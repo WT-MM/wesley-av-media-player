@@ -155,6 +155,41 @@ Omit those options and the corresponding report columns are omitted too.
 6. Use at least three runs for the development snapshot and five runs for a
    release decision. Report median run means plus variability.
 
+## Non-windowed libmpv probe
+
+`macos/libmpv_offscreen_probe.cpp` isolates WAM's current libmpv/OpenGL render
+path from Qt Quick and window-server animation. It is useful for rejecting
+engine-option experiments before they reach the full player benchmark; its
+numbers are not a substitute for the LaunchServices suite above.
+
+Build it on macOS with the same Homebrew libmpv used by the development app:
+
+```sh
+clang++ -std=c++20 -O2 -DGL_SILENCE_DEPRECATION \
+  benchmarks/macos/libmpv_offscreen_probe.cpp \
+  -o build/wam_libmpv_offscreen_probe \
+  $(pkg-config --cflags --libs mpv) \
+  -framework OpenGL -framework Foundation
+```
+
+Then run a 20-second sample against a local corpus derivative:
+
+```sh
+build/wam_libmpv_offscreen_probe /path/to/tos-h264-4k24-180s.mp4
+```
+
+Optional positional arguments select `hwdec-extra-frames`, `swapchain-depth`,
+render-API advanced control (`0` or `1`), `gpu-dumb-mode`, `fbo-format`, and
+`hwdec`, in that order. The probe verifies the active hardware decoder, A/V
+sync, and dropped-frame counters and reports process CPU, sampled physical
+footprint, context switches, render callbacks, and frames rendered.
+
+The offscreen target deliberately uses the shipping OpenGL renderer but a null
+audio output and no Qt scene graph. Its footprint excludes the separate
+VideoToolbox XPC helper, and its `glFinish()` makes GPU completion deterministic
+instead of modelling Qt's window swapchain. Compare only identical probe runs;
+use the full suite for any product or competitor claim.
+
 The shorter development window is intentionally practical. A release-grade
 energy run should use a 60-second warm-up and 300-second measurement window.
 

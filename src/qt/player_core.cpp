@@ -259,8 +259,11 @@ PlayerCore::~PlayerCore() {
 
 void PlayerCore::detachOwner(PlayerController *owner) {
   std::scoped_lock lock(owner_mutex_);
-  if (owner_ == owner)
+  if (owner_ == owner) {
     owner_ = nullptr;
+    event_drain_queued_.store(false, std::memory_order_release);
+    video_update_queued_.store(false, std::memory_order_release);
+  }
 }
 
 void *PlayerCore::getOpenGlProcAddress(void *, const char *name) {
@@ -314,6 +317,14 @@ void PlayerCore::render(int framebuffer, int width, int height, bool flip_y) {
   if (!render_context_)
     return;
 
+  // Keep the render callback coalesced until Qt actually consumes the update,
+  // rather than only until the GUI thread asks the scene graph for a frame.
+  // The latter can be a full vsync later (or indefinitely later while the
+  // window is hidden), which otherwise permits redundant queued GUI updates.
+  // Clear before update(): a callback racing with this render then schedules
+  // the following frame instead of being lost.
+  video_update_queued_.store(false, std::memory_order_release);
+
   // Rendering the current frame is also correct for redraws caused by an
   // expose or resize even when MPV_RENDER_UPDATE_FRAME is not set.
   mpv_render_context_update(render_context_);
@@ -329,11 +340,15 @@ void PlayerCore::render(int framebuffer, int width, int height, bool flip_y) {
 
 void PlayerCore::releaseRenderContext() {
   std::scoped_lock lock(render_mutex_);
-  if (!render_context_)
-    return;
-  mpv_render_context_set_update_callback(render_context_, nullptr, nullptr);
-  mpv_render_context_free(render_context_);
-  render_context_ = nullptr;
+  if (render_context_) {
+    mpv_render_context_set_update_callback(render_context_, nullptr, nullptr);
+    mpv_render_context_free(render_context_);
+    render_context_ = nullptr;
+  }
+  // A queued update may have been delivered while the scene graph was hidden
+  // and therefore never consumed by render(). A replacement context must be
+  // able to schedule its first frame instead of inheriting that stale gate.
+  video_update_queued_.store(false, std::memory_order_release);
   rendering_ready_.store(false, std::memory_order_release);
 }
 
@@ -385,18 +400,21 @@ void PlayerCore::queueVideoUpdate() {
     return;
   }
   PlayerController *owner = owner_;
-  QMetaObject::invokeMethod(
+  const bool queued = QMetaObject::invokeMethod(
       owner,
       [this, owner] {
-        video_update_queued_.store(false, std::memory_order_release);
         {
           std::scoped_lock owner_lock(owner_mutex_);
-          if (owner_ != owner)
+          if (owner_ != owner) {
+            video_update_queued_.store(false, std::memory_order_release);
             return;
+          }
         }
         owner->requestVideoUpdate();
       },
       Qt::QueuedConnection);
+  if (!queued)
+    video_update_queued_.store(false, std::memory_order_release);
 }
 
 void PlayerCore::notifyRenderingReady() {
