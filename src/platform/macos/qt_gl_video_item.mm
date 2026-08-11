@@ -762,6 +762,7 @@ struct QtGlVideoItem::SharedState {
   mutable QMutex mutex;
   std::optional<FrameLease> latestFrame;
   std::uint64_t acceptedGeneration{0};
+  std::uint64_t acceptedRenderedFrames{0};
   bool generationOpen{true};
   std::uint64_t timelineSerial{0};
   std::shared_ptr<GlCounters> counters{std::make_shared<GlCounters>()};
@@ -1397,6 +1398,19 @@ class QtGlVideoNode final : public QSGRenderNode {
     slot.fence = replacementFence;
     updateRenderedGeneration(counters_->lastRenderedGeneration,
                              slot.frame.timing().generation);
+    {
+      // Linearize a completed draw against flush(). A fence for the old
+      // timeline may be installed after the GUI thread advances generation;
+      // that draw remains part of renderedFrames but cannot acknowledge the
+      // newly accepted playback attempt.
+      QMutexLocker lock(&state_->mutex);
+      if (state_->generationOpen &&
+          slot.frame.timing().generation == state_->acceptedGeneration &&
+          state_->acceptedRenderedFrames !=
+              std::numeric_limits<std::uint64_t>::max()) {
+        ++state_->acceptedRenderedFrames;
+      }
+    }
     // Publishing the completed-frame count after the generation makes an
     // acquire snapshot that observes this draw observe its generation too.
     counters_->renderedFrames.fetch_add(1, std::memory_order_release);
@@ -1544,6 +1558,7 @@ QtGlVideoItemStats QtGlVideoItem::stats() const {
   {
     QMutexLocker lock(&state_->mutex);
     result.acceptedGeneration = state_->acceptedGeneration;
+    result.acceptedRenderedFrames = state_->acceptedRenderedFrames;
   }
   result.submittedFrames =
       counters.submittedFrames.load(std::memory_order_relaxed);

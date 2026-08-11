@@ -382,6 +382,7 @@ Item {
   WAM_CHECK(blankStats.renderedFrames == 0);
   WAM_CHECK(blankStats.lastRenderedGeneration == 0);
   WAM_CHECK(blankStats.acceptedGeneration == 0);
+  WAM_CHECK(blankStats.acceptedRenderedFrames == 0);
   WAM_CHECK(blankStats.fatalErrorSerial == 0);
   WAM_CHECK(blankStats.activeResourceSets == 0);
   WAM_CHECK(!blankStats.textureRectangleSupported);
@@ -764,6 +765,15 @@ Item {
   window.requestUpdate();
   WAM_CHECK(spinUntil(
       [&] { return green_mesa_11->stats().pendingRetirements == 1; }, 5000));
+  const auto generationOneBaseline = green_mesa_11->stats();
+  WAM_CHECK(generationOneBaseline.acceptedGeneration == 1);
+  for (int redraw = 0; redraw < 3; ++redraw) {
+    window.requestUpdate();
+    WAM_CHECK(!window.grabWindow().isNull());
+  }
+  WAM_CHECK(green_mesa_11->stats().acceptedGeneration == 1);
+  WAM_CHECK(green_mesa_11->stats().acceptedRenderedFrames ==
+            generationOneBaseline.acceptedRenderedFrames);
   PixelBufferCreation stale = solidBuffer(
       kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, {235, 128, 128},
       kCVImageBufferYCbCrMatrix_ITU_R_709_2);
@@ -774,6 +784,8 @@ Item {
   WAM_CHECK(green_mesa_11->stats().staleFrames == beforeFlush.staleFrames + 1);
   WAM_CHECK(green_mesa_11->stats().lastRenderedGeneration ==
             beforeFlush.lastRenderedGeneration);
+  WAM_CHECK(green_mesa_11->stats().acceptedRenderedFrames ==
+            generationOneBaseline.acceptedRenderedFrames);
 
   PixelBufferCreation currentRed = solidBuffer(
       kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, {80, 112, 216},
@@ -788,6 +800,8 @@ Item {
   WAM_CHECK(green_mesa_11->stats().importedFrames == beforeFlush.importedFrames);
   WAM_CHECK(green_mesa_11->stats().lastRenderedGeneration ==
             beforeFlush.lastRenderedGeneration);
+  WAM_CHECK(green_mesa_11->stats().acceptedRenderedFrames ==
+            generationOneBaseline.acceptedRenderedFrames);
 
   // Explicitly destroy and recreate the QSG node while the old share-group
   // job is held. The new node must retain the latest generation-one lease but
@@ -825,6 +839,10 @@ Item {
                  "post-flush retained current-generation frame");
   WAM_CHECK(spinUntil(
       [&] { return green_mesa_11->stats().lastRenderedGeneration == 1; }, 5000));
+  const auto generationOnePresented = green_mesa_11->stats();
+  WAM_CHECK(generationOnePresented.acceptedGeneration == 1);
+  WAM_CHECK(generationOnePresented.acceptedRenderedFrames >
+            generationOneBaseline.acceptedRenderedFrames);
 
   // A regressed/same generation argument advances fail-closed instead of
   // reopening the just-flushed timeline to a delayed callback.
@@ -835,6 +853,10 @@ Item {
   window.requestUpdate();
   WAM_CHECK(spinUntil(
       [&] { return green_mesa_11->stats().activeResourceSets == 0; }, 5000));
+  const auto generationTwoBaseline = green_mesa_11->stats();
+  WAM_CHECK(generationTwoBaseline.acceptedGeneration == 2);
+  WAM_CHECK(generationTwoBaseline.acceptedRenderedFrames >=
+            generationOnePresented.acceptedRenderedFrames);
   PixelBufferCreation regressedStale = solidBuffer(
       kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, {235, 128, 128},
       kCVImageBufferYCbCrMatrix_ITU_R_709_2);
@@ -846,11 +868,17 @@ Item {
   WAM_CHECK(green_mesa_11->stats().staleFrames ==
             beforeRegressedFlush.staleFrames + 1);
   WAM_CHECK(green_mesa_11->stats().lastRenderedGeneration == 1);
+  WAM_CHECK(green_mesa_11->stats().acceptedRenderedFrames ==
+            generationTwoBaseline.acceptedRenderedFrames);
   PixelBufferCreation generationTwo = solidBuffer(
       kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, {80, 112, 216},
       kCVImageBufferYCbCrMatrix_ITU_R_709_2);
   submitOwnedBufferAndGrab(green_mesa_11, &window, generationTwo.buffer, 2);
   WAM_CHECK(green_mesa_11->stats().lastRenderedGeneration == 2);
+  const auto generationTwoPresented = green_mesa_11->stats();
+  WAM_CHECK(generationTwoPresented.acceptedGeneration == 2);
+  WAM_CHECK(generationTwoPresented.acceptedRenderedFrames >
+            generationTwoBaseline.acceptedRenderedFrames);
 
   // A taken fatal reason re-arms the latch. A terminal init failure on the
   // first frame of a new generation must not advertise that generation as
