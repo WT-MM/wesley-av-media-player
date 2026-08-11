@@ -265,6 +265,69 @@ if(BUILD_TESTING)
       add_test(NAME macos_native_video COMMAND wam_native_video_test)
       set_tests_properties(macos_native_video PROPERTIES SKIP_RETURN_CODE 77)
 
+      # Isolated activation gate for a future integrated Qt Quick Metal path.
+      # The shipping executable deliberately remains OpenGL/libmpv. Invoke qsb
+      # explicitly so the build can select Xcode's optional Metal toolchain,
+      # propagate WAM's deployment floor, and inspect every embedded metallib.
+      find_package(Qt6ShaderToolsTools 6.11 REQUIRED CONFIG)
+      set(WAM_NATIVE_VIDEO_SHADER_BUILD_DIR
+        "${CMAKE_CURRENT_BINARY_DIR}/native-video-shaders")
+      set(WAM_NATIVE_VIDEO_QSB_FILES)
+      foreach(WAM_NATIVE_VIDEO_SHADER IN ITEMS
+          native_video.vert native_video.frag)
+        set(WAM_NATIVE_VIDEO_SHADER_SOURCE
+          "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/macos/shaders/${WAM_NATIVE_VIDEO_SHADER}")
+        set(WAM_NATIVE_VIDEO_SHADER_QSB
+          "${WAM_NATIVE_VIDEO_SHADER_BUILD_DIR}/${WAM_NATIVE_VIDEO_SHADER}.qsb")
+        add_custom_command(
+          OUTPUT "${WAM_NATIVE_VIDEO_SHADER_QSB}"
+          COMMAND ${CMAKE_COMMAND}
+            "-DQSB_EXECUTABLE=$<TARGET_FILE:Qt6::qsb>"
+            "-DINPUT=${WAM_NATIVE_VIDEO_SHADER_SOURCE}"
+            "-DOUTPUT=${WAM_NATIVE_VIDEO_SHADER_QSB}"
+            "-DDEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET}"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/BakeMetalShader.cmake"
+          DEPENDS
+            "${WAM_NATIVE_VIDEO_SHADER_SOURCE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/cmake/BakeMetalShader.cmake"
+            Qt6::qsb
+          COMMENT "Baking ${WAM_NATIVE_VIDEO_SHADER} with an embedded metallib"
+          VERBATIM)
+        set_source_files_properties("${WAM_NATIVE_VIDEO_SHADER_QSB}"
+          PROPERTIES
+            GENERATED TRUE
+            QT_RESOURCE_ALIAS "${WAM_NATIVE_VIDEO_SHADER}.qsb")
+        list(APPEND WAM_NATIVE_VIDEO_QSB_FILES
+          "${WAM_NATIVE_VIDEO_SHADER_QSB}")
+      endforeach()
+
+      add_executable(wam_native_qt_metal_compositor_test
+        tests/native_qt_metal_compositor_test.mm
+        src/platform/macos/qt_metal_video_item.hpp
+        src/platform/macos/qt_metal_video_item.mm)
+      qt_add_resources(wam_native_qt_metal_compositor_test
+        wam_native_qt_metal_shaders
+        PREFIX "/wam/native-video/shaders"
+        FILES ${WAM_NATIVE_VIDEO_QSB_FILES})
+      target_include_directories(wam_native_qt_metal_compositor_test PRIVATE
+        src)
+      target_link_libraries(wam_native_qt_metal_compositor_test PRIVATE
+        wam_macos_native_video
+        Qt6::Core
+        Qt6::Gui
+        Qt6::Qml
+        Qt6::Quick)
+      target_compile_options(wam_native_qt_metal_compositor_test PRIVATE
+        "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>"
+        -Wall -Wextra -Wpedantic)
+      set_target_properties(wam_native_qt_metal_compositor_test PROPERTIES
+        AUTOMOC ON
+        LINKER_LANGUAGE OBJCXX)
+      add_test(NAME macos_native_qt_metal_compositor
+        COMMAND wam_native_qt_metal_compositor_test)
+      set_tests_properties(macos_native_qt_metal_compositor PROPERTIES
+        TIMEOUT 20)
+
       find_library(WAM_AVFOUNDATION_FRAMEWORK AVFoundation REQUIRED)
       add_executable(wam_video_toolbox_decoder_test
         tests/video_toolbox_decoder_test.mm

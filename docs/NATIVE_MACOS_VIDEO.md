@@ -15,9 +15,10 @@ cmake -S . -B build-native \
   -DBUILD_TESTING=ON
 cmake --build build-native \
   --target wam wam_native_video_test wam_video_toolbox_decoder_test \
-           wam_native_video_pipeline_test
+           wam_native_video_pipeline_test \
+           wam_native_qt_metal_compositor_test
 ctest --test-dir build-native \
-  -R 'macos_(native_video|native_video_pipeline|video_toolbox_decoder)' \
+  -R 'macos_(native_video|native_video_pipeline|video_toolbox_decoder|native_qt_metal_compositor)' \
   --output-on-failure
 ```
 
@@ -31,6 +32,15 @@ ctest --test-dir build-native \
   copy.
 - `MetalFrameLease` keeps both the CoreVideo frame and its texture views alive
   through command encoding.
+- `QtMetalVideoItem` is an isolated, non-shipping Qt Quick composition gate. It
+  wraps the original IOSurface's NV12/P010 planes on Qt's exact Metal device,
+  converts them in one offline-compiled shader pass, and preserves QML z-order
+  without a full-frame intermediate. Hardware tests cover non-neutral BT.601
+  and BT.709 pixels, full/video range, P010 normalization, chroma siting,
+  opacity, two simultaneous items, bounded Qt frame-slot retention, paused
+  scene-graph recreation, window migration, and complete resource retirement.
+  Unsupported color metadata fails closed. Embedded standard and batchable
+  metallibs are inspected at build time to enforce WAM's macOS 13 floor.
 - `MetalLayerPresenter` is a standalone component probe. It imports those plane
   views into a two-drawable `CAMetalLayer`, performs one NV12/P010-to-BGRA Metal
   pass (including center/left chroma siting), and retains each lease through GPU
@@ -180,11 +190,13 @@ process measurements beat the controlled baseline.
    `QNativeInterface::QSGMetalTexture::fromNative`, retain their frame leases
    through GPU consumption, and convert/color in one offline-cross-compiled
    `qsb` `QSGMaterialShader` pass. This preserves QML z-order without a full-
-   frame intermediate. Qt 6.11's `qt_add_shaders` embeds MSL source by default,
-   and its `PRECOMPILE` mode only invokes `fxc` on Windows; create and prewarm
-   the Metal pipeline once during media preparation. Avoiding Metal source
-   compilation entirely would require an explicit `qsb --metallib` build step
-   plus validation that the embedded library retains the macOS 13 floor.
+   frame intermediate. The isolated gate invokes `qsb --metallib` through the
+   exact Xcode Metal toolchain, propagates WAM's macOS 13 deployment floor, and
+   inspects standard and batchable bytecode variants instead of trusting tool
+   exit status. Create and prewarm the Metal pipeline once during media
+   preparation. The current R/RG native-plane wrappers work under pinned Qt
+   6.11.1 hardware tests but exceed Qt's documented RGBA-only native-texture
+   contract, so both architectures must remain gated on pixel tests.
 2. Resolve Qt's process-wide graphics API before selecting that path. The
    existing libmpv fallback requires OpenGL, so safe choices include startup
    preflight/relaunch, a fallback decoder that also feeds Metal, or a macOS-

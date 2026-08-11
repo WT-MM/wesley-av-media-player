@@ -30,6 +30,7 @@ jobs:
         uses: jurplel/install-qt-action@v4
         with:
           version: ${{ env.QT_VERSION }}
+          modules: qtshadertools
           cache: true
       - run: brew install cmake ninja pkg-config mpv ffmpeg
       - run: test "$(qmake -query QT_VERSION)" = "$QT_VERSION"

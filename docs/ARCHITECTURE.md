@@ -55,6 +55,11 @@ generation-based seek invalidation. It is compiled only with
 `WAM_ENABLE_MACOS_NATIVE_VIDEO=ON`; no shipping controller or render node can
 select it, and the normal libmpv path is unchanged. The current standalone
 `CAMetalLayer` presenter is a component probe, not a qualified Qt compositor.
+An isolated `QtMetalVideoItem` gate instead imports the original IOSurface
+planes on Qt's Metal device and converts them inside the Qt scene graph, so QML
+z-order is preserved without a full-frame intermediate. It is hardware-tested
+for color, frame-slot lifetime, scene-graph recreation, and window migration,
+but is not registered with or linked into shipping WAM.
 Pipeline stop, detach, and destruction transfer their demux/VideoToolbox drain
 to a self-owned background retirement slot, so the AppKit thread never joins
 those producers. A process-wide admission lease permits at most one native
@@ -62,8 +67,9 @@ attempt to prepare, run, or retire; frontend churn therefore cannot accumulate
 stuck AVFoundation/VideoToolbox sessions. Asset and track keys load on a private
 serial queue; the caller only starts work and polls one generation-tagged
 terminal result, so no Apple callback can invoke client code after destruction.
-Runtime activation remains blocked on Qt-native composition, atomic fallback,
-and full-sync/open-GOP seek coverage.
+Runtime activation remains blocked on connecting the native pipeline to a Qt
+render node, an authoritative audio clock, atomic libmpv fallback, subtitle
+behavior, and full-sync/open-GOP seek coverage.
 See `docs/NATIVE_MACOS_VIDEO.md` for scope and rollout gates.
 
 ## Editing and captions
@@ -109,5 +115,6 @@ Automated coverage includes playback policy and state parsing, process-tree job
 cancellation, caption success/failure/cancellation/cleanup, lazy libmpv startup,
 render-generation and controller recovery races, and an actual FFmpeg duration
 assertion for a trimmed 2× export. The opt-in macOS native build additionally
-exercises VideoToolbox decode ordering, IOSurface/Metal import, and pipeline
-lifecycle on supported hardware.
+exercises VideoToolbox decode ordering, IOSurface/Metal import, Qt scene-graph
+color/composition/lifetime behavior, and pipeline lifecycle on supported
+hardware.
