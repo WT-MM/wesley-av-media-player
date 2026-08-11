@@ -350,6 +350,28 @@ resolve_packaged_dependency() {
   return 1
 }
 
+# `otool -L` includes an image's LC_ID_DYLIB as its first entry. Some Qt
+# plugins use an absolute install name that points at the plugin itself, which
+# is metadata rather than a runtime dependency. Audit the load commands
+# directly so LC_ID_DYLIB cannot be mistaken for an external library while all
+# real strong, weak, re-exported, upward, and lazy dependencies remain gated.
+list_loaded_dependencies() {
+  otool -l "$1" | awk '
+    $1 == "cmd" {
+      is_dependency = ($2 == "LC_LOAD_DYLIB" ||
+                       $2 == "LC_LOAD_WEAK_DYLIB" ||
+                       $2 == "LC_REEXPORT_DYLIB" ||
+                       $2 == "LC_LOAD_UPWARD_DYLIB" ||
+                       $2 == "LC_LAZY_LOAD_DYLIB")
+      next
+    }
+    is_dependency && $1 == "name" {
+      print $2
+      is_dependency = 0
+    }
+  '
+}
+
 # Remove development-only absolute rpaths from every packaged image, not only
 # WAM's own media binaries. The closure audit below proves they are unnecessary.
 for audit_file in "${BUNDLE_MACHOS[@]}"; do
@@ -394,7 +416,7 @@ for audit_file in "${BUNDLE_MACHOS[@]}"; do
       print -u2 "Unresolved packaged dependency in $audit_file: $dependency"
       exit 1
     fi
-  done < <(otool -L "$audit_file" | tail -n +2 | awk '{print $1}')
+  done < <(list_loaded_dependencies "$audit_file")
 
   while IFS= read -r packaged_rpath; do
     [[ -n "$packaged_rpath" ]] || continue
