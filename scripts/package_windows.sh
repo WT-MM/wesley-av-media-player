@@ -97,6 +97,7 @@ cp -f "$FFMPEG_EXECUTABLE" "$PACKAGE_DIR/tools/ffmpeg.exe"
 cp -f "$WHISPER_EXECUTABLE" "$PACKAGE_DIR/tools/whisper-cli.exe"
 cp -f "$MODEL" "$PACKAGE_DIR/models/ggml-base.en.bin"
 cp -f README.md THIRD_PARTY_NOTICES.md "$PACKAGE_DIR/"
+cp -f packaging/windows/qt.conf "$PACKAGE_DIR/qt.conf"
 
 # Windows resolves DLLs relative to each executable, not its parent directory.
 # Keep player dependencies beside WAM.exe and tool dependencies inside tools/.
@@ -188,7 +189,12 @@ while IFS= read -r package_binary; do
 done < "$package_binary_list"
 rm -f "$package_binary_list"
 
+echo "Verifying packaged FFmpeg runtime"
 "$PACKAGE_DIR/tools/ffmpeg.exe" -hide_banner -version >/dev/null
-"$PACKAGE_DIR/tools/whisper-cli.exe" --help >/dev/null
-"$PACKAGE_DIR/WAM.exe" --verify-runtime
+echo "Verifying packaged Whisper runtime"
+"$PACKAGE_DIR/tools/whisper-cli.exe" --help >/dev/null 2>&1
+echo "Verifying packaged WAM Qt/QML runtime"
+env -u QML_IMPORT_PATH -u QML2_IMPORT_PATH -u QT_PLUGIN_PATH \
+  -u QT_QPA_PLATFORM_PLUGIN_PATH \
+  "$PACKAGE_DIR/WAM.exe" --verify-runtime
 echo "Prepared standalone Qt/QML Windows package at $PACKAGE_DIR"

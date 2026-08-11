@@ -235,6 +235,8 @@ jobs:
           test -f package/Qt6Quick.dll
           test -f package/Qt6QuickControls2.dll
           test -f package/platforms/qwindows.dll
+          test -f package/qt.conf
+          grep -qxF 'QmlImports=qml' package/qt.conf
           test -d package/qml/QtQuick
           test -x package/tools/ffmpeg.exe
           test -x package/tools/whisper-cli.exe
