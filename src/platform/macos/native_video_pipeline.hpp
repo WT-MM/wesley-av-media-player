@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -27,14 +28,103 @@ enum class NativeVideoPrepareResult : std::uint8_t {
   Failed,
 };
 
+enum class NativeVideoOutputMode : std::uint8_t {
+  MetalLayer,
+  QtOpenGL,
+};
+
+enum class NativeScheduledFrameDispatchResult : std::uint8_t {
+  Dispatched,
+  Backpressure,
+  Rejected,
+  Failed,
+};
+
+struct NativeScheduledFrameOutputStats {
+  bool closed{false};
+  bool deliveryQueued{false};
+  std::uint64_t acceptedGeneration{0};
+  std::uint64_t dispatchedFrames{0};
+  std::uint64_t deliveredFrames{0};
+  std::uint64_t coalescedFrames{0};
+  std::uint64_t staleFrames{0};
+  std::uint64_t rejectedFrames{0};
+  // The three render-pass counters below are activity-sampled by the dormant
+  // Qt adapter. They are refreshed by start/dispatch/flush/failure/retirement
+  // observation, but can lag redraws of a retained frame while playback is
+  // otherwise quiescent. A future runtime benchmark must request an explicit
+  // GUI-linearized presenter snapshot instead of treating stats() as a
+  // per-render notification.
+  // Adapter-lifetime Qt render passes. Qt may redraw one retained lease more
+  // than once, so this is deliberately not a unique-frame count and can
+  // exceed dispatchedFrames.
+  std::uint64_t actuallyRenderedFrames{0};
+  // Presenter-lifetime successful draws that were still part of its accepted
+  // generation when the completion fence was published. This counter and
+  // acceptedGeneration are sampled coherently by the presenter.
+  std::uint64_t acceptedRenderedFrames{0};
+  // Exact accepted draws since the current output failure-handler epoch's
+  // startup flush was applied on the GUI thread. Later seek flushes preserve
+  // this attempt counter; installing the next handler resets it.
+  std::uint64_t attemptAcceptedRenderedFrames{0};
+  std::uint64_t lastRenderedGeneration{0};
+  std::uint64_t fatalErrorSerial{0};
+};
+
+struct NativeScheduledFrameStartAck {
+  std::uint64_t requestedGeneration{0};
+  std::uint64_t acceptedGeneration{0};
+  std::uint64_t acceptedRenderedFrames{0};
+};
+
+// Thread-safe boundary between the native scheduler and an externally owned
+// GUI presenter. Implementations retain at most one scheduled FrameLease and
+// must never call a GUI object from dispatch(), flush(), close(), or stats().
+// A failure handler may run on the presenter's GUI thread and therefore must
+// return promptly and must not call back into the output.
+class NativeScheduledFrameOutput {
+ public:
+  using FailureHandler = std::function<void(std::string)>;
+  using StartAppliedHandler =
+      std::function<void(NativeScheduledFrameStartAck)>;
+
+  virtual ~NativeScheduledFrameOutput() = default;
+  [[nodiscard]] virtual NativeScheduledFrameDispatchResult dispatch(
+      FrameLease frame, std::string* error = nullptr) noexcept = 0;
+  // Applies the prepared generation on the GUI/presenter side and invokes the
+  // callback only after that flush has linearized against completed draws.
+  // Implementations must never invoke it while holding an output lock.
+  [[nodiscard]] virtual bool startGeneration(
+      std::uint64_t generation, StartAppliedHandler applied,
+      std::string* error = nullptr) noexcept = 0;
+  [[nodiscard]] virtual bool flush(std::uint64_t nextGeneration,
+                                   std::string* error = nullptr) noexcept = 0;
+  virtual void close(std::uint64_t finalGeneration) noexcept = 0;
+  virtual void setFailureHandler(FailureHandler handler) noexcept = 0;
+  [[nodiscard]] virtual NativeScheduledFrameOutputStats stats()
+      const noexcept = 0;
+};
+
 struct NativeVideoPipelineStats {
   bool prepared{false};
   bool active{false};
   bool stopping{false};
   bool hardwareDecode{false};
+  NativeVideoOutputMode outputMode{NativeVideoOutputMode::MetalLayer};
   std::uint64_t generation{0};
   std::uint64_t compressedSamplesRead{0};
   std::uint64_t compressedSamplesSubmitted{0};
+  // A scheduled frame was selected as due by the audio-clock scheduler.
+  std::uint64_t scheduledFrames{0};
+  // The external capacity-one handoff accepted the frame. This is not a
+  // presentation acknowledgement; actuallyRenderedFrames is sampled only
+  // after Qt's scene graph reports that the frame was drawn.
+  std::uint64_t dispatchedFrames{0};
+  // Activity-sampled Qt render passes since this pipeline's current
+  // preparation began. A retained frame may contribute more than one pass,
+  // and quiescent retained-frame redraws can remain unobserved until the next
+  // bridge activity. This is not yet a benchmark-grade live counter.
+  std::uint64_t actuallyRenderedFrames{0};
   std::uint64_t presentedFrames{0};
   std::uint64_t lateFramesDropped{0};
   std::uint64_t staleFramesDropped{0};
@@ -45,6 +135,9 @@ struct NativeVideoPipelineStats {
   std::size_t queueCapacity{0};
   VideoToolboxDecoderStats decoder;
   MetalLayerPresenterStats presenter;
+  // Raw adapter-lifetime totals. Use the top-level counters for the current
+  // pipeline preparation epoch.
+  NativeScheduledFrameOutputStats scheduledOutput;
 };
 
 struct NativeVideoPrepareOutcome {
@@ -68,6 +161,14 @@ struct NativeVideoPrepareOutcome {
 class NativeVideoPipeline final {
  public:
   static std::unique_ptr<NativeVideoPipeline> create(
+      std::string* error = nullptr);
+
+  // Dormant Qt/OpenGL foundation. This factory is not called or linked by a
+  // shipping controller. Unlike create(), a successful preparation stops in
+  // Prepared and performs zero decode/presentation work until startPrepared()
+  // is called. The output requests CGL-compatible VideoToolbox IOSurfaces.
+  static std::unique_ptr<NativeVideoPipeline> createForQtOpenGL(
+      std::shared_ptr<NativeScheduledFrameOutput> output,
       std::string* error = nullptr);
 
   NativeVideoPipeline(const NativeVideoPipeline&) = delete;
@@ -94,19 +195,31 @@ class NativeVideoPipeline final {
       std::string* error = nullptr);
   [[nodiscard]] std::optional<NativeVideoPrepareOutcome>
   takePrepareResult() noexcept;
+  // Starts an externally presented pipeline after a Ready outcome has been
+  // consumed. The returned value is the admitted decoded-frame generation.
+  // Startup remains inert until the output asynchronously acknowledges that
+  // this generation was applied to the GUI presenter; only then can the
+  // worker/display link enter Running.
+  [[nodiscard]] std::optional<std::uint64_t> startPrepared(
+      std::string* error = nullptr) noexcept;
   // Revokes playback immediately and retires AVFoundation/VideoToolbox work on
   // a private serial queue. It never joins the worker or waits for Apple
   // callbacks on the calling thread. While stats().stopping is true, a new
   // prepareLocalFileAsync() fails fast instead of accumulating retired
   // sessions.
   // Admission is process-wide, so frontend recreation cannot bypass the bound.
-  void stop() noexcept;
+  // Returns the exact invalidation generation applied to the external output.
+  // Repeated calls during the same retirement return the existing generation.
+  [[nodiscard]] std::uint64_t stop() noexcept;
 
   // Calls are cheap: they update a small clock snapshot and start/stop the
   // display link only on state transitions.
   void updateAudioClock(double positionSeconds, bool paused,
                         double rate) noexcept;
-  void seek(double positionSeconds) noexcept;
+  // Returns the exact new generation after the output has rejected all older
+  // scheduled deliveries, or nullopt when no active seek was accepted.
+  [[nodiscard]] std::optional<std::uint64_t> seek(
+      double positionSeconds) noexcept;
 
   [[nodiscard]] bool attached() const noexcept;
   [[nodiscard]] bool active() const noexcept;
@@ -146,6 +259,9 @@ struct NativeVideoPipelineTestAccess {
       NativeVideoPipeline& pipeline, std::shared_future<void> release,
       std::shared_ptr<std::atomic<bool>> entered);
   static void setRetirementBarrier(
+      NativeVideoPipeline& pipeline, std::shared_future<void> release,
+      std::shared_ptr<std::atomic<bool>> entered);
+  static void setStartPreparedPostWorkerBarrier(
       NativeVideoPipeline& pipeline, std::shared_future<void> release,
       std::shared_ptr<std::atomic<bool>> entered);
 };

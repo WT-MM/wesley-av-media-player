@@ -58,6 +58,29 @@ void assignError(std::string* error, std::string message) {
   }
 }
 
+void assignFixedErrorNoexcept(std::string* error, const char* message) noexcept {
+  if (error == nullptr) {
+    return;
+  }
+  try {
+    *error = message;
+  } catch (...) {
+  }
+}
+
+void assignErrorNoexcept(std::string* error,
+                         const std::string& message) noexcept {
+  if (error == nullptr) {
+    return;
+  }
+  try {
+    *error = message;
+  } catch (...) {
+    assignFixedErrorNoexcept(error,
+                             "native Qt OpenGL output startup failed");
+  }
+}
+
 std::string describeNSError(NSError* error, const char* fallback) {
   if (error == nil || error.localizedDescription == nil) {
     return fallback;
@@ -296,6 +319,8 @@ class NotifyingFrameSink final : public DecodedFrameSink {
 struct AtomicPipelineStats {
   std::atomic<std::uint64_t> compressedSamplesRead{0};
   std::atomic<std::uint64_t> compressedSamplesSubmitted{0};
+  std::atomic<std::uint64_t> scheduledFrames{0};
+  std::atomic<std::uint64_t> dispatchedFrames{0};
   std::atomic<std::uint64_t> presentedFrames{0};
   std::atomic<std::uint64_t> lateFramesDropped{0};
   std::atomic<std::uint64_t> staleFramesDropped{0};
@@ -306,6 +331,8 @@ struct AtomicPipelineStats {
   void reset() noexcept {
     compressedSamplesRead.store(0, std::memory_order_relaxed);
     compressedSamplesSubmitted.store(0, std::memory_order_relaxed);
+    scheduledFrames.store(0, std::memory_order_relaxed);
+    dispatchedFrames.store(0, std::memory_order_relaxed);
     presentedFrames.store(0, std::memory_order_relaxed);
     lateFramesDropped.store(0, std::memory_order_relaxed);
     staleFramesDropped.store(0, std::memory_order_relaxed);
@@ -343,27 +370,44 @@ class PipelineFailureState final {
     ++epoch_;
   }
 
-  void reportCurrent(std::string message) noexcept {
-    std::uint64_t epoch = 0;
-    {
-      std::lock_guard lock(mutex_);
-      epoch = epoch_;
-    }
-    report(epoch, std::move(message));
+  void disablePreservingError() noexcept {
+    active_.store(false, std::memory_order_release);
+    std::lock_guard lock(mutex_);
+    enabled_ = false;
+    reported_ = false;
+    ++epoch_;
   }
 
-  void report(std::uint64_t epoch, std::string message) noexcept {
+  std::optional<std::uint64_t> reportCurrent(
+      std::string message) noexcept {
     std::lock_guard lock(mutex_);
-    if (!enabled_ || epoch != epoch_ || reported_) {
-      return;
+    if (!enabled_ || reported_) {
+      return std::nullopt;
     }
     reported_ = true;
     lastError_ = std::move(message);
     active_.store(false, std::memory_order_release);
+    return epoch_;
+  }
+
+  bool report(std::uint64_t epoch, std::string message) noexcept {
+    std::lock_guard lock(mutex_);
+    if (!enabled_ || epoch != epoch_ || reported_) {
+      return false;
+    }
+    reported_ = true;
+    lastError_ = std::move(message);
+    active_.store(false, std::memory_order_release);
+    return true;
   }
 
   [[nodiscard]] bool active() const noexcept {
     return active_.load(std::memory_order_acquire);
+  }
+
+  [[nodiscard]] bool failed(std::uint64_t epoch) const noexcept {
+    std::lock_guard lock(mutex_);
+    return !enabled_ || epoch_ != epoch || reported_;
   }
 
   std::optional<std::string> takeLastError() noexcept {
@@ -389,6 +433,8 @@ struct NativeVideoPipeline::Impl
   enum class Lifecycle : std::uint8_t {
     Idle,
     Preparing,
+    Prepared,
+    Starting,
     Running,
     Retiring,
     Finalizing,
@@ -429,7 +475,9 @@ struct NativeVideoPipeline::Impl
   ~Impl() = default;
 
   std::shared_ptr<PipelineFailureState> failureState;
+  NativeVideoOutputMode outputMode{NativeVideoOutputMode::MetalLayer};
   std::unique_ptr<MetalLayerPresenter> presenter;
+  std::shared_ptr<NativeScheduledFrameOutput> scheduledOutput;
   std::unique_ptr<NotifyingFrameSink> sink;
   std::unique_ptr<VideoToolboxDecoder> decoder;
 
@@ -478,6 +526,9 @@ struct NativeVideoPipeline::Impl
   bool ownsProcessAdmission{false};
   std::uint64_t preparationGeneration{0};
   std::shared_ptr<PreparationRequest> activePreparation;
+  double preparedInitialPosition{0.0};
+  std::uint64_t preparedFrameGeneration{0};
+  std::uint64_t preparedFailureEpoch{0};
 
   mutable std::mutex preparationResultMutex;
   std::optional<NativeVideoPrepareOutcome> preparationResult;
@@ -496,14 +547,31 @@ struct NativeVideoPipeline::Impl
   std::shared_ptr<std::atomic<bool>> preparationCommitEntered;
   std::shared_future<void> retirementBarrier;
   std::shared_ptr<std::atomic<bool>> retirementEntered;
+  std::shared_future<void> startPreparedPostWorkerBarrier;
+  std::shared_ptr<std::atomic<bool>> startPreparedPostWorkerEntered;
 #endif
 
   std::atomic<bool> attached{false};
   std::atomic<bool> prepared{false};
+  std::atomic<bool> running{false};
   std::atomic<bool> stopping{false};
   std::atomic<bool> pausedPresentationNeeded{false};
   std::atomic<std::uint64_t> requestedGeneration{0};
   AtomicPipelineStats counters;
+
+  [[nodiscard]] std::optional<std::uint64_t> advanceGeneration() noexcept {
+    std::uint64_t observed =
+        requestedGeneration.load(std::memory_order_acquire);
+    while (observed != std::numeric_limits<std::uint64_t>::max()) {
+      const std::uint64_t next = observed + 1;
+      if (requestedGeneration.compare_exchange_weak(
+              observed, next, std::memory_order_acq_rel,
+              std::memory_order_acquire)) {
+        return next;
+      }
+    }
+    return std::nullopt;
+  }
 
   void initializePresentationSource() {
     presentationSource = dispatch_source_create(
@@ -616,8 +684,9 @@ struct NativeVideoPipeline::Impl
   }
 
   void renderAtAudioClock() noexcept {
-    if (!failureState->active() || presenter == nullptr ||
-        sink == nullptr) {
+    if (!running.load(std::memory_order_acquire) ||
+        !failureState->active() || sink == nullptr ||
+        (presenter == nullptr && scheduledOutput == nullptr)) {
       return;
     }
 
@@ -669,6 +738,40 @@ struct NativeVideoPipeline::Impl
       return;
     }
 
+    counters.scheduledFrames.fetch_add(1, std::memory_order_relaxed);
+
+    if (scheduledOutput != nullptr) {
+      std::string error;
+      const NativeScheduledFrameDispatchResult result =
+          scheduledOutput->dispatch(*due, &error);
+      switch (result) {
+      case NativeScheduledFrameDispatchResult::Dispatched:
+        counters.dispatchedFrames.fetch_add(1, std::memory_order_relaxed);
+        if (paused) {
+          pausedPresentationNeeded.store(false, std::memory_order_release);
+        }
+        break;
+      case NativeScheduledFrameDispatchResult::Backpressure:
+        counters.presenterBackpressureEvents.fetch_add(
+            1, std::memory_order_relaxed);
+        retryFrame = std::move(*due);
+        break;
+      case NativeScheduledFrameDispatchResult::Rejected:
+        if (failureState->active()) {
+          reportFailure(error.empty()
+                            ? "native Qt OpenGL output rejected a current "
+                              "generation frame"
+                            : std::move(error));
+        }
+        break;
+      case NativeScheduledFrameDispatchResult::Failed:
+        reportFailure(error.empty() ? "native Qt OpenGL output failed"
+                                    : std::move(error));
+        break;
+      }
+      return;
+    }
+
     std::string error;
     const MetalPresentResult result = presenter->present(*due, &error);
     switch (result) {
@@ -696,7 +799,21 @@ struct NativeVideoPipeline::Impl
   }
 
   void reportFailure(std::string message) noexcept {
-    failureState->reportCurrent(std::move(message));
+    const std::optional<std::uint64_t> failureEpoch =
+        failureState->reportCurrent(std::move(message));
+    if (!failureEpoch || outputMode != NativeVideoOutputMode::QtOpenGL) {
+      return;
+    }
+    // reportFailure can run on the worker or while renderAtAudioClock holds
+    // presentationMutex. Never invert presentation -> lifecycle here. A
+    // first-wins, epoch-tagged weak continuation owns fail-closed retirement.
+    const std::weak_ptr<Impl> weakImpl = weak_from_this();
+    const std::uint64_t reportedEpoch = *failureEpoch;
+    dispatch_async(preparationQueue, ^{
+      if (auto retained = weakImpl.lock()) {
+        retained->retireAfterScheduledOutputFailure(reportedEpoch);
+      }
+    });
   }
 
   CMTime syncSampleStart(double targetSeconds) const noexcept {
@@ -992,31 +1109,50 @@ struct NativeVideoPipeline::Impl
     }
   }
 
-  void startWorker(double initialPosition) {
+  [[nodiscard]] bool startWorker(double initialPosition,
+                                 std::string* error) noexcept {
     {
       std::lock_guard lock(stateMutex);
+      if (worker.joinable()) {
+        assignFixedErrorNoexcept(error,
+                                 "native video worker is already running");
+        return false;
+      }
       stopWorker = false;
       requestedSeekSeconds = initialPosition;
       ++seekVersion;
     }
-    worker = std::thread([this] {
-      try {
-        workerLoop();
-      } catch (const std::bad_alloc&) {
-        reportFailure("native video worker exhausted its bounded memory "
-                      "allocation");
-      } catch (const std::exception& exception) {
+    try {
+      std::thread started([this] {
         try {
-          reportFailure(std::string("native video worker failed: ") +
-                        exception.what());
+          workerLoop();
+        } catch (const std::bad_alloc&) {
+          reportFailure("native video worker exhausted its bounded memory "
+                        "allocation");
+        } catch (const std::exception& exception) {
+          try {
+            reportFailure(std::string("native video worker failed: ") +
+                          exception.what());
+          } catch (...) {
+            reportFailure("native video worker failed");
+          }
         } catch (...) {
           reportFailure("native video worker failed");
         }
-      } catch (...) {
-        reportFailure("native video worker failed with an unknown error");
+      });
+      worker = std::move(started);
+    } catch (...) {
+      {
+        std::lock_guard lock(stateMutex);
+        stopWorker = true;
+        ++seekVersion;
       }
-    });
+      assignFixedErrorNoexcept(error,
+                               "native video worker could not be created");
+      return false;
+    }
     workerWake.notify_all();
+    return true;
   }
 
   void signalWorkerStop() noexcept {
@@ -1073,6 +1209,22 @@ struct NativeVideoPipeline::Impl
       std::lock_guard lock(schedulingTestMutex);
       release = std::move(assetLoadCallbackBarrier);
       entered = std::move(assetLoadCallbackEntered);
+    }
+    if (release.valid()) {
+      if (entered != nullptr) {
+        entered->store(true, std::memory_order_release);
+      }
+      release.wait();
+    }
+  }
+
+  void waitAtStartPreparedPostWorkerBarrier() {
+    std::shared_future<void> release;
+    std::shared_ptr<std::atomic<bool>> entered;
+    {
+      std::lock_guard lock(schedulingTestMutex);
+      release = std::move(startPreparedPostWorkerBarrier);
+      entered = std::move(startPreparedPostWorkerEntered);
     }
     if (release.valid()) {
       if (entered != nullptr) {
@@ -1448,8 +1600,14 @@ struct NativeVideoPipeline::Impl
       return;
     }
 
-    const std::uint64_t generation =
-        requestedGeneration.fetch_add(1, std::memory_order_acq_rel) + 1;
+    const std::optional<std::uint64_t> nextGeneration = advanceGeneration();
+    if (!nextGeneration) {
+      finishUncommittedPreparation(
+          request, NativeVideoPrepareResult::Failed,
+          "native video frame generation is exhausted");
+      return;
+    }
+    const std::uint64_t generation = *nextGeneration;
     std::string decoderError;
     double initialPosition = 0.0;
     {
@@ -1477,9 +1635,14 @@ struct NativeVideoPipeline::Impl
               state->notifyFrameAvailable();
             }
           });
-      decoder = std::make_unique<VideoToolboxDecoder>(
-          VideoToolboxDecoderOptions{kMaximumInFlightDecodeFrames,
-                                     kMaximumReorderFrames});
+      VideoToolboxDecoderOptions decoderOptions;
+      decoderOptions.maxInFlightFrames = kMaximumInFlightDecodeFrames;
+      decoderOptions.maxPendingPresentationFrames = kMaximumReorderFrames;
+      decoderOptions.outputInterop =
+          outputMode == NativeVideoOutputMode::QtOpenGL
+              ? VideoToolboxOutputInterop::OpenGL
+              : VideoToolboxOutputInterop::Metal;
+      decoder = std::make_unique<VideoToolboxDecoder>(decoderOptions);
       const VideoStreamConfiguration stream{
           codec,
           dimensions,
@@ -1512,7 +1675,10 @@ struct NativeVideoPipeline::Impl
     }
 
     counters.reset();
-    const std::uint64_t failureEpoch = failureState->beginAttempt();
+    const std::uint64_t failureEpoch =
+        outputMode == NativeVideoOutputMode::MetalLayer
+            ? failureState->beginAttempt()
+            : 0;
     {
       std::lock_guard lock(presentationMutex);
       minimumPresentationSeconds = initialPosition;
@@ -1566,6 +1732,29 @@ struct NativeVideoPipeline::Impl
         assignError(error, "native video pipeline is shutting down");
         return false;
       }
+      if (scheduledOutput != nullptr) {
+        const NativeScheduledFrameOutputStats outputStats =
+            scheduledOutput->stats();
+        if (outputStats.closed || outputStats.fatalErrorSerial != 0 ||
+            outputStats.acceptedGeneration ==
+                std::numeric_limits<std::uint64_t>::max()) {
+          assignError(error,
+                      outputStats.fatalErrorSerial != 0
+                          ? "native Qt OpenGL output is terminal; recreate "
+                            "the output adapter before preparing"
+                          : "native Qt OpenGL output is closed or its "
+                            "generation is exhausted");
+          return false;
+        }
+        std::uint64_t observed =
+            requestedGeneration.load(std::memory_order_acquire);
+        while (observed < outputStats.acceptedGeneration &&
+               !requestedGeneration.compare_exchange_weak(
+                   observed, outputStats.acceptedGeneration,
+                   std::memory_order_acq_rel,
+                   std::memory_order_acquire)) {
+        }
+      }
       {
         bool expected = false;
         if (!gNativeAttemptAdmission.compare_exchange_strong(
@@ -1583,6 +1772,8 @@ struct NativeVideoPipeline::Impl
       request->generation = ++preparationGeneration;
       activePreparation = request;
       return true;
+    case Lifecycle::Prepared:
+    case Lifecycle::Starting:
     case Lifecycle::Running:
       *retireExisting = true;
       assignError(error,
@@ -1652,8 +1843,13 @@ struct NativeVideoPipeline::Impl
     if (schedule) {
       failureState->disable();
       prepared.store(false, std::memory_order_release);
-      presenter->setFailureHandler({}, {});
-      presenter->setVisible(false);
+      if (presenter != nullptr) {
+        presenter->setFailureHandler({}, {});
+        presenter->setVisible(false);
+      }
+      if (scheduledOutput != nullptr) {
+        scheduledOutput->setFailureHandler({});
+      }
       signalWorkerStop();
       scheduleRetirement();
     }
@@ -1665,30 +1861,66 @@ struct NativeVideoPipeline::Impl
 #if defined(WAM_NATIVE_VIDEO_PIPELINE_TESTING)
     waitAtPreparationCommitBarrier();
 #endif
-    std::lock_guard resultLock(preparationResultMutex);
-    std::lock_guard lifecycleLock(lifecycleMutex);
-    if (lifecycle != Lifecycle::Preparing || activePreparation != request ||
-        request->cancelled.load(std::memory_order_acquire) ||
-        stopRequestedDuringPrepare || shutdownRequested) {
-      return false;
+    bool scheduleRetirementAfterUnlock = false;
+    {
+      std::lock_guard resultLock(preparationResultMutex);
+      std::lock_guard lifecycleLock(lifecycleMutex);
+      if (lifecycle != Lifecycle::Preparing || activePreparation != request ||
+          request->cancelled.load(std::memory_order_acquire) ||
+          stopRequestedDuringPrepare || shutdownRequested) {
+        return false;
+      }
+
+      prepared.store(true, std::memory_order_release);
+      if (outputMode == NativeVideoOutputMode::QtOpenGL) {
+        // Preparation is intentionally inert. In particular, no failure epoch
+        // is active and the worker/display link cannot race the GUI's exact-
+        // generation flush performed by startPrepared().
+        preparedInitialPosition = initialPosition;
+        preparedFrameGeneration =
+            requestedGeneration.load(std::memory_order_acquire);
+        preparedFailureEpoch = 0;
+        lifecycle = Lifecycle::Prepared;
+        preparationResult.emplace(NativeVideoPrepareOutcome{
+            request->generation, NativeVideoPrepareResult::Ready, {}});
+      } else {
+        std::weak_ptr<PipelineFailureState> weakFailureState = failureState;
+        presenter->setFailureHandler(
+            failureState,
+            [weakFailureState, failureEpoch](std::string message) {
+              if (auto state = weakFailureState.lock()) {
+                state->report(failureEpoch, std::move(message));
+              }
+            });
+        failureState->activate(failureEpoch);
+        presenter->setVisible(true);
+        std::string workerError;
+        if (!startWorker(initialPosition, &workerError)) {
+          failureState->disable();
+          presenter->setFailureHandler({}, {});
+          presenter->setVisible(false);
+          prepared.store(false, std::memory_order_release);
+          stopping.store(true, std::memory_order_release);
+          lifecycle = Lifecycle::Retiring;
+          preparationResult.emplace(NativeVideoPrepareOutcome{
+              request->generation, NativeVideoPrepareResult::Failed,
+              workerError.empty() ? "native video worker could not be created"
+                                  : std::move(workerError)});
+          scheduleRetirementAfterUnlock = true;
+        } else {
+          running.store(true, std::memory_order_release);
+          lifecycle = Lifecycle::Running;
+          preparationResult.emplace(NativeVideoPrepareOutcome{
+              request->generation, NativeVideoPrepareResult::Ready, {}});
+        }
+      }
+      request->completed.store(true, std::memory_order_release);
+      activePreparation.reset();
     }
-    std::weak_ptr<PipelineFailureState> weakFailureState = failureState;
-    presenter->setFailureHandler(
-        failureState,
-        [weakFailureState, failureEpoch](std::string message) {
-          if (auto state = weakFailureState.lock()) {
-            state->report(failureEpoch, std::move(message));
-          }
-        });
-    failureState->activate(failureEpoch);
-    prepared.store(true, std::memory_order_release);
-    presenter->setVisible(true);
-    startWorker(initialPosition);
-    preparationResult.emplace(NativeVideoPrepareOutcome{
-        request->generation, NativeVideoPrepareResult::Ready, {}});
-    request->completed.store(true, std::memory_order_release);
-    activePreparation.reset();
-    lifecycle = Lifecycle::Running;
+    if (scheduleRetirementAfterUnlock) {
+      signalWorkerStop();
+      scheduleRetirement();
+    }
     return true;
   }
 
@@ -1721,8 +1953,239 @@ struct NativeVideoPipeline::Impl
     });
   }
 
-  void requestTeardown(bool final) noexcept {
+  // lifecycleMutex is held by the caller. No allocation or caller error
+  // publication is allowed after this method publishes Retiring.
+  void revokeNativeAttemptLocked() noexcept {
+    running.store(false, std::memory_order_release);
+    setDisplayLinkRunning(false);
+    failureState->disablePreservingError();
+    signalWorkerStop();
+    scheduledOutput->setFailureHandler({});
+    {
+      std::lock_guard presentationLock(presentationMutex);
+      const std::optional<std::uint64_t> nextGeneration =
+          advanceGeneration();
+      const std::uint64_t invalidationGeneration =
+          nextGeneration.value_or(
+              requestedGeneration.load(std::memory_order_acquire));
+      heldFrame.reset();
+      retryFrame.reset();
+      if (nextGeneration) {
+        if (!scheduledOutput->flush(invalidationGeneration, nullptr)) {
+          scheduledOutput->close(invalidationGeneration);
+        }
+      } else {
+        // A generic output need not treat an equal generation as an
+        // invalidation. Generation exhaustion is terminal, so close it.
+        scheduledOutput->close(invalidationGeneration);
+      }
+    }
+    prepared.store(false, std::memory_order_release);
+    stopping.store(true, std::memory_order_release);
+    lifecycle = Lifecycle::Retiring;
+  }
+
+  void retireAfterScheduledOutputFailure(
+      std::uint64_t failureEpoch) noexcept {
+    bool retire = false;
+    {
+      std::lock_guard lifecycleLock(lifecycleMutex);
+      if ((lifecycle == Lifecycle::Starting ||
+           lifecycle == Lifecycle::Running) &&
+          preparedFailureEpoch == failureEpoch) {
+        revokeNativeAttemptLocked();
+        retire = true;
+      }
+    }
+    if (retire) {
+      scheduleRetirement();
+    }
+  }
+
+  void completeScheduledOutputStart(
+      std::uint64_t failureEpoch, std::uint64_t expectedGeneration,
+      NativeScheduledFrameStartAck acknowledgment) noexcept {
+    bool retire = false;
+    {
+      std::lock_guard lifecycleLock(lifecycleMutex);
+      if (lifecycle != Lifecycle::Starting ||
+          preparedFailureEpoch != failureEpoch ||
+          requestedGeneration.load(std::memory_order_acquire) !=
+              expectedGeneration) {
+        return;
+      }
+
+      std::string workerError;
+      if (failureState->failed(failureEpoch) ||
+          acknowledgment.requestedGeneration != expectedGeneration ||
+          acknowledgment.acceptedGeneration != expectedGeneration) {
+        failureState->report(
+            failureEpoch,
+            "native Qt OpenGL startup acknowledgment was stale");
+        retire = true;
+      } else {
+        failureState->activate(failureEpoch);
+        if (!failureState->active()) {
+          failureState->report(
+              failureEpoch,
+              "native Qt OpenGL output failed before worker startup");
+          retire = true;
+        }
+      }
+      if (!retire && !startWorker(preparedInitialPosition, &workerError)) {
+        failureState->report(
+            failureEpoch,
+            workerError.empty()
+                ? "native video worker could not be created"
+                : std::move(workerError));
+        retire = true;
+      }
+#if defined(WAM_NATIVE_VIDEO_PIPELINE_TESTING)
+      if (!retire) {
+        waitAtStartPreparedPostWorkerBarrier();
+      }
+#endif
+      if (!retire && !failureState->active()) {
+        retire = true;
+      }
+
+      if (retire) {
+        revokeNativeAttemptLocked();
+      } else {
+        running.store(true, std::memory_order_release);
+        lifecycle = Lifecycle::Running;
+        // Keep display-link/source activation in the lifecycle transaction.
+        // stop() cannot publish Retiring between Running and these mutations,
+        // so retirement always observes and shuts down everything we start.
+        bool paused = true;
+        (void)audioClockNow(&paused);
+        setDisplayLinkRunning(!paused);
+        if (paused && presentationSource != nil) {
+          pausedPresentationNeeded.store(true, std::memory_order_release);
+          dispatch_source_merge_data(presentationSource, 1);
+        }
+      }
+    }
+
+    if (retire) {
+      scheduleRetirement();
+    }
+  }
+
+  [[nodiscard]] std::optional<std::uint64_t> startPrepared(
+      std::string* error) noexcept {
+    if (error != nullptr) {
+      error->clear();
+    }
+    bool retire = false;
+    std::uint64_t generation = 0;
+    try {
+      std::lock_guard resultLock(preparationResultMutex);
+      if (preparationResult.has_value()) {
+        assignError(error,
+                    "consume the Ready native video preparation result "
+                    "before starting it");
+        return std::nullopt;
+      }
+      std::lock_guard lifecycleLock(lifecycleMutex);
+      if (outputMode != NativeVideoOutputMode::QtOpenGL ||
+          scheduledOutput == nullptr) {
+        assignError(error,
+                    "startPrepared is only valid for the dormant Qt OpenGL "
+                    "output path");
+        return std::nullopt;
+      }
+      if (lifecycle != Lifecycle::Prepared) {
+        assignError(error, "native video is not in the Prepared state");
+        return std::nullopt;
+      }
+      generation = preparedFrameGeneration;
+      if (generation == 0 ||
+          generation != requestedGeneration.load(std::memory_order_acquire)) {
+        assignError(error, "native video prepared generation is stale");
+        return std::nullopt;
+      }
+
+      const std::uint64_t failureEpoch = failureState->beginAttempt();
+      preparedFailureEpoch = failureEpoch;
+      lifecycle = Lifecycle::Starting;
+
+      const std::weak_ptr<Impl> weakImpl = weak_from_this();
+      scheduledOutput->setFailureHandler(
+          [weakImpl, failureEpoch](std::string message) {
+            auto state = weakImpl.lock();
+            if (state == nullptr) {
+              return;
+            }
+            if (!state->failureState->report(failureEpoch,
+                                             std::move(message))) {
+              return;
+            }
+            dispatch_queue_t queue = state->preparationQueue;
+            dispatch_async(queue, ^{
+              if (auto retained = weakImpl.lock()) {
+                retained->retireAfterScheduledOutputFailure(failureEpoch);
+              }
+            });
+          });
+
+      const auto applied =
+          [weakImpl, failureEpoch, generation](
+              NativeScheduledFrameStartAck acknowledgment) {
+            auto state = weakImpl.lock();
+            if (state == nullptr) {
+              return;
+            }
+            dispatch_queue_t queue = state->preparationQueue;
+            dispatch_async(queue, ^{
+              if (auto retained = weakImpl.lock()) {
+                retained->completeScheduledOutputStart(
+                    failureEpoch, generation, acknowledgment);
+              }
+            });
+          };
+
+      std::string outputError;
+      {
+        std::lock_guard presentationLock(presentationMutex);
+        if (!scheduledOutput->startGeneration(generation, applied,
+                                              &outputError)) {
+          retire = true;
+        }
+      }
+      if (failureState->failed(failureEpoch)) {
+        if (outputError.empty()) {
+          outputError = "native Qt OpenGL output failed while arming";
+        }
+        retire = true;
+      }
+
+      if (retire) {
+        if (outputError.empty()) {
+          outputError = "native Qt OpenGL output could not start";
+        }
+        failureState->report(failureEpoch, outputError);
+        // Caller diagnostics are made non-throwing before Retiring is visible.
+        assignErrorNoexcept(error, outputError);
+        revokeNativeAttemptLocked();
+      }
+    } catch (...) {
+      assignFixedErrorNoexcept(error,
+                               "native Qt OpenGL output startup failed");
+      requestTeardown(false);
+      return std::nullopt;
+    }
+
+    if (retire) {
+      scheduleRetirement();
+      return std::nullopt;
+    }
+    return generation;
+  }
+
+  std::uint64_t requestTeardown(bool final) noexcept {
     bool schedule = false;
+    bool invalidate = false;
     std::shared_ptr<PreparationRequest> preparationToCancel;
     {
       std::lock_guard lock(lifecycleMutex);
@@ -1733,18 +2196,25 @@ struct NativeVideoPipeline::Impl
           lifecycle = Lifecycle::Finalizing;
           stopping.store(true, std::memory_order_release);
           schedule = true;
+          invalidate = true;
         }
         break;
       case Lifecycle::Preparing:
+        invalidate = !stopRequestedDuringPrepare;
         stopRequestedDuringPrepare = true;
         stopping.store(true, std::memory_order_release);
         preparationToCancel = activePreparation;
         break;
+      case Lifecycle::Prepared:
+      case Lifecycle::Starting:
       case Lifecycle::Running:
+        running.store(false, std::memory_order_release);
+        setDisplayLinkRunning(false);
         lifecycle = shutdownRequested ? Lifecycle::Finalizing
                                       : Lifecycle::Retiring;
         stopping.store(true, std::memory_order_release);
         schedule = true;
+        invalidate = true;
         break;
       case Lifecycle::Retiring:
         if (shutdownRequested) {
@@ -1756,12 +2226,46 @@ struct NativeVideoPipeline::Impl
       }
     }
 
+    std::uint64_t invalidationGeneration =
+        requestedGeneration.load(std::memory_order_acquire);
+    if (invalidate || (final && scheduledOutput != nullptr)) {
+      std::lock_guard presentationLock(presentationMutex);
+      bool generationExhausted = false;
+      if (invalidate) {
+        if (const auto nextGeneration = advanceGeneration()) {
+          invalidationGeneration = *nextGeneration;
+        } else {
+          // UINT64_MAX is already a permanently fail-closed generation. Never
+          // wrap and accidentally re-admit generation zero.
+          invalidationGeneration =
+              requestedGeneration.load(std::memory_order_acquire);
+          generationExhausted = true;
+        }
+      } else {
+        invalidationGeneration =
+            requestedGeneration.load(std::memory_order_acquire);
+      }
+      heldFrame.reset();
+      retryFrame.reset();
+      if (scheduledOutput != nullptr) {
+        scheduledOutput->setFailureHandler({});
+        if (final || generationExhausted) {
+          scheduledOutput->close(invalidationGeneration);
+        } else {
+          if (!scheduledOutput->flush(invalidationGeneration, nullptr)) {
+            scheduledOutput->close(invalidationGeneration);
+          }
+        }
+      }
+    }
+
     if (preparationToCancel != nullptr) {
       preparationToCancel->cancelled.store(true, std::memory_order_release);
       schedulePreparationCancellation(preparationToCancel);
     }
 
     failureState->disable();
+    running.store(false, std::memory_order_release);
     prepared.store(false, std::memory_order_release);
     if (presenter != nullptr) {
       presenter->setFailureHandler({}, {});
@@ -1771,6 +2275,7 @@ struct NativeVideoPipeline::Impl
     if (schedule) {
       scheduleRetirement();
     }
+    return invalidationGeneration;
   }
 
   void completeRetirement() noexcept {
@@ -1831,6 +2336,9 @@ struct NativeVideoPipeline::Impl
       } else {
         lifecycle = Lifecycle::Idle;
         stopRequestedDuringPrepare = false;
+        preparedInitialPosition = 0.0;
+        preparedFrameGeneration = 0;
+        preparedFailureEpoch = 0;
         stopping.store(false, std::memory_order_release);
       }
     }
@@ -1890,15 +2398,66 @@ std::unique_ptr<NativeVideoPipeline> NativeVideoPipeline::create(
       new NativeVideoPipeline(std::move(impl)));
 }
 
+std::unique_ptr<NativeVideoPipeline> NativeVideoPipeline::createForQtOpenGL(
+    std::shared_ptr<NativeScheduledFrameOutput> output,
+    std::string* error) {
+  if (error != nullptr) {
+    error->clear();
+  }
+  if (output == nullptr) {
+    assignError(error, "native Qt OpenGL output is required");
+    return nullptr;
+  }
+  const NativeScheduledFrameOutputStats outputStats = output->stats();
+  if (outputStats.closed) {
+    assignError(error, "native Qt OpenGL output is already closed");
+    return nullptr;
+  }
+  if (outputStats.fatalErrorSerial != 0) {
+    assignError(error,
+                "native Qt OpenGL output is terminal; recreate the output "
+                "adapter before preparing");
+    return nullptr;
+  }
+  if (outputStats.acceptedGeneration ==
+      std::numeric_limits<std::uint64_t>::max()) {
+    assignError(error, "native Qt OpenGL output generation is exhausted");
+    return nullptr;
+  }
+
+  auto impl = std::make_shared<Impl>();
+  impl->outputMode = NativeVideoOutputMode::QtOpenGL;
+  impl->scheduledOutput = std::move(output);
+  // Reusing an output with a new pipeline remains monotonic. The first
+  // configured decoder generation will be strictly newer than every frame the
+  // Qt item has already accepted.
+  impl->requestedGeneration.store(outputStats.acceptedGeneration,
+                                  std::memory_order_release);
+  impl->attached.store(true, std::memory_order_release);
+  impl->initializePresentationSource();
+  if (!impl->createDisplayLink(error)) {
+    impl->requestTeardown(true);
+    return nullptr;
+  }
+  return std::unique_ptr<NativeVideoPipeline>(
+      new NativeVideoPipeline(std::move(impl)));
+}
+
 bool NativeVideoPipeline::attachToView(void* nativeView, std::string* error) {
+  if (impl_->presenter == nullptr) {
+    assignError(error,
+                "the Qt OpenGL output is attached by its QQuickItem");
+    return false;
+  }
   if (!impl_->presenter->attachToView(nativeView, error)) {
     impl_->attached.store(false, std::memory_order_release);
     return false;
   }
   impl_->attached.store(true, std::memory_order_release);
   const bool active = impl_->failureState->active();
-  impl_->presenter->setVisible(active);
-  if (active) {
+  const bool running = impl_->running.load(std::memory_order_acquire);
+  impl_->presenter->setVisible(active && running);
+  if (active && running) {
     // Headless preparation may already have filled the bounded queue while the
     // clock is paused. Wake the serial presenter immediately on attachment;
     // there may be no future decode callback or display-link tick to do it.
@@ -1911,14 +2470,18 @@ bool NativeVideoPipeline::attachToView(void* nativeView, std::string* error) {
 void NativeVideoPipeline::detach() noexcept {
   // Layer invalidation/removal is the only detach mutation that belongs on the
   // AppKit thread. Worker/decoder retirement is merely signaled below.
-  impl_->presenter->detach();
+  if (impl_->presenter != nullptr) {
+    impl_->presenter->detach();
+  }
   impl_->attached.store(false, std::memory_order_release);
-  stop();
+  (void)stop();
 }
 
 void NativeVideoPipeline::resize(double widthPoints, double heightPoints,
                                  double backingScale) noexcept {
-  impl_->presenter->resize(widthPoints, heightPoints, backingScale);
+  if (impl_->presenter != nullptr) {
+    impl_->presenter->resize(widthPoints, heightPoints, backingScale);
+  }
 }
 
 bool NativeVideoPipeline::prepareLocalFileAsync(
@@ -1949,8 +2512,14 @@ NativeVideoPipeline::takePrepareResult() noexcept {
   impl_->preparationResult.reset();
   return result;
 }
-void NativeVideoPipeline::stop() noexcept {
-  impl_->requestTeardown(false);
+
+std::optional<std::uint64_t> NativeVideoPipeline::startPrepared(
+    std::string* error) noexcept {
+  return impl_->startPrepared(error);
+}
+
+std::uint64_t NativeVideoPipeline::stop() noexcept {
+  return impl_->requestTeardown(false);
 }
 
 void NativeVideoPipeline::updateAudioClock(double positionSeconds, bool paused,
@@ -1966,29 +2535,61 @@ void NativeVideoPipeline::updateAudioClock(double positionSeconds, bool paused,
     impl_->clockRate = rate;
     impl_->clockPaused = paused;
   }
-  const bool shouldRun =
-      impl_->failureState->active() && !paused;
-  impl_->setDisplayLinkRunning(shouldRun);
-  if (paused && impl_->failureState->active()) {
+  // Serialize the decision and the physical display-link/source mutation with
+  // Starting/Running/Retiring transitions. A stale pre-retirement active
+  // snapshot can otherwise restart CVDisplayLink after Idle.
+  std::lock_guard lifecycleLock(impl_->lifecycleMutex);
+  const bool running = impl_->lifecycle == Impl::Lifecycle::Running &&
+                       impl_->running.load(std::memory_order_acquire) &&
+                       impl_->failureState->active();
+  impl_->setDisplayLinkRunning(running && !paused);
+  if (paused && running) {
     impl_->pausedPresentationNeeded.store(true, std::memory_order_release);
     dispatch_source_merge_data(impl_->presentationSource, 1);
   }
 }
 
-void NativeVideoPipeline::seek(double positionSeconds) noexcept {
-  if (!impl_->failureState->active() ||
-      !finiteNonnegative(positionSeconds)) {
-    return;
+std::optional<std::uint64_t> NativeVideoPipeline::seek(
+    double positionSeconds) noexcept {
+  if (!finiteNonnegative(positionSeconds)) {
+    return std::nullopt;
+  }
+  std::lock_guard lifecycleLock(impl_->lifecycleMutex);
+  if (impl_->lifecycle != Impl::Lifecycle::Running ||
+      !impl_->running.load(std::memory_order_acquire) ||
+      !impl_->failureState->active()) {
+    return std::nullopt;
   }
   std::lock_guard resourceLock(impl_->resourceMutex);
   if (!impl_->failureState->active() || impl_->decoder == nullptr ||
       impl_->sink == nullptr) {
-    return;
+    return std::nullopt;
   }
   positionSeconds = impl_->normalizePosition(positionSeconds);
-  const std::uint64_t generation =
-      impl_->requestedGeneration.fetch_add(1, std::memory_order_acq_rel) + 1;
-  (void)generation;
+  std::uint64_t generation = 0;
+  {
+    std::lock_guard lock(impl_->presentationMutex);
+    const std::optional<std::uint64_t> nextGeneration =
+        impl_->advanceGeneration();
+    if (!nextGeneration) {
+      impl_->reportFailure("native video frame generation is exhausted");
+      return std::nullopt;
+    }
+    generation = *nextGeneration;
+    impl_->minimumPresentationSeconds = positionSeconds;
+    impl_->heldFrame.reset();
+    impl_->retryFrame.reset();
+    if (impl_->scheduledOutput != nullptr) {
+      std::string outputError;
+      if (!impl_->scheduledOutput->flush(generation, &outputError)) {
+        impl_->reportFailure(
+            outputError.empty()
+                ? "native Qt OpenGL output could not flush a seek"
+                : std::move(outputError));
+        return std::nullopt;
+      }
+    }
+  }
   AVAssetReader* reader = nil;
   {
     std::lock_guard lock(impl_->stateMutex);
@@ -1996,18 +2597,13 @@ void NativeVideoPipeline::seek(double positionSeconds) noexcept {
     ++impl_->seekVersion;
     reader = impl_->activeReader;
   }
-  {
-    std::lock_guard lock(impl_->presentationMutex);
-    impl_->minimumPresentationSeconds = positionSeconds;
-    impl_->heldFrame.reset();
-    impl_->retryFrame.reset();
-  }
   impl_->pausedPresentationNeeded.store(true, std::memory_order_release);
   if (reader != nil) {
     [reader cancelReading];
   }
   impl_->workerWake.notify_all();
   dispatch_source_merge_data(impl_->presentationSource, 1);
+  return generation;
 }
 
 bool NativeVideoPipeline::attached() const noexcept {
@@ -2015,7 +2611,8 @@ bool NativeVideoPipeline::attached() const noexcept {
 }
 
 bool NativeVideoPipeline::active() const noexcept {
-  return impl_->failureState->active();
+  return impl_->running.load(std::memory_order_acquire) &&
+         impl_->failureState->active();
 }
 
 std::optional<std::string> NativeVideoPipeline::takeLastError() noexcept {
@@ -2025,8 +2622,10 @@ std::optional<std::string> NativeVideoPipeline::takeLastError() noexcept {
 NativeVideoPipelineStats NativeVideoPipeline::stats() const noexcept {
   NativeVideoPipelineStats result;
   result.prepared = impl_->prepared.load(std::memory_order_acquire);
-  result.active = impl_->failureState->active();
+  result.active = impl_->running.load(std::memory_order_acquire) &&
+                  impl_->failureState->active();
   result.stopping = impl_->stopping.load(std::memory_order_acquire);
+  result.outputMode = impl_->outputMode;
   result.generation =
       impl_->requestedGeneration.load(std::memory_order_acquire);
   result.compressedSamplesRead =
@@ -2034,6 +2633,10 @@ NativeVideoPipelineStats NativeVideoPipeline::stats() const noexcept {
   result.compressedSamplesSubmitted =
       impl_->counters.compressedSamplesSubmitted.load(
           std::memory_order_relaxed);
+  result.scheduledFrames =
+      impl_->counters.scheduledFrames.load(std::memory_order_relaxed);
+  result.dispatchedFrames =
+      impl_->counters.dispatchedFrames.load(std::memory_order_relaxed);
   result.presentedFrames =
       impl_->counters.presentedFrames.load(std::memory_order_relaxed);
   result.lateFramesDropped =
@@ -2062,6 +2665,18 @@ NativeVideoPipelineStats NativeVideoPipeline::stats() const noexcept {
   }
   if (impl_->presenter != nullptr) {
     result.presenter = impl_->presenter->stats();
+  }
+  if (impl_->scheduledOutput != nullptr) {
+    result.scheduledOutput = impl_->scheduledOutput->stats();
+    // The bridge establishes this exact attempt baseline only when the
+    // startup generation flush is actually applied on the GUI thread. It is
+    // therefore immune to prior-attempt redraws while an off-GUI start is
+    // waiting in the event queue.
+    result.actuallyRenderedFrames =
+        result.prepared &&
+                !impl_->running.load(std::memory_order_acquire)
+            ? 0
+            : result.scheduledOutput.attemptAcceptedRenderedFrames;
   }
   return result;
 }
@@ -2118,6 +2733,14 @@ void NativeVideoPipelineTestAccess::setRetirementBarrier(
   std::lock_guard lock(pipeline.impl_->schedulingTestMutex);
   pipeline.impl_->retirementBarrier = std::move(release);
   pipeline.impl_->retirementEntered = std::move(entered);
+}
+
+void NativeVideoPipelineTestAccess::setStartPreparedPostWorkerBarrier(
+    NativeVideoPipeline& pipeline, std::shared_future<void> release,
+    std::shared_ptr<std::atomic<bool>> entered) {
+  std::lock_guard lock(pipeline.impl_->schedulingTestMutex);
+  pipeline.impl_->startPreparedPostWorkerBarrier = std::move(release);
+  pipeline.impl_->startPreparedPostWorkerEntered = std::move(entered);
 }
 #endif
 

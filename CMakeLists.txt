@@ -430,6 +430,41 @@ if(BUILD_TESTING)
           TIMEOUT 45
           SKIP_RETURN_CODE 77)
 
+        # Dormant scheduler-to-Qt bridge gate. The adapter and Qt OpenGL item
+        # remain test-only and are intentionally absent from wam and
+        # wam_macos_native_video until controller/fallback activation is
+        # independently approved.
+        add_executable(wam_native_qt_gl_output_test
+          tests/native_qt_gl_output_test.mm
+          src/platform/macos/native_qt_gl_output.hpp
+          src/platform/macos/native_qt_gl_output.mm
+          src/platform/macos/qt_gl_video_item.hpp
+          src/platform/macos/qt_gl_video_item.mm)
+        target_include_directories(wam_native_qt_gl_output_test PRIVATE src)
+        target_compile_definitions(wam_native_qt_gl_output_test PRIVATE
+          WAM_NATIVE_VIDEO_PIPELINE_TESTING=1
+          WAM_NATIVE_GL_VIDEO_TESTING=1
+          GL_SILENCE_DEPRECATION=1)
+        target_link_libraries(wam_native_qt_gl_output_test PRIVATE
+          wam_macos_native_video
+          Qt6::Core
+          Qt6::Gui
+          Qt6::Qml
+          Qt6::Quick
+          "${WAM_OPENGL_FRAMEWORK}")
+        target_compile_options(wam_native_qt_gl_output_test PRIVATE
+          "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>"
+          -Wall -Wextra -Wpedantic)
+        set_target_properties(wam_native_qt_gl_output_test PROPERTIES
+          AUTOMOC ON
+          LINKER_LANGUAGE OBJCXX)
+        add_test(NAME macos_native_qt_gl_output
+          COMMAND wam_native_qt_gl_output_test
+            "${WAM_RESOLVED_NATIVE_VIDEO_TEST_FIXTURE}")
+        set_tests_properties(macos_native_qt_gl_output PROPERTIES
+          TIMEOUT 45
+          SKIP_RETURN_CODE 77)
+
         set(WAM_VIDEO_TOOLBOX_DECODER_TEST_ARGUMENTS
           "${WAM_RESOLVED_NATIVE_VIDEO_TEST_FIXTURE}")
         if(WAM_RESOLVED_NATIVE_VIDEO_10BIT_TEST_FIXTURE AND
