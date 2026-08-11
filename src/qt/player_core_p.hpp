@@ -91,6 +91,13 @@ class PlayerCore final : public std::enable_shared_from_this<PlayerCore> {
   [[nodiscard]] std::uint64_t renderContextCreateCount() const noexcept {
     return render_context_create_count_.load(std::memory_order_acquire);
   }
+  // One acquire-load captures an exact lifecycle stamp. Callers must derive
+  // both RenderLifecycle::phase() and generation() from this returned ticket
+  // so admission/revocation decisions cannot mix two lifecycle states.
+  // Observation never starts, retries, or invalidates a render context.
+  [[nodiscard]] RenderTicket renderLifecycleSnapshot() const noexcept {
+    return render_lifecycle_.snapshot();
+  }
 
   void detachOwner(PlayerController* owner);
 
