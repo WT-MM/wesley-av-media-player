@@ -304,6 +304,25 @@ NativeActivationCoordinator::mpvEndFileError(Token token,
   return beginTerminalStop(FallbackReason::MpvFailure, true);
 }
 
+Action NativeActivationCoordinator::fail(Token token,
+                                         FallbackReason reason) noexcept {
+  if (!matches(token) || phase_ == Phase::Idle)
+    return none();
+  if (phase_ == Phase::Failed)
+    return pending_action_.value_or(none());
+  if (nativeOwnedPhase())
+    return beginFallback(token, reason);
+  if (phase_ == Phase::FallbackStopping)
+    return beginTerminalStop(reason, true);
+  if (phase_ == Phase::FallbackAwaitRenderer)
+    return beginTerminalStop(reason, false);
+  if (phase_ == Phase::FallbackAwaitRestart ||
+      phase_ == Phase::FallbackActive) {
+    return beginTerminalStop(reason, true);
+  }
+  return none();
+}
+
 Action NativeActivationCoordinator::mpvReady(Token token,
                                              MpvReady ready) noexcept {
   if (!matches(token))
