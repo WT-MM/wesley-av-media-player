@@ -108,10 +108,18 @@ ColorParameters colorParameters(CVPixelBufferRef pixelBuffer) {
 
   ColorParameters result{};
   if (fullRange) {
-    result.range = {0.0F, 1.0F, 0.5F, 1.0F};
+    if (tenBit) {
+      result.range = {0.0F, 65535.0F / (1023.0F * 64.0F),
+                      (512.0F * 64.0F) / 65535.0F,
+                      65535.0F / (1023.0F * 64.0F)};
+    } else {
+      result.range = {0.0F, 1.0F, 128.0F / 255.0F, 1.0F};
+    }
   } else if (tenBit) {
-    result.range = {64.0F / 1023.0F, 1023.0F / 876.0F,
-                    512.0F / 1023.0F, 1023.0F / 896.0F};
+    result.range = {(64.0F * 64.0F) / 65535.0F,
+                    65535.0F / (876.0F * 64.0F),
+                    (512.0F * 64.0F) / 65535.0F,
+                    65535.0F / (896.0F * 64.0F)};
   } else {
     result.range = {16.0F / 255.0F, 255.0F / 219.0F,
                     128.0F / 255.0F, 255.0F / 224.0F};
@@ -139,6 +147,8 @@ ColorParameters colorParameters(CVPixelBufferRef pixelBuffer) {
       pixelBuffer, kCVImageBufferYCbCrMatrixKey, nullptr);
   const bool is601 = matrix != nullptr &&
                      CFEqual(matrix, kCVImageBufferYCbCrMatrix_ITU_R_601_4);
+  const bool is709 = matrix != nullptr &&
+                     CFEqual(matrix, kCVImageBufferYCbCrMatrix_ITU_R_709_2);
   const bool is2020 = matrix != nullptr &&
                       CFEqual(matrix, kCVImageBufferYCbCrMatrix_ITU_R_2020);
   if (matrix != nullptr) {
@@ -148,6 +158,10 @@ ColorParameters colorParameters(CVPixelBufferRef pixelBuffer) {
     result.red = {1.0F, 0.0F, 1.4020F, 0.0F};
     result.green = {1.0F, -0.344136F, -0.714136F, 0.0F};
     result.blue = {1.0F, 1.7720F, 0.0F, 0.0F};
+  } else if (is709) {
+    result.red = {1.0F, 0.0F, 1.5748F, 0.0F};
+    result.green = {1.0F, -0.187324F, -0.468124F, 0.0F};
+    result.blue = {1.0F, 1.8556F, 0.0F, 0.0F};
   } else if (is2020) {
     result.red = {1.0F, 0.0F, 1.4746F, 0.0F};
     result.green = {1.0F, -0.164553F, -0.571353F, 0.0F};
