@@ -144,9 +144,12 @@ enum class VideoDecodeSubmitResult : std::uint8_t {
   Rejected,
 };
 
-// Boundary between an asynchronous decoder and the presentation queue. A sink
-// takes ownership of the lease it accepts. Backpressure is explicit so decode
-// cannot grow memory without bound when the display falls behind.
+// Boundary between a decoder and the presentation queue. VideoToolbox may call
+// enqueue() inline before submit() returns even when asynchronous decode was
+// requested, so implementations must return promptly and must not wait on the
+// submitting thread. A sink takes ownership of the lease it accepts.
+// Backpressure is explicit so decode cannot grow memory without bound when the
+// display falls behind.
 class DecodedFrameSink {
 public:
   virtual ~DecodedFrameSink() = default;

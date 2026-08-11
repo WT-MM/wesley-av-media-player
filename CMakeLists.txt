@@ -10,7 +10,7 @@ endif()
 project(WAM VERSION 0.3.1 LANGUAGES CXX)
 
 option(WAM_ENABLE_MACOS_NATIVE_VIDEO
-  "Build the experimental VideoToolbox/IOSurface/Metal presenter foundation"
+  "Build the dormant AVFoundation/VideoToolbox/Metal foundation"
   OFF)
 set(WAM_NATIVE_VIDEO_TEST_FIXTURE "" CACHE FILEPATH
   "Optional H.264 B-frame fixture used by the macOS VideoToolbox test")
@@ -108,14 +108,23 @@ if(APPLE)
     find_library(WAM_COREVIDEO_FRAMEWORK CoreVideo REQUIRED)
     find_library(WAM_FOUNDATION_FRAMEWORK Foundation REQUIRED)
     find_library(WAM_IOSURFACE_FRAMEWORK IOSurface REQUIRED)
+    find_library(WAM_APPKIT_FRAMEWORK AppKit REQUIRED)
+    find_library(WAM_AVFOUNDATION_FRAMEWORK AVFoundation REQUIRED)
     find_library(WAM_METAL_FRAMEWORK Metal REQUIRED)
+    find_library(WAM_QUARTZCORE_FRAMEWORK QuartzCore REQUIRED)
     find_library(WAM_VIDEOTOOLBOX_FRAMEWORK VideoToolbox REQUIRED)
 
-    add_library(wam_macos_native_video STATIC
+    set(WAM_MACOS_NATIVE_VIDEO_CORE_SOURCES
       src/platform/macos/native_video_presenter.hpp
       src/platform/macos/native_video_presenter.mm
       src/platform/macos/video_toolbox_decoder.hpp
       src/platform/macos/video_toolbox_decoder.mm)
+    add_library(wam_macos_native_video STATIC
+      ${WAM_MACOS_NATIVE_VIDEO_CORE_SOURCES}
+      src/platform/macos/metal_layer_presenter.hpp
+      src/platform/macos/metal_layer_presenter.mm
+      src/platform/macos/native_video_pipeline.hpp
+      src/platform/macos/native_video_pipeline.mm)
     target_include_directories(wam_macos_native_video PUBLIC src)
     target_compile_features(wam_macos_native_video PUBLIC cxx_std_20)
     target_compile_options(wam_macos_native_video PRIVATE
@@ -127,11 +136,16 @@ if(APPLE)
       "${WAM_COREVIDEO_FRAMEWORK}"
       "${WAM_FOUNDATION_FRAMEWORK}"
       "${WAM_IOSURFACE_FRAMEWORK}"
+      "${WAM_APPKIT_FRAMEWORK}"
+      "${WAM_AVFOUNDATION_FRAMEWORK}"
       "${WAM_METAL_FRAMEWORK}"
+      "${WAM_QUARTZCORE_FRAMEWORK}"
       "${WAM_VIDEOTOOLBOX_FRAMEWORK}")
 
-    # Linking the inert foundation proves it coexists with the shipping app.
-    # No runtime code selects it yet, so libmpv remains the only default path.
+    # Linking the static foundation proves that it coexists with WAM, but no
+    # shipping controller or render node selects it. libmpv remains the only
+    # runtime path even in an opt-in build until the documented release gates
+    # (Qt composition, subtitles, clocks, and atomic fallback) are complete.
     target_link_libraries(wam PRIVATE wam_macos_native_video)
     target_compile_definitions(wam PRIVATE WAM_HAS_MACOS_NATIVE_VIDEO=1)
   endif()
@@ -223,9 +237,19 @@ if(BUILD_TESTING)
 
       find_library(WAM_AVFOUNDATION_FRAMEWORK AVFoundation REQUIRED)
       add_executable(wam_video_toolbox_decoder_test
-        tests/video_toolbox_decoder_test.mm)
+        tests/video_toolbox_decoder_test.mm
+        ${WAM_MACOS_NATIVE_VIDEO_CORE_SOURCES})
+      target_include_directories(wam_video_toolbox_decoder_test PRIVATE src)
+      target_compile_definitions(wam_video_toolbox_decoder_test PRIVATE
+        WAM_NATIVE_VIDEO_TESTING=1)
       target_link_libraries(wam_video_toolbox_decoder_test PRIVATE
-        wam_macos_native_video
+        "${WAM_COREFOUNDATION_FRAMEWORK}"
+        "${WAM_COREMEDIA_FRAMEWORK}"
+        "${WAM_COREVIDEO_FRAMEWORK}"
+        "${WAM_FOUNDATION_FRAMEWORK}"
+        "${WAM_IOSURFACE_FRAMEWORK}"
+        "${WAM_METAL_FRAMEWORK}"
+        "${WAM_VIDEOTOOLBOX_FRAMEWORK}"
         "${WAM_AVFOUNDATION_FRAMEWORK}")
       target_compile_options(wam_video_toolbox_decoder_test PRIVATE
         "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>"
@@ -241,6 +265,22 @@ if(BUILD_TESTING)
       endif()
       if(WAM_RESOLVED_NATIVE_VIDEO_TEST_FIXTURE AND
           EXISTS "${WAM_RESOLVED_NATIVE_VIDEO_TEST_FIXTURE}")
+        add_executable(wam_native_video_pipeline_test
+          tests/native_video_pipeline_test.mm)
+        target_link_libraries(wam_native_video_pipeline_test PRIVATE
+          wam_macos_native_video)
+        target_compile_options(wam_native_video_pipeline_test PRIVATE
+          "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>"
+          -Wall -Wextra -Wpedantic)
+        set_target_properties(wam_native_video_pipeline_test PROPERTIES
+          LINKER_LANGUAGE OBJCXX)
+        add_test(NAME macos_native_video_pipeline
+          COMMAND wam_native_video_pipeline_test
+            "${WAM_RESOLVED_NATIVE_VIDEO_TEST_FIXTURE}")
+        set_tests_properties(macos_native_video_pipeline PROPERTIES
+          TIMEOUT 30
+          SKIP_RETURN_CODE 77)
+
         add_test(NAME macos_video_toolbox_decoder
           COMMAND wam_video_toolbox_decoder_test
             "${WAM_RESOLVED_NATIVE_VIDEO_TEST_FIXTURE}")

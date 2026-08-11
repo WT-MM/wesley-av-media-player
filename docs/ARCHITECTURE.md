@@ -29,14 +29,20 @@ Metal, Direct3D, or Vulkan targets, so the first Qt release forces Qt Quick to
 OpenGL on all platforms. A later native presenter can preserve the QML shell
 while importing Metal/D3D/Vulkan images from an FFmpeg/libplacebo boundary.
 
-The default-off macOS foundation for that work lives in
-`src/platform/macos/native_video_presenter.*` and
-`src/platform/macos/video_toolbox_decoder.*`. It provides retained
+The default-off macOS experiment lives in
+`src/platform/macos/native_video_presenter.*`,
+`src/platform/macos/video_toolbox_decoder.*`,
+`src/platform/macos/metal_layer_presenter.*`, and
+`src/platform/macos/native_video_pipeline.*`. It provides retained
 `CVPixelBuffer` frame leases, zero-copy IOSurface-to-Metal plane views, a hard-
 bounded decode/presentation handoff, H.264/HEVC VideoToolbox sessions, and
 generation-based seek invalidation. It is compiled only with
-`WAM_ENABLE_MACOS_NATIVE_VIDEO=ON`; the shipping libmpv path is unchanged. See
-`docs/NATIVE_MACOS_VIDEO.md` for scope and rollout gates.
+`WAM_ENABLE_MACOS_NATIVE_VIDEO=ON`; no shipping controller or render node can
+select it, and the normal libmpv path is unchanged. The current standalone
+`CAMetalLayer` presenter is a component probe, not a qualified Qt compositor.
+Runtime activation is also blocked on asynchronous AVAsset key loading,
+codec-derived presentation reordering, and off-UI VideoToolbox teardown.
+See `docs/NATIVE_MACOS_VIDEO.md` for scope and rollout gates.
 
 ## Editing and captions
 
