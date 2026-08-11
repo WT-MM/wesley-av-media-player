@@ -81,25 +81,6 @@ CMTime mediaTime(double value) noexcept {
   return CMTimeMakeWithSeconds(std::max(0.0, value), 60'000);
 }
 
-template <typename Callback>
-class ScopeExit final {
- public:
-  explicit ScopeExit(Callback callback) : callback_(std::move(callback)) {}
-  ScopeExit(const ScopeExit&) = delete;
-  ScopeExit& operator=(const ScopeExit&) = delete;
-  ~ScopeExit() {
-    if (armed_) {
-      callback_();
-    }
-  }
-
-  void release() noexcept { armed_ = false; }
-
- private:
-  Callback callback_;
-  bool armed_{true};
-};
-
 bool sampleIsKeyFrame(CMSampleBufferRef sample) noexcept {
   CFArrayRef attachments =
       CMSampleBufferGetSampleAttachmentsArray(sample, false);
@@ -413,10 +394,34 @@ struct NativeVideoPipeline::Impl
     Finalizing,
   };
 
+  enum class PreparationStep : std::uint8_t {
+    Start,
+    AssetValuesReady,
+    TrackValuesReady,
+  };
+
+  struct PreparationRequest {
+    std::uint64_t generation{0};
+    std::filesystem::path path;
+    double initialPositionSeconds{0.0};
+    std::atomic<bool> cancelled{false};
+    std::atomic<bool> completed{false};
+
+    // These fields are confined to preparationQueue. AVFoundation's callback
+    // only enqueues a continuation; it never mutates the request directly.
+    __strong AVURLAsset* asset{nil};
+    __strong AVAssetTrack* track{nil};
+    bool assetLoadInFlight{false};
+    bool trackLoadInFlight{false};
+    bool ownsConfiguredResources{false};
+  };
+
   Impl()
       : failureState(std::make_shared<PipelineFailureState>()),
         presentationQueue(dispatch_queue_create(
             "com.wesleymaa.wam.native-video-present", DISPATCH_QUEUE_SERIAL)),
+        preparationQueue(dispatch_queue_create(
+            "com.wesleymaa.wam.native-video-prepare", DISPATCH_QUEUE_SERIAL)),
         retirementQueue(dispatch_queue_create(
             "com.wesleymaa.wam.native-video-retire", DISPATCH_QUEUE_SERIAL)),
         presentationSource(nil) {}
@@ -462,6 +467,7 @@ struct NativeVideoPipeline::Impl
   mutable std::mutex displayLinkMutex;
   CVDisplayLinkRef displayLink{nullptr};
   __strong dispatch_queue_t presentationQueue;
+  __strong dispatch_queue_t preparationQueue;
   __strong dispatch_queue_t retirementQueue;
   __strong dispatch_source_t presentationSource{nil};
 
@@ -470,9 +476,22 @@ struct NativeVideoPipeline::Impl
   bool stopRequestedDuringPrepare{false};
   bool shutdownRequested{false};
   bool ownsProcessAdmission{false};
+  std::uint64_t preparationGeneration{0};
+  std::shared_ptr<PreparationRequest> activePreparation;
+
+  mutable std::mutex preparationResultMutex;
+  std::optional<NativeVideoPrepareOutcome> preparationResult;
 
 #if defined(WAM_NATIVE_VIDEO_PIPELINE_TESTING)
   mutable std::mutex schedulingTestMutex;
+  std::shared_future<void> preparationLoadBarrier;
+  std::shared_ptr<std::atomic<bool>> preparationLoadEntered;
+  std::shared_future<void> assetLoadCallbackBarrier;
+  std::shared_ptr<std::atomic<bool>> assetLoadCallbackEntered;
+  std::shared_future<void> trackLoadCallbackBarrier;
+  std::shared_ptr<std::atomic<bool>> trackLoadCallbackEntered;
+  std::shared_ptr<std::atomic<bool>> preparationCancellationEntered;
+  std::atomic<bool> failAfterResourceTransfer{false};
   std::shared_future<void> preparationCommitBarrier;
   std::shared_ptr<std::atomic<bool>> preparationCommitEntered;
   std::shared_future<void> retirementBarrier;
@@ -1031,6 +1050,65 @@ struct NativeVideoPipeline::Impl
   }
 
 #if defined(WAM_NATIVE_VIDEO_PIPELINE_TESTING)
+  void waitAtPreparationLoadBarrier() {
+    std::shared_future<void> release;
+    std::shared_ptr<std::atomic<bool>> entered;
+    {
+      std::lock_guard lock(schedulingTestMutex);
+      release = std::move(preparationLoadBarrier);
+      entered = std::move(preparationLoadEntered);
+    }
+    if (release.valid()) {
+      if (entered != nullptr) {
+        entered->store(true, std::memory_order_release);
+      }
+      release.wait();
+    }
+  }
+
+  void waitAtAssetLoadCallbackBarrier() {
+    std::shared_future<void> release;
+    std::shared_ptr<std::atomic<bool>> entered;
+    {
+      std::lock_guard lock(schedulingTestMutex);
+      release = std::move(assetLoadCallbackBarrier);
+      entered = std::move(assetLoadCallbackEntered);
+    }
+    if (release.valid()) {
+      if (entered != nullptr) {
+        entered->store(true, std::memory_order_release);
+      }
+      release.wait();
+    }
+  }
+
+  void waitAtTrackLoadCallbackBarrier() {
+    std::shared_future<void> release;
+    std::shared_ptr<std::atomic<bool>> entered;
+    {
+      std::lock_guard lock(schedulingTestMutex);
+      release = std::move(trackLoadCallbackBarrier);
+      entered = std::move(trackLoadCallbackEntered);
+    }
+    if (release.valid()) {
+      if (entered != nullptr) {
+        entered->store(true, std::memory_order_release);
+      }
+      release.wait();
+    }
+  }
+
+  void markPreparationCancellationEntered() {
+    std::shared_ptr<std::atomic<bool>> entered;
+    {
+      std::lock_guard lock(schedulingTestMutex);
+      entered = preparationCancellationEntered;
+    }
+    if (entered != nullptr) {
+      entered->store(true, std::memory_order_release);
+    }
+  }
+
   void waitAtPreparationCommitBarrier() {
     std::shared_future<void> release;
     std::shared_ptr<std::atomic<bool>> entered;
@@ -1064,9 +1142,423 @@ struct NativeVideoPipeline::Impl
   }
 #endif
 
-  [[nodiscard]] bool beginPreparation(bool* retireExisting,
-                                      std::string* error) noexcept {
+  static bool loadedValues(
+      id<AVAsynchronousKeyValueLoading> object,
+      NSArray<NSString*>* keys, bool* loadingCancelled,
+      std::string* error) {
+    *loadingCancelled = false;
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    for (NSString* key in keys) {
+      NSError* keyError = nil;
+      const AVKeyValueStatus status =
+          [object statusOfValueForKey:key error:&keyError];
+      if (status == AVKeyValueStatusLoaded) {
+        continue;
+      }
+      if (status == AVKeyValueStatusCancelled) {
+        *loadingCancelled = true;
+        assignError(error, "AVFoundation cancelled native asset inspection");
+        return false;
+      }
+      if (status == AVKeyValueStatusFailed) {
+        assignError(error,
+                    describeNSError(keyError,
+                                    "AVFoundation asset inspection failed"));
+        return false;
+      }
+      const char* keyText = key.UTF8String;
+      assignError(error,
+                  std::string("AVFoundation did not finish loading asset key ") +
+                      (keyText == nullptr ? "<unknown>" : keyText));
+      return false;
+    }
+#pragma clang diagnostic pop
+    return true;
+  }
+
+  void runPreparationStep(
+      const std::shared_ptr<PreparationRequest>& request,
+      PreparationStep step) noexcept {
+    try {
+      switch (step) {
+      case PreparationStep::Start:
+        startPreparation(request);
+        break;
+      case PreparationStep::AssetValuesReady:
+        assetValuesReady(request);
+        break;
+      case PreparationStep::TrackValuesReady:
+        trackValuesReady(request);
+        break;
+      }
+    } catch (...) {
+      // No C++ exception may cross a libdispatch/Objective-C callback frame.
+      // The short diagnostic fits libc++'s inline string storage, while the
+      // per-request ownership flag makes partial decoder construction retire
+      // through the same self-owned teardown path as an explicit stop.
+      finishUncommittedPreparation(
+          request, NativeVideoPrepareResult::Failed,
+          "native prep failed");
+    }
+  }
+
+  void startPreparation(
+      const std::shared_ptr<PreparationRequest>& request) {
+#if defined(WAM_NATIVE_VIDEO_PIPELINE_TESTING)
+    waitAtPreparationLoadBarrier();
+#endif
+    if (request->cancelled.load(std::memory_order_acquire)) {
+      finishUncommittedPreparation(
+          request, NativeVideoPrepareResult::Failed,
+          "native video preparation was cancelled");
+      return;
+    }
+
+    std::error_code fileError;
+    if (!std::filesystem::is_regular_file(request->path, fileError)) {
+      finishUncommittedPreparation(
+          request, NativeVideoPrepareResult::Failed,
+          "native video requires a readable local file");
+      return;
+    }
+    NSString* filePath =
+        [NSString stringWithUTF8String:request->path.c_str()];
+    if (filePath == nil) {
+      finishUncommittedPreparation(
+          request, NativeVideoPrepareResult::Failed,
+          "native video path is not valid UTF-8");
+      return;
+    }
+    NSURL* url = [NSURL fileURLWithPath:filePath];
+    request->asset = [AVURLAsset
+        URLAssetWithURL:url
+                options:@{AVURLAssetPreferPreciseDurationAndTimingKey : @YES}];
+
+    NSArray<NSString*>* keys = @[
+      @"playable", @"hasProtectedContent", @"duration", @"tracks"
+    ];
+    request->assetLoadInFlight = true;
+    const std::shared_ptr<Impl> self = shared_from_this();
+    const std::shared_ptr<PreparationRequest> retainedRequest = request;
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    [request->asset loadValuesAsynchronouslyForKeys:keys
+                                  completionHandler:^{
+#if defined(WAM_NATIVE_VIDEO_PIPELINE_TESTING)
+      self->waitAtAssetLoadCallbackBarrier();
+#endif
+      dispatch_async(self->preparationQueue, ^{
+        @autoreleasepool {
+          self->runPreparationStep(
+              retainedRequest, PreparationStep::AssetValuesReady);
+        }
+      });
+    }];
+#pragma clang diagnostic pop
+  }
+
+  void assetValuesReady(
+      const std::shared_ptr<PreparationRequest>& request) {
+    request->assetLoadInFlight = false;
+    if (request->cancelled.load(std::memory_order_acquire)) {
+      finishUncommittedPreparation(
+          request, NativeVideoPrepareResult::Failed,
+          "native video preparation was cancelled");
+      return;
+    }
+
+    NSArray<NSString*>* keys = @[
+      @"playable", @"hasProtectedContent", @"duration", @"tracks"
+    ];
+    bool loadingCancelled = false;
+    std::string loadingError;
+    if (!loadedValues(request->asset, keys, &loadingCancelled,
+                      &loadingError)) {
+      finishUncommittedPreparation(
+          request, NativeVideoPrepareResult::Failed,
+          std::move(loadingError));
+      return;
+    }
+
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    if (!request->asset.playable || request->asset.hasProtectedContent) {
+      finishUncommittedPreparation(
+          request, NativeVideoPrepareResult::Unsupported,
+          "protected or unplayable media uses the libmpv path");
+      return;
+    }
+    // The tracks key was proven Loaded above, so these filtering calls cannot
+    // trigger the synchronous I/O warned about by AVFoundation.
+    NSArray<AVAssetTrack*>* tracks =
+        [request->asset tracksWithMediaType:AVMediaTypeVideo];
+    NSArray<AVAssetTrack*>* audioTracks =
+        [request->asset tracksWithMediaType:AVMediaTypeAudio];
+    NSArray<AVAssetTrack*>* subtitleTracks =
+        [request->asset tracksWithMediaType:AVMediaTypeSubtitle];
+    NSArray<AVAssetTrack*>* textTracks =
+        [request->asset tracksWithMediaType:AVMediaTypeText];
+    NSArray<AVAssetTrack*>* closedCaptionTracks =
+        [request->asset tracksWithMediaType:AVMediaTypeClosedCaption];
+#pragma clang diagnostic pop
+    if (tracks.count != 1) {
+      finishUncommittedPreparation(
+          request, NativeVideoPrepareResult::Unsupported,
+          "native video requires exactly one video track; multi-angle and "
+          "track-selected media use libmpv");
+      return;
+    }
+    if (audioTracks.count == 0) {
+      finishUncommittedPreparation(
+          request, NativeVideoPrepareResult::Unsupported,
+          "native video currently requires an audio track as its "
+          "authoritative playback clock");
+      return;
+    }
+    if (subtitleTracks.count != 0 || textTracks.count != 0 ||
+        closedCaptionTracks.count != 0) {
+      finishUncommittedPreparation(
+          request, NativeVideoPrepareResult::Unsupported,
+          "embedded subtitle, text, and closed-caption tracks require the "
+          "libmpv compositor");
+      return;
+    }
+    request->track = tracks.firstObject;
+
+    NSArray<NSString*>* trackKeys =
+        @[@"formatDescriptions", @"preferredTransform"];
+    request->trackLoadInFlight = true;
+    const std::shared_ptr<Impl> self = shared_from_this();
+    const std::shared_ptr<PreparationRequest> retainedRequest = request;
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    [request->track loadValuesAsynchronouslyForKeys:trackKeys
+                                  completionHandler:^{
+#if defined(WAM_NATIVE_VIDEO_PIPELINE_TESTING)
+      self->waitAtTrackLoadCallbackBarrier();
+#endif
+      dispatch_async(self->preparationQueue, ^{
+        @autoreleasepool {
+          self->runPreparationStep(
+              retainedRequest, PreparationStep::TrackValuesReady);
+        }
+      });
+    }];
+#pragma clang diagnostic pop
+  }
+
+  void trackValuesReady(
+      const std::shared_ptr<PreparationRequest>& request) {
+    request->trackLoadInFlight = false;
+    if (request->cancelled.load(std::memory_order_acquire)) {
+      finishUncommittedPreparation(
+          request, NativeVideoPrepareResult::Failed,
+          "native video preparation was cancelled");
+      return;
+    }
+
+    NSArray<NSString*>* keys =
+        @[@"formatDescriptions", @"preferredTransform"];
+    bool loadingCancelled = false;
+    std::string loadingError;
+    if (!loadedValues(request->track, keys, &loadingCancelled,
+                      &loadingError)) {
+      finishUncommittedPreparation(
+          request, NativeVideoPrepareResult::Failed,
+          std::move(loadingError));
+      return;
+    }
+
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    NSArray* descriptions = request->track.formatDescriptions;
+    const CGAffineTransform transform = request->track.preferredTransform;
+    const CMTime duration = request->asset.duration;
+#pragma clang diagnostic pop
+    if (descriptions.count != 1) {
+      finishUncommittedPreparation(
+          request, NativeVideoPrepareResult::Unsupported,
+          "video tracks with missing or changing format descriptions use "
+          "libmpv");
+      return;
+    }
+    auto format =
+        (__bridge CMVideoFormatDescriptionRef)descriptions.firstObject;
+    const CMVideoCodecType codec = CMFormatDescriptionGetMediaSubType(format);
+    if (codec != kCMVideoCodecType_H264 && codec != kCMVideoCodecType_HEVC) {
+      finishUncommittedPreparation(
+          request, NativeVideoPrepareResult::Unsupported,
+          "native video currently supports H.264 and HEVC");
+      return;
+    }
+    if (!CGAffineTransformIsIdentity(transform)) {
+      finishUncommittedPreparation(
+          request, NativeVideoPrepareResult::Unsupported,
+          "rotated video currently uses the libmpv renderer");
+      return;
+    }
+    if (!isProgressiveFormat(format)) {
+      finishUncommittedPreparation(
+          request, NativeVideoPrepareResult::Unsupported,
+          "interlaced video currently requires libmpv deinterlacing");
+      return;
+    }
+    if (hasUnsupportedColorMetadata(format) ||
+        hasDolbyVisionConfiguration(format)) {
+      finishUncommittedPreparation(
+          request, NativeVideoPrepareResult::Unsupported,
+          "video color metadata is outside the native SDR BT.709/601 "
+          "contract and requires libmpv color management");
+      return;
+    }
+
+    const CMVideoDimensions dimensions =
+        CMVideoFormatDescriptionGetDimensions(format);
+    const CGSize presentationDimensions =
+        CMVideoFormatDescriptionGetPresentationDimensions(format, true, true);
+    if (dimensions.width <= 0 || dimensions.height <= 0) {
+      finishUncommittedPreparation(
+          request, NativeVideoPrepareResult::Unsupported,
+          "video track has invalid coded dimensions");
+      return;
+    }
+    const std::uint64_t codedPixels =
+        static_cast<std::uint64_t>(dimensions.width) *
+        static_cast<std::uint64_t>(dimensions.height);
+    if (codedPixels > kMaximumCodedPixels) {
+      finishUncommittedPreparation(
+          request, NativeVideoPrepareResult::Unsupported,
+          "native video above 1080p exceeds the experiment's bounded "
+          "decoded-surface budget and uses libmpv");
+      return;
+    }
+    if (std::abs(presentationDimensions.width - dimensions.width) > 0.5 ||
+        std::abs(presentationDimensions.height - dimensions.height) > 0.5) {
+      finishUncommittedPreparation(
+          request, NativeVideoPrepareResult::Unsupported,
+          "non-square pixels or a cropped aperture currently use libmpv");
+      return;
+    }
+    auto configuration = copyCodecConfiguration(format, codec);
+    if (!configuration) {
+      finishUncommittedPreparation(
+          request, NativeVideoPrepareResult::Unsupported,
+          "video track lacks an avcC/hvcC configuration atom");
+      return;
+    }
+
+    const std::uint64_t generation =
+        requestedGeneration.fetch_add(1, std::memory_order_acq_rel) + 1;
+    std::string decoderError;
+    double initialPosition = 0.0;
+    {
+      std::lock_guard resourceLock(resourceMutex);
+      // From this point onward any exception or cancellation must retire the
+      // partially transferred AVFoundation/VideoToolbox ownership rather than
+      // release process admission as if no resources existed.
+      request->ownsConfiguredResources = true;
+      asset = request->asset;
+      track = request->track;
+      assetDuration = duration;
+      this->codec = codec;
+      this->dimensions = dimensions;
+      codecConfiguration = std::move(*configuration);
+#if defined(WAM_NATIVE_VIDEO_PIPELINE_TESTING)
+      if (failAfterResourceTransfer.exchange(false,
+                                             std::memory_order_acq_rel)) {
+        throw std::bad_alloc();
+      }
+#endif
+      std::weak_ptr<Impl> weakImpl = shared_from_this();
+      sink = std::make_unique<NotifyingFrameSink>(
+          kFrameQueueCapacity, generation, [weakImpl] {
+            if (auto state = weakImpl.lock()) {
+              state->notifyFrameAvailable();
+            }
+          });
+      decoder = std::make_unique<VideoToolboxDecoder>(
+          VideoToolboxDecoderOptions{kMaximumInFlightDecodeFrames,
+                                     kMaximumReorderFrames});
+      const VideoStreamConfiguration stream{
+          codec,
+          dimensions,
+          std::span<const std::byte>(codecConfiguration),
+          true,
+          true,
+          generation};
+      if (!decoder->configure(stream, *sink, &decoderError)) {
+        decoder.reset();
+        sink.reset();
+        asset = nil;
+        track = nil;
+        codecConfiguration.clear();
+        assetDuration = kCMTimeInvalid;
+        request->ownsConfiguredResources = false;
+      } else {
+        initialPosition = normalizePosition(
+            finiteNonnegative(request->initialPositionSeconds)
+                ? request->initialPositionSeconds
+                : 0.0);
+      }
+    }
+    if (!request->ownsConfiguredResources) {
+      finishUncommittedPreparation(
+          request, NativeVideoPrepareResult::Unsupported,
+          decoderError.empty()
+              ? "hardware VideoToolbox decode is unavailable"
+              : std::move(decoderError));
+      return;
+    }
+
+    counters.reset();
+    const std::uint64_t failureEpoch = failureState->beginAttempt();
+    {
+      std::lock_guard lock(presentationMutex);
+      minimumPresentationSeconds = initialPosition;
+      heldFrame.reset();
+      retryFrame.reset();
+    }
+    {
+      std::lock_guard lock(clockMutex);
+      clockMediaSeconds = initialPosition;
+      clockAnchorHostSeconds = CACurrentMediaTime();
+      clockRate = 1.0;
+      clockPaused = true;
+    }
+    pausedPresentationNeeded.store(true, std::memory_order_release);
+    if (!commitPreparation(request, failureEpoch, initialPosition)) {
+      finishUncommittedPreparation(
+          request, NativeVideoPrepareResult::Failed,
+          "native video preparation was cancelled");
+      return;
+    }
+    request->asset = nil;
+    request->track = nil;
+  }
+
+  void schedulePreparation(
+      const std::shared_ptr<PreparationRequest>& request) {
+    const std::shared_ptr<Impl> self = shared_from_this();
+    const std::shared_ptr<PreparationRequest> retainedRequest = request;
+    dispatch_async(preparationQueue, ^{
+      @autoreleasepool {
+        self->runPreparationStep(retainedRequest, PreparationStep::Start);
+      }
+    });
+  }
+
+  [[nodiscard]] bool beginPreparation(
+      const std::shared_ptr<PreparationRequest>& request,
+      bool* retireExisting, std::string* error) noexcept {
     *retireExisting = false;
+    std::lock_guard resultLock(preparationResultMutex);
+    if (preparationResult.has_value()) {
+      assignError(error,
+                  "consume the previous native video preparation result "
+                  "before starting another request");
+      return false;
+    }
     std::lock_guard lock(lifecycleMutex);
     switch (lifecycle) {
     case Lifecycle::Idle:
@@ -1088,6 +1580,8 @@ struct NativeVideoPipeline::Impl
       ownsProcessAdmission = true;
       lifecycle = Lifecycle::Preparing;
       stopRequestedDuringPrepare = false;
+      request->generation = ++preparationGeneration;
+      activePreparation = request;
       return true;
     case Lifecycle::Running:
       *retireExisting = true;
@@ -1118,14 +1612,27 @@ struct NativeVideoPipeline::Impl
     });
   }
 
-  void abortPreparation(bool ownsConfiguredResources) noexcept {
+  void finishUncommittedPreparation(
+      const std::shared_ptr<PreparationRequest>& request,
+      NativeVideoPrepareResult result, std::string error) noexcept {
+    if (request->completed.exchange(true, std::memory_order_acq_rel)) {
+      return;
+    }
     bool schedule = false;
     {
-      std::lock_guard lock(lifecycleMutex);
-      if (lifecycle != Lifecycle::Preparing) {
+      // Result -> lifecycle is the global ordering also used by admission.
+      // Publishing and leaving Preparing are atomic with respect to a new
+      // request, so no terminal outcome can be overwritten or missed.
+      std::lock_guard resultLock(preparationResultMutex);
+      std::lock_guard lifecycleLock(lifecycleMutex);
+      preparationResult = NativeVideoPrepareOutcome{
+          request->generation, result, std::move(error)};
+      if (lifecycle != Lifecycle::Preparing ||
+          activePreparation != request) {
         return;
       }
-      if (ownsConfiguredResources || stopRequestedDuringPrepare ||
+      activePreparation.reset();
+      if (request->ownsConfiguredResources || stopRequestedDuringPrepare ||
           shutdownRequested) {
         lifecycle = shutdownRequested ? Lifecycle::Finalizing
                                       : Lifecycle::Retiring;
@@ -1140,6 +1647,8 @@ struct NativeVideoPipeline::Impl
         stopRequestedDuringPrepare = false;
       }
     }
+    request->asset = nil;
+    request->track = nil;
     if (schedule) {
       failureState->disable();
       prepared.store(false, std::memory_order_release);
@@ -1151,13 +1660,16 @@ struct NativeVideoPipeline::Impl
   }
 
   [[nodiscard]] bool commitPreparation(
+      const std::shared_ptr<PreparationRequest>& request,
       std::uint64_t failureEpoch, double initialPosition) {
 #if defined(WAM_NATIVE_VIDEO_PIPELINE_TESTING)
     waitAtPreparationCommitBarrier();
 #endif
-    std::lock_guard lock(lifecycleMutex);
-    if (lifecycle != Lifecycle::Preparing || stopRequestedDuringPrepare ||
-        shutdownRequested) {
+    std::lock_guard resultLock(preparationResultMutex);
+    std::lock_guard lifecycleLock(lifecycleMutex);
+    if (lifecycle != Lifecycle::Preparing || activePreparation != request ||
+        request->cancelled.load(std::memory_order_acquire) ||
+        stopRequestedDuringPrepare || shutdownRequested) {
       return false;
     }
     std::weak_ptr<PipelineFailureState> weakFailureState = failureState;
@@ -1172,12 +1684,46 @@ struct NativeVideoPipeline::Impl
     prepared.store(true, std::memory_order_release);
     presenter->setVisible(true);
     startWorker(initialPosition);
+    preparationResult.emplace(NativeVideoPrepareOutcome{
+        request->generation, NativeVideoPrepareResult::Ready, {}});
+    request->completed.store(true, std::memory_order_release);
+    activePreparation.reset();
     lifecycle = Lifecycle::Running;
     return true;
   }
 
+  void schedulePreparationCancellation(
+      const std::shared_ptr<PreparationRequest>& request) noexcept {
+    const std::shared_ptr<Impl> self = shared_from_this();
+    const std::shared_ptr<PreparationRequest> retainedRequest = request;
+    dispatch_async(preparationQueue, ^{
+      @autoreleasepool {
+        if (retainedRequest->completed.load(std::memory_order_acquire)) {
+          return;
+        }
+        if (retainedRequest->asset != nil) {
+#if defined(WAM_NATIVE_VIDEO_PIPELINE_TESTING)
+          self->markPreparationCancellationEntered();
+#endif
+          [retainedRequest->asset cancelLoading];
+        }
+        // Once an AVFoundation request has been issued, retain the process-wide
+        // admission lease until its callback acknowledges completion/cancel.
+        // A wedged framework callback can therefore stall one attempt, but
+        // cannot be multiplied by recreating frontends.
+        if (!retainedRequest->assetLoadInFlight &&
+            !retainedRequest->trackLoadInFlight) {
+          self->finishUncommittedPreparation(
+              retainedRequest, NativeVideoPrepareResult::Failed,
+              "native video preparation was cancelled");
+        }
+      }
+    });
+  }
+
   void requestTeardown(bool final) noexcept {
     bool schedule = false;
+    std::shared_ptr<PreparationRequest> preparationToCancel;
     {
       std::lock_guard lock(lifecycleMutex);
       shutdownRequested = shutdownRequested || final;
@@ -1192,6 +1738,7 @@ struct NativeVideoPipeline::Impl
       case Lifecycle::Preparing:
         stopRequestedDuringPrepare = true;
         stopping.store(true, std::memory_order_release);
+        preparationToCancel = activePreparation;
         break;
       case Lifecycle::Running:
         lifecycle = shutdownRequested ? Lifecycle::Finalizing
@@ -1207,6 +1754,11 @@ struct NativeVideoPipeline::Impl
       case Lifecycle::Finalizing:
         break;
       }
+    }
+
+    if (preparationToCancel != nullptr) {
+      preparationToCancel->cancelled.store(true, std::memory_order_release);
+      schedulePreparationCancellation(preparationToCancel);
     }
 
     failureState->disable();
@@ -1369,215 +1921,34 @@ void NativeVideoPipeline::resize(double widthPoints, double heightPoints,
   impl_->presenter->resize(widthPoints, heightPoints, backingScale);
 }
 
-NativeVideoPrepareResult NativeVideoPipeline::prepareLocalFile(
+bool NativeVideoPipeline::prepareLocalFileAsync(
     const std::filesystem::path& path, double initialPositionSeconds,
     std::string* error) {
   if (error != nullptr) {
     error->clear();
   }
+  auto request = std::make_shared<Impl::PreparationRequest>();
+  request->path = path;
+  request->initialPositionSeconds = initialPositionSeconds;
   bool retireExisting = false;
-  if (!impl_->beginPreparation(&retireExisting, error)) {
+  if (!impl_->beginPreparation(request, &retireExisting, error)) {
     if (retireExisting) {
       impl_->requestTeardown(false);
     }
-    return NativeVideoPrepareResult::Failed;
+    return false;
   }
-  bool ownsConfiguredResources = false;
-  ScopeExit preparationGuard([&] {
-    impl_->abortPreparation(ownsConfiguredResources);
-  });
-  std::error_code fileError;
-  if (!std::filesystem::is_regular_file(path, fileError)) {
-    assignError(error, "native video requires a readable local file");
-    return NativeVideoPrepareResult::Failed;
-  }
-  NSString* filePath = [NSString stringWithUTF8String:path.c_str()];
-  if (filePath == nil) {
-    assignError(error, "native video path is not valid UTF-8");
-    return NativeVideoPrepareResult::Failed;
-  }
-  NSURL* url = [NSURL fileURLWithPath:filePath];
-  AVURLAsset* asset = [AVURLAsset
-      URLAssetWithURL:url
-              options:@{AVURLAssetPreferPreciseDurationAndTimingKey : @YES}];
-
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
-  if (!asset.playable || asset.hasProtectedContent) {
-    assignError(error, "protected or unplayable media uses the libmpv path");
-    return NativeVideoPrepareResult::Unsupported;
-  }
-  NSArray<AVAssetTrack*>* tracks =
-      [asset tracksWithMediaType:AVMediaTypeVideo];
-  NSArray<AVAssetTrack*>* audioTracks =
-      [asset tracksWithMediaType:AVMediaTypeAudio];
-  NSArray<AVAssetTrack*>* subtitleTracks =
-      [asset tracksWithMediaType:AVMediaTypeSubtitle];
-  NSArray<AVAssetTrack*>* textTracks =
-      [asset tracksWithMediaType:AVMediaTypeText];
-  NSArray<AVAssetTrack*>* closedCaptionTracks =
-      [asset tracksWithMediaType:AVMediaTypeClosedCaption];
-#pragma clang diagnostic pop
-  if (tracks.count != 1) {
-    assignError(error,
-                "native video requires exactly one video track; multi-angle "
-                "and track-selected media use libmpv");
-    return NativeVideoPrepareResult::Unsupported;
-  }
-  if (audioTracks.count == 0) {
-    assignError(error,
-                "native video currently requires an audio track as its "
-                "authoritative playback clock");
-    return NativeVideoPrepareResult::Unsupported;
-  }
-  if (subtitleTracks.count != 0 || textTracks.count != 0 ||
-      closedCaptionTracks.count != 0) {
-    assignError(error,
-                "embedded subtitle, text, and closed-caption tracks require "
-                "the libmpv compositor");
-    return NativeVideoPrepareResult::Unsupported;
-  }
-  AVAssetTrack* track = tracks.firstObject;
-
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
-  NSArray* descriptions = track.formatDescriptions;
-  const CGAffineTransform transform = track.preferredTransform;
-  const CMTime duration = asset.duration;
-#pragma clang diagnostic pop
-  if (descriptions.count != 1) {
-    assignError(error,
-                "video tracks with missing or changing format descriptions "
-                "use libmpv");
-    return NativeVideoPrepareResult::Unsupported;
-  }
-  auto format = (__bridge CMVideoFormatDescriptionRef)descriptions.firstObject;
-  const CMVideoCodecType codec = CMFormatDescriptionGetMediaSubType(format);
-  if (codec != kCMVideoCodecType_H264 && codec != kCMVideoCodecType_HEVC) {
-    assignError(error, "native video currently supports H.264 and HEVC");
-    return NativeVideoPrepareResult::Unsupported;
-  }
-  if (!CGAffineTransformIsIdentity(transform)) {
-    assignError(error, "rotated video currently uses the libmpv renderer");
-    return NativeVideoPrepareResult::Unsupported;
-  }
-  if (!isProgressiveFormat(format)) {
-    assignError(error,
-                "interlaced video currently requires libmpv deinterlacing");
-    return NativeVideoPrepareResult::Unsupported;
-  }
-  if (hasUnsupportedColorMetadata(format) ||
-      hasDolbyVisionConfiguration(format)) {
-    assignError(error,
-                "video color metadata is outside the native SDR BT.709/601 "
-                "contract and requires libmpv color management");
-    return NativeVideoPrepareResult::Unsupported;
-  }
-
-  const CMVideoDimensions dimensions =
-      CMVideoFormatDescriptionGetDimensions(format);
-  const CGSize presentationDimensions =
-      CMVideoFormatDescriptionGetPresentationDimensions(format, true, true);
-  if (dimensions.width <= 0 || dimensions.height <= 0) {
-    assignError(error, "video track has invalid coded dimensions");
-    return NativeVideoPrepareResult::Unsupported;
-  }
-  const std::uint64_t codedPixels =
-      static_cast<std::uint64_t>(dimensions.width) *
-      static_cast<std::uint64_t>(dimensions.height);
-  if (codedPixels > kMaximumCodedPixels) {
-    assignError(error,
-                "native video above 1080p exceeds the experiment's bounded "
-                "decoded-surface budget and uses libmpv");
-    return NativeVideoPrepareResult::Unsupported;
-  }
-  if (std::abs(presentationDimensions.width - dimensions.width) > 0.5 ||
-      std::abs(presentationDimensions.height - dimensions.height) > 0.5) {
-    assignError(error,
-                "non-square pixels or a cropped aperture currently use "
-                "libmpv");
-    return NativeVideoPrepareResult::Unsupported;
-  }
-  auto configuration = copyCodecConfiguration(format, codec);
-  if (!configuration) {
-    assignError(error, "video track lacks an avcC/hvcC configuration atom");
-    return NativeVideoPrepareResult::Unsupported;
-  }
-
-  const std::uint64_t generation =
-      impl_->requestedGeneration.fetch_add(1, std::memory_order_acq_rel) + 1;
-  std::string decoderError;
-  double initialPosition = 0.0;
-  {
-    std::lock_guard resourceLock(impl_->resourceMutex);
-    impl_->asset = asset;
-    impl_->track = track;
-    impl_->assetDuration = duration;
-    impl_->codec = codec;
-    impl_->dimensions = dimensions;
-    impl_->codecConfiguration = std::move(*configuration);
-    std::weak_ptr<Impl> weakImpl = impl_;
-    impl_->sink = std::make_unique<NotifyingFrameSink>(
-        kFrameQueueCapacity, generation, [weakImpl] {
-          if (auto state = weakImpl.lock()) {
-            state->notifyFrameAvailable();
-          }
-        });
-    impl_->decoder = std::make_unique<VideoToolboxDecoder>(
-        VideoToolboxDecoderOptions{kMaximumInFlightDecodeFrames,
-                                   kMaximumReorderFrames});
-    const VideoStreamConfiguration stream{
-        codec,
-        dimensions,
-        std::span<const std::byte>(impl_->codecConfiguration),
-        true,
-        true,
-        generation};
-    if (!impl_->decoder->configure(stream, *impl_->sink, &decoderError)) {
-      impl_->decoder.reset();
-      impl_->sink.reset();
-      impl_->asset = nil;
-      impl_->track = nil;
-      impl_->codecConfiguration.clear();
-      impl_->assetDuration = kCMTimeInvalid;
-    } else {
-      ownsConfiguredResources = true;
-      initialPosition = impl_->normalizePosition(
-          finiteNonnegative(initialPositionSeconds) ? initialPositionSeconds
-                                                    : 0.0);
-    }
-  }
-  if (!ownsConfiguredResources) {
-    assignError(error, decoderError.empty()
-                           ? "hardware VideoToolbox decode is unavailable"
-                           : std::move(decoderError));
-    return NativeVideoPrepareResult::Unsupported;
-  }
-
-  impl_->counters.reset();
-  const std::uint64_t failureEpoch = impl_->failureState->beginAttempt();
-  {
-    std::lock_guard lock(impl_->presentationMutex);
-    impl_->minimumPresentationSeconds = initialPosition;
-    impl_->heldFrame.reset();
-    impl_->retryFrame.reset();
-  }
-  {
-    std::lock_guard lock(impl_->clockMutex);
-    impl_->clockMediaSeconds = initialPosition;
-    impl_->clockAnchorHostSeconds = CACurrentMediaTime();
-    impl_->clockRate = 1.0;
-    impl_->clockPaused = true;
-  }
-  impl_->pausedPresentationNeeded.store(true, std::memory_order_release);
-  if (!impl_->commitPreparation(failureEpoch, initialPosition)) {
-    assignError(error, "native video preparation was cancelled");
-    return NativeVideoPrepareResult::Failed;
-  }
-  preparationGuard.release();
-  return NativeVideoPrepareResult::Ready;
+  impl_->schedulePreparation(request);
+  return true;
 }
 
+std::optional<NativeVideoPrepareOutcome>
+NativeVideoPipeline::takePrepareResult() noexcept {
+  std::lock_guard lock(impl_->preparationResultMutex);
+  std::optional<NativeVideoPrepareOutcome> result =
+      std::move(impl_->preparationResult);
+  impl_->preparationResult.reset();
+  return result;
+}
 void NativeVideoPipeline::stop() noexcept {
   impl_->requestTeardown(false);
 }
@@ -1696,6 +2067,43 @@ NativeVideoPipelineStats NativeVideoPipeline::stats() const noexcept {
 }
 
 #if defined(WAM_NATIVE_VIDEO_PIPELINE_TESTING)
+void NativeVideoPipelineTestAccess::setPreparationLoadBarrier(
+    NativeVideoPipeline& pipeline, std::shared_future<void> release,
+    std::shared_ptr<std::atomic<bool>> entered) {
+  std::lock_guard lock(pipeline.impl_->schedulingTestMutex);
+  pipeline.impl_->preparationLoadBarrier = std::move(release);
+  pipeline.impl_->preparationLoadEntered = std::move(entered);
+}
+
+void NativeVideoPipelineTestAccess::setAssetLoadCallbackBarrier(
+    NativeVideoPipeline& pipeline, std::shared_future<void> release,
+    std::shared_ptr<std::atomic<bool>> entered) {
+  std::lock_guard lock(pipeline.impl_->schedulingTestMutex);
+  pipeline.impl_->assetLoadCallbackBarrier = std::move(release);
+  pipeline.impl_->assetLoadCallbackEntered = std::move(entered);
+}
+
+void NativeVideoPipelineTestAccess::setTrackLoadCallbackBarrier(
+    NativeVideoPipeline& pipeline, std::shared_future<void> release,
+    std::shared_ptr<std::atomic<bool>> entered) {
+  std::lock_guard lock(pipeline.impl_->schedulingTestMutex);
+  pipeline.impl_->trackLoadCallbackBarrier = std::move(release);
+  pipeline.impl_->trackLoadCallbackEntered = std::move(entered);
+}
+
+void NativeVideoPipelineTestAccess::setPreparationCancellationMarker(
+    NativeVideoPipeline& pipeline,
+    std::shared_ptr<std::atomic<bool>> entered) {
+  std::lock_guard lock(pipeline.impl_->schedulingTestMutex);
+  pipeline.impl_->preparationCancellationEntered = std::move(entered);
+}
+
+void NativeVideoPipelineTestAccess::failNextPreparationAfterResourceTransfer(
+    NativeVideoPipeline& pipeline) {
+  pipeline.impl_->failAfterResourceTransfer.store(
+      true, std::memory_order_release);
+}
+
 void NativeVideoPipelineTestAccess::setPreparationCommitBarrier(
     NativeVideoPipeline& pipeline, std::shared_future<void> release,
     std::shared_ptr<std::atomic<bool>> entered) {

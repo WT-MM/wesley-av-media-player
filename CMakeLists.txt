@@ -310,7 +310,7 @@ if(BUILD_TESTING)
           COMMAND wam_native_video_pipeline_test
             "${WAM_RESOLVED_NATIVE_VIDEO_TEST_FIXTURE}")
         set_tests_properties(macos_native_video_pipeline PROPERTIES
-          TIMEOUT 30
+          TIMEOUT 45
           SKIP_RETURN_CODE 77)
 
         add_test(NAME macos_video_toolbox_decoder

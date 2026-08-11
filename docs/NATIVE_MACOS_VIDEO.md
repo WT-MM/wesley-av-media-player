@@ -5,7 +5,7 @@ VideoToolbox, IOSurface, and Metal. The code is excluded unless
 `WAM_ENABLE_MACOS_NATIVE_VIDEO=ON`. Even in an opt-in build, no shipping
 controller or render node can select it: libmpv remains the only runtime path.
 This is intentional while the composition, subtitle, clock, fallback, and
-asynchronous asset-loading gates below remain open.
+seek-validation gates below remain open.
 
 Enable the isolated foundation with:
 
@@ -89,6 +89,21 @@ ctest --test-dir build-native \
   `stats().stopping` clears, the same frontend can prepare a fresh generation.
   Destruction upgrades an already queued normal stop to final shutdown without
   racing the retirement task's transition back to idle.
+- `prepareLocalFileAsync()` performs no AVFoundation property access or
+  filesystem inspection on its caller. An accepted request is moved to a
+  private serial preparation queue, loads the asset's `playable`,
+  `hasProtectedContent`, `duration`, and `tracks` keys asynchronously, verifies
+  every key reached `Loaded`, then asynchronously loads and verifies the chosen
+  track's `formatDescriptions` and `preferredTransform` before calling any
+  getter. `takePrepareResult()` consumes exactly one generation-tagged terminal
+  `Ready`, `Unsupported`, or `Failed` outcome; callers must consume it before a
+  new request can be admitted, so results cannot be overwritten or accumulate.
+  No client callback can run from an AVFoundation, decode, teardown, or post-
+  destruction stack. Stop/destruction logically cancels the request and asks
+  AVFoundation to cancel loading from the preparation queue. If a framework
+  load is already in flight, the process-wide admission lease remains held
+  until its completion acknowledges cancellation, bounding even a wedged load
+  to one self-owned attempt.
 - macOS CI generates a deterministic H.264 stream with B frames, compiles the
   default-off native targets, and checks real decode order, returned timing,
   actual pixel format, IOSurface backing, and Metal plane import.
@@ -145,14 +160,16 @@ mark of two.
 
 The checked-in B-frame fixture exercises real hardware decode, a generation-
 safe non-frame-aligned seek, video-only rejection, queue/in-flight bounds,
-stop during configured-but-uncommitted preparation, asynchronous detach/stop,
-restart after retirement, process-wide contention, the normal-stop-to-final-
-destruction upgrade, and active frontend destruction. Test-only background
-barriers make both destruction branches deterministic without changing a
-production build. One isolated local run measured 0.008 ms for detach, 0.019 ms
-for stop, and 0.007 ms for active frontend destruction to return while real
-H.264 hardware work was active. Those numbers are test diagnostics only, not
-steady-state playback or comparative benchmark evidence.
+prompt return while asset loading is held, cancellation during held asset-key
+loading, physical `cancelLoading` dispatch and admission retention until
+callback acknowledgement, successful delayed loading, exception rollback after
+partial resource transfer, stop during configured-but-uncommitted preparation,
+destruction during held track-key loading, asynchronous detach/stop, restart after
+retirement, process-wide contention, the normal-stop-to-final-destruction
+upgrade, and active frontend destruction. Test-only background barriers and a
+one-shot failure injection make the slow/cancel/destruction/rollback branches
+deterministic without changing a production build. Those timings remain test
+diagnostics only, not steady-state playback or comparative benchmark evidence.
 No memory or performance improvement is claimed until complete WAM + framework
 process measurements beat the controlled baseline.
 
@@ -161,9 +178,13 @@ process measurements beat the controlled baseline.
 1. Replace the rejected host-layer composition with an integrated Qt scene-
    graph Metal item: wrap the IOSurface-backed Y/UV `MTLTexture` planes through
    `QNativeInterface::QSGMetalTexture::fromNative`, retain their frame leases
-   through GPU consumption, and convert/color in one precompiled `qsb`
-   `QSGMaterialShader` pass. This preserves QML z-order without a full-frame
-   intermediate or runtime shader compilation.
+   through GPU consumption, and convert/color in one offline-cross-compiled
+   `qsb` `QSGMaterialShader` pass. This preserves QML z-order without a full-
+   frame intermediate. Qt 6.11's `qt_add_shaders` embeds MSL source by default,
+   and its `PRECOMPILE` mode only invokes `fxc` on Windows; create and prewarm
+   the Metal pipeline once during media preparation. Avoiding Metal source
+   compilation entirely would require an explicit `qsb --metallib` build step
+   plus validation that the embedded library retains the macOS 13 floor.
 2. Resolve Qt's process-wide graphics API before selecting that path. The
    existing libmpv fallback requires OpenGL, so safe choices include startup
    preflight/relaunch, a fallback decoder that also feeds Metal, or a macOS-
@@ -176,11 +197,10 @@ process measurements beat the controlled baseline.
    matching file-load generation is authoritative.
 4. Add subtitle/caption/OSD composition, track-selection parity, a video-only
    master clock, broader profile/level/chroma coverage, and full-sync/open-GOP
-   seek validation. Replace synchronous AVAsset property access with cancellable
-   asynchronous key loading before any UI-thread selection decision. The
-   pipeline's stop/detach/destruction caller path is non-blocking now, but
-   preparation still performs synchronous AVAsset inspection and remains
-   prohibited on the UI thread.
+   seek validation. Asset and track inspection is now cancellable, asynchronous,
+   generation-tagged, and safe to initiate from the UI thread; integration must
+   poll and match its terminal result to the still-current file-load generation
+   before committing selection or fallback.
 5. Gate rollout on CPU, peak/current footprint, energy, seek latency, dropped
    frames, A/V drift, HDR/color, subtitle, and sleep/wake tests.
 

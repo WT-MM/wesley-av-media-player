@@ -47,6 +47,12 @@ struct NativeVideoPipelineStats {
   MetalLayerPresenterStats presenter;
 };
 
+struct NativeVideoPrepareOutcome {
+  std::uint64_t generation{0};
+  NativeVideoPrepareResult result{NativeVideoPrepareResult::Failed};
+  std::string error;
+};
+
 // Dormant macOS video-path foundation:
 //
 //   AVAssetReader (compressed MP4/MOV samples)
@@ -78,16 +84,21 @@ class NativeVideoPipeline final {
 
   // Preparation may run before attachToView() for headless validation or
   // startup prebuffering. Drawable absence is non-fatal and the bounded queue
-  // stops producing until a host is attached. This dormant probe still queries
-  // AVAsset keys synchronously and must not run on an interactive UI thread;
-  // production activation is blocked on cancellable asynchronous key loading.
-  [[nodiscard]] NativeVideoPrepareResult prepareLocalFile(
+  // stops producing until a host is attached. Accepted work is always queued;
+  // this call never reads an AVAsset/AVAssetTrack property and never waits for
+  // AVFoundation. Exactly one generation-tagged terminal outcome is published
+  // for each accepted request and can be consumed with takePrepareResult().
+  // A prior outcome must be consumed before another request can be admitted.
+  [[nodiscard]] bool prepareLocalFileAsync(
       const std::filesystem::path& path, double initialPositionSeconds = 0.0,
       std::string* error = nullptr);
+  [[nodiscard]] std::optional<NativeVideoPrepareOutcome>
+  takePrepareResult() noexcept;
   // Revokes playback immediately and retires AVFoundation/VideoToolbox work on
   // a private serial queue. It never joins the worker or waits for Apple
   // callbacks on the calling thread. While stats().stopping is true, a new
-  // prepareLocalFile() fails fast instead of accumulating retired sessions.
+  // prepareLocalFileAsync() fails fast instead of accumulating retired
+  // sessions.
   // Admission is process-wide, so frontend recreation cannot bypass the bound.
   void stop() noexcept;
 
@@ -117,6 +128,20 @@ class NativeVideoPipeline final {
 // Private deterministic scheduling seams for the native pipeline integration
 // test. Production builds do not compile or expose these methods.
 struct NativeVideoPipelineTestAccess {
+  static void setPreparationLoadBarrier(
+      NativeVideoPipeline& pipeline, std::shared_future<void> release,
+      std::shared_ptr<std::atomic<bool>> entered);
+  static void setAssetLoadCallbackBarrier(
+      NativeVideoPipeline& pipeline, std::shared_future<void> release,
+      std::shared_ptr<std::atomic<bool>> entered);
+  static void setTrackLoadCallbackBarrier(
+      NativeVideoPipeline& pipeline, std::shared_future<void> release,
+      std::shared_ptr<std::atomic<bool>> entered);
+  static void setPreparationCancellationMarker(
+      NativeVideoPipeline& pipeline,
+      std::shared_ptr<std::atomic<bool>> entered);
+  static void failNextPreparationAfterResourceTransfer(
+      NativeVideoPipeline& pipeline);
   static void setPreparationCommitBarrier(
       NativeVideoPipeline& pipeline, std::shared_future<void> release,
       std::shared_ptr<std::atomic<bool>> entered);
