@@ -31,6 +31,19 @@
 #include <vector>
 
 namespace wam::macos {
+
+struct QtGlFatalErrorSerialState {
+  std::atomic<std::uint64_t> serial{0};
+};
+
+QtGlFatalErrorSerialToken::QtGlFatalErrorSerialToken(
+    std::shared_ptr<const QtGlFatalErrorSerialState> state) noexcept
+    : state_(std::move(state)) {}
+
+std::uint64_t QtGlFatalErrorSerialToken::load() const noexcept {
+  return state_ ? state_->serial.load(std::memory_order_acquire) : 0;
+}
+
 namespace {
 
 constexpr std::size_t kSlotCount = 2;
@@ -48,7 +61,8 @@ struct GlCounters {
   std::atomic<std::uint64_t> importedFrames{0};
   std::atomic<std::uint64_t> renderedFrames{0};
   std::atomic<std::uint64_t> lastRenderedGeneration{0};
-  std::atomic<std::uint64_t> fatalErrorSerial{0};
+  std::shared_ptr<QtGlFatalErrorSerialState> fatalErrorSerial{
+      std::make_shared<QtGlFatalErrorSerialState>()};
   std::atomic<std::uint64_t> backpressuredImports{0};
   std::atomic<std::uint64_t> rejectedFrames{0};
   std::atomic<std::uint64_t> staleFrames{0};
@@ -84,9 +98,10 @@ struct GlCounters {
       return;
     }
     fatalError.emplace(std::move(error));
-    std::uint64_t observed = fatalErrorSerial.load(std::memory_order_relaxed);
+    std::uint64_t observed =
+        fatalErrorSerial->serial.load(std::memory_order_relaxed);
     while (observed != std::numeric_limits<std::uint64_t>::max() &&
-           !fatalErrorSerial.compare_exchange_weak(
+           !fatalErrorSerial->serial.compare_exchange_weak(
                observed, observed + 1, std::memory_order_release,
                std::memory_order_relaxed)) {
     }
@@ -1604,9 +1619,14 @@ QtGlVideoItemStats QtGlVideoItem::stats() const {
     QMutexLocker lock(&counters.errorMutex);
     result.lastError = counters.lastError;
     result.fatalErrorSerial =
-        counters.fatalErrorSerial.load(std::memory_order_acquire);
+        counters.fatalErrorSerial->serial.load(std::memory_order_acquire);
   }
   return result;
+}
+
+QtGlFatalErrorSerialToken QtGlVideoItem::fatalErrorSerialToken()
+    const noexcept {
+  return QtGlFatalErrorSerialToken(state_->counters->fatalErrorSerial);
 }
 
 std::optional<QString> QtGlVideoItem::takeFatalError() {

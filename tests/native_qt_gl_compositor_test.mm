@@ -377,13 +377,16 @@ Item {
   WAM_CHECK(spinUntil([&] { return window.isSceneGraphInitialized(); }, 5000));
   WAM_CHECK(window.rendererInterface()->graphicsApi() ==
             QSGRendererInterface::OpenGL);
+  WAM_CHECK(wam::macos::QtGlFatalErrorSerialToken{}.load() == 0);
   const auto blankStats = video->stats();
+  const auto fatalSerialToken = video->fatalErrorSerialToken();
   WAM_CHECK(blankStats.submittedFrames == 0);
   WAM_CHECK(blankStats.renderedFrames == 0);
   WAM_CHECK(blankStats.lastRenderedGeneration == 0);
   WAM_CHECK(blankStats.acceptedGeneration == 0);
   WAM_CHECK(blankStats.acceptedRenderedFrames == 0);
   WAM_CHECK(blankStats.fatalErrorSerial == 0);
+  WAM_CHECK(fatalSerialToken.load() == 0);
   WAM_CHECK(blankStats.activeResourceSets == 0);
   WAM_CHECK(!blankStats.textureRectangleSupported);
   WAM_CHECK(!blankStats.acceleratedContext);
@@ -410,6 +413,8 @@ Item {
       },
       5000));
   const auto emptyInitFailureStats = video->stats();
+  WAM_CHECK(fatalSerialToken.load() ==
+            emptyInitFailureStats.fatalErrorSerial);
   WAM_CHECK(emptyInitFailureStats.activeResourceSets == 0);
   WAM_CHECK(emptyInitFailureStats.importedFrames == 0);
   WAM_CHECK(emptyInitFailureStats.renderedFrames ==
@@ -422,6 +427,8 @@ Item {
       QStringLiteral("retirement service creation")));
   WAM_CHECK(!video->takeFatalError().has_value());
   WAM_CHECK(video->stats().fatalErrorSerial ==
+            emptyInitFailureStats.fatalErrorSerial);
+  WAM_CHECK(fatalSerialToken.load() ==
             emptyInitFailureStats.fatalErrorSerial);
   // Taking an event must not make the same terminal node failure look new on
   // subsequent render requests.
@@ -914,6 +921,10 @@ Item {
       },
       5000));
   const auto generationThreeFailureStats = video->stats();
+  WAM_CHECK(generationThreeFailureStats.fatalErrorSerial ==
+            emptyInitFailureStats.fatalErrorSerial + 1);
+  WAM_CHECK(fatalSerialToken.load() ==
+            generationThreeFailureStats.fatalErrorSerial);
   WAM_CHECK(generationThreeFailureStats.importedFrames ==
             beforeReinvalidatedFailure.importedFrames);
   WAM_CHECK(generationThreeFailureStats.lastRenderedGeneration == 2);
@@ -943,6 +954,8 @@ Item {
   WAM_CHECK(fatalError->contains(
       QStringLiteral("retirement service creation")));
   WAM_CHECK(!video->takeFatalError().has_value());
+  WAM_CHECK(fatalSerialToken.load() ==
+            generationThreeFailureStats.fatalErrorSerial);
 
   // Moving the paused frame to another live window creates another node and
   // potentially another Qt context/share group. No decoder resubmit occurs.
@@ -987,7 +1000,10 @@ Item {
   stats = video->stats();
   WAM_CHECK(stats.peakActiveResourceSets <= 2);
   WAM_CHECK(!stats.retirementFailed);
+  const std::uint64_t fatalSerialBeforeItemDestruction =
+      fatalSerialToken.load();
   videoOwner.reset();
+  WAM_CHECK(fatalSerialToken.load() == fatalSerialBeforeItemDestruction);
 
   // The impossible lost-service branch must truly quarantine ownership. A
   // misleading fail-closed message is insufficient if the local FrameLease
