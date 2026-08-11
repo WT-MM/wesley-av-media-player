@@ -278,28 +278,45 @@ CVPixelBufferRef createIOSurfacePixelBuffer(OSType format,
   return result;
 }
 
-class AcceleratedCGLContext final {
+class CGLInteropContext final {
 public:
-  AcceleratedCGLContext() {
-    const CGLPixelFormatAttribute attributes[] = {
+  explicit CGLInteropContext(bool forceCoreProfileFallback = false) {
+    const CGLPixelFormatAttribute acceleratedAttributes[] = {
         kCGLPFAAccelerated,
         kCGLPFAOpenGLProfile,
         static_cast<CGLPixelFormatAttribute>(kCGLOGLPVersion_3_2_Core),
         static_cast<CGLPixelFormatAttribute>(0)};
-    GLint count = 0;
-    const CGLError chooseStatus =
-        CGLChoosePixelFormat(attributes, &pixelFormat_, &count);
-    WAM_CHECK_DETAIL(chooseStatus == kCGLNoError,
-                     CGLErrorString(chooseStatus));
-    WAM_CHECK(pixelFormat_ != nullptr);
-    WAM_CHECK(count > 0);
+    const CGLPixelFormatAttribute coreProfileAttributes[] = {
+        kCGLPFAOpenGLProfile,
+        static_cast<CGLPixelFormatAttribute>(kCGLOGLPVersion_3_2_Core),
+        static_cast<CGLPixelFormatAttribute>(0)};
+
+    if (!forceCoreProfileFallback &&
+        choosePixelFormat(acceleratedAttributes, &pixelFormat_)) {
+      usedCoreProfileFallback_ = false;
+    } else {
+      usedCoreProfileFallback_ = true;
+      WAM_CHECK_DETAIL(choosePixelFormat(coreProfileAttributes, &pixelFormat_),
+                       "no OpenGL 3.2 core CGL pixel format is available");
+    }
+
+    GLint profile = 0;
+    const CGLError profileStatus = CGLDescribePixelFormat(
+        pixelFormat_, 0, kCGLPFAOpenGLProfile, &profile);
+    WAM_CHECK_DETAIL(profileStatus == kCGLNoError,
+                     CGLErrorString(profileStatus));
+    WAM_CHECK_DETAIL(
+        profile == static_cast<GLint>(kCGLOGLPVersion_3_2_Core),
+        "CGL selected a pixel format outside the OpenGL 3.2 core contract");
     GLint accelerated = 0;
     const CGLError describeStatus = CGLDescribePixelFormat(
         pixelFormat_, 0, kCGLPFAAccelerated, &accelerated);
     WAM_CHECK_DETAIL(describeStatus == kCGLNoError,
                      CGLErrorString(describeStatus));
-    WAM_CHECK_DETAIL(accelerated != 0,
-                     "CGL selected a non-accelerated pixel format");
+    accelerated_ = accelerated != 0;
+    WAM_CHECK_DETAIL(usedCoreProfileFallback_ || accelerated_,
+                     "the acceleration-constrained CGL selection was not "
+                     "accelerated");
     const CGLError createStatus =
         CGLCreateContext(pixelFormat_, nullptr, &context_);
     WAM_CHECK_DETAIL(createStatus == kCGLNoError,
@@ -307,10 +324,10 @@ public:
     WAM_CHECK(context_ != nullptr);
   }
 
-  AcceleratedCGLContext(const AcceleratedCGLContext &) = delete;
-  AcceleratedCGLContext &operator=(const AcceleratedCGLContext &) = delete;
+  CGLInteropContext(const CGLInteropContext &) = delete;
+  CGLInteropContext &operator=(const CGLInteropContext &) = delete;
 
-  ~AcceleratedCGLContext() {
+  ~CGLInteropContext() {
     if (CGLGetCurrentContext() == context_) {
       CGLSetCurrentContext(nullptr);
     }
@@ -323,10 +340,32 @@ public:
   }
 
   [[nodiscard]] CGLContextObj get() const noexcept { return context_; }
+  [[nodiscard]] bool accelerated() const noexcept { return accelerated_; }
+  [[nodiscard]] bool usedCoreProfileFallback() const noexcept {
+    return usedCoreProfileFallback_;
+  }
 
 private:
+  static bool choosePixelFormat(const CGLPixelFormatAttribute *attributes,
+                                CGLPixelFormatObj *pixelFormat) {
+    CGLPixelFormatObj candidate = nullptr;
+    GLint count = 0;
+    const CGLError status =
+        CGLChoosePixelFormat(attributes, &candidate, &count);
+    if (status != kCGLNoError || candidate == nullptr || count <= 0) {
+      if (candidate != nullptr) {
+        CGLDestroyPixelFormat(candidate);
+      }
+      return false;
+    }
+    *pixelFormat = candidate;
+    return true;
+  }
+
   CGLPixelFormatObj pixelFormat_{nullptr};
   CGLContextObj context_{nullptr};
+  bool accelerated_{false};
+  bool usedCoreProfileFallback_{false};
 };
 
 void bindIOSurfacePlanesWithCGL(CGLContextObj context,
@@ -369,6 +408,20 @@ void bindIOSurfacePlanesWithCGL(CGLContextObj context,
   glBindTexture(GL_TEXTURE_RECTANGLE, 0);
   glDeleteTextures(static_cast<GLsizei>(textures.size()), textures.data());
   WAM_CHECK(glGetError() == GL_NO_ERROR);
+}
+
+void testForcedCGLCoreProfileFallback() {
+  CGLInteropContext fallbackContext(true);
+  WAM_CHECK(fallbackContext.usedCoreProfileFallback());
+  CVPixelBufferRef nv12 = createIOSurfacePixelBuffer(
+      kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, 128, 64,
+      wam::macos::VideoToolboxOutputInterop::OpenGL);
+  bindIOSurfacePlanesWithCGL(fallbackContext.get(), nv12);
+  CVPixelBufferRelease(nv12);
+  std::cout << "Forced CGL 3.2-core fallback import passed ("
+            << (fallbackContext.accelerated() ? "accelerated"
+                                              : "non-accelerated")
+            << " renderer)\n";
 }
 
 void testFiniteAdmissionNeverEnablesTemporalProcessing() {
@@ -1269,7 +1322,15 @@ int main(int argc, char **argv) {
     WAM_CHECK_DETAIL(VTIsHardwareDecodeSupported(kCMVideoCodecType_HEVC),
                      "this runner reports no hardware HEVC decoder");
   }
-  AcceleratedCGLContext cglContext;
+  CGLInteropContext cglContext;
+  std::cout << "Decoded-frame CGL import context: OpenGL 3.2 core, "
+            << (cglContext.accelerated() ? "accelerated" : "non-accelerated")
+            << ", "
+            << (cglContext.usedCoreProfileFallback()
+                    ? "available-core fallback"
+                    : "accelerated preference")
+            << '\n';
+  testForcedCGLCoreProfileFallback();
   testFiniteAdmissionNeverEnablesTemporalProcessing();
   testConfigurationByteBound(video);
   testCodecParserAndDeclaredReorderBound(video);
