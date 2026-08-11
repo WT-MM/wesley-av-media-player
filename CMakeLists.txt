@@ -250,6 +250,9 @@ if(BUILD_TESTING)
         "minos ${WAM_MACOS_DEPLOYMENT_TARGET_REGEX}")
 
     if(WAM_ENABLE_MACOS_NATIVE_VIDEO)
+      target_compile_definitions(wam_macos_native_video PRIVATE
+        WAM_NATIVE_VIDEO_PIPELINE_TESTING=1)
+
       add_executable(wam_native_video_test
         tests/native_video_presenter_test.mm)
       target_link_libraries(wam_native_video_test PRIVATE
@@ -294,6 +297,8 @@ if(BUILD_TESTING)
           EXISTS "${WAM_RESOLVED_NATIVE_VIDEO_TEST_FIXTURE}")
         add_executable(wam_native_video_pipeline_test
           tests/native_video_pipeline_test.mm)
+        target_compile_definitions(wam_native_video_pipeline_test PRIVATE
+          WAM_NATIVE_VIDEO_PIPELINE_TESTING=1)
         target_link_libraries(wam_native_video_pipeline_test PRIVATE
           wam_macos_native_video)
         target_compile_options(wam_native_video_pipeline_test PRIVATE

@@ -55,9 +55,13 @@ generation-based seek invalidation. It is compiled only with
 `WAM_ENABLE_MACOS_NATIVE_VIDEO=ON`; no shipping controller or render node can
 select it, and the normal libmpv path is unchanged. The current standalone
 `CAMetalLayer` presenter is a component probe, not a qualified Qt compositor.
-Runtime activation is also blocked on asynchronous AVAsset key loading,
-Qt-native composition, full-sync/open-GOP seek coverage, and off-UI bounded
-VideoToolbox teardown.
+Pipeline stop, detach, and destruction transfer their demux/VideoToolbox drain
+to a self-owned background retirement slot, so the AppKit thread never joins
+those producers. A process-wide admission lease permits at most one native
+attempt to prepare, run, or retire; frontend churn therefore cannot accumulate
+stuck VideoToolbox sessions. Runtime activation remains blocked on asynchronous
+AVAsset key loading, Qt-native composition, and full-sync/open-GOP seek
+coverage.
 See `docs/NATIVE_MACOS_VIDEO.md` for scope and rollout gates.
 
 ## Editing and captions
