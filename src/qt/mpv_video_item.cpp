@@ -1,5 +1,6 @@
 #include "mpv_video_item.hpp"
 
+#include "mpv_render_context_policy.hpp"
 #include "player_controller.hpp"
 #include "player_core_p.hpp"
 
@@ -48,7 +49,13 @@ class MpvRenderNode final : public QSGRenderNode {
   }
 
   void render(const RenderState*) override {
-    if (!core_ || !window_ || !render_requested_) return;
+    if (!core_) return;
+    // Releasing here keeps mpv's free call in the scene graph's current GL
+    // context. Do this before every other early return: native-path revocation
+    // and controller render suppression must not leave an invisible libmpv
+    // context resident indefinitely.
+    if (!retainMpvRenderContextForPass(*core_, render_requested_)) return;
+    if (!window_) return;
     if (window_->rendererInterface()->graphicsApi() !=
         QSGRendererInterface::OpenGL)
       return;

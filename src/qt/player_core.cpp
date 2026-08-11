@@ -258,22 +258,23 @@ PlayerCore::~PlayerCore() {
   if (!handle_)
     return;
 
-  mpv_set_wakeup_callback(handle_, nullptr, nullptr);
+  revokeRenderContext();
   {
     std::scoped_lock lock(render_mutex_);
-    if (render_context_) {
-      // Make every outstanding GUI-thread ticket stale before the fallback
-      // destroys the context.
-      static_cast<void>(render_lifecycle_.invalidate());
-      // A MpvRenderNode normally releases this while its OpenGL context is
-      // current. This fallback is only for an abnormal scene-graph teardown.
-      qWarning() << "WAM: mpv render context outlived its scene-graph node";
-      mpv_render_context_set_update_callback(render_context_, nullptr, nullptr);
-      mpv_render_context_free(render_context_);
-      render_context_ = nullptr;
-    }
+    // An admitted render context owns a shared reference back to this object.
+    // Consequently the destructor cannot be entered until an exact-context
+    // release has freed the renderer and broken that cycle. This assertion is
+    // a guard against ever reintroducing an unsafe destructor fallback:
+    // libmpv forbids every mpv_render_* call from a different/no GL context.
+    Q_ASSERT(!render_context_);
+    Q_ASSERT(render_context_owner_.isNull());
+    Q_ASSERT(!render_context_callback_installed_);
+    Q_ASSERT(!render_context_keepalive_);
+    Q_ASSERT(!renderContextBusy());
+    static_cast<void>(render_lifecycle_.invalidate());
   }
-  mpv_terminate_destroy(handle_);
+  mpv_set_wakeup_callback(handle_, nullptr, nullptr);
+  terminateMpvHandle(handle_);
 }
 
 void PlayerCore::detachOwner(PlayerController *owner) {
@@ -285,6 +286,158 @@ void PlayerCore::detachOwner(PlayerController *owner) {
   }
 }
 
+void PlayerCore::allowRenderContext() noexcept {
+  render_context_permission_.fetch_or(kRenderContextAllowed,
+                                      std::memory_order_acq_rel);
+}
+
+void PlayerCore::revokeRenderContext() noexcept {
+  render_context_permission_.fetch_and(
+      static_cast<std::uint8_t>(~kRenderContextAllowed),
+      std::memory_order_acq_rel);
+}
+
+bool PlayerCore::renderContextAllowed() const noexcept {
+  return (render_context_permission_.load(std::memory_order_acquire) &
+          kRenderContextAllowed) != 0;
+}
+
+bool PlayerCore::renderContextBusy() const noexcept {
+  return (render_context_permission_.load(std::memory_order_acquire) &
+          kRenderContextBusy) != 0;
+}
+
+void PlayerCore::clearRenderContextBusy() noexcept {
+  render_context_permission_.fetch_and(
+      static_cast<std::uint8_t>(~kRenderContextBusy),
+      std::memory_order_acq_rel);
+}
+
+QOpenGLContext *PlayerCore::currentOpenGlContext() const noexcept {
+#if defined(WAM_PLAYER_CORE_RENDER_CONTEXT_TESTING)
+  if (has_current_opengl_context_for_testing_) {
+    try {
+      if (!has_current_opengl_context_for_testing_())
+        return nullptr;
+    } catch (...) {
+      return nullptr;
+    }
+  }
+#endif
+  return QOpenGLContext::currentContext();
+}
+
+bool PlayerCore::renderContextOwnerIsCurrentLocked() const noexcept {
+  return render_context_ && !render_context_owner_.isNull() &&
+         currentOpenGlContext() == render_context_owner_.data();
+}
+
+bool PlayerCore::commitRenderContextPermission(bool keep_busy) noexcept {
+  std::uint8_t expected = static_cast<std::uint8_t>(
+      kRenderContextAllowed | kRenderContextBusy);
+  const std::uint8_t desired =
+      keep_busy ? expected : kRenderContextAllowed;
+  return render_context_permission_.compare_exchange_strong(
+      expected, desired, std::memory_order_acq_rel,
+      std::memory_order_acquire);
+}
+
+void PlayerCore::setRenderContextUpdateCallback(
+    mpv_render_context *context, mpv_render_update_fn callback,
+    void *callback_context) noexcept {
+  if (!context)
+    return;
+#if defined(WAM_PLAYER_CORE_RENDER_CONTEXT_TESTING)
+  if (render_context_set_update_callback_for_testing_) {
+    try {
+      render_context_set_update_callback_for_testing_(
+          context, callback, callback_context);
+    } catch (...) {
+      // A test seam must not escape this production noexcept cleanup path.
+    }
+    return;
+  }
+#endif
+  mpv_render_context_set_update_callback(context, callback,
+                                         callback_context);
+}
+
+void PlayerCore::freeRenderContext(mpv_render_context *context) noexcept {
+  if (!context)
+    return;
+#if defined(WAM_PLAYER_CORE_RENDER_CONTEXT_TESTING)
+  render_context_free_count_for_testing_.fetch_add(
+      1, std::memory_order_relaxed);
+  if (render_context_free_for_testing_) {
+    try {
+      render_context_free_for_testing_(context);
+    } catch (...) {
+      // A test seam must not escape this production noexcept cleanup path.
+    }
+    return;
+  }
+#endif
+  mpv_render_context_free(context);
+}
+
+void PlayerCore::terminateMpvHandle(mpv_handle *handle) noexcept {
+  if (!handle)
+    return;
+#if defined(WAM_PLAYER_CORE_RENDER_CONTEXT_TESTING)
+  if (before_terminate_destroy_for_testing_) {
+    try {
+      before_terminate_destroy_for_testing_(handle);
+    } catch (...) {
+      // A test seam must not escape this production noexcept teardown path.
+    }
+  }
+#endif
+  mpv_terminate_destroy(handle);
+}
+
+bool PlayerCore::freeRenderContextResourceLocked(
+    std::shared_ptr<PlayerCore> &deferred_keepalive) noexcept {
+  if (!render_context_) {
+    deferred_keepalive = std::move(render_context_keepalive_);
+    render_context_owner_.clear();
+    render_context_callback_installed_ = false;
+    return true;
+  }
+  if (!renderContextOwnerIsCurrentLocked())
+    return false;
+
+  // Move the self-owner first, but retain the local reference through the
+  // entire mpv free, lifecycle notification, and caller return path.
+  deferred_keepalive = std::move(render_context_keepalive_);
+  if (render_context_callback_installed_) {
+    setRenderContextUpdateCallback(render_context_, nullptr, nullptr);
+  }
+  freeRenderContext(render_context_);
+  render_context_ = nullptr;
+  render_context_callback_installed_ = false;
+  render_context_owner_.clear();
+  return true;
+}
+
+bool PlayerCore::invalidateAndFreeRenderContextLocked(
+    std::optional<RenderTicket> &retired_ticket,
+    std::shared_ptr<PlayerCore> &deferred_keepalive) noexcept {
+  // Check the exact live owner before invalidating. On mismatch the retained
+  // renderer, lifecycle, Busy bit, and self-owner remain intact, and no
+  // mpv_render_* API is invoked.
+  if (render_context_ && !renderContextOwnerIsCurrentLocked())
+    return false;
+
+  retired_ticket = render_lifecycle_.invalidate();
+  if (!freeRenderContextResourceLocked(deferred_keepalive))
+    return false;
+  // Busy covers both the API call and the full installed-context lifetime.
+  // Publish its release only after libmpv has returned from free().
+  clearRenderContextBusy();
+  video_update_queued_.store(false, std::memory_order_release);
+  return true;
+}
+
 void *PlayerCore::getOpenGlProcAddress(void *, const char *name) {
   QOpenGLContext *context = QOpenGLContext::currentContext();
   if (!context || !name)
@@ -293,48 +446,220 @@ void *PlayerCore::getOpenGlProcAddress(void *, const char *name) {
 }
 
 bool PlayerCore::ensureRenderContext() {
+  std::shared_ptr<PlayerCore> deferred_keepalive;
+  std::optional<RenderTicket> retired_ticket;
   std::unique_lock lock(render_mutex_);
   if (!handle_)
     return false;
 
-  if (const auto ready = render_lifecycle_.readyTicket())
-    return render_context_ != nullptr;
+  if (const auto ready = render_lifecycle_.readyTicket()) {
+    if (render_context_ && renderContextAllowed()) {
+      return renderContextOwnerIsCurrentLocked();
+    }
+    if (!renderContextAllowed()) {
+      const bool released = invalidateAndFreeRenderContextLocked(
+          retired_ticket, deferred_keepalive);
+      lock.unlock();
+      if (released && retired_ticket)
+        notifyRenderInvalidated(*retired_ticket);
+    }
+    return false;
+  }
+
+  // A denied, context-free render pass is a pure no-op. In particular it must
+  // not churn RenderLifecycle generations or queue invalidation callbacks.
+  if (!renderContextAllowed())
+    return false;
 
   const auto creating = render_lifecycle_.beginCreation();
   if (!creating)
     return false;
 
-  QString error;
-  if (!QOpenGLContext::currentContext()) {
-    error = QStringLiteral(
-        "The video renderer requires an active OpenGL context.");
-  } else {
-    mpv_opengl_init_params gl_init{&PlayerCore::getOpenGlProcAddress, nullptr};
-    mpv_render_param parameters[] = {
-        {MPV_RENDER_PARAM_API_TYPE,
-         const_cast<char *>(MPV_RENDER_API_TYPE_OPENGL)},
-        {MPV_RENDER_PARAM_OPENGL_INIT_PARAMS, &gl_init},
-        {MPV_RENDER_PARAM_INVALID, nullptr},
-    };
-
-    mpv_render_context *candidate = nullptr;
-    const int result =
-        mpv_render_context_create(&candidate, handle_, parameters);
-    if (result < 0) {
-      error = QStringLiteral("Unable to initialize video rendering: %1")
-                  .arg(QString::fromUtf8(mpv_error_string(result)));
-    } else {
-      render_context_ = candidate;
-      mpv_render_context_set_update_callback(
-          render_context_, &PlayerCore::onRenderUpdate, this);
+  QOpenGLContext *const creating_context = currentOpenGlContext();
+  if (!creating_context) {
+    // No Busy reservation was needed because the API will not be called, but
+    // failure publication must still linearize against revoke().
+    std::uint8_t expected = kRenderContextAllowed;
+    if (!render_context_permission_.compare_exchange_strong(
+            expected, kRenderContextAllowed, std::memory_order_acq_rel,
+            std::memory_order_acquire)) {
+      const auto retired = render_lifecycle_.invalidate();
+      lock.unlock();
+      if (retired)
+        notifyRenderInvalidated(*retired);
+      return false;
     }
-  }
-
-  if (!error.isEmpty()) {
     const auto failed = render_lifecycle_.completeCreation(*creating, false);
     lock.unlock();
     if (failed)
-      postInitializationError(error, *failed);
+      postRenderInitializationErrorBestEffort(
+          MPV_ERROR_GENERIC, true, *failed);
+    return false;
+  }
+
+  std::uint8_t expected = kRenderContextAllowed;
+  if (!render_context_permission_.compare_exchange_strong(
+          expected,
+          static_cast<std::uint8_t>(kRenderContextAllowed |
+                                    kRenderContextBusy),
+          std::memory_order_acq_rel, std::memory_order_acquire)) {
+    const auto retired = render_lifecycle_.invalidate();
+    lock.unlock();
+    if (retired)
+      notifyRenderInvalidated(*retired);
+    return false;
+  }
+
+  // Busy admits only shared PlayerCore instances. The retained self-owner is
+  // the fail-safe lifetime boundary for libmpv's callback target: if the
+  // creating QOpenGLContext disappears before release, the entire core is
+  // intentionally quarantined instead of running undefined render teardown.
+  auto admitted_keepalive = weak_from_this().lock();
+  if (!admitted_keepalive) {
+    retired_ticket = render_lifecycle_.invalidate();
+    clearRenderContextBusy();
+    lock.unlock();
+    if (retired_ticket)
+      notifyRenderInvalidated(*retired_ticket);
+    return false;
+  }
+  render_context_keepalive_ = std::move(admitted_keepalive);
+  render_context_owner_ = creating_context;
+  render_context_callback_installed_ = false;
+
+#if defined(WAM_PLAYER_CORE_RENDER_CONTEXT_TESTING)
+  if (before_render_context_create_for_testing_)
+    before_render_context_create_for_testing_();
+#endif
+
+  // The hook may model a context switch or destruction. Never call the API
+  // unless the exact captured owner is still live and current.
+  if (render_context_owner_.isNull() ||
+      currentOpenGlContext() != render_context_owner_.data()) {
+    retired_ticket = render_lifecycle_.invalidate();
+    deferred_keepalive = std::move(render_context_keepalive_);
+    render_context_owner_.clear();
+    clearRenderContextBusy();
+    lock.unlock();
+    if (retired_ticket)
+      notifyRenderInvalidated(*retired_ticket);
+    return false;
+  }
+
+  // This no-op RMW is the API admission linearization against revoke(). A
+  // revoke that won while Busy skips the actual mpv call and create counter.
+  if (!commitRenderContextPermission(true)) {
+    retired_ticket = render_lifecycle_.invalidate();
+    deferred_keepalive = std::move(render_context_keepalive_);
+    render_context_owner_.clear();
+    clearRenderContextBusy();
+    lock.unlock();
+    if (retired_ticket)
+      notifyRenderInvalidated(*retired_ticket);
+    return false;
+  }
+
+  mpv_opengl_init_params gl_init{&PlayerCore::getOpenGlProcAddress, nullptr};
+  mpv_render_param parameters[] = {
+      {MPV_RENDER_PARAM_API_TYPE,
+       const_cast<char *>(MPV_RENDER_API_TYPE_OPENGL)},
+      {MPV_RENDER_PARAM_OPENGL_INIT_PARAMS, &gl_init},
+      {MPV_RENDER_PARAM_INVALID, nullptr},
+  };
+
+  mpv_render_context *candidate = nullptr;
+  render_context_create_count_.fetch_add(1, std::memory_order_relaxed);
+  int result = 0;
+#if defined(WAM_PLAYER_CORE_RENDER_CONTEXT_TESTING)
+  if (render_context_create_for_testing_) {
+    try {
+      result = render_context_create_for_testing_(&candidate, handle_,
+                                                  parameters);
+    } catch (...) {
+      candidate = nullptr;
+      result = MPV_ERROR_GENERIC;
+    }
+  } else
+#endif
+  {
+    result = mpv_render_context_create(&candidate, handle_, parameters);
+  }
+
+#if defined(WAM_PLAYER_CORE_RENDER_CONTEXT_TESTING)
+  if (after_render_context_api_for_testing_)
+    after_render_context_api_for_testing_();
+  if (result >= 0 && candidate &&
+      after_render_context_create_for_testing_) {
+    after_render_context_create_for_testing_();
+  }
+#endif
+
+  if (candidate)
+    render_context_ = candidate;
+
+  // libmpv requires the exact creating GL context for every render API call,
+  // including callback installation and free. A post-API context switch keeps
+  // even a partial failure candidate retained under Busy+self for later
+  // exact-owner retirement; it must not publish Ready/Failed or be destroyed
+  // through the wrong context.
+  if (candidate && !renderContextOwnerIsCurrentLocked()) {
+    try {
+      qWarning()
+          << "WAM: retaining an mpv render candidate after its creating"
+             " OpenGL context stopped being current";
+    } catch (...) {
+      // Diagnostics are best-effort; ownership remains safely quarantined.
+    }
+    return false;
+  }
+
+  if (result < 0 || !candidate) {
+    // A failed API is allowed to return a partial candidate. Its exact owner
+    // was verified above. Finish every resource/lifecycle transition before
+    // allocating a detailed diagnostic so bad_alloc cannot strand Creating,
+    // Busy, the self-owner, or a partial candidate on the render thread.
+    if (!freeRenderContextResourceLocked(deferred_keepalive))
+      return false;
+    if (!commitRenderContextPermission(false)) {
+      retired_ticket = render_lifecycle_.invalidate();
+      clearRenderContextBusy();
+      lock.unlock();
+      if (retired_ticket)
+        notifyRenderInvalidated(*retired_ticket);
+      return false;
+    }
+    const auto failed = render_lifecycle_.completeCreation(*creating, false);
+    lock.unlock();
+    if (failed)
+      postRenderInitializationErrorBestEffort(result, false, *failed);
+    return false;
+  }
+
+  // Installation has its own exact permission linearization after the API
+  // and adversarial barrier. A revoke that won frees the uninstalled candidate
+  // and returns the lifecycle to Empty without reporting an error.
+  if (!commitRenderContextPermission(true)) {
+    const bool released = invalidateAndFreeRenderContextLocked(
+        retired_ticket, deferred_keepalive);
+    lock.unlock();
+    if (released && retired_ticket)
+      notifyRenderInvalidated(*retired_ticket);
+    return false;
+  }
+
+  setRenderContextUpdateCallback(
+      render_context_, &PlayerCore::onRenderUpdate, this);
+  render_context_callback_installed_ = true;
+
+  // This RMW is the Ready commit point. If it succeeds, a later revoke is an
+  // active-context revocation: lifecycle publication may finish, but ticket
+  // readers observe the denied gate and the node releases on its next pass.
+  if (!commitRenderContextPermission(true)) {
+    const bool released = invalidateAndFreeRenderContextLocked(
+        retired_ticket, deferred_keepalive);
+    lock.unlock();
+    if (released && retired_ticket)
+      notifyRenderInvalidated(*retired_ticket);
     return false;
   }
 
@@ -342,9 +667,8 @@ bool PlayerCore::ensureRenderContext() {
   if (!ready) {
     // Defensive only: creation and release are serialized on Qt's render
     // thread, so this transition should not be invalidated in production.
-    mpv_render_context_set_update_callback(render_context_, nullptr, nullptr);
-    mpv_render_context_free(render_context_);
-    render_context_ = nullptr;
+    static_cast<void>(invalidateAndFreeRenderContextLocked(
+        retired_ticket, deferred_keepalive));
     return false;
   }
   lock.unlock();
@@ -356,8 +680,10 @@ void PlayerCore::render(int framebuffer, int width, int height, bool flip_y) {
   if (width <= 0 || height <= 0)
     return;
   std::scoped_lock lock(render_mutex_);
-  if (!render_context_)
+  if (!render_context_ || !renderContextAllowed() ||
+      !renderContextOwnerIsCurrentLocked()) {
     return;
+  }
 
   // Keep the render callback coalesced until Qt actually consumes the update,
   // rather than only until the GUI thread asks the scene graph for a frame.
@@ -380,28 +706,21 @@ void PlayerCore::render(int framebuffer, int width, int height, bool flip_y) {
   mpv_render_context_render(render_context_, parameters);
 }
 
-void PlayerCore::releaseRenderContext() {
+bool PlayerCore::releaseRenderContext() {
   std::optional<RenderTicket> retired_ticket;
+  std::shared_ptr<PlayerCore> deferred_keepalive;
+  bool released = false;
   {
     std::scoped_lock lock(render_mutex_);
     // Invalidate GUI-thread tickets before freeing the context. An
     // asynchronous load command that races teardown therefore cannot be
     // mistaken for a load submitted against the replacement generation.
-    retired_ticket = render_lifecycle_.invalidate();
-    if (render_context_) {
-      mpv_render_context_set_update_callback(render_context_, nullptr,
-                                             nullptr);
-      mpv_render_context_free(render_context_);
-      render_context_ = nullptr;
-    }
-    // A queued update may have been delivered while the scene graph was
-    // hidden and therefore never consumed by render(). A replacement context
-    // must be able to schedule its first frame instead of inheriting that
-    // stale gate.
-    video_update_queued_.store(false, std::memory_order_release);
+    released = invalidateAndFreeRenderContextLocked(
+        retired_ticket, deferred_keepalive);
   }
-  if (retired_ticket)
+  if (released && retired_ticket)
     notifyRenderInvalidated(*retired_ticket);
+  return released;
 }
 
 bool PlayerCore::retryFailedRenderContext() {
@@ -474,6 +793,10 @@ void PlayerCore::queueVideoUpdate() {
 }
 
 void PlayerCore::notifyRenderingReady(RenderTicket ticket) {
+#if defined(WAM_PLAYER_CORE_RENDER_CONTEXT_TESTING)
+  render_context_ready_notify_count_for_testing_.fetch_add(
+      1, std::memory_order_relaxed);
+#endif
   std::scoped_lock lock(owner_mutex_);
   if (!owner_)
     return;
@@ -484,6 +807,10 @@ void PlayerCore::notifyRenderingReady(RenderTicket ticket) {
 }
 
 void PlayerCore::notifyRenderInvalidated(RenderTicket retired_ticket) {
+#if defined(WAM_PLAYER_CORE_RENDER_CONTEXT_TESTING)
+  render_context_invalidation_notify_count_for_testing_.fetch_add(
+      1, std::memory_order_relaxed);
+#endif
   std::scoped_lock lock(owner_mutex_);
   if (!owner_)
     return;
@@ -496,18 +823,58 @@ void PlayerCore::notifyRenderInvalidated(RenderTicket retired_ticket) {
       Qt::QueuedConnection);
 }
 
-void PlayerCore::postInitializationError(const QString &error,
-                                         RenderTicket ticket) {
-  std::scoped_lock lock(owner_mutex_);
-  if (!owner_)
+void PlayerCore::postRenderInitializationErrorBestEffort(
+    int result, bool missing_opengl_context,
+    RenderTicket ticket) noexcept {
+  try {
+#if defined(WAM_PLAYER_CORE_RENDER_CONTEXT_TESTING)
+    if (before_render_context_error_diagnostic_for_testing_)
+      before_render_context_error_diagnostic_for_testing_();
+#endif
+    if (missing_opengl_context) {
+      postInitializationError(
+          QStringLiteral(
+              "The video renderer requires an active OpenGL context."),
+          ticket);
+    } else if (result < 0) {
+      postInitializationError(
+          QStringLiteral("Unable to initialize video rendering: %1")
+              .arg(QString::fromUtf8(mpv_error_string(result))),
+          ticket);
+    } else {
+      postInitializationError(
+          QStringLiteral("Unable to initialize video rendering."), ticket);
+    }
     return;
-  PlayerController *owner = owner_;
-  QMetaObject::invokeMethod(
-      owner,
-      [owner, error, ticket] {
-        owner->handleRenderInitializationFailure(error, ticket.stamp);
-      },
-      Qt::QueuedConnection);
+  } catch (...) {
+    // The render-resource and lifecycle transaction has already completed.
+    // Fall through to a static, allocation-free diagnostic if constructing
+    // the detailed QString (or a deterministic test seam) failed.
+  }
+  postInitializationError(
+      QStringLiteral("Unable to initialize video rendering."), ticket);
+}
+
+void PlayerCore::postInitializationError(const QString &error,
+                                         RenderTicket ticket) noexcept {
+#if defined(WAM_PLAYER_CORE_RENDER_CONTEXT_TESTING)
+  render_context_error_notify_count_for_testing_.fetch_add(
+      1, std::memory_order_relaxed);
+#endif
+  try {
+    std::scoped_lock lock(owner_mutex_);
+    if (!owner_)
+      return;
+    PlayerController *owner = owner_;
+    QMetaObject::invokeMethod(
+        owner,
+        [owner, error, ticket] {
+          owner->handleRenderInitializationFailure(error, ticket.stamp);
+        },
+        Qt::QueuedConnection);
+  } catch (...) {
+    // Renderer failure reporting must never throw through Qt's render pass.
+  }
 }
 
 } // namespace wam::qt

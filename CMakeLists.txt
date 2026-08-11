@@ -230,6 +230,38 @@ if(BUILD_TESTING)
   add_test(NAME player_controller_lazy COMMAND wam_player_controller_lazy_test)
   set_tests_properties(player_controller_lazy PROPERTIES TIMEOUT 20)
 
+  add_executable(wam_player_core_render_context_permission_test
+    tests/player_core_render_context_permission_test.cpp
+    src/qt/player_controller.cpp
+    src/qt/player_controller.hpp
+    src/qt/player_core.cpp
+    src/qt/player_core_p.hpp
+    src/qt/render_lifecycle.hpp
+    src/qt/mpv_render_context_policy.hpp
+    src/jobs.cpp
+    src/jobs.hpp
+    src/caption_service.cpp
+    src/caption_service.hpp)
+  target_include_directories(
+    wam_player_core_render_context_permission_test PRIVATE src)
+  target_compile_definitions(
+    wam_player_core_render_context_permission_test PRIVATE
+    WAM_PLAYER_CORE_RENDER_CONTEXT_TESTING=1)
+  target_link_libraries(wam_player_core_render_context_permission_test PRIVATE
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Quick
+    Qt6::OpenGL
+    PkgConfig::MPV)
+  add_test(NAME player_core_render_context_permission
+    COMMAND wam_player_core_render_context_permission_test)
+  set_tests_properties(player_core_render_context_permission PROPERTIES
+    TIMEOUT 30)
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    set_tests_properties(player_core_render_context_permission PROPERTIES
+      ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+  endif()
+
   add_executable(wam_render_lifecycle_test
     tests/render_lifecycle_test.cpp
     src/qt/render_lifecycle.hpp)
