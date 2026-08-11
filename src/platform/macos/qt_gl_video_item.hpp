@@ -12,6 +12,24 @@
 
 namespace wam::macos {
 
+struct QtGlFatalErrorSerialState;
+
+// Copyable read-only handle for render-thread failure polling. The opaque
+// atomic state is shared independently of QObject lifetime; only the
+// presenter can publish a new serial.
+class QtGlFatalErrorSerialToken final {
+ public:
+  QtGlFatalErrorSerialToken() noexcept = default;
+  [[nodiscard]] std::uint64_t load() const noexcept;
+
+ private:
+  explicit QtGlFatalErrorSerialToken(
+      std::shared_ptr<const QtGlFatalErrorSerialState> state) noexcept;
+
+  std::shared_ptr<const QtGlFatalErrorSerialState> state_;
+  friend class QtGlVideoItem;
+};
+
 struct QtGlVideoItemStats {
   std::uint64_t submittedFrames{0};
   std::uint64_t importedFrames{0};
@@ -67,6 +85,10 @@ class QtGlVideoItem final : public QQuickItem {
   // and a recreated scene graph cannot resurrect the old generation.
   void flush(std::uint64_t nextGeneration) noexcept;
   [[nodiscard]] QtGlVideoItemStats stats() const;
+  // Acquire on the item's owning/GUI thread. Copies of the returned token and
+  // load() itself are safe on the scene-graph render thread.
+  [[nodiscard]] QtGlFatalErrorSerialToken fatalErrorSerialToken()
+      const noexcept;
   // Fatal presenter failures are first-wins until consumed. The serial never
   // resets, so a polling controller can distinguish a newly latched failure
   // from an already handled one without allocating on the blank-player path.
