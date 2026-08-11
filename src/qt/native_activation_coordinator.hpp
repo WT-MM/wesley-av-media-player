@@ -187,6 +187,11 @@ public:
   [[nodiscard]] Action mpvLoadFailed(Token token) noexcept;
   [[nodiscard]] Action mpvEndFileError(Token token,
                                        std::int64_t entry) noexcept;
+  // Controller deadlines fail native-owned phases into the one-way mpv
+  // fallback. Once fallback already owns presentation they are terminal and
+  // use its fail-closed pause/stop/allow/error chain. An issued action is
+  // never overwritten; its exact acknowledgement serializes cleanup.
+  [[nodiscard]] Action fail(Token token, FallbackReason reason) noexcept;
   [[nodiscard]] Action mpvReady(Token token, MpvReady ready) noexcept;
   [[nodiscard]] Action
   evaluateRelease(Token token, bool renderAllowed, bool renderBusy,

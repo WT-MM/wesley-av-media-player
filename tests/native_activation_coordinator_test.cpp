@@ -1174,6 +1174,197 @@ void testTerminalErrorsBehindFallbackActions() {
   }
 }
 
+void testControllerFailureEntryPoint() {
+  {
+    NativeActivationCoordinator coordinator;
+    const Token token = activate(coordinator, 30);
+    const Token stale{token.request, token.attempt + 1};
+    expectKind(coordinator.fail(stale, FallbackReason::ContextFailure),
+               Action::Kind::None, "stale controller failure token is inert");
+    expect(!coordinator.nextAction(),
+           "stale controller failure cannot occupy the action slot");
+
+    const Action pause =
+        coordinator.fail(token, FallbackReason::ContextFailure);
+    expectKind(pause, Action::Kind::ForcePauseMpv,
+               "native Active controller failure enters recoverable fallback");
+    const Action stop = coordinator.completeAction(pause.serial, pausedAt(6.5));
+    expectKind(stop, Action::Kind::StopNative,
+               "recoverable controller failure pauses before native stop");
+    const Action allow = coordinator.completeAction(stop.serial, stoppedAt(91));
+    expectKind(allow, Action::Kind::AllowMpvRenderer,
+               "recoverable controller failure re-allows after safe stop");
+    const Action waiting = coordinator.completeAction(allow.serial, {});
+    expectKind(waiting, Action::Kind::None,
+               "recoverable controller failure waits for fallback renderer");
+    expect(coordinator.snapshot().phase == Phase::FallbackAwaitRenderer &&
+               coordinator.snapshot().fallbackReason ==
+                   FallbackReason::ContextFailure,
+           "native controller failure preserves reason without surfacing yet");
+
+    const Action error = coordinator.fail(token, FallbackReason::Mismatch);
+    expectKind(error, Action::Kind::SurfaceError,
+               "fallback AwaitRenderer failure surfaces directly");
+    expect(error.value == static_cast<std::uint64_t>(FallbackReason::Mismatch),
+           "direct fallback failure preserves exact controller reason");
+    expect(coordinator.fail(token, FallbackReason::NativeFailure) == error,
+           "repeated Failed callback retains the exact SurfaceError serial");
+    static_cast<void>(coordinator.completeAction(error.serial, {}));
+    expect(coordinator.snapshot().phase == Phase::Failed,
+           "SurfaceError acknowledgement ends in Failed");
+    expectKind(coordinator.fail(token, FallbackReason::NativeFailure),
+               Action::Kind::None,
+               "acknowledged Failed state ignores later controller failures");
+  }
+
+  {
+    NativeActivationCoordinator coordinator;
+    const Token token = activate(coordinator, 31);
+    const Action clock = coordinator.setDesiredRate(token, 1.5);
+    expectKind(clock, Action::Kind::UpdateNativeClock,
+               "pending native controller-failure test owns a clock action");
+    expect(coordinator.fail(token, FallbackReason::NativeFailure) == clock,
+           "native failure never overwrites an issued clock serial");
+    const Action pause = coordinator.completeAction(clock.serial, {});
+    expectKind(pause, Action::Kind::ForcePauseMpv,
+               "issued native action acknowledgement continues fallback pause");
+    const Action stop =
+        coordinator.completeAction(pause.serial, pausedAt(7.0, 1.5));
+    const Action allow = coordinator.completeAction(stop.serial, stoppedAt(92));
+    static_cast<void>(coordinator.completeAction(allow.serial, {}));
+    expect(coordinator.snapshot().phase == Phase::FallbackAwaitRenderer,
+           "pending native mutation still reaches recoverable fallback");
+  }
+
+  {
+    NativeActivationCoordinator coordinator;
+    const Prepared prepared = prepareForStart(coordinator, 32);
+    expect(coordinator.fail(prepared.token, FallbackReason::ContextFailure) ==
+               prepared.start,
+           "renderer-denied native request retains issued StartNative serial");
+    const Action pause = coordinator.completeAction(prepared.start.serial, {});
+    expectKind(pause, Action::Kind::ForcePauseMpv,
+               "denied native request acknowledgement orders fallback pause");
+    const Action stop = coordinator.completeAction(pause.serial, pausedAt(0.0));
+    const Action allow = coordinator.completeAction(stop.serial, stoppedAt(93));
+    static_cast<void>(coordinator.completeAction(allow.serial, {}));
+    expect(coordinator.snapshot().phase == Phase::FallbackAwaitRenderer &&
+               !coordinator.snapshot().rendererDenied,
+           "denied native request stops then restores renderer permission");
+  }
+
+  {
+    NativeActivationCoordinator coordinator;
+    const Token token = activate(coordinator, 33);
+    const Action pause = coordinator.fail(token, FallbackReason::NativeFailure);
+    expect(coordinator.fail(token, FallbackReason::NativeFailure) == pause,
+           "failure during pending ForcePause retains its exact serial");
+    const Action stop = coordinator.completeAction(pause.serial, pausedAt(8.0));
+    expectKind(stop, Action::Kind::StopNative,
+               "repeated fallback failure continues to native Stop");
+    expect(coordinator.fail(token, FallbackReason::NativeFailure) == stop,
+           "failure during pending Stop retains its exact serial");
+    const Action allow = coordinator.completeAction(stop.serial, stoppedAt(94));
+    expectKind(allow, Action::Kind::AllowMpvRenderer,
+               "terminalized fallback still re-allows after safe Stop");
+    expect(coordinator.fail(token, FallbackReason::NativeFailure) == allow,
+           "failure during pending Allow retains its exact serial");
+    const Action error = coordinator.completeAction(allow.serial, {});
+    expectKind(error, Action::Kind::SurfaceError,
+               "terminalized repeated failure surfaces exactly once");
+    static_cast<void>(coordinator.completeAction(error.serial, {}));
+    expect(coordinator.snapshot().phase == Phase::Failed,
+           "repeated pending-action failure chain settles Failed");
+  }
+
+  {
+    NativeActivationCoordinator coordinator;
+    const Token token = activate(coordinator, 34);
+    driveFallbackToRenderer(coordinator, token);
+    static_cast<void>(coordinator.mpvReady(token, ready(99, 7, 3, 18.25)));
+    const Action select = coordinator.fallbackRenderReady(token, 180);
+    expect(coordinator.fail(token, FallbackReason::ContextFailure) == select,
+           "fallback failure never overwrites pending Select");
+    const Action pause = coordinator.completeAction(select.serial, {});
+    expectKind(pause, Action::Kind::ForcePauseMpv,
+               "pending Select failure force-pauses before surfacing");
+    const Action error = coordinator.completeAction(pause.serial, {});
+    expectKind(error, Action::Kind::SurfaceError,
+               "pending Select failure surfaces after physical pause");
+    static_cast<void>(coordinator.completeAction(error.serial, {}));
+  }
+
+  {
+    NativeActivationCoordinator coordinator;
+    const Token token = activate(coordinator, 340);
+    driveFallbackToRenderer(coordinator, token);
+    static_cast<void>(coordinator.mpvReady(token, ready(99, 7, 3, 18.25)));
+    const Action select = coordinator.fallbackRenderReady(token, 179);
+    const Action waiting = coordinator.completeAction(select.serial, {});
+    expectKind(waiting, Action::Kind::None,
+               "no-action AwaitRestart test waits for playback restart");
+    expect(coordinator.snapshot().phase == Phase::FallbackAwaitRestart,
+           "selection acknowledgement reaches no-action AwaitRestart");
+    const Action pause = coordinator.fail(token, FallbackReason::Mismatch);
+    expectKind(pause, Action::Kind::ForcePauseMpv,
+               "no-action AwaitRestart failure force-pauses transport");
+    const Action error = coordinator.completeAction(pause.serial, {});
+    expectKind(error, Action::Kind::SurfaceError,
+               "AwaitRestart failure surfaces after physical pause");
+    static_cast<void>(coordinator.completeAction(error.serial, {}));
+  }
+
+  {
+    NativeActivationCoordinator coordinator;
+    const Token token = activate(coordinator, 35);
+    driveFallbackToRenderer(coordinator, token);
+    static_cast<void>(coordinator.mpvReady(token, ready(99, 7, 3, 18.25)));
+    const Action select = coordinator.fallbackRenderReady(token, 181);
+    static_cast<void>(
+        coordinator.fallbackPlaybackRestart(token, 181, 7, 18.25));
+    const Action restore = coordinator.completeAction(select.serial, {});
+    expectKind(restore, Action::Kind::RestoreTransport,
+               "pending Restore failure test reaches transport restore");
+    expect(coordinator.fail(token, FallbackReason::ContextFailure) == restore,
+           "fallback failure never overwrites pending Restore");
+    const Action pause = coordinator.completeAction(restore.serial, {});
+    expectKind(pause, Action::Kind::ForcePauseMpv,
+               "pending Restore failure re-pauses possibly resumed audio");
+    const Action error = coordinator.completeAction(pause.serial, {});
+    expectKind(error, Action::Kind::SurfaceError,
+               "pending Restore failure surfaces after physical pause");
+    static_cast<void>(coordinator.completeAction(error.serial, {}));
+  }
+
+  {
+    NativeActivationCoordinator coordinator;
+    const Token token = fallbackActive(coordinator, 36, 182);
+    const Action attach = coordinator.requestCaption(token, 9001);
+    expectKind(attach, Action::Kind::AttachCaption,
+               "pending Attach failure test owns caption action");
+    expect(coordinator.fail(token, FallbackReason::Caption) == attach,
+           "fallback failure never overwrites pending AttachCaption");
+    const Action pause = coordinator.completeAction(attach.serial, {});
+    expectKind(pause, Action::Kind::ForcePauseMpv,
+               "pending Attach acknowledgement orders terminal pause");
+    const Action error = coordinator.completeAction(pause.serial, {});
+    expectKind(error, Action::Kind::SurfaceError,
+               "pending Attach failure surfaces after pause");
+    static_cast<void>(coordinator.completeAction(error.serial, {}));
+  }
+
+  {
+    NativeActivationCoordinator coordinator;
+    const Token token = activate(coordinator, 37);
+    const Action stop = coordinator.cancelForStopOrOpen(CancelMode::Stop);
+    expectKind(coordinator.fail(token, FallbackReason::NativeFailure),
+               Action::Kind::None,
+               "cancel-burned token rejects controller failure callback");
+    expect(coordinator.nextAction() == stop,
+           "rejected canceled failure leaves cleanup action intact");
+  }
+}
+
 } // namespace
 
 int main() {
@@ -1193,6 +1384,7 @@ int main() {
   testUnsupportedNoFrameAndZeroStop();
   testTokenSourceAndTrackMismatch();
   testTerminalErrorsBehindFallbackActions();
+  testControllerFailureEntryPoint();
   if (failures == 0)
     std::cout << "native activation coordinator tests passed\n";
   return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
