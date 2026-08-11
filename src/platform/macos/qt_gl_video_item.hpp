@@ -18,6 +18,7 @@ struct QtGlVideoItemStats {
   std::uint64_t renderedFrames{0};
   std::uint64_t lastRenderedGeneration{0};
   std::uint64_t acceptedGeneration{0};
+  std::uint64_t acceptedRenderedFrames{0};
   std::uint64_t fatalErrorSerial{0};
   std::uint64_t backpressuredImports{0};
   std::uint64_t rejectedFrames{0};
