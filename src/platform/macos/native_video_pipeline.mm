@@ -28,14 +28,15 @@ namespace {
 constexpr std::size_t kFrameQueueCapacity = 3;
 constexpr std::size_t kDecodeQueueHighWater = 2;
 constexpr std::size_t kMaximumInFlightDecodeFrames = 2;
-// This remains a hard surface-retention bound. Overflow is promoted to a
-// decoder failure so an eventual runtime integration can fall back instead of
-// silently dropping a valid long-reorder stream.
+// The decoder conservatively takes the maximum declared reorder depth across
+// the H.264/HEVC configuration record and retains no more than that window.
+// This is the dormant experiment's ceiling; a production fallback selector is
+// not wired yet.
 constexpr std::size_t kMaximumReorderFrames = 8;
-// Until codec-derived DPB/reorder sizing lands, cap the dormant experiment at
-// 1080p. Its application-retained worst case is 17 decoded leases (queue,
-// decode, reorder, scheduling, GPU) plus two BGRA drawables: about 66 MiB for
-// NV12 or 117 MiB for P010. VideoToolbox's private pool is additional.
+// Cap the dormant experiment at 1080p. Its application-retained worst case is
+// 17 decoded leases (queue, decode, reorder, scheduling, GPU) plus two BGRA
+// drawables: about 66 MiB for NV12 or 117 MiB for P010. Two bounded compressed
+// copies, demux scratch, and VideoToolbox's private pool are additional.
 constexpr std::uint64_t kMaximumCodedPixels = 1920ULL * 1080ULL;
 constexpr std::size_t kMaximumCodecConfigurationBytes = 1024ULL * 1024ULL;
 // Reject corrupt or adversarial access units before either the demux scratch
