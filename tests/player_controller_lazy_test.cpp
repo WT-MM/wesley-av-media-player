@@ -7,11 +7,13 @@
 
 #include <mpv/client.h>
 
+#include <chrono>
 #include <clocale>
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
 #include <memory>
+#include <thread>
 
 namespace wam::qt {
 
@@ -599,6 +601,21 @@ bool nearlyEqual(double left, double right, double epsilon = 0.0005) {
   return std::abs(left - right) <= epsilon;
 }
 
+template <typename Predicate>
+bool processEventsUntil(
+    Predicate predicate,
+    std::chrono::milliseconds timeout = std::chrono::milliseconds(2000)) {
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  while (std::chrono::steady_clock::now() < deadline) {
+    QCoreApplication::processEvents(QEventLoop::AllEvents);
+    if (predicate())
+      return true;
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  QCoreApplication::processEvents(QEventLoop::AllEvents);
+  return predicate();
+}
+
 double readDouble(mpv_handle *handle, const char *name) {
   double value = 0.0;
   const int result = mpv_get_property(handle, name, MPV_FORMAT_DOUBLE, &value);
@@ -1145,8 +1162,18 @@ int main(int argc, char **argv) {
                nearlyEqual(Access::recoveryPosition(mutation_controller),
                            42.0),
            "play/pause/seek after queueing supersede captured transport");
-    Access::finishQueuedRecoveryCompletion(mutation_controller);
-    Access::finishQueuedRecoveryCompletion(mutation_controller);
+    const bool latest_transport_settled = processEventsUntil([&] {
+      // libmpv property writes complete asynchronously, and recovery completion
+      // itself advances through zero-delay Qt timers. Pump both boundaries
+      // before asserting the final user intent; their relative latency differs
+      // across libmpv backends and operating systems.
+      Access::drainMpvEvents(mutation_controller);
+      return !Access::hasRenderRecovery(mutation_controller) &&
+             mutation_controller.paused() &&
+             nearlyEqual(mutation_controller.position(), 42.0);
+    });
+    expect(latest_transport_settled,
+           "queued user transport settles within the bounded event drain");
     expect(!Access::hasRenderRecovery(mutation_controller),
            "new user intent completes the queued recovery");
     expect(mutation_controller.paused(),
