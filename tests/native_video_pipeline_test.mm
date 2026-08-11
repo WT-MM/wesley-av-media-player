@@ -1,5 +1,6 @@
 #include "platform/macos/native_video_pipeline.hpp"
 
+#import <AppKit/AppKit.h>
 #import <AVFoundation/AVFoundation.h>
 #import <VideoToolbox/VideoToolbox.h>
 
@@ -242,6 +243,40 @@ int main(int argc, char** argv) {
     return 77;
   }
 
+  // Pause after a decoder is configured but before preparation can commit.
+  // stop() must revoke that Preparing attempt without waiting, and the worker
+  // must never start after the barrier is released.
+  std::promise<void> preparationRelease;
+  auto preparationEntered = std::make_shared<std::atomic<bool>>(false);
+  wam::macos::NativeVideoPipelineTestAccess::setPreparationCommitBarrier(
+      *pipeline, preparationRelease.get_future().share(), preparationEntered);
+  wam::macos::NativeVideoPrepareResult cancelledPrepare =
+      wam::macos::NativeVideoPrepareResult::Ready;
+  std::string cancelledPrepareError;
+  std::thread preparing([&] {
+    @autoreleasepool {
+      cancelledPrepare = pipeline->prepareLocalFile(
+          argv[1], 0.0, &cancelledPrepareError);
+    }
+  });
+  WAM_CHECK(waitUntil([&] {
+    return preparationEntered->load(std::memory_order_acquire);
+  }));
+  const auto preparingStopStart = std::chrono::steady_clock::now();
+  pipeline->stop();
+  const auto preparingStopElapsed = std::chrono::duration<double, std::milli>(
+      std::chrono::steady_clock::now() - preparingStopStart);
+  WAM_CHECK(preparingStopElapsed < std::chrono::milliseconds(250));
+  preparationRelease.set_value();
+  preparing.join();
+  WAM_CHECK(cancelledPrepare ==
+            wam::macos::NativeVideoPrepareResult::Failed);
+  WAM_CHECK_DETAIL(cancelledPrepareError ==
+                       "native video preparation was cancelled",
+                   cancelledPrepareError);
+  WAM_CHECK(waitUntil([&] { return !pipeline->stats().stopping; }));
+  WAM_CHECK(!pipeline->active());
+
   const std::uint64_t residentBefore = residentBytes();
   const double cpuBefore = processCpuSeconds();
   const auto wallStart = std::chrono::steady_clock::now();
@@ -265,6 +300,17 @@ int main(int argc, char** argv) {
   // No view is attached in this non-GUI integration test. Drawable absence is
   // intentionally non-fatal; callback coalescing makes the exact count
   // scheduler-dependent.
+
+  // The bound is process-wide, not merely per frontend: a caller cannot evade
+  // an active/retiring session's admission lease by constructing another
+  // NativeVideoPipeline and piling up VideoToolbox resources.
+  auto contender = wam::macos::NativeVideoPipeline::create(&error);
+  WAM_CHECK_DETAIL(contender != nullptr, error);
+  WAM_CHECK(contender->prepareLocalFile(argv[1], 0.0, &error) ==
+            wam::macos::NativeVideoPrepareResult::Failed);
+  WAM_CHECK_DETAIL(error.find("another native video attempt") !=
+                       std::string::npos,
+                   error);
 
   const std::uint64_t firstGeneration = initial.generation;
   const std::uint64_t submissionsBeforeSeek =
@@ -292,8 +338,114 @@ int main(int argc, char** argv) {
   WAM_CHECK_DETAIL(!asyncFailure.has_value(),
                    asyncFailure.value_or(std::string{}));
 
-  pipeline->stop();
+  // Detach owns only the immediate AppKit layer mutation. AVAssetReader worker
+  // join and VideoToolbox callback drain must be transferred to the private
+  // retirement owner rather than stalling this main thread.
+  NSView* hostView = [[NSView alloc]
+      initWithFrame:NSMakeRect(0.0, 0.0, 640.0, 360.0)];
+  WAM_CHECK_DETAIL(pipeline->attachToView((__bridge void*)hostView, &error),
+                   error);
+  WAM_CHECK(pipeline->attached());
+  const auto detachStart = std::chrono::steady_clock::now();
+  pipeline->detach();
+  const auto detachElapsed = std::chrono::duration<double, std::milli>(
+      std::chrono::steady_clock::now() - detachStart);
+  WAM_CHECK(detachElapsed < std::chrono::milliseconds(250));
   WAM_CHECK(!pipeline->active());
+  WAM_CHECK(!pipeline->attached());
+  WAM_CHECK(waitUntil([&] { return !pipeline->stats().stopping; }));
+  const auto stopped = pipeline->stats();
+  WAM_CHECK(!stopped.prepared);
+  WAM_CHECK(!stopped.decoder.configured);
+  WAM_CHECK(stopped.queueDepth == 0);
+
+  // Once the single retirement slot is clear the same frontend can prepare a
+  // fresh generation. This catches resource transfer that leaves a joinable
+  // worker, a stale sink pointer, or a permanently poisoned lifecycle phase.
+  const auto restarted = pipeline->prepareLocalFile(argv[1], 0.0, &error);
+  WAM_CHECK_DETAIL(restarted ==
+                       wam::macos::NativeVideoPrepareResult::Ready,
+                   error);
+  WAM_CHECK(waitUntil([&] {
+    const auto stats = pipeline->stats();
+    return stats.active && stats.compressedSamplesSubmitted >= 1;
+  }));
+  const auto stopStart = std::chrono::steady_clock::now();
+  pipeline->stop();
+  const auto stopElapsed = std::chrono::duration<double, std::milli>(
+      std::chrono::steady_clock::now() - stopStart);
+  WAM_CHECK(stopElapsed < std::chrono::milliseconds(250));
+  WAM_CHECK(!pipeline->active());
+  WAM_CHECK(waitUntil([&] { return !pipeline->stats().stopping; }));
+
+  // Explicitly exercise the Retiring -> Finalizing upgrade: destruction while
+  // a normal stop is queued must not schedule a second close or lose the sole
+  // self-owner. The process-wide admission is released only after that close.
+  WAM_CHECK_DETAIL(
+      contender->prepareLocalFile(argv[1], 0.0, &error) ==
+          wam::macos::NativeVideoPrepareResult::Ready,
+      error);
+  WAM_CHECK(waitUntil([&] {
+    return contender->stats().compressedSamplesSubmitted >= 1;
+  }));
+  std::promise<void> upgradeRetirementRelease;
+  auto upgradeRetirementEntered =
+      std::make_shared<std::atomic<bool>>(false);
+  wam::macos::NativeVideoPipelineTestAccess::setRetirementBarrier(
+      *contender, upgradeRetirementRelease.get_future().share(),
+      upgradeRetirementEntered);
+  contender->stop();
+  WAM_CHECK(waitUntil([&] {
+    return upgradeRetirementEntered->load(std::memory_order_acquire);
+  }));
+  const auto upgradeDestructionStart = std::chrono::steady_clock::now();
+  contender.reset();
+  const auto upgradeDestructionElapsed =
+      std::chrono::duration<double, std::milli>(
+          std::chrono::steady_clock::now() - upgradeDestructionStart);
+  WAM_CHECK(upgradeDestructionElapsed < std::chrono::milliseconds(250));
+  upgradeRetirementRelease.set_value();
+
+  // Active destruction follows the same transfer contract: the frontend can
+  // disappear immediately because the queued owner retains every callback
+  // target, decoder, and sink until background retirement completes.
+  auto destructionPipeline = wam::macos::NativeVideoPipeline::create(&error);
+  WAM_CHECK_DETAIL(destructionPipeline != nullptr, error);
+  WAM_CHECK(waitUntil([&] {
+    return destructionPipeline->prepareLocalFile(argv[1], 0.0, &error) ==
+           wam::macos::NativeVideoPrepareResult::Ready;
+  }));
+  WAM_CHECK(waitUntil([&] {
+    return destructionPipeline->stats().compressedSamplesSubmitted >= 1;
+  }));
+  std::promise<void> activeRetirementRelease;
+  auto activeRetirementEntered =
+      std::make_shared<std::atomic<bool>>(false);
+  wam::macos::NativeVideoPipelineTestAccess::setRetirementBarrier(
+      *destructionPipeline, activeRetirementRelease.get_future().share(),
+      activeRetirementEntered);
+  const auto destructionStart = std::chrono::steady_clock::now();
+  destructionPipeline.reset();
+  const auto destructionElapsed = std::chrono::duration<double, std::milli>(
+      std::chrono::steady_clock::now() - destructionStart);
+  WAM_CHECK(destructionElapsed < std::chrono::milliseconds(250));
+  WAM_CHECK(waitUntil([&] {
+    return activeRetirementEntered->load(std::memory_order_acquire);
+  }));
+  activeRetirementRelease.set_value();
+
+  // Admission does not reopen until the destroyed frontend's decoder and sink
+  // have completed their self-owned close. Preparing this final probe is the
+  // deterministic completion signal; no fixed sleep is involved.
+  auto completionProbe = wam::macos::NativeVideoPipeline::create(&error);
+  WAM_CHECK_DETAIL(completionProbe != nullptr, error);
+  WAM_CHECK(waitUntil([&] {
+    return completionProbe->prepareLocalFile(argv[1], 0.0, &error) ==
+           wam::macos::NativeVideoPrepareResult::Ready;
+  }));
+  completionProbe->stop();
+  WAM_CHECK(waitUntil([&] { return !completionProbe->stats().stopping; }));
+
   const auto wallEnd = std::chrono::steady_clock::now();
   const double cpuAfter = processCpuSeconds();
   const std::uint64_t residentAfter = residentBytes();
@@ -305,10 +457,15 @@ int main(int argc, char** argv) {
                 (1024.0 * 1024.0)
           : 0.0;
 
-  std::cout << "Native pipeline demux/decode/seek/shutdown passed; "
+  std::cout << "Native pipeline demux/decode/seek/async-shutdown passed; "
             << "wall=" << wallSeconds << "s cpu=" << (cpuAfter - cpuBefore)
             << "s resident_delta=" << residentDeltaMiB
-            << "MiB submitted=" << afterSeek.compressedSamplesSubmitted
+            << "MiB preparing_stop_ms=" << preparingStopElapsed.count()
+            << " detach_ms=" << detachElapsed.count()
+            << " stop_ms=" << stopElapsed.count()
+            << " stop_destroy_ms=" << upgradeDestructionElapsed.count()
+            << " destroy_ms=" << destructionElapsed.count()
+            << " submitted=" << afterSeek.compressedSamplesSubmitted
             << " delivered=" << afterSeek.decoder.deliveredFrames << '\n';
   return EXIT_SUCCESS;
 }

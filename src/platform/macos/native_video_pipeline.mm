@@ -47,6 +47,11 @@ constexpr double kClockLeadSeconds = 1.0 / 120.0;
 constexpr double kPausedFrameToleranceSeconds = 1.0 / 1000.0;
 constexpr double kMaximumSeekPrerollSeconds = 12.0;
 
+// A wedged Apple callback is not forcibly cancellable. Keep the process-wide
+// resource bound at one preparing/running/retiring native attempt so repeatedly
+// destroying frontends cannot accumulate self-owned VideoToolbox sessions.
+std::atomic<bool> gNativeAttemptAdmission{false};
+
 void assignError(std::string* error, std::string message) {
   if (error != nullptr) {
     *error = std::move(message);
@@ -75,6 +80,25 @@ double seconds(CMTime time) noexcept {
 CMTime mediaTime(double value) noexcept {
   return CMTimeMakeWithSeconds(std::max(0.0, value), 60'000);
 }
+
+template <typename Callback>
+class ScopeExit final {
+ public:
+  explicit ScopeExit(Callback callback) : callback_(std::move(callback)) {}
+  ScopeExit(const ScopeExit&) = delete;
+  ScopeExit& operator=(const ScopeExit&) = delete;
+  ~ScopeExit() {
+    if (armed_) {
+      callback_();
+    }
+  }
+
+  void release() noexcept { armed_ = false; }
+
+ private:
+  Callback callback_;
+  bool armed_{true};
+};
 
 bool sampleIsKeyFrame(CMSampleBufferRef sample) noexcept {
   CFArrayRef attachments =
@@ -379,19 +403,35 @@ class PipelineFailureState final {
 
 }  // namespace
 
-struct NativeVideoPipeline::Impl {
+struct NativeVideoPipeline::Impl
+    : public std::enable_shared_from_this<NativeVideoPipeline::Impl> {
+  enum class Lifecycle : std::uint8_t {
+    Idle,
+    Preparing,
+    Running,
+    Retiring,
+    Finalizing,
+  };
+
   Impl()
       : failureState(std::make_shared<PipelineFailureState>()),
         presentationQueue(dispatch_queue_create(
             "com.wesleymaa.wam.native-video-present", DISPATCH_QUEUE_SERIAL)),
+        retirementQueue(dispatch_queue_create(
+            "com.wesleymaa.wam.native-video-retire", DISPATCH_QUEUE_SERIAL)),
         presentationSource(nil) {}
 
-  ~Impl() { shutdown(); }
+  ~Impl() = default;
 
   std::shared_ptr<PipelineFailureState> failureState;
   std::unique_ptr<MetalLayerPresenter> presenter;
   std::unique_ptr<NotifyingFrameSink> sink;
   std::unique_ptr<VideoToolboxDecoder> decoder;
+
+  // Control calls never hold this mutex while joining the worker, draining a
+  // dispatch queue, or waiting for VideoToolbox. It only protects ownership
+  // transfer and short stats snapshots.
+  mutable std::mutex resourceMutex;
 
   __strong AVURLAsset* asset{nil};
   __strong AVAssetTrack* track{nil};
@@ -422,10 +462,26 @@ struct NativeVideoPipeline::Impl {
   mutable std::mutex displayLinkMutex;
   CVDisplayLinkRef displayLink{nullptr};
   __strong dispatch_queue_t presentationQueue;
+  __strong dispatch_queue_t retirementQueue;
   __strong dispatch_source_t presentationSource{nil};
+
+  mutable std::mutex lifecycleMutex;
+  Lifecycle lifecycle{Lifecycle::Idle};
+  bool stopRequestedDuringPrepare{false};
+  bool shutdownRequested{false};
+  bool ownsProcessAdmission{false};
+
+#if defined(WAM_NATIVE_VIDEO_PIPELINE_TESTING)
+  mutable std::mutex schedulingTestMutex;
+  std::shared_future<void> preparationCommitBarrier;
+  std::shared_ptr<std::atomic<bool>> preparationCommitEntered;
+  std::shared_future<void> retirementBarrier;
+  std::shared_ptr<std::atomic<bool>> retirementEntered;
+#endif
 
   std::atomic<bool> attached{false};
   std::atomic<bool> prepared{false};
+  std::atomic<bool> stopping{false};
   std::atomic<bool> pausedPresentationNeeded{false};
   std::atomic<std::uint64_t> requestedGeneration{0};
   AtomicPipelineStats counters;
@@ -433,10 +489,12 @@ struct NativeVideoPipeline::Impl {
   void initializePresentationSource() {
     presentationSource = dispatch_source_create(
         DISPATCH_SOURCE_TYPE_DATA_ADD, 0, 0, presentationQueue);
-    Impl* self = this;
+    std::weak_ptr<Impl> weakSelf = shared_from_this();
     dispatch_source_set_event_handler(presentationSource, ^{
       @autoreleasepool {
-        self->renderAtAudioClock();
+        if (auto self = weakSelf.lock()) {
+          self->renderAtAudioClock();
+        }
       }
     });
     dispatch_resume(presentationSource);
@@ -942,18 +1000,27 @@ struct NativeVideoPipeline::Impl {
     workerWake.notify_all();
   }
 
-  void stopWorkerThread() noexcept {
-    AVAssetReader* reader = nil;
+  void signalWorkerStop() noexcept {
     {
       std::lock_guard lock(stateMutex);
       stopWorker = true;
       ++seekVersion;
+    }
+    workerWake.notify_all();
+  }
+
+  void cancelActiveReader() noexcept {
+    AVAssetReader* reader = nil;
+    {
+      std::lock_guard lock(stateMutex);
       reader = activeReader;
     }
     if (reader != nil) {
       [reader cancelReading];
     }
-    workerWake.notify_all();
+  }
+
+  void joinWorkerThread() noexcept {
     if (worker.joinable()) {
       worker.join();
     }
@@ -963,51 +1030,308 @@ struct NativeVideoPipeline::Impl {
     }
   }
 
-  void shutdown() noexcept {
+#if defined(WAM_NATIVE_VIDEO_PIPELINE_TESTING)
+  void waitAtPreparationCommitBarrier() {
+    std::shared_future<void> release;
+    std::shared_ptr<std::atomic<bool>> entered;
+    {
+      std::lock_guard lock(schedulingTestMutex);
+      release = std::move(preparationCommitBarrier);
+      entered = std::move(preparationCommitEntered);
+    }
+    if (release.valid()) {
+      if (entered != nullptr) {
+        entered->store(true, std::memory_order_release);
+      }
+      release.wait();
+    }
+  }
+
+  void waitAtRetirementBarrier() {
+    std::shared_future<void> release;
+    std::shared_ptr<std::atomic<bool>> entered;
+    {
+      std::lock_guard lock(schedulingTestMutex);
+      release = std::move(retirementBarrier);
+      entered = std::move(retirementEntered);
+    }
+    if (release.valid()) {
+      if (entered != nullptr) {
+        entered->store(true, std::memory_order_release);
+      }
+      release.wait();
+    }
+  }
+#endif
+
+  [[nodiscard]] bool beginPreparation(bool* retireExisting,
+                                      std::string* error) noexcept {
+    *retireExisting = false;
+    std::lock_guard lock(lifecycleMutex);
+    switch (lifecycle) {
+    case Lifecycle::Idle:
+      if (shutdownRequested) {
+        assignError(error, "native video pipeline is shutting down");
+        return false;
+      }
+      {
+        bool expected = false;
+        if (!gNativeAttemptAdmission.compare_exchange_strong(
+                expected, true, std::memory_order_acq_rel,
+                std::memory_order_acquire)) {
+          assignError(error,
+                      "another native video attempt is active or retiring; "
+                      "retry after its stats().stopping becomes false");
+          return false;
+        }
+      }
+      ownsProcessAdmission = true;
+      lifecycle = Lifecycle::Preparing;
+      stopRequestedDuringPrepare = false;
+      return true;
+    case Lifecycle::Running:
+      *retireExisting = true;
+      assignError(error,
+                  "the previous native video attempt is being retired; "
+                  "retry preparation after stats().stopping becomes false");
+      return false;
+    case Lifecycle::Preparing:
+      assignError(error, "native video preparation is already in progress");
+      return false;
+    case Lifecycle::Retiring:
+      assignError(error,
+                  "native video teardown is still in progress; retry after "
+                  "stats().stopping becomes false");
+      return false;
+    case Lifecycle::Finalizing:
+      assignError(error, "native video pipeline is shutting down");
+      return false;
+    }
+  }
+
+  void scheduleRetirement() noexcept {
+    const std::shared_ptr<Impl> self = shared_from_this();
+    dispatch_async(retirementQueue, ^{
+      @autoreleasepool {
+        self->completeRetirement();
+      }
+    });
+  }
+
+  void abortPreparation(bool ownsConfiguredResources) noexcept {
+    bool schedule = false;
+    {
+      std::lock_guard lock(lifecycleMutex);
+      if (lifecycle != Lifecycle::Preparing) {
+        return;
+      }
+      if (ownsConfiguredResources || stopRequestedDuringPrepare ||
+          shutdownRequested) {
+        lifecycle = shutdownRequested ? Lifecycle::Finalizing
+                                      : Lifecycle::Retiring;
+        stopping.store(true, std::memory_order_release);
+        schedule = true;
+      } else {
+        if (ownsProcessAdmission) {
+          ownsProcessAdmission = false;
+          gNativeAttemptAdmission.store(false, std::memory_order_release);
+        }
+        lifecycle = Lifecycle::Idle;
+        stopRequestedDuringPrepare = false;
+      }
+    }
+    if (schedule) {
+      failureState->disable();
+      prepared.store(false, std::memory_order_release);
+      presenter->setFailureHandler({}, {});
+      presenter->setVisible(false);
+      signalWorkerStop();
+      scheduleRetirement();
+    }
+  }
+
+  [[nodiscard]] bool commitPreparation(
+      std::uint64_t failureEpoch, double initialPosition) {
+#if defined(WAM_NATIVE_VIDEO_PIPELINE_TESTING)
+    waitAtPreparationCommitBarrier();
+#endif
+    std::lock_guard lock(lifecycleMutex);
+    if (lifecycle != Lifecycle::Preparing || stopRequestedDuringPrepare ||
+        shutdownRequested) {
+      return false;
+    }
+    std::weak_ptr<PipelineFailureState> weakFailureState = failureState;
+    presenter->setFailureHandler(
+        failureState,
+        [weakFailureState, failureEpoch](std::string message) {
+          if (auto state = weakFailureState.lock()) {
+            state->report(failureEpoch, std::move(message));
+          }
+        });
+    failureState->activate(failureEpoch);
+    prepared.store(true, std::memory_order_release);
+    presenter->setVisible(true);
+    startWorker(initialPosition);
+    lifecycle = Lifecycle::Running;
+    return true;
+  }
+
+  void requestTeardown(bool final) noexcept {
+    bool schedule = false;
+    {
+      std::lock_guard lock(lifecycleMutex);
+      shutdownRequested = shutdownRequested || final;
+      switch (lifecycle) {
+      case Lifecycle::Idle:
+        if (shutdownRequested) {
+          lifecycle = Lifecycle::Finalizing;
+          stopping.store(true, std::memory_order_release);
+          schedule = true;
+        }
+        break;
+      case Lifecycle::Preparing:
+        stopRequestedDuringPrepare = true;
+        stopping.store(true, std::memory_order_release);
+        break;
+      case Lifecycle::Running:
+        lifecycle = shutdownRequested ? Lifecycle::Finalizing
+                                      : Lifecycle::Retiring;
+        stopping.store(true, std::memory_order_release);
+        schedule = true;
+        break;
+      case Lifecycle::Retiring:
+        if (shutdownRequested) {
+          lifecycle = Lifecycle::Finalizing;
+        }
+        break;
+      case Lifecycle::Finalizing:
+        break;
+      }
+    }
+
     failureState->disable();
     prepared.store(false, std::memory_order_release);
     if (presenter != nullptr) {
       presenter->setFailureHandler({}, {});
+      presenter->setVisible(false);
     }
+    signalWorkerStop();
+    if (schedule) {
+      scheduleRetirement();
+    }
+  }
+
+  void completeRetirement() noexcept {
+#if defined(WAM_NATIVE_VIDEO_PIPELINE_TESTING)
+    waitAtRetirementBarrier();
+#endif
+    // These operations have no contractual upper bound. The private serial
+    // owner, never AppKit or the frontend, absorbs that latency and retains
+    // every object a late callback can reach.
     setDisplayLinkRunning(false);
-    stopWorkerThread();
-    if (decoder != nullptr) {
-      decoder->close();
-    }
+    cancelActiveReader();
+    joinWorkerThread();
     if (presentationSource != nil) {
-      dispatch_source_cancel(presentationSource);
       dispatch_sync(presentationQueue, ^{});
-      presentationSource = nil;
     }
     {
       std::lock_guard lock(presentationMutex);
       heldFrame.reset();
       retryFrame.reset();
     }
-    if (displayLink != nullptr) {
-      CVDisplayLinkRelease(displayLink);
-      displayLink = nullptr;
+
+    std::unique_ptr<VideoToolboxDecoder> retiredDecoder;
+    std::unique_ptr<NotifyingFrameSink> retiredSink;
+    std::vector<std::byte> retiredCodecConfiguration;
+    {
+      std::lock_guard lock(resourceMutex);
+      retiredDecoder = std::move(decoder);
+      retiredSink = std::move(sink);
+      asset = nil;
+      track = nil;
+      codec = 0;
+      dimensions = {0, 0};
+      retiredCodecConfiguration = std::move(codecConfiguration);
+      assetDuration = kCMTimeInvalid;
+    }
+    if (retiredDecoder != nullptr) {
+      // retiredSink intentionally outlives close(): AsyncDecodeState stores a
+      // non-owning sink pointer, and Apple may issue its final callback from
+      // inside the wait/invalidate sequence.
+      retiredDecoder->close();
+    }
+    retiredDecoder.reset();
+    retiredSink.reset();
+    retiredCodecConfiguration.clear();
+
+    bool final = false;
+    {
+      std::lock_guard lock(lifecycleMutex);
+      if (ownsProcessAdmission) {
+        ownsProcessAdmission = false;
+        // Publish process admission before Idle/stopping=false. A caller that
+        // observes retirement completion must not lose CAS to our stale lease.
+        gNativeAttemptAdmission.store(false, std::memory_order_release);
+      }
+      final = shutdownRequested;
+      if (final) {
+        lifecycle = Lifecycle::Finalizing;
+      } else {
+        lifecycle = Lifecycle::Idle;
+        stopRequestedDuringPrepare = false;
+        stopping.store(false, std::memory_order_release);
+      }
+    }
+
+    if (!final) {
+      return;
+    }
+
+    // Stop/release the callback source only after the worker and decoder can no
+    // longer enqueue work. Draining after cancellation proves that the raw
+    // display-link/source context cannot run after Impl's final owner leaves.
+    if (presentationSource != nil) {
+      dispatch_source_cancel(presentationSource);
+      dispatch_sync(presentationQueue, ^{});
+      presentationSource = nil;
+    }
+    {
+      std::lock_guard lock(displayLinkMutex);
+      if (displayLink != nullptr) {
+        if (CVDisplayLinkIsRunning(displayLink)) {
+          CVDisplayLinkStop(displayLink);
+        }
+        CVDisplayLinkRelease(displayLink);
+        displayLink = nullptr;
+      }
     }
   }
 };
 
-NativeVideoPipeline::NativeVideoPipeline(std::unique_ptr<Impl> impl) noexcept
+NativeVideoPipeline::NativeVideoPipeline(std::shared_ptr<Impl> impl) noexcept
     : impl_(std::move(impl)) {}
 
-NativeVideoPipeline::~NativeVideoPipeline() = default;
+NativeVideoPipeline::~NativeVideoPipeline() {
+  if (impl_ != nullptr) {
+    // The queued task becomes the sole owner after this frontend releases its
+    // shared_ptr. No callback captures NativeVideoPipeline itself.
+    impl_->requestTeardown(true);
+  }
+}
 
 std::unique_ptr<NativeVideoPipeline> NativeVideoPipeline::create(
     std::string* error) {
   if (error != nullptr) {
     error->clear();
   }
-  auto impl = std::make_unique<Impl>();
+  auto impl = std::make_shared<Impl>();
   impl->presenter = MetalLayerPresenter::create(error);
   if (impl->presenter == nullptr) {
     return nullptr;
   }
   impl->initializePresentationSource();
   if (!impl->createDisplayLink(error)) {
+    impl->requestTeardown(true);
     return nullptr;
   }
   return std::unique_ptr<NativeVideoPipeline>(
@@ -1033,9 +1357,11 @@ bool NativeVideoPipeline::attachToView(void* nativeView, std::string* error) {
 }
 
 void NativeVideoPipeline::detach() noexcept {
-  stop();
+  // Layer invalidation/removal is the only detach mutation that belongs on the
+  // AppKit thread. Worker/decoder retirement is merely signaled below.
   impl_->presenter->detach();
   impl_->attached.store(false, std::memory_order_release);
+  stop();
 }
 
 void NativeVideoPipeline::resize(double widthPoints, double heightPoints,
@@ -1049,7 +1375,17 @@ NativeVideoPrepareResult NativeVideoPipeline::prepareLocalFile(
   if (error != nullptr) {
     error->clear();
   }
-  stop();
+  bool retireExisting = false;
+  if (!impl_->beginPreparation(&retireExisting, error)) {
+    if (retireExisting) {
+      impl_->requestTeardown(false);
+    }
+    return NativeVideoPrepareResult::Failed;
+  }
+  bool ownsConfiguredResources = false;
+  ScopeExit preparationGuard([&] {
+    impl_->abortPreparation(ownsConfiguredResources);
+  });
   std::error_code fileError;
   if (!std::filesystem::is_regular_file(path, fileError)) {
     assignError(error, "native video requires a readable local file");
@@ -1170,32 +1506,48 @@ NativeVideoPrepareResult NativeVideoPipeline::prepareLocalFile(
 
   const std::uint64_t generation =
       impl_->requestedGeneration.fetch_add(1, std::memory_order_acq_rel) + 1;
-  impl_->asset = asset;
-  impl_->track = track;
-  impl_->assetDuration = duration;
-  impl_->codec = codec;
-  impl_->dimensions = dimensions;
-  impl_->codecConfiguration = std::move(*configuration);
-  impl_->sink = std::make_unique<NotifyingFrameSink>(
-      kFrameQueueCapacity, generation,
-      [state = impl_.get()] { state->notifyFrameAvailable(); });
-  impl_->decoder = std::make_unique<VideoToolboxDecoder>(
-      VideoToolboxDecoderOptions{kMaximumInFlightDecodeFrames,
-                                 kMaximumReorderFrames});
-  const VideoStreamConfiguration stream{
-      codec,
-      dimensions,
-      std::span<const std::byte>(impl_->codecConfiguration),
-      true,
-      true,
-      generation};
   std::string decoderError;
-  if (!impl_->decoder->configure(stream, *impl_->sink, &decoderError)) {
-    impl_->decoder.reset();
-    impl_->sink.reset();
-    impl_->asset = nil;
-    impl_->track = nil;
-    impl_->codecConfiguration.clear();
+  double initialPosition = 0.0;
+  {
+    std::lock_guard resourceLock(impl_->resourceMutex);
+    impl_->asset = asset;
+    impl_->track = track;
+    impl_->assetDuration = duration;
+    impl_->codec = codec;
+    impl_->dimensions = dimensions;
+    impl_->codecConfiguration = std::move(*configuration);
+    std::weak_ptr<Impl> weakImpl = impl_;
+    impl_->sink = std::make_unique<NotifyingFrameSink>(
+        kFrameQueueCapacity, generation, [weakImpl] {
+          if (auto state = weakImpl.lock()) {
+            state->notifyFrameAvailable();
+          }
+        });
+    impl_->decoder = std::make_unique<VideoToolboxDecoder>(
+        VideoToolboxDecoderOptions{kMaximumInFlightDecodeFrames,
+                                   kMaximumReorderFrames});
+    const VideoStreamConfiguration stream{
+        codec,
+        dimensions,
+        std::span<const std::byte>(impl_->codecConfiguration),
+        true,
+        true,
+        generation};
+    if (!impl_->decoder->configure(stream, *impl_->sink, &decoderError)) {
+      impl_->decoder.reset();
+      impl_->sink.reset();
+      impl_->asset = nil;
+      impl_->track = nil;
+      impl_->codecConfiguration.clear();
+      impl_->assetDuration = kCMTimeInvalid;
+    } else {
+      ownsConfiguredResources = true;
+      initialPosition = impl_->normalizePosition(
+          finiteNonnegative(initialPositionSeconds) ? initialPositionSeconds
+                                                    : 0.0);
+    }
+  }
+  if (!ownsConfiguredResources) {
     assignError(error, decoderError.empty()
                            ? "hardware VideoToolbox decode is unavailable"
                            : std::move(decoderError));
@@ -1204,59 +1556,30 @@ NativeVideoPrepareResult NativeVideoPipeline::prepareLocalFile(
 
   impl_->counters.reset();
   const std::uint64_t failureEpoch = impl_->failureState->beginAttempt();
-  std::weak_ptr<PipelineFailureState> weakFailureState = impl_->failureState;
-  impl_->presenter->setFailureHandler(
-      impl_->failureState,
-      [weakFailureState, failureEpoch](std::string message) {
-        if (auto state = weakFailureState.lock()) {
-          state->report(failureEpoch, std::move(message));
-        }
-      });
-  impl_->minimumPresentationSeconds = impl_->normalizePosition(
-      finiteNonnegative(initialPositionSeconds) ? initialPositionSeconds : 0.0);
   {
     std::lock_guard lock(impl_->presentationMutex);
+    impl_->minimumPresentationSeconds = initialPosition;
     impl_->heldFrame.reset();
     impl_->retryFrame.reset();
   }
   {
     std::lock_guard lock(impl_->clockMutex);
-    impl_->clockMediaSeconds = impl_->minimumPresentationSeconds;
+    impl_->clockMediaSeconds = initialPosition;
     impl_->clockAnchorHostSeconds = CACurrentMediaTime();
     impl_->clockRate = 1.0;
     impl_->clockPaused = true;
   }
   impl_->pausedPresentationNeeded.store(true, std::memory_order_release);
-  impl_->prepared.store(true, std::memory_order_release);
-  impl_->failureState->activate(failureEpoch);
-  impl_->presenter->setVisible(true);
-  impl_->startWorker(impl_->minimumPresentationSeconds);
+  if (!impl_->commitPreparation(failureEpoch, initialPosition)) {
+    assignError(error, "native video preparation was cancelled");
+    return NativeVideoPrepareResult::Failed;
+  }
+  preparationGuard.release();
   return NativeVideoPrepareResult::Ready;
 }
 
 void NativeVideoPipeline::stop() noexcept {
-  impl_->failureState->disable();
-  impl_->prepared.store(false, std::memory_order_release);
-  impl_->presenter->setFailureHandler({}, {});
-  impl_->setDisplayLinkRunning(false);
-  impl_->stopWorkerThread();
-  if (impl_->decoder != nullptr) {
-    impl_->decoder->close();
-  }
-  dispatch_sync(impl_->presentationQueue, ^{});
-  {
-    std::lock_guard lock(impl_->presentationMutex);
-    impl_->heldFrame.reset();
-    impl_->retryFrame.reset();
-  }
-  impl_->presenter->setVisible(false);
-  impl_->decoder.reset();
-  impl_->sink.reset();
-  impl_->asset = nil;
-  impl_->track = nil;
-  impl_->activeReader = nil;
-  impl_->codecConfiguration.clear();
-  impl_->assetDuration = kCMTimeInvalid;
+  impl_->requestTeardown(false);
 }
 
 void NativeVideoPipeline::updateAudioClock(double positionSeconds, bool paused,
@@ -1284,6 +1607,11 @@ void NativeVideoPipeline::updateAudioClock(double positionSeconds, bool paused,
 void NativeVideoPipeline::seek(double positionSeconds) noexcept {
   if (!impl_->failureState->active() ||
       !finiteNonnegative(positionSeconds)) {
+    return;
+  }
+  std::lock_guard resourceLock(impl_->resourceMutex);
+  if (!impl_->failureState->active() || impl_->decoder == nullptr ||
+      impl_->sink == nullptr) {
     return;
   }
   positionSeconds = impl_->normalizePosition(positionSeconds);
@@ -1327,6 +1655,7 @@ NativeVideoPipelineStats NativeVideoPipeline::stats() const noexcept {
   NativeVideoPipelineStats result;
   result.prepared = impl_->prepared.load(std::memory_order_acquire);
   result.active = impl_->failureState->active();
+  result.stopping = impl_->stopping.load(std::memory_order_acquire);
   result.generation =
       impl_->requestedGeneration.load(std::memory_order_acquire);
   result.compressedSamplesRead =
@@ -1348,19 +1677,40 @@ NativeVideoPipelineStats NativeVideoPipeline::stats() const noexcept {
           std::memory_order_relaxed);
   result.displayLinkTicks =
       impl_->counters.displayLinkTicks.load(std::memory_order_relaxed);
-  if (impl_->sink != nullptr) {
-    result.queueDepth = impl_->sink->size();
-    result.queueCapacity = impl_->sink->capacity();
-  }
-  if (impl_->decoder != nullptr) {
-    result.decoder = impl_->decoder->stats();
-    result.hardwareDecode =
-        result.decoder.usingHardwareAcceleratedDecoder;
+  {
+    std::lock_guard resourceLock(impl_->resourceMutex);
+    if (impl_->sink != nullptr) {
+      result.queueDepth = impl_->sink->size();
+      result.queueCapacity = impl_->sink->capacity();
+    }
+    if (impl_->decoder != nullptr) {
+      result.decoder = impl_->decoder->stats();
+      result.hardwareDecode =
+          result.decoder.usingHardwareAcceleratedDecoder;
+    }
   }
   if (impl_->presenter != nullptr) {
     result.presenter = impl_->presenter->stats();
   }
   return result;
 }
+
+#if defined(WAM_NATIVE_VIDEO_PIPELINE_TESTING)
+void NativeVideoPipelineTestAccess::setPreparationCommitBarrier(
+    NativeVideoPipeline& pipeline, std::shared_future<void> release,
+    std::shared_ptr<std::atomic<bool>> entered) {
+  std::lock_guard lock(pipeline.impl_->schedulingTestMutex);
+  pipeline.impl_->preparationCommitBarrier = std::move(release);
+  pipeline.impl_->preparationCommitEntered = std::move(entered);
+}
+
+void NativeVideoPipelineTestAccess::setRetirementBarrier(
+    NativeVideoPipeline& pipeline, std::shared_future<void> release,
+    std::shared_ptr<std::atomic<bool>> entered) {
+  std::lock_guard lock(pipeline.impl_->schedulingTestMutex);
+  pipeline.impl_->retirementBarrier = std::move(release);
+  pipeline.impl_->retirementEntered = std::move(entered);
+}
+#endif
 
 }  // namespace wam::macos

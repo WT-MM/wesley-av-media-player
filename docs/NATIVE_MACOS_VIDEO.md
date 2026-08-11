@@ -5,7 +5,7 @@ VideoToolbox, IOSurface, and Metal. The code is excluded unless
 `WAM_ENABLE_MACOS_NATIVE_VIDEO=ON`. Even in an opt-in build, no shipping
 controller or render node can select it: libmpv remains the only runtime path.
 This is intentional while the composition, subtitle, clock, fallback, and
-shutdown gates below remain open.
+asynchronous asset-loading gates below remain open.
 
 Enable the isolated foundation with:
 
@@ -67,8 +67,14 @@ ctest --test-dir build-native \
   application-level bound even if presentation falls behind.
 - VideoToolbox submission has its own hard in-flight bound. Seek flush advances
   the generation before draining callbacks, invalidates the codec session, and
-  requires a new key frame. Shutdown waits for all callbacks and invalidates the
-  session before releasing either the sink or format description.
+  requires a new key frame. The decoder's low-level `close()` still waits for
+  Apple callbacks, but `NativeVideoPipeline` moves the decoder and its sink as
+  one ownership unit to a private serial retirement queue before calling it.
+  `stop()`, `detach()`, and frontend destruction therefore never join the demux
+  worker, drain a dispatch queue, call `cancelReading`, or wait for VideoToolbox
+  on their caller. A retired sink remains alive until `close()` completes, and
+  final source/display-link destruction occurs only after every producer is
+  stopped and the presentation queue is drained.
 - `NativeVideoPipeline` uses `AVAssetReaderTrackOutput` with nil output settings
   and `alwaysCopiesSampleData=NO`, so AVFoundation supplies the original
   length-prefixed compressed access units. It keeps one compressed sample at a
@@ -76,7 +82,13 @@ ctest --test-dir build-native \
   boundary intended for a future authoritative audio clock. Asynchronous
   decode/presentation failures atomically deactivate the attempt and latch a
   message for `takeLastError()`; the pipeline never invokes arbitrary client
-  code from demux, decode, render, or post-destruction stacks.
+  code from demux, decode, render, or post-destruction stacks. Each frontend has
+  exactly one retirement slot, and a process-wide admission lease allows only
+  one native attempt to prepare, run, or retire. Constructing fresh frontends
+  therefore cannot accumulate stuck VideoToolbox sessions. Once
+  `stats().stopping` clears, the same frontend can prepare a fresh generation.
+  Destruction upgrades an already queued normal stop to final shutdown without
+  racing the retirement task's transition back to idle.
 - macOS CI generates a deterministic H.264 stream with B frames, compiles the
   default-off native targets, and checks real decode order, returned timing,
   actual pixel format, IOSurface backing, and Metal plane import.
@@ -132,10 +144,15 @@ process-memory ceiling. Normal paused prebuffering stops at a queue high-water
 mark of two.
 
 The checked-in B-frame fixture exercises real hardware decode, a generation-
-safe non-frame-aligned seek, video-only rejection, queue/in-flight bounds, and
-shutdown. The latest isolated run took 0.245 seconds wall / 0.026 seconds
-process CPU and observed a 1.84 MiB resident-set delta. Those numbers are test
-diagnostics only, not steady-state playback or comparative benchmark evidence.
+safe non-frame-aligned seek, video-only rejection, queue/in-flight bounds,
+stop during configured-but-uncommitted preparation, asynchronous detach/stop,
+restart after retirement, process-wide contention, the normal-stop-to-final-
+destruction upgrade, and active frontend destruction. Test-only background
+barriers make both destruction branches deterministic without changing a
+production build. One isolated local run measured 0.008 ms for detach, 0.019 ms
+for stop, and 0.007 ms for active frontend destruction to return while real
+H.264 hardware work was active. Those numbers are test diagnostics only, not
+steady-state playback or comparative benchmark evidence.
 No memory or performance improvement is claimed until complete WAM + framework
 process measurements beat the controlled baseline.
 
@@ -158,12 +175,12 @@ process measurements beat the controlled baseline.
    intended memory benefit. libmpv may still own demux/audio only after a
    matching file-load generation is authoritative.
 4. Add subtitle/caption/OSD composition, track-selection parity, a video-only
-   master clock, broader profile/level/chroma coverage, full-sync/open-GOP seek
-   validation, and asynchronous bounded VideoToolbox teardown. Replace
-   synchronous AVAsset property access with cancellable asynchronous key loading
-   before any UI-thread selection decision. `VideoToolboxDecoder::close()` still
-   waits synchronously for Apple callbacks, so preparation, stop, and destruction
-   are not approved on the UI thread.
+   master clock, broader profile/level/chroma coverage, and full-sync/open-GOP
+   seek validation. Replace synchronous AVAsset property access with cancellable
+   asynchronous key loading before any UI-thread selection decision. The
+   pipeline's stop/detach/destruction caller path is non-blocking now, but
+   preparation still performs synchronous AVAsset inspection and remains
+   prohibited on the UI thread.
 5. Gate rollout on CPU, peak/current footprint, energy, seek latency, dropped
    frames, A/V drift, HDR/color, subtitle, and sleep/wake tests.
 

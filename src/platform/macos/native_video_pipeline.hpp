@@ -10,7 +10,16 @@
 #include <optional>
 #include <string>
 
+#if defined(WAM_NATIVE_VIDEO_PIPELINE_TESTING)
+#include <atomic>
+#include <future>
+#endif
+
 namespace wam::macos {
+
+#if defined(WAM_NATIVE_VIDEO_PIPELINE_TESTING)
+struct NativeVideoPipelineTestAccess;
+#endif
 
 enum class NativeVideoPrepareResult : std::uint8_t {
   Ready,
@@ -21,6 +30,7 @@ enum class NativeVideoPrepareResult : std::uint8_t {
 struct NativeVideoPipelineStats {
   bool prepared{false};
   bool active{false};
+  bool stopping{false};
   bool hardwareDecode{false};
   std::uint64_t generation{0};
   std::uint64_t compressedSamplesRead{0};
@@ -74,9 +84,11 @@ class NativeVideoPipeline final {
   [[nodiscard]] NativeVideoPrepareResult prepareLocalFile(
       const std::filesystem::path& path, double initialPositionSeconds = 0.0,
       std::string* error = nullptr);
-  // Synchronous until VideoToolbox gains a separate teardown owner; callers of
-  // this dormant API must not invoke stop/destruction on an interactive UI
-  // thread because Apple's callback drain has no timeout contract.
+  // Revokes playback immediately and retires AVFoundation/VideoToolbox work on
+  // a private serial queue. It never joins the worker or waits for Apple
+  // callbacks on the calling thread. While stats().stopping is true, a new
+  // prepareLocalFile() fails fast instead of accumulating retired sessions.
+  // Admission is process-wide, so frontend recreation cannot bypass the bound.
   void stop() noexcept;
 
   // Calls are cheap: they update a small clock snapshot and start/stop the
@@ -93,9 +105,25 @@ class NativeVideoPipeline final {
   [[nodiscard]] NativeVideoPipelineStats stats() const noexcept;
 
  private:
+#if defined(WAM_NATIVE_VIDEO_PIPELINE_TESTING)
+  friend struct NativeVideoPipelineTestAccess;
+#endif
   struct Impl;
-  explicit NativeVideoPipeline(std::unique_ptr<Impl> impl) noexcept;
-  std::unique_ptr<Impl> impl_;
+  explicit NativeVideoPipeline(std::shared_ptr<Impl> impl) noexcept;
+  std::shared_ptr<Impl> impl_;
 };
+
+#if defined(WAM_NATIVE_VIDEO_PIPELINE_TESTING)
+// Private deterministic scheduling seams for the native pipeline integration
+// test. Production builds do not compile or expose these methods.
+struct NativeVideoPipelineTestAccess {
+  static void setPreparationCommitBarrier(
+      NativeVideoPipeline& pipeline, std::shared_future<void> release,
+      std::shared_ptr<std::atomic<bool>> entered);
+  static void setRetirementBarrier(
+      NativeVideoPipeline& pipeline, std::shared_future<void> release,
+      std::shared_ptr<std::atomic<bool>> entered);
+};
+#endif
 
 }  // namespace wam::macos
