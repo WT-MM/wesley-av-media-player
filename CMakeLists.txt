@@ -268,6 +268,16 @@ if(BUILD_TESTING)
   target_include_directories(wam_render_lifecycle_test PRIVATE src)
   add_test(NAME render_lifecycle COMMAND wam_render_lifecycle_test)
 
+  add_executable(wam_native_activation_coordinator_test
+    tests/native_activation_coordinator_test.cpp
+    src/qt/native_activation_coordinator.cpp
+    src/qt/native_activation_coordinator.hpp)
+  target_include_directories(
+    wam_native_activation_coordinator_test PRIVATE src)
+  add_test(NAME native_activation_coordinator
+    COMMAND wam_native_activation_coordinator_test)
+  set_tests_properties(native_activation_coordinator PROPERTIES TIMEOUT 10)
+
   find_program(WAM_FFMPEG_EXECUTABLE ffmpeg)
   find_program(WAM_FFPROBE_EXECUTABLE ffprobe)
   if(WAM_FFMPEG_EXECUTABLE AND WAM_FFPROBE_EXECUTABLE)
