@@ -14,6 +14,9 @@ ApplicationWindow {
     property bool controlsRevealed: true
     property bool transportUserPositioned: false
     property point transportPosition: Qt.point(0, 0)
+    property Item dialogFocusReturnItem: null
+    readonly property bool nativeDialogVisible: mediaDialog.visible
+        || exportDialog.visible || captionDialog.visible || errorDialog.visible
 
     visible: true
     width: 1180
@@ -104,6 +107,23 @@ ApplicationWindow {
             controller.openFileDialog();
     }
 
+    function rememberDialogFocus() {
+        dialogFocusReturnItem = root.activeFocusItem || stage;
+    }
+
+    function restoreDialogFocus() {
+        const target = dialogFocusReturnItem;
+        dialogFocusReturnItem = null;
+        if (target && target.visible !== false && target.enabled !== false)
+            target.forceActiveFocus(Qt.PopupFocusReason);
+        else
+            stage.forceActiveFocus(Qt.PopupFocusReason);
+    }
+
+    function restoreDialogFocusAfterClose() {
+        dialogFocusRestoreTimer.restart();
+    }
+
     function suggestedOutputUrl(suffix) {
         if (!controller.source)
             return "";
@@ -130,14 +150,65 @@ ApplicationWindow {
         onTriggered: root.hideControlsIfIdle()
     }
 
+    Timer {
+        id: dialogFocusRestoreTimer
+        // Native macOS sheets report hidden before their close animation has
+        // returned key focus. Reapply after that handoff so it is not
+        // overwritten by AppKit a moment later.
+        interval: 250
+        repeat: false
+        onTriggered: {
+            if (!mediaDialog.visible && !exportDialog.visible
+                    && !captionDialog.visible && !errorDialog.visible)
+                root.restoreDialogFocus();
+        }
+    }
+
+    Shortcut {
+        sequence: "Space"
+        context: Qt.ApplicationShortcut
+        autoRepeat: false
+        enabled: root.controller.hasMedia && !root.nativeDialogVisible
+        onActivated: {
+            root.controller.togglePlayPause();
+            root.revealControls();
+        }
+    }
+
+    Shortcut {
+        sequence: "Left"
+        context: Qt.ApplicationShortcut
+        enabled: root.controller.hasMedia && !root.nativeDialogVisible
+        onActivated: {
+            root.controller.seekRelative(-5);
+            root.revealControls();
+        }
+    }
+
+    Shortcut {
+        sequence: "Right"
+        context: Qt.ApplicationShortcut
+        enabled: root.controller.hasMedia && !root.nativeDialogVisible
+        onActivated: {
+            root.controller.seekRelative(5);
+            root.revealControls();
+        }
+    }
+
     FileDialog {
         id: mediaDialog
         title: "Open Media"
         fileMode: FileDialog.OpenFile
-        nameFilters: ["Media files (*.mp4 *.mkv *.mov *.avi *.webm *.m4v *.mp3 *.m4a *.wav *.flac *.ogg *.opus *.aac *.ts *.m2ts *.wmv *.flv)", "All files (*)"]
+        nameFilters: ["Media files (*.mp4 *.mkv *.mov *.avi *.webm *.m4v *.mp3 *.m4a *.wav *.flac *.ogg *.opus *.aac *.ts *.m2ts *.wmv *.flv *.m3u *.m3u8 *.pls *.cue)", "All files (*)"]
         onAccepted: {
             root.controller.open(selectedFile);
             root.revealControls();
+            root.restoreDialogFocusAfterClose();
+        }
+        onRejected: root.restoreDialogFocusAfterClose()
+        onVisibleChanged: {
+            if (!visible)
+                root.restoreDialogFocusAfterClose();
         }
     }
 
@@ -147,7 +218,15 @@ ApplicationWindow {
         fileMode: FileDialog.SaveFile
         defaultSuffix: "mp4"
         nameFilters: ["MP4 video (*.mp4)"]
-        onAccepted: root.controller.exportSelectionTo(selectedFile)
+        onAccepted: {
+            root.controller.exportSelectionTo(selectedFile);
+            root.restoreDialogFocusAfterClose();
+        }
+        onRejected: root.restoreDialogFocusAfterClose()
+        onVisibleChanged: {
+            if (!visible)
+                root.restoreDialogFocusAfterClose();
+        }
     }
 
     FileDialog {
@@ -156,13 +235,27 @@ ApplicationWindow {
         fileMode: FileDialog.SaveFile
         defaultSuffix: "srt"
         nameFilters: ["SubRip captions (*.srt)"]
-        onAccepted: root.controller.generateCaptionsTo(selectedFile)
+        onAccepted: {
+            root.controller.generateCaptionsTo(selectedFile);
+            root.restoreDialogFocusAfterClose();
+        }
+        onRejected: root.restoreDialogFocusAfterClose()
+        onVisibleChanged: {
+            if (!visible)
+                root.restoreDialogFocusAfterClose();
+        }
     }
 
     MessageDialog {
         id: errorDialog
         title: "WAM"
         buttons: MessageDialog.Ok
+        onAccepted: root.restoreDialogFocusAfterClose()
+        onRejected: root.restoreDialogFocusAfterClose()
+        onVisibleChanged: {
+            if (!visible)
+                root.restoreDialogFocusAfterClose();
+        }
     }
 
     Rectangle {
@@ -366,19 +459,7 @@ ApplicationWindow {
                 return;
             }
 
-            if (event.key === Qt.Key_Space) {
-                root.controller.togglePlayPause();
-                root.revealControls();
-                event.accepted = true;
-            } else if (event.key === Qt.Key_Left) {
-                root.controller.seekRelative(-5);
-                root.revealControls();
-                event.accepted = true;
-            } else if (event.key === Qt.Key_Right) {
-                root.controller.seekRelative(5);
-                root.revealControls();
-                event.accepted = true;
-            } else if (event.key === Qt.Key_E) {
+            if (event.key === Qt.Key_E) {
                 root.quickEditOpen = !root.quickEditOpen;
                 if (root.quickEditOpen)
                     editor.forceActiveFocus();
@@ -405,6 +486,7 @@ ApplicationWindow {
         target: root.controller
 
         function onOpenFileDialogRequested() {
+            root.rememberDialogFocus();
             mediaDialog.open();
         }
 
@@ -417,6 +499,7 @@ ApplicationWindow {
             const suggested = root.suggestedOutputUrl("-wam.mp4");
             if (suggested.length > 0)
                 exportDialog.currentFile = suggested;
+            root.rememberDialogFocus();
             exportDialog.open();
         }
 
@@ -424,6 +507,7 @@ ApplicationWindow {
             const suggested = root.suggestedOutputUrl(".srt");
             if (suggested.length > 0)
                 captionDialog.currentFile = suggested;
+            root.rememberDialogFocus();
             captionDialog.open();
         }
 
@@ -431,6 +515,7 @@ ApplicationWindow {
             if (root.controller.lastError.length === 0)
                 return;
             errorDialog.text = root.controller.lastError;
+            root.rememberDialogFocus();
             errorDialog.open();
         }
 

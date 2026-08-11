@@ -27,6 +27,20 @@ HEVC, VP9, AV1, HDR, multiple subtitle formats, 1×/2×/4× playback, random see
 energy impact, dropped frames, and clean-machine tests on macOS, Windows, and
 Linux.
 
+### Blank-launch lazy-engine result
+
+A counterbalanced five-versus-five blank-launch A/B on the same Mac measured
+the effect of keeping the libmpv client dormant until the first valid open. The
+median physical footprint fell from 138,445,904 to 133,727,384 bytes, a
+4,718,520-byte (about 4.5 MiB) reduction. Median `ps` RSS fell by 9,632 KiB
+(about 9.4 MiB), and peak physical footprint fell by about 4.65 MB. The blank
+window also avoids libmpv's dormant worker threads.
+
+This is an idle-only result. Once media is opened, WAM initializes the same
+shipping libmpv path, so no active-playback CPU or memory improvement is claimed
+from lazy initialization. First-open/first-frame latency remains a separate
+release measurement.
+
 ## Production efficiency policy
 
 Normal playback now uses mpv's audio-clock sync and direct bilinear sampler

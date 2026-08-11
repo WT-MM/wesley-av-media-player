@@ -8,14 +8,19 @@
 #include <QString>
 #include <QUrl>
 
+#include <cstdint>
 #include <memory>
+#include <optional>
+#include <vector>
 
 class QTimer;
+struct mpv_event_end_file;
 
 namespace wam::qt {
 
 class MpvVideoItem;
 class PlayerCore;
+class PlayerControllerTestAccess;
 
 // QML-facing playback state and commands. All regular libmpv client calls are
 // made on this object's (GUI) thread; video rendering remains isolated on Qt
@@ -23,7 +28,7 @@ class PlayerCore;
 class PlayerController final : public QObject {
   Q_OBJECT
 
-  Q_PROPERTY(bool available READ available CONSTANT)
+  Q_PROPERTY(bool available READ available NOTIFY availableChanged)
   Q_PROPERTY(bool hasMedia READ hasMedia NOTIFY hasMediaChanged)
   Q_PROPERTY(QUrl source READ source WRITE setSource NOTIFY sourceChanged)
   Q_PROPERTY(QString mediaTitle READ mediaTitle NOTIFY mediaTitleChanged)
@@ -119,6 +124,7 @@ public:
   void setCaptionStatus(const QString &status);
 
 signals:
+  void availableChanged();
   void hasMediaChanged();
   void sourceChanged();
   void mediaTitleChanged();
@@ -151,6 +157,84 @@ signals:
 private:
   friend class PlayerCore;
   friend class MpvVideoItem;
+  friend class PlayerControllerTestAccess;
+
+  struct OpenAttempt {
+    std::uint64_t id = 0;
+    std::uint64_t request_serial = 0;
+    std::uint64_t render_stamp = 0;
+    std::int64_t playlist_entry_id = -1;
+  };
+
+  enum class RenderRecoveryMode {
+    NoReselection,
+    VideoReselect,
+    FullReload,
+  };
+
+  struct RenderRecovery {
+    std::uint64_t request_serial = 0;
+    double position = 0.0;
+    bool paused = true;
+    RenderRecoveryMode mode = RenderRecoveryMode::NoReselection;
+    std::int64_t video_track_id = -1;
+    std::int64_t audio_track_id = -1;
+    std::int64_t subtitle_track_id = -1;
+    bool file_has_audio_track = false;
+    bool track_snapshot_proven = false;
+    std::vector<std::filesystem::path> external_subtitles;
+    QUrl reload_source;
+    std::int64_t playlist_position = -1;
+    bool preserve_playlist_context = false;
+    std::uint64_t accepted_render_stamp = 0;
+    bool command_failed = false;
+    bool file_loaded = false;
+    bool playback_restarted = false;
+    bool external_subtitles_restored = false;
+    std::size_t external_subtitles_restored_count = 0;
+    bool per_file_state_restored = false;
+    bool transport_restored = false;
+    bool position_overridden = false;
+    std::uint64_t completion_token = 0;
+    int restore_retry_count = 0;
+    bool restore_retry_queued = false;
+    QString restore_failure;
+  };
+
+  struct RenderRecoveryAttempt {
+    std::uint64_t id = 0;
+    std::uint64_t request_serial = 0;
+    std::uint64_t render_stamp = 0;
+    std::int64_t playlist_entry_id = -1;
+    std::int64_t video_track_id = -1;
+    RenderRecoveryMode mode = RenderRecoveryMode::NoReselection;
+    std::int64_t started_playlist_entry_id = -1;
+    bool restarted_playlist_entry = false;
+  };
+
+  struct LivePlaybackState {
+    bool paused = true;
+    bool idle = true;
+    std::optional<bool> eof_reached;
+    std::optional<double> position;
+    std::optional<double> duration;
+  };
+
+  struct StartupPlaybackSync {
+    std::uint64_t request_serial = 0;
+    std::uint64_t render_stamp = 0;
+    std::int64_t playlist_entry_id = -1;
+    bool intended_paused = false;
+    std::optional<double> intended_position;
+    bool position_overridden = false;
+    std::uint64_t completion_token = 0;
+    int retry_count = 0;
+  };
+
+  struct PlaylistEntryRange {
+    std::int64_t first = -1;
+    std::uint64_t count = 0;
+  };
 
   enum class ObservedProperty : uint64_t {
     Pause = 1,
@@ -165,11 +249,69 @@ private:
     MediaTitle,
     PreservePitch,
     EofReached,
+    VideoTrack,
+    AudioTrack,
+    SubtitleTrack,
   };
 
   void drainMpvEvents();
   void requestVideoUpdate();
-  void flushPendingOpen();
+  void handleRenderInitializationFailure(const QString &error,
+                                         std::uint64_t render_stamp);
+  void handleRenderInvalidated(std::uint64_t retired_render_stamp);
+  void handleOpenCommandReply(std::uint64_t reply_userdata, int error);
+  void handleRenderRecoveryCommandReply(std::uint64_t reply_userdata,
+                                        int error);
+  void handleStartFile(std::int64_t playlist_entry_id);
+  void handleEndFile(const mpv_event_end_file &end);
+  void handlePlaybackReady(bool file_loaded);
+  void restoreRenderRecovery();
+  void queueRenderRecoveryCompletion();
+  void finishRenderRecoveryCompletion(std::uint64_t completion_token,
+                                      std::uint64_t request_serial,
+                                      std::uint64_t render_stamp,
+                                      std::int64_t playlist_entry_id);
+  [[nodiscard]] std::optional<LivePlaybackState>
+  readLivePlaybackState() const;
+  [[nodiscard]] static bool livePlaybackStateMatchesRecovery(
+      const RenderRecovery &recovery,
+      const LivePlaybackState &live_state);
+  [[nodiscard]] static bool livePlaybackStateMatchesStartupSync(
+      const StartupPlaybackSync &startup_sync,
+      const LivePlaybackState &live_state);
+  void commitRenderRecovery(const RenderRecovery &recovery,
+                            const LivePlaybackState &live_state);
+  void queueStartupPlaybackSync();
+  void finishStartupPlaybackSync(std::uint64_t completion_token,
+                                 std::uint64_t request_serial,
+                                 std::uint64_t render_stamp,
+                                 std::int64_t playlist_entry_id);
+  void reconcileStartupPlaybackSync(const LivePlaybackState &live_state);
+  void commitStartupPlaybackSync(const LivePlaybackState &live_state);
+  void scheduleRenderRecoveryRetry(const QString &error);
+  void degradeRenderRecovery(const QString &error);
+  void applyObservedPause(bool paused);
+  void applyObservedPosition(double position);
+  void applyObservedDuration(double duration);
+  void applyObservedIdle(bool idle);
+  void applyObservedEof(bool eof_reached);
+  void applyObservedVideoTrack(std::int64_t video_track_id);
+  void applyObservedAudioTrack(std::int64_t audio_track_id);
+  void applyObservedSubtitleTrack(std::int64_t subtitle_track_id);
+  void cacheCurrentTrackSelection();
+  void cacheCurrentEntrySource();
+  [[nodiscard]] static std::int64_t authoritativePlaylistEntry(
+      std::int64_t live_entry, std::int64_t captured_start_entry);
+  [[nodiscard]] bool acceptsPlaybackObservation() const;
+  [[nodiscard]] bool playlistEntryBelongsToCurrentLineage(
+      std::int64_t playlist_entry_id) const;
+  [[nodiscard]] bool engineReady() const;
+  [[nodiscard]] bool needsRenderContext() const;
+  bool initializePlaybackEngine();
+  bool flushPendingOpen(std::uint64_t render_stamp);
+  bool flushRenderRecovery(std::uint64_t render_stamp);
+  void continuePendingOpen();
+  void abandonPendingOpen();
   void attachVideoItem(MpvVideoItem *item);
   void detachVideoItem(MpvVideoItem *item);
   [[nodiscard]] std::shared_ptr<PlayerCore> coreForRendering() const;
@@ -177,6 +319,7 @@ private:
   void updatePause(bool paused);
   void updateIdle(bool idle);
   void updateEof(bool eof_reached);
+  void updateDuration(double duration);
   void updateSource(const QUrl &source);
   void updateMediaTitle(const QString &title);
   void resetTimeline();
@@ -196,7 +339,12 @@ private:
   ::wam::CaptionService caption_service_;
 
   QUrl source_;
+  // requested_source_ is the authoritative GUI intent. source_ mirrors mpv's
+  // observed path and can briefly clear during asynchronous replacement.
+  QUrl requested_source_;
   QUrl pending_source_;
+  QUrl committed_entry_source_;
+  std::int64_t committed_playlist_position_ = -1;
   QString media_title_;
   int appearance_ = 0;
   QString last_error_;
@@ -223,6 +371,29 @@ private:
   bool export_cancel_requested_ = false;
   bool export_completion_pending_ = false;
   bool caption_completion_pending_ = false;
+  bool observed_current_path_ = false;
+  std::uint64_t request_serial_ = 0;
+  std::uint64_t pending_request_serial_ = 0;
+  std::uint64_t next_open_attempt_id_ = 0;
+  std::uint64_t next_render_recovery_attempt_id_ = 0;
+  std::uint64_t next_render_recovery_completion_token_ = 0;
+  std::uint64_t next_startup_playback_sync_token_ = 0;
+  std::uint64_t last_reported_render_failure_stamp_ = 0;
+  std::int64_t active_event_playlist_entry_id_ = -1;
+  std::int64_t terminal_playlist_entry_id_ = -1;
+  std::int64_t last_error_playlist_entry_id_ = -1;
+  std::int64_t selected_video_track_id_ = -1;
+  std::int64_t selected_audio_track_id_ = -1;
+  std::int64_t selected_subtitle_track_id_ = -1;
+  std::int64_t selected_tracks_playlist_entry_id_ = -1;
+  std::optional<bool> current_file_has_audio_track_;
+  std::vector<std::filesystem::path> attached_subtitle_files_;
+  std::vector<PlaylistEntryRange> redirect_ranges_;
+  std::optional<OpenAttempt> open_attempt_;
+  std::optional<OpenAttempt> committed_open_;
+  std::optional<RenderRecovery> render_recovery_;
+  std::optional<RenderRecoveryAttempt> render_recovery_attempt_;
+  std::optional<StartupPlaybackSync> startup_playback_sync_;
 };
 
 } // namespace wam::qt

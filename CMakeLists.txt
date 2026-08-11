@@ -46,6 +46,7 @@ qt_add_executable(wam MACOSX_BUNDLE WIN32
   src/qt/player_controller.hpp
   src/qt/player_core.cpp
   src/qt/player_core_p.hpp
+  src/qt/render_lifecycle.hpp
   src/qt/playback_policy.hpp
   src/qt/mpv_video_item.cpp
   src/qt/mpv_video_item.hpp
@@ -202,6 +203,32 @@ if(BUILD_TESTING)
     src/jobs.hpp)
   target_include_directories(wam_caption_test PRIVATE src)
   add_test(NAME caption_service COMMAND wam_caption_test)
+
+  add_executable(wam_player_controller_lazy_test
+    tests/player_controller_lazy_test.cpp
+    src/qt/player_controller.cpp
+    src/qt/player_controller.hpp
+    src/qt/player_core.cpp
+    src/qt/player_core_p.hpp
+    src/jobs.cpp
+    src/jobs.hpp
+    src/caption_service.cpp
+    src/caption_service.hpp)
+  target_include_directories(wam_player_controller_lazy_test PRIVATE src)
+  target_link_libraries(wam_player_controller_lazy_test PRIVATE
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Quick
+    Qt6::OpenGL
+    PkgConfig::MPV)
+  add_test(NAME player_controller_lazy COMMAND wam_player_controller_lazy_test)
+  set_tests_properties(player_controller_lazy PROPERTIES TIMEOUT 20)
+
+  add_executable(wam_render_lifecycle_test
+    tests/render_lifecycle_test.cpp
+    src/qt/render_lifecycle.hpp)
+  target_include_directories(wam_render_lifecycle_test PRIVATE src)
+  add_test(NAME render_lifecycle COMMAND wam_render_lifecycle_test)
 
   find_program(WAM_FFMPEG_EXECUTABLE ffmpeg)
   find_program(WAM_FFPROBE_EXECUTABLE ffprobe)

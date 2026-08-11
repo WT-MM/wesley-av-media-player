@@ -6,6 +6,7 @@
 #include <QDebug>
 #include <QMetaObject>
 #include <QOpenGLContext>
+#include <QThread>
 #include <QtGlobal>
 
 #include <mpv/render_gl.h>
@@ -136,26 +137,35 @@ void applyRendererExperiments(mpv_handle *handle) {
 
 } // namespace
 
-PlayerCore::PlayerCore(PlayerController *owner) : owner_(owner) {
-  handle_ = mpv_create();
-  if (!handle_) {
+PlayerCore::PlayerCore(PlayerController *owner) : owner_(owner) {}
+
+bool PlayerCore::initialize() {
+  Q_ASSERT(!owner_ || QThread::currentThread() == owner_->thread());
+  State expected = State::Dormant;
+  if (!state_.compare_exchange_strong(expected, State::Initializing,
+                                      std::memory_order_acq_rel))
+    return expected == State::Ready;
+
+  mpv_handle *candidate = mpv_create();
+  if (!candidate) {
     initialization_error_ =
         QStringLiteral("Unable to create the media engine.");
-    return;
+    state_.store(State::Failed, std::memory_order_release);
+    return false;
   }
 
   // The packaged application must behave identically regardless of a user's
   // standalone mpv configuration. Avoid loading user scripts, profiles, and
   // built-in overlays that WAM neither displays nor controls.
-  setOption(handle_, "config", "no");
-  setOption(handle_, "load-scripts", "no");
-  setOption(handle_, "load-auto-profiles", "no");
-  setOption(handle_, "load-stats-overlay", "no");
-  setOption(handle_, "load-console", "no");
-  setOption(handle_, "load-select", "no");
-  setOption(handle_, "load-context-menu", "no");
-  setOption(handle_, "load-commands", "no");
-  setOption(handle_, "load-positioning", "no");
+  setOption(candidate, "config", "no");
+  setOption(candidate, "load-scripts", "no");
+  setOption(candidate, "load-auto-profiles", "no");
+  setOption(candidate, "load-stats-overlay", "no");
+  setOption(candidate, "load-console", "no");
+  setOption(candidate, "load-select", "no");
+  setOption(candidate, "load-context-menu", "no");
+  setOption(candidate, "load-commands", "no");
+  setOption(candidate, "load-positioning", "no");
 
   // Keep mpv's own UI/input disabled: QML is the single UX layer. The render
   // API and hardware interop let supported decoders provide GPU-backed frames
@@ -164,78 +174,84 @@ PlayerCore::PlayerCore(PlayerController *owner) : owner_(owner) {
   // Qt owns the process-wide application/menu lifecycle. Prevent mpv's macOS
   // AppHub from installing its standalone-player activation policy, menu
   // shortcuts, and Touch Bar while initializing inside the Qt host.
-  setOption(handle_, "macos-app-activation-policy", "prohibited");
-  setOption(handle_, "macos-menu-shortcuts", "no");
+  setOption(candidate, "macos-app-activation-policy", "prohibited");
+  setOption(candidate, "macos-menu-shortcuts", "no");
 #endif
-  setOption(handle_, "vo", "libmpv");
-  setOption(handle_, "hwdec", "auto-safe");
-  setOption(handle_, "vd-lavc-dr", "auto");
-  setOption(handle_, "gpu-hwdec-interop", "auto");
+  setOption(candidate, "vo", "libmpv");
+  setOption(candidate, "hwdec", "auto-safe");
+  setOption(candidate, "vd-lavc-dr", "auto");
+  setOption(candidate, "gpu-hwdec-interop", "auto");
   // Keep mpv's backend-specific hardware-frame reserve. A globally reduced
   // pool can starve fixed-allocation decoders such as D3D11VA and VAAPI even
   // when it happens to work with VideoToolbox's dynamic allocation path.
   // Audio-clock sync is mpv's lean, robust default. Display-resample remains
   // opt-in for viewers who prefer cadence correction over power efficiency.
-  setOption(handle_, "video-sync", "audio");
-  setOption(handle_, "audio-pitch-correction", "yes");
-  setOption(handle_, "keep-open", "yes");
-  setOption(handle_, "osc", "no");
-  setOption(handle_, "osd-level", "0");
-  setOption(handle_, "osd-bar", "no");
-  setOption(handle_, "osd-on-seek", "no");
-  setOption(handle_, "input-default-bindings", "no");
-  setOption(handle_, "input-builtin-bindings", "no");
-  setOption(handle_, "input-vo-keyboard", "no");
-  setOption(handle_, "input-cursor", "no");
-  setOption(handle_, "terminal", "no");
-  setOption(handle_, "msg-level", "all=warn");
-  setOption(handle_, "resume-playback", "no");
-  setOption(handle_, "autoload-files", "no");
-  setOption(handle_, "cover-art-auto", "no");
+  setOption(candidate, "video-sync", "audio");
+  setOption(candidate, "audio-pitch-correction", "yes");
+  setOption(candidate, "keep-open", "yes");
+  setOption(candidate, "osc", "no");
+  setOption(candidate, "osd-level", "0");
+  setOption(candidate, "osd-bar", "no");
+  setOption(candidate, "osd-on-seek", "no");
+  setOption(candidate, "input-default-bindings", "no");
+  setOption(candidate, "input-builtin-bindings", "no");
+  setOption(candidate, "input-vo-keyboard", "no");
+  setOption(candidate, "input-cursor", "no");
+  setOption(candidate, "terminal", "no");
+  setOption(candidate, "msg-level", "all=warn");
+  setOption(candidate, "resume-playback", "no");
+  setOption(candidate, "autoload-files", "no");
+  setOption(candidate, "cover-art-auto", "no");
 
   // These are conservative fallbacks for a source that bypasses WAM's normal
   // loadfile path. PlayerController supplies tighter per-file limits for local
   // files and bounded network limits for URLs.
-  setOption(handle_, "cache", "auto");
-  setOption(handle_, "cache-secs", "8");
-  setOption(handle_, "demuxer-readahead-secs", "3");
-  setOption(handle_, "demuxer-max-bytes", "32MiB");
-  setOption(handle_, "demuxer-max-back-bytes", "8MiB");
-  setOption(handle_, "demuxer-hysteresis-secs", "2");
+  setOption(candidate, "cache", "auto");
+  setOption(candidate, "cache-secs", "8");
+  setOption(candidate, "demuxer-readahead-secs", "3");
+  setOption(candidate, "demuxer-max-bytes", "32MiB");
+  setOption(candidate, "demuxer-max-back-bytes", "8MiB");
+  setOption(candidate, "demuxer-hysteresis-secs", "2");
 
   // Prefer the renderer's direct sampler path. Unlike forcing gpu-dumb-mode,
   // these settings still let mpv engage an advanced pipeline when HDR/color
   // conversion requires it, while ordinary SDR playback avoids intermediate
   // full-frame FBOs and multi-tap scaling shaders.
-  setOption(handle_, "scale", "bilinear");
-  setOption(handle_, "dscale", "bilinear");
-  setOption(handle_, "correct-downscaling", "no");
-  setOption(handle_, "linear-downscaling", "no");
-  setOption(handle_, "sigmoid-upscaling", "no");
-  setOption(handle_, "deband", "no");
-  setOption(handle_, "interpolation", "no");
-  applyRendererExperiments(handle_);
+  setOption(candidate, "scale", "bilinear");
+  setOption(candidate, "dscale", "bilinear");
+  setOption(candidate, "correct-downscaling", "no");
+  setOption(candidate, "linear-downscaling", "no");
+  setOption(candidate, "sigmoid-upscaling", "no");
+  setOption(candidate, "deband", "no");
+  setOption(candidate, "interpolation", "no");
+  applyRendererExperiments(candidate);
 
-  const int result = mpv_initialize(handle_);
+  const int result = mpv_initialize(candidate);
   if (result < 0) {
     initialization_error_ =
         QStringLiteral("Unable to initialize the media engine: %1")
             .arg(QString::fromUtf8(mpv_error_string(result)));
-    mpv_terminate_destroy(handle_);
-    handle_ = nullptr;
-    return;
+    mpv_terminate_destroy(candidate);
+    state_.store(State::Failed, std::memory_order_release);
+    return false;
   }
 
   // mpv's terminal output is disabled for a GUI app, but warning-level engine
   // diagnostics still need to reach WAM's log so playback failures can be
   // diagnosed instead of collapsing into the generic end-file error alone.
-  const int log_result = mpv_request_log_messages(handle_, "warn");
+  const int log_result = mpv_request_log_messages(candidate, "warn");
   if (log_result < 0) {
     qWarning() << "WAM: unable to enable media-engine diagnostics:"
                << mpv_error_string(log_result);
   }
 
-  mpv_set_wakeup_callback(handle_, &PlayerCore::onMpvWakeup, this);
+  mpv_set_wakeup_callback(candidate, &PlayerCore::onMpvWakeup, this);
+  {
+    std::scoped_lock lock(render_mutex_);
+    handle_ = candidate;
+    state_.store(State::Ready, std::memory_order_release);
+  }
+  return true;
 }
 
 PlayerCore::~PlayerCore() {
@@ -246,6 +262,9 @@ PlayerCore::~PlayerCore() {
   {
     std::scoped_lock lock(render_mutex_);
     if (render_context_) {
+      // Make every outstanding GUI-thread ticket stale before the fallback
+      // destroys the context.
+      static_cast<void>(render_lifecycle_.invalidate());
       // A MpvRenderNode normally releases this while its OpenGL context is
       // current. This fallback is only for an abnormal scene-graph teardown.
       qWarning() << "WAM: mpv render context outlived its scene-graph node";
@@ -274,39 +293,62 @@ void *PlayerCore::getOpenGlProcAddress(void *, const char *name) {
 }
 
 bool PlayerCore::ensureRenderContext() {
-  std::scoped_lock lock(render_mutex_);
-  if (render_context_)
-    return true;
+  std::unique_lock lock(render_mutex_);
   if (!handle_)
     return false;
+
+  if (const auto ready = render_lifecycle_.readyTicket())
+    return render_context_ != nullptr;
+
+  const auto creating = render_lifecycle_.beginCreation();
+  if (!creating)
+    return false;
+
+  QString error;
   if (!QOpenGLContext::currentContext()) {
-    postInitializationError(QStringLiteral(
-        "The video renderer requires an active OpenGL context."));
+    error = QStringLiteral(
+        "The video renderer requires an active OpenGL context.");
+  } else {
+    mpv_opengl_init_params gl_init{&PlayerCore::getOpenGlProcAddress, nullptr};
+    mpv_render_param parameters[] = {
+        {MPV_RENDER_PARAM_API_TYPE,
+         const_cast<char *>(MPV_RENDER_API_TYPE_OPENGL)},
+        {MPV_RENDER_PARAM_OPENGL_INIT_PARAMS, &gl_init},
+        {MPV_RENDER_PARAM_INVALID, nullptr},
+    };
+
+    mpv_render_context *candidate = nullptr;
+    const int result =
+        mpv_render_context_create(&candidate, handle_, parameters);
+    if (result < 0) {
+      error = QStringLiteral("Unable to initialize video rendering: %1")
+                  .arg(QString::fromUtf8(mpv_error_string(result)));
+    } else {
+      render_context_ = candidate;
+      mpv_render_context_set_update_callback(
+          render_context_, &PlayerCore::onRenderUpdate, this);
+    }
+  }
+
+  if (!error.isEmpty()) {
+    const auto failed = render_lifecycle_.completeCreation(*creating, false);
+    lock.unlock();
+    if (failed)
+      postInitializationError(error, *failed);
     return false;
   }
 
-  mpv_opengl_init_params gl_init{&PlayerCore::getOpenGlProcAddress, nullptr};
-  mpv_render_param parameters[] = {
-      {MPV_RENDER_PARAM_API_TYPE,
-       const_cast<char *>(MPV_RENDER_API_TYPE_OPENGL)},
-      {MPV_RENDER_PARAM_OPENGL_INIT_PARAMS, &gl_init},
-      {MPV_RENDER_PARAM_INVALID, nullptr},
-  };
-
-  const int result =
-      mpv_render_context_create(&render_context_, handle_, parameters);
-  if (result < 0) {
+  const auto ready = render_lifecycle_.completeCreation(*creating, true);
+  if (!ready) {
+    // Defensive only: creation and release are serialized on Qt's render
+    // thread, so this transition should not be invalidated in production.
+    mpv_render_context_set_update_callback(render_context_, nullptr, nullptr);
+    mpv_render_context_free(render_context_);
     render_context_ = nullptr;
-    postInitializationError(
-        QStringLiteral("Unable to initialize video rendering: %1")
-            .arg(QString::fromUtf8(mpv_error_string(result))));
     return false;
   }
-
-  mpv_render_context_set_update_callback(render_context_,
-                                         &PlayerCore::onRenderUpdate, this);
-  rendering_ready_.store(true, std::memory_order_release);
-  notifyRenderingReady();
+  lock.unlock();
+  notifyRenderingReady(*ready);
   return true;
 }
 
@@ -339,17 +381,31 @@ void PlayerCore::render(int framebuffer, int width, int height, bool flip_y) {
 }
 
 void PlayerCore::releaseRenderContext() {
-  std::scoped_lock lock(render_mutex_);
-  if (render_context_) {
-    mpv_render_context_set_update_callback(render_context_, nullptr, nullptr);
-    mpv_render_context_free(render_context_);
-    render_context_ = nullptr;
+  std::optional<RenderTicket> retired_ticket;
+  {
+    std::scoped_lock lock(render_mutex_);
+    // Invalidate GUI-thread tickets before freeing the context. An
+    // asynchronous load command that races teardown therefore cannot be
+    // mistaken for a load submitted against the replacement generation.
+    retired_ticket = render_lifecycle_.invalidate();
+    if (render_context_) {
+      mpv_render_context_set_update_callback(render_context_, nullptr,
+                                             nullptr);
+      mpv_render_context_free(render_context_);
+      render_context_ = nullptr;
+    }
+    // A queued update may have been delivered while the scene graph was
+    // hidden and therefore never consumed by render(). A replacement context
+    // must be able to schedule its first frame instead of inheriting that
+    // stale gate.
+    video_update_queued_.store(false, std::memory_order_release);
   }
-  // A queued update may have been delivered while the scene graph was hidden
-  // and therefore never consumed by render(). A replacement context must be
-  // able to schedule its first frame instead of inheriting that stale gate.
-  video_update_queued_.store(false, std::memory_order_release);
-  rendering_ready_.store(false, std::memory_order_release);
+  if (retired_ticket)
+    notifyRenderInvalidated(*retired_ticket);
+}
+
+bool PlayerCore::retryFailedRenderContext() {
+  return render_lifecycle_.retryFailure();
 }
 
 void PlayerCore::onMpvWakeup(void *context) {
@@ -417,22 +473,40 @@ void PlayerCore::queueVideoUpdate() {
     video_update_queued_.store(false, std::memory_order_release);
 }
 
-void PlayerCore::notifyRenderingReady() {
+void PlayerCore::notifyRenderingReady(RenderTicket ticket) {
   std::scoped_lock lock(owner_mutex_);
   if (!owner_)
     return;
   PlayerController *owner = owner_;
   QMetaObject::invokeMethod(
-      owner, [owner] { owner->flushPendingOpen(); }, Qt::QueuedConnection);
+      owner, [owner, ticket] { owner->flushPendingOpen(ticket.stamp); },
+      Qt::QueuedConnection);
 }
 
-void PlayerCore::postInitializationError(const QString &error) {
+void PlayerCore::notifyRenderInvalidated(RenderTicket retired_ticket) {
   std::scoped_lock lock(owner_mutex_);
   if (!owner_)
     return;
   PlayerController *owner = owner_;
   QMetaObject::invokeMethod(
-      owner, [owner, error] { owner->setLastError(error); },
+      owner,
+      [owner, retired_ticket] {
+        owner->handleRenderInvalidated(retired_ticket.stamp);
+      },
+      Qt::QueuedConnection);
+}
+
+void PlayerCore::postInitializationError(const QString &error,
+                                         RenderTicket ticket) {
+  std::scoped_lock lock(owner_mutex_);
+  if (!owner_)
+    return;
+  PlayerController *owner = owner_;
+  QMetaObject::invokeMethod(
+      owner,
+      [owner, error, ticket] {
+        owner->handleRenderInitializationFailure(error, ticket.stamp);
+      },
       Qt::QueuedConnection);
 }
 

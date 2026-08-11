@@ -20,13 +20,15 @@ class MpvRenderNode final : public QSGRenderNode {
   ~MpvRenderNode() override { releaseCore(); }
 
   void synchronize(std::shared_ptr<PlayerCore> core, QQuickWindow* window,
-                   const QRectF& rect, bool has_media) {
+                   const QRectF& rect, bool render_requested,
+                   bool has_media) {
     if (core_ != core) {
       releaseCore();
       core_ = std::move(core);
     }
     window_ = window;
     rect_ = rect;
+    render_requested_ = render_requested;
     has_media_ = has_media;
   }
 
@@ -46,7 +48,7 @@ class MpvRenderNode final : public QSGRenderNode {
   }
 
   void render(const RenderState*) override {
-    if (!core_ || !window_) return;
+    if (!core_ || !window_ || !render_requested_) return;
     if (window_->rendererInterface()->graphicsApi() !=
         QSGRendererInterface::OpenGL)
       return;
@@ -90,6 +92,7 @@ class MpvRenderNode final : public QSGRenderNode {
   std::shared_ptr<PlayerCore> core_;
   QQuickWindow* window_ = nullptr;
   QRectF rect_;
+  bool render_requested_ = false;
   bool has_media_ = false;
 };
 
@@ -116,9 +119,11 @@ QSGNode* MpvVideoItem::updatePaintNode(QSGNode* old_node,
                                        UpdatePaintNodeData*) {
   auto* node = static_cast<MpvRenderNode*>(old_node);
   if (!node) node = new MpvRenderNode;
-  node->synchronize(controller_ ? controller_->coreForRendering() : nullptr,
+  PlayerController *controller = controller_.data();
+  node->synchronize(controller ? controller->coreForRendering() : nullptr,
                     window(), boundingRect(),
-                    controller_ && controller_->hasMedia());
+                    controller && controller->needsRenderContext(),
+                    controller && controller->hasMedia());
   return node;
 }
 
