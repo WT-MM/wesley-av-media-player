@@ -111,7 +111,10 @@ FocusScope {
         anchors.rightMargin: 18
         height: 24
         to: Math.max(1, root.player.duration)
-        mediaPosition: root.player.position
+        // Once the palette has faded out, disconnect its geometry from
+        // mpv's frame-rate time-pos notifications. Re-evaluating when it
+        // becomes visible snaps directly to the current position.
+        mediaPosition: root.visible ? root.player.position : 0
         accentColor: root.accentColor
         onPreviewSeekRequested: seconds => {
             root.player.previewSeekTo(seconds);
