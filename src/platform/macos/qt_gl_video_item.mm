@@ -1541,6 +1541,10 @@ void QtGlVideoItem::flush(std::uint64_t nextGeneration) noexcept {
 QtGlVideoItemStats QtGlVideoItem::stats() const {
   const auto& counters = *state_->counters;
   QtGlVideoItemStats result;
+  {
+    QMutexLocker lock(&state_->mutex);
+    result.acceptedGeneration = state_->acceptedGeneration;
+  }
   result.submittedFrames =
       counters.submittedFrames.load(std::memory_order_relaxed);
   result.importedFrames =

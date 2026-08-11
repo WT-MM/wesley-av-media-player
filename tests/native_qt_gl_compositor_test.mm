@@ -381,6 +381,7 @@ Item {
   WAM_CHECK(blankStats.submittedFrames == 0);
   WAM_CHECK(blankStats.renderedFrames == 0);
   WAM_CHECK(blankStats.lastRenderedGeneration == 0);
+  WAM_CHECK(blankStats.acceptedGeneration == 0);
   WAM_CHECK(blankStats.fatalErrorSerial == 0);
   WAM_CHECK(blankStats.activeResourceSets == 0);
   WAM_CHECK(!blankStats.textureRectangleSupported);
@@ -757,7 +758,9 @@ Item {
   // enter the capacity-one latest-frame mailbox.
   video->holdRetirementsForTesting(true);
   const auto beforeFlush = video->stats();
+  WAM_CHECK(beforeFlush.acceptedGeneration == 0);
   video->flush(1);
+  WAM_CHECK(video->stats().acceptedGeneration == 1);
   window.requestUpdate();
   WAM_CHECK(spinUntil(
       [&] { return video->stats().pendingRetirements == 1; }, 5000));
@@ -826,7 +829,9 @@ Item {
   // A regressed/same generation argument advances fail-closed instead of
   // reopening the just-flushed timeline to a delayed callback.
   const auto beforeRegressedFlush = video->stats();
+  WAM_CHECK(beforeRegressedFlush.acceptedGeneration == 1);
   video->flush(1);
+  WAM_CHECK(video->stats().acceptedGeneration == 2);
   window.requestUpdate();
   WAM_CHECK(spinUntil(
       [&] { return video->stats().activeResourceSets == 0; }, 5000));
