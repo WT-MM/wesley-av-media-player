@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">WAM app icon</title>
+  <desc id="desc">A light, stylized portrait with glasses, a floral shirt, a thumbs-up and a pointing hand.</desc>
+  <defs>
+    <linearGradient id="paper" x1="120" y1="70" x2="890" y2="960" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#fffefa"/>
+      <stop offset="1" stop-color="#ebe7df"/>
+    </linearGradient>
+    <linearGradient id="skin" x1="420" y1="250" x2="650" y2="790" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#f0bd97"/>
+      <stop offset="1" stop-color="#d98e69"/>
+    </linearGradient>
+    <linearGradient id="shirt" x1="360" y1="580" x2="750" y2="980" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#34363c"/>
+      <stop offset="1" stop-color="#202126"/>
+    </linearGradient>
+    <filter id="lift" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="18" stdDeviation="22" flood-color="#28251f" flood-opacity=".16"/>
+    </filter>
+    <clipPath id="tile">
+      <rect x="36" y="36" width="952" height="952" rx="216"/>
+    </clipPath>
+    <g id="flower">
+      <path d="M0-34C18-31 28-18 24-3C12-3 3-11 0-22C-3-11-12-3-24-3C-28-18-18-31 0-34Z" fill="#ee7f86"/>
+      <path d="M34 0C31 18 18 28 3 24C3 12 11 3 22 0C11-3 3-12 3-24C18-28 31-18 34 0Z" fill="#ef9a78"/>
+      <path d="M0 34C-18 31-28 18-24 3C-12 3-3 11 0 22C3 11 12 3 24 3C28 18 18 31 0 34Z" fill="#eebf68"/>
+      <circle r="8" fill="#f8efe1"/>
+    </g>
+    <g id="leaf">
+      <path d="M0 0C28-38 61-34 70-28C62 1 31 16 0 0Z" fill="#71bfa8"/>
+      <path d="M5-1C27-8 45-15 63-26" fill="none" stroke="#e4f0e9" stroke-width="6" stroke-linecap="round"/>
+    </g>
+  </defs>
+
+  <g clip-path="url(#tile)">
+    <rect x="36" y="36" width="952" height="952" rx="216" fill="url(#paper)"/>
+
+    <!-- A restrained audiovisual halo: speaker arcs and one play cue. -->
+    <path d="M203 427C164 479 164 548 203 600M158 386C92 462 92 563 158 641"
+          fill="none" stroke="#26272b" stroke-width="24" stroke-linecap="round" opacity=".08"/>
+    <path d="M821 403C866 458 866 536 821 592M866 363C940 449 940 552 866 635"
+          fill="none" stroke="#26272b" stroke-width="24" stroke-linecap="round" opacity=".08"/>
+
+    <g filter="url(#lift)">
+      <!-- Neck behind the open collar. -->
+      <path d="M463 526L615 517L638 665L474 675Z" fill="url(#skin)"/>
+
+      <!-- Floral shirt, simplified to remain legible at 32 px. -->
+      <path d="M336 617C372 577 429 558 481 566L548 629L613 563C680 568 761 596 796 649L852 1018H245L278 720C287 673 303 639 336 617Z"
+            fill="url(#shirt)"/>
+      <path d="M476 566L548 629L494 719L407 590Z" fill="#45474d"/>
+      <path d="M615 563L548 629L603 720L690 589Z" fill="#44464c"/>
+      <path d="M548 629V1004" fill="none" stroke="#17181b" stroke-width="10" opacity=".65"/>
+      <circle cx="548" cy="735" r="8" fill="#c8c4bc" opacity=".78"/>
+      <circle cx="548" cy="839" r="8" fill="#c8c4bc" opacity=".78"/>
+
+      <g transform="translate(375 714) rotate(-16) scale(.78)"><use href="#flower"/></g>
+      <g transform="translate(688 685) rotate(18) scale(.72)"><use href="#flower"/></g>
+      <g transform="translate(431 874) rotate(12) scale(.66)"><use href="#flower"/></g>
+      <g transform="translate(690 883) rotate(-22) scale(.82)"><use href="#flower"/></g>
+      <g transform="translate(311 822) rotate(22) scale(.72)"><use href="#leaf"/></g>
+      <g transform="translate(594 788) rotate(-34) scale(.74)"><use href="#leaf"/></g>
+      <g transform="translate(735 769) rotate(148) scale(.62)"><use href="#leaf"/></g>
+      <g transform="translate(500 956) rotate(202) scale(.64)"><use href="#leaf"/></g>
+
+      <!-- Face and ears. -->
+      <ellipse cx="374" cy="404" rx="34" ry="54" fill="#e7a37d"/>
+      <ellipse cx="676" cy="405" rx="32" ry="52" fill="#e5a079"/>
+      <path d="M380 287C421 221 534 194 612 232C668 260 687 328 669 421C650 516 602 574 531 578C455 581 399 523 374 431C352 354 355 327 380 287Z"
+            fill="url(#skin)"/>
+
+      <!-- Hair silhouette taken from the loose, forward fringe in the photo. -->
+      <path d="M359 358C330 290 357 212 427 172C490 136 591 145 649 196C687 229 706 283 688 350L651 327L635 274L609 312L574 239L554 304L511 228L484 309L435 243L422 322L382 285Z"
+            fill="#151619"/>
+      <path d="M402 226C438 168 520 151 589 177" fill="none" stroke="#2b2c30" stroke-width="24" stroke-linecap="round" opacity=".75"/>
+
+      <!-- Thin silver glasses and familiar relaxed expression. -->
+      <g fill="none" stroke="#f4f0e8" stroke-width="13" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M391 350C424 333 476 331 507 350L496 410C463 425 420 421 399 399Z"/>
+        <path d="M535 348C566 328 621 329 650 347L641 398C618 420 573 423 544 407Z"/>
+        <path d="M506 355C516 348 525 347 536 354M391 358L365 351M650 354L678 345"/>
+      </g>
+      <circle cx="458" cy="372" r="8" fill="#24252a"/>
+      <circle cx="590" cy="370" r="8" fill="#24252a"/>
+      <path d="M528 378C520 416 517 435 536 441" fill="none" stroke="#bd7459" stroke-width="9" stroke-linecap="round"/>
+      <path d="M492 476C520 498 562 498 590 472C570 519 512 526 492 476Z" fill="#6f3d38"/>
+      <path d="M509 486C532 497 555 494 574 481" fill="none" stroke="#f6e0d2" stroke-width="8" stroke-linecap="round"/>
+
+      <!-- Left-hand thumbs-up silhouette from the foreground pose. -->
+      <path d="M286 825C238 837 185 819 152 782C135 763 143 735 165 728C183 722 199 734 216 747L243 769L230 700C226 675 239 655 260 654C280 654 289 672 290 694L295 737L320 724C345 712 372 720 384 743C395 766 386 793 362 805Z"
+            fill="url(#skin)"/>
+
+      <!-- Right pointing hand; the finger direction doubles as a media-forward cue. -->
+      <path d="M734 765C777 752 812 753 847 767L934 807C955 817 961 842 948 859C937 875 918 878 898 870L828 842L878 885C895 900 896 924 881 939C864 955 842 951 825 936L750 872L703 842C679 826 683 786 706 775Z"
+            fill="url(#skin)"/>
+      <path d="M786 798L887 833" fill="none" stroke="#f4c5a5" stroke-width="9" stroke-linecap="round" opacity=".7"/>
+
+      <!-- Small player cue, secondary to the portrait. -->
+      <circle cx="548" cy="908" r="44" fill="#f7f3ea" opacity=".94"/>
+      <path d="M535 884L571 908L535 932Z" fill="#292a2e"/>
+    </g>
+  </g>
+</svg>

@@ -1,0 +1,7 @@
+module Wam
+Main 1.0 Main.qml
+FloatingControls 1.0 FloatingControls.qml
+IconButton 1.0 IconButton.qml
+QuietButton 1.0 QuietButton.qml
+Scrubber 1.0 Scrubber.qml
+QuickEditSheet 1.0 QuickEditSheet.qml
