@@ -1,0 +1,97 @@
+{
+  "schema_version": 1,
+  "downloaded_on": "2026-08-10",
+  "entries": [
+    {
+      "id": "wam-test-h264",
+      "kind": "local-fixture",
+      "path": "test-media/sample-h264.mp4",
+      "sha256": "1270b4c98bd7ee2a5253099c3af6810a1dda76b715e1c812e5e02942545bc6c6",
+      "duration_seconds": 6.0,
+      "video": "H.264 High, 1280x720, 30 fps, yuv420p",
+      "audio": "AAC-LC, 48 kHz mono",
+      "steady_state_derivative": "wam-test-h264-180s.mp4"
+    },
+    {
+      "id": "wam-test-vp9",
+      "kind": "local-fixture",
+      "path": "test-media/sample-vp9.webm",
+      "sha256": "941476d23ea0b695e9c088eb3b530caf399eceeed86cd7ed13708bf450a8638a",
+      "duration_seconds": 4.008,
+      "video": "VP9 Profile 0, 854x480, 24 fps, yuv420p",
+      "audio": "Opus, 48 kHz mono",
+      "steady_state_derivative": "wam-test-vp9-180s.webm"
+    },
+    {
+      "id": "tos-h264-4k24",
+      "kind": "online-real-video",
+      "title": "Tears of Steel 4K H.264",
+      "source_page": "https://learn.microsoft.com/en-us/playready/advanced/testcontent/playready-3x-test-content",
+      "content_license_page": "https://mango.blender.org/about/",
+      "license": "CC BY 3.0 (Blender Foundation content)",
+      "url": "https://test.playready.microsoft.com/media/profficialsite/tearsofsteel_4k_60s_24fps.12000kbps.3840x2160.h264-8b.2ch.128kbps.aac.mp4",
+      "filename": "tos-h264-4k24.mp4",
+      "sha256": "4d0b0e7f569c23a421182e68c53f4a3bab85d701fcb688a733bb859cf13a0274",
+      "bytes": 80399291,
+      "duration_seconds": 60.083333,
+      "video": "H.264 High, 3840x2160, 24 fps, 8-bit yuv420p",
+      "audio": "AAC stereo",
+      "steady_state_derivative": "tos-h264-4k24-180s.mp4"
+    },
+    {
+      "id": "tos-hevc-4k24",
+      "kind": "online-real-video",
+      "title": "Tears of Steel 4K HEVC",
+      "source_page": "https://learn.microsoft.com/en-us/playready/advanced/testcontent/playready-3x-test-content",
+      "content_license_page": "https://mango.blender.org/about/",
+      "license": "CC BY 3.0 (Blender Foundation content)",
+      "url": "https://test.playready.microsoft.com/media/profficialsite/tearsofsteel_4k_60s_24fps.12000kbps.3840x2160.h265-8b.2ch.128kbps.aac.mp4",
+      "filename": "tos-hevc-4k24.mp4",
+      "sha256": "af69bb5d854a0f2106d59b57b6fe543faa1831a7ed83e3b9d6ecd8de52be962f",
+      "bytes": 78711207,
+      "duration_seconds": 60.083333,
+      "video": "HEVC Main, 3840x2160, 24 fps, 8-bit yuv420p",
+      "audio": "AAC stereo",
+      "source_sample_entry": "hev1",
+      "steady_state_derivative": "tos-hevc-hvc1-4k24-180s.mp4",
+      "steady_state_derivative_sha256": "7ab9b5238bad9548b1ea616c4d9374059b74b0b249bcaf46fb5da5bb7e669c68",
+      "steady_state_derivative_bytes": 236145272,
+      "steady_state_derivative_sample_entry": "hvc1",
+      "steady_state_derivative_note": "Stream-copy remux for cross-player compatibility; encoded video and audio packets are unchanged."
+    },
+    {
+      "id": "noaa-octopus-vp9",
+      "kind": "online-real-video",
+      "title": "Deep-sea octopuses (NOAA ROV footage)",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Wk215-deep-sea-octopuses.webm",
+      "license": "Public domain (NOAA)",
+      "url": "https://upload.wikimedia.org/wikipedia/commons/6/66/Wk215-deep-sea-octopuses.webm",
+      "filename": "noaa-octopus-vp9.webm",
+      "sha256": "0bd0eab901319e7e26532a2d98cee6191b7d10c52ff1af7b0003752da425b841",
+      "bytes": 9507971,
+      "duration_seconds": 87.304,
+      "video": "VP9 Profile 0, 1280x720, 24000/1001 fps, yuv420p",
+      "audio": "Opus"
+    },
+    {
+      "id": "nasa-minute-av1",
+      "kind": "online-real-video",
+      "title": "NASA Minute, August 8 2025",
+      "source_page": "https://commons.wikimedia.org/wiki/File:NASA_Minute_Aug_8,_2025.webm",
+      "license": "Public domain (NASA)",
+      "url": "https://upload.wikimedia.org/wikipedia/commons/b/bb/NASA_Minute_Aug_8%2C_2025.webm",
+      "filename": "nasa-minute-av1.webm",
+      "sha256": "b582e0d7861100f984b3bc5d74d62d477015077337270db564837c79bd091ef8",
+      "bytes": 20328851,
+      "duration_seconds": 99.421,
+      "video": "AV1 Main, 1080x1080, 30 fps, yuv420p",
+      "audio": "Opus"
+    }
+  ],
+  "network_probe": {
+    "id": "apple-av1-hls",
+    "source_page": "https://developer.apple.com/streaming/examples/",
+    "url": "https://devstreaming-cdn.apple.com/videos/streaming/examples/av1-sample/av1-sample.m3u8",
+    "note": "Compatibility and startup probe only; adaptive networking is excluded from local energy rankings."
+  }
+}

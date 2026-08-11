@@ -1,0 +1,664 @@
+#include "jobs.hpp"
+
+#include <algorithm>
+#include <array>
+#include <chrono>
+#include <cmath>
+#include <cstdlib>
+#include <sstream>
+#include <system_error>
+#include <thread>
+#include <vector>
+
+#if !defined(_WIN32)
+#include <cerrno>
+#include <csignal>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
+
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#elif defined(_WIN32)
+#include <windows.h>
+#endif
+
+namespace wam {
+
+namespace {
+
+using namespace std::chrono_literals;
+
+constexpr auto kProcessPollInterval = 20ms;
+constexpr auto kGracefulShutdownTimeout = 750ms;
+
+std::string pathArgument(const std::filesystem::path& path) {
+#ifdef _WIN32
+  const auto utf8 = path.u8string();
+  return std::string(reinterpret_cast<const char*>(utf8.data()), utf8.size());
+#else
+  return path.string();
+#endif
+}
+
+#ifdef _WIN32
+
+std::wstring widenUtf8(const std::string& value) {
+  if (value.empty()) return {};
+  const int size = MultiByteToWideChar(CP_UTF8, 0, value.data(),
+                                       static_cast<int>(value.size()), nullptr, 0);
+  if (size <= 0) return std::wstring(value.begin(), value.end());
+  std::wstring result(static_cast<size_t>(size), L'\0');
+  MultiByteToWideChar(CP_UTF8, 0, value.data(), static_cast<int>(value.size()),
+                      result.data(), size);
+  return result;
+}
+
+std::wstring quoteWindowsArgument(const std::wstring& value) {
+  std::wstring result = L"\"";
+  std::size_t slashes = 0;
+  for (const wchar_t c : value) {
+    if (c == L'\\') {
+      ++slashes;
+    } else if (c == L'\"') {
+      result.append(slashes * 2 + 1, L'\\');
+      result.push_back(L'\"');
+      slashes = 0;
+    } else {
+      result.append(slashes, L'\\');
+      slashes = 0;
+      result.push_back(c);
+    }
+  }
+  result.append(slashes * 2, L'\\');
+  result.push_back(L'\"');
+  return result;
+}
+
+std::filesystem::path resolveWindowsExecutable(
+    const std::filesystem::path& executable) {
+  if (executable.is_absolute() || executable.has_parent_path())
+    return executable;
+  std::array<wchar_t, 32768> resolved{};
+  const wchar_t* extension = executable.has_extension() ? nullptr : L".exe";
+  const DWORD length = SearchPathW(nullptr, executable.c_str(), extension,
+                                   static_cast<DWORD>(resolved.size()),
+                                   resolved.data(), nullptr);
+  if (length > 0 && length < resolved.size())
+    return std::filesystem::path(std::wstring(resolved.data(), length));
+  return executable;
+}
+
+int runWindowsChild(std::stop_token stop, const wchar_t* application,
+                    std::wstring command_line) {
+  if (stop.stop_requested()) return 130;
+
+  HANDLE job = CreateJobObjectW(nullptr, nullptr);
+  if (!job) return static_cast<int>(GetLastError());
+
+  JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+  limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+  if (!SetInformationJobObject(job, JobObjectExtendedLimitInformation, &limits,
+                               sizeof(limits))) {
+    const int error = static_cast<int>(GetLastError());
+    CloseHandle(job);
+    return error;
+  }
+
+  std::vector<wchar_t> mutable_command(command_line.begin(), command_line.end());
+  mutable_command.push_back(L'\0');
+
+  STARTUPINFOW startup{};
+  startup.cb = sizeof(startup);
+  PROCESS_INFORMATION process{};
+  const DWORD flags = CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP | CREATE_SUSPENDED;
+  if (!CreateProcessW(application, mutable_command.data(), nullptr, nullptr, FALSE,
+                      flags, nullptr, nullptr, &startup, &process)) {
+    const int error = static_cast<int>(GetLastError());
+    CloseHandle(job);
+    return error;
+  }
+
+  if (!AssignProcessToJobObject(job, process.hProcess)) {
+    const int error = static_cast<int>(GetLastError());
+    TerminateProcess(process.hProcess, static_cast<UINT>(error));
+    ResumeThread(process.hThread);
+    WaitForSingleObject(process.hProcess, INFINITE);
+    CloseHandle(process.hThread);
+    CloseHandle(process.hProcess);
+    CloseHandle(job);
+    return error;
+  }
+  ResumeThread(process.hThread);
+  CloseHandle(process.hThread);
+
+  bool cancellation_started = false;
+  std::chrono::steady_clock::time_point force_kill_at{};
+  for (;;) {
+    const DWORD wait = WaitForSingleObject(process.hProcess,
+                                            static_cast<DWORD>(kProcessPollInterval.count()));
+    if (wait == WAIT_OBJECT_0) break;
+    if (wait == WAIT_FAILED) {
+      const int error = static_cast<int>(GetLastError());
+      TerminateJobObject(job, static_cast<UINT>(error));
+      CloseHandle(process.hProcess);
+      CloseHandle(job);
+      return error;
+    }
+
+    if (stop.stop_requested() && !cancellation_started) {
+      cancellation_started = true;
+      force_kill_at = std::chrono::steady_clock::now() + kGracefulShutdownTimeout;
+      // Best effort for console-aware tools such as FFmpeg. CREATE_NO_WINDOW
+      // means this may not be deliverable, so the Job Object remains the
+      // reliable bounded fallback below.
+      GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, process.dwProcessId);
+    }
+    if (cancellation_started && std::chrono::steady_clock::now() >= force_kill_at) {
+      TerminateJobObject(job, 137);
+      WaitForSingleObject(process.hProcess, INFINITE);
+      break;
+    }
+  }
+
+  DWORD exit_code = 1;
+  GetExitCodeProcess(process.hProcess, &exit_code);
+  CloseHandle(process.hProcess);
+  // Closing the configured Job Object also guarantees no descendant survives
+  // a shell that happened to exit before its child.
+  CloseHandle(job);
+  return static_cast<int>(exit_code);
+}
+
+int runCommand(std::stop_token stop, const std::string& command) {
+  // Legacy/test-only shell route. Production exports use runProcessCommand().
+  std::wstring command_line =
+      L"cmd.exe /D /S /C \"" + widenUtf8(command) + L"\"";
+  return runWindowsChild(stop, nullptr, std::move(command_line));
+}
+
+int runProcessCommand(std::stop_token stop, const ProcessCommand& command) {
+  if (command.executable.empty()) return ERROR_FILE_NOT_FOUND;
+  const auto executable = resolveWindowsExecutable(command.executable);
+  std::wstring command_line = quoteWindowsArgument(executable.wstring());
+  for (const auto& argument : command.arguments) {
+    command_line.push_back(L' ');
+    command_line += quoteWindowsArgument(widenUtf8(argument));
+  }
+  const std::wstring application = executable.wstring();
+  return runWindowsChild(stop, application.c_str(), std::move(command_line));
+}
+
+#else
+
+int normalizedExitCode(int status) {
+  if (WIFEXITED(status)) return WEXITSTATUS(status);
+  if (WIFSIGNALED(status)) return 128 + WTERMSIG(status);
+  return 1;
+}
+
+int waitForPosixChild(std::stop_token stop, pid_t child) {
+  // Resolve the harmless parent/child setpgid race. EACCES means the child
+  // reached exec first after successfully configuring itself.
+  if (setpgid(child, child) != 0 && errno != EACCES && errno != ESRCH) {
+    const int error = errno ? errno : 1;
+    kill(child, SIGTERM);
+    int status = 0;
+    while (waitpid(child, &status, 0) < 0 && errno == EINTR) {
+    }
+    return error;
+  }
+
+  int status = 0;
+  bool cancellation_started = false;
+  std::chrono::steady_clock::time_point force_kill_at{};
+  for (;;) {
+    const pid_t waited = waitpid(child, &status, WNOHANG);
+    if (waited == child) return normalizedExitCode(status);
+    if (waited < 0 && errno != EINTR) return errno ? errno : 1;
+
+    if (stop.stop_requested() && !cancellation_started) {
+      cancellation_started = true;
+      force_kill_at = std::chrono::steady_clock::now() + kGracefulShutdownTimeout;
+      // Negative PID targets the whole process group. Fall back to the shell
+      // PID only if group setup raced with a very early child exit.
+      if (kill(-child, SIGTERM) != 0 && errno != ESRCH) kill(child, SIGTERM);
+    }
+    if (cancellation_started && std::chrono::steady_clock::now() >= force_kill_at) {
+      if (kill(-child, SIGKILL) != 0 && errno != ESRCH) kill(child, SIGKILL);
+      while (waitpid(child, &status, 0) < 0 && errno == EINTR) {
+      }
+      return normalizedExitCode(status);
+    }
+    std::this_thread::sleep_for(kProcessPollInterval);
+  }
+}
+
+int runCommand(std::stop_token stop, const std::string& command) {
+  if (stop.stop_requested()) return 130;
+
+  const pid_t child = fork();
+  if (child < 0) return errno ? errno : 1;
+  if (child == 0) {
+    // A dedicated process group lets cancellation reach the shell and every
+    // command it spawned.
+    setpgid(0, 0);
+    execl("/bin/sh", "sh", "-c", command.c_str(), static_cast<char*>(nullptr));
+    _exit(127);
+  }
+  return waitForPosixChild(stop, child);
+}
+
+int runProcessCommand(std::stop_token stop, const ProcessCommand& command) {
+  if (stop.stop_requested()) return 130;
+  if (command.executable.empty()) return ENOENT;
+
+  std::vector<std::string> storage;
+  storage.reserve(command.arguments.size() + 1);
+  storage.push_back(pathArgument(command.executable));
+  storage.insert(storage.end(), command.arguments.begin(),
+                 command.arguments.end());
+  std::vector<char*> arguments;
+  arguments.reserve(storage.size() + 1);
+  for (auto& value : storage) arguments.push_back(value.data());
+  arguments.push_back(nullptr);
+
+  const pid_t child = fork();
+  if (child < 0) return errno ? errno : 1;
+  if (child == 0) {
+    setpgid(0, 0);
+    execvp(arguments.front(), arguments.data());
+    _exit(errno == ENOENT ? 127 : 126);
+  }
+  return waitForPosixChild(stop, child);
+}
+
+#endif
+
+bool reserveFileExclusively(const std::filesystem::path& path,
+                            std::string* error) {
+#ifdef _WIN32
+  HANDLE file = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
+                            FILE_ATTRIBUTE_NORMAL, nullptr);
+  if (file == INVALID_HANDLE_VALUE) {
+    if (error)
+      *error = std::error_code(static_cast<int>(GetLastError()),
+                               std::system_category())
+                   .message();
+    return false;
+  }
+  CloseHandle(file);
+  return true;
+#else
+  const int file =
+      open(path.c_str(), O_CREAT | O_EXCL | O_WRONLY | O_CLOEXEC, 0666);
+  if (file < 0) {
+    if (error)
+      *error = std::error_code(errno, std::generic_category()).message();
+    return false;
+  }
+  close(file);
+  return true;
+#endif
+}
+
+std::string formatNumber(double value) {
+  std::ostringstream stream;
+  stream.precision(12);
+  stream << value;
+  return stream.str();
+}
+
+}  // namespace
+
+std::string quoteArg(const std::string& value) {
+#ifdef _WIN32
+  std::string out = "\"";
+  unsigned slashes = 0;
+  for (char c : value) {
+    if (c == '\\') {
+      ++slashes;
+    } else if (c == '"') {
+      out.append(slashes * 2 + 1, '\\');
+      out += '"';
+      slashes = 0;
+    } else {
+      out.append(slashes, '\\');
+      slashes = 0;
+      out += c;
+    }
+  }
+  out.append(slashes * 2, '\\');
+  return out + '"';
+#else
+  std::string out = "'";
+  for (char c : value) out += (c == '\'' ? "'\\''" : std::string(1, c));
+  return out + "'";
+#endif
+}
+
+std::string atempoFilter(double speed) {
+  speed = std::clamp(speed, 0.0625, 16.0);
+  std::vector<double> stages;
+  while (speed < 0.5) {
+    stages.push_back(0.5);
+    speed /= 0.5;
+  }
+  while (speed > 2.0) {
+    stages.push_back(2.0);
+    speed /= 2.0;
+  }
+  stages.push_back(speed);
+  std::ostringstream out;
+  for (size_t i = 0; i < stages.size(); ++i) {
+    if (i) out << ',';
+    out << "atempo=" << stages[i];
+  }
+  return out.str();
+}
+
+ProcessCommand buildExportProcess(const std::filesystem::path& ffmpeg,
+                                  const EditOptions& o) {
+  const double speed = std::clamp(o.speed, 0.0625, 16.0);
+  ProcessCommand command;
+  command.executable = ffmpeg;
+  auto& args = command.arguments;
+  args = {"-hide_banner", "-loglevel", "warning", "-nostdin", "-y"};
+  if (o.in_seconds > 0.001) {
+    args.emplace_back("-ss");
+    args.push_back(formatNumber(o.in_seconds));
+  }
+  // `-t` is deliberately an input option. If it is placed after `-i`, FFmpeg
+  // limits the already-retimed output and a 2x export reads twice as much of
+  // the source as the selected trim range.
+  if (o.out_seconds > o.in_seconds + 0.001) {
+    args.emplace_back("-t");
+    args.push_back(formatNumber(o.out_seconds - o.in_seconds));
+  }
+  args.emplace_back("-i");
+  args.push_back(pathArgument(o.input));
+  args.insert(args.end(), {"-map", "0:v:0?", "-map", "0:a:0?"});
+  args.emplace_back("-filter:v");
+  args.push_back("setpts=(PTS-STARTPTS)/" + formatNumber(speed));
+  if (o.preserve_pitch) {
+    args.emplace_back("-filter:a");
+    args.push_back(atempoFilter(speed));
+  } else {
+    args.emplace_back("-filter:a");
+    args.push_back("asetrate=sample_rate*" + formatNumber(speed) +
+                   ",aresample=sample_rate");
+  }
+  if (o.prefer_hardware_encoder) {
+#ifdef __APPLE__
+    args.insert(args.end(), {"-c:v", "h264_videotoolbox", "-allow_sw", "1",
+                             "-realtime", "1", "-q:v", "65", "-pix_fmt",
+                             "yuv420p"});
+#else
+    args.insert(args.end(), {"-c:v", "libx264", "-preset", "veryfast", "-crf",
+                             "18", "-pix_fmt", "yuv420p"});
+#endif
+  } else {
+    args.insert(args.end(), {"-c:v", "libx264", "-preset", "veryfast", "-crf",
+                             "18", "-pix_fmt", "yuv420p"});
+  }
+  args.insert(args.end(), {"-c:a", "aac", "-b:a", "192k", "-movflags",
+                           "+faststart"});
+  args.push_back(pathArgument(o.output));
+  return command;
+}
+
+std::string buildExportCommand(const std::filesystem::path& ffmpeg,
+                               const EditOptions& options) {
+  const ProcessCommand process = buildExportProcess(ffmpeg, options);
+  std::ostringstream command;
+  command << quoteArg(pathArgument(process.executable));
+  for (const auto& argument : process.arguments)
+    command << ' ' << quoteArg(argument);
+  return command.str();
+}
+
+std::filesystem::path reserveExportStagingFile(
+    const std::filesystem::path& destination, std::string* error) {
+  if (error) error->clear();
+  if (destination.empty()) {
+    if (error) *error = "The export destination is empty.";
+    return {};
+  }
+
+  std::error_code path_error;
+  const auto absolute_destination =
+      std::filesystem::absolute(destination, path_error);
+  if (path_error) {
+    if (error) *error = path_error.message();
+    return {};
+  }
+  const auto directory = absolute_destination.parent_path();
+  if (!std::filesystem::is_directory(directory, path_error)) {
+    if (error)
+      *error = path_error ? path_error.message()
+                          : "The export destination folder does not exist.";
+    return {};
+  }
+
+  static std::atomic<uint64_t> counter{0};
+#ifdef _WIN32
+  const uint64_t process_id = static_cast<uint64_t>(GetCurrentProcessId());
+#else
+  const uint64_t process_id = static_cast<uint64_t>(getpid());
+#endif
+  for (int attempt = 0; attempt < 128; ++attempt) {
+    const uint64_t token =
+        static_cast<uint64_t>(
+            std::chrono::steady_clock::now().time_since_epoch().count()) ^
+        (process_id << 32U) ^
+        counter.fetch_add(1, std::memory_order_relaxed);
+    std::ostringstream name;
+    name << ".wam-export-" << std::hex << token << '-' << attempt << ".mp4";
+    const auto candidate = directory / name.str();
+    std::string reserve_error;
+    if (reserveFileExclusively(candidate, &reserve_error)) return candidate;
+    if (attempt == 127 && error) *error = std::move(reserve_error);
+  }
+  if (error && error->empty())
+    *error = "Could not reserve a unique export staging file.";
+  return {};
+}
+
+bool commitExportStagingFile(const std::filesystem::path& staging,
+                             const std::filesystem::path& destination,
+                             std::string* error) {
+  if (error) error->clear();
+  if (staging.empty() || destination.empty()) {
+    if (error) *error = "The export staging or destination path is empty.";
+    return false;
+  }
+  std::error_code path_error;
+  if (!std::filesystem::is_regular_file(staging, path_error) || path_error) {
+    if (error)
+      *error = path_error ? path_error.message()
+                          : "The encoded staging file is missing.";
+    return false;
+  }
+  const auto size = std::filesystem::file_size(staging, path_error);
+  if (path_error || size == 0) {
+    if (error)
+      *error = path_error ? path_error.message()
+                          : "The encoded staging file is empty.";
+    return false;
+  }
+
+  const auto staging_parent =
+      std::filesystem::weakly_canonical(staging.parent_path(), path_error);
+  if (path_error) {
+    if (error) *error = path_error.message();
+    return false;
+  }
+  path_error.clear();
+  const auto absolute_destination =
+      std::filesystem::absolute(destination, path_error);
+  if (path_error) {
+    if (error) *error = path_error.message();
+    return false;
+  }
+  path_error.clear();
+  const auto destination_parent =
+      std::filesystem::weakly_canonical(absolute_destination.parent_path(),
+                                        path_error);
+  if (path_error || staging_parent != destination_parent) {
+    if (error)
+      *error = path_error
+                   ? path_error.message()
+                   : "Export staging and destination must share a folder.";
+    return false;
+  }
+
+#ifdef _WIN32
+  if (!MoveFileExW(staging.c_str(), absolute_destination.c_str(),
+                   MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+    if (error)
+      *error = std::error_code(static_cast<int>(GetLastError()),
+                               std::system_category())
+                   .message();
+    return false;
+  }
+#else
+  std::filesystem::rename(staging, absolute_destination, path_error);
+  if (path_error) {
+    if (error) *error = path_error.message();
+    return false;
+  }
+#endif
+  return true;
+}
+
+void removeExportStagingFile(const std::filesystem::path& staging) noexcept {
+  if (staging.empty()) return;
+  std::error_code ignored;
+  std::filesystem::remove(staging, ignored);
+}
+
+BackgroundJob::~BackgroundJob() {
+  cancel();
+  wait();
+}
+
+bool BackgroundJob::start(std::string label, std::string command) {
+  return startWorker(
+      std::move(label),
+      [command = std::move(command)](std::stop_token stop) {
+        return runCommand(stop, command);
+      });
+}
+
+bool BackgroundJob::start(std::string label, ProcessCommand command) {
+  return startWorker(
+      std::move(label),
+      [command = std::move(command)](std::stop_token stop) {
+        return runProcessCommand(stop, command);
+      });
+}
+
+bool BackgroundJob::startWorker(
+    std::string label, std::function<int(std::stop_token)> operation) {
+  if (running_.exchange(true)) return false;
+  wait();
+  finished_ = false;
+  exit_code_ = -1;
+  {
+    std::lock_guard lock(label_mutex_);
+    label_ = std::move(label);
+  }
+  try {
+    worker_ = std::jthread(
+        [this, operation = std::move(operation)](std::stop_token stop) {
+          int code = 1;
+          try {
+            code = operation(stop);
+          } catch (...) {
+            code = 1;
+          }
+          exit_code_ = code;
+          running_ = false;
+          finished_ = true;
+        });
+  } catch (...) {
+    // `running_` is claimed before thread creation to serialize callers. Give
+    // that claim back if the OS cannot create the worker, otherwise this job
+    // object can never be used again.
+    exit_code_ = -1;
+    finished_ = true;
+    running_ = false;
+    throw;
+  }
+  return true;
+}
+
+std::string BackgroundJob::label() const {
+  std::lock_guard lock(label_mutex_);
+  return label_;
+}
+
+void BackgroundJob::cancel() {
+  if (worker_.joinable()) worker_.request_stop();
+}
+
+void BackgroundJob::wait() {
+  if (worker_.joinable()) worker_.join();
+}
+
+void BackgroundJob::reset() {
+  if (running()) return;
+  wait();
+  finished_ = false;
+  exit_code_ = -1;
+  std::lock_guard lock(label_mutex_);
+  label_.clear();
+}
+
+static std::filesystem::path executablePath(const char* argv0) {
+#ifdef __APPLE__
+  uint32_t size = 0;
+  _NSGetExecutablePath(nullptr, &size);
+  std::string buffer(size, '\0');
+  if (_NSGetExecutablePath(buffer.data(), &size) == 0)
+    return std::filesystem::weakly_canonical(buffer.c_str());
+#elif defined(_WIN32)
+  std::wstring buffer(32768, L'\0');
+  const DWORD size = GetModuleFileNameW(nullptr, buffer.data(), buffer.size());
+  if (size) return std::filesystem::path(buffer.substr(0, size));
+#else
+  std::vector<char> buffer(4096);
+  const auto size = readlink("/proc/self/exe", buffer.data(), buffer.size() - 1);
+  if (size > 0) return std::filesystem::path(std::string(buffer.data(), size));
+#endif
+  return std::filesystem::absolute(argv0 ? argv0 : "wam");
+}
+
+std::filesystem::path findBundledTool(const char* executable, const char* argv0) {
+  auto dir = executablePath(argv0).parent_path();
+#ifdef __APPLE__
+  const auto bundled = dir / "../Resources/tools" / executable;
+#elif defined(_WIN32)
+  const auto bundled = dir / "tools" / executable;
+#else
+  const auto bundled = dir / "../lib/wam/tools" / executable;
+#endif
+  if (std::filesystem::exists(bundled)) return std::filesystem::weakly_canonical(bundled);
+  return executable;
+}
+
+std::filesystem::path defaultWhisperModel(const char* argv0) {
+  auto dir = executablePath(argv0).parent_path();
+#ifdef __APPLE__
+  return std::filesystem::weakly_canonical(dir / "../Resources/models/ggml-base.en.bin");
+#elif defined(_WIN32)
+  return dir / "models/ggml-base.en.bin";
+#else
+  return std::filesystem::weakly_canonical(dir / "../share/wam/models/ggml-base.en.bin");
+#endif
+}
+
+}  // namespace wam

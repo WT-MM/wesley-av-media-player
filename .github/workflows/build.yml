@@ -1,0 +1,241 @@
+name: Build standalone WAM apps
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            architecture: arm64
+          - runner: macos-15-intel
+            architecture: x86_64
+    runs-on: ${{ matrix.runner }}
+    env:
+      QT_VERSION: 6.11.1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install pinned Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          cache: true
+      - run: brew install cmake ninja pkg-config mpv ffmpeg
+      - run: test "$(qmake -query QT_VERSION)" = "$QT_VERSION"
+      - name: Generate deterministic native decoder fixture
+        run: |
+          mkdir -p build-fixtures
+          ffmpeg -hide_banner -loglevel error \
+            -f lavfi -i "testsrc2=size=320x180:rate=30" \
+            -frames:v 30 -an -c:v libx264 -pix_fmt yuv420p \
+            -bf 2 -g 30 -x264-params "keyint=30:min-keyint=30:scenecut=0" \
+            -movflags +faststart \
+            build-fixtures/native-bframes-h264.mp4
+          test "$(ffprobe -v error -select_streams v:0 \
+            -show_entries stream=has_b_frames -of csv=p=0 \
+            build-fixtures/native-bframes-h264.mp4)" -gt 0
+      - run: >-
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DBUILD_TESTING=ON
+          -DWAM_ENABLE_MACOS_NATIVE_VIDEO=ON
+          -DWAM_NATIVE_VIDEO_TEST_FIXTURE=${{ github.workspace }}/build-fixtures/native-bframes-h264.mp4
+      - run: cmake --build build --parallel
+      - run: ctest --test-dir build --output-on-failure
+      - name: Install Qt app bundle
+        run: |
+          cmake --install build --prefix stage 2>&1 | tee qt-install.log
+          if grep -E '^ERROR:' qt-install.log; then
+            echo "Qt deployment reported errors despite a zero exit code" >&2
+            exit 1
+          fi
+      - name: Add standalone media and caption runtime
+        run: |
+          chmod +x scripts/*.sh scripts/*.zsh
+          scripts/build_whisper.sh build/runtime/whisper-cli
+          scripts/fetch_whisper_model.sh build/runtime/models/ggml-base.en.bin
+          scripts/bundle_macos.zsh \
+            stage/WAM.app \
+            build/runtime/whisper-cli \
+            build/runtime/models/ggml-base.en.bin
+      - name: Verify installed macOS payload
+        run: |
+          test -x stage/WAM.app/Contents/MacOS/WAM
+          test -d stage/WAM.app/Contents/Frameworks/QtCore.framework
+          test -d stage/WAM.app/Contents/Frameworks/QtQuick.framework
+          test -f stage/WAM.app/Contents/PlugIns/platforms/libqcocoa.dylib
+          test -d stage/WAM.app/Contents/Resources/qml/QtQuick
+          test -s stage/WAM.app/Contents/Resources/WAM.icns
+          test -x stage/WAM.app/Contents/Resources/tools/ffmpeg
+          test -x stage/WAM.app/Contents/Resources/tools/whisper-cli
+          test -s stage/WAM.app/Contents/Resources/models/ggml-base.en.bin
+          test "$(lipo -archs stage/WAM.app/Contents/MacOS/WAM)" = "${{ matrix.architecture }}"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' \
+            stage/WAM.app/Contents/Info.plist)" = "WAM.icns"
+          stage/WAM.app/Contents/MacOS/WAM --verify-runtime
+          /usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' \
+            stage/WAM.app/Contents/Info.plist
+          codesign --verify --deep --strict stage/WAM.app
+          while IFS= read -r -d '' candidate; do
+            if file "$candidate" | grep -q 'Mach-O'; then
+              codesign --verify --strict "$candidate"
+            fi
+          done < <(find stage/WAM.app/Contents -type f -print0)
+      - run: >-
+          ditto -c -k --sequesterRsrc --keepParent
+          stage/WAM.app WAM-macOS-${{ matrix.architecture }}.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WAM-macOS-${{ matrix.architecture }}
+          path: WAM-macOS-${{ matrix.architecture }}.zip
+          if-no-files-found: error
+          retention-days: 14
+
+  linux:
+    timeout-minutes: 90
+    runs-on: ubuntu-24.04
+    env:
+      QT_VERSION: 6.11.1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install pinned Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          cache: true
+      - run: sudo apt-get update && sudo apt-get install -y cmake ninja-build pkg-config libmpv-dev libgl-dev libegl1 ffmpeg libfuse2t64 libxcb-cursor0 libxkbcommon-x11-0 xvfb
+      - run: test "$(qmake -query QT_VERSION)" = "$QT_VERSION"
+      - run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+      - run: cmake --build build --parallel
+      - run: ctest --test-dir build --output-on-failure
+      - run: cmake --install build --prefix AppDir/usr
+      - run: chmod +x scripts/*.sh && scripts/build_whisper.sh build/runtime/whisper-cli && scripts/fetch_whisper_model.sh build/runtime/models/ggml-base.en.bin
+      - name: Install bundled media and caption tools
+        run: |
+          install -Dm755 "$(command -v ffmpeg)" AppDir/usr/lib/wam/tools/ffmpeg
+          install -Dm755 build/runtime/whisper-cli AppDir/usr/lib/wam/tools/whisper-cli
+          install -Dm644 build/runtime/models/ggml-base.en.bin AppDir/usr/share/wam/models/ggml-base.en.bin
+      - name: Install AppImage deployment tools
+        run: |
+          curl --fail --location --retry 3 \
+            --output linuxdeploy.AppImage \
+            https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          curl --fail --location --retry 3 \
+            --output linuxdeploy-plugin-qt.AppImage \
+            https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage
+          chmod +x linuxdeploy.AppImage linuxdeploy-plugin-qt.AppImage
+      - name: Build standalone AppImage
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: 1
+          APPIMAGETOOL_APP_NAME: WAM
+          QML_SOURCES_PATHS: ${{ github.workspace }}/qml
+        run: >-
+          ./linuxdeploy.AppImage
+          --appdir AppDir
+          --executable AppDir/usr/bin/wam
+          --executable AppDir/usr/lib/wam/tools/ffmpeg
+          --executable AppDir/usr/lib/wam/tools/whisper-cli
+          --desktop-file packaging/linux/wam.desktop
+          --icon-file packaging/linux/wam.svg
+          --plugin qt
+          --output appimage
+      - name: Verify AppImage payload
+        run: |
+          APPIMAGE_EXTRACT_AND_RUN=1 ./WAM*.AppImage --appimage-extract >/dev/null
+          test -x squashfs-root/usr/bin/wam
+          test -x squashfs-root/usr/lib/wam/tools/ffmpeg
+          test -x squashfs-root/usr/lib/wam/tools/whisper-cli
+          test -s squashfs-root/usr/share/wam/models/ggml-base.en.bin
+          find squashfs-root -name 'libQt6Core.so.6' -print -quit | grep -q .
+          find squashfs-root -name 'libQt6Gui.so.6' -print -quit | grep -q .
+          find squashfs-root -name 'libQt6Qml.so.6' -print -quit | grep -q .
+          find squashfs-root -name 'libQt6Quick.so.6' -print -quit | grep -q .
+          find squashfs-root -name 'libqxcb.so' -print -quit | grep -q .
+          find squashfs-root -type d -path '*/qml/QtQuick' -print -quit | grep -q .
+          APPIMAGE_EXTRACT_AND_RUN=1 xvfb-run -a \
+            ./WAM*.AppImage --verify-runtime
+          runtime_library_path="$(find squashfs-root/usr -type d \( -name lib -o -path '*/lib/*' \) -print | paste -sd: -)"
+          while IFS= read -r candidate; do
+            if file "$candidate" | grep -q ELF; then
+              unresolved="$(LD_LIBRARY_PATH="$runtime_library_path" ldd "$candidate" 2>/dev/null | grep 'not found' || true)"
+              if test -n "$unresolved"; then
+                echo "Unresolved dependency in $candidate" >&2
+                echo "$unresolved" >&2
+                exit 1
+              fi
+            fi
+          done < <(find squashfs-root/usr/bin squashfs-root/usr/lib squashfs-root/usr/plugins squashfs-root/usr/qml -type f 2>/dev/null)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WAM-Linux
+          path: WAM*.AppImage
+          if-no-files-found: error
+          retention-days: 14
+
+  windows:
+    timeout-minutes: 90
+    runs-on: windows-2025
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            git
+            make
+            curl
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-qt6-base
+            mingw-w64-ucrt-x86_64-qt6-declarative
+            mingw-w64-ucrt-x86_64-mpv
+            mingw-w64-ucrt-x86_64-ffmpeg
+      - run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+      - run: cmake --build build --parallel
+      - run: ctest --test-dir build --output-on-failure
+      - run: chmod +x scripts/*.sh && scripts/build_whisper.sh build/runtime/whisper-cli.exe && scripts/fetch_whisper_model.sh build/runtime/models/ggml-base.en.bin
+      - run: scripts/package_windows.sh
+      - name: Verify Windows payload
+        run: |
+          test -x package/WAM.exe
+          test -f package/Qt6Core.dll
+          test -f package/Qt6Gui.dll
+          test -f package/Qt6Qml.dll
+          test -f package/Qt6Quick.dll
+          test -f package/Qt6QuickControls2.dll
+          test -f package/platforms/qwindows.dll
+          test -d package/qml/QtQuick
+          test -x package/tools/ffmpeg.exe
+          test -x package/tools/whisper-cli.exe
+          test -s package/models/ggml-base.en.bin
+          pacman -Q > package/MSYS2-PACKAGES.txt
+      - name: Create Windows ZIP
+        shell: pwsh
+        run: Compress-Archive -Path package/* -DestinationPath WAM-Windows.zip -Force
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WAM-Windows
+          path: WAM-Windows.zip
+          if-no-files-found: error
+          retention-days: 14
