@@ -59,9 +59,11 @@ Pipeline stop, detach, and destruction transfer their demux/VideoToolbox drain
 to a self-owned background retirement slot, so the AppKit thread never joins
 those producers. A process-wide admission lease permits at most one native
 attempt to prepare, run, or retire; frontend churn therefore cannot accumulate
-stuck VideoToolbox sessions. Runtime activation remains blocked on asynchronous
-AVAsset key loading, Qt-native composition, and full-sync/open-GOP seek
-coverage.
+stuck AVFoundation/VideoToolbox sessions. Asset and track keys load on a private
+serial queue; the caller only starts work and polls one generation-tagged
+terminal result, so no Apple callback can invoke client code after destruction.
+Runtime activation remains blocked on Qt-native composition, atomic fallback,
+and full-sync/open-GOP seek coverage.
 See `docs/NATIVE_MACOS_VIDEO.md` for scope and rollout gates.
 
 ## Editing and captions
