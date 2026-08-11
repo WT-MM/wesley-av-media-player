@@ -283,7 +283,6 @@ public:
   AcceleratedCGLContext() {
     const CGLPixelFormatAttribute attributes[] = {
         kCGLPFAAccelerated,
-        kCGLPFANoRecovery,
         kCGLPFAOpenGLProfile,
         static_cast<CGLPixelFormatAttribute>(kCGLOGLPVersion_3_2_Core),
         static_cast<CGLPixelFormatAttribute>(0)};
@@ -294,6 +293,13 @@ public:
                      CGLErrorString(chooseStatus));
     WAM_CHECK(pixelFormat_ != nullptr);
     WAM_CHECK(count > 0);
+    GLint accelerated = 0;
+    const CGLError describeStatus = CGLDescribePixelFormat(
+        pixelFormat_, 0, kCGLPFAAccelerated, &accelerated);
+    WAM_CHECK_DETAIL(describeStatus == kCGLNoError,
+                     CGLErrorString(describeStatus));
+    WAM_CHECK_DETAIL(accelerated != 0,
+                     "CGL selected a non-accelerated pixel format");
     const CGLError createStatus =
         CGLCreateContext(pixelFormat_, nullptr, &context_);
     WAM_CHECK_DETAIL(createStatus == kCGLNoError,
