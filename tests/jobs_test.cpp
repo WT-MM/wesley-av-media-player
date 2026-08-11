@@ -1,12 +1,23 @@
 #include "jobs.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <string>
 #include <thread>
+#include <utility>
+
+#ifndef _WIN32
+#include <cerrno>
+#include <csignal>
+#include <unistd.h>
+#endif
+
+static_assert(noexcept(std::declval<wam::BackgroundJob&>().cancel()),
+              "background cancellation must remain no-throw");
 
 namespace {
 int failures = 0;
@@ -29,6 +40,38 @@ void writeFile(const std::filesystem::path& path, const std::string& contents) {
   output << contents;
 }
 
+#ifndef _WIN32
+void exitSuccessfullyOnTerm(int) { _exit(0); }
+
+bool waitForFile(const std::filesystem::path& path,
+                 std::chrono::steady_clock::duration timeout) {
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  while (std::chrono::steady_clock::now() < deadline) {
+    std::error_code error;
+    if (std::filesystem::is_regular_file(path, error) &&
+        std::filesystem::file_size(path, error) > 0)
+      return true;
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  return false;
+}
+
+bool processExists(pid_t process) {
+  if (kill(process, 0) == 0) return true;
+  return errno == EPERM;
+}
+
+bool waitForProcessExit(pid_t process,
+                        std::chrono::steady_clock::duration timeout) {
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  while (std::chrono::steady_clock::now() < deadline) {
+    if (!processExists(process)) return true;
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  return !processExists(process);
+}
+#endif
+
 int main(int argc, char** argv) {
   if (argc == 4 && std::string(argv[1]) == "--structured-child") {
     writeFile(argv[2], argv[3]);
@@ -38,6 +81,22 @@ int main(int argc, char** argv) {
     std::this_thread::sleep_for(std::chrono::seconds(30));
     return 0;
   }
+  if (argc == 2 && std::string(argv[1]) == "--structured-fast-child")
+    return 0;
+#ifndef _WIN32
+  if (argc == 3 &&
+      std::string(argv[1]) == "--structured-descendant-leader") {
+    signal(SIGTERM, exitSuccessfullyOnTerm);
+    const pid_t descendant = fork();
+    if (descendant < 0) return 3;
+    if (descendant == 0) {
+      signal(SIGTERM, SIG_IGN);
+      writeFile(argv[2], std::to_string(getpid()));
+      for (;;) pause();
+    }
+    for (;;) pause();
+  }
+#endif
 
   expect(wam::atempoFilter(1.0) == "atempo=1", "1x atempo");
   expect(wam::atempoFilter(4.0) == "atempo=2,atempo=2", "4x atempo chain");
@@ -188,6 +247,18 @@ int main(int argc, char** argv) {
            "cancel cleanup removes the staging file");
     expect(readFile(destination) == "keep me",
            "cancel cleanup leaves the destination untouched");
+
+    const auto retry_output = directory / "retry.txt";
+    wam::ProcessCommand retry;
+    retry.executable = std::filesystem::absolute(argv[0]);
+    retry.arguments = {"--structured-child", retry_output.string(),
+                       "reused after cancellation"};
+    expect(job.start("reuse after cancellation", std::move(retry)),
+           "a cancelled job can be reused");
+    job.wait();
+    expect(job.succeeded() &&
+               readFile(retry_output) == "reused after cancellation",
+           "job reuse clears the previous cancellation request");
     std::filesystem::remove_all(directory);
   }
 
@@ -212,9 +283,107 @@ int main(int argc, char** argv) {
     }
     expect(job.finished(), "cancelled job finishes promptly");
     expect(!job.succeeded(), "cancelled job is not successful");
+    expect(job.exitCode() == 130,
+           "cancelled job reports the canonical cancellation code");
     expect(std::chrono::steady_clock::now() - started_at < std::chrono::seconds(3),
            "cancellation is bounded");
   }
+
+  {
+    // Race cancel() against start() after running() is published. The first
+    // request must never be erased by reusable-worker initialization.
+    bool lost_cancellation = false;
+    for (int attempt = 0; attempt < 16 && !lost_cancellation; ++attempt) {
+      wam::ProcessCommand child;
+      child.executable = std::filesystem::absolute(argv[0]);
+      child.arguments = {"--structured-slow-child"};
+      wam::BackgroundJob job;
+      std::atomic<bool> start_returned{false};
+      bool started = false;
+      std::thread starter([&] {
+        started = job.start("publication cancellation", child);
+        start_returned.store(true, std::memory_order_release);
+      });
+      while (!job.running() &&
+             !start_returned.load(std::memory_order_acquire))
+        std::this_thread::yield();
+      if (job.running())
+        job.cancel();
+      starter.join();
+
+      const auto deadline =
+          std::chrono::steady_clock::now() + std::chrono::seconds(2);
+      while (!job.finished() && std::chrono::steady_clock::now() < deadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+      lost_cancellation = !started || !job.finished() || job.succeeded() ||
+                          job.exitCode() != 130;
+      if (!job.finished())
+        job.cancel();
+      job.wait();
+    }
+    expect(!lost_cancellation,
+           "cancellation published after running is never reset or lost");
+  }
+
+#ifndef _WIN32
+  {
+    // Exercise the very-fast child/setpgid race repeatedly. A child that is
+    // already waitable before the parent's setpgid still reports its real
+    // successful exit rather than an isolation error.
+    for (int attempt = 0; attempt < 64; ++attempt) {
+      wam::ProcessCommand child;
+      child.executable = std::filesystem::absolute(argv[0]);
+      child.arguments = {"--structured-fast-child"};
+      wam::BackgroundJob job;
+      expect(job.start("fast process-group race", child),
+             "fast structured child starts");
+      job.wait();
+      expect(job.succeeded(), "fast structured child preserves exit zero");
+    }
+  }
+
+  {
+    // The process-group leader exits on SIGTERM while its child deliberately
+    // ignores TERM. wait() must retain the PGID through the grace deadline and
+    // kill that descendant before reporting completion.
+    const auto stamp =
+        std::chrono::steady_clock::now().time_since_epoch().count();
+    const auto directory = std::filesystem::temp_directory_path() /
+                           ("wam-descendant-cancel-" + std::to_string(stamp));
+    std::filesystem::create_directories(directory);
+    const auto pid_file = directory / "descendant.pid";
+    wam::ProcessCommand child;
+    child.executable = std::filesystem::absolute(argv[0]);
+    child.arguments = {"--structured-descendant-leader", pid_file.string()};
+    wam::BackgroundJob job;
+    expect(job.start("descendant cancellation", child),
+           "descendant cancellation process starts");
+    const bool descendant_started =
+        waitForFile(pid_file, std::chrono::seconds(2));
+    expect(descendant_started, "TERM-ignoring descendant reports its PID");
+    const pid_t descendant =
+        descendant_started ? static_cast<pid_t>(std::stol(readFile(pid_file)))
+                           : -1;
+    expect(descendant <= 0 || getpgid(descendant) != getpgrp(),
+           "test descendant is isolated from the test runner process group");
+    const auto started_at = std::chrono::steady_clock::now();
+    job.cancel();
+    job.wait();
+    const bool descendant_gone =
+        descendant > 0 && waitForProcessExit(descendant, std::chrono::seconds(1));
+    if (descendant > 0 && !descendant_gone)
+      kill(descendant, SIGKILL);
+    expect(descendant_gone,
+           "cancellation reaps a TERM-ignoring process-group descendant");
+    expect(!job.succeeded(), "descendant cancellation is not successful");
+    expect(job.exitCode() == 130,
+           "zero-exiting TERM handler still reports cancellation");
+    expect(std::chrono::steady_clock::now() - started_at <
+               std::chrono::seconds(3),
+           "descendant cleanup remains bounded");
+    std::filesystem::remove_all(directory);
+  }
+#endif
 
   {
     const auto started_at = std::chrono::steady_clock::now();

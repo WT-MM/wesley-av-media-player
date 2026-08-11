@@ -221,9 +221,9 @@ void drainWindowsPipe(HANDLE pipe, std::string &output) {
 
 ProcessResult runProcess(const fs::path &executable,
                          const std::vector<std::string> &arguments,
-                         std::stop_token stop_token) {
+                         const detail::CancellationFlag &cancellation) {
   ProcessResult result;
-  if (stop_token.stop_requested()) {
+  if (cancellation.requested()) {
     result.cancelled = true;
     return result;
   }
@@ -294,7 +294,7 @@ ProcessResult runProcess(const fs::path &executable,
       WaitForSingleObject(process.hProcess, INFINITE);
       break;
     }
-    if (stop_token.stop_requested() && !termination_sent) {
+    if (cancellation.requested() && !termination_sent) {
       result.cancelled = true;
       termination_sent = true;
       if (process_in_job)
@@ -327,6 +327,9 @@ std::optional<fs::path> searchWindowsPath(const fs::path &executable) {
 
 #else
 
+constexpr auto kCaptionProcessPollInterval = 20ms;
+constexpr auto kCaptionGracefulShutdownTimeout = 500ms;
+
 void drainPosixPipe(int pipe, std::string &output) {
   std::array<char, 4096> buffer{};
   for (;;) {
@@ -342,11 +345,72 @@ void drainPosixPipe(int pipe, std::string &output) {
   }
 }
 
+bool establishCaptionProcessGroup(pid_t child, int *error) {
+  if (setpgid(child, child) == 0)
+    return true;
+
+  const int setup_error = errno ? errno : 1;
+  // The child can reach exec before the parent's setpgid. Only signal a
+  // negative PID after proving the child owns that process-group identity.
+  if (setup_error == EACCES && getpgid(child) == child)
+    return true;
+  if (error)
+    *error = setup_error;
+  return false;
+}
+
+void signalVerifiedCaptionProcessGroup(pid_t group, int signal) {
+  int result = 0;
+  do {
+    result = kill(-group, signal);
+  } while (result != 0 && errno == EINTR);
+}
+
+bool reapCaptionChild(pid_t child, int *status, int *error) {
+  pid_t waited = -1;
+  do {
+    waited = waitpid(child, status, 0);
+  } while (waited < 0 && errno == EINTR);
+  if (waited == child)
+    return true;
+  if (error)
+    *error = errno ? errno : 1;
+  return false;
+}
+
+enum class CaptionChildObservation { Running, Exited, Error };
+
+CaptionChildObservation observeCaptionChild(pid_t child, int *error) {
+  siginfo_t information{};
+  int observed = -1;
+  do {
+    observed = waitid(P_PID, static_cast<id_t>(child), &information,
+                      WEXITED | WNOHANG | WNOWAIT);
+  } while (observed != 0 && errno == EINTR);
+  if (observed != 0) {
+    if (error)
+      *error = errno ? errno : 1;
+    return CaptionChildObservation::Error;
+  }
+  return information.si_pid == child ? CaptionChildObservation::Exited
+                                     : CaptionChildObservation::Running;
+}
+
+void terminateUnisolatedCaptionChild(pid_t child) {
+  int killed = 0;
+  do {
+    killed = kill(child, SIGKILL);
+  } while (killed != 0 && errno == EINTR);
+  int ignored_status = 0;
+  int ignored_error = 0;
+  reapCaptionChild(child, &ignored_status, &ignored_error);
+}
+
 ProcessResult runProcess(const fs::path &executable,
                          const std::vector<std::string> &arguments,
-                         std::stop_token stop_token) {
+                         const detail::CancellationFlag &cancellation) {
   ProcessResult result;
-  if (stop_token.stop_requested()) {
+  if (cancellation.requested()) {
     result.cancelled = true;
     return result;
   }
@@ -357,8 +421,15 @@ ProcessResult runProcess(const fs::path &executable,
     return result;
   }
   const int existing_flags = fcntl(output_pipe[0], F_GETFL, 0);
-  if (existing_flags >= 0)
-    fcntl(output_pipe[0], F_SETFL, existing_flags | O_NONBLOCK);
+  if (existing_flags < 0 ||
+      fcntl(output_pipe[0], F_SETFL, existing_flags | O_NONBLOCK) != 0) {
+    result.launch_error =
+        std::string("could not make the caption output pipe nonblocking: ") +
+        std::strerror(errno);
+    close(output_pipe[0]);
+    close(output_pipe[1]);
+    return result;
+  }
 
   std::vector<std::string> storage;
   storage.reserve(arguments.size() + 1);
@@ -378,7 +449,8 @@ ProcessResult runProcess(const fs::path &executable,
     return result;
   }
   if (pid == 0) {
-    setpgid(0, 0);
+    if (setpgid(0, 0) != 0)
+      _exit(125);
     dup2(output_pipe[1], STDOUT_FILENO);
     dup2(output_pipe[1], STDERR_FILENO);
     close(output_pipe[0]);
@@ -395,42 +467,106 @@ ProcessResult runProcess(const fs::path &executable,
 
   result.launched = true;
   close(output_pipe[1]);
-  const bool owns_process_group = setpgid(pid, pid) == 0 || getpgid(pid) == pid;
+  int setup_error = 0;
+  if (!establishCaptionProcessGroup(pid, &setup_error)) {
+    int observation_error = 0;
+    const auto observation =
+        observeCaptionChild(pid, &observation_error);
+    int status = 0;
+    int reap_error = 0;
+    const bool exited = observation == CaptionChildObservation::Exited &&
+                        reapCaptionChild(pid, &status, &reap_error);
+    if (observation == CaptionChildObservation::Running ||
+        (observation == CaptionChildObservation::Error &&
+         observation_error != ECHILD))
+      terminateUnisolatedCaptionChild(pid);
+    drainPosixPipe(output_pipe[0], result.output);
+    close(output_pipe[0]);
+    result.cancelled = cancellation.requested();
+    if (exited) {
+      if (WIFEXITED(status))
+        result.exit_code = WEXITSTATUS(status);
+      else if (WIFSIGNALED(status))
+        result.exit_code = 128 + WTERMSIG(status);
+      if (result.cancelled)
+        result.exit_code = 130;
+    } else {
+      result.launched = false;
+      result.exit_code = result.cancelled ? 130 : setup_error;
+      result.launch_error =
+          std::string("could not establish an isolated process group: ") +
+          std::strerror(setup_error);
+    }
+    return result;
+  }
+
   bool termination_sent = false;
-  bool force_sent = false;
   auto force_at = std::chrono::steady_clock::time_point::max();
   int status = 0;
+  bool status_valid = false;
   for (;;) {
     drainPosixPipe(output_pipe[0], result.output);
-    const pid_t wait_result = waitpid(pid, &status, WNOHANG);
-    if (wait_result == pid)
-      break;
-    if (wait_result < 0 && errno != EINTR)
-      break;
-
-    if (stop_token.stop_requested() && !termination_sent) {
-      result.cancelled = true;
-      termination_sent = true;
-      force_at = std::chrono::steady_clock::now() + 500ms;
-      if (owns_process_group)
-        kill(-pid, SIGTERM);
-      else
-        kill(pid, SIGTERM);
-    } else if (termination_sent && !force_sent &&
-               std::chrono::steady_clock::now() >= force_at) {
-      force_sent = true;
-      if (owns_process_group)
-        kill(-pid, SIGKILL);
-      else
-        kill(pid, SIGKILL);
+    if (!termination_sent) {
+      if (cancellation.requested()) {
+        result.cancelled = true;
+        termination_sent = true;
+        force_at = std::chrono::steady_clock::now() +
+                   kCaptionGracefulShutdownTimeout;
+        signalVerifiedCaptionProcessGroup(pid, SIGTERM);
+      } else {
+        int observation_error = 0;
+        const auto observation =
+            observeCaptionChild(pid, &observation_error);
+        if (observation == CaptionChildObservation::Error) {
+          // After ECHILD the PID may already be reusable. Do not direct a
+          // process-group signal at that numeric identity.
+          if (observation_error != ECHILD) {
+            signalVerifiedCaptionProcessGroup(pid, SIGKILL);
+            int ignored_error = 0;
+            status_valid = reapCaptionChild(pid, &status, &ignored_error);
+          }
+          if (!status_valid)
+            result.exit_code = observation_error ? observation_error : 1;
+          break;
+        }
+        if (observation == CaptionChildObservation::Exited) {
+          // waitid(WNOWAIT) leaves the leader unreaped. Re-check cancellation
+          // before choosing between a normal reap and whole-group cleanup.
+          if (cancellation.requested()) {
+            result.cancelled = true;
+            termination_sent = true;
+            force_at = std::chrono::steady_clock::now() +
+                       kCaptionGracefulShutdownTimeout;
+            signalVerifiedCaptionProcessGroup(pid, SIGTERM);
+          } else {
+            int reap_error = 0;
+            status_valid = reapCaptionChild(pid, &status, &reap_error);
+            if (!status_valid)
+              result.exit_code = reap_error ? reap_error : 1;
+            break;
+          }
+        }
+      }
     }
-    std::this_thread::sleep_for(20ms);
+
+    if (termination_sent &&
+        std::chrono::steady_clock::now() >= force_at) {
+      // Keep the leader waitable until this final group signal. Its unreaped
+      // PID prevents the process-group number from being reused underneath us.
+      signalVerifiedCaptionProcessGroup(pid, SIGKILL);
+      int reap_error = 0;
+      status_valid = reapCaptionChild(pid, &status, &reap_error);
+      if (!status_valid)
+        result.exit_code = 130;
+      break;
+    }
+    std::this_thread::sleep_for(kCaptionProcessPollInterval);
   }
   drainPosixPipe(output_pipe[0], result.output);
   close(output_pipe[0]);
-  if (WIFEXITED(status))
+  if (status_valid && WIFEXITED(status))
     result.exit_code = WEXITSTATUS(status);
-  else if (WIFSIGNALED(status))
+  else if (status_valid && WIFSIGNALED(status))
     result.exit_code = 128 + WTERMSIG(status);
   return result;
 }
@@ -751,6 +887,7 @@ bool CaptionService::start(CaptionRequest request) {
   }
   if (worker_.joinable())
     worker_.join();
+  cancellation_.reset();
   {
     std::lock_guard status_lock(status_mutex_);
     status_ = {};
@@ -761,9 +898,8 @@ bool CaptionService::start(CaptionRequest request) {
     status_.output_srt = request.output_srt;
   }
   try {
-    worker_ = std::jthread([this, request = std::move(request)](
-                               std::stop_token stop_token) mutable {
-      run(std::move(request), stop_token);
+    worker_ = std::thread([this, request = std::move(request)]() mutable {
+      run(std::move(request), cancellation_);
     });
   } catch (const std::exception &exception) {
     fail(std::string("Could not start caption worker: ") + exception.what());
@@ -773,16 +909,19 @@ bool CaptionService::start(CaptionRequest request) {
 }
 
 void CaptionService::cancel() noexcept {
-  std::lock_guard worker_lock(worker_mutex_);
-  if (!worker_.joinable())
-    return;
-  {
+  // Cancellation must remain available even while another caller is joining
+  // the worker. The atomic request is the functional operation; the status
+  // message is best-effort and must never make this noexcept method throw.
+  cancellation_.request();
+  try {
     std::lock_guard status_lock(status_mutex_);
     if (!status_.running)
       return;
     status_.message = "Cancelling caption generation…";
+  } catch (...) {
+    // The cancellation flag is already published. A diagnostic status update
+    // is optional and must not violate this method's no-throw contract.
   }
-  worker_.request_stop();
 }
 
 void CaptionService::wait() {
@@ -843,11 +982,12 @@ void CaptionService::cancelled() {
   status_.error.clear();
 }
 
-void CaptionService::run(CaptionRequest request,
-                         std::stop_token stop_token) noexcept {
+void CaptionService::run(
+    CaptionRequest request,
+    const detail::CancellationFlag &cancellation) noexcept {
   try {
     auto stopIfRequested = [&]() {
-      if (!stop_token.stop_requested())
+      if (!cancellation.requested())
         return false;
       cancelled();
       return true;
@@ -940,7 +1080,8 @@ void CaptionService::run(CaptionRequest request,
     update(CaptionStage::ExtractingAudio, 0.12f,
            "Preparing clean speech audio with FFmpeg…");
     const auto extraction = runProcess(
-        request.tools.ffmpeg, audioArguments(request.input, *wav), stop_token);
+        request.tools.ffmpeg, audioArguments(request.input, *wav),
+        cancellation);
     if (extraction.cancelled) {
       cancelled();
       return;
@@ -974,7 +1115,7 @@ void CaptionService::run(CaptionRequest request,
         runProcess(request.tools.whisper,
                    whisperArguments(request.tools.model, *wav, output_base,
                                     request.options),
-                   stop_token);
+                   cancellation);
     if (transcription.cancelled) {
       cancelled();
       return;

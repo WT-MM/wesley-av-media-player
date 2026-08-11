@@ -1,6 +1,7 @@
 #include "caption_service.hpp"
 #include "jobs.hpp"
 
+#include <array>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -9,15 +10,26 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <utility>
 
 #ifndef _WIN32
+#include <cerrno>
+#include <csignal>
 #include <sys/stat.h>
+#include <unistd.h>
 #endif
 
 namespace fs = std::filesystem;
 using namespace std::chrono_literals;
 
+static_assert(noexcept(std::declval<wam::CaptionService &>().cancel()),
+              "caption cancellation must remain no-throw");
+
 namespace {
+
+#ifndef _WIN32
+void exitSuccessfullyOnTerm(int) { _exit(0); }
+#endif
 
 void check(bool condition, const char *message) {
   if (!condition)
@@ -70,6 +82,45 @@ int runFakeCaptionTool(int argc, char **argv) {
     }
     if (output_base.empty())
       return 3;
+#ifndef _WIN32
+    if (name.find("descendant") != std::string::npos) {
+      signal(SIGTERM, exitSuccessfullyOnTerm);
+      const pid_t descendant = fork();
+      if (descendant < 0)
+        return 4;
+      if (descendant == 0) {
+        signal(SIGTERM, SIG_IGN);
+        if (const char *log =
+                std::getenv("WAM_CAPTION_TEST_DESCENDANT_PID_LOG"))
+          writeFile(log, std::to_string(getpid()));
+
+        // More than the service's retained diagnostic cap also exceeds a
+        // typical pipe buffer. Cancellation must keep draining while it waits
+        // through the graceful process-group deadline.
+        std::array<char, 4096> diagnostic{};
+        diagnostic.fill('x');
+        for (int block = 0; block < 32; ++block) {
+          std::size_t written = 0;
+          while (written < diagnostic.size()) {
+            const ssize_t count =
+                write(STDOUT_FILENO, diagnostic.data() + written,
+                      diagnostic.size() - written);
+            if (count > 0) {
+              written += static_cast<std::size_t>(count);
+            } else if (count < 0 && errno == EINTR) {
+              continue;
+            } else {
+              break;
+            }
+          }
+        }
+        for (;;)
+          pause();
+      }
+      for (;;)
+        pause();
+    }
+#endif
     if (name.find("slow") != std::string::npos)
       std::this_thread::sleep_for(5s);
     fs::path srt = output_base;
@@ -141,6 +192,37 @@ void waitForStage(wam::CaptionService &service, wam::CaptionStage stage) {
   throw std::runtime_error("caption service did not reach expected stage");
 }
 
+#ifndef _WIN32
+bool waitForFile(const fs::path &path,
+                 std::chrono::steady_clock::duration timeout) {
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  while (std::chrono::steady_clock::now() < deadline) {
+    std::error_code error;
+    if (fs::is_regular_file(path, error) && fs::file_size(path, error) > 0)
+      return true;
+    std::this_thread::sleep_for(10ms);
+  }
+  return false;
+}
+
+bool processExists(pid_t process) {
+  if (kill(process, 0) == 0)
+    return true;
+  return errno == EPERM;
+}
+
+bool waitForProcessExit(pid_t process,
+                        std::chrono::steady_clock::duration timeout) {
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  while (std::chrono::steady_clock::now() < deadline) {
+    if (!processExists(process))
+      return true;
+    std::this_thread::sleep_for(10ms);
+  }
+  return !processExists(process);
+}
+#endif
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -159,6 +241,10 @@ int main(int argc, char **argv) {
         copyAsTool(this_executable, temporary.path, "fake-whisper-empty");
     const auto slow_whisper =
         copyAsTool(this_executable, temporary.path, "fake-whisper-slow");
+#ifndef _WIN32
+    const auto descendant_whisper = copyAsTool(
+        this_executable, temporary.path, "fake-whisper-descendant");
+#endif
 
     const fs::path awkward = temporary.path / "media ' ; & $ file.mov";
     const fs::path awkward_wav = temporary.path / "audio ' ; & $ file.wav";
@@ -301,7 +387,66 @@ int main(int argc, char **argv) {
       const fs::path used_wav = readFile(wav_log);
       check(!used_wav.empty() && !fs::exists(used_wav),
             "cancelled request leaked its temporary WAV");
+
+      auto retry = requestFor(temporary.path, fake_ffmpeg, fake_whisper,
+                              "retry-after-cancel.srt");
+      check(service.start(retry),
+            "caption service should be reusable after cancellation");
+      service.wait();
+      const auto retry_status = service.status();
+      check(retry_status.stage == wam::CaptionStage::Completed &&
+                retry_status.succeeded,
+            "caption reuse must clear the previous cancellation request");
+      check(readFile(retry.output_srt).find("Hello from WAM") !=
+                std::string::npos,
+            "caption reuse did not commit the retry output");
     }
+
+#ifndef _WIN32
+    // A cooperative tool leader can exit zero on TERM while a descendant
+    // ignores TERM and keeps the diagnostic pipe open. Keep the leader
+    // unreaped until the final whole-group kill, then leave no descendant.
+    {
+      const fs::path descendant_log = temporary.path / "descendant.pid";
+      setenv("WAM_CAPTION_TEST_DESCENDANT_PID_LOG", descendant_log.c_str(), 1);
+      auto request = requestFor(temporary.path, fake_ffmpeg,
+                                descendant_whisper, "descendant-cancel.srt");
+      writeFile(request.output_srt, "preserve captions during group cancel");
+      wam::CaptionService service;
+      check(service.start(request), "descendant caption request should start");
+      waitForStage(service, wam::CaptionStage::Transcribing);
+      check(waitForFile(descendant_log, 2s),
+            "caption descendant should report its PID");
+      const pid_t descendant =
+          static_cast<pid_t>(std::stol(readFile(descendant_log)));
+      const pid_t descendant_group = getpgid(descendant);
+      check(descendant_group > 0 && descendant_group != getpgrp(),
+            "caption helper must be isolated from the test runner group");
+
+      const auto started = std::chrono::steady_clock::now();
+      service.cancel();
+      service.cancel();
+      service.wait();
+      const auto elapsed = std::chrono::steady_clock::now() - started;
+      const auto status = service.status();
+      const bool descendant_gone = waitForProcessExit(descendant, 1s);
+      if (!descendant_gone)
+        kill(descendant, SIGKILL);
+
+      check(status.stage == wam::CaptionStage::Cancelled && status.cancelled,
+            "descendant caption request should finish as cancelled");
+      check(descendant_gone,
+            "caption cancellation must kill a TERM-ignoring descendant");
+      check(elapsed < 2s,
+            "repeated caption cancellation must not extend the deadline");
+      check(readFile(request.output_srt) ==
+                "preserve captions during group cancel",
+            "descendant cancellation must preserve an existing output");
+      check(captionTemporaryCount(temporary.path) == 0,
+            "descendant cancellation leaked a staging file");
+      unsetenv("WAM_CAPTION_TEST_DESCENDANT_PID_LOG");
+    }
+#endif
 
 #ifdef __APPLE__
     // Cloud placeholders report a logical size but can block indefinitely on

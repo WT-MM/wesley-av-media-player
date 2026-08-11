@@ -55,8 +55,10 @@ jobs:
       - run: ctest --test-dir build --output-on-failure
       - name: Install Qt app bundle
         run: |
-          cmake --install build --prefix stage 2>&1 | tee qt-install.log
-          if grep -E '^ERROR:' qt-install.log; then
+          set -o pipefail
+          cmake --install build \
+            --prefix "${{ github.workspace }}/stage" 2>&1 | tee qt-install.log
+          if grep -E '^(ERROR:|CMake Error)' qt-install.log; then
             echo "Qt deployment reported errors despite a zero exit code" >&2
             exit 1
           fi
@@ -121,7 +123,7 @@ jobs:
       - run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
       - run: cmake --build build --parallel
       - run: ctest --test-dir build --output-on-failure
-      - run: cmake --install build --prefix AppDir/usr
+      - run: cmake --install build --prefix "${{ github.workspace }}/AppDir/usr"
       - run: chmod +x scripts/*.sh && scripts/build_whisper.sh build/runtime/whisper-cli && scripts/fetch_whisper_model.sh build/runtime/models/ggml-base.en.bin
       - name: Install bundled media and caption tools
         run: |

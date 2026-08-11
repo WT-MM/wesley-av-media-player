@@ -1,5 +1,7 @@
 #pragma once
 
+#include "cancellation.hpp"
+
 #include <filesystem>
 #include <mutex>
 #include <string>
@@ -99,7 +101,8 @@ public:
   bool succeeded() const;
 
 private:
-  void run(CaptionRequest request, std::stop_token stop_token) noexcept;
+  void run(CaptionRequest request,
+           const detail::CancellationFlag &cancellation) noexcept;
   void update(CaptionStage stage, float progress, std::string message);
   void complete(const std::filesystem::path &output);
   void fail(std::string error);
@@ -108,7 +111,8 @@ private:
   mutable std::mutex status_mutex_;
   CaptionStatus status_;
   mutable std::mutex worker_mutex_;
-  std::jthread worker_;
+  std::thread worker_;
+  detail::CancellationFlag cancellation_;
 };
 
 } // namespace wam
