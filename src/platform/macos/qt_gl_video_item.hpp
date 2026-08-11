@@ -1,0 +1,90 @@
+#pragma once
+
+#include "native_video_presenter.hpp"
+
+#include <QQuickItem>
+#include <QString>
+
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+
+namespace wam::macos {
+
+struct QtGlVideoItemStats {
+  std::uint64_t submittedFrames{0};
+  std::uint64_t importedFrames{0};
+  std::uint64_t renderedFrames{0};
+  std::uint64_t backpressuredImports{0};
+  std::uint64_t rejectedFrames{0};
+  std::uint64_t staleFrames{0};
+  std::uint64_t destroyedResourceSets{0};
+  std::size_t activeResourceSets{0};
+  std::size_t peakActiveResourceSets{0};
+  std::size_t pendingRetirements{0};
+  OSType lastPixelFormat{0};
+  bool exactSourceIOSurface{false};
+  bool textureRectangleSupported{false};
+  bool textureRgSupported{false};
+  bool acceleratedContext{false};
+  bool renderedIntoNonDefaultFramebuffer{false};
+  bool sawScissorClip{false};
+  bool sawStencilClip{false};
+  bool retirementFailed{false};
+  QString lastError;
+};
+
+// Test-gated Qt Quick integration for IOSurface-backed VideoToolbox output.
+// It deliberately uses Qt's existing OpenGL scene-graph backend so the
+// shipping libmpv fallback does not need a cross-API copy. The node binds the
+// IOSurface's NV12/P010 planes as GL_TEXTURE_RECTANGLE views and converts YUV
+// directly into Qt's active render target in one draw.
+//
+// The item is not registered by, linked into, or selected by shipping WAM.
+// submitFrame() belongs on the GUI thread. OpenGL imports, draws, fences, and
+// destruction happen on the scene-graph render thread or the private shared-
+// context retirement service.
+class QtGlVideoItem final : public QQuickItem {
+  Q_OBJECT
+
+ public:
+  struct SharedState;
+
+  explicit QtGlVideoItem(QQuickItem* parent = nullptr);
+  ~QtGlVideoItem() override;
+
+  // Capacity-one handoff: a newer frame replaces a pending frame that has not
+  // yet been consumed by the render thread. The last accepted lease is also
+  // retained so paused playback survives scene-graph recreation.
+  void submitFrame(FrameLease frame);
+  // Atomically advances the accepted timeline and clears the retained frame.
+  // A stale frame submitted by an asynchronous pre-seek callback is rejected,
+  // and a recreated scene graph cannot resurrect the old generation.
+  void flush(std::uint64_t nextGeneration) noexcept;
+  [[nodiscard]] QtGlVideoItemStats stats() const;
+
+#if defined(WAM_NATIVE_GL_VIDEO_TESTING)
+  // Deterministic fail-closed seam for the isolated hardware gate.
+  void failNextImportForTesting();
+  void failSecondPlaneImportForTesting();
+  void failAfterRetirementServiceCreationForTesting();
+  // Exercises the teardown path without depending on GPU scheduling luck.
+  void holdRetirementsForTesting(bool hold);
+  // Forces the impossible no-service teardown branch. The gate verifies that
+  // its IOSurface lease is quarantined rather than released unsafely.
+  void strandRetirementServiceForTesting();
+  [[nodiscard]] static std::size_t quarantinedJobsForTesting() noexcept;
+  // Proves VAO names are deleted only in their exact origin CGL context,
+  // including same-share-group and different-share-group collisions.
+  [[nodiscard]] static bool verifyContextLocalVaoPolicyForTesting();
+#endif
+
+ protected:
+  QSGNode* updatePaintNode(QSGNode* oldNode,
+                           UpdatePaintNodeData* data) override;
+
+ private:
+  std::shared_ptr<SharedState> state_;
+};
+
+}  // namespace wam::macos
