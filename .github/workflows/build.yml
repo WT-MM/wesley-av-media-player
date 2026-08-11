@@ -219,6 +219,8 @@ jobs:
             mingw-w64-ucrt-x86_64-qt6-declarative
             mingw-w64-ucrt-x86_64-mpv
             mingw-w64-ucrt-x86_64-ffmpeg
+      - name: Test Windows QML deploy tool discovery
+        run: sh tests/package_windows_qml_scanner_test.sh
       - run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
       - run: cmake --build build --parallel
       - run: ctest --test-dir build --output-on-failure
