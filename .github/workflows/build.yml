@@ -37,14 +37,20 @@ jobs:
         run: |
           mkdir -p build-fixtures
           ffmpeg -hide_banner -loglevel error \
-            -f lavfi -i "testsrc2=size=320x180:rate=30" \
-            -frames:v 30 -an -c:v libx264 -pix_fmt yuv420p \
+            -f lavfi -i "testsrc2=size=320x180:rate=30:duration=3" \
+            -f lavfi -i "anullsrc=channel_layout=stereo:sample_rate=48000:duration=3" \
+            -map 0:v:0 -map 1:a:0 -frames:v 90 \
+            -c:v libx264 -pix_fmt yuv420p \
             -bf 2 -g 30 -x264-params "keyint=30:min-keyint=30:scenecut=0" \
+            -c:a aac -b:a 64k -shortest \
             -movflags +faststart \
             build-fixtures/native-bframes-h264.mp4
           test "$(ffprobe -v error -select_streams v:0 \
             -show_entries stream=has_b_frames -of csv=p=0 \
             build-fixtures/native-bframes-h264.mp4)" -gt 0
+          test "$(ffprobe -v error -select_streams a:0 \
+            -show_entries stream=codec_name -of csv=p=0 \
+            build-fixtures/native-bframes-h264.mp4)" = "aac"
       - run: >-
           cmake -S . -B build -G Ninja
           -DCMAKE_BUILD_TYPE=Release

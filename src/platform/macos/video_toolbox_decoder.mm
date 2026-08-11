@@ -17,6 +17,10 @@
 namespace wam::macos {
 namespace {
 
+constexpr std::size_t kMaximumCodecConfigurationBytes = 1024ULL * 1024ULL;
+constexpr std::size_t kMaximumCompressedPacketBytes =
+    32ULL * 1024ULL * 1024ULL;
+
 void assignError(std::string *error, std::string message) {
   if (error != nullptr) {
     *error = std::move(message);
@@ -45,6 +49,7 @@ struct AsyncDecodeState {
   std::size_t maxPendingPresentationFrames{0};
   std::size_t peakPendingPresentationFrames{0};
   std::vector<FrameLease> pendingPresentationFrames;
+  OSType expectedOutputPixelFormat{0};
   OSType actualOutputPixelFormat{0};
   CMTime maximumSeenPresentationTime{kCMTimeInvalid};
   CMTime safePresentationTime{kCMTimeInvalid};
@@ -210,17 +215,12 @@ void deliverDecodedFrame(const std::shared_ptr<AsyncDecodeState> &state,
     } else {
       const OSType pixelFormat = CVPixelBufferGetPixelFormatType(
           static_cast<CVPixelBufferRef>(imageBuffer));
-      const bool supported =
-          pixelFormat == kCVPixelFormatType_32BGRA ||
-          pixelFormat == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange ||
-          pixelFormat == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange ||
-          pixelFormat == kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange ||
-          pixelFormat == kCVPixelFormatType_420YpCbCr10BiPlanarFullRange;
-      if (!supported) {
+      if (pixelFormat != state->expectedOutputPixelFormat) {
         state->lastError =
-            "VideoToolbox produced a pixel format unsupported by the Metal "
-            "presenter: " +
-            std::to_string(pixelFormat);
+            "VideoToolbox output pixel format " +
+            std::to_string(pixelFormat) + " did not match the bounded native "
+            "decode contract " +
+            std::to_string(state->expectedOutputPixelFormat);
         ++state->dropped;
       } else if (!CMTIME_IS_VALID(timing.presentationTime)) {
         state->lastError =
@@ -260,12 +260,15 @@ void deliverDecodedFrame(const std::shared_ptr<AsyncDecodeState> &state,
           collectPresentableFramesLocked(*state, false, readyFrames);
           if (state->pendingPresentationFrames.size() >
               state->maxPendingPresentationFrames) {
-            // Preserve ordering and the oldest display work. Dropping the
-            // farthest-future surface is cheaper and safer than unbounded
-            // retention when a malformed/extreme GOP exceeds the contract.
+            // Preserve the hard memory bound, but make the loss sticky so the
+            // pipeline rejects/falls back instead of silently corrupting a
+            // legal stream whose reorder depth exceeds its declared contract.
             state->pendingPresentationFrames.pop_back();
             ++state->dropped;
             ++state->presentationBackpressureDrops;
+            state->lastError =
+                "decoded stream exceeded the bounded presentation-reorder "
+                "contract";
           }
         }
       }
@@ -291,6 +294,8 @@ OSStatus createFormatDescription(const VideoStreamConfiguration &configuration,
       : configuration.codec == kCMVideoCodecType_HEVC ? CFSTR("hvcC")
                                                       : nullptr;
   if (atomName == nullptr || configuration.codecConfiguration.empty() ||
+      configuration.codecConfiguration.size() >
+          kMaximumCodecConfigurationBytes ||
       configuration.codecConfiguration.size() >
           static_cast<std::size_t>(std::numeric_limits<CFIndex>::max())) {
     return paramErr;
@@ -422,6 +427,9 @@ struct VideoToolboxDecoder::Impl {
   bool preferHardware{true};
   bool requireHardware{false};
   OSType outputPixelFormat{0};
+#if defined(WAM_NATIVE_VIDEO_TESTING)
+  std::size_t testReservedInFlight{0};
+#endif
 
   ~Impl() {
     if (session != nullptr) {
@@ -631,6 +639,7 @@ bool VideoToolboxDecoder::configure(
         impl_->options.maxPendingPresentationFrames;
     impl_->async->peakPendingPresentationFrames = 0;
     impl_->async->pendingPresentationFrames.clear();
+    impl_->async->expectedOutputPixelFormat = impl_->outputPixelFormat;
     impl_->async->actualOutputPixelFormat = 0;
     impl_->async->maximumSeenPresentationTime = kCMTimeInvalid;
     impl_->async->safePresentationTime = kCMTimeInvalid;
@@ -724,6 +733,12 @@ VideoToolboxDecoder::submit(const CompressedVideoPacket &packet,
     assignError(error, "compressed video packet is empty");
     return VideoDecodeSubmitResult::Rejected;
   }
+  if (packet.bytes.size() > kMaximumCompressedPacketBytes) {
+    assignError(error,
+                "compressed video packet exceeds the 32 MiB decoder memory "
+                "bound");
+    return VideoDecodeSubmitResult::Rejected;
+  }
   if (impl_->awaitingKeyFrame && !packet.keyFrame) {
     assignError(error, "decoder requires a key frame after configure or flush");
     return VideoDecodeSubmitResult::Rejected;
@@ -761,12 +776,22 @@ VideoToolboxDecoder::submit(const CompressedVideoPacket &packet,
                            packet.generation, packet.keyFrame};
   const std::shared_ptr<AsyncDecodeState> callbackState = impl_->async;
   VTDecodeInfoFlags infoFlags = 0;
+#if defined(WAM_NATIVE_VIDEO_TESTING)
+  VTDecodeFrameFlags decodeFlags = 0;
+  if (impl_->options.enableAsynchronousDecompression) {
+    decodeFlags |= kVTDecodeFrame_EnableAsynchronousDecompression;
+  }
+  if (impl_->options.enableTemporalProcessing) {
+    decodeFlags |= kVTDecodeFrame_EnableTemporalProcessing;
+  }
+#else
+  constexpr VTDecodeFrameFlags decodeFlags =
+      kVTDecodeFrame_EnableAsynchronousDecompression |
+      kVTDecodeFrame_EnableTemporalProcessing;
+#endif
   const OSStatus decodeStatus =
       VTDecompressionSessionDecodeFrameWithOutputHandler(
-          impl_->session, sample,
-          kVTDecodeFrame_EnableAsynchronousDecompression |
-              kVTDecodeFrame_EnableTemporalProcessing,
-          &infoFlags,
+          impl_->session, sample, decodeFlags, &infoFlags,
           ^(OSStatus status, VTDecodeInfoFlags callbackFlags,
             CVImageBufferRef imageBuffer, CMTime presentationTime,
             CMTime presentationDuration) {
@@ -882,5 +907,48 @@ VideoToolboxDecoderStats VideoToolboxDecoder::stats() const noexcept {
 std::optional<std::string> VideoToolboxDecoder::takeLastError() {
   return impl_->takeAsyncErrorLocked();
 }
+
+#if defined(WAM_NATIVE_VIDEO_TESTING)
+bool VideoToolboxDecoderTestAccess::occupyInFlightCapacity(
+    VideoToolboxDecoder &decoder, std::string *error) {
+  if (error != nullptr) {
+    error->clear();
+  }
+  std::lock_guard operationLock(decoder.impl_->operationMutex);
+  std::lock_guard stateLock(decoder.impl_->async->mutex);
+  if (!decoder.impl_->configured) {
+    assignError(error, "test decoder is not configured");
+    return false;
+  }
+  if (decoder.impl_->testReservedInFlight != 0 ||
+      decoder.impl_->async->inFlight != 0) {
+    assignError(error, "test decoder already has in-flight work");
+    return false;
+  }
+  decoder.impl_->testReservedInFlight =
+      decoder.impl_->options.maxInFlightFrames;
+  decoder.impl_->async->inFlight = decoder.impl_->testReservedInFlight;
+  return true;
+}
+
+bool VideoToolboxDecoderTestAccess::releaseInFlightCapacity(
+    VideoToolboxDecoder &decoder, std::string *error) {
+  if (error != nullptr) {
+    error->clear();
+  }
+  std::lock_guard operationLock(decoder.impl_->operationMutex);
+  std::lock_guard stateLock(decoder.impl_->async->mutex);
+  if (decoder.impl_->testReservedInFlight == 0 ||
+      decoder.impl_->async->inFlight !=
+          decoder.impl_->testReservedInFlight) {
+    assignError(error, "test decoder has no isolated capacity reservation");
+    return false;
+  }
+  decoder.impl_->async->inFlight = 0;
+  decoder.impl_->testReservedInFlight = 0;
+  decoder.impl_->async->completion.notify_all();
+  return true;
+}
+#endif
 
 } // namespace wam::macos

@@ -7,6 +7,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstddef>
@@ -199,6 +200,26 @@ bool earlier(CMTime left, CMTime right) {
          CMTimeCompare(left, right) < 0;
 }
 
+void testConfigurationByteBound(const DemuxedVideo &video) {
+  constexpr std::uint64_t generation = 5;
+  constexpr std::size_t oversizedConfigurationBytes = 1024ULL * 1024ULL + 1ULL;
+  void *inaccessibleBytes =
+      mmap(nullptr, oversizedConfigurationBytes, PROT_NONE,
+           MAP_PRIVATE | MAP_ANON, -1, 0);
+  WAM_CHECK(inaccessibleBytes != MAP_FAILED);
+
+  wam::macos::BoundedFrameQueue queue(1, generation);
+  wam::macos::VideoToolboxDecoder decoder;
+  auto configuration = streamConfiguration(video, generation, false);
+  configuration.codecConfiguration = std::span<const std::byte>(
+      static_cast<const std::byte *>(inaccessibleBytes),
+      oversizedConfigurationBytes);
+  std::string error;
+  WAM_CHECK(!decoder.configure(configuration, queue, &error));
+  WAM_CHECK(!error.empty());
+  WAM_CHECK(munmap(inaccessibleBytes, oversizedConfigurationBytes) == 0);
+}
+
 void testBFramePresentationOrderAndMetalImport(const DemuxedVideo &video,
                                                std::size_t keyIndex,
                                                bool requireHardware) {
@@ -320,15 +341,94 @@ void testSinkBackpressureIsRecoverable(const DemuxedVideo &video,
   decoder.close();
 }
 
-class BlockingSink final : public wam::macos::DecodedFrameSink {
+void testAdmissionBeforeCopy(const DemuxedVideo &video, std::size_t keyIndex,
+                             bool requireHardware) {
+  constexpr std::uint64_t generation = 6;
+  wam::macos::BoundedFrameQueue queue(2, generation);
+  wam::macos::VideoToolboxDecoderOptions options;
+  options.maxInFlightFrames = 1;
+  wam::macos::VideoToolboxDecoder decoder(options);
+  std::string error;
+  WAM_CHECK_DETAIL(
+      decoder.configure(streamConfiguration(video, generation, requireHardware),
+                        queue, &error),
+      error);
+
+  // The test-only source build can reserve the decoder's one real admission
+  // slot without depending on whether VideoToolbox invokes callbacks inline.
+  WAM_CHECK_DETAIL(
+      wam::macos::VideoToolboxDecoderTestAccess::occupyInFlightCapacity(
+          decoder, &error),
+      error);
+  WAM_CHECK(decoder.stats().inFlightFrames == 1);
+
+  wam::macos::CompressedVideoPacket guardedPacket =
+      packetView(video.packets[keyIndex], generation);
+  const long pageSize = sysconf(_SC_PAGESIZE);
+  WAM_CHECK(pageSize > 0);
+  void *inaccessibleBytes = mmap(nullptr, static_cast<std::size_t>(pageSize),
+                                 PROT_NONE, MAP_PRIVATE | MAP_ANON, -1, 0);
+  WAM_CHECK(inaccessibleBytes != MAP_FAILED);
+  guardedPacket.bytes = std::span<const std::byte>(
+      static_cast<const std::byte *>(inaccessibleBytes),
+      static_cast<std::size_t>(pageSize));
+  WAM_CHECK(decoder.submit(guardedPacket, &error) ==
+            wam::macos::VideoDecodeSubmitResult::Backpressure);
+  WAM_CHECK(munmap(inaccessibleBytes, static_cast<std::size_t>(pageSize)) == 0);
+  WAM_CHECK(error.empty());
+  WAM_CHECK(decoder.stats().inFlightFrames == 1);
+  WAM_CHECK(decoder.stats().backpressuredSubmissions == 1);
+  WAM_CHECK(!decoder.takeLastError().has_value());
+
+  WAM_CHECK_DETAIL(
+      wam::macos::VideoToolboxDecoderTestAccess::releaseInFlightCapacity(
+          decoder, &error),
+      error);
+  WAM_CHECK(decoder.stats().inFlightFrames == 0);
+
+  // A media-controlled packet larger than the decoder contract must reject
+  // before touching or copying its payload. PROT_NONE turns that ordering into
+  // a deterministic safety assertion without allocating 32 MiB of resident RAM.
+  constexpr std::size_t oversizedPacketBytes =
+      32ULL * 1024ULL * 1024ULL + 1ULL;
+  void *oversizedBytes = mmap(nullptr, oversizedPacketBytes, PROT_NONE,
+                              MAP_PRIVATE | MAP_ANON, -1, 0);
+  WAM_CHECK(oversizedBytes != MAP_FAILED);
+  auto oversizedPacket = packetView(video.packets[keyIndex], generation);
+  oversizedPacket.bytes = std::span<const std::byte>(
+      static_cast<const std::byte *>(oversizedBytes), oversizedPacketBytes);
+  WAM_CHECK(decoder.submit(oversizedPacket, &error) ==
+            wam::macos::VideoDecodeSubmitResult::Rejected);
+  WAM_CHECK(error.find("32 MiB") != std::string::npos);
+  WAM_CHECK(munmap(oversizedBytes, oversizedPacketBytes) == 0);
+
+  // Removing the synthetic reservation must leave the real decode lifecycle
+  // usable; this catches a seam that accidentally poisons production state.
+  WAM_CHECK_DETAIL(
+      decoder.submit(packetView(video.packets[keyIndex], generation), &error) ==
+          wam::macos::VideoDecodeSubmitResult::Accepted,
+      error);
+  WAM_CHECK_DETAIL(decoder.submit(endOfStream(generation), &error) ==
+                       wam::macos::VideoDecodeSubmitResult::Accepted,
+                   error);
+  WAM_CHECK(decoder.stats().submittedFrames == 1);
+  WAM_CHECK(decoder.stats().inFlightFrames == 0);
+  WAM_CHECK(queue.tryTake().has_value());
+  decoder.close();
+}
+
+class GatedSink final : public wam::macos::DecodedFrameSink {
 public:
-  explicit BlockingSink(std::uint64_t generation) : queue_(4, generation) {}
+  GatedSink(std::atomic<bool> &submissionActive, std::uint64_t generation)
+      : submissionActive_(submissionActive), queue_(4, generation) {}
 
   wam::macos::FrameEnqueueResult enqueue(wam::macos::FrameLease frame,
                                          std::string *error) override {
     {
       std::unique_lock lock(mutex_);
       callbackEntered_ = true;
+      callbackOverlappedSubmit_ =
+          submissionActive_.load(std::memory_order_acquire);
       condition_.notify_all();
       condition_.wait(lock, [this] { return released_; });
     }
@@ -349,6 +449,11 @@ public:
                                [this] { return callbackEntered_; });
   }
 
+  bool callbackOverlappedSubmit() {
+    std::lock_guard lock(mutex_);
+    return callbackOverlappedSubmit_;
+  }
+
   void release() {
     std::lock_guard lock(mutex_);
     released_ = true;
@@ -358,66 +463,103 @@ public:
   std::optional<wam::macos::FrameLease> tryTake() { return queue_.tryTake(); }
 
 private:
+  std::atomic<bool> &submissionActive_;
   wam::macos::BoundedFrameQueue queue_;
   std::mutex mutex_;
   std::condition_variable condition_;
   bool callbackEntered_{false};
+  bool callbackOverlappedSubmit_{false};
   bool released_{false};
 };
 
-void testInFlightBound(const DemuxedVideo &video, std::size_t keyIndex,
-                       bool requireHardware) {
+void testCallbackScheduling(const DemuxedVideo &video, std::size_t keyIndex,
+                            bool requireHardware,
+                            bool allowAsynchronousDecode) {
   constexpr std::uint64_t generation = 7;
-  BlockingSink sink(generation);
-  wam::macos::VideoToolboxDecoder decoder({1});
-  std::string error;
+  std::atomic<bool> submissionActive{false};
+  GatedSink sink(submissionActive, generation);
+  wam::macos::VideoToolboxDecoderOptions options;
+  options.maxInFlightFrames = 1;
+  options.enableAsynchronousDecompression = allowAsynchronousDecode;
+  // This test controls presentation ordering itself. Disabling temporal
+  // processing prevents a decoder from legally retaining the first packet
+  // indefinitely while preserving the production default everywhere else.
+  options.enableTemporalProcessing = false;
+  wam::macos::VideoToolboxDecoder decoder(options);
+  std::string configurationError;
   WAM_CHECK_DETAIL(
       decoder.configure(streamConfiguration(video, generation, requireHardware),
-                        sink, &error),
-      error);
-  WAM_CHECK_DETAIL(
-      decoder.submit(packetView(video.packets[keyIndex], generation), &error) ==
-          wam::macos::VideoDecodeSubmitResult::Accepted,
-      error);
-
-  const auto callbackDeadline =
-      std::chrono::steady_clock::now() + std::chrono::seconds(5);
-  while (decoder.stats().inFlightFrames != 0 &&
-         std::chrono::steady_clock::now() < callbackDeadline) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(1));
-  }
-  WAM_CHECK(decoder.stats().inFlightFrames == 0);
+                        sink, &configurationError),
+      configurationError);
 
   const std::size_t deliveryIndex = keyIndex + 1;
   WAM_CHECK(deliveryIndex < video.packets.size());
-  WAM_CHECK_DETAIL(
-      decoder.submit(packetView(video.packets[deliveryIndex], generation),
-                     &error) == wam::macos::VideoDecodeSubmitResult::Accepted,
-      error);
-  WAM_CHECK(sink.waitForCallback());
 
-  const std::size_t nextIndex = deliveryIndex + 1 < video.packets.size()
-                                    ? deliveryIndex + 1
-                                    : deliveryIndex;
-  wam::macos::CompressedVideoPacket guardedPacket =
-      packetView(video.packets[nextIndex], generation);
-  const long pageSize = sysconf(_SC_PAGESIZE);
-  WAM_CHECK(pageSize > 0);
-  void *inaccessibleBytes = mmap(nullptr, static_cast<std::size_t>(pageSize),
-                                 PROT_NONE, MAP_PRIVATE | MAP_ANON, -1, 0);
-  WAM_CHECK(inaccessibleBytes != MAP_FAILED);
-  guardedPacket.bytes = std::span<const std::byte>(
-      static_cast<const std::byte *>(inaccessibleBytes),
-      static_cast<std::size_t>(pageSize));
-  WAM_CHECK(decoder.submit(guardedPacket, &error) ==
-            wam::macos::VideoDecodeSubmitResult::Backpressure);
-  WAM_CHECK(munmap(inaccessibleBytes, static_cast<std::size_t>(pageSize)) == 0);
-  WAM_CHECK(error.empty());
-  WAM_CHECK(decoder.stats().inFlightFrames == 1);
-  WAM_CHECK(decoder.stats().backpressuredSubmissions == 1);
+  struct SubmissionResults {
+    wam::macos::VideoDecodeSubmitResult first{
+        wam::macos::VideoDecodeSubmitResult::Rejected};
+    wam::macos::VideoDecodeSubmitResult second{
+        wam::macos::VideoDecodeSubmitResult::Rejected};
+    std::string error;
+  } results;
+
+  std::thread submitter([&] {
+    @autoreleasepool {
+      auto trackedSubmit = [&](const wam::macos::CompressedVideoPacket &packet) {
+        submissionActive.store(true, std::memory_order_release);
+        const auto result = decoder.submit(packet, &results.error);
+        submissionActive.store(false, std::memory_order_release);
+        return result;
+      };
+
+      results.first =
+          trackedSubmit(packetView(video.packets[keyIndex], generation));
+      if (results.first != wam::macos::VideoDecodeSubmitResult::Accepted) {
+        return;
+      }
+
+      // With temporal processing disabled the first output callback cannot be
+      // retained indefinitely. Waiting for it here makes the second accepted
+      // packet the sole in-flight frame, regardless of decoder speed.
+      const auto callbackDeadline =
+          std::chrono::steady_clock::now() + std::chrono::seconds(5);
+      while (decoder.stats().inFlightFrames != 0 &&
+             std::chrono::steady_clock::now() < callbackDeadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      }
+      if (decoder.stats().inFlightFrames != 0) {
+        results.error = "first non-temporal callback did not complete";
+        return;
+      }
+      results.second =
+          trackedSubmit(packetView(video.packets[deliveryIndex], generation));
+    }
+  });
+
+  const bool callbackArrived = sink.waitForCallback();
+  const bool callbackOverlappedSubmit =
+      callbackArrived && sink.callbackOverlappedSubmit();
+
+  // Always release before joining: a conforming decoder may invoke the output
+  // handler inline, in which case submitter owns operationMutex until enqueue()
+  // returns. The former main-thread wait was the Intel CI deadlock.
+  sink.release();
+  submitter.join();
+  WAM_CHECK_DETAIL(callbackArrived, "decoded-frame callback did not arrive");
+  WAM_CHECK_DETAIL(
+      results.first == wam::macos::VideoDecodeSubmitResult::Accepted,
+      results.error);
+  WAM_CHECK_DETAIL(
+      results.second == wam::macos::VideoDecodeSubmitResult::Accepted,
+      results.error);
+  if (!allowAsynchronousDecode) {
+    WAM_CHECK_DETAIL(
+        callbackOverlappedSubmit,
+        "synchronous VideoToolbox mode returned before its output callback");
+  }
   WAM_CHECK(!decoder.takeLastError().has_value());
 
-  sink.release();
+  std::string error;
   WAM_CHECK_DETAIL(decoder.submit(endOfStream(generation), &error) ==
                        wam::macos::VideoDecodeSubmitResult::Accepted,
                    error);
@@ -550,7 +692,10 @@ int main(int argc, char **argv) {
 
   const bool h264Hardware = VTIsHardwareDecodeSupported(kCMVideoCodecType_H264);
   const bool hevcHardware = VTIsHardwareDecodeSupported(kCMVideoCodecType_HEVC);
-  testInFlightBound(video, keyIndex, h264Hardware);
+  testConfigurationByteBound(video);
+  testAdmissionBeforeCopy(video, keyIndex, h264Hardware);
+  testCallbackScheduling(video, keyIndex, h264Hardware, true);
+  testCallbackScheduling(video, keyIndex, h264Hardware, false);
   testLifecycleAndGeneration(video, keyIndex, h264Hardware);
   testBFramePresentationOrderAndMetalImport(video, keyIndex, h264Hardware);
   testSinkBackpressureIsRecoverable(video, keyIndex, h264Hardware);
