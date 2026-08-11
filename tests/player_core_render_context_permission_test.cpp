@@ -93,7 +93,7 @@ public:
   }
 
   [[nodiscard]] static RenderTicket lifecycle(const PlayerCore &core) {
-    return core.render_lifecycle_.snapshot();
+    return core.renderLifecycleSnapshot();
   }
 
   [[nodiscard]] static std::uint64_t freeCount(const PlayerCore &core) {
@@ -166,6 +166,7 @@ struct RevokeObservation {
   bool busyBeforeRevoke{false};
   bool allowedAfterRevoke{true};
   bool allowedAfterReallow{false};
+  wam::qt::RenderTicket lifecycleBeforeRevoke;
 };
 
 RevokeObservation revokeAtBarrier(wam::qt::PlayerCore &core,
@@ -178,6 +179,7 @@ RevokeObservation revokeAtBarrier(wam::qt::PlayerCore &core,
     return result;
   }
   result.busyBeforeRevoke = core.renderContextBusy();
+  result.lifecycleBeforeRevoke = core.renderLifecycleSnapshot();
   core.revokeRenderContext();
   result.allowedAfterRevoke = core.renderContextAllowed();
   barrier.resumeHook();
@@ -193,6 +195,7 @@ RevokeObservation revokeAndReallowAtBarrier(wam::qt::PlayerCore &core,
     return result;
   }
   result.busyBeforeRevoke = core.renderContextBusy();
+  result.lifecycleBeforeRevoke = core.renderLifecycleSnapshot();
   core.revokeRenderContext();
   result.allowedAfterRevoke = core.renderContextAllowed();
   core.allowRenderContext();
@@ -255,6 +258,15 @@ int main(int argc, char **argv) {
          "a fresh core has no Ready notification");
   expect(Access::errorCount(core) == 0,
          "a fresh core has no render error notification");
+  const wam::qt::RenderTicket fresh_lifecycle =
+      core.renderLifecycleSnapshot();
+  expect(wam::qt::RenderLifecycle::phase(fresh_lifecycle) ==
+             wam::qt::RenderPhase::Empty,
+         "the public lifecycle snapshot reports fresh Empty phase");
+  expect(wam::qt::RenderLifecycle::generation(fresh_lifecycle) == 1,
+         "the public lifecycle snapshot reports the fresh generation");
+  expect(core.renderLifecycleSnapshot() == fresh_lifecycle,
+         "repeated public snapshots never mutate an Empty lifecycle");
 
   // Permission denied before entry must prevent the expensive API call.
   core.revokeRenderContext();
@@ -287,6 +299,14 @@ int main(int argc, char **argv) {
          "the pre-API revocation barrier completed");
   expect(before_api_observation.busyBeforeRevoke,
          "Busy is visible before API admission");
+  expect(wam::qt::RenderLifecycle::phase(
+             before_api_observation.lifecycleBeforeRevoke) ==
+             wam::qt::RenderPhase::Creating,
+         "the public lifecycle snapshot observes in-flight Creating phase");
+  expect(wam::qt::RenderLifecycle::generation(
+             before_api_observation.lifecycleBeforeRevoke) ==
+             wam::qt::RenderLifecycle::generation(fresh_lifecycle),
+         "Creating preserves the exact fresh lifecycle generation");
   expect(!before_api_observation.allowedAfterRevoke,
          "revocation clears Allowed without waiting for render_mutex");
   expect(!created_before_api,
@@ -351,6 +371,13 @@ int main(int argc, char **argv) {
          "the latest re-allow publishes the exact candidate as Ready");
   const auto first_ready = core.readyRenderTicket();
   expect(first_ready.has_value(), "the first installed context has a ticket");
+  const wam::qt::RenderTicket first_ready_snapshot =
+      core.renderLifecycleSnapshot();
+  expect(first_ready && first_ready_snapshot == *first_ready,
+         "the public lifecycle snapshot returns the exact Ready ticket");
+  expect(wam::qt::RenderLifecycle::phase(first_ready_snapshot) ==
+             wam::qt::RenderPhase::Ready,
+         "the public lifecycle snapshot exposes Ready phase");
   expect(Access::readyCount(core) == 1,
          "the first installed context publishes Ready exactly once");
   expect(core.renderContextCreateCount() == 2,
@@ -383,6 +410,18 @@ int main(int argc, char **argv) {
   expect(Access::invalidationCount(core) ==
              before_active_release_invalidations + 1,
          "active release emits exactly one invalidation");
+  const wam::qt::RenderTicket after_active_release_snapshot =
+      core.renderLifecycleSnapshot();
+  expect(wam::qt::RenderLifecycle::phase(after_active_release_snapshot) ==
+             wam::qt::RenderPhase::Empty,
+         "the public lifecycle snapshot observes revoked Empty phase");
+  expect(first_ready &&
+             wam::qt::RenderLifecycle::generation(
+                 after_active_release_snapshot) ==
+                 wam::qt::RenderLifecycle::generation(*first_ready) + 1,
+         "revoked Empty snapshot advances the Ready generation exactly once");
+  expect(core.renderLifecycleSnapshot() == after_active_release_snapshot,
+         "snapshot observation does not advance revoked Empty lifecycle");
   const std::uint64_t after_active_release_invalidations =
       Access::invalidationCount(core);
   expect(core.releaseRenderContext() && core.releaseRenderContext(),
