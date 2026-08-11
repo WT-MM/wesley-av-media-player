@@ -2,14 +2,37 @@
 
 #include <chrono>
 #include <cmath>
-#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <iterator>
 #include <string>
+#include <utility>
 
 namespace fs = std::filesystem;
+
+namespace {
+
+std::string utf8Path(const fs::path& path) {
+  const auto value = path.u8string();
+  return {reinterpret_cast<const char*>(value.data()), value.size()};
+}
+
+bool runProcess(const char* label, wam::ProcessCommand command) {
+  wam::BackgroundJob job;
+  if (!job.start(label, std::move(command))) {
+    std::cerr << "could not start " << label << "\n";
+    return false;
+  }
+  job.wait();
+  if (!job.succeeded()) {
+    std::cerr << label << " failed with exit code " << job.exitCode() << "\n";
+    return false;
+  }
+  return true;
+}
+
+}  // namespace
 
 int main(int argc, char** argv) {
   if (argc != 3) {
@@ -20,17 +43,22 @@ int main(int argc, char** argv) {
   const fs::path directory = fs::temp_directory_path() /
                              ("wam-export-test-" + std::to_string(stamp));
   fs::create_directories(directory);
-  const fs::path input = directory / "six seconds.mp4";
-  const fs::path output = directory / "two seconds.mp4";
+  // These names contain metacharacters from both POSIX shells and cmd.exe.
+  // The integration test therefore fails if any media path is accidentally
+  // routed through a shell instead of WAM's structured process launcher.
+  const fs::path input = directory / "six seconds & $WAM %WAM%.mp4";
+  const fs::path output = directory / "two seconds & $WAM %WAM%.mp4";
   const fs::path duration_file = directory / "duration.txt";
 
-  const std::string generate =
-      wam::quoteArg(argv[1]) +
-      " -hide_banner -loglevel error -y -f lavfi -i "
-      "testsrc2=size=320x180:rate=30:duration=6 -f lavfi -i "
-      "sine=frequency=440:sample_rate=48000:duration=6 -shortest "
-      "-c:v mpeg4 -q:v 5 -c:a aac " + wam::quoteArg(input.string());
-  if (std::system(generate.c_str()) != 0) {
+  wam::ProcessCommand generate;
+  generate.executable = argv[1];
+  generate.arguments = {
+      "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+      "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30:duration=6",
+      "-f", "lavfi", "-i",
+      "sine=frequency=440:sample_rate=48000:duration=6", "-shortest",
+      "-c:v", "mpeg4", "-q:v", "5", "-c:a", "aac", utf8Path(input)};
+  if (!runProcess("export fixture generation", std::move(generate))) {
     std::cerr << "could not create export fixture\n";
     fs::remove_all(directory);
     return 1;
@@ -91,12 +119,12 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  const std::string probe =
-      wam::quoteArg(argv[2]) +
-      " -v error -show_entries format=duration -of default=nw=1:nk=1 " +
-      wam::quoteArg(output.string()) + " > " +
-      wam::quoteArg(duration_file.string());
-  if (std::system(probe.c_str()) != 0) {
+  wam::ProcessCommand probe;
+  probe.executable = argv[2];
+  probe.arguments = {"-v", "error", "-show_entries", "format=duration",
+                     "-of", "default=nw=1:nk=1", "-o",
+                     utf8Path(duration_file), utf8Path(output)};
+  if (!runProcess("ffprobe", std::move(probe))) {
     std::cerr << "ffprobe failed\n";
     fs::remove_all(directory);
     return 1;
