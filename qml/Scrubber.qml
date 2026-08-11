@@ -20,7 +20,10 @@ Slider {
     from: 0
     to: 1
     value: displayPosition
-    stepSize: Math.max(0.1, Math.min(5, (to - from) / 100))
+    // Match WAM's global/VLC-style transport shortcuts even while the
+    // timeline owns keyboard focus. A duration-relative step made the same
+    // Right Arrow key seek by a different amount after clicking the scrubber.
+    stepSize: 5
     hoverEnabled: true
     focusPolicy: Qt.StrongFocus
     live: true
