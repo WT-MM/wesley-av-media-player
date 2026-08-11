@@ -44,14 +44,21 @@ if [[ ! -d "$FRAMEWORKS/QtCore.framework" ||
 fi
 
 # Homebrew Qt may deploy QML metadata and plugin binaries as malformed relative
-# links back into its Cellar. Resolve both trees to real files before rewriting
-# dependencies so codesign and the resulting app remain independent of the
-# build machine. Official Qt packages normally need no work here.
+# links back into its Cellar. Materialize only links whose resolved target is
+# external to the app. CMake's official Qt deployment deliberately places QML
+# plug-ins in Contents/PlugIns and links to them from Resources/qml; preserving
+# those internal links also preserves the @loader_path directory macdeployqt
+# used when it rewrote the plug-in's dependencies.
 repaired_qt_links=0
 materialize_qt_links() {
   local qml_link qml_source qml_link_target
   while IFS= read -r qml_link; do
     qml_source="${qml_link:A}"
+    if [[ -f "$qml_source" &&
+          ( "$qml_source" == "$APP_PATH" ||
+            "$qml_source" == "$APP_PATH"/* ) ]]; then
+      continue
+    fi
     if [[ ! -f "$qml_source" && -n "$BREW_PREFIX" ]]; then
       qml_link_target="$(readlink "$qml_link")"
       if [[ "$qml_link_target" == *Cellar/* ]]; then
@@ -93,7 +100,8 @@ if (( repaired_qt_links > 0 )); then
     "-libpath=$QT_LIB_DIR" \
     -always-overwrite -no-strip -no-codesign -verbose=1
   # macdeployqt may recreate the same package-manager links while copying the
-  # now-complete closure. Make the final payload self-contained again.
+  # now-complete closure. Materialize external links again while retaining its
+  # intentional in-bundle QML plug-in links.
   materialize_qt_links
 fi
 

@@ -100,16 +100,19 @@ int main(int argc, char** argv) {
     fs::remove_all(directory);
     return 1;
   }
+  bool destination_preserved = false;
   {
     std::ifstream existing(output, std::ios::binary);
     const std::string contents{std::istreambuf_iterator<char>(existing),
                                std::istreambuf_iterator<char>()};
-    if (contents != "existing destination must survive encoding") {
-      std::cerr << "export modified destination before commit\n";
-      wam::removeExportStagingFile(staging);
-      fs::remove_all(directory);
-      return 1;
-    }
+    destination_preserved =
+        contents == "existing destination must survive encoding";
+  }
+  if (!destination_preserved) {
+    std::cerr << "export modified destination before commit\n";
+    wam::removeExportStagingFile(staging);
+    fs::remove_all(directory);
+    return 1;
   }
   if (!wam::commitExportStagingFile(staging, output, &transaction_error)) {
     std::cerr << "could not commit export staging: " << transaction_error
@@ -129,10 +132,13 @@ int main(int argc, char** argv) {
     fs::remove_all(directory);
     return 1;
   }
-  std::ifstream duration_input(duration_file);
   double duration = 0.0;
-  duration_input >> duration;
-  const bool correct = duration_input && std::abs(duration - 2.0) <= 0.12;
+  bool correct = false;
+  {
+    std::ifstream duration_input(duration_file);
+    duration_input >> duration;
+    correct = duration_input && std::abs(duration - 2.0) <= 0.12;
+  }
   fs::remove_all(directory);
   if (!correct) {
     std::cerr << "expected a 2.0 second export, got " << duration << "\n";
