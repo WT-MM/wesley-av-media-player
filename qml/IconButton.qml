@@ -81,24 +81,17 @@ AbstractButton {
                 ctx.fillRect(width * 0.56, height * 0.25, width * 0.13, height * 0.5);
             } else if (control.iconName === "backward5" || control.iconName === "forward5") {
                 const forward = control.iconName === "forward5";
+                const tipX = width * (forward ? 0.74 : 0.26);
+                const tailX = width * (forward ? 0.24 : 0.76);
+                const shoulderX = width * (forward ? 0.54 : 0.46);
+                ctx.lineWidth = 1.5;
                 ctx.beginPath();
-                ctx.arc(width * 0.5, height * 0.53, width * 0.3, forward ? Math.PI * 1.15 : Math.PI * -0.15, forward ? Math.PI * 0.05 : Math.PI * 0.95, !forward);
+                ctx.moveTo(tailX, height * 0.5);
+                ctx.lineTo(tipX, height * 0.5);
+                ctx.moveTo(shoulderX, height * 0.3);
+                ctx.lineTo(tipX, height * 0.5);
+                ctx.lineTo(shoulderX, height * 0.7);
                 ctx.stroke();
-                ctx.beginPath();
-                if (forward) {
-                    ctx.moveTo(width * 0.76, height * 0.23);
-                    ctx.lineTo(width * 0.78, height * 0.45);
-                    ctx.lineTo(width * 0.58, height * 0.37);
-                } else {
-                    ctx.moveTo(width * 0.24, height * 0.23);
-                    ctx.lineTo(width * 0.22, height * 0.45);
-                    ctx.lineTo(width * 0.42, height * 0.37);
-                }
-                ctx.stroke();
-                ctx.font = "600 " + Math.round(height * 0.43) + "px sans-serif";
-                ctx.textAlign = "center";
-                ctx.textBaseline = "middle";
-                ctx.fillText("5", width * 0.5, height * 0.58);
             } else if (control.iconName === "volume" || control.iconName === "volumeMuted") {
                 ctx.beginPath();
                 ctx.moveTo(width * 0.18, height * 0.43);
@@ -125,11 +118,38 @@ AbstractButton {
                     ctx.stroke();
                 }
             } else if (control.iconName === "captions") {
-                ctx.strokeRect(width * 0.13, height * 0.24, width * 0.74, height * 0.52);
-                ctx.font = "700 " + Math.round(height * 0.35) + "px sans-serif";
-                ctx.textAlign = "center";
-                ctx.textBaseline = "middle";
-                ctx.fillText("CC", width * 0.5, height * 0.52);
+                const left = width * 0.13;
+                const right = width * 0.87;
+                const top = height * 0.24;
+                const bottom = height * 0.76;
+                const radius = width * 0.11;
+                ctx.lineWidth = 1.3;
+                ctx.beginPath();
+                ctx.moveTo(left + radius, top);
+                ctx.lineTo(right - radius, top);
+                ctx.quadraticCurveTo(right, top, right, top + radius);
+                ctx.lineTo(right, bottom - radius);
+                ctx.quadraticCurveTo(right, bottom, right - radius, bottom);
+                ctx.lineTo(left + radius, bottom);
+                ctx.quadraticCurveTo(left, bottom, left, bottom - radius);
+                ctx.lineTo(left, top + radius);
+                ctx.quadraticCurveTo(left, top, left + radius, top);
+                ctx.stroke();
+
+                // Two quiet caption rows read more clearly at toolbar scale
+                // than font-rendered initials and stay in the same line family
+                // as the surrounding transport icons.
+                ctx.lineWidth = 1.45;
+                ctx.beginPath();
+                ctx.moveTo(width * 0.28, height * 0.45);
+                ctx.lineTo(width * 0.46, height * 0.45);
+                ctx.moveTo(width * 0.56, height * 0.45);
+                ctx.lineTo(width * 0.72, height * 0.45);
+                ctx.moveTo(width * 0.28, height * 0.61);
+                ctx.lineTo(width * 0.52, height * 0.61);
+                ctx.moveTo(width * 0.62, height * 0.61);
+                ctx.lineTo(width * 0.72, height * 0.61);
+                ctx.stroke();
             } else if (control.iconName === "edit") {
                 ctx.beginPath();
                 ctx.moveTo(width * 0.24, height * 0.74);
