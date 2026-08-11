@@ -92,9 +92,9 @@ std::filesystem::path resolveWindowsExecutable(
   return executable;
 }
 
-int runWindowsChild(std::stop_token stop, const wchar_t* application,
-                    std::wstring command_line) {
-  if (stop.stop_requested()) return 130;
+int runWindowsChild(const detail::CancellationFlag& cancellation,
+                    const wchar_t* application, std::wstring command_line) {
+  if (cancellation.requested()) return 130;
 
   HANDLE job = CreateJobObjectW(nullptr, nullptr);
   if (!job) return static_cast<int>(GetLastError());
@@ -140,7 +140,12 @@ int runWindowsChild(std::stop_token stop, const wchar_t* application,
   for (;;) {
     const DWORD wait = WaitForSingleObject(process.hProcess,
                                             static_cast<DWORD>(kProcessPollInterval.count()));
-    if (wait == WAIT_OBJECT_0) break;
+    if (wait == WAIT_OBJECT_0) {
+      // Preserve cancellation as the public result even when a cooperative
+      // child handles CTRL_BREAK and exits zero.
+      if (cancellation.requested()) cancellation_started = true;
+      break;
+    }
     if (wait == WAIT_FAILED) {
       const int error = static_cast<int>(GetLastError());
       TerminateJobObject(job, static_cast<UINT>(error));
@@ -149,7 +154,7 @@ int runWindowsChild(std::stop_token stop, const wchar_t* application,
       return error;
     }
 
-    if (stop.stop_requested() && !cancellation_started) {
+    if (cancellation.requested() && !cancellation_started) {
       cancellation_started = true;
       force_kill_at = std::chrono::steady_clock::now() + kGracefulShutdownTimeout;
       // Best effort for console-aware tools such as FFmpeg. CREATE_NO_WINDOW
@@ -170,17 +175,19 @@ int runWindowsChild(std::stop_token stop, const wchar_t* application,
   // Closing the configured Job Object also guarantees no descendant survives
   // a shell that happened to exit before its child.
   CloseHandle(job);
-  return static_cast<int>(exit_code);
+  return cancellation_started ? 130 : static_cast<int>(exit_code);
 }
 
-int runCommand(std::stop_token stop, const std::string& command) {
+int runCommand(const detail::CancellationFlag& cancellation,
+               const std::string& command) {
   // Legacy/test-only shell route. Production exports use runProcessCommand().
   std::wstring command_line =
       L"cmd.exe /D /S /C \"" + widenUtf8(command) + L"\"";
-  return runWindowsChild(stop, nullptr, std::move(command_line));
+  return runWindowsChild(cancellation, nullptr, std::move(command_line));
 }
 
-int runProcessCommand(std::stop_token stop, const ProcessCommand& command) {
+int runProcessCommand(const detail::CancellationFlag& cancellation,
+                      const ProcessCommand& command) {
   if (command.executable.empty()) return ERROR_FILE_NOT_FOUND;
   const auto executable = resolveWindowsExecutable(command.executable);
   std::wstring command_line = quoteWindowsArgument(executable.wstring());
@@ -189,7 +196,8 @@ int runProcessCommand(std::stop_token stop, const ProcessCommand& command) {
     command_line += quoteWindowsArgument(widenUtf8(argument));
   }
   const std::wstring application = executable.wstring();
-  return runWindowsChild(stop, application.c_str(), std::move(command_line));
+  return runWindowsChild(cancellation, application.c_str(),
+                         std::move(command_line));
 }
 
 #else
@@ -200,60 +208,161 @@ int normalizedExitCode(int status) {
   return 1;
 }
 
-int waitForPosixChild(std::stop_token stop, pid_t child) {
-  // Resolve the harmless parent/child setpgid race. EACCES means the child
-  // reached exec first after successfully configuring itself.
-  if (setpgid(child, child) != 0 && errno != EACCES && errno != ESRCH) {
-    const int error = errno ? errno : 1;
-    kill(child, SIGTERM);
-    int status = 0;
-    while (waitpid(child, &status, 0) < 0 && errno == EINTR) {
+bool establishProcessGroup(pid_t child, int* error) {
+  if (setpgid(child, child) == 0) return true;
+
+  const int setup_error = errno ? errno : 1;
+  // The child can win the setpgid/exec race. EACCES alone is not proof that
+  // the numeric group belongs to it, so verify the group before any negative
+  // PID signal is allowed.
+  if (setup_error == EACCES && getpgid(child) == child) return true;
+  if (error) *error = setup_error;
+  return false;
+}
+
+void signalVerifiedProcessGroup(pid_t group, int signal) {
+  int result = 0;
+  do {
+    result = kill(-group, signal);
+  } while (result != 0 && errno == EINTR);
+}
+
+bool reapPosixChild(pid_t child, int* status, int* error) {
+  pid_t waited = -1;
+  do {
+    waited = waitpid(child, status, 0);
+  } while (waited < 0 && errno == EINTR);
+  if (waited == child) return true;
+  if (error) *error = errno ? errno : 1;
+  return false;
+}
+
+enum class ChildObservation { Running, Exited, Error };
+
+ChildObservation observePosixChild(pid_t child, int* error) {
+  siginfo_t information{};
+  int observed = -1;
+  do {
+    observed = waitid(P_PID, static_cast<id_t>(child), &information,
+                      WEXITED | WNOHANG | WNOWAIT);
+  } while (observed != 0 && errno == EINTR);
+  if (observed != 0) {
+    if (error) *error = errno ? errno : 1;
+    return ChildObservation::Error;
+  }
+  return information.si_pid == child ? ChildObservation::Exited
+                                     : ChildObservation::Running;
+}
+
+int terminateUnisolatedChild(pid_t child, int error) {
+  int killed = 0;
+  do {
+    killed = kill(child, SIGKILL);
+  } while (killed != 0 && errno == EINTR);
+  int ignored_status = 0;
+  int ignored_error = 0;
+  reapPosixChild(child, &ignored_status, &ignored_error);
+  return error ? error : 1;
+}
+
+int waitForPosixChild(const detail::CancellationFlag& cancellation,
+                      pid_t child) {
+  int setup_error = 0;
+  if (!establishProcessGroup(child, &setup_error)) {
+    // macOS can report ESRCH when a very short-lived, already-isolated child
+    // has become waitable before the parent wins the setpgid race. Preserve
+    // its real status without ever signalling an unverified numeric PGID.
+    int observation_error = 0;
+    if (observePosixChild(child, &observation_error) ==
+        ChildObservation::Exited) {
+      int status = 0;
+      int reap_error = 0;
+      if (!reapPosixChild(child, &status, &reap_error))
+        return reap_error ? reap_error : setup_error;
+      return cancellation.requested() ? 130 : normalizedExitCode(status);
     }
-    return error;
+    if (observation_error == ECHILD)
+      return setup_error ? setup_error : observation_error;
+    return terminateUnisolatedChild(child, setup_error);
   }
 
-  int status = 0;
   bool cancellation_started = false;
   std::chrono::steady_clock::time_point force_kill_at{};
   for (;;) {
-    const pid_t waited = waitpid(child, &status, WNOHANG);
-    if (waited == child) return normalizedExitCode(status);
-    if (waited < 0 && errno != EINTR) return errno ? errno : 1;
-
-    if (stop.stop_requested() && !cancellation_started) {
-      cancellation_started = true;
-      force_kill_at = std::chrono::steady_clock::now() + kGracefulShutdownTimeout;
-      // Negative PID targets the whole process group. Fall back to the shell
-      // PID only if group setup raced with a very early child exit.
-      if (kill(-child, SIGTERM) != 0 && errno != ESRCH) kill(child, SIGTERM);
-    }
-    if (cancellation_started && std::chrono::steady_clock::now() >= force_kill_at) {
-      if (kill(-child, SIGKILL) != 0 && errno != ESRCH) kill(child, SIGKILL);
-      while (waitpid(child, &status, 0) < 0 && errno == EINTR) {
+    if (!cancellation_started) {
+      if (cancellation.requested()) {
+        cancellation_started = true;
+        force_kill_at =
+            std::chrono::steady_clock::now() + kGracefulShutdownTimeout;
+        signalVerifiedProcessGroup(child, SIGTERM);
+      } else {
+        int observation_error = 0;
+        const auto observation = observePosixChild(child, &observation_error);
+        if (observation == ChildObservation::Error) {
+          // ECHILD means somebody else already reaped the leader, so its PID
+          // can no longer protect the group identity. Never group-signal it.
+          if (observation_error != ECHILD) {
+            signalVerifiedProcessGroup(child, SIGKILL);
+            int ignored_status = 0;
+            int ignored_error = 0;
+            reapPosixChild(child, &ignored_status, &ignored_error);
+          }
+          return observation_error ? observation_error : 1;
+        }
+        if (observation == ChildObservation::Exited) {
+          // The exit is only observed, not reaped. Re-check cancellation while
+          // the PID still reserves the process-group identity.
+          if (cancellation.requested()) {
+            cancellation_started = true;
+            force_kill_at =
+                std::chrono::steady_clock::now() + kGracefulShutdownTimeout;
+            signalVerifiedProcessGroup(child, SIGTERM);
+          } else {
+            int status = 0;
+            int reap_error = 0;
+            if (!reapPosixChild(child, &status, &reap_error))
+              return reap_error ? reap_error : 1;
+            return normalizedExitCode(status);
+          }
+        }
       }
-      return normalizedExitCode(status);
+    }
+
+    if (cancellation_started &&
+        std::chrono::steady_clock::now() >= force_kill_at) {
+      // The leader remains waitable (possibly a zombie) through this final
+      // group signal. That reserves its PID/PGID and makes -child safe.
+      signalVerifiedProcessGroup(child, SIGKILL);
+      int status = 0;
+      int reap_error = 0;
+      reapPosixChild(child, &status, &reap_error);
+      // Cancellation is the canonical public outcome even if a cooperative
+      // TERM handler made the leader exit zero.
+      return 130;
     }
     std::this_thread::sleep_for(kProcessPollInterval);
   }
 }
 
-int runCommand(std::stop_token stop, const std::string& command) {
-  if (stop.stop_requested()) return 130;
+int runCommand(const detail::CancellationFlag& cancellation,
+               const std::string& command) {
+  if (cancellation.requested()) return 130;
 
   const pid_t child = fork();
   if (child < 0) return errno ? errno : 1;
   if (child == 0) {
     // A dedicated process group lets cancellation reach the shell and every
     // command it spawned.
-    setpgid(0, 0);
+    if (setpgid(0, 0) != 0) _exit(125);
     execl("/bin/sh", "sh", "-c", command.c_str(), static_cast<char*>(nullptr));
     _exit(127);
   }
-  return waitForPosixChild(stop, child);
+  return waitForPosixChild(cancellation, child);
 }
 
-int runProcessCommand(std::stop_token stop, const ProcessCommand& command) {
-  if (stop.stop_requested()) return 130;
+int runProcessCommand(const detail::CancellationFlag& cancellation,
+                      const ProcessCommand& command) {
+  if (cancellation.requested()) return 130;
   if (command.executable.empty()) return ENOENT;
 
   std::vector<std::string> storage;
@@ -269,11 +378,11 @@ int runProcessCommand(std::stop_token stop, const ProcessCommand& command) {
   const pid_t child = fork();
   if (child < 0) return errno ? errno : 1;
   if (child == 0) {
-    setpgid(0, 0);
+    if (setpgid(0, 0) != 0) _exit(125);
     execvp(arguments.front(), arguments.data());
     _exit(errno == ENOENT ? 127 : 126);
   }
-  return waitForPosixChild(stop, child);
+  return waitForPosixChild(cancellation, child);
 }
 
 #endif
@@ -548,35 +657,45 @@ BackgroundJob::~BackgroundJob() {
 bool BackgroundJob::start(std::string label, std::string command) {
   return startWorker(
       std::move(label),
-      [command = std::move(command)](std::stop_token stop) {
-        return runCommand(stop, command);
+      [command = std::move(command)](
+          const detail::CancellationFlag& cancellation) {
+        return runCommand(cancellation, command);
       });
 }
 
 bool BackgroundJob::start(std::string label, ProcessCommand command) {
   return startWorker(
       std::move(label),
-      [command = std::move(command)](std::stop_token stop) {
-        return runProcessCommand(stop, command);
+      [command = std::move(command)](
+          const detail::CancellationFlag& cancellation) {
+        return runProcessCommand(cancellation, command);
       });
 }
 
 bool BackgroundJob::startWorker(
-    std::string label, std::function<int(std::stop_token)> operation) {
-  if (running_.exchange(true)) return false;
-  wait();
+    std::string label,
+    std::function<int(const detail::CancellationFlag&)> operation) {
+  std::lock_guard worker_lock(worker_mutex_);
+  if (running_.load(std::memory_order_acquire)) return false;
+  if (worker_.joinable()) worker_.join();
+
+  // Reset the reusable source before publishing the new job as running.
+  // cancel() never takes worker_mutex_, so every request made after this
+  // publication remains visible to the worker and cannot be overwritten.
+  cancellation_.reset();
   finished_ = false;
   exit_code_ = -1;
   {
     std::lock_guard lock(label_mutex_);
     label_ = std::move(label);
   }
+  running_.store(true, std::memory_order_release);
   try {
-    worker_ = std::jthread(
-        [this, operation = std::move(operation)](std::stop_token stop) {
+    worker_ = std::thread(
+        [this, operation = std::move(operation)] {
           int code = 1;
           try {
-            code = operation(stop);
+            code = operation(cancellation_);
           } catch (...) {
             code = 1;
           }
@@ -601,17 +720,17 @@ std::string BackgroundJob::label() const {
   return label_;
 }
 
-void BackgroundJob::cancel() {
-  if (worker_.joinable()) worker_.request_stop();
-}
+void BackgroundJob::cancel() noexcept { cancellation_.request(); }
 
 void BackgroundJob::wait() {
+  std::lock_guard worker_lock(worker_mutex_);
   if (worker_.joinable()) worker_.join();
 }
 
 void BackgroundJob::reset() {
-  if (running()) return;
-  wait();
+  std::lock_guard worker_lock(worker_mutex_);
+  if (running_.load(std::memory_order_acquire)) return;
+  if (worker_.joinable()) worker_.join();
   finished_ = false;
   exit_code_ = -1;
   std::lock_guard lock(label_mutex_);

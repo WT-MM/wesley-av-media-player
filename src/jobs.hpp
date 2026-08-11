@@ -1,5 +1,7 @@
 #pragma once
 
+#include "cancellation.hpp"
+
 #include <atomic>
 #include <filesystem>
 #include <functional>
@@ -59,15 +61,18 @@ class BackgroundJob {
   bool finished() const { return finished_.load(); }
   int exitCode() const { return exit_code_.load(); }
   std::string label() const;
-  void cancel();
+  void cancel() noexcept;
   void wait();
   void reset();
 
  private:
   bool startWorker(std::string label,
-                   std::function<int(std::stop_token)> operation);
+                   std::function<int(const detail::CancellationFlag&)>
+                       operation);
 
-  std::jthread worker_;
+  std::thread worker_;
+  detail::CancellationFlag cancellation_;
+  mutable std::mutex worker_mutex_;
   std::atomic<bool> running_{false};
   std::atomic<bool> finished_{false};
   std::atomic<int> exit_code_{-1};

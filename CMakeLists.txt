@@ -35,6 +35,8 @@ find_package(Qt6 6.11 REQUIRED COMPONENTS
   OpenGL)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(MPV REQUIRED IMPORTED_TARGET mpv)
+include(cmake/WamMsys2PkgConfig.cmake)
+wam_normalize_msys2_pkgconfig_target(PkgConfig::MPV ${MPV_LIBRARY_DIRS})
 
 qt_standard_project_setup(REQUIRES 6.11)
 
@@ -161,6 +163,10 @@ install(FILES README.md THIRD_PARTY_NOTICES.md DESTINATION share/doc/wam)
 
 include(CTest)
 if(BUILD_TESTING)
+  add_test(NAME msys2_pkgconfig_paths
+    COMMAND ${CMAKE_COMMAND} -P
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/msys2_pkgconfig_paths_test.cmake)
+
   add_executable(wam_playback_policy_test tests/playback_policy_test.cpp)
   target_include_directories(wam_playback_policy_test PRIVATE src)
   add_test(NAME playback_policy COMMAND wam_playback_policy_test)
