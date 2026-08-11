@@ -14,6 +14,15 @@ namespace wam::macos {
 struct VideoToolboxDecoderTestAccess;
 #endif
 
+// Selects the zero-copy GPU import contract requested from CoreVideo. OpenGL
+// adds CGL IOSurface texture compatibility while retaining Metal compatibility,
+// so an opt-in native OpenGL presenter can fail back without changing the
+// decoded-frame ownership contract.
+enum class VideoToolboxOutputInterop : std::uint8_t {
+  Metal,
+  OpenGL,
+};
+
 struct VideoToolboxDecoderOptions {
   // Counts frames accepted by VideoToolbox whose output has not yet been
   // retired in submission order. This deliberately includes callbacks that
@@ -25,6 +34,10 @@ struct VideoToolboxDecoderOptions {
   // rejects a stream whose SPS requires more retained IOSurfaces, allowing the
   // caller to fall back without silently corrupting presentation order.
   std::size_t maxPendingPresentationFrames{8};
+  // Metal is the established decoder output contract. The dormant OpenGL mode
+  // additionally guarantees CGLTexImageIOSurface2D-compatible IOSurfaces and
+  // validates the exact two-plane NV12/P010 layout before delivery.
+  VideoToolboxOutputInterop outputInterop{VideoToolboxOutputInterop::Metal};
 #if defined(WAM_NATIVE_VIDEO_TESTING)
   // VideoToolbox is allowed to invoke an output handler before submit()
   // returns even when asynchronous decompression is enabled. This test-only
@@ -51,6 +64,7 @@ struct VideoToolboxDecoderStats {
   std::uint64_t outOfOrderDrops{0};
   std::size_t pendingPresentationFrames{0};
   std::size_t peakPendingPresentationFrames{0};
+  VideoToolboxOutputInterop outputInterop{VideoToolboxOutputInterop::Metal};
   OSType requestedOutputPixelFormat{0};
   OSType actualOutputPixelFormat{0};
 };
@@ -115,6 +129,9 @@ struct VideoToolboxDecoderTestAccess {
   [[nodiscard]] static bool injectDecodedFrame(
       VideoToolboxDecoder &decoder, std::uint64_t submissionSequence,
       CVPixelBufferRef pixelBuffer, FrameTiming timing, std::string *error);
+  [[nodiscard]] static bool validateOutputSurface(
+      CVPixelBufferRef pixelBuffer, OSType expectedPixelFormat,
+      VideoToolboxOutputInterop outputInterop, std::string *error);
   static void drainPresentationFrames(VideoToolboxDecoder &decoder) noexcept;
 };
 #endif

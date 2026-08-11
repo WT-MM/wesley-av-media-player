@@ -681,6 +681,7 @@ struct AsyncDecodeState {
   std::uint64_t nextCompletionSequence{0};
   std::vector<CompletedDecode> completedDecodes;
   std::vector<FrameLease> pendingPresentationFrames;
+  VideoToolboxOutputInterop outputInterop{VideoToolboxOutputInterop::Metal};
   OSType expectedOutputPixelFormat{0};
   OSType actualOutputPixelFormat{0};
   CMTime lastDeliveredPresentationTime{kCMTimeInvalid};
@@ -839,6 +840,128 @@ void resetPresentationState(
   // Release decoder surfaces after leaving both pipeline locks.
 }
 
+struct BiPlanarSurfaceLayout {
+  std::size_t lumaBytesPerElement{0};
+  std::size_t chromaBytesPerElement{0};
+};
+
+std::optional<BiPlanarSurfaceLayout>
+biPlanarSurfaceLayout(OSType pixelFormat) noexcept {
+  switch (pixelFormat) {
+  case kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange:
+  case kCVPixelFormatType_420YpCbCr8BiPlanarFullRange:
+    return BiPlanarSurfaceLayout{1, 2};
+  case kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange:
+  case kCVPixelFormatType_420YpCbCr10BiPlanarFullRange:
+    return BiPlanarSurfaceLayout{2, 4};
+  default:
+    return std::nullopt;
+  }
+}
+
+bool validateOutputSurfaceContract(CVPixelBufferRef pixelBuffer,
+                                   OSType expectedPixelFormat,
+                                   VideoToolboxOutputInterop outputInterop,
+                                   std::string *error) {
+  if (pixelBuffer == nullptr) {
+    assignError(error, "VideoToolbox returned no decoded pixel buffer");
+    return false;
+  }
+  const OSType pixelFormat = CVPixelBufferGetPixelFormatType(pixelBuffer);
+  if (pixelFormat != expectedPixelFormat) {
+    assignError(error,
+                "VideoToolbox output pixel format " +
+                    std::to_string(pixelFormat) +
+                    " did not match the bounded native decode contract " +
+                    std::to_string(expectedPixelFormat));
+    return false;
+  }
+  IOSurfaceRef surface = CVPixelBufferGetIOSurface(pixelBuffer);
+  if (surface == nullptr) {
+    assignError(error, "VideoToolbox produced a frame without an IOSurface");
+    return false;
+  }
+  if (outputInterop == VideoToolboxOutputInterop::Metal) {
+    return true;
+  }
+  if (outputInterop != VideoToolboxOutputInterop::OpenGL) {
+    assignError(error, "unsupported VideoToolbox output interop contract");
+    return false;
+  }
+
+  const auto layout = biPlanarSurfaceLayout(pixelFormat);
+  if (!layout) {
+    assignError(error,
+                "OpenGL IOSurface import requires NV12 or P010 output");
+    return false;
+  }
+  if (!CVPixelBufferIsPlanar(pixelBuffer) ||
+      CVPixelBufferGetPlaneCount(pixelBuffer) != 2 ||
+      IOSurfaceGetPlaneCount(surface) != 2) {
+    assignError(error,
+                "OpenGL IOSurface output must expose exactly two planes");
+    return false;
+  }
+  const OSType surfacePixelFormat = IOSurfaceGetPixelFormat(surface);
+  // CoreVideo-owned decoder surfaces normally carry the CV fourcc. A zero
+  // IOSurface fourcc is explicitly unspecified and does not prevent CGL plane
+  // binding; a contradictory nonzero value is unsafe and must fail closed.
+  if (surfacePixelFormat != 0 && surfacePixelFormat != pixelFormat) {
+    assignError(error,
+                "IOSurface pixel format does not match its CVPixelBuffer");
+    return false;
+  }
+
+  const std::size_t width = CVPixelBufferGetWidth(pixelBuffer);
+  const std::size_t height = CVPixelBufferGetHeight(pixelBuffer);
+  if (width == 0 || height == 0) {
+    assignError(error, "decoded IOSurface has empty dimensions");
+    return false;
+  }
+  const std::array<std::size_t, 2> expectedWidths{
+      width, width / 2U + width % 2U};
+  const std::array<std::size_t, 2> expectedHeights{height,
+                                                   height / 2U + height % 2U};
+  const std::array<std::size_t, 2> expectedBytesPerElement{
+      layout->lumaBytesPerElement, layout->chromaBytesPerElement};
+  for (std::size_t plane = 0; plane < 2; ++plane) {
+    const std::size_t cvWidth =
+        CVPixelBufferGetWidthOfPlane(pixelBuffer, plane);
+    const std::size_t cvHeight =
+        CVPixelBufferGetHeightOfPlane(pixelBuffer, plane);
+    const std::size_t cvBytesPerRow =
+        CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, plane);
+    const std::size_t surfaceWidth = IOSurfaceGetWidthOfPlane(surface, plane);
+    const std::size_t surfaceHeight =
+        IOSurfaceGetHeightOfPlane(surface, plane);
+    const std::size_t surfaceBytesPerElement =
+        IOSurfaceGetBytesPerElementOfPlane(surface, plane);
+    const std::size_t surfaceBytesPerRow =
+        IOSurfaceGetBytesPerRowOfPlane(surface, plane);
+    if (cvWidth != expectedWidths[plane] ||
+        cvHeight != expectedHeights[plane] || surfaceWidth != cvWidth ||
+        surfaceHeight != cvHeight ||
+        surfaceBytesPerElement != expectedBytesPerElement[plane] ||
+        surfaceBytesPerRow != cvBytesPerRow ||
+        cvWidth > std::numeric_limits<std::size_t>::max() /
+                      expectedBytesPerElement[plane] ||
+        cvBytesPerRow < cvWidth * expectedBytesPerElement[plane]) {
+      assignError(error,
+                  "decoded IOSurface plane " + std::to_string(plane) +
+                      " does not match the exact " +
+                      (pixelFormat ==
+                               kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange ||
+                           pixelFormat ==
+                               kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
+                       ? "NV12"
+                       : "P010") +
+                      " OpenGL texture layout");
+      return false;
+    }
+  }
+  return true;
+}
+
 void deliverDecodedFrame(const std::shared_ptr<AsyncDecodeState> &state,
                          std::uint64_t submissionSequence, FrameTiming timing,
                          OSStatus status,
@@ -878,19 +1001,13 @@ void deliverDecodedFrame(const std::shared_ptr<AsyncDecodeState> &state,
       // A flush advances the generation before waiting for callbacks, so an
       // old frame is released here without ever reaching the new timeline.
       ++state->dropped;
-    } else if (CVPixelBufferGetIOSurface(
-                   static_cast<CVPixelBufferRef>(imageBuffer)) == nullptr) {
-      state->lastError = "VideoToolbox produced a frame without an IOSurface";
-      ++state->dropped;
     } else {
-      const OSType pixelFormat = CVPixelBufferGetPixelFormatType(
-          static_cast<CVPixelBufferRef>(imageBuffer));
-      if (pixelFormat != state->expectedOutputPixelFormat) {
-        state->lastError =
-            "VideoToolbox output pixel format " +
-            std::to_string(pixelFormat) + " did not match the bounded native "
-            "decode contract " +
-            std::to_string(state->expectedOutputPixelFormat);
+      auto pixelBuffer = static_cast<CVPixelBufferRef>(imageBuffer);
+      std::string surfaceError;
+      if (!validateOutputSurfaceContract(
+              pixelBuffer, state->expectedOutputPixelFormat,
+              state->outputInterop, &surfaceError)) {
+        state->lastError = std::move(surfaceError);
         ++state->dropped;
       } else if (!CMTIME_IS_NUMERIC(timing.presentationTime)) {
         state->lastError =
@@ -898,13 +1015,14 @@ void deliverDecodedFrame(const std::shared_ptr<AsyncDecodeState> &state,
             "presentation timestamp";
         ++state->dropped;
       } else {
+        const OSType pixelFormat =
+            CVPixelBufferGetPixelFormatType(pixelBuffer);
         state->actualOutputPixelFormat = pixelFormat;
         if (sink == nullptr) {
           state->lastError = "decoded frame has no configured output sink";
           ++state->dropped;
         } else {
-          decodedFrame.emplace(static_cast<CVPixelBufferRef>(imageBuffer),
-                               timing);
+          decodedFrame.emplace(pixelBuffer, timing);
         }
       }
     }
@@ -1003,7 +1121,7 @@ OSType
 requestedPixelFormat(const VideoStreamConfiguration &configuration) noexcept {
   // hvcC stores bit_depth_luma_minus8 in the low three bits of byte 17.
   // The common H.264 High 10 profile uses profile_idc 110. Both map directly
-  // to the presenter's supported 10-bit bi-planar Metal import path.
+  // to the presenter's supported 10-bit bi-planar GPU import path.
   const auto *bytes = reinterpret_cast<const std::uint8_t *>(
       configuration.codecConfiguration.data());
   bool tenBit = false;
@@ -1130,12 +1248,18 @@ struct VideoToolboxDecoder::Impl {
         kCFAllocatorDefault, nullptr, nullptr, 0,
         &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
     CFMutableDictionaryRef imageAttributes = CFDictionaryCreateMutable(
-        kCFAllocatorDefault, 3, &kCFTypeDictionaryKeyCallBacks,
+        kCFAllocatorDefault, 4, &kCFTypeDictionaryKeyCallBacks,
         &kCFTypeDictionaryValueCallBacks);
     CFDictionarySetValue(imageAttributes, kCVPixelBufferIOSurfacePropertiesKey,
                          emptyIOSurfaceProperties);
     CFDictionarySetValue(imageAttributes, kCVPixelBufferMetalCompatibilityKey,
                          kCFBooleanTrue);
+    if (options.outputInterop == VideoToolboxOutputInterop::OpenGL) {
+      CFDictionarySetValue(
+          imageAttributes,
+          kCVPixelBufferIOSurfaceOpenGLTextureCompatibilityKey,
+          kCFBooleanTrue);
+    }
     const std::int32_t pixelFormatValue =
         static_cast<std::int32_t>(outputPixelFormat);
     CFNumberRef pixelFormatNumber = CFNumberCreate(
@@ -1217,6 +1341,11 @@ VideoToolboxDecoder::VideoToolboxDecoder(VideoToolboxDecoderOptions options)
   if (options.maxPendingPresentationFrames == 0) {
     throw std::invalid_argument(
         "VideoToolbox presentation reorder bound must be greater than zero");
+  }
+  if (options.outputInterop != VideoToolboxOutputInterop::Metal &&
+      options.outputInterop != VideoToolboxOutputInterop::OpenGL) {
+    throw std::invalid_argument(
+        "unsupported VideoToolbox output interop contract");
   }
 }
 
@@ -1324,6 +1453,7 @@ bool VideoToolboxDecoder::configure(
     impl_->async->nextCompletionSequence = 0;
     impl_->async->completedDecodes.clear();
     impl_->async->pendingPresentationFrames.clear();
+    impl_->async->outputInterop = impl_->options.outputInterop;
     impl_->async->expectedOutputPixelFormat = impl_->outputPixelFormat;
     impl_->async->actualOutputPixelFormat = 0;
     impl_->async->lastDeliveredPresentationTime = kCMTimeInvalid;
@@ -1569,6 +1699,7 @@ VideoToolboxDecoderStats VideoToolboxDecoder::stats() const noexcept {
   result.usingHardwareAcceleratedDecoder = impl_->usingHardware;
   result.awaitingKeyFrame = impl_->awaitingKeyFrame;
   result.maxInFlightFrames = impl_->options.maxInFlightFrames;
+  result.outputInterop = impl_->options.outputInterop;
   {
     std::lock_guard stateLock(impl_->async->mutex);
     result.inFlightFrames = impl_->async->inFlight;
@@ -1731,6 +1862,16 @@ bool VideoToolboxDecoderTestAccess::injectDecodedFrame(
                       0, pixelBuffer, timing.presentationTime,
                       timing.duration);
   return true;
+}
+
+bool VideoToolboxDecoderTestAccess::validateOutputSurface(
+    CVPixelBufferRef pixelBuffer, OSType expectedPixelFormat,
+    VideoToolboxOutputInterop outputInterop, std::string *error) {
+  if (error != nullptr) {
+    error->clear();
+  }
+  return validateOutputSurfaceContract(pixelBuffer, expectedPixelFormat,
+                                       outputInterop, error);
 }
 
 void VideoToolboxDecoderTestAccess::drainPresentationFrames(

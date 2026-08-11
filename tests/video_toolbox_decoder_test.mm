@@ -1,6 +1,9 @@
 #include "platform/macos/video_toolbox_decoder.hpp"
 
 #import <AVFoundation/AVFoundation.h>
+#import <OpenGL/CGLIOSurface.h>
+#import <OpenGL/OpenGL.h>
+#import <OpenGL/gl3.h>
 #import <VideoToolbox/VideoToolbox.h>
 
 #include <sys/mman.h>
@@ -21,6 +24,7 @@
 #include <mutex>
 #include <span>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -59,6 +63,41 @@ struct DemuxedVideo {
   std::vector<OwnedPacket> packets;
 };
 
+struct TestInputs {
+  const char *h264Path{nullptr};
+  const char *main10Path{nullptr};
+  bool requireHardware{false};
+};
+
+TestInputs parseTestInputs(int argc, char **argv) {
+  TestInputs result;
+  std::vector<const char *> mediaPaths;
+  mediaPaths.reserve(2);
+  for (int index = 1; index < argc; ++index) {
+    const std::string_view argument(argv[index]);
+    if (argument == "--require-hardware") {
+      WAM_CHECK_DETAIL(!result.requireHardware,
+                       "--require-hardware was supplied more than once");
+      result.requireHardware = true;
+    } else {
+      WAM_CHECK_DETAIL(!argument.starts_with("--"),
+                       "unknown VideoToolbox test option");
+      mediaPaths.push_back(argv[index]);
+    }
+  }
+
+  WAM_CHECK_DETAIL(mediaPaths.size() == 1 || mediaPaths.size() == 2,
+                   "usage: wam_video_toolbox_decoder_test "
+                   "[--require-hardware] sample-h264.mp4 "
+                   "[sample-main10-hevc.mp4]");
+  WAM_CHECK_DETAIL(!result.requireHardware || mediaPaths.size() == 2,
+                   "--require-hardware requires both H.264 and Main 10 HEVC "
+                   "fixtures");
+  result.h264Path = mediaPaths[0];
+  result.main10Path = mediaPaths.size() == 2 ? mediaPaths[1] : nullptr;
+  return result;
+}
+
 bool sampleIsKeyFrame(CMSampleBufferRef sample) {
   CFArrayRef attachments =
       CMSampleBufferGetSampleAttachmentsArray(sample, false);
@@ -72,7 +111,9 @@ bool sampleIsKeyFrame(CMSampleBufferRef sample) {
   return notSync == nullptr || !CFBooleanGetValue(notSync);
 }
 
-DemuxedVideo readCompressedH264(const char *path) {
+DemuxedVideo readCompressedVideo(const char *path,
+                                 CMVideoCodecType expectedCodec,
+                                 std::size_t minimumPackets) {
   NSString *filePath = [NSString stringWithUTF8String:path];
   NSURL *url = [NSURL fileURLWithPath:filePath];
   AVURLAsset *asset = [AVURLAsset URLAssetWithURL:url options:nil];
@@ -102,7 +143,10 @@ DemuxedVideo readCompressedH264(const char *path) {
       extensions,
       kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms));
   const CFStringRef atomName =
-      video.codec == kCMVideoCodecType_H264 ? CFSTR("avcC") : CFSTR("hvcC");
+      video.codec == kCMVideoCodecType_H264   ? CFSTR("avcC")
+      : video.codec == kCMVideoCodecType_HEVC ? CFSTR("hvcC")
+                                               : nullptr;
+  WAM_CHECK(atomName != nullptr);
   auto atom = static_cast<CFDataRef>(CFDictionaryGetValue(atoms, atomName));
   WAM_CHECK(atom != nullptr);
   const CFIndex configurationLength = CFDataGetLength(atom);
@@ -153,10 +197,10 @@ DemuxedVideo readCompressedH264(const char *path) {
 
   WAM_CHECK(reader.status == AVAssetReaderStatusReading ||
             reader.status == AVAssetReaderStatusCompleted);
-  WAM_CHECK(video.codec == kCMVideoCodecType_H264);
+  WAM_CHECK(video.codec == expectedCodec);
   WAM_CHECK(video.dimensions.width > 0 && video.dimensions.height > 0);
   WAM_CHECK(!video.configuration.empty());
-  WAM_CHECK(video.packets.size() >= 3);
+  WAM_CHECK(video.packets.size() >= minimumPackets);
   return video;
 }
 
@@ -205,9 +249,13 @@ bool earlier(CMTime left, CMTime right) {
 
 CVPixelBufferRef createIOSurfacePixelBuffer(OSType format,
                                              std::size_t width,
-                                             std::size_t height) {
+                                             std::size_t height,
+                                             wam::macos::VideoToolboxOutputInterop
+                                                 outputInterop = wam::macos::
+                                                     VideoToolboxOutputInterop::
+                                                         Metal) {
   CFMutableDictionaryRef attributes = CFDictionaryCreateMutable(
-      kCFAllocatorDefault, 2, &kCFTypeDictionaryKeyCallBacks,
+      kCFAllocatorDefault, 3, &kCFTypeDictionaryKeyCallBacks,
       &kCFTypeDictionaryValueCallBacks);
   CFDictionaryRef empty = CFDictionaryCreate(
       kCFAllocatorDefault, nullptr, nullptr, 0,
@@ -215,6 +263,11 @@ CVPixelBufferRef createIOSurfacePixelBuffer(OSType format,
   CFDictionarySetValue(attributes, kCVPixelBufferIOSurfacePropertiesKey, empty);
   CFDictionarySetValue(attributes, kCVPixelBufferMetalCompatibilityKey,
                        kCFBooleanTrue);
+  if (outputInterop == wam::macos::VideoToolboxOutputInterop::OpenGL) {
+    CFDictionarySetValue(
+        attributes, kCVPixelBufferIOSurfaceOpenGLTextureCompatibilityKey,
+        kCFBooleanTrue);
+  }
   CVPixelBufferRef result = nullptr;
   const CVReturn status = CVPixelBufferCreate(
       kCFAllocatorDefault, width, height, format, attributes, &result);
@@ -225,8 +278,97 @@ CVPixelBufferRef createIOSurfacePixelBuffer(OSType format,
   return result;
 }
 
+class AcceleratedCGLContext final {
+public:
+  AcceleratedCGLContext() {
+    const CGLPixelFormatAttribute attributes[] = {
+        kCGLPFAAccelerated,
+        kCGLPFANoRecovery,
+        kCGLPFAOpenGLProfile,
+        static_cast<CGLPixelFormatAttribute>(kCGLOGLPVersion_3_2_Core),
+        static_cast<CGLPixelFormatAttribute>(0)};
+    GLint count = 0;
+    const CGLError chooseStatus =
+        CGLChoosePixelFormat(attributes, &pixelFormat_, &count);
+    WAM_CHECK_DETAIL(chooseStatus == kCGLNoError,
+                     CGLErrorString(chooseStatus));
+    WAM_CHECK(pixelFormat_ != nullptr);
+    WAM_CHECK(count > 0);
+    const CGLError createStatus =
+        CGLCreateContext(pixelFormat_, nullptr, &context_);
+    WAM_CHECK_DETAIL(createStatus == kCGLNoError,
+                     CGLErrorString(createStatus));
+    WAM_CHECK(context_ != nullptr);
+  }
+
+  AcceleratedCGLContext(const AcceleratedCGLContext &) = delete;
+  AcceleratedCGLContext &operator=(const AcceleratedCGLContext &) = delete;
+
+  ~AcceleratedCGLContext() {
+    if (CGLGetCurrentContext() == context_) {
+      CGLSetCurrentContext(nullptr);
+    }
+    if (context_ != nullptr) {
+      CGLDestroyContext(context_);
+    }
+    if (pixelFormat_ != nullptr) {
+      CGLDestroyPixelFormat(pixelFormat_);
+    }
+  }
+
+  [[nodiscard]] CGLContextObj get() const noexcept { return context_; }
+
+private:
+  CGLPixelFormatObj pixelFormat_{nullptr};
+  CGLContextObj context_{nullptr};
+};
+
+void bindIOSurfacePlanesWithCGL(CGLContextObj context,
+                                CVPixelBufferRef pixelBuffer) {
+  WAM_CHECK(context != nullptr);
+  WAM_CHECK(pixelBuffer != nullptr);
+  IOSurfaceRef surface = CVPixelBufferGetIOSurface(pixelBuffer);
+  WAM_CHECK(surface != nullptr);
+  WAM_CHECK(CGLSetCurrentContext(context) == kCGLNoError);
+
+  const OSType format = CVPixelBufferGetPixelFormatType(pixelBuffer);
+  const bool tenBit =
+      format == kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange ||
+      format == kCVPixelFormatType_420YpCbCr10BiPlanarFullRange;
+  WAM_CHECK(tenBit ||
+            format == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange ||
+            format == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange);
+  const std::array<GLenum, 2> internalFormats{
+      static_cast<GLenum>(tenBit ? GL_R16 : GL_R8),
+      static_cast<GLenum>(tenBit ? GL_RG16 : GL_RG8)};
+  const std::array<GLenum, 2> externalFormats{GL_RED, GL_RG};
+  const GLenum type = tenBit ? GL_UNSIGNED_SHORT : GL_UNSIGNED_BYTE;
+
+  std::array<GLuint, 2> textures{};
+  glGenTextures(static_cast<GLsizei>(textures.size()), textures.data());
+  WAM_CHECK(textures[0] != 0);
+  WAM_CHECK(textures[1] != 0);
+  for (std::size_t plane = 0; plane < textures.size(); ++plane) {
+    glBindTexture(GL_TEXTURE_RECTANGLE, textures[plane]);
+    const CGLError importStatus = CGLTexImageIOSurface2D(
+        context, GL_TEXTURE_RECTANGLE, internalFormats[plane],
+        static_cast<GLsizei>(CVPixelBufferGetWidthOfPlane(pixelBuffer, plane)),
+        static_cast<GLsizei>(
+            CVPixelBufferGetHeightOfPlane(pixelBuffer, plane)),
+        externalFormats[plane], type, surface, static_cast<GLuint>(plane));
+    WAM_CHECK_DETAIL(importStatus == kCGLNoError,
+                     CGLErrorString(importStatus));
+    WAM_CHECK(glGetError() == GL_NO_ERROR);
+  }
+  glBindTexture(GL_TEXTURE_RECTANGLE, 0);
+  glDeleteTextures(static_cast<GLsizei>(textures.size()), textures.data());
+  WAM_CHECK(glGetError() == GL_NO_ERROR);
+}
+
 void testFiniteAdmissionNeverEnablesTemporalProcessing() {
   wam::macos::VideoToolboxDecoder asynchronous;
+  WAM_CHECK(asynchronous.stats().outputInterop ==
+            wam::macos::VideoToolboxOutputInterop::Metal);
   const std::uint32_t asynchronousFlags =
       wam::macos::VideoToolboxDecoderTestAccess::decodeFlags(asynchronous);
   WAM_CHECK((asynchronousFlags &
@@ -241,6 +383,13 @@ void testFiniteAdmissionNeverEnablesTemporalProcessing() {
   WAM_CHECK((synchronousFlags &
              kVTDecodeFrame_EnableAsynchronousDecompression) == 0);
   WAM_CHECK((synchronousFlags & kVTDecodeFrame_EnableTemporalProcessing) == 0);
+
+  wam::macos::VideoToolboxDecoderOptions openGLOptions;
+  openGLOptions.outputInterop =
+      wam::macos::VideoToolboxOutputInterop::OpenGL;
+  wam::macos::VideoToolboxDecoder openGL(openGLOptions);
+  WAM_CHECK(openGL.stats().outputInterop ==
+            wam::macos::VideoToolboxOutputInterop::OpenGL);
 }
 
 void testInjectedCallbackOrderUsesDecodeSequence(
@@ -483,6 +632,9 @@ void testDefaultBoundMakesProgressBeforeEndOfStream(
   WAM_CHECK(stats.submittedFrames == packetCount);
   WAM_CHECK(stats.deliveredFrames == packetCount);
   WAM_CHECK(stats.droppedFrames == 0);
+  if (requireHardware) {
+    WAM_CHECK(stats.usingHardwareAcceleratedDecoder);
+  }
   WAM_CHECK(stats.inFlightFrames == 0);
   decoder.close();
 }
@@ -569,6 +721,142 @@ void testBFramePresentationOrderAndMetalImport(const DemuxedVideo &video,
   }
   WAM_CHECK(queue.reachedEndOfStream());
   decoder.close();
+}
+
+void testDecodedNV12OpenGLInterop(const DemuxedVideo &video,
+                                  std::size_t keyIndex,
+                                  bool requireHardware,
+                                  CGLContextObj cglContext) {
+  constexpr std::uint64_t generation = 45;
+  const std::size_t packetCount = video.packets.size() - keyIndex;
+  wam::macos::BoundedFrameQueue queue(packetCount + 1, generation);
+  wam::macos::VideoToolboxDecoderOptions options;
+  options.maxInFlightFrames = packetCount + 1;
+  options.outputInterop = wam::macos::VideoToolboxOutputInterop::OpenGL;
+  wam::macos::VideoToolboxDecoder decoder(options);
+  std::string error;
+  WAM_CHECK_DETAIL(
+      decoder.configure(streamConfiguration(video, generation, requireHardware),
+                        queue, &error),
+      error);
+  for (std::size_t index = keyIndex; index < video.packets.size(); ++index) {
+    WAM_CHECK_DETAIL(
+        decoder.submit(packetView(video.packets[index], generation), &error) ==
+            wam::macos::VideoDecodeSubmitResult::Accepted,
+        error);
+  }
+  WAM_CHECK_DETAIL(decoder.submit(endOfStream(generation), &error) ==
+                       wam::macos::VideoDecodeSubmitResult::Accepted,
+                   error);
+
+  const auto stats = decoder.stats();
+  WAM_CHECK(stats.outputInterop ==
+            wam::macos::VideoToolboxOutputInterop::OpenGL);
+  WAM_CHECK(stats.requestedOutputPixelFormat ==
+            kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange);
+  WAM_CHECK(stats.actualOutputPixelFormat ==
+            kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange);
+  WAM_CHECK(stats.deliveredFrames == packetCount);
+  WAM_CHECK(stats.droppedFrames == 0);
+  if (requireHardware) {
+    WAM_CHECK(stats.usingHardwareAcceleratedDecoder);
+  }
+
+  std::size_t importedFrames = 0;
+  while (auto frame = queue.tryTake()) {
+    WAM_CHECK_DETAIL(
+        wam::macos::VideoToolboxDecoderTestAccess::validateOutputSurface(
+            frame->pixelBuffer(), stats.requestedOutputPixelFormat,
+            wam::macos::VideoToolboxOutputInterop::OpenGL, &error),
+        error);
+    bindIOSurfacePlanesWithCGL(cglContext, frame->pixelBuffer());
+    ++importedFrames;
+  }
+  WAM_CHECK(importedFrames == packetCount);
+  WAM_CHECK(queue.reachedEndOfStream());
+  WAM_CHECK(!decoder.takeLastError().has_value());
+  std::cout << "NV12 VT-to-CGL decode passed ("
+            << (stats.usingHardwareAcceleratedDecoder ? "hardware" : "software")
+            << " VideoToolbox)\n";
+  decoder.close();
+}
+
+void testDecodedP010OpenGLInterop(const DemuxedVideo &video,
+                                  std::size_t keyIndex,
+                                  bool requireHardware,
+                                  CGLContextObj cglContext) {
+  constexpr std::uint64_t generation = 46;
+  const std::size_t packetCount = video.packets.size() - keyIndex;
+  WAM_CHECK(packetCount > 0);
+  wam::macos::BoundedFrameQueue queue(packetCount + 1, generation);
+  wam::macos::VideoToolboxDecoderOptions options;
+  options.maxInFlightFrames = packetCount + 1;
+  options.outputInterop = wam::macos::VideoToolboxOutputInterop::OpenGL;
+  wam::macos::VideoToolboxDecoder decoder(options);
+  std::string error;
+  WAM_CHECK_DETAIL(
+      decoder.configure(streamConfiguration(video, generation, requireHardware),
+                        queue, &error),
+      error);
+  for (std::size_t index = keyIndex; index < video.packets.size(); ++index) {
+    WAM_CHECK_DETAIL(
+        decoder.submit(packetView(video.packets[index], generation), &error) ==
+            wam::macos::VideoDecodeSubmitResult::Accepted,
+        error);
+  }
+  WAM_CHECK_DETAIL(decoder.submit(endOfStream(generation), &error) ==
+                       wam::macos::VideoDecodeSubmitResult::Accepted,
+                   error);
+
+  const auto stats = decoder.stats();
+  WAM_CHECK(stats.outputInterop ==
+            wam::macos::VideoToolboxOutputInterop::OpenGL);
+  WAM_CHECK(stats.requestedOutputPixelFormat ==
+            kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange);
+  WAM_CHECK(stats.actualOutputPixelFormat ==
+            kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange);
+  WAM_CHECK(stats.deliveredFrames == packetCount);
+  WAM_CHECK(stats.droppedFrames == 0);
+  if (requireHardware) {
+    WAM_CHECK(stats.usingHardwareAcceleratedDecoder);
+  }
+
+  std::size_t importedFrames = 0;
+  while (auto frame = queue.tryTake()) {
+    WAM_CHECK_DETAIL(
+        wam::macos::VideoToolboxDecoderTestAccess::validateOutputSurface(
+            frame->pixelBuffer(), stats.requestedOutputPixelFormat,
+            wam::macos::VideoToolboxOutputInterop::OpenGL, &error),
+        error);
+    bindIOSurfacePlanesWithCGL(cglContext, frame->pixelBuffer());
+    ++importedFrames;
+  }
+  WAM_CHECK(importedFrames == packetCount);
+  WAM_CHECK(queue.reachedEndOfStream());
+  WAM_CHECK(!decoder.takeLastError().has_value());
+  std::cout << "P010 VT-to-CGL decode passed ("
+            << (stats.usingHardwareAcceleratedDecoder ? "hardware" : "software")
+            << " VideoToolbox)\n";
+  decoder.close();
+}
+
+void testSyntheticP010LayoutRejection(CGLContextObj cglContext) {
+  CVPixelBufferRef p010 = createIOSurfacePixelBuffer(
+      kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange, 128, 64,
+      wam::macos::VideoToolboxOutputInterop::OpenGL);
+  std::string error;
+  WAM_CHECK_DETAIL(
+      wam::macos::VideoToolboxDecoderTestAccess::validateOutputSurface(
+          p010, kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange,
+          wam::macos::VideoToolboxOutputInterop::OpenGL, &error),
+      error);
+  bindIOSurfacePlanesWithCGL(cglContext, p010);
+
+  WAM_CHECK(!wam::macos::VideoToolboxDecoderTestAccess::validateOutputSurface(
+      p010, kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+      wam::macos::VideoToolboxOutputInterop::OpenGL, &error));
+  WAM_CHECK(error.find("pixel format") != std::string::npos);
+  CVPixelBufferRelease(p010);
 }
 
 void testSinkBackpressureIsRecoverable(const DemuxedVideo &video,
@@ -954,35 +1242,57 @@ void testHevcConfiguration(bool requireHardware) {
 } // namespace
 
 int main(int argc, char **argv) {
-  if (argc != 2) {
-    std::cerr << "usage: wam_video_toolbox_decoder_test sample-h264.mp4\n";
-    return EXIT_FAILURE;
-  }
-
-  DemuxedVideo video = readCompressedH264(argv[1]);
+  const TestInputs inputs = parseTestInputs(argc, argv);
+  DemuxedVideo video =
+      readCompressedVideo(inputs.h264Path, kCMVideoCodecType_H264, 3);
   const std::size_t keyIndex = firstKeyFrame(video);
   WAM_CHECK(keyIndex < video.packets.size());
+  DemuxedVideo main10Video;
+  std::size_t main10KeyIndex = 0;
+  const bool hasMain10Fixture = inputs.main10Path != nullptr;
+  if (hasMain10Fixture) {
+    main10Video =
+        readCompressedVideo(inputs.main10Path, kCMVideoCodecType_HEVC, 1);
+    main10KeyIndex = firstKeyFrame(main10Video);
+    WAM_CHECK(main10KeyIndex < main10Video.packets.size());
+  }
 
-  const bool h264Hardware = VTIsHardwareDecodeSupported(kCMVideoCodecType_H264);
-  const bool hevcHardware = VTIsHardwareDecodeSupported(kCMVideoCodecType_HEVC);
+  if (inputs.requireHardware) {
+    WAM_CHECK_DETAIL(VTIsHardwareDecodeSupported(kCMVideoCodecType_H264),
+                     "this runner reports no hardware H.264 decoder");
+    WAM_CHECK_DETAIL(VTIsHardwareDecodeSupported(kCMVideoCodecType_HEVC),
+                     "this runner reports no hardware HEVC decoder");
+  }
+  AcceleratedCGLContext cglContext;
   testFiniteAdmissionNeverEnablesTemporalProcessing();
   testConfigurationByteBound(video);
   testCodecParserAndDeclaredReorderBound(video);
-  testAdmissionBeforeCopy(video, keyIndex, h264Hardware);
+  testAdmissionBeforeCopy(video, keyIndex, inputs.requireHardware);
   testDefaultBoundMakesProgressBeforeEndOfStream(video, keyIndex,
-                                                 h264Hardware);
-  testCallbackScheduling(video, keyIndex, h264Hardware, true);
-  testCallbackScheduling(video, keyIndex, h264Hardware, false);
-  testLifecycleAndGeneration(video, keyIndex, h264Hardware);
-  testInjectedCallbackOrderUsesDecodeSequence(video, h264Hardware);
+                                                 inputs.requireHardware);
+  testCallbackScheduling(video, keyIndex, inputs.requireHardware, true);
+  testCallbackScheduling(video, keyIndex, inputs.requireHardware, false);
+  testLifecycleAndGeneration(video, keyIndex, inputs.requireHardware);
+  testInjectedCallbackOrderUsesDecodeSequence(video, inputs.requireHardware);
   testInjectedCompletionGapPreservesAdmissionAndMakesProgress(
-      video, keyIndex, h264Hardware);
-  testBFramePresentationOrderAndMetalImport(video, keyIndex, h264Hardware);
-  testSinkBackpressureIsRecoverable(video, keyIndex, h264Hardware);
-  testHevcConfiguration(hevcHardware);
+      video, keyIndex, inputs.requireHardware);
+  testBFramePresentationOrderAndMetalImport(video, keyIndex,
+                                            inputs.requireHardware);
+  testDecodedNV12OpenGLInterop(video, keyIndex, inputs.requireHardware,
+                               cglContext.get());
+  if (hasMain10Fixture) {
+    testDecodedP010OpenGLInterop(main10Video, main10KeyIndex,
+                                 inputs.requireHardware, cglContext.get());
+  } else {
+    std::cout << "Real P010 VideoToolbox decode was not exercised: no Main 10 "
+                 "HEVC fixture was supplied\n";
+  }
+  testSyntheticP010LayoutRejection(cglContext.get());
+  testSinkBackpressureIsRecoverable(video, keyIndex, inputs.requireHardware);
+  testHevcConfiguration(inputs.requireHardware);
 
-  std::cout << "VideoToolbox H.264 B-frame ordering, zero-copy Metal import, "
-               "HEVC configuration, bounded backpressure, flush, and shutdown "
-               "passed\n";
+  std::cout << "VideoToolbox H.264 B-frame ordering, zero-copy Metal/CGL "
+               "NV12 and P010 import, HEVC configuration, bounded "
+               "backpressure, flush, and shutdown passed\n";
   return EXIT_SUCCESS;
 }

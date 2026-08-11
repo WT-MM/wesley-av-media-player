@@ -14,6 +14,11 @@ option(WAM_ENABLE_MACOS_NATIVE_VIDEO
   OFF)
 set(WAM_NATIVE_VIDEO_TEST_FIXTURE "" CACHE FILEPATH
   "Optional H.264 B-frame fixture used by the macOS VideoToolbox test")
+set(WAM_NATIVE_VIDEO_10BIT_TEST_FIXTURE "" CACHE FILEPATH
+  "Optional Main 10 HEVC fixture used by the macOS VideoToolbox test")
+option(WAM_REQUIRE_NATIVE_VIDEO_TEST_HARDWARE
+  "Require hardware H.264/Main 10 decoding in the macOS VideoToolbox test"
+  OFF)
 
 if(WAM_ENABLE_MACOS_NATIVE_VIDEO AND NOT APPLE)
   message(FATAL_ERROR
@@ -112,6 +117,7 @@ if(APPLE)
     find_library(WAM_APPKIT_FRAMEWORK AppKit REQUIRED)
     find_library(WAM_AVFOUNDATION_FRAMEWORK AVFoundation REQUIRED)
     find_library(WAM_METAL_FRAMEWORK Metal REQUIRED)
+    find_library(WAM_OPENGL_FRAMEWORK OpenGL REQUIRED)
     find_library(WAM_QUARTZCORE_FRAMEWORK QuartzCore REQUIRED)
     find_library(WAM_VIDEOTOOLBOX_FRAMEWORK VideoToolbox REQUIRED)
 
@@ -334,7 +340,8 @@ if(BUILD_TESTING)
         ${WAM_MACOS_NATIVE_VIDEO_CORE_SOURCES})
       target_include_directories(wam_video_toolbox_decoder_test PRIVATE src)
       target_compile_definitions(wam_video_toolbox_decoder_test PRIVATE
-        WAM_NATIVE_VIDEO_TESTING=1)
+        WAM_NATIVE_VIDEO_TESTING=1
+        GL_SILENCE_DEPRECATION=1)
       target_link_libraries(wam_video_toolbox_decoder_test PRIVATE
         "${WAM_COREFOUNDATION_FRAMEWORK}"
         "${WAM_COREMEDIA_FRAMEWORK}"
@@ -342,6 +349,7 @@ if(BUILD_TESTING)
         "${WAM_FOUNDATION_FRAMEWORK}"
         "${WAM_IOSURFACE_FRAMEWORK}"
         "${WAM_METAL_FRAMEWORK}"
+        "${WAM_OPENGL_FRAMEWORK}"
         "${WAM_VIDEOTOOLBOX_FRAMEWORK}"
         "${WAM_AVFOUNDATION_FRAMEWORK}")
       target_compile_options(wam_video_toolbox_decoder_test PRIVATE
@@ -351,10 +359,27 @@ if(BUILD_TESTING)
         LINKER_LANGUAGE OBJCXX)
       set(WAM_RESOLVED_NATIVE_VIDEO_TEST_FIXTURE
         "${WAM_NATIVE_VIDEO_TEST_FIXTURE}")
+      set(WAM_RESOLVED_NATIVE_VIDEO_10BIT_TEST_FIXTURE
+        "${WAM_NATIVE_VIDEO_10BIT_TEST_FIXTURE}")
       if(NOT WAM_RESOLVED_NATIVE_VIDEO_TEST_FIXTURE AND
           EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/test-media/sample-h264.mp4")
         set(WAM_RESOLVED_NATIVE_VIDEO_TEST_FIXTURE
           "${CMAKE_CURRENT_SOURCE_DIR}/test-media/sample-h264.mp4")
+      endif()
+
+      if(WAM_REQUIRE_NATIVE_VIDEO_TEST_HARDWARE)
+        if(NOT WAM_RESOLVED_NATIVE_VIDEO_TEST_FIXTURE OR
+            NOT EXISTS "${WAM_RESOLVED_NATIVE_VIDEO_TEST_FIXTURE}")
+          message(FATAL_ERROR
+            "WAM_REQUIRE_NATIVE_VIDEO_TEST_HARDWARE requires an existing "
+            "H.264 fixture")
+        endif()
+        if(NOT WAM_RESOLVED_NATIVE_VIDEO_10BIT_TEST_FIXTURE OR
+            NOT EXISTS "${WAM_RESOLVED_NATIVE_VIDEO_10BIT_TEST_FIXTURE}")
+          message(FATAL_ERROR
+            "WAM_REQUIRE_NATIVE_VIDEO_TEST_HARDWARE requires an existing "
+            "Main 10 HEVC fixture")
+        endif()
       endif()
       if(WAM_RESOLVED_NATIVE_VIDEO_TEST_FIXTURE AND
           EXISTS "${WAM_RESOLVED_NATIVE_VIDEO_TEST_FIXTURE}")
@@ -376,15 +401,31 @@ if(BUILD_TESTING)
           TIMEOUT 45
           SKIP_RETURN_CODE 77)
 
+        set(WAM_VIDEO_TOOLBOX_DECODER_TEST_ARGUMENTS
+          "${WAM_RESOLVED_NATIVE_VIDEO_TEST_FIXTURE}")
+        if(WAM_RESOLVED_NATIVE_VIDEO_10BIT_TEST_FIXTURE AND
+            EXISTS "${WAM_RESOLVED_NATIVE_VIDEO_10BIT_TEST_FIXTURE}")
+          list(APPEND WAM_VIDEO_TOOLBOX_DECODER_TEST_ARGUMENTS
+            "${WAM_RESOLVED_NATIVE_VIDEO_10BIT_TEST_FIXTURE}")
+        else()
+          message(WARNING
+            "Native VideoToolbox decoder test will run without real P010 "
+            "decode coverage; set WAM_NATIVE_VIDEO_10BIT_TEST_FIXTURE to "
+            "enable it")
+        endif()
+        if(WAM_REQUIRE_NATIVE_VIDEO_TEST_HARDWARE)
+          list(APPEND WAM_VIDEO_TOOLBOX_DECODER_TEST_ARGUMENTS
+            "--require-hardware")
+        endif()
         add_test(NAME macos_video_toolbox_decoder
           COMMAND wam_video_toolbox_decoder_test
-            "${WAM_RESOLVED_NATIVE_VIDEO_TEST_FIXTURE}")
+            ${WAM_VIDEO_TOOLBOX_DECODER_TEST_ARGUMENTS})
         set_tests_properties(macos_video_toolbox_decoder PROPERTIES
           TIMEOUT 30)
       else()
         message(WARNING
-          "Native VideoToolbox test target built without an H.264 fixture; "
-          "set WAM_NATIVE_VIDEO_TEST_FIXTURE to register it with CTest")
+          "Native video tests built without an H.264 fixture; set "
+          "WAM_NATIVE_VIDEO_TEST_FIXTURE to register them with CTest")
       endif()
     endif()
   endif()
