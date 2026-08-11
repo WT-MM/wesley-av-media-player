@@ -13,7 +13,62 @@ find_windeployqt() {
 }
 WINDEPLOYQT="${WAM_WINDEPLOYQT:-$(find_windeployqt || true)}"
 
-for required in "$APP_EXECUTABLE" "$WHISPER_EXECUTABLE" "$MODEL" "$FFMPEG_EXECUTABLE" "$WINDEPLOYQT"; do
+find_qmlimportscanner() {
+  qtpaths_executable="$(command -v qtpaths6 2>/dev/null \
+    || command -v qtpaths 2>/dev/null \
+    || true)"
+  if test -n "$qtpaths_executable"; then
+    qt_libexec_dir="$("$qtpaths_executable" --query QT_INSTALL_LIBEXECS 2>/dev/null \
+      || true)"
+    if test -n "$qt_libexec_dir"; then
+      for candidate in \
+        "$qt_libexec_dir/qmlimportscanner.exe" \
+        "$qt_libexec_dir/qmlimportscanner"; do
+        if test -f "$candidate"; then
+          printf '%s\n' "$candidate"
+          return 0
+        fi
+      done
+    fi
+  fi
+  if command -v qmlimportscanner >/dev/null 2>&1; then
+    command -v qmlimportscanner
+    return 0
+  fi
+  return 1
+}
+QMLIMPORTSCANNER="${WAM_QMLIMPORTSCANNER:-$(find_qmlimportscanner || true)}"
+if test -z "$QMLIMPORTSCANNER"; then
+  echo "Qt QML deployment scanner was not found; install the Qt declarative tools" >&2
+  exit 1
+fi
+
+normalize_shell_path() {
+  path="$1"
+  case "$path" in
+    [A-Za-z]:[\\/]*)
+      if ! command -v cygpath >/dev/null 2>&1; then
+        echo "Cannot normalize native Windows Qt path without cygpath: $path" >&2
+        return 1
+      fi
+      cygpath -u "$path"
+      ;;
+    *)
+      printf '%s\n' "$path"
+      ;;
+  esac
+}
+if ! QMLIMPORTSCANNER_PATH="$(normalize_shell_path "$QMLIMPORTSCANNER")"; then
+  exit 1
+fi
+
+for required in \
+  "$APP_EXECUTABLE" \
+  "$WHISPER_EXECUTABLE" \
+  "$MODEL" \
+  "$FFMPEG_EXECUTABLE" \
+  "$WINDEPLOYQT" \
+  "$QMLIMPORTSCANNER_PATH"; do
   if ! test -f "$required"; then
     echo "Required release file is missing: $required" >&2
     exit 1
@@ -31,7 +86,11 @@ cp -f "$APP_EXECUTABLE" "$PACKAGE_DIR/WAM.exe"
 # before adding mpv/FFmpeg/whisper dependency graphs. This keeps windeployqt in
 # control of the Qt layout and prevents the generic DLL copier from selecting
 # incompatible Qt libraries from another toolchain.
-"$WINDEPLOYQT" --release --no-translations \
+# Qt launches qmlimportscanner by its bare executable name. MSYS2 deliberately
+# installs that private Qt helper in share/qt6/bin rather than the regular
+# UCRT64 bin directory, so expose its directory to windeployqt's child process.
+PATH="$(dirname "$QMLIMPORTSCANNER_PATH"):$PATH" \
+  "$WINDEPLOYQT" --release --no-translations \
   --qmldir "$QML_SOURCE_DIR" --dir "$PACKAGE_DIR" "$PACKAGE_DIR/WAM.exe"
 
 cp -f "$FFMPEG_EXECUTABLE" "$PACKAGE_DIR/tools/ffmpeg.exe"

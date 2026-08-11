@@ -1,6 +1,7 @@
 #include "platform/macos/native_video_pipeline.hpp"
 
 #import <AVFoundation/AVFoundation.h>
+#import <VideoToolbox/VideoToolbox.h>
 
 #include <mach/mach.h>
 #include <sys/resource.h>
@@ -9,6 +10,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
+#include <optional>
 #include <string>
 #include <thread>
 
@@ -158,6 +160,48 @@ std::filesystem::path makeVideoOnlyFixture(
   }
 }
 
+std::optional<CMVideoCodecType> fixtureVideoCodec(
+    const std::filesystem::path& sourcePath, std::string* error) {
+  @autoreleasepool {
+    NSString* sourceString = [NSString stringWithUTF8String:sourcePath.c_str()];
+    AVURLAsset* source = [AVURLAsset
+        URLAssetWithURL:[NSURL fileURLWithPath:sourceString]
+                options:@{AVURLAssetPreferPreciseDurationAndTimingKey : @YES}];
+
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    AVAssetTrack* videoTrack =
+        [source tracksWithMediaType:AVMediaTypeVideo].firstObject;
+#pragma clang diagnostic pop
+    if (videoTrack == nil) {
+      *error = "source fixture has no video track";
+      return std::nullopt;
+    }
+
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    NSArray* descriptions = videoTrack.formatDescriptions;
+#pragma clang diagnostic pop
+    if (descriptions.count == 0) {
+      *error = "source fixture video track has no format description";
+      return std::nullopt;
+    }
+    CMFormatDescriptionRef description =
+        (__bridge CMFormatDescriptionRef)descriptions.firstObject;
+    return CMFormatDescriptionGetMediaSubType(description);
+  }
+}
+
+const char* codecName(CMVideoCodecType codec) {
+  if (codec == kCMVideoCodecType_H264) {
+    return "H.264 (avc1)";
+  }
+  if (codec == kCMVideoCodecType_HEVC) {
+    return "HEVC (hvc1)";
+  }
+  return "unsupported codec";
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -185,6 +229,18 @@ int main(int argc, char** argv) {
             wam::macos::NativeVideoPrepareResult::Unsupported);
   WAM_CHECK_DETAIL(error.find("audio track") != std::string::npos, error);
   WAM_CHECK(!pipeline->active());
+
+  std::string codecError;
+  const auto codec = fixtureVideoCodec(argv[1], &codecError);
+  WAM_CHECK_DETAIL(codec.has_value(), codecError);
+  WAM_CHECK(*codec == kCMVideoCodecType_H264 ||
+            *codec == kCMVideoCodecType_HEVC);
+  if (!VTIsHardwareDecodeSupported(*codec)) {
+    std::cout << "SKIP: this runner has no hardware VideoToolbox decoder for "
+              << codecName(*codec)
+              << "; video-only rejection passed before the capability check\n";
+    return 77;
+  }
 
   const std::uint64_t residentBefore = residentBytes();
   const double cpuBefore = processCpuSeconds();
