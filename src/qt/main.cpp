@@ -26,6 +26,7 @@
 #include <array>
 #include <clocale>
 #include <cmath>
+#include <cstdio>
 #include <memory>
 #include <optional>
 #include <string>
@@ -262,6 +263,21 @@ bool verifyResumeTracker() {
          tracker.snapshot().position_observed;
 }
 
+int runtimeVerificationFailure(int exit_code, const QString &message) {
+  qCritical().noquote() << message;
+#ifdef Q_OS_WIN
+  // WAM is a GUI-subsystem executable, so Qt's normal logger is not visible in
+  // a Windows packaging shell. Write the same diagnostic to the inherited
+  // stderr handle so CI reports the exact missing module or plugin.
+  const QByteArray utf8 = message.toUtf8();
+  std::fwrite(utf8.constData(), 1, static_cast<std::size_t>(utf8.size()),
+              stderr);
+  std::fputc('\n', stderr);
+  std::fflush(stderr);
+#endif
+  return exit_code;
+}
+
 int verifyRuntime() {
   const QUrl missing_relative =
       mediaUrlFromArgument(QStringLiteral("videos/definitely-missing.mp4"));
@@ -276,24 +292,25 @@ int verifyRuntime() {
       explicit_remote.scheme() != QStringLiteral("https") ||
       inferred_remote.isLocalFile() ||
       inferred_remote.scheme() != QStringLiteral("http")) {
-    qCritical() << "WAM runtime verification failed: media path resolution "
-                   "is invalid.";
-    return 6;
+    return runtimeVerificationFailure(
+        6, QStringLiteral("WAM runtime verification failed: media path "
+                          "resolution is invalid."));
   }
 
   if (!verifyResumeTracker()) {
-    qCritical()
-        << "WAM runtime verification failed: resume tracking is invalid.";
-    return 5;
+    return runtimeVerificationFailure(
+        5, QStringLiteral(
+               "WAM runtime verification failed: resume tracking is invalid."));
   }
 
   const uint64_t linked_api = mpv_client_api_version();
   const uint64_t compiled_api = MPV_CLIENT_API_VERSION;
   if (linked_api == 0 || (linked_api >> 16) != (compiled_api >> 16)) {
-    qCritical().nospace()
-        << "WAM runtime verification failed: incompatible libmpv client API "
-        << (linked_api >> 16) << '.' << (linked_api & 0xffff) << ".";
-    return 3;
+    return runtimeVerificationFailure(
+        3, QStringLiteral("WAM runtime verification failed: incompatible "
+                          "libmpv client API %1.%2.")
+               .arg(linked_api >> 16)
+               .arg(linked_api & 0xffff));
   }
 
   // Keep this check headless and side-effect free. Full PlayerController/mpv
@@ -313,10 +330,10 @@ int verifyRuntime() {
       QUrl(QStringLiteral("qrc:/wam-runtime-check.qml")));
   std::unique_ptr<QObject> instance(component.create());
   if (!instance) {
-    qCritical().noquote()
-        << "WAM runtime verification failed: Qt Quick is unavailable:"
-        << component.errorString();
-    return 2;
+    return runtimeVerificationFailure(
+        2, QStringLiteral(
+               "WAM runtime verification failed: Qt Quick is unavailable: %1")
+               .arg(component.errorString()));
   }
 
   qInfo().nospace() << "WAM runtime verification passed (libmpv client API "
