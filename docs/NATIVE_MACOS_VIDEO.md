@@ -46,14 +46,18 @@ ctest --test-dir build-native \
   inputs at 1 MiB/32 MiB, and requires actual IOSurface output to exactly match
   its requested NV12 or P010 format. The generic presenter can still import BGRA,
   but the bounded decode pipeline does not accept a BGRA substitution.
-- Decode uses VideoToolbox temporal processing and its returned presentation
-  timestamp/duration. The current bounded high-water reorder heuristic produces
-  monotonic output for the checked-in B-frame fixture and explicitly drains at
-  end of stream, but it is not proven correct for every legal VideoToolbox
-  callback order. Exceeding the eight-frame contract is a sticky failure, not a
-  silent frame drop. Codec-derived reorder/DPB handling and temporal-processing
-  backpressure proofs are activation gates; a future runtime must fall back
-  atomically.
+- Decode requests asynchronous VideoToolbox operation without temporal
+  processing; Apple permits temporal mode to retain frames indefinitely before
+  end of stream, which is incompatible with finite admission. Callback results
+  are normalized by submission sequence, and admission credits remain charged
+  until contiguous retirement so out-of-order callbacks cannot bypass the
+  memory bound. Strict H.264/HEVC SPS parsing takes a conservative maximum
+  presentation reorder depth across the configuration record, PTS output is
+  sorted within that declared bound, and streams requiring more than eight
+  retained presentation frames are rejected by the dormant native attempt. A
+  production runtime selector and atomic fallback are not wired yet.
+  Deterministic legal callback-order, completion-gap, B-frame, and pre-EOS
+  liveness tests cover the current contract.
 - Decoder, frame-sink, and presenter interfaces establish ownership,
   backpressure, flush, and end-of-stream behavior without coupling the demuxer
   to VideoToolbox.
@@ -117,10 +121,15 @@ are three queued frames, two submitted VideoToolbox frames, eight reorder
 leases, two pipeline scheduling leases, and two GPU submissions. At the 1080p
 eligibility ceiling, the standalone presenter also caps its drawable raster at
 1920x1080 even on a larger/Retina host. Those 17 decoded leases plus two BGRA
-drawables account for about 66 MiB with NV12 or 117 MiB with P010.
-VideoToolbox's private pool and framework/Qt/libmpv allocations are additional
-and are not bounded by this calculation. Normal paused prebuffering stops at a
-queue high-water mark of two.
+drawables account for about 66 MiB with NV12 or 117 MiB with P010. Decoder
+admission can additionally retain two compressed sample copies of up to 32 MiB
+each, and a non-contiguous AVFoundation sample can require a transient 32 MiB
+pipeline scratch buffer. Thus the directly bounded decoded/drawable/compressed
+storage can approach roughly 162 MiB for NV12 or 213 MiB for P010 before the
+AVFoundation-owned current sample. VideoToolbox's private pool and
+framework/Qt/libmpv allocations are also additional, so this is not a complete
+process-memory ceiling. Normal paused prebuffering stops at a queue high-water
+mark of two.
 
 The checked-in B-frame fixture exercises real hardware decode, a generation-
 safe non-frame-aligned seek, video-only rejection, queue/in-flight bounds, and
@@ -149,11 +158,12 @@ process measurements beat the controlled baseline.
    intended memory benefit. libmpv may still own demux/audio only after a
    matching file-load generation is authoritative.
 4. Add subtitle/caption/OSD composition, track-selection parity, a video-only
-   master clock, codec-derived DPB/reorder sizing, and asynchronous bounded
-   VideoToolbox teardown. Replace synchronous AVAsset property access with
-   cancellable asynchronous key loading before any UI-thread selection decision.
-   `VideoToolboxDecoder::close()` still waits synchronously for Apple callbacks,
-   so preparation, stop, and destruction are not approved on the UI thread.
+   master clock, broader profile/level/chroma coverage, full-sync/open-GOP seek
+   validation, and asynchronous bounded VideoToolbox teardown. Replace
+   synchronous AVAsset property access with cancellable asynchronous key loading
+   before any UI-thread selection decision. `VideoToolboxDecoder::close()` still
+   waits synchronously for Apple callbacks, so preparation, stop, and destruction
+   are not approved on the UI thread.
 5. Gate rollout on CPU, peak/current footprint, energy, seek latency, dropped
    frames, A/V drift, HDR/color, subtitle, and sleep/wake tests.
 

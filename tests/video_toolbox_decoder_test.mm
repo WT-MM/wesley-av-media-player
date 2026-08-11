@@ -7,6 +7,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -15,6 +16,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <initializer_list>
+#include <limits>
 #include <mutex>
 #include <span>
 #include <string>
@@ -200,6 +203,177 @@ bool earlier(CMTime left, CMTime right) {
          CMTimeCompare(left, right) < 0;
 }
 
+CVPixelBufferRef createIOSurfacePixelBuffer(OSType format,
+                                             std::size_t width,
+                                             std::size_t height) {
+  CFMutableDictionaryRef attributes = CFDictionaryCreateMutable(
+      kCFAllocatorDefault, 2, &kCFTypeDictionaryKeyCallBacks,
+      &kCFTypeDictionaryValueCallBacks);
+  CFDictionaryRef empty = CFDictionaryCreate(
+      kCFAllocatorDefault, nullptr, nullptr, 0,
+      &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+  CFDictionarySetValue(attributes, kCVPixelBufferIOSurfacePropertiesKey, empty);
+  CFDictionarySetValue(attributes, kCVPixelBufferMetalCompatibilityKey,
+                       kCFBooleanTrue);
+  CVPixelBufferRef result = nullptr;
+  const CVReturn status = CVPixelBufferCreate(
+      kCFAllocatorDefault, width, height, format, attributes, &result);
+  CFRelease(empty);
+  CFRelease(attributes);
+  WAM_CHECK(status == kCVReturnSuccess);
+  WAM_CHECK(result != nullptr);
+  return result;
+}
+
+void testFiniteAdmissionNeverEnablesTemporalProcessing() {
+  wam::macos::VideoToolboxDecoder asynchronous;
+  const std::uint32_t asynchronousFlags =
+      wam::macos::VideoToolboxDecoderTestAccess::decodeFlags(asynchronous);
+  WAM_CHECK((asynchronousFlags &
+             kVTDecodeFrame_EnableAsynchronousDecompression) != 0);
+  WAM_CHECK((asynchronousFlags & kVTDecodeFrame_EnableTemporalProcessing) == 0);
+
+  wam::macos::VideoToolboxDecoderOptions synchronousOptions;
+  synchronousOptions.enableAsynchronousDecompression = false;
+  wam::macos::VideoToolboxDecoder synchronous(synchronousOptions);
+  const std::uint32_t synchronousFlags =
+      wam::macos::VideoToolboxDecoderTestAccess::decodeFlags(synchronous);
+  WAM_CHECK((synchronousFlags &
+             kVTDecodeFrame_EnableAsynchronousDecompression) == 0);
+  WAM_CHECK((synchronousFlags & kVTDecodeFrame_EnableTemporalProcessing) == 0);
+}
+
+void testInjectedCallbackOrderUsesDecodeSequence(
+    const DemuxedVideo &video, bool requireHardware) {
+  constexpr std::uint64_t generation = 41;
+  constexpr std::size_t reorderDepth = 2;
+  wam::macos::BoundedFrameQueue queue(4, generation);
+  wam::macos::VideoToolboxDecoderOptions options;
+  options.maxInFlightFrames = 4;
+  options.maxPendingPresentationFrames = 4;
+  wam::macos::VideoToolboxDecoder decoder(options);
+  std::string error;
+  WAM_CHECK_DETAIL(
+      decoder.configure(streamConfiguration(video, generation, requireHardware),
+                        queue, &error),
+      error);
+  WAM_CHECK_DETAIL(
+      wam::macos::VideoToolboxDecoderTestAccess::setPresentationReorderDepth(
+          decoder, reorderDepth, &error),
+      error);
+
+  // Decode order 0,3,1,2 is legal at reorder depth two. VideoToolbox's async
+  // handlers arrive as 0,2,3,1 below: the former PTS high-water heuristic
+  // emitted 2 before the final 1 callback and then dropped that legal frame.
+  constexpr std::array<std::int64_t, 4> decodeOrderPts{0, 3, 1, 2};
+  constexpr std::array<std::uint64_t, 4> callbackOrder{0, 3, 1, 2};
+  std::array<CVPixelBufferRef, 4> buffers{};
+  for (CVPixelBufferRef &buffer : buffers) {
+    buffer = createIOSurfacePixelBuffer(
+        kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, 64, 32);
+  }
+  for (const std::uint64_t sequence : callbackOrder) {
+    const wam::macos::FrameTiming timing{
+        CMTimeMake(decodeOrderPts[sequence], 1), CMTimeMake(1, 1), generation,
+        sequence == 0};
+    WAM_CHECK_DETAIL(
+        wam::macos::VideoToolboxDecoderTestAccess::injectDecodedFrame(
+            decoder, sequence, buffers[sequence], timing, &error),
+        error);
+  }
+  for (CVPixelBufferRef buffer : buffers) {
+    CVPixelBufferRelease(buffer);
+  }
+  wam::macos::VideoToolboxDecoderTestAccess::drainPresentationFrames(decoder);
+
+  std::vector<std::int64_t> deliveredPts;
+  while (auto frame = queue.tryTake()) {
+    deliveredPts.push_back(frame->timing().presentationTime.value);
+  }
+  WAM_CHECK((deliveredPts == std::vector<std::int64_t>{0, 1, 2, 3}));
+  const auto stats = decoder.stats();
+  WAM_CHECK(stats.codecReorderFrames == reorderDepth);
+  WAM_CHECK(stats.peakPendingPresentationFrames <= reorderDepth);
+  WAM_CHECK(stats.deliveredFrames == 4);
+  WAM_CHECK(stats.droppedFrames == 0);
+  WAM_CHECK(stats.outOfOrderDrops == 0);
+  WAM_CHECK(stats.inFlightFrames == 0);
+  WAM_CHECK(!decoder.takeLastError().has_value());
+  decoder.close();
+}
+
+void testInjectedCompletionGapPreservesAdmissionAndMakesProgress(
+    const DemuxedVideo &video, std::size_t keyIndex, bool requireHardware) {
+  constexpr std::uint64_t generation = 42;
+  wam::macos::BoundedFrameQueue queue(2, generation);
+  wam::macos::VideoToolboxDecoderOptions options;
+  options.maxInFlightFrames = 2;
+  options.maxPendingPresentationFrames = 2;
+  wam::macos::VideoToolboxDecoder decoder(options);
+  std::string error;
+  WAM_CHECK_DETAIL(
+      decoder.configure(streamConfiguration(video, generation, requireHardware),
+                        queue, &error),
+      error);
+  WAM_CHECK_DETAIL(
+      wam::macos::VideoToolboxDecoderTestAccess::setPresentationReorderDepth(
+          decoder, 0, &error),
+      error);
+  WAM_CHECK_DETAIL(
+      wam::macos::VideoToolboxDecoderTestAccess::reserveInjectedSubmissions(
+          decoder, 2, &error),
+      error);
+
+  CVPixelBufferRef first = createIOSurfacePixelBuffer(
+      kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, 64, 32);
+  CVPixelBufferRef second = createIOSurfacePixelBuffer(
+      kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, 64, 32);
+  const wam::macos::FrameTiming secondTiming{
+      CMTimeMake(1, 1), CMTimeMake(1, 1), generation, false};
+  WAM_CHECK_DETAIL(
+      wam::macos::VideoToolboxDecoderTestAccess::injectDecodedFrame(
+          decoder, 1, second, secondTiming, &error),
+      error);
+
+  // A later callback must not free its admission credit while sequence zero is
+  // still missing. PROT_NONE makes a premature packet copy fail deterministically.
+  WAM_CHECK(decoder.stats().inFlightFrames == 2);
+  const long pageSize = sysconf(_SC_PAGESIZE);
+  WAM_CHECK(pageSize > 0);
+  void *inaccessibleBytes = mmap(nullptr, static_cast<std::size_t>(pageSize),
+                                 PROT_NONE, MAP_PRIVATE | MAP_ANON, -1, 0);
+  WAM_CHECK(inaccessibleBytes != MAP_FAILED);
+  auto guardedPacket = packetView(video.packets[keyIndex], generation);
+  guardedPacket.bytes = std::span<const std::byte>(
+      static_cast<const std::byte *>(inaccessibleBytes),
+      static_cast<std::size_t>(pageSize));
+  WAM_CHECK(decoder.submit(guardedPacket, &error) ==
+            wam::macos::VideoDecodeSubmitResult::Backpressure);
+  WAM_CHECK(munmap(inaccessibleBytes, static_cast<std::size_t>(pageSize)) == 0);
+
+  const wam::macos::FrameTiming firstTiming{
+      CMTimeMake(0, 1), CMTimeMake(1, 1), generation, true};
+  WAM_CHECK_DETAIL(
+      wam::macos::VideoToolboxDecoderTestAccess::injectDecodedFrame(
+          decoder, 0, first, firstTiming, &error),
+      error);
+  CVPixelBufferRelease(first);
+  CVPixelBufferRelease(second);
+
+  WAM_CHECK(decoder.stats().inFlightFrames == 0);
+  auto firstOutput = queue.tryTake();
+  auto secondOutput = queue.tryTake();
+  WAM_CHECK(firstOutput.has_value());
+  WAM_CHECK(secondOutput.has_value());
+  WAM_CHECK(CMTimeCompare(firstOutput->timing().presentationTime,
+                          CMTimeMake(0, 1)) == 0);
+  WAM_CHECK(CMTimeCompare(secondOutput->timing().presentationTime,
+                          CMTimeMake(1, 1)) == 0);
+  WAM_CHECK(decoder.stats().backpressuredSubmissions == 1);
+  WAM_CHECK(!decoder.takeLastError().has_value());
+  decoder.close();
+}
+
 void testConfigurationByteBound(const DemuxedVideo &video) {
   constexpr std::uint64_t generation = 5;
   constexpr std::size_t oversizedConfigurationBytes = 1024ULL * 1024ULL + 1ULL;
@@ -218,6 +392,99 @@ void testConfigurationByteBound(const DemuxedVideo &video) {
   WAM_CHECK(!decoder.configure(configuration, queue, &error));
   WAM_CHECK(!error.empty());
   WAM_CHECK(munmap(inaccessibleBytes, oversizedConfigurationBytes) == 0);
+}
+
+void testCodecParserAndDeclaredReorderBound(const DemuxedVideo &video) {
+  constexpr std::uint64_t generation = 8;
+  const auto configuration = streamConfiguration(video, generation, false);
+  const auto reorderFrames =
+      wam::macos::VideoToolboxDecoderTestAccess::codecReorderFrames(
+          configuration);
+  WAM_CHECK(reorderFrames.has_value());
+  WAM_CHECK(*reorderFrames > 0);
+  WAM_CHECK(*reorderFrames <= 8);
+
+  auto appendToFirstSps = [&](std::initializer_list<std::byte> suffix) {
+    std::vector<std::byte> malformed = video.configuration;
+    WAM_CHECK(malformed.size() >= 8);
+    const std::size_t spsLength =
+        (static_cast<std::size_t>(std::to_integer<std::uint8_t>(malformed[6]))
+         << 8U) |
+        std::to_integer<std::uint8_t>(malformed[7]);
+    WAM_CHECK(spsLength <= malformed.size() - 8);
+    const std::size_t expandedLength = spsLength + suffix.size();
+    WAM_CHECK(expandedLength <= std::numeric_limits<std::uint16_t>::max());
+    malformed.insert(malformed.begin() + static_cast<std::ptrdiff_t>(8 + spsLength),
+                     suffix.begin(), suffix.end());
+    malformed[6] =
+        static_cast<std::byte>((expandedLength >> 8U) & 0xffU);
+    malformed[7] = static_cast<std::byte>(expandedLength & 0xffU);
+    return malformed;
+  };
+
+  for (std::vector<std::byte> malformed : {
+           appendToFirstSps(
+               {std::byte{0x00}, std::byte{0x00}, std::byte{0x03}}),
+           appendToFirstSps({std::byte{0x00}, std::byte{0x00},
+                             std::byte{0x03}, std::byte{0x04}})}) {
+    auto malformedConfiguration = configuration;
+    malformedConfiguration.codecConfiguration = malformed;
+    WAM_CHECK(
+        !wam::macos::VideoToolboxDecoderTestAccess::codecReorderFrames(
+             malformedConfiguration)
+             .has_value());
+  }
+
+  wam::macos::VideoToolboxDecoderOptions options;
+  options.maxInFlightFrames = 2;
+  options.maxPendingPresentationFrames = *reorderFrames - 1;
+  wam::macos::VideoToolboxDecoder decoder(options);
+  wam::macos::BoundedFrameQueue queue(2, generation);
+  std::string error;
+  WAM_CHECK(!decoder.configure(configuration, queue, &error));
+  WAM_CHECK(error.find("exceeding the configured bound") != std::string::npos);
+}
+
+void testDefaultBoundMakesProgressBeforeEndOfStream(
+    const DemuxedVideo &video, std::size_t keyIndex, bool requireHardware) {
+  constexpr std::uint64_t generation = 9;
+  const std::size_t packetCount = video.packets.size() - keyIndex;
+  wam::macos::BoundedFrameQueue queue(packetCount + 1, generation);
+  wam::macos::VideoToolboxDecoderOptions options;
+  options.maxInFlightFrames = 2;
+  wam::macos::VideoToolboxDecoder decoder(options);
+  std::string error;
+  WAM_CHECK_DETAIL(
+      decoder.configure(streamConfiguration(video, generation, requireHardware),
+                        queue, &error),
+      error);
+
+  for (std::size_t index = keyIndex; index < video.packets.size(); ++index) {
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (true) {
+      const auto result =
+          decoder.submit(packetView(video.packets[index], generation), &error);
+      if (result == wam::macos::VideoDecodeSubmitResult::Accepted) {
+        break;
+      }
+      WAM_CHECK_DETAIL(result ==
+                           wam::macos::VideoDecodeSubmitResult::Backpressure,
+                       error);
+      WAM_CHECK_DETAIL(std::chrono::steady_clock::now() < deadline,
+                       "finite decoder admission stalled before EOS");
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+  }
+  WAM_CHECK_DETAIL(decoder.submit(endOfStream(generation), &error) ==
+                       wam::macos::VideoDecodeSubmitResult::Accepted,
+                   error);
+  const auto stats = decoder.stats();
+  WAM_CHECK(stats.submittedFrames == packetCount);
+  WAM_CHECK(stats.deliveredFrames == packetCount);
+  WAM_CHECK(stats.droppedFrames == 0);
+  WAM_CHECK(stats.inFlightFrames == 0);
+  decoder.close();
 }
 
 void testBFramePresentationOrderAndMetalImport(const DemuxedVideo &video,
@@ -260,6 +527,8 @@ void testBFramePresentationOrderAndMetalImport(const DemuxedVideo &video,
   WAM_CHECK(stats.deliveredFrames == packetCount);
   WAM_CHECK(stats.droppedFrames == 0);
   WAM_CHECK(stats.outOfOrderDrops == 0);
+  WAM_CHECK(stats.codecReorderFrames > 0);
+  WAM_CHECK(stats.codecReorderFrames <= 8);
   WAM_CHECK(stats.requestedOutputPixelFormat ==
             kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange);
   WAM_CHECK(stats.actualOutputPixelFormat ==
@@ -481,15 +750,18 @@ void testCallbackScheduling(const DemuxedVideo &video, std::size_t keyIndex,
   wam::macos::VideoToolboxDecoderOptions options;
   options.maxInFlightFrames = 1;
   options.enableAsynchronousDecompression = allowAsynchronousDecode;
-  // This test controls presentation ordering itself. Disabling temporal
-  // processing prevents a decoder from legally retaining the first packet
-  // indefinitely while preserving the production default everywhere else.
-  options.enableTemporalProcessing = false;
+  // Temporal processing is disabled in every build because it may retain a
+  // frame indefinitely until EOS, defeating finite admission. This test only
+  // varies whether the callback may run asynchronously.
   wam::macos::VideoToolboxDecoder decoder(options);
   std::string configurationError;
   WAM_CHECK_DETAIL(
       decoder.configure(streamConfiguration(video, generation, requireHardware),
                         sink, &configurationError),
+      configurationError);
+  WAM_CHECK_DETAIL(
+      wam::macos::VideoToolboxDecoderTestAccess::setPresentationReorderDepth(
+          decoder, 0, &configurationError),
       configurationError);
 
   const std::size_t deliveryIndex = keyIndex + 1;
@@ -671,6 +943,7 @@ void testHevcConfiguration(bool requireHardware) {
   std::string error;
   WAM_CHECK_DETAIL(decoder.configure(configuration, queue, &error), error);
   WAM_CHECK(decoder.stats().configured);
+  WAM_CHECK(decoder.stats().codecReorderFrames <= 8);
   if (requireHardware) {
     WAM_CHECK(decoder.stats().usingHardwareAcceleratedDecoder);
   }
@@ -692,11 +965,18 @@ int main(int argc, char **argv) {
 
   const bool h264Hardware = VTIsHardwareDecodeSupported(kCMVideoCodecType_H264);
   const bool hevcHardware = VTIsHardwareDecodeSupported(kCMVideoCodecType_HEVC);
+  testFiniteAdmissionNeverEnablesTemporalProcessing();
   testConfigurationByteBound(video);
+  testCodecParserAndDeclaredReorderBound(video);
   testAdmissionBeforeCopy(video, keyIndex, h264Hardware);
+  testDefaultBoundMakesProgressBeforeEndOfStream(video, keyIndex,
+                                                 h264Hardware);
   testCallbackScheduling(video, keyIndex, h264Hardware, true);
   testCallbackScheduling(video, keyIndex, h264Hardware, false);
   testLifecycleAndGeneration(video, keyIndex, h264Hardware);
+  testInjectedCallbackOrderUsesDecodeSequence(video, h264Hardware);
+  testInjectedCompletionGapPreservesAdmissionAndMakesProgress(
+      video, keyIndex, h264Hardware);
   testBFramePresentationOrderAndMetalImport(video, keyIndex, h264Hardware);
   testSinkBackpressureIsRecoverable(video, keyIndex, h264Hardware);
   testHevcConfiguration(hevcHardware);

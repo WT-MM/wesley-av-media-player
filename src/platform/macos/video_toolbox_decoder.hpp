@@ -15,22 +15,23 @@ struct VideoToolboxDecoderTestAccess;
 #endif
 
 struct VideoToolboxDecoderOptions {
-  // Counts frames accepted by VideoToolbox whose output callback has not yet
-  // completed. submit() returns typed backpressure before allocating or copying
-  // compressed packet storage when this bound is reached.
+  // Counts frames accepted by VideoToolbox whose output has not yet been
+  // retired in submission order. This deliberately includes callbacks that
+  // completed out of order, so callback scheduling cannot bypass the bound.
+  // submit() returns typed backpressure before allocating or copying compressed
+  // packet storage when this bound is reached.
   std::size_t maxInFlightFrames{3};
-  // Bounds decoded IOSurfaces retained briefly to convert decode-order
-  // callbacks into presentation order. Saturation preserves the memory bound
-  // and records a fatal stream-contract error so callers can fall back rather
-  // than silently continuing with a dropped frame.
+  // Hard ceiling for the codec-derived presentation reorder depth. configure()
+  // rejects a stream whose SPS requires more retained IOSurfaces, allowing the
+  // caller to fall back without silently corrupting presentation order.
   std::size_t maxPendingPresentationFrames{8};
 #if defined(WAM_NATIVE_VIDEO_TESTING)
   // VideoToolbox is allowed to invoke an output handler before submit()
-  // returns even when asynchronous decompression is enabled. These test-only
-  // switches exercise both legal callback modes while the production build
-  // retains its constant, branch-free asynchronous + temporal flags.
+  // returns even when asynchronous decompression is enabled. This test-only
+  // switch exercises both legal callback modes. Temporal processing is never
+  // enabled: Apple permits it to retain frames indefinitely until EOS, which
+  // is incompatible with finite pre-EOS admission.
   bool enableAsynchronousDecompression{true};
-  bool enableTemporalProcessing{true};
 #endif
 };
 
@@ -40,13 +41,13 @@ struct VideoToolboxDecoderStats {
   bool awaitingKeyFrame{true};
   std::size_t maxInFlightFrames{0};
   std::size_t inFlightFrames{0};
+  std::size_t codecReorderFrames{0};
   std::uint64_t generation{0};
   std::uint64_t submittedFrames{0};
   std::uint64_t deliveredFrames{0};
   std::uint64_t droppedFrames{0};
   std::uint64_t backpressuredSubmissions{0};
   std::uint64_t sinkBackpressureDrops{0};
-  std::uint64_t presentationBackpressureDrops{0};
   std::uint64_t outOfOrderDrops{0};
   std::size_t pendingPresentationFrames{0};
   std::size_t peakPendingPresentationFrames{0};
@@ -102,6 +103,19 @@ struct VideoToolboxDecoderTestAccess {
   occupyInFlightCapacity(VideoToolboxDecoder &decoder, std::string *error);
   [[nodiscard]] static bool
   releaseInFlightCapacity(VideoToolboxDecoder &decoder, std::string *error);
+  [[nodiscard]] static std::uint32_t
+  decodeFlags(const VideoToolboxDecoder &decoder) noexcept;
+  [[nodiscard]] static std::optional<std::size_t>
+  codecReorderFrames(const VideoStreamConfiguration &configuration);
+  [[nodiscard]] static bool setPresentationReorderDepth(
+      VideoToolboxDecoder &decoder, std::size_t reorderFrames,
+      std::string *error);
+  [[nodiscard]] static bool reserveInjectedSubmissions(
+      VideoToolboxDecoder &decoder, std::size_t count, std::string *error);
+  [[nodiscard]] static bool injectDecodedFrame(
+      VideoToolboxDecoder &decoder, std::uint64_t submissionSequence,
+      CVPixelBufferRef pixelBuffer, FrameTiming timing, std::string *error);
+  static void drainPresentationFrames(VideoToolboxDecoder &decoder) noexcept;
 };
 #endif
 
