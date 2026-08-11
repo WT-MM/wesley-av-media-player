@@ -41,6 +41,24 @@ shipping libmpv path, so no active-playback CPU or memory improvement is claimed
 from lazy initialization. First-open/first-frame latency remains a separate
 release measurement.
 
+### Controlled playback snapshots (2026-08-11)
+
+A newly validity-gated nine-trial GUI matrix measured three fresh-launch runs
+each of WAM, VLC, and QuickTime Player on the same H.264 4K24 clip. Median CPU /
+`top` POWER score / memory were 12.41% / 12.20 / 851.0 MiB for WAM, 9.01% /
+8.86 / 736.8 MiB for VLC, and 7.05% / 6.82 / 213.9 MiB for QuickTime. These are
+timestamp-weighted run means summarized by median; the tracked record includes
+the ranges, footprint and counter data, validity gates, and artifact hashes.
+The installed VLC was x86_64 under Rosetta, so this is not an
+architecture-neutral comparison. `top` POWER is a relative Energy Impact score,
+not watts or joules.
+
+A separate 15-run offscreen libmpv baseline covers H.264, HEVC, VP9, and AV1.
+It excludes Qt, the visible window, audio output, application lifecycle, and the
+VideoToolbox helper's process footprint. It is engine-lab data and must not be
+compared directly with the full-player rows. See
+`benchmarks/BASELINES_2026-08-11.md` for the complete scoped record.
+
 ## Production efficiency policy
 
 Normal playback now uses mpv's audio-clock sync and direct bilinear sampler
