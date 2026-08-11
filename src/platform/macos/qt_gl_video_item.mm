@@ -47,6 +47,8 @@ struct GlCounters {
   std::atomic<std::uint64_t> submittedFrames{0};
   std::atomic<std::uint64_t> importedFrames{0};
   std::atomic<std::uint64_t> renderedFrames{0};
+  std::atomic<std::uint64_t> lastRenderedGeneration{0};
+  std::atomic<std::uint64_t> fatalErrorSerial{0};
   std::atomic<std::uint64_t> backpressuredImports{0};
   std::atomic<std::uint64_t> rejectedFrames{0};
   std::atomic<std::uint64_t> staleFrames{0};
@@ -68,10 +70,33 @@ struct GlCounters {
 #endif
   mutable QMutex errorMutex;
   QString lastError;
+  std::optional<QString> fatalError;
 
   void setError(QString error) {
     QMutexLocker lock(&errorMutex);
     lastError = std::move(error);
+  }
+
+  void latchFatalError(QString error) {
+    QMutexLocker lock(&errorMutex);
+    lastError = error;
+    if (fatalError) {
+      return;
+    }
+    fatalError.emplace(std::move(error));
+    std::uint64_t observed = fatalErrorSerial.load(std::memory_order_relaxed);
+    while (observed != std::numeric_limits<std::uint64_t>::max() &&
+           !fatalErrorSerial.compare_exchange_weak(
+               observed, observed + 1, std::memory_order_release,
+               std::memory_order_relaxed)) {
+    }
+  }
+
+  [[nodiscard]] std::optional<QString> takeFatalError() {
+    QMutexLocker lock(&errorMutex);
+    std::optional<QString> result = std::move(fatalError);
+    fatalError.reset();
+    return result;
   }
 };
 
@@ -80,6 +105,18 @@ void updatePeak(std::atomic<std::size_t>& peak, std::size_t value) noexcept {
   while (observed < value &&
          !peak.compare_exchange_weak(observed, value,
                                      std::memory_order_relaxed)) {
+  }
+}
+
+void updateRenderedGeneration(
+    std::atomic<std::uint64_t>& lastRenderedGeneration,
+    std::uint64_t generation) noexcept {
+  std::uint64_t observed =
+      lastRenderedGeneration.load(std::memory_order_relaxed);
+  while (observed < generation &&
+         !lastRenderedGeneration.compare_exchange_weak(
+             observed, generation, std::memory_order_release,
+             std::memory_order_relaxed)) {
   }
 }
 
@@ -348,7 +385,7 @@ class RetirementService final {
         if (job.counters) {
           job.counters->retirementFailed.store(true,
                                                 std::memory_order_relaxed);
-          job.counters->setError(QStringLiteral(
+          job.counters->latchFatalError(QStringLiteral(
               "shared CGL retirement fence failed; resources retained "
               "fail-closed"));
         }
@@ -773,26 +810,29 @@ class QtGlVideoNode final : public QSGRenderNode {
   }
 
   void render(const RenderState* renderState) override {
+    if (fatalFailure_) {
+      return;
+    }
     if (window_ == nullptr || renderState == nullptr ||
         window_->rendererInterface() == nullptr ||
         window_->rendererInterface()->graphicsApi() !=
             QSGRendererInterface::OpenGL) {
-      counters_->setError(
+      fatalFailure_ = true;
+      counters_->latchFatalError(
           QStringLiteral("Qt Quick is not using a current OpenGL context"));
       return;
     }
 
     CGLContextObj cglContext = CGLGetCurrentContext();
     if (cglContext == nullptr) {
-      counters_->setError(QStringLiteral("Qt did not make a CGL context current"));
+      fatalFailure_ = true;
+      counters_->latchFatalError(
+          QStringLiteral("Qt did not make a CGL context current"));
       return;
     }
     DeferredRetirementGuard retirementGuard(this);
     std::optional<RawGlState> savedState;
 
-    if (fatalFailure_) {
-      return;
-    }
 #if defined(WAM_NATIVE_GL_VIDEO_TESTING)
     if (state_->strandRetirementService.exchange(false,
                                                   std::memory_order_relaxed)) {
@@ -851,7 +891,11 @@ class QtGlVideoNode final : public QSGRenderNode {
     bool retry = false;
     if (!ensureResources(cglContext, &error, &retry)) {
       if (!error.isEmpty()) {
-        counters_->setError(std::move(error));
+        if (retry) {
+          counters_->setError(std::move(error));
+        } else {
+          counters_->latchFatalError(std::move(error));
+        }
       }
       if (retry) {
         if (synchronizedFrame_ &&
@@ -890,7 +934,8 @@ class QtGlVideoNode final : public QSGRenderNode {
     }
     draw(*currentSlot_, renderState, &error);
     if (!error.isEmpty()) {
-      counters_->setError(std::move(error));
+      counters_->latchFatalError(std::move(error));
+      fatalFailure_ = true;
     }
   }
 
@@ -1082,7 +1127,7 @@ class QtGlVideoNode final : public QSGRenderNode {
       } else if (status == GL_WAIT_FAILED) {
         counters_->retirementFailed.store(true, std::memory_order_relaxed);
         fatalFailure_ = true;
-        counters_->setError(QStringLiteral(
+        counters_->latchFatalError(QStringLiteral(
             "Qt CGL frame fence failed; slot retained fail-closed"));
       }
     }
@@ -1350,7 +1395,11 @@ class QtGlVideoNode final : public QSGRenderNode {
       glDeleteSync(slot.fence);
     }
     slot.fence = replacementFence;
-    counters_->renderedFrames.fetch_add(1, std::memory_order_relaxed);
+    updateRenderedGeneration(counters_->lastRenderedGeneration,
+                             slot.frame.timing().generation);
+    // Publishing the completed-frame count after the generation makes an
+    // acquire snapshot that observes this draw observe its generation too.
+    counters_->renderedFrames.fetch_add(1, std::memory_order_release);
   }
 
   void retireAll() {
@@ -1388,7 +1437,7 @@ class QtGlVideoNode final : public QSGRenderNode {
       // bundle rather than deleting borrowed views without a compatible GL
       // context.
       counters_->retirementFailed.store(true, std::memory_order_relaxed);
-      counters_->setError(QStringLiteral(
+      counters_->latchFatalError(QStringLiteral(
           "CGL resources lost their shared retirement context; retained "
           "fail-closed"));
       quarantineRetirementJob(std::move(job));
@@ -1497,7 +1546,9 @@ QtGlVideoItemStats QtGlVideoItem::stats() const {
   result.importedFrames =
       counters.importedFrames.load(std::memory_order_relaxed);
   result.renderedFrames =
-      counters.renderedFrames.load(std::memory_order_relaxed);
+      counters.renderedFrames.load(std::memory_order_acquire);
+  result.lastRenderedGeneration =
+      counters.lastRenderedGeneration.load(std::memory_order_acquire);
   result.backpressuredImports =
       counters.backpressuredImports.load(std::memory_order_relaxed);
   result.rejectedFrames =
@@ -1533,8 +1584,14 @@ QtGlVideoItemStats QtGlVideoItem::stats() const {
   {
     QMutexLocker lock(&counters.errorMutex);
     result.lastError = counters.lastError;
+    result.fatalErrorSerial =
+        counters.fatalErrorSerial.load(std::memory_order_acquire);
   }
   return result;
+}
+
+std::optional<QString> QtGlVideoItem::takeFatalError() {
+  return state_->counters->takeFatalError();
 }
 
 #if defined(WAM_NATIVE_GL_VIDEO_TESTING)

@@ -379,13 +379,18 @@ Item {
             QSGRendererInterface::OpenGL);
   const auto blankStats = video->stats();
   WAM_CHECK(blankStats.submittedFrames == 0);
+  WAM_CHECK(blankStats.renderedFrames == 0);
+  WAM_CHECK(blankStats.lastRenderedGeneration == 0);
+  WAM_CHECK(blankStats.fatalErrorSerial == 0);
   WAM_CHECK(blankStats.activeResourceSets == 0);
   WAM_CHECK(!blankStats.textureRectangleSupported);
   WAM_CHECK(!blankStats.acceleratedContext);
+  WAM_CHECK(!video->takeFatalError().has_value());
 
   // Fail after the shared retirement context exists but before shaders/VAO or
   // plane textures do. Removing the node must clear that empty attachment so
   // a recreated node can retry instead of spinning on stale context identity.
+  const auto beforeEmptyInitFailure = video->stats();
   video->failAfterRetirementServiceCreationForTesting();
   PixelBufferCreation emptyInitFailure = solidBuffer(
       kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, {235, 128, 128},
@@ -395,12 +400,36 @@ Item {
   window.requestUpdate();
   WAM_CHECK(spinUntil(
       [&] {
-        return video->stats().lastError.contains(
-            QStringLiteral("retirement service creation"));
+        const auto current = video->stats();
+        return current.fatalErrorSerial ==
+                   beforeEmptyInitFailure.fatalErrorSerial + 1 &&
+               current.lastError.contains(
+                   QStringLiteral("retirement service creation"));
       },
       5000));
-  WAM_CHECK(video->stats().activeResourceSets == 0);
-  WAM_CHECK(video->stats().importedFrames == 0);
+  const auto emptyInitFailureStats = video->stats();
+  WAM_CHECK(emptyInitFailureStats.activeResourceSets == 0);
+  WAM_CHECK(emptyInitFailureStats.importedFrames == 0);
+  WAM_CHECK(emptyInitFailureStats.renderedFrames ==
+            beforeEmptyInitFailure.renderedFrames);
+  WAM_CHECK(emptyInitFailureStats.lastRenderedGeneration ==
+            beforeEmptyInitFailure.lastRenderedGeneration);
+  auto fatalError = video->takeFatalError();
+  WAM_CHECK(fatalError.has_value());
+  WAM_CHECK(fatalError->contains(
+      QStringLiteral("retirement service creation")));
+  WAM_CHECK(!video->takeFatalError().has_value());
+  WAM_CHECK(video->stats().fatalErrorSerial ==
+            emptyInitFailureStats.fatalErrorSerial);
+  // Taking an event must not make the same terminal node failure look new on
+  // subsequent render requests.
+  for (int repeat = 0; repeat < 3; ++repeat) {
+    window.requestUpdate();
+    WAM_CHECK(!window.grabWindow().isNull());
+  }
+  WAM_CHECK(video->stats().fatalErrorSerial ==
+            emptyInitFailureStats.fatalErrorSerial);
+  WAM_CHECK(!video->takeFatalError().has_value());
   video->setParentItem(nullptr);
   window.requestUpdate();
   WAM_CHECK(!window.grabWindow().isNull());
@@ -414,6 +443,10 @@ Item {
                current.lastError.isEmpty();
       },
       5000));
+  WAM_CHECK(video->stats().lastRenderedGeneration == 0);
+  WAM_CHECK(video->stats().fatalErrorSerial ==
+            emptyInitFailureStats.fatalErrorSerial);
+  WAM_CHECK(!video->takeFatalError().has_value());
 
   const std::array<ColorCase, 8> colorCases{{
       {"NV12 video BT.601",
@@ -516,8 +549,11 @@ Item {
   PixelBufferCreation bt2020 = solidBuffer(
       kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, {80, 112, 216},
       kCVImageBufferYCbCrMatrix_ITU_R_2020);
+  const auto beforeMetadataFailure = video->stats();
   submitOwnedBufferExpectRejected(video, &window, bt2020.buffer,
                                   QStringLiteral("YCbCr matrix"));
+  WAM_CHECK(video->stats().fatalErrorSerial ==
+            beforeMetadataFailure.fatalErrorSerial);
   PixelBufferCreation topLeft = solidBuffer(
       kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, {80, 112, 216},
       kCVImageBufferYCbCrMatrix_ITU_R_709_2);
@@ -527,12 +563,20 @@ Item {
                         kCVAttachmentMode_ShouldPropagate);
   submitOwnedBufferExpectRejected(video, &window, topLeft.buffer,
                                   QStringLiteral("chroma siting"));
+  // Unsupported per-frame metadata is recoverable input rejection rather
+  // than a terminal presenter failure.
+  WAM_CHECK(video->stats().fatalErrorSerial ==
+            beforeMetadataFailure.fatalErrorSerial);
+  WAM_CHECK(!video->takeFatalError().has_value());
 
   // Restore a known good frame after the deliberate metadata failures.
   PixelBufferCreation restoredWhite = solidBuffer(
       kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, {235, 128, 128},
       kCVImageBufferYCbCrMatrix_ITU_R_709_2);
   submitOwnedBufferAndGrab(video, &window, restoredWhite.buffer);
+  WAM_CHECK(video->stats().fatalErrorSerial ==
+            beforeMetadataFailure.fatalErrorSerial);
+  WAM_CHECK(!video->takeFatalError().has_value());
 
   // Parent translation proves projection * item transform rather than a draw
   // in window coordinates.
@@ -647,8 +691,8 @@ Item {
   }
   WAM_CHECK(video->stats().peakActiveResourceSets <= 2);
 
-  // Deterministic import failure is latched and does not replace the current
-  // good frame or grow the resource ring.
+  // Deterministic frame rejection remains recoverable and does not replace
+  // the current good frame, grow the resource ring, or publish a fatal event.
   const auto beforeFailure = video->stats();
   video->failNextImportForTesting();
   PixelBufferCreation failed = solidBuffer(
@@ -659,12 +703,19 @@ Item {
   window.requestUpdate();
   WAM_CHECK(spinUntil(
       [&] {
-        return video->stats().lastError.contains(
-            QStringLiteral("injected Qt CGL import failure"));
+        const auto current = video->stats();
+        return current.fatalErrorSerial == beforeFailure.fatalErrorSerial &&
+               current.lastError.contains(
+                   QStringLiteral("injected Qt CGL import failure"));
       },
       5000));
   WAM_CHECK(video->stats().importedFrames == beforeFailure.importedFrames);
+  WAM_CHECK(video->stats().lastRenderedGeneration ==
+            beforeFailure.lastRenderedGeneration);
   WAM_CHECK(video->stats().activeResourceSets <= 2);
+  WAM_CHECK(!video->takeFatalError().has_value());
+  WAM_CHECK(video->stats().fatalErrorSerial ==
+            beforeFailure.fatalErrorSerial);
 
   const auto beforePartialFailure = video->stats();
   video->failSecondPlaneImportForTesting();
@@ -676,8 +727,11 @@ Item {
   window.requestUpdate();
   WAM_CHECK(spinUntil(
       [&] {
-        return video->stats().lastError.contains(
-            QStringLiteral("second-plane CGL import failure"));
+        const auto current = video->stats();
+        return current.fatalErrorSerial ==
+                   beforePartialFailure.fatalErrorSerial &&
+               current.lastError.contains(
+                   QStringLiteral("second-plane CGL import failure"));
       },
       5000));
   WAM_CHECK(spinUntil(
@@ -689,10 +743,14 @@ Item {
       5000));
   WAM_CHECK(video->stats().importedFrames ==
             beforePartialFailure.importedFrames);
+  WAM_CHECK(video->stats().lastRenderedGeneration ==
+            beforePartialFailure.lastRenderedGeneration);
+  WAM_CHECK(!video->takeFatalError().has_value());
   PixelBufferCreation afterPartialFailure = solidBuffer(
       kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, {235, 128, 128},
       kCVImageBufferYCbCrMatrix_ITU_R_709_2);
   submitOwnedBufferAndGrab(video, &window, afterPartialFailure.buffer);
+  WAM_CHECK(!video->takeFatalError().has_value());
 
   // Hold teardown to make generation invalidation and recreated-node
   // backpressure deterministic. The stale callback is rejected before it can
@@ -711,6 +769,8 @@ Item {
   video->submitFrame(wam::macos::FrameLease(stale.buffer, staleTiming));
   CVPixelBufferRelease(stale.buffer);
   WAM_CHECK(video->stats().staleFrames == beforeFlush.staleFrames + 1);
+  WAM_CHECK(video->stats().lastRenderedGeneration ==
+            beforeFlush.lastRenderedGeneration);
 
   PixelBufferCreation currentRed = solidBuffer(
       kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, {80, 112, 216},
@@ -723,6 +783,8 @@ Item {
   WAM_CHECK(spinUntil(
       [&] { return video->stats().backpressuredImports > 0; }, 5000));
   WAM_CHECK(video->stats().importedFrames == beforeFlush.importedFrames);
+  WAM_CHECK(video->stats().lastRenderedGeneration ==
+            beforeFlush.lastRenderedGeneration);
 
   // Explicitly destroy and recreate the QSG node while the old share-group
   // job is held. The new node must retain the latest generation-one lease but
@@ -758,6 +820,8 @@ Item {
   checkColorNear(sampleLogicalPixel(image, window, 40, 100),
                  QColor(232, 31, 41), 5,
                  "post-flush retained current-generation frame");
+  WAM_CHECK(spinUntil(
+      [&] { return video->stats().lastRenderedGeneration == 1; }, 5000));
 
   // A regressed/same generation argument advances fail-closed instead of
   // reopening the just-flushed timeline to a delayed callback.
@@ -776,10 +840,76 @@ Item {
   CVPixelBufferRelease(regressedStale.buffer);
   WAM_CHECK(video->stats().staleFrames ==
             beforeRegressedFlush.staleFrames + 1);
+  WAM_CHECK(video->stats().lastRenderedGeneration == 1);
   PixelBufferCreation generationTwo = solidBuffer(
       kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, {80, 112, 216},
       kCVImageBufferYCbCrMatrix_ITU_R_709_2);
   submitOwnedBufferAndGrab(video, &window, generationTwo.buffer, 2);
+  WAM_CHECK(video->stats().lastRenderedGeneration == 2);
+
+  // A taken fatal reason re-arms the latch. A terminal init failure on the
+  // first frame of a new generation must not advertise that generation as
+  // rendered. Recreating the node then proves the retained fatal survives a
+  // later successful draw until explicitly consumed.
+  const auto beforeReinvalidatedFailure = video->stats();
+  video->flush(3);
+  window.requestUpdate();
+  WAM_CHECK(spinUntil(
+      [&] {
+        const auto current = video->stats();
+        return current.activeResourceSets == 0 &&
+               current.pendingRetirements == 0;
+      },
+      5000));
+  video->failAfterRetirementServiceCreationForTesting();
+  PixelBufferCreation generationThree = solidBuffer(
+      kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, {80, 112, 216},
+      kCVImageBufferYCbCrMatrix_ITU_R_709_2);
+  wam::macos::FrameTiming generationThreeTiming;
+  generationThreeTiming.generation = 3;
+  video->submitFrame(
+      wam::macos::FrameLease(generationThree.buffer, generationThreeTiming));
+  CVPixelBufferRelease(generationThree.buffer);
+  window.requestUpdate();
+  WAM_CHECK(spinUntil(
+      [&] {
+        const auto current = video->stats();
+        return current.fatalErrorSerial ==
+                   beforeReinvalidatedFailure.fatalErrorSerial + 1 &&
+               current.lastError.contains(
+                   QStringLiteral("retirement service creation"));
+      },
+      5000));
+  const auto generationThreeFailureStats = video->stats();
+  WAM_CHECK(generationThreeFailureStats.importedFrames ==
+            beforeReinvalidatedFailure.importedFrames);
+  WAM_CHECK(generationThreeFailureStats.lastRenderedGeneration == 2);
+  const auto submittedBeforeGenerationThreeRecovery =
+      generationThreeFailureStats.submittedFrames;
+  video->setParentItem(nullptr);
+  window.requestUpdate();
+  WAM_CHECK(!window.grabWindow().isNull());
+  video->setParentItem(host);
+  video->setSize(QSizeF(400, 300));
+  window.requestUpdate();
+  WAM_CHECK(spinUntil(
+      [&] {
+        const auto current = video->stats();
+        return current.importedFrames >=
+                   beforeReinvalidatedFailure.importedFrames + 1 &&
+               current.lastRenderedGeneration == 3 &&
+               current.lastError.isEmpty();
+      },
+      5000));
+  WAM_CHECK(video->stats().submittedFrames ==
+            submittedBeforeGenerationThreeRecovery);
+  WAM_CHECK(video->stats().fatalErrorSerial ==
+            generationThreeFailureStats.fatalErrorSerial);
+  fatalError = video->takeFatalError();
+  WAM_CHECK(fatalError.has_value());
+  WAM_CHECK(fatalError->contains(
+      QStringLiteral("retirement service creation")));
+  WAM_CHECK(!video->takeFatalError().has_value());
 
   // Moving the paused frame to another live window creates another node and
   // potentially another Qt context/share group. No decoder resubmit occurs.
@@ -849,6 +979,13 @@ Item {
                    quarantineBefore + 1;
       },
       5000));
+  const auto quarantineStats = quarantineItem->stats();
+  WAM_CHECK(quarantineStats.fatalErrorSerial == 1);
+  fatalError = quarantineItem->takeFatalError();
+  WAM_CHECK(fatalError.has_value());
+  WAM_CHECK(fatalError->contains(
+      QStringLiteral("lost their shared retirement context")));
+  WAM_CHECK(!quarantineItem->takeFatalError().has_value());
   WAM_CHECK(quarantineItem->stats().activeResourceSets > 0);
   quarantineItem->setParentItem(nullptr);
   window.requestUpdate();

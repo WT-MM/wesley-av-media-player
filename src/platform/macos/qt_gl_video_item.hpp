@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 
 namespace wam::macos {
 
@@ -15,6 +16,8 @@ struct QtGlVideoItemStats {
   std::uint64_t submittedFrames{0};
   std::uint64_t importedFrames{0};
   std::uint64_t renderedFrames{0};
+  std::uint64_t lastRenderedGeneration{0};
+  std::uint64_t fatalErrorSerial{0};
   std::uint64_t backpressuredImports{0};
   std::uint64_t rejectedFrames{0};
   std::uint64_t staleFrames{0};
@@ -62,6 +65,10 @@ class QtGlVideoItem final : public QQuickItem {
   // and a recreated scene graph cannot resurrect the old generation.
   void flush(std::uint64_t nextGeneration) noexcept;
   [[nodiscard]] QtGlVideoItemStats stats() const;
+  // Fatal presenter failures are first-wins until consumed. The serial never
+  // resets, so a polling controller can distinguish a newly latched failure
+  // from an already handled one without allocating on the blank-player path.
+  [[nodiscard]] std::optional<QString> takeFatalError();
 
 #if defined(WAM_NATIVE_GL_VIDEO_TESTING)
   // Deterministic fail-closed seam for the isolated hardware gate.
