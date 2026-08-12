@@ -24,6 +24,25 @@ enum class MetalPresentResult : std::uint8_t {
   Failed,
 };
 
+#if defined(WAM_METAL_LAYER_PRESENTER_TESTING)
+// Deterministic exception seams for the focused presenter test. The shipping
+// native-video library is built without this definition, so neither the seam
+// nor its state exists in production.
+enum class MetalLayerPresenterFaultPoint : std::uint8_t {
+  None,
+  CompletionGroupAllocation,
+  ErrorAssignment,
+  TextureImport,
+  FrameLeaseAllocation,
+  CompletionTicketAllocation,
+  FailureHandlerCopy,
+  CompletionHandlerInstallation,
+  CommandBufferCommit,
+};
+
+struct MetalLayerPresenterTestAccess;
+#endif
+
 // A compact CAMetalLayer presenter for IOSurface-backed VideoToolbox output.
 // attachToView(), resize(), and detach() are main-thread operations. present()
 // belongs on a dedicated serial presentation queue (never the real-time
@@ -54,13 +73,33 @@ class MetalLayerPresenter final {
                          FailureHandler handler) noexcept;
 
   [[nodiscard]] MetalPresentResult present(
-      const FrameLease& frame, std::string* error = nullptr);
+      const FrameLease& frame, std::string* error = nullptr) noexcept;
   [[nodiscard]] MetalLayerPresenterStats stats() const noexcept;
 
  private:
   struct Impl;
   explicit MetalLayerPresenter(std::unique_ptr<Impl> impl) noexcept;
   std::unique_ptr<Impl> impl_;
+#if defined(WAM_METAL_LAYER_PRESENTER_TESTING)
+  friend struct MetalLayerPresenterTestAccess;
+#endif
 };
+
+#if defined(WAM_METAL_LAYER_PRESENTER_TESTING)
+struct MetalLayerPresenterTestAccess {
+  struct FaultOutcome {
+    MetalLayerPresenterStats statistics;
+    bool exceptionCaught{false};
+    bool groupIdle{false};
+  };
+
+  static void failNext(MetalLayerPresenterFaultPoint point) noexcept;
+  [[nodiscard]] static bool faultPending() noexcept;
+  [[nodiscard]] static FaultOutcome exerciseAccountingFault(
+      MetalLayerPresenterFaultPoint point) noexcept;
+  [[nodiscard]] static bool completionGroupIdle(
+      const MetalLayerPresenter& presenter) noexcept;
+};
+#endif
 
 }  // namespace wam::macos

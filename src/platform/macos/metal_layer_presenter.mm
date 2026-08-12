@@ -11,8 +11,11 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <exception>
 #include <memory>
 #include <mutex>
+#include <new>
+#include <stdexcept>
 #include <string>
 #include <utility>
 
@@ -20,6 +23,26 @@ namespace wam::macos {
 namespace {
 
 constexpr double kMaximumDrawablePixels = 1920.0 * 1080.0;
+
+#if defined(WAM_METAL_LAYER_PRESENTER_TESTING)
+std::atomic<MetalLayerPresenterFaultPoint> presenterFault{
+    MetalLayerPresenterFaultPoint::None};
+
+void throwIfPresenterFault(MetalLayerPresenterFaultPoint point) {
+  MetalLayerPresenterFaultPoint expected = point;
+  if (presenterFault.compare_exchange_strong(
+          expected, MetalLayerPresenterFaultPoint::None,
+          std::memory_order_acq_rel, std::memory_order_acquire)) {
+    if (point ==
+            MetalLayerPresenterFaultPoint::CompletionHandlerInstallation ||
+        point == MetalLayerPresenterFaultPoint::CommandBufferCommit) {
+      [NSException raise:NSInternalInconsistencyException
+                  format:@"injected Metal presenter platform exception"];
+    }
+    throw std::runtime_error("injected Metal presenter exception");
+  }
+}
+#endif
 
 constexpr char kShaderSource[] = R"METAL(
 #include <metal_stdlib>
@@ -92,8 +115,24 @@ struct ColorParameters {
 };
 
 void assignError(std::string* error, std::string message) {
+#if defined(WAM_METAL_LAYER_PRESENTER_TESTING)
+  throwIfPresenterFault(MetalLayerPresenterFaultPoint::ErrorAssignment);
+#endif
   if (error != nullptr) {
     *error = std::move(message);
+  }
+}
+
+void assignFixedErrorNoexcept(std::string* error, const char* message) noexcept {
+  if (error == nullptr) {
+    return;
+  }
+  try {
+    error->assign(message);
+  } catch (...) {
+    // Returning Failed is authoritative. An allocator failure may prevent the
+    // optional diagnostic string from being replaced, but may never escape the
+    // presentation queue or strand an in-flight reservation.
   }
 }
 
@@ -211,11 +250,147 @@ CGSize boundedDrawableSize(CGSize pointSize, CGFloat backingScale) noexcept {
 }
 
 struct PresenterCompletionState {
-  __strong dispatch_group_t group{dispatch_group_create()};
+  PresenterCompletionState() {
+#if defined(WAM_METAL_LAYER_PRESENTER_TESTING)
+    throwIfPresenterFault(
+        MetalLayerPresenterFaultPoint::CompletionGroupAllocation);
+#endif
+    group = dispatch_group_create();
+    if (group == nil) {
+      throw std::bad_alloc();
+    }
+  }
+
+  __strong dispatch_group_t group{nil};
   mutable std::mutex mutex;
   MetalLayerPresenterStats statistics;
   std::weak_ptr<void> failureLifetime;
   MetalLayerPresenter::FailureHandler failureHandler;
+};
+
+// Reserves one of the presenter's two bounded in-flight slots. Until ownership
+// is transferred to a CompletionTicket, every return and exception path is
+// unwound by this guard without allocating or waiting for the render thread.
+class InFlightReservation final {
+ public:
+  explicit InFlightReservation(
+      std::shared_ptr<PresenterCompletionState> completion) noexcept
+      : completion_(std::move(completion)) {}
+
+  InFlightReservation(const InFlightReservation&) = delete;
+  InFlightReservation& operator=(const InFlightReservation&) = delete;
+
+  ~InFlightReservation() { release(); }
+
+  void activate() noexcept { active_ = true; }
+  void transfer() noexcept { active_ = false; }
+
+ private:
+  void release() noexcept {
+    if (!active_) {
+      return;
+    }
+    active_ = false;
+    try {
+      std::lock_guard lock(completion_->mutex);
+      if (completion_->statistics.inFlightFrames > 0) {
+        --completion_->statistics.inFlightFrames;
+      }
+    } catch (...) {
+      // std::mutex operations on a live, non-recursive mutex do not normally
+      // fail. Keep the destructor non-throwing if the platform reports one.
+    }
+  }
+
+  std::shared_ptr<PresenterCompletionState> completion_;
+  bool active_{false};
+};
+
+// One shared ticket bridges the synchronous encoder and Metal's asynchronous
+// completion block. It owns exactly one dispatch-group enter and, once claimed,
+// exactly one in-flight reservation. A pre-commit throw, a normal GPU callback,
+// or destruction of an uncommitted command buffer can race to finish it; only
+// the first path updates accounting and leaves the group.
+class PresenterCompletionTicket final {
+ public:
+  explicit PresenterCompletionTicket(
+      std::shared_ptr<PresenterCompletionState> completion) noexcept
+      : completion_(std::move(completion)) {
+    dispatch_group_enter(completion_->group);
+  }
+
+  PresenterCompletionTicket(const PresenterCompletionTicket&) = delete;
+  PresenterCompletionTicket& operator=(const PresenterCompletionTicket&) =
+      delete;
+
+  ~PresenterCompletionTicket() { finish(false); }
+
+  void claimReservation() noexcept {
+    ownsReservation_.store(true, std::memory_order_release);
+  }
+
+  void markSubmitted() {
+    std::lock_guard lock(completion_->mutex);
+    ++completion_->statistics.submittedFrames;
+    submitted_.store(true, std::memory_order_release);
+  }
+
+  void finish(bool succeeded) noexcept {
+    bool expected = false;
+    if (!finished_.compare_exchange_strong(
+            expected, true, std::memory_order_acq_rel,
+            std::memory_order_acquire)) {
+      return;
+    }
+
+    try {
+      std::lock_guard lock(completion_->mutex);
+      if (ownsReservation_.load(std::memory_order_acquire) &&
+          completion_->statistics.inFlightFrames > 0) {
+        --completion_->statistics.inFlightFrames;
+      }
+      if (submitted_.load(std::memory_order_acquire)) {
+        if (succeeded) {
+          ++completion_->statistics.completedFrames;
+        } else {
+          ++completion_->statistics.failedFrames;
+        }
+      }
+    } catch (...) {
+      // Always balance the dispatch group below. The completion-state mutex is
+      // live for the ticket's entire lifetime and should not fail in practice.
+    }
+    dispatch_group_leave(completion_->group);
+  }
+
+ private:
+  std::shared_ptr<PresenterCompletionState> completion_;
+  std::atomic<bool> ownsReservation_{false};
+  std::atomic<bool> submitted_{false};
+  std::atomic<bool> finished_{false};
+};
+
+class PresenterCompletionAbortGuard final {
+ public:
+  explicit PresenterCompletionAbortGuard(
+      std::shared_ptr<PresenterCompletionTicket> ticket) noexcept
+      : ticket_(std::move(ticket)) {}
+
+  PresenterCompletionAbortGuard(const PresenterCompletionAbortGuard&) =
+      delete;
+  PresenterCompletionAbortGuard& operator=(
+      const PresenterCompletionAbortGuard&) = delete;
+
+  ~PresenterCompletionAbortGuard() {
+    if (ticket_) {
+      ticket_->finish(false);
+    }
+  }
+
+  void transferToCommittedBuffer() noexcept { ticket_.reset(); }
+
+ private:
+  std::shared_ptr<PresenterCompletionTicket> ticket_;
 };
 
 std::string commandBufferFailure(id<MTLCommandBuffer> commandBuffer) {
@@ -311,7 +486,14 @@ std::unique_ptr<MetalLayerPresenter> MetalLayerPresenter::create(
   if (error != nullptr) {
     error->clear();
   }
-  auto impl = std::make_unique<Impl>();
+  std::unique_ptr<Impl> impl;
+  try {
+    impl = std::make_unique<Impl>();
+  } catch (...) {
+    assignFixedErrorNoexcept(
+        error, "Metal presenter completion-state creation failed");
+    return nullptr;
+  }
   impl->device = MTLCreateSystemDefaultDevice();
   if (impl->device == nil) {
     assignError(error, "Metal is unavailable on this Mac");
@@ -509,171 +691,282 @@ void MetalLayerPresenter::setFailureHandler(
 }
 
 MetalPresentResult MetalLayerPresenter::present(const FrameLease& frame,
-                                                std::string* error) {
-  if (error != nullptr) {
-    error->clear();
-  }
-  if (!frame || !frame.isIOSurfaceBacked()) {
-    assignError(error, "presenter requires an IOSurface-backed frame");
-    return MetalPresentResult::Failed;
-  }
-
-  CAMetalLayer* layer = nil;
-  CGSize drawableSize = CGSizeZero;
-  std::uint64_t layerGeneration = 0;
-  {
-    std::lock_guard layerLock(impl_->layerMutex);
-    if (impl_->layer == nil || !impl_->attached || !impl_->visible) {
-      assignError(error, "Metal presentation layer is not visible");
-      return MetalPresentResult::DrawableUnavailable;
-    }
-    // Retain a stable layer snapshot, then release the layer-state lock before
-    // nextDrawable/encoding. Main-thread resize and detach must never wait on
-    // CAMetalLayer drawable backpressure.
-    layer = impl_->layer;
-    drawableSize = layer.drawableSize;
-    layerGeneration = impl_->layerGeneration;
-  }
-  const std::shared_ptr<PresenterCompletionState> completion =
-      impl_->completion;
-  {
-    std::lock_guard completionLock(completion->mutex);
-    if (completion->statistics.inFlightFrames >= 2) {
-      assignError(error, "Metal presenter in-flight limit reached");
-      return MetalPresentResult::Backpressure;
-    }
-    ++completion->statistics.inFlightFrames;
-  }
-  const auto releaseReservation = [&completion] {
-    std::lock_guard completionLock(completion->mutex);
-    if (completion->statistics.inFlightFrames > 0) {
-      --completion->statistics.inFlightFrames;
-    }
-  };
-
-  auto imported = impl_->textureCache->importFrame(frame, error);
-  if (!imported) {
-    releaseReservation();
-    return MetalPresentResult::Failed;
-  }
-  auto frameTextures =
-      std::make_shared<MetalFrameLease>(std::move(*imported));
-  const bool yuv = frameTextures->planeCount() == 2;
-  if (!yuv && frameTextures->planeCount() != 1) {
-    assignError(error, "Metal presenter received an unsupported plane count");
-    releaseReservation();
-    return MetalPresentResult::Failed;
-  }
-
-  id<CAMetalDrawable> drawable = [layer nextDrawable];
-  if (drawable == nil) {
-    assignError(error, "CAMetalLayer did not provide a drawable");
-    releaseReservation();
-    return MetalPresentResult::DrawableUnavailable;
-  }
-  id<MTLCommandBuffer> commandBuffer = [impl_->commandQueue commandBuffer];
-  if (commandBuffer == nil) {
-    assignError(error, "Metal command buffer creation failed");
-    releaseReservation();
-    return MetalPresentResult::Failed;
-  }
-
-  MTLRenderPassDescriptor* pass = [MTLRenderPassDescriptor renderPassDescriptor];
-  pass.colorAttachments[0].texture = drawable.texture;
-  pass.colorAttachments[0].loadAction = MTLLoadActionClear;
-  pass.colorAttachments[0].storeAction = MTLStoreActionStore;
-  pass.colorAttachments[0].clearColor = MTLClearColorMake(0.0, 0.0, 0.0, 1.0);
-  id<MTLRenderCommandEncoder> encoder =
-      [commandBuffer renderCommandEncoderWithDescriptor:pass];
-  if (encoder == nil) {
-    assignError(error, "Metal render encoder creation failed");
-    releaseReservation();
-    return MetalPresentResult::Failed;
-  }
-
-  const simd_float2 scale = aspectScale(frame, drawableSize);
-  [encoder setVertexBytes:&scale length:sizeof(scale) atIndex:0];
-  if (yuv) {
-    [encoder setRenderPipelineState:impl_->yuvPipeline];
-    [encoder setFragmentTexture:(__bridge id<MTLTexture>)
-                                    frameTextures->nativeTexture(0)
-                        atIndex:0];
-    [encoder setFragmentTexture:(__bridge id<MTLTexture>)
-                                    frameTextures->nativeTexture(1)
-                        atIndex:1];
-    const ColorParameters color = colorParameters(frame.pixelBuffer());
-    [encoder setFragmentBytes:&color length:sizeof(color) atIndex:0];
-  } else {
-    [encoder setRenderPipelineState:impl_->bgraPipeline];
-    [encoder setFragmentTexture:(__bridge id<MTLTexture>)
-                                    frameTextures->nativeTexture(0)
-                        atIndex:0];
-  }
-  [encoder drawPrimitives:MTLPrimitiveTypeTriangleStrip
-              vertexStart:0
-              vertexCount:4];
-  [encoder endEncoding];
-
-  {
-    std::lock_guard layerLock(impl_->layerMutex);
-    if (!impl_->attached || !impl_->visible || impl_->layer != layer ||
-        impl_->layerGeneration != layerGeneration) {
-      assignError(error, "Metal presentation layer changed during encoding");
-      releaseReservation();
-      return MetalPresentResult::DrawableUnavailable;
-    }
-    // Scheduling the presentation while the generation is validated prevents
-    // detach from winning between validation and presentDrawable. Encoding,
-    // drawable acquisition, commit, and GPU work all remain outside this lock.
-    [commandBuffer presentDrawable:drawable];
-  }
-
-  FailureHandler failureHandler;
-  std::weak_ptr<void> failureLifetime;
-  {
-    std::lock_guard completionLock(completion->mutex);
-    ++completion->statistics.submittedFrames;
-    failureLifetime = completion->failureLifetime;
-    failureHandler = completion->failureHandler;
-  }
-  dispatch_group_enter(completion->group);
-  [commandBuffer addCompletedHandler:^(id<MTLCommandBuffer> completed) {
-    // Capturing the shared lease keeps the IOSurface and both Metal plane views
-    // alive until the GPU has consumed the command buffer.
-    (void)frameTextures;
-    const bool succeeded =
-        completed.status == MTLCommandBufferStatusCompleted;
-    {
-      std::lock_guard completionLock(completion->mutex);
-      if (completion->statistics.inFlightFrames > 0) {
-        --completion->statistics.inFlightFrames;
+                                                std::string* error) noexcept {
+  @try {
+    try {
+      if (error != nullptr) {
+        error->clear();
       }
-      if (succeeded) {
-        ++completion->statistics.completedFrames;
-      } else {
-        ++completion->statistics.failedFrames;
+      if (!frame || !frame.isIOSurfaceBacked()) {
+        assignError(error, "presenter requires an IOSurface-backed frame");
+        return MetalPresentResult::Failed;
       }
-    }
-    dispatch_group_leave(completion->group);
-    if (!succeeded && failureHandler) {
-      // Promotion is the revocation/drain contract: the token owns every
-      // handler capture and remains strongly held for the entire invocation.
-      if (auto lifetime = failureLifetime.lock()) {
-        try {
-          failureHandler(commandBufferFailure(completed));
-        } catch (...) {
-          // Client error reporting must not escape a Metal completion callback.
+
+      CAMetalLayer* layer = nil;
+      CGSize drawableSize = CGSizeZero;
+      std::uint64_t layerGeneration = 0;
+      {
+        std::lock_guard layerLock(impl_->layerMutex);
+        if (impl_->layer == nil || !impl_->attached || !impl_->visible) {
+          assignError(error, "Metal presentation layer is not visible");
+          return MetalPresentResult::DrawableUnavailable;
         }
+        // Retain a stable layer snapshot, then release the layer-state lock
+        // before nextDrawable/encoding. Main-thread resize and detach must
+        // never wait on CAMetalLayer drawable backpressure.
+        layer = impl_->layer;
+        drawableSize = layer.drawableSize;
+        layerGeneration = impl_->layerGeneration;
       }
+
+      const std::shared_ptr<PresenterCompletionState> completion =
+          impl_->completion;
+      InFlightReservation reservation(completion);
+      {
+        std::lock_guard completionLock(completion->mutex);
+        if (completion->statistics.inFlightFrames >= 2) {
+          assignError(error, "Metal presenter in-flight limit reached");
+          return MetalPresentResult::Backpressure;
+        }
+        ++completion->statistics.inFlightFrames;
+        reservation.activate();
+      }
+
+#if defined(WAM_METAL_LAYER_PRESENTER_TESTING)
+      throwIfPresenterFault(MetalLayerPresenterFaultPoint::TextureImport);
+#endif
+      auto imported = impl_->textureCache->importFrame(frame, error);
+      if (!imported) {
+        return MetalPresentResult::Failed;
+      }
+#if defined(WAM_METAL_LAYER_PRESENTER_TESTING)
+      throwIfPresenterFault(
+          MetalLayerPresenterFaultPoint::FrameLeaseAllocation);
+#endif
+      auto frameTextures =
+          std::make_shared<MetalFrameLease>(std::move(*imported));
+      const bool yuv = frameTextures->planeCount() == 2;
+      if (!yuv && frameTextures->planeCount() != 1) {
+        assignError(error,
+                    "Metal presenter received an unsupported plane count");
+        return MetalPresentResult::Failed;
+      }
+
+      id<CAMetalDrawable> drawable = [layer nextDrawable];
+      if (drawable == nil) {
+        assignError(error, "CAMetalLayer did not provide a drawable");
+        return MetalPresentResult::DrawableUnavailable;
+      }
+      id<MTLCommandBuffer> commandBuffer = [impl_->commandQueue commandBuffer];
+      if (commandBuffer == nil) {
+        assignError(error, "Metal command buffer creation failed");
+        return MetalPresentResult::Failed;
+      }
+
+      MTLRenderPassDescriptor* pass =
+          [MTLRenderPassDescriptor renderPassDescriptor];
+      pass.colorAttachments[0].texture = drawable.texture;
+      pass.colorAttachments[0].loadAction = MTLLoadActionClear;
+      pass.colorAttachments[0].storeAction = MTLStoreActionStore;
+      pass.colorAttachments[0].clearColor =
+          MTLClearColorMake(0.0, 0.0, 0.0, 1.0);
+      id<MTLRenderCommandEncoder> encoder =
+          [commandBuffer renderCommandEncoderWithDescriptor:pass];
+      if (encoder == nil) {
+        assignError(error, "Metal render encoder creation failed");
+        return MetalPresentResult::Failed;
+      }
+
+      const simd_float2 scale = aspectScale(frame, drawableSize);
+      [encoder setVertexBytes:&scale length:sizeof(scale) atIndex:0];
+      if (yuv) {
+        [encoder setRenderPipelineState:impl_->yuvPipeline];
+        [encoder setFragmentTexture:(__bridge id<MTLTexture>)
+                                        frameTextures->nativeTexture(0)
+                            atIndex:0];
+        [encoder setFragmentTexture:(__bridge id<MTLTexture>)
+                                        frameTextures->nativeTexture(1)
+                            atIndex:1];
+        const ColorParameters color = colorParameters(frame.pixelBuffer());
+        [encoder setFragmentBytes:&color length:sizeof(color) atIndex:0];
+      } else {
+        [encoder setRenderPipelineState:impl_->bgraPipeline];
+        [encoder setFragmentTexture:(__bridge id<MTLTexture>)
+                                        frameTextures->nativeTexture(0)
+                            atIndex:0];
+      }
+      [encoder drawPrimitives:MTLPrimitiveTypeTriangleStrip
+                  vertexStart:0
+                  vertexCount:4];
+      [encoder endEncoding];
+
+      {
+        std::lock_guard layerLock(impl_->layerMutex);
+        if (!impl_->attached || !impl_->visible || impl_->layer != layer ||
+            impl_->layerGeneration != layerGeneration) {
+          assignError(error,
+                      "Metal presentation layer changed during encoding");
+          return MetalPresentResult::DrawableUnavailable;
+        }
+        // Scheduling presentation while the generation is validated prevents
+        // detach from winning between validation and presentDrawable. Encoding,
+        // drawable acquisition, commit, and GPU work stay outside this lock.
+        [commandBuffer presentDrawable:drawable];
+      }
+
+      FailureHandler failureHandler;
+      std::weak_ptr<void> failureLifetime;
+#if defined(WAM_METAL_LAYER_PRESENTER_TESTING)
+      throwIfPresenterFault(
+          MetalLayerPresenterFaultPoint::FailureHandlerCopy);
+#endif
+      {
+        std::lock_guard completionLock(completion->mutex);
+        failureLifetime = completion->failureLifetime;
+        failureHandler = completion->failureHandler;
+      }
+
+#if defined(WAM_METAL_LAYER_PRESENTER_TESTING)
+      throwIfPresenterFault(
+          MetalLayerPresenterFaultPoint::CompletionTicketAllocation);
+#endif
+      auto completionTicket =
+          std::make_shared<PresenterCompletionTicket>(completion);
+      completionTicket->claimReservation();
+      reservation.transfer();
+      PresenterCompletionAbortGuard abortGuard(completionTicket);
+
+#if defined(WAM_METAL_LAYER_PRESENTER_TESTING)
+      throwIfPresenterFault(
+          MetalLayerPresenterFaultPoint::CompletionHandlerInstallation);
+#endif
+      [commandBuffer addCompletedHandler:^(id<MTLCommandBuffer> completed) {
+        // Capturing the shared lease keeps the IOSurface and both Metal plane
+        // views alive until the GPU has consumed the command buffer.
+        (void)frameTextures;
+        bool succeeded = false;
+        @try {
+          succeeded = completed.status == MTLCommandBufferStatusCompleted;
+        } @catch (NSException*) {
+          succeeded = false;
+        }
+        completionTicket->finish(succeeded);
+        if (!succeeded && failureHandler) {
+          // Promotion is the revocation/drain contract: the token owns every
+          // handler capture and remains held throughout the invocation.
+          if (auto lifetime = failureLifetime.lock()) {
+            try {
+              @try {
+                failureHandler(commandBufferFailure(completed));
+              } @catch (NSException*) {
+                // Client error reporting must not escape Metal's callback.
+              }
+            } catch (...) {
+              // Client error reporting must not escape Metal's callback.
+            }
+          }
+        }
+      }];
+      completionTicket->markSubmitted();
+#if defined(WAM_METAL_LAYER_PRESENTER_TESTING)
+      throwIfPresenterFault(
+          MetalLayerPresenterFaultPoint::CommandBufferCommit);
+#endif
+      [commandBuffer commit];
+      abortGuard.transferToCommittedBuffer();
+      return MetalPresentResult::Presented;
+    } catch (...) {
+      assignFixedErrorNoexcept(
+          error, "Metal presenter rejected a frame after an internal failure");
+      return MetalPresentResult::Failed;
     }
-  }];
-  [commandBuffer commit];
-  return MetalPresentResult::Presented;
+  } @catch (NSException*) {
+    assignFixedErrorNoexcept(
+        error, "Metal presenter rejected a frame after a platform failure");
+    return MetalPresentResult::Failed;
+  }
 }
 
 MetalLayerPresenterStats MetalLayerPresenter::stats() const noexcept {
   std::lock_guard lock(impl_->completion->mutex);
   return impl_->completion->statistics;
 }
+
+#if defined(WAM_METAL_LAYER_PRESENTER_TESTING)
+void MetalLayerPresenterTestAccess::failNext(
+    MetalLayerPresenterFaultPoint point) noexcept {
+  presenterFault.store(point, std::memory_order_release);
+}
+
+bool MetalLayerPresenterTestAccess::faultPending() noexcept {
+  return presenterFault.load(std::memory_order_acquire) !=
+         MetalLayerPresenterFaultPoint::None;
+}
+
+MetalLayerPresenterTestAccess::FaultOutcome
+MetalLayerPresenterTestAccess::exerciseAccountingFault(
+    MetalLayerPresenterFaultPoint point) noexcept {
+  FaultOutcome outcome;
+  presenterFault.store(point, std::memory_order_release);
+  std::shared_ptr<PresenterCompletionState> completion;
+  @try {
+    try {
+      completion = std::make_shared<PresenterCompletionState>();
+      InFlightReservation reservation(completion);
+      {
+        std::lock_guard lock(completion->mutex);
+        ++completion->statistics.inFlightFrames;
+        reservation.activate();
+      }
+      if (point == MetalLayerPresenterFaultPoint::ErrorAssignment) {
+        std::string diagnostic;
+        assignError(&diagnostic, "unused");
+      }
+      throwIfPresenterFault(MetalLayerPresenterFaultPoint::TextureImport);
+      throwIfPresenterFault(
+          MetalLayerPresenterFaultPoint::FrameLeaseAllocation);
+      throwIfPresenterFault(MetalLayerPresenterFaultPoint::FailureHandlerCopy);
+      throwIfPresenterFault(
+          MetalLayerPresenterFaultPoint::CompletionTicketAllocation);
+
+      auto ticket = std::make_shared<PresenterCompletionTicket>(completion);
+      ticket->claimReservation();
+      reservation.transfer();
+      PresenterCompletionAbortGuard abortGuard(ticket);
+      throwIfPresenterFault(
+          MetalLayerPresenterFaultPoint::CompletionHandlerInstallation);
+      ticket->markSubmitted();
+      throwIfPresenterFault(
+          MetalLayerPresenterFaultPoint::CommandBufferCommit);
+      abortGuard.transferToCommittedBuffer();
+    } catch (...) {
+      outcome.exceptionCaught = true;
+    }
+  } @catch (NSException*) {
+    outcome.exceptionCaught = true;
+  }
+
+  // A point that did not throw is a malformed test request. Never leave the
+  // synthetic committed ticket pending in that case; only known fault points
+  // are accepted by the focused test.
+  if (completion) {
+    {
+      std::lock_guard lock(completion->mutex);
+      outcome.statistics = completion->statistics;
+    }
+    outcome.groupIdle =
+        dispatch_group_wait(completion->group, DISPATCH_TIME_NOW) == 0;
+  } else {
+    outcome.groupIdle = true;
+  }
+  return outcome;
+}
+
+bool MetalLayerPresenterTestAccess::completionGroupIdle(
+    const MetalLayerPresenter& presenter) noexcept {
+  return dispatch_group_wait(presenter.impl_->completion->group,
+                             DISPATCH_TIME_NOW) == 0;
+}
+#endif
 
 }  // namespace wam::macos

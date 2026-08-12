@@ -1,4 +1,10 @@
-#include "platform/macos/native_video_presenter.hpp"
+#define WAM_METAL_LAYER_PRESENTER_TESTING 1
+// Compile the presenter into this focused test translation unit so the
+// deterministic exception seams do not exist in wam_macos_native_video. The
+// static linker consequently extracts only the texture-cache implementation
+// from that production archive; the link/symbol check in local validation
+// guards against accidentally pulling a second presenter definition.
+#include "platform/macos/metal_layer_presenter.mm"
 
 #include <CoreFoundation/CoreFoundation.h>
 #include <CoreVideo/CoreVideo.h>
@@ -8,6 +14,7 @@
 #include <atomic>
 #include <cstdlib>
 #include <iostream>
+#include <memory>
 #include <string>
 #include <thread>
 #include <utility>
@@ -64,6 +71,10 @@ CVPixelBufferRef createRequiredIOSurfacePixelBuffer(OSType format,
 } // namespace
 
 int main() {
+  static_assert(noexcept(std::declval<wam::macos::MetalLayerPresenter&>()
+                             .present(
+                                 std::declval<const wam::macos::FrameLease&>(),
+                                 nullptr)));
   std::string error;
 
   // Run the platform-independent ownership and queue coverage first. A machine
@@ -127,6 +138,46 @@ int main() {
             wam::macos::FrameEnqueueResult::Rejected);
   WAM_CHECK(error == "rejecting a stale decoded-frame generation");
 
+  // The exact accounting state machine is deterministic even on Macs/runners
+  // that expose no Metal device. These seams execute the same reservation,
+  // ticket, abort-guard, and group ownership types used by present().
+  const auto requireAccountingFault =
+      [](wam::macos::MetalLayerPresenterFaultPoint point,
+         bool reachesSubmission) {
+        const auto outcome =
+            wam::macos::MetalLayerPresenterTestAccess::exerciseAccountingFault(
+                point);
+        WAM_CHECK(outcome.exceptionCaught);
+        WAM_CHECK(outcome.groupIdle);
+        WAM_CHECK(!wam::macos::MetalLayerPresenterTestAccess::faultPending());
+        WAM_CHECK(outcome.statistics.inFlightFrames == 0);
+        WAM_CHECK(outcome.statistics.completedFrames == 0);
+        WAM_CHECK(outcome.statistics.submittedFrames ==
+                  (reachesSubmission ? 1 : 0));
+        WAM_CHECK(outcome.statistics.failedFrames ==
+                  (reachesSubmission ? 1 : 0));
+      };
+  requireAccountingFault(
+      wam::macos::MetalLayerPresenterFaultPoint::CompletionGroupAllocation,
+      false);
+  requireAccountingFault(
+      wam::macos::MetalLayerPresenterFaultPoint::ErrorAssignment, false);
+  requireAccountingFault(
+      wam::macos::MetalLayerPresenterFaultPoint::TextureImport, false);
+  requireAccountingFault(
+      wam::macos::MetalLayerPresenterFaultPoint::FrameLeaseAllocation, false);
+  requireAccountingFault(
+      wam::macos::MetalLayerPresenterFaultPoint::FailureHandlerCopy, false);
+  requireAccountingFault(
+      wam::macos::MetalLayerPresenterFaultPoint::CompletionTicketAllocation,
+      false);
+  requireAccountingFault(
+      wam::macos::MetalLayerPresenterFaultPoint::CompletionHandlerInstallation,
+      false);
+  requireAccountingFault(
+      wam::macos::MetalLayerPresenterFaultPoint::CommandBufferCommit, true);
+  std::cout << "Metal presenter exception-accounting coverage passed\n";
+
   // Independently establish genuine device absence. Once a device exists,
   // MetalTextureCache::create() returning null is an implementation failure,
   // not a reason to skip the test.
@@ -181,6 +232,86 @@ int main() {
   WAM_CHECK(bgraImport->plane(0).metalPixelFormat ==
             static_cast<std::uint64_t>(MTLPixelFormatBGRA8Unorm));
   WAM_CHECK(bgraImport->nativeTexture(0) != nullptr);
+
+  // Every potentially allocating stage in present() must fail closed without
+  // leaking either an in-flight slot or a dispatch-group enter. This presenter
+  // is deliberately offscreen: CAMetalLayer still supplies bounded drawables,
+  // while the test launches no GUI and never waits on the render thread.
+  auto presenter = wam::macos::MetalLayerPresenter::create(&error);
+  WAM_CHECK(presenter != nullptr);
+  WAM_CHECK(error.empty());
+  NSView* presenterHost =
+      [[NSView alloc] initWithFrame:NSMakeRect(0.0, 0.0, 320.0, 180.0)];
+  WAM_CHECK(presenter->attachToView((__bridge void*)presenterHost, &error));
+  WAM_CHECK(error.empty());
+  presenter->setVisible(true);
+  const auto failureLifetime = std::make_shared<int>(1);
+  presenter->setFailureHandler(
+      failureLifetime, [](std::string) { WAM_CHECK(false); });
+
+  const auto requireInjectedFailure =
+      [&](wam::macos::MetalLayerPresenterFaultPoint point,
+          bool reachesSubmission, bool platformException) {
+        const wam::macos::MetalLayerPresenterStats before =
+            presenter->stats();
+        wam::macos::MetalLayerPresenterTestAccess::failNext(point);
+        error = "stale diagnostic";
+        wam::macos::MetalPresentResult result =
+            wam::macos::MetalPresentResult::Presented;
+        @autoreleasepool {
+          result = presenter->present(bgraFrame, &error);
+        }
+        WAM_CHECK(result == wam::macos::MetalPresentResult::Failed);
+        WAM_CHECK(!wam::macos::MetalLayerPresenterTestAccess::faultPending());
+        WAM_CHECK(
+            error ==
+            (platformException
+                 ? "Metal presenter rejected a frame after a platform failure"
+                 : "Metal presenter rejected a frame after an internal failure"));
+        const wam::macos::MetalLayerPresenterStats after = presenter->stats();
+        WAM_CHECK(after.inFlightFrames == before.inFlightFrames);
+        WAM_CHECK(after.completedFrames == before.completedFrames);
+        WAM_CHECK(after.submittedFrames ==
+                  before.submittedFrames + (reachesSubmission ? 1 : 0));
+        WAM_CHECK(after.failedFrames ==
+                  before.failedFrames + (reachesSubmission ? 1 : 0));
+        WAM_CHECK(
+            wam::macos::MetalLayerPresenterTestAccess::completionGroupIdle(
+                *presenter));
+      };
+
+  // Error construction itself can fail before any frame reservation exists.
+  wam::macos::MetalLayerPresenterTestAccess::failNext(
+      wam::macos::MetalLayerPresenterFaultPoint::ErrorAssignment);
+  error = "stale diagnostic";
+  WAM_CHECK(presenter->present({}, &error) ==
+            wam::macos::MetalPresentResult::Failed);
+  WAM_CHECK(!wam::macos::MetalLayerPresenterTestAccess::faultPending());
+  WAM_CHECK(error ==
+            "Metal presenter rejected a frame after an internal failure");
+  WAM_CHECK(presenter->stats().inFlightFrames == 0);
+  WAM_CHECK(
+      wam::macos::MetalLayerPresenterTestAccess::completionGroupIdle(
+          *presenter));
+
+  requireInjectedFailure(
+      wam::macos::MetalLayerPresenterFaultPoint::TextureImport, false, false);
+  requireInjectedFailure(
+      wam::macos::MetalLayerPresenterFaultPoint::FrameLeaseAllocation, false,
+      false);
+  requireInjectedFailure(
+      wam::macos::MetalLayerPresenterFaultPoint::FailureHandlerCopy, false,
+      false);
+  requireInjectedFailure(
+      wam::macos::MetalLayerPresenterFaultPoint::CompletionTicketAllocation,
+      false, false);
+  requireInjectedFailure(
+      wam::macos::MetalLayerPresenterFaultPoint::CompletionHandlerInstallation,
+      false, true);
+  requireInjectedFailure(
+      wam::macos::MetalLayerPresenterFaultPoint::CommandBufferCommit, true,
+      true);
+  presenter->detach();
 
   // P010 allocation is not exposed on every supported Mac/virtual runner. If
   // CoreVideo creates it, both 10-bit Metal plane imports are mandatory.
