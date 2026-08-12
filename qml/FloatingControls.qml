@@ -55,7 +55,7 @@ FocusScope {
         id: glass
         anchors.fill: parent
         radius: root.compact ? 14 : 15
-        color: "#d91b1b1e"
+        color: "#d51b1b1e"
     }
 
     // The blank chrome is a drag surface, like QuickTime's floating palette.
@@ -121,10 +121,14 @@ FocusScope {
             root.interaction();
         }
         onSeekRequested: seconds => {
-            root.player.seekTo(seconds);
+            root.player.endScrub(seconds);
             root.interaction();
         }
-        onScrubbingChanged: root.interaction()
+        onScrubbingChanged: {
+            if (scrubbing)
+                root.player.beginScrub();
+            root.interaction();
+        }
     }
 
     Text {
@@ -201,7 +205,7 @@ FocusScope {
                 Rectangle {
                     anchors.fill: parent
                     radius: 2
-                    color: "#45ffffff"
+                    color: "#70ffffff"
                 }
                 Rectangle {
                     width: volumeSlider.visualPosition * parent.width
