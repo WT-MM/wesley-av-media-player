@@ -9,6 +9,7 @@
 #include <QEventLoop>
 #include <QGuiApplication>
 #include <QImage>
+#include <QProcess>
 #include <QQmlComponent>
 #include <QQmlEngine>
 #include <QQuickItem>
@@ -321,6 +322,27 @@ int main(int argc, char** argv) {
   format.setSwapBehavior(QSurfaceFormat::DoubleBuffer);
   QSurfaceFormat::setDefaultFormat(format);
   QGuiApplication application(argc, argv);
+  const QString faultPrefix = QStringLiteral("--retirement-fault=");
+  QString faultCase;
+  for (const QString& argument : application.arguments()) {
+    if (argument.startsWith(faultPrefix)) {
+      faultCase = argument.mid(faultPrefix.size());
+    }
+  }
+  if (faultCase.isEmpty()) {
+    for (const QString& isolatedCase :
+         {QStringLiteral("post-fence"), QStringLiteral("worker-poll"),
+          QStringLiteral("synchronization")}) {
+      QProcess child;
+      child.setProcessChannelMode(QProcess::ForwardedChannels);
+      child.start(QCoreApplication::applicationFilePath(),
+                  {faultPrefix + isolatedCase});
+      WAM_CHECK(child.waitForStarted(5000));
+      WAM_CHECK(child.waitForFinished(30000));
+      WAM_CHECK(child.exitStatus() == QProcess::NormalExit);
+      WAM_CHECK(child.exitCode() == EXIT_SUCCESS);
+    }
+  }
   WAM_CHECK(
       wam::macos::QtGlVideoItem::verifyContextLocalVaoPolicyForTesting());
 
@@ -372,6 +394,127 @@ Item {
   video->setParentItem(host);
   video->setSize(QSizeF(400, 300));
 
+  if (!faultCase.isEmpty()) {
+    WAM_CHECK(faultCase == QStringLiteral("post-fence") ||
+              faultCase == QStringLiteral("worker-poll") ||
+              faultCase == QStringLiteral("synchronization"));
+    window.show();
+    window.requestUpdate();
+    WAM_CHECK(spinUntil([&] { return window.isSceneGraphInitialized(); },
+                        5000));
+    WAM_CHECK(window.rendererInterface()->graphicsApi() ==
+              QSGRendererInterface::OpenGL);
+
+    if (faultCase == QStringLiteral("post-fence")) {
+      const std::size_t quarantineBefore =
+          wam::macos::QtGlVideoItem::quarantinedJobsForTesting();
+      const std::uint64_t transferredFencesBefore =
+          video->transferredCoveringFencesForTesting();
+      video->failAfterFenceCreationForTesting();
+      PixelBufferCreation frame = solidBuffer(
+          kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, {80, 112, 216},
+          kCVImageBufferYCbCrMatrix_ITU_R_709_2);
+      video->submitFrame(wam::macos::FrameLease(frame.buffer));
+      CVPixelBufferRelease(frame.buffer);
+      window.requestUpdate();
+      WAM_CHECK(spinUntil(
+          [&] { return video->stats().fatalErrorSerial == 1; }, 5000));
+      WAM_CHECK(spinUntil(
+          [&] {
+            const auto current = video->stats();
+            return current.activeResourceSets == 0 &&
+                   current.pendingRetirements == 0 &&
+                   video->transferredCoveringFencesForTesting() ==
+                       transferredFencesBefore + 1;
+          },
+          5000));
+      const auto failed = video->stats();
+      WAM_CHECK(failed.importedFrames == 1);
+      WAM_CHECK(failed.renderedFrames == 0);
+      WAM_CHECK(wam::macos::QtGlVideoItem::quarantinedJobsForTesting() ==
+                quarantineBefore);
+      WAM_CHECK(
+          wam::macos::QtGlVideoItem::nativeGlSubsystemPoisonedForTesting());
+      WAM_CHECK(video->takeFatalError().has_value());
+      WAM_CHECK(!video->takeFatalError().has_value());
+    } else if (faultCase == QStringLiteral("worker-poll")) {
+      PixelBufferCreation frame = solidBuffer(
+          kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, {80, 112, 216},
+          kCVImageBufferYCbCrMatrix_ITU_R_709_2);
+      submitOwnedBufferAndGrab(video, &window, frame.buffer);
+      const std::size_t quarantineBefore =
+          wam::macos::QtGlVideoItem::quarantinedJobsForTesting();
+      video->failNextRetirementWorkerPollForTesting();
+      video->setParentItem(nullptr);
+      window.requestUpdate();
+      WAM_CHECK(spinUntil(
+          [&] {
+            const auto current = video->stats();
+            return wam::macos::QtGlVideoItem::quarantinedJobsForTesting() ==
+                       quarantineBefore + 1 &&
+                   current.pendingRetirements == 0 &&
+                   current.activeResourceSets > 0 &&
+                   current.retirementFailed &&
+                   current.fatalErrorSerial == 1 &&
+                   wam::macos::QtGlVideoItem::
+                       nativeGlSubsystemPoisonedForTesting();
+          },
+          5000));
+      const auto failed = video->stats();
+      WAM_CHECK(failed.pendingRetirements == 0);
+      WAM_CHECK(failed.activeResourceSets > 0);
+      WAM_CHECK(failed.retirementFailed);
+      WAM_CHECK(failed.fatalErrorSerial == 1);
+      WAM_CHECK(
+          wam::macos::QtGlVideoItem::nativeGlSubsystemPoisonedForTesting());
+      WAM_CHECK(video->takeFatalError().has_value());
+      WAM_CHECK(!video->takeFatalError().has_value());
+    } else {
+      PixelBufferCreation baseline = solidBuffer(
+          kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, {80, 112, 216},
+          kCVImageBufferYCbCrMatrix_ITU_R_709_2);
+      submitOwnedBufferAndGrab(video, &window, baseline.buffer);
+      const auto before = video->stats();
+      video->failNextSynchronizationForTesting();
+      PixelBufferCreation replacement = solidBuffer(
+          kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, {235, 128, 128},
+          kCVImageBufferYCbCrMatrix_ITU_R_709_2);
+      video->submitFrame(wam::macos::FrameLease(replacement.buffer));
+      CVPixelBufferRelease(replacement.buffer);
+      window.requestUpdate();
+      WAM_CHECK(spinUntil(
+          [&] {
+            return video->stats().fatalErrorSerial ==
+                   before.fatalErrorSerial + 1;
+          },
+          5000));
+      const auto failed = video->stats();
+      WAM_CHECK(failed.importedFrames == before.importedFrames);
+      WAM_CHECK(failed.activeResourceSets == before.activeResourceSets);
+      WAM_CHECK(
+          wam::macos::QtGlVideoItem::nativeGlSubsystemPoisonedForTesting());
+      WAM_CHECK(video->takeFatalError().has_value());
+      WAM_CHECK(!video->takeFatalError().has_value());
+      video->setParentItem(nullptr);
+      window.requestUpdate();
+      WAM_CHECK(spinUntil(
+          [&] {
+            const auto current = video->stats();
+            return current.activeResourceSets == 0 &&
+                   current.pendingRetirements == 0;
+          },
+          5000));
+    }
+
+    videoOwner.reset();
+    window.hide();
+    window.releaseResources();
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    std::cout << "Qt OpenGL retirement fault case passed: "
+              << faultCase.toStdString() << '\n';
+    return EXIT_SUCCESS;
+  }
+
   window.show();
   window.requestUpdate();
   WAM_CHECK(spinUntil([&] { return window.isSceneGraphInitialized(); }, 5000));
@@ -391,6 +534,50 @@ Item {
   WAM_CHECK(!blankStats.textureRectangleSupported);
   WAM_CHECK(!blankStats.acceleratedContext);
   WAM_CHECK(!video->takeFatalError().has_value());
+  WAM_CHECK(wam::macos::QtGlVideoItem::retirementServiceCountForTesting() <=
+            wam::macos::QtGlVideoItem::retirementServiceCapacityForTesting());
+  WAM_CHECK(!wam::macos::QtGlVideoItem::nativeGlSubsystemPoisonedForTesting());
+
+  // Retirement-context startup is observed asynchronously. Mask readiness
+  // after service creation and prove the render path returns without
+  // allocating resources or importing the retained frame; unmasking resumes
+  // on a later scene-graph pass without a render-thread wait.
+  auto startingOwner = std::make_unique<wam::macos::QtGlVideoItem>();
+  auto* startingItem = startingOwner.get();
+  startingItem->setParentItem(host);
+  startingItem->setSize(QSizeF(400, 300));
+  startingItem->holdRetirementServiceStartingForTesting(true);
+  PixelBufferCreation startingFrame = solidBuffer(
+      kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, {235, 128, 128},
+      kCVImageBufferYCbCrMatrix_ITU_R_709_2);
+  startingItem->submitFrame(wam::macos::FrameLease(startingFrame.buffer));
+  CVPixelBufferRelease(startingFrame.buffer);
+  window.requestUpdate();
+  WAM_CHECK(spinUntil(
+      [&] {
+        return wam::macos::QtGlVideoItem::retirementServiceCountForTesting() >
+               0;
+      },
+      5000));
+  for (int retry = 0; retry < 3; ++retry) {
+    window.requestUpdate();
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+  }
+  WAM_CHECK(startingItem->stats().importedFrames == 0);
+  WAM_CHECK(startingItem->stats().activeResourceSets == 0);
+  startingItem->holdRetirementServiceStartingForTesting(false);
+  WAM_CHECK(spinUntil(
+      [&] { return startingItem->stats().importedFrames == 1; }, 5000));
+  startingItem->setParentItem(nullptr);
+  window.requestUpdate();
+  WAM_CHECK(spinUntil(
+      [&] {
+        const auto current = startingItem->stats();
+        return current.activeResourceSets == 0 &&
+               current.pendingRetirements == 0;
+      },
+      5000));
+  startingOwner.reset();
 
   // Fail after the shared retirement context exists but before shaders/VAO or
   // plane textures do. Removing the node must clear that empty attachment so
@@ -456,6 +643,68 @@ Item {
   WAM_CHECK(video->stats().fatalErrorSerial ==
             emptyInitFailureStats.fatalErrorSerial);
   WAM_CHECK(!video->takeFatalError().has_value());
+
+  // The retirement node for the next GL resource lifetime is allocated
+  // before any shader, texture, fence, or FrameLease can exist. Failure to
+  // reserve it rejects that attempt with zero active resources, and a fresh
+  // scene-graph node can recover without quarantining an IOSurface.
+  auto reservationOwner = std::make_unique<wam::macos::QtGlVideoItem>();
+  auto* reservationItem = reservationOwner.get();
+  reservationItem->setParentItem(host);
+  reservationItem->setSize(QSizeF(400, 300));
+  PixelBufferCreation reservationFrame = solidBuffer(
+      kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, {80, 112, 216},
+      kCVImageBufferYCbCrMatrix_ITU_R_709_2);
+  submitOwnedBufferAndGrab(reservationItem, &window,
+                           reservationFrame.buffer);
+  reservationItem->flush(1);
+  window.requestUpdate();
+  WAM_CHECK(spinUntil(
+      [&] {
+        const auto current = reservationItem->stats();
+        return current.activeResourceSets == 0 &&
+               current.pendingRetirements == 0;
+      },
+      5000));
+  reservationItem->failNextRetirementJobReservationForTesting();
+  PixelBufferCreation reservationRetry = solidBuffer(
+      kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, {80, 112, 216},
+      kCVImageBufferYCbCrMatrix_ITU_R_709_2);
+  wam::macos::FrameTiming reservationRetryTiming;
+  reservationRetryTiming.generation = 1;
+  reservationItem->submitFrame(wam::macos::FrameLease(
+      reservationRetry.buffer, reservationRetryTiming));
+  CVPixelBufferRelease(reservationRetry.buffer);
+  window.requestUpdate();
+  WAM_CHECK(spinUntil(
+      [&] {
+        const auto current = reservationItem->stats();
+        return current.fatalErrorSerial == 1 &&
+               current.activeResourceSets == 0 &&
+               current.lastError.contains(
+                   QStringLiteral("retirement ownership"));
+      },
+      5000));
+  WAM_CHECK(reservationItem->takeFatalError().has_value());
+  reservationItem->setParentItem(nullptr);
+  window.requestUpdate();
+  WAM_CHECK(!window.grabWindow().isNull());
+  reservationItem->setParentItem(host);
+  reservationItem->setSize(QSizeF(400, 300));
+  window.requestUpdate();
+  WAM_CHECK(spinUntil(
+      [&] { return reservationItem->stats().lastRenderedGeneration == 1; },
+      5000));
+  reservationItem->setParentItem(nullptr);
+  window.requestUpdate();
+  WAM_CHECK(spinUntil(
+      [&] {
+        const auto current = reservationItem->stats();
+        return current.activeResourceSets == 0 &&
+               current.pendingRetirements == 0;
+      },
+      5000));
+  reservationOwner.reset();
 
   const std::array<ColorCase, 8> colorCases{{
       {"NV12 video BT.601",
@@ -1005,9 +1254,10 @@ Item {
   videoOwner.reset();
   WAM_CHECK(fatalSerialToken.load() == fatalSerialBeforeItemDestruction);
 
-  // The impossible lost-service branch must truly quarantine ownership. A
-  // misleading fail-closed message is insufficient if the local FrameLease
-  // destructs and returns its IOSurface to the decoder pool.
+  // A retirement-queue failure occurs after GL names and the IOSurface lease
+  // have moved out of the node. The intrusive job must therefore enter the
+  // allocation-free process quarantine without destroying that lease. The
+  // first such failure permanently disables new native GL admission.
   const std::size_t quarantineBefore =
       wam::macos::QtGlVideoItem::quarantinedJobsForTesting();
   auto quarantineOwner = std::make_unique<wam::macos::QtGlVideoItem>();
@@ -1019,7 +1269,8 @@ Item {
       kCVImageBufferYCbCrMatrix_ITU_R_709_2);
   submitOwnedBufferAndGrab(quarantineItem, &window,
                            quarantineFrame.buffer);
-  quarantineItem->strandRetirementServiceForTesting();
+  quarantineItem->failNextRetirementEnqueueForTesting();
+  quarantineItem->setParentItem(nullptr);
   window.requestUpdate();
   WAM_CHECK(spinUntil(
       [&] {
@@ -1030,16 +1281,33 @@ Item {
       5000));
   const auto quarantineStats = quarantineItem->stats();
   WAM_CHECK(quarantineStats.fatalErrorSerial == 1);
+  WAM_CHECK(quarantineStats.pendingRetirements == 0);
   fatalError = quarantineItem->takeFatalError();
   WAM_CHECK(fatalError.has_value());
-  WAM_CHECK(fatalError->contains(
-      QStringLiteral("lost their shared retirement context")));
   WAM_CHECK(!quarantineItem->takeFatalError().has_value());
   WAM_CHECK(quarantineItem->stats().activeResourceSets > 0);
-  quarantineItem->setParentItem(nullptr);
-  window.requestUpdate();
-  WAM_CHECK(!window.grabWindow().isNull());
+  WAM_CHECK(wam::macos::QtGlVideoItem::nativeGlSubsystemPoisonedForTesting());
+  WAM_CHECK(wam::macos::QtGlVideoItem::retirementServiceCountForTesting() <=
+            wam::macos::QtGlVideoItem::retirementServiceCapacityForTesting());
   quarantineOwner.reset();
+
+  auto blockedOwner = std::make_unique<wam::macos::QtGlVideoItem>();
+  auto* blockedItem = blockedOwner.get();
+  blockedItem->setParentItem(host);
+  blockedItem->setSize(QSizeF(400, 300));
+  PixelBufferCreation blockedFrame = solidBuffer(
+      kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, {235, 128, 128},
+      kCVImageBufferYCbCrMatrix_ITU_R_709_2);
+  blockedItem->submitFrame(wam::macos::FrameLease(blockedFrame.buffer));
+  CVPixelBufferRelease(blockedFrame.buffer);
+  window.requestUpdate();
+  WAM_CHECK(spinUntil(
+      [&] { return blockedItem->stats().fatalErrorSerial == 1; }, 5000));
+  WAM_CHECK(blockedItem->stats().activeResourceSets == 0);
+  WAM_CHECK(blockedItem->stats().importedFrames == 0);
+  blockedItem->setParentItem(nullptr);
+  window.requestUpdate();
+  blockedOwner.reset();
 
   migrationWindow.hide();
   migrationWindow.releaseResources();

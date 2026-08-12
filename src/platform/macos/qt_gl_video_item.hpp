@@ -99,12 +99,24 @@ class QtGlVideoItem final : public QQuickItem {
   void failNextImportForTesting();
   void failSecondPlaneImportForTesting();
   void failAfterRetirementServiceCreationForTesting();
+  void failNextRetirementJobReservationForTesting();
+  void failNextRetirementEnqueueForTesting();
+  void failNextRetirementWorkerPollForTesting();
+  void failAfterFenceCreationForTesting();
+  void failNextSynchronizationForTesting();
+  void holdRetirementServiceStartingForTesting(bool hold);
   // Exercises the teardown path without depending on GPU scheduling luck.
   void holdRetirementsForTesting(bool hold);
   // Forces the impossible no-service teardown branch. The gate verifies that
   // its IOSurface lease is quarantined rather than released unsafely.
   void strandRetirementServiceForTesting();
   [[nodiscard]] static std::size_t quarantinedJobsForTesting() noexcept;
+  [[nodiscard]] static std::size_t retirementServiceCountForTesting() noexcept;
+  [[nodiscard]] static std::size_t
+  retirementServiceCapacityForTesting() noexcept;
+  [[nodiscard]] static bool nativeGlSubsystemPoisonedForTesting() noexcept;
+  [[nodiscard]] std::uint64_t
+  transferredCoveringFencesForTesting() const noexcept;
   // Proves VAO names are deleted only in their exact origin CGL context,
   // including same-share-group and different-share-group collisions.
   [[nodiscard]] static bool verifyContextLocalVaoPolicyForTesting();

@@ -425,7 +425,7 @@ if(BUILD_TESTING)
       add_test(NAME macos_native_qt_gl_compositor
         COMMAND wam_native_qt_gl_compositor_test)
       set_tests_properties(macos_native_qt_gl_compositor PROPERTIES
-        TIMEOUT 30)
+        TIMEOUT 120)
 
       # One-shot native action executor gate. The session, Qt output adapter,
       # and OpenGL item remain absent from every shipping target.
