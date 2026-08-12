@@ -151,6 +151,17 @@ std::optional<wam::macos::NativeVideoPrepareOutcome> waitForPreparation(
         return outcome.has_value();
       },
       8000);
+  if (ready && outcome.has_value()) {
+    if (outcome->result == wam::macos::NativeVideoPrepareResult::Ready) {
+      WAM_CHECK(outcome->generation != 0);
+      WAM_CHECK(outcome->generation == pipeline.stats().generation);
+    } else {
+      // Preparation request sequencing is intentionally private. A terminal
+      // outcome that cannot be started must never leak its request ordinal as
+      // a decoded-frame/output generation.
+      WAM_CHECK(outcome->generation == 0);
+    }
+  }
   return ready ? std::move(outcome) : std::nullopt;
 }
 
@@ -751,6 +762,325 @@ void verifyFailureNotificationCopyRetries(QQuickWindow& window) {
   QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
 }
 
+void verifySchedulingAllocationFailures(QQuickWindow& window) {
+  std::string error;
+
+  // A functor-allocation throw before an accepted GUI drain rolls back the
+  // exact token and sole pending frame, returns a terminal dispatch result,
+  // and leaves no phantom queued delivery.
+  {
+    auto item = std::make_unique<wam::macos::QtGlVideoItem>();
+    item->setParentItem(window.contentItem());
+    item->setSize(QSizeF(480, 270));
+    auto output = wam::macos::NativeQtGlOutput::create(item.get(), &error);
+    WAM_CHECK_DETAIL(output != nullptr, error);
+    std::atomic<unsigned> failures{0};
+    output->setFailureHandler([&](std::string) {
+      failures.fetch_add(1, std::memory_order_release);
+    });
+    pumpEventsFor(20);
+    output->throwNextGuiDrainInvokeForTesting();
+    WAM_CHECK(output->dispatch(makeFrame(0, 120), &error) ==
+              wam::macos::NativeScheduledFrameDispatchResult::Failed);
+    WAM_CHECK(!output->stats().deliveryQueued);
+    WAM_CHECK(output->stats().deliveredFrames == 0);
+    WAM_CHECK(failures.load(std::memory_order_acquire) == 1);
+    WAM_CHECK(output->dispatch(makeFrame(0, 130), &error) ==
+              wam::macos::NativeScheduledFrameDispatchResult::Failed);
+    WAM_CHECK(failures.load(std::memory_order_acquire) == 1);
+    output->close(1);
+    output.reset();
+    item->setParentItem(nullptr);
+    item.reset();
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+  }
+
+  // An unexpected throw after Qt accepted the drain request is caught at the
+  // queued QObject boundary. Its exact token and frame are retired before the
+  // fixed first-wins failure is delivered.
+  {
+    auto item = std::make_unique<wam::macos::QtGlVideoItem>();
+    item->setParentItem(window.contentItem());
+    item->setSize(QSizeF(480, 270));
+    auto output = wam::macos::NativeQtGlOutput::create(item.get(), &error);
+    WAM_CHECK_DETAIL(output != nullptr, error);
+    std::atomic<unsigned> failures{0};
+    output->setFailureHandler([&](std::string) {
+      failures.fetch_add(1, std::memory_order_release);
+    });
+    pumpEventsFor(20);
+    output->throwInNextAcceptedGuiDrainForTesting();
+    WAM_CHECK(output->dispatch(makeFrame(0, 140), &error) ==
+              wam::macos::NativeScheduledFrameDispatchResult::Dispatched);
+    WAM_CHECK(spinUntil([&] {
+      return failures.load(std::memory_order_acquire) == 1;
+    }));
+    WAM_CHECK(!output->stats().deliveryQueued);
+    WAM_CHECK(output->stats().deliveredFrames == 0);
+    output->close(1);
+    output.reset();
+    item->setParentItem(nullptr);
+    item.reset();
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+  }
+
+  // The immediate render observer retries one allocation failure without
+  // letting any exception or user callback cross afterRendering.
+  {
+    auto item = std::make_unique<wam::macos::QtGlVideoItem>();
+    item->setParentItem(window.contentItem());
+    item->setSize(QSizeF(480, 270));
+    auto output = wam::macos::NativeQtGlOutput::create(item.get(), &error);
+    WAM_CHECK_DETAIL(output != nullptr, error);
+    std::atomic<unsigned> failures{0};
+    output->setFailureHandler([&](std::string) {
+      failures.fetch_add(1, std::memory_order_release);
+    });
+    pumpEventsFor(20);
+    output->throwNextImmediateObservationInvokeForTesting();
+    item->failAfterRetirementServiceCreationForTesting();
+    item->submitFrame(makeFrame(0, 150));
+    window.requestUpdate();
+    WAM_CHECK(spinUntil([&] {
+      return failures.load(std::memory_order_acquire) == 1;
+    }));
+    WAM_CHECK(!output->immediateObservationQueuedForTesting());
+    WAM_CHECK(output->stats().fatalErrorSerial == 1);
+    output->close(1);
+    output.reset();
+    item->setParentItem(nullptr);
+    item.reset();
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+  }
+
+  // If both bounded render-thread queue attempts throw, the callback performs
+  // atomics only. A later controller observation consumes the fixed terminal
+  // marker exactly once and leaves the coalescing bit clear. The watchdog was
+  // established before activation, so even a hidden/paused path needs no new
+  // allocation or later public call to deliver the failure on the GUI thread.
+  {
+    auto item = std::make_unique<wam::macos::QtGlVideoItem>();
+    item->setParentItem(window.contentItem());
+    item->setSize(QSizeF(480, 270));
+    auto output = wam::macos::NativeQtGlOutput::create(item.get(), &error);
+    WAM_CHECK_DETAIL(output != nullptr, error);
+    std::atomic<unsigned> failures{0};
+    output->setFailureHandler([&](std::string) {
+      failures.fetch_add(1, std::memory_order_release);
+    });
+    pumpEventsFor(20);
+    output->throwNextTwoImmediateObservationInvokesForTesting();
+    item->failAfterRetirementServiceCreationForTesting();
+    item->submitFrame(makeFrame(0, 155));
+    window.requestUpdate();
+    WAM_CHECK(spinUntil([&] {
+      return item->stats().fatalErrorSerial == 1 &&
+             !output->immediateObservationQueuedForTesting();
+    }));
+    WAM_CHECK(spinUntil([&] {
+      return failures.load(std::memory_order_acquire) == 1;
+    }));
+    const auto terminalStats = output->stats();
+    WAM_CHECK(terminalStats.fatalErrorSerial == 1);
+    (void)output->stats();
+    WAM_CHECK(failures.load(std::memory_order_acquire) == 1);
+    output->close(1);
+    output.reset();
+    item->setParentItem(nullptr);
+    item.reset();
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+  }
+
+  // Timer allocation failure rolls the poll bit back and terminalizes the
+  // bridge exactly once instead of stranding transient retirement polling.
+  {
+    auto item = std::make_unique<wam::macos::QtGlVideoItem>();
+    item->setParentItem(window.contentItem());
+    item->setSize(QSizeF(480, 270));
+    auto output = wam::macos::NativeQtGlOutput::create(item.get(), &error);
+    WAM_CHECK_DETAIL(output != nullptr, error);
+    std::atomic<unsigned> failures{0};
+    output->setFailureHandler([&](std::string) {
+      failures.fetch_add(1, std::memory_order_release);
+    });
+    pumpEventsFor(20);
+    output->throwNextObservationPollForTesting();
+    WAM_CHECK(output->flush(1, &error));
+    WAM_CHECK(failures.load(std::memory_order_acquire) == 1);
+    WAM_CHECK(!output->observationPollQueuedForTesting());
+    WAM_CHECK(output->stats().fatalErrorSerial == 1);
+    output->close(2);
+    output.reset();
+    item->setParentItem(nullptr);
+    item.reset();
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+  }
+}
+
+void verifyCallbackSelfReleaseAndWindowReconnect(QQuickWindow& window) {
+  std::string error;
+
+  // Failure delivery may release the final public output owner from inside a
+  // GuiContext-owned queued callback. State survives the callback tail and
+  // QObject destruction remains deferred until Qt unwinds event delivery.
+  {
+    auto item = std::make_unique<wam::macos::QtGlVideoItem>();
+    item->setParentItem(window.contentItem());
+    item->setSize(QSizeF(480, 270));
+    auto output = wam::macos::NativeQtGlOutput::create(item.get(), &error);
+    WAM_CHECK_DETAIL(output != nullptr, error);
+    std::atomic<unsigned> failures{0};
+    output->setFailureHandler([&](std::string) {
+      failures.fetch_add(1, std::memory_order_release);
+      output.reset();
+    });
+    pumpEventsFor(20);
+    output->throwInNextAcceptedGuiDrainForTesting();
+    WAM_CHECK(output->dispatch(makeFrame(0, 165), &error) ==
+              wam::macos::NativeScheduledFrameDispatchResult::Dispatched);
+    WAM_CHECK(spinUntil([&] {
+      return failures.load(std::memory_order_acquire) == 1 && !output;
+    }));
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+    auto replacement =
+        wam::macos::NativeQtGlOutput::create(item.get(), &error);
+    WAM_CHECK_DETAIL(replacement != nullptr, error);
+    replacement->close(1);
+    replacement.reset();
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+    item->setParentItem(nullptr);
+    item.reset();
+  }
+
+  // The applied-start callback can likewise release the final public owner
+  // from an accepted queued drain. State and GuiContext remain valid until the
+  // callback unwinds, and a replacement is possible only after deferred
+  // QObject deletion clears the item lease.
+  {
+    auto item = std::make_unique<wam::macos::QtGlVideoItem>();
+    item->setParentItem(window.contentItem());
+    item->setSize(QSizeF(480, 270));
+    auto output = wam::macos::NativeQtGlOutput::create(item.get(), &error);
+    WAM_CHECK_DETAIL(output != nullptr, error);
+    std::atomic<unsigned> acknowledgments{0};
+    bool accepted = false;
+    std::thread starter([&] {
+      accepted = output->startGeneration(
+          1,
+          [&](wam::macos::NativeScheduledFrameStartAck) {
+            acknowledgments.fetch_add(1, std::memory_order_release);
+            output.reset();
+          },
+          &error);
+    });
+    starter.join();
+    WAM_CHECK_DETAIL(accepted, error);
+    WAM_CHECK(spinUntil([&] {
+      return acknowledgments.load(std::memory_order_acquire) == 1 &&
+             !output;
+    }));
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+    auto replacement =
+        wam::macos::NativeQtGlOutput::create(item.get(), &error);
+    WAM_CHECK_DETAIL(replacement != nullptr, error);
+    replacement->close(2);
+    replacement.reset();
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+    item->setParentItem(nullptr);
+    item.reset();
+  }
+
+  // A windowChanged reconnect allocation failure never crosses the Qt signal.
+  // The output terminalizes and keeps the existing observer/lease fail closed.
+  {
+    auto item = std::make_unique<wam::macos::QtGlVideoItem>();
+    item->setParentItem(window.contentItem());
+    item->setSize(QSizeF(480, 270));
+    auto output = wam::macos::NativeQtGlOutput::create(item.get(), &error);
+    WAM_CHECK_DETAIL(output != nullptr, error);
+    std::atomic<unsigned> failures{0};
+    output->setFailureHandler([&](std::string) {
+      failures.fetch_add(1, std::memory_order_release);
+    });
+    pumpEventsFor(20);
+    output->throwNextWindowObservationConnectForTesting();
+    item->setParentItem(nullptr);
+    item->setParentItem(window.contentItem());
+    WAM_CHECK(spinUntil([&] {
+      return failures.load(std::memory_order_acquire) == 1;
+    }));
+    WAM_CHECK(output->stats().fatalErrorSerial == 1);
+    WAM_CHECK(output->dispatch(makeFrame(0, 170), &error) ==
+              wam::macos::NativeScheduledFrameDispatchResult::Failed);
+    output->close(1);
+    output.reset();
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+    item->setParentItem(nullptr);
+    item.reset();
+  }
+}
+
+void verifyFinalFlushSchedulingFailures(QQuickWindow& window) {
+  std::string error;
+
+  // If both off-thread flush queues fail and finalizer functor construction
+  // throws, deferred GuiContext destruction remains the exact GUI-thread flush
+  // owner. No exception crosses close() or the noexcept custom deleter.
+  {
+    auto item = std::make_unique<wam::macos::QtGlVideoItem>();
+    item->setParentItem(window.contentItem());
+    item->setSize(QSizeF(480, 270));
+    auto output = wam::macos::NativeQtGlOutput::create(item.get(), &error);
+    WAM_CHECK_DETAIL(output != nullptr, error);
+    output->failNextGuiInvokeForTesting();
+    output->throwNextFinalFlushInvokeForTesting();
+    std::thread closer([owned = std::move(output)]() mutable {
+      owned->close(1);
+      owned.reset();
+    });
+    closer.join();
+    WAM_CHECK(spinUntil([&] {
+      return item->stats().acceptedGeneration >= 1;
+    }));
+    auto replacement =
+        wam::macos::NativeQtGlOutput::create(item.get(), &error);
+    WAM_CHECK_DETAIL(replacement != nullptr, error);
+    replacement->close(item->stats().acceptedGeneration + 1);
+    replacement.reset();
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+    item->setParentItem(nullptr);
+    item.reset();
+  }
+
+  // If Qt rejects both final-flush queues and even deferred deletion throws,
+  // the complete context is quarantined: the item lease stays true and a
+  // replacement adapter is denied rather than risking off-thread destruction
+  // or releasing an unflushed retained frame.
+  {
+    auto item = std::make_unique<wam::macos::QtGlVideoItem>();
+    item->setParentItem(window.contentItem());
+    item->setSize(QSizeF(480, 270));
+    auto output = wam::macos::NativeQtGlOutput::create(item.get(), &error);
+    WAM_CHECK_DETAIL(output != nullptr, error);
+    output->failNextGuiInvokeForTesting();
+    output->failNextFinalFlushInvokeForTesting();
+    output->throwNextGuiContextDeleteLaterForTesting();
+    std::thread closer([owned = std::move(output)]() mutable {
+      owned->close(1);
+      owned.reset();
+    });
+    closer.join();
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+    WAM_CHECK(wam::macos::NativeQtGlOutput::create(item.get(), &error) ==
+              nullptr);
+    WAM_CHECK(error.find("already has a live native output") !=
+              std::string::npos);
+    item->setParentItem(nullptr);
+    item.reset();
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+  }
+}
+
 void verifyFailureAfterWorkerCreation(
     QQuickWindow& window, const std::filesystem::path& fixture) {
   std::string error;
@@ -1125,6 +1455,9 @@ int main(int argc, char** argv) {
   verifySameGenerationStartStillAcknowledges(window);
   verifyHiddenLatePresenterFailure(window);
   verifyFailureNotificationCopyRetries(window);
+  verifySchedulingAllocationFailures(window);
+  verifyCallbackSelfReleaseAndWindowReconnect(window);
+  verifyFinalFlushSchedulingFailures(window);
   verifyFailureAfterWorkerCreation(window, fixture);
   verifyStaleStartAcknowledgmentAfterStop(fixture);
   verifyDirectSchedulerFailureRetires(window, fixture);
@@ -1163,9 +1496,11 @@ int main(int argc, char** argv) {
   WAM_CHECK(beforeStart.displayLinkTicks == 0);
   WAM_CHECK(beforeStart.decoder.outputInterop ==
             wam::macos::VideoToolboxOutputInterop::OpenGL);
+  WAM_CHECK(preparedOutcome->generation == beforeStart.generation);
 
   const auto firstGeneration = pipeline->startPrepared(&error);
   WAM_CHECK_DETAIL(firstGeneration.has_value(), error);
+  WAM_CHECK(*firstGeneration == preparedOutcome->generation);
   WAM_CHECK(pipelineOutput->stats().acceptedGeneration == *firstGeneration);
   pipeline->updateAudioClock(0.0, true, 1.0);
   WAM_CHECK(spinUntil([&] {
@@ -1194,6 +1529,8 @@ int main(int argc, char** argv) {
   const std::uint64_t stoppedGeneration = pipeline->stop();
   WAM_CHECK(stoppedGeneration == *seekGeneration + 1);
   WAM_CHECK(pipelineOutput->stats().acceptedGeneration == stoppedGeneration);
+  const std::uint64_t firstOutputStoppedGeneration =
+      pipelineOutput->stats().acceptedGeneration;
   WAM_CHECK(!pipeline->active());
   WAM_CHECK(spinUntil([&] { return !pipeline->stats().stopping; }, 10000));
 
@@ -1208,12 +1545,20 @@ int main(int argc, char** argv) {
       secondOutcome->result == wam::macos::NativeVideoPrepareResult::Ready,
       secondOutcome->error);
   const auto secondPrepared = pipeline->stats();
+  WAM_CHECK(secondOutcome->generation == secondPrepared.generation);
+  WAM_CHECK(secondOutcome->generation > *firstGeneration);
+  WAM_CHECK(secondOutcome->generation > stoppedGeneration);
+  WAM_CHECK(secondOutcome->generation > firstOutputStoppedGeneration);
+  WAM_CHECK(pipelineOutput->stats().acceptedGeneration ==
+            firstOutputStoppedGeneration);
   WAM_CHECK(secondPrepared.actuallyRenderedFrames == 0);
   WAM_CHECK(secondPrepared.scheduledOutput.actuallyRenderedFrames > 0);
   WAM_CHECK(secondPrepared.compressedSamplesSubmitted == 0);
   const auto secondGeneration = pipeline->startPrepared(&error);
   WAM_CHECK_DETAIL(secondGeneration.has_value(), error);
-  WAM_CHECK(*secondGeneration > stoppedGeneration);
+  WAM_CHECK(*secondGeneration == secondOutcome->generation);
+  WAM_CHECK(pipeline->stats().generation == *secondGeneration);
+  WAM_CHECK(pipelineOutput->stats().acceptedGeneration == *secondGeneration);
   pipeline->updateAudioClock(0.0, true, 1.0);
   WAM_CHECK(spinUntil([&] {
     const auto stats = pipeline->stats();

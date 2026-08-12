@@ -79,6 +79,32 @@ struct NativeQtGlOutput::State
       if (item == nullptr) {
         return;
       }
+      deferredSchedulingWatchdog_.setInterval(50);
+      deferredSchedulingWatchdog_.setSingleShot(false);
+      deferredWatchdogConnection_ = QObject::connect(
+          &deferredSchedulingWatchdog_, &QTimer::timeout, this,
+          [this, weakState = state_] {
+            try {
+              if (auto state = weakState.lock()) {
+                state->consumeDeferredSchedulingFailureNoexcept();
+              } else {
+                deferredSchedulingWatchdog_.stop();
+              }
+            } catch (...) {
+              // Never unwind through Qt's timer delivery boundary.
+            }
+          });
+      if (!deferredWatchdogConnection_) {
+        throw std::bad_alloc();
+      }
+      // This allocation-free repeating timer is established before native
+      // activation. It normally performs one atomic load per tick, and is the
+      // guaranteed GUI-thread consumer if both bounded afterRendering functor
+      // queues fail while a hidden or paused item produces no further work.
+      deferredSchedulingWatchdog_.start();
+      if (!deferredSchedulingWatchdog_.isActive()) {
+        throw std::bad_alloc();
+      }
       QObject::connect(
           item, &QQuickItem::windowChanged, this,
           [this](QQuickWindow* window) { setWindow(window); });
@@ -92,8 +118,11 @@ struct NativeQtGlOutput::State
     }
 
     ~GuiContext() override {
-      if (afterRenderingConnection_) {
-        QObject::disconnect(afterRenderingConnection_);
+      try {
+        if (afterRenderingConnection_) {
+          QObject::disconnect(afterRenderingConnection_);
+        }
+      } catch (...) {
       }
       if (QtGlVideoItem* item = item_.data()) {
         // close() may be followed immediately by dropping the last adapter
@@ -166,35 +195,103 @@ struct NativeQtGlOutput::State
       }
     }
 
-   private:
-    void setWindow(QQuickWindow* window) {
-      if (afterRenderingConnection_) {
-        QObject::disconnect(afterRenderingConnection_);
-        afterRenderingConnection_ = {};
+#if defined(WAM_NATIVE_GL_VIDEO_TESTING)
+    void throwNextDeferredDeletionForTesting() noexcept {
+      throwNextDeferredDeletion_.store(true, std::memory_order_release);
+    }
+#endif
+
+    void scheduleDeferredDeletionNoexcept() noexcept {
+      try {
+#if defined(WAM_NATIVE_GL_VIDEO_TESTING)
+        if (throwNextDeferredDeletion_.exchange(
+                false, std::memory_order_acq_rel)) {
+          throw std::bad_alloc();
+        }
+#endif
+        deleteLater();
+      } catch (...) {
+        // Synchronous/off-thread QObject destruction would be unsafe,
+        // especially while a final-flush obligation is armed. Deliberately
+        // quarantine this complete context for the process lifetime. It owns
+        // no FrameLease; only the QObject, output-property lease, and final-
+        // flush obligation remain, while QtGlVideoItem safely owns any
+        // retained frame.
       }
+    }
+
+   private:
+    void setWindow(QQuickWindow* window) noexcept {
       if (window == nullptr) {
+        try {
+          if (afterRenderingConnection_) {
+            QObject::disconnect(afterRenderingConnection_);
+            afterRenderingConnection_ = {};
+          }
+        } catch (...) {
+          reportObservationConnectionFailure();
+        }
         return;
       }
-      afterRenderingConnection_ = QObject::connect(
-          window, &QQuickWindow::afterRendering, this,
-          [weakState = state_,
-           fatalErrorSerialToken = fatalErrorSerialToken_,
-           observedPresenterFatalSerial =
-               observedPresenterFatalSerial_] {
-            // This direct render-thread callback deliberately performs only
-            // two acquire loads on shared atomic telemetry. Normal frames do
-            // not lock State, touch a QObject/QPointer, sample full presenter
-            // stats, allocate, or queue work on the GUI thread.
-            if (fatalErrorSerialToken.load() ==
-                observedPresenterFatalSerial->load(
-                    std::memory_order_acquire)) {
-              return;
-            }
-            if (auto state = weakState.lock()) {
-              state->queueImmediateObservation();
-            }
-          },
-          Qt::DirectConnection);
+
+      try {
+#if defined(WAM_NATIVE_GL_VIDEO_TESTING)
+        if (auto state = state_.lock();
+            state && state->throwNextWindowObservationConnect.exchange(
+                         false, std::memory_order_acq_rel)) {
+          throw std::bad_alloc();
+        }
+#endif
+        // Establish the replacement before disconnecting the old window.
+        // If QObject::connect allocates and throws, the previous render-thread
+        // observer remains armed until the bridge fails closed below.
+        const QMetaObject::Connection replacement = QObject::connect(
+            window, &QQuickWindow::afterRendering, this,
+            [weakState = state_,
+             fatalErrorSerialToken = fatalErrorSerialToken_,
+             observedPresenterFatalSerial =
+                 observedPresenterFatalSerial_] {
+              try {
+                // This direct render-thread callback deliberately performs
+                // only two acquire loads on shared atomic telemetry. Normal
+                // frames do not lock State, touch a QObject/QPointer, sample
+                // full presenter stats, allocate, or queue GUI work.
+                if (fatalErrorSerialToken.load() ==
+                    observedPresenterFatalSerial->load(
+                        std::memory_order_acquire)) {
+                  return;
+                }
+                if (auto state = weakState.lock()) {
+                  state->queueImmediateObservation();
+                }
+              } catch (...) {
+                // Never unwind through QQuickWindow::afterRendering. All
+                // expected work above is noexcept; this is the outer Qt
+                // boundary for an injected or future implementation defect.
+              }
+            },
+            Qt::DirectConnection);
+        if (!replacement) {
+          reportObservationConnectionFailure();
+          return;
+        }
+        if (afterRenderingConnection_) {
+          QObject::disconnect(afterRenderingConnection_);
+        }
+        afterRenderingConnection_ = replacement;
+      } catch (...) {
+        reportObservationConnectionFailure();
+      }
+    }
+
+    void reportObservationConnectionFailure() noexcept {
+      try {
+        if (auto state = state_.lock()) {
+          state->failSchedulingNoexcept(
+              "Qt could not connect the native video render observer");
+        }
+      } catch (...) {
+      }
     }
 
     QPointer<QtGlVideoItem> item_;
@@ -203,9 +300,14 @@ struct NativeQtGlOutput::State
     QtGlFatalErrorSerialToken fatalErrorSerialToken_;
     std::shared_ptr<const std::atomic<std::uint64_t>>
         observedPresenterFatalSerial_;
+    QTimer deferredSchedulingWatchdog_;
+    QMetaObject::Connection deferredWatchdogConnection_;
     QMetaObject::Connection afterRenderingConnection_;
     std::atomic<std::uint64_t> finalFlushGeneration_{0};
     std::atomic<bool> finalFlushRequired_{false};
+#if defined(WAM_NATIVE_GL_VIDEO_TESTING)
+    std::atomic<bool> throwNextDeferredDeletion_{false};
+#endif
   };
 
   mutable std::mutex mutex;
@@ -250,9 +352,22 @@ struct NativeQtGlOutput::State
   std::atomic<bool> observationArmed{false};
   std::atomic<bool> observationQueued{false};
   std::atomic<bool> observationPollQueued{false};
+  enum class DeferredSchedulingFailure : std::uint8_t {
+    None,
+    ImmediateObservation,
+  };
+  std::atomic<DeferredSchedulingFailure> deferredSchedulingFailure{
+      DeferredSchedulingFailure::None};
 #if defined(WAM_NATIVE_GL_VIDEO_TESTING)
   std::atomic<bool> failNextFailureNotificationCopy{false};
   std::atomic<bool> failNextGuiInvoke{false};
+  std::atomic<unsigned> throwImmediateObservationInvokes{0};
+  std::atomic<bool> throwNextGuiDrainInvoke{false};
+  std::atomic<bool> throwInNextAcceptedGuiDrain{false};
+  std::atomic<bool> throwNextObservationPoll{false};
+  std::atomic<bool> throwNextWindowObservationConnect{false};
+  std::atomic<bool> failNextFinalFlushInvoke{false};
+  std::atomic<bool> throwNextFinalFlushInvoke{false};
 #endif
 
   void updateObservationArmLocked() noexcept {
@@ -267,20 +382,58 @@ struct NativeQtGlOutput::State
         observationQueued.exchange(true, std::memory_order_acq_rel)) {
       return;
     }
-    const std::weak_ptr<State> weakState = weak_from_this();
-    const bool queued = QMetaObject::invokeMethod(
-        guiContext.get(),
-        [weakState] {
-          if (auto retained = weakState.lock()) {
-            retained->observationQueued.store(false,
-                                               std::memory_order_release);
-            retained->observePresenterOnGui();
-          }
-        },
-        Qt::QueuedConnection);
-    if (!queued) {
-      observationQueued.store(false, std::memory_order_release);
+    for (unsigned attempt = 0; attempt != 2; ++attempt) {
+      bool queued = false;
+      try {
+        const std::weak_ptr<State> weakState = weak_from_this();
+#if defined(WAM_NATIVE_GL_VIDEO_TESTING)
+        unsigned remaining =
+            throwImmediateObservationInvokes.load(std::memory_order_acquire);
+        while (remaining != 0 &&
+               !throwImmediateObservationInvokes.compare_exchange_weak(
+                   remaining, remaining - 1, std::memory_order_acq_rel,
+                   std::memory_order_acquire)) {
+        }
+        if (remaining != 0) {
+          throw std::bad_alloc();
+        }
+#endif
+        queued = QMetaObject::invokeMethod(
+            guiContext.get(),
+            [weakState] {
+              try {
+                if (auto retained = weakState.lock()) {
+                  retained->observationQueued.store(
+                      false, std::memory_order_release);
+                  retained->observePresenterOnGui();
+                }
+              } catch (...) {
+              }
+            },
+            Qt::QueuedConnection);
+      } catch (...) {
+        queued = false;
+      }
+      if (queued) {
+        return;
+      }
+      // Keep ownership of the coalescing bit across the one bounded retry.
+      // Publishing false between attempts would let another afterRendering
+      // callback queue a competing observation.
+      if (attempt == 0 && observationArmed.load(std::memory_order_acquire)) {
+        continue;
+      }
+      break;
     }
+    // Both bounded attempts failed. This method can run inside
+    // QQuickWindow::afterRendering, so terminal publication remains atomics-
+    // only; the next public/controller call consumes it under State::mutex.
+    observationQueued.store(false, std::memory_order_release);
+    DeferredSchedulingFailure expected = DeferredSchedulingFailure::None;
+    (void)deferredSchedulingFailure.compare_exchange_strong(
+        expected, DeferredSchedulingFailure::ImmediateObservation,
+        std::memory_order_acq_rel, std::memory_order_acquire);
+    observationArmed.store(false, std::memory_order_release);
   }
 
   [[nodiscard]] std::pair<FailureHandler, std::string>
@@ -323,6 +476,86 @@ struct NativeQtGlOutput::State
     return takeFailureNotificationLocked();
   }
 
+  [[nodiscard]] std::pair<FailureHandler, std::string> latchFailureLocked(
+      const char* message) noexcept {
+    if (!failureLatched) {
+      failureLatched = true;
+      try {
+        failureMessage = message;
+      } catch (...) {
+        try {
+          failureMessage = "native Qt OpenGL output failed";
+        } catch (...) {
+        }
+      }
+      if (fatalErrorSerial != std::numeric_limits<std::uint64_t>::max()) {
+        ++fatalErrorSerial;
+      }
+    }
+    return takeFailureNotificationLocked();
+  }
+
+  void failSchedulingNoexcept(const char* message) noexcept {
+    std::pair<FailureHandler, std::string> notify;
+    try {
+      {
+        std::lock_guard lock(mutex);
+        if (closed) {
+          return;
+        }
+        notify = latchFailureLocked(message);
+        transientObservation = false;
+        updateObservationArmLocked();
+      }
+      invokeFailureNoexcept(std::move(notify.first),
+                            std::move(notify.second));
+    } catch (...) {
+      // The scheduling path is already unusable. At minimum, disarm the
+      // render callback so a secondary exception cannot repeatedly cross a
+      // Qt boundary.
+      observationArmed.store(false, std::memory_order_release);
+    }
+  }
+
+  [[nodiscard]] std::pair<FailureHandler, std::string>
+  consumeDeferredSchedulingFailureLocked() noexcept {
+    switch (deferredSchedulingFailure.exchange(
+        DeferredSchedulingFailure::None, std::memory_order_acq_rel)) {
+      case DeferredSchedulingFailure::None:
+        return {};
+      case DeferredSchedulingFailure::ImmediateObservation: {
+        auto notify = latchFailureLocked(
+            "Qt could not queue native video presenter observation");
+        transientObservation = false;
+        updateObservationArmLocked();
+        return notify;
+      }
+    }
+    auto notify = latchFailureLocked(
+        "native Qt OpenGL observation scheduling failed");
+    transientObservation = false;
+    updateObservationArmLocked();
+    return notify;
+  }
+
+  void consumeDeferredSchedulingFailureNoexcept() noexcept {
+    if (deferredSchedulingFailure.load(std::memory_order_acquire) ==
+        DeferredSchedulingFailure::None) {
+      return;
+    }
+    std::pair<FailureHandler, std::string> notify;
+    try {
+      {
+        std::lock_guard lock(mutex);
+        notify = consumeDeferredSchedulingFailureLocked();
+      }
+      invokeFailureNoexcept(std::move(notify.first),
+                            std::move(notify.second));
+    } catch (...) {
+      observationArmed.store(false, std::memory_order_release);
+    }
+  }
+
   [[nodiscard]] bool queueDrainLocked(std::string* error) noexcept {
     if (queuedDrainToken != 0) {
       return true;
@@ -333,20 +566,34 @@ struct NativeQtGlOutput::State
     }
     const std::uint64_t token = nextRequestSerial;
     queuedDrainToken = token;
-    const std::weak_ptr<State> weakState = weak_from_this();
     bool queued = false;
+    try {
+      const std::weak_ptr<State> weakState = weak_from_this();
 #if defined(WAM_NATIVE_GL_VIDEO_TESTING)
-    if (!failNextGuiInvoke.exchange(false, std::memory_order_acq_rel))
+      if (throwNextGuiDrainInvoke.exchange(false,
+                                           std::memory_order_acq_rel)) {
+        throw std::bad_alloc();
+      }
+      if (failNextGuiInvoke.exchange(false, std::memory_order_acq_rel)) {
+        queued = false;
+      } else
 #endif
-    {
+      {
       queued = QMetaObject::invokeMethod(
           guiContext.get(),
           [weakState, token] {
             if (auto state = weakState.lock()) {
-              state->drainOnGui(token);
+              try {
+                state->drainOnGui(token);
+              } catch (...) {
+                state->failAcceptedDrainCallbackOnGui(token);
+              }
             }
           },
           Qt::QueuedConnection);
+      }
+    } catch (...) {
+      queued = false;
     }
     if (queued) {
       return true;
@@ -365,6 +612,33 @@ struct NativeQtGlOutput::State
     assignErrorNoexcept(error,
                         "Qt rejected the native video GUI delivery request");
     return false;
+  }
+
+  void failAcceptedDrainCallbackOnGui(std::uint64_t token) noexcept {
+    std::pair<FailureHandler, std::string> notify;
+    try {
+      {
+        std::lock_guard lock(mutex);
+        if (queuedDrainToken != token) {
+          return;
+        }
+        queuedDrainToken = 0;
+        pendingFrame.reset();
+        pendingFlush.reset();
+        pendingStartApplied = {};
+        pendingStartRequestedGeneration = 0;
+        forcePendingFlush = false;
+        pendingFinalFlush = false;
+        notify = latchFailureLocked(
+            "native Qt OpenGL GUI delivery callback failed");
+        transientObservation = false;
+        updateObservationArmLocked();
+      }
+      invokeFailureNoexcept(std::move(notify.first),
+                            std::move(notify.second));
+    } catch (...) {
+      observationArmed.store(false, std::memory_order_release);
+    }
   }
 
   void samplePresenterLocked(QtGlVideoItem* item,
@@ -477,14 +751,29 @@ struct NativeQtGlOutput::State
         observationPollQueued.exchange(true, std::memory_order_acq_rel)) {
       return;
     }
-    const std::weak_ptr<State> weakState = weak_from_this();
-    QTimer::singleShot(50, guiContext.get(), [weakState] {
-      if (auto state = weakState.lock()) {
-        state->observationPollQueued.store(false,
-                                           std::memory_order_release);
-        state->observePresenterOnGui();
+    try {
+      const std::weak_ptr<State> weakState = weak_from_this();
+#if defined(WAM_NATIVE_GL_VIDEO_TESTING)
+      if (throwNextObservationPoll.exchange(false,
+                                             std::memory_order_acq_rel)) {
+        throw std::bad_alloc();
       }
-    });
+#endif
+      QTimer::singleShot(50, guiContext.get(), [weakState] {
+        try {
+          if (auto state = weakState.lock()) {
+            state->observationPollQueued.store(
+                false, std::memory_order_release);
+            state->observePresenterOnGui();
+          }
+        } catch (...) {
+        }
+      });
+    } catch (...) {
+      observationPollQueued.store(false, std::memory_order_release);
+      failSchedulingNoexcept(
+          "Qt could not queue native video presenter polling");
+    }
   }
 
   void itemDestroyedOnGui() noexcept {
@@ -506,7 +795,13 @@ struct NativeQtGlOutput::State
                           std::move(notify.second));
   }
 
-  void drainOnGui(std::uint64_t token) noexcept {
+  void drainOnGui(std::uint64_t token) {
+#if defined(WAM_NATIVE_GL_VIDEO_TESTING)
+    if (throwInNextAcceptedGuiDrain.exchange(
+            false, std::memory_order_acq_rel)) {
+      throw std::bad_alloc();
+    }
+#endif
     std::pair<FailureHandler, std::string> notify;
     StartAppliedHandler startApplied;
     std::optional<NativeScheduledFrameStartAck> startAck;
@@ -666,15 +961,13 @@ std::shared_ptr<NativeQtGlOutput> NativeQtGlOutput::create(
   state->observedPresenterFatalSerial = baseline.fatalErrorSerial;
   state->observedPresenterFatalSerialAtomic->store(
       baseline.fatalErrorSerial, std::memory_order_release);
-  QThread* const itemThread = item->thread();
-  auto deleter = [itemThread](State::GuiContext* context) noexcept {
-    if (QThread::currentThread() == itemThread) {
-      delete context;
-      return;
-    }
-    // deleteLater() is thread-safe and ensures QObject/QPointer destruction
-    // remains on the GUI thread when retirement releases the last owner.
-    context->deleteLater();
+  auto deleter = [](State::GuiContext* context) noexcept {
+    // Always defer destruction, including on the GUI thread. An arbitrary
+    // output callback may drop the last State while Qt is delivering an event
+    // to this context; synchronous QObject deletion would invalidate the
+    // active receiver stack. deleteLater() also marshals foreign-thread final
+    // release back to the context's GUI thread.
+    context->scheduleDeferredDeletionNoexcept();
   };
   try {
     state->guiContext = std::shared_ptr<State::GuiContext>(
@@ -692,6 +985,8 @@ std::shared_ptr<NativeQtGlOutput> NativeQtGlOutput::create(
 
 NativeScheduledFrameDispatchResult NativeQtGlOutput::dispatch(
     FrameLease frame, std::string* error) noexcept {
+  const std::shared_ptr<State> state = state_;
+  state->consumeDeferredSchedulingFailureNoexcept();
   if (error != nullptr) {
     error->clear();
   }
@@ -704,34 +999,34 @@ NativeScheduledFrameDispatchResult NativeQtGlOutput::dispatch(
   NativeScheduledFrameDispatchResult result =
       NativeScheduledFrameDispatchResult::Dispatched;
   {
-    std::lock_guard lock(state_->mutex);
-    if (state_->closed) {
-      ++state_->rejectedFrames;
+    std::lock_guard lock(state->mutex);
+    if (state->closed) {
+      ++state->rejectedFrames;
       assignErrorNoexcept(error, "native Qt OpenGL output is closed");
       return NativeScheduledFrameDispatchResult::Rejected;
     }
-    if (state_->failureLatched) {
-      ++state_->rejectedFrames;
-      assignErrorNoexcept(error, state_->failureMessage);
+    if (state->failureLatched) {
+      ++state->rejectedFrames;
+      assignErrorNoexcept(error, state->failureMessage);
       return NativeScheduledFrameDispatchResult::Failed;
     }
-    if (frame.timing().generation != state_->acceptedGeneration) {
-      ++state_->staleFrames;
+    if (frame.timing().generation != state->acceptedGeneration) {
+      ++state->staleFrames;
       assignErrorNoexcept(error,
                           "native Qt OpenGL frame generation is stale");
       return NativeScheduledFrameDispatchResult::Rejected;
     }
-    const bool coalesced = state_->pendingFrame.has_value();
-    state_->pendingFrame = std::move(frame);
-    if (!state_->queueDrainLocked(error)) {
-      ++state_->rejectedFrames;
-      notify = state_->latchFailureLocked(
+    const bool coalesced = state->pendingFrame.has_value();
+    state->pendingFrame = std::move(frame);
+    if (!state->queueDrainLocked(error)) {
+      ++state->rejectedFrames;
+      notify = state->latchFailureLocked(
           "Qt rejected the native video GUI delivery request");
       result = NativeScheduledFrameDispatchResult::Failed;
     } else {
-      ++state_->dispatchedFrames;
+      ++state->dispatchedFrames;
       if (coalesced) {
-        ++state_->coalescedFrames;
+        ++state->coalescedFrames;
       }
     }
   }
@@ -759,6 +1054,11 @@ bool NativeQtGlOutput::flush(std::uint64_t nextGeneration,
 bool NativeQtGlOutput::flushImpl(std::uint64_t nextGeneration,
                                  StartAppliedHandler startApplied,
                                  std::string* error) noexcept {
+  // Arbitrary failure/start callbacks below may release the last public
+  // NativeQtGlOutput owner. Keep State alive independently and never
+  // dereference this again after that first callback boundary.
+  const std::shared_ptr<State> state = state_;
+  state->consumeDeferredSchedulingFailureNoexcept();
   if (error != nullptr) {
     error->clear();
   }
@@ -767,95 +1067,95 @@ bool NativeQtGlOutput::flushImpl(std::uint64_t nextGeneration,
   bool success = true;
   bool schedulePoll = false;
   {
-    std::lock_guard lock(state_->mutex);
-    if (state_->closed) {
+    std::lock_guard lock(state->mutex);
+    if (state->closed) {
       assignErrorNoexcept(error, "native Qt OpenGL output is closed");
       return false;
     }
-    if (state_->failureLatched) {
-      assignErrorNoexcept(error, state_->failureMessage);
+    if (state->failureLatched) {
+      assignErrorNoexcept(error, state->failureMessage);
       success = false;
     }
-    if (startApplied && state_->pendingStartApplied) {
+    if (startApplied && state->pendingStartApplied) {
       assignErrorNoexcept(error,
                           "native Qt OpenGL startup flush is already pending");
       return false;
     }
     const bool forceFailClosed =
-        nextGeneration <= state_->acceptedGeneration;
+        nextGeneration <= state->acceptedGeneration;
     if (forceFailClosed) {
       success = false;
-      if (!state_->failureLatched) {
+      if (!state->failureLatched) {
         assignErrorNoexcept(
-            error, nextGeneration < state_->acceptedGeneration
+            error, nextGeneration < state->acceptedGeneration
                        ? "native Qt OpenGL flush generation regressed"
                        : "native Qt OpenGL generation was already flushed");
       }
     } else {
-      state_->acceptedGeneration = nextGeneration;
+      state->acceptedGeneration = nextGeneration;
     }
-    if (forceFailClosed && state_->acceptedGeneration ==
+    if (forceFailClosed && state->acceptedGeneration ==
                                std::numeric_limits<std::uint64_t>::max()) {
-      state_->closed = true;
+      state->closed = true;
     }
-    state_->pendingFrame.reset();
+    state->pendingFrame.reset();
     if (!startApplied) {
       // A seek/stop supersedes a not-yet-applied startup request. Its callback
       // must never publish Running after the newer invalidation was admitted.
-      state_->pendingStartApplied = {};
-      state_->pendingStartRequestedGeneration = 0;
+      state->pendingStartApplied = {};
+      state->pendingStartRequestedGeneration = 0;
     }
-    state_->transientObservation = true;
-    state_->updateObservationArmLocked();
+    state->transientObservation = true;
+    state->updateObservationArmLocked();
     if (!success && startApplied) {
       startApplied = {};
     }
 
-    if (state_->guiContext->isGuiThread()) {
+    if (state->guiContext->isGuiThread()) {
       // Controller-originated start/seek calls invalidate the retained Qt
       // frame synchronously. No blocking cross-thread invoke is ever used.
-      state_->pendingFlush.reset();
-      state_->forcePendingFlush = false;
-      QtGlVideoItem* item = state_->guiContext->itemOnGui();
+      state->pendingFlush.reset();
+      state->forcePendingFlush = false;
+      QtGlVideoItem* item = state->guiContext->itemOnGui();
       if (item == nullptr) {
-        notify = state_->latchFailureLocked(
+        notify = state->latchFailureLocked(
             "native Qt OpenGL video item was destroyed");
-        assignErrorNoexcept(error, state_->failureMessage);
+        assignErrorNoexcept(error, state->failureMessage);
         success = false;
       } else {
-        if (state_->applyFlushOnGuiLocked(item, nextGeneration, false,
+        if (state->applyFlushOnGuiLocked(item, nextGeneration, false,
                                           &notify)) {
           if (startApplied) {
-            state_->attemptAcceptedRenderedBaseline =
-                state_->presenterAcceptedRenderedFrames;
-            state_->attemptAcceptedRenderedFrames = 0;
-            state_->attemptBaselinePending = false;
-            state_->attemptBaselineApplied = true;
+            state->attemptAcceptedRenderedBaseline =
+                state->presenterAcceptedRenderedFrames;
+            state->attemptAcceptedRenderedFrames = 0;
+            state->attemptBaselinePending = false;
+            state->attemptBaselineApplied = true;
             startAck.emplace(NativeScheduledFrameStartAck{
-                nextGeneration, state_->acceptedGeneration,
-                state_->presenterAcceptedRenderedFrames});
+                nextGeneration, state->acceptedGeneration,
+                state->presenterAcceptedRenderedFrames});
           }
-          state_->updateObservationArmLocked();
-          state_->retirementGracePolls = 1;
+          state->updateObservationArmLocked();
+          state->retirementGracePolls = 1;
           schedulePoll = true;
-          if (forceFailClosed && state_->acceptedGeneration ==
+          if (forceFailClosed && state->acceptedGeneration ==
                                      std::numeric_limits<std::uint64_t>::max()) {
-            state_->closed = true;
+            state->closed = true;
           }
         } else {
-          assignErrorNoexcept(error, state_->failureMessage);
+          assignErrorNoexcept(error, state->failureMessage);
           success = false;
         }
       }
     } else {
-      state_->pendingFlush = nextGeneration;
-      state_->forcePendingFlush = forceFailClosed;
+      state->pendingFlush = nextGeneration;
+      state->forcePendingFlush = forceFailClosed;
       if (startApplied) {
-        state_->pendingStartRequestedGeneration = nextGeneration;
-        state_->pendingStartApplied = std::move(startApplied);
+        state->pendingStartRequestedGeneration = nextGeneration;
+        state->pendingStartApplied = std::move(startApplied);
       }
-      if (!state_->queueDrainLocked(error)) {
-        notify = state_->latchFailureLocked(
+      if (!state->queueDrainLocked(error)) {
+        notify = state->latchFailureLocked(
             "Qt rejected the native video generation flush");
         success = false;
       }
@@ -870,59 +1170,78 @@ bool NativeQtGlOutput::flushImpl(std::uint64_t nextGeneration,
     }
   }
   if (schedulePoll) {
-    state_->scheduleObservationPollOnGui();
+    state->scheduleObservationPollOnGui();
   }
   return success;
 }
 
 void NativeQtGlOutput::close(std::uint64_t finalGeneration) noexcept {
+  const std::shared_ptr<State> state = state_;
+  state->consumeDeferredSchedulingFailureNoexcept();
   std::pair<FailureHandler, std::string> notify;
   {
-    std::lock_guard lock(state_->mutex);
-    if (state_->closed) {
+    std::lock_guard lock(state->mutex);
+    if (state->closed) {
       return;
     }
-    state_->closed = true;
-    state_->acceptedGeneration =
-        std::max(state_->acceptedGeneration, finalGeneration);
-    state_->pendingFrame.reset();
-    state_->pendingStartApplied = {};
-    state_->pendingStartRequestedGeneration = 0;
-    state_->observationArmed.store(false, std::memory_order_release);
+    state->closed = true;
+    state->acceptedGeneration =
+        std::max(state->acceptedGeneration, finalGeneration);
+    state->pendingFrame.reset();
+    state->pendingStartApplied = {};
+    state->pendingStartRequestedGeneration = 0;
+    state->observationArmed.store(false, std::memory_order_release);
 
-    if (state_->guiContext->isGuiThread()) {
-      state_->pendingFlush.reset();
-      state_->forcePendingFlush = false;
-      if (QtGlVideoItem* item = state_->guiContext->itemOnGui()) {
+    if (state->guiContext->isGuiThread()) {
+      state->pendingFlush.reset();
+      state->forcePendingFlush = false;
+      if (QtGlVideoItem* item = state->guiContext->itemOnGui()) {
         // close() is a terminal invalidation, so even an exhausted/equal
         // generation must clear Qt's retained lease. QtGlVideoItem treats the
         // repeated value fail-closed and never reopens that timeline.
-        (void)state_->applyFlushOnGuiLocked(
-            item, state_->acceptedGeneration, false, &notify);
+        (void)state->applyFlushOnGuiLocked(
+            item, state->acceptedGeneration, false, &notify);
       }
     } else {
-      state_->guiContext->requireFinalFlush(state_->acceptedGeneration);
-      state_->pendingFlush = state_->acceptedGeneration;
-      state_->forcePendingFlush = true;
-      state_->pendingFinalFlush = true;
+      state->guiContext->requireFinalFlush(state->acceptedGeneration);
+      state->pendingFlush = state->acceptedGeneration;
+      state->forcePendingFlush = true;
+      state->pendingFinalFlush = true;
       std::string ignoredError;
-      if (!state_->queueDrainLocked(&ignoredError)) {
-        notify = state_->latchFailureLocked(
+      if (!state->queueDrainLocked(&ignoredError)) {
+        notify = state->latchFailureLocked(
             "Qt rejected the final native video generation flush");
       }
       // Queue this after the ordinary drain. If State survives, that drain
       // applies and disarms the obligation; if State dies, this bounded strong
       // GUI callback becomes the terminal invalidation owner.
+      bool finalizerQueued = false;
       try {
         const std::shared_ptr<State::GuiContext> finalizer =
-            state_->guiContext;
-        (void)QMetaObject::invokeMethod(
-            finalizer.get(),
-            [finalizer] { finalizer->performRequiredFinalFlushOnGui(); },
-            Qt::QueuedConnection);
+            state->guiContext;
+#if defined(WAM_NATIVE_GL_VIDEO_TESTING)
+        if (state->throwNextFinalFlushInvoke.exchange(
+                false, std::memory_order_acq_rel)) {
+          throw std::bad_alloc();
+        }
+        if (!state->failNextFinalFlushInvoke.exchange(
+                false, std::memory_order_acq_rel))
+#endif
+        {
+          finalizerQueued = QMetaObject::invokeMethod(
+              finalizer.get(),
+              [finalizer] { finalizer->performRequiredFinalFlushOnGui(); },
+              Qt::QueuedConnection);
+        }
       } catch (...) {
-        // The destructor remains a fail-closed fallback with the obligation
-        // still armed.
+        finalizerQueued = false;
+      }
+      if (!finalizerQueued) {
+        auto finalizerNotify = state->latchFailureLocked(
+            "Qt rejected the final native video flush owner");
+        if (!notify.first) {
+          notify = std::move(finalizerNotify);
+        }
       }
     }
   }
@@ -931,58 +1250,66 @@ void NativeQtGlOutput::close(std::uint64_t finalGeneration) noexcept {
 }
 
 void NativeQtGlOutput::setFailureHandler(FailureHandler handler) noexcept {
+  // The installed or already-latched handler is arbitrary and may release the
+  // last public output owner while this call is delivering it.
+  const std::shared_ptr<State> state = state_;
   std::pair<FailureHandler, std::string> notify;
   bool sampleImmediately = false;
   {
-    std::lock_guard lock(state_->mutex);
-    const bool wasActive = state_->failureHandlerActive;
+    std::lock_guard lock(state->mutex);
+    const bool wasActive = state->failureHandlerActive;
     try {
-      state_->failureHandler = std::move(handler);
+      state->failureHandler = std::move(handler);
     } catch (...) {
-      state_->failureHandler = {};
+      state->failureHandler = {};
     }
-    state_->failureHandlerActive = static_cast<bool>(state_->failureHandler);
-    if (!wasActive && state_->failureHandlerActive) {
+    state->failureHandlerActive = static_cast<bool>(state->failureHandler);
+    state->failureDelivered = false;
+    notify = state->consumeDeferredSchedulingFailureLocked();
+    if (!wasActive && state->failureHandlerActive) {
       // The next startGeneration GUI application establishes the exact
       // presenter-side baseline for this attempt. Old redraws before that
       // linearization can never inflate the new attempt.
-      state_->attemptBaselinePending = true;
-      state_->attemptBaselineApplied = false;
-      state_->attemptAcceptedRenderedBaseline =
-          state_->presenterAcceptedRenderedFrames;
-      state_->attemptAcceptedRenderedFrames = 0;
+      state->attemptBaselinePending = true;
+      state->attemptBaselineApplied = false;
+      state->attemptAcceptedRenderedBaseline =
+          state->presenterAcceptedRenderedFrames;
+      state->attemptAcceptedRenderedFrames = 0;
     }
-    state_->updateObservationArmLocked();
-    sampleImmediately = state_->failureHandlerActive &&
-                        !state_->failureLatched && !state_->closed;
-    state_->failureDelivered = false;
-    notify = state_->takeFailureNotificationLocked();
+    state->updateObservationArmLocked();
+    sampleImmediately = state->failureHandlerActive &&
+                        !state->failureLatched && !state->closed;
+    if (!notify.first) {
+      notify = state->takeFailureNotificationLocked();
+    }
   }
   invokeFailureNoexcept(std::move(notify.first),
                         std::move(notify.second));
   if (sampleImmediately) {
-    state_->queueImmediateObservation();
+    state->queueImmediateObservation();
   }
 }
 
 NativeScheduledFrameOutputStats NativeQtGlOutput::stats() const noexcept {
-  std::lock_guard lock(state_->mutex);
+  const std::shared_ptr<State> state = state_;
+  state->consumeDeferredSchedulingFailureNoexcept();
+  std::lock_guard lock(state->mutex);
   NativeScheduledFrameOutputStats result;
-  result.closed = state_->closed;
-  result.deliveryQueued = state_->queuedDrainToken != 0;
-  result.acceptedGeneration = state_->acceptedGeneration;
-  result.dispatchedFrames = state_->dispatchedFrames;
-  result.deliveredFrames = state_->deliveredFrames;
-  result.coalescedFrames = state_->coalescedFrames;
-  result.staleFrames = state_->staleFrames;
-  result.rejectedFrames = state_->rejectedFrames;
-  result.actuallyRenderedFrames = state_->actuallyRenderedFrames;
+  result.closed = state->closed;
+  result.deliveryQueued = state->queuedDrainToken != 0;
+  result.acceptedGeneration = state->acceptedGeneration;
+  result.dispatchedFrames = state->dispatchedFrames;
+  result.deliveredFrames = state->deliveredFrames;
+  result.coalescedFrames = state->coalescedFrames;
+  result.staleFrames = state->staleFrames;
+  result.rejectedFrames = state->rejectedFrames;
+  result.actuallyRenderedFrames = state->actuallyRenderedFrames;
   result.acceptedRenderedFrames =
-      state_->presenterAcceptedRenderedFrames;
+      state->presenterAcceptedRenderedFrames;
   result.attemptAcceptedRenderedFrames =
-      state_->attemptAcceptedRenderedFrames;
-  result.lastRenderedGeneration = state_->lastRenderedGeneration;
-  result.fatalErrorSerial = state_->fatalErrorSerial;
+      state->attemptAcceptedRenderedFrames;
+  result.lastRenderedGeneration = state->lastRenderedGeneration;
+  result.fatalErrorSerial = state->fatalErrorSerial;
   return result;
 }
 
@@ -995,6 +1322,58 @@ void NativeQtGlOutput::failNextFailureNotificationCopyForTesting() noexcept {
 
 void NativeQtGlOutput::failNextGuiInvokeForTesting() noexcept {
   state_->failNextGuiInvoke.store(true, std::memory_order_release);
+}
+
+void NativeQtGlOutput::throwNextImmediateObservationInvokeForTesting()
+    noexcept {
+  state_->throwImmediateObservationInvokes.store(1,
+                                                  std::memory_order_release);
+}
+
+void NativeQtGlOutput::throwNextTwoImmediateObservationInvokesForTesting()
+    noexcept {
+  state_->throwImmediateObservationInvokes.store(2,
+                                                  std::memory_order_release);
+}
+
+void NativeQtGlOutput::throwNextGuiDrainInvokeForTesting() noexcept {
+  state_->throwNextGuiDrainInvoke.store(true, std::memory_order_release);
+}
+
+void NativeQtGlOutput::throwInNextAcceptedGuiDrainForTesting() noexcept {
+  state_->throwInNextAcceptedGuiDrain.store(true,
+                                            std::memory_order_release);
+}
+
+void NativeQtGlOutput::throwNextObservationPollForTesting() noexcept {
+  state_->throwNextObservationPoll.store(true, std::memory_order_release);
+}
+
+void NativeQtGlOutput::throwNextWindowObservationConnectForTesting()
+    noexcept {
+  state_->throwNextWindowObservationConnect.store(
+      true, std::memory_order_release);
+}
+
+void NativeQtGlOutput::failNextFinalFlushInvokeForTesting() noexcept {
+  state_->failNextFinalFlushInvoke.store(true, std::memory_order_release);
+}
+
+void NativeQtGlOutput::throwNextFinalFlushInvokeForTesting() noexcept {
+  state_->throwNextFinalFlushInvoke.store(true, std::memory_order_release);
+}
+
+void NativeQtGlOutput::throwNextGuiContextDeleteLaterForTesting() noexcept {
+  state_->guiContext->throwNextDeferredDeletionForTesting();
+}
+
+bool NativeQtGlOutput::immediateObservationQueuedForTesting()
+    const noexcept {
+  return state_->observationQueued.load(std::memory_order_acquire);
+}
+
+bool NativeQtGlOutput::observationPollQueuedForTesting() const noexcept {
+  return state_->observationPollQueued.load(std::memory_order_acquire);
 }
 #endif
 

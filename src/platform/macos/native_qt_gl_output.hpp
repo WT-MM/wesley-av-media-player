@@ -42,6 +42,18 @@ class NativeQtGlOutput final : public NativeScheduledFrameOutput {
 #if defined(WAM_NATIVE_GL_VIDEO_TESTING)
   void failNextFailureNotificationCopyForTesting() noexcept;
   void failNextGuiInvokeForTesting() noexcept;
+  void throwNextImmediateObservationInvokeForTesting() noexcept;
+  void throwNextTwoImmediateObservationInvokesForTesting() noexcept;
+  void throwNextGuiDrainInvokeForTesting() noexcept;
+  void throwInNextAcceptedGuiDrainForTesting() noexcept;
+  void throwNextObservationPollForTesting() noexcept;
+  void throwNextWindowObservationConnectForTesting() noexcept;
+  void failNextFinalFlushInvokeForTesting() noexcept;
+  void throwNextFinalFlushInvokeForTesting() noexcept;
+  void throwNextGuiContextDeleteLaterForTesting() noexcept;
+  [[nodiscard]] bool immediateObservationQueuedForTesting()
+      const noexcept;
+  [[nodiscard]] bool observationPollQueuedForTesting() const noexcept;
 #endif
 
  private:
