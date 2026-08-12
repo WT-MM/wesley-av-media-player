@@ -3,6 +3,7 @@
 #include <QCoreApplication>
 #include <QThread>
 
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -12,6 +13,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <thread>
 #include <utility>
 
 namespace {
@@ -184,6 +186,172 @@ public:
 
 private:
   std::shared_ptr<FakePipelineState> state_;
+};
+
+// The regular fakes above are intentionally simple because every test using
+// them is owner-thread confined. These narrower fakes use atomics so the
+// destructor regression can observe its teardown only after joining the
+// destroying thread without introducing a data race into the test itself.
+struct ForeignDestructorOrderState {
+  std::atomic<bool> armed{false};
+  std::atomic<std::uint64_t> next{0};
+  std::atomic<std::uint64_t> stop{0};
+  std::atomic<std::uint64_t> pipelineStats{0};
+  std::atomic<std::uint64_t> outputStats{0};
+  std::atomic<std::uint64_t> close{0};
+
+  void record(std::atomic<std::uint64_t> &slot) noexcept {
+    if (armed.load()) {
+      slot = next.fetch_add(1) + 1;
+    }
+  }
+};
+
+struct ForeignDestructorOutputState {
+  const std::thread::id ownerThread{std::this_thread::get_id()};
+  std::shared_ptr<ForeignDestructorOrderState> order;
+  std::atomic<std::uint64_t> acceptedGeneration{0};
+  std::atomic<std::uint64_t> closeGeneration{0};
+  std::atomic<std::uint64_t> dispatchCalls{0};
+  std::atomic<std::uint64_t> startGenerationCalls{0};
+  std::atomic<std::uint64_t> flushCalls{0};
+  std::atomic<std::uint64_t> closeCalls{0};
+  std::atomic<std::uint64_t> setFailureHandlerCalls{0};
+  std::atomic<std::uint64_t> statsCalls{0};
+  std::atomic<std::uint64_t> offOwnerStatsCalls{0};
+  std::atomic<bool> closed{false};
+  std::atomic<bool> closeRanOffOwnerThread{false};
+};
+
+class ForeignDestructorOutput final : public NativeScheduledFrameOutput {
+public:
+  explicit ForeignDestructorOutput(
+      std::shared_ptr<ForeignDestructorOutputState> state)
+      : state_(std::move(state)) {}
+
+  NativeScheduledFrameDispatchResult dispatch(FrameLease,
+                                              std::string *) noexcept override {
+    ++state_->dispatchCalls;
+    return NativeScheduledFrameDispatchResult::Rejected;
+  }
+
+  bool startGeneration(std::uint64_t, StartAppliedHandler,
+                       std::string *) noexcept override {
+    ++state_->startGenerationCalls;
+    return false;
+  }
+
+  bool flush(std::uint64_t, std::string *) noexcept override {
+    ++state_->flushCalls;
+    return false;
+  }
+
+  void close(std::uint64_t generation) noexcept override {
+    ++state_->closeCalls;
+    state_->order->record(state_->order->close);
+    state_->closeGeneration = generation;
+    state_->acceptedGeneration = generation;
+    state_->closed = true;
+    state_->closeRanOffOwnerThread =
+        std::this_thread::get_id() != state_->ownerThread;
+  }
+
+  void setFailureHandler(FailureHandler) noexcept override {
+    ++state_->setFailureHandlerCalls;
+  }
+
+  NativeScheduledFrameOutputStats stats() const noexcept override {
+    ++state_->statsCalls;
+    if (std::this_thread::get_id() != state_->ownerThread) {
+      ++state_->offOwnerStatsCalls;
+    }
+    state_->order->record(state_->order->outputStats);
+    NativeScheduledFrameOutputStats result;
+    result.acceptedGeneration = state_->acceptedGeneration.load();
+    result.closed = state_->closed.load();
+    return result;
+  }
+
+private:
+  std::shared_ptr<ForeignDestructorOutputState> state_;
+};
+
+struct ForeignDestructorPipelineState {
+  const std::thread::id ownerThread{std::this_thread::get_id()};
+  std::shared_ptr<ForeignDestructorOrderState> order;
+  std::atomic<std::uint64_t> generation{0};
+  std::atomic<std::uint64_t> stopResult{0};
+  std::atomic<std::uint64_t> prepareCalls{0};
+  std::atomic<std::uint64_t> takePrepareResultCalls{0};
+  std::atomic<std::uint64_t> startCalls{0};
+  std::atomic<std::uint64_t> stopCalls{0};
+  std::atomic<std::uint64_t> clockCalls{0};
+  std::atomic<std::uint64_t> seekCalls{0};
+  std::atomic<std::uint64_t> takeLastErrorCalls{0};
+  std::atomic<std::uint64_t> statsCalls{0};
+  std::atomic<std::uint64_t> offOwnerStatsCalls{0};
+  std::atomic<bool> stopRanOffOwnerThread{false};
+};
+
+class ForeignDestructorPipeline final : public NativeVideoSessionPipeline {
+public:
+  explicit ForeignDestructorPipeline(
+      std::shared_ptr<ForeignDestructorPipelineState> state)
+      : state_(std::move(state)) {}
+
+  bool prepareLocalFileAsync(const std::filesystem::path &, double,
+                             std::string *) override {
+    ++state_->prepareCalls;
+    return false;
+  }
+
+  std::optional<NativeVideoPrepareOutcome>
+  takePrepareResult() noexcept override {
+    ++state_->takePrepareResultCalls;
+    return std::nullopt;
+  }
+
+  std::optional<std::uint64_t>
+  startPrepared(std::string *) noexcept override {
+    ++state_->startCalls;
+    return std::nullopt;
+  }
+
+  std::uint64_t stop() noexcept override {
+    ++state_->stopCalls;
+    state_->order->record(state_->order->stop);
+    state_->stopRanOffOwnerThread =
+        std::this_thread::get_id() != state_->ownerThread;
+    return state_->stopResult.load();
+  }
+
+  void updateAudioClock(double, bool, double) noexcept override {
+    ++state_->clockCalls;
+  }
+
+  std::optional<std::uint64_t> seek(double) noexcept override {
+    ++state_->seekCalls;
+    return std::nullopt;
+  }
+
+  std::optional<std::string> takeLastError() noexcept override {
+    ++state_->takeLastErrorCalls;
+    return std::nullopt;
+  }
+
+  NativeVideoPipelineStats stats() const noexcept override {
+    ++state_->statsCalls;
+    if (std::this_thread::get_id() != state_->ownerThread) {
+      ++state_->offOwnerStatsCalls;
+    }
+    state_->order->record(state_->order->pipelineStats);
+    NativeVideoPipelineStats result;
+    result.generation = state_->generation.load();
+    return result;
+  }
+
+private:
+  std::shared_ptr<ForeignDestructorPipelineState> state_;
 };
 
 struct Fixture {
@@ -567,6 +735,60 @@ void testOffOwnerThreadActionFailsWithoutMutation() {
          "off-owner-thread action leaves a bounded diagnostic");
 }
 
+void testDestructorStopsAndClosesFromForeignThread() {
+  constexpr std::uint64_t limit =
+      std::numeric_limits<std::uint64_t>::max();
+  Token token{50, 1};
+  auto order = std::make_shared<ForeignDestructorOrderState>();
+  auto outputState = std::make_shared<ForeignDestructorOutputState>();
+  auto pipelineState = std::make_shared<ForeignDestructorPipelineState>();
+  outputState->order = order;
+  pipelineState->order = order;
+  outputState->acceptedGeneration = limit - 4;
+  pipelineState->generation = limit - 3;
+  pipelineState->stopResult = limit - 2;
+
+  auto output = std::make_shared<ForeignDestructorOutput>(outputState);
+  std::string error;
+  auto session = NativeVideoSession::createForTesting(
+      token, "/tmp/video.mp4", output,
+      std::make_unique<ForeignDestructorPipeline>(pipelineState),
+      QThread::currentThread(), &error);
+  expect(session != nullptr && error.empty(),
+         "foreign-destructor test session is created on its owner thread");
+
+  order->armed = true;
+  std::thread destroyer([owned = std::move(session)]() mutable {
+    owned.reset();
+  });
+  destroyer.join();
+
+  expect(pipelineState->stopCalls == 1 &&
+             pipelineState->stopRanOffOwnerThread &&
+             outputState->closeCalls == 1 &&
+             outputState->closeRanOffOwnerThread && outputState->closed,
+         "foreign-thread destruction stops and closes exactly once");
+  expect(outputState->closeGeneration == limit - 1 &&
+             outputState->acceptedGeneration == limit - 1 &&
+             outputState->closeGeneration > pipelineState->stopResult,
+         "foreign-thread destruction closes on a fresh nonwrapping generation");
+  expect(order->next == 4 && order->stop == 1 &&
+             order->pipelineStats == 2 && order->outputStats == 3 &&
+             order->close == 4 && pipelineState->offOwnerStatsCalls == 1 &&
+             outputState->offOwnerStatsCalls == 1,
+         "foreign-thread teardown orders stop, snapshots, then output close");
+  expect(pipelineState->prepareCalls == 0 &&
+             pipelineState->takePrepareResultCalls == 0 &&
+             pipelineState->startCalls == 0 && pipelineState->clockCalls == 0 &&
+             pipelineState->seekCalls == 0 &&
+             pipelineState->takeLastErrorCalls == 0 &&
+             outputState->dispatchCalls == 0 &&
+             outputState->startGenerationCalls == 0 &&
+             outputState->flushCalls == 0 &&
+             outputState->setFailureHandlerCalls == 0,
+         "destruction invokes no owner-thread action or presentation mutation");
+}
+
 void testDestructorStopsAndClosesWithoutGenerationWrap() {
   {
     Token token{51, 1};
@@ -623,6 +845,7 @@ int main(int argc, char **argv) {
   testAuthoritativePauseAndRestoreReanchor();
   testFatalChangeAndWrongThreadSafeSample();
   testOffOwnerThreadActionFailsWithoutMutation();
+  testDestructorStopsAndClosesFromForeignThread();
   testDestructorStopsAndClosesWithoutGenerationWrap();
   if (failures != 0) {
     std::cerr << failures << " native video session assertion(s) failed\n";

@@ -20,6 +20,15 @@ option(WAM_REQUIRE_NATIVE_VIDEO_TEST_HARDWARE
   "Require hardware H.264/Main 10 decoding in the macOS VideoToolbox test"
   OFF)
 
+include(CTest)
+if(WAM_REQUIRE_NATIVE_VIDEO_TEST_HARDWARE AND
+    (NOT APPLE OR NOT BUILD_TESTING OR
+     NOT WAM_ENABLE_MACOS_NATIVE_VIDEO))
+  message(FATAL_ERROR
+    "WAM_REQUIRE_NATIVE_VIDEO_TEST_HARDWARE requires macOS, "
+    "BUILD_TESTING=ON, and WAM_ENABLE_MACOS_NATIVE_VIDEO=ON")
+endif()
+
 if(WAM_ENABLE_MACOS_NATIVE_VIDEO AND NOT APPLE)
   message(FATAL_ERROR
     "WAM_ENABLE_MACOS_NATIVE_VIDEO is available only on macOS")
@@ -126,12 +135,14 @@ if(APPLE)
       src/platform/macos/native_video_presenter.mm
       src/platform/macos/video_toolbox_decoder.hpp
       src/platform/macos/video_toolbox_decoder.mm)
-    add_library(wam_macos_native_video STATIC
+    set(WAM_MACOS_NATIVE_VIDEO_SOURCES
       ${WAM_MACOS_NATIVE_VIDEO_CORE_SOURCES}
       src/platform/macos/metal_layer_presenter.hpp
       src/platform/macos/metal_layer_presenter.mm
       src/platform/macos/native_video_pipeline.hpp
       src/platform/macos/native_video_pipeline.mm)
+    add_library(wam_macos_native_video STATIC
+      ${WAM_MACOS_NATIVE_VIDEO_SOURCES})
     target_include_directories(wam_macos_native_video PUBLIC src)
     target_compile_features(wam_macos_native_video PUBLIC cxx_std_20)
     target_compile_options(wam_macos_native_video PRIVATE
@@ -182,7 +193,6 @@ install(SCRIPT ${wam_qml_deploy_script})
 
 install(FILES README.md THIRD_PARTY_NOTICES.md DESTINATION share/doc/wam)
 
-include(CTest)
 if(BUILD_TESTING)
   add_test(NAME msys2_pkgconfig_paths
     COMMAND ${CMAKE_COMMAND} -P
@@ -313,9 +323,6 @@ if(BUILD_TESTING)
         "minos ${WAM_MACOS_DEPLOYMENT_TARGET_REGEX}")
 
     if(WAM_ENABLE_MACOS_NATIVE_VIDEO)
-      target_compile_definitions(wam_macos_native_video PRIVATE
-        WAM_NATIVE_VIDEO_PIPELINE_TESTING=1)
-
       add_executable(wam_native_video_test
         tests/native_video_presenter_test.mm)
       target_link_libraries(wam_native_video_test PRIVATE
@@ -452,6 +459,27 @@ if(BUILD_TESTING)
         COMMAND wam_native_video_session_test)
       set_tests_properties(macos_native_video_session PROPERTIES TIMEOUT 20)
 
+      # Exact coordinator-action adapter gate. The adapter and all of its
+      # injected ports remain absent from the shipping application until the
+      # PlayerController integration/fallback gate is separately approved.
+      add_executable(wam_native_video_action_driver_test
+        tests/native_video_action_driver_test.mm
+        src/platform/macos/native_video_action_driver.hpp
+        src/platform/macos/native_video_action_driver.mm)
+      target_include_directories(wam_native_video_action_driver_test PRIVATE
+        src)
+      target_link_libraries(wam_native_video_action_driver_test PRIVATE
+        "${WAM_FOUNDATION_FRAMEWORK}")
+      target_compile_options(wam_native_video_action_driver_test PRIVATE
+        "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>"
+        -Wall -Wextra -Wpedantic)
+      set_target_properties(wam_native_video_action_driver_test PROPERTIES
+        LINKER_LANGUAGE OBJCXX)
+      add_test(NAME macos_native_video_action_driver
+        COMMAND wam_native_video_action_driver_test)
+      set_tests_properties(macos_native_video_action_driver PROPERTIES
+        TIMEOUT 10)
+
       find_library(WAM_AVFOUNDATION_FRAMEWORK AVFoundation REQUIRED)
       add_executable(wam_video_toolbox_decoder_test
         tests/video_toolbox_decoder_test.mm
@@ -499,25 +527,72 @@ if(BUILD_TESTING)
             "Main 10 HEVC fixture")
         endif()
       endif()
+
+      # The pipeline's scheduling hooks alter its private layout and control
+      # flow. Compile a complete test-only implementation so neither the
+      # shipping archive nor an executable contains mixed definitions.
+      add_library(wam_macos_native_video_pipeline_test_impl STATIC
+        ${WAM_MACOS_NATIVE_VIDEO_SOURCES})
+      target_include_directories(
+        wam_macos_native_video_pipeline_test_impl PUBLIC src)
+      target_compile_features(
+        wam_macos_native_video_pipeline_test_impl PUBLIC cxx_std_20)
+      target_compile_definitions(
+        wam_macos_native_video_pipeline_test_impl PRIVATE
+        WAM_NATIVE_VIDEO_PIPELINE_TESTING=1)
+      target_compile_options(
+        wam_macos_native_video_pipeline_test_impl PRIVATE
+        "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>"
+        -Wall -Wextra -Wpedantic)
+      target_link_libraries(
+        wam_macos_native_video_pipeline_test_impl PUBLIC
+        "${WAM_COREFOUNDATION_FRAMEWORK}"
+        "${WAM_COREMEDIA_FRAMEWORK}"
+        "${WAM_COREVIDEO_FRAMEWORK}"
+        "${WAM_FOUNDATION_FRAMEWORK}"
+        "${WAM_IOSURFACE_FRAMEWORK}"
+        "${WAM_APPKIT_FRAMEWORK}"
+        "${WAM_AVFOUNDATION_FRAMEWORK}"
+        "${WAM_METAL_FRAMEWORK}"
+        "${WAM_QUARTZCORE_FRAMEWORK}"
+        "${WAM_VIDEOTOOLBOX_FRAMEWORK}")
+
+      add_executable(wam_native_video_pipeline_test
+        tests/native_video_pipeline_test.mm)
+      target_compile_definitions(wam_native_video_pipeline_test PRIVATE
+        WAM_NATIVE_VIDEO_PIPELINE_TESTING=1)
+      target_link_libraries(wam_native_video_pipeline_test PRIVATE
+        wam_macos_native_video_pipeline_test_impl)
+      target_compile_options(wam_native_video_pipeline_test PRIVATE
+        "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>"
+        -Wall -Wextra -Wpedantic)
+      set_target_properties(wam_native_video_pipeline_test PROPERTIES
+        LINKER_LANGUAGE OBJCXX)
+      add_test(NAME macos_native_video_pipeline_admission
+        COMMAND wam_native_video_pipeline_test --admission-only)
+      set_tests_properties(macos_native_video_pipeline_admission PROPERTIES
+        TIMEOUT 10)
+
       if(WAM_RESOLVED_NATIVE_VIDEO_TEST_FIXTURE AND
           EXISTS "${WAM_RESOLVED_NATIVE_VIDEO_TEST_FIXTURE}")
-        add_executable(wam_native_video_pipeline_test
-          tests/native_video_pipeline_test.mm)
-        target_compile_definitions(wam_native_video_pipeline_test PRIVATE
-          WAM_NATIVE_VIDEO_PIPELINE_TESTING=1)
-        target_link_libraries(wam_native_video_pipeline_test PRIVATE
-          wam_macos_native_video)
-        target_compile_options(wam_native_video_pipeline_test PRIVATE
-          "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>"
-          -Wall -Wextra -Wpedantic)
-        set_target_properties(wam_native_video_pipeline_test PROPERTIES
-          LINKER_LANGUAGE OBJCXX)
         add_test(NAME macos_native_video_pipeline
           COMMAND wam_native_video_pipeline_test
             "${WAM_RESOLVED_NATIVE_VIDEO_TEST_FIXTURE}")
         set_tests_properties(macos_native_video_pipeline PROPERTIES
           TIMEOUT 45
           SKIP_RETURN_CODE 77)
+        if(WAM_RESOLVED_NATIVE_VIDEO_10BIT_TEST_FIXTURE AND
+            EXISTS "${WAM_RESOLVED_NATIVE_VIDEO_10BIT_TEST_FIXTURE}")
+          string(REPLACE ";" "\\;"
+            WAM_ESCAPED_NATIVE_VIDEO_10BIT_TEST_FIXTURE
+            "${WAM_RESOLVED_NATIVE_VIDEO_10BIT_TEST_FIXTURE}")
+          string(CONCAT WAM_NATIVE_VIDEO_PIPELINE_TEST_ENVIRONMENT
+            "WAM_NATIVE_VIDEO_10BIT_TEST_FIXTURE="
+            "${WAM_ESCAPED_NATIVE_VIDEO_10BIT_TEST_FIXTURE}")
+          set_tests_properties(macos_native_video_pipeline PROPERTIES
+            ENVIRONMENT
+              "${WAM_NATIVE_VIDEO_PIPELINE_TEST_ENVIRONMENT}")
+        endif()
 
         # Dormant scheduler-to-Qt bridge gate. The adapter and Qt OpenGL item
         # remain test-only and are intentionally absent from wam and
@@ -535,7 +610,7 @@ if(BUILD_TESTING)
           WAM_NATIVE_GL_VIDEO_TESTING=1
           GL_SILENCE_DEPRECATION=1)
         target_link_libraries(wam_native_qt_gl_output_test PRIVATE
-          wam_macos_native_video
+          wam_macos_native_video_pipeline_test_impl
           Qt6::Core
           Qt6::Gui
           Qt6::Qml
@@ -577,8 +652,8 @@ if(BUILD_TESTING)
           TIMEOUT 30)
       else()
         message(WARNING
-          "Native video tests built without an H.264 fixture; set "
-          "WAM_NATIVE_VIDEO_TEST_FIXTURE to register them with CTest")
+          "Fixture-backed native video tests were not registered; set "
+          "WAM_NATIVE_VIDEO_TEST_FIXTURE to enable them")
       endif()
     endif()
   endif()
