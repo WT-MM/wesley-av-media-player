@@ -67,9 +67,10 @@ struct NativeVideoSessionEvent {
 };
 
 // One-shot, GUI-owner-thread executor for the dormant native-video path. It is
-// deliberately compiled only by its macOS test target. A future controller
-// must create a new session for each activation attempt; StopNative burns the
-// session after applying a fresh output generation.
+// absent from default builds and can be production-compiled only by the
+// separate activation option. A future controller must create a new session
+// for each activation attempt; StopNative burns the session after applying a
+// fresh output generation.
 class NativeVideoSession final {
 public:
   static std::unique_ptr<NativeVideoSession>

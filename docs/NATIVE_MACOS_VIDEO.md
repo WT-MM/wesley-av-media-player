@@ -2,10 +2,11 @@
 
 WAM has a dormant macOS playback foundation built around AVFoundation,
 VideoToolbox, IOSurface, and Metal. The code is excluded unless
-`WAM_ENABLE_MACOS_NATIVE_VIDEO=ON`. Even in an opt-in build, no shipping
-controller or render node can select it: libmpv remains the only runtime path.
-This is intentional while the composition, subtitle, clock, fallback, and
-seek-validation gates below remain open.
+`WAM_ENABLE_MACOS_NATIVE_VIDEO=ON`. A second option,
+`WAM_ENABLE_MACOS_NATIVE_VIDEO_ACTIVATION=ON`, production-compiles the reviewed
+coordinator, action runner, session, and Qt OpenGL output together. It still
+constructs no PlayerController owner and begins no native attempt, so libmpv
+remains the only runtime path. Both options default to `OFF`.
 
 Enable the isolated foundation with:
 
@@ -21,6 +22,11 @@ ctest --test-dir build-native \
   -R 'macos_(native_video|native_video_pipeline|video_toolbox_decoder|native_qt_metal_compositor)' \
   --output-on-failure
 ```
+
+To compile the dormant production activation seam as well, add
+`-DWAM_ENABLE_MACOS_NATIVE_VIDEO_ACTIVATION=ON`. This currently verifies the
+component boundary only; it does not change playback selection or register a
+second QML video item.
 
 ## What exists now
 

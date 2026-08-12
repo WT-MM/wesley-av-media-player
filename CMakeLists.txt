@@ -12,6 +12,9 @@ project(WAM VERSION 0.3.1 LANGUAGES CXX)
 option(WAM_ENABLE_MACOS_NATIVE_VIDEO
   "Build the dormant AVFoundation/VideoToolbox/Metal foundation"
   OFF)
+option(WAM_ENABLE_MACOS_NATIVE_VIDEO_ACTIVATION
+  "Compile the dormant macOS native-video activation seam"
+  OFF)
 set(WAM_NATIVE_VIDEO_TEST_FIXTURE "" CACHE FILEPATH
   "Optional H.264 B-frame fixture used by the macOS VideoToolbox test")
 set(WAM_NATIVE_VIDEO_10BIT_TEST_FIXTURE "" CACHE FILEPATH
@@ -32,6 +35,16 @@ endif()
 if(WAM_ENABLE_MACOS_NATIVE_VIDEO AND NOT APPLE)
   message(FATAL_ERROR
     "WAM_ENABLE_MACOS_NATIVE_VIDEO is available only on macOS")
+endif()
+if(WAM_ENABLE_MACOS_NATIVE_VIDEO_ACTIVATION AND NOT APPLE)
+  message(FATAL_ERROR
+    "WAM_ENABLE_MACOS_NATIVE_VIDEO_ACTIVATION is available only on macOS")
+endif()
+if(WAM_ENABLE_MACOS_NATIVE_VIDEO_ACTIVATION AND
+    NOT WAM_ENABLE_MACOS_NATIVE_VIDEO)
+  message(FATAL_ERROR
+    "WAM_ENABLE_MACOS_NATIVE_VIDEO_ACTIVATION requires "
+    "WAM_ENABLE_MACOS_NATIVE_VIDEO=ON")
 endif()
 
 set(CMAKE_CXX_STANDARD 20)
@@ -159,6 +172,73 @@ if(APPLE)
       "${WAM_METAL_FRAMEWORK}"
       "${WAM_QUARTZCORE_FRAMEWORK}"
       "${WAM_VIDEOTOOLBOX_FRAMEWORK}")
+
+    if(WAM_ENABLE_MACOS_NATIVE_VIDEO_ACTIVATION)
+      # Compile the already-reviewed coordinator, bounded action runner,
+      # macOS command adapter, one-shot session, and Qt OpenGL output as one
+      # production configuration. PlayerController does not own or begin this
+      # seam yet, so even this explicit opt-in remains runtime-inert.
+      set(WAM_MACOS_NATIVE_VIDEO_ACTIVATION_SOURCES
+        src/qt/native_activation_coordinator.hpp
+        src/qt/native_activation_coordinator.cpp
+        src/qt/native_video_controller.hpp
+        src/qt/native_video_controller.cpp
+        src/platform/macos/native_video_action_driver.hpp
+        src/platform/macos/native_video_action_driver.mm
+        src/platform/macos/native_video_session.hpp
+        src/platform/macos/native_video_session.mm
+        src/platform/macos/native_qt_gl_output.hpp
+        src/platform/macos/native_qt_gl_output.mm
+        src/platform/macos/qt_gl_video_item.hpp
+        src/platform/macos/qt_gl_video_item.mm)
+      add_library(wam_macos_native_video_activation STATIC
+        ${WAM_MACOS_NATIVE_VIDEO_ACTIVATION_SOURCES})
+      target_include_directories(wam_macos_native_video_activation PUBLIC src)
+      target_compile_features(wam_macos_native_video_activation PUBLIC
+        cxx_std_20)
+      target_compile_definitions(wam_macos_native_video_activation PRIVATE
+        GL_SILENCE_DEPRECATION=1)
+      target_compile_options(wam_macos_native_video_activation PRIVATE
+        "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>"
+        -Wall -Wextra -Wpedantic)
+      target_link_libraries(wam_macos_native_video_activation
+        PUBLIC wam_macos_native_video
+        PRIVATE
+          Qt6::Core
+          Qt6::Gui
+          Qt6::Qml
+          Qt6::Quick
+          "${WAM_OPENGL_FRAMEWORK}")
+      set_target_properties(wam_macos_native_video_activation PROPERTIES
+        AUTOMOC ON
+        LINKER_LANGUAGE OBJCXX)
+      target_link_libraries(wam PRIVATE
+        wam_macos_native_video_activation)
+      target_compile_definitions(wam PRIVATE
+        WAM_HAS_MACOS_NATIVE_VIDEO_ACTIVATION=1)
+
+      if(BUILD_TESTING)
+        # Headless closure gate: referencing one symbol from each boundary
+        # forces the production-macro archive (including AUTOMOC and the
+        # session -> Qt output -> QtGL chain) to resolve without constructing
+        # a window or starting a native attempt.
+        add_executable(wam_native_video_activation_link_test
+          tests/native_video_activation_link_test.mm)
+        target_include_directories(
+          wam_native_video_activation_link_test PRIVATE src)
+        target_link_libraries(wam_native_video_activation_link_test PRIVATE
+          wam_macos_native_video_activation)
+        target_compile_options(wam_native_video_activation_link_test PRIVATE
+          "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>"
+          -Wall -Wextra -Wpedantic)
+        set_target_properties(wam_native_video_activation_link_test
+          PROPERTIES LINKER_LANGUAGE OBJCXX)
+        add_test(NAME macos_native_video_activation_link
+          COMMAND wam_native_video_activation_link_test)
+        set_tests_properties(macos_native_video_activation_link PROPERTIES
+          TIMEOUT 10)
+      endif()
+    endif()
 
     # Linking the static foundation proves that it coexists with WAM, but no
     # shipping controller or render node selects it. libmpv remains the only
@@ -288,8 +368,9 @@ if(BUILD_TESTING)
     COMMAND wam_native_activation_coordinator_test)
   set_tests_properties(native_activation_coordinator PROPERTIES TIMEOUT 10)
 
-  # Pure capacity-one action runner. This target is test-only; the shipping
-  # controller does not construct or link the native activation path yet.
+  # Pure capacity-one action runner. This target is test-only; the default
+  # application omits the activation seam, and the opt-in application still
+  # does not construct or begin it.
   add_executable(wam_native_video_controller_test
     tests/native_video_controller_test.cpp
     src/qt/native_video_controller.cpp
@@ -398,9 +479,9 @@ if(BUILD_TESTING)
       set_tests_properties(macos_native_qt_metal_compositor PROPERTIES
         TIMEOUT 20)
 
-      # OpenGL/CGL activation gate matching the shipping Qt graphics backend.
-      # It remains test-only: no shipping target compiles or registers this
-      # item until the controller/fallback activation gate is complete.
+      # OpenGL/CGL hardware gate matching the shipping Qt graphics backend.
+      # The item is absent from default application builds; the opt-in
+      # production seam compiles it but does not register or construct it.
       add_executable(wam_native_qt_gl_compositor_test
         tests/native_qt_gl_compositor_test.mm
         src/platform/macos/qt_gl_video_item.hpp
@@ -428,7 +509,8 @@ if(BUILD_TESTING)
         TIMEOUT 120)
 
       # One-shot native action executor gate. The session, Qt output adapter,
-      # and OpenGL item remain absent from every shipping target.
+      # and OpenGL item are absent from default application builds; the opt-in
+      # production seam compiles them without creating a runtime owner.
       add_executable(wam_native_video_session_test
         tests/native_video_session_test.mm
         src/platform/macos/native_video_session.hpp
@@ -459,9 +541,9 @@ if(BUILD_TESTING)
         COMMAND wam_native_video_session_test)
       set_tests_properties(macos_native_video_session PROPERTIES TIMEOUT 20)
 
-      # Exact coordinator-action adapter gate. The adapter and all of its
-      # injected ports remain absent from the shipping application until the
-      # PlayerController integration/fallback gate is separately approved.
+      # Exact coordinator-action adapter gate. The adapter is absent from
+      # default application builds. The opt-in production seam compiles it,
+      # but no concrete PlayerController ports construct or select it yet.
       add_executable(wam_native_video_action_driver_test
         tests/native_video_action_driver_test.mm
         src/platform/macos/native_video_action_driver.hpp
@@ -594,10 +676,10 @@ if(BUILD_TESTING)
               "${WAM_NATIVE_VIDEO_PIPELINE_TEST_ENVIRONMENT}")
         endif()
 
-        # Dormant scheduler-to-Qt bridge gate. The adapter and Qt OpenGL item
-        # remain test-only and are intentionally absent from wam and
-        # wam_macos_native_video until controller/fallback activation is
-        # independently approved.
+        # Dormant scheduler-to-Qt bridge hardware gate. The adapter and Qt
+        # OpenGL item are absent from default application builds. The opt-in
+        # production seam compiles them, but does not construct, register, or
+        # select them until controller/fallback activation is approved.
         add_executable(wam_native_qt_gl_output_test
           tests/native_qt_gl_output_test.mm
           src/platform/macos/native_qt_gl_output.hpp
