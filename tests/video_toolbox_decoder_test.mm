@@ -67,6 +67,7 @@ struct TestInputs {
   const char *h264Path{nullptr};
   const char *main10Path{nullptr};
   bool requireHardware{false};
+  bool callbackAllocationOnly{false};
 };
 
 TestInputs parseTestInputs(int argc, char **argv) {
@@ -79,6 +80,10 @@ TestInputs parseTestInputs(int argc, char **argv) {
       WAM_CHECK_DETAIL(!result.requireHardware,
                        "--require-hardware was supplied more than once");
       result.requireHardware = true;
+    } else if (argument == "--callback-allocation-only") {
+      WAM_CHECK_DETAIL(!result.callbackAllocationOnly,
+                       "--callback-allocation-only was supplied more than once");
+      result.callbackAllocationOnly = true;
     } else {
       WAM_CHECK_DETAIL(!argument.starts_with("--"),
                        "unknown VideoToolbox test option");
@@ -88,7 +93,8 @@ TestInputs parseTestInputs(int argc, char **argv) {
 
   WAM_CHECK_DETAIL(mediaPaths.size() == 1 || mediaPaths.size() == 2,
                    "usage: wam_video_toolbox_decoder_test "
-                   "[--require-hardware] sample-h264.mp4 "
+                   "[--require-hardware] [--callback-allocation-only] "
+                   "sample-h264.mp4 "
                    "[sample-main10-hevc.mp4]");
   WAM_CHECK_DETAIL(!result.requireHardware || mediaPaths.size() == 2,
                    "--require-hardware requires both H.264 and Main 10 HEVC "
@@ -580,6 +586,69 @@ void testInjectedCompletionGapPreservesAdmissionAndMakesProgress(
   WAM_CHECK(decoder.stats().backpressuredSubmissions == 1);
   WAM_CHECK(!decoder.takeLastError().has_value());
   decoder.close();
+}
+
+void testCallbackAllocationFailureFailsClosedAndRetiresInOrder() {
+  using AllocationPoint =
+      wam::macos::VideoToolboxDecoderTestAllocationPoint;
+
+  auto exercise = [&](AllocationPoint point, std::uint64_t generation,
+                      std::uint64_t failingSequence,
+                      std::size_t expectedAfterFailure) {
+    wam::macos::BoundedFrameQueue queue(2, generation);
+    wam::macos::VideoToolboxDecoderOptions options;
+    options.maxInFlightFrames = 2;
+    options.maxPendingPresentationFrames = 2;
+    wam::macos::VideoToolboxDecoder decoder(options);
+    std::string error;
+    WAM_CHECK_DETAIL(
+        wam::macos::VideoToolboxDecoderTestAccess::prepareInjectedCallbacks(
+            decoder, queue, generation, &error),
+        error);
+    WAM_CHECK_DETAIL(
+        wam::macos::VideoToolboxDecoderTestAccess::reserveInjectedSubmissions(
+            decoder, 2, &error),
+        error);
+
+    const std::array<wam::macos::FrameTiming, 2> timings{
+        wam::macos::FrameTiming{CMTimeMake(0, 1), CMTimeMake(1, 1),
+                                generation, true},
+        wam::macos::FrameTiming{CMTimeMake(1, 1), CMTimeMake(1, 1),
+                                generation, false}};
+    wam::macos::VideoToolboxDecoderTestAccess::failNextCallbackAllocation(
+        decoder, point);
+    WAM_CHECK_DETAIL(
+        wam::macos::VideoToolboxDecoderTestAccess::injectDecodedFrame(
+            decoder, failingSequence, nullptr, timings[failingSequence],
+            &error),
+        error);
+    WAM_CHECK(decoder.stats().inFlightFrames == expectedAfterFailure);
+
+    const std::uint64_t remainingSequence = failingSequence == 0 ? 1 : 0;
+    WAM_CHECK_DETAIL(
+        wam::macos::VideoToolboxDecoderTestAccess::injectDecodedFrame(
+            decoder, remainingSequence, nullptr,
+            timings[remainingSequence], &error),
+        error);
+
+    const auto stats = decoder.stats();
+    WAM_CHECK(stats.inFlightFrames == 0);
+    WAM_CHECK(stats.deliveredFrames == 0);
+    WAM_CHECK(stats.pendingPresentationFrames == 0);
+    WAM_CHECK(!queue.tryTake().has_value());
+    const auto callbackError = decoder.takeLastError();
+    WAM_CHECK(callbackError.has_value());
+    WAM_CHECK(callbackError->find("exhausted bounded storage") !=
+              std::string::npos);
+    decoder.close();
+  };
+
+  // Sequence one fails before it can enter completedDecodes. Its tombstone
+  // must remain behind sequence zero rather than prematurely releasing credit.
+  exercise(AllocationPoint::CompletedDecode, 43, 1, 2);
+  // Sequence zero reaches the presentation insertion before allocation fails;
+  // its one credit retires exactly once, and the later callback closes the gap.
+  exercise(AllocationPoint::PendingPresentation, 44, 0, 1);
 }
 
 void testConfigurationByteBound(const DemuxedVideo &video) {
@@ -1322,6 +1391,11 @@ int main(int argc, char **argv) {
     WAM_CHECK_DETAIL(VTIsHardwareDecodeSupported(kCMVideoCodecType_HEVC),
                      "this runner reports no hardware HEVC decoder");
   }
+  if (inputs.callbackAllocationOnly) {
+    testCallbackAllocationFailureFailsClosedAndRetiresInOrder();
+    std::cout << "VideoToolbox callback allocation-failure handling passed\n";
+    return EXIT_SUCCESS;
+  }
   CGLInteropContext cglContext;
   std::cout << "Decoded-frame CGL import context: OpenGL 3.2 core, "
             << (cglContext.accelerated() ? "accelerated" : "non-accelerated")
@@ -1343,6 +1417,7 @@ int main(int argc, char **argv) {
   testInjectedCallbackOrderUsesDecodeSequence(video, inputs.requireHardware);
   testInjectedCompletionGapPreservesAdmissionAndMakesProgress(
       video, keyIndex, inputs.requireHardware);
+  testCallbackAllocationFailureFailsClosedAndRetiresInOrder();
   testBFramePresentationOrderAndMetalImport(video, keyIndex,
                                             inputs.requireHardware);
   testDecodedNV12OpenGLInterop(video, keyIndex, inputs.requireHardware,
