@@ -12,6 +12,13 @@ namespace wam::macos {
 
 #if defined(WAM_NATIVE_VIDEO_TESTING)
 struct VideoToolboxDecoderTestAccess;
+
+// Test-only fault locations at the two callback-owned container insertion
+// boundaries. Production builds neither expose nor evaluate these seams.
+enum class VideoToolboxDecoderTestAllocationPoint : std::uint8_t {
+  CompletedDecode,
+  PendingPresentation,
+};
 #endif
 
 // Selects the zero-copy GPU import contract requested from CoreVideo. OpenGL
@@ -126,9 +133,15 @@ struct VideoToolboxDecoderTestAccess {
       std::string *error);
   [[nodiscard]] static bool reserveInjectedSubmissions(
       VideoToolboxDecoder &decoder, std::size_t count, std::string *error);
+  [[nodiscard]] static bool prepareInjectedCallbacks(
+      VideoToolboxDecoder &decoder, DecodedFrameSink &sink,
+      std::uint64_t generation, std::string *error);
   [[nodiscard]] static bool injectDecodedFrame(
       VideoToolboxDecoder &decoder, std::uint64_t submissionSequence,
       CVPixelBufferRef pixelBuffer, FrameTiming timing, std::string *error);
+  static void failNextCallbackAllocation(
+      VideoToolboxDecoder &decoder,
+      VideoToolboxDecoderTestAllocationPoint point) noexcept;
   [[nodiscard]] static bool validateOutputSurface(
       CVPixelBufferRef pixelBuffer, OSType expectedPixelFormat,
       VideoToolboxOutputInterop outputInterop, std::string *error);

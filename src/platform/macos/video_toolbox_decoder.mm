@@ -7,12 +7,14 @@
 
 #include <algorithm>
 #include <array>
+#include <cstring>
 #include <condition_variable>
 #include <exception>
 #include <limits>
 #include <mutex>
 #include <span>
 #include <stdexcept>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -23,6 +25,7 @@ constexpr std::size_t kMaximumCodecConfigurationBytes = 1024ULL * 1024ULL;
 constexpr std::size_t kMaximumCompressedPacketBytes =
     32ULL * 1024ULL * 1024ULL;
 constexpr std::size_t kMaximumCodecReorderFrames = 16;
+constexpr std::size_t kAsyncErrorCapacity = 384;
 
 constexpr VTDecodeFrameFlags
 finiteAdmissionDecodeFlags(bool enableAsynchronousDecompression) noexcept {
@@ -663,6 +666,22 @@ struct AsyncDecodeState {
     std::optional<FrameLease> frame;
   };
 
+  struct AsyncError {
+    std::array<char, kAsyncErrorCapacity> bytes{};
+    std::size_t size{0};
+
+    void assign(std::string_view message) noexcept {
+      size = std::min(message.size(), bytes.size());
+      if (size != 0) {
+        std::memcpy(bytes.data(), message.data(), size);
+      }
+    }
+
+    void reset() noexcept { size = 0; }
+
+    [[nodiscard]] bool present() const noexcept { return size != 0; }
+  };
+
   mutable std::mutex mutex;
   std::mutex deliveryMutex;
   std::condition_variable completion;
@@ -681,16 +700,30 @@ struct AsyncDecodeState {
   std::uint64_t nextCompletionSequence{0};
   std::vector<CompletedDecode> completedDecodes;
   std::vector<FrameLease> pendingPresentationFrames;
+  // Reused under deliveryMutex. configure() reserves every callback-owned
+  // vector to its admission ceiling before VideoToolbox can invoke a handler.
+  std::vector<FrameLease> deliveryFrames;
   VideoToolboxOutputInterop outputInterop{VideoToolboxOutputInterop::Metal};
   OSType expectedOutputPixelFormat{0};
   OSType actualOutputPixelFormat{0};
   CMTime lastDeliveredPresentationTime{kCMTimeInvalid};
   bool discarding{false};
-  std::optional<std::string> lastError;
+  bool callbackFailedClosed{false};
+  AsyncError lastError;
+#if defined(WAM_NATIVE_VIDEO_TESTING)
+  std::optional<VideoToolboxDecoderTestAllocationPoint>
+      failNextAllocationPoint;
+  bool permitSyntheticCallbackFrame{false};
+#endif
 };
 
+void assignAsyncErrorLocked(AsyncDecodeState &state,
+                            std::string_view message) noexcept {
+  state.lastError.assign(message);
+}
+
 void finishCallbacks(const std::shared_ptr<AsyncDecodeState> &state,
-                     std::size_t retiredCount = 1) noexcept {
+                     std::size_t retiredCount = 1) {
   std::lock_guard lock(state->mutex);
   state->inFlight = retiredCount < state->inFlight
                         ? state->inFlight - retiredCount
@@ -699,10 +732,27 @@ void finishCallbacks(const std::shared_ptr<AsyncDecodeState> &state,
 }
 
 void recordAsyncError(const std::shared_ptr<AsyncDecodeState> &state,
-                      std::string message) noexcept {
-  std::lock_guard lock(state->mutex);
-  state->lastError = std::move(message);
+                      std::string_view message) noexcept {
+  // This function is used by catch handlers on a foreign Apple callback. It
+  // must remain allocation-free, and even a pathological mutex failure must
+  // not escape through the C/Objective-C callback boundary.
+  try {
+    std::lock_guard lock(state->mutex);
+    assignAsyncErrorLocked(*state, message);
+  } catch (...) {
+  }
 }
+
+#if defined(WAM_NATIVE_VIDEO_TESTING)
+void maybeFailCallbackAllocationLocked(
+    AsyncDecodeState &state,
+    VideoToolboxDecoderTestAllocationPoint point) {
+  if (state.failNextAllocationPoint == point) {
+    state.failNextAllocationPoint.reset();
+    throw std::bad_alloc();
+  }
+}
+#endif
 
 bool timeBefore(CMTime left, CMTime right) noexcept {
   return CMTIME_IS_NUMERIC(left) && CMTIME_IS_NUMERIC(right) &&
@@ -723,8 +773,9 @@ void collectPresentableFramesLocked(AsyncDecodeState &state, bool drainAll,
           state.pendingPresentationFrames.begin());
       ++state.dropped;
       ++state.outOfOrderDrops;
-      state.lastError =
-          "VideoToolbox returned a frame older than the presentation floor";
+      assignAsyncErrorLocked(
+          state,
+          "VideoToolbox returned a frame older than the presentation floor");
       continue;
     }
     state.lastDeliveredPresentationTime = candidate.timing().presentationTime;
@@ -734,9 +785,9 @@ void collectPresentableFramesLocked(AsyncDecodeState &state, bool drainAll,
   }
 }
 
-std::size_t collectCompletedDecodesLocked(
-    AsyncDecodeState &state, std::vector<FrameLease> &output) {
-  std::size_t retiredCount = 0;
+void collectCompletedDecodesLocked(AsyncDecodeState &state,
+                                   std::vector<FrameLease> &output,
+                                   std::size_t &retiredCount) {
   while (!state.completedDecodes.empty() &&
          state.completedDecodes.front().submissionSequence ==
              state.nextCompletionSequence) {
@@ -753,8 +804,9 @@ std::size_t collectCompletedDecodesLocked(
                    state.lastDeliveredPresentationTime)) {
       ++state.dropped;
       ++state.outOfOrderDrops;
-      state.lastError =
-          "decoded stream exceeded its SPS presentation-reorder bound";
+      assignAsyncErrorLocked(
+          state,
+          "decoded stream exceeded its SPS presentation-reorder bound");
       continue;
     }
     auto insertion = std::upper_bound(
@@ -764,6 +816,10 @@ std::size_t collectCompletedDecodesLocked(
           return timeBefore(left.timing().presentationTime,
                             right.timing().presentationTime);
         });
+#if defined(WAM_NATIVE_VIDEO_TESTING)
+    maybeFailCallbackAllocationLocked(
+        state, VideoToolboxDecoderTestAllocationPoint::PendingPresentation);
+#endif
     state.pendingPresentationFrames.insert(insertion,
                                            std::move(*completed.frame));
     collectPresentableFramesLocked(state, false, output);
@@ -771,12 +827,11 @@ std::size_t collectCompletedDecodesLocked(
         std::max(state.peakPendingPresentationFrames,
                  state.pendingPresentationFrames.size());
   }
-  return retiredCount;
 }
 
 void deliverBatch(const std::shared_ptr<AsyncDecodeState> &state,
                   DecodedFrameSink &sink,
-                  std::vector<FrameLease> frames) noexcept {
+                  std::vector<FrameLease> &frames) {
   for (FrameLease &frame : frames) {
     try {
       std::string sinkError;
@@ -792,52 +847,112 @@ void deliverBatch(const std::shared_ptr<AsyncDecodeState> &state,
         ++state->sinkBackpressureDrops;
       } else {
         ++state->dropped;
-        state->lastError =
-            sinkError.empty()
-                ? "decoded frame sink rejected a frame"
-                : "decoded frame sink rejected a frame: " + sinkError;
+        assignAsyncErrorLocked(
+            *state, sinkError.empty() ? "decoded frame sink rejected a frame"
+                                      : std::string_view(sinkError));
       }
-    } catch (const std::exception &exception) {
-      recordAsyncError(state, std::string("decoded frame delivery threw: ") +
-                                  exception.what());
-      std::lock_guard lock(state->mutex);
-      ++state->dropped;
+    } catch (const std::exception &) {
+      recordAsyncError(state, "decoded frame delivery threw an exception");
+      try {
+        std::lock_guard lock(state->mutex);
+        ++state->dropped;
+      } catch (...) {
+      }
     } catch (...) {
       recordAsyncError(state, "decoded frame delivery threw an unknown error");
-      std::lock_guard lock(state->mutex);
-      ++state->dropped;
+      try {
+        std::lock_guard lock(state->mutex);
+        ++state->dropped;
+      } catch (...) {
+      }
     }
   }
+  frames.clear();
 }
 
 void drainAllPresentationFrames(
     const std::shared_ptr<AsyncDecodeState> &state) noexcept {
-  std::lock_guard deliveryLock(state->deliveryMutex);
-  DecodedFrameSink *sink = nullptr;
-  std::vector<FrameLease> readyFrames;
-  {
-    std::lock_guard lock(state->mutex);
-    sink = state->sink;
-    collectPresentableFramesLocked(*state, true, readyFrames);
-  }
-  if (sink != nullptr && !readyFrames.empty()) {
-    deliverBatch(state, *sink, std::move(readyFrames));
+  try {
+    std::lock_guard deliveryLock(state->deliveryMutex);
+    DecodedFrameSink *sink = nullptr;
+    {
+      std::lock_guard lock(state->mutex);
+      sink = state->sink;
+      collectPresentableFramesLocked(*state, true, state->deliveryFrames);
+    }
+    if (sink != nullptr && !state->deliveryFrames.empty()) {
+      deliverBatch(state, *sink, state->deliveryFrames);
+    } else {
+      state->deliveryFrames.clear();
+    }
+  } catch (...) {
+    recordAsyncError(state,
+                     "decoded presentation drain threw an exception");
   }
 }
 
 void resetPresentationState(
     const std::shared_ptr<AsyncDecodeState> &state) noexcept {
   std::vector<FrameLease> retiredFrames;
+  std::lock_guard deliveryLock(state->deliveryMutex);
   {
-    std::lock_guard deliveryLock(state->deliveryMutex);
     std::lock_guard lock(state->mutex);
     retiredFrames.swap(state->pendingPresentationFrames);
     state->completedDecodes.clear();
+    state->deliveryFrames.clear();
     state->nextSubmissionSequence = 0;
     state->nextCompletionSequence = 0;
     state->lastDeliveredPresentationTime = kCMTimeInvalid;
+    state->callbackFailedClosed = false;
   }
-  // Release decoder surfaces after leaving both pipeline locks.
+  // Release decoder surfaces outside the state mutex, then return the empty
+  // vector's pre-reserved storage before another callback can enter.
+  retiredFrames.clear();
+  {
+    std::lock_guard lock(state->mutex);
+    state->pendingPresentationFrames.swap(retiredFrames);
+  }
+}
+
+bool reserveCallbackStorage(
+    const std::shared_ptr<AsyncDecodeState> &state,
+    std::size_t maxInFlightFrames,
+    std::size_t maxPendingPresentationFrames, std::string *error) {
+  if (maxPendingPresentationFrames ==
+          std::numeric_limits<std::size_t>::max() ||
+      maxInFlightFrames >
+          std::numeric_limits<std::size_t>::max() -
+              maxPendingPresentationFrames - 1U) {
+    assignError(error, "VideoToolbox callback storage bound overflows size_t");
+    return false;
+  }
+  const std::size_t pendingCapacity = maxPendingPresentationFrames + 1U;
+  const std::size_t deliveryCapacity =
+      maxInFlightFrames + maxPendingPresentationFrames + 1U;
+
+  try {
+    std::lock_guard deliveryLock(state->deliveryMutex);
+    std::lock_guard stateLock(state->mutex);
+    if (maxInFlightFrames > state->completedDecodes.max_size() ||
+        pendingCapacity > state->pendingPresentationFrames.max_size() ||
+        deliveryCapacity > state->deliveryFrames.max_size()) {
+      assignError(error,
+                  "VideoToolbox callback storage bound exceeds vector limits");
+      return false;
+    }
+    state->completedDecodes.reserve(maxInFlightFrames);
+    state->pendingPresentationFrames.reserve(pendingCapacity);
+    state->deliveryFrames.reserve(deliveryCapacity);
+  } catch (const std::bad_alloc &) {
+    assignError(error,
+                "could not reserve bounded VideoToolbox callback storage");
+    return false;
+  } catch (const std::length_error &) {
+    assignError(error,
+                "VideoToolbox callback storage bound exceeds vector limits");
+    return false;
+  }
+  return true;
 }
 
 struct BiPlanarSurfaceLayout {
@@ -962,12 +1077,40 @@ bool validateOutputSurfaceContract(CVPixelBufferRef pixelBuffer,
   return true;
 }
 
-void deliverDecodedFrame(const std::shared_ptr<AsyncDecodeState> &state,
-                         std::uint64_t submissionSequence, FrameTiming timing,
-                         OSStatus status,
-                         VTDecodeInfoFlags infoFlags,
-                         CVImageBufferRef imageBuffer, CMTime presentationTime,
-                         CMTime presentationDuration) noexcept {
+struct CallbackProgress {
+  std::size_t retiredCount{0};
+};
+
+void insertCompletionTombstoneLocked(AsyncDecodeState &state,
+                                     std::uint64_t submissionSequence) {
+  const auto insertion = std::lower_bound(
+      state.completedDecodes.begin(), state.completedDecodes.end(),
+      submissionSequence,
+      [](const AsyncDecodeState::CompletedDecode &completion,
+         std::uint64_t sequence) {
+        return completion.submissionSequence < sequence;
+      });
+  if (submissionSequence < state.nextCompletionSequence ||
+      (insertion != state.completedDecodes.end() &&
+       insertion->submissionSequence == submissionSequence)) {
+    return;
+  }
+  // configure() reserves maxInFlightFrames slots. Since every sequence owns
+  // one admission credit, this fail-closed tombstone cannot grow the vector
+  // beyond that preallocated ceiling.
+  state.completedDecodes.insert(
+      insertion,
+      AsyncDecodeState::CompletedDecode{submissionSequence, std::nullopt});
+}
+
+void deliverDecodedFrameImpl(const std::shared_ptr<AsyncDecodeState> &state,
+                             std::uint64_t submissionSequence,
+                             FrameTiming timing, OSStatus status,
+                             VTDecodeInfoFlags infoFlags,
+                             CVImageBufferRef imageBuffer,
+                             CMTime presentationTime,
+                             CMTime presentationDuration,
+                             CallbackProgress &progress) {
   // Async callbacks are not assumed to arrive in submission or presentation
   // order. Serialize the callback boundary, restore submission order by the
   // captured sequence, then apply the SPS-derived PTS reorder bound.
@@ -980,82 +1123,168 @@ void deliverDecodedFrame(const std::shared_ptr<AsyncDecodeState> &state,
   }
 
   DecodedFrameSink *sink = nullptr;
-  std::vector<FrameLease> readyFrames;
-  std::size_t retiredCount = 0;
   {
     std::lock_guard lock(state->mutex);
     sink = state->sink;
-    std::optional<FrameLease> decodedFrame;
-    if (status != noErr) {
-      state->lastError = statusError("VideoToolbox output callback", status);
+    if (state->callbackFailedClosed) {
       ++state->dropped;
-    } else if ((infoFlags & kVTDecodeInfo_FrameDropped) != 0 ||
-               imageBuffer == nullptr) {
-      ++state->dropped;
-      if (imageBuffer == nullptr &&
-          (infoFlags & kVTDecodeInfo_FrameDropped) == 0) {
-        state->lastError =
-            "VideoToolbox returned success without a decoded pixel buffer";
-      }
-    } else if (state->discarding || timing.generation != state->generation) {
-      // A flush advances the generation before waiting for callbacks, so an
-      // old frame is released here without ever reaching the new timeline.
-      ++state->dropped;
+      insertCompletionTombstoneLocked(*state, submissionSequence);
+      collectCompletedDecodesLocked(*state, state->deliveryFrames,
+                                    progress.retiredCount);
     } else {
-      auto pixelBuffer = static_cast<CVPixelBufferRef>(imageBuffer);
-      std::string surfaceError;
-      if (!validateOutputSurfaceContract(
-              pixelBuffer, state->expectedOutputPixelFormat,
-              state->outputInterop, &surfaceError)) {
-        state->lastError = std::move(surfaceError);
+      std::optional<FrameLease> decodedFrame;
+      if (status != noErr) {
+        assignAsyncErrorLocked(
+            *state, "VideoToolbox output callback reported failure");
         ++state->dropped;
-      } else if (!CMTIME_IS_NUMERIC(timing.presentationTime)) {
-        state->lastError =
-            "VideoToolbox returned a decoded frame without a finite numeric "
-            "presentation timestamp";
+      } else if ((infoFlags & kVTDecodeInfo_FrameDropped) != 0 ||
+                 (imageBuffer == nullptr
+#if defined(WAM_NATIVE_VIDEO_TESTING)
+                  && !state->permitSyntheticCallbackFrame
+#endif
+                  )) {
+        ++state->dropped;
+        if (imageBuffer == nullptr &&
+            (infoFlags & kVTDecodeInfo_FrameDropped) == 0) {
+          assignAsyncErrorLocked(
+              *state,
+              "VideoToolbox returned success without a decoded pixel buffer");
+        }
+      } else if (state->discarding || timing.generation != state->generation) {
+        // A flush advances the generation before waiting for callbacks, so an
+        // old frame is released here without ever reaching the new timeline.
         ++state->dropped;
       } else {
-        const OSType pixelFormat =
-            CVPixelBufferGetPixelFormatType(pixelBuffer);
-        state->actualOutputPixelFormat = pixelFormat;
-        if (sink == nullptr) {
-          state->lastError = "decoded frame has no configured output sink";
+        auto pixelBuffer = static_cast<CVPixelBufferRef>(imageBuffer);
+#if defined(WAM_NATIVE_VIDEO_TESTING)
+        if (state->permitSyntheticCallbackFrame) {
+          decodedFrame.emplace(pixelBuffer, timing);
+        } else
+#endif
+        if (!validateOutputSurfaceContract(
+                pixelBuffer, state->expectedOutputPixelFormat,
+                state->outputInterop, nullptr)) {
+          assignAsyncErrorLocked(
+              *state,
+              "VideoToolbox decoded surface violated the output contract");
+          ++state->dropped;
+        } else if (!CMTIME_IS_NUMERIC(timing.presentationTime)) {
+          assignAsyncErrorLocked(
+              *state,
+              "VideoToolbox returned a decoded frame without a finite numeric "
+              "presentation timestamp");
           ++state->dropped;
         } else {
-          decodedFrame.emplace(pixelBuffer, timing);
+          const OSType pixelFormat =
+              CVPixelBufferGetPixelFormatType(pixelBuffer);
+          state->actualOutputPixelFormat = pixelFormat;
+          if (sink == nullptr) {
+            assignAsyncErrorLocked(
+                *state, "decoded frame has no configured output sink");
+            ++state->dropped;
+          } else {
+            decodedFrame.emplace(pixelBuffer, timing);
+          }
         }
       }
-    }
 
-    const auto duplicate = std::lower_bound(
-        state->completedDecodes.begin(), state->completedDecodes.end(),
-        submissionSequence,
-        [](const AsyncDecodeState::CompletedDecode &completion,
-           std::uint64_t sequence) {
-          return completion.submissionSequence < sequence;
-        });
-    if (submissionSequence < state->nextCompletionSequence ||
-        (duplicate != state->completedDecodes.end() &&
-         duplicate->submissionSequence == submissionSequence)) {
-      if (decodedFrame) {
-        ++state->dropped;
+      const auto duplicate = std::lower_bound(
+          state->completedDecodes.begin(), state->completedDecodes.end(),
+          submissionSequence,
+          [](const AsyncDecodeState::CompletedDecode &completion,
+             std::uint64_t sequence) {
+            return completion.submissionSequence < sequence;
+          });
+      if (submissionSequence < state->nextCompletionSequence ||
+          (duplicate != state->completedDecodes.end() &&
+           duplicate->submissionSequence == submissionSequence)) {
+        if (decodedFrame) {
+          ++state->dropped;
+        }
+        assignAsyncErrorLocked(
+            *state,
+            "VideoToolbox invoked a duplicate decoded-frame callback");
+      } else {
+#if defined(WAM_NATIVE_VIDEO_TESTING)
+        maybeFailCallbackAllocationLocked(
+            *state, VideoToolboxDecoderTestAllocationPoint::CompletedDecode);
+#endif
+        state->completedDecodes.insert(
+            duplicate, AsyncDecodeState::CompletedDecode{
+                           submissionSequence, std::move(decodedFrame)});
+        collectCompletedDecodesLocked(*state, state->deliveryFrames,
+                                      progress.retiredCount);
       }
-      state->lastError =
-          "VideoToolbox invoked a duplicate decoded-frame callback";
-    } else {
-      state->completedDecodes.insert(
-          duplicate, AsyncDecodeState::CompletedDecode{
-                         submissionSequence, std::move(decodedFrame)});
-      retiredCount = collectCompletedDecodesLocked(*state, readyFrames);
     }
   }
 
-  if (sink != nullptr && !readyFrames.empty()) {
-    deliverBatch(state, *sink, std::move(readyFrames));
+  if (sink != nullptr && !state->deliveryFrames.empty()) {
+    deliverBatch(state, *sink, state->deliveryFrames);
+  } else {
+    state->deliveryFrames.clear();
   }
 
-  if (retiredCount != 0) {
-    finishCallbacks(state, retiredCount);
+  if (progress.retiredCount != 0) {
+    finishCallbacks(state, progress.retiredCount);
+  }
+}
+
+void failDecodedFrameCallback(
+    const std::shared_ptr<AsyncDecodeState> &state,
+    std::uint64_t submissionSequence, CallbackProgress progress,
+    std::string_view diagnostic) noexcept {
+  try {
+    std::lock_guard deliveryLock(state->deliveryMutex);
+    {
+      std::lock_guard lock(state->mutex);
+      // Keep every accepted submission behind the same sequence gate even on
+      // allocation failure. Existing completions become no-frame tombstones;
+      // a missing current completion is added from pre-reserved capacity.
+      for (AsyncDecodeState::CompletedDecode &completion :
+           state->completedDecodes) {
+        completion.frame.reset();
+      }
+      state->pendingPresentationFrames.clear();
+      state->deliveryFrames.clear();
+      state->callbackFailedClosed = true;
+      state->discarding = true;
+      ++state->dropped;
+      assignAsyncErrorLocked(*state, diagnostic);
+      insertCompletionTombstoneLocked(*state, submissionSequence);
+      collectCompletedDecodesLocked(*state, state->deliveryFrames,
+                                    progress.retiredCount);
+    }
+    if (progress.retiredCount != 0) {
+      finishCallbacks(state, progress.retiredCount);
+    }
+  } catch (...) {
+    recordAsyncError(state,
+                     "VideoToolbox output callback failed closed");
+  }
+}
+
+void deliverDecodedFrame(const std::shared_ptr<AsyncDecodeState> &state,
+                         std::uint64_t submissionSequence, FrameTiming timing,
+                         OSStatus status, VTDecodeInfoFlags infoFlags,
+                         CVImageBufferRef imageBuffer, CMTime presentationTime,
+                         CMTime presentationDuration) noexcept {
+  CallbackProgress progress;
+  try {
+    deliverDecodedFrameImpl(state, submissionSequence, timing, status,
+                            infoFlags, imageBuffer, presentationTime,
+                            presentationDuration, progress);
+  } catch (const std::bad_alloc &) {
+    failDecodedFrameCallback(
+        state, submissionSequence, progress,
+        "VideoToolbox output callback exhausted bounded storage");
+  } catch (const std::exception &) {
+    failDecodedFrameCallback(
+        state, submissionSequence, progress,
+        "VideoToolbox output callback threw an exception");
+  } catch (...) {
+    failDecodedFrameCallback(
+        state, submissionSequence, progress,
+        "VideoToolbox output callback threw an unknown exception");
   }
 }
 
@@ -1326,7 +1555,12 @@ struct VideoToolboxDecoder::Impl {
 
   std::optional<std::string> takeAsyncErrorLocked() {
     std::lock_guard lock(async->mutex);
-    std::optional<std::string> result = std::move(async->lastError);
+    if (!async->lastError.present()) {
+      return std::nullopt;
+    }
+    std::optional<std::string> result(std::in_place,
+                                      async->lastError.bytes.data(),
+                                      async->lastError.size);
     async->lastError.reset();
     return result;
   }
@@ -1428,6 +1662,13 @@ bool VideoToolboxDecoder::configure(
                         impl_->options.maxPendingPresentationFrames));
     return false;
   }
+  if (!reserveCallbackStorage(impl_->async, impl_->options.maxInFlightFrames,
+                              impl_->options.maxPendingPresentationFrames,
+                              error)) {
+    CFRelease(impl_->formatDescription);
+    impl_->formatDescription = nullptr;
+    return false;
+  }
 
   impl_->preferHardware = configuration.preferHardwareDecode;
   impl_->requireHardware = configuration.requireHardwareDecode;
@@ -1457,7 +1698,12 @@ bool VideoToolboxDecoder::configure(
     impl_->async->expectedOutputPixelFormat = impl_->outputPixelFormat;
     impl_->async->actualOutputPixelFormat = 0;
     impl_->async->lastDeliveredPresentationTime = kCMTimeInvalid;
+    impl_->async->callbackFailedClosed = false;
     impl_->async->lastError.reset();
+#if defined(WAM_NATIVE_VIDEO_TESTING)
+    impl_->async->failNextAllocationPoint.reset();
+    impl_->async->permitSyntheticCallbackFrame = false;
+#endif
   }
   sink.flush(configuration.generation);
 
@@ -1837,6 +2083,59 @@ bool VideoToolboxDecoderTestAccess::reserveInjectedSubmissions(
   return true;
 }
 
+bool VideoToolboxDecoderTestAccess::prepareInjectedCallbacks(
+    VideoToolboxDecoder &decoder, DecodedFrameSink &sink,
+    std::uint64_t generation, std::string *error) {
+  if (error != nullptr) {
+    error->clear();
+  }
+  std::lock_guard operationLock(decoder.impl_->operationMutex);
+  if (decoder.impl_->configured || decoder.impl_->session != nullptr ||
+      decoder.impl_->formatDescription != nullptr) {
+    assignError(error, "test decoder is already configured");
+    return false;
+  }
+  if (!reserveCallbackStorage(
+          decoder.impl_->async, decoder.impl_->options.maxInFlightFrames,
+          decoder.impl_->options.maxPendingPresentationFrames, error)) {
+    return false;
+  }
+
+  {
+    std::lock_guard deliveryLock(decoder.impl_->async->deliveryMutex);
+    std::lock_guard stateLock(decoder.impl_->async->mutex);
+    decoder.impl_->configured = true;
+    decoder.impl_->ended = false;
+    decoder.impl_->awaitingKeyFrame = false;
+    decoder.impl_->outputPixelFormat =
+        kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange;
+    decoder.impl_->codecReorderFrames = 0;
+    decoder.impl_->async->sink = &sink;
+    decoder.impl_->async->generation = generation;
+    decoder.impl_->async->inFlight = 0;
+    decoder.impl_->async->codecReorderFrames = 0;
+    decoder.impl_->async->nextSubmissionSequence = 0;
+    decoder.impl_->async->nextCompletionSequence = 0;
+    decoder.impl_->async->completedDecodes.clear();
+    decoder.impl_->async->pendingPresentationFrames.clear();
+    decoder.impl_->async->deliveryFrames.clear();
+    decoder.impl_->async->outputInterop = decoder.impl_->options.outputInterop;
+    decoder.impl_->async->expectedOutputPixelFormat =
+        decoder.impl_->outputPixelFormat;
+    decoder.impl_->async->actualOutputPixelFormat = 0;
+    decoder.impl_->async->lastDeliveredPresentationTime = kCMTimeInvalid;
+    decoder.impl_->async->discarding = false;
+    decoder.impl_->async->callbackFailedClosed = false;
+    decoder.impl_->async->lastError.reset();
+#if defined(WAM_NATIVE_VIDEO_TESTING)
+    decoder.impl_->async->failNextAllocationPoint.reset();
+    decoder.impl_->async->permitSyntheticCallbackFrame = true;
+#endif
+  }
+  sink.flush(generation);
+  return true;
+}
+
 bool VideoToolboxDecoderTestAccess::injectDecodedFrame(
     VideoToolboxDecoder &decoder, std::uint64_t submissionSequence,
     CVPixelBufferRef pixelBuffer, FrameTiming timing, std::string *error) {
@@ -1850,7 +2149,8 @@ bool VideoToolboxDecoderTestAccess::injectDecodedFrame(
       assignError(error, "test decoder is not configured");
       return false;
     }
-    if (pixelBuffer == nullptr) {
+    if (pixelBuffer == nullptr &&
+        !decoder.impl_->async->permitSyntheticCallbackFrame) {
       assignError(error, "test decoded frame has no pixel buffer");
       return false;
     }
@@ -1862,6 +2162,17 @@ bool VideoToolboxDecoderTestAccess::injectDecodedFrame(
                       0, pixelBuffer, timing.presentationTime,
                       timing.duration);
   return true;
+}
+
+void VideoToolboxDecoderTestAccess::failNextCallbackAllocation(
+    VideoToolboxDecoder &decoder,
+    VideoToolboxDecoderTestAllocationPoint point) noexcept {
+  try {
+    std::lock_guard operationLock(decoder.impl_->operationMutex);
+    std::lock_guard stateLock(decoder.impl_->async->mutex);
+    decoder.impl_->async->failNextAllocationPoint = point;
+  } catch (...) {
+  }
 }
 
 bool VideoToolboxDecoderTestAccess::validateOutputSurface(
