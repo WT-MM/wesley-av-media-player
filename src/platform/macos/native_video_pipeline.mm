@@ -6,6 +6,7 @@
 #import <QuartzCore/QuartzCore.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -19,6 +20,7 @@
 #include <optional>
 #include <span>
 #include <thread>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -33,7 +35,8 @@ constexpr std::size_t kMaximumInFlightDecodeFrames = 2;
 // This is the dormant experiment's ceiling; a production fallback selector is
 // not wired yet.
 constexpr std::size_t kMaximumReorderFrames = 8;
-// Cap the dormant experiment at 1080p. Its application-retained worst case is
+// Cap the dormant experiment at a 1920x1080 coded-pixel budget. Its
+// application-retained worst case is
 // 17 decoded leases (queue, decode, reorder, scheduling, GPU) plus two BGRA
 // drawables: about 66 MiB for NV12 or 117 MiB for P010. Two bounded compressed
 // copies, demux scratch, and VideoToolbox's private pool are additional.
@@ -51,6 +54,20 @@ constexpr double kMaximumSeekPrerollSeconds = 12.0;
 // resource bound at one preparing/running/retiring native attempt so repeatedly
 // destroying frontends cannot accumulate self-owned VideoToolbox sessions.
 std::atomic<bool> gNativeAttemptAdmission{false};
+
+#if defined(WAM_NATIVE_VIDEO_PIPELINE_TESTING)
+std::atomic<bool> gFailNextPipelineWrapperAllocation{false};
+#endif
+
+constexpr const char* kPresentationExceptionError =
+    "native video presentation exhausted its bounded memory";
+constexpr const char* kWorkerAllocationError =
+    "native video worker exhausted its bounded memory";
+constexpr const char* kWorkerExceptionError = "native video worker failed";
+constexpr const char* kDisplayLinkStartError =
+    "native video display link could not start";
+constexpr const char* kDisplayLinkStopError =
+    "native video display link could not stop cleanly";
 
 void assignError(std::string* error, std::string message) {
   if (error != nullptr) {
@@ -80,6 +97,41 @@ void assignErrorNoexcept(std::string* error,
                              "native Qt OpenGL output startup failed");
   }
 }
+
+class ScopedSampleBuffer final {
+ public:
+  explicit ScopedSampleBuffer(CMSampleBufferRef sample) noexcept
+      : sample_(sample) {}
+  ScopedSampleBuffer(const ScopedSampleBuffer&) = delete;
+  ScopedSampleBuffer& operator=(const ScopedSampleBuffer&) = delete;
+  ~ScopedSampleBuffer() {
+    if (sample_ != nullptr) {
+      CFRelease(sample_);
+    }
+  }
+
+  [[nodiscard]] CMSampleBufferRef get() const noexcept { return sample_; }
+  [[nodiscard]] explicit operator bool() const noexcept {
+    return sample_ != nullptr;
+  }
+
+ private:
+  CMSampleBufferRef sample_{nullptr};
+};
+
+template <typename Callback>
+class ScopeExit final {
+ public:
+  explicit ScopeExit(Callback callback) noexcept(
+      std::is_nothrow_move_constructible_v<Callback>)
+      : callback_(std::move(callback)) {}
+  ScopeExit(const ScopeExit&) = delete;
+  ScopeExit& operator=(const ScopeExit&) = delete;
+  ~ScopeExit() noexcept { callback_(); }
+
+ private:
+  Callback callback_;
+};
 
 std::string describeNSError(NSError* error, const char* fallback) {
   if (error == nil || error.localizedDescription == nil) {
@@ -274,6 +326,86 @@ std::optional<std::vector<std::byte>> copyCodecConfiguration(
   return result;
 }
 
+bool probeCompressedSampleExtraction(AVAsset* asset, AVAssetTrack* track,
+                                     CMVideoCodecType expectedCodec,
+                                     std::string* error) {
+  NSError* readerError = nil;
+  AVAssetReader* reader =
+      [[AVAssetReader alloc] initWithAsset:asset error:&readerError];
+  if (reader == nil) {
+    assignError(error,
+                describeNSError(readerError,
+                                "AVFoundation reader probe failed"));
+    return false;
+  }
+  AVAssetReaderTrackOutput* output =
+      [[AVAssetReaderTrackOutput alloc] initWithTrack:track
+                                       outputSettings:nil];
+  if (output == nil) {
+    assignError(error,
+                "AVFoundation could not create a compressed-sample output");
+    return false;
+  }
+  output.alwaysCopiesSampleData = NO;
+  if (![reader canAddOutput:output]) {
+    assignError(error,
+                "AVFoundation cannot expose the original compressed video "
+                "samples");
+    return false;
+  }
+  [reader addOutput:output];
+  if (![reader startReading]) {
+    assignError(error,
+                describeNSError(reader.error,
+                                "AVFoundation compressed-sample probe could "
+                                "not start"));
+    return false;
+  }
+
+  constexpr std::size_t kMaximumProbeSamples = 64;
+  bool foundCompressedSample = false;
+  std::string invalidSampleError;
+  for (std::size_t index = 0; index < kMaximumProbeSamples; ++index) {
+    CMSampleBufferRef sample = [output copyNextSampleBuffer];
+    if (sample == nullptr) {
+      break;
+    }
+    const CMFormatDescriptionRef sampleFormat =
+        CMSampleBufferGetFormatDescription(sample);
+    CMBlockBufferRef data = CMSampleBufferGetDataBuffer(sample);
+    const std::size_t dataLength =
+        data == nullptr ? 0 : CMBlockBufferGetDataLength(data);
+    if (dataLength == 0) {
+      CFRelease(sample);
+      continue;
+    }
+    const bool usable = CMSampleBufferGetNumSamples(sample) == 1 &&
+                        sampleFormat != nullptr &&
+                        CMFormatDescriptionGetMediaSubType(sampleFormat) ==
+                            expectedCodec &&
+                        dataLength <= kMaximumCompressedSampleBytes;
+    CFRelease(sample);
+    if (usable) {
+      foundCompressedSample = true;
+      break;
+    }
+    invalidSampleError =
+        "AVFoundation yielded a compressed video sample outside the native "
+        "codec or memory contract";
+    break;
+  }
+  const std::string readerDiagnostic =
+      describeNSError(reader.error,
+                      "AVFoundation did not yield a bounded compressed "
+                      "video sample");
+  [reader cancelReading];
+  if (!foundCompressedSample) {
+    assignError(error, invalidSampleError.empty() ? readerDiagnostic
+                                                  : invalidSampleError);
+  }
+  return foundCompressedSample;
+}
+
 class NotifyingFrameSink final : public DecodedFrameSink {
  public:
   using Notification = std::function<void()>;
@@ -350,6 +482,7 @@ class PipelineFailureState final {
     enabled_ = true;
     reported_ = false;
     lastError_.reset();
+    fixedError_ = nullptr;
     active_.store(false, std::memory_order_release);
     return epoch_;
   }
@@ -367,6 +500,7 @@ class PipelineFailureState final {
     enabled_ = false;
     reported_ = false;
     lastError_.reset();
+    fixedError_ = nullptr;
     ++epoch_;
   }
 
@@ -386,6 +520,20 @@ class PipelineFailureState final {
     }
     reported_ = true;
     lastError_ = std::move(message);
+    fixedError_ = nullptr;
+    active_.store(false, std::memory_order_release);
+    return epoch_;
+  }
+
+  std::optional<std::uint64_t> reportFixedCurrent(
+      const char* message) noexcept {
+    std::lock_guard lock(mutex_);
+    if (!enabled_ || reported_) {
+      return std::nullopt;
+    }
+    reported_ = true;
+    lastError_.reset();
+    fixedError_ = message;
     active_.store(false, std::memory_order_release);
     return epoch_;
   }
@@ -397,6 +545,19 @@ class PipelineFailureState final {
     }
     reported_ = true;
     lastError_ = std::move(message);
+    fixedError_ = nullptr;
+    active_.store(false, std::memory_order_release);
+    return true;
+  }
+
+  bool reportFixed(std::uint64_t epoch, const char* message) noexcept {
+    std::lock_guard lock(mutex_);
+    if (!enabled_ || epoch != epoch_ || reported_) {
+      return false;
+    }
+    reported_ = true;
+    lastError_.reset();
+    fixedError_ = message;
     active_.store(false, std::memory_order_release);
     return true;
   }
@@ -412,9 +573,24 @@ class PipelineFailureState final {
 
   std::optional<std::string> takeLastError() noexcept {
     std::lock_guard lock(mutex_);
-    std::optional<std::string> result = std::move(lastError_);
-    lastError_.reset();
-    return result;
+    if (lastError_.has_value()) {
+      std::optional<std::string> result = std::move(lastError_);
+      lastError_.reset();
+      fixedError_ = nullptr;
+      return result;
+    }
+    if (fixedError_ == nullptr) {
+      return std::nullopt;
+    }
+    const char* message = fixedError_;
+    fixedError_ = nullptr;
+    try {
+      return std::string(message);
+    } catch (...) {
+      // The failure is already latched and the pipeline is inactive. Preserve
+      // the noexcept API even if diagnostics cannot be materialized yet.
+      return std::string{};
+    }
   }
 
  private:
@@ -423,10 +599,351 @@ class PipelineFailureState final {
   bool enabled_{false};
   bool reported_{false};
   std::optional<std::string> lastError_;
+  const char* fixedError_{nullptr};
   std::atomic<bool> active_{false};
 };
 
 }  // namespace
+
+NativeVideoContainerAdmissionHint nativeVideoContainerAdmissionHint(
+    std::string_view path) noexcept {
+  const std::size_t separator = path.find_last_of("/\\");
+  const std::size_t dot = path.find_last_of('.');
+  const std::size_t basenameStart =
+      separator == std::string_view::npos ? 0 : separator + 1;
+  if (dot == std::string_view::npos ||
+      (separator != std::string_view::npos && dot < separator) ||
+      dot == basenameStart ||
+      dot + 1 >= path.size()) {
+    return {};
+  }
+  const std::string_view extension = path.substr(dot + 1);
+  const auto is = [extension](std::string_view expected) noexcept {
+    if (extension.size() != expected.size()) {
+      return false;
+    }
+    for (std::size_t index = 0; index < extension.size(); ++index) {
+      const char value = extension[index];
+      const char folded = value >= 'A' && value <= 'Z'
+                              ? static_cast<char>(value - 'A' + 'a')
+                              : value;
+      if (folded != expected[index]) {
+        return false;
+      }
+    }
+    return true;
+  };
+
+  if (is("mp4") || is("m4v")) {
+    return {NativeVideoContainerFamily::IsoBaseMedia,
+            NativeVideoDemuxPreference::AvFoundation};
+  }
+  if (is("mov") || is("qt")) {
+    return {NativeVideoContainerFamily::QuickTime,
+            NativeVideoDemuxPreference::AvFoundation};
+  }
+  if (is("mkv") || is("mk3d") || is("mka")) {
+    return {NativeVideoContainerFamily::Matroska,
+            NativeVideoDemuxPreference::ExternalBridgeRequired};
+  }
+  if (is("webm")) {
+    return {NativeVideoContainerFamily::WebM,
+            NativeVideoDemuxPreference::ExternalBridgeRequired};
+  }
+  if (is("avi")) {
+    return {NativeVideoContainerFamily::Avi,
+            NativeVideoDemuxPreference::ProbeAvFoundation};
+  }
+  if (is("ts") || is("mts") || is("m2ts")) {
+    return {NativeVideoContainerFamily::MpegTransportStream,
+            NativeVideoDemuxPreference::ProbeAvFoundation};
+  }
+  if (is("ogg") || is("ogv")) {
+    return {NativeVideoContainerFamily::Ogg,
+            NativeVideoDemuxPreference::ExternalBridgeRequired};
+  }
+  if (is("flv")) {
+    return {NativeVideoContainerFamily::FlashVideo,
+            NativeVideoDemuxPreference::ExternalBridgeRequired};
+  }
+  return {};
+}
+
+NativeVideoCodecAdmission nativeVideoCodecAdmission(
+    std::uint32_t mediaSubtype) noexcept {
+  if (mediaSubtype == kCMVideoCodecType_H264) {
+    return NativeVideoCodecAdmission::H264;
+  }
+  if (mediaSubtype == kCMVideoCodecType_HEVC) {
+    return NativeVideoCodecAdmission::Hevc;
+  }
+  return NativeVideoCodecAdmission::Unsupported;
+}
+
+namespace {
+
+class CodecRbspBitReader final {
+ public:
+  explicit CodecRbspBitReader(
+      std::span<const std::uint8_t> escapedBytes) noexcept
+      : bytes_(escapedBytes) {}
+
+  [[nodiscard]] bool readBits(std::size_t count,
+                              std::uint32_t& value) noexcept {
+    if (count > 32) {
+      return false;
+    }
+    value = 0;
+    for (std::size_t index = 0; index < count; ++index) {
+      if (bitsRemaining_ == 0 && !loadByte()) {
+        return false;
+      }
+      value = (value << 1U) |
+              ((currentByte_ >> (bitsRemaining_ - 1U)) & 1U);
+      --bitsRemaining_;
+    }
+    return true;
+  }
+
+  [[nodiscard]] bool readUnsignedExpGolomb(
+      std::uint32_t& value) noexcept {
+    std::size_t leadingZeroBits = 0;
+    std::uint32_t bit = 0;
+    while (true) {
+      if (!readBits(1, bit)) {
+        return false;
+      }
+      if (bit != 0) {
+        break;
+      }
+      if (++leadingZeroBits > 31) {
+        return false;
+      }
+    }
+    std::uint32_t suffix = 0;
+    if (!readBits(leadingZeroBits, suffix)) {
+      return false;
+    }
+    const std::uint64_t decoded =
+        ((std::uint64_t{1} << leadingZeroBits) - 1U) + suffix;
+    if (decoded > std::numeric_limits<std::uint32_t>::max()) {
+      return false;
+    }
+    value = static_cast<std::uint32_t>(decoded);
+    return true;
+  }
+
+ private:
+  [[nodiscard]] bool loadByte() noexcept {
+    while (offset_ < bytes_.size()) {
+      const std::uint8_t value = bytes_[offset_++];
+      if (zeroCount_ >= 2 && value == 0x03U) {
+        if (offset_ >= bytes_.size() || bytes_[offset_] > 0x03U) {
+          return false;
+        }
+        zeroCount_ = 0;
+        continue;
+      }
+      zeroCount_ = value == 0 ? zeroCount_ + 1 : 0;
+      currentByte_ = value;
+      bitsRemaining_ = 8;
+      return true;
+    }
+    return false;
+  }
+
+  std::span<const std::uint8_t> bytes_;
+  std::size_t offset_{0};
+  std::size_t zeroCount_{0};
+  std::uint8_t currentByte_{0};
+  std::size_t bitsRemaining_{0};
+};
+
+NativeVideoSampleFormatAdmission h264SampleFormatAdmission(
+    std::span<const std::byte> configuration) noexcept {
+  const auto bytes = std::span<const std::uint8_t>(
+      reinterpret_cast<const std::uint8_t*>(configuration.data()),
+      configuration.size());
+  if (bytes.size() < 8 || bytes[0] != 1) {
+    return NativeVideoSampleFormatAdmission::Unsupported;
+  }
+  const std::size_t spsCount = bytes[5] & 0x1fU;
+  std::size_t offset = 6;
+  if (spsCount == 0) {
+    return NativeVideoSampleFormatAdmission::Unsupported;
+  }
+  for (std::size_t index = 0; index < spsCount; ++index) {
+    if (offset + 2 > bytes.size()) {
+      return NativeVideoSampleFormatAdmission::Unsupported;
+    }
+    const std::size_t length =
+        (static_cast<std::size_t>(bytes[offset]) << 8U) | bytes[offset + 1];
+    offset += 2;
+    if (length < 5 || length > bytes.size() - offset ||
+        (bytes[offset] & 0x1fU) != 7U) {
+      return NativeVideoSampleFormatAdmission::Unsupported;
+    }
+
+    CodecRbspBitReader bits(bytes.subspan(offset + 1, length - 1));
+    std::uint32_t profile = 0;
+    std::uint32_t ignored = 0;
+    if (!bits.readBits(8, profile) || !bits.readBits(8, ignored) ||
+        !bits.readBits(8, ignored) ||
+        !bits.readUnsignedExpGolomb(ignored)) {
+      return NativeVideoSampleFormatAdmission::Unsupported;
+    }
+    if (profile != bytes[1] ||
+        (profile != 66 && profile != 77 && profile != 88 && profile != 100)) {
+      return NativeVideoSampleFormatAdmission::Unsupported;
+    }
+    if (profile == 100) {
+      std::uint32_t chromaFormat = 0;
+      std::uint32_t lumaDepthMinusEight = 0;
+      std::uint32_t chromaDepthMinusEight = 0;
+      if (!bits.readUnsignedExpGolomb(chromaFormat) || chromaFormat != 1 ||
+          !bits.readUnsignedExpGolomb(lumaDepthMinusEight) ||
+          !bits.readUnsignedExpGolomb(chromaDepthMinusEight) ||
+          lumaDepthMinusEight != 0 || chromaDepthMinusEight != 0) {
+        return NativeVideoSampleFormatAdmission::Unsupported;
+      }
+    }
+    offset += length;
+  }
+  return NativeVideoSampleFormatAdmission::Yuv420EightBit;
+}
+
+NativeVideoSampleFormatAdmission hevcSampleFormatAdmission(
+    std::span<const std::byte> configuration) noexcept {
+  const auto bytes = std::span<const std::uint8_t>(
+      reinterpret_cast<const std::uint8_t*>(configuration.data()),
+      configuration.size());
+  if (bytes.size() < 23 || bytes[0] != 1 || (bytes[16] & 0x03U) != 1U) {
+    return NativeVideoSampleFormatAdmission::Unsupported;
+  }
+  const std::uint8_t lumaDepthMinusEight = bytes[17] & 0x07U;
+  const std::uint8_t chromaDepthMinusEight = bytes[18] & 0x07U;
+  if (lumaDepthMinusEight != chromaDepthMinusEight ||
+      (lumaDepthMinusEight != 0 && lumaDepthMinusEight != 2)) {
+    return NativeVideoSampleFormatAdmission::Unsupported;
+  }
+
+  const auto skipProfileTierLevel = [](CodecRbspBitReader& bits,
+                                       std::uint32_t subLayers) noexcept {
+    std::uint32_t ignored = 0;
+    if (!bits.readBits(32, ignored) || !bits.readBits(32, ignored) ||
+        !bits.readBits(32, ignored)) {
+      return false;
+    }
+    std::array<std::uint32_t, 8> profilePresent{};
+    std::array<std::uint32_t, 8> levelPresent{};
+    for (std::uint32_t layer = 0; layer < subLayers; ++layer) {
+      if (!bits.readBits(1, profilePresent[layer]) ||
+          !bits.readBits(1, levelPresent[layer])) {
+        return false;
+      }
+    }
+    if (subLayers > 0) {
+      for (std::uint32_t layer = subLayers; layer < 8; ++layer) {
+        if (!bits.readBits(2, ignored)) {
+          return false;
+        }
+      }
+    }
+    for (std::uint32_t layer = 0; layer < subLayers; ++layer) {
+      if (profilePresent[layer] &&
+          (!bits.readBits(32, ignored) || !bits.readBits(32, ignored) ||
+           !bits.readBits(24, ignored))) {
+        return false;
+      }
+      if (levelPresent[layer] && !bits.readBits(8, ignored)) {
+        return false;
+      }
+    }
+    return true;
+  };
+
+  std::size_t offset = 23;
+  bool foundSps = false;
+  for (std::size_t array = 0; array < bytes[22]; ++array) {
+    if (offset + 3 > bytes.size()) {
+      return NativeVideoSampleFormatAdmission::Unsupported;
+    }
+    const std::uint8_t nalType = bytes[offset] & 0x3fU;
+    const std::size_t nalCount =
+        (static_cast<std::size_t>(bytes[offset + 1]) << 8U) |
+        bytes[offset + 2];
+    offset += 3;
+    for (std::size_t index = 0; index < nalCount; ++index) {
+      if (offset + 2 > bytes.size()) {
+        return NativeVideoSampleFormatAdmission::Unsupported;
+      }
+      const std::size_t length =
+          (static_cast<std::size_t>(bytes[offset]) << 8U) |
+          bytes[offset + 1];
+      offset += 2;
+      if (length == 0 || length > bytes.size() - offset) {
+        return NativeVideoSampleFormatAdmission::Unsupported;
+      }
+      if (nalType == 33U) {
+        if (length < 3 || ((bytes[offset] >> 1U) & 0x3fU) != 33U) {
+          return NativeVideoSampleFormatAdmission::Unsupported;
+        }
+        CodecRbspBitReader bits(bytes.subspan(offset + 2, length - 2));
+        std::uint32_t ignored = 0;
+        std::uint32_t subLayers = 0;
+        std::uint32_t chromaFormat = 0;
+        std::uint32_t spsLumaDepthMinusEight = 0;
+        std::uint32_t spsChromaDepthMinusEight = 0;
+        if (!bits.readBits(4, ignored) || !bits.readBits(3, subLayers) ||
+            subLayers > 6 || !bits.readBits(1, ignored) ||
+            !skipProfileTierLevel(bits, subLayers) ||
+            !bits.readUnsignedExpGolomb(ignored) ||
+            !bits.readUnsignedExpGolomb(chromaFormat) || chromaFormat != 1 ||
+            !bits.readUnsignedExpGolomb(ignored) ||
+            !bits.readUnsignedExpGolomb(ignored) ||
+            !bits.readBits(1, ignored)) {
+          return NativeVideoSampleFormatAdmission::Unsupported;
+        }
+        if (ignored != 0) {
+          for (std::size_t windowOffset = 0; windowOffset < 4;
+               ++windowOffset) {
+            if (!bits.readUnsignedExpGolomb(ignored)) {
+              return NativeVideoSampleFormatAdmission::Unsupported;
+            }
+          }
+        }
+        if (!bits.readUnsignedExpGolomb(spsLumaDepthMinusEight) ||
+            !bits.readUnsignedExpGolomb(spsChromaDepthMinusEight) ||
+            spsLumaDepthMinusEight != lumaDepthMinusEight ||
+            spsChromaDepthMinusEight != chromaDepthMinusEight) {
+          return NativeVideoSampleFormatAdmission::Unsupported;
+        }
+        foundSps = true;
+      }
+      offset += length;
+    }
+  }
+  if (!foundSps || offset != bytes.size()) {
+    return NativeVideoSampleFormatAdmission::Unsupported;
+  }
+  return lumaDepthMinusEight == 2
+             ? NativeVideoSampleFormatAdmission::Yuv420TenBit
+             : NativeVideoSampleFormatAdmission::Yuv420EightBit;
+}
+
+}  // namespace
+
+NativeVideoSampleFormatAdmission nativeVideoSampleFormatAdmission(
+    std::uint32_t mediaSubtype,
+    std::span<const std::byte> codecConfiguration) noexcept {
+  if (mediaSubtype == kCMVideoCodecType_H264) {
+    return h264SampleFormatAdmission(codecConfiguration);
+  }
+  if (mediaSubtype == kCMVideoCodecType_HEVC) {
+    return hevcSampleFormatAdmission(codecConfiguration);
+  }
+  return NativeVideoSampleFormatAdmission::Unsupported;
+}
 
 struct NativeVideoPipeline::Impl
     : public std::enable_shared_from_this<NativeVideoPipeline::Impl> {
@@ -472,7 +989,14 @@ struct NativeVideoPipeline::Impl
             "com.wesleymaa.wam.native-video-retire", DISPATCH_QUEUE_SERIAL)),
         presentationSource(nil) {}
 
-  ~Impl() = default;
+  ~Impl() {
+    // Normal final retirement has already cleared both objects. This fallback
+    // exists for allocation failure while a factory is assembling the public
+    // wrapper. The display-link handler captures no raw Impl pointer, so
+    // cancellation/release is safe without synchronously draining a queue from
+    // an unknown destructor thread.
+    releaseDisplayInfrastructureNoexcept(false);
+  }
 
   std::shared_ptr<PipelineFailureState> failureState;
   NativeVideoOutputMode outputMode{NativeVideoOutputMode::MetalLayer};
@@ -549,6 +1073,10 @@ struct NativeVideoPipeline::Impl
   std::shared_ptr<std::atomic<bool>> retirementEntered;
   std::shared_future<void> startPreparedPostWorkerBarrier;
   std::shared_ptr<std::atomic<bool>> startPreparedPostWorkerEntered;
+  std::atomic<bool> failNextPresentationDispatch{false};
+  std::atomic<bool> failNextWorkerSampleSubmission{false};
+  std::atomic<bool> failNextDisplayLinkStart{false};
+  std::atomic<bool> failNextDisplayLinkStop{false};
 #endif
 
   std::atomic<bool> attached{false};
@@ -556,6 +1084,7 @@ struct NativeVideoPipeline::Impl
   std::atomic<bool> running{false};
   std::atomic<bool> stopping{false};
   std::atomic<bool> pausedPresentationNeeded{false};
+  std::atomic<bool> displayLinkHealthy{true};
   std::atomic<std::uint64_t> requestedGeneration{0};
   AtomicPipelineStats counters;
 
@@ -573,18 +1102,36 @@ struct NativeVideoPipeline::Impl
     return std::nullopt;
   }
 
-  void initializePresentationSource() {
-    presentationSource = dispatch_source_create(
+  [[nodiscard]] bool dispatchInfrastructureReady() const noexcept {
+    return presentationQueue != nil && preparationQueue != nil &&
+           retirementQueue != nil;
+  }
+
+  [[nodiscard]] bool initializePresentationSource(
+      std::string* error) noexcept {
+    if (!dispatchInfrastructureReady()) {
+      assignFixedErrorNoexcept(
+          error, "native video dispatch queues could not be created");
+      return false;
+    }
+    dispatch_source_t source = dispatch_source_create(
         DISPATCH_SOURCE_TYPE_DATA_ADD, 0, 0, presentationQueue);
+    if (source == nil) {
+      assignFixedErrorNoexcept(
+          error, "native video presentation source could not be created");
+      return false;
+    }
     std::weak_ptr<Impl> weakSelf = shared_from_this();
-    dispatch_source_set_event_handler(presentationSource, ^{
+    dispatch_source_set_event_handler(source, ^{
       @autoreleasepool {
         if (auto self = weakSelf.lock()) {
           self->renderAtAudioClock();
         }
       }
     });
-    dispatch_resume(presentationSource);
+    presentationSource = source;
+    dispatch_resume(source);
+    return true;
   }
 
   void notifyFrameAvailable() noexcept {
@@ -600,54 +1147,110 @@ struct NativeVideoPipeline::Impl
     }
   }
 
-  static CVReturn displayLinkCallback(CVDisplayLinkRef,
-                                      const CVTimeStamp*,
-                                      const CVTimeStamp*,
-                                      CVOptionFlags,
-                                      CVOptionFlags*, void* context) {
-    auto* self = static_cast<Impl*>(context);
-    self->counters.displayLinkTicks.fetch_add(1, std::memory_order_relaxed);
-    if (self->failureState->active() &&
-        self->presentationSource != nil) {
-      // A DATA_ADD source coalesces ticks when Metal is still presenting the
-      // preceding frame. The real-time display-link callback never allocates,
-      // locks the presenter, or calls nextDrawable.
-      dispatch_source_merge_data(self->presentationSource, 1);
-    }
-    return kCVReturnSuccess;
-  }
-
-  bool createDisplayLink(std::string* error) {
-    const CVReturn createStatus =
-        CVDisplayLinkCreateWithActiveCGDisplays(&displayLink);
-    if (createStatus != kCVReturnSuccess || displayLink == nullptr) {
-      assignError(error, "CVDisplayLink creation failed: " +
-                             std::to_string(createStatus));
+  [[nodiscard]] bool createDisplayLink(std::string* error) noexcept {
+    if (presentationSource == nil) {
+      assignFixedErrorNoexcept(
+          error, "native video presentation source is unavailable");
       return false;
     }
-    const CVReturn callbackStatus = CVDisplayLinkSetOutputCallback(
-        displayLink, &Impl::displayLinkCallback, this);
+    CVDisplayLinkRef createdLink = nullptr;
+    const CVReturn createStatus =
+        CVDisplayLinkCreateWithActiveCGDisplays(&createdLink);
+    if (createStatus != kCVReturnSuccess || createdLink == nullptr) {
+      assignFixedErrorNoexcept(error, "CVDisplayLink creation failed");
+      return false;
+    }
+
+    // A block-owned weak control block and source replace the former raw Impl*
+    // callback context. Even if Stop reports failure or a callback overlaps
+    // final Release, an in-flight block owns all memory it can touch. It may
+    // lock Impl only while a real shared owner still exists.
+    const std::weak_ptr<Impl> weakSelf = weak_from_this();
+    __strong dispatch_source_t callbackSource = presentationSource;
+    const CVReturn callbackStatus = CVDisplayLinkSetOutputHandler(
+        createdLink,
+        ^CVReturn(CVDisplayLinkRef, const CVTimeStamp*, const CVTimeStamp*,
+                  CVOptionFlags, CVOptionFlags*) {
+          if (auto self = weakSelf.lock()) {
+            self->counters.displayLinkTicks.fetch_add(
+                1, std::memory_order_relaxed);
+            if (self->failureState->active()) {
+              // DATA_ADD coalesces ticks while the serial presenter is busy.
+              // This real-time callback performs no rendering or allocation.
+              dispatch_source_merge_data(callbackSource, 1);
+            }
+          }
+          return kCVReturnSuccess;
+        });
     if (callbackStatus != kCVReturnSuccess) {
-      CVDisplayLinkRelease(displayLink);
-      displayLink = nullptr;
-      assignError(error, "CVDisplayLink callback setup failed: " +
-                             std::to_string(callbackStatus));
+      CVDisplayLinkRelease(createdLink);
+      assignFixedErrorNoexcept(error,
+                               "CVDisplayLink callback setup failed");
+      return false;
+    }
+    displayLink = createdLink;
+    displayLinkHealthy.store(true, std::memory_order_release);
+    return true;
+  }
+
+  [[nodiscard]] bool setDisplayLinkRunning(bool shouldRun) noexcept {
+    std::lock_guard lock(displayLinkMutex);
+    if (displayLink == nullptr ||
+        !displayLinkHealthy.load(std::memory_order_acquire)) {
+      return false;
+    }
+    const bool isRunning = CVDisplayLinkIsRunning(displayLink);
+    CVReturn status = kCVReturnSuccess;
+    if (shouldRun && !isRunning) {
+#if defined(WAM_NATIVE_VIDEO_PIPELINE_TESTING)
+      if (failNextDisplayLinkStart.exchange(false,
+                                            std::memory_order_acq_rel)) {
+        status = kCVReturnError;
+      } else
+#endif
+      {
+        status = CVDisplayLinkStart(displayLink);
+      }
+    } else if (!shouldRun && isRunning) {
+#if defined(WAM_NATIVE_VIDEO_PIPELINE_TESTING)
+      if (failNextDisplayLinkStop.exchange(false,
+                                           std::memory_order_acq_rel)) {
+        status = kCVReturnError;
+      } else
+#endif
+      {
+        status = CVDisplayLinkStop(displayLink);
+      }
+    }
+    if (status != kCVReturnSuccess) {
+      displayLinkHealthy.store(false, std::memory_order_release);
       return false;
     }
     return true;
   }
 
-  void setDisplayLinkRunning(bool running) noexcept {
+  void releaseDisplayInfrastructureNoexcept(bool drainSource) noexcept {
+    dispatch_source_t source = presentationSource;
+    if (source != nil) {
+      dispatch_source_cancel(source);
+      if (drainSource && presentationQueue != nil) {
+        dispatch_sync(presentationQueue, ^{});
+      }
+      presentationSource = nil;
+    }
+
     std::lock_guard lock(displayLinkMutex);
     if (displayLink == nullptr) {
       return;
     }
-    const bool isRunning = CVDisplayLinkIsRunning(displayLink);
-    if (running && !isRunning) {
-      CVDisplayLinkStart(displayLink);
-    } else if (!running && isRunning) {
-      CVDisplayLinkStop(displayLink);
+    if (CVDisplayLinkIsRunning(displayLink)) {
+      const CVReturn stopStatus = CVDisplayLinkStop(displayLink);
+      if (stopStatus != kCVReturnSuccess) {
+        displayLinkHealthy.store(false, std::memory_order_release);
+      }
     }
+    CVDisplayLinkRelease(displayLink);
+    displayLink = nullptr;
   }
 
   double audioClockNow(bool* pausedOut = nullptr) const noexcept {
@@ -684,6 +1287,23 @@ struct NativeVideoPipeline::Impl
   }
 
   void renderAtAudioClock() noexcept {
+    try {
+      renderAtAudioClockImpl();
+    } catch (...) {
+      // Neither libdispatch nor the Objective-C block ABI may observe a C++
+      // exception. The fixed diagnostic is latched without allocating, which
+      // is essential when the original failure was std::bad_alloc.
+      reportFixedFailure(kPresentationExceptionError);
+    }
+  }
+
+  void renderAtAudioClockImpl() {
+#if defined(WAM_NATIVE_VIDEO_PIPELINE_TESTING)
+    if (failNextPresentationDispatch.exchange(false,
+                                               std::memory_order_acq_rel)) {
+      throw std::bad_alloc();
+    }
+#endif
     if (!running.load(std::memory_order_acquire) ||
         !failureState->active() || sink == nullptr ||
         (presenter == nullptr && scheduledOutput == nullptr)) {
@@ -798,10 +1418,10 @@ struct NativeVideoPipeline::Impl
     }
   }
 
-  void reportFailure(std::string message) noexcept {
-    const std::optional<std::uint64_t> failureEpoch =
-        failureState->reportCurrent(std::move(message));
-    if (!failureEpoch || outputMode != NativeVideoOutputMode::QtOpenGL) {
+  void scheduleFailureRetirement(
+      std::optional<std::uint64_t> failureEpoch) noexcept {
+    if (!failureEpoch || outputMode != NativeVideoOutputMode::QtOpenGL ||
+        preparationQueue == nil) {
       return;
     }
     // reportFailure can run on the worker or while renderAtAudioClock holds
@@ -814,6 +1434,18 @@ struct NativeVideoPipeline::Impl
         retained->retireAfterScheduledOutputFailure(reportedEpoch);
       }
     });
+  }
+
+  void reportFailure(std::string message) noexcept {
+    const std::optional<std::uint64_t> failureEpoch =
+        failureState->reportCurrent(std::move(message));
+    scheduleFailureRetirement(failureEpoch);
+  }
+
+  void reportFixedFailure(const char* message) noexcept {
+    const std::optional<std::uint64_t> failureEpoch =
+        failureState->reportFixedCurrent(message);
+    scheduleFailureRetirement(failureEpoch);
   }
 
   CMTime syncSampleStart(double targetSeconds) const noexcept {
@@ -923,6 +1555,12 @@ struct NativeVideoPipeline::Impl
 
   bool submitSample(CMSampleBufferRef sample, std::uint64_t generation,
                     std::uint64_t version, bool& submittedSyncSample) {
+#if defined(WAM_NATIVE_VIDEO_PIPELINE_TESTING)
+    if (failNextWorkerSampleSubmission.exchange(
+            false, std::memory_order_acq_rel)) {
+      throw std::bad_alloc();
+    }
+#endif
     CMBlockBufferRef block = CMSampleBufferGetDataBuffer(sample);
     if (block == nullptr || CMBlockBufferGetDataLength(block) == 0) {
       return true;
@@ -1003,6 +1641,18 @@ struct NativeVideoPipeline::Impl
     return false;
   }
 
+  void clearActiveReader(AVAssetReader* reader) noexcept {
+    try {
+      std::lock_guard lock(stateMutex);
+      if (activeReader == reader) {
+        activeReader = nil;
+      }
+    } catch (...) {
+      // std::mutex locking does not allocate in the supported libc++, but the
+      // cleanup boundary remains noexcept even on a platform error.
+    }
+  }
+
   bool runReaderSession(double targetSeconds, std::uint64_t generation,
                         std::uint64_t version) {
     @autoreleasepool {
@@ -1021,6 +1671,8 @@ struct NativeVideoPipeline::Impl
         }
         activeReader = reader;
       }
+      ScopeExit activeReaderCleanup(
+          [this, reader]() noexcept { clearActiveReader(reader); });
 
       bool reachedEnd = false;
       bool submittedSyncSample = false;
@@ -1029,8 +1681,8 @@ struct NativeVideoPipeline::Impl
             !waitForDecodeCapacity(version)) {
           break;
         }
-        CMSampleBufferRef sample = [output copyNextSampleBuffer];
-        if (sample == nullptr) {
+        ScopedSampleBuffer sample([output copyNextSampleBuffer]);
+        if (!sample) {
           reachedEnd = reader.status == AVAssetReaderStatusCompleted;
           if (!reachedEnd && reader.status == AVAssetReaderStatusFailed) {
             reportFailure(describeNSError(reader.error,
@@ -1046,18 +1698,10 @@ struct NativeVideoPipeline::Impl
 
         counters.compressedSamplesRead.fetch_add(1,
                                                  std::memory_order_relaxed);
-        const bool accepted = submitSample(sample, generation, version,
+        const bool accepted = submitSample(sample.get(), generation, version,
                                            submittedSyncSample);
-        CFRelease(sample);
         if (!accepted) {
           break;
-        }
-      }
-
-      {
-        std::lock_guard lock(stateMutex);
-        if (activeReader == reader) {
-          activeReader = nil;
         }
       }
       if (reachedEnd && !requestChanged(version) &&
@@ -1127,17 +1771,11 @@ struct NativeVideoPipeline::Impl
         try {
           workerLoop();
         } catch (const std::bad_alloc&) {
-          reportFailure("native video worker exhausted its bounded memory "
-                        "allocation");
-        } catch (const std::exception& exception) {
-          try {
-            reportFailure(std::string("native video worker failed: ") +
-                          exception.what());
-          } catch (...) {
-            reportFailure("native video worker failed");
-          }
+          reportFixedFailure(kWorkerAllocationError);
+        } catch (const std::exception&) {
+          reportFixedFailure(kWorkerExceptionError);
         } catch (...) {
-          reportFailure("native video worker failed");
+          reportFixedFailure(kWorkerExceptionError);
         }
       });
       worker = std::move(started);
@@ -1374,6 +2012,16 @@ struct NativeVideoPipeline::Impl
           "native video requires a readable local file");
       return;
     }
+    const NativeVideoContainerAdmissionHint containerHint =
+        nativeVideoContainerAdmissionHint(request->path.string());
+    if (containerHint.preferredDemux ==
+        NativeVideoDemuxPreference::ExternalBridgeRequired) {
+      finishUncommittedPreparation(
+          request, NativeVideoPrepareResult::Unsupported,
+          "container needs an external compressed-sample demux bridge; "
+          "using libmpv");
+      return;
+    }
     NSString* filePath =
         [NSString stringWithUTF8String:request->path.c_str()];
     if (filePath == nil) {
@@ -1538,7 +2186,8 @@ struct NativeVideoPipeline::Impl
     auto format =
         (__bridge CMVideoFormatDescriptionRef)descriptions.firstObject;
     const CMVideoCodecType codec = CMFormatDescriptionGetMediaSubType(format);
-    if (codec != kCMVideoCodecType_H264 && codec != kCMVideoCodecType_HEVC) {
+    if (nativeVideoCodecAdmission(codec) ==
+        NativeVideoCodecAdmission::Unsupported) {
       finishUncommittedPreparation(
           request, NativeVideoPrepareResult::Unsupported,
           "native video currently supports H.264 and HEVC");
@@ -1567,8 +2216,6 @@ struct NativeVideoPipeline::Impl
 
     const CMVideoDimensions dimensions =
         CMVideoFormatDescriptionGetDimensions(format);
-    const CGSize presentationDimensions =
-        CMVideoFormatDescriptionGetPresentationDimensions(format, true, true);
     if (dimensions.width <= 0 || dimensions.height <= 0) {
       finishUncommittedPreparation(
           request, NativeVideoPrepareResult::Unsupported,
@@ -1581,12 +2228,23 @@ struct NativeVideoPipeline::Impl
     if (codedPixels > kMaximumCodedPixels) {
       finishUncommittedPreparation(
           request, NativeVideoPrepareResult::Unsupported,
-          "native video above 1080p exceeds the experiment's bounded "
-          "decoded-surface budget and uses libmpv");
+          "native video exceeds the experiment's 2,073,600 coded-pixel "
+          "surface budget and uses libmpv");
       return;
     }
-    if (std::abs(presentationDimensions.width - dimensions.width) > 0.5 ||
-        std::abs(presentationDimensions.height - dimensions.height) > 0.5) {
+    const CGRect cleanAperture =
+        CMVideoFormatDescriptionGetCleanAperture(format, true);
+    const CGSize pixelAspectDimensions =
+        CMVideoFormatDescriptionGetPresentationDimensions(format, true, false);
+    const bool fullCodedAperture =
+        std::abs(cleanAperture.origin.x) <= 0.5 &&
+        std::abs(cleanAperture.origin.y) <= 0.5 &&
+        std::abs(cleanAperture.size.width - dimensions.width) <= 0.5 &&
+        std::abs(cleanAperture.size.height - dimensions.height) <= 0.5;
+    const bool squarePixels =
+        std::abs(pixelAspectDimensions.width - dimensions.width) <= 0.5 &&
+        std::abs(pixelAspectDimensions.height - dimensions.height) <= 0.5;
+    if (!fullCodedAperture || !squarePixels) {
       finishUncommittedPreparation(
           request, NativeVideoPrepareResult::Unsupported,
           "non-square pixels or a cropped aperture currently use libmpv");
@@ -1597,6 +2255,31 @@ struct NativeVideoPipeline::Impl
       finishUncommittedPreparation(
           request, NativeVideoPrepareResult::Unsupported,
           "video track lacks an avcC/hvcC configuration atom");
+      return;
+    }
+    if (nativeVideoSampleFormatAdmission(codec, *configuration) ==
+        NativeVideoSampleFormatAdmission::Unsupported) {
+      finishUncommittedPreparation(
+          request, NativeVideoPrepareResult::Unsupported,
+          "native video requires 4:2:0 H.264/HEVC with matching 8-bit "
+          "components, or 10-bit HEVC");
+      return;
+    }
+    std::string demuxProbeError;
+    if (!probeCompressedSampleExtraction(request->asset, request->track,
+                                         codec, &demuxProbeError)) {
+      finishUncommittedPreparation(
+          request, NativeVideoPrepareResult::Unsupported,
+          demuxProbeError.empty()
+              ? "AVFoundation cannot expose bounded compressed video "
+                "samples; using libmpv"
+              : std::move(demuxProbeError));
+      return;
+    }
+    if (request->cancelled.load(std::memory_order_acquire)) {
+      finishUncommittedPreparation(
+          request, NativeVideoPrepareResult::Failed,
+          "native video preparation was cancelled");
       return;
     }
 
@@ -1720,16 +2403,23 @@ struct NativeVideoPipeline::Impl
     *retireExisting = false;
     std::lock_guard resultLock(preparationResultMutex);
     if (preparationResult.has_value()) {
-      assignError(error,
-                  "consume the previous native video preparation result "
-                  "before starting another request");
+      assignFixedErrorNoexcept(
+          error,
+          "consume the previous native video preparation result before "
+          "starting another request");
       return false;
     }
     std::lock_guard lock(lifecycleMutex);
     switch (lifecycle) {
     case Lifecycle::Idle:
       if (shutdownRequested) {
-        assignError(error, "native video pipeline is shutting down");
+        assignFixedErrorNoexcept(error,
+                                 "native video pipeline is shutting down");
+        return false;
+      }
+      if (!displayLinkHealthy.load(std::memory_order_acquire)) {
+        assignFixedErrorNoexcept(
+            error, "native video display link is no longer usable");
         return false;
       }
       if (scheduledOutput != nullptr) {
@@ -1738,12 +2428,13 @@ struct NativeVideoPipeline::Impl
         if (outputStats.closed || outputStats.fatalErrorSerial != 0 ||
             outputStats.acceptedGeneration ==
                 std::numeric_limits<std::uint64_t>::max()) {
-          assignError(error,
-                      outputStats.fatalErrorSerial != 0
-                          ? "native Qt OpenGL output is terminal; recreate "
-                            "the output adapter before preparing"
-                          : "native Qt OpenGL output is closed or its "
-                            "generation is exhausted");
+          assignFixedErrorNoexcept(
+              error,
+              outputStats.fatalErrorSerial != 0
+                  ? "native Qt OpenGL output is terminal; recreate the output "
+                    "adapter before preparing"
+                  : "native Qt OpenGL output is closed or its generation is "
+                    "exhausted");
           return false;
         }
         std::uint64_t observed =
@@ -1760,9 +2451,10 @@ struct NativeVideoPipeline::Impl
         if (!gNativeAttemptAdmission.compare_exchange_strong(
                 expected, true, std::memory_order_acq_rel,
                 std::memory_order_acquire)) {
-          assignError(error,
-                      "another native video attempt is active or retiring; "
-                      "retry after its stats().stopping becomes false");
+          assignFixedErrorNoexcept(
+              error,
+              "another native video attempt is active or retiring; retry "
+              "after its stats().stopping becomes false");
           return false;
         }
       }
@@ -1776,20 +2468,24 @@ struct NativeVideoPipeline::Impl
     case Lifecycle::Starting:
     case Lifecycle::Running:
       *retireExisting = true;
-      assignError(error,
-                  "the previous native video attempt is being retired; "
-                  "retry preparation after stats().stopping becomes false");
+      assignFixedErrorNoexcept(
+          error,
+          "the previous native video attempt is being retired; retry "
+          "preparation after stats().stopping becomes false");
       return false;
     case Lifecycle::Preparing:
-      assignError(error, "native video preparation is already in progress");
+      assignFixedErrorNoexcept(
+          error, "native video preparation is already in progress");
       return false;
     case Lifecycle::Retiring:
-      assignError(error,
-                  "native video teardown is still in progress; retry after "
-                  "stats().stopping becomes false");
+      assignFixedErrorNoexcept(
+          error,
+          "native video teardown is still in progress; retry after "
+          "stats().stopping becomes false");
       return false;
     case Lifecycle::Finalizing:
-      assignError(error, "native video pipeline is shutting down");
+      assignFixedErrorNoexcept(error,
+                               "native video pipeline is shutting down");
       return false;
     }
   }
@@ -1817,7 +2513,7 @@ struct NativeVideoPipeline::Impl
       std::lock_guard resultLock(preparationResultMutex);
       std::lock_guard lifecycleLock(lifecycleMutex);
       preparationResult = NativeVideoPrepareOutcome{
-          request->generation, result, std::move(error)};
+          0, result, std::move(error)};
       if (lifecycle != Lifecycle::Preparing ||
           activePreparation != request) {
         return;
@@ -1882,7 +2578,7 @@ struct NativeVideoPipeline::Impl
         preparedFailureEpoch = 0;
         lifecycle = Lifecycle::Prepared;
         preparationResult.emplace(NativeVideoPrepareOutcome{
-            request->generation, NativeVideoPrepareResult::Ready, {}});
+            preparedFrameGeneration, NativeVideoPrepareResult::Ready, {}});
       } else {
         std::weak_ptr<PipelineFailureState> weakFailureState = failureState;
         presenter->setFailureHandler(
@@ -1903,7 +2599,7 @@ struct NativeVideoPipeline::Impl
           stopping.store(true, std::memory_order_release);
           lifecycle = Lifecycle::Retiring;
           preparationResult.emplace(NativeVideoPrepareOutcome{
-              request->generation, NativeVideoPrepareResult::Failed,
+              0, NativeVideoPrepareResult::Failed,
               workerError.empty() ? "native video worker could not be created"
                                   : std::move(workerError)});
           scheduleRetirementAfterUnlock = true;
@@ -1911,7 +2607,8 @@ struct NativeVideoPipeline::Impl
           running.store(true, std::memory_order_release);
           lifecycle = Lifecycle::Running;
           preparationResult.emplace(NativeVideoPrepareOutcome{
-              request->generation, NativeVideoPrepareResult::Ready, {}});
+              requestedGeneration.load(std::memory_order_acquire),
+              NativeVideoPrepareResult::Ready, {}});
         }
       }
       request->completed.store(true, std::memory_order_release);
@@ -1957,7 +2654,7 @@ struct NativeVideoPipeline::Impl
   // publication is allowed after this method publishes Retiring.
   void revokeNativeAttemptLocked() noexcept {
     running.store(false, std::memory_order_release);
-    setDisplayLinkRunning(false);
+    (void)setDisplayLinkRunning(false);
     failureState->disablePreservingError();
     signalWorkerStop();
     scheduledOutput->setFailureHandler({});
@@ -2052,17 +2749,24 @@ struct NativeVideoPipeline::Impl
       if (retire) {
         revokeNativeAttemptLocked();
       } else {
-        running.store(true, std::memory_order_release);
-        lifecycle = Lifecycle::Running;
         // Keep display-link/source activation in the lifecycle transaction.
         // stop() cannot publish Retiring between Running and these mutations,
         // so retirement always observes and shuts down everything we start.
         bool paused = true;
         (void)audioClockNow(&paused);
-        setDisplayLinkRunning(!paused);
-        if (paused && presentationSource != nil) {
-          pausedPresentationNeeded.store(true, std::memory_order_release);
-          dispatch_source_merge_data(presentationSource, 1);
+        if (!setDisplayLinkRunning(!paused)) {
+          (void)failureState->reportFixed(
+              failureEpoch,
+              paused ? kDisplayLinkStopError : kDisplayLinkStartError);
+          revokeNativeAttemptLocked();
+          retire = true;
+        } else {
+          running.store(true, std::memory_order_release);
+          lifecycle = Lifecycle::Running;
+          if (paused && presentationSource != nil) {
+            pausedPresentationNeeded.store(true, std::memory_order_release);
+            dispatch_source_merge_data(presentationSource, 1);
+          }
         }
       }
     }
@@ -2209,7 +2913,7 @@ struct NativeVideoPipeline::Impl
       case Lifecycle::Starting:
       case Lifecycle::Running:
         running.store(false, std::memory_order_release);
-        setDisplayLinkRunning(false);
+        (void)setDisplayLinkRunning(false);
         lifecycle = shutdownRequested ? Lifecycle::Finalizing
                                       : Lifecycle::Retiring;
         stopping.store(true, std::memory_order_release);
@@ -2285,7 +2989,7 @@ struct NativeVideoPipeline::Impl
     // These operations have no contractual upper bound. The private serial
     // owner, never AppKit or the frontend, absorbs that latency and retains
     // every object a late callback can reach.
-    setDisplayLinkRunning(false);
+    (void)setDisplayLinkRunning(false);
     cancelActiveReader();
     joinWorkerThread();
     if (presentationSource != nil) {
@@ -2347,24 +3051,10 @@ struct NativeVideoPipeline::Impl
       return;
     }
 
-    // Stop/release the callback source only after the worker and decoder can no
-    // longer enqueue work. Draining after cancellation proves that the raw
-    // display-link/source context cannot run after Impl's final owner leaves.
-    if (presentationSource != nil) {
-      dispatch_source_cancel(presentationSource);
-      dispatch_sync(presentationQueue, ^{});
-      presentationSource = nil;
-    }
-    {
-      std::lock_guard lock(displayLinkMutex);
-      if (displayLink != nullptr) {
-        if (CVDisplayLinkIsRunning(displayLink)) {
-          CVDisplayLinkStop(displayLink);
-        }
-        CVDisplayLinkRelease(displayLink);
-        displayLink = nullptr;
-      }
-    }
+    // Stop/release only after worker and decoder retirement. The source drain
+    // linearizes every queued presenter block; the display-link block itself
+    // owns a weak control block and a stable source rather than raw Impl*.
+    releaseDisplayInfrastructureNoexcept(true);
   }
 };
 
@@ -2384,18 +3074,43 @@ std::unique_ptr<NativeVideoPipeline> NativeVideoPipeline::create(
   if (error != nullptr) {
     error->clear();
   }
-  auto impl = std::make_shared<Impl>();
-  impl->presenter = MetalLayerPresenter::create(error);
-  if (impl->presenter == nullptr) {
+  std::shared_ptr<Impl> impl;
+  bool constructionComplete = false;
+  ScopeExit constructionCleanup([&]() noexcept {
+    if (!constructionComplete && impl != nullptr) {
+      impl->releaseDisplayInfrastructureNoexcept(true);
+    }
+  });
+  try {
+    impl = std::make_shared<Impl>();
+    if (!impl->dispatchInfrastructureReady()) {
+      assignFixedErrorNoexcept(
+          error, "native video dispatch queues could not be created");
+      return nullptr;
+    }
+    impl->presenter = MetalLayerPresenter::create(error);
+    if (impl->presenter == nullptr) {
+      return nullptr;
+    }
+    if (!impl->initializePresentationSource(error) ||
+        !impl->createDisplayLink(error)) {
+      return nullptr;
+    }
+#if defined(WAM_NATIVE_VIDEO_PIPELINE_TESTING)
+    if (gFailNextPipelineWrapperAllocation.exchange(
+            false, std::memory_order_acq_rel)) {
+      throw std::bad_alloc();
+    }
+#endif
+    auto pipeline = std::unique_ptr<NativeVideoPipeline>(
+        new NativeVideoPipeline(impl));
+    constructionComplete = true;
+    return pipeline;
+  } catch (...) {
+    assignFixedErrorNoexcept(
+        error, "native video pipeline could not be created");
     return nullptr;
   }
-  impl->initializePresentationSource();
-  if (!impl->createDisplayLink(error)) {
-    impl->requestTeardown(true);
-    return nullptr;
-  }
-  return std::unique_ptr<NativeVideoPipeline>(
-      new NativeVideoPipeline(std::move(impl)));
 }
 
 std::unique_ptr<NativeVideoPipeline> NativeVideoPipeline::createForQtOpenGL(
@@ -2404,43 +3119,68 @@ std::unique_ptr<NativeVideoPipeline> NativeVideoPipeline::createForQtOpenGL(
   if (error != nullptr) {
     error->clear();
   }
-  if (output == nullptr) {
-    assignError(error, "native Qt OpenGL output is required");
-    return nullptr;
-  }
-  const NativeScheduledFrameOutputStats outputStats = output->stats();
-  if (outputStats.closed) {
-    assignError(error, "native Qt OpenGL output is already closed");
-    return nullptr;
-  }
-  if (outputStats.fatalErrorSerial != 0) {
-    assignError(error,
-                "native Qt OpenGL output is terminal; recreate the output "
-                "adapter before preparing");
-    return nullptr;
-  }
-  if (outputStats.acceptedGeneration ==
-      std::numeric_limits<std::uint64_t>::max()) {
-    assignError(error, "native Qt OpenGL output generation is exhausted");
-    return nullptr;
-  }
+  std::shared_ptr<Impl> impl;
+  bool constructionComplete = false;
+  ScopeExit constructionCleanup([&]() noexcept {
+    if (!constructionComplete && impl != nullptr) {
+      impl->releaseDisplayInfrastructureNoexcept(true);
+    }
+  });
+  try {
+    if (output == nullptr) {
+      assignError(error, "native Qt OpenGL output is required");
+      return nullptr;
+    }
+    const NativeScheduledFrameOutputStats outputStats = output->stats();
+    if (outputStats.closed) {
+      assignError(error, "native Qt OpenGL output is already closed");
+      return nullptr;
+    }
+    if (outputStats.fatalErrorSerial != 0) {
+      assignError(error,
+                  "native Qt OpenGL output is terminal; recreate the output "
+                  "adapter before preparing");
+      return nullptr;
+    }
+    if (outputStats.acceptedGeneration ==
+        std::numeric_limits<std::uint64_t>::max()) {
+      assignError(error, "native Qt OpenGL output generation is exhausted");
+      return nullptr;
+    }
 
-  auto impl = std::make_shared<Impl>();
-  impl->outputMode = NativeVideoOutputMode::QtOpenGL;
-  impl->scheduledOutput = std::move(output);
-  // Reusing an output with a new pipeline remains monotonic. The first
-  // configured decoder generation will be strictly newer than every frame the
-  // Qt item has already accepted.
-  impl->requestedGeneration.store(outputStats.acceptedGeneration,
-                                  std::memory_order_release);
-  impl->attached.store(true, std::memory_order_release);
-  impl->initializePresentationSource();
-  if (!impl->createDisplayLink(error)) {
-    impl->requestTeardown(true);
+    impl = std::make_shared<Impl>();
+    if (!impl->dispatchInfrastructureReady()) {
+      assignFixedErrorNoexcept(
+          error, "native video dispatch queues could not be created");
+      return nullptr;
+    }
+    impl->outputMode = NativeVideoOutputMode::QtOpenGL;
+    impl->scheduledOutput = std::move(output);
+    // Reusing an output with a new pipeline remains monotonic. The first
+    // configured decoder generation will be strictly newer than every frame the
+    // Qt item has already accepted.
+    impl->requestedGeneration.store(outputStats.acceptedGeneration,
+                                    std::memory_order_release);
+    impl->attached.store(true, std::memory_order_release);
+    if (!impl->initializePresentationSource(error) ||
+        !impl->createDisplayLink(error)) {
+      return nullptr;
+    }
+#if defined(WAM_NATIVE_VIDEO_PIPELINE_TESTING)
+    if (gFailNextPipelineWrapperAllocation.exchange(
+            false, std::memory_order_acq_rel)) {
+      throw std::bad_alloc();
+    }
+#endif
+    auto pipeline = std::unique_ptr<NativeVideoPipeline>(
+        new NativeVideoPipeline(impl));
+    constructionComplete = true;
+    return pipeline;
+  } catch (...) {
+    assignFixedErrorNoexcept(
+        error, "native Qt OpenGL pipeline could not be created");
     return nullptr;
   }
-  return std::unique_ptr<NativeVideoPipeline>(
-      new NativeVideoPipeline(std::move(impl)));
 }
 
 bool NativeVideoPipeline::attachToView(void* nativeView, std::string* error) {
@@ -2538,14 +3278,25 @@ void NativeVideoPipeline::updateAudioClock(double positionSeconds, bool paused,
   // Serialize the decision and the physical display-link/source mutation with
   // Starting/Running/Retiring transitions. A stale pre-retirement active
   // snapshot can otherwise restart CVDisplayLink after Idle.
-  std::lock_guard lifecycleLock(impl_->lifecycleMutex);
-  const bool running = impl_->lifecycle == Impl::Lifecycle::Running &&
-                       impl_->running.load(std::memory_order_acquire) &&
-                       impl_->failureState->active();
-  impl_->setDisplayLinkRunning(running && !paused);
-  if (paused && running) {
-    impl_->pausedPresentationNeeded.store(true, std::memory_order_release);
-    dispatch_source_merge_data(impl_->presentationSource, 1);
+  bool displayTransitionFailed = false;
+  {
+    std::lock_guard lifecycleLock(impl_->lifecycleMutex);
+    const bool running = impl_->lifecycle == Impl::Lifecycle::Running &&
+                         impl_->running.load(std::memory_order_acquire) &&
+                         impl_->failureState->active();
+    if (running && !impl_->setDisplayLinkRunning(!paused)) {
+      impl_->reportFixedFailure(paused ? kDisplayLinkStopError
+                                       : kDisplayLinkStartError);
+      displayTransitionFailed = true;
+    } else if (paused && running) {
+      impl_->pausedPresentationNeeded.store(true, std::memory_order_release);
+      if (impl_->presentationSource != nil) {
+        dispatch_source_merge_data(impl_->presentationSource, 1);
+      }
+    }
+  }
+  if (displayTransitionFailed) {
+    (void)impl_->requestTeardown(false);
   }
 }
 
@@ -2682,6 +3433,56 @@ NativeVideoPipelineStats NativeVideoPipeline::stats() const noexcept {
 }
 
 #if defined(WAM_NATIVE_VIDEO_PIPELINE_TESTING)
+void NativeVideoPipelineTestAccess::failNextFactoryWrapperAllocation() {
+  gFailNextPipelineWrapperAllocation.store(true, std::memory_order_release);
+}
+
+bool NativeVideoPipelineTestAccess::exercisePresentationExceptionBoundary(
+    NativeVideoPipeline& pipeline) noexcept {
+  const std::uint64_t epoch = pipeline.impl_->failureState->beginAttempt();
+  pipeline.impl_->failureState->activate(epoch);
+  pipeline.impl_->failNextPresentationDispatch.store(
+      true, std::memory_order_release);
+  pipeline.impl_->renderAtAudioClock();
+  const bool failed = pipeline.impl_->failureState->failed(epoch);
+  pipeline.impl_->failureState->disablePreservingError();
+  return failed;
+}
+
+void NativeVideoPipelineTestAccess::failNextWorkerSampleSubmission(
+    NativeVideoPipeline& pipeline) noexcept {
+  pipeline.impl_->failNextWorkerSampleSubmission.store(
+      true, std::memory_order_release);
+}
+
+bool NativeVideoPipelineTestAccess::hasActiveReader(
+    const NativeVideoPipeline& pipeline) noexcept {
+  std::lock_guard lock(pipeline.impl_->stateMutex);
+  return pipeline.impl_->activeReader != nil;
+}
+
+void NativeVideoPipelineTestAccess::failNextDisplayLinkStart(
+    NativeVideoPipeline& pipeline) noexcept {
+  pipeline.impl_->failNextDisplayLinkStart.store(true,
+                                                 std::memory_order_release);
+}
+
+void NativeVideoPipelineTestAccess::failNextDisplayLinkStop(
+    NativeVideoPipeline& pipeline) noexcept {
+  pipeline.impl_->failNextDisplayLinkStop.store(true,
+                                                std::memory_order_release);
+}
+
+bool NativeVideoPipelineTestAccess::setDisplayLinkRunning(
+    NativeVideoPipeline& pipeline, bool running) noexcept {
+  return pipeline.impl_->setDisplayLinkRunning(running);
+}
+
+bool NativeVideoPipelineTestAccess::displayLinkHealthy(
+    const NativeVideoPipeline& pipeline) noexcept {
+  return pipeline.impl_->displayLinkHealthy.load(std::memory_order_acquire);
+}
+
 void NativeVideoPipelineTestAccess::setPreparationLoadBarrier(
     NativeVideoPipeline& pipeline, std::shared_future<void> release,
     std::shared_ptr<std::atomic<bool>> entered) {

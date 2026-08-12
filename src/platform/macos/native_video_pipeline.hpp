@@ -9,7 +9,9 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
+#include <string_view>
 
 #if defined(WAM_NATIVE_VIDEO_PIPELINE_TESTING)
 #include <atomic>
@@ -27,6 +29,60 @@ enum class NativeVideoPrepareResult : std::uint8_t {
   Unsupported,
   Failed,
 };
+
+// Container names are conservative routing hints. Families known to need the
+// not-yet-implemented external bridge fail closed before AVFoundation; an
+// absent or unrecognized suffix remains an AVFoundation probe candidate. A
+// familiar suffix never proves that compressed samples can be extracted.
+enum class NativeVideoContainerFamily : std::uint8_t {
+  Unknown,
+  IsoBaseMedia,
+  QuickTime,
+  Matroska,
+  WebM,
+  Avi,
+  MpegTransportStream,
+  Ogg,
+  FlashVideo,
+};
+
+enum class NativeVideoDemuxPreference : std::uint8_t {
+  ProbeAvFoundation,
+  AvFoundation,
+  ExternalBridgeRequired,
+};
+
+struct NativeVideoContainerAdmissionHint {
+  NativeVideoContainerFamily container{NativeVideoContainerFamily::Unknown};
+  NativeVideoDemuxPreference preferredDemux{
+      NativeVideoDemuxPreference::ProbeAvFoundation};
+};
+
+enum class NativeVideoCodecAdmission : std::uint8_t {
+  Unsupported,
+  H264,
+  Hevc,
+};
+
+enum class NativeVideoSampleFormatAdmission : std::uint8_t {
+  Unsupported,
+  Yuv420EightBit,
+  Yuv420TenBit,
+};
+
+// These allocation-free helpers describe two independent native gates. A
+// container must first yield compressed samples through an implemented demux
+// backend, and only then can its codec be considered for VideoToolbox. The
+// current implementation has only AVFoundation; ExternalBridgeRequired is a
+// future route and remains ineligible for native activation.
+[[nodiscard]] NativeVideoContainerAdmissionHint
+nativeVideoContainerAdmissionHint(std::string_view path) noexcept;
+[[nodiscard]] NativeVideoCodecAdmission nativeVideoCodecAdmission(
+    std::uint32_t mediaSubtype) noexcept;
+[[nodiscard]] NativeVideoSampleFormatAdmission
+nativeVideoSampleFormatAdmission(
+    std::uint32_t mediaSubtype,
+    std::span<const std::byte> codecConfiguration) noexcept;
 
 enum class NativeVideoOutputMode : std::uint8_t {
   MetalLayer,
@@ -141,6 +197,9 @@ struct NativeVideoPipelineStats {
 };
 
 struct NativeVideoPrepareOutcome {
+  // Ready publishes the exact nonzero decoded-frame/output timeline used by
+  // startPrepared(). Unsupported and Failed publish zero; request sequencing
+  // is internal and never shares this field.
   std::uint64_t generation{0};
   NativeVideoPrepareResult result{NativeVideoPrepareResult::Failed};
   std::string error;
@@ -148,7 +207,7 @@ struct NativeVideoPrepareOutcome {
 
 // Dormant macOS video-path foundation:
 //
-//   AVAssetReader (compressed MP4/MOV samples)
+//   implemented demux backend (currently AVAssetReader)
 //     -> VideoToolboxDecoder
 //     -> bounded IOSurface queue
 //     -> CAMetalLayer
@@ -156,8 +215,12 @@ struct NativeVideoPrepareOutcome {
 // updateAudioClock() re-anchors a monotonic local clock to a future external
 // audio/timeline authority so the display-link callback need not poll or wake
 // the GUI thread for every frame. The path deliberately accepts only a narrow,
-// bounded local SDR H.264/HEVC subset; every other source returns Unsupported.
-// No shipping WAM controller selects this class yet.
+// bounded local SDR 4:2:0 H.264/HEVC subset. Today AVFoundation can route
+// MP4/M4V/MOV and may probe additional system-supported containers, but Ready
+// requires extraction of one bounded sample with the expected codec first.
+// Start/first draw remain the authoritative full packet/decode proof. Formats
+// needing a future external compressed-sample bridge remain Unsupported. No
+// shipping WAM controller selects this class yet.
 class NativeVideoPipeline final {
  public:
   static std::unique_ptr<NativeVideoPipeline> create(
@@ -187,9 +250,10 @@ class NativeVideoPipeline final {
   // startup prebuffering. Drawable absence is non-fatal and the bounded queue
   // stops producing until a host is attached. Accepted work is always queued;
   // this call never reads an AVAsset/AVAssetTrack property and never waits for
-  // AVFoundation. Exactly one generation-tagged terminal outcome is published
-  // for each accepted request and can be consumed with takePrepareResult().
-  // A prior outcome must be consumed before another request can be admitted.
+  // AVFoundation. Exactly one terminal outcome is published for each accepted
+  // request and can be consumed with takePrepareResult(). Only Ready carries
+  // the exact nonzero decoded-frame generation; Unsupported and Failed carry
+  // zero. A prior outcome must be consumed before another request is admitted.
   [[nodiscard]] bool prepareLocalFileAsync(
       const std::filesystem::path& path, double initialPositionSeconds = 0.0,
       std::string* error = nullptr);
@@ -241,6 +305,23 @@ class NativeVideoPipeline final {
 // Private deterministic scheduling seams for the native pipeline integration
 // test. Production builds do not compile or expose these methods.
 struct NativeVideoPipelineTestAccess {
+  // Deterministic lifetime/exception seams. They are compiled only into the
+  // isolated test implementation; the shipping native library has no fault
+  // flags or test entry points.
+  static void failNextFactoryWrapperAllocation();
+  static bool exercisePresentationExceptionBoundary(
+      NativeVideoPipeline& pipeline) noexcept;
+  static void failNextWorkerSampleSubmission(
+      NativeVideoPipeline& pipeline) noexcept;
+  static bool hasActiveReader(const NativeVideoPipeline& pipeline) noexcept;
+  static void failNextDisplayLinkStart(
+      NativeVideoPipeline& pipeline) noexcept;
+  static void failNextDisplayLinkStop(
+      NativeVideoPipeline& pipeline) noexcept;
+  static bool setDisplayLinkRunning(
+      NativeVideoPipeline& pipeline, bool running) noexcept;
+  static bool displayLinkHealthy(
+      const NativeVideoPipeline& pipeline) noexcept;
   static void setPreparationLoadBarrier(
       NativeVideoPipeline& pipeline, std::shared_future<void> release,
       std::shared_ptr<std::atomic<bool>> entered);

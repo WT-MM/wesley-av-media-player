@@ -99,14 +99,34 @@ ctest --test-dir build-native \
   `stats().stopping` clears, the same frontend can prepare a fresh generation.
   Destruction upgrades an already queued normal stop to final shutdown without
   racing the retirement task's transition back to idle.
+- Container suffixes are routing hints only. MP4/M4V/MOV use the current
+  AVFoundation compressed-sample route; AVI and MPEG transport streams are
+  probe candidates whose actual contents still must pass every AVFoundation,
+  codec, hardware, color, and memory gate. MKV/Matroska, WebM, Ogg, and FLV are
+  modeled as requiring a future external compressed-sample demux bridge and
+  remain on libmpv today. This fail-closed suffix gate can conservatively send
+  renamed but otherwise readable media to libmpv; no suffix can make media
+  eligible without passing the content, demux, and codec gates. The codec
+  gate separately accepts only 4:2:0 H.264/HEVC with matching 8-bit
+  components, plus exact 10-bit 4:2:0 HEVC; VP9, AV1, ProRes, 12-bit, 4:2:2,
+  and 4:4:4 remain unsupported by this native path.
 - `prepareLocalFileAsync()` performs no AVFoundation property access or
   filesystem inspection on its caller. An accepted request is moved to a
   private serial preparation queue, loads the asset's `playable`,
   `hasProtectedContent`, `duration`, and `tracks` keys asynchronously, verifies
   every key reached `Loaded`, then asynchronously loads and verifies the chosen
   track's `formatDescriptions` and `preferredTransform` before calling any
-  getter. `takePrepareResult()` consumes exactly one generation-tagged terminal
-  `Ready`, `Unsupported`, or `Failed` outcome; callers must consume it before a
+  getter. Before publishing `Ready`, it also creates a throwaway
+  `AVAssetReaderTrackOutput` with nil settings and synchronously extracts one
+  bounded expected-codec compressed sample on that private queue. This proves
+  more than playability, but it does not yet prove length-prefixed NAL framing
+  or complete decode/presentation. Start and the first accepted draw remain the
+  authoritative native-activation proof. The probe reader is confined to the
+  preparation queue; stop is observed after a synchronous sample copy returns,
+  and the process-wide admission lease bounds a wedged importer to one attempt.
+  `takePrepareResult()` consumes exactly one terminal
+  `Ready`, `Unsupported`, or `Failed` outcome; only `Ready` carries the exact
+  nonzero decoded-frame generation. Callers must consume it before a
   new request can be admitted, so results cannot be overwritten or accumulate.
   No client callback can run from an AVFoundation, decode, teardown, or post-
   destruction stack. Stop/destruction logically cancels the request and asks
@@ -120,13 +140,16 @@ ctest --test-dir build-native \
 
 The isolated pipeline accepts only readable local, unprotected files with one
 progressive SDR H.264/HEVC video track, at least one audio track, one stable
-format description, supported BT.709/601 metadata, square pixels, an uncropped
-aperture, identity rotation, and at most 1920x1080 coded pixels. It rejects
+format description, BT.709 primaries/transfer with a BT.709 or BT.601 matrix
+(or absent metadata under the current SD/HD inference), square pixels, an uncropped
+aperture, identity rotation, and at most 2,073,600 coded pixels (the current
+1920x1080 surface budget). It rejects
 video-only/silent media because no independent video master clock exists yet,
 and rejects embedded subtitle, text, or closed-caption tracks because no native
 compositor exists. It also rejects a seek requiring more than 12 seconds of
 hidden key-frame preroll instead of unexpectedly decoding a long file from zero.
-Network media, other codecs/containers, multi-video media, interlacing,
+Network media, containers that cannot yield AVFoundation compressed samples,
+other codecs, multi-video media, interlacing,
 HDR/PQ/HLG, Dolby Vision, ICC/log/gamma/wide-gamut metadata, alpha, unsupported
 chroma siting, rotation, non-square pixels, and cropped apertures remain on
 libmpv.
