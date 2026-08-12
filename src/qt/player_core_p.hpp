@@ -99,6 +99,12 @@ class PlayerCore final : public std::enable_shared_from_this<PlayerCore> {
     return render_lifecycle_.snapshot();
   }
 
+#if defined(WAM_PLAYER_CORE_RENDER_CONTEXT_TESTING)
+  // Exercises only the notification gate at ensureRenderContext() entry. The
+  // shipping render path uses the same private predicate in full.
+  [[nodiscard]] bool renderNotificationAllowsCreationForTesting() noexcept;
+#endif
+
   void detachOwner(PlayerController* owner);
 
   // These methods are called only from Qt Quick's OpenGL render thread.
@@ -111,14 +117,17 @@ class PlayerCore final : public std::enable_shared_from_this<PlayerCore> {
   bool releaseRenderContext();
 
  private:
-  static void onMpvWakeup(void* context);
-  static void onRenderUpdate(void* context);
-  static void* getOpenGlProcAddress(void* context, const char* name);
+  static void onMpvWakeup(void* context) noexcept;
+  static void onRenderUpdate(void* context) noexcept;
+  static void* getOpenGlProcAddress(void* context, const char* name) noexcept;
 
-  void queueEventDrain();
-  void queueVideoUpdate();
-  void notifyRenderingReady(RenderTicket ticket);
-  void notifyRenderInvalidated(RenderTicket retired_ticket);
+  void queueEventDrain() noexcept;
+  void queueVideoUpdate() noexcept;
+  void notifyRenderingReady(RenderTicket ticket) noexcept;
+  void notifyRenderInvalidated(RenderTicket retired_ticket) noexcept;
+  void queueRenderNotificationDrain() noexcept;
+  void drainRenderNotifications(PlayerController* expected_owner) noexcept;
+  [[nodiscard]] bool hasPendingRenderInvalidation() noexcept;
   void postInitializationError(const QString& error,
                                RenderTicket ticket) noexcept;
   void postRenderInitializationErrorBestEffort(
@@ -163,6 +172,18 @@ class PlayerCore final : public std::enable_shared_from_this<PlayerCore> {
   std::atomic<bool> video_update_queued_{false};
   QString initialization_error_;
 
+  // Render lifecycle transitions happen on Qt's scene-graph thread, while
+  // their controller effects belong to the GUI thread. Keep the exact facts
+  // until controller work succeeds: QMetaObject queueing may return false or
+  // throw while allocating its functor, and a Ready lifecycle otherwise has
+  // no reason to notify again. An undelivered invalidation gates replacement
+  // creation, preserving invalidation-before-Ready ordering and bounding the
+  // fixed-capacity state to one transition of each kind.
+  std::mutex render_notification_mutex_;
+  std::uint64_t pending_render_ready_stamp_ = 0;
+  std::uint64_t pending_render_invalidation_stamp_ = 0;
+  bool render_notification_drain_queued_ = false;
+
 #if defined(WAM_PLAYER_CORE_RENDER_CONTEXT_TESTING)
   std::function<void()> before_render_context_create_for_testing_;
   std::function<void()> after_render_context_api_for_testing_;
@@ -177,6 +198,18 @@ class PlayerCore final : public std::enable_shared_from_this<PlayerCore> {
   std::function<void(mpv_render_context*)>
       render_context_free_for_testing_;
   std::function<void(mpv_handle*)> before_terminate_destroy_for_testing_;
+  // Deterministic substitutes for QMetaObject::invokeMethod(). They model
+  // both its false return and exceptions while copying/allocating a functor;
+  // neither seam exists in the shipping target.
+  std::function<bool()> queue_event_drain_for_testing_;
+  std::function<bool()> queue_video_update_for_testing_;
+  std::function<void()> drain_events_for_testing_;
+  std::function<void()> request_video_update_for_testing_;
+  std::function<bool()> queue_render_notification_for_testing_;
+  std::function<void(std::uint64_t)>
+      render_ready_work_for_testing_;
+  std::function<void(std::uint64_t)>
+      render_invalidation_work_for_testing_;
   std::atomic<std::uint64_t> render_context_free_count_for_testing_{0};
   std::atomic<std::uint64_t>
       render_context_ready_notify_count_for_testing_{0};

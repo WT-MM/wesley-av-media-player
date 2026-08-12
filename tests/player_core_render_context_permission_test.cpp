@@ -1,4 +1,5 @@
 #include "qt/mpv_render_context_policy.hpp"
+#include "qt/player_controller.hpp"
 #include "qt/player_core_p.hpp"
 
 #include <QGuiApplication>
@@ -13,6 +14,7 @@
 #include <chrono>
 #include <clocale>
 #include <cstdint>
+#include <cstring>
 #include <cstdlib>
 #include <functional>
 #include <iostream>
@@ -63,6 +65,104 @@ public:
     core.before_render_context_error_diagnostic_for_testing_ = std::move(hook);
   }
 
+  static std::shared_ptr<PlayerCore> core(PlayerController &owner) {
+    return owner.core_;
+  }
+
+  static void injectEventQueue(PlayerCore &core, std::function<bool()> queue) {
+    core.queue_event_drain_for_testing_ = std::move(queue);
+  }
+
+  static void injectVideoQueue(PlayerCore &core, std::function<bool()> queue) {
+    core.queue_video_update_for_testing_ = std::move(queue);
+  }
+
+  static void injectEventWork(PlayerCore &core, std::function<void()> work) {
+    core.drain_events_for_testing_ = std::move(work);
+  }
+
+  static void injectVideoWork(PlayerCore &core, std::function<void()> work) {
+    core.request_video_update_for_testing_ = std::move(work);
+  }
+
+  static void injectRenderNotificationQueue(PlayerCore &core,
+                                            std::function<bool()> queue) {
+    core.queue_render_notification_for_testing_ = std::move(queue);
+  }
+
+  static void injectReadyNotificationWork(
+      PlayerCore &core, std::function<void(std::uint64_t)> work) {
+    core.render_ready_work_for_testing_ = std::move(work);
+  }
+
+  static void injectInvalidationNotificationWork(
+      PlayerCore &core, std::function<void(std::uint64_t)> work) {
+    core.render_invalidation_work_for_testing_ = std::move(work);
+  }
+
+  static void notifyReady(PlayerCore &core, RenderTicket ticket) noexcept {
+    core.notifyRenderingReady(ticket);
+  }
+
+  static void notifyInvalidated(PlayerCore &core,
+                                RenderTicket ticket) noexcept {
+    core.notifyRenderInvalidated(ticket);
+  }
+
+  static void retryRenderNotifications(PlayerCore &core) noexcept {
+    core.queueRenderNotificationDrain();
+  }
+
+  static void drainRenderNotifications(PlayerCore &core,
+                                       PlayerController &owner) noexcept {
+    core.drainRenderNotifications(&owner);
+  }
+
+  [[nodiscard]] static bool renderNotificationQueued(PlayerCore &core) {
+    std::scoped_lock lock(core.render_notification_mutex_);
+    return core.render_notification_drain_queued_;
+  }
+
+  [[nodiscard]] static std::uint64_t pendingReadyNotification(
+      PlayerCore &core) {
+    std::scoped_lock lock(core.render_notification_mutex_);
+    return core.pending_render_ready_stamp_;
+  }
+
+  [[nodiscard]] static std::uint64_t pendingInvalidationNotification(
+      PlayerCore &core) {
+    std::scoped_lock lock(core.render_notification_mutex_);
+    return core.pending_render_invalidation_stamp_;
+  }
+
+  [[nodiscard]] static bool notificationAllowsCreation(PlayerCore &core) {
+    return core.renderNotificationAllowsCreationForTesting();
+  }
+
+  static void invokeWakeupCallback(PlayerCore &core) {
+    PlayerCore::onMpvWakeup(&core);
+  }
+
+  static void invokeRenderUpdateCallback(PlayerCore &core) {
+    PlayerCore::onRenderUpdate(&core);
+  }
+
+  [[nodiscard]] static constexpr bool callbacksAreNoexcept() {
+    return noexcept(PlayerCore::onMpvWakeup(nullptr)) &&
+           noexcept(PlayerCore::onRenderUpdate(nullptr)) &&
+           noexcept(PlayerCore::getOpenGlProcAddress(nullptr, nullptr)) &&
+           noexcept(std::declval<PlayerCore &>().notifyRenderingReady({})) &&
+           noexcept(std::declval<PlayerCore &>().notifyRenderInvalidated({}));
+  }
+
+  [[nodiscard]] static bool eventDrainQueued(const PlayerCore &core) {
+    return core.event_drain_queued_.load(std::memory_order_acquire);
+  }
+
+  [[nodiscard]] static bool videoUpdateQueued(const PlayerCore &core) {
+    return core.video_update_queued_.load(std::memory_order_acquire);
+  }
+
   static void clearHooks(PlayerCore &core) {
     core.before_render_context_create_for_testing_ = {};
     core.after_render_context_api_for_testing_ = {};
@@ -73,6 +173,13 @@ public:
     core.render_context_free_for_testing_ = {};
     core.before_terminate_destroy_for_testing_ = {};
     core.before_render_context_error_diagnostic_for_testing_ = {};
+    core.queue_event_drain_for_testing_ = {};
+    core.queue_video_update_for_testing_ = {};
+    core.drain_events_for_testing_ = {};
+    core.request_video_update_for_testing_ = {};
+    core.queue_render_notification_for_testing_ = {};
+    core.render_ready_work_for_testing_ = {};
+    core.render_invalidation_work_for_testing_ = {};
   }
 
   [[nodiscard]] static bool hasRenderContext(const PlayerCore &core) {
@@ -227,8 +334,219 @@ bool makeCurrentOffscreen(QOpenGLContext &context, QOffscreenSurface &surface,
 
 int main(int argc, char **argv) {
   QGuiApplication application(argc, argv);
+  const bool notification_only =
+      argc == 2 && std::strcmp(argv[1], "--notification-only") == 0;
   expect(std::setlocale(LC_NUMERIC, "C") != nullptr,
          "LC_NUMERIC can be restored for libmpv");
+
+  // libmpv invokes these callbacks on foreign threads and explicitly forbids
+  // exceptions from leaving them. A failed Qt dispatch must also release its
+  // coalescing reservation so the next callback can retry.
+  expect(Access::callbacksAreNoexcept(),
+         "every libmpv callback entry point is declared noexcept");
+  {
+    wam::qt::PlayerController callback_owner;
+    const auto callback_core = Access::core(callback_owner);
+    expect(static_cast<bool>(callback_core),
+           "the callback test owns a dormant PlayerCore");
+
+    int event_retry_count = 0;
+    Access::injectEventQueue(*callback_core,
+                             []() -> bool { throw std::bad_alloc{}; });
+    Access::invokeWakeupCallback(*callback_core);
+    expect(!Access::eventDrainQueued(*callback_core),
+           "a throwing event dispatch rolls back its coalescing bit");
+    Access::injectEventQueue(*callback_core, [&] {
+      ++event_retry_count;
+      return false;
+    });
+    Access::invokeWakeupCallback(*callback_core);
+    expect(event_retry_count == 1 && !Access::eventDrainQueued(*callback_core),
+           "a failed event dispatch remains retryable and rolls back");
+
+    int video_retry_count = 0;
+    Access::injectVideoQueue(*callback_core,
+                             []() -> bool { throw std::bad_alloc{}; });
+    Access::invokeRenderUpdateCallback(*callback_core);
+    expect(!Access::videoUpdateQueued(*callback_core),
+           "a throwing video dispatch rolls back its coalescing bit");
+    Access::injectVideoQueue(*callback_core, [&] {
+      ++video_retry_count;
+      return false;
+    });
+    Access::invokeRenderUpdateCallback(*callback_core);
+    expect(video_retry_count == 1 && !Access::videoUpdateQueued(*callback_core),
+           "a failed video dispatch remains retryable and rolls back");
+
+    Access::clearHooks(*callback_core);
+
+    Access::injectEventWork(*callback_core, [] { throw std::bad_alloc{}; });
+    Access::invokeWakeupCallback(*callback_core);
+    QCoreApplication::sendPostedEvents(&callback_owner);
+    expect(!Access::eventDrainQueued(*callback_core),
+           "throwing queued event work escapes neither Qt nor coalescing");
+
+    Access::injectVideoWork(*callback_core, [] { throw std::bad_alloc{}; });
+    Access::invokeRenderUpdateCallback(*callback_core);
+    QCoreApplication::sendPostedEvents(&callback_owner);
+    expect(!Access::videoUpdateQueued(*callback_core),
+           "throwing queued video work rolls back its coalescing bit");
+
+    Access::clearHooks(*callback_core);
+
+    // Ready and invalidation are one-shot lifecycle facts. A failed Qt queue
+    // must retain the exact stamp, roll back queue admission, and allow a
+    // later bounded retry. Controller work is likewise exception-contained:
+    // it is acknowledged only after returning successfully.
+    wam::qt::RenderLifecycle notification_lifecycle;
+    const auto notification_creating =
+        notification_lifecycle.beginCreation();
+    const auto notification_ready =
+        notification_creating
+            ? notification_lifecycle.completeCreation(*notification_creating,
+                                                       true)
+            : std::nullopt;
+    expect(notification_ready.has_value(),
+           "notification test creates an exact synthetic Ready ticket");
+    const wam::qt::RenderTicket ready_ticket =
+        notification_ready.value_or(wam::qt::RenderTicket{});
+
+    // Persistent notification queue failure must request a later frame as its
+    // liveness trigger. The video queue seam proves that trigger without
+    // entering Qt's event loop.
+    int retry_frame_requests = 0;
+    Access::injectVideoQueue(*callback_core, [&] {
+      ++retry_frame_requests;
+      return false;
+    });
+    int ready_queue_attempts = 0;
+    Access::injectRenderNotificationQueue(*callback_core, [&] {
+      ++ready_queue_attempts;
+      return false;
+    });
+    Access::notifyReady(*callback_core, ready_ticket);
+    expect(ready_queue_attempts == 3 && retry_frame_requests == 1 &&
+               !Access::renderNotificationQueued(*callback_core) &&
+               Access::pendingReadyNotification(*callback_core) ==
+                   ready_ticket.stamp,
+           "three failed Ready queue attempts retain one retryable exact fact");
+
+    int ready_work_attempts = 0;
+    Access::injectRenderNotificationQueue(*callback_core,
+                                          [] { return true; });
+    Access::injectReadyNotificationWork(
+        *callback_core, [&](std::uint64_t stamp) {
+          ++ready_work_attempts;
+          expect(stamp == ready_ticket.stamp,
+                 "Ready work receives the exact retained stamp");
+          if (ready_work_attempts == 1)
+            throw std::bad_alloc{};
+        });
+    Access::retryRenderNotifications(*callback_core);
+    expect(Access::renderNotificationQueued(*callback_core),
+           "a later Ready retry reserves one notification drain");
+    Access::drainRenderNotifications(*callback_core, callback_owner);
+    expect(ready_work_attempts == 1 &&
+               Access::renderNotificationQueued(*callback_core) &&
+               Access::pendingReadyNotification(*callback_core) ==
+                   ready_ticket.stamp,
+           "throwing Ready work remains pending and is requeued");
+    Access::drainRenderNotifications(*callback_core, callback_owner);
+    expect(ready_work_attempts == 2 &&
+               !Access::renderNotificationQueued(*callback_core) &&
+               Access::pendingReadyNotification(*callback_core) == 0,
+           "successful Ready retry consumes the exact fact once");
+
+    const auto retired_ticket = notification_lifecycle.invalidate();
+    expect(retired_ticket && *retired_ticket == ready_ticket,
+           "notification invalidation retires the synthetic Ready ticket");
+    int invalidation_queue_attempts = 0;
+    Access::injectRenderNotificationQueue(*callback_core, [&]() -> bool {
+      ++invalidation_queue_attempts;
+      throw std::bad_alloc{};
+    });
+    Access::notifyInvalidated(
+        *callback_core,
+        retired_ticket.value_or(wam::qt::RenderTicket{}));
+    expect(invalidation_queue_attempts == 3 && retry_frame_requests == 2 &&
+               !Access::renderNotificationQueued(*callback_core) &&
+               Access::pendingInvalidationNotification(*callback_core) ==
+                   ready_ticket.stamp,
+           "throwing invalidation queues escape neither release nor recovery");
+    expect(!Access::notificationAllowsCreation(*callback_core) &&
+               invalidation_queue_attempts == 6 &&
+               retry_frame_requests == 3 &&
+               Access::pendingInvalidationNotification(*callback_core) ==
+                   ready_ticket.stamp,
+           "pending invalidation blocks replacement creation and retries");
+
+    int invalidation_work_attempts = 0;
+    Access::injectRenderNotificationQueue(*callback_core,
+                                          [] { return true; });
+    Access::injectInvalidationNotificationWork(
+        *callback_core, [&](std::uint64_t stamp) {
+          ++invalidation_work_attempts;
+          expect(stamp == ready_ticket.stamp,
+                 "invalidation work receives the exact retained stamp");
+          if (invalidation_work_attempts == 1)
+            throw std::bad_alloc{};
+        });
+    Access::retryRenderNotifications(*callback_core);
+    Access::drainRenderNotifications(*callback_core, callback_owner);
+    expect(invalidation_work_attempts == 1 &&
+               Access::renderNotificationQueued(*callback_core) &&
+               Access::pendingInvalidationNotification(*callback_core) ==
+                   ready_ticket.stamp,
+           "throwing invalidation work retains fail-closed recovery");
+    Access::drainRenderNotifications(*callback_core, callback_owner);
+    expect(invalidation_work_attempts == 2 &&
+               !Access::renderNotificationQueued(*callback_core) &&
+               Access::pendingInvalidationNotification(*callback_core) == 0,
+           "successful invalidation retry consumes recovery exactly once");
+    expect(Access::notificationAllowsCreation(*callback_core),
+           "delivered invalidation reopens exact replacement creation");
+
+    Access::clearHooks(*callback_core);
+  }
+
+  // A real context-bound Qt functor owns a PlayerCore keepalive, while owner
+  // detach clears retained facts. Destroying the controller before dispatch
+  // must therefore discard the callback without dereferencing either object.
+  {
+    auto retiring_owner = std::make_unique<wam::qt::PlayerController>();
+    const auto retiring_core = Access::core(*retiring_owner);
+    wam::qt::RenderLifecycle lifecycle;
+    const auto creating = lifecycle.beginCreation();
+    const auto ready = creating
+                           ? lifecycle.completeCreation(*creating, true)
+                           : std::nullopt;
+    expect(retiring_core && ready,
+           "owner-retirement test has a shared core and Ready ticket");
+    if (retiring_core && ready)
+      Access::notifyReady(*retiring_core, *ready);
+    expect(retiring_core &&
+               Access::renderNotificationQueued(*retiring_core),
+           "a real context-bound Ready callback is queued before teardown");
+    retiring_owner.reset();
+    QCoreApplication::sendPostedEvents(nullptr);
+    expect(retiring_core &&
+               !Access::renderNotificationQueued(*retiring_core) &&
+               Access::pendingReadyNotification(*retiring_core) == 0 &&
+               Access::pendingInvalidationNotification(*retiring_core) == 0,
+           "owner detach discards queued notification state safely");
+  }
+
+  if (notification_only) {
+    if (failures != 0) {
+      std::cerr << failures
+                << " PlayerCore notification barrier check(s) failed\n";
+      return EXIT_FAILURE;
+    }
+    std::cout << "PlayerCore notification barrier passed: noexcept queue "
+                 "rollback, bounded retry, exact Ready/invalidation work, "
+                 "and owner teardown\n";
+    return EXIT_SUCCESS;
+  }
 
   QOpenGLContext gl_context;
   QOffscreenSurface gl_surface;

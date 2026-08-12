@@ -14,6 +14,29 @@
 namespace wam::qt {
 namespace {
 
+constexpr unsigned kRenderNotificationQueueAttempts = 3;
+constexpr unsigned kRenderNotificationDrainBatch = 4;
+
+class CoalescingFlagRollback final {
+public:
+  explicit CoalescingFlagRollback(std::atomic<bool> &flag) noexcept
+      : flag_(flag) {}
+
+  CoalescingFlagRollback(const CoalescingFlagRollback &) = delete;
+  CoalescingFlagRollback &operator=(const CoalescingFlagRollback &) = delete;
+
+  ~CoalescingFlagRollback() noexcept {
+    if (armed_)
+      flag_.store(false, std::memory_order_release);
+  }
+
+  void dismiss() noexcept { armed_ = false; }
+
+private:
+  std::atomic<bool> &flag_;
+  bool armed_ = true;
+};
+
 bool setOption(mpv_handle *handle, const char *name, const char *value) {
   const int result = mpv_set_option_string(handle, name, value);
   if (result < 0) {
@@ -278,11 +301,24 @@ PlayerCore::~PlayerCore() {
 }
 
 void PlayerCore::detachOwner(PlayerController *owner) {
-  std::scoped_lock lock(owner_mutex_);
-  if (owner_ == owner) {
-    owner_ = nullptr;
-    event_drain_queued_.store(false, std::memory_order_release);
-    video_update_queued_.store(false, std::memory_order_release);
+  bool detached = false;
+  {
+    std::scoped_lock lock(owner_mutex_);
+    if (owner_ == owner) {
+      owner_ = nullptr;
+      event_drain_queued_.store(false, std::memory_order_release);
+      video_update_queued_.store(false, std::memory_order_release);
+      detached = true;
+    }
+  }
+  if (detached) {
+    // Queued functors are context-bound to `owner` and Qt discards them when
+    // it is destroyed. Clear their retained facts as part of the same logical
+    // detach so a render-node keepalive cannot preserve stale GUI work.
+    std::scoped_lock notification_lock(render_notification_mutex_);
+    pending_render_ready_stamp_ = 0;
+    pending_render_invalidation_stamp_ = 0;
+    render_notification_drain_queued_ = false;
   }
 }
 
@@ -306,6 +342,13 @@ bool PlayerCore::renderContextBusy() const noexcept {
   return (render_context_permission_.load(std::memory_order_acquire) &
           kRenderContextBusy) != 0;
 }
+
+#if defined(WAM_PLAYER_CORE_RENDER_CONTEXT_TESTING)
+bool PlayerCore::renderNotificationAllowsCreationForTesting() noexcept {
+  queueRenderNotificationDrain();
+  return !hasPendingRenderInvalidation();
+}
+#endif
 
 void PlayerCore::clearRenderContextBusy() noexcept {
   render_context_permission_.fetch_and(
@@ -438,14 +481,30 @@ bool PlayerCore::invalidateAndFreeRenderContextLocked(
   return true;
 }
 
-void *PlayerCore::getOpenGlProcAddress(void *, const char *name) {
-  QOpenGLContext *context = QOpenGLContext::currentContext();
-  if (!context || !name)
+void *PlayerCore::getOpenGlProcAddress(void *, const char *name) noexcept {
+  if (!name)
     return nullptr;
-  return reinterpret_cast<void *>(context->getProcAddress(QByteArray(name)));
+  try {
+    QOpenGLContext *context = QOpenGLContext::currentContext();
+    if (!context)
+      return nullptr;
+    return reinterpret_cast<void *>(context->getProcAddress(QByteArray(name)));
+  } catch (...) {
+    // This function is invoked through libmpv's C callback boundary. A failed
+    // QByteArray allocation is equivalent to an unavailable GL entry point.
+    return nullptr;
+  }
 }
 
 bool PlayerCore::ensureRenderContext() {
+  // A queue failure leaves the exact lifecycle fact pending. Every later
+  // scene-graph pass retries it before observing or changing renderer state.
+  // Invalidation must reach the controller before a replacement Ready can be
+  // created, otherwise recovery could bind to the new generation first.
+  queueRenderNotificationDrain();
+  if (hasPendingRenderInvalidation())
+    return false;
+
   std::shared_ptr<PlayerCore> deferred_keepalive;
   std::optional<RenderTicket> retired_ticket;
   std::unique_lock lock(render_mutex_);
@@ -727,100 +786,378 @@ bool PlayerCore::retryFailedRenderContext() {
   return render_lifecycle_.retryFailure();
 }
 
-void PlayerCore::onMpvWakeup(void *context) {
-  static_cast<PlayerCore *>(context)->queueEventDrain();
+void PlayerCore::onMpvWakeup(void *context) noexcept {
+  if (!context)
+    return;
+  try {
+    static_cast<PlayerCore *>(context)->queueEventDrain();
+  } catch (...) {
+    // libmpv forbids exceptions from crossing this foreign callback boundary.
+  }
 }
 
-void PlayerCore::onRenderUpdate(void *context) {
-  static_cast<PlayerCore *>(context)->queueVideoUpdate();
+void PlayerCore::onRenderUpdate(void *context) noexcept {
+  if (!context)
+    return;
+  try {
+    static_cast<PlayerCore *>(context)->queueVideoUpdate();
+  } catch (...) {
+    // libmpv forbids exceptions from crossing this foreign callback boundary.
+  }
 }
 
-void PlayerCore::queueEventDrain() {
+void PlayerCore::queueEventDrain() noexcept {
   if (event_drain_queued_.exchange(true, std::memory_order_acq_rel))
     return;
 
-  std::scoped_lock lock(owner_mutex_);
-  if (!owner_) {
-    event_drain_queued_.store(false, std::memory_order_release);
-    return;
-  }
-  PlayerController *owner = owner_;
-  QMetaObject::invokeMethod(
-      owner,
-      [this, owner] {
-        event_drain_queued_.store(false, std::memory_order_release);
-        {
-          std::scoped_lock owner_lock(owner_mutex_);
-          if (owner_ != owner)
-            return;
-        }
+  CoalescingFlagRollback rollback(event_drain_queued_);
+  try {
+    std::scoped_lock lock(owner_mutex_);
+    if (!owner_)
+      return;
+    PlayerController *owner = owner_;
+    bool queued = false;
+#if defined(WAM_PLAYER_CORE_RENDER_CONTEXT_TESTING)
+    if (queue_event_drain_for_testing_) {
+      queued = queue_event_drain_for_testing_();
+    } else
+#endif
+    {
+      queued = QMetaObject::invokeMethod(
+          owner,
+          [this, owner] {
+            event_drain_queued_.store(false, std::memory_order_release);
+            try {
+              {
+                std::scoped_lock owner_lock(owner_mutex_);
+                if (owner_ != owner)
+                  return;
+              }
 
-        // mpv may invoke its wakeup callback while holding an internal client
-        // lock. Never retain owner_mutex_ while entering mpv_wait_event(), or
-        // the GUI and mpv core threads can acquire those locks in opposite
-        // orders and deadlock. This functor is context-bound to `owner`, so Qt
-        // guarantees the QObject remains alive for the duration of the call.
-        owner->drainMpvEvents();
-      },
-      Qt::QueuedConnection);
+              // mpv may invoke its wakeup callback while holding an internal
+              // client lock. Never retain owner_mutex_ while entering
+              // mpv_wait_event(), or the GUI and mpv core threads can acquire
+              // those locks in opposite orders and deadlock. This functor is
+              // context-bound to `owner`, so Qt guarantees the QObject remains
+              // alive for the duration of the call.
+#if defined(WAM_PLAYER_CORE_RENDER_CONTEXT_TESTING)
+              if (drain_events_for_testing_) {
+                drain_events_for_testing_();
+              } else
+#endif
+              {
+                owner->drainMpvEvents();
+              }
+            } catch (...) {
+              // No exception may escape Qt's event dispatch. The bit was
+              // cleared before work began, so a later wakeup can retry.
+            }
+          },
+          Qt::QueuedConnection);
+    }
+    if (!queued)
+      return;
+    rollback.dismiss();
+  } catch (...) {
+    // Rollback clears the bit so a later wakeup can retry. In particular, an
+    // allocation failure while Qt copies the functor must not silence events.
+  }
 }
 
-void PlayerCore::queueVideoUpdate() {
+void PlayerCore::queueVideoUpdate() noexcept {
   if (video_update_queued_.exchange(true, std::memory_order_acq_rel))
     return;
 
-  std::scoped_lock lock(owner_mutex_);
-  if (!owner_) {
-    video_update_queued_.store(false, std::memory_order_release);
-    return;
+  CoalescingFlagRollback rollback(video_update_queued_);
+  try {
+    std::scoped_lock lock(owner_mutex_);
+    if (!owner_)
+      return;
+    PlayerController *owner = owner_;
+    bool queued = false;
+#if defined(WAM_PLAYER_CORE_RENDER_CONTEXT_TESTING)
+    if (queue_video_update_for_testing_) {
+      queued = queue_video_update_for_testing_();
+    } else
+#endif
+    {
+      queued = QMetaObject::invokeMethod(
+          owner,
+          [this, owner] {
+            try {
+              {
+                std::scoped_lock owner_lock(owner_mutex_);
+                if (owner_ != owner) {
+                  video_update_queued_.store(false, std::memory_order_release);
+                  return;
+                }
+              }
+#if defined(WAM_PLAYER_CORE_RENDER_CONTEXT_TESTING)
+              if (request_video_update_for_testing_) {
+                request_video_update_for_testing_();
+              } else
+#endif
+              {
+                owner->requestVideoUpdate();
+              }
+            } catch (...) {
+              // Rendering normally consumes this reservation. Failed owner
+              // work did not request a frame, so make the callback retryable.
+              video_update_queued_.store(false, std::memory_order_release);
+            }
+          },
+          Qt::QueuedConnection);
+    }
+    if (!queued)
+      return;
+    rollback.dismiss();
+  } catch (...) {
+    // Rollback clears the bit so a later frame notification can retry.
   }
-  PlayerController *owner = owner_;
-  const bool queued = QMetaObject::invokeMethod(
-      owner,
-      [this, owner] {
-        {
-          std::scoped_lock owner_lock(owner_mutex_);
-          if (owner_ != owner) {
-            video_update_queued_.store(false, std::memory_order_release);
-            return;
-          }
-        }
-        owner->requestVideoUpdate();
-      },
-      Qt::QueuedConnection);
-  if (!queued)
-    video_update_queued_.store(false, std::memory_order_release);
 }
 
-void PlayerCore::notifyRenderingReady(RenderTicket ticket) {
+void PlayerCore::notifyRenderingReady(RenderTicket ticket) noexcept {
 #if defined(WAM_PLAYER_CORE_RENDER_CONTEXT_TESTING)
   render_context_ready_notify_count_for_testing_.fetch_add(
       1, std::memory_order_relaxed);
 #endif
-  std::scoped_lock lock(owner_mutex_);
-  if (!owner_)
-    return;
-  PlayerController *owner = owner_;
-  QMetaObject::invokeMethod(
-      owner, [owner, ticket] { owner->flushPendingOpen(ticket.stamp); },
-      Qt::QueuedConnection);
+  try {
+    {
+      std::scoped_lock lock(render_notification_mutex_);
+      pending_render_ready_stamp_ = ticket.stamp;
+    }
+    queueRenderNotificationDrain();
+  } catch (...) {
+    // No exception may leave Qt's render pass. The state mutation itself is
+    // allocation-free; this is a final barrier for platform mutex failures.
+  }
 }
 
-void PlayerCore::notifyRenderInvalidated(RenderTicket retired_ticket) {
+void PlayerCore::notifyRenderInvalidated(RenderTicket retired_ticket) noexcept {
 #if defined(WAM_PLAYER_CORE_RENDER_CONTEXT_TESTING)
   render_context_invalidation_notify_count_for_testing_.fetch_add(
       1, std::memory_order_relaxed);
 #endif
-  std::scoped_lock lock(owner_mutex_);
-  if (!owner_)
+  try {
+    {
+      std::scoped_lock lock(render_notification_mutex_);
+      // If Ready never reached the GUI, its retirement supersedes that pending
+      // handoff. If it is already executing, the drain clears by exact stamp
+      // and then observes this invalidation in the same ordered batch.
+      if (pending_render_ready_stamp_ == retired_ticket.stamp)
+        pending_render_ready_stamp_ = 0;
+      if (pending_render_invalidation_stamp_ == 0 ||
+          pending_render_invalidation_stamp_ == retired_ticket.stamp) {
+        pending_render_invalidation_stamp_ = retired_ticket.stamp;
+      }
+    }
+    queueRenderNotificationDrain();
+  } catch (...) {
+    // Render release and render-node destruction are noexcept boundaries in
+    // practice even where Qt's virtual API cannot express that contract.
+  }
+}
+
+bool PlayerCore::hasPendingRenderInvalidation() noexcept {
+  try {
+    std::scoped_lock lock(render_notification_mutex_);
+    return pending_render_invalidation_stamp_ != 0;
+  } catch (...) {
+    // If the barrier itself is unusable, fail closed rather than creating a
+    // replacement whose Ready could overtake an unobserved invalidation.
+    return true;
+  }
+}
+
+void PlayerCore::queueRenderNotificationDrain() noexcept {
+  bool exhausted = false;
+  for (unsigned attempt = 0; attempt < kRenderNotificationQueueAttempts;
+       ++attempt) {
+    try {
+      {
+        std::scoped_lock lock(render_notification_mutex_);
+        if (render_notification_drain_queued_ ||
+            (pending_render_invalidation_stamp_ == 0 &&
+             pending_render_ready_stamp_ == 0)) {
+          return;
+        }
+        render_notification_drain_queued_ = true;
+      }
+
+      bool has_owner = false;
+      bool queued = false;
+#if defined(WAM_PLAYER_CORE_RENDER_CONTEXT_TESTING)
+      std::function<bool()> queue_seam;
+      bool use_qt_queue = true;
+#endif
+      {
+        // detachOwner() takes this same lock before clearing notification
+        // state, so the QObject remains a valid invokeMethod context through
+        // the complete queue call. Controller work runs only in the functor.
+        std::scoped_lock owner_lock(owner_mutex_);
+        PlayerController *const owner = owner_;
+        if (owner) {
+          has_owner = true;
+#if defined(WAM_PLAYER_CORE_RENDER_CONTEXT_TESTING)
+          queue_seam = queue_render_notification_for_testing_;
+          use_qt_queue = !queue_seam;
+#endif
+          if (
+#if defined(WAM_PLAYER_CORE_RENDER_CONTEXT_TESTING)
+              use_qt_queue
+#else
+              true
+#endif
+          ) {
+            auto keepalive = weak_from_this().lock();
+            if (keepalive) {
+              queued = QMetaObject::invokeMethod(
+                  owner,
+                  [keepalive = std::move(keepalive), owner] {
+                    keepalive->drainRenderNotifications(owner);
+                  },
+                  Qt::QueuedConnection);
+            }
+          }
+        }
+      }
+
+#if defined(WAM_PLAYER_CORE_RENDER_CONTEXT_TESTING)
+      // Test/user work is deliberately outside owner_mutex_. The production
+      // QMetaObject queue call stays under it solely to linearize QObject
+      // lifetime with detachOwner().
+      if (has_owner && queue_seam)
+        queued = queue_seam();
+#endif
+
+      if (queued)
+        return;
+
+      {
+        std::scoped_lock lock(render_notification_mutex_);
+        // invokeMethod did not take ownership of a functor. Roll back the
+        // reservation so this loop or a later render pass can retry.
+        render_notification_drain_queued_ = false;
+        if (!has_owner) {
+          pending_render_ready_stamp_ = 0;
+          pending_render_invalidation_stamp_ = 0;
+          return;
+        }
+      }
+    } catch (...) {
+      // Functor copying/allocation and deterministic test seams can throw.
+      // Restore queue admission without touching either exact lifecycle fact.
+      try {
+        std::scoped_lock lock(render_notification_mutex_);
+        render_notification_drain_queued_ = false;
+      } catch (...) {
+        return;
+      }
+    }
+    exhausted = true;
+  }
+
+  if (exhausted) {
+    // A bounded immediate retry handles transient allocation pressure. Keep
+    // the facts pending and request another scene-graph pass as the natural
+    // liveness trigger; queueVideoUpdate() has its own noexcept rollback.
+    queueVideoUpdate();
+  }
+}
+
+void PlayerCore::drainRenderNotifications(
+    PlayerController *expected_owner) noexcept {
+  for (unsigned delivered = 0; delivered < kRenderNotificationDrainBatch;
+       ++delivered) {
+    std::uint64_t stamp = 0;
+    bool invalidation = false;
+    try {
+      {
+        std::scoped_lock lock(render_notification_mutex_);
+        if (pending_render_invalidation_stamp_ != 0) {
+          stamp = pending_render_invalidation_stamp_;
+          invalidation = true;
+        } else if (pending_render_ready_stamp_ != 0) {
+          stamp = pending_render_ready_stamp_;
+        } else {
+          render_notification_drain_queued_ = false;
+          return;
+        }
+      }
+
+      {
+        std::scoped_lock owner_lock(owner_mutex_);
+        if (owner_ != expected_owner) {
+          std::scoped_lock notification_lock(render_notification_mutex_);
+          pending_render_ready_stamp_ = 0;
+          pending_render_invalidation_stamp_ = 0;
+          render_notification_drain_queued_ = false;
+          return;
+        }
+      }
+
+      // The functor is context-bound to expected_owner, so QObject teardown
+      // cannot race this GUI-thread work. Do not hold either internal mutex
+      // across controller code: it may synchronously request another frame.
+      if (invalidation) {
+#if defined(WAM_PLAYER_CORE_RENDER_CONTEXT_TESTING)
+        if (render_invalidation_work_for_testing_)
+          render_invalidation_work_for_testing_(stamp);
+        else
+#endif
+          expected_owner->handleRenderInvalidated(stamp);
+      } else {
+#if defined(WAM_PLAYER_CORE_RENDER_CONTEXT_TESTING)
+        if (render_ready_work_for_testing_)
+          render_ready_work_for_testing_(stamp);
+        else
+#endif
+          static_cast<void>(expected_owner->flushPendingOpen(stamp));
+      }
+
+      {
+        std::scoped_lock lock(render_notification_mutex_);
+        std::uint64_t &pending =
+            invalidation ? pending_render_invalidation_stamp_
+                         : pending_render_ready_stamp_;
+        if (pending == stamp)
+          pending = 0;
+      }
+
+      if (invalidation) {
+        // handleRenderInvalidated() normally requests the replacement frame,
+        // but the render thread may consume that update before this barrier
+        // clears. Queue once more after acknowledgement so replacement
+        // creation cannot remain parked behind the just-delivered gate.
+        try {
+          expected_owner->requestVideoUpdate();
+        } catch (...) {
+          queueVideoUpdate();
+        }
+      }
+    } catch (...) {
+      // Leave the exact fact pending. Roll back the consumed queue reservation
+      // before scheduling a fresh bounded attempt; no exception escapes Qt.
+      try {
+        std::scoped_lock lock(render_notification_mutex_);
+        render_notification_drain_queued_ = false;
+      } catch (...) {
+        return;
+      }
+      queueRenderNotificationDrain();
+      return;
+    }
+  }
+
+  // Bound one GUI event even if adversarial hooks continuously publish facts.
+  // Release its reservation and let the same guarded queue path continue.
+  try {
+    std::scoped_lock lock(render_notification_mutex_);
+    render_notification_drain_queued_ = false;
+  } catch (...) {
     return;
-  PlayerController *owner = owner_;
-  QMetaObject::invokeMethod(
-      owner,
-      [owner, retired_ticket] {
-        owner->handleRenderInvalidated(retired_ticket.stamp);
-      },
-      Qt::QueuedConnection);
+  }
+  queueRenderNotificationDrain();
 }
 
 void PlayerCore::postRenderInitializationErrorBestEffort(
