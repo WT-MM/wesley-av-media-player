@@ -70,8 +70,10 @@ public:
          std::string *error) noexcept = 0;
 };
 
-// Test-only macOS boundary adapter. It owns one activation token, one session,
-// and at most one coordinator Action or mpv command reply at a time.
+// Default-off macOS boundary adapter. It owns one activation token, one
+// session, and at most one coordinator Action or mpv command reply at a time.
+// Production builds can compile this seam independently, but PlayerController
+// does not construct or begin it until the final admission wiring is enabled.
 class MacosNativeVideoActionDriver final
     : public native_activation::NativeVideoActionDriver {
 public:

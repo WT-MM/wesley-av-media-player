@@ -52,14 +52,18 @@ The default-off macOS experiment lives in
 `CVPixelBuffer` frame leases, zero-copy IOSurface-to-Metal plane views, a hard-
 bounded decode/presentation handoff, H.264/HEVC VideoToolbox sessions, and
 generation-based seek invalidation. It is compiled only with
-`WAM_ENABLE_MACOS_NATIVE_VIDEO=ON`; no shipping controller or render node can
-select it, and the normal libmpv path is unchanged. The current standalone
+`WAM_ENABLE_MACOS_NATIVE_VIDEO=ON`. The stricter
+`WAM_ENABLE_MACOS_NATIVE_VIDEO_ACTIVATION=ON` option can also compile the
+coordinator/session/QtGL activation seam as production code, but no shipping
+controller constructs or begins it and the normal libmpv path is unchanged.
+The current standalone
 `CAMetalLayer` presenter is a component probe, not a qualified Qt compositor.
 An isolated `QtMetalVideoItem` gate instead imports the original IOSurface
 planes on Qt's Metal device and converts them inside the Qt scene graph, so QML
 z-order is preserved without a full-frame intermediate. It is hardware-tested
 for color, frame-slot lifetime, scene-graph recreation, and window migration,
-but is not registered with or linked into shipping WAM.
+but remains a test-only Metal gate; the production-compile seam uses the
+separately reviewed Qt OpenGL item and still registers neither item.
 Pipeline stop, detach, and destruction transfer their demux/VideoToolbox drain
 to a self-owned background retirement slot, so the AppKit thread never joins
 those producers. A process-wide admission lease permits at most one native
