@@ -278,6 +278,21 @@ if(BUILD_TESTING)
     COMMAND wam_native_activation_coordinator_test)
   set_tests_properties(native_activation_coordinator PROPERTIES TIMEOUT 10)
 
+  # Pure capacity-one action runner. This target is test-only; the shipping
+  # controller does not construct or link the native activation path yet.
+  add_executable(wam_native_video_controller_test
+    tests/native_video_controller_test.cpp
+    src/qt/native_video_controller.cpp
+    src/qt/native_video_controller.hpp
+    src/qt/native_activation_coordinator.cpp
+    src/qt/native_activation_coordinator.hpp)
+  target_include_directories(wam_native_video_controller_test PRIVATE src)
+  target_compile_options(wam_native_video_controller_test PRIVATE
+    -Wall -Wextra -Wpedantic)
+  add_test(NAME native_video_controller
+    COMMAND wam_native_video_controller_test)
+  set_tests_properties(native_video_controller PROPERTIES TIMEOUT 10)
+
   find_program(WAM_FFMPEG_EXECUTABLE ffmpeg)
   find_program(WAM_FFPROBE_EXECUTABLE ffprobe)
   if(WAM_FFMPEG_EXECUTABLE AND WAM_FFPROBE_EXECUTABLE)
