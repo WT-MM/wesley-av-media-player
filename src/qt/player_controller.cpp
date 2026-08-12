@@ -39,10 +39,26 @@ namespace {
 
 constexpr double kMinimumRate = 0.0625;
 constexpr double kMaximumRate = 16.0;
+constexpr double kScrubConvergenceToleranceSeconds = 0.050;
+constexpr int kScrubSeekTimeoutMs = 750;
 constexpr std::uint64_t kCommandReplyNamespaceMask = 3ULL << 62;
 constexpr std::uint64_t kOpenCommandReplyNamespace = 1ULL << 63;
 constexpr std::uint64_t kRenderRecoveryCommandReplyNamespace = 1ULL << 62;
 constexpr std::uint64_t kCommandReplyIdMask = ~kCommandReplyNamespaceMask;
+constexpr std::uint64_t kScrubCommandReplyTag =
+    kOpenCommandReplyNamespace | (1ULL << 61);
+constexpr std::uint64_t kOpenCommandReplyIdMask = (1ULL << 61) - 1ULL;
+constexpr std::uint64_t kScrubCommandReplyIdMask = kOpenCommandReplyIdMask;
+constexpr std::uint64_t kScrubCommandReplyMask =
+    kCommandReplyNamespaceMask | (1ULL << 61);
+
+static_assert((kOpenCommandReplyNamespace & kScrubCommandReplyMask) !=
+              kScrubCommandReplyTag);
+static_assert((kRenderRecoveryCommandReplyNamespace &
+               kCommandReplyNamespaceMask) !=
+              (kScrubCommandReplyTag & kCommandReplyNamespaceMask));
+static_assert((3ULL << 62) !=
+              (kScrubCommandReplyTag & kCommandReplyNamespaceMask));
 
 bool nearlyEqual(double left, double right, double epsilon = 0.0005) {
   return std::abs(left - right) <= epsilon;
@@ -550,6 +566,8 @@ bool PlayerController::open(const QUrl &source) {
     }
   }
 
+  finishScrubGesture(true);
+
   updateEof(false);
   resetTimeline();
 
@@ -584,6 +602,11 @@ bool PlayerController::open(const QUrl &source) {
 void PlayerController::play() {
   if (!engineReady())
     return;
+  if (scrub_seek_) {
+    scrub_seek_->intended_paused = false;
+    updatePause(false);
+    return;
+  }
   if (eof_reached_ && committed_open_ &&
       terminal_playlist_entry_id_ ==
           committed_open_->playlist_entry_id) {
@@ -610,6 +633,11 @@ void PlayerController::play() {
 void PlayerController::pause() {
   if (!engineReady())
     return;
+  if (scrub_seek_) {
+    scrub_seek_->intended_paused = true;
+    updatePause(true);
+    return;
+  }
   if (render_recovery_ &&
       render_recovery_->request_serial == request_serial_) {
     if (!render_recovery_->paused &&
@@ -636,6 +664,7 @@ void PlayerController::pause() {
 void PlayerController::togglePlayPause() { playing() ? pause() : play(); }
 
 void PlayerController::stop() {
+  invalidateScrubGesture();
   ++request_serial_;
   if (request_serial_ == 0)
     ++request_serial_;
@@ -672,9 +701,45 @@ void PlayerController::stop() {
   requestVideoUpdate();
 }
 
+void PlayerController::beginScrub() {
+  if (!engineReady() || scrub_seek_ || render_recovery_ ||
+      startup_playback_sync_ || !acceptsPlaybackObservation()) {
+    return;
+  }
+
+  int live_paused = paused_ ? 1 : 0;
+  if (mpv_get_property(core_->handle(), "pause", MPV_FORMAT_FLAG,
+                       &live_paused) < 0) {
+    return;
+  }
+  ++next_scrub_gesture_id_;
+  if (next_scrub_gesture_id_ == 0)
+    ++next_scrub_gesture_id_;
+  scrub_seek_ = ScrubSeek{next_scrub_gesture_id_,
+                          request_serial_,
+                          0,
+                          committed_open_->playlist_entry_id,
+                          position_,
+                          std::nullopt,
+                          std::nullopt,
+                          live_paused != 0};
+
+  int physically_paused = 1;
+  if (mpv_set_property(core_->handle(), "pause", MPV_FORMAT_FLAG,
+                       &physically_paused) < 0) {
+    scrub_seek_.reset();
+    return;
+  }
+  updatePause(live_paused != 0);
+}
+
 void PlayerController::seekTo(double seconds) {
   if (!engineReady() || !std::isfinite(seconds))
     return;
+  if (scrub_seek_) {
+    endScrub(seconds);
+    return;
+  }
   const double maximum = duration_ > 0.0 ? duration_ : seconds;
   const double target = std::clamp(seconds, 0.0, std::max(0.0, maximum));
   if (render_recovery_ &&
@@ -702,6 +767,12 @@ void PlayerController::previewSeekTo(double seconds) {
     return;
   const double maximum = duration_ > 0.0 ? duration_ : seconds;
   const double target = std::clamp(seconds, 0.0, std::max(0.0, maximum));
+  if (!scrub_seek_) {
+    // Preview calls belong only to an explicitly owned pointer gesture. If
+    // startup or render recovery refused ownership, ignore cadence updates;
+    // the release path still performs one ordinary exact seek.
+    return;
+  }
   if (render_recovery_ &&
       render_recovery_->request_serial == request_serial_) {
     render_recovery_->position = target;
@@ -714,21 +785,235 @@ void PlayerController::previewSeekTo(double seconds) {
     startup_playback_sync_->position_overridden = true;
   }
 
-  // Timeline dragging favors cheap keyframe previews. The release path uses
-  // seekTo(), which performs the exact final seek once per gesture.
-  sendCommand(core_->handle(),
-              {QByteArrayLiteral("seek"), QByteArray::number(target, 'g', 12),
-               QByteArrayLiteral("absolute+keyframes")});
+  if (scrub_seek_->request_serial != request_serial_) {
+    invalidateScrubGesture();
+    return;
+  }
+  if (scrub_seek_->command != 0) {
+    scrub_seek_->pending_target = target;
+  } else {
+    dispatchScrubSeek(target, false);
+  }
   if (!nearlyEqual(position_, target)) {
     position_ = target;
     emit positionChanged();
   }
 }
 
+void PlayerController::endScrub(double seconds) {
+  if (!scrub_seek_) {
+    seekTo(seconds);
+    return;
+  }
+  if (!engineReady() || !std::isfinite(seconds) ||
+      scrub_seek_->request_serial != request_serial_) {
+    finishScrubGesture(true);
+    return;
+  }
+  const double maximum = duration_ > 0.0 ? duration_ : seconds;
+  const double target =
+      std::clamp(seconds, 0.0, std::max(0.0, maximum));
+  scrub_seek_->final = true;
+  scrub_seek_->pending_target = target;
+  if (scrub_seek_->command == 0) {
+    scrub_seek_->pending_target.reset();
+    dispatchScrubSeek(target, true);
+  }
+  if (!nearlyEqual(position_, target)) {
+    position_ = target;
+    emit positionChanged();
+  }
+}
+
+void PlayerController::dispatchScrubSeek(double target, bool final) {
+  if (!scrub_seek_ || !engineReady() || scrub_seek_->command != 0 ||
+      scrub_seek_->request_serial != request_serial_ ||
+      !committed_open_ ||
+      committed_open_->request_serial != request_serial_ ||
+      committed_open_->playlist_entry_id != scrub_seek_->playlist_entry_id ||
+      active_event_playlist_entry_id_ != scrub_seek_->playlist_entry_id) {
+    finishScrubGesture(true);
+    return;
+  }
+
+  ++next_scrub_command_id_;
+  next_scrub_command_id_ &= kScrubCommandReplyIdMask;
+  if (next_scrub_command_id_ == 0)
+    next_scrub_command_id_ = 1;
+  const std::uint64_t command = next_scrub_command_id_;
+  const std::uint64_t reply_userdata = kScrubCommandReplyTag | command;
+
+  scrub_seek_->command = command;
+  scrub_seek_->target = target;
+  scrub_seek_->final = final;
+  scrub_seek_->command_replied = false;
+  scrub_seek_->seek_started = false;
+  scrub_seek_->playback_restarted = false;
+  scrub_seek_->authoritative_position.reset();
+  const std::uint64_t gesture = scrub_seek_->gesture;
+  const std::uint64_t request_serial = scrub_seek_->request_serial;
+  const int result = sendCommand(
+      core_->handle(),
+      {QByteArrayLiteral("seek"), QByteArray::number(target, 'g', 12),
+       QByteArrayLiteral("absolute+exact")},
+      reply_userdata);
+  if (result < 0) {
+    finishScrubGesture(true);
+    return;
+  }
+
+  // Command completion alone does not mean a frame was decoded. Keep the
+  // capacity-one slot until a post-issuance playback restart also converges.
+  QTimer::singleShot(kScrubSeekTimeoutMs, this,
+                     [this, gesture, request_serial, command] {
+                       handleScrubTimeout(gesture, request_serial, command);
+                     });
+}
+
+void PlayerController::handleScrubTimeout(std::uint64_t gesture,
+                                          std::uint64_t request_serial,
+                                          std::uint64_t command) {
+  if (!scrub_seek_ || scrub_seek_->gesture != gesture ||
+      scrub_seek_->request_serial != request_serial ||
+      scrub_seek_->command != command) {
+    return;
+  }
+  if (scrub_seek_->command_replied) {
+    scrub_seek_->command = 0;
+    scrub_seek_->command_replied = false;
+    scrub_seek_->seek_started = false;
+    scrub_seek_->playback_restarted = false;
+    scrub_seek_->authoritative_position.reset();
+    scrub_seek_->pending_target.reset();
+    // The command reply proves only API execution, not decoder completion.
+    // Without a matching restart, issuing the retained final target here
+    // could overlap the still-decoding seek. Exit conservatively instead.
+    finishScrubGesture(true);
+    return;
+  }
+  if (engineReady() && !scrub_seek_->abort_pending) {
+    scrub_seek_->abort_pending = true;
+    mpv_abort_async_command(core_->handle(), kScrubCommandReplyTag | command);
+  }
+}
+
+void PlayerController::handleScrubCommandReply(std::uint64_t reply_userdata,
+                                                int error) {
+  const std::uint64_t command = reply_userdata & kScrubCommandReplyIdMask;
+  if (!scrub_seek_ || scrub_seek_->request_serial != request_serial_ ||
+      scrub_seek_->command != command) {
+    return;
+  }
+  if (scrub_seek_->abort_pending) {
+    // Abort is best-effort: even its reply cannot prove the old decoder seek
+    // stopped. Never launch a retained target over that unproven work.
+    finishScrubGesture(true);
+    return;
+  }
+  if (error < 0) {
+    const std::optional<double> pending = scrub_seek_->pending_target;
+    const bool final = scrub_seek_->final;
+    scrub_seek_->command = 0;
+    scrub_seek_->command_replied = false;
+    scrub_seek_->seek_started = false;
+    scrub_seek_->playback_restarted = false;
+    scrub_seek_->authoritative_position.reset();
+    scrub_seek_->pending_target.reset();
+    if (final && pending && !scrub_seek_->replacement_dispatched) {
+      scrub_seek_->replacement_dispatched = true;
+      dispatchScrubSeek(*pending, true);
+      return;
+    }
+    finishScrubGesture(true);
+    return;
+  }
+  scrub_seek_->command_replied = true;
+  maybeCompleteScrubSeek();
+}
+
+void PlayerController::handleScrubPlaybackRestart() {
+  if (!scrub_seek_ || scrub_seek_->command == 0 ||
+      !scrub_seek_->seek_started ||
+      scrub_seek_->request_serial != request_serial_ || !committed_open_ ||
+      committed_open_->request_serial != request_serial_ ||
+      committed_open_->playlist_entry_id != scrub_seek_->playlist_entry_id ||
+      active_event_playlist_entry_id_ != scrub_seek_->playlist_entry_id ||
+      !engineReady()) {
+    return;
+  }
+  scrub_seek_->playback_restarted = true;
+  double live_position = 0.0;
+  if (mpv_get_property(core_->handle(), "time-pos", MPV_FORMAT_DOUBLE,
+                       &live_position) >= 0 &&
+      std::isfinite(live_position)) {
+    scrub_seek_->authoritative_position = std::max(0.0, live_position);
+  }
+  maybeCompleteScrubSeek();
+}
+
+void PlayerController::maybeCompleteScrubSeek() {
+  if (!scrub_seek_ || !scrub_seek_->command_replied ||
+      !scrub_seek_->playback_restarted) {
+    return;
+  }
+  if (!scrub_seek_->authoritative_position ||
+      std::abs(*scrub_seek_->authoritative_position - scrub_seek_->target) >
+          kScrubConvergenceToleranceSeconds) {
+    return;
+  }
+
+  const bool final = scrub_seek_->final;
+  const std::optional<double> pending = scrub_seek_->pending_target;
+  scrub_seek_->command = 0;
+  scrub_seek_->command_replied = false;
+  scrub_seek_->seek_started = false;
+  scrub_seek_->playback_restarted = false;
+  scrub_seek_->authoritative_position.reset();
+  scrub_seek_->pending_target.reset();
+  if (final) {
+    if (pending && !nearlyEqual(*pending, scrub_seek_->target)) {
+      dispatchScrubSeek(*pending, true);
+      return;
+    }
+    finishScrubGesture(true);
+    return;
+  }
+  if (pending)
+    dispatchScrubSeek(*pending, false);
+}
+
+void PlayerController::finishScrubGesture(bool restore_transport) {
+  if (!scrub_seek_)
+    return;
+  const bool intended_paused = scrub_seek_->intended_paused;
+  const std::uint64_t active_command = scrub_seek_->command;
+  const bool matching_lineage =
+      scrub_seek_->request_serial == request_serial_ && committed_open_ &&
+      committed_open_->request_serial == request_serial_ &&
+      committed_open_->playlist_entry_id == scrub_seek_->playlist_entry_id &&
+      active_event_playlist_entry_id_ == scrub_seek_->playlist_entry_id;
+  if (active_command != 0 && engineReady()) {
+    mpv_abort_async_command(core_->handle(),
+                            kScrubCommandReplyTag | active_command);
+  }
+  scrub_seek_.reset();
+  if (!restore_transport || !matching_lineage || !engineReady())
+    return;
+  int paused = intended_paused ? 1 : 0;
+  if (mpv_set_property(core_->handle(), "pause", MPV_FORMAT_FLAG, &paused) >=
+      0) {
+    updatePause(intended_paused);
+  }
+}
+
+void PlayerController::invalidateScrubGesture() {
+  finishScrubGesture(false);
+}
+
 void PlayerController::seekRelative(double seconds) {
   if (!engineReady() || !std::isfinite(seconds))
     return;
-  if (render_recovery_) {
+  if (scrub_seek_ || render_recovery_) {
     seekTo(position_ + seconds);
     return;
   }
@@ -1213,6 +1498,11 @@ void PlayerController::drainMpvEvents() {
     if (event->event_id == MPV_EVENT_COMMAND_REPLY) {
       const std::uint64_t reply_namespace =
           event->reply_userdata & kCommandReplyNamespaceMask;
+      if ((event->reply_userdata & kScrubCommandReplyMask) ==
+          kScrubCommandReplyTag) {
+        handleScrubCommandReply(event->reply_userdata, event->error);
+        continue;
+      }
       if (reply_namespace == kOpenCommandReplyNamespace) {
         handleOpenCommandReply(event->reply_userdata, event->error);
         continue;
@@ -1235,7 +1525,14 @@ void PlayerController::drainMpvEvents() {
     }
 
     if (event->event_id == MPV_EVENT_PLAYBACK_RESTART) {
+      handleScrubPlaybackRestart();
       handlePlaybackReady(false);
+      continue;
+    }
+
+    if (event->event_id == MPV_EVENT_SEEK) {
+      if (scrub_seek_ && scrub_seek_->command != 0)
+        scrub_seek_->seek_started = true;
       continue;
     }
 
@@ -1433,7 +1730,7 @@ bool PlayerController::flushPendingOpen(std::uint64_t render_stamp) {
   }
 
   ++next_open_attempt_id_;
-  next_open_attempt_id_ &= kCommandReplyIdMask;
+  next_open_attempt_id_ &= kOpenCommandReplyIdMask;
   if (next_open_attempt_id_ == 0)
     next_open_attempt_id_ = 1;
   const std::uint64_t reply_userdata =
@@ -1577,7 +1874,7 @@ bool PlayerController::flushRenderRecovery(std::uint64_t render_stamp) {
 void PlayerController::handleOpenCommandReply(std::uint64_t reply_userdata,
                                                int error) {
   const std::uint64_t attempt_id =
-      reply_userdata & kCommandReplyIdMask;
+      reply_userdata & kOpenCommandReplyIdMask;
   if (!open_attempt_ || open_attempt_->id != attempt_id)
     return;
 
@@ -1754,6 +2051,9 @@ bool PlayerController::playlistEntryBelongsToCurrentLineage(
 }
 
 void PlayerController::handleStartFile(std::int64_t playlist_entry_id) {
+  if (scrub_seek_) {
+    invalidateScrubGesture();
+  }
   if (playlist_entry_id < 0) {
     active_event_playlist_entry_id_ = -1;
     return;
@@ -1878,6 +2178,8 @@ void PlayerController::handleEndFile(const mpv_event_end_file &end) {
        startup_entry);
   if (!current_entry)
     return;
+
+  invalidateScrubGesture();
 
   active_event_playlist_entry_id_ = -1;
 
@@ -2049,7 +2351,7 @@ void PlayerController::handlePlaybackReady(bool file_loaded) {
 
 bool PlayerController::acceptsPlaybackObservation() const {
   return !requested_source_.isEmpty() && pending_source_.isEmpty() &&
-         pending_request_serial_ == 0 && !open_attempt_ &&
+         pending_request_serial_ == 0 && !open_attempt_ && !scrub_seek_ &&
          !render_recovery_ && !startup_playback_sync_ && committed_open_ &&
          committed_open_->request_serial == request_serial_ &&
          committed_open_->playlist_entry_id >= 0 &&
@@ -2065,9 +2367,17 @@ void PlayerController::applyObservedPause(bool paused) {
 }
 
 void PlayerController::applyObservedPosition(double position) {
-  if (!acceptsPlaybackObservation() || !std::isfinite(position))
+  if (!std::isfinite(position))
     return;
   const double value = std::max(0.0, position);
+  if (scrub_seek_) {
+    if (scrub_seek_->playback_restarted)
+      scrub_seek_->authoritative_position = value;
+    maybeCompleteScrubSeek();
+    return;
+  }
+  if (!acceptsPlaybackObservation())
+    return;
   if (!nearlyEqual(position_, value)) {
     position_ = value;
     emit positionChanged();
@@ -2779,6 +3089,11 @@ void PlayerController::handleRenderInvalidated(
     std::uint64_t retired_render_stamp) {
   if (requested_source_.isEmpty())
     return;
+
+  if (scrub_seek_ && committed_open_ &&
+      committed_open_->render_stamp == retired_render_stamp) {
+    invalidateScrubGesture();
+  }
 
   bool needs_retry = false;
   if (open_attempt_ &&

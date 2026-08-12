@@ -55,6 +55,7 @@ Slider {
         const seconds = pendingSeek;
         pendingSeek = -1;
         previewSeekRequested(seconds);
+        seekThrottle.restart();
     }
 
     function previewAt(pointerX) {
@@ -155,7 +156,7 @@ Slider {
         Rectangle {
             anchors.fill: parent
             radius: height / 2
-            color: "#4dffffff"
+            color: "#70ffffff"
         }
 
         Rectangle {
@@ -211,6 +212,9 @@ Slider {
         onPressed: mouse => {
             control.forceActiveFocus(Qt.MouseFocusReason);
             control.previewPosition = control.displayPosition;
+            // `pressed` changes before this handler runs, so the parent's
+            // scrubbingChanged handler establishes backend gesture ownership
+            // before the first immediate preview is emitted below.
             control.previewAt(mouse.x);
         }
         onPositionChanged: mouse => {
@@ -218,6 +222,8 @@ Slider {
                 control.previewAt(mouse.x);
         }
         onReleased: mouse => control.finishScrub(mouse.x, true)
+        // Cancellation commits the last frame the user could see, matching a
+        // release that occurs after pointer capture is lost.
         onCanceled: control.finishScrub(0, false)
     }
 }

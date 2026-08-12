@@ -407,6 +407,86 @@ class PlayerControllerTestAccess final {
     controller.handlePlaybackReady(file_loaded);
   }
 
+  static bool hasScrub(const PlayerController &controller) {
+    return controller.scrub_seek_.has_value();
+  }
+
+  static std::uint64_t scrubCommand(const PlayerController &controller) {
+    return controller.scrub_seek_ ? controller.scrub_seek_->command : 0;
+  }
+
+  static double scrubTarget(const PlayerController &controller) {
+    return controller.scrub_seek_ ? controller.scrub_seek_->target : -1.0;
+  }
+
+  static std::optional<double>
+  scrubPendingTarget(const PlayerController &controller) {
+    return controller.scrub_seek_
+               ? controller.scrub_seek_->pending_target
+               : std::nullopt;
+  }
+
+  static bool scrubIntendsPause(const PlayerController &controller) {
+    return controller.scrub_seek_ && controller.scrub_seek_->intended_paused;
+  }
+
+  static bool scrubFinal(const PlayerController &controller) {
+    return controller.scrub_seek_ && controller.scrub_seek_->final;
+  }
+
+  static bool scrubSeekStarted(const PlayerController &controller) {
+    return controller.scrub_seek_ && controller.scrub_seek_->seek_started;
+  }
+
+  static bool scrubAbortPending(const PlayerController &controller) {
+    return controller.scrub_seek_ && controller.scrub_seek_->abort_pending;
+  }
+
+  static void scrubCommandReply(PlayerController &controller,
+                                std::uint64_t command, int error = 0) {
+    controller.handleScrubCommandReply((1ULL << 63) | (1ULL << 61) |
+                                           command,
+                                       error);
+  }
+
+  static void scrubSeekStarted(PlayerController &controller) {
+    if (controller.scrub_seek_)
+      controller.scrub_seek_->seek_started = true;
+  }
+
+  static void scrubRestart(PlayerController &controller,
+                           double authoritative_position) {
+    if (!controller.scrub_seek_)
+      return;
+    controller.scrub_seek_->authoritative_position =
+        authoritative_position;
+    controller.scrub_seek_->playback_restarted = true;
+    controller.maybeCompleteScrubSeek();
+  }
+
+  static void scrubPlaybackRestart(PlayerController &controller) {
+    controller.handleScrubPlaybackRestart();
+  }
+
+  static void scrubObservedPosition(PlayerController &controller,
+                                    double position) {
+    controller.applyObservedPosition(position);
+  }
+
+  static void scrubTimeout(PlayerController &controller,
+                           std::uint64_t command) {
+    if (!controller.scrub_seek_)
+      return;
+    controller.handleScrubTimeout(controller.scrub_seek_->gesture,
+                                  controller.scrub_seek_->request_serial,
+                                  command);
+  }
+
+  static void scrubFinish(PlayerController &controller,
+                          bool restore_transport) {
+    controller.finishScrubGesture(restore_transport);
+  }
+
   static void setCachedPlaybackState(PlayerController &controller,
                                      double position, bool paused) {
     controller.position_ = position;
@@ -1594,6 +1674,198 @@ int main(int argc, char **argv) {
                          failed_again);
     expect(error_notifications == 2,
            "a new failed generation may report one new error");
+  }
+
+  {
+    using Access = wam::qt::PlayerControllerTestAccess;
+    wam::qt::PlayerController controller;
+    expect(Access::initializeEngine(controller),
+           "scrubbing tests have a live libmpv client");
+    const auto ready = Access::makeRendererReady(controller);
+    const QUrl source(QStringLiteral("wam-test://scrub/capacity-one"));
+    Access::seedCommittedMedia(controller, source, 101, ready, 1001, 1, 2,
+                               0, true);
+    Access::setCachedTransportState(controller, 10.0, false, false, false);
+    int playing = 0;
+    mpv_set_property(Access::core(controller)->handle(), "pause",
+                     MPV_FORMAT_FLAG, &playing);
+
+    controller.beginScrub();
+    expect(Access::hasScrub(controller) && !controller.paused(),
+           "beginScrub captures playing intent while physically pausing");
+    Access::applyObservedPlaybackState(controller, 11.0, true);
+    expect(!controller.paused() && nearlyEqual(controller.position(), 10.0),
+           "physical pause and decoder position observations stay hidden");
+
+    controller.previewSeekTo(20.0);
+    const std::uint64_t first = Access::scrubCommand(controller);
+    controller.previewSeekTo(30.0);
+    controller.previewSeekTo(40.0);
+    expect(first != 0 && Access::scrubCommand(controller) == first &&
+               Access::scrubPendingTarget(controller) &&
+               nearlyEqual(*Access::scrubPendingTarget(controller), 40.0),
+           "preview traffic is capacity-one with one latest pending target");
+
+    Access::scrubCommandReply(controller, first + 99);
+    Access::scrubPlaybackRestart(controller);
+    expect(Access::scrubCommand(controller) == first,
+           "stale replies and restarts before SEEK cannot retire a flight");
+    Access::scrubSeekStarted(controller);
+    Access::scrubCommandReply(controller, first);
+    Access::scrubRestart(controller, 20.0);
+    const std::uint64_t second = Access::scrubCommand(controller);
+    expect(second != 0 && second != first &&
+               nearlyEqual(Access::scrubTarget(controller), 40.0),
+           "reply plus converged restart dispatches only the latest preview");
+
+    controller.endScrub(55.0);
+    expect(Access::scrubFinal(controller) &&
+               Access::scrubPendingTarget(controller) &&
+               nearlyEqual(*Access::scrubPendingTarget(controller), 55.0),
+           "release during a preview retains its exact final target");
+    Access::scrubSeekStarted(controller);
+    Access::scrubRestart(controller, 40.0);
+    expect(Access::scrubCommand(controller) == second,
+           "restart before command reply waits without stacking work");
+    Access::scrubCommandReply(controller, second);
+    const std::uint64_t final = Access::scrubCommand(controller);
+    expect(final != 0 && final != second &&
+               nearlyEqual(Access::scrubTarget(controller), 55.0),
+           "release target becomes the one final exact command");
+    Access::scrubSeekStarted(controller);
+    Access::scrubCommandReply(controller, final);
+    Access::scrubRestart(controller, 54.0);
+    expect(Access::hasScrub(controller),
+           "an early restart waits for authoritative position convergence");
+    Access::scrubObservedPosition(controller, 55.0);
+    expect(!Access::hasScrub(controller) && !controller.paused(),
+           "later exact position convergence restores captured play intent");
+  }
+
+  {
+    using Access = wam::qt::PlayerControllerTestAccess;
+    wam::qt::PlayerController controller;
+    expect(Access::initializeEngine(controller),
+           "scrub failure tests have a live libmpv client");
+    const auto ready = Access::makeRendererReady(controller);
+    const QUrl source(QStringLiteral("wam-test://scrub/fail-safe"));
+    Access::seedCommittedMedia(controller, source, 102, ready, 1002, 1, 2,
+                               0, true);
+    Access::setCachedTransportState(controller, 5.0, true, false, false);
+    int paused = 1;
+    mpv_set_property(Access::core(controller)->handle(), "pause",
+                     MPV_FORMAT_FLAG, &paused);
+
+    controller.beginScrub();
+    controller.previewSeekTo(-5.0);
+    const std::uint64_t preview = Access::scrubCommand(controller);
+    expect(nearlyEqual(Access::scrubTarget(controller), 0.0),
+           "preview targets clamp to the current timeline");
+    controller.play();
+    controller.pause();
+    controller.play();
+    expect(!Access::scrubIntendsPause(controller),
+           "play and pause update only post-gesture intent");
+    controller.endScrub(500.0);
+    Access::scrubCommandReply(controller, preview, MPV_ERROR_COMMAND);
+    const std::uint64_t final = Access::scrubCommand(controller);
+    expect(final != 0 && final != preview &&
+               nearlyEqual(Access::scrubTarget(controller), 500.0),
+           "a failed preview still dispatches the retained final target");
+    Access::scrubTimeout(controller, final);
+    expect(Access::hasScrub(controller) &&
+               Access::scrubAbortPending(controller),
+           "timeout requests abort while retaining capacity-one ownership");
+    Access::scrubCommandReply(controller, final, MPV_ERROR_COMMAND);
+    expect(!Access::hasScrub(controller),
+           "the exact abort reply exits after the one final replacement");
+
+    controller.beginScrub();
+    controller.previewSeekTo(8.0);
+    expect(Access::hasScrub(controller),
+           "a new scrub can begin after timeout cleanup");
+    controller.stop();
+    expect(!Access::hasScrub(controller) && controller.paused(),
+           "Stop burns scrub identity without a late transport restore");
+  }
+
+  {
+    using Access = wam::qt::PlayerControllerTestAccess;
+    wam::qt::PlayerController controller;
+    expect(Access::initializeEngine(controller),
+           "scrub lifecycle tests have a live libmpv client");
+    auto ready = Access::makeRendererReady(controller);
+    const QUrl source(QStringLiteral("wam-test://scrub/lifecycle"));
+    Access::seedCommittedMedia(controller, source, 103, ready, 1003, 1, 2,
+                               0, true);
+    Access::setCachedTransportState(controller, 6.0, true, false, false);
+    int paused = 1;
+    mpv_set_property(Access::core(controller)->handle(), "pause",
+                     MPV_FORMAT_FLAG, &paused);
+    controller.beginScrub();
+    controller.previewSeekTo(12.0);
+    const std::uint64_t first = Access::scrubCommand(controller);
+    Access::scrubSeekStarted(controller);
+    Access::scrubCommandReply(controller, first);
+    Access::scrubRestart(controller, 12.0);
+    controller.endScrub(13.0);
+    const std::uint64_t final = Access::scrubCommand(controller);
+    Access::scrubSeekStarted(controller);
+    Access::scrubCommandReply(controller, final);
+    Access::scrubRestart(controller, 13.0);
+    expect(!Access::hasScrub(controller) && controller.paused(),
+           "successful final seek restores an initially paused player");
+
+    controller.beginScrub();
+    controller.previewSeekTo(14.0);
+    const std::uint64_t retired = Access::scrubCommand(controller);
+    const auto retired_render = Access::invalidateRenderer(controller);
+    Access::renderInvalidated(controller, retired_render);
+    expect(!Access::hasScrub(controller),
+           "renderer invalidation burns active scrub ownership");
+    Access::scrubCommandReply(controller, retired);
+    expect(!Access::hasScrub(controller),
+           "a stale reply cannot resurrect invalidated scrub ownership");
+
+    ready = Access::makeRendererReady(controller);
+    Access::finishRecoveryForTest(controller, ready);
+    Access::seedCommittedMedia(controller, source, 103, ready, 1003, 1, 2,
+                               0, true);
+    controller.beginScrub();
+    controller.previewSeekTo(14.5);
+    const std::uint64_t timed_out = Access::scrubCommand(controller);
+    controller.endScrub(14.75);
+    Access::scrubTimeout(controller, timed_out);
+    expect(Access::scrubAbortPending(controller) &&
+               Access::scrubCommand(controller) == timed_out,
+           "timeout cannot publish a replacement before abort completion");
+    Access::scrubSeekStarted(controller);
+    Access::scrubRestart(controller, 14.5);
+    expect(Access::scrubCommand(controller) == timed_out,
+           "late seek events cannot retire a timed-out command");
+    Access::scrubCommandReply(controller, timed_out);
+    expect(!Access::hasScrub(controller),
+           "timed-out success reply exits without an overlapping replacement");
+    Access::scrubSeekStarted(controller);
+    Access::scrubPlaybackRestart(controller);
+    expect(!Access::hasScrub(controller),
+           "late events from a timed-out seek remain inert after cleanup");
+
+    controller.beginScrub();
+    controller.previewSeekTo(14.9);
+    const std::uint64_t reply_first = Access::scrubCommand(controller);
+    controller.endScrub(15.1);
+    Access::scrubCommandReply(controller, reply_first);
+    Access::scrubTimeout(controller, reply_first);
+    expect(!Access::hasScrub(controller),
+           "reply-first timeout drops pending final instead of overlapping "
+           "an unproven decoder seek");
+
+    controller.beginScrub();
+    controller.previewSeekTo(15.0);
+    Access::endFile(controller, MPV_END_FILE_REASON_EOF, 1003);
+    expect(!Access::hasScrub(controller),
+           "terminal EOF burns scrub ownership without restoring playback");
   }
 
   // Any wakeup posted during initialization is context-bound to the destroyed

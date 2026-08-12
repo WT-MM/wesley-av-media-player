@@ -95,8 +95,10 @@ public:
   Q_INVOKABLE void pause();
   Q_INVOKABLE void togglePlayPause();
   Q_INVOKABLE void stop();
+  Q_INVOKABLE void beginScrub();
   Q_INVOKABLE void seekTo(double seconds);
   Q_INVOKABLE void previewSeekTo(double seconds);
+  Q_INVOKABLE void endScrub(double seconds);
   Q_INVOKABLE void seekRelative(double seconds);
   Q_INVOKABLE void skipBackward();
   Q_INVOKABLE void skipForward();
@@ -236,6 +238,23 @@ private:
     std::uint64_t count = 0;
   };
 
+  struct ScrubSeek {
+    std::uint64_t gesture = 0;
+    std::uint64_t request_serial = 0;
+    std::uint64_t command = 0;
+    std::int64_t playlist_entry_id = -1;
+    double target = 0.0;
+    std::optional<double> pending_target;
+    std::optional<double> authoritative_position;
+    bool intended_paused = true;
+    bool final = false;
+    bool command_replied = false;
+    bool seek_started = false;
+    bool playback_restarted = false;
+    bool replacement_dispatched = false;
+    bool abort_pending = false;
+  };
+
   enum class ObservedProperty : uint64_t {
     Pause = 1,
     Idle,
@@ -262,6 +281,15 @@ private:
   void handleOpenCommandReply(std::uint64_t reply_userdata, int error);
   void handleRenderRecoveryCommandReply(std::uint64_t reply_userdata,
                                         int error);
+  void handleScrubCommandReply(std::uint64_t reply_userdata, int error);
+  void handleScrubPlaybackRestart();
+  void dispatchScrubSeek(double target, bool final);
+  void maybeCompleteScrubSeek();
+  void handleScrubTimeout(std::uint64_t gesture,
+                          std::uint64_t request_serial,
+                          std::uint64_t command);
+  void finishScrubGesture(bool restore_transport);
+  void invalidateScrubGesture();
   void handleStartFile(std::int64_t playlist_entry_id);
   void handleEndFile(const mpv_event_end_file &end);
   void handlePlaybackReady(bool file_loaded);
@@ -376,6 +404,8 @@ private:
   std::uint64_t pending_request_serial_ = 0;
   std::uint64_t next_open_attempt_id_ = 0;
   std::uint64_t next_render_recovery_attempt_id_ = 0;
+  std::uint64_t next_scrub_gesture_id_ = 0;
+  std::uint64_t next_scrub_command_id_ = 0;
   std::uint64_t next_render_recovery_completion_token_ = 0;
   std::uint64_t next_startup_playback_sync_token_ = 0;
   std::uint64_t last_reported_render_failure_stamp_ = 0;
@@ -394,6 +424,7 @@ private:
   std::optional<RenderRecovery> render_recovery_;
   std::optional<RenderRecoveryAttempt> render_recovery_attempt_;
   std::optional<StartupPlaybackSync> startup_playback_sync_;
+  std::optional<ScrubSeek> scrub_seek_;
 };
 
 } // namespace wam::qt

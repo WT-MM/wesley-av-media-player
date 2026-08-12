@@ -15,6 +15,9 @@ ApplicationWindow {
     property bool transportUserPositioned: false
     property point transportPosition: Qt.point(0, 0)
     property Item dialogFocusReturnItem: null
+    readonly property real titlebarInteractionHeight: visibility === Window.FullScreen
+        ? 0
+        : SafeArea.margins.top
     readonly property bool nativeDialogVisible: mediaDialog.visible
         || exportDialog.visible || captionDialog.visible || errorDialog.visible
 
@@ -105,6 +108,14 @@ ApplicationWindow {
     function openMedia() {
         if (controller.openFileDialog)
             controller.openFileDialog();
+    }
+
+    function toggleMaximized() {
+        if (visibility === Window.FullScreen)
+            return;
+        visibility = visibility === Window.Maximized
+            ? Window.Windowed
+            : Window.Maximized;
     }
 
     function rememberDialogFocus() {
@@ -282,10 +293,6 @@ ApplicationWindow {
             anchors.fill: parent
             visible: !root.controller.hasMedia
 
-            Accessible.role: Accessible.Button
-            Accessible.name: "Open media"
-            Accessible.onPressAction: root.openMedia()
-
             Canvas {
                 id: emptyMark
                 anchors.centerIn: parent
@@ -365,14 +372,25 @@ ApplicationWindow {
                 }
             }
 
-            TapHandler {
-                acceptedButtons: Qt.LeftButton
-                onTapped: root.openMedia()
-            }
+            Item {
+                // Keep expanded native chrome available for window gestures;
+                // the empty-player action starts below the titlebar inset.
+                anchors.fill: parent
+                anchors.topMargin: root.titlebarInteractionHeight
 
-            HoverHandler {
-                id: emptyHover
-                cursorShape: Qt.PointingHandCursor
+                Accessible.role: Accessible.Button
+                Accessible.name: "Open media"
+                Accessible.onPressAction: root.openMedia()
+
+                TapHandler {
+                    acceptedButtons: Qt.LeftButton
+                    onTapped: root.openMedia()
+                }
+
+                HoverHandler {
+                    id: emptyHover
+                    cursorShape: Qt.PointingHandCursor
+                }
             }
         }
 
@@ -402,8 +420,13 @@ ApplicationWindow {
             acceptedButtons: Qt.LeftButton
             gesturePolicy: TapHandler.DragThreshold
             onTapped: root.revealControls()
-            onDoubleTapped: {
-                root.controller.toggleFullscreen();
+            onDoubleTapped: eventPoint => {
+                const titlebarDoubleClick = root.visibility !== Window.FullScreen
+                    && eventPoint.position.y < root.titlebarInteractionHeight;
+                if (titlebarDoubleClick)
+                    root.toggleMaximized();
+                else
+                    root.controller.toggleFullscreen();
                 root.revealControls();
             }
         }
