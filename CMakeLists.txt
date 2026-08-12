@@ -405,6 +405,38 @@ if(BUILD_TESTING)
       set_tests_properties(macos_native_qt_gl_compositor PROPERTIES
         TIMEOUT 30)
 
+      # One-shot native action executor gate. The session, Qt output adapter,
+      # and OpenGL item remain absent from every shipping target.
+      add_executable(wam_native_video_session_test
+        tests/native_video_session_test.mm
+        src/platform/macos/native_video_session.hpp
+        src/platform/macos/native_video_session.mm
+        src/platform/macos/native_qt_gl_output.hpp
+        src/platform/macos/native_qt_gl_output.mm
+        src/platform/macos/qt_gl_video_item.hpp
+        src/platform/macos/qt_gl_video_item.mm)
+      target_include_directories(wam_native_video_session_test PRIVATE src)
+      target_compile_definitions(wam_native_video_session_test PRIVATE
+        WAM_NATIVE_VIDEO_SESSION_TESTING=1
+        WAM_NATIVE_GL_VIDEO_TESTING=1
+        GL_SILENCE_DEPRECATION=1)
+      target_link_libraries(wam_native_video_session_test PRIVATE
+        wam_macos_native_video
+        Qt6::Core
+        Qt6::Gui
+        Qt6::Qml
+        Qt6::Quick
+        "${WAM_OPENGL_FRAMEWORK}")
+      target_compile_options(wam_native_video_session_test PRIVATE
+        "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>"
+        -Wall -Wextra -Wpedantic)
+      set_target_properties(wam_native_video_session_test PROPERTIES
+        AUTOMOC ON
+        LINKER_LANGUAGE OBJCXX)
+      add_test(NAME macos_native_video_session
+        COMMAND wam_native_video_session_test)
+      set_tests_properties(macos_native_video_session PROPERTIES TIMEOUT 20)
+
       find_library(WAM_AVFOUNDATION_FRAMEWORK AVFoundation REQUIRED)
       add_executable(wam_video_toolbox_decoder_test
         tests/video_toolbox_decoder_test.mm
