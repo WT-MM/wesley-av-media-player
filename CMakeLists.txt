@@ -129,6 +129,7 @@ qt_add_qml_module(wam
   QML_FILES
     qml/Main.qml
     qml/FloatingControls.qml
+    qml/NoticeToast.qml
     qml/IconButton.qml
     qml/QuietButton.qml
     qml/QuickEditSheet.qml

@@ -71,6 +71,11 @@ class PlayerController final : public QObject {
   Q_PROPERTY(
       QString captionStatus READ captionStatus NOTIFY captionStatusChanged)
   Q_PROPERTY(QString lastError READ lastError NOTIFY lastErrorChanged)
+  // Informational playback notices (e.g. "using compatibility playback")
+  // that never interrupt the user with a modal surface. Distinct from
+  // lastError, which QML still presents as a blocking dialog for genuine
+  // failures where playback did not continue.
+  Q_PROPERTY(QString lastNotice READ lastNotice NOTIFY lastNoticeChanged)
 
 public:
   explicit PlayerController(QObject *parent = nullptr);
@@ -113,6 +118,7 @@ public:
   [[nodiscard]] bool captioning() const { return captioning_; }
   [[nodiscard]] QString captionStatus() const { return caption_status_; }
   [[nodiscard]] QString lastError() const { return last_error_; }
+  [[nodiscard]] QString lastNotice() const { return last_notice_; }
 
   void setSource(const QUrl &source);
 
@@ -176,6 +182,7 @@ signals:
   void captioningChanged();
   void captionStatusChanged();
   void lastErrorChanged();
+  void lastNoticeChanged();
 
   // The QML shell owns platform dialogs/window state. These requests keep the
   // playback core independent of Qt Widgets and native-window assumptions.
@@ -527,6 +534,11 @@ private:
   void resetTimeline();
   void cancelCaptionsForMediaChange();
   void setLastError(const QString &error);
+  // Non-blocking counterpart to setLastError: fallback-continuation notices
+  // (native playback degraded to compatibility playback, or a seek could not
+  // be served natively) where playback kept going and a modal dialog would
+  // be pure interruption. QML surfaces this as a transient toast.
+  void setLastNotice(const QString &notice);
   void setExportStatus(const QString &status);
   void cleanupExportStaging() noexcept;
   void startWorkPolling();
@@ -558,6 +570,7 @@ private:
   int appearance_ = 0;
   double seek_step_seconds_ = 5.0;
   QString last_error_;
+  QString last_notice_;
   QString export_status_;
   QString caption_status_;
   QString caption_cancel_reason_;

@@ -34,6 +34,11 @@ ApplicationWindow {
     property bool transportUserPositioned: false
     property point transportPosition: Qt.point(0, 0)
     property Item dialogFocusReturnItem: null
+    // Transient toast state for informational playback notices (fallback
+    // continuation, native seeking unavailable). Deliberately not a native
+    // or modal surface -- see NoticeToast.qml and showNotice() below.
+    property string noticeText: ""
+    property bool noticeVisible: false
     // The window's real AppKit titlebar height, read from the NSWindow once
     // (32pt on macOS 26, 28pt before it) instead of assumed. 0 until the
     // native window exists; Qt's own safe-area inset stands in until then.
@@ -238,6 +243,20 @@ ApplicationWindow {
         } else {
             errorDialogLoader.active = true;
         }
+    }
+
+    // Fallback-continuation and seek-unavailable notices: playback kept
+    // going, so this never steals focus, never blocks, and needs no
+    // acknowledgement -- just a brief toast that fades on its own.
+    function showNotice(message) {
+        noticeText = message;
+        noticeVisible = true;
+        noticeHideTimer.restart();
+    }
+
+    function dismissNotice() {
+        noticeVisible = false;
+        noticeHideTimer.stop();
     }
 
     function showQuickEdit() {
@@ -518,9 +537,47 @@ ApplicationWindow {
     Component {
         id: errorDialogComponent
 
-        MessageDialog {
+        // Deliberately a QML Dialog (QtQuick.Controls), not the native
+        // QtQuick.Dialogs MessageDialog: on macOS that backs onto NSAlert,
+        // whose modal session blocks QCoreApplication::quit() from ever
+        // completing while it is open (aboutToQuit never fires). This stays
+        // for genuine errors -- cases where playback did not continue -- so
+        // it keeps the blocking, must-acknowledge presentation, but as an
+        // ordinary Qt Quick popup that the app's own event loop owns, quit
+        // closes it along with everything else instead of being vetoed by it.
+        Dialog {
+            id: errorDialog
+            property alias text: errorMessage.text
             title: "WAM"
-            buttons: MessageDialog.Ok
+            modal: true
+            focus: true
+            standardButtons: Dialog.Ok
+            // Not `parent`: this Dialog is instantiated under a plain,
+            // zero-sized Loader (errorDialogLoader), so centering on its
+            // literal QML parent pins it to the Loader's origin instead of
+            // the window. Overlay.overlay is the documented target for
+            // centering a Popup/Dialog on the window it's shown in.
+            anchors.centerIn: Overlay.overlay
+            closePolicy: Popup.CloseOnEscape
+            // Fixes the dialog's width instead of letting it derive from the
+            // content Label's implicitWidth: with wrapMode active, that
+            // default derivation is circular (Dialog.qml's own implicitWidth
+            // binding depends on contentItem.implicitWidth, which here would
+            // depend back on the width the Dialog just handed it) and Qt
+            // reports it as a binding loop every time the dialog opens.
+            implicitWidth: 360
+
+            contentItem: Label {
+                id: errorMessage
+                width: errorDialog.availableWidth
+                wrapMode: Text.WordWrap
+                // The Basic style's default Label color can end up too close
+                // to the dialog's own background to read; the dialog's own
+                // palette (which already tracks light/dark) is the
+                // authoritative contrasting color here.
+                color: errorDialog.palette.text
+            }
+
             onAccepted: root.restoreDialogFocusAfterClose()
             onRejected: root.restoreDialogFocusAfterClose()
             onVisibleChanged: {
@@ -538,6 +595,17 @@ ApplicationWindow {
         onLoaded: {
             item.text = pendingText;
             item.open();
+        }
+    }
+
+    // Belt and suspenders alongside the non-native Dialog above: an orderly
+    // quit closes the error dialog itself rather than leaving it as the last
+    // thing left standing when the window tears down.
+    Connections {
+        target: Qt.application
+        function onAboutToQuit() {
+            if (errorDialogLoader.item)
+                errorDialogLoader.item.close();
         }
     }
 
@@ -883,6 +951,24 @@ ApplicationWindow {
             onEditRequested: root.openQuickEdit()
         }
 
+        Timer {
+            id: noticeHideTimer
+            interval: 4000
+            onTriggered: root.noticeVisible = false
+        }
+
+        NoticeToast {
+            id: noticeToast
+            anchors.horizontalCenter: stage.horizontalCenter
+            anchors.bottom: stage.bottom
+            // Above the transport's default resting place regardless of
+            // where the user has dragged it -- see defaultTransportY().
+            anchors.bottomMargin: stage.height - root.defaultTransportY() + 14
+            text: root.noticeText
+            shown: root.noticeVisible
+            onDismissed: root.dismissNotice()
+        }
+
         Component {
             id: quickEditComponent
 
@@ -968,6 +1054,12 @@ ApplicationWindow {
             if (root.controller.lastError.length === 0)
                 return;
             root.showErrorDialog(root.controller.lastError);
+        }
+
+        function onLastNoticeChanged() {
+            if (root.controller.lastNotice.length === 0)
+                return;
+            root.showNotice(root.controller.lastNotice);
         }
 
         function onPlayingChanged() {
