@@ -177,10 +177,18 @@ struct NativeAudioOutputFacts {
 // exact bounded rational cannot be evaluated are rejected. An exact integral
 // SampleTime additionally proves sample-frame continuity; other sample
 // timestamps safely use HostTicks timing.
+// The client (input-scope) format is always the STREAM rate, and every host-
+// tick computation, the published sample rate, and the render core all stay in
+// that one stream-rate domain. The device is not required to run at the stream
+// rate and its nominal rate is never changed: when the two differ, the output
+// AudioUnit's OWN converter resamples at the input-scope boundary, and the
+// render callback's frame counts and timestamps are already delivered in the
+// client domain. No sample-rate conversion is ever performed by this code.
 // A StreamFormat property listener remains installed for the complete unit
-// lifetime. Any live device/default-format change immediately revokes render
-// admission, latches a fatal rate failure, and wakes the serialized owner;
-// no output sample-rate conversion is ever admitted. Device invalidation and
+// lifetime. The device rate observed at the first configure()-time query is
+// latched; every later query must still equal it. Any live device/default-
+// format change therefore immediately revokes render admission, latches a
+// fatal rate failure, and wakes the serialized owner. Device invalidation and
 // start admission share one atomic commit gate, so neither can overwrite the
 // other.
 //
@@ -274,6 +282,8 @@ class NativeAudioOutput final
   [[nodiscard]] bool validCallTable() const noexcept;
   [[nodiscard]] bool admittedSampleRate(std::uint32_t sampleRate) const
       noexcept;
+  [[nodiscard]] bool usableDeviceRate(
+      const AudioStreamBasicDescription &format) const noexcept;
   [[nodiscard]] bool validDeviceRate(
       const AudioStreamBasicDescription &format) const noexcept;
   [[nodiscard]] bool validClientFormat(
@@ -336,6 +346,13 @@ class NativeAudioOutput final
   std::uint64_t prior_rate_scalar_bits_{0};
   std::uint64_t prior_end_host_ticks_{0};
   std::uint32_t sample_rate_{0};
+  // The DEVICE format rate latched at the first configure()-time query. It is
+  // deliberately independent of sample_rate_ (the stream rate): the client
+  // format and every timing computation stay in the stream-rate domain while
+  // the unit's own converter bridges to whatever the device runs at. A later
+  // query that no longer matches this latched value proves the device changed
+  // under us and is fatal.
+  Float64 device_rate_{0.0};
   bool used_{false};
   bool callback_attached_{false};
   bool listener_attached_{false};
