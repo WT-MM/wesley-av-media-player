@@ -179,6 +179,7 @@ void NativePlaybackOwner::samplePlaybackMetrics() {
   if (nativeSession_ != nullptr) {
     const ::wam::macos::NativeMediaSessionMetrics sampled =
         nativeSession_->metrics();
+    sample.sessionEpoch = sampled.sessionEpoch;
     sample.drawnFrames = sampled.drawnFrames;
     sample.submittedFrames = sampled.submittedFrames;
     sample.supersededFrames = sampled.supersededFrames;
@@ -197,6 +198,8 @@ void NativePlaybackOwner::samplePlaybackMetrics() {
   }
   // With no native session the sample carries no counters at all: every field
   // stays unavailable and is emitted as null rather than as a fabricated zero.
+  // The epoch is the exception; it stays 0, the reserved "no session open"
+  // value, because it names an epoch rather than counting anything.
   static_cast<void>(metrics.write(sample));
 }
 

@@ -235,6 +235,12 @@ struct NativeMediaSessionFacts {
 // nothing published yet) from a real zero, so a sampler can emit null instead
 // of inventing a count.
 struct NativeMediaSessionMetrics {
+  // Identifies the counter epoch: a value assigned once when this session was
+  // constructed, constant for its whole life, and issued to no other session
+  // in this process or in any earlier one. A change here is exactly the signal
+  // that every counter below restarted at zero. It is never 0, so a sampler
+  // holding no session can reserve 0 for "no session open".
+  std::uint64_t sessionEpoch{0};
   std::uint64_t drawnFrames{0};
   std::uint64_t submittedFrames{0};
   std::uint64_t supersededFrames{0};

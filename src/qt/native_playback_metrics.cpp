@@ -217,7 +217,11 @@ bool NativePlaybackMetrics::write(
     return false;
   }
   JsonLine line(line_, kMaximumJsonLineBytes);
-  line.text("{\"record\":\"playback_sample\",\"t_mono_ns\":");
+  line.text("{\"record\":\"playback_sample\",\"session_epoch\":");
+  // Never null: 0 stands for "no session open", which is the only case in
+  // which the counters below are all null anyway.
+  line.unsignedInteger(sample.sessionEpoch);
+  line.text(",\"t_mono_ns\":");
   line.unsignedInteger(clock_());
   line.text(",\"media_seconds\":");
   line.numberOrNull(sample.mediaSeconds, sample.hasClock);
