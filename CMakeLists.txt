@@ -71,7 +71,8 @@ find_package(Qt6 6.11 REQUIRED COMPONENTS
   QuickControls2
   QuickDialogs2
   QuickLayouts
-  OpenGL)
+  OpenGL
+  LabsPlatform)
 find_package(PkgConfig REQUIRED)
 if(APPLE)
   # The native-first macOS executable needs libmpv's declarations to compile
@@ -134,7 +135,8 @@ qt_add_qml_module(wam
     qml/QuietButton.qml
     qml/QuickEditSheet.qml
     qml/PreferencesWindow.qml
-    qml/Scrubber.qml)
+    qml/Scrubber.qml
+    qml/AppMenuBar.qml)
 
 target_include_directories(wam PRIVATE src src/qt)
 target_compile_definitions(wam PRIVATE WAM_VERSION="${PROJECT_VERSION}")
@@ -147,6 +149,7 @@ target_link_libraries(wam PRIVATE
   Qt6::QuickDialogs2
   Qt6::QuickLayouts
   Qt6::OpenGL
+  Qt6::LabsPlatform
   wam_mpv_headers)
 
 if(MSVC)
@@ -225,6 +228,13 @@ if(APPLE)
     MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
     MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
     MACOSX_BUNDLE_ICON_FILE "WAM.icns"
+    # Same template Qt's own qt_add_executable(MACOSX_BUNDLE) would generate
+    # (see .../lib/cmake/Qt6/macos/Info.plist.app.in), plus CFBundleDocumentTypes
+    # / UTImportedTypeDeclarations so WAM can be set as the default handler for
+    # the media it opens without shadowing system UTIs or overriding Finder's
+    # QuickLook video-frame thumbnails -- see packaging/Info.plist.in for the
+    # detailed rationale.
+    MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/packaging/Info.plist.in"
     BUILD_RPATH "/opt/homebrew/lib;/opt/homebrew/opt/qt/lib"
     INSTALL_RPATH "@executable_path/../Frameworks")
 
@@ -407,6 +417,8 @@ if(APPLE)
     target_sources(wam PRIVATE
       src/qt/native_benchmark_telemetry.hpp
       src/qt/native_benchmark_telemetry.cpp
+      src/qt/native_playback_metrics.hpp
+      src/qt/native_playback_metrics.cpp
       src/qt/native_open_preflight.hpp
       src/qt/native_open_preflight.mm
       src/qt/native_playback_owner.hpp

@@ -221,6 +221,39 @@ struct NativeMediaSessionFacts {
   bool observationPending{false};
 };
 
+// Diagnostic-only cumulative playback counters for an out-of-band metrics
+// stream. Every counter is cumulative since this session was constructed, not
+// since process start: a new open builds a new session and restarts them at
+// zero. A sampler must therefore treat a decrease as an epoch change rather
+// than as a delta.
+//
+// The counters themselves live on worker-confined children, so metrics() never
+// reads them directly. The worker publishes one coherent-enough set of relaxed
+// atomic slots once per pass, and only after a first metrics() call arms it;
+// while the metrics stream is disabled the worker performs no sampling at all.
+// The three "valid" flags separate "genuinely unavailable" (no graph built, or
+// nothing published yet) from a real zero, so a sampler can emit null instead
+// of inventing a count.
+struct NativeMediaSessionMetrics {
+  std::uint64_t drawnFrames{0};
+  std::uint64_t submittedFrames{0};
+  std::uint64_t supersededFrames{0};
+  std::uint64_t discardedLateFrames{0};
+  std::uint64_t audioUnderrunCallbacks{0};
+  std::uint64_t audioClockAdvancedUnderruns{0};
+  std::uint64_t audioRetiredLateFrames{0};
+  std::uint64_t audioCallbacks{0};
+  std::uint64_t audioRenderedFrames{0};
+  // The clock's own requested rate, not an achieved rate. A sampler that wants
+  // the achieved rate must divide a mediaSeconds delta by a wall-clock delta.
+  double mediaSeconds{0.0};
+  double clockRate{0.0};
+  bool videoValid{false};
+  bool audioValid{false};
+  bool clockValid{false};
+  bool paused{true};
+};
+
 // A one-shot native media epoch. Exactly one worker owns exactly one
 // AVFoundationMediaSource, NativeAudioSession, NativeVideoConsumer, and
 // NativeMediaDispatcher. Public methods only publish fixed commands; source
@@ -284,6 +317,10 @@ class NativeMediaSession final {
 
   [[nodiscard]] NativeMediaSessionObservations takeObservations() noexcept;
   [[nodiscard]] NativeMediaSessionFacts facts() const noexcept;
+  // Diagnostic sampler for an out-of-band metrics stream. Safe to call from
+  // any thread. The first call arms worker-side publication; until the worker
+  // has completed one pass afterwards the returned validity flags are false.
+  [[nodiscard]] NativeMediaSessionMetrics metrics() const noexcept;
 
  private:
   struct Impl;

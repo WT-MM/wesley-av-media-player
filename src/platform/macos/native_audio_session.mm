@@ -1669,6 +1669,13 @@ NativeMediaClockSnapshot NativeAudioSession::visibleClock() const noexcept {
   return control_->renderCore.visibleClock();
 }
 
+NativeAudioRenderStats NativeAudioSession::renderStats() const noexcept {
+  if (control_ == nullptr) {
+    return {};
+  }
+  return control_->renderCore.stats();
+}
+
 NativeAudioSessionFacts NativeAudioSession::facts() const noexcept {
   NativeAudioSessionFacts result;
   if (control_ == nullptr) {

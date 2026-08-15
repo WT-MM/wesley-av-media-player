@@ -6,6 +6,7 @@
 #include "media/native_media_dispatcher.hpp"
 
 #include <algorithm>
+#include <cstring>
 #include <dispatch/dispatch.h>
 #include <limits>
 #include <mutex>
@@ -173,6 +174,10 @@ struct SessionVideoControl {
       void*) noexcept{nullptr};
   NativeVideoConsumerPreviewProgress (*quiesceForPreview)(
       void*, MediaGeneration) noexcept{nullptr};
+  // Diagnostic-only, optional. Left null by the test graph seam, which has no
+  // NativeVideoConsumer to sample; publishMetrics() then reports the video
+  // counters as unavailable rather than as zero.
+  bool (*metrics)(void*, NativeMediaSessionMetrics*) noexcept{nullptr};
 };
 
 struct SessionAudioControl {
@@ -184,6 +189,8 @@ struct SessionAudioControl {
   NativeAudioSessionProgress (*stop)(void*) noexcept{nullptr};
   NativeMediaClockSnapshot (*clock)(void*) noexcept{nullptr};
   MediaGeneration (*highestExposed)(void*) noexcept{nullptr};
+  // Diagnostic-only, optional; see SessionVideoControl::metrics.
+  bool (*metrics)(void*, NativeMediaSessionMetrics*) noexcept{nullptr};
 };
 
 struct SessionPreviewControl {
@@ -959,6 +966,19 @@ struct NativeMediaSession::Impl final {
         [](void* context, MediaGeneration generation) noexcept {
           return static_cast<NativeVideoConsumer*>(context)
               ->quiesceForPreview(generation);
+        },
+        // Worker-thread only, exactly like every other entry in this table.
+        // NativeVideoConsumer::facts() is an owner-serialized read, so the
+        // metrics stream must never call it from the GUI thread; the worker
+        // copies the result into the Impl's atomic publication slots instead.
+        [](void* context, NativeMediaSessionMetrics* out) noexcept {
+          const NativeVideoConsumerFacts facts =
+              static_cast<NativeVideoConsumer*>(context)->facts();
+          out->drawnFrames = facts.output.drawnFrames;
+          out->submittedFrames = facts.output.submittedFrames;
+          out->supersededFrames = facts.output.supersededFrames;
+          out->discardedLateFrames = facts.discardedLateFrames;
+          return true;
         }};
     audioControl = {
         audio.get(),
@@ -984,6 +1004,20 @@ struct NativeMediaSession::Impl final {
           return static_cast<NativeAudioSession*>(context)
               ->facts()
               .highestExposedGeneration;
+        },
+        // renderStats() reads only relaxed callback-owned atomics, so it is
+        // the one audio accessor that would also be safe off-worker. It is
+        // still called here so the whole published set comes from one worker
+        // pass and no other thread ever touches NativeAudioSession.
+        [](void* context, NativeMediaSessionMetrics* out) noexcept {
+          const NativeAudioRenderStats stats =
+              static_cast<NativeAudioSession*>(context)->renderStats();
+          out->audioUnderrunCallbacks = stats.underrunCallbacks;
+          out->audioClockAdvancedUnderruns = stats.clockAdvancedUnderruns;
+          out->audioRetiredLateFrames = stats.retiredLateFrames;
+          out->audioCallbacks = stats.callbacks;
+          out->audioRenderedFrames = stats.renderedFrames;
+          return true;
         }};
     sourceOwned = std::move(source);
     videoOwned = std::move(video);
@@ -2449,6 +2483,67 @@ if (result != NativeAudioSessionProgress::Done) {
     static_cast<void>(publishEnded(clock.mediaSeconds));
   }
 
+  // Out-of-band diagnostic publication. Runs only after a metrics() caller has
+  // armed it, so a build with no metrics stream attached pays exactly one
+  // relaxed atomic load per worker pass and never samples a child at all.
+  //
+  // Every counter it publishes is worker-confined at its source: the video
+  // consumer's facts() is owner-serialized and the cached clock snapshot is
+  // plain memory that refreshClock() writes. Sampling them here and storing
+  // relaxed atomics is what lets a GUI sampler read them without a data race.
+  // The individual slots are not published as one transaction; a reader can
+  // observe a video counter from this pass beside an audio counter from the
+  // previous one. That is deliberate and harmless for a rate metric whose
+  // window is orders of magnitude longer than a worker pass.
+  void publishMetrics() noexcept {
+    if (!metricsArmed.load(std::memory_order_relaxed)) {
+      return;
+    }
+    NativeMediaSessionMetrics sampled;
+    if (videoControl.metrics != nullptr && videoControl.context != nullptr &&
+        videoControl.metrics(videoControl.context, &sampled)) {
+      metricsDrawnFrames.store(sampled.drawnFrames, std::memory_order_relaxed);
+      metricsSubmittedFrames.store(sampled.submittedFrames,
+                                   std::memory_order_relaxed);
+      metricsSupersededFrames.store(sampled.supersededFrames,
+                                    std::memory_order_relaxed);
+      metricsDiscardedLateFrames.store(sampled.discardedLateFrames,
+                                       std::memory_order_relaxed);
+      metricsVideoValid.store(true, std::memory_order_relaxed);
+    }
+    if (audioControl.metrics != nullptr && audioControl.context != nullptr &&
+        audioControl.metrics(audioControl.context, &sampled)) {
+      metricsAudioUnderrunCallbacks.store(sampled.audioUnderrunCallbacks,
+                                          std::memory_order_relaxed);
+      metricsAudioClockAdvancedUnderruns.store(
+          sampled.audioClockAdvancedUnderruns, std::memory_order_relaxed);
+      metricsAudioRetiredLateFrames.store(sampled.audioRetiredLateFrames,
+                                          std::memory_order_relaxed);
+      metricsAudioCallbacks.store(sampled.audioCallbacks,
+                                  std::memory_order_relaxed);
+      metricsAudioRenderedFrames.store(sampled.audioRenderedFrames,
+                                       std::memory_order_relaxed);
+      metricsAudioValid.store(true, std::memory_order_relaxed);
+    }
+    // The cached snapshot is the same value the video consumer schedules
+    // against, so it needs no second live clock sample and no live-issue
+    // permit. refreshClock() only replaces it with a publicationCurrent
+    // sample, so a stale value here is always a real earlier observation.
+    const NativeMediaClockSnapshot clock = childLifetime->clock->snapshot;
+    if (clock.valid) {
+      std::uint64_t mediaSecondsBits = 0;
+      std::uint64_t rateBits = 0;
+      static_assert(sizeof(mediaSecondsBits) == sizeof(clock.mediaSeconds));
+      std::memcpy(&mediaSecondsBits, &clock.mediaSeconds,
+                  sizeof(mediaSecondsBits));
+      std::memcpy(&rateBits, &clock.rate, sizeof(rateBits));
+      metricsMediaSecondsBits.store(mediaSecondsBits,
+                                    std::memory_order_relaxed);
+      metricsClockRateBits.store(rateBits, std::memory_order_relaxed);
+      metricsClockValid.store(true, std::memory_order_relaxed);
+    }
+  }
+
   void refreshClock() noexcept {
     if (audioControl.clock != nullptr && dispatcherObservedVideo) {
       if (!beginLiveIssue()) {
@@ -2546,6 +2641,7 @@ if (result != NativeAudioSessionProgress::Done) {
           continue;
         }
         refreshClock();
+        publishMetrics();
         if (preparePending) {
           progressPrepare();
         }
@@ -2743,6 +2839,28 @@ if (result != NativeAudioSessionProgress::Done) {
   SessionVideoControl videoControl{};
   SessionAudioControl audioControl{};
   SessionPreviewControl previewControl{};
+  // Out-of-band diagnostic publication slots. The worker is the only writer;
+  // metrics() is the only reader and may run on any thread. These deliberately
+  // sit outside `mutex` so an idle metrics sampler never contends with command
+  // admission, and outside the worker's unsynchronised owner fields so no
+  // existing single-threaded invariant is weakened. metricsArmed is written
+  // only by metrics(); until it is set the worker skips publishMetrics()
+  // entirely, which is what keeps a metrics-free run bit-for-bit unchanged.
+  std::atomic<bool> metricsArmed{false};
+  std::atomic<bool> metricsVideoValid{false};
+  std::atomic<bool> metricsAudioValid{false};
+  std::atomic<bool> metricsClockValid{false};
+  std::atomic<std::uint64_t> metricsDrawnFrames{0};
+  std::atomic<std::uint64_t> metricsSubmittedFrames{0};
+  std::atomic<std::uint64_t> metricsSupersededFrames{0};
+  std::atomic<std::uint64_t> metricsDiscardedLateFrames{0};
+  std::atomic<std::uint64_t> metricsAudioUnderrunCallbacks{0};
+  std::atomic<std::uint64_t> metricsAudioClockAdvancedUnderruns{0};
+  std::atomic<std::uint64_t> metricsAudioRetiredLateFrames{0};
+  std::atomic<std::uint64_t> metricsAudioCallbacks{0};
+  std::atomic<std::uint64_t> metricsAudioRenderedFrames{0};
+  std::atomic<std::uint64_t> metricsMediaSecondsBits{0};
+  std::atomic<std::uint64_t> metricsClockRateBits{0};
   protocol::Prepare prepareCommand{};
   protocol::Start startCommand{};
   protocol::SetRunState runCommand{};
@@ -3423,6 +3541,58 @@ NativeMediaSessionFacts NativeMediaSession::facts() const noexcept {
   result.appliedRunStateStamp = impl_->publicAppliedRunStamp;
   result.appliedPaused = impl_->publicAppliedPaused;
   result.observationPending = impl_->observationsPresentLocked();
+  return result;
+}
+
+NativeMediaSessionMetrics NativeMediaSession::metrics() const noexcept {
+  NativeMediaSessionMetrics result;
+  if (impl_ == nullptr) {
+    return result;
+  }
+  // Arming is idempotent and deliberately performed by the reader: the session
+  // has no knowledge of whether a metrics stream exists, and this keeps the
+  // worker's sampling cost strictly opt-in. The first call after arming can
+  // therefore legitimately report every group as unavailable.
+  impl_->metricsArmed.store(true, std::memory_order_relaxed);
+  result.videoValid = impl_->metricsVideoValid.load(std::memory_order_relaxed);
+  if (result.videoValid) {
+    result.drawnFrames =
+        impl_->metricsDrawnFrames.load(std::memory_order_relaxed);
+    result.submittedFrames =
+        impl_->metricsSubmittedFrames.load(std::memory_order_relaxed);
+    result.supersededFrames =
+        impl_->metricsSupersededFrames.load(std::memory_order_relaxed);
+    result.discardedLateFrames =
+        impl_->metricsDiscardedLateFrames.load(std::memory_order_relaxed);
+  }
+  result.audioValid = impl_->metricsAudioValid.load(std::memory_order_relaxed);
+  if (result.audioValid) {
+    result.audioUnderrunCallbacks =
+        impl_->metricsAudioUnderrunCallbacks.load(std::memory_order_relaxed);
+    result.audioClockAdvancedUnderruns =
+        impl_->metricsAudioClockAdvancedUnderruns.load(
+            std::memory_order_relaxed);
+    result.audioRetiredLateFrames =
+        impl_->metricsAudioRetiredLateFrames.load(std::memory_order_relaxed);
+    result.audioCallbacks =
+        impl_->metricsAudioCallbacks.load(std::memory_order_relaxed);
+    result.audioRenderedFrames =
+        impl_->metricsAudioRenderedFrames.load(std::memory_order_relaxed);
+  }
+  result.clockValid = impl_->metricsClockValid.load(std::memory_order_relaxed);
+  if (result.clockValid) {
+    const std::uint64_t mediaSecondsBits =
+        impl_->metricsMediaSecondsBits.load(std::memory_order_relaxed);
+    const std::uint64_t rateBits =
+        impl_->metricsClockRateBits.load(std::memory_order_relaxed);
+    std::memcpy(&result.mediaSeconds, &mediaSecondsBits,
+                sizeof(result.mediaSeconds));
+    std::memcpy(&result.clockRate, &rateBits, sizeof(result.clockRate));
+  }
+  {
+    std::lock_guard lock(impl_->mutex);
+    result.paused = impl_->publicAppliedPaused;
+  }
   return result;
 }
 

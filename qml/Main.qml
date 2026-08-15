@@ -380,7 +380,10 @@ ApplicationWindow {
 
     Timer {
         id: fadeTimer
-        interval: 5000
+        // QuickTime-feel idle timeout: 3s of no genuine pointer movement
+        // fades the chrome (revealControls/hideControlsIfIdle above still
+        // pin it while the pointer is on the transport or titlebar band).
+        interval: 3000
         repeat: false
         onTriggered: root.hideControlsIfIdle()
     }
@@ -623,6 +626,21 @@ ApplicationWindow {
         id: preferencesLoader
         active: root.preferencesInstantiated
         sourceComponent: preferencesComponent
+        // The first showPreferences() call only flips the activation flag;
+        // the window it asked for must appear once loading finishes, or the
+        // very first Preferences invocation does nothing visible.
+        onLoaded: {
+            item.show();
+            item.raise();
+            item.requestActivate();
+        }
+    }
+
+    // The real macOS desktop menu bar (Qt.labs.platform, not an in-window
+    // QtQuick Controls one) -- see qml/AppMenuBar.qml.
+    AppMenuBar {
+        controller: root.controller
+        appRoot: root
     }
 
     // ApplicationWindow automatically extends `background` to cover the whole
@@ -684,7 +702,13 @@ ApplicationWindow {
 
             Behavior on opacity {
                 NumberAnimation {
-                    duration: root.chromeInstantHide ? 0 : (root.controlsRevealed ? 135 : 85)
+                    // Reveal stays a snappy 135ms; the idle fade-out is a
+                    // smooth but quick 250ms -- both OutCubic, matching the
+                    // floating transport's own Behavior on opacity so the
+                    // band, the transport and the traffic lights (native,
+                    // src/qt/macos_window_chrome.mm) read as one motion.
+                    // The pointer-left-window path stays instant (0ms).
+                    duration: root.chromeInstantHide ? 0 : (root.controlsRevealed ? 135 : 250)
                     easing.type: Easing.OutCubic
                 }
             }

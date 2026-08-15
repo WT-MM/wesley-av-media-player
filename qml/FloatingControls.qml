@@ -10,10 +10,25 @@ FocusScope {
     property bool instantHide: false
     property color accentColor: "#f1f1f2"
     property bool compact: width < 560
+    // When the inline slider can't fit, the speaker icon stays in place and
+    // a small glass flyout with a vertical slider takes over -- QuickTime-
+    // like "always reachable" volume, matched to the transport's own fade
+    // timing.
+    property bool volumePopupOpen: false
+    readonly property bool volumePopupWanted: compact
+        && (muteButton.hovered || volumePopupHover.hovered || popupVolumeSlider.pressed)
     readonly property bool hovered: panelHover.hovered
-    readonly property bool interactionActive: panelDrag.pressed
+    // A pointer merely resting on the transport (no button down) counts as
+    // "active" too -- otherwise the idle timer in Main.qml can fade the
+    // panel out from directly under a stationary cursor that is parked on
+    // it, which is exactly the QuickTime-style pin the transport is meant
+    // to honor (see Main.qml's hideControlsIfIdle/transportInteractionChanged).
+    readonly property bool interactionActive: hovered
+        || volumePopupOpen
+        || panelDrag.pressed
         || timeline.scrubbing
         || volumeSlider.pressed
+        || popupVolumeSlider.pressed
         || muteButton.down
         || backButton.down
         || playButton.down
@@ -54,9 +69,34 @@ FocusScope {
 
     Behavior on opacity {
         NumberAnimation {
-            duration: root.instantHide || root.suppressed ? 0 : (root.revealed ? 135 : 85)
+            // Reveal: snappy 135ms. Idle fade-out: smooth but quick 250ms.
+            // Pointer-left-window / suppressed stays instant. Matches the
+            // titlebar band's own Behavior on opacity in Main.qml.
+            duration: root.instantHide || root.suppressed ? 0 : (root.revealed ? 135 : 250)
             easing.type: Easing.OutCubic
         }
+    }
+
+    // A short close delay bridges the few unhovered pixels between the icon
+    // and the popup above it, so moving the cursor up into the flyout
+    // doesn't flicker the fade.
+    onVolumePopupWantedChanged: {
+        if (volumePopupWanted) {
+            volumePopupCloseTimer.stop();
+            volumePopupOpen = true;
+        } else {
+            volumePopupCloseTimer.restart();
+        }
+    }
+    onCompactChanged: {
+        if (!compact)
+            volumePopupOpen = false;
+    }
+
+    Timer {
+        id: volumePopupCloseTimer
+        interval: 150
+        onTriggered: root.volumePopupOpen = false
     }
 
     Rectangle {
@@ -166,7 +206,6 @@ FocusScope {
         anchors.bottom: parent.bottom
         anchors.bottomMargin: 7
         spacing: 0
-        visible: !root.compact
 
         IconButton {
             id: muteButton
@@ -186,6 +225,7 @@ FocusScope {
             height: 30
             from: 0
             to: 1
+            visible: !root.compact
             hoverEnabled: true
             focusPolicy: Qt.TabFocus
             Accessible.name: "Volume"
@@ -224,6 +264,88 @@ FocusScope {
             handle: Rectangle {
                 x: volumeSlider.leftPadding + volumeSlider.visualPosition * (volumeSlider.availableWidth - width)
                 y: volumeSlider.topPadding + volumeSlider.availableHeight / 2 - height / 2
+                implicitWidth: 8
+                implicitHeight: 8
+                radius: width / 2
+                color: "white"
+            }
+        }
+    }
+
+    // Collapsed-width flyout: same glass card, radius and ~135ms fade as the
+    // transport itself, holding a vertical slider above the speaker icon.
+    Rectangle {
+        id: volumePopup
+        radius: 14
+        color: "#d51b1b1e"
+        width: 34
+        height: 104
+        z: 5
+        anchors.horizontalCenter: volumeCluster.horizontalCenter
+        anchors.bottom: volumeCluster.top
+        anchors.bottomMargin: 6
+        opacity: root.volumePopupOpen ? 1 : 0
+        visible: opacity > 0
+        enabled: opacity > 0.05
+
+        Behavior on opacity {
+            NumberAnimation {
+                duration: 135
+                easing.type: Easing.OutCubic
+            }
+        }
+
+        HoverHandler {
+            id: volumePopupHover
+        }
+
+        Slider {
+            id: popupVolumeSlider
+            orientation: Qt.Vertical
+            anchors.centerIn: parent
+            width: 24
+            height: 84
+            from: 0
+            to: 1
+            hoverEnabled: true
+            focusPolicy: Qt.TabFocus
+            Accessible.name: "Volume"
+            Accessible.role: Accessible.Slider
+            onMoved: {
+                root.player.setVolume(value);
+                root.interaction();
+            }
+
+            Binding {
+                target: popupVolumeSlider
+                property: "value"
+                value: root.player.volume
+                when: !popupVolumeSlider.pressed
+                restoreMode: Binding.RestoreNone
+            }
+
+            background: Item {
+                x: popupVolumeSlider.leftPadding + popupVolumeSlider.availableWidth / 2 - 1
+                y: popupVolumeSlider.topPadding
+                width: 2
+                height: popupVolumeSlider.availableHeight
+                Rectangle {
+                    anchors.fill: parent
+                    radius: 2
+                    color: "#70ffffff"
+                }
+                Rectangle {
+                    anchors.bottom: parent.bottom
+                    width: parent.width
+                    height: popupVolumeSlider.visualPosition * parent.height
+                    radius: 2
+                    color: "#d8ffffff"
+                }
+            }
+
+            handle: Rectangle {
+                x: popupVolumeSlider.leftPadding + popupVolumeSlider.availableWidth / 2 - width / 2
+                y: popupVolumeSlider.topPadding + (1 - popupVolumeSlider.visualPosition) * (popupVolumeSlider.availableHeight - height)
                 implicitWidth: 8
                 implicitHeight: 8
                 radius: width / 2
