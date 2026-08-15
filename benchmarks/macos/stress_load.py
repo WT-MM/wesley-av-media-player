@@ -70,6 +70,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
@@ -857,6 +858,229 @@ def parse_metrics(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
+PARK_SCRIPT = """
+tell application "System Events"
+  set procs to (every process whose unix id is {pid})
+  if (count of procs) is 0 then return "no-process"
+  set p to item 1 of procs
+  set frontmost of p to true
+  try
+    set ws to windows of p
+    if (count of ws) is 0 then return "no-window"
+    set w to item 1 of ws
+    set position of w to {{{x}, {y}}}
+    set size of w to {{{width}, {height}}}
+    perform action "AXRaise" of w
+    return "parked"
+  on error errText
+    return "error: " & errText
+  end try
+end tell
+"""
+
+
+RAISE_SCRIPT = """
+tell application "System Events"
+  set procs to (every process whose unix id is {pid})
+  if (count of procs) is 0 then return "no-process"
+  set ws to windows of (item 1 of procs)
+  if (count of ws) is 0 then return "no-window"
+  perform action "AXRaise" of (item 1 of ws)
+  return "raised"
+end tell
+"""
+
+
+def raise_window(pid: int, *, timeout_s: float = 8.0) -> str:
+    """Re-raise the window, and do NOTHING else.
+
+    Deliberately separate from park_window: repeatedly re-applying position
+    and size forces a window resize on every tick, and a resize tears down and
+    reallocates the video surface. Measured, that alone dragged playback to
+    0.84x and more than doubled CPU -- the keeper was corrupting the very
+    numbers it existed to protect. Geometry is set once at launch; only the
+    window ordering is maintained.
+
+    The timeout is generous because this competes with the synthetic load for
+    a core. A stingy timeout silently stops keeping the window up exactly when
+    load makes that most necessary, which is the worst possible time to fail.
+    """
+    try:
+        proc = subprocess.run(
+            ["osascript", "-e", RAISE_SCRIPT.format(pid=pid)],
+            capture_output=True, text=True, timeout=timeout_s,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return "timeout"
+    return proc.stdout.strip() or "failed"
+
+
+def park_window(pid: int, *, x: int = 40, y: int = 60,
+                width: int = 960, height: int = 600,
+                timeout_s: float = 15.0) -> str:
+    """Move the player's window to a known corner and raise it above others.
+
+    Measurement validity depends on the window being visible: macOS stops the
+    render loop for an occluded window, and a measured run of a stopped render
+    loop is a measurement of nothing. Parking is part of the measurement, not
+    cosmetics.
+
+    AXRaise is what actually matters here, and it is enough on its own. Making
+    the *application* frontmost is neither achievable nor necessary: modern
+    macOS refuses programmatic focus steals, but raising the window in the
+    window-server ordering restores drawing anyway. Measured directly: while
+    covered, drawn frames held flat and late drops climbed at 30/s; the
+    instant AXRaise landed, drawing resumed at exactly 30 fps and late drops
+    stopped. So this deliberately does not fight for focus.
+
+    The window does not exist at launch, so this retries until it appears.
+    It stays best-effort -- accessibility permission can be denied -- and the
+    caller proves liveness afterwards rather than trusting the return value.
+    """
+    script = PARK_SCRIPT.format(pid=pid, x=x, y=y, width=width, height=height)
+    deadline = time.monotonic() + timeout_s
+    last = "not-attempted"
+    while time.monotonic() < deadline:
+        try:
+            proc = subprocess.run(
+                ["osascript", "-e", script], capture_output=True, text=True,
+                timeout=20,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            return f"unavailable: {exc}"
+        last = proc.stdout.strip() or f"failed: {proc.stderr.strip()}"
+        if last == "parked":
+            return last
+        time.sleep(0.5)
+    return f"gave up after {timeout_s:.0f}s: {last}"
+
+
+def user_idle_seconds() -> float | None:
+    """Seconds since the last human input event, or None if unreadable.
+
+    This harness raises a video window over whatever else is on screen and
+    saturates every core. That is fine on an unattended machine and hostile on
+    one somebody is using, and the two are indistinguishable without asking.
+    """
+    proc = subprocess.run(
+        ["ioreg", "-c", "IOHIDSystem", "-w", "0"],
+        capture_output=True, text=True,
+    )
+    if proc.returncode != 0:
+        return None
+    match = re.search(r'"HIDIdleTime"\s*=\s*(\d+)', proc.stdout)
+    if not match:
+        return None
+    return int(match.group(1)) / 1e9
+
+
+class WindowKeeper:
+    """Keeps the player's window raised for the duration of a measurement.
+
+    A single raise at launch is not enough: anything that activates later --
+    another app, a notification, the player's own dialogs -- puts the window
+    back under, and drawing stops the moment it does. Re-raising on an
+    interval is what makes a long unattended window trustworthy.
+
+    This deliberately does NOT steal application focus; it only reorders the
+    window, which is all that drawing requires.
+    """
+
+    def __init__(self, pid: int, metrics_path: Path,
+                 interval_s: float = 2.0) -> None:
+        self._pid = pid
+        self._metrics_path = metrics_path
+        self._interval = interval_s
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self.raises = 0
+        self.failed_raises = 0
+
+    def __enter__(self) -> "WindowKeeper":
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=10.0)
+
+    def _run(self) -> None:
+        """Raise ON DEMAND, never on a schedule.
+
+        An unconditional periodic raise is not free: at one every two seconds
+        it cost a measured ~16% of wall time, pinning playback at 0.83x in
+        every condition -- uniform enough to look like a real property of the
+        player rather than damage done by the instrument. So the keeper now
+        watches drawn_frames and intervenes only when drawing has actually
+        stalled. On an uncontended machine it does nothing at all, which is
+        the only way the no-load row can be trusted.
+        """
+        last_drawn: int | None = None
+        while not self._stop.is_set():
+            self._stop.wait(self._interval)
+            if self._stop.is_set():
+                break
+            rows = parse_metrics(self._metrics_path)
+            drawing = [r for r in rows if r.get("drawn_frames") is not None]
+            current = drawing[-1]["drawn_frames"] if drawing else None
+            if current is None:
+                continue
+            stalled = last_drawn is not None and current <= last_drawn
+            last_drawn = current
+            if not stalled:
+                continue
+            if raise_window(self._pid) == "raised":
+                self.raises += 1
+            else:
+                self.failed_raises += 1
+
+
+class OcclusionError(HarnessError):
+    """The window is not drawing, so nothing measured here is about load."""
+
+
+def assert_draws_advancing(metrics_path: Path, *, minimum_fps: float = 10.0) -> None:
+    """Refuse to open a measurement window on a window that is not drawing.
+
+    macOS stops the render loop for an occluded window. When that happens the
+    clock, the audio callbacks and the late-drop counter all keep advancing
+    perfectly while drawn_frames freezes -- which reads as a catastrophic fps
+    collapse that has nothing whatsoever to do with system load. This harness
+    learned that the hard way: a fullscreen video player covering the WAM
+    window produced exactly the signature of the bug it was built to find.
+
+    So liveness is proved before every window rather than assumed. The bar is
+    deliberately low: this separates "drawing" from "not drawing at all", and
+    leaves judging the actual frame rate to the acceptance check.
+    """
+    rows = parse_metrics(metrics_path)
+    drawing = [r for r in rows if r.get("drawn_frames") is not None]
+    if len(drawing) < 2:
+        raise OcclusionError(
+            f"no usable playback samples yet in {metrics_path.name}; the "
+            f"player may not have started drawing"
+        )
+    # Only the most recent samples count. Averaging over a longer tail lets
+    # the startup ramp -- which always draws -- mask a window that has since
+    # been covered, which is exactly the false pass this guard exists to
+    # prevent.
+    recent = drawing[-min(len(drawing), 3):]
+    span_s = (recent[-1]["t_mono_ns"] - recent[0]["t_mono_ns"]) / 1e9
+    frames = recent[-1]["drawn_frames"] - recent[0]["drawn_frames"]
+    if span_s <= 0:
+        raise OcclusionError("metric samples carry no elapsed time")
+    fps = frames / span_s
+    if fps < minimum_fps:
+        raise OcclusionError(
+            f"window is drawing at {fps:.1f} fps before the measured window "
+            f"even opened -- it is almost certainly occluded or minimised. "
+            f"Park the player where nothing covers it and rerun; measuring "
+            f"now would record occlusion, not load."
+        )
+
+
 def _delta(rows: list[dict[str, Any]], key: str) -> int | None:
     first = rows[0].get(key)
     last = rows[-1].get(key)
@@ -969,7 +1193,20 @@ def check_acceptance(summary: dict[str, Any]) -> dict[str, Any]:
         else ("pass" if low <= rate <= high else "FAIL"),
     }
 
-    results = [c["result"] for c in checks.values()]
+    # An occluded window fails every frame criterion while the clock stays
+    # perfect. Naming that explicitly stops a covered window from being filed
+    # as a load regression, which is the single most misleading result this
+    # harness can produce.
+    if (isinstance(fps, (int, float)) and fps < 1.0
+            and isinstance(rate, (int, float)) and low <= rate <= high):
+        checks["diagnosis"] = (
+            "window appears OCCLUDED, not load-starved: the clock held "
+            "rate while no frames were drawn. Raise the player window and "
+            "rerun; this run says nothing about load."
+        )
+
+    results = [c["result"] for c in checks.values()
+               if isinstance(c, dict) and "result" in c]
     checks["overall"] = (
         "FAIL" if "FAIL" in results
         else ("unknown" if "unknown" in results else "pass")
@@ -1054,19 +1291,36 @@ def run_trial(args: argparse.Namespace) -> dict[str, Any]:
         launcher.terminate()
         raise HarnessError("WAM did not start within 20s")
 
+    park_result = park_window(target_pid)
+
     load = start_load(
         args.mode, args.startup_grace + args.settle + args.duration + 5.0,
         cpu_workers=args.cpu_workers, game_workers=args.game_workers,
         gpu_threads=args.gpu_threads, gpu_iters=args.gpu_iters,
         gpu_inflight=args.gpu_inflight,
     )
+    idle_at_start = user_idle_seconds()
     cost: dict[str, Any] | None = None
     cost_error: str | None = None
+    window_start_index = 0
+    window_end_index: int | None = None
+    keeper = WindowKeeper(target_pid, metrics_path)
     try:
         # Let playback and the load both reach steady state before the
         # measured window opens.
-        time.sleep(args.startup_grace + args.settle)
-        cost = sample_cost(target_pid, args.duration, interval_s=args.interval)
+        with keeper:
+            time.sleep(args.startup_grace + args.settle)
+            if not args.skip_liveness_check:
+                assert_draws_advancing(metrics_path)
+            # Anchor the playback summary to exactly the window the cost
+            # sampler measures. Selecting "the last N seconds of the file"
+            # instead silently swept in the post-EOF tail, where the clip has
+            # ended and nothing draws -- which read as 25 fps at 0.84x when
+            # the player was in fact holding a flawless 30 fps at 1.0x.
+            window_start_index = len(parse_metrics(metrics_path))
+            cost = sample_cost(target_pid, args.duration,
+                               interval_s=args.interval)
+            window_end_index = len(parse_metrics(metrics_path))
         failures = load.poll_failures()
         if failures and args.mode != "none":
             raise HarnessError("load died mid-window: " + "; ".join(failures))
@@ -1084,7 +1338,11 @@ def run_trial(args: argparse.Namespace) -> dict[str, Any]:
         launcher.terminate()
 
     rows = parse_metrics(metrics_path)
-    summary = summarize_playback(rows, window_s=args.duration)
+    windowed = rows[window_start_index:window_end_index]
+    summary = summarize_playback(windowed if len(windowed) >= 2 else rows,
+                                 window_s=None if len(windowed) >= 2
+                                 else args.duration)
+    summary["window_rows"] = len(windowed)
 
     report: dict[str, Any] = {
         "trial": tag,
@@ -1095,6 +1353,11 @@ def run_trial(args: argparse.Namespace) -> dict[str, Any]:
         "duration_s": args.duration,
         "state_lines_scrubbed": removed,
         "foreign_wam_pids_left_alone": sorted(pre_existing),
+        "window_park": park_result,
+        "window_raises": keeper.raises,
+        "window_raise_failures": keeper.failed_raises,
+        "user_idle_s_at_start": idle_at_start,
+        "user_idle_s_at_end": user_idle_seconds(),
         "load": load.description,
         "playback": summary,
         "acceptance": check_acceptance(summary),
@@ -1208,15 +1471,30 @@ def cmd_trial(args: argparse.Namespace) -> int:
 def cmd_matrix(args: argparse.Namespace) -> int:
     """The baseline table: one clip across all four load conditions."""
     reports = []
+    aborted = None
     for mode in args.modes:
+        # The current window always finishes -- a half-measured window is
+        # worthless -- but a returning user stops the NEXT one. Saturating
+        # every core under someone who has just sat back down is not a
+        # benchmark, it is a denial of service.
+        idle = user_idle_seconds()
+        if (reports and args.min_idle_s > 0 and idle is not None
+                and idle < args.min_idle_s):
+            aborted = (
+                f"stopped before '{mode}': user active again "
+                f"(idle {idle:.0f}s < {args.min_idle_s:.0f}s). "
+                f"Completed: {[r['mode'] for r in reports]}"
+            )
+            print(aborted, file=sys.stderr)
+            break
         trial_args = argparse.Namespace(**vars(args))
         trial_args.mode = mode
-        print(f"--- {mode} ---", file=sys.stderr)
+        print(f"--- {mode} (idle {idle}) ---", file=sys.stderr)
         reports.append(run_trial(trial_args))
         if args.cooldown > 0:
             time.sleep(args.cooldown)
 
-    print(json.dumps({"matrix": reports}, indent=2))
+    print(json.dumps({"matrix": reports, "aborted": aborted}, indent=2))
     print("\n" + format_matrix_table(reports), file=sys.stderr)
     return 0
 
@@ -1265,6 +1543,11 @@ def add_trial_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--out-dir", type=Path,
         default=PROJECT_ROOT / ".cache" / "benchmarks" / "stress" / "runs",
+    )
+    parser.add_argument(
+        "--skip-liveness-check", action="store_true",
+        help="measure even if the window is not drawing. Only meaningful "
+             "when occlusion IS the thing under test",
     )
 
 
@@ -1343,6 +1626,11 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["none", "cpu", "gpu", "combined"],
     )
     p_matrix.add_argument("--cooldown", type=float, default=5.0)
+    p_matrix.add_argument(
+        "--min-idle-s", type=float, default=45.0,
+        help="stop before the next condition if the user has been active "
+             "more recently than this; 0 disables the check",
+    )
     p_matrix.set_defaults(func=cmd_matrix)
 
     return parser

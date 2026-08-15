@@ -13,6 +13,14 @@ struct NativePlaybackMetricsTestAccess;
 // JSON null so no consumer can mistake "no session open" for "nothing was
 // dropped".
 struct NativePlaybackMetricsSample {
+  // Names the counter epoch the rest of this sample belongs to. Every counter
+  // below is cumulative per NativeMediaSession and restarts at zero when a new
+  // session is constructed, and the file is opened in append mode, so one file
+  // may hold several epochs. A consumer differencing consecutive samples must
+  // difference only within one epoch: a change here explains a backwards
+  // counter that would otherwise look like corruption. 0 means no session was
+  // open, and is never a real session's value.
+  std::uint64_t sessionEpoch{0};
   std::uint64_t drawnFrames{0};
   std::uint64_t submittedFrames{0};
   std::uint64_t supersededFrames{0};
@@ -83,9 +91,12 @@ private:
                         Clock clock, Sink sink, Flusher flusher,
                         void *sinkContext) noexcept;
 
-  // Every emitted line fits well inside this bound: fourteen fields whose
-  // widest forms are a 20-digit u64 and a 24-character double.
-  static constexpr std::size_t kMaximumJsonLineBytes = 512;
+  // Fifteen fields whose widest forms are a 20-digit u64 and a 24-character
+  // double: 319 bytes of literal punctuation and keys plus 273 bytes of
+  // widest-case values is 592, so this bound admits every representable line
+  // rather than merely every likely one. Still one fixed allocation made once
+  // at construction, so formatting never allocates.
+  static constexpr std::size_t kMaximumJsonLineBytes = 640;
 
   bool enabled_{false};
   unsigned intervalMilliseconds_{kDefaultIntervalMilliseconds};

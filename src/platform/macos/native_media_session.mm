@@ -6,6 +6,8 @@
 #include "media/native_media_dispatcher.hpp"
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cstring>
 #include <dispatch/dispatch.h>
 #include <limits>
@@ -322,6 +324,35 @@ NativeMediaSessionWake::trackedVideo() noexcept {
   return impl_ == nullptr ? NativeTrackedVideoOutputWakeSeam{}
                           : NativeTrackedVideoOutputWakeSeam{&signal, this};
 }
+
+namespace {
+
+// Seeds the process's session epoch sequence. An epoch has to separate counter
+// resets across processes as well as within one, because the metrics file is
+// opened in append mode and a harness may deliberately point several runs at a
+// single file; a sequence restarting at 1 every launch would hand consecutive
+// runs the same epochs and so prove nothing about the run boundary that resets
+// the counters. Seeding from the wall clock starts each run above every epoch
+// an earlier run on this machine could have issued, while leaving the within-
+// run sequence a plain +1 step. The value is never 0, so a sampler holding no
+// session keeps 0 for "no session open".
+std::uint64_t sessionEpochSeed() noexcept {
+  const auto since =
+      std::chrono::system_clock::now().time_since_epoch();
+  const auto nanoseconds =
+      std::chrono::duration_cast<std::chrono::nanoseconds>(since).count();
+  return nanoseconds > 0 ? static_cast<std::uint64_t>(nanoseconds) : 1;
+}
+
+// Read once per session construction and never again, so it costs nothing on
+// any hot path, and the seed is not even sampled in a process that never opens
+// a session.
+std::uint64_t allocateSessionEpoch() noexcept {
+  static std::atomic<std::uint64_t> next{sessionEpochSeed()};
+  return next.fetch_add(1, std::memory_order_relaxed);
+}
+
+}  // namespace
 
 struct NativeMediaSession::Impl final {
   explicit Impl(NativeMediaSessionSourceBinding sourceBinding,
@@ -2839,6 +2870,11 @@ if (result != NativeAudioSessionProgress::Done) {
   SessionVideoControl videoControl{};
   SessionAudioControl audioControl{};
   SessionPreviewControl previewControl{};
+  // Names this session's counter epoch. Assigned once at construction and
+  // immutable thereafter, so metrics() may read it from any thread without
+  // synchronisation, and it is the only metrics field already valid before the
+  // worker has published anything.
+  const std::uint64_t sessionEpoch{allocateSessionEpoch()};
   // Out-of-band diagnostic publication slots. The worker is the only writer;
   // metrics() is the only reader and may run on any thread. These deliberately
   // sit outside `mutex` so an idle metrics sampler never contends with command
@@ -3554,6 +3590,9 @@ NativeMediaSessionMetrics NativeMediaSession::metrics() const noexcept {
   // worker's sampling cost strictly opt-in. The first call after arming can
   // therefore legitimately report every group as unavailable.
   impl_->metricsArmed.store(true, std::memory_order_relaxed);
+  // Always reported, even on that first unavailable-everything call: it names
+  // the epoch the counters will belong to, not a counter of its own.
+  result.sessionEpoch = impl_->sessionEpoch;
   result.videoValid = impl_->metricsVideoValid.load(std::memory_order_relaxed);
   if (result.videoValid) {
     result.drawnFrames =
