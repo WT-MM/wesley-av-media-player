@@ -441,6 +441,40 @@ OwnedSample makeSample(CMFormatDescriptionRef format, CMTime pts, CMTime dts,
   return OwnedSample(sample);
 }
 
+// A compressed-audio sample buffer carrying `sampleCount` access units whose
+// timing is stated exactly as `timing` -- either one entry per access unit or
+// a single entry shared by all of them, which is precisely the distinction the
+// media-grid restating has to respect.
+OwnedSample makeCompressedAudioSample(
+    CMFormatDescriptionRef format, std::span<const CMSampleTimingInfo> timing,
+    std::size_t sampleCount, std::size_t perSampleBytes) {
+  expect(sampleCount > 0 && perSampleBytes > 0 &&
+             (timing.size() == 1 || timing.size() == sampleCount),
+         "synthetic compressed audio shape should be exact");
+  const std::size_t byteCount = perSampleBytes * sampleCount;
+  CMBlockBufferRef block = nullptr;
+  OSStatus status = CMBlockBufferCreateWithMemoryBlock(
+      kCFAllocatorDefault, nullptr, byteCount, kCFAllocatorDefault, nullptr, 0,
+      byteCount, 0, &block);
+  expect(status == noErr && block != nullptr,
+         "synthetic compressed audio block should be created");
+  const std::vector<std::byte> bytes(byteCount, std::byte{0x27});
+  status = CMBlockBufferReplaceDataBytes(bytes.data(), block, 0, bytes.size());
+  expect(status == noErr,
+         "synthetic compressed audio bytes should be initialized");
+  const std::size_t sizeEntry = perSampleBytes;
+  CMSampleBufferRef sample = nullptr;
+  status = CMSampleBufferCreateReady(
+      kCFAllocatorDefault, block, format,
+      static_cast<CMItemCount>(sampleCount),
+      static_cast<CMItemCount>(timing.size()), timing.data(), 1, &sizeEntry,
+      &sample);
+  CFRelease(block);
+  expect(status == noErr && sample != nullptr,
+         "synthetic compressed audio sample should be created");
+  return OwnedSample(sample);
+}
+
 OwnedSample makeDiscontinuity(CMTime pts) {
   const CMSampleTimingInfo timing{kCMTimeInvalid, pts, kCMTimeInvalid};
   CMSampleBufferRef sample = nullptr;
@@ -2939,6 +2973,154 @@ void testRealDeferredFirstReadTiming(const std::filesystem::path& path) {
 
 }  // namespace
 
+// Pins the EOF shape of every clip whose audio does not land on an exact
+// 1024-frame AAC boundary -- the common case, and the exact shape that dropped
+// h264-44k.mp4 to the fallback with a Decode failure at end of stream.
+//
+// The muxer folds the edit's end trim into the container: the final access
+// unit's stts duration is shortened so that the track's declared media
+// duration lands on the edited end (2585 access units for 60 s at 44.1 kHz,
+// the last stated as 1008 of 1024 frames). CoreMedia repeats that shortfall as
+// a TrimDurationAtEnd attachment, which this backend removes. Publishing the
+// truncated duration alongside the removed attachment leaves an edit in the
+// timing: the unit claims fewer frames on the media timeline than its own
+// packet decodes to, and the frozen converter correctly refuses it. A
+// legitimate CoreMedia EOF tail must drain to end of stream, so the truncated
+// unit is restated on the codec's ordinal packet grid instead.
+void testTruncatedFinalAudioPacketIsRestatedOnTheMediaGrid() {
+  using namespace wam::macos::avfoundation_media_source_testing;
+  constexpr std::int32_t kRate = 48'000;
+  constexpr std::int64_t kPacketFrames = 1024;
+  const OwnedFormat format = makeAudioFormat();
+
+  const auto durationOf = [](const CMSampleTimingInfo& entry) {
+    return entry.duration;
+  };
+  const auto isExactly = [](CMTime time, std::int64_t frames) {
+    return CMTIME_IS_NUMERIC(time) && time.timescale == kRate &&
+           time.value == frames && time.epoch == 0;
+  };
+
+  // One timing entry per access unit: only the truncated tail moves.
+  {
+    std::array<CMSampleTimingInfo, 4> timing{};
+    for (std::size_t index = 0; index < timing.size(); ++index) {
+      timing[index].presentationTimeStamp = CMTimeMake(
+          3'452'928 + static_cast<std::int64_t>(index) * kPacketFrames, kRate);
+      timing[index].decodeTimeStamp = kCMTimeInvalid;
+      timing[index].duration = CMTimeMake(kPacketFrames, kRate);
+    }
+    timing[3].duration = CMTimeMake(1'008, kRate);
+    const OwnedSample sample =
+        makeCompressedAudioSample(format.get(), timing, timing.size(), 344);
+    const std::size_t restated =
+        restateCompressedAudioPacketDurationsForTesting(
+            sample.get(), timing.data(), timing.size());
+    expect(restated == 1,
+           "only the truncated final access unit should be restated");
+    for (std::size_t index = 0; index < timing.size(); ++index) {
+      expect(isExactly(durationOf(timing[index]), kPacketFrames),
+             "every access unit should occupy exactly one packet on the grid");
+    }
+    // The restated tail is contiguous with its own presentation time and ends
+    // one whole packet later, which is exactly what the packet decodes to.
+    const CMTime end = CMTimeAdd(timing[3].presentationTimeStamp,
+                                 timing[3].duration);
+    expect(CMTIME_IS_NUMERIC(end) &&
+               CMTimeCompare(end, CMTimeMake(3'457'024, kRate)) == 0,
+           "the restated tail should end on the exact packet grid");
+  }
+
+  // A single shared timing entry describes every access unit; the stream's
+  // fixed packet size is the only thing that can speak for it.
+  {
+    std::array<CMSampleTimingInfo, 1> timing{};
+    timing[0].presentationTimeStamp = CMTimeMake(3'452'928, kRate);
+    timing[0].decodeTimeStamp = kCMTimeInvalid;
+    timing[0].duration = CMTimeMake(1'008, kRate);
+    const OwnedSample sample =
+        makeCompressedAudioSample(format.get(), timing, 4, 344);
+    const std::size_t restated =
+        restateCompressedAudioPacketDurationsForTesting(
+            sample.get(), timing.data(), timing.size());
+    expect(restated == 1 && isExactly(timing[0].duration, kPacketFrames),
+           "a shared short timing entry should be restated on the grid");
+  }
+
+  // The rule only ever lengthens, and only up to one whole packet. A unit the
+  // container already states in full -- or states longer than a packet, or
+  // states with no positive duration at all -- is left exactly as it is, so a
+  // genuinely malformed grid still reaches the converter unchanged.
+  {
+    std::array<CMSampleTimingInfo, 3> timing{};
+    for (auto& entry : timing) {
+      entry.presentationTimeStamp = CMTimeMake(3'452'928, kRate);
+      entry.decodeTimeStamp = kCMTimeInvalid;
+    }
+    timing[0].duration = CMTimeMake(kPacketFrames, kRate);
+    timing[1].duration = CMTimeMake(2 * kPacketFrames, kRate);
+    timing[2].duration = kCMTimeInvalid;
+    const OwnedSample sample =
+        makeCompressedAudioSample(format.get(), timing, timing.size(), 344);
+    const std::size_t restated =
+        restateCompressedAudioPacketDurationsForTesting(
+            sample.get(), timing.data(), timing.size());
+    expect(restated == 0, "a full or over-long access unit should not move");
+    expect(isExactly(timing[0].duration, kPacketFrames) &&
+               isExactly(timing[1].duration, 2 * kPacketFrames) &&
+               !CMTIME_IS_NUMERIC(timing[2].duration),
+           "non-truncated durations should survive byte-exactly");
+  }
+
+  // A zero duration states no extent at all rather than a trimmed one, so it
+  // is never manufactured into a whole packet.
+  {
+    std::array<CMSampleTimingInfo, 1> timing{};
+    timing[0].presentationTimeStamp = CMTimeMake(3'452'928, kRate);
+    timing[0].decodeTimeStamp = kCMTimeInvalid;
+    timing[0].duration = CMTimeMake(0, kRate);
+    const OwnedSample sample =
+        makeCompressedAudioSample(format.get(), timing, 1, 344);
+    const std::size_t restated =
+        restateCompressedAudioPacketDurationsForTesting(
+            sample.get(), timing.data(), timing.size());
+    expect(restated == 0 && timing[0].duration.value == 0,
+           "a zero-duration entry should not be restated");
+  }
+
+  // Video is not on an audio packet grid; the rule must not touch it.
+  {
+    const OwnedFormat videoFormat = makeVideoFormat();
+    std::array<CMSampleTimingInfo, 1> timing{};
+    timing[0].presentationTimeStamp = CMTimeMake(1'024, 15'360);
+    timing[0].decodeTimeStamp = kCMTimeInvalid;
+    timing[0].duration = CMTimeMake(256, 15'360);
+    const OwnedSample sample =
+        makeSample(videoFormat.get(), timing[0].presentationTimeStamp,
+                   kCMTimeInvalid, 4'096, 1, true, timing[0].duration);
+    const std::size_t restated =
+        restateCompressedAudioPacketDurationsForTesting(
+            sample.get(), timing.data(), timing.size());
+    expect(restated == 0 &&
+               CMTimeCompare(timing[0].duration, CMTimeMake(256, 15'360)) == 0,
+           "a video sample should never be restated on an audio packet grid");
+  }
+
+  // A null sample or a null timing array is inert rather than a fault.
+  {
+    std::array<CMSampleTimingInfo, 1> timing{};
+    timing[0].duration = CMTimeMake(1'008, kRate);
+    expect(restateCompressedAudioPacketDurationsForTesting(
+               nullptr, timing.data(), timing.size()) == 0,
+           "a null sample should restate nothing");
+    const OwnedSample sample =
+        makeCompressedAudioSample(format.get(), timing, 1, 344);
+    expect(restateCompressedAudioPacketDurationsForTesting(sample.get(),
+                                                           nullptr, 1) == 0,
+           "a null timing array should restate nothing");
+  }
+}
+
 int main(int argc, char** argv) {
   @autoreleasepool {
     const bool timingOnly =
@@ -2965,6 +3147,7 @@ int main(int argc, char** argv) {
     testExactCancellationDuringDeferredRefill();
     testFormatlessDiscontinuityPrecedesImmutableFormatCheck();
     testMediaFreeMarkersAreDistinguishedFromDiscontinuities();
+    testTruncatedFinalAudioPacketIsRestatedOnTheMediaGrid();
     testAdmissionDiscontinuityPrefixIsBounded();
     testExactCancellationWhileStartBlocks();
     testMetadataLoadsOverlapAndValidateInSourceOrder();

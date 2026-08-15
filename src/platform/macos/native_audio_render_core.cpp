@@ -18,6 +18,30 @@ constexpr std::uint64_t kMaximumExactDoubleInteger =
 constexpr std::uint64_t kLateFrameResyncThreshold =
     static_cast<std::uint64_t>(NativePcmRing::kFramesPerSlab);
 
+// Playable audio that late-frame retirement may never take. The producer can
+// only republish once the consumer retires a slab and its wake round trip
+// completes, and that round trip is a DURATION, not a frame count: the same
+// number of frames is 8.8% more time at 44.1 kHz than at 48 kHz, and a device
+// running a sample-rate converter pulls a non-integral number of stream frames
+// per callback, so the frame budget between two publications is not even
+// constant within one rate. Retirement that is allowed to strip the ring down
+// to exactly the frames this callback needs therefore manufactures the next
+// underrun, which advances the clock, which grows the debt, which retires more
+// freshly produced audio -- a self-sustaining starvation loop rather than the
+// one-shot resync the retirement is meant to be. Reserving a rate-scaled floor
+// keeps catch-up strictly to audio the producer is already far enough ahead to
+// spare. The floor is capped at one admission unit so it can never exceed what
+// the ring itself can hold at the highest admitted rates.
+constexpr std::uint64_t kLateFrameRetentionMilliseconds = 40;
+
+[[nodiscard]] constexpr std::uint64_t lateFrameRetentionFloor(
+    std::uint32_t sampleRate) noexcept {
+  const std::uint64_t scaled = static_cast<std::uint64_t>(sampleRate) *
+                               kLateFrameRetentionMilliseconds / 1000U;
+  return std::min<std::uint64_t>(
+      scaled, static_cast<std::uint64_t>(NativePcmRing::kFramesPerSlab));
+}
+
 static_assert(std::atomic<bool>::is_always_lock_free);
 static_assert(std::atomic<std::uint8_t>::is_always_lock_free);
 static_assert(std::atomic<std::uint32_t>::is_always_lock_free);
@@ -514,13 +538,22 @@ NativeAudioRenderResult NativeAudioRenderCore::render(
     // behind its own timestamp, and behind video, for the rest of the
     // generation.
     //
-    // Two deliberate bounds. Retirement waits until the debt reaches one
+    // Three deliberate bounds. Retirement waits until the debt reaches one
     // producer admission unit, because a debt below that is smaller than the
     // granularity at which the producer publishes at all and is not worth a
-    // discontinuity. And catch-up comes only out of surplus, never out of the
+    // discontinuity. Catch-up comes only out of surplus, never out of the
     // frames this callback itself needs, so a producer that has only partially
     // recovered still renders its short prefix instead of being starved again.
-    const std::size_t surplus = readable.frames - input.frameCount;
+    // And the surplus is measured above a rate-scaled retention floor, so a
+    // producer that has only just caught up keeps the refill headroom it needs
+    // to reach its next publication instead of having it retired out from
+    // under it.
+    const std::uint64_t reserved =
+        input.frameCount + lateFrameRetentionFloor(input.sampleRate);
+    const std::size_t surplus =
+        readable.frames > reserved
+            ? static_cast<std::size_t>(readable.frames - reserved)
+            : 0U;
     const std::size_t requested = static_cast<std::size_t>(
         std::min<std::uint64_t>(pending_late_frames_, surplus));
     const std::size_t retired = ring_.discard(generation, requested);

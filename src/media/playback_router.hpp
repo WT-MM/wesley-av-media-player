@@ -53,6 +53,17 @@ struct TimeoutPolicy {
   // produces its audio-clock and video-draw proofs from parking the route
   // forever with a frozen position and no published failure.
   std::uint64_t seekTicks{0};
+  // NativeStopping completes only when the session publishes Stopped, and that
+  // proof depends on the video output observing its terminal invalidation. On
+  // the Qt path that observation is produced by the render thread, so a window
+  // that has stopped compositing (occluded, offscreen, another Space) parks the
+  // replacement transaction forever while still showing the retired frame.
+  // Bounding it is what turns that silent park into a visible, recoverable
+  // failure. Expiry is consumed only through
+  // retireStoppingAfterSynchronousTeardown, never through advance(), because
+  // releasing this state requires the caller to have destroyed the native graph
+  // first.
+  std::uint64_t stopTicks{0};
 };
 
 struct LineageSeed {
@@ -181,6 +192,15 @@ public:
   // lineage high-water marks remain burned.
   [[nodiscard]] Transition abandonNativeAfterSynchronousRetirement(
       Tick now) noexcept;
+  // Bounded escape from NativeStopping when the exact Stopped proof can no
+  // longer arrive. Applies only after the armed stop deadline expires, and the
+  // caller must first synchronously destroy the one-shot native resource graph
+  // exactly as abandonNativeAfterSynchronousRetirement requires. No Stopped
+  // proof is fabricated: the stop invalidation generation is already burned, so
+  // this only releases the retired lineage and routes the queued replacement,
+  // which is what an occluded window would otherwise wait for forever.
+  [[nodiscard]] Transition
+  retireStoppingAfterSynchronousTeardown(Tick now) noexcept;
   [[nodiscard]] Transition setPaused(bool paused, Tick now) noexcept;
   [[nodiscard]] Transition previewFrame(const PreviewFrameRequest &request,
                                         Tick now) noexcept;

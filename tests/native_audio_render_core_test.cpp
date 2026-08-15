@@ -1097,6 +1097,135 @@ void testExactSampleTimeTiming() {
          "switching between host and sample timing resets continuity proof");
 }
 
+// Rate-parameterized fixture. The host clock runs at the stream rate so one
+// host tick is exactly one stream frame, matching the fixed-rate Fixture.
+struct RateFixture {
+  FakeHostClock host;
+  NativePcmRing ring{1};
+  NativeMediaClock clock;
+  NativeAudioRenderCore core;
+  std::uint32_t rate;
+  bool ready{false};
+
+  explicit RateFixture(std::uint32_t sampleRate)
+      : clock(host.seam(sampleRate)),
+        core(ring, clock, sampleRate),
+        rate(sampleRate) {
+    const auto initialPosition =
+        mediaTimeSecondsAtFrame(MediaTime{0, 1}, 0, sampleRate);
+    ready = initialPosition &&
+            clock.anchorAtHostTicks(1, 0, *initialPosition, 1.0, false) &&
+            core.activate(1, 0, MediaTime{0, 1}, MediaTime{0, 1}, sampleRate);
+    core.setPaused(false);
+    core.setAccepting(true);
+  }
+};
+
+[[nodiscard]] NativeAudioRenderInput rateInput(
+    std::uint64_t streamFrameStart, std::uint32_t frameCount,
+    std::uint64_t firstHostTicks, std::uint32_t sampleRate) noexcept {
+  NativeAudioRenderInput input = hostInput(streamFrameStart, frameCount,
+                                           firstHostTicks);
+  input.sampleRate = sampleRate;
+  return input;
+}
+
+// Pinned regression: late-frame retirement must leave the same amount of
+// refill headroom measured in TIME at every admitted stream rate.
+//
+// Before this was pinned, retirement took every frame above the ones the
+// current callback itself needed, leaving the ring with exactly zero refill
+// headroom the instant it fired. The producer cannot republish until the
+// consumer retires a slab and its wake round trip completes -- a duration, not
+// a frame count -- so a zero-headroom ring underruns on the very next callback,
+// which advances the clock, which grows the debt, which retires more freshly
+// produced audio. That loop is worse at 44.1 kHz than at 48 kHz because a
+// 44.1 kHz stream on a 48 kHz device runs the AudioUnit's own sample-rate
+// converter and is pulled a non-integral ~470.4 frames per callback instead of
+// a flat 512, so the frame budget between two publications is not even constant
+// within the rate.
+//
+// The invariant this pins is deliberately stated in milliseconds: whatever the
+// stream rate and whatever the device pull quantum, a retirement must never
+// drive the ring below the same real-time refill floor.
+void testLateRetirementHeadroomIsRateIndependent() {
+  struct Case {
+    std::uint32_t rate;
+    std::uint32_t quantum;  // device pull in stream frames per callback
+  };
+  // 512 device frames at 48 kHz: a flat 512 when the stream is already 48 kHz,
+  // and 512 * 44100 / 48000 = 470.4 -> 470 when the unit's converter is engaged.
+  constexpr std::array<Case, 2> cases{Case{48000, 512}, Case{44100, 470}};
+
+  std::array<double, cases.size()> retainedMilliseconds{};
+  for (std::size_t index = 0; index != cases.size(); ++index) {
+    const Case testCase = cases[index];
+    RateFixture fixture(testCase.rate);
+    expect(fixture.ready, "rate fixture activates at its stream rate");
+
+    // One committed PCM segment: clock resilience is confined to steady state
+    // and must never manufacture a generation's first segment.
+    expect(publishConstant(fixture.ring, 1, testCase.quantum, 1.0F),
+           "producer banks exactly one device pull");
+    std::array<float, NativePcmRing::kSamplesPerSlab> output{};
+    const auto first = fixture.core.render(
+        rateInput(0, testCase.quantum, 0, testCase.rate),
+        std::span<float>(output).first(
+            static_cast<std::size_t>(testCase.quantum) *
+            NativePcmRing::kChannels));
+    expect(first.committed && first.pcmFrames == testCase.quantum,
+           "first segment commits before any resilience applies");
+
+    // Starve past the resync threshold so a real debt exists.
+    std::uint64_t cursor = testCase.quantum;
+    while (cursor - testCase.quantum <
+           static_cast<std::uint64_t>(NativePcmRing::kFramesPerSlab)) {
+      fixture.host.ticks.store(cursor, std::memory_order_relaxed);
+      const auto starved = fixture.core.render(
+          rateInput(cursor, testCase.quantum, cursor, testCase.rate),
+          std::span<float>(output).first(
+              static_cast<std::size_t>(testCase.quantum) *
+              NativePcmRing::kChannels));
+      if (starved.advancedSilentFrames != testCase.quantum) {
+        expect(false, "starved callback publishes its device interval");
+        break;
+      }
+      cursor += testCase.quantum;
+    }
+
+    // Producer fully recovers with four whole access units.
+    for (unsigned slab = 0; slab != 4U; ++slab) {
+      expect(publishConstant(fixture.ring, 1, 1024, 1.0F),
+             "recovered producer publishes one access unit");
+    }
+    fixture.host.ticks.store(cursor, std::memory_order_relaxed);
+    const auto recovered = fixture.core.render(
+        rateInput(cursor, testCase.quantum, cursor, testCase.rate),
+        std::span<float>(output).first(
+            static_cast<std::size_t>(testCase.quantum) *
+            NativePcmRing::kChannels));
+
+    expect(recovered.committed && recovered.pcmFrames == testCase.quantum &&
+               recovered.failure == NativeAudioRenderFailure::None,
+           "a recovered producer resumes playing a full prefix");
+    expect(fixture.core.stats().retiredLateFrames != 0,
+           "surplus catch-up still repays the debt it can afford");
+    expect(recovered.bufferedPcmFramesKnown &&
+               recovered.bufferedPcmFramesAfter != 0,
+           "retirement never strips the ring to zero refill headroom");
+    retainedMilliseconds[index] =
+        1000.0 * static_cast<double>(recovered.bufferedPcmFramesAfter) /
+        static_cast<double>(testCase.rate);
+  }
+
+  // The whole point: the surviving headroom is the same DURATION at both
+  // rates, not the same frame count.
+  expect(retainedMilliseconds[0] >= 30.0 && retainedMilliseconds[1] >= 30.0,
+         "retirement leaves a real refill window at both stream rates");
+  expect(std::abs(retainedMilliseconds[0] - retainedMilliseconds[1]) <= 2.0,
+         "retained refill headroom is rate-independent in milliseconds");
+}
+
 } // namespace
 
 int main() {
@@ -1118,6 +1247,7 @@ int main() {
   testHostFrequencyComposition();
   testExactPartialHostPrefix();
   testExactSampleTimeTiming();
+  testLateRetirementHeadroomIsRateIndependent();
 
   if (failures != 0) {
     std::cerr << failures << " native audio render core check(s) failed\n";

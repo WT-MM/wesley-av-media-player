@@ -191,6 +191,16 @@ inspectedAudioChannelLayoutSizeForTesting() noexcept;
 // empty-media terminator. The backend drops them instead of publishing them;
 // timed zero-sample discontinuity markers must stay false.
 [[nodiscard]] bool mediaFreeMarkerForTesting(CMSampleBufferRef sample) noexcept;
+// Restates a compressed audio sample's per-access-unit durations on the
+// codec's own ordinal packet grid, returning how many entries were restated.
+// A container that folded an edit's end trim into the final access unit is
+// republished at the frame count that unit's own packet decodes to. Only ever
+// lengthens a short unit up to that exact extent; a unit already stated in
+// full, a non-positive duration, and a stream without a fixed packet frame
+// count are all left untouched.
+[[nodiscard]] std::size_t restateCompressedAudioPacketDurationsForTesting(
+    CMSampleBufferRef sample, CMSampleTimingInfo* timing,
+    std::size_t entries) noexcept;
 [[nodiscard]] std::optional<media::MediaTrackDescriptor>
 inspectVideoFormat(CMVideoFormatDescriptionRef format,
                    media::MediaTrackId trackId, media::MediaTime duration,

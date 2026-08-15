@@ -141,8 +141,9 @@ private:
   };
 
   [[nodiscard]] playback_router::Tick nextTick() noexcept;
-  // Re-evaluates the wall-clock watchdog that bounds the two native phases
-  // that own no timer of their own, NativePreparing and NativeStarting.
+  // Re-evaluates the wall-clock watchdog that bounds the native phases that
+  // own no timer of their own: NativePreparing, NativeStarting, NativeSeeking
+  // and NativeStopping.
   void refreshNativePhaseWatchdog();
   void expireNativePhaseWatchdog(std::uint64_t epoch);
   void completeOpenPreflight(NativeOpenPreflightResult result);
@@ -201,6 +202,7 @@ private:
   QPointer<MpvVideoItem> surface_;
   playback_router::PlaybackRouter router_{
       playback_router::TimeoutPolicy{kNativePhaseTickBudget,
+                                     kNativePhaseTickBudget,
                                      kNativePhaseTickBudget,
                                      kNativePhaseTickBudget}};
   std::map<std::uint64_t, SourceRecord> sources_;

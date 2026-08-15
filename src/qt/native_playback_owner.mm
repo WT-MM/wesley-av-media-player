@@ -176,11 +176,23 @@ playback_router::Tick NativePlaybackOwner::nextTick() noexcept {
 // step less: its CommitReady needs an audio-clock proof and a video-draw proof
 // covering the target, and any pipeline stall that withholds either one parks
 // the route with a frozen position, a live window, and complete silence.
+//
+// NativeStopping is bounded for a stronger reason still. Its Stopped proof
+// requires the tracked video output to observe its terminal invalidation, and
+// on the Qt path that observation is published only from a real render pass
+// (QtGlVideoNode acknowledges the invalidated generation while rendering or
+// while being destroyed). A window that has stopped compositing -- fully
+// occluded, on another Space, minimised, or moved offscreen -- therefore never
+// produces it, so a stop or a replacement open issued while parked would wait
+// forever behind the OLD frame with no failure, no timeout and no recovery.
+// The GUI-thread final flush has already invalidated the item by then, so
+// forcing retirement here cannot let a retired generation reach the screen.
 void NativePlaybackOwner::refreshNativePhaseWatchdog() {
   const playback_router::State state = router_.snapshot().state;
   const bool bounded = state == playback_router::State::NativePreparing ||
                        state == playback_router::State::NativeStarting ||
-                       state == playback_router::State::NativeSeeking;
+                       state == playback_router::State::NativeSeeking ||
+                       state == playback_router::State::NativeStopping;
   if (!bounded) {
     // Leaving the bounded phases invalidates any in-flight timer.
     ++nativePhaseWatchdogEpoch_;
@@ -216,11 +228,13 @@ void NativePlaybackOwner::expireNativePhaseWatchdog(std::uint64_t epoch) {
   const playback_router::State state = router_.snapshot().state;
   if (state != playback_router::State::NativePreparing &&
       state != playback_router::State::NativeStarting &&
-      state != playback_router::State::NativeSeeking) {
+      state != playback_router::State::NativeSeeking &&
+      state != playback_router::State::NativeStopping) {
     refreshNativePhaseWatchdog();
     return;
   }
   const bool seeking = state == playback_router::State::NativeSeeking;
+  const bool stopping = state == playback_router::State::NativeStopping;
   // Cross the armed phase deadline in the router's own tick domain. The budget
   // is unreachable by ordinary event ticks, so this is the only way advance()
   // observes an expired deadline.
@@ -230,8 +244,25 @@ void NativePlaybackOwner::expireNativePhaseWatchdog(std::uint64_t epoch) {
   } else {
     tick_ += kNativePhaseTickBudget;
   }
-  playback_router::Transition transition = router_.advance({tick_});
+  // A retirement that cannot complete is released only by destroying the graph
+  // that owes the missing proof. Take the router's decision first so nothing is
+  // torn down unless it actually leaves NativeStopping, then destroy the
+  // session synchronously before any resulting action can build a replacement.
+  playback_router::Transition transition =
+      stopping ? router_.retireStoppingAfterSynchronousTeardown({tick_})
+               : router_.advance({tick_});
   if (!applied(transition)) {
+    // Nothing was retired, so the phase is still live and still needs bounding.
+    refreshNativePhaseWatchdog();
+    return;
+  }
+  if (stopping) {
+    clearNativeSession();
+    nativeStop_.reset();
+    controller_.setLastNotice(QStringLiteral(
+        "Native playback could not retire while the window was not being "
+        "drawn; it was force-retired."));
+    execute(std::move(transition));
     return;
   }
   clearNativeCommit(true);

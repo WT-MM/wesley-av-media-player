@@ -863,6 +863,83 @@ void timeoutStopsButNeverManufacturesQuiescence() {
       "only exact proof releases timed-out native ownership");
 }
 
+// NativeStopping is the phase whose completion needs the video output's
+// terminal invalidation proof, which the Qt path can only publish from a real
+// render pass. A window that has stopped compositing therefore parks the
+// replacement transaction forever. The stop budget must be armed exactly like
+// the other phases, and its expiry must release the retired lineage instead of
+// waiting for a proof that can no longer arrive.
+void stoppingPhaseIsWatchdogBoundedAndForceRetires() {
+  router::PlaybackRouter router({0, 0, 0, 20});
+  const auto prepare = action(router.open(nativeOpen(201, false), {1}),
+                              router::ActionKind::NativePrepare,
+                              "bounded-stop route prepares")
+                           .prepare;
+  const auto start = action(router.onNativePrepared(preparedFor(prepare), {2}),
+                            router::ActionKind::NativeStart,
+                            "bounded-stop route starts")
+                         .start;
+  action(router.onNativeStarted({start.stamp, start.preparedGeneration, 0}, {3}),
+         router::ActionKind::NativeSetRunState,
+         "bounded-stop route becomes active");
+  const auto stop = action(router.open(nativeOpen(202), {4}),
+                           router::ActionKind::NativeStop,
+                           "replacement retires the live native route")
+                        .stop;
+  expect(router.snapshot().state == router::State::NativeStopping &&
+             router.snapshot().hasPendingOpen,
+         "replacement parks in NativeStopping until retirement proves");
+  expect(router.retireStoppingAfterSynchronousTeardown({23}).status ==
+             router::Status::Ignored,
+         "the armed stop deadline is not reached early");
+  expect(router.snapshot().state == router::State::NativeStopping,
+         "an unexpired stop budget keeps the exact proof authoritative");
+  expect(router.advance({24}).status == router::Status::Ignored,
+         "advance never releases retirement, even past the stop deadline");
+  const auto replacement =
+      action(router.retireStoppingAfterSynchronousTeardown({24}),
+             router::ActionKind::NativePrepare,
+             "expired stop budget force-retires and routes the replacement")
+          .prepare;
+  expect(replacement.sourceKey == native::SourceKey{202},
+         "force-retirement routes the queued replacement source");
+  expect(replacement.reservedGeneration.value >
+             stop.invalidationGeneration.value,
+         "force-retirement never reuses the burned stop invalidation");
+  expect(router.onNativeStopped({stop.stamp, stop.invalidationGeneration}, {25})
+                 .status == router::Status::Ignored,
+         "a late Stopped proof cannot re-route an already retired stop");
+}
+
+void unboundedStopBudgetStillRequiresTheExactProof() {
+  router::PlaybackRouter router;
+  const auto prepare = action(router.open(nativeOpen(211, false), {1}),
+                              router::ActionKind::NativePrepare,
+                              "unbounded-stop route prepares")
+                           .prepare;
+  const auto start = action(router.onNativePrepared(preparedFor(prepare), {2}),
+                            router::ActionKind::NativeStart,
+                            "unbounded-stop route starts")
+                         .start;
+  action(router.onNativeStarted({start.stamp, start.preparedGeneration, 0}, {3}),
+         router::ActionKind::NativeSetRunState,
+         "unbounded-stop route becomes active");
+  const auto stop = action(router.open(nativeOpen(212), {4}),
+                           router::ActionKind::NativeStop,
+                           "unbounded-stop replacement retires first")
+                        .stop;
+  expect(router.retireStoppingAfterSynchronousTeardown({100000}).status ==
+             router::Status::Ignored,
+         "a zero stop budget never force-retires, whatever the tick");
+  const auto next =
+      action(router.onNativeStopped({stop.stamp, stop.invalidationGeneration},
+                                    {100001}),
+             router::ActionKind::NativePrepare,
+             "the exact Stopped proof remains the ordinary release");
+  expect(next.prepare.sourceKey == native::SourceKey{212},
+         "proof-released retirement routes the queued replacement");
+}
+
 void naturalEndRetainsNativeUntilExactStop() {
   router::PlaybackRouter router;
   const auto prepare =
@@ -926,6 +1003,8 @@ int main() {
   exhaustionFailsWithoutWrapping();
   wrongLineageAndLatestIntent();
   timeoutStopsButNeverManufacturesQuiescence();
+  stoppingPhaseIsWatchdogBoundedAndForceRetires();
+  unboundedStopBudgetStillRequiresTheExactProof();
   naturalEndRetainsNativeUntilExactStop();
   commitSeekPromotesOnlyExactReady();
   previewFramesReserveLatestGestureAndCommit();

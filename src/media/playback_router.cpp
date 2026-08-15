@@ -306,6 +306,20 @@ Transition PlaybackRouter::abandonNativeAfterSynchronousRetirement(
   return invalid();
 }
 
+Transition PlaybackRouter::retireStoppingAfterSynchronousTeardown(
+    Tick now) noexcept {
+  if (!acceptTick(now)) {
+    return invalid();
+  }
+  // Only the armed stop deadline releases this state. Without an expiry the
+  // exact Stopped proof remains the single authority, so an unbounded policy
+  // and an early caller both keep the strict protocol.
+  if (state_ != State::NativeStopping || !deadlineExpired(now)) {
+    return ignored();
+  }
+  return routeAfterStop(now);
+}
+
 Transition PlaybackRouter::setPaused(bool paused, Tick now) noexcept {
   if (!acceptTick(now)) {
     return invalid();
@@ -446,7 +460,7 @@ bool PlaybackRouter::queueFallbackForCurrent() noexcept {
 }
 
 Transition PlaybackRouter::beginNativeStop(bool fallbackCurrent,
-                                           Tick) noexcept {
+                                           Tick now) noexcept {
   latestPreview_ = {};
   if (fallbackCurrent) {
     fallbackReservationExhausted_ = !queueFallbackForCurrent();
@@ -461,7 +475,12 @@ Transition PlaybackRouter::beginNativeStop(bool fallbackCurrent,
            invalidation};
   serial_ = stop_.stamp.serial;
   state_ = State::NativeStopping;
-  deadlineArmed_ = false;
+  // Retirement owns no timer of its own and its completion depends on a fact
+  // published by the session worker exactly as Prepare, Start and CommitSeek
+  // do. Arm the same deadline here so a Stopped proof that can never arrive is
+  // bounded instead of parking the route silently forever.
+  deadlineArmed_ = timeouts_.stopTicks != 0;
+  deadline_ = deadline(now, timeouts_.stopTicks);
   return applied(nativeStopAction(stop_));
 }
 
