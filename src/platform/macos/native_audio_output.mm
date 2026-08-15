@@ -342,10 +342,18 @@ bool NativeAudioOutput::admittedSampleRate(
          sampleRate == 96000 || sampleRate == 192000;
 }
 
+bool NativeAudioOutput::usableDeviceRate(
+    const AudioStreamBasicDescription &format) const noexcept {
+  return std::isfinite(format.mSampleRate) && format.mSampleRate > 0.0;
+}
+
+// Proves the device has not changed under us since configure() latched it. The
+// device rate need not equal the stream rate: the unit's own converter bridges
+// the two at the input-scope boundary.
 bool NativeAudioOutput::validDeviceRate(
     const AudioStreamBasicDescription &format) const noexcept {
-  return std::isfinite(format.mSampleRate) &&
-         format.mSampleRate == static_cast<Float64>(sample_rate_);
+  return std::isfinite(format.mSampleRate) && device_rate_ > 0.0 &&
+         format.mSampleRate == device_rate_;
 }
 
 AudioStreamBasicDescription NativeAudioOutput::clientFormat() const noexcept {
@@ -588,6 +596,7 @@ NativeAudioOutputProgress NativeAudioOutput::configure(
   used_ = true;
   setState(NativeAudioOutputState::Configuring);
   stopped_.store(true, std::memory_order_release);
+  device_rate_ = 0.0;
 
   const bool validConfiguration =
       validCallTable() && configuration.generation != 0 &&
@@ -657,7 +666,9 @@ NativeAudioOutputProgress NativeAudioOutput::configure(
     static_cast<void>(close());
     return NativeAudioOutputProgress::Failed;
   }
-  if (!validDeviceRate(deviceFormat) ||
+  // The device need not run at the stream rate; it only has to report a usable
+  // rate. Latch it so every later query can prove the device did not change.
+  if (!usableDeviceRate(deviceFormat) ||
       (admission_gate_.load(std::memory_order_acquire) &
        kAdmissionDeviceInvalid) != 0 ||
       failure_.load(std::memory_order_acquire) !=
@@ -667,6 +678,7 @@ NativeAudioOutputProgress NativeAudioOutput::configure(
     static_cast<void>(close());
     return NativeAudioOutputProgress::Failed;
   }
+  device_rate_ = deviceFormat.mSampleRate;
 
   UInt32 maximumFrames = kMaximumFramesPerSlice;
   status = setProperty(kAudioUnitProperty_MaximumFramesPerSlice,
@@ -1052,6 +1064,7 @@ NativeAudioOutputProgress NativeAudioOutput::closeStep() noexcept {
     configured_.store(false, std::memory_order_release);
     published_activated_.store(false, std::memory_order_release);
     activated_ = false;
+    device_rate_ = 0.0;
     setState(NativeAudioOutputState::Closed);
     if (claim_held_) {
       claim_held_ = false;
@@ -1143,6 +1156,7 @@ NativeAudioOutputProgress NativeAudioOutput::closeStep() noexcept {
   configured_.store(false, std::memory_order_release);
   published_activated_.store(false, std::memory_order_release);
   activated_ = false;
+  device_rate_ = 0.0;
   stopped_.store(true, std::memory_order_release);
   setState(NativeAudioOutputState::Closed);
 

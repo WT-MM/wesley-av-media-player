@@ -100,6 +100,31 @@ struct NativeAudioOutputTestAccess {
     output.after_facts_bridge_owner_hook_ = hook;
     output.after_facts_bridge_owner_context_ = context;
   }
+
+  // Seeds the exactly-adjacent carry state the render callback would have left
+  // behind, so a slice sequence can be evaluated deterministically.
+  static void seedCarry(NativeAudioOutput &output, __uint128_t remainder,
+                        __uint128_t denominator, std::uint64_t rateScalarBits,
+                        std::uint64_t endHostTicks) noexcept {
+    output.timing_remainder_ = remainder;
+    output.prior_timing_denominator_ = denominator;
+    output.prior_rate_scalar_bits_ = rateScalarBits;
+    output.prior_end_host_ticks_ = endHostTicks;
+  }
+
+  [[nodiscard]] static bool callbackInput(
+      NativeAudioOutput &output, const AudioTimeStamp &timestamp,
+      std::uint32_t frameCount, NativeAudioRenderInput *input,
+      __uint128_t *nextRemainder, __uint128_t *nextDenominator,
+      std::uint64_t *nextRateScalarBits) noexcept {
+    return output.callbackInput(timestamp, frameCount, input, nextRemainder,
+                                nextDenominator, nextRateScalarBits);
+  }
+
+  [[nodiscard]] static Float64 deviceRate(
+      const NativeAudioOutput &output) noexcept {
+    return output.device_rate_;
+  }
 };
 
 }  // namespace wam::macos
@@ -116,6 +141,7 @@ using wam::macos::NativeAudioOutputTestAccess;
 using wam::macos::NativeAudioOutputWakeSeam;
 using wam::macos::NativeAudioRenderCore;
 using wam::macos::NativeAudioRenderCoreTestAccess;
+using wam::macos::NativeAudioRenderInput;
 using wam::macos::NativeAudioRenderStats;
 using wam::macos::NativeAudioUnitCallTable;
 using wam::macos::NativeMediaClock;
@@ -700,16 +726,32 @@ void testConfigurationAndExactDeviceFormat() {
          "configured facts and client format are interleaved stereo Float32");
   fixture.cleanup();
 
-  Fixture mismatch;
-  mismatch.fake.deviceRate = 44100.0;
-  expect(mismatch.output->configure(mismatch.configuration()) ==
+  Fixture differing;
+  differing.fake.deviceRate = 44100.0;
+  expect(differing.output->configure(differing.configuration()) ==
+             NativeAudioOutputProgress::Done &&
+             differing.output->facts().failure ==
+                 NativeAudioOutputFailure::None &&
+             differing.fake.sawOrdered(
+                 {Call::GetDeviceFormat, Call::SetClientFormat}) &&
+             differing.fake.clientFormat.mSampleRate ==
+                 static_cast<Float64>(kSampleRate) &&
+             differing.output->facts().sampleRate == kSampleRate &&
+             differing.fake.deviceRate == 44100.0,
+         "a device rate that differs from the stream rate is admitted at the "
+         "unit's own converter");
+  differing.cleanup();
+
+  Fixture unusableRate;
+  unusableRate.fake.deviceRate = 0.0;
+  expect(unusableRate.output->configure(unusableRate.configuration()) ==
              NativeAudioOutputProgress::Failed &&
-             mismatch.output->facts().failure ==
+             unusableRate.output->facts().failure ==
                  NativeAudioOutputFailure::DeviceRateMismatch &&
-             mismatch.fake.sawOrdered(
+             unusableRate.fake.sawOrdered(
                  {Call::GetDeviceFormat, Call::Dispose}) &&
-             !mismatch.fake.sawOrdered({Call::SetClientFormat}),
-         "device-rate mismatch fails before any output SRC is configured");
+             !unusableRate.fake.sawOrdered({Call::SetClientFormat}),
+         "an unusable device rate fails before any client format is set");
 
   Fixture invalid;
   expect(invalid.output->configure(invalid.configuration(32000)) ==
@@ -900,7 +942,8 @@ void testPartialInitializationAndStartUnwind() {
          "invalid injected host frequency fails before component lookup");
 
   Fixture preAttachDispose;
-  preAttachDispose.fake.deviceRate = 44100.0;
+  preAttachDispose.fake.deviceRate =
+      std::numeric_limits<double>::quiet_NaN();
   preAttachDispose.fake.failAt = Call::Dispose;
   expect(preAttachDispose.output->configure(
              preAttachDispose.configuration()) ==
@@ -1047,6 +1090,131 @@ void testTimestampModesAndRationalCarry() {
              exactScalar.output->facts().renderedCallbacks == 2 &&
              exactScalar.clock.sample().segmentEndHostTicks == 170668543,
          "exact scalar remainder preserves the next adjacent boundary");
+}
+
+// A 44100 Hz stream on a 48000 Hz device. The device nominal rate is never
+// touched; the output AudioUnit's own converter bridges the two at the
+// input-scope boundary, so the client format and every host-tick computation
+// stay entirely in the 44100 domain. The client slice size that CoreAudio then
+// delivers is 512 * 44100 / 48000 = 470.4, i.e. an alternating 470/471, which
+// makes the carried integer remainder load-bearing on every callback.
+void testStreamRateBelowDeviceRateUsesUnitConverter() {
+  constexpr std::uint32_t kStreamRate = 44100;
+  constexpr std::uint64_t kConverterHostFrequency = 24000000;
+
+  Fixture converted(kConverterHostFrequency);
+  converted.fake.deviceRate = 48000.0;
+  expect(converted.anchored && converted.output &&
+             converted.output->configure(
+                 converted.configuration(kStreamRate)) ==
+                 NativeAudioOutputProgress::Done &&
+             converted.output->facts().failure ==
+                 NativeAudioOutputFailure::None,
+         "a 44100 stream configures against a 48000 default output device");
+  expect(converted.fake.clientFormat.mSampleRate ==
+             static_cast<Float64>(kStreamRate) &&
+             converted.fake.clientFormat.mFormatID == kAudioFormatLinearPCM &&
+             converted.fake.clientFormat.mChannelsPerFrame == 2 &&
+             converted.fake.clientFormat.mBytesPerFrame == 8 &&
+             converted.fake.deviceRate == 48000.0 &&
+             NativeAudioOutputTestAccess::deviceRate(*converted.output) ==
+                 48000.0,
+         "the client format carries the stream rate while the device keeps its "
+         "own nominal rate");
+  expect(converted.output->facts().sampleRate == kStreamRate,
+         "published facts report the stream rate, not the device rate");
+
+  converted.core.setPaused(false);
+  expect(converted.output->start() == NativeAudioOutputProgress::Done,
+         "a 44100 stream starts on a 48000 device");
+
+  // The AU-internal converter reports client-domain slices, so the exact
+  // rational endpoints must chain across a non-uniform 470/471/470 sequence.
+  std::array<float, 940> shortSlice{};
+  std::array<float, 942> longSlice{};
+  converted.host.ticks.store(0, std::memory_order_relaxed);
+  expect(publishConstant(converted.ring, 470) &&
+             invokeTracked(converted.fake, hostTimestamp(0), 470,
+                           shortSlice) == noErr &&
+             converted.output->facts().frameCursor == 470 &&
+             converted.clock.sample().segmentEndHostTicks == 255782,
+         "first 470-frame client slice lands on its exact rational endpoint");
+  converted.host.ticks.store(255782, std::memory_order_relaxed);
+  expect(publishConstant(converted.ring, 471) &&
+             invokeTracked(converted.fake, hostTimestamp(255782), 471,
+                           longSlice) == noErr &&
+             converted.output->facts().frameCursor == 941 &&
+             converted.clock.sample().segmentEndHostTicks == 512108,
+         "adjacent 471-frame client slice carries the remainder forward");
+  converted.host.ticks.store(512108, std::memory_order_relaxed);
+  expect(publishConstant(converted.ring, 470) &&
+             invokeTracked(converted.fake, hostTimestamp(512108), 470,
+                           shortSlice) == noErr &&
+             converted.output->facts().frameCursor == 1411 &&
+             converted.clock.sample().segmentEndHostTicks == 767891 &&
+             converted.output->facts().failure ==
+                 NativeAudioOutputFailure::None,
+         "the carried remainder makes 1411 client frames end at the exact "
+         "floor 767891 rather than the 767890 a per-slice truncation gives");
+
+  // Direct evaluation of the adapter's rational input, seeded with the carry
+  // state each preceding slice leaves behind.
+  const std::uint64_t unitScalarBits = std::bit_cast<std::uint64_t>(1.0);
+  NativeAudioRenderInput input{};
+  __uint128_t remainder = 0;
+  __uint128_t denominator = 0;
+  std::uint64_t scalarBits = 0;
+
+  NativeAudioOutputTestAccess::seedCarry(*converted.output, 0, 0, 0, 0);
+  expect(NativeAudioOutputTestAccess::callbackInput(
+             *converted.output, hostTimestamp(0), 470, &input, &remainder,
+             &denominator, &scalarBits) &&
+             input.sampleRate == kStreamRate &&
+             input.hostTickDenominator == static_cast<__uint128_t>(44100) &&
+             input.hostTickNumeratorPerFrame ==
+                 static_cast<__uint128_t>(kConverterHostFrequency) &&
+             input.hostTickRemainderAtStart == 0 &&
+             input.endHostTicks == 255782 &&
+             denominator == static_cast<__uint128_t>(44100) &&
+             remainder == static_cast<__uint128_t>(13800) &&
+             scalarBits == unitScalarBits,
+         "callbackInput denominates 470 client frames in the 44100 domain");
+
+  NativeAudioOutputTestAccess::seedCarry(
+      *converted.output, static_cast<__uint128_t>(13800),
+      static_cast<__uint128_t>(44100), unitScalarBits, 255782);
+  expect(NativeAudioOutputTestAccess::callbackInput(
+             *converted.output, hostTimestamp(255782), 471, &input,
+             &remainder, &denominator, &scalarBits) &&
+             input.hostTickDenominator == static_cast<__uint128_t>(44100) &&
+             input.hostTickRemainderAtStart ==
+                 static_cast<__uint128_t>(13800) &&
+             input.firstHostTicks == 255782 &&
+             input.endHostTicks == 512108 &&
+             remainder == static_cast<__uint128_t>(37200),
+         "an exactly adjacent 471-frame slice consumes the carried remainder");
+
+  NativeAudioOutputTestAccess::seedCarry(
+      *converted.output, static_cast<__uint128_t>(37200),
+      static_cast<__uint128_t>(44100), unitScalarBits, 512108);
+  expect(NativeAudioOutputTestAccess::callbackInput(
+             *converted.output, hostTimestamp(512108), 470, &input,
+             &remainder, &denominator, &scalarBits) &&
+             input.hostTickRemainderAtStart ==
+                 static_cast<__uint128_t>(37200) &&
+             input.firstHostTicks == 512108 &&
+             input.endHostTicks == 767891 &&
+             remainder == static_cast<__uint128_t>(6900),
+         "the accumulated carry lengthens the third slice by one host tick");
+
+  // A device that changes away from the latched rate is still fatal, even
+  // though the stream rate never equalled it.
+  converted.fake.changeDeviceRate(44100.0);
+  expect(converted.output->facts().failure ==
+             NativeAudioOutputFailure::DeviceRateMismatch &&
+             !converted.output->facts().started,
+         "a live device rate change remains fatal under unit conversion");
+  converted.cleanup();
 }
 
 void testMalformedAndPostStopCallbacks() {
@@ -1889,6 +2057,7 @@ int main() {
     testConfigurationAndExactDeviceFormat();
     testPartialInitializationAndStartUnwind();
     testTimestampModesAndRationalCarry();
+    testStreamRateBelowDeviceRateUsesUnitConverter();
     testMalformedAndPostStopCallbacks();
     testFrameAndTimestampOverflow();
     testDeviceChangeWinsStartCommit();
