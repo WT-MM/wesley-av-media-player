@@ -2,14 +2,17 @@
 
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <functional>
 #include <iostream>
 #include <memory>
 #include <optional>
 #include <span>
 #include <string>
+#include <thread>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -501,6 +504,11 @@ struct FakeConsumerState {
   int firstRetireOrder{0};
   std::shared_ptr<std::atomic<std::uint64_t>> observedDestructions;
   bool payloadReleasedAtFirstRetire{false};
+  // Runs inside configure(), on whichever thread the dispatcher configured
+  // this port from. It exists to hold one port inside configure() while the
+  // peer port is configured concurrently, so a test can land an owner-visible
+  // event in the middle of the parallel configure window.
+  std::function<void()> configureHook;
 };
 
 NativeMediaConsumeResult configureConsumer(
@@ -511,6 +519,9 @@ NativeMediaConsumeResult configureConsumer(
   state.configuredTrack = track.id;
   state.configuredGeneration = generation;
   state.configuredTimeline = timeline;
+  if (state.configureHook) {
+    state.configureHook();
+  }
   return state.configureResult;
 }
 
@@ -1735,6 +1746,29 @@ void checkExactTerminalRetirement() {
          "terminal retirement supersedes a pending seek and prevents its "
          "candidate facts from ever publishing");
 
+  // Partial configure failure under parallel port configuration.
+  //
+  // These two expectations used to assert the mechanics of a strictly serial
+  // configure: video was configured first, so a video rejection returned
+  // before audio was ever called, and audio was retired with a retired
+  // generation of zero because it had never been exposed.
+  //
+  // openLocalFile() now configures audio on a joined worker thread while it
+  // configures video on the owner thread, because VTDecompressionSessionCreate
+  // and AudioUnitInitialize are independent and both IPC-bound; serializing
+  // them charged every open the sum of their latencies. The losing port can no
+  // longer be "the one we never got to" -- both ports are called, and both are
+  // stamped as exposed at the exact generation on the owner thread before
+  // either configure() runs.
+  //
+  // The INTENT of the old invariant is exactly what is asserted below and is
+  // unchanged: exposure accounting must be exact, and there must never be an
+  // exposed-but-unaccounted port. What changes is only the mechanism by which
+  // a port becomes exposed. So the fixture still proves the no-leak property,
+  // and proves it on the harder case: audio genuinely configured, video
+  // failed, and audio must still be retired exactly once, at generation 4, by
+  // the ordinary retirement machinery -- configured ports are always retired
+  // ports, whichever port lost the race.
   TestRig partial = makeRig({});
   partial.video->configureResult = NativeMediaConsumeResult::Unsupported;
   const NativeMediaDispatcherOpenOutcome partialOpen =
@@ -1743,16 +1777,105 @@ void checkExactTerminalRetirement() {
              partial.dispatcher->stats().state ==
                  NativeMediaDispatcherState::Failed &&
              partial.video->configureCalls == 1 &&
-             partial.audio->configureCalls == 0,
-         "partial configuration fixture exposes only the attempted port");
+             partial.audio->configureCalls == 1 &&
+             partial.audio->configuredGeneration == 4 &&
+             partial.dispatcher->stats().videoExposedGeneration == 4 &&
+             partial.dispatcher->stats().audioExposedGeneration == 4,
+         "parallel configuration exposes both ports at the exact generation "
+         "even when one of them rejects the open");
   const NativeMediaDispatcherLifecycleOutcome partialRetired =
       partial.dispatcher->retire(4, 8);
   expect(partialRetired.status == NativeMediaDispatcherLifecycleStatus::Done &&
              partial.video->retireGenerations.back() ==
                  std::pair<MediaGeneration, MediaGeneration>{4, 8} &&
              partial.audio->retireGenerations.back() ==
-                 std::pair<MediaGeneration, MediaGeneration>{0, 8},
-         "retirement calls even an unconfigured port with retired zero");
+                 std::pair<MediaGeneration, MediaGeneration>{4, 8} &&
+             partial.audio->retireCalls == partial.audio->configureCalls &&
+             partial.video->retireCalls == partial.video->configureCalls,
+         "a port that configured while its peer failed is retired exactly "
+         "once at the generation it was configured with, so the failed open "
+         "leaks no configured port");
+}
+
+// Parallel open-time configure: the worker must never outlive openLocalFile,
+// and an owner-visible event that lands in the middle of the configure window
+// must not be able to observe a half-exposed dispatcher or strand a port.
+//
+// Each case holds the video port inside configure() while the audio worker is
+// running, so the two configures genuinely overlap rather than the worker
+// merely finishing first. The requestCancel() that lands in that window is the
+// documented cross-thread seam, so this is exactly the "cancel mid-open" shape
+// the parallel-configure design has to survive.
+void checkParallelConfigureJoinsAndRetiresExactly() {
+  // Case 1: cancellation lands mid-open while both ports configure.
+  // The open still completes, both ports are configured exactly once at the
+  // exact generation, and the worker is joined before openLocalFile returns.
+  TestRig cancelled = makeRig({});
+  NativeMediaDispatcher* cancelledDispatcher = cancelled.dispatcher.get();
+  std::atomic<bool> cancelDelivered{false};
+  cancelled.video->configureHook = [cancelledDispatcher, &cancelDelivered]() {
+    std::thread canceller([cancelledDispatcher, &cancelDelivered]() {
+      cancelledDispatcher->requestCancel(4);
+      cancelDelivered.store(true, std::memory_order_release);
+    });
+    canceller.join();
+    // Widen the overlap so the audio worker is still inside configure().
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  };
+  const NativeMediaDispatcherOpenOutcome cancelledOpen =
+      cancelled.dispatcher->openLocalFile("cancel.mp4", requiredAvOptions(), 4);
+  expect(cancelDelivered.load(std::memory_order_acquire) &&
+             cancelled.video->configureCalls == 1 &&
+             cancelled.audio->configureCalls == 1 &&
+             cancelled.video->configuredGeneration == 4 &&
+             cancelled.audio->configuredGeneration == 4 &&
+             cancelledOpen.generation == 4,
+         "a cancellation landing inside the parallel configure window still "
+         "joins the audio worker and exposes both ports exactly once");
+  // Whatever verdict the open reached, terminal retirement must name both
+  // ports exactly once at the generation they were configured with.
+  const NativeMediaDispatcherLifecycleOutcome cancelledRetired =
+      cancelled.dispatcher->retire(cancelled.dispatcher->stats().generation, 11);
+  expect(cancelledRetired.status == NativeMediaDispatcherLifecycleStatus::Done &&
+             cancelled.video->retireGenerations.back() ==
+                 std::pair<MediaGeneration, MediaGeneration>{4, 11} &&
+             cancelled.audio->retireGenerations.back() ==
+                 std::pair<MediaGeneration, MediaGeneration>{4, 11} &&
+             cancelled.video->retireCalls == cancelled.video->configureCalls &&
+             cancelled.audio->retireCalls == cancelled.audio->configureCalls,
+         "a cancelled-mid-open generation is retired exactly once per port");
+
+  // Case 2: the same mid-open cancellation, but video also rejects the open.
+  // This is the no-leak case: audio genuinely configured on the worker, video
+  // failed on the owner thread, and audio must still be retired exactly.
+  TestRig lost = makeRig({});
+  NativeMediaDispatcher* lostDispatcher = lost.dispatcher.get();
+  lost.video->configureResult = NativeMediaConsumeResult::Unsupported;
+  lost.video->configureHook = [lostDispatcher]() {
+    std::thread canceller(
+        [lostDispatcher]() { lostDispatcher->requestCancel(5); });
+    canceller.join();
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  };
+  const NativeMediaDispatcherOpenOutcome lostOpen =
+      lost.dispatcher->openLocalFile("lost.mp4", requiredAvOptions(), 5);
+  expect(lostOpen.status == NativeMediaDispatcherOpenStatus::Failed &&
+             lost.dispatcher->stats().state ==
+                 NativeMediaDispatcherState::Failed &&
+             lost.video->configureCalls == 1 &&
+             lost.audio->configureCalls == 1 &&
+             lost.audio->configuredGeneration == 5 &&
+             lost.dispatcher->stats().audioExposedGeneration == 5,
+         "a video rejection during a cancelled parallel configure still joins "
+         "and accounts the audio port");
+  const NativeMediaDispatcherLifecycleOutcome lostRetired =
+      lost.dispatcher->retire(5, 12);
+  expect(lostRetired.status == NativeMediaDispatcherLifecycleStatus::Done &&
+             lost.audio->retireGenerations.back() ==
+                 std::pair<MediaGeneration, MediaGeneration>{5, 12} &&
+             lost.audio->retireCalls == lost.audio->configureCalls &&
+             lost.video->retireCalls == lost.video->configureCalls,
+         "the losing parallel configure leaks no configured audio port");
 }
 
 void checkFormatChangeFailsClosed() {
@@ -1798,6 +1921,7 @@ int main() {
   checkSourceFirstSeekCommitAndFailedSeekPreservation();
   checkQuiescingCancelAndCloseProofs();
   checkExactTerminalRetirement();
+  checkParallelConfigureJoinsAndRetiresExactly();
   checkFormatChangeFailsClosed();
   std::cout << "native media dispatcher checks passed\n";
   return 0;

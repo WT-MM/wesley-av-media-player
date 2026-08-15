@@ -366,9 +366,29 @@ struct NativeMediaDispatcherStats {
   std::uint64_t acceptedSeeks{0};
 };
 
-// Deterministic single-owner demux/dispatch core. It creates no thread, timer,
-// callback, or queue. Exactly one MediaSource is opened once, and read
-// admission is per lane rather than global.
+// Deterministic single-owner demux/dispatch core. It creates no timer,
+// callback, or queue, and no thread outlives the call that made it: the only
+// thread this class ever creates is the open-time audio configure worker
+// described below, which is always joined inside openLocalFile(). Exactly one
+// MediaSource is opened once, and read admission is per lane rather than
+// global.
+//
+// Parallel open-time configuration. VTDecompressionSessionCreate and
+// AudioUnitInitialize are independent and both IPC-bound, so configuring the
+// two ports one after the other charged every open the sum of their latencies.
+// openLocalFile() therefore configures audio on one worker thread while it
+// configures video on the owner thread, and joins that worker before it
+// decides any verdict. Both ports are marked configured and stamped with the
+// exact generation on the owner thread before either configure() runs, so the
+// old exposure invariant holds unchanged in intent: a port is accounted from
+// the moment it can be called, never merely from the moment it succeeds. The
+// worker mutates no dispatcher state, so the join is the single owner-thread
+// transition that the staged/pending generation facts can observe; there is no
+// half-exposed state to sample. When video configure fails after audio
+// configure succeeded, audio is already accounted as configured at the exact
+// generation, and the ordinary FailureCancel and retire() machinery retires it
+// exactly once at that generation -- configured ports are always retired
+// ports, whichever port lost.
 //
 // Lane admission. MediaSource::readNext() is a single merged pull, so the
 // dispatcher cannot ask for one track: it must own storage for whatever the

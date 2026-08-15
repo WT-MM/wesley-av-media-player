@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <thread>
 #include <type_traits>
 #include <utility>
 
@@ -22,6 +23,17 @@ bool lifecycleFailure(NativeMediaConsumerProgress progress) noexcept {
          progress == NativeMediaConsumerProgress::Unsupported ||
          progress == NativeMediaConsumerProgress::Failed;
 }
+
+// Verdict of one port's open-time configure() attempt. Skipped means the
+// descriptor selected no track for that port, so the port was never exposed.
+// Threw records an escaped exception without letting it cross a thread
+// boundary or skip the join that the parallel configure depends on.
+enum class OpenConfigureVerdict : std::uint8_t {
+  Skipped,
+  Accepted,
+  Rejected,
+  Threw,
+};
 
 [[nodiscard]] std::optional<NativeMediaGenerationTimeline> deriveTimeline(
     MediaGeneration generation, MediaSeekMode mode, MediaTime requestedTarget,
@@ -320,36 +332,144 @@ NativeMediaDispatcherOpenOutcome NativeMediaDispatcher::openLocalFile(
   stats_.selectedAudio = descriptor_->selectedAudio.value_or(0);
   consumer_generation_ = generation;
 
-  try {
-    if (descriptor_->selectedVideo) {
-      const MediaTrackDescriptor* track =
-          findMediaTrack(*descriptor_, *descriptor_->selectedVideo);
-      stats_.videoConfigured = true;
-      // configure() exposes the generation even when the port rejects it.
-      // Terminal retirement must therefore name it precisely.
-      video_exposed_generation_ = generation;
-      if (track == nullptr ||
-          video_->configure(*track, generation, *timeline, nullptr) !=
-              NativeMediaConsumeResult::Accepted) {
-        fail(NativeMediaDispatcherFailure::ConsumerConfiguration, generation);
-        result.status = NativeMediaDispatcherOpenStatus::Failed;
-        return result;
+  // Parallel port configuration.
+  //
+  // VTDecompressionSessionCreate and AudioUnitInitialize are both IPC-bound on
+  // their own daemons and share no state, so running them one after the other
+  // simply added their latencies (~69 ms + ~59 ms) to every open. Audio is
+  // therefore configured on a single worker thread while video is configured
+  // on the owner thread, and the open's verdict is decided only after that
+  // worker is joined.
+  //
+  // Exposure accounting is unchanged in intent and strengthened in mechanics.
+  // Both ports are marked configured and stamped with the exact generation
+  // here, on the owner thread, BEFORE either configure() runs: configure()
+  // exposes the generation even when the port rejects it, and under
+  // concurrency neither port may be observed as "called but unaccounted".
+  // Terminal retirement therefore names both ports precisely, so a port that
+  // configured successfully while its peer failed is still retired exactly
+  // once at this generation by the ordinary FailureCancel/retire() machinery.
+  //
+  // The worker writes nothing the dispatcher owns: it touches only its own
+  // verdict slot and the two const inputs (track descriptor and timeline).
+  // Every dispatcher-visible mutation happens on the owner thread after the
+  // join, so the staged/pending generation facts seam still observes the
+  // whole configure as one atomic owner transition and can never sample a
+  // half-exposed dispatcher.
+  const MediaTrackDescriptor* videoTrack =
+      descriptor_->selectedVideo
+          ? findMediaTrack(*descriptor_, *descriptor_->selectedVideo)
+          : nullptr;
+  const MediaTrackDescriptor* audioTrack =
+      descriptor_->selectedAudio
+          ? findMediaTrack(*descriptor_, *descriptor_->selectedAudio)
+          : nullptr;
+  if (descriptor_->selectedVideo) {
+    stats_.videoConfigured = true;
+    video_exposed_generation_ = generation;
+  }
+  if (descriptor_->selectedAudio) {
+    stats_.audioConfigured = true;
+    audio_exposed_generation_ = generation;
+  }
+
+  const NativeMediaGenerationTimeline& configureTimeline = *timeline;
+  OpenConfigureVerdict videoVerdict = OpenConfigureVerdict::Skipped;
+  OpenConfigureVerdict audioVerdict = OpenConfigureVerdict::Skipped;
+
+  const auto configureAudio = [this, audioTrack, generation,
+                               &configureTimeline,
+                               &audioVerdict]() noexcept {
+    if (audioTrack == nullptr) {
+      audioVerdict = OpenConfigureVerdict::Rejected;
+      return;
+    }
+    try {
+      audioVerdict =
+          audio_->configure(*audioTrack, generation, configureTimeline,
+                            nullptr) == NativeMediaConsumeResult::Accepted
+              ? OpenConfigureVerdict::Accepted
+              : OpenConfigureVerdict::Rejected;
+    } catch (...) {
+      // An exception must never cross the thread boundary: it would bypass
+      // the join and terminate. Record it and let the owner thread decide.
+      audioVerdict = OpenConfigureVerdict::Threw;
+    }
+  };
+
+  // Structural join. The correctness argument for every shared write below is
+  // "the worker has already finished", so the join is performed explicitly at
+  // the join point, before any verdict is read. The destructor is the backstop
+  // that keeps that invariant true by SCOPE rather than by comment discipline:
+  // a future edit that adds an early return between the spawn and the verdict
+  // would otherwise destroy a joinable thread and terminate the process.
+  // join() itself can throw std::system_error and openLocalFile is noexcept,
+  // so the throw is swallowed in both places.
+  struct WorkerJoin {
+    std::thread worker;
+    void join() noexcept {
+      if (!worker.joinable()) {
+        return;
+      }
+      try {
+        worker.join();
+      } catch (...) {
+        // Deliberately ignored: the worker lambda is noexcept and has already
+        // published its verdict, so a join that reports std::system_error
+        // costs only an unreclaimed thread handle. There is nothing to report
+        // and nothing a caller could do, and letting it escape a noexcept open
+        // would terminate the process instead.
       }
     }
-    if (descriptor_->selectedAudio) {
-      const MediaTrackDescriptor* track =
-          findMediaTrack(*descriptor_, *descriptor_->selectedAudio);
-      stats_.audioConfigured = true;
-      audio_exposed_generation_ = generation;
-      if (track == nullptr ||
-          audio_->configure(*track, generation, *timeline, nullptr) !=
-              NativeMediaConsumeResult::Accepted) {
-        fail(NativeMediaDispatcherFailure::ConsumerConfiguration, generation);
-        result.status = NativeMediaDispatcherOpenStatus::Failed;
-        return result;
+    ~WorkerJoin() { join(); }
+  };
+
+  // Only a dual-track open can win anything from a worker; a single-port open
+  // configures inline and never pays for thread creation.
+  WorkerJoin audioWorker;
+  if (descriptor_->selectedAudio && descriptor_->selectedVideo) {
+    try {
+      audioWorker.worker = std::thread(configureAudio);
+    } catch (...) {
+      // Thread creation is the only failure allowed to degrade this path, and
+      // it degrades to the previous serial behaviour rather than to an open
+      // failure. The handle stays non-joinable and audio is configured below.
+    }
+  }
+
+  if (descriptor_->selectedVideo) {
+    if (videoTrack == nullptr) {
+      videoVerdict = OpenConfigureVerdict::Rejected;
+    } else {
+      try {
+        videoVerdict =
+            video_->configure(*videoTrack, generation, configureTimeline,
+                              nullptr) == NativeMediaConsumeResult::Accepted
+                ? OpenConfigureVerdict::Accepted
+                : OpenConfigureVerdict::Rejected;
+      } catch (...) {
+        videoVerdict = OpenConfigureVerdict::Threw;
       }
     }
-  } catch (...) {
+  }
+
+  const bool audioRanOnWorker = audioWorker.worker.joinable();
+  audioWorker.join();
+  if (!audioRanOnWorker && descriptor_->selectedAudio) {
+    // Video-free open, or a worker that could not be created.
+    configureAudio();
+  }
+
+  // Verdict is decided only here, with both ports joined and both exposures
+  // already accounted.
+  if (videoVerdict != OpenConfigureVerdict::Skipped &&
+      videoVerdict != OpenConfigureVerdict::Accepted) {
+    fail(NativeMediaDispatcherFailure::ConsumerConfiguration, generation);
+    result.status = NativeMediaDispatcherOpenStatus::Failed;
+    return result;
+  }
+  if (audioVerdict != OpenConfigureVerdict::Skipped &&
+      audioVerdict != OpenConfigureVerdict::Accepted) {
     fail(NativeMediaDispatcherFailure::ConsumerConfiguration, generation);
     result.status = NativeMediaDispatcherOpenStatus::Failed;
     return result;
