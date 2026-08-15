@@ -225,6 +225,12 @@ class NativeAudioSession final : public media::NativeAudioConsumer {
   [[nodiscard]] NativeAudioSessionProgress setMuted(bool muted) noexcept;
   [[nodiscard]] NativeAudioSessionProgress stop() noexcept;
   [[nodiscard]] NativeMediaClockSnapshot visibleClock() const noexcept;
+  // Diagnostic-only view of the render callback's cumulative counters. Every
+  // field is a plain relaxed atomic owned by the callback, so this read is
+  // allocation-, lock- and wait-free and may race render() exactly like
+  // visibleClock(). It exists so an owner can sample underrun/late-frame
+  // facts without adding any work to the real-time callback itself.
+  [[nodiscard]] NativeAudioRenderStats renderStats() const noexcept;
   [[nodiscard]] NativeAudioSessionFacts facts() const noexcept;
   // Exact Ready + stopped/quiescent owner-thread phase boundary. Success resets only
   // the two diagnostic leaf HWMs, seeding each from its current ownership.

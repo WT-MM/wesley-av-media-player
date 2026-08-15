@@ -6,6 +6,7 @@
 #include "qt/native_open_preflight.hpp"
 
 #include <QPointer>
+#include <QTimer>
 #include <QUrl>
 
 #include <cstdint>
@@ -191,6 +192,9 @@ private:
   void clearNativeCommit(bool notifyFailure) noexcept;
   void clearNativeSession() noexcept;
   void surfaceNativeError(const QString &detail);
+  // Both are no-ops unless WAM_PLAYBACK_METRICS_PATH names an absolute path.
+  void startPlaybackMetrics();
+  void samplePlaybackMetrics();
 
   // Ticks carry no implied unit. This owner drives them as an event counter,
   // so an ordinary open consumes a handful. A phase budget far above that is
@@ -230,6 +234,8 @@ private:
   std::uint64_t nativePhaseWatchdogEpoch_{0};
   bool nativePhaseWatchdogArmed_{false};
   NativeBenchmarkTelemetry *telemetry_{nullptr};
+  // Constructed only when the opt-in playback metrics stream is enabled.
+  std::unique_ptr<QTimer> metricsTimer_;
   bool firstNativeDrawReported_{false};
   PreviewDisposition nativePreviewDisposition_{PreviewDisposition::Rejected};
   bool nativeCommitDispatchAccepted_{false};

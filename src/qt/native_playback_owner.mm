@@ -2,6 +2,7 @@
 
 #include "mpv_video_item.hpp"
 #include "native_benchmark_telemetry.hpp"
+#include "native_playback_metrics.hpp"
 #include "platform/macos/native_media_session_system.hpp"
 #include "playback/mpv/mpv_runtime.hpp"
 #include "player_controller.hpp"
@@ -146,6 +147,57 @@ NativePlaybackOwner::NativePlaybackOwner(PlayerController &controller)
   if (telemetry.enabled()) {
     telemetry_ = &telemetry;
   }
+  startPlaybackMetrics();
+}
+
+// Sampling is driven from the GUI thread on purpose. This owner is the only
+// object that knows which native session is current, and a GUI-thread timer
+// linearizes the snapshot against every session swap performed here, so a
+// sample can never straddle two epochs. It creates no thread of its own and
+// adds nothing to the audio render callback or the Qt render thread. When
+// WAM_PLAYBACK_METRICS_PATH is unset the singleton is disabled, no QTimer is
+// constructed, and nothing below ever runs.
+void NativePlaybackOwner::startPlaybackMetrics() {
+  NativePlaybackMetrics &metrics = NativePlaybackMetrics::instance();
+  if (!metrics.enabled()) {
+    return;
+  }
+  metricsTimer_ = std::make_unique<QTimer>();
+  metricsTimer_->setTimerType(Qt::CoarseTimer);
+  metricsTimer_->setInterval(
+      static_cast<int>(metrics.intervalMilliseconds()));
+  // The timer is the connection's context object as well as its sender, so
+  // destroying it with this owner also severs the lambda's `this` capture.
+  QObject::connect(metricsTimer_.get(), &QTimer::timeout, metricsTimer_.get(),
+                   [this] { samplePlaybackMetrics(); });
+  metricsTimer_->start();
+}
+
+void NativePlaybackOwner::samplePlaybackMetrics() {
+  NativePlaybackMetrics &metrics = NativePlaybackMetrics::instance();
+  NativePlaybackMetricsSample sample;
+  if (nativeSession_ != nullptr) {
+    const ::wam::macos::NativeMediaSessionMetrics sampled =
+        nativeSession_->metrics();
+    sample.drawnFrames = sampled.drawnFrames;
+    sample.submittedFrames = sampled.submittedFrames;
+    sample.supersededFrames = sampled.supersededFrames;
+    sample.discardedLateFrames = sampled.discardedLateFrames;
+    sample.audioUnderrunCallbacks = sampled.audioUnderrunCallbacks;
+    sample.audioClockAdvancedUnderruns = sampled.audioClockAdvancedUnderruns;
+    sample.audioRetiredLateFrames = sampled.audioRetiredLateFrames;
+    sample.audioCallbacks = sampled.audioCallbacks;
+    sample.audioRenderedFrames = sampled.audioRenderedFrames;
+    sample.mediaSeconds = sampled.mediaSeconds;
+    sample.clockRate = sampled.clockRate;
+    sample.hasVideo = sampled.videoValid;
+    sample.hasAudio = sampled.audioValid;
+    sample.hasClock = sampled.clockValid;
+    sample.paused = sampled.paused;
+  }
+  // With no native session the sample carries no counters at all: every field
+  // stays unavailable and is emitted as null rather than as a fabricated zero.
+  static_cast<void>(metrics.write(sample));
 }
 
 NativePlaybackOwner::~NativePlaybackOwner() {
