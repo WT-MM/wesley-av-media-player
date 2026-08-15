@@ -364,6 +364,8 @@ if(APPLE)
       src/platform/macos/native_audio_session.mm
       src/platform/macos/native_media_session.hpp
       src/platform/macos/native_media_session.mm
+      src/platform/macos/native_silent_timebase.hpp
+      src/platform/macos/native_silent_timebase.cpp
       src/platform/macos/native_preview_frame_lane.hpp
       src/platform/macos/native_preview_frame_lane.mm
       src/platform/macos/native_tracked_video_arbiter.hpp
@@ -1026,6 +1028,10 @@ if(BUILD_TESTING)
         src/platform/macos/avfoundation_preview_source.mm
         src/platform/macos/native_media_session.hpp
         src/platform/macos/native_media_session.mm
+        src/platform/macos/native_media_clock.hpp
+        src/platform/macos/native_media_clock.cpp
+        src/platform/macos/native_silent_timebase.hpp
+        src/platform/macos/native_silent_timebase.cpp
         src/platform/macos/native_preview_frame_lane.hpp
         src/platform/macos/native_preview_frame_lane.mm)
       target_include_directories(wam_native_media_session_test PRIVATE src)

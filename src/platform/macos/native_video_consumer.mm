@@ -36,6 +36,38 @@ void assignError(std::string* error, const char* message) {
   }
 }
 
+// Exact ceiling on decoded-surface ownership for one compressed admission.
+// kMaximumDecodedSurfaceOwnership is the documented share of the process-wide
+// budget, raised only as far as the codec's own reorder floor requires:
+// VideoToolboxDecoder::drainPresentation() delivers nothing until retention
+// exceeds codecReorderFrames, so a bound at or below that floor would refuse
+// the very input that produces the next presentable frame.
+[[nodiscard]] std::size_t decodedSurfaceOwnershipBound(
+    const VideoToolboxDecoderStats& decoder) noexcept {
+  return std::max(NativeVideoConsumer::kMaximumDecodedSurfaceOwnership,
+                  decoder.codecReorderFrames + 1);
+}
+
+// Decoder credit alone is not a decoded-surface bound. VideoToolbox retains
+// maxInFlightFrames + codecReorderFrames decoded frames, and every retained
+// frame holds one IOSurface charge from the shared
+// kNativeSurfaceBudgetMaximumSurfaces pool. An audio-paced route never reached
+// that ceiling because PCM-ring backpressure closed the dispatcher's merged
+// read gate long before decoded read-ahead could grow. A host-paced route has
+// no such throttle, so decoded read-ahead expanded until the budget saturated
+// and FrameLease's acquire started failing inside the decode callback -- which
+// retires the frame as an ordered budget tombstone, invisible to every
+// preroll/late/superseded counter, and silently halves the drawn frame rate.
+// Bounding ownership here keeps the same read-ahead as compressed bytes in the
+// dispatcher's video lane, which is bounded by payload size rather than by
+// scarce decoded surfaces.
+[[nodiscard]] bool decodedSurfaceAdmissionOpen(
+    const VideoToolboxDecoderStats& decoder) noexcept {
+  const std::size_t owned =
+      decoder.inFlightFrames + decoder.retainedPresentationFrames;
+  return owned < decodedSurfaceOwnershipBound(decoder);
+}
+
 [[nodiscard]] WideUnsigned magnitude(WideSigned value) noexcept {
   if (value >= 0) {
     return static_cast<WideUnsigned>(value);
@@ -1351,7 +1383,8 @@ media::NativeMediaConsumeResult NativeVideoConsumer::capacity(
     impl.latch(NativeVideoConsumerFailure::Decoder);
     return media::NativeMediaConsumeResult::Failed;
   }
-  return decoder.acceptsCompressedSample
+  return decoder.acceptsCompressedSample &&
+                 decodedSurfaceAdmissionOpen(decoder)
              ? media::NativeMediaConsumeResult::Accepted
              : media::NativeMediaConsumeResult::Backpressure;
 }
@@ -1414,8 +1447,11 @@ media::NativeMediaConsumeResult NativeVideoConsumer::trySample(
   // It also made a compositor that stops presenting terminal: an accepted but
   // undrawn frame blocked decode, so nothing could become late, so nothing
   // could be retired, and the only wake left was the draw that was never
-  // coming. Decoder in-flight credit is the real memory bound and it still
-  // caps decoded-surface ownership well inside the process-wide budget.
+  // coming. Decoder credit remains the presentation-independent part of that
+  // bound; decodedSurfaceAdmissionOpen() adds the resource half of it, because
+  // decoder credit alone permits maxInFlightFrames + codecReorderFrames
+  // decoded surfaces and that is more than this route's share of the
+  // process-wide decoded-surface budget.
   const VideoToolboxDecoderStats admission = impl.decoder.stats();
   if (admission.generation != impl.generation) {
     return media::NativeMediaConsumeResult::StaleGeneration;
@@ -1425,7 +1461,8 @@ media::NativeMediaConsumeResult NativeVideoConsumer::trySample(
     assignError(error, "native video decoder lost its configuration");
     return media::NativeMediaConsumeResult::Failed;
   }
-  if (!admission.acceptsCompressedSample) {
+  if (!admission.acceptsCompressedSample ||
+      !decodedSurfaceAdmissionOpen(admission)) {
     return media::NativeMediaConsumeResult::Backpressure;
   }
   if (sample.track != impl.track ||

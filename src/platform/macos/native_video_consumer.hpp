@@ -39,10 +39,13 @@ using NativeVideoClockSample =
 // ticksPerSecond is the exact host frequency used by snapshot host-tick
 // fields. The seam's owner must also arrange a consumer wake whenever
 // authoritative media time advances far enough to revisit a published
-// nextDueHostTicks. Native v1 sets
-// this only for an audio-authoritative route whose AudioUnit callback uses the
-// shared wake. Video-only/silent media remains Unsupported/fallback; this
-// consumer never creates a timer to manufacture that missing progress edge.
+// nextDueHostTicks. This consumer never creates a timer to manufacture that
+// missing progress edge; supplying it is entirely the seam owner's obligation.
+// Native v1 has two owners that discharge it: an audio-authoritative route,
+// whose AudioUnit callback consumes the published deadline from the shared
+// wake, and an audio-less (silent) route, whose session worker waits on its
+// own semaphore with that same deadline (NativeSilentTimebase and
+// NativeMediaSessionWake::setHostPacedDeadlines).
 struct NativeVideoClockSeam {
   NativeVideoClockSample sample{nullptr};
   void* context{nullptr};
@@ -140,10 +143,11 @@ struct NativeVideoConsumerQuarantineFacts {
 // methods except the immutable wake callbacks are confined to the single
 // dispatcher worker.
 //
-// Ownership is bounded to VideoToolbox's kMaximumDecoderInFlightFrames
-// admitted submissions, one decoded-queue FrameLease, one scheduler-held
-// FrameLease, and the tracked output's one admitted FrameLease. Compressed
-// admission is gated by decoder credit only: presentation state (a frame not
+// Ownership is bounded to kMaximumDecodedSurfaceOwnership decoded surfaces
+// held by VideoToolbox (in-flight submissions plus retained reorder frames),
+// one decoded-queue FrameLease, one scheduler-held FrameLease, and the tracked
+// output's one admitted FrameLease. Compressed admission is gated by decoder
+// credit and by that decoded-surface bound: presentation state (a frame not
 // yet due, or a draw not yet acknowledged) deliberately does not throttle
 // decode, so the route is paced by the media clock rather than by the
 // display, and a compositor that stops presenting cannot pin the decoder.
@@ -169,13 +173,27 @@ class NativeVideoConsumer final : public media::NativeVideoConsumer {
   // spends more than that on its own decode/reorder latency: measured frames
   // reached the scheduler about 43 ms *after* their presentation interval had
   // closed, so every other frame was retired late once the media clock ran at
-  // a true 1.0x. Five in-flight frames restore a positive lead. Decoded
-  // IOSurface ownership stays inside the process-wide budget
-  // (kNativeSurfaceBudgetMaximumSurfaces = 10): at most five decoder-retained
-  // surfaces, one decoded-queue lease, one scheduler-held lease and the
-  // tracked output's one accepted lease.
+  // a true 1.0x. Five in-flight frames restore a positive lead. This value
+  // alone does not bound decoded IOSurface ownership: VideoToolbox retains
+  // maxInFlight + codecReorderFrames decoded frames, so
+  // kMaximumDecodedSurfaceOwnership below is what actually keeps the route
+  // inside the process-wide budget (kNativeSurfaceBudgetMaximumSurfaces = 10):
+  // at most five decoder-held surfaces, one decoded-queue lease, one
+  // scheduler-held lease and the tracked output's one accepted lease.
   static constexpr std::size_t kMaximumDecoderInFlightFrames = 5;
   static constexpr std::size_t kDecodedQueueCapacity = 1;
+  // Decoded frames are IOSurfaces charged against the process-wide
+  // NativeSurfaceBudget, and VideoToolboxDecoder's own admission credit bounds
+  // only decode ownership: it admits maxInFlightFrames + codecReorderFrames
+  // retained decoded frames, which for any reordered stream is strictly more
+  // than the five decoder-retained surfaces the ownership paragraph above
+  // documents. This is the route's own bound on decoded-surface ownership
+  // (in-flight decodes plus retained presentation frames), applied on top of
+  // decoder credit so the documented accounting actually holds. It is a
+  // resource bound, not a presentation gate: refused compressed samples stay
+  // in the dispatcher's bounded video lane, so read-ahead is preserved as
+  // cheap compressed bytes instead of scarce decoded surfaces.
+  static constexpr std::size_t kMaximumDecodedSurfaceOwnership = 5;
 
   [[nodiscard]] static std::unique_ptr<NativeVideoConsumer> create(
       std::shared_ptr<void> externalLifetime,

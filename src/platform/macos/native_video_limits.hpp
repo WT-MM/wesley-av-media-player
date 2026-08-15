@@ -60,12 +60,18 @@ static_assert(kMaximumTransientVideoCodecConfigurationBytes ==
 // ---------------------------------------------------------------------------
 // Selected A/V duration relation.
 //
-// The native route's media clock is audio-authoritative: presentation time
-// advances only while the audio renderer consumes real samples, and the video
-// consumer deliberately manufactures neither synthetic silence nor a fallback
-// timer. A video tail that extends past the end of the selected audio can
-// therefore never be advanced, which is why native v1 requires the selected
-// audio duration to cover the selected video duration.
+// This relation constrains only a generation that HAS a selected audio track.
+// For such a generation the media clock is audio-authoritative: presentation
+// time advances only while the audio renderer consumes real samples, and the
+// video consumer deliberately manufactures neither synthetic silence nor a
+// fallback timer. A video tail extending past the end of the selected audio
+// could therefore never be advanced, which is why native v1 requires the
+// selected audio duration to cover the selected video duration.
+//
+// A source with NO audio track at all is a different shape, not a violation of
+// this rule: NativeSilentTimebase publishes media time from the host clock, so
+// there is no audio timeline that could fall short and this predicate is not
+// consulted. See nativeV1Descriptor() in native_media_session.mm.
 //
 // Real containers do not honour that relation to the tick. The dominant cause
 // is codec priming expressed as an edit list: a muxer that trims AAC-LC's

@@ -12,6 +12,7 @@
 #include <cstring>
 #include <condition_variable>
 #include <exception>
+#include <initializer_list>
 #include <limits>
 #include <mutex>
 #include <span>
@@ -1198,6 +1199,27 @@ bool attachmentIsAbsentOrExactString(CVBufferRef buffer, CFStringRef key,
   return matches;
 }
 
+bool attachmentIsAbsentOrOneOfStrings(
+    CVBufferRef buffer, CFStringRef key,
+    std::initializer_list<CFStringRef> expected, const char *diagnostic,
+    std::string *error) {
+  CFTypeRef value = CVBufferCopyAttachment(buffer, key, nullptr);
+  if (value == nullptr) {
+    return true;
+  }
+  const bool matches =
+      CFGetTypeID(value) == CFStringGetTypeID() &&
+      std::any_of(expected.begin(), expected.end(),
+                  [value](CFStringRef candidate) {
+                    return candidate != nullptr && CFEqual(value, candidate);
+                  });
+  CFRelease(value);
+  if (!matches) {
+    assignError(error, diagnostic);
+  }
+  return matches;
+}
+
 bool rejectPresentAttachment(CVBufferRef buffer, CFStringRef key,
                              const char *diagnostic,
                              std::string *error) {
@@ -1216,10 +1238,23 @@ bool validateDecodedSdrColorAttachments(CVPixelBufferRef pixelBuffer,
     assignError(error, "VideoToolbox returned no decoded pixel buffer");
     return false;
   }
-  if (!attachmentIsAbsentOrExactString(
+  // A stream whose VUI carries no colour description reaches this port with
+  // Unknown primaries, which admission deliberately accepts as SDR. The
+  // decoder does not see that "unspecified" state: VideoToolbox resolves it
+  // with the conventional SD/HD inference and attaches a concrete value, so
+  // every untagged standard-definition frame arrives tagged SMPTE_C (525) or
+  // EBU_3213 (625) with the matching BT.601 matrix. Those are the SD SDR
+  // primaries for exactly the inference the presentation path already
+  // implements -- see the BT.601 conversion in qt_gl_video_item.mm -- so
+  // rejecting them here would fail every untagged SD clip while accepting the
+  // identical untagged HD one. An explicitly tagged BT.601 stream never gets
+  // this far: the media source marks that unsupported at admission.
+  if (!attachmentIsAbsentOrOneOfStrings(
           pixelBuffer, kCVImageBufferColorPrimariesKey,
-          kCVImageBufferColorPrimaries_ITU_R_709_2,
-          "decoded color primaries are not BT.709 SDR", error) ||
+          {kCVImageBufferColorPrimaries_ITU_R_709_2,
+           kCVImageBufferColorPrimaries_SMPTE_C,
+           kCVImageBufferColorPrimaries_EBU_3213},
+          "decoded color primaries are not BT.709 or BT.601 SDR", error) ||
       !attachmentIsAbsentOrExactString(
           pixelBuffer, kCVImageBufferTransferFunctionKey,
           kCVImageBufferTransferFunction_ITU_R_709_2,

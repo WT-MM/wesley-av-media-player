@@ -22,8 +22,11 @@ void saturatingIncrement(std::atomic<std::uint64_t>& value) noexcept {
 [[nodiscard]] bool validPreparedDescriptor(
     const std::shared_ptr<const media::MediaSourceDescriptor>& descriptor,
     const media::MediaSourceLimits& limits) noexcept {
+  // A selected video track is mandatory for every native v1 context. A
+  // selected audio track is not: an audio-less asset is admitted with
+  // selectedAudio left unset, and the descriptor validator already rejects a
+  // selection that names a track of the wrong kind or no track at all.
   return descriptor != nullptr && descriptor->selectedVideo.has_value() &&
-         descriptor->selectedAudio.has_value() &&
          media::validateMediaSourceDescriptor(*descriptor, limits, nullptr);
 }
 
@@ -96,6 +99,18 @@ adoptPreparedAVFoundationAssetContext(
         metadataLoads.assetMetadataLoadBatches == 0 ||
         metadataLoads.selectedTrackMetadataLoadBatches == 0 ||
         !validPreparedDescriptor(descriptor, effective)) {
+      return {};
+    }
+    // The audio borrow and the descriptor's audio selection are one fact
+    // stated twice. handles.complete() no longer requires an audio track, so
+    // this is the edge that keeps the two agreeing: an audio-less descriptor
+    // must arrive with a null audio handle, and a descriptor that selected
+    // audio must arrive with the track it selected. Either mismatch means the
+    // caller's admission and its borrows came from different asset views, so
+    // fail the adoption closed rather than publish a context that disagrees
+    // with its own immutable descriptor.
+    if (descriptor->selectedAudio.has_value() !=
+        (handles.selectedAudioTrack != nullptr)) {
       return {};
     }
     AVURLAsset* asset = (__bridge AVURLAsset*)(

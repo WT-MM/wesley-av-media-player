@@ -1,6 +1,7 @@
 #include "native_media_session.hpp"
 
 #include "avfoundation_media_source.hpp"
+#include "native_silent_timebase.hpp"
 #include "native_video_limits.hpp"
 
 #include "media/native_media_dispatcher.hpp"
@@ -52,15 +53,25 @@ exactFrameTime(CMTime time) noexcept {
     const media::MediaSourceDescriptor& descriptor) noexcept {
   const media::MediaTrackDescriptor* video =
       selectedTrack(descriptor, descriptor.selectedVideo);
+  if (video == nullptr || !video->duration.valid() ||
+      video->duration.value < 0) {
+    return false;
+  }
   const media::MediaTrackDescriptor* audio =
       selectedTrack(descriptor, descriptor.selectedAudio);
-  if (video == nullptr || audio == nullptr || !video->duration.valid() ||
-      !audio->duration.valid() || video->duration.value < 0 ||
-      audio->duration.value < 0) {
+  if (audio == nullptr) {
+    // Audio-less (silent) source. There is no audio timeline to cover the
+    // video one because the clock is not audio-authoritative for this
+    // generation: NativeSilentTimebase publishes media time from the host
+    // clock instead. A descriptor that names a selected audio track it cannot
+    // resolve is still a hard protocol fault.
+    return !descriptor.selectedAudio.has_value();
+  }
+  if (!audio->duration.valid() || audio->duration.value < 0) {
     return false;
   }
   // One shared rule with NativeVideoConsumer::selectedTrackDurationsSupported:
-  // the audio-authoritative clock must cover the video timeline apart from a
+  // an audio-authoritative clock must cover the video timeline apart from a
   // bounded container-artefact shortfall. See native_video_limits.hpp.
   return native_video_limits::acceptsSelectedTrackDurations(audio->duration,
                                                             video->duration);
@@ -118,9 +129,10 @@ class NativeV1AdmissionSource final : public media::MediaSource {
       source_->close();
       result.status = media::MediaSourceOpenStatus::Unsupported;
       result.descriptor.reset();
-      result.error = "native v1 requires selected A/V and an audio "
-                     "duration that covers the video duration apart from a "
-                     "bounded container-artefact shortfall";
+      result.error = "native v1 requires a selected video track and, when the "
+                     "source carries audio, an audio duration that covers the "
+                     "video duration apart from a bounded container-artefact "
+                     "shortfall";
     }
     return result;
   }
@@ -195,6 +207,39 @@ struct SessionAudioControl {
   bool (*metrics)(void*, NativeMediaSessionMetrics*) noexcept{nullptr};
 };
 
+// Rebinds the session's transport/clock authority onto a host-clock timebase
+// for an audio-less generation. metrics is deliberately left null: a silent
+// generation has no render callback, so the audio counters are genuinely
+// unavailable rather than zero, and publishMetrics() already reports that.
+[[nodiscard]] SessionAudioControl silentTimebaseControl(
+    NativeSilentTimebase* timebase) noexcept {
+  return SessionAudioControl{
+      timebase,
+      [](void* context) noexcept {
+        return static_cast<NativeSilentTimebase*>(context)->start();
+      },
+      [](void* context, bool paused) noexcept {
+        return static_cast<NativeSilentTimebase*>(context)->setPaused(paused);
+      },
+      [](void* context, float gain) noexcept {
+        return static_cast<NativeSilentTimebase*>(context)->setGain(gain);
+      },
+      [](void* context, bool muted) noexcept {
+        return static_cast<NativeSilentTimebase*>(context)->setMuted(muted);
+      },
+      [](void* context) noexcept {
+        return static_cast<NativeSilentTimebase*>(context)->stop();
+      },
+      [](void* context) noexcept {
+        return static_cast<NativeSilentTimebase*>(context)->visibleClock();
+      },
+      [](void* context) noexcept {
+        return static_cast<NativeSilentTimebase*>(context)
+            ->highestExposedGeneration();
+      },
+      nullptr};
+}
+
 struct SessionPreviewControl {
   void* context{nullptr};
   NativePreviewFrameRequestStatus (*request)(
@@ -217,6 +262,11 @@ struct NativeMediaSessionWake::Impl final {
   std::atomic<bool> workerPending{false};
   std::atomic<std::uint64_t> videoDueHostTicks{0};
   dispatch_semaphore_t semaphore{dispatch_semaphore_create(0)};
+  // Audio-less heartbeat. Both fields are written and read exclusively on the
+  // session worker thread (armed from progressPrepare, consumed by wait()),
+  // so they need no synchronization of their own.
+  bool hostPaced{false};
+  NativeMediaHostClock hostPacedClock{};
 #if defined(WAM_NATIVE_MEDIA_SESSION_TESTING)
   std::atomic<std::uint64_t> consumedTokens{0};
   std::atomic<std::uint64_t> consumeBarrierTarget{0};
@@ -257,12 +307,71 @@ void NativeMediaSessionWake::notify() noexcept {
   }
 }
 
+namespace {
+
+// Bounded floor for the audio-less heartbeat. It matches the ordinary
+// CoreAudio device period this route replaces, so an armed silent generation
+// pays no more worker wakes than the AudioUnit callback used to deliver, and a
+// video due tick that lands sooner still wins.
+constexpr std::uint64_t kHostPacedFloorNanos = 10ULL * 1000ULL * 1000ULL;
+
+[[nodiscard]] dispatch_time_t hostPacedDeadline(
+    bool hostPaced, NativeMediaHostClock hostClock,
+    std::atomic<std::uint64_t>* dueSlot) noexcept {
+  if (!hostPaced || hostClock.readTicks == nullptr ||
+      hostClock.ticksPerSecond == 0 || dueSlot == nullptr) {
+    return DISPATCH_TIME_FOREVER;
+  }
+  std::uint64_t nanos = kHostPacedFloorNanos;
+  std::uint64_t due = dueSlot->load(std::memory_order_acquire);
+  if (due != 0) {
+    const std::uint64_t now = hostClock.readTicks(hostClock.context);
+    if (due <= now) {
+      // Consume the deadline exactly once, mirroring the audio wake seam's
+      // compare-exchange. Without this a due tick that has already passed
+      // makes every later wait expire instantly and the worker spins.
+      static_cast<void>(dueSlot->compare_exchange_strong(
+          due, 0, std::memory_order_acq_rel, std::memory_order_relaxed));
+      nanos = 0;
+    } else {
+      // A far-future due tick would overflow a 64-bit nanosecond product, so
+      // the exact conversion is done in 128 bits and then clamped to the
+      // floor.
+      const auto exact = static_cast<__uint128_t>(due - now) *
+                         static_cast<__uint128_t>(1000000000ULL) /
+                         static_cast<__uint128_t>(hostClock.ticksPerSecond);
+      nanos = exact >= static_cast<__uint128_t>(kHostPacedFloorNanos)
+                  ? kHostPacedFloorNanos
+                  : static_cast<std::uint64_t>(exact);
+    }
+  }
+  return dispatch_time(DISPATCH_TIME_NOW, static_cast<std::int64_t>(nanos));
+}
+
+}  // namespace
+
+void NativeMediaSessionWake::setHostPacedDeadlines(
+    NativeMediaHostClock hostClock) noexcept {
+  if (impl_ == nullptr) {
+    return;
+  }
+  impl_->hostPacedClock = hostClock;
+  impl_->hostPaced =
+      hostClock.readTicks != nullptr && hostClock.ticksPerSecond != 0;
+}
+
 void NativeMediaSessionWake::wait() noexcept {
   if (impl_ == nullptr) {
     return;
   }
+  // An expired deadline leaves the semaphore untouched, so a notification that
+  // races the timeout is not lost: its token stays queued and is consumed by
+  // the next wait, costing at most one redundant worker pass. Every worker
+  // pass is idempotent, which is what makes the timed wait safe here.
   static_cast<void>(dispatch_semaphore_wait(
-      impl_->semaphore, DISPATCH_TIME_FOREVER));
+      impl_->semaphore,
+      hostPacedDeadline(impl_->hostPaced, impl_->hostPacedClock,
+                        &impl_->videoDueHostTicks)));
 #if defined(WAM_NATIVE_MEDIA_SESSION_TESTING)
   const std::uint64_t token =
       impl_->consumedTokens.fetch_add(1, std::memory_order_acq_rel) + 1;
@@ -772,6 +881,7 @@ struct NativeMediaSession::Impl final {
         commitAudioStarted = false;
         commitSourcePaused = false;
         commitTargetPaused = false;
+        commitTimebaseActivated = false;
         commitIssued = false;
         commitCommitted = false;
         commitAudioProof.reset();
@@ -826,6 +936,7 @@ struct NativeMediaSession::Impl final {
       commitAudioStarted = false;
       commitSourcePaused = false;
       commitTargetPaused = false;
+      commitTimebaseActivated = false;
       if (publishedCommit->reviveFromEnded) {
         endingLatched = false;
         endedPublished = false;
@@ -932,6 +1043,7 @@ struct NativeMediaSession::Impl final {
       audioOwned = std::move(graph.audio);
       videoObserver = videoOwned.get();
       audioObserver = audioOwned.get();
+      audioConsumerControl = audioControl;
       return true;
     }
     return false;
@@ -1055,6 +1167,7 @@ struct NativeMediaSession::Impl final {
     audioOwned = std::move(audio);
     videoObserver = videoOwned.get();
     audioObserver = audioOwned.get();
+    audioConsumerControl = audioControl;
     return true;
 #endif
   }
@@ -1575,8 +1688,11 @@ struct NativeMediaSession::Impl final {
     }
     if (!directAudioRetired) {
       if (directAudioRetiredGeneration == 0) {
-        directAudioRetiredGeneration =
-            audioControl.highestExposed(audioControl.context);
+        // Never audioControl here: an audio-less generation has rebound that
+        // table to the silent timebase, whose generation is not the audio
+        // consumer's exposure high water.
+        directAudioRetiredGeneration = audioConsumerControl.highestExposed(
+            audioConsumerControl.context);
       }
       const auto progress =
           audioObserver->retire(directAudioRetiredGeneration,
@@ -1751,7 +1867,11 @@ if (!transferred) {
     }
     media::MediaSourceOpenOptions options;
     options.selection.requireVideo = true;
-    options.selection.requireAudio = true;
+    // Audio is optional. A source with no audio track at all is admitted and
+    // driven by NativeSilentTimebase; a source that carries audio the backend
+    // cannot select still fails its own admission, so relaxing this flag does
+    // not silently drop a real audio track.
+    options.selection.requireAudio = false;
     options.initialPosition = media::MediaSourceInitialPosition{
         initialPosition, media::MediaSeekMode::Accurate};
     if (!beginLiveIssue()) {
@@ -1815,6 +1935,26 @@ if (avfoundationSourceObserver == nullptr) {
     assetContextSnapshot = std::move(admittedAssetContext);
 #endif
     descriptorSnapshot = descriptor;
+    // Bind the generation's timebase before anything can publish Prepared.
+    // From here the Start / SetRunState / CommitSeek / Ended chains address
+    // whichever authority this generation owns, with no further branching.
+    if (!descriptor->selectedAudio.has_value()) {
+      if (silentTimebase == nullptr) {
+        silentTimebase = NativeSilentTimebase::create(dependencies.hostClock);
+      }
+      if (silentTimebase == nullptr ||
+          !silentTimebase->activate(reservedGeneration,
+                                    prepareCommand.initialPositionSeconds)) {
+        prepareFailed = true;
+        static_cast<void>(publishFailure(protocol::FailureReason::Clock));
+        return;
+      }
+      audioControl = silentTimebaseControl(silentTimebase.get());
+      // The audio render callback was the only periodic edge that woke this
+      // worker to draw a frame on time. With no output unit, the worker's own
+      // wait carries that deadline instead.
+      dependencies.wake->setHostPacedDeadlines(dependencies.hostClock);
+    }
     bool committed = false;
     {
       std::lock_guard lock(mutex);
@@ -1829,7 +1969,8 @@ if (avfoundationSourceObserver == nullptr) {
         publicDispatcherObservedVideo = dispatcherObservedVideo;
         factMailbox.emplace(protocol::Prepared{
             prepareCommand.stamp, prepareCommand.sourceKey,
-            {descriptorDurationSeconds(*descriptor), true, true},
+            {descriptorDurationSeconds(*descriptor),
+             descriptor->selectedAudio.has_value(), true},
             prepareCommand.reservedGeneration});
         committed = true;
       }
@@ -2168,6 +2309,20 @@ if (result != NativeAudioSessionProgress::Done) {
     }
 
     activeGeneration = commitCommand.targetGeneration.value;
+    // An audio-less generation has no consumer for the dispatcher to flush, so
+    // nothing has moved its timebase onto the committed generation. Do that
+    // here, at the same point the dispatcher's flush would have reactivated
+    // NativeAudioSession, and land it paused at the exact binary64 target the
+    // controller published so refreshClockForCommit() matches bit for bit.
+    if (silentTimebase != nullptr && !commitTimebaseActivated) {
+      if (!silentTimebase->activate(commitCommand.targetGeneration.value,
+                                    commitCommand.targetSeconds)) {
+        static_cast<void>(publishFailure(protocol::FailureReason::CommitSeek,
+                                         commitCommand.stamp));
+        return;
+      }
+      commitTimebaseActivated = true;
+    }
     // Dispatcher seek flushes NativeAudioSession and leaves the target
     // generation activated but Ready (output stopped). Start must therefore
     // follow SeekCommitted for every commit, not only replay from Ended.
@@ -2271,6 +2426,7 @@ if (result != NativeAudioSessionProgress::Done) {
       commitAudioStarted = false;
       commitSourcePaused = false;
       commitTargetPaused = false;
+      commitTimebaseActivated = false;
       commitIssued = false;
       commitCommitted = false;
       commitAudioProof.reset();
@@ -2621,8 +2777,25 @@ if (result != NativeAudioSessionProgress::Done) {
   };
 #endif
 
+  // Arms the audio-less heartbeat only for the states that actually need a
+  // periodic edge, so a silent generation that is paused, ended, stopped or
+  // failed sleeps exactly as an audio-authoritative one does once its output
+  // unit has stopped. Evaluated on the worker immediately before it blocks,
+  // so it always describes the state the previous pass left behind.
+  void syncHostPacedDeadlines() noexcept {
+    if (silentTimebase == nullptr) {
+      return;
+    }
+    const bool active = !endedPublished && !stopLatched && !liveFailed &&
+                        !endingLatched &&
+                        (commitPending || previewPending || !appliedPaused);
+    dependencies.wake->setHostPacedDeadlines(
+        active ? dependencies.hostClock : NativeMediaHostClock{});
+  }
+
   void work() noexcept {
     while (true) {
+      syncHostPacedDeadlines();
       dependencies.wake->wait();
       // std::thread has no run-loop-owned autorelease boundary. Establish one
       // only after a wake is consumed and drain it before the worker blocks
@@ -2868,7 +3041,19 @@ if (result != NativeAudioSessionProgress::Done) {
   void* previewBindingObserverContext{nullptr};
 #endif
   SessionVideoControl videoControl{};
+  // Transport and clock authority for the active generation. For an ordinary
+  // A/V generation this addresses the NativeAudioSession below; for an
+  // audio-less one progressPrepare rebinds it to silentTimebase, which
+  // publishes the same proofs from the host clock. Nothing else about the
+  // Start / SetRunState / CommitSeek / Ended chains changes.
   SessionAudioControl audioControl{};
+  // The unswapped binding to the audio *consumer*. Retirement must pair
+  // audioObserver->retire() with that consumer's own highest exposed
+  // generation, never with a timebase generation, so this copy is captured at
+  // graph construction and is never rebound.
+  SessionAudioControl audioConsumerControl{};
+  // Present only while the active generation has no selected audio track.
+  std::unique_ptr<NativeSilentTimebase> silentTimebase;
   SessionPreviewControl previewControl{};
   // Names this session's counter epoch. Assigned once at construction and
   // immutable thereafter, so metrics() may read it from any thread without
@@ -2920,6 +3105,10 @@ if (result != NativeAudioSessionProgress::Done) {
   bool commitAudioStarted{false};
   bool commitSourcePaused{false};
   bool commitTargetPaused{false};
+  // Audio-less only: the silent timebase's quiescent transition onto the
+  // target generation, performed once per commit between SeekCommitted and
+  // the transport start.
+  bool commitTimebaseActivated{false};
   bool commitIssued{false};
   bool commitCommitted{false};
   bool previewHandoffPending{false};

@@ -1907,10 +1907,16 @@ void incrementInventory(media::MediaTrackInventory* inventory,
 [[nodiscard]] bool preservesLegacyNativeAdmission(
     const MediaSourceDescriptor& descriptor, std::string* error) {
   const auto& inventory = descriptor.inventory;
-  if (inventory.video != 1 || inventory.audio == 0 ||
-      inventory.subtitle != 0 || inventory.text != 0 ||
-      inventory.closedCaption != 0 || !descriptor.selectedVideo ||
-      !descriptor.selectedAudio) {
+  // Native v1 is a video contract, so exactly one video track and its
+  // selection stay mandatory. Audio is optional: an audio-less asset (a
+  // GIF-to-MP4 conversion, for instance) enumerates zero audio tracks and
+  // leaves selectedAudio unset. The two must agree in both directions - an
+  // inventory with audio that selected none, or a selection with no audio in
+  // the inventory, is a descriptor this backend never builds.
+  if (inventory.video != 1 || inventory.subtitle != 0 ||
+      inventory.text != 0 || inventory.closedCaption != 0 ||
+      !descriptor.selectedVideo ||
+      descriptor.selectedAudio.has_value() != (inventory.audio != 0)) {
     assignError(error,
                 "track inventory is outside the native video v1 contract");
     return false;
@@ -1971,6 +1977,11 @@ void incrementInventory(media::MediaTrackInventory* inventory,
     assignError(error,
                 "selected video geometry/color is outside native SDR v1");
     return false;
+  }
+  // An audio-less asset has no selected audio track to admit, so the audio
+  // half of the contract is vacuously satisfied and must not be dereferenced.
+  if (!descriptor.selectedAudio) {
+    return true;
   }
   const MediaTrackDescriptor* audioTrack =
       media::findMediaTrack(descriptor, *descriptor.selectedAudio);
@@ -2105,14 +2116,23 @@ template <typename NoteReaderCreationAttempt>
       descriptor.selectedAudio
           ? media::findMediaTrack(descriptor, *descriptor.selectedAudio)
           : nullptr;
-  if (videoFormatCount != 1 || audioFormatCount != 1 ||
-      expectedVideo == nullptr || expectedAudio == nullptr ||
+  // An audio-less asset selected no audio track, so it owes no audio format:
+  // the exactly-one-format proof becomes an exactly-zero-formats proof and the
+  // format comparison is skipped rather than run against a track that does not
+  // exist. A descriptor that did select audio owes the original proof
+  // unchanged, in the original order.
+  const bool audioSelected = descriptor.selectedAudio.has_value();
+  const std::size_t expectedAudioFormatCount = audioSelected ? 1 : 0;
+  if (videoFormatCount != 1 || audioFormatCount != expectedAudioFormatCount ||
+      expectedVideo == nullptr ||
+      (audioSelected && expectedAudio == nullptr) ||
       !exactIdentityVideoTransform(videoTransform) ||
       !expectedVideo->video || !expectedVideo->video->identityTransform ||
       expectedVideo->video->rotationDegrees != 0 ||
       !videoFormatMatchesTrack(videoFormat, *expectedVideo,
                                requestedLimits) ||
-      !audioFormatMatchesTrack(audioFormat, *expectedAudio)) {
+      (audioSelected &&
+       !audioFormatMatchesTrack(audioFormat, *expectedAudio))) {
     assignError(error,
                 "selected track formats changed before reader creation");
     return false;
@@ -2170,8 +2190,12 @@ class ProductionGeneration final : public AVFoundationGeneration {
         audioTrack = (__bridge AVAssetTrack*)(
             const_cast<void*>(handles.selectedAudioTrack));
         const auto duration = exactCMTime(descriptor->duration);
-        if (asset == nil || videoTrack == nil || audioTrack == nil ||
-            !duration) {
+        // The context's audio borrow is present exactly when the immutable
+        // descriptor selected audio, so an audio-less asset legitimately warm
+        // starts with a nil audioTrack. Requiring the two to agree keeps a
+        // borrow that disagrees with the admitted descriptor a hard failure.
+        if (asset == nil || videoTrack == nil || !duration ||
+            (audioTrack != nil) != descriptor->selectedAudio.has_value()) {
           result.error = "AVFoundation asset context is incomplete";
           return result;
         }
@@ -2276,10 +2300,16 @@ class ProductionGeneration final : public AVFoundationGeneration {
                                                 : firstVideoTrack;
         audioTrack = preferredAudioTrack != nil ? preferredAudioTrack
                                                 : firstAudioTrack;
-        if (inventory.video != 1 || inventory.audio == 0 ||
-            inventory.subtitle != 0 || inventory.text != 0 ||
-            inventory.closedCaption != 0 || videoTrack == nil ||
-            audioTrack == nil) {
+        // Native v1 admits exactly one video track and no timed-text tracks.
+        // Audio is optional: an asset that enumerates no audio track (a
+        // GIF-to-MP4 conversion, for instance) is admitted video-only and
+        // leaves selectedAudio unset. An enumerated audio track that could not
+        // be resolved to a selection - or a resolved track the inventory never
+        // counted - stays a rejection, so the two must agree exactly.
+        if (inventory.video != 1 || inventory.subtitle != 0 ||
+            inventory.text != 0 || inventory.closedCaption != 0 ||
+            videoTrack == nil ||
+            (audioTrack != nil) != (inventory.audio != 0)) {
           result.status = AVFoundationGenerationStatus::Unsupported;
           result.error =
               "asset track inventory is outside the native video v1 contract";
@@ -2295,17 +2325,22 @@ class ProductionGeneration final : public AVFoundationGeneration {
         auto mutableDescriptor = std::make_shared<MediaSourceDescriptor>();
         mutableDescriptor->duration = *sourceDuration;
         mutableDescriptor->inventory = inventory;
-        mutableDescriptor->tracks.reserve(2);
+        mutableDescriptor->tracks.reserve(audioTrack != nil ? 2 : 1);
 
         // Both selected tracks have the same immutable metadata key set.
-        // Issue both loads before waiting, then validate video first.
+        // Issue both loads before waiting, then validate video first. An
+        // audio-less asset has one selected track, so the batch covers exactly
+        // the tracks that exist and still counts as the single selected-track
+        // metadata load the context requires.
         NSArray<NSString*>* trackKeys = @[
           @"formatDescriptions", @"naturalTimeScale", @"timeRange",
           @"preferredTransform", @"languageCode", @"extendedLanguageTag"
         ];
-        const std::array selectedTrackLoadRequests{
+        const std::array selectedTrackLoadStorage{
             AsyncLoadRequest{videoTrack, trackKeys},
             AsyncLoadRequest{audioTrack, trackKeys}};
+        const std::span<const AsyncLoadRequest> selectedTrackLoadRequests(
+            selectedTrackLoadStorage.data(), audioTrack != nil ? 2u : 1u);
         bool trackRejected = false;
         if (!waitForLoadedValues(
                 selectedTrackLoadRequests, metadata_load_signal_,
@@ -2332,22 +2367,28 @@ class ProductionGeneration final : public AVFoundationGeneration {
         mutableDescriptor->selectedVideo = videoDescriptor->id;
         mutableDescriptor->tracks.push_back(std::move(*videoDescriptor));
 
-        if (!preservesZeroBasedTrackTimeline(audioTrack, &result.error)) {
-          result.status = AVFoundationGenerationStatus::Unsupported;
-          return result;
+        // An audio-less asset contributes no audio track: there is no track
+        // timeline to prove zero-based, no identifier to disambiguate against
+        // the video track, and no audio format to describe. selectedAudio
+        // stays unset and descriptor->tracks holds the video track alone.
+        if (audioTrack != nil) {
+          if (!preservesZeroBasedTrackTimeline(audioTrack, &result.error)) {
+            result.status = AVFoundationGenerationStatus::Unsupported;
+            return result;
+          }
+          MediaTrackId audioId = stableTrackId(audioTrack, 2);
+          if (audioId == *mutableDescriptor->selectedVideo) {
+            audioId = *mutableDescriptor->selectedVideo == 1 ? 2 : 1;
+          }
+          auto audioDescriptor =
+              describeAudio(audioTrack, audioId, limits, &result.error);
+          if (!audioDescriptor) {
+            result.status = AVFoundationGenerationStatus::Unsupported;
+            return result;
+          }
+          mutableDescriptor->selectedAudio = audioDescriptor->id;
+          mutableDescriptor->tracks.push_back(std::move(*audioDescriptor));
         }
-        MediaTrackId audioId = stableTrackId(audioTrack, 2);
-        if (audioId == *mutableDescriptor->selectedVideo) {
-          audioId = *mutableDescriptor->selectedVideo == 1 ? 2 : 1;
-        }
-        auto audioDescriptor =
-            describeAudio(audioTrack, audioId, limits, &result.error);
-        if (!audioDescriptor) {
-          result.status = AVFoundationGenerationStatus::Unsupported;
-          return result;
-        }
-        mutableDescriptor->selectedAudio = audioDescriptor->id;
-        mutableDescriptor->tracks.push_back(std::move(*audioDescriptor));
         if (!media::validateMediaSourceDescriptor(
                 *mutableDescriptor, limits, &result.error)) {
           result.status = AVFoundationGenerationStatus::Unsupported;
@@ -2460,7 +2501,9 @@ class ProductionGeneration final : public AVFoundationGeneration {
       // Re-read the already-loaded selected formats on every cold/seek
       // generation immediately before creating its reader. The context owns
       // tracks, not a promise that their mutable AVFoundation view is still
-      // the one admitted into the immutable descriptor.
+      // the one admitted into the immutable descriptor. An audio-less asset
+      // has no audio track to re-read: the nil send states zero audio formats,
+      // which is exactly the rebind proof its descriptor owes.
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
       NSArray* currentVideoFormats = videoTrack.formatDescriptions;

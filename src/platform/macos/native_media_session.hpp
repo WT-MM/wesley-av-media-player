@@ -44,6 +44,16 @@ class NativeMediaSessionWake final {
   void wait() noexcept;
   void beginDrain() noexcept;
   void publishVideoDueHostTicks(std::uint64_t hostTicks) noexcept;
+  // Arms the host-paced fallback heartbeat used by audio-less generations.
+  // On the audio-authoritative route the AudioUnit render callback is the
+  // only periodic edge that wakes the worker to draw a frame on time (it
+  // consumes videoDueHostTicks through the audio wake seam). A silent
+  // generation runs no output unit, so the worker instead waits on its own
+  // semaphore with a deadline: the published video due tick when one is
+  // armed, otherwise a bounded floor that reproduces the device-period
+  // cadence the audio callback used to provide. Passing an unconfigured
+  // clock disarms it and restores the untimed wait.
+  void setHostPacedDeadlines(NativeMediaHostClock hostClock) noexcept;
 
   std::unique_ptr<Impl> impl_;
 
