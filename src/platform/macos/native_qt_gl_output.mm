@@ -167,22 +167,29 @@ struct NativeQtGlOutput::State
         }
       } catch (...) {
       }
-      if (QtGlVideoItem* item = item_.data()) {
-        // close() may be followed immediately by dropping the last adapter
-        // owner on a retirement thread. The normal drain holds only weak
-        // State, so this GUI-owned context carries the terminal invalidation
-        // independently until destruction.
-        if (finalFlushRequired_.load(std::memory_order_acquire)) {
+      // The lease may already have been handed back at the exact retirement
+      // boundary (see releaseOutputLeaseOnRetirementNoexcept). A successor can
+      // then already own the item, so a retired context must not flush it or
+      // clear a lease it no longer holds.
+      if (leaseHeld_.load(std::memory_order_acquire)) {
+        if (QtGlVideoItem* item = item_.data()) {
+          // close() may be followed immediately by dropping the last adapter
+          // owner on a retirement thread. The normal drain holds only weak
+          // State, so this GUI-owned context carries the terminal
+          // invalidation independently until destruction.
+          if (finalFlushRequired_.load(std::memory_order_acquire)) {
+            try {
+              item->flush(finalFlushGeneration_.load(
+                  std::memory_order_acquire));
+            } catch (...) {
+            }
+          }
           try {
-            item->flush(finalFlushGeneration_.load(
-                std::memory_order_acquire));
+            item->setProperty(kOutputLeaseProperty, false);
           } catch (...) {
           }
         }
-        try {
-          item->setProperty(kOutputLeaseProperty, false);
-        } catch (...) {
-        }
+        leaseHeld_.store(false, std::memory_order_release);
       }
     }
 
@@ -286,7 +293,43 @@ struct NativeQtGlOutput::State
     }
 #endif
 
+    // Exact lease handoff. The last adapter owner has just been dropped, so
+    // this context is retired: no further State exists to arm a drain, a
+    // start, or another flush. The QObject itself still has to die through
+    // the event loop, but keeping the item's output lease alive until that
+    // deferred deletion runs would deny an immediate in-process replacement
+    // adapter -- exactly the second open of a reopen. Hand the lease back
+    // here instead, and only once every obligation this context still owes
+    // the item has been discharged in order:
+    //   * off the GUI thread nothing may be handed back, because the
+    //     terminal invalidation is still owed and only the destructor (or a
+    //     queued finalizer) can apply it on the item's thread;
+    //   * on the GUI thread the owed final flush is applied first, so the
+    //     item is invalidated before any successor can observe it, and the
+    //     lease is released only if that obligation actually cleared.
+    // A context that does not release here keeps leaseHeld_ set and stays the
+    // lease owner through destruction, so retirement accounting is unchanged.
+    void releaseOutputLeaseOnRetirementNoexcept() noexcept {
+      if (!leaseHeld_.load(std::memory_order_acquire) || !isGuiThread()) {
+        return;
+      }
+      performRequiredFinalFlushOnGui();
+      if (finalFlushRequired_.load(std::memory_order_acquire)) {
+        return;
+      }
+      QtGlVideoItem* item = item_.data();
+      if (item != nullptr) {
+        try {
+          item->setProperty(kOutputLeaseProperty, false);
+        } catch (...) {
+          return;
+        }
+      }
+      leaseHeld_.store(false, std::memory_order_release);
+    }
+
     void scheduleDeferredDeletionNoexcept() noexcept {
+      releaseOutputLeaseOnRetirementNoexcept();
       try {
 #if defined(WAM_NATIVE_GL_VIDEO_TESTING)
         if (throwNextDeferredDeletion_.exchange(
@@ -513,6 +556,10 @@ struct NativeQtGlOutput::State
 #endif
     std::atomic<std::uint64_t> finalFlushGeneration_{0};
     std::atomic<bool> finalFlushRequired_{false};
+    // Set at construction because createTracked only publishes a GuiContext
+    // after it has taken the item's output lease, and cleared exactly once by
+    // whichever of the retirement handoff or the destructor hands it back.
+    std::atomic<bool> leaseHeld_{true};
 #if defined(WAM_NATIVE_GL_VIDEO_TESTING)
     std::atomic<bool> throwNextDeferredDeletion_{false};
 #endif
@@ -567,6 +614,13 @@ struct NativeQtGlOutput::State
   std::uint64_t trackedFlushRetiredGeneration{0};
   std::uint64_t trackedFlushNextGeneration{0};
   std::uint64_t trackedCloseGeneration{0};
+  // This adapter's own retirement ledger, deliberately not seeded from the
+  // item. acceptedGeneration inherits the item's cross-adapter history so a
+  // successor can never display stale pixels, but the tracked consumer's
+  // ledger is per-session and starts its first arm from 0. Comparing an arm
+  // against the inherited item history instead of this ledger is what made a
+  // second in-process open fail its first arm on a reused item.
+  std::uint64_t trackedRetiredGeneration{0};
   bool trackedFlushPending{false};
   bool trackedClosePending{false};
   bool trackedFlushDone{false};
@@ -1377,8 +1431,24 @@ NativeQtGlOutput::~NativeQtGlOutput() {
     while (!state_->trackedWakeGateDrainedNoexcept()) {
       std::this_thread::yield();
     }
-    std::lock_guard lock(state_->mutex);
-    state_->trackedWake = {};
+    {
+      std::lock_guard lock(state_->mutex);
+      state_->trackedWake = {};
+    }
+    // The last adapter owner has just been dropped, so this adapter is
+    // exactly retired: the wake gate is closed and drained, every queued GUI
+    // callback holds only weak State and is about to become inert, and no
+    // caller can reach this object again. That is the retirement boundary the
+    // item's output lease describes, so hand the lease back here rather than
+    // at the GuiContext's deferred QObject deletion. Deferred deletion is
+    // still required for the QObject itself, but it cannot run before the
+    // event loop is re-entered, and an in-process reopen creates the
+    // successor adapter in the very call stack that destroyed this one.
+    // Released outside the State mutex: the handoff applies any owed terminal
+    // invalidation to the item first, and item calls must not run under it.
+    if (state_->guiContext) {
+      state_->guiContext->releaseOutputLeaseOnRetirementNoexcept();
+    }
   }
 }
 
@@ -2018,7 +2088,7 @@ NativeTrackedVideoOutputProgress NativeQtGlOutput::flushProgress(
         return NativeTrackedVideoOutputProgress::StaleGeneration;
       }
     } else {
-      if (retiredGeneration != state->acceptedGeneration) {
+      if (retiredGeneration != state->trackedRetiredGeneration) {
         return NativeTrackedVideoOutputProgress::StaleGeneration;
       }
       state->trackedFlushPending = true;
@@ -2051,6 +2121,9 @@ NativeTrackedVideoOutputProgress NativeQtGlOutput::flushProgress(
     }
     state->trackedFlushPending = false;
     state->trackedFlushDone = true;
+    // The transfer is proven, so this generation is now the exact retirement
+    // point the next arm/seek flush must name.
+    state->trackedRetiredGeneration = state->trackedFlushNextGeneration;
     state->updateObservationArmLocked();
   }
   return NativeTrackedVideoOutputProgress::Done;
