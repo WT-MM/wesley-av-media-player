@@ -54,7 +54,24 @@ case "$(uname -s)" in
     # required macOS 26.3 and raised the minimum version of the entire app.
     # whisper.cpp's Accelerate path uses an API annotated as macOS 13.3+, so
     # 13.3 is the earliest honest default while that fast path is enabled.
-    set -- "-DCMAKE_OSX_DEPLOYMENT_TARGET=${WAM_MACOS_DEPLOYMENT_TARGET:-13.3}"
+    if test -n "${WAM_MACOS_RELEASE_FLOOR:-}" &&
+       test -n "${WAM_MACOS_DEPLOYMENT_TARGET:-}" &&
+       test "$WAM_MACOS_RELEASE_FLOOR" != "$WAM_MACOS_DEPLOYMENT_TARGET"; then
+      echo "conflicting macOS deployment floors" >&2
+      exit 64
+    fi
+    MACOS_DEPLOYMENT_FLOOR="${WAM_MACOS_RELEASE_FLOOR:-${WAM_MACOS_DEPLOYMENT_TARGET:-13.3}}"
+    if ! printf '%s\n' "$MACOS_DEPLOYMENT_FLOOR" | awk -F. '
+        NF < 2 || NF > 3 ||
+        $1 !~ /^(0|[1-9][0-9]*)$/ ||
+        $2 !~ /^(0|[1-9][0-9]*)$/ ||
+        (NF == 3 && $3 !~ /^(0|[1-9][0-9]*)$/) ||
+        $1 > 999 || $2 > 999 || (NF == 3 && $3 > 999) { exit 65 }
+      '; then
+      echo "invalid macOS deployment floor" >&2
+      exit 64
+    fi
+    set -- "-DCMAKE_OSX_DEPLOYMENT_TARGET=$MACOS_DEPLOYMENT_FLOOR"
     ;;
 esac
 

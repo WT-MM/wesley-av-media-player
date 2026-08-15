@@ -22,6 +22,7 @@
 #include <limits>
 #include <mutex>
 #include <optional>
+#include <string>
 #include <utility>
 
 namespace wam::macos {
@@ -35,6 +36,13 @@ constexpr int kRedOffset = 112;
 constexpr int kGreenOffset = 128;
 constexpr int kBlueOffset = 144;
 constexpr int kUniformBytes = 160;
+
+#if defined(WAM_NATIVE_METAL_VIDEO_TESTING)
+std::atomic<bool> gFailNextSynchronizationTokenCopy{false};
+std::atomic<bool> gFailNextImportTokenCopy{false};
+std::atomic<std::uint64_t> gSynchronizationTokenCopyFailures{0};
+std::atomic<std::uint64_t> gImportTokenCopyFailures{0};
+#endif
 
 struct ColorParameters {
   std::array<float, 4> range{};
@@ -409,19 +417,52 @@ class QtMetalVideoNode final : public QSGGeometryNode {
 
   [[nodiscard]] bool hasProcessedSubmission(
       std::uint64_t submissionSerial) const noexcept {
-    return processedSubmissionSerial_ == submissionSerial;
+    return processedSubmissionSerial_ == submissionSerial ||
+           rejectedTokenCopySerial_ == submissionSerial;
   }
 
   void markSubmissionProcessed(std::uint64_t submissionSerial) noexcept {
     processedSubmissionSerial_ = submissionSerial;
   }
 
-  bool import(FrameLease frame, QString* error) {
+  void markTokenCopyRejected(std::uint64_t submissionSerial) noexcept {
+    rejectedTokenCopySerial_ = submissionSerial;
+  }
+
+  bool import(FrameLease frame, QString* error, bool* tokenCopyFailed) {
+    *tokenCopyFailed = false;
     if (!frame || !frame.isIOSurfaceBacked()) {
       *error = QStringLiteral("Qt Metal item requires an IOSurface frame");
       return false;
     }
-    auto color = colorParameters(frame.pixelBuffer(), error);
+    const CVPixelBufferRef sourcePixelBuffer = frame.pixelBuffer();
+    FrameLease retainedFrame;
+#if defined(WAM_NATIVE_METAL_VIDEO_TESTING)
+    const bool injectCopyFailure =
+        gFailNextImportTokenCopy.exchange(false, std::memory_order_relaxed);
+#else
+    constexpr bool injectCopyFailure = false;
+#endif
+    if (!injectCopyFailure) {
+      retainedFrame = FrameLease(frame);
+    }
+    if (!retainedFrame ||
+        retainedFrame.pixelBuffer() != sourcePixelBuffer) {
+      *tokenCopyFailed = true;
+#if defined(WAM_NATIVE_METAL_VIDEO_TESTING)
+      gImportTokenCopyFailures.fetch_add(1, std::memory_order_relaxed);
+#endif
+      *error = injectCopyFailure
+                   ? QStringLiteral(
+                         "injected Qt Metal import accounting-token copy "
+                         "failure")
+                   : QStringLiteral(
+                         "could not clone decoded-surface accounting token "
+                         "for Qt Metal import");
+      return false;
+    }
+
+    auto color = colorParameters(retainedFrame.pixelBuffer(), error);
     if (!color) {
       return false;
     }
@@ -456,11 +497,26 @@ class QtMetalVideoNode final : public QSGGeometryNode {
     }
 
     std::string importError;
-    auto imported = textureCache_->importFrame(frame, &importError);
+    auto imported = textureCache_->importFrame(retainedFrame, &importError);
     if (!imported || imported->planeCount() != 2) {
+      if (importError.find("accounting token") != std::string::npos) {
+        *tokenCopyFailed = true;
+#if defined(WAM_NATIVE_METAL_VIDEO_TESTING)
+        gImportTokenCopyFailures.fetch_add(1, std::memory_order_relaxed);
+#endif
+      }
       *error = importError.empty()
                    ? QStringLiteral("Qt Metal item requires a two-plane frame")
                    : QString::fromStdString(importError);
+      return false;
+    }
+    if (imported->frame().pixelBuffer() != sourcePixelBuffer) {
+      *tokenCopyFailed = true;
+#if defined(WAM_NATIVE_METAL_VIDEO_TESTING)
+      gImportTokenCopyFailures.fetch_add(1, std::memory_order_relaxed);
+#endif
+      *error = QStringLiteral(
+          "Qt Metal imported frame identity changed during token handoff");
       return false;
     }
 
@@ -474,7 +530,7 @@ class QtMetalVideoNode final : public QSGGeometryNode {
       *error = QStringLiteral("imported planes do not use Qt's Metal device");
       return false;
     }
-    IOSurfaceRef sourceSurface = frame.ioSurface();
+    IOSurfaceRef sourceSurface = retainedFrame.ioSurface();
     if (lumaNative.iosurface != sourceSurface ||
         chromaNative.iosurface != sourceSurface ||
         lumaNative.iosurfacePlane != 0 || chromaNative.iosurfacePlane != 1) {
@@ -516,7 +572,7 @@ class QtMetalVideoNode final : public QSGGeometryNode {
     material_->setResources(current_);
     opaqueMaterial_->setResources(current_);
     markDirty(DirtyMaterial);
-    state_->lastPixelFormat.store(frame.pixelFormat(),
+    state_->lastPixelFormat.store(retainedFrame.pixelFormat(),
                                   std::memory_order_relaxed);
     state_->exactQtMetalDevice.store(true, std::memory_order_relaxed);
     state_->exactSourceIOSurface.store(true, std::memory_order_relaxed);
@@ -549,9 +605,32 @@ class QtMetalVideoNode final : public QSGGeometryNode {
   QtFrameSlotRetainer slotRetainer_;
   QRectF bounds_;
   std::uint64_t processedSubmissionSerial_{0};
+  std::uint64_t rejectedTokenCopySerial_{0};
 };
 
 }  // namespace
+
+#if defined(WAM_NATIVE_METAL_VIDEO_TESTING)
+void failNextQtMetalSynchronizationTokenCopyForTesting() noexcept {
+  gFailNextSynchronizationTokenCopy.store(true, std::memory_order_relaxed);
+}
+
+void failNextQtMetalImportTokenCopyForTesting() noexcept {
+  gFailNextImportTokenCopy.store(true, std::memory_order_relaxed);
+}
+
+std::uint64_t qtMetalSynchronizationTokenCopyFailuresForTesting() noexcept {
+  return gSynchronizationTokenCopyFailures.load(std::memory_order_relaxed);
+}
+
+std::uint64_t qtMetalImportTokenCopyFailuresForTesting() noexcept {
+  return gImportTokenCopyFailures.load(std::memory_order_relaxed);
+}
+
+std::uint64_t qtMetalNextResourceSerialForTesting() noexcept {
+  return gNextResourceSerial.load(std::memory_order_relaxed);
+}
+#endif
 
 bool QtFrameSlotRetainer::retain(int currentSlot, int framesInFlight,
                                  std::shared_ptr<void> resource) noexcept {
@@ -636,30 +715,77 @@ QtMetalVideoItemStats QtMetalVideoItem::stats() const {
 QSGNode* QtMetalVideoItem::updatePaintNode(QSGNode* oldNode,
                                            UpdatePaintNodeData*) {
   auto* node = static_cast<QtMetalVideoNode*>(oldNode);
+  std::optional<FrameLease> latest;
+  std::uint64_t submissionSerial = 0;
+  CVPixelBufferRef submittedPixelBuffer = nullptr;
+  bool handoffCopyFailed = false;
+  {
+    QMutexLocker lock(&state_->mutex);
+    submissionSerial = state_->latestSubmissionSerial;
+    if (state_->latestFrame &&
+        (node == nullptr || !node->hasProcessedSubmission(submissionSerial))) {
+      submittedPixelBuffer = state_->latestFrame->pixelBuffer();
+#if defined(WAM_NATIVE_METAL_VIDEO_TESTING)
+      const bool injectCopyFailure =
+          gFailNextSynchronizationTokenCopy.exchange(
+              false, std::memory_order_relaxed);
+#else
+      constexpr bool injectCopyFailure = false;
+#endif
+      FrameLease handoff;
+      if (!injectCopyFailure) {
+        handoff = FrameLease(*state_->latestFrame);
+      }
+      if (!handoff || handoff.pixelBuffer() != submittedPixelBuffer) {
+        handoffCopyFailed = true;
+        // Keep the node's old processed/resource serial and current textures.
+        // Removing only this failed mailbox entry also refunds its surface
+        // charge without allowing a render-thread retry loop.
+        state_->latestFrame.reset();
+      } else {
+        latest.emplace(std::move(handoff));
+      }
+    }
+  }
+  if (handoffCopyFailed) {
+#if defined(WAM_NATIVE_METAL_VIDEO_TESTING)
+    gSynchronizationTokenCopyFailures.fetch_add(1,
+                                                 std::memory_order_relaxed);
+#endif
+    state_->setError(QStringLiteral(
+        "Qt Metal scene-graph synchronization could not clone the "
+        "decoded-surface accounting token"));
+    return oldNode;
+  }
+
+  // Constructing a node is allowed only after the newest frame has a complete,
+  // identity-checked render-thread lease. Blank items still create no native
+  // texture cache or imported resources.
   if (node == nullptr) {
     node = new QtMetalVideoNode(window(), state_);
   }
   node->setBounds(boundingRect());
 
-  std::optional<FrameLease> latest;
-  std::uint64_t submissionSerial = 0;
-  {
-    QMutexLocker lock(&state_->mutex);
-    submissionSerial = state_->latestSubmissionSerial;
-    if (state_->latestFrame &&
-        !node->hasProcessedSubmission(submissionSerial)) {
-      latest = state_->latestFrame;
-    }
-  }
   if (latest) {
-    // Mark every attempt, including a rejected frame, so geometry-only updates
-    // do not repeatedly import the same bad submission. A recreated node starts
-    // at zero and intentionally retries the retained latest frame.
-    node->markSubmissionProcessed(submissionSerial);
     QString error;
-    if (!node->import(std::move(*latest), &error)) {
+    bool tokenCopyFailed = false;
+    if (!node->import(std::move(*latest), &error, &tokenCopyFailed)) {
+      if (tokenCopyFailed) {
+        node->markTokenCopyRejected(submissionSerial);
+        QMutexLocker lock(&state_->mutex);
+        if (state_->latestSubmissionSerial == submissionSerial &&
+            state_->latestFrame &&
+            state_->latestFrame->pixelBuffer() == submittedPixelBuffer) {
+          state_->latestFrame.reset();
+        }
+      } else {
+        // Ordinary metadata/device rejection is bounded for this node but a
+        // recreated node intentionally retries the retained latest frame.
+        node->markSubmissionProcessed(submissionSerial);
+      }
       state_->setError(std::move(error));
     } else {
+      node->markSubmissionProcessed(submissionSerial);
       state_->setError({});
     }
   }

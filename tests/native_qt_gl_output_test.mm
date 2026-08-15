@@ -139,6 +139,345 @@ wam::macos::FrameLease makeFrame(std::uint64_t generation,
   return frame;
 }
 
+void trackedWake(void* context) noexcept {
+  static_cast<std::atomic<std::uint64_t>*>(context)->fetch_add(
+      1, std::memory_order_release);
+}
+
+void verifyDeferredWatchdogIsStrictlyOnDemand(QQuickWindow& window) {
+  std::string error;
+  auto item = std::make_unique<wam::macos::QtGlVideoItem>();
+  item->setParentItem(window.contentItem());
+  item->setSize(QSizeF(480, 270));
+  item->setVisible(false);
+  auto output = wam::macos::NativeQtGlOutput::create(item.get(), &error);
+  WAM_CHECK_DETAIL(output != nullptr, error);
+
+  const auto idleBaseline = output->deferredWatchdogFactsForTesting();
+  pumpEventsFor(175);
+  const auto idle = output->deferredWatchdogFactsForTesting();
+  WAM_CHECK(idle.armRequests == idleBaseline.armRequests);
+  WAM_CHECK(idle.arms == idleBaseline.arms);
+  WAM_CHECK(idle.wakes == idleBaseline.wakes);
+  WAM_CHECK(!idle.active);
+  WAM_CHECK(!idle.armQueued);
+
+  output->setFailureHandler([](std::string) {});
+  WAM_CHECK(spinUntil(
+      [&] { return !output->immediateObservationQueuedForTesting(); }));
+  const auto pausedBaseline = output->deferredWatchdogFactsForTesting();
+  output->noticeRenderProgressForTesting();
+  const auto firstArm = output->deferredWatchdogFactsForTesting();
+  WAM_CHECK(firstArm.armRequests == pausedBaseline.armRequests + 1);
+  WAM_CHECK(firstArm.arms == pausedBaseline.arms + 1);
+  WAM_CHECK(firstArm.wakes == pausedBaseline.wakes);
+  WAM_CHECK(firstArm.active);
+  WAM_CHECK(firstArm.renderObservationPending);
+  WAM_CHECK(spinUntil([&] {
+    const auto facts = output->deferredWatchdogFactsForTesting();
+    return facts.wakes == pausedBaseline.wakes + 1 && !facts.active &&
+           !facts.armQueued && !facts.renderObservationPending;
+  }));
+
+  const auto firstSettled = output->deferredWatchdogFactsForTesting();
+  pumpEventsFor(175);
+  const auto pausedIdle = output->deferredWatchdogFactsForTesting();
+  WAM_CHECK(pausedIdle.armRequests == firstSettled.armRequests);
+  WAM_CHECK(pausedIdle.arms == firstSettled.arms);
+  WAM_CHECK(pausedIdle.wakes == firstSettled.wakes);
+  WAM_CHECK(!pausedIdle.active);
+
+  std::thread deferredNotifier(
+      [&] { output->noticeRenderProgressForTesting(); });
+  deferredNotifier.join();
+  WAM_CHECK(spinUntil([&] {
+    const auto facts = output->deferredWatchdogFactsForTesting();
+    return facts.armRequests == firstSettled.armRequests + 1 &&
+           facts.arms == firstSettled.arms + 1 &&
+           facts.wakes == firstSettled.wakes + 1 && !facts.active &&
+           !facts.armQueued && !facts.renderObservationPending;
+  }));
+  const auto secondSettled = output->deferredWatchdogFactsForTesting();
+  pumpEventsFor(175);
+  const auto finalIdle = output->deferredWatchdogFactsForTesting();
+  WAM_CHECK(finalIdle.armRequests == secondSettled.armRequests);
+  WAM_CHECK(finalIdle.arms == secondSettled.arms);
+  WAM_CHECK(finalIdle.wakes == secondSettled.wakes);
+
+  output->close(1);
+  output.reset();
+  item->setParentItem(nullptr);
+  item.reset();
+  QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+}
+
+void verifyTrackedDrawAndInvalidation(QQuickWindow& window) {
+  std::string error;
+  auto item = std::make_unique<wam::macos::QtGlVideoItem>();
+  item->setParentItem(window.contentItem());
+  item->setSize(QSizeF(480, 270));
+  std::atomic<std::uint64_t> wakes{0};
+  std::atomic<wam::macos::NativeQtGlOutput*> renderProbeOutput{nullptr};
+  std::atomic<bool> renderProbeArmed{false};
+  std::atomic<std::uint64_t> renderProbeCalls{0};
+  std::atomic<wam::macos::NativeTrackedVideoCapacity> renderProbeCapacity{
+      wam::macos::NativeTrackedVideoCapacity::Failed};
+  // Connect before the adapter so this direct callback deterministically
+  // samples the draw mailbox first. The adapter's later afterRendering
+  // observer then sees no delta; progress depends on capacity() preserving
+  // the wake edge it consumed.
+  const QMetaObject::Connection renderProbe = QObject::connect(
+      &window, &QQuickWindow::afterRendering, &window,
+      [&] {
+        if (!renderProbeArmed.load(std::memory_order_acquire)) {
+          return;
+        }
+        if (auto* observed =
+                renderProbeOutput.load(std::memory_order_acquire)) {
+          renderProbeCapacity.store(observed->capacity(1),
+                                    std::memory_order_release);
+          renderProbeCalls.fetch_add(1, std::memory_order_release);
+        }
+      },
+      Qt::DirectConnection);
+  auto output = wam::macos::NativeQtGlOutput::createTracked(
+      item.get(), {trackedWake, &wakes}, &error);
+  WAM_CHECK_DETAIL(output != nullptr, error);
+  renderProbeOutput.store(output.get(), std::memory_order_release);
+  WAM_CHECK(output->capacity(1) ==
+            wam::macos::NativeTrackedVideoCapacity::StaleGeneration);
+
+  WAM_CHECK(output->flushProgress(0, 1) ==
+            wam::macos::NativeTrackedVideoOutputProgress::Quiescing);
+  WAM_CHECK(spinUntil([&] {
+    return output->flushProgress(0, 1) ==
+           wam::macos::NativeTrackedVideoOutputProgress::Done;
+  }));
+  WAM_CHECK(output->capacity(1) ==
+            wam::macos::NativeTrackedVideoCapacity::Available);
+
+  auto frame = makeFrame(1, 180);
+  wakes.store(0, std::memory_order_release);
+  renderProbeCalls.store(0, std::memory_order_release);
+  renderProbeArmed.store(true, std::memory_order_release);
+  WAM_CHECK(output->submit(
+                frame, wam::macos::NativeTrackedFrameSequence{1}, &error) ==
+            wam::macos::NativeTrackedVideoSubmitStatus::Accepted);
+  WAM_CHECK(output->capacity(1) ==
+            wam::macos::NativeTrackedVideoCapacity::Backpressure);
+  WAM_CHECK(output->submit(
+                frame, wam::macos::NativeTrackedFrameSequence{2}, &error) ==
+            wam::macos::NativeTrackedVideoSubmitStatus::Backpressure);
+  WAM_CHECK(spinUntil([&] {
+    return renderProbeCalls.load(std::memory_order_acquire) != 0 &&
+           wakes.load(std::memory_order_acquire) != 0;
+  }));
+  WAM_CHECK(renderProbeCapacity.load(std::memory_order_acquire) ==
+            wam::macos::NativeTrackedVideoCapacity::Backpressure);
+  renderProbeArmed.store(false, std::memory_order_release);
+  std::optional<wam::macos::NativeTrackedVideoEvent> draw;
+  WAM_CHECK(spinUntil([&] {
+    draw = output->takeEvent();
+    return draw.has_value();
+  }));
+  WAM_CHECK(draw->kind ==
+            wam::macos::NativeTrackedVideoEventKind::FrameDrawn);
+  WAM_CHECK(draw->frameSequence.value == 1);
+  WAM_CHECK(draw->generation == 1);
+  WAM_CHECK(CMTimeCompare(draw->timing.presentationTime,
+                          frame.timing().presentationTime) == 0);
+  const auto afterDraw = output->facts();
+  WAM_CHECK(afterDraw.drawnFrames == 1);
+  WAM_CHECK(afterDraw.retainedFrames == 0);
+  WAM_CHECK(wakes.load(std::memory_order_acquire) > 0);
+
+  auto second = makeFrame(1, 210);
+  WAM_CHECK(output->submit(
+                second, wam::macos::NativeTrackedFrameSequence{2}, &error) ==
+            wam::macos::NativeTrackedVideoSubmitStatus::Accepted);
+  WAM_CHECK(output->flushProgress(1, 2) ==
+            wam::macos::NativeTrackedVideoOutputProgress::Quiescing);
+  std::optional<wam::macos::NativeTrackedVideoEvent> superseded;
+  WAM_CHECK(spinUntil([&] {
+    superseded = output->takeEvent();
+    return superseded.has_value();
+  }));
+  WAM_CHECK(superseded->kind ==
+            wam::macos::NativeTrackedVideoEventKind::FrameSuperseded);
+  WAM_CHECK(superseded->frameSequence.value == 2);
+  WAM_CHECK(spinUntil([&] {
+    return output->flushProgress(1, 2) ==
+           wam::macos::NativeTrackedVideoOutputProgress::Done;
+  }));
+  WAM_CHECK(output->facts().supersededFrames == 1);
+
+  // Pin a callback before terminal detachment. closeProgress must atomically
+  // close the same gate, reject every later entry, and remain Quiescing until
+  // this pre-close pin drains; only then may it return Done and let the owner
+  // release the raw wake context.
+  std::atomic<bool> pinnedEntered{false};
+  std::atomic<bool> pinnedRelease{false};
+  std::thread pinnedWake([&] {
+    output->holdPinnedTrackedWakeForTesting(&pinnedEntered,
+                                             &pinnedRelease);
+  });
+  WAM_CHECK(spinUntil(
+      [&] { return pinnedEntered.load(std::memory_order_acquire); }));
+  WAM_CHECK(output->closeProgress(3) ==
+            wam::macos::NativeTrackedVideoOutputProgress::Quiescing);
+  WAM_CHECK(spinUntil([&] {
+    const auto progress = output->closeProgress(3);
+    WAM_CHECK(progress !=
+              wam::macos::NativeTrackedVideoOutputProgress::Done);
+    std::atomic<bool> lateEntered{false};
+    std::atomic<bool> lateRelease{true};
+    std::thread lateWake([&] {
+      output->holdPinnedTrackedWakeForTesting(&lateEntered,
+                                               &lateRelease);
+    });
+    lateWake.join();
+    return !lateEntered.load(std::memory_order_acquire);
+  }));
+  pinnedRelease.store(true, std::memory_order_release);
+  pinnedWake.join();
+  WAM_CHECK(spinUntil([&] {
+    return output->closeProgress(3) ==
+           wam::macos::NativeTrackedVideoOutputProgress::Done;
+  }));
+  WAM_CHECK(output->closeProgress(3) ==
+            wam::macos::NativeTrackedVideoOutputProgress::Done);
+  renderProbeOutput.store(nullptr, std::memory_order_release);
+  QObject::disconnect(renderProbe);
+  output.reset();
+  item->setParentItem(nullptr);
+  item.reset();
+  QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+}
+
+void verifyTrackedRejectionPrecedesInvalidation(QQuickWindow& window) {
+  std::string error;
+  auto item = std::make_unique<wam::macos::QtGlVideoItem>();
+  item->setParentItem(window.contentItem());
+  item->setSize(QSizeF(480, 270));
+  std::atomic<std::uint64_t> wakes{0};
+  auto output = wam::macos::NativeQtGlOutput::createTracked(
+      item.get(), {trackedWake, &wakes}, &error);
+  WAM_CHECK_DETAIL(output != nullptr, error);
+  WAM_CHECK(output->flushProgress(0, 1) ==
+            wam::macos::NativeTrackedVideoOutputProgress::Quiescing);
+  WAM_CHECK(spinUntil([&] {
+    return output->flushProgress(0, 1) ==
+           wam::macos::NativeTrackedVideoOutputProgress::Done;
+  }));
+
+  auto frame = makeFrame(1, 190);
+  WAM_CHECK(output->submit(
+                frame, wam::macos::NativeTrackedFrameSequence{77}, &error) ==
+            wam::macos::NativeTrackedVideoSubmitStatus::Accepted);
+  wam::macos::NativeTrackedVideoOutputProgress flushResult =
+      wam::macos::NativeTrackedVideoOutputProgress::Failed;
+  std::thread flusher([&] { flushResult = output->flushProgress(1, 2); });
+  flusher.join();
+  WAM_CHECK(flushResult ==
+            wam::macos::NativeTrackedVideoOutputProgress::Quiescing);
+
+  // Both facts are present before one owner sample. Although invalidation is
+  // also sufficient to supersede frame 77, its exact import rejection must
+  // occupy the terminal mailbox first and cannot be overwritten.
+  item->publishRenderInvalidationForTesting(2);
+  item->publishTrackedRejectionForTesting(
+      wam::macos::QtGlFrameIdentity{1, 77}, 1, 1);
+  const auto terminal = output->takeEvent();
+  WAM_CHECK(terminal.has_value());
+  WAM_CHECK(terminal->kind ==
+            wam::macos::NativeTrackedVideoEventKind::Failed);
+  WAM_CHECK(terminal->frameSequence.value == 77);
+  const auto facts = output->facts();
+  WAM_CHECK(facts.fatal);
+  WAM_CHECK(facts.retainedFrames == 0);
+  WAM_CHECK(facts.invalidationPending);
+
+  const auto closeStarted = output->closeProgress(3);
+  WAM_CHECK(closeStarted ==
+                wam::macos::NativeTrackedVideoOutputProgress::Quiescing ||
+            closeStarted ==
+                wam::macos::NativeTrackedVideoOutputProgress::Done);
+  if (closeStarted !=
+      wam::macos::NativeTrackedVideoOutputProgress::Done) {
+    item->publishRenderInvalidationForTesting(3);
+  }
+  WAM_CHECK(spinUntil([&] {
+    return output->closeProgress(3) ==
+           wam::macos::NativeTrackedVideoOutputProgress::Done;
+  }));
+  const auto closedFacts = output->facts();
+  WAM_CHECK(closedFacts.fatal);
+  WAM_CHECK(closedFacts.closed);
+  WAM_CHECK(closedFacts.generation == 3);
+  WAM_CHECK(closedFacts.retainedFrames == 0);
+  WAM_CHECK(!closedFacts.eventPending);
+  WAM_CHECK(!closedFacts.invalidationPending);
+
+  output.reset();
+  QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+  item->setParentItem(nullptr);
+  item.reset();
+}
+
+void verifyTrackedFailedFrameStillCloses(QQuickWindow& window) {
+  std::string error;
+  auto item = std::make_unique<wam::macos::QtGlVideoItem>();
+  item->setParentItem(window.contentItem());
+  item->setSize(QSizeF(480, 270));
+  std::atomic<std::uint64_t> wakes{0};
+  auto output = wam::macos::NativeQtGlOutput::createTracked(
+      item.get(), {trackedWake, &wakes}, &error);
+  WAM_CHECK_DETAIL(output != nullptr, error);
+  WAM_CHECK(output->flushProgress(0, 1) ==
+            wam::macos::NativeTrackedVideoOutputProgress::Quiescing);
+  item->publishRenderInvalidationForTesting(1);
+  WAM_CHECK(output->flushProgress(0, 1) ==
+            wam::macos::NativeTrackedVideoOutputProgress::Done);
+
+  auto frame = makeFrame(1, 200);
+  WAM_CHECK(output->submit(
+                frame, wam::macos::NativeTrackedFrameSequence{91}, &error) ==
+            wam::macos::NativeTrackedVideoSubmitStatus::Accepted);
+  item->publishTrackedRejectionForTesting(
+      wam::macos::QtGlFrameIdentity{1, 91}, 1, 1);
+  const auto failed = output->takeEvent();
+  WAM_CHECK(failed.has_value());
+  WAM_CHECK(failed->kind ==
+            wam::macos::NativeTrackedVideoEventKind::Failed);
+  WAM_CHECK(failed->frameSequence.value == 91);
+  WAM_CHECK(output->facts().fatal);
+  WAM_CHECK(output->facts().retainedFrames == 0);
+
+  const auto closeStarted = output->closeProgress(2);
+  WAM_CHECK(closeStarted ==
+                wam::macos::NativeTrackedVideoOutputProgress::Quiescing ||
+            closeStarted ==
+                wam::macos::NativeTrackedVideoOutputProgress::Done);
+  if (closeStarted !=
+      wam::macos::NativeTrackedVideoOutputProgress::Done) {
+    item->publishRenderInvalidationForTesting(2);
+  }
+  WAM_CHECK(output->closeProgress(2) ==
+            wam::macos::NativeTrackedVideoOutputProgress::Done);
+  const auto closedFacts = output->facts();
+  WAM_CHECK(closedFacts.fatal);
+  WAM_CHECK(closedFacts.closed);
+  WAM_CHECK(closedFacts.generation == 2);
+  WAM_CHECK(closedFacts.retainedFrames == 0);
+  WAM_CHECK(!closedFacts.eventPending);
+  WAM_CHECK(!closedFacts.invalidationPending);
+
+  output.reset();
+  QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+  item->setParentItem(nullptr);
+  item.reset();
+}
+
 std::optional<wam::macos::NativeVideoPrepareOutcome> waitForPreparation(
     wam::macos::NativeVideoPipeline& pipeline) {
   std::optional<wam::macos::NativeVideoPrepareOutcome> outcome;
@@ -833,11 +1172,15 @@ void verifySchedulingAllocationFailures(QQuickWindow& window) {
     auto output = wam::macos::NativeQtGlOutput::create(item.get(), &error);
     WAM_CHECK_DETAIL(output != nullptr, error);
     std::atomic<unsigned> failures{0};
+    output->throwNextImmediateObservationInvokeForTesting();
     output->setFailureHandler([&](std::string) {
       failures.fetch_add(1, std::memory_order_release);
     });
-    pumpEventsFor(20);
-    output->throwNextImmediateObservationInvokeForTesting();
+    WAM_CHECK(spinUntil(
+        [&] { return !output->immediateObservationQueuedForTesting(); }));
+    const auto retryFacts = output->deferredWatchdogFactsForTesting();
+    WAM_CHECK(retryFacts.arms == 0);
+    WAM_CHECK(retryFacts.wakes == 0);
     item->failAfterRetirementServiceCreationForTesting();
     item->submitFrame(makeFrame(0, 150));
     window.requestUpdate();
@@ -853,11 +1196,9 @@ void verifySchedulingAllocationFailures(QQuickWindow& window) {
     QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
   }
 
-  // If both bounded render-thread queue attempts throw, the callback performs
-  // atomics only. A later controller observation consumes the fixed terminal
-  // marker exactly once and leaves the coalescing bit clear. The watchdog was
-  // established before activation, so even a hidden/paused path needs no new
-  // allocation or later public call to deliver the failure on the GUI thread.
+  // If both bounded immediate-observation attempts throw, the fixed terminal
+  // marker arms exactly one pre-created watchdog cycle. It delivers once and
+  // returns to a truly idle state instead of leaving a 50 ms repeating timer.
   {
     auto item = std::make_unique<wam::macos::QtGlVideoItem>();
     item->setParentItem(window.contentItem());
@@ -865,21 +1206,26 @@ void verifySchedulingAllocationFailures(QQuickWindow& window) {
     auto output = wam::macos::NativeQtGlOutput::create(item.get(), &error);
     WAM_CHECK_DETAIL(output != nullptr, error);
     std::atomic<unsigned> failures{0};
+    const auto before = output->deferredWatchdogFactsForTesting();
+    output->throwNextTwoImmediateObservationInvokesForTesting();
     output->setFailureHandler([&](std::string) {
       failures.fetch_add(1, std::memory_order_release);
     });
-    pumpEventsFor(20);
-    output->throwNextTwoImmediateObservationInvokesForTesting();
-    item->failAfterRetirementServiceCreationForTesting();
-    item->submitFrame(makeFrame(0, 155));
-    window.requestUpdate();
-    WAM_CHECK(spinUntil([&] {
-      return item->stats().fatalErrorSerial == 1 &&
-             !output->immediateObservationQueuedForTesting();
-    }));
     WAM_CHECK(spinUntil([&] {
       return failures.load(std::memory_order_acquire) == 1;
     }));
+    const auto settled = output->deferredWatchdogFactsForTesting();
+    WAM_CHECK(settled.armRequests == before.armRequests + 1);
+    WAM_CHECK(settled.arms == before.arms + 1);
+    WAM_CHECK(settled.wakes == before.wakes + 1);
+    WAM_CHECK(!settled.active);
+    WAM_CHECK(!settled.armQueued);
+    WAM_CHECK(!settled.renderObservationPending);
+    pumpEventsFor(125);
+    const auto idle = output->deferredWatchdogFactsForTesting();
+    WAM_CHECK(idle.armRequests == settled.armRequests);
+    WAM_CHECK(idle.arms == settled.arms);
+    WAM_CHECK(idle.wakes == settled.wakes);
     const auto terminalStats = output->stats();
     WAM_CHECK(terminalStats.fatalErrorSerial == 1);
     (void)output->stats();
@@ -1276,9 +1622,11 @@ void verifyDirectSchedulerFailureRetires(
 
 int main(int argc, char** argv) {
   if (argc != 2) {
-    std::cerr << "usage: native_qt_gl_output_test <h264-or-hevc-file>\n";
+    std::cerr << "usage: native_qt_gl_output_test "
+                 "<h264-or-hevc-file|--watchdog-only>\n";
     return EXIT_FAILURE;
   }
+  const bool watchdogOnly = std::string(argv[1]) == "--watchdog-only";
 
   QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
   QSurfaceFormat format;
@@ -1291,8 +1639,11 @@ int main(int argc, char** argv) {
   QSurfaceFormat::setDefaultFormat(format);
   QGuiApplication application(argc, argv);
 
-  const std::filesystem::path fixture(argv[1]);
-  verifyFailureDuringPreparedStart(fixture);
+  const std::filesystem::path fixture =
+      watchdogOnly ? std::filesystem::path{} : std::filesystem::path(argv[1]);
+  if (!watchdogOnly) {
+    verifyFailureDuringPreparedStart(fixture);
+  }
 
   QQuickWindow window;
   window.resize(480, 270);
@@ -1307,6 +1658,11 @@ int main(int argc, char** argv) {
   WAM_CHECK(spinUntil([&] { return window.isSceneGraphInitialized(); }));
   WAM_CHECK(window.rendererInterface()->graphicsApi() ==
             QSGRendererInterface::OpenGL);
+  verifyDeferredWatchdogIsStrictlyOnDemand(window);
+  if (watchdogOnly) {
+    std::cout << "native Qt OpenGL deferred watchdog checks passed\n";
+    return EXIT_SUCCESS;
+  }
 
   std::string error;
   auto output = wam::macos::NativeQtGlOutput::create(item.get(), &error);
@@ -1451,6 +1807,9 @@ int main(int argc, char** argv) {
   QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
 
   verifyOffThreadFlushAndFinalOwnerDrop(window);
+  verifyTrackedDrawAndInvalidation(window);
+  verifyTrackedFailedFrameStillCloses(window);
+  verifyTrackedRejectionPrecedesInvalidation(window);
   verifyOffThreadStartAcknowledgment(window);
   verifySameGenerationStartStillAcknowledges(window);
   verifyHiddenLatePresenterFailure(window);

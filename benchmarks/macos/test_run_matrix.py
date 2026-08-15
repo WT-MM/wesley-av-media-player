@@ -215,6 +215,28 @@ class RunnerTests(unittest.TestCase):
             self.assertFalse(entry["performance_metrics_available"])
             self.assertNotIn("value", entry)
 
+    def test_missing_native_proof_is_distinct_ineligible_na(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            trial = self.make_trial(Path(temporary), "wam-test-h264-1x", "wam")
+            entry = trial.as_manifest_entry()
+
+            def ineligible(command, **kwargs):
+                return subprocess.CompletedProcess(
+                    command,
+                    run_matrix.NATIVE_PROOF_INELIGIBLE_EXIT,
+                    "",
+                    "WAM native benchmark is ineligible: no exact first frame",
+                )
+
+            completed = run_matrix.execute_trial(
+                trial, entry, runner_args(), run_process=ineligible
+            )
+            self.assertFalse(completed)
+            self.assertEqual(entry["status"], "n/a")
+            self.assertEqual(entry["n_a"]["reason"], "ineligible")
+            self.assertIn("native_selected", entry["n_a"]["basis"])
+            self.assertFalse(entry["performance_metrics_available"])
+
     def test_expected_unsupported_failure_has_distinct_na_reason(self):
         with tempfile.TemporaryDirectory() as temporary:
             trial = self.make_trial(Path(temporary), "nasa-minute-av1-1x", "quicktime")

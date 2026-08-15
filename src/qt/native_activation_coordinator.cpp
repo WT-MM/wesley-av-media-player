@@ -944,6 +944,11 @@ Action NativeActivationCoordinator::completeAction(
 
   if (!completion.succeeded) {
     if (completed.kind == Action::Kind::AttachCaption) {
+      if (pending_caption_id_ &&
+          *pending_caption_id_ != completed.captionId) {
+        return publish(Action::Kind::AttachCaption, 0, 0, -1,
+                       *pending_caption_id_);
+      }
       pending_caption_id_.reset();
       phase_ = Phase::FallbackActive;
       fallback_reason_ = FallbackReason::Caption;

@@ -4,6 +4,10 @@
 #include "player_controller.hpp"
 #include "player_core_p.hpp"
 
+#if defined(Q_OS_MACOS)
+#include "platform/macos/qt_gl_video_item.hpp"
+#endif
+
 #include <QOpenGLContext>
 #include <QOpenGLFunctions>
 #include <QQmlEngine>
@@ -105,12 +109,31 @@ class MpvRenderNode final : public QSGRenderNode {
 
 }  // namespace
 
-MpvVideoItem::MpvVideoItem(QQuickItem* parent) : QQuickItem(parent) {
+MpvVideoItem::MpvVideoItem(QQuickItem* parent)
+    : QQuickItem(parent)
+#if defined(Q_OS_MACOS)
+      , native_video_item_(new macos::QtGlVideoItem(this))
+#endif
+{
   setFlag(ItemHasContents, true);
+#if defined(Q_OS_MACOS)
+  // A parent's content node is below its zero-z children. Consequently the
+  // native frame covers the independently suppressible mpv node, while QML
+  // controls declared after this stage remain above the complete subtree.
+  native_video_item_->setPosition(QPointF{});
+  native_video_item_->setSize(size());
+  native_video_item_->setZ(0.0);
+#endif
 }
 
 MpvVideoItem::~MpvVideoItem() {
   if (controller_) controller_->detachVideoItem(this);
+#if defined(Q_OS_MACOS)
+  // Destroy the native presenter while this most-derived stage still owns a
+  // valid Qt Quick identity. Its QSG node may queue context-bound retirement;
+  // no controller/session may borrow the accessor beyond this point.
+  delete native_video_item_;
+#endif
 }
 
 void MpvVideoItem::setController(PlayerController* controller) {
@@ -121,6 +144,19 @@ void MpvVideoItem::setController(PlayerController* controller) {
   emit controllerChanged();
   update();
 }
+
+#if defined(Q_OS_MACOS)
+macos::QtGlVideoItem& MpvVideoItem::nativeVideoItem() noexcept {
+  return *native_video_item_;
+}
+
+void MpvVideoItem::geometryChange(const QRectF& new_geometry,
+                                  const QRectF& old_geometry) {
+  QQuickItem::geometryChange(new_geometry, old_geometry);
+  native_video_item_->setPosition(QPointF{});
+  native_video_item_->setSize(new_geometry.size());
+}
+#endif
 
 QSGNode* MpvVideoItem::updatePaintNode(QSGNode* old_node,
                                        UpdatePaintNodeData*) {

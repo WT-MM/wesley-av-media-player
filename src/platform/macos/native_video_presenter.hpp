@@ -1,5 +1,7 @@
 #pragma once
 
+#include "native_surface_budget.hpp"
+
 #include <CoreMedia/CoreMedia.h>
 #include <CoreVideo/CoreVideo.h>
 #include <IOSurface/IOSurfaceRef.h>
@@ -13,6 +15,10 @@
 
 namespace wam::macos {
 
+#if defined(WAM_NATIVE_FRAME_LEASE_TESTING)
+struct FrameLeaseTestAccess;
+#endif
+
 // Identifies a decode generation. Incrementing the generation on seek or load
 // lets every asynchronous stage reject frames from the previous timeline.
 struct FrameTiming {
@@ -23,7 +29,11 @@ struct FrameTiming {
 };
 
 // A cheap, reference-counted lease on a VideoToolbox/CoreVideo output frame.
-// The constructor retains a borrowed reference; no pixel bytes are copied.
+// CPU-backed buffers retain the borrowed CoreVideo reference directly.
+// IOSurface-backed buffers are admitted through NativeSurfaceBudget before
+// retaining that reference; a failed admission produces a wholly empty lease.
+// Copies clone the existing accounting token and never reacquire by identity.
+// No pixel bytes are copied.
 class FrameLease final {
 public:
   FrameLease() noexcept = default;
@@ -47,9 +57,31 @@ public:
   void reset() noexcept;
 
 private:
+#if defined(WAM_NATIVE_FRAME_LEASE_TESTING)
+  friend struct FrameLeaseTestAccess;
+#endif
+  void swap(FrameLease &other) noexcept;
+
   CVPixelBufferRef pixelBuffer_{nullptr};
   FrameTiming timing_{};
+  NativeSurfaceBudgetToken surface_budget_token_{};
 };
+
+#if defined(WAM_NATIVE_FRAME_LEASE_TESTING)
+// Header-only access keeps every test-only symbol out of shipping objects.
+// Tests may inspect the exact token clone used by FrameLease without adding a
+// second acquisition path to the production API.
+struct FrameLeaseTestAccess {
+  [[nodiscard]] static NativeSurfaceBudgetToken &
+  surfaceBudgetToken(FrameLease &frame) noexcept {
+    return frame.surface_budget_token_;
+  }
+  [[nodiscard]] static const NativeSurfaceBudgetToken &
+  surfaceBudgetToken(const FrameLease &frame) noexcept {
+    return frame.surface_budget_token_;
+  }
+};
+#endif
 
 struct MetalPlane {
   std::size_t width{0};

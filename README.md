@@ -41,6 +41,8 @@ brew install cmake ninja qt mpv ffmpeg pkg-config
 cmake -S . -B build -G Ninja \
   -DCMAKE_PREFIX_PATH=/opt/homebrew/opt/qt \
   -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_OSX_DEPLOYMENT_TARGET=13.3 \
+  -DWAM_ENABLE_MACOS_NATIVE_VIDEO=ON \
   -DBUILD_TESTING=ON
 cmake --build build --parallel
 ctest --test-dir build --output-on-failure
@@ -58,6 +60,20 @@ scripts/bundle_macos.zsh \
   build/runtime/whisper-cli \
   build/runtime/models/ggml-base.en.bin
 ```
+
+That local command produces an ad-hoc-signed development package. Public macOS
+artifacts are built only by `.github/workflows/release-macos.yml`, which uses a
+protected `macos-release` environment, checksum-pinned dependencies built for
+macOS 13.3, Developer ID signing, Apple notarization, ticket stapling, and a
+Gatekeeper assessment. The workflow publishes only the post-staple ZIP and its
+SHA-256 sidecar. It never runs for pull requests.
+
+The protected environment supplies checksum-pinned per-architecture Qt SDK and
+media closure archives, the full Developer ID Application authority and team
+ID, the base64 PKCS#12 certificate and password, App Store Connect notary key ID
+and issuer ID, and the base64 notary API key. Release credentials are imported
+into an ephemeral CI keychain and removed in an unconditional cleanup step;
+they must not be placed in the repository or local build files.
 
 ## Controls
 

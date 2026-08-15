@@ -22,9 +22,17 @@ FocusScope {
         || captionsButton.down
         || editButton.down
         || fullscreenButton.down
+    readonly property int elapsedWholeSeconds: Math.floor(timeline.displayPosition)
     signal editRequested
     signal interaction
     signal moveRequested(real targetX, real targetY)
+
+    function formatStepSeconds(seconds) {
+        // seekStepSeconds is always a whole number in practice (the
+        // Preferences window only ever writes integers), but it is stored as
+        // a double to match seekRelative's signature -- drop a stray ".0".
+        return Number(seconds).toFixed(seconds % 1 === 0 ? 0 : 1);
+    }
 
     function formatTime(seconds) {
         if (!isFinite(seconds) || seconds < 0)
@@ -98,7 +106,6 @@ FocusScope {
             if (hovered)
                 root.interaction();
         }
-        onPointChanged: root.interaction()
     }
 
     Scrubber {
@@ -118,7 +125,6 @@ FocusScope {
         accentColor: root.accentColor
         onPreviewSeekRequested: seconds => {
             root.player.previewSeekTo(seconds);
-            root.interaction();
         }
         onSeekRequested: seconds => {
             root.player.endScrub(seconds);
@@ -135,7 +141,7 @@ FocusScope {
         anchors.left: timeline.left
         anchors.top: timeline.bottom
         anchors.topMargin: -2
-        text: root.formatTime(timeline.displayPosition)
+        text: root.formatTime(root.elapsedWholeSeconds)
         color: "#c8ffffff"
         font.pixelSize: 10
         font.weight: Font.Medium
@@ -237,10 +243,10 @@ FocusScope {
             id: backButton
             compact: true
             iconName: "backward5"
-            accessibleName: "Back 5 seconds"
-            toolTip: "Back 5 seconds (Left Arrow)"
+            accessibleName: "Back " + root.formatStepSeconds(root.player.seekStepSeconds) + " seconds"
+            toolTip: accessibleName + " (Left Arrow)"
             onClicked: {
-                root.player.seekRelative(-5);
+                root.player.skipBackward();
                 root.interaction();
             }
         }
@@ -262,10 +268,10 @@ FocusScope {
             id: forwardButton
             compact: true
             iconName: "forward5"
-            accessibleName: "Forward 5 seconds"
-            toolTip: "Forward 5 seconds (Right Arrow)"
+            accessibleName: "Forward " + root.formatStepSeconds(root.player.seekStepSeconds) + " seconds"
+            toolTip: accessibleName + " (Right Arrow)"
             onClicked: {
-                root.player.seekRelative(5);
+                root.player.skipForward();
                 root.interaction();
             }
         }

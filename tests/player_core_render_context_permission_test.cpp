@@ -1,3 +1,6 @@
+#define WAM_MPV_RUNTIME_TESTING 1
+
+#include "fakes/mpv_runtime/injected_mpv_runtime.hpp"
 #include "qt/mpv_render_context_policy.hpp"
 #include "qt/player_controller.hpp"
 #include "qt/player_core_p.hpp"
@@ -558,7 +561,10 @@ int main(int argc, char **argv) {
 
   auto core_owner = std::make_shared<wam::qt::PlayerCore>(nullptr);
   wam::qt::PlayerCore &core = *core_owner;
-  expect(core.initialize(), "PlayerCore initializes a real libmpv client");
+  const auto runtime =
+      wam::playback::mpv::makeInjectedLinkedMpvRuntime();
+  expect(core.initialize(runtime),
+         "PlayerCore initializes through the injected mpv table");
   if (!core.ready()) {
     std::cerr << "FAIL: " << core.initializationError().toStdString() << '\n';
     return EXIT_FAILURE;
@@ -895,8 +901,8 @@ int main(int argc, char **argv) {
   Access::setBeforeTerminate(*exact_core, [&](mpv_handle *) {
     exact_terminations.fetch_add(1, std::memory_order_relaxed);
   });
-  expect(exact_core->initialize(),
-         "the exact-context core initializes a real libmpv client");
+  expect(exact_core->initialize(runtime),
+         "the exact-context core initializes through the injected table");
   expect(exact_core->ensureRenderContext(),
          "context A creates and publishes the exact-owned renderer");
   expect(Access::renderContextOwner(*exact_core) == &gl_context &&
@@ -979,8 +985,8 @@ int main(int argc, char **argv) {
   Access::setBeforeTerminate(*switched_success, [&](mpv_handle *) {
     switched_success_terminations.fetch_add(1, std::memory_order_relaxed);
   });
-  expect(switched_success->initialize(),
-         "the post-API success core initializes libmpv");
+  expect(switched_success->initialize(runtime),
+         "the post-API success core initializes through the injected table");
   expect(gl_context.makeCurrent(&gl_surface),
          "context A is current before the post-API success switch");
   bool switched_success_to_b = false;
@@ -1026,8 +1032,8 @@ int main(int argc, char **argv) {
   Access::setBeforeTerminate(*partial_core, [&](mpv_handle *) {
     partial_terminations.fetch_add(1, std::memory_order_relaxed);
   });
-  expect(partial_core->initialize(),
-         "the partial-failure core initializes libmpv");
+  expect(partial_core->initialize(runtime),
+         "the partial-failure core initializes through the injected table");
   auto *const partial_candidate = reinterpret_cast<mpv_render_context *>(
       static_cast<std::uintptr_t>(0x51AFC0DEU));
   bool partial_freed_exact_candidate = false;
@@ -1083,8 +1089,8 @@ int main(int argc, char **argv) {
   Access::setBeforeTerminate(*allocation_failure, [&](mpv_handle *) {
     allocation_failure_terminations.fetch_add(1, std::memory_order_relaxed);
   });
-  expect(allocation_failure->initialize(),
-         "the allocation-failure core initializes libmpv");
+  expect(allocation_failure->initialize(runtime),
+         "the allocation-failure core initializes through the injected table");
   auto *const allocation_failure_candidate =
       reinterpret_cast<mpv_render_context *>(
           static_cast<std::uintptr_t>(0xA110CA7EU));
@@ -1142,8 +1148,8 @@ int main(int argc, char **argv) {
     Access::setBeforeTerminate(stack_core, [&](mpv_handle *) {
       stack_terminations.fetch_add(1, std::memory_order_relaxed);
     });
-    expect(stack_core.initialize(),
-           "the non-shared core can initialize its non-render mpv client");
+    expect(stack_core.initialize(runtime),
+           "the non-shared core initializes through the injected table");
     expect(gl_context.makeCurrent(&gl_surface),
            "context A is current for non-shared admission rejection");
     expect(!stack_core.ensureRenderContext(),
@@ -1178,8 +1184,8 @@ int main(int argc, char **argv) {
         *quarantined_core, [quarantined_terminations](mpv_handle *) {
           quarantined_terminations->fetch_add(1, std::memory_order_relaxed);
         });
-    expect(quarantined_core->initialize(),
-           "the quarantine core initializes libmpv");
+    expect(quarantined_core->initialize(runtime),
+           "the quarantine core initializes through the injected table");
     expect(quarantined_core->ensureRenderContext(),
            "the doomed owner creates an active renderer");
     quarantined_weak = quarantined_core;
