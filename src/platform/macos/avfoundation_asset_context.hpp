@@ -40,9 +40,14 @@ struct AVFoundationAssetContextNativeHandles {
   const void* selectedVideoTrack{nullptr};
   const void* selectedAudioTrack{nullptr};
 
+  // Native v1 admits audio-less assets (a GIF-to-MP4 conversion carries one
+  // H.264 track and no audio), so a null selectedAudioTrack is a complete
+  // borrow rather than a missing one. Completeness therefore states only what
+  // every admitted asset owns; the audio handle is cross-checked against the
+  // descriptor's selectedAudio in adoptPreparedAVFoundationAssetContext, which
+  // is the one place that knows whether this asset was admitted with audio.
   [[nodiscard]] bool complete() const noexcept {
-    return asset != nullptr && selectedVideoTrack != nullptr &&
-           selectedAudioTrack != nullptr;
+    return asset != nullptr && selectedVideoTrack != nullptr;
   }
 };
 
