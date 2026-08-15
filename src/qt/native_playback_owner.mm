@@ -75,6 +75,31 @@ QString nativeFailureText(media::native_playback::FailureReason reason) {
   return QStringLiteral("Native playback failed.");
 }
 
+// True for failure reasons where the user-facing text above is merely
+// informational: playback kept going (compatibility playback took over
+// immediately, or -- for Preview/CommitSeek -- native playback is still
+// running and only the seek itself was declined). False for reasons where
+// playback did not continue, which stay on the blocking error surface.
+bool nativeFailureIsInformational(
+    media::native_playback::FailureReason reason) noexcept {
+  using Reason = media::native_playback::FailureReason;
+  switch (reason) {
+  case Reason::Preparation:
+  case Reason::Startup:
+  case Reason::Clock:
+  case Reason::Decode:
+  case Reason::AudioOutput:
+  case Reason::VideoOutput:
+  case Reason::Preview:
+  case Reason::CommitSeek:
+    return true;
+  case Reason::Stop:
+  case Reason::Protocol:
+    return false;
+  }
+  return false;
+}
+
 bool applied(const playback_router::Transition &transition) noexcept {
   return transition.status == playback_router::Status::Applied;
 }
@@ -210,7 +235,9 @@ void NativePlaybackOwner::expireNativePhaseWatchdog(std::uint64_t epoch) {
     return;
   }
   clearNativeCommit(true);
-  controller_.setLastError(
+  // Both texts end in "using compatibility playback": the watchdog only ever
+  // fires into a fallback continuation, never a hard stop.
+  controller_.setLastNotice(
       seeking ? QStringLiteral("Native playback could not complete the seek in "
                                "time; using compatibility playback.")
               : QStringLiteral("Native playback did not start in time; using "
@@ -1322,7 +1349,11 @@ void NativePlaybackOwner::consumeLifecycle(
             return;
           }
           clearNativeCommit(true);
-          controller_.setLastError(nativeFailureText(event.reason));
+          if (nativeFailureIsInformational(event.reason)) {
+            controller_.setLastNotice(nativeFailureText(event.reason));
+          } else {
+            controller_.setLastError(nativeFailureText(event.reason));
+          }
           if (event.reason == native_protocol::FailureReason::Preparation &&
               transition.action.has_value() &&
               transition.action->kind ==

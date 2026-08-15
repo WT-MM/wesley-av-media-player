@@ -4338,4 +4338,19 @@ void PlayerController::setLastError(const QString &error) {
   emit lastErrorChanged();
 }
 
+void PlayerController::setLastNotice(const QString &notice) {
+  if (!notice.isEmpty())
+    qInfo().noquote() << "WAM:" << notice;
+  if (last_notice_ == notice) {
+    // Same treatment as setLastError: a repeated notice (e.g. the same
+    // fallback text on a second file) still has to re-trigger the toast, not
+    // be swallowed as an unchanged property.
+    if (!notice.isEmpty())
+      emit lastNoticeChanged();
+    return;
+  }
+  last_notice_ = notice;
+  emit lastNoticeChanged();
+}
+
 } // namespace wam::qt
