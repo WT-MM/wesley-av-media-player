@@ -176,6 +176,99 @@ struct AudioPrimingPlan {
 // A payload-free buffer that states an exact time and claims no empty media is
 // an ordinary discontinuity marker and is deliberately excluded, so the
 // staging path keeps owning format-change detection.
+// The exact media-timeline extent of one compressed audio access unit: the
+// frame count its own packet decodes to, over the stream's sample rate. An
+// invalid time means the sample does not state one unambiguously (not audio,
+// no stream description, a non-integral rate, or a codec whose packets carry
+// no fixed frame count and no per-packet count for this exact entry).
+[[nodiscard]] CMTime naturalAudioPacketDuration(CMSampleBufferRef sample,
+                                                CMItemCount entries,
+                                                CMItemCount index) noexcept {
+  CMFormatDescriptionRef format = CMSampleBufferGetFormatDescription(sample);
+  if (format == nullptr ||
+      CMFormatDescriptionGetMediaType(format) != kCMMediaType_Audio) {
+    return kCMTimeInvalid;
+  }
+  const AudioStreamBasicDescription* asbd =
+      CMAudioFormatDescriptionGetStreamBasicDescription(
+          static_cast<CMAudioFormatDescriptionRef>(format));
+  if (asbd == nullptr || !(asbd->mSampleRate > 0.0) ||
+      asbd->mSampleRate >
+          static_cast<double>(std::numeric_limits<std::int32_t>::max())) {
+    return kCMTimeInvalid;
+  }
+  const auto timescale = static_cast<std::int32_t>(asbd->mSampleRate);
+  if (static_cast<double>(timescale) != asbd->mSampleRate) {
+    return kCMTimeInvalid;
+  }
+  std::uint32_t frames = asbd->mFramesPerPacket;
+  // A per-packet frame count only names one access unit when the timing array
+  // states one entry per access unit; a single shared entry describes them all
+  // and only the stream's fixed packet size can speak for it.
+  const CMItemCount samples = CMSampleBufferGetNumSamples(sample);
+  if (entries == samples && index >= 0 && index < samples) {
+    const AudioStreamPacketDescription* packets = nullptr;
+    std::size_t packetBytes = 0;
+    if (CMSampleBufferGetAudioStreamPacketDescriptionsPtr(
+            sample, &packets, &packetBytes) == noErr &&
+        packets != nullptr &&
+        static_cast<std::size_t>(index) <
+            packetBytes / sizeof(AudioStreamPacketDescription) &&
+        packets[static_cast<std::size_t>(index)].mVariableFramesInPacket != 0) {
+      frames =
+          packets[static_cast<std::size_t>(index)].mVariableFramesInPacket;
+    }
+  }
+  if (frames == 0) {
+    return kCMTimeInvalid;
+  }
+  return CMTimeMake(static_cast<std::int64_t>(frames), timescale);
+}
+
+// Restates a compressed audio sample's per-access-unit durations on the
+// codec's own ordinal media grid, and returns how many entries it restated.
+//
+// A muxer folds an edit's end trim into the container: it shortens the final
+// access unit's stts duration so that the track's declared media duration
+// lands exactly on the edited end. CoreMedia surfaces that shortfall twice --
+// once as the short input duration and once as the TrimDurationAtEnd
+// attachment this backend removes. Dropping only the attachment would publish
+// an access unit whose stated media-timeline extent is smaller than the frames
+// its own packet decodes to, which is an edit left in the timing, not a
+// media-timeline fact.
+//
+// On its own media timeline compressed audio occupies an exact ordinal grid:
+// every access unit is exactly its packet's frame count long. So a truncated
+// unit is republished at that exact natural extent. This only ever lengthens a
+// unit, only up to the size its own packet description already declares, and
+// never touches a unit the container states in full -- it cannot turn a
+// genuinely malformed grid into a well-formed one, and it cannot hide a
+// decoder fault.
+[[nodiscard]] std::size_t restateCompressedAudioPacketDurations(
+    CMSampleBufferRef sample, CMSampleTimingInfo* timing,
+    std::size_t entries) noexcept {
+  if (sample == nullptr || timing == nullptr) {
+    return 0;
+  }
+  std::size_t restated = 0;
+  for (std::size_t index = 0; index < entries; ++index) {
+    CMSampleTimingInfo& entry = timing[index];
+    if (!CMTIME_IS_NUMERIC(entry.duration) || entry.duration.value <= 0) {
+      continue;
+    }
+    const CMTime natural = naturalAudioPacketDuration(
+        sample, static_cast<CMItemCount>(entries),
+        static_cast<CMItemCount>(index));
+    if (!CMTIME_IS_NUMERIC(natural) || natural.value <= 0 ||
+        CMTimeCompare(entry.duration, natural) >= 0) {
+      continue;
+    }
+    entry.duration = natural;
+    ++restated;
+  }
+  return restated;
+}
+
 [[nodiscard]] bool mediaFreeMarker(CMSampleBufferRef sample) noexcept {
   if (sample == nullptr) {
     return false;
@@ -2667,8 +2760,10 @@ class ProductionGeneration final : public AVFoundationGeneration {
   // media timeline and owns its decode-versus-presentation window itself, so
   // republish each unit on its input timing alone before it leaves this
   // backend. Compressed audio decode order is presentation order, so the
-  // redundant decode stamp is dropped rather than reconciled. Returns a +1
-  // reference, or null when the unit cannot be restated exactly.
+  // redundant decode stamp is dropped rather than reconciled. The container's
+  // end trim, folded into the final access unit's duration, is restated on the
+  // codec's ordinal packet grid for the same reason. Returns a +1 reference,
+  // or null when the unit cannot be restated exactly.
   [[nodiscard]] CMSampleBufferRef restatedOnMediaTimeline(
       CMSampleBufferRef sample) noexcept {
     CMItemCount entries = 0;
@@ -2680,6 +2775,8 @@ class ProductionGeneration final : public AVFoundationGeneration {
         static_cast<std::size_t>(entries) > audio_timing_.size()) {
       return nullptr;
     }
+    static_cast<void>(restateCompressedAudioPacketDurations(
+        sample, audio_timing_.data(), static_cast<std::size_t>(entries)));
     for (CMItemCount index = 0; index < entries; ++index) {
       CMSampleTimingInfo& timing =
           audio_timing_[static_cast<std::size_t>(index)];
@@ -3855,6 +3952,12 @@ bool sampleFormatMatchesTrackForTesting(
 
 bool mediaFreeMarkerForTesting(CMSampleBufferRef sample) noexcept {
   return mediaFreeMarker(sample);
+}
+
+std::size_t restateCompressedAudioPacketDurationsForTesting(
+    CMSampleBufferRef sample, CMSampleTimingInfo* timing,
+    std::size_t entries) noexcept {
+  return restateCompressedAudioPacketDurations(sample, timing, entries);
 }
 
 std::optional<MediaTrackDescriptor> inspectVideoFormat(
