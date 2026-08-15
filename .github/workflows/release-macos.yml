@@ -1,0 +1,446 @@
+name: Release notarized macOS apps
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-macos-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: macOS ${{ matrix.architecture }}
+    environment:
+      name: macos-release
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            architecture: arm64
+          - runner: macos-15-intel
+            architecture: x86_64
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: /bin/zsh {0}
+    env:
+      QT_VERSION: 6.11.1
+      WAM_MACOS_RELEASE_FLOOR: "13.3"
+      MACOSX_DEPLOYMENT_TARGET: "13.3"
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      WAM_MACOS_EXPECTED_SIGNING_AUTHORITY: >-
+        ${{ vars.MACOS_DEVELOPER_ID_APPLICATION }}
+      WAM_MACOS_EXPECTED_TEAM_ID: ${{ vars.MACOS_TEAM_ID }}
+      WAM_MACOS_NOTARY_KEY_ID: ${{ vars.MACOS_NOTARY_KEY_ID }}
+      WAM_MACOS_NOTARY_ISSUER_ID: ${{ vars.MACOS_NOTARY_ISSUER_ID }}
+
+    steps:
+      - name: Check out the release source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Validate the release ref
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == push ]]; then
+            print -r -- "$GITHUB_REF_NAME" |
+              /usr/bin/grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'
+            project_version="$(/usr/bin/sed -nE \
+              's/^project\(WAM VERSION ([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' \
+              CMakeLists.txt)"
+            [[ -n "$project_version" ]]
+            [[ "$GITHUB_REF_NAME" == "v$project_version" ]]
+          fi
+
+      - name: Install build tools
+        run: |
+          set -euo pipefail
+          for tool in cmake ninja pkg-config; do
+            command -v "$tool" >/dev/null || {
+              print -u2 -- "Release runner is missing required tool: $tool"
+              exit 1
+            }
+          done
+
+      - name: Install checksum-pinned Qt SDK
+        env:
+          ARCHITECTURE: ${{ matrix.architecture }}
+          ARM64_URL: ${{ vars.WAM_MACOS_QT_ARCHIVE_ARM64_URL }}
+          ARM64_SHA256: ${{ vars.WAM_MACOS_QT_ARCHIVE_ARM64_SHA256 }}
+          X86_64_URL: ${{ vars.WAM_MACOS_QT_ARCHIVE_X86_64_URL }}
+          X86_64_SHA256: ${{ vars.WAM_MACOS_QT_ARCHIVE_X86_64_SHA256 }}
+        run: |
+          set -euo pipefail
+          case "$ARCHITECTURE" in
+            arm64)
+              archive_url="$ARM64_URL"
+              archive_sha256="$ARM64_SHA256"
+              ;;
+            x86_64)
+              archive_url="$X86_64_URL"
+              archive_sha256="$X86_64_SHA256"
+              ;;
+            *)
+              print -u2 -- "Unsupported Qt release architecture: $ARCHITECTURE"
+              exit 64
+              ;;
+          esac
+
+          [[ -n "$archive_url" && "$archive_url" == https://* ]] || {
+            print -u2 -- \
+              "A protected HTTPS Qt SDK archive URL is required for $ARCHITECTURE"
+            exit 1
+          }
+          archive_sha256="${archive_sha256:l}"
+          (( ${#archive_sha256} == 64 )) &&
+            [[ "$archive_sha256" != *[^0-9a-f]* ]] || {
+              print -u2 -- \
+                "A protected Qt SDK archive SHA-256 is required for $ARCHITECTURE"
+              exit 1
+            }
+
+          archive="$RUNNER_TEMP/wam-qt-$QT_VERSION-$ARCHITECTURE.tar.gz"
+          prefix="$RUNNER_TEMP/wam-qt-$QT_VERSION-$ARCHITECTURE"
+          [[ ! -e "$archive" && ! -e "$prefix" ]]
+          /usr/bin/curl --proto '=https' --proto-redir '=https' --tlsv1.2 \
+            --fail --location --retry 3 --output "$archive" "$archive_url"
+          actual_sha256="$(/usr/bin/shasum -a 256 "$archive" |
+            /usr/bin/awk '{print $1}')"
+          [[ "$actual_sha256" == "$archive_sha256" ]] || {
+            print -u2 -- "Pinned Qt SDK archive checksum mismatch"
+            exit 1
+          }
+
+          archive_inventory="$RUNNER_TEMP/wam-qt-$ARCHITECTURE.files"
+          /usr/bin/tar -tzf "$archive" > "$archive_inventory"
+          while IFS= read -r archive_entry; do
+            [[ -n "$archive_entry" ]]
+            [[ "$archive_entry" != /* &&
+               "$archive_entry" != .. &&
+               "$archive_entry" != ../* &&
+               "$archive_entry" != */.. &&
+               "$archive_entry" != *"/../"* ]] || {
+              print -u2 -- \
+                "Pinned Qt SDK archive contains an escaping path: $archive_entry"
+              exit 1
+            }
+          done < "$archive_inventory"
+          /usr/bin/tar -tvzf "$archive" |
+            /usr/bin/awk '
+              substr($0, 1, 1) != "-" && substr($0, 1, 1) != "d" {
+                exit 1
+              }
+            ' || {
+              print -u2 -- "Pinned Qt SDK archive contains links or special files"
+              exit 1
+            }
+
+          mkdir -p "$prefix"
+          /usr/bin/tar -xzf "$archive" -C "$prefix" --strip-components=1
+          if /usr/bin/find "$prefix" -type l -print -quit |
+              /usr/bin/grep -q .; then
+            print -u2 -- "Pinned Qt SDK archive extracted a symbolic link"
+            exit 1
+          fi
+          if /usr/bin/find "$prefix" ! -type f ! -type d -print -quit |
+              /usr/bin/grep -q .; then
+            print -u2 -- "Pinned Qt SDK archive extracted a special file"
+            exit 1
+          fi
+          [[ -x "$prefix/bin/qt-cmake" && -x "$prefix/bin/macdeployqt" &&
+             -x "$prefix/bin/qmake" ]]
+          [[ -f "$prefix/lib/cmake/Qt6/Qt6Config.cmake" &&
+             -f "$prefix/lib/cmake/Qt6ShaderTools/Qt6ShaderToolsConfig.cmake" ]]
+          qt_core="$prefix/lib/QtCore.framework/Versions/A/QtCore"
+          [[ -f "$qt_core" && ! -L "$qt_core" ]]
+          [[ "$(/usr/bin/lipo -archs "$qt_core")" == "$ARCHITECTURE" ]]
+          qt_version="$("$prefix/bin/qmake" -query QT_VERSION)"
+          [[ "$qt_version" == "$QT_VERSION" ]]
+          print -r -- "$prefix/bin" >> "$GITHUB_PATH"
+          print -r -- "CMAKE_PREFIX_PATH=$prefix" >> "$GITHUB_ENV"
+
+      - name: Install checksum-pinned media closure
+        env:
+          ARCHITECTURE: ${{ matrix.architecture }}
+          ARM64_URL: ${{ vars.WAM_MACOS_MEDIA_ARCHIVE_ARM64_URL }}
+          ARM64_SHA256: ${{ vars.WAM_MACOS_MEDIA_ARCHIVE_ARM64_SHA256 }}
+          X86_64_URL: ${{ vars.WAM_MACOS_MEDIA_ARCHIVE_X86_64_URL }}
+          X86_64_SHA256: ${{ vars.WAM_MACOS_MEDIA_ARCHIVE_X86_64_SHA256 }}
+        run: |
+          set -euo pipefail
+          case "$ARCHITECTURE" in
+            arm64)
+              archive_url="$ARM64_URL"
+              archive_sha256="$ARM64_SHA256"
+              ;;
+            x86_64)
+              archive_url="$X86_64_URL"
+              archive_sha256="$X86_64_SHA256"
+              ;;
+            *)
+              print -u2 -- "Unsupported release architecture: $ARCHITECTURE"
+              exit 64
+              ;;
+          esac
+
+          [[ -n "$archive_url" && "$archive_url" == https://* ]] || {
+            print -u2 -- \
+              "A protected HTTPS media archive URL is required for $ARCHITECTURE"
+            exit 1
+          }
+          archive_sha256="${archive_sha256:l}"
+          (( ${#archive_sha256} == 64 )) &&
+            [[ "$archive_sha256" != *[^0-9a-f]* ]] || {
+              print -u2 -- \
+                "A protected media archive SHA-256 is required for $ARCHITECTURE"
+              exit 1
+            }
+
+          archive="$RUNNER_TEMP/wam-media-$ARCHITECTURE.tar.gz"
+          prefix="$RUNNER_TEMP/wam-media-$ARCHITECTURE"
+          [[ ! -e "$archive" && ! -e "$prefix" ]]
+          /usr/bin/curl --proto '=https' --proto-redir '=https' --tlsv1.2 \
+            --fail --location --retry 3 \
+            --output "$archive" "$archive_url"
+          actual_sha256="$(/usr/bin/shasum -a 256 "$archive" |
+            /usr/bin/awk '{print $1}')"
+          [[ "$actual_sha256" == "$archive_sha256" ]] || {
+            print -u2 -- "Pinned media archive checksum mismatch"
+            exit 1
+          }
+
+          archive_inventory="$RUNNER_TEMP/wam-media-$ARCHITECTURE.files"
+          /usr/bin/tar -tzf "$archive" > "$archive_inventory"
+          while IFS= read -r archive_entry; do
+            [[ -n "$archive_entry" ]]
+            [[ "$archive_entry" != /* &&
+               "$archive_entry" != .. &&
+               "$archive_entry" != ../* &&
+               "$archive_entry" != */.. &&
+               "$archive_entry" != *"/../"* ]] || {
+              print -u2 -- \
+                "Pinned media archive contains an escaping path: $archive_entry"
+              exit 1
+            }
+          done < "$archive_inventory"
+          /usr/bin/tar -tvzf "$archive" |
+            /usr/bin/awk '
+              substr($0, 1, 1) != "-" && substr($0, 1, 1) != "d" {
+                exit 1
+              }
+            ' || {
+              print -u2 -- \
+                "Pinned media archive contains links or special files"
+              exit 1
+            }
+
+          mkdir -p "$prefix"
+          /usr/bin/tar -xzf "$archive" -C "$prefix" --strip-components=1
+          if /usr/bin/find "$prefix" -type l -print -quit |
+              /usr/bin/grep -q .; then
+            print -u2 -- "Pinned media archive extracted a symbolic link"
+            exit 1
+          fi
+          if /usr/bin/find "$prefix" ! -type f ! -type d -print -quit |
+              /usr/bin/grep -q .; then
+            print -u2 -- "Pinned media archive extracted a special file"
+            exit 1
+          fi
+          [[ -x "$prefix/bin/ffmpeg" ]]
+          [[ -x "$prefix/bin/ffprobe" ]]
+          [[ -f "$prefix/include/mpv/client.h" ]]
+          [[ -f "$prefix/lib/pkgconfig/mpv.pc" ]]
+          [[ -f "$prefix/lib/libmpv.2.dylib" &&
+             ! -L "$prefix/lib/libmpv.2.dylib" ]]
+          [[ "$(/usr/bin/lipo -archs "$prefix/bin/ffmpeg")" ==
+             "$ARCHITECTURE" ]]
+          [[ "$(/usr/bin/lipo -archs "$prefix/lib/libmpv.2.dylib")" ==
+             "$ARCHITECTURE" ]]
+
+          PKG_CONFIG_PATH="$prefix/lib/pkgconfig" \
+            pkg-config --exists mpv
+          print -r -- "$prefix/bin" >> "$GITHUB_PATH"
+          {
+            print -r -- "PKG_CONFIG_PATH=$prefix/lib/pkgconfig"
+            print -r -- "WAM_FFMPEG_EXECUTABLE=$prefix/bin/ffmpeg"
+            print -r -- \
+              "WAM_MPV_FALLBACK_LIBRARY=$prefix/lib/libmpv.2.dylib"
+          } >> "$GITHUB_ENV"
+
+      - name: Configure, build, and test the release source
+        run: |
+          set -euo pipefail
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_ARCHITECTURES=${{ matrix.architecture }} \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET="$WAM_MACOS_RELEASE_FLOOR" \
+            -DBUILD_TESTING=ON \
+            -DWAM_ENABLE_MACOS_NATIVE_VIDEO=ON
+          cmake --build build --parallel
+          ctest --test-dir build --output-on-failure
+
+      - name: Install the app and pinned caption runtime
+        run: |
+          set -euo pipefail
+          cmake --install build --prefix "$GITHUB_WORKSPACE/stage"
+          WAM_MACOS_RELEASE_FLOOR="$WAM_MACOS_RELEASE_FLOOR" \
+            scripts/build_whisper.sh build/runtime/whisper-cli
+          scripts/fetch_whisper_model.sh \
+            build/runtime/models/ggml-base.en.bin
+          [[ "$(/usr/bin/lipo -archs build/runtime/whisper-cli)" ==
+             "${{ matrix.architecture }}" ]]
+
+      - name: Import protected Developer ID and notary credentials
+        env:
+          CERTIFICATE_P12_BASE64: >-
+            ${{ secrets.MACOS_DEVELOPER_ID_P12_BASE64 }}
+          CERTIFICATE_P12_PASSWORD: >-
+            ${{ secrets.MACOS_DEVELOPER_ID_P12_PASSWORD }}
+          NOTARY_API_KEY_BASE64: >-
+            ${{ secrets.MACOS_NOTARY_KEY_BASE64 }}
+        run: |
+          set -euo pipefail
+          umask 077
+          : "${CERTIFICATE_P12_BASE64:?missing Developer ID P12}"
+          : "${CERTIFICATE_P12_PASSWORD:?missing Developer ID P12 password}"
+          : "${NOTARY_API_KEY_BASE64:?missing notary API key}"
+          : "${WAM_MACOS_EXPECTED_SIGNING_AUTHORITY:?missing signing authority}"
+          : "${WAM_MACOS_EXPECTED_TEAM_ID:?missing signing team}"
+          : "${WAM_MACOS_NOTARY_KEY_ID:?missing notary key ID}"
+          : "${WAM_MACOS_NOTARY_ISSUER_ID:?missing notary issuer ID}"
+
+          [[ "$WAM_MACOS_EXPECTED_SIGNING_AUTHORITY" ==
+             "Developer ID Application: "* ]]
+          [[ "$WAM_MACOS_EXPECTED_SIGNING_AUTHORITY" ==
+             *" ($WAM_MACOS_EXPECTED_TEAM_ID)" ]]
+          (( ${#WAM_MACOS_EXPECTED_TEAM_ID} == 10 ))
+          [[ "$WAM_MACOS_EXPECTED_TEAM_ID" != *[^A-Z0-9]* ]]
+
+          certificate_path="$RUNNER_TEMP/wam-release-certificate.p12"
+          notary_key_path="$RUNNER_TEMP/wam-notary-api-key.p8"
+          keychain_path="$RUNNER_TEMP/wam-release.keychain-db"
+          printf '%s' "$CERTIFICATE_P12_BASE64" |
+            /usr/bin/base64 -D > "$certificate_path"
+          printf '%s' "$NOTARY_API_KEY_BASE64" |
+            /usr/bin/base64 -D > "$notary_key_path"
+          chmod 600 "$certificate_path" "$notary_key_path"
+          /usr/bin/grep -q '^-----BEGIN PRIVATE KEY-----$' "$notary_key_path"
+          /usr/bin/grep -q '^-----END PRIVATE KEY-----$' "$notary_key_path"
+
+          keychain_password="$(/usr/bin/openssl rand -hex 32)"
+          security create-keychain -p "$keychain_password" "$keychain_path"
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain -p "$keychain_password" "$keychain_path"
+          security import "$certificate_path" \
+            -k "$keychain_path" \
+            -P "$CERTIFICATE_P12_PASSWORD" \
+            -T /usr/bin/codesign
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s -k "$keychain_password" "$keychain_path"
+          security list-keychains -d user -s "$keychain_path"
+          unset keychain_password
+
+          identities="$(security find-identity -v -p codesigning \
+            "$keychain_path")"
+          matches="$(print -r -- "$identities" |
+            /usr/bin/grep -F -- \
+              "\"$WAM_MACOS_EXPECTED_SIGNING_AUTHORITY\"" || true)"
+          match_count="$(print -r -- "$matches" |
+            /usr/bin/awk 'NF { count += 1 } END { print count + 0 }')"
+          [[ "$match_count" == 1 ]] || {
+            print -u2 -- \
+              "Expected exactly one protected Developer ID identity"
+            exit 1
+          }
+          fingerprint="$(print -r -- "$matches" |
+            /usr/bin/awk 'NF { print $2; exit }')"
+          (( ${#fingerprint} == 40 ))
+          [[ "$fingerprint" != *[^0-9A-Fa-f]* ]]
+          {
+            print -r -- "WAM_MACOS_CODESIGN_IDENTITY=$fingerprint"
+            print -r -- "WAM_MACOS_NOTARY_KEY=$notary_key_path"
+          } >> "$GITHUB_ENV"
+
+      - name: Remove protected signing material if import fails
+        if: ${{ failure() }}
+        run: |
+          set +e
+          security lock-keychain \
+            "$RUNNER_TEMP/wam-release.keychain-db" 2>/dev/null
+          security delete-keychain \
+            "$RUNNER_TEMP/wam-release.keychain-db" 2>/dev/null
+          /bin/rm -f -- \
+            "$RUNNER_TEMP/wam-release-certificate.p12" \
+            "$RUNNER_TEMP/wam-notary-api-key.p8"
+          exit 0
+
+      - name: Bundle and Developer ID sign inside-out
+        run: |
+          set -euo pipefail
+          /usr/bin/env \
+            -u WAM_RELEASE_MACOS_POLICY_TESTING \
+            -u WAM_RELEASE_MACOS_TEST_ROOT \
+            -u WAM_RELEASE_MACOS_TOOL_DIR \
+            scripts/bundle_macos.zsh \
+              stage/WAM.app \
+              build/runtime/whisper-cli \
+              build/runtime/models/ggml-base.en.bin
+          stage/WAM.app/Contents/MacOS/WAM --verify-runtime
+
+      - name: Select release artifact name
+        id: artifact
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == push ]]; then
+            release_label="$GITHUB_REF_NAME"
+          else
+            release_label="manual-${GITHUB_SHA[1,12]}"
+          fi
+          print -r -- "label=$release_label" >> "$GITHUB_OUTPUT"
+
+      - name: Notarize, staple, assess, and archive
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          /usr/bin/env \
+            -u WAM_RELEASE_MACOS_POLICY_TESTING \
+            -u WAM_RELEASE_MACOS_TEST_ROOT \
+            -u WAM_RELEASE_MACOS_TOOL_DIR \
+            /bin/zsh scripts/release_macos_notarize.zsh \
+              stage/WAM.app \
+              "dist/WAM-macOS-${{ matrix.architecture }}-${{ steps.artifact.outputs.label }}.zip"
+
+      - name: Remove protected signing material
+        if: ${{ always() }}
+        run: |
+          set +e
+          security lock-keychain \
+            "$RUNNER_TEMP/wam-release.keychain-db" 2>/dev/null
+          security delete-keychain \
+            "$RUNNER_TEMP/wam-release.keychain-db" 2>/dev/null
+          /bin/rm -f -- \
+            "$RUNNER_TEMP/wam-release-certificate.p12" \
+            "$RUNNER_TEMP/wam-notary-api-key.p8"
+          exit 0
+
+      - name: Upload the notarized release
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: >-
+            WAM-macOS-${{ matrix.architecture }}-${{ steps.artifact.outputs.label }}
+          path: |
+            dist/*.zip
+            dist/*.zip.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30

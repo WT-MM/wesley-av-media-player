@@ -1,9 +1,11 @@
 #pragma once
 
+#include "playback/mpv/mpv_runtime.hpp"
 #include "render_lifecycle.hpp"
 
 #include <QPointer>
 #include <QString>
+#include <QtGlobal>
 
 #include <atomic>
 #include <cstdint>
@@ -41,7 +43,8 @@ class PlayerCore final : public std::enable_shared_from_this<PlayerCore> {
 
   // Initializes libmpv on the controller's GUI thread. The render thread may
   // retain this wrapper while dormant, but it never initializes the engine.
-  bool initialize();
+  bool initialize(
+      std::shared_ptr<const ::wam::playback::mpv::MpvRuntime> runtime);
   [[nodiscard]] bool ready() const {
     return state_.load(std::memory_order_acquire) == State::Ready;
   }
@@ -53,6 +56,14 @@ class PlayerCore final : public std::enable_shared_from_this<PlayerCore> {
   }
   [[nodiscard]] mpv_handle* handle() const {
     return ready() ? handle_ : nullptr;
+  }
+  [[nodiscard]] const ::wam::playback::mpv::MpvApi* readyApi() const noexcept {
+    return ready() && runtime_ ? &runtime_->api() : nullptr;
+  }
+  [[nodiscard]] const ::wam::playback::mpv::MpvApi& api() const noexcept {
+    const auto* const ready_api = readyApi();
+    Q_ASSERT(ready_api != nullptr);
+    return *ready_api;
   }
   [[nodiscard]] std::optional<RenderTicket> readyRenderTicket() const {
     if (!renderContextAllowed())
@@ -107,6 +118,14 @@ class PlayerCore final : public std::enable_shared_from_this<PlayerCore> {
 
   void detachOwner(PlayerController* owner);
 
+  // GUI-thread terminal fallback recovery. This is admitted only after
+  // renderer permission is revoked and the exact GL lifecycle is Empty and
+  // not Busy. Returning true means the mpv wakeup callback was cleared and
+  // mpv_terminate_destroy returned; the wrapper is then detached/dormant and
+  // may be replaced without waiting for a scene-graph-held shared reference.
+  [[nodiscard]] bool retireFallbackAfterRenderRelease(
+      PlayerController* owner) noexcept;
+
   // These methods are called only from Qt Quick's OpenGL render thread.
   bool ensureRenderContext();
   void render(int framebuffer, int width, int height, bool flip_y);
@@ -154,6 +173,10 @@ class PlayerCore final : public std::enable_shared_from_this<PlayerCore> {
   mutable std::mutex owner_mutex_;
   PlayerController* owner_ = nullptr;
   std::mutex render_mutex_;
+  // Set exactly once before the first client handle is created and retained
+  // through every render-context keepalive. No libmpv object can outlive the
+  // immutable table or the dynamically loaded image that implements it.
+  std::shared_ptr<const ::wam::playback::mpv::MpvRuntime> runtime_;
   mpv_handle* handle_ = nullptr;
   mpv_render_context* render_context_ = nullptr;
   QPointer<QOpenGLContext> render_context_owner_;

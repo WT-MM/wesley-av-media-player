@@ -3,15 +3,27 @@ cmake_minimum_required(VERSION 3.24)
 # Qt 6.11 supports macOS 13 and newer. Pin the executable's load-command floor
 # instead of inheriting the build machine's current SDK version.
 if(APPLE AND NOT DEFINED CMAKE_OSX_DEPLOYMENT_TARGET)
-  set(CMAKE_OSX_DEPLOYMENT_TARGET "13.0" CACHE STRING
+  set(CMAKE_OSX_DEPLOYMENT_TARGET "13.3" CACHE STRING
       "Minimum supported macOS version")
 endif()
 
 project(WAM VERSION 0.3.1 LANGUAGES CXX)
 
+if(APPLE)
+  # Apple-native targets below use Objective-C++ even when the dormant legacy
+  # video option is off. Enabling the language here keeps target availability
+  # independent of that older feature gate.
+  enable_language(OBJCXX)
+endif()
+
+if(APPLE)
+  set(WAM_MACOS_NATIVE_VIDEO_DEFAULT ON)
+else()
+  set(WAM_MACOS_NATIVE_VIDEO_DEFAULT OFF)
+endif()
 option(WAM_ENABLE_MACOS_NATIVE_VIDEO
-  "Build the dormant AVFoundation/VideoToolbox/Metal foundation"
-  OFF)
+  "Build the shipping AVFoundation/VideoToolbox native playback path"
+  ${WAM_MACOS_NATIVE_VIDEO_DEFAULT})
 option(WAM_ENABLE_MACOS_NATIVE_VIDEO_ACTIVATION
   "Compile the dormant macOS native-video activation seam"
   OFF)
@@ -61,9 +73,35 @@ find_package(Qt6 6.11 REQUIRED COMPONENTS
   QuickLayouts
   OpenGL)
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(MPV REQUIRED IMPORTED_TARGET mpv)
+if(APPLE)
+  # The native-first macOS executable needs libmpv's declarations to compile
+  # its dormant compatibility client, but it must not acquire a load command
+  # for libmpv. The fallback runtime resolves the complete API table only
+  # after the playback router explicitly selects fallback.
+  pkg_check_modules(MPV_HEADERS REQUIRED mpv)
+  add_library(wam_mpv_headers INTERFACE)
+  target_include_directories(wam_mpv_headers SYSTEM INTERFACE
+    ${MPV_HEADERS_INCLUDE_DIRS})
+  target_compile_options(wam_mpv_headers INTERFACE
+    ${MPV_HEADERS_CFLAGS_OTHER})
+else()
+  pkg_check_modules(MPV REQUIRED IMPORTED_TARGET mpv)
+  add_library(wam_mpv_headers INTERFACE)
+  target_link_libraries(wam_mpv_headers INTERFACE PkgConfig::MPV)
+endif()
 include(cmake/WamMsys2PkgConfig.cmake)
-wam_normalize_msys2_pkgconfig_target(PkgConfig::MPV ${MPV_LIBRARY_DIRS})
+if(TARGET PkgConfig::MPV)
+  wam_normalize_msys2_pkgconfig_target(PkgConfig::MPV ${MPV_LIBRARY_DIRS})
+endif()
+if(APPLE AND BUILD_TESTING)
+  # These two legacy integration tests intentionally exercise a real linked
+  # mpv client through an injected table. Keep that strong dependency private
+  # to tests; the shipping executable sees only wam_mpv_headers.
+  pkg_check_modules(MPV_TEST_LINK REQUIRED IMPORTED_TARGET mpv)
+  set(WAM_MPV_INTEGRATION_TEST_TARGET PkgConfig::MPV_TEST_LINK)
+else()
+  set(WAM_MPV_INTEGRATION_TEST_TARGET PkgConfig::MPV)
+endif()
 
 qt_standard_project_setup(REQUIRES 6.11)
 
@@ -73,6 +111,7 @@ qt_add_executable(wam MACOSX_BUNDLE WIN32
   src/qt/player_controller.hpp
   src/qt/player_core.cpp
   src/qt/player_core_p.hpp
+  src/qt/mpv_hwdec_interop_policy.hpp
   src/qt/render_lifecycle.hpp
   src/qt/playback_policy.hpp
   src/qt/mpv_video_item.cpp
@@ -93,6 +132,7 @@ qt_add_qml_module(wam
     qml/IconButton.qml
     qml/QuietButton.qml
     qml/QuickEditSheet.qml
+    qml/PreferencesWindow.qml
     qml/Scrubber.qml)
 
 target_include_directories(wam PRIVATE src src/qt)
@@ -106,12 +146,70 @@ target_link_libraries(wam PRIVATE
   Qt6::QuickDialogs2
   Qt6::QuickLayouts
   Qt6::OpenGL
-  PkgConfig::MPV)
+  wam_mpv_headers)
 
 if(MSVC)
   target_compile_options(wam PRIVATE /W4 /permissive-)
 else()
   target_compile_options(wam PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+add_library(wam_mpv_runtime STATIC
+  src/playback/mpv/mpv_api.hpp
+  src/playback/mpv/mpv_api.cpp
+  src/playback/mpv/mpv_runtime.hpp
+  src/playback/mpv/mpv_runtime_common.cpp)
+if(APPLE)
+  target_sources(wam_mpv_runtime PRIVATE
+    src/playback/mpv/mpv_runtime.cpp)
+else()
+  target_sources(wam_mpv_runtime PRIVATE
+    src/playback/mpv/mpv_runtime_linked.cpp)
+endif()
+target_include_directories(wam_mpv_runtime PUBLIC src)
+target_compile_features(wam_mpv_runtime PUBLIC cxx_std_20)
+if(MSVC)
+  target_compile_options(wam_mpv_runtime PRIVATE /W4 /permissive-)
+else()
+  target_compile_options(wam_mpv_runtime PRIVATE
+    -Wall -Wextra -Wpedantic)
+endif()
+target_link_libraries(wam_mpv_runtime
+  PUBLIC
+    Qt6::Core
+    wam_mpv_headers)
+if(CMAKE_DL_LIBS)
+  target_link_libraries(wam_mpv_runtime PRIVATE ${CMAKE_DL_LIBS})
+endif()
+target_link_libraries(wam PRIVATE wam_mpv_runtime)
+
+if(APPLE)
+  add_library(wam_native_core STATIC
+    src/media/matroska_aac.hpp
+    src/media/matroska_aac.cpp
+    src/media/matroska_ebml.hpp
+    src/media/matroska_ebml.cpp
+    src/media/video_codec_configuration.hpp
+    src/media/video_codec_configuration.cpp
+    src/media/native_media_source.hpp
+    src/media/native_media_source.cpp
+    src/media/native_media_backend.hpp
+    src/media/native_media_backend.cpp
+    src/media/native_media_dispatcher.hpp
+    src/media/native_media_dispatcher.cpp
+    src/media/native_playback_contract.hpp
+    src/media/playback_router.hpp
+    src/media/playback_router.cpp
+    src/platform/macos/native_media_clock.hpp
+    src/platform/macos/native_media_clock.cpp
+    src/platform/macos/native_pcm_ring.hpp
+    src/platform/macos/native_pcm_ring.cpp
+    src/platform/macos/native_audio_render_core.hpp
+    src/platform/macos/native_audio_render_core.cpp)
+  target_include_directories(wam_native_core PUBLIC src)
+  target_compile_features(wam_native_core PUBLIC cxx_std_20)
+  target_compile_options(wam_native_core PRIVATE
+    -Wall -Wextra -Wpedantic)
 endif()
 
 if(APPLE)
@@ -129,27 +227,202 @@ if(APPLE)
     BUILD_RPATH "/opt/homebrew/lib;/opt/homebrew/opt/qt/lib"
     INSTALL_RPATH "@executable_path/../Frameworks")
 
+  # The macOS stage always owns one tracked native surface, even before a
+  # native media epoch is selected. Keep its implementation and the neutral
+  # FrameLease/video primitives in one Apple-only production closure. Metal
+  # texture mapping lives in its opt-in archive below so the OpenGL route does
+  # not acquire Metal merely by retaining decoded-frame leases.
+  find_library(WAM_COREFOUNDATION_FRAMEWORK CoreFoundation REQUIRED)
+  find_library(WAM_COREMEDIA_FRAMEWORK CoreMedia REQUIRED)
+  find_library(WAM_COREVIDEO_FRAMEWORK CoreVideo REQUIRED)
+  find_library(WAM_FOUNDATION_FRAMEWORK Foundation REQUIRED)
+  find_library(WAM_IOSURFACE_FRAMEWORK IOSurface REQUIRED)
+  find_library(WAM_OPENGL_FRAMEWORK OpenGL REQUIRED)
+  find_library(WAM_VIDEOTOOLBOX_FRAMEWORK VideoToolbox REQUIRED)
+
+  set(WAM_MACOS_NATIVE_VIDEO_CORE_SOURCES
+    src/platform/macos/native_surface_budget.hpp
+    src/platform/macos/native_surface_budget.mm
+    src/platform/macos/native_video_limits.hpp
+    src/platform/macos/native_video_presenter.hpp
+    src/platform/macos/native_video_presenter.mm
+    src/platform/macos/video_toolbox_decoder.hpp
+    src/platform/macos/video_toolbox_decoder.mm)
+  add_library(wam_macos_native_video_core STATIC
+    ${WAM_MACOS_NATIVE_VIDEO_CORE_SOURCES})
+  target_include_directories(wam_macos_native_video_core PUBLIC src)
+  target_compile_features(wam_macos_native_video_core PUBLIC cxx_std_20)
+  target_compile_options(wam_macos_native_video_core PRIVATE
+    "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>"
+    -Wall -Wextra -Wpedantic)
+  target_link_libraries(wam_macos_native_video_core PUBLIC
+    "${WAM_COREFOUNDATION_FRAMEWORK}"
+    "${WAM_COREMEDIA_FRAMEWORK}"
+    "${WAM_COREVIDEO_FRAMEWORK}"
+    "${WAM_FOUNDATION_FRAMEWORK}"
+    "${WAM_IOSURFACE_FRAMEWORK}"
+    "${WAM_VIDEOTOOLBOX_FRAMEWORK}")
+  set_target_properties(wam_macos_native_video_core PROPERTIES
+    LINKER_LANGUAGE OBJCXX)
+
+  add_library(wam_macos_native_qt_tracked STATIC
+    src/platform/macos/native_qt_gl_output.hpp
+    src/platform/macos/native_qt_gl_output.mm
+    src/platform/macos/qt_gl_video_item.hpp
+    src/platform/macos/qt_gl_video_item.mm)
+  target_include_directories(wam_macos_native_qt_tracked PUBLIC src)
+  target_compile_features(wam_macos_native_qt_tracked PUBLIC cxx_std_20)
+  target_compile_definitions(wam_macos_native_qt_tracked PRIVATE
+    GL_SILENCE_DEPRECATION=1)
+  target_compile_options(wam_macos_native_qt_tracked PRIVATE
+    "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>"
+    -Wall -Wextra -Wpedantic)
+  target_link_libraries(wam_macos_native_qt_tracked
+    PUBLIC
+      wam_macos_native_video_core
+      Qt6::Core
+      Qt6::Gui
+      Qt6::Quick
+    PRIVATE
+      "${WAM_OPENGL_FRAMEWORK}")
+  set_target_properties(wam_macos_native_qt_tracked PROPERTIES
+    AUTOMOC ON
+    LINKER_LANGUAGE OBJCXX)
+  target_link_libraries(wam PRIVATE wam_macos_native_qt_tracked)
+
+  # QuickTime-style window chrome (transparent full-size-content titlebar,
+  # aspect-ratio-locked interactive resizing, double-click Actual Size) is a
+  # small always-on AppKit UI helper, independent of which video backend is
+  # selected, so it is not gated behind WAM_ENABLE_MACOS_NATIVE_VIDEO below.
+  find_library(WAM_APPKIT_FRAMEWORK AppKit REQUIRED)
+  find_library(WAM_QUARTZCORE_FRAMEWORK QuartzCore REQUIRED)
+  find_library(WAM_AVFOUNDATION_FRAMEWORK AVFoundation REQUIRED)
+  target_sources(wam PRIVATE
+    src/qt/macos_window_chrome.hpp
+    src/qt/macos_window_chrome.mm)
+  # ARC only for the window-chrome helper: the playback .mm sources are
+  # ARC-agnostic by design and pay per-frame retain/release costs under ARC.
+  set_source_files_properties(src/qt/macos_window_chrome.mm PROPERTIES
+    COMPILE_OPTIONS "-fobjc-arc")
+  target_link_libraries(wam PRIVATE
+    "${WAM_APPKIT_FRAMEWORK}"
+    "${WAM_QUARTZCORE_FRAMEWORK}"
+    "${WAM_AVFOUNDATION_FRAMEWORK}")
+  set_target_properties(wam PROPERTIES LINKER_LANGUAGE OBJCXX)
+
   if(WAM_ENABLE_MACOS_NATIVE_VIDEO)
-    enable_language(OBJCXX)
-    find_library(WAM_COREFOUNDATION_FRAMEWORK CoreFoundation REQUIRED)
-    find_library(WAM_COREMEDIA_FRAMEWORK CoreMedia REQUIRED)
-    find_library(WAM_COREVIDEO_FRAMEWORK CoreVideo REQUIRED)
-    find_library(WAM_FOUNDATION_FRAMEWORK Foundation REQUIRED)
-    find_library(WAM_IOSURFACE_FRAMEWORK IOSurface REQUIRED)
+    find_library(WAM_COREGRAPHICS_FRAMEWORK CoreGraphics REQUIRED)
     find_library(WAM_APPKIT_FRAMEWORK AppKit REQUIRED)
+    find_library(WAM_AUDIOTOOLBOX_FRAMEWORK AudioToolbox REQUIRED)
+    find_library(WAM_COREAUDIO_FRAMEWORK CoreAudio REQUIRED)
     find_library(WAM_AVFOUNDATION_FRAMEWORK AVFoundation REQUIRED)
     find_library(WAM_METAL_FRAMEWORK Metal REQUIRED)
-    find_library(WAM_OPENGL_FRAMEWORK OpenGL REQUIRED)
     find_library(WAM_QUARTZCORE_FRAMEWORK QuartzCore REQUIRED)
-    find_library(WAM_VIDEOTOOLBOX_FRAMEWORK VideoToolbox REQUIRED)
 
-    set(WAM_MACOS_NATIVE_VIDEO_CORE_SOURCES
-      src/platform/macos/native_video_presenter.hpp
-      src/platform/macos/native_video_presenter.mm
-      src/platform/macos/video_toolbox_decoder.hpp
-      src/platform/macos/video_toolbox_decoder.mm)
+    set(WAM_MACOS_NATIVE_VIDEO_METAL_MAPPER_SOURCES
+      src/platform/macos/native_video_metal_mapper.mm)
+    add_library(wam_macos_native_video_metal_mapper STATIC
+      ${WAM_MACOS_NATIVE_VIDEO_METAL_MAPPER_SOURCES})
+    target_include_directories(
+      wam_macos_native_video_metal_mapper PUBLIC src)
+    target_compile_features(
+      wam_macos_native_video_metal_mapper PUBLIC cxx_std_20)
+    target_compile_options(wam_macos_native_video_metal_mapper PRIVATE
+      "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>"
+      -Wall -Wextra -Wpedantic)
+    target_link_libraries(wam_macos_native_video_metal_mapper
+      PUBLIC
+        wam_macos_native_video_core
+      PRIVATE
+        "${WAM_METAL_FRAMEWORK}")
+    set_target_properties(wam_macos_native_video_metal_mapper PROPERTIES
+      LINKER_LANGUAGE OBJCXX)
+
+    set(WAM_MACOS_NATIVE_BACKEND_SOURCES
+      src/platform/macos/avfoundation_asset_context.hpp
+      src/platform/macos/avfoundation_asset_context.mm
+      src/platform/macos/avfoundation_media_source.hpp
+      src/platform/macos/avfoundation_media_source.mm
+      src/platform/macos/avfoundation_preview_source.hpp
+      src/platform/macos/avfoundation_preview_source.mm
+      src/platform/macos/native_audio_converter.hpp
+      src/platform/macos/native_audio_converter.mm
+      src/platform/macos/native_audio_output.hpp
+      src/platform/macos/native_audio_output.mm
+      src/platform/macos/native_audio_session.hpp
+      src/platform/macos/native_audio_session.mm
+      src/platform/macos/native_media_session.hpp
+      src/platform/macos/native_media_session.mm
+      src/platform/macos/native_preview_frame_lane.hpp
+      src/platform/macos/native_preview_frame_lane.mm
+      src/platform/macos/native_tracked_video_arbiter.hpp
+      src/platform/macos/native_tracked_video_arbiter.mm
+      src/platform/macos/native_tracked_video_output.hpp
+      src/platform/macos/native_video_consumer.hpp
+      src/platform/macos/native_video_consumer.mm)
+
+    add_library(wam_macos_native_backend STATIC
+      ${WAM_MACOS_NATIVE_BACKEND_SOURCES})
+    target_include_directories(wam_macos_native_backend PUBLIC src)
+    target_compile_features(wam_macos_native_backend PUBLIC cxx_std_20)
+    target_compile_options(wam_macos_native_backend PRIVATE
+      "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>"
+      -Wall -Wextra -Wpedantic)
+    target_link_libraries(wam_macos_native_backend PUBLIC
+      wam_native_core
+      wam_macos_native_video_core
+      "${WAM_COREFOUNDATION_FRAMEWORK}"
+      "${WAM_COREGRAPHICS_FRAMEWORK}"
+      "${WAM_COREMEDIA_FRAMEWORK}"
+      "${WAM_COREVIDEO_FRAMEWORK}"
+      "${WAM_FOUNDATION_FRAMEWORK}"
+      "${WAM_IOSURFACE_FRAMEWORK}"
+      "${WAM_AUDIOTOOLBOX_FRAMEWORK}"
+      "${WAM_COREAUDIO_FRAMEWORK}"
+      "${WAM_AVFOUNDATION_FRAMEWORK}"
+      "${WAM_VIDEOTOOLBOX_FRAMEWORK}")
+    set_target_properties(wam_macos_native_backend PROPERTIES
+      LINKER_LANGUAGE OBJCXX)
+
+    # This production factory is the only layer that joins the platform
+    # session backend to its tracked Qt output. PlayerController's macOS route
+    # owner now consumes it directly; keep both implementations single-owned
+    # while making the native route part of the shipping executable.
+    add_library(wam_macos_native_session_system STATIC
+      src/platform/macos/native_media_session_system.hpp
+      src/platform/macos/native_media_session_system.mm)
+    target_include_directories(wam_macos_native_session_system PUBLIC src)
+    target_compile_features(wam_macos_native_session_system PUBLIC cxx_std_20)
+    target_compile_options(wam_macos_native_session_system PRIVATE
+      "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>"
+      -Wall -Wextra -Wpedantic)
+    target_link_libraries(wam_macos_native_session_system
+      PUBLIC
+        wam_macos_native_backend
+        wam_macos_native_qt_tracked)
+    set_target_properties(wam_macos_native_session_system PROPERTIES
+      LINKER_LANGUAGE OBJCXX)
+
+    target_sources(wam PRIVATE
+      src/qt/native_benchmark_telemetry.hpp
+      src/qt/native_benchmark_telemetry.cpp
+      src/qt/native_open_preflight.hpp
+      src/qt/native_open_preflight.mm
+      src/qt/native_playback_owner.hpp
+      src/qt/native_playback_owner.mm)
+    target_compile_definitions(wam PRIVATE
+      WAM_HAS_MACOS_NATIVE_PLAYBACK=1)
+    target_compile_options(wam PRIVATE
+      "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>")
+    target_link_libraries(wam PRIVATE
+      wam_macos_native_session_system)
+    set_target_properties(wam PROPERTIES LINKER_LANGUAGE OBJCXX)
+
+    # Legacy tests that require decoder-only test seams compile a private
+    # variant of this exact subset. Keep the new audio/source consumers out of
+    # that macro-bearing archive so production and test class layouts cannot
+    # mix.
     set(WAM_MACOS_NATIVE_VIDEO_SOURCES
-      ${WAM_MACOS_NATIVE_VIDEO_CORE_SOURCES}
       src/platform/macos/metal_layer_presenter.hpp
       src/platform/macos/metal_layer_presenter.mm
       src/platform/macos/native_video_pipeline.hpp
@@ -162,22 +435,16 @@ if(APPLE)
       "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>"
       -Wall -Wextra -Wpedantic)
     target_link_libraries(wam_macos_native_video PUBLIC
-      "${WAM_COREFOUNDATION_FRAMEWORK}"
-      "${WAM_COREMEDIA_FRAMEWORK}"
-      "${WAM_COREVIDEO_FRAMEWORK}"
-      "${WAM_FOUNDATION_FRAMEWORK}"
-      "${WAM_IOSURFACE_FRAMEWORK}"
+      wam_macos_native_video_metal_mapper
       "${WAM_APPKIT_FRAMEWORK}"
-      "${WAM_AVFOUNDATION_FRAMEWORK}"
-      "${WAM_METAL_FRAMEWORK}"
       "${WAM_QUARTZCORE_FRAMEWORK}"
-      "${WAM_VIDEOTOOLBOX_FRAMEWORK}")
+      "${WAM_AVFOUNDATION_FRAMEWORK}")
 
     if(WAM_ENABLE_MACOS_NATIVE_VIDEO_ACTIVATION)
       # Compile the already-reviewed coordinator, bounded action runner,
-      # macOS command adapter, one-shot session, and Qt OpenGL output as one
-      # production configuration. PlayerController does not own or begin this
-      # seam yet, so even this explicit opt-in remains runtime-inert.
+      # macOS command adapter and one-shot session as one production
+      # configuration. The single Qt OpenGL output implementation is supplied
+      # by the always-present tracked surface archive above.
       set(WAM_MACOS_NATIVE_VIDEO_ACTIVATION_SOURCES
         src/qt/native_activation_coordinator.hpp
         src/qt/native_activation_coordinator.cpp
@@ -186,11 +453,7 @@ if(APPLE)
         src/platform/macos/native_video_action_driver.hpp
         src/platform/macos/native_video_action_driver.mm
         src/platform/macos/native_video_session.hpp
-        src/platform/macos/native_video_session.mm
-        src/platform/macos/native_qt_gl_output.hpp
-        src/platform/macos/native_qt_gl_output.mm
-        src/platform/macos/qt_gl_video_item.hpp
-        src/platform/macos/qt_gl_video_item.mm)
+        src/platform/macos/native_video_session.mm)
       add_library(wam_macos_native_video_activation STATIC
         ${WAM_MACOS_NATIVE_VIDEO_ACTIVATION_SOURCES})
       target_include_directories(wam_macos_native_video_activation PUBLIC src)
@@ -202,7 +465,9 @@ if(APPLE)
         "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>"
         -Wall -Wextra -Wpedantic)
       target_link_libraries(wam_macos_native_video_activation
-        PUBLIC wam_macos_native_video
+        PUBLIC
+          wam_macos_native_video
+          wam_macos_native_qt_tracked
         PRIVATE
           Qt6::Core
           Qt6::Gui
@@ -240,12 +505,10 @@ if(APPLE)
       endif()
     endif()
 
-    # Linking the static foundation proves that it coexists with WAM, but no
-    # shipping controller or render node selects it. libmpv remains the only
-    # runtime path even in an opt-in build until the documented release gates
-    # (Qt composition, subtitles, clocks, and atomic fallback) are complete.
-    target_link_libraries(wam PRIVATE wam_macos_native_video)
-    target_compile_definitions(wam PRIVATE WAM_HAS_MACOS_NATIVE_VIDEO=1)
+    # Keep the legacy CAMetalLayer pipeline available to its focused tests and
+    # to the separately gated activation seam above. The shipping native owner
+    # uses wam_macos_native_session_system plus the tracked OpenGL surface and
+    # therefore must not link this dormant Metal archive.
   endif()
 endif()
 
@@ -274,13 +537,137 @@ install(SCRIPT ${wam_qml_deploy_script})
 install(FILES README.md THIRD_PARTY_NOTICES.md DESTINATION share/doc/wam)
 
 if(BUILD_TESTING)
+  if(APPLE)
+    add_test(NAME macos_bundle_lazy_mpv_transaction
+      COMMAND /bin/zsh
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/bundle_macos_lazy_mpv_seed_test.zsh")
+    set_tests_properties(macos_bundle_lazy_mpv_transaction PROPERTIES
+      TIMEOUT 120)
+    add_test(NAME macos_release_notarize_transaction
+      COMMAND /bin/zsh
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/release_macos_notarize_test.zsh")
+    set_tests_properties(macos_release_notarize_transaction PROPERTIES
+      TIMEOUT 90)
+  endif()
   add_test(NAME msys2_pkgconfig_paths
     COMMAND ${CMAKE_COMMAND} -P
       ${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/msys2_pkgconfig_paths_test.cmake)
 
+  if(APPLE)
+    add_executable(wam_native_media_source_test
+      tests/native_media_source_test.cpp)
+    target_link_libraries(
+      wam_native_media_source_test PRIVATE wam_native_core)
+    add_test(NAME native_media_source COMMAND wam_native_media_source_test)
+
+    add_executable(wam_native_media_backend_test
+      tests/native_media_backend_test.cpp)
+    target_link_libraries(
+      wam_native_media_backend_test PRIVATE wam_native_core)
+    add_test(NAME native_media_backend COMMAND wam_native_media_backend_test)
+
+    add_executable(wam_matroska_ebml_test
+      tests/matroska_ebml_test.cpp)
+    target_link_libraries(wam_matroska_ebml_test PRIVATE wam_native_core)
+    add_test(NAME matroska_ebml COMMAND wam_matroska_ebml_test)
+
+    add_executable(wam_matroska_aac_test
+      tests/matroska_aac_test.cpp)
+    target_link_libraries(wam_matroska_aac_test PRIVATE wam_native_core)
+    add_test(NAME matroska_aac COMMAND wam_matroska_aac_test)
+
+    add_executable(wam_video_codec_configuration_test
+      tests/video_codec_configuration_test.cpp)
+    target_link_libraries(
+      wam_video_codec_configuration_test PRIVATE wam_native_core)
+    add_test(NAME video_codec_configuration
+      COMMAND wam_video_codec_configuration_test)
+
+    add_executable(wam_native_playback_contract_test
+      tests/native_playback_contract_test.cpp)
+    target_link_libraries(
+      wam_native_playback_contract_test PRIVATE wam_native_core)
+    add_test(NAME native_playback_contract
+      COMMAND wam_native_playback_contract_test)
+
+    add_executable(wam_native_media_dispatcher_test
+      tests/native_media_dispatcher_test.cpp)
+    target_link_libraries(
+      wam_native_media_dispatcher_test PRIVATE wam_native_core)
+    add_test(NAME native_media_dispatcher
+      COMMAND wam_native_media_dispatcher_test)
+
+    add_executable(wam_playback_router_test
+      tests/playback_router_test.cpp)
+    target_link_libraries(wam_playback_router_test PRIVATE wam_native_core)
+    add_test(NAME playback_router COMMAND wam_playback_router_test)
+
+    # The clock's bounded publication-token domain is a compile-time test
+    # seam; compile a complete private implementation rather than mixing it
+    # with the production wam_native_core object.
+    add_executable(wam_native_media_clock_test
+      tests/native_media_clock_test.cpp
+      src/platform/macos/native_media_clock.hpp
+      src/platform/macos/native_media_clock.cpp)
+    target_include_directories(wam_native_media_clock_test PRIVATE src)
+    target_compile_definitions(wam_native_media_clock_test PRIVATE
+      WAM_NATIVE_MEDIA_CLOCK_TESTING=1)
+    add_test(NAME native_media_clock COMMAND wam_native_media_clock_test)
+
+    add_executable(wam_native_pcm_ring_test
+      tests/native_pcm_ring_test.cpp)
+    target_link_libraries(wam_native_pcm_ring_test PRIVATE wam_native_core)
+    add_test(NAME native_pcm_ring COMMAND wam_native_pcm_ring_test)
+
+    add_executable(wam_native_audio_render_core_test
+      tests/native_audio_render_core_test.cpp)
+    target_link_libraries(
+      wam_native_audio_render_core_test PRIVATE wam_native_core)
+    add_test(NAME native_audio_render_core
+      COMMAND wam_native_audio_render_core_test)
+
+    foreach(WAM_NATIVE_CORE_TEST_TARGET IN ITEMS
+        wam_matroska_aac_test
+        wam_matroska_ebml_test
+        wam_video_codec_configuration_test
+        wam_native_media_source_test
+        wam_native_media_backend_test
+        wam_native_playback_contract_test
+        wam_native_media_dispatcher_test
+        wam_playback_router_test
+        wam_native_media_clock_test
+        wam_native_pcm_ring_test
+        wam_native_audio_render_core_test)
+      target_compile_features(${WAM_NATIVE_CORE_TEST_TARGET} PRIVATE
+        cxx_std_20)
+      target_compile_options(${WAM_NATIVE_CORE_TEST_TARGET} PRIVATE
+        -Wall -Wextra -Wpedantic)
+    endforeach()
+    set_tests_properties(
+      matroska_aac
+      matroska_ebml
+      video_codec_configuration
+      native_media_source
+      native_media_backend
+      native_playback_contract
+      native_media_dispatcher
+      playback_router
+      native_media_clock
+      native_pcm_ring
+      native_audio_render_core
+      PROPERTIES TIMEOUT 10)
+  endif()
+
   add_executable(wam_playback_policy_test tests/playback_policy_test.cpp)
   target_include_directories(wam_playback_policy_test PRIVATE src)
   add_test(NAME playback_policy COMMAND wam_playback_policy_test)
+
+  add_executable(wam_mpv_hwdec_interop_policy_test
+    tests/mpv_hwdec_interop_policy_test.cpp
+    src/qt/mpv_hwdec_interop_policy.hpp)
+  target_include_directories(wam_mpv_hwdec_interop_policy_test PRIVATE src)
+  add_test(NAME mpv_hwdec_interop_policy
+    COMMAND wam_mpv_hwdec_interop_policy_test)
 
   add_executable(wam_jobs_test tests/jobs_test.cpp src/jobs.cpp src/jobs.hpp)
   target_include_directories(wam_jobs_test PRIVATE src)
@@ -302,6 +689,8 @@ if(BUILD_TESTING)
 
   add_executable(wam_player_controller_lazy_test
     tests/player_controller_lazy_test.cpp
+    src/playback/mpv/mpv_api.cpp
+    src/playback/mpv/mpv_runtime_common.cpp
     src/qt/player_controller.cpp
     src/qt/player_controller.hpp
     src/qt/player_core.cpp
@@ -311,17 +700,21 @@ if(BUILD_TESTING)
     src/caption_service.cpp
     src/caption_service.hpp)
   target_include_directories(wam_player_controller_lazy_test PRIVATE src)
+  target_compile_definitions(wam_player_controller_lazy_test PRIVATE
+    WAM_MPV_RUNTIME_TESTING=1)
   target_link_libraries(wam_player_controller_lazy_test PRIVATE
     Qt6::Core
     Qt6::Gui
     Qt6::Quick
     Qt6::OpenGL
-    PkgConfig::MPV)
+    ${WAM_MPV_INTEGRATION_TEST_TARGET})
   add_test(NAME player_controller_lazy COMMAND wam_player_controller_lazy_test)
   set_tests_properties(player_controller_lazy PROPERTIES TIMEOUT 20)
 
   add_executable(wam_player_core_render_context_permission_test
     tests/player_core_render_context_permission_test.cpp
+    src/playback/mpv/mpv_api.cpp
+    src/playback/mpv/mpv_runtime_common.cpp
     src/qt/player_controller.cpp
     src/qt/player_controller.hpp
     src/qt/player_core.cpp
@@ -336,13 +729,14 @@ if(BUILD_TESTING)
     wam_player_core_render_context_permission_test PRIVATE src)
   target_compile_definitions(
     wam_player_core_render_context_permission_test PRIVATE
+    WAM_MPV_RUNTIME_TESTING=1
     WAM_PLAYER_CORE_RENDER_CONTEXT_TESTING=1)
   target_link_libraries(wam_player_core_render_context_permission_test PRIVATE
     Qt6::Core
     Qt6::Gui
     Qt6::Quick
     Qt6::OpenGL
-    PkgConfig::MPV)
+    ${WAM_MPV_INTEGRATION_TEST_TARGET})
   add_test(NAME player_core_render_context_permission
     COMMAND wam_player_core_render_context_permission_test)
   set_tests_properties(player_core_render_context_permission PROPERTIES
@@ -403,11 +797,325 @@ if(BUILD_TESTING)
       PASS_REGULAR_EXPRESSION
         "minos ${WAM_MACOS_DEPLOYMENT_TARGET_REGEX}")
 
+    # Structural, unshown-window gate for the one native child owned by the
+    # macOS stage. Compile the same controller/core closure as production so
+    # MpvVideoItem is never tested against placeholder method definitions.
+    add_executable(wam_mpv_video_item_native_host_test
+      tests/mpv_video_item_native_host_test.cpp
+      src/qt/mpv_video_item.cpp
+      src/qt/mpv_video_item.hpp
+      src/qt/player_controller.cpp
+      src/qt/player_controller.hpp
+      src/qt/player_core.cpp
+      src/qt/player_core_p.hpp
+      src/jobs.cpp
+      src/jobs.hpp
+      src/caption_service.cpp
+      src/caption_service.hpp)
+    target_include_directories(wam_mpv_video_item_native_host_test PRIVATE
+      src src/qt)
+    target_compile_features(wam_mpv_video_item_native_host_test PRIVATE
+      cxx_std_20)
+    target_compile_options(wam_mpv_video_item_native_host_test PRIVATE
+      -Wall -Wextra -Wpedantic)
+    target_link_libraries(wam_mpv_video_item_native_host_test PRIVATE
+      wam_mpv_runtime
+      wam_macos_native_qt_tracked
+      Qt6::Core
+      Qt6::Gui
+      Qt6::Qml
+      Qt6::Quick
+      Qt6::OpenGL)
+    set_target_properties(wam_mpv_video_item_native_host_test PROPERTIES
+      AUTOMOC ON
+      LINKER_LANGUAGE OBJCXX)
+    add_test(NAME macos_mpv_video_item_native_host
+      COMMAND wam_mpv_video_item_native_host_test)
+    set_tests_properties(macos_mpv_video_item_native_host PROPERTIES
+      TIMEOUT 20)
+
     if(WAM_ENABLE_MACOS_NATIVE_VIDEO)
+      # Fixture-free gates with test-only declarations compile their complete
+      # macro-bearing implementations privately. Production-layout contract
+      # gates may link the production archive directly.
+      add_executable(wam_avfoundation_media_source_test
+        tests/avfoundation_media_source_test.mm
+        src/platform/macos/avfoundation_asset_context.hpp
+        src/platform/macos/avfoundation_asset_context.mm
+        src/platform/macos/avfoundation_media_source.hpp
+        src/platform/macos/avfoundation_media_source.mm)
+      target_include_directories(
+        wam_avfoundation_media_source_test PRIVATE src)
+      target_compile_definitions(wam_avfoundation_media_source_test PRIVATE
+        WAM_AVFOUNDATION_MEDIA_SOURCE_TESTING=1)
+      target_link_libraries(wam_avfoundation_media_source_test PRIVATE
+        wam_native_core
+        "${WAM_COREFOUNDATION_FRAMEWORK}"
+        "${WAM_COREGRAPHICS_FRAMEWORK}"
+        "${WAM_COREMEDIA_FRAMEWORK}"
+        "${WAM_COREVIDEO_FRAMEWORK}"
+        "${WAM_FOUNDATION_FRAMEWORK}"
+        "${WAM_AUDIOTOOLBOX_FRAMEWORK}"
+        "${WAM_AVFOUNDATION_FRAMEWORK}")
+      add_test(NAME macos_avfoundation_media_source
+        COMMAND wam_avfoundation_media_source_test)
+      set_tests_properties(macos_avfoundation_media_source PROPERTIES
+        TIMEOUT 30)
+
+      add_executable(wam_avfoundation_preview_source_test
+        tests/avfoundation_preview_source_test.mm
+        src/platform/macos/avfoundation_asset_context.hpp
+        src/platform/macos/avfoundation_asset_context.mm
+        src/platform/macos/avfoundation_preview_source.hpp
+        src/platform/macos/avfoundation_preview_source.mm)
+      target_include_directories(
+        wam_avfoundation_preview_source_test PRIVATE src)
+      target_compile_definitions(
+        wam_avfoundation_preview_source_test PRIVATE
+        WAM_AVFOUNDATION_PREVIEW_SOURCE_TESTING=1)
+      target_link_libraries(wam_avfoundation_preview_source_test PRIVATE
+        wam_native_core
+        "${WAM_COREFOUNDATION_FRAMEWORK}"
+        "${WAM_COREGRAPHICS_FRAMEWORK}"
+        "${WAM_COREMEDIA_FRAMEWORK}"
+        "${WAM_COREVIDEO_FRAMEWORK}"
+        "${WAM_FOUNDATION_FRAMEWORK}"
+        "${WAM_AVFOUNDATION_FRAMEWORK}")
+      add_test(NAME macos_avfoundation_preview_source
+        COMMAND wam_avfoundation_preview_source_test)
+      set_tests_properties(macos_avfoundation_preview_source PROPERTIES
+        TIMEOUT 30)
+
+      add_executable(wam_native_audio_converter_test
+        tests/native_audio_converter_test.mm
+        src/platform/macos/native_audio_converter.hpp
+        src/platform/macos/native_audio_converter.mm)
+      target_include_directories(wam_native_audio_converter_test PRIVATE src)
+      target_link_libraries(wam_native_audio_converter_test PRIVATE
+        wam_native_core
+        "${WAM_COREFOUNDATION_FRAMEWORK}"
+        "${WAM_COREMEDIA_FRAMEWORK}"
+        "${WAM_FOUNDATION_FRAMEWORK}"
+        "${WAM_AUDIOTOOLBOX_FRAMEWORK}")
+      add_test(NAME macos_native_audio_converter
+        COMMAND wam_native_audio_converter_test)
+      set_tests_properties(macos_native_audio_converter PROPERTIES
+        TIMEOUT 20)
+
+      add_executable(wam_native_audio_output_test
+        tests/native_audio_output_test.mm
+        src/platform/macos/native_audio_output.hpp
+        src/platform/macos/native_audio_output.mm)
+      target_include_directories(wam_native_audio_output_test PRIVATE src)
+      target_link_libraries(wam_native_audio_output_test PRIVATE
+        wam_native_core
+        "${WAM_COREMEDIA_FRAMEWORK}"
+        "${WAM_FOUNDATION_FRAMEWORK}"
+        "${WAM_AUDIOTOOLBOX_FRAMEWORK}"
+        "${WAM_COREAUDIO_FRAMEWORK}")
+      add_test(NAME macos_native_audio_output
+        COMMAND wam_native_audio_output_test)
+      set_tests_properties(macos_native_audio_output PROPERTIES TIMEOUT 30)
+
+      add_executable(wam_native_surface_budget_test
+        tests/native_surface_budget_test.mm
+        src/platform/macos/native_surface_budget.hpp
+        src/platform/macos/native_surface_budget.mm)
+      target_include_directories(wam_native_surface_budget_test PRIVATE src)
+      target_compile_definitions(wam_native_surface_budget_test PRIVATE
+        WAM_NATIVE_SURFACE_BUDGET_TESTING=1)
+      target_link_libraries(wam_native_surface_budget_test PRIVATE
+        "${WAM_COREFOUNDATION_FRAMEWORK}"
+        "${WAM_COREVIDEO_FRAMEWORK}"
+        "${WAM_IOSURFACE_FRAMEWORK}")
+      add_test(NAME macos_native_surface_budget
+        COMMAND wam_native_surface_budget_test)
+      set_tests_properties(macos_native_surface_budget PROPERTIES TIMEOUT 20)
+
+      add_executable(wam_native_video_consumer_test
+        tests/native_video_consumer_test.mm
+        src/platform/macos/native_video_consumer.hpp
+        src/platform/macos/native_video_consumer.mm
+        src/platform/macos/native_surface_budget.hpp
+        src/platform/macos/native_surface_budget.mm
+        src/platform/macos/native_video_presenter.hpp
+        src/platform/macos/native_video_presenter.mm
+        src/platform/macos/video_toolbox_decoder.hpp
+        src/platform/macos/video_toolbox_decoder.mm)
+      target_include_directories(wam_native_video_consumer_test PRIVATE src)
+      target_compile_definitions(wam_native_video_consumer_test PRIVATE
+        WAM_NATIVE_VIDEO_CONSUMER_TESTING=1)
+      target_link_libraries(wam_native_video_consumer_test PRIVATE
+        wam_native_core
+        "${WAM_COREFOUNDATION_FRAMEWORK}"
+        "${WAM_COREMEDIA_FRAMEWORK}"
+        "${WAM_COREVIDEO_FRAMEWORK}"
+        "${WAM_FOUNDATION_FRAMEWORK}"
+        "${WAM_IOSURFACE_FRAMEWORK}"
+        "${WAM_METAL_FRAMEWORK}"
+        "${WAM_VIDEOTOOLBOX_FRAMEWORK}")
+      add_test(NAME macos_native_video_consumer
+        COMMAND wam_native_video_consumer_test)
+      set_tests_properties(macos_native_video_consumer PROPERTIES TIMEOUT 30)
+
+      # The arbiter has no test-only class layout. Exercise the single
+      # production implementation through the backend archive instead of
+      # compiling a second copy into this executable.
+      add_executable(wam_native_tracked_video_arbiter_test
+        tests/native_tracked_video_arbiter_test.mm)
+      target_include_directories(
+        wam_native_tracked_video_arbiter_test PRIVATE src)
+      target_link_libraries(wam_native_tracked_video_arbiter_test PRIVATE
+        wam_macos_native_backend)
+      add_test(NAME macos_native_tracked_video_arbiter
+        COMMAND wam_native_tracked_video_arbiter_test)
+      set_tests_properties(macos_native_tracked_video_arbiter PROPERTIES
+        TIMEOUT 20)
+
+      # The lane's deterministic synthetic-frame seam is absent from the
+      # shipping class. Compile the lane and its source dependency privately
+      # under one macro, while reusing the production decoder/video core.
+      add_executable(wam_native_preview_frame_lane_test
+        tests/native_preview_frame_lane_test.mm
+        src/platform/macos/avfoundation_asset_context.hpp
+        src/platform/macos/avfoundation_asset_context.mm
+        src/platform/macos/avfoundation_preview_source.hpp
+        src/platform/macos/avfoundation_preview_source.mm
+        src/platform/macos/native_preview_frame_lane.hpp
+        src/platform/macos/native_preview_frame_lane.mm)
+      target_include_directories(
+        wam_native_preview_frame_lane_test PRIVATE src)
+      target_compile_definitions(
+        wam_native_preview_frame_lane_test PRIVATE
+        WAM_NATIVE_PREVIEW_FRAME_LANE_TESTING=1)
+      target_link_libraries(wam_native_preview_frame_lane_test PRIVATE
+        wam_native_core
+        wam_macos_native_video_core
+        "${WAM_COREGRAPHICS_FRAMEWORK}"
+        "${WAM_AVFOUNDATION_FRAMEWORK}")
+      add_test(NAME macos_native_preview_frame_lane
+        COMMAND wam_native_preview_frame_lane_test)
+      set_tests_properties(macos_native_preview_frame_lane PROPERTIES
+        TIMEOUT 30)
+
+      # Every implementation in this private closure sees the session test
+      # seam, and no production archive containing a differently laid-out
+      # NativeMediaSession is linked.
+      add_executable(wam_native_media_session_test
+        tests/native_media_session_test.mm
+        src/media/native_media_source.hpp
+        src/media/native_media_source.cpp
+        src/media/native_media_dispatcher.hpp
+        src/media/native_media_dispatcher.cpp
+        src/platform/macos/avfoundation_asset_context.hpp
+        src/platform/macos/avfoundation_asset_context.mm
+        src/platform/macos/avfoundation_preview_source.hpp
+        src/platform/macos/avfoundation_preview_source.mm
+        src/platform/macos/native_media_session.hpp
+        src/platform/macos/native_media_session.mm
+        src/platform/macos/native_preview_frame_lane.hpp
+        src/platform/macos/native_preview_frame_lane.mm)
+      target_include_directories(wam_native_media_session_test PRIVATE src)
+      target_compile_definitions(wam_native_media_session_test PRIVATE
+        WAM_AVFOUNDATION_ASSET_CONTEXT_TESTING=1
+        WAM_NATIVE_MEDIA_SESSION_TESTING=1)
+      target_link_libraries(wam_native_media_session_test PRIVATE
+        wam_macos_native_video_core
+        "${WAM_FOUNDATION_FRAMEWORK}"
+        "${WAM_COREMEDIA_FRAMEWORK}"
+        "${WAM_COREAUDIO_FRAMEWORK}"
+        "${WAM_AUDIOTOOLBOX_FRAMEWORK}"
+        "${WAM_COREGRAPHICS_FRAMEWORK}"
+        "${WAM_AVFOUNDATION_FRAMEWORK}")
+      add_test(NAME macos_native_media_session
+        COMMAND wam_native_media_session_test)
+      set_tests_properties(macos_native_media_session PROPERTIES TIMEOUT 30)
+
+      # Pure route/retirement contract gate. It intentionally links the one
+      # production backend archive for exact-position preflight instead of
+      # compiling a second NativeMediaSession or NativePlaybackOwner.
+      add_executable(wam_native_playback_owner_contract_test
+        tests/native_playback_owner_contract_test.cpp)
+      target_include_directories(
+        wam_native_playback_owner_contract_test PRIVATE src)
+      target_link_libraries(wam_native_playback_owner_contract_test PRIVATE
+        wam_macos_native_backend)
+      add_test(NAME macos_native_playback_owner_contract
+        COMMAND wam_native_playback_owner_contract_test)
+      set_tests_properties(macos_native_playback_owner_contract PROPERTIES
+        TIMEOUT 10)
+
+      add_executable(wam_native_open_preflight_test
+        tests/native_open_preflight_test.mm
+        src/qt/native_open_preflight.hpp
+        src/qt/native_open_preflight.mm)
+      target_include_directories(wam_native_open_preflight_test PRIVATE src)
+      target_link_libraries(wam_native_open_preflight_test PRIVATE
+        wam_macos_native_backend
+        Qt6::Core)
+      add_test(NAME macos_native_open_preflight
+        COMMAND wam_native_open_preflight_test)
+      set_tests_properties(macos_native_open_preflight PROPERTIES TIMEOUT 10)
+
+      add_executable(wam_native_benchmark_telemetry_test
+        tests/native_benchmark_telemetry_test.cpp
+        src/qt/native_benchmark_telemetry.hpp
+        src/qt/native_benchmark_telemetry.cpp)
+      target_include_directories(
+        wam_native_benchmark_telemetry_test PRIVATE src)
+      target_compile_definitions(
+        wam_native_benchmark_telemetry_test PRIVATE
+        WAM_NATIVE_BENCHMARK_TELEMETRY_TESTING=1)
+      target_compile_features(
+        wam_native_benchmark_telemetry_test PRIVATE cxx_std_20)
+      target_compile_options(
+        wam_native_benchmark_telemetry_test PRIVATE
+        -Wall -Wextra -Wpedantic)
+      add_test(NAME macos_native_benchmark_telemetry
+        COMMAND wam_native_benchmark_telemetry_test)
+      set_tests_properties(macos_native_benchmark_telemetry PROPERTIES
+        TIMEOUT 10)
+
+      foreach(WAM_HEADLESS_NATIVE_TEST_TARGET IN ITEMS
+          wam_avfoundation_media_source_test
+          wam_avfoundation_preview_source_test
+          wam_native_audio_converter_test
+          wam_native_audio_output_test
+          wam_native_surface_budget_test
+          wam_native_video_consumer_test
+          wam_native_tracked_video_arbiter_test
+          wam_native_preview_frame_lane_test
+          wam_native_media_session_test
+          wam_native_playback_owner_contract_test
+          wam_native_open_preflight_test)
+        target_compile_features(${WAM_HEADLESS_NATIVE_TEST_TARGET} PRIVATE
+          cxx_std_20)
+        target_compile_options(${WAM_HEADLESS_NATIVE_TEST_TARGET} PRIVATE
+          "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>"
+          -Wall -Wextra -Wpedantic)
+        set_target_properties(${WAM_HEADLESS_NATIVE_TEST_TARGET} PROPERTIES
+          LINKER_LANGUAGE OBJCXX)
+      endforeach()
+
       add_executable(wam_native_video_test
-        tests/native_video_presenter_test.mm)
+        tests/native_video_presenter_test.mm
+        src/platform/macos/native_video_presenter.hpp
+        src/platform/macos/native_video_presenter.mm
+        ${WAM_MACOS_NATIVE_VIDEO_METAL_MAPPER_SOURCES})
+      target_include_directories(wam_native_video_test PRIVATE src)
+      target_compile_definitions(wam_native_video_test PRIVATE
+        WAM_NATIVE_FRAME_LEASE_TESTING=1
+        WAM_NATIVE_SURFACE_BUDGET_TESTING=1
+        WAM_METAL_LAYER_PRESENTER_TESTING=1)
       target_link_libraries(wam_native_video_test PRIVATE
-        wam_macos_native_video)
+        "${WAM_COREFOUNDATION_FRAMEWORK}"
+        "${WAM_COREMEDIA_FRAMEWORK}"
+        "${WAM_COREVIDEO_FRAMEWORK}"
+        "${WAM_FOUNDATION_FRAMEWORK}"
+        "${WAM_IOSURFACE_FRAMEWORK}"
+        "${WAM_APPKIT_FRAMEWORK}"
+        "${WAM_METAL_FRAMEWORK}"
+        "${WAM_QUARTZCORE_FRAMEWORK}")
       target_compile_options(wam_native_video_test PRIVATE
         "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>"
         -Wall -Wextra -Wpedantic)
@@ -462,8 +1170,10 @@ if(BUILD_TESTING)
         FILES ${WAM_NATIVE_VIDEO_QSB_FILES})
       target_include_directories(wam_native_qt_metal_compositor_test PRIVATE
         src)
+      target_compile_definitions(wam_native_qt_metal_compositor_test PRIVATE
+        WAM_NATIVE_METAL_VIDEO_TESTING=1)
       target_link_libraries(wam_native_qt_metal_compositor_test PRIVATE
-        wam_macos_native_video
+        wam_macos_native_video_metal_mapper
         Qt6::Core
         Qt6::Gui
         Qt6::Qml
@@ -491,7 +1201,7 @@ if(BUILD_TESTING)
         WAM_NATIVE_GL_VIDEO_TESTING=1
         GL_SILENCE_DEPRECATION=1)
       target_link_libraries(wam_native_qt_gl_compositor_test PRIVATE
-        wam_macos_native_video
+        wam_macos_native_video_core
         Qt6::Core
         Qt6::Gui
         Qt6::Qml
@@ -565,7 +1275,8 @@ if(BUILD_TESTING)
       find_library(WAM_AVFOUNDATION_FRAMEWORK AVFoundation REQUIRED)
       add_executable(wam_video_toolbox_decoder_test
         tests/video_toolbox_decoder_test.mm
-        ${WAM_MACOS_NATIVE_VIDEO_CORE_SOURCES})
+        ${WAM_MACOS_NATIVE_VIDEO_CORE_SOURCES}
+        ${WAM_MACOS_NATIVE_VIDEO_METAL_MAPPER_SOURCES})
       target_include_directories(wam_video_toolbox_decoder_test PRIVATE src)
       target_compile_definitions(wam_video_toolbox_decoder_test PRIVATE
         WAM_NATIVE_VIDEO_TESTING=1
@@ -585,6 +1296,10 @@ if(BUILD_TESTING)
         -Wall -Wextra -Wpedantic)
       set_target_properties(wam_video_toolbox_decoder_test PROPERTIES
         LINKER_LANGUAGE OBJCXX)
+      add_test(NAME macos_video_toolbox_decoder_limits
+        COMMAND wam_video_toolbox_decoder_test --limits-only)
+      set_tests_properties(macos_video_toolbox_decoder_limits PROPERTIES
+        TIMEOUT 10)
       set(WAM_RESOLVED_NATIVE_VIDEO_TEST_FIXTURE
         "${WAM_NATIVE_VIDEO_TEST_FIXTURE}")
       set(WAM_RESOLVED_NATIVE_VIDEO_10BIT_TEST_FIXTURE
@@ -610,10 +1325,42 @@ if(BUILD_TESTING)
         endif()
       endif()
 
+      set(WAM_NATIVE_HEADLESS_PERFORMANCE_FIXTURE
+        "${CMAKE_CURRENT_SOURCE_DIR}/test-media/sample-h264.mp4")
+      # Always compile the production-layout regression, including in clean
+      # checkouts without media. Only its real-file execution needs the known
+      # H.264/AAC fixture. Verdicts use identity, reuse, and bounded-ownership
+      # facts; optional timings remain report-only.
+      add_executable(wam_native_headless_performance_test
+        tests/native_headless_performance_test.mm)
+      target_include_directories(
+        wam_native_headless_performance_test PRIVATE src)
+      target_compile_features(
+        wam_native_headless_performance_test PRIVATE cxx_std_20)
+      target_compile_options(
+        wam_native_headless_performance_test PRIVATE
+        "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>"
+        -Wall -Wextra -Wpedantic)
+      target_link_libraries(wam_native_headless_performance_test PRIVATE
+        wam_macos_native_backend)
+      set_target_properties(
+        wam_native_headless_performance_test PROPERTIES
+        LINKER_LANGUAGE OBJCXX)
+      if(EXISTS "${WAM_NATIVE_HEADLESS_PERFORMANCE_FIXTURE}")
+        add_test(NAME macos_native_headless_performance
+          COMMAND wam_native_headless_performance_test
+            "${WAM_NATIVE_HEADLESS_PERFORMANCE_FIXTURE}")
+        set_tests_properties(macos_native_headless_performance PROPERTIES
+          TIMEOUT 30)
+      endif()
+
       # The pipeline's scheduling hooks alter its private layout and control
-      # flow. Compile a complete test-only implementation so neither the
-      # shipping archive nor an executable contains mixed definitions.
+      # flow. Compile its complete legacy implementation privately so neither
+      # the production backend nor its class layouts can mix with this macro-
+      # bearing executable.
       add_library(wam_macos_native_video_pipeline_test_impl STATIC
+        ${WAM_MACOS_NATIVE_VIDEO_CORE_SOURCES}
+        ${WAM_MACOS_NATIVE_VIDEO_METAL_MAPPER_SOURCES}
         ${WAM_MACOS_NATIVE_VIDEO_SOURCES})
       target_include_directories(
         wam_macos_native_video_pipeline_test_impl PUBLIC src)

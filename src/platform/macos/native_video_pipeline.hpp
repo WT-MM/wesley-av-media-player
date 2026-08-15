@@ -207,7 +207,8 @@ struct NativeVideoPrepareOutcome {
 
 // Dormant macOS video-path foundation:
 //
-//   implemented demux backend (currently AVAssetReader)
+//   implemented demux backend (currently AVAssetReader, retaining its ready
+//     compressed CMSampleBuffers without an application payload copy)
 //     -> VideoToolboxDecoder
 //     -> bounded IOSurface queue
 //     -> CAMetalLayer

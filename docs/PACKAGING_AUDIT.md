@@ -39,11 +39,10 @@ The audited fixed bundle had executable UUID
 - All 193 Mach-O images were thin `arm64`.
 - The outer bundle passed deep strict verification.
 
-This signature is suitable only for local development: it is ad hoc, has no
-team identifier or hardened-runtime flag, and is not notarized. A public build
-still needs inside-out Developer ID signing (including QML leaves), hardened
-runtime, timestamping, notarization, stapling, and a quarantined clean-machine
-install test.
+The ordinary local bundler mode remains intentionally ad hoc. Public builds use
+the separate release policy described below: explicit inside-out Developer ID
+signing (including QML leaves), hardened runtime, secure timestamps,
+notarization, stapling, Gatekeeper assessment, and a post-staple artifact.
 
 ## Reproducible verification
 
@@ -120,9 +119,62 @@ was checked with `otool` and reported 13.3.
 
 That helper fix is only one part of the release correction. Qt, mpv, FFmpeg,
 and their closure must also come from a pinned clean build targeting the chosen
-release floor. The bundler should continue recording the maximum actual
-`LC_BUILD_VERSION` in `Info.plist`; lowering only the plist would create a
-package that advertises support but cannot load.
+release floor. Development packaging still records the maximum actual
+`LC_BUILD_VERSION` in `Info.plist`. When `WAM_MACOS_RELEASE_FLOOR=13.3` is set,
+the bundler instead inspects every architecture of every Mach-O, rejects a
+missing, malformed, non-macOS, duplicate, or above-floor `LC_BUILD_VERSION`,
+and requires `LSMinimumSystemVersion` to be exactly 13.3. Release mode never
+raises the declaration to accommodate an unsuitable dependency.
+
+## Developer ID and notarization release policy
+
+The release bundler accepts signing only as one complete fail-closed policy:
+
+```text
+WAM_MACOS_RELEASE_FLOOR=13.3
+WAM_MACOS_CODESIGN_IDENTITY=<SHA-1 identity in the ephemeral keychain>
+WAM_MACOS_EXPECTED_SIGNING_AUTHORITY=Developer ID Application: ... (TEAMID)
+WAM_MACOS_EXPECTED_TEAM_ID=TEAMID
+```
+
+It signs every Mach-O leaf, then nested code containers deepest-first, and the
+outer app last with hardened runtime and Apple's secure timestamp service. It
+does not use recursive `--deep` signing in this mode. Verification still uses
+deep bundle validation in addition to explicit leaf checks, and requires the
+Developer ID certificate chain, exact authority and team, runtime flag, secure
+timestamp, and absence of `com.apple.security.get-task-allow` on every
+architecture.
+
+`scripts/release_macos_notarize.zsh` never signs. It re-verifies the signed app,
+submits a private temporary ZIP with `notarytool --wait`, requires an Accepted
+result, staples and validates the ticket, repeats signature verification, runs
+Gatekeeper assessment, and only then creates the publishable ZIP and SHA-256
+sidecar. Its deterministic fixture replaces every Apple service/tool; repository
+tests never contact the notary service or use a real certificate.
+
+`.github/workflows/release-macos.yml` is limited to version tags and manual
+dispatch through the protected `macos-release` environment. Configure that
+environment with required reviewers, prevent self-review, and restrict allowed
+refs. It needs these environment values:
+
+- Variables: `MACOS_DEVELOPER_ID_APPLICATION`, `MACOS_TEAM_ID`,
+  `MACOS_NOTARY_KEY_ID`, `MACOS_NOTARY_ISSUER_ID`,
+  `WAM_MACOS_QT_ARCHIVE_ARM64_URL`,
+  `WAM_MACOS_QT_ARCHIVE_ARM64_SHA256`,
+  `WAM_MACOS_QT_ARCHIVE_X86_64_URL`,
+  `WAM_MACOS_QT_ARCHIVE_X86_64_SHA256`,
+  `WAM_MACOS_MEDIA_ARCHIVE_ARM64_URL`,
+  `WAM_MACOS_MEDIA_ARCHIVE_ARM64_SHA256`,
+  `WAM_MACOS_MEDIA_ARCHIVE_X86_64_URL`, and
+  `WAM_MACOS_MEDIA_ARCHIVE_X86_64_SHA256`.
+- Secrets: `MACOS_DEVELOPER_ID_P12_BASE64`,
+  `MACOS_DEVELOPER_ID_P12_PASSWORD`, and `MACOS_NOTARY_KEY_BASE64`.
+
+Those credentials and the protected-environment policy are external release
+prerequisites. The other external blocker is an audited Qt/mpv/FFmpeg closure
+built at macOS 13.3 for each published architecture. Homebrew host binaries are
+valid development inputs but are not accepted as release provenance. A final
+quarantined clean-machine playback test remains a human release prerequisite.
 
 ## Exact size breakdown
 

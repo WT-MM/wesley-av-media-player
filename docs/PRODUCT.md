@@ -10,7 +10,7 @@ like one continuous action.
   default, Dark/System choices, and a closable Quick Edit surface
 - Direct full-window libmpv scene rendering without a second video-sized FBO
 - Hardware-decoded playback with safe fallback, speed/pitch control, drag/drop,
-  fullscreen, five-second keyboard seeking, and throttled timeline scrubbing
+  fullscreen, five-second keyboard seeking, and frame-paced timeline scrubbing
 - Non-destructive trim/retime export and verified, cancellable local captions
 - Additive standalone Qt/media packaging definitions for macOS, Windows, Linux
 

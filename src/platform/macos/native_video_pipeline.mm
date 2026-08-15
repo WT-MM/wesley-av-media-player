@@ -1,5 +1,7 @@
 #include "native_video_pipeline.hpp"
 
+#include "native_video_limits.hpp"
+
 #import <AppKit/AppKit.h>
 #import <AVFoundation/AVFoundation.h>
 #import <CoreVideo/CoreVideo.h>
@@ -29,7 +31,8 @@ namespace {
 
 constexpr std::size_t kFrameQueueCapacity = 3;
 constexpr std::size_t kDecodeQueueHighWater = 2;
-constexpr std::size_t kMaximumInFlightDecodeFrames = 2;
+constexpr std::size_t kMaximumInFlightDecodeFrames =
+    native_video_limits::kMaximumPipelineInFlightAccessUnits;
 // The decoder conservatively takes the maximum declared reorder depth across
 // the H.264/HEVC configuration record and retains no more than that window.
 // This is the dormant experiment's ceiling; a production fallback selector is
@@ -38,14 +41,16 @@ constexpr std::size_t kMaximumReorderFrames = 8;
 // Cap the dormant experiment at a 1920x1080 coded-pixel budget. Its
 // application-retained worst case is
 // 17 decoded leases (queue, decode, reorder, scheduling, GPU) plus two BGRA
-// drawables: about 66 MiB for NV12 or 117 MiB for P010. Two bounded compressed
-// copies, demux scratch, and VideoToolbox's private pool are additional.
+// drawables: about 66 MiB for NV12 or 117 MiB for P010. The finite decode
+// window may additionally retain two accepted compressed access units plus the
+// AVAssetReader sample waiting for capacity: at most 24 MiB of logical source
+// bytes, without an application payload duplicate. VideoToolbox's private pool
+// is external to this accounting.
 constexpr std::uint64_t kMaximumCodedPixels = 1920ULL * 1080ULL;
-constexpr std::size_t kMaximumCodecConfigurationBytes = 1024ULL * 1024ULL;
-// Reject corrupt or adversarial access units before either the demux scratch
-// allocation or VideoToolbox's CMBlockBuffer copy. Valid 1080p H.264/HEVC
-// access units are normally orders of magnitude smaller than this ceiling.
-constexpr std::size_t kMaximumCompressedSampleBytes = 32ULL * 1024ULL * 1024ULL;
+// Reject corrupt or adversarial access units before decoder admission. Valid
+// 1080p H.264/HEVC access units are normally orders of magnitude smaller than
+// this ceiling. AVAssetReader's ready sample buffer is submitted directly, so
+// the application does not flatten or duplicate the compressed payload.
 constexpr double kClockLeadSeconds = 1.0 / 120.0;
 constexpr double kPausedFrameToleranceSeconds = 1.0 / 1000.0;
 constexpr double kMaximumSeekPrerollSeconds = 12.0;
@@ -156,17 +161,31 @@ CMTime mediaTime(double value) noexcept {
   return CMTimeMakeWithSeconds(std::max(0.0, value), 60'000);
 }
 
-bool sampleIsKeyFrame(CMSampleBufferRef sample) noexcept {
+std::optional<bool> sampleKeyFrameStatus(
+    CMSampleBufferRef sample) noexcept {
   CFArrayRef attachments =
       CMSampleBufferGetSampleAttachmentsArray(sample, false);
   if (attachments == nullptr || CFArrayGetCount(attachments) == 0) {
     return true;
   }
-  auto attachment = static_cast<CFDictionaryRef>(
-      CFArrayGetValueAtIndex(attachments, 0));
-  auto notSync = static_cast<CFBooleanRef>(
-      CFDictionaryGetValue(attachment, kCMSampleAttachmentKey_NotSync));
-  return notSync == nullptr || !CFBooleanGetValue(notSync);
+  if (CFArrayGetCount(attachments) != 1) {
+    return std::nullopt;
+  }
+  CFTypeRef first =
+      static_cast<CFTypeRef>(CFArrayGetValueAtIndex(attachments, 0));
+  if (first == nullptr || CFGetTypeID(first) != CFDictionaryGetTypeID()) {
+    return std::nullopt;
+  }
+  auto attachment = static_cast<CFDictionaryRef>(first);
+  CFTypeRef notSync = static_cast<CFTypeRef>(CFDictionaryGetValue(
+      attachment, kCMSampleAttachmentKey_NotSync));
+  if (notSync == nullptr) {
+    return true;
+  }
+  if (CFGetTypeID(notSync) != CFBooleanGetTypeID()) {
+    return std::nullopt;
+  }
+  return !CFBooleanGetValue(static_cast<CFBooleanRef>(notSync));
 }
 
 bool extensionIsAbsentOrOneOf(
@@ -316,9 +335,8 @@ std::optional<std::vector<std::byte>> copyCodecConfiguration(
     return std::nullopt;
   }
   const CFIndex length = CFDataGetLength(atom);
-  if (length <= 0 ||
-      static_cast<std::uint64_t>(length) >
-          kMaximumCodecConfigurationBytes) {
+  if (length <= 0 || !native_video_limits::acceptsVideoCodecConfigurationSize(
+                         static_cast<std::size_t>(length))) {
     return std::nullopt;
   }
   std::vector<std::byte> result(static_cast<std::size_t>(length));
@@ -383,7 +401,8 @@ bool probeCompressedSampleExtraction(AVAsset* asset, AVAssetTrack* track,
                         sampleFormat != nullptr &&
                         CMFormatDescriptionGetMediaSubType(sampleFormat) ==
                             expectedCodec &&
-                        dataLength <= kMaximumCompressedSampleBytes;
+                        native_video_limits::
+                            acceptsCompressedVideoAccessUnitSize(dataLength);
     CFRelease(sample);
     if (usable) {
       foundCompressedSample = true;
@@ -1016,7 +1035,6 @@ struct NativeVideoPipeline::Impl
   CMTime assetDuration{kCMTimeInvalid};
   CMVideoCodecType codec{0};
   CMVideoDimensions dimensions{0, 0};
-  std::vector<std::byte> codecConfiguration;
 
   mutable std::mutex stateMutex;
   std::condition_variable workerWake;
@@ -1572,52 +1590,27 @@ struct NativeVideoPipeline::Impl
     }
 
     const std::size_t dataLength = CMBlockBufferGetDataLength(block);
-    if (dataLength > kMaximumCompressedSampleBytes) {
-      reportFailure("compressed video sample exceeds the 32 MiB native "
+    if (!native_video_limits::acceptsCompressedVideoAccessUnitSize(dataLength)) {
+      reportFailure("compressed video sample exceeds the 8 MiB native "
                     "decoder memory bound");
       return false;
     }
-    char* contiguousData = nullptr;
-    std::size_t lengthAtOffset = 0;
-    std::size_t totalLength = 0;
-    const OSStatus pointerStatus = CMBlockBufferGetDataPointer(
-        block, 0, &lengthAtOffset, &totalLength, &contiguousData);
-    std::vector<std::byte> scratch;
-    const std::byte* bytes = nullptr;
-    if (pointerStatus == noErr && contiguousData != nullptr &&
-        lengthAtOffset == dataLength && totalLength == dataLength) {
-      bytes = reinterpret_cast<const std::byte*>(contiguousData);
-    } else {
-      scratch.resize(dataLength);
-      const OSStatus copyStatus = CMBlockBufferCopyDataBytes(
-          block, 0, dataLength, scratch.data());
-      if (copyStatus != noErr) {
-        reportFailure("AVFoundation compressed sample copy failed: " +
-                      std::to_string(copyStatus));
-        return false;
-      }
-      bytes = scratch.data();
+    const std::optional<bool> keyFrame = sampleKeyFrameStatus(sample);
+    if (!keyFrame) {
+      reportFailure("native demux received malformed compressed-sample "
+                    "attachments");
+      return false;
     }
-
-    const bool keyFrame = sampleIsKeyFrame(sample);
-    if (!keyFrame && !submittedSyncSample) {
+    if (!*keyFrame && !submittedSyncSample) {
       return true;
     }
-    const CompressedVideoPacket packet{
-        std::span<const std::byte>(bytes, dataLength),
-        CMSampleBufferGetPresentationTimeStamp(sample),
-        CMSampleBufferGetDecodeTimeStamp(sample),
-        CMSampleBufferGetDuration(sample),
-        generation,
-        keyFrame,
-        false};
 
     while (!requestChanged(version)) {
       std::string decodeError;
       const VideoDecodeSubmitResult result =
-          decoder->submit(packet, &decodeError);
+          decoder->submitCMSampleBuffer(sample, generation, &decodeError);
       if (result == VideoDecodeSubmitResult::Accepted) {
-        submittedSyncSample = submittedSyncSample || keyFrame;
+        submittedSyncSample = submittedSyncSample || *keyFrame;
         counters.compressedSamplesSubmitted.fetch_add(
             1, std::memory_order_relaxed);
         return true;
@@ -2304,7 +2297,6 @@ struct NativeVideoPipeline::Impl
       assetDuration = duration;
       this->codec = codec;
       this->dimensions = dimensions;
-      codecConfiguration = std::move(*configuration);
 #if defined(WAM_NATIVE_VIDEO_PIPELINE_TESTING)
       if (failAfterResourceTransfer.exchange(false,
                                              std::memory_order_acq_rel)) {
@@ -2329,16 +2321,22 @@ struct NativeVideoPipeline::Impl
       const VideoStreamConfiguration stream{
           codec,
           dimensions,
-          std::span<const std::byte>(codecConfiguration),
+          std::span<const std::byte>(*configuration),
           true,
           true,
           generation};
-      if (!decoder->configure(stream, *sink, &decoderError)) {
+      const bool decoderConfigured =
+          decoder->configure(stream, *sink, &decoderError);
+      // VideoToolboxDecoder synchronously builds and owns its CoreMedia format
+      // description. The pipeline never needs the source atom again, so release
+      // its vector before Ready is published instead of retaining a duplicate
+      // for the full playback lifetime.
+      configuration.reset();
+      if (!decoderConfigured) {
         decoder.reset();
         sink.reset();
         asset = nil;
         track = nil;
-        codecConfiguration.clear();
         assetDuration = kCMTimeInvalid;
         request->ownsConfiguredResources = false;
       } else {
@@ -3003,7 +3001,6 @@ struct NativeVideoPipeline::Impl
 
     std::unique_ptr<VideoToolboxDecoder> retiredDecoder;
     std::unique_ptr<NotifyingFrameSink> retiredSink;
-    std::vector<std::byte> retiredCodecConfiguration;
     {
       std::lock_guard lock(resourceMutex);
       retiredDecoder = std::move(decoder);
@@ -3012,7 +3009,6 @@ struct NativeVideoPipeline::Impl
       track = nil;
       codec = 0;
       dimensions = {0, 0};
-      retiredCodecConfiguration = std::move(codecConfiguration);
       assetDuration = kCMTimeInvalid;
     }
     if (retiredDecoder != nullptr) {
@@ -3023,7 +3019,6 @@ struct NativeVideoPipeline::Impl
     }
     retiredDecoder.reset();
     retiredSink.reset();
-    retiredCodecConfiguration.clear();
 
     bool final = false;
     {

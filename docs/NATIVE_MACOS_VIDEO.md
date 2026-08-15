@@ -58,10 +58,16 @@ second QML video item.
 - `VideoToolboxDecoder` accepts H.264 `avcC` and HEVC `hvcC` format
   configurations plus length-prefixed compressed access units. It creates
   hardware-preferred or hardware-required sessions, admits work against a hard
-  in-flight limit before copying packet bytes, caps configuration/access-unit
-  inputs at 1 MiB/32 MiB, and requires actual IOSurface output to exactly match
-  its requested NV12 or P010 format. The generic presenter can still import BGRA,
-  but the bounded decode pipeline does not accept a BGRA substitution.
+  in-flight limit before copying generic packet spans, caps one selected codec
+  configuration at 256 KiB and each access unit at 8 MiB, and requires actual
+  IOSurface output to exactly match its requested NV12 or P010 format.
+  AVFoundation callers submit their ready `CMSampleBuffer` directly; that path
+  retains the source storage only as long as VideoToolbox requires and performs
+  no application payload copy. Its selected avcC/hvcC atom must also be
+  nonempty, at most 256 KiB, and byte-identical to the configured atom. The
+  decoder reuses its configured session and does not cache a second direct
+  format description. The generic presenter can still import BGRA, but the
+  bounded decode pipeline does not accept a BGRA substitution.
 - Decode requests asynchronous VideoToolbox operation without temporal
   processing; Apple permits temporal mode to retain frames indefinitely before
   end of stream, which is incompatible with finite admission. Callback results
@@ -94,8 +100,11 @@ second QML video item.
 - `NativeVideoPipeline` uses `AVAssetReaderTrackOutput` with nil output settings
   and `alwaysCopiesSampleData=NO`, so AVFoundation supplies the original
   length-prefixed compressed access units. It keeps one compressed sample at a
-  time, feeds the hardware-required decoder, and exposes a cheap clock update
-  boundary intended for a future authoritative audio clock. Asynchronous
+  time and submits that same sample directly to the hardware-required decoder.
+  After decoder configuration completes, it releases its source avcC/hvcC
+  vector because the decoder's CoreMedia format description owns the retained
+  representation. The pipeline exposes a cheap clock update boundary intended
+  for a future authoritative audio clock. Asynchronous
   decode/presentation failures atomically deactivate the attempt and latch a
   message for `takeLastError()`; the pipeline never invokes arbitrary client
   code from demux, decode, render, or post-destruction stacks. Each frontend has
@@ -128,7 +137,8 @@ second QML video item.
   more than playability, but it does not yet prove length-prefixed NAL framing
   or complete decode/presentation. Start and the first accepted draw remain the
   authoritative native-activation proof. The probe reader is confined to the
-  preparation queue; stop is observed after a synchronous sample copy returns,
+  preparation queue; stop is observed after synchronous sample extraction
+  returns,
   and the process-wide admission lease bounds a wedged importer to one attempt.
   `takePrepareResult()` consumes exactly one terminal
   `Ready`, `Unsupported`, or `Failed` outcome; only `Ready` carries the exact
@@ -182,20 +192,32 @@ compressed packet
 There is no CPU pixel readback, CPU format conversion, or full-resolution
 intermediate texture between decode output and Metal. The decoder rejects any
 actual output format other than its requested NV12/P010 choice, so BGRA cannot
-silently invalidate this pipeline calculation. The current hard bounds
-are three queued frames, two submitted VideoToolbox frames, eight reorder
-leases, two pipeline scheduling leases, and two GPU submissions. At the 1080p
+silently invalidate this pipeline calculation. The current hard bounds are
+three queued frames, two submitted VideoToolbox frames, eight reorder leases,
+two pipeline scheduling leases, and two GPU submissions. At the 1080p
 eligibility ceiling, the standalone presenter also caps its drawable raster at
 1920x1080 even on a larger/Retina host. Those 17 decoded leases plus two BGRA
-drawables account for about 66 MiB with NV12 or 117 MiB with P010. Decoder
-admission can additionally retain two compressed sample copies of up to 32 MiB
-each, and a non-contiguous AVFoundation sample can require a transient 32 MiB
-pipeline scratch buffer. Thus the directly bounded decoded/drawable/compressed
-storage can approach roughly 162 MiB for NV12 or 213 MiB for P010 before the
-AVFoundation-owned current sample. VideoToolbox's private pool and
-framework/Qt/libmpv allocations are also additional, so this is not a complete
-process-memory ceiling. Normal paused prebuffering stops at a queue high-water
-mark of two.
+drawables account for about 66 MiB with NV12 or 117 MiB with P010.
+
+The integrated AVFoundation path makes no application compressed-payload copy.
+It can logically retain two VideoToolbox submissions plus one reader sample
+waiting for capacity, each capped at 8 MiB: a conservative 24 MiB source-byte
+envelope. The selected 256 KiB avcC/hvcC configuration can briefly exist as the
+pipeline vector, CFData, and the format-description representation, so its
+conservative logical charge is 768 KiB during configuration and 256 KiB
+afterward. The pipeline vector is released before `Ready`; an admitted direct
+sample must reference a bounded, byte-identical atom, and the decoder does not
+retain its format as another logically distinct configuration. Combining these
+current standalone decoded/drawable figures with compressed source bytes and
+transient configuration gives about 90.75 MiB for NV12 or 141.75 MiB for P010
+(roughly 91 or 142 MiB), not the obsolete 162/213 MiB copy-and-scratch estimate.
+The generic
+packet-span API still makes its documented copy, but the integrated pipeline
+does not use it. VideoToolbox's private DPB/pixel pool and
+AVFoundation/CoreMedia/framework/Qt/libmpv allocations are additional and lack
+an API byte ceiling, so none of these figures is a complete process-memory or
+300 MiB claim. Normal paused prebuffering stops at a queue high-water mark of
+two.
 
 The checked-in B-frame fixture exercises real hardware decode, a generation-
 safe non-frame-aligned seek, video-only rejection, queue/in-flight bounds,

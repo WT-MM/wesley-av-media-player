@@ -2,6 +2,7 @@
 
 #include "caption_service.hpp"
 #include "jobs.hpp"
+#include "playback_policy.hpp"
 
 #include <QObject>
 #include <QPointer>
@@ -19,8 +20,23 @@ struct mpv_event_end_file;
 namespace wam::qt {
 
 class MpvVideoItem;
+class NativePlaybackOwner;
 class PlayerCore;
 class PlayerControllerTestAccess;
+
+} // namespace wam::qt
+
+namespace wam::playback::mpv {
+class MpvRuntime;
+}
+
+namespace wam::media::native_playback {
+struct CommitReady;
+struct PreviewFailed;
+struct PreviewPresented;
+} // namespace wam::media::native_playback
+
+namespace wam::qt {
 
 // QML-facing playback state and commands. All regular libmpv client calls are
 // made on this object's (GUI) thread; video rendering remains isolated on Qt
@@ -45,6 +61,8 @@ class PlayerController final : public QObject {
                  preservePitchChanged)
   Q_PROPERTY(int appearance READ appearance WRITE setAppearance NOTIFY
                  appearanceChanged)
+  Q_PROPERTY(double seekStepSeconds READ seekStepSeconds WRITE
+                 setSeekStepSeconds NOTIFY seekStepSecondsChanged)
   Q_PROPERTY(double trimIn READ trimIn WRITE setTrimIn NOTIFY trimInChanged)
   Q_PROPERTY(double trimOut READ trimOut WRITE setTrimOut NOTIFY trimOutChanged)
   Q_PROPERTY(bool exporting READ exporting NOTIFY exportingChanged)
@@ -60,6 +78,12 @@ public:
 
   PlayerController(const PlayerController &) = delete;
   PlayerController &operator=(const PlayerController &) = delete;
+
+  // Compatibility-router handoff. Provisioning retains an already validated
+  // runtime but does not create an mpv handle; initializePlaybackEngine() can
+  // consume it only after the router has explicitly selected fallback.
+  [[nodiscard]] bool provisionMpvFallbackRuntime(
+      std::shared_ptr<const ::wam::playback::mpv::MpvRuntime> runtime);
 
   [[nodiscard]] bool available() const;
   [[nodiscard]] bool hasMedia() const { return !source_.isEmpty(); }
@@ -79,6 +103,9 @@ public:
   [[nodiscard]] bool preservePitch() const { return preserve_pitch_; }
   // 0 = light (default), 1 = dark, 2 = follow the operating system.
   [[nodiscard]] int appearance() const { return appearance_; }
+  // Seconds skipped by the Left/Right arrow shortcuts and the transport's
+  // skip buttons. Whole-second values in [1, 60]; default 5.
+  [[nodiscard]] double seekStepSeconds() const { return seek_step_seconds_; }
   [[nodiscard]] double trimIn() const { return trim_in_; }
   [[nodiscard]] double trimOut() const { return trim_out_; }
   [[nodiscard]] bool exporting() const { return exporting_; }
@@ -111,6 +138,7 @@ public:
   Q_INVOKABLE void toggleFullscreen();
   Q_INVOKABLE void setPreservePitch(bool preserve);
   Q_INVOKABLE void setAppearance(int appearance);
+  Q_INVOKABLE void setSeekStepSeconds(double seconds);
   Q_INVOKABLE void setTrimIn(double seconds);
   Q_INVOKABLE void setTrimOut(double seconds);
   Q_INVOKABLE void exportSelection();
@@ -140,6 +168,7 @@ signals:
   void captionsVisibleChanged();
   void preservePitchChanged();
   void appearanceChanged();
+  void seekStepSecondsChanged();
   void trimInChanged();
   void trimOutChanged();
   void exportingChanged();
@@ -159,6 +188,7 @@ signals:
 private:
   friend class PlayerCore;
   friend class MpvVideoItem;
+  friend class NativePlaybackOwner;
   friend class PlayerControllerTestAccess;
 
   struct OpenAttempt {
@@ -167,6 +197,15 @@ private:
     std::uint64_t render_stamp = 0;
     std::int64_t playlist_entry_id = -1;
   };
+
+#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+  struct RoutedFallbackOpen {
+    std::uint64_t attempt = 0;
+    std::uint64_t serial = 0;
+    std::uint64_t source_key = 0;
+    PlaybackSourceClass source_class{PlaybackSourceClass::Network};
+  };
+#endif
 
   enum class RenderRecoveryMode {
     NoReselection,
@@ -247,13 +286,86 @@ private:
     std::optional<double> pending_target;
     std::optional<double> authoritative_position;
     bool intended_paused = true;
+    // final records that pointer ownership has been released. command_exact
+    // records the precision of the currently issued capacity-one command;
+    // those states intentionally differ while an approximate preview is
+    // draining after release.
     bool final = false;
+    bool command_exact = false;
     bool command_replied = false;
     bool seek_started = false;
     bool playback_restarted = false;
     bool replacement_dispatched = false;
     bool abort_pending = false;
   };
+
+  // Controller-side ownership for a native pointer gesture. The handle tracks
+  // every movement immediately, while native media work is demand-driven: one
+  // exact request may be in flight and all later movement coalesces into the
+  // single latest desired identity. A real terminal presentation releases the
+  // in-flight slot and immediately dispatches that latest desire. Releasing
+  // the pointer burns both identities and creates one fresh CommitSeek.
+  struct NativeScrubIntent {
+    std::uint64_t gesture = 0;
+    double origin = 0.0;
+    double target = 0.0;
+    std::uint64_t latest_preview_request = 0;
+    std::uint64_t dispatched_preview_request = 0;
+    bool intended_paused = true;
+  };
+
+  struct NativePreviewIntent {
+    std::uint64_t gesture = 0;
+    std::uint64_t request = 0;
+    double target = 0.0;
+  };
+
+  struct NativeSeekIntent {
+    std::uint64_t gesture = 0;
+    std::uint64_t request = 0;
+    double target = 0.0;
+    double rollback_position = 0.0;
+    bool intended_paused = true;
+  };
+
+  enum class NativeSeekTerminal : std::uint8_t {
+    None,
+    Ready,
+    Failed,
+  };
+
+  struct NativeSeekSubmissionState {
+    std::uint64_t gesture = 0;
+    std::uint64_t request = 0;
+    double target = 0.0;
+    NativeSeekTerminal terminal{NativeSeekTerminal::None};
+    NativeSeekSubmissionState *previous = nullptr;
+  };
+
+  enum class NativeSeekSubmission : std::uint8_t {
+    Accepted,
+    Rejected,
+    Compatibility,
+  };
+
+  enum class NativeSeekDispatch : std::uint8_t {
+    Consumed,
+    Compatibility,
+  };
+
+  enum class NativePreviewSubmission : std::uint8_t {
+    Accepted,
+    Replaced,
+    Stale,
+    Rejected,
+  };
+
+  using NativeSeekSubmitter = NativeSeekSubmission (*)(
+      void *context, const NativeSeekIntent &intent) noexcept;
+  using NativePreviewSubmitter = NativePreviewSubmission (*)(
+      void *context, const NativePreviewIntent &intent) noexcept;
+  using NativePreviewDemandObserver = void (*)(
+      void *context, const NativePreviewIntent &intent) noexcept;
 
   enum class ObservedProperty : uint64_t {
     Pause = 1,
@@ -283,13 +395,63 @@ private:
                                         int error);
   void handleScrubCommandReply(std::uint64_t reply_userdata, int error);
   void handleScrubPlaybackRestart();
-  void dispatchScrubSeek(double target, bool final);
+  void dispatchScrubSeek(double target, bool exact);
   void maybeCompleteScrubSeek();
-  void handleScrubTimeout(std::uint64_t gesture,
-                          std::uint64_t request_serial,
+  [[nodiscard]] static const char *scrubSeekMode(bool exact);
+  void armScrubTimeout(std::uint64_t gesture, std::uint64_t request_serial,
+                       std::uint64_t command);
+  void cancelScrubTimeout();
+  void handleScrubTimeout(std::uint64_t gesture, std::uint64_t request_serial,
                           std::uint64_t command);
   void finishScrubGesture(bool restore_transport);
   void invalidateScrubGesture();
+  [[nodiscard]] static std::optional<std::uint64_t>
+  reserveNativeSeekIdentity(std::uint64_t &high_water) noexcept;
+  [[nodiscard]] double boundedSeekTarget(double seconds) const noexcept;
+  [[nodiscard]] bool beginNativeScrubIntent();
+  [[nodiscard]] std::optional<NativePreviewIntent>
+  makeNativePreviewIntent(double seconds);
+  [[nodiscard]] std::optional<NativePreviewIntent>
+  makeObservedNativePreviewIntent(double seconds, void *context,
+                                  NativePreviewDemandObserver observer);
+  void dispatchNativePreviewIntent(const NativePreviewIntent &intent,
+                                   void *context,
+                                   NativePreviewSubmitter submitter);
+  [[nodiscard]] std::optional<NativeSeekIntent>
+  finishNativeScrubIntent(double seconds);
+  [[nodiscard]] std::optional<NativeSeekIntent>
+  makeNativeSeekIntent(double seconds);
+  [[nodiscard]] NativeSeekDispatch
+  dispatchNativeSeekIntent(const NativeSeekIntent &intent, void *context,
+                           NativeSeekSubmitter submitter);
+#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+  void dispatchNativePreviewIntent(const NativePreviewIntent &intent);
+  void nativePreviewPresented(
+      const ::wam::media::native_playback::PreviewPresented &presented);
+  void nativePreviewFailed(
+      const ::wam::media::native_playback::PreviewFailed &failed);
+  [[nodiscard]] NativeSeekDispatch
+  dispatchNativeSeekIntent(const NativeSeekIntent &intent);
+  void
+  nativeCommitReady(const ::wam::media::native_playback::CommitReady &ready);
+#endif
+  [[nodiscard]] bool completeNativePreviewPresented(
+      std::uint64_t gesture, std::uint64_t request,
+      double actual_presentation_time, void *context,
+      NativePreviewSubmitter submitter);
+  [[nodiscard]] bool completeNativePreviewFailed(
+      std::uint64_t gesture, std::uint64_t request, void *context,
+      NativePreviewSubmitter submitter);
+  [[nodiscard]] bool acceptNativeCommitReady(std::uint64_t gesture,
+                                             std::uint64_t request,
+                                             double target);
+  void nativeCommitFailed(std::uint64_t gesture,
+                          std::uint64_t request) noexcept;
+  void setNativeScrubPauseIntent(bool paused);
+  void invalidateNativeScrubIntent() noexcept;
+  void invalidateNativeSeekIntents() noexcept;
+  void publishNativeMainPosition(double position);
+  void publishSeekTarget(double target);
   void handleStartFile(std::int64_t playlist_entry_id);
   void handleEndFile(const mpv_event_end_file &end);
   void handlePlaybackReady(bool file_loaded);
@@ -299,14 +461,13 @@ private:
                                       std::uint64_t request_serial,
                                       std::uint64_t render_stamp,
                                       std::int64_t playlist_entry_id);
-  [[nodiscard]] std::optional<LivePlaybackState>
-  readLivePlaybackState() const;
-  [[nodiscard]] static bool livePlaybackStateMatchesRecovery(
-      const RenderRecovery &recovery,
-      const LivePlaybackState &live_state);
-  [[nodiscard]] static bool livePlaybackStateMatchesStartupSync(
-      const StartupPlaybackSync &startup_sync,
-      const LivePlaybackState &live_state);
+  [[nodiscard]] std::optional<LivePlaybackState> readLivePlaybackState() const;
+  [[nodiscard]] static bool
+  livePlaybackStateMatchesRecovery(const RenderRecovery &recovery,
+                                   const LivePlaybackState &live_state);
+  [[nodiscard]] static bool
+  livePlaybackStateMatchesStartupSync(const StartupPlaybackSync &startup_sync,
+                                      const LivePlaybackState &live_state);
   void commitRenderRecovery(const RenderRecovery &recovery,
                             const LivePlaybackState &live_state);
   void queueStartupPlaybackSync();
@@ -328,14 +489,27 @@ private:
   void applyObservedSubtitleTrack(std::int64_t subtitle_track_id);
   void cacheCurrentTrackSelection();
   void cacheCurrentEntrySource();
-  [[nodiscard]] static std::int64_t authoritativePlaylistEntry(
-      std::int64_t live_entry, std::int64_t captured_start_entry);
+  [[nodiscard]] static std::int64_t
+  authoritativePlaylistEntry(std::int64_t live_entry,
+                             std::int64_t captured_start_entry);
   [[nodiscard]] bool acceptsPlaybackObservation() const;
-  [[nodiscard]] bool playlistEntryBelongsToCurrentLineage(
-      std::int64_t playlist_entry_id) const;
+  [[nodiscard]] bool
+  playlistEntryBelongsToCurrentLineage(std::int64_t playlist_entry_id) const;
   [[nodiscard]] bool engineReady() const;
   [[nodiscard]] bool needsRenderContext() const;
   bool initializePlaybackEngine();
+#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+  void prepareRoutedOpenIntent(const QUrl &source);
+  [[nodiscard]] bool nativeRouteAdmissionAllowed() const noexcept;
+  [[nodiscard]] bool
+  beginRoutedFallbackOpen(const QUrl &source, std::uint64_t attempt,
+                          std::uint64_t serial, std::uint64_t source_key,
+                          bool paused, PlaybackSourceClass source_class);
+  void notifyRoutedFallbackOpenFailed();
+  [[nodiscard]] bool resetRoutedFallbackCoreAfterRelease(
+      const std::shared_ptr<PlayerCore> &expected_core);
+#endif
+  void finishStopUi(bool stop_compatibility_engine);
   bool flushPendingOpen(std::uint64_t render_stamp);
   bool flushRenderRecovery(std::uint64_t render_stamp);
   void continuePendingOpen();
@@ -360,8 +534,15 @@ private:
   bool attachSubtitleFile(const std::filesystem::path &subtitle);
 
   std::shared_ptr<PlayerCore> core_;
+  std::shared_ptr<const ::wam::playback::mpv::MpvRuntime> fallback_runtime_;
+#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+  std::shared_ptr<PlayerCore> fallback_reset_core_;
+  std::unique_ptr<NativePlaybackOwner> native_playback_;
+  std::optional<RoutedFallbackOpen> routed_fallback_open_;
+#endif
   QPointer<MpvVideoItem> video_item_;
   QTimer *work_timer_ = nullptr;
+  QTimer *scrub_timeout_timer_ = nullptr;
 
   ::wam::BackgroundJob export_job_;
   ::wam::CaptionService caption_service_;
@@ -375,6 +556,7 @@ private:
   std::int64_t committed_playlist_position_ = -1;
   QString media_title_;
   int appearance_ = 0;
+  double seek_step_seconds_ = 5.0;
   QString last_error_;
   QString export_status_;
   QString caption_status_;
@@ -406,6 +588,11 @@ private:
   std::uint64_t next_render_recovery_attempt_id_ = 0;
   std::uint64_t next_scrub_gesture_id_ = 0;
   std::uint64_t next_scrub_command_id_ = 0;
+  std::uint64_t next_native_seek_gesture_id_ = 0;
+  std::uint64_t next_native_seek_request_id_ = 0;
+  std::uint64_t scrub_timeout_gesture_ = 0;
+  std::uint64_t scrub_timeout_request_serial_ = 0;
+  std::uint64_t scrub_timeout_command_ = 0;
   std::uint64_t next_render_recovery_completion_token_ = 0;
   std::uint64_t next_startup_playback_sync_token_ = 0;
   std::uint64_t last_reported_render_failure_stamp_ = 0;
@@ -425,6 +612,19 @@ private:
   std::optional<RenderRecoveryAttempt> render_recovery_attempt_;
   std::optional<StartupPlaybackSync> startup_playback_sync_;
   std::optional<ScrubSeek> scrub_seek_;
+  std::optional<NativeScrubIntent> native_scrub_intent_;
+  std::optional<NativeSeekIntent> native_seek_intent_;
+  NativeSeekSubmissionState *native_seek_submission_ = nullptr;
+  std::uint64_t latest_native_seek_submission_request_ = 0;
+#if defined(WAM_MPV_RUNTIME_TESTING)
+  // The controller-only test target deliberately excludes the platform owner.
+  // This seam lets it exercise the public previewSeekTo boundary while keeping
+  // production object layout and dispatch unchanged.
+  void *native_preview_test_submit_context_ = nullptr;
+  NativePreviewSubmitter native_preview_test_submitter_ = nullptr;
+  void *native_preview_test_demand_context_ = nullptr;
+  NativePreviewDemandObserver native_preview_test_demand_observer_ = nullptr;
+#endif
 };
 
 } // namespace wam::qt

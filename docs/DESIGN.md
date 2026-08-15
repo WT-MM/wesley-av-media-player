@@ -68,8 +68,10 @@ pointer movement, or immediately when the pointer leaves the player window.
 
 ## Playback palette verification
 
-The project does not currently have a Qt Quick Test target, so changes to the
-palette must include these deterministic manual checks until that target exists:
+The scrubber's frame-pacing and exact-release contract has deterministic Qt
+Quick Test coverage in `tests/tst_scrubber.qml`. The project does not yet have
+a full playback-palette Qt Quick Test target, so palette integration changes
+must also include these deterministic manual checks:
 
 1. Move the pointer over the player, leave it still over the video and then over
    the palette, and confirm the palette begins hiding at five seconds in both
@@ -78,9 +80,10 @@ palette must include these deterministic manual checks until that target exists:
    opacity immediately; move it back and confirm the palette reappears.
 3. Hold and drag the timeline for longer than five seconds. Confirm the palette
    stays visible, its time label and handle track the pointer continuously, and
-   playback lands at the release position. Repeat by clicking three distant
-   points on the track and with Left/Right, Home/End, and Page Up/Page Down while
-   the timeline has keyboard focus.
+   native preview follows rapidly at frame cadence without duplicate stationary
+   requests, then playback lands at the exact release position. Repeat by
+   clicking three distant points on the track and with Left/Right, Home/End, and
+   Page Up/Page Down while the timeline has keyboard focus.
 4. Drag from empty palette chrome and confirm the complete palette follows the
    pointer. Start the same gesture on the timeline, volume slider, and every
    button and confirm the palette itself does not move.

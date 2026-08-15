@@ -5,3 +5,4 @@ IconButton 1.0 IconButton.qml
 QuietButton 1.0 QuietButton.qml
 Scrubber 1.0 Scrubber.qml
 QuickEditSheet 1.0 QuickEditSheet.qml
+PreferencesWindow 1.0 PreferencesWindow.qml

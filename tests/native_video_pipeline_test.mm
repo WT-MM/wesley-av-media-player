@@ -1,4 +1,5 @@
 #include "platform/macos/native_video_pipeline.hpp"
+#include "platform/macos/native_video_limits.hpp"
 
 #import <AppKit/AppKit.h>
 #import <AVFoundation/AVFoundation.h>
@@ -38,6 +39,38 @@ void check(bool condition, const char* expression, int line,
   check(static_cast<bool>(expression), #expression, __LINE__)
 #define WAM_CHECK_DETAIL(expression, detail)                                   \
   check(static_cast<bool>(expression), #expression, __LINE__, (detail))
+
+void checkNativeVideoLimitContract() {
+  using namespace wam::macos::native_video_limits;
+  static_assert(kMaximumCompressedVideoAccessUnitBytes ==
+                8ULL * 1024ULL * 1024ULL);
+  static_assert(kMaximumVideoCodecConfigurationBytes ==
+                256ULL * 1024ULL);
+  static_assert(kMaximumTransientVideoCodecConfigurationBytes ==
+                768ULL * 1024ULL);
+  static_assert(kMaximumRetainedVideoCodecConfigurationBytes ==
+                256ULL * 1024ULL);
+  static_assert(kMaximumPipelineInFlightAccessUnits == 2);
+  static_assert(kMaximumPipelineLogicalCompressedVideoBytes ==
+                24ULL * 1024ULL * 1024ULL);
+  static_assert(acceptsCompressedVideoAccessUnitSize(
+      kMaximumCompressedVideoAccessUnitBytes));
+  static_assert(!acceptsCompressedVideoAccessUnitSize(
+      kMaximumCompressedVideoAccessUnitBytes + 1));
+  static_assert(acceptsVideoCodecConfigurationSize(
+      kMaximumVideoCodecConfigurationBytes));
+  static_assert(!acceptsVideoCodecConfigurationSize(
+      kMaximumVideoCodecConfigurationBytes + 1));
+
+  WAM_CHECK(acceptsCompressedVideoAccessUnitSize(
+      kMaximumCompressedVideoAccessUnitBytes));
+  WAM_CHECK(!acceptsCompressedVideoAccessUnitSize(
+      kMaximumCompressedVideoAccessUnitBytes + 1));
+  WAM_CHECK(acceptsVideoCodecConfigurationSize(
+      kMaximumVideoCodecConfigurationBytes));
+  WAM_CHECK(!acceptsVideoCodecConfigurationSize(
+      kMaximumVideoCodecConfigurationBytes + 1));
+}
 
 class TestBitWriter final {
  public:
@@ -404,6 +437,8 @@ void checkFixtureSampleFormatAdmission(
   std::string error;
   const auto configuration = fixtureCodecConfiguration(path, &codec, &error);
   WAM_CHECK_DETAIL(configuration.has_value(), error);
+  WAM_CHECK(wam::macos::native_video_limits::
+                acceptsVideoCodecConfigurationSize(configuration->size()));
   const auto admission = wam::macos::nativeVideoSampleFormatAdmission(
       codec, std::span<const std::byte>(*configuration));
   WAM_CHECK(admission !=
@@ -667,6 +702,7 @@ const char* codecName(CMVideoCodecType codec) {
 }  // namespace
 
 int main(int argc, char** argv) {
+  checkNativeVideoLimitContract();
   checkAdmissionModel();
   if (argc == 2 && std::string_view(argv[1]) == "--admission-only") {
     std::cout << "native video admission model tests passed\n";
@@ -1031,6 +1067,11 @@ int main(int argc, char** argv) {
   WAM_CHECK(initial.decoder.inFlightFrames <=
             initial.decoder.maxInFlightFrames);
   WAM_CHECK(initial.decoder.pendingPresentationFrames <= 3);
+  WAM_CHECK(initial.decoder.directSampleBufferSubmissions ==
+            initial.decoder.submittedFrames);
+  WAM_CHECK(initial.decoder.directSampleBufferBytes > 0);
+  WAM_CHECK(initial.decoder.copiedSpanSubmissions == 0);
+  WAM_CHECK(initial.decoder.copiedSpanBytes == 0);
 
   // The bound is process-wide, not merely per frontend: a caller cannot evade
   // an active/retiring session's admission lease by constructing another
@@ -1063,6 +1104,12 @@ int main(int argc, char** argv) {
   WAM_CHECK(afterSeek.decoder.inFlightFrames <=
             afterSeek.decoder.maxInFlightFrames);
   WAM_CHECK(afterSeek.decoder.pendingPresentationFrames <= 3);
+  WAM_CHECK(afterSeek.decoder.directSampleBufferSubmissions ==
+            afterSeek.decoder.submittedFrames);
+  WAM_CHECK(afterSeek.decoder.directSampleBufferBytes >=
+            initial.decoder.directSampleBufferBytes);
+  WAM_CHECK(afterSeek.decoder.copiedSpanSubmissions == 0);
+  WAM_CHECK(afterSeek.decoder.copiedSpanBytes == 0);
   const auto asyncFailure = pipeline->takeLastError();
   WAM_CHECK_DETAIL(!asyncFailure.has_value(),
                    asyncFailure.value_or(std::string{}));
@@ -1217,6 +1264,9 @@ int main(int argc, char** argv) {
       << " stop_destroy_ms=" << upgradeDestructionElapsed.count()
       << " destroy_ms=" << destructionElapsed.count()
       << " submitted=" << afterSeek.compressedSamplesSubmitted
+      << " direct_compressed_bytes="
+      << afterSeek.decoder.directSampleBufferBytes
+      << " copied_compressed_bytes=" << afterSeek.decoder.copiedSpanBytes
       << " delivered=" << afterSeek.decoder.deliveredFrames << '\n';
   return EXIT_SUCCESS;
 }

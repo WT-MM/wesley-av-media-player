@@ -4,12 +4,20 @@
 #include "playback_policy.hpp"
 #include "player_core_p.hpp"
 
+#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#include "native_benchmark_telemetry.hpp"
+#include "native_playback_owner.hpp"
+#endif
+
 #include <QByteArray>
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#if !defined(Q_OS_MACOS) || !defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
 #include <QStorageInfo>
+#endif
+#include <QThread>
 #include <QTimer>
 
 #include <algorithm>
@@ -18,6 +26,7 @@
 #include <cwctype>
 #include <exception>
 #include <filesystem>
+#include <limits>
 #include <optional>
 
 #ifdef Q_OS_WIN
@@ -30,12 +39,14 @@
 #include <windows.h>
 #endif
 
-#ifdef Q_OS_MACOS
+#if defined(Q_OS_MACOS) && !defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
 #include <sys/mount.h>
 #endif
 
 namespace wam::qt {
 namespace {
+
+using ::wam::playback::mpv::MpvApi;
 
 constexpr double kMinimumRate = 0.0625;
 constexpr double kMaximumRate = 16.0;
@@ -51,6 +62,9 @@ constexpr std::uint64_t kOpenCommandReplyIdMask = (1ULL << 61) - 1ULL;
 constexpr std::uint64_t kScrubCommandReplyIdMask = kOpenCommandReplyIdMask;
 constexpr std::uint64_t kScrubCommandReplyMask =
     kCommandReplyNamespaceMask | (1ULL << 61);
+#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+constexpr std::uint64_t kFallbackStopCommandReplyNamespace = 3ULL << 62;
+#endif
 
 static_assert((kOpenCommandReplyNamespace & kScrubCommandReplyMask) !=
               kScrubCommandReplyTag);
@@ -110,14 +124,16 @@ PlaybackSourceClass playbackSourceClass(const QUrl &source) {
   if (!source.isLocalFile())
     return PlaybackSourceClass::Network;
 
+#if !defined(Q_OS_MACOS) || !defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   const QString local_path = source.toLocalFile();
   const QStorageInfo storage(local_path);
   if (storage.isValid() &&
       isRemoteFilesystemType(storage.fileSystemType().toStdString())) {
     return PlaybackSourceClass::BufferedLocal;
   }
+#endif
 
-#ifdef Q_OS_MACOS
+#if defined(Q_OS_MACOS) && !defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   struct statfs mount_information{};
   const QByteArray encoded_path = QFile::encodeName(local_path);
   if (::statfs(encoded_path.constData(), &mount_information) == 0 &&
@@ -142,26 +158,56 @@ PlaybackSourceClass playbackSourceClass(const QUrl &source) {
   return PlaybackSourceClass::FastLocal;
 }
 
-bool setPlaybackProperty(mpv_handle *handle, const char *name,
+struct ReadyMpvClient final {
+  const MpvApi *api = nullptr;
+  mpv_handle *handle = nullptr;
+
+  [[nodiscard]] explicit operator bool() const noexcept {
+    return api != nullptr && handle != nullptr;
+  }
+};
+
+[[nodiscard]] ReadyMpvClient readyMpvClient(PlayerCore *core) noexcept {
+  if (!core)
+    return {};
+  const MpvApi *const api = core->readyApi();
+  mpv_handle *const handle = core->handle();
+  return api && handle ? ReadyMpvClient{api, handle} : ReadyMpvClient{};
+}
+
+[[nodiscard]] QString mpvErrorDetail(PlayerCore *core, int error) {
+  const ReadyMpvClient client = readyMpvClient(core);
+  if (client) {
+    if (const char *const detail = client.api->mpv_error_string(error))
+      return QString::fromUtf8(detail);
+  }
+  return QStringLiteral("media-engine error %1").arg(error);
+}
+
+bool setPlaybackProperty(PlayerCore *core, const char *name,
                          const char *value) {
-  const int result = mpv_set_property_string(handle, name, value);
+  const ReadyMpvClient client = readyMpvClient(core);
+  if (!client)
+    return false;
+  const int result =
+      client.api->mpv_set_property_string(client.handle, name, value);
   if (result >= 0)
     return true;
   qWarning().nospace() << "WAM: unable to set playback policy property " << name
-                       << '=' << value << ": " << mpv_error_string(result);
+                       << '=' << value << ": "
+                       << client.api->mpv_error_string(result);
   return false;
 }
 
-void applyPlaybackBufferPolicy(mpv_handle *handle,
+void applyPlaybackBufferPolicy(PlayerCore *core,
                                PlaybackSourceClass source_class) {
   const PlaybackBufferPolicy policy = playbackBufferPolicy(source_class);
-  setPlaybackProperty(handle, "cache", policy.cache_mode);
-  setPlaybackProperty(handle, "cache-secs", policy.cache_seconds);
-  setPlaybackProperty(handle, "demuxer-readahead-secs",
-                      policy.readahead_seconds);
-  setPlaybackProperty(handle, "demuxer-max-bytes", policy.forward_bytes);
-  setPlaybackProperty(handle, "demuxer-max-back-bytes", policy.backward_bytes);
-  setPlaybackProperty(handle, "demuxer-hysteresis-secs",
+  setPlaybackProperty(core, "cache", policy.cache_mode);
+  setPlaybackProperty(core, "cache-secs", policy.cache_seconds);
+  setPlaybackProperty(core, "demuxer-readahead-secs", policy.readahead_seconds);
+  setPlaybackProperty(core, "demuxer-max-bytes", policy.forward_bytes);
+  setPlaybackProperty(core, "demuxer-max-back-bytes", policy.backward_bytes);
+  setPlaybackProperty(core, "demuxer-hysteresis-secs",
                       policy.hysteresis_seconds);
 }
 
@@ -228,95 +274,114 @@ bool pathsReferToSameFile(const std::filesystem::path &left,
 #endif
 }
 
-int sendCommand(mpv_handle *handle,
+int sendCommand(PlayerCore *core,
                 const std::initializer_list<QByteArray> &arguments,
                 std::uint64_t reply_userdata = 0) {
-  if (!handle || arguments.size() == 0)
+  if (arguments.size() == 0)
+    return MPV_ERROR_INVALID_PARAMETER;
+  const ReadyMpvClient client = readyMpvClient(core);
+  if (!client)
     return MPV_ERROR_INVALID_PARAMETER;
   std::vector<const char *> argv;
   argv.reserve(arguments.size() + 1);
   for (const QByteArray &argument : arguments)
     argv.push_back(argument.constData());
   argv.push_back(nullptr);
-  return mpv_command_async(handle, reply_userdata, argv.data());
+  return client.api->mpv_command_async(client.handle, reply_userdata,
+                                       argv.data());
 }
 
-bool setCoreProperty(mpv_handle *handle, const char *name, mpv_format format,
+bool setCoreProperty(PlayerCore *core, const char *name, mpv_format format,
                      void *value) {
-  const int result = mpv_set_property(handle, name, format, value);
+  const ReadyMpvClient client = readyMpvClient(core);
+  if (!client)
+    return false;
+  const int result =
+      client.api->mpv_set_property(client.handle, name, format, value);
   if (result >= 0)
     return true;
   qWarning().nospace() << "WAM: unable to restore media-engine property "
-                       << name << ": " << mpv_error_string(result);
+                       << name << ": " << client.api->mpv_error_string(result);
   return false;
 }
 
-bool setTrackSelection(mpv_handle *handle, const char *name,
+bool setTrackSelection(PlayerCore *core, const char *name,
                        std::int64_t selection) {
   if (selection < 0)
     return true;
+  const ReadyMpvClient client = readyMpvClient(core);
+  if (!client)
+    return false;
   if (selection == 0) {
-    const int result = mpv_set_property_string(handle, name, "no");
+    const int result =
+        client.api->mpv_set_property_string(client.handle, name, "no");
     if (result >= 0)
       return true;
     qWarning().nospace() << "WAM: unable to restore media-engine property "
-                         << name << "=no: " << mpv_error_string(result);
+                         << name
+                         << "=no: " << client.api->mpv_error_string(result);
     return false;
   }
   std::int64_t value = selection;
-  return setCoreProperty(handle, name, MPV_FORMAT_INT64, &value);
+  return setCoreProperty(core, name, MPV_FORMAT_INT64, &value);
 }
 
-std::int64_t playlistEntryIdAtPosition(mpv_handle *handle,
+std::int64_t playlistEntryIdAtPosition(PlayerCore *core,
                                        const char *position_property) {
+  const ReadyMpvClient client = readyMpvClient(core);
+  if (!client)
+    return -1;
   std::int64_t playlist_position = -1;
   std::int64_t entry_id = -1;
-  if (!handle ||
-      mpv_get_property(handle, position_property, MPV_FORMAT_INT64,
-                       &playlist_position) < 0 ||
+  if (client.api->mpv_get_property(client.handle, position_property,
+                                   MPV_FORMAT_INT64, &playlist_position) < 0 ||
       playlist_position < 0) {
     return -1;
   }
-  const QByteArray property =
-      QByteArrayLiteral("playlist/") + QByteArray::number(playlist_position) +
-      QByteArrayLiteral("/id");
-  if (mpv_get_property(handle, property.constData(), MPV_FORMAT_INT64,
-                       &entry_id) < 0) {
+  const QByteArray property = QByteArrayLiteral("playlist/") +
+                              QByteArray::number(playlist_position) +
+                              QByteArrayLiteral("/id");
+  if (client.api->mpv_get_property(client.handle, property.constData(),
+                                   MPV_FORMAT_INT64, &entry_id) < 0) {
     return -1;
   }
   return entry_id;
 }
 
-std::int64_t currentPlaylistEntryId(mpv_handle *handle) {
-  return playlistEntryIdAtPosition(handle, "playlist-pos");
+std::int64_t currentPlaylistEntryId(PlayerCore *core) {
+  return playlistEntryIdAtPosition(core, "playlist-pos");
 }
 
-std::int64_t playingPlaylistEntryId(mpv_handle *handle) {
-  return playlistEntryIdAtPosition(handle, "playlist-playing-pos");
+std::int64_t playingPlaylistEntryId(PlayerCore *core) {
+  return playlistEntryIdAtPosition(core, "playlist-playing-pos");
 }
 
-std::int64_t playlistEntryCount(mpv_handle *handle) {
+std::int64_t playlistEntryCount(PlayerCore *core) {
+  const ReadyMpvClient client = readyMpvClient(core);
+  if (!client)
+    return 0;
   std::int64_t count = 0;
-  if (!handle ||
-      mpv_get_property(handle, "playlist/count", MPV_FORMAT_INT64, &count) <
-          0) {
+  if (client.api->mpv_get_property(client.handle, "playlist/count",
+                                   MPV_FORMAT_INT64, &count) < 0) {
     return 0;
   }
   return std::max<std::int64_t>(0, count);
 }
 
-std::int64_t playlistPositionForEntry(mpv_handle *handle,
-                                      std::int64_t entry_id) {
-  const std::int64_t count = playlistEntryCount(handle);
+std::int64_t playlistPositionForEntry(PlayerCore *core, std::int64_t entry_id) {
   if (entry_id < 0)
     return -1;
+  const ReadyMpvClient client = readyMpvClient(core);
+  if (!client)
+    return -1;
+  const std::int64_t count = playlistEntryCount(core);
   for (std::int64_t index = 0; index < count; ++index) {
-    const QByteArray property =
-        QByteArrayLiteral("playlist/") + QByteArray::number(index) +
-        QByteArrayLiteral("/id");
+    const QByteArray property = QByteArrayLiteral("playlist/") +
+                                QByteArray::number(index) +
+                                QByteArrayLiteral("/id");
     std::int64_t candidate_id = -1;
-    if (mpv_get_property(handle, property.constData(), MPV_FORMAT_INT64,
-                         &candidate_id) >= 0 &&
+    if (client.api->mpv_get_property(client.handle, property.constData(),
+                                     MPV_FORMAT_INT64, &candidate_id) >= 0 &&
         candidate_id == entry_id) {
       return index;
     }
@@ -324,62 +389,71 @@ std::int64_t playlistPositionForEntry(mpv_handle *handle,
   return -1;
 }
 
-QUrl playlistEntrySource(mpv_handle *handle, std::int64_t entry_id) {
-  const std::int64_t count = playlistEntryCount(handle);
-  if (!handle || entry_id < 0) {
+QUrl playlistEntrySource(PlayerCore *core, std::int64_t entry_id) {
+  if (entry_id < 0)
     return {};
-  }
+  const ReadyMpvClient client = readyMpvClient(core);
+  if (!client)
+    return {};
+  const std::int64_t count = playlistEntryCount(core);
   for (std::int64_t index = 0; index < count; ++index) {
     const QByteArray prefix =
         QByteArrayLiteral("playlist/") + QByteArray::number(index);
     const QByteArray id_property = prefix + QByteArrayLiteral("/id");
     std::int64_t candidate_id = -1;
-    if (mpv_get_property(handle, id_property.constData(), MPV_FORMAT_INT64,
-                         &candidate_id) < 0 ||
+    if (client.api->mpv_get_property(client.handle, id_property.constData(),
+                                     MPV_FORMAT_INT64, &candidate_id) < 0 ||
         candidate_id != entry_id) {
       continue;
     }
     const QByteArray filename_property =
         prefix + QByteArrayLiteral("/filename");
-    char *filename =
-        mpv_get_property_string(handle, filename_property.constData());
+    char *filename = client.api->mpv_get_property_string(
+        client.handle, filename_property.constData());
     if (!filename)
       return {};
     const QUrl source = urlFromMpvPath(QString::fromUtf8(filename));
-    mpv_free(filename);
+    client.api->mpv_free(filename);
     return source;
   }
   return {};
 }
 
-std::int64_t currentVideoTrackId(mpv_handle *handle) {
+std::int64_t currentVideoTrackId(PlayerCore *core) {
+  const ReadyMpvClient client = readyMpvClient(core);
+  if (!client)
+    return -1;
   std::int64_t track_id = -1;
-  if (!handle ||
-      mpv_get_property(handle, "vid", MPV_FORMAT_INT64, &track_id) < 0 ||
+  if (client.api->mpv_get_property(client.handle, "vid", MPV_FORMAT_INT64,
+                                   &track_id) < 0 ||
       track_id <= 0) {
     return -1;
   }
   return track_id;
 }
 
-std::int64_t currentTrackId(mpv_handle *handle, const char *name) {
+std::int64_t currentTrackId(PlayerCore *core, const char *name) {
+  const ReadyMpvClient client = readyMpvClient(core);
+  if (!client)
+    return -1;
   std::int64_t track_id = -1;
-  if (!handle ||
-      mpv_get_property(handle, name, MPV_FORMAT_INT64, &track_id) < 0 ||
+  if (client.api->mpv_get_property(client.handle, name, MPV_FORMAT_INT64,
+                                   &track_id) < 0 ||
       track_id <= 0) {
     return -1;
   }
   return track_id;
 }
 
-std::int64_t currentTrackSelection(mpv_handle *handle, const char *name) {
-  if (!handle)
+std::int64_t currentTrackSelection(PlayerCore *core, const char *name) {
+  const ReadyMpvClient client = readyMpvClient(core);
+  if (!client)
     return -1;
-  char *selection = mpv_get_property_string(handle, name);
+  char *selection = client.api->mpv_get_property_string(client.handle, name);
   if (!selection)
     return -1;
   const QString value = QString::fromUtf8(selection).trimmed();
-  mpv_free(selection);
+  client.api->mpv_free(selection);
   if (value.compare(QStringLiteral("no"), Qt::CaseInsensitive) == 0)
     return 0;
   bool valid = false;
@@ -387,24 +461,27 @@ std::int64_t currentTrackSelection(mpv_handle *handle, const char *name) {
   return valid && numeric > 0 ? static_cast<std::int64_t>(numeric) : -1;
 }
 
-std::optional<bool> currentFileHasTrackType(mpv_handle *handle,
+std::optional<bool> currentFileHasTrackType(PlayerCore *core,
                                             const char *type) {
+  const ReadyMpvClient client = readyMpvClient(core);
+  if (!client)
+    return std::nullopt;
   std::int64_t count = 0;
-  if (!handle ||
-      mpv_get_property(handle, "track-list/count", MPV_FORMAT_INT64, &count) <
-          0 ||
+  if (client.api->mpv_get_property(client.handle, "track-list/count",
+                                   MPV_FORMAT_INT64, &count) < 0 ||
       count <= 0) {
     return std::nullopt;
   }
   for (std::int64_t index = 0; index < count; ++index) {
-    const QByteArray property =
-        QByteArrayLiteral("track-list/") + QByteArray::number(index) +
-        QByteArrayLiteral("/type");
-    char *track_type = mpv_get_property_string(handle, property.constData());
+    const QByteArray property = QByteArrayLiteral("track-list/") +
+                                QByteArray::number(index) +
+                                QByteArrayLiteral("/type");
+    char *track_type = client.api->mpv_get_property_string(
+        client.handle, property.constData());
     if (!track_type)
       continue;
     const bool matches = QByteArray(track_type) == type;
-    mpv_free(track_type);
+    client.api->mpv_free(track_type);
     if (matches)
       return true;
   }
@@ -444,14 +521,40 @@ std::int64_t readTrackSelection(const mpv_event_property *property) {
 
 PlayerController::PlayerController(QObject *parent)
     : QObject(parent), core_(std::make_shared<PlayerCore>(this)) {
+#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+  native_playback_ = std::make_unique<NativePlaybackOwner>(*this);
+  // Playing media is a user-initiated activity even when WAM is not the
+  // frontmost application. Track the transport with the platform assertion so
+  // the display never idle-sleeps into the screen saver over playing video and
+  // so App Nap never throttles an occluded or background playback session. The
+  // signal is the single choke point for every transport source: native route,
+  // compatibility route, end of file and idle.
+  connect(this, &PlayerController::playingChanged, this,
+          [this] { setMacosPlaybackActivityHeld(playing()); });
+#endif
   work_timer_ = new QTimer(this);
   work_timer_->setInterval(100);
   work_timer_->setTimerType(Qt::CoarseTimer);
   connect(work_timer_, &QTimer::timeout, this,
           &PlayerController::pollBackgroundWork);
+
+  // Scrubbing can issue many commands over one pointer gesture. Reusing one
+  // timer avoids allocating a lambda/timer event for every command and makes
+  // stale timeout ownership explicit when the capacity-one slot is rearmed.
+  scrub_timeout_timer_ = new QTimer(this);
+  scrub_timeout_timer_->setSingleShot(true);
+  scrub_timeout_timer_->setTimerType(Qt::PreciseTimer);
+  connect(scrub_timeout_timer_, &QTimer::timeout, this, [this] {
+    const std::uint64_t gesture = scrub_timeout_gesture_;
+    const std::uint64_t request_serial = scrub_timeout_request_serial_;
+    const std::uint64_t command = scrub_timeout_command_;
+    cancelScrubTimeout();
+    handleScrubTimeout(gesture, request_serial, command);
+  });
 }
 
 PlayerController::~PlayerController() {
+  cancelScrubTimeout();
   if (work_timer_)
     work_timer_->stop();
   export_job_.cancel();
@@ -459,22 +562,48 @@ PlayerController::~PlayerController() {
   cleanupExportStaging();
   caption_service_.cancel();
   caption_service_.wait();
+#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+  native_playback_.reset();
+  setMacosPlaybackActivityHeld(false);
+#endif
   if (core_)
     core_->detachOwner(this);
   core_.reset();
 }
 
-bool PlayerController::available() const { return core_ && !core_->failed(); }
-
-bool PlayerController::engineReady() const {
-  return core_ && core_->ready();
+bool PlayerController::provisionMpvFallbackRuntime(
+    std::shared_ptr<const ::wam::playback::mpv::MpvRuntime> runtime) {
+  Q_ASSERT(QThread::currentThread() == thread());
+  if (!runtime || !runtime->api().complete() || engineReady() ||
+      fallback_runtime_) {
+    return false;
+  }
+  fallback_runtime_ = std::move(runtime);
+  return true;
 }
+
+bool PlayerController::available() const {
+#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+  // Native playback remains available even when the optional compatibility
+  // engine is dormant or a bundle-local fallback failed to initialize.
+  return native_playback_ != nullptr;
+#else
+  return core_ && !core_->failed();
+#endif
+}
+
+bool PlayerController::engineReady() const { return core_ && core_->ready(); }
 
 bool PlayerController::initializePlaybackEngine() {
   if (engineReady())
     return true;
+  if (!core_ || !fallback_runtime_) {
+    setLastError(QStringLiteral(
+        "The compatibility media engine has not been selected."));
+    return false;
+  }
   const bool was_available = available();
-  if (!core_ || !core_->initialize()) {
+  if (!core_->initialize(fallback_runtime_)) {
     requested_source_.clear();
     pending_source_.clear();
     committed_entry_source_.clear();
@@ -501,6 +630,7 @@ bool PlayerController::initializePlaybackEngine() {
   }
 
   mpv_handle *handle = core_->handle();
+  const MpvApi &api = core_->api();
 
   // Restore cached UI settings synchronously before observing properties.
   // This prevents mpv's defaults from briefly overwriting the saved state on
@@ -510,17 +640,17 @@ bool PlayerController::initializePlaybackEngine() {
   int engine_muted = muted_ ? 1 : 0;
   int engine_captions = captions_visible_ ? 1 : 0;
   int engine_preserve_pitch = preserve_pitch_ ? 1 : 0;
-  setCoreProperty(handle, "volume", MPV_FORMAT_DOUBLE, &engine_volume);
-  setCoreProperty(handle, "speed", MPV_FORMAT_DOUBLE, &engine_rate);
-  setCoreProperty(handle, "mute", MPV_FORMAT_FLAG, &engine_muted);
-  setCoreProperty(handle, "sub-visibility", MPV_FORMAT_FLAG,
+  setCoreProperty(core_.get(), "volume", MPV_FORMAT_DOUBLE, &engine_volume);
+  setCoreProperty(core_.get(), "speed", MPV_FORMAT_DOUBLE, &engine_rate);
+  setCoreProperty(core_.get(), "mute", MPV_FORMAT_FLAG, &engine_muted);
+  setCoreProperty(core_.get(), "sub-visibility", MPV_FORMAT_FLAG,
                   &engine_captions);
-  setCoreProperty(handle, "audio-pitch-correction", MPV_FORMAT_FLAG,
+  setCoreProperty(core_.get(), "audio-pitch-correction", MPV_FORMAT_FLAG,
                   &engine_preserve_pitch);
 
-  const auto observe = [handle](ObservedProperty id, const char *name,
-                                mpv_format format) {
-    mpv_observe_property(handle, static_cast<uint64_t>(id), name, format);
+  const auto observe = [&api, handle](ObservedProperty id, const char *name,
+                                      mpv_format format) {
+    api.mpv_observe_property(handle, static_cast<uint64_t>(id), name, format);
   };
   observe(ObservedProperty::Pause, "pause", MPV_FORMAT_FLAG);
   observe(ObservedProperty::Idle, "idle-active", MPV_FORMAT_FLAG);
@@ -554,6 +684,18 @@ void PlayerController::openFileDialog() { emit openFileDialogRequested(); }
 bool PlayerController::open(const QUrl &source) {
   if (source.isEmpty())
     return false;
+#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+  if (!native_playback_)
+    return false;
+  // Burn pointer/preview completion ownership before the owner drains any
+  // observations from the retiring source. A late exact presentation from
+  // that source must not become visible during the replacement transaction.
+  invalidateNativeSeekIntents();
+  // A blank player follows the existing mpv behavior and starts a newly
+  // opened file. Replacements retain the user's current pause intent.
+  const bool intended_paused = hasMedia() ? paused_ : false;
+  return native_playback_->open(source, 0.0, intended_paused);
+#else
   const QString argument = sourceArgument(source);
   if (argument.isEmpty() || !initializePlaybackEngine())
     return false;
@@ -597,9 +739,166 @@ bool PlayerController::open(const QUrl &source) {
 
   requestVideoUpdate();
   return true;
+#endif
 }
 
+#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+void PlayerController::prepareRoutedOpenIntent(const QUrl &source) {
+  invalidateNativeSeekIntents();
+  if (captioning_) {
+    const auto incoming = localPath(displayUrlForSource(source));
+    if (!incoming || caption_input_.empty() ||
+        !pathsReferToSameFile(caption_input_, *incoming)) {
+      cancelCaptionsForMediaChange();
+    }
+  }
+
+  finishScrubGesture(true);
+  updateEof(false);
+  resetTimeline();
+
+  ++request_serial_;
+  if (request_serial_ == 0)
+    ++request_serial_;
+  requested_source_ = source;
+  pending_source_.clear();
+  pending_request_serial_ = 0;
+  open_attempt_.reset();
+  committed_open_.reset();
+  committed_entry_source_.clear();
+  committed_playlist_position_ = -1;
+  render_recovery_.reset();
+  render_recovery_attempt_.reset();
+  startup_playback_sync_.reset();
+  routed_fallback_open_.reset();
+  redirect_ranges_.clear();
+  observed_current_path_ = false;
+  active_event_playlist_entry_id_ = -1;
+  terminal_playlist_entry_id_ = -1;
+  last_error_playlist_entry_id_ = -1;
+  selected_video_track_id_ = -1;
+  selected_audio_track_id_ = -1;
+  selected_subtitle_track_id_ = -1;
+  selected_tracks_playlist_entry_id_ = -1;
+  current_file_has_audio_track_.reset();
+  attached_subtitle_files_.clear();
+}
+
+bool PlayerController::nativeRouteAdmissionAllowed() const noexcept {
+  return rate_ == 1.0 && video_item_;
+}
+
+bool PlayerController::beginRoutedFallbackOpen(
+    const QUrl &source, std::uint64_t attempt, std::uint64_t serial,
+    std::uint64_t source_key, bool paused, PlaybackSourceClass source_class) {
+  if (!engineReady() || source.isEmpty() || attempt == 0 || serial == 0 ||
+      source_key == 0) {
+    setLastError(
+        QStringLiteral("Compatibility playback received an invalid open."));
+    return false;
+  }
+
+  int paused_flag = paused ? 1 : 0;
+  if (core_->api().mpv_set_property(core_->handle(), "pause", MPV_FORMAT_FLAG,
+                                    &paused_flag) < 0) {
+    setLastError(QStringLiteral(
+        "Compatibility playback could not apply the requested transport."));
+    return false;
+  }
+
+  core_->allowRenderContext();
+  pending_source_ = source;
+  pending_request_serial_ = request_serial_;
+  routed_fallback_open_ =
+      RoutedFallbackOpen{attempt, serial, source_key, source_class};
+  static_cast<void>(core_->retryFailedRenderContext());
+  requestVideoUpdate();
+
+  // Keep router action execution non-reentrant. A pre-existing Ready render
+  // ticket can submit the load on this queued GUI turn; otherwise the normal
+  // render-ready notification owns submission.
+  QPointer<PlayerController> self(this);
+  QMetaObject::invokeMethod(
+      this,
+      [self] {
+        if (self)
+          self->continuePendingOpen();
+      },
+      Qt::QueuedConnection);
+  return true;
+}
+
+void PlayerController::notifyRoutedFallbackOpenFailed() {
+  if (!native_playback_ || !routed_fallback_open_)
+    return;
+  const RoutedFallbackOpen lineage = *routed_fallback_open_;
+  routed_fallback_open_.reset();
+  native_playback_->fallbackOpenFailed(lineage.attempt, lineage.serial,
+                                       lineage.source_key);
+}
+
+bool PlayerController::resetRoutedFallbackCoreAfterRelease(
+    const std::shared_ptr<PlayerCore> &expected_core) {
+  if (!expected_core || core_ != expected_core || !fallback_reset_core_)
+    return false;
+  if (!expected_core->retireFallbackAfterRenderRelease(this))
+    return false;
+
+  core_ = std::move(fallback_reset_core_);
+  pending_source_.clear();
+  pending_request_serial_ = 0;
+  open_attempt_.reset();
+  committed_open_.reset();
+  committed_entry_source_.clear();
+  committed_playlist_position_ = -1;
+  render_recovery_.reset();
+  render_recovery_attempt_.reset();
+  startup_playback_sync_.reset();
+  routed_fallback_open_.reset();
+  active_event_playlist_entry_id_ = -1;
+  terminal_playlist_entry_id_ = -1;
+  last_error_playlist_entry_id_ = -1;
+  last_reported_render_failure_stamp_ = 0;
+  selected_video_track_id_ = -1;
+  selected_audio_track_id_ = -1;
+  selected_subtitle_track_id_ = -1;
+  selected_tracks_playlist_entry_id_ = -1;
+  current_file_has_audio_track_.reset();
+  attached_subtitle_files_.clear();
+  requestVideoUpdate();
+  return true;
+}
+#endif
+
 void PlayerController::play() {
+#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+  if (native_playback_) {
+    if (native_playback_->nativeOwnsTransport() && native_scrub_intent_) {
+      // A native seek converges while physically paused. Keep play/pause as
+      // logical post-seek intent; the owner applies the latest value only after
+      // exact CommitReady proof.
+      setNativeScrubPauseIntent(false);
+      updatePause(false);
+      return;
+    }
+    if (native_playback_->nativeOwnsTransport() && native_seek_intent_) {
+      setNativeScrubPauseIntent(false);
+      updatePause(false);
+    }
+    const auto disposition = native_playback_->setPaused(false);
+    if (disposition == NativePlaybackOwner::PauseDisposition::NativeHandled ||
+        disposition == NativePlaybackOwner::PauseDisposition::NotOwned) {
+      if (disposition == NativePlaybackOwner::PauseDisposition::NativeHandled &&
+          eof_reached_ && !native_seek_intent_) {
+        // Native Ended retains its graph. Replay is one ordinary exact seek
+        // to zero; CommitReady then restores the retained playing intent.
+        updatePause(false);
+        seekTo(0.0);
+      }
+      return;
+    }
+  }
+#endif
   if (!engineReady())
     return;
   if (scrub_seek_) {
@@ -608,16 +907,14 @@ void PlayerController::play() {
     return;
   }
   if (eof_reached_ && committed_open_ &&
-      terminal_playlist_entry_id_ ==
-          committed_open_->playlist_entry_id) {
+      terminal_playlist_entry_id_ == committed_open_->playlist_entry_id) {
     active_event_playlist_entry_id_ = terminal_playlist_entry_id_;
     terminal_playlist_entry_id_ = -1;
   }
   if (eof_reached_ || (duration_ > 0.0 && position_ >= duration_ - 0.05))
     seekTo(0.0);
   updateEof(false);
-  if (render_recovery_ &&
-      render_recovery_->request_serial == request_serial_) {
+  if (render_recovery_ && render_recovery_->request_serial == request_serial_) {
     render_recovery_->paused = false;
     render_recovery_->transport_restored = false;
   }
@@ -626,11 +923,30 @@ void PlayerController::play() {
     startup_playback_sync_->intended_paused = false;
   }
   int paused = 0;
-  mpv_set_property_async(core_->handle(), 0, "pause", MPV_FORMAT_FLAG, &paused);
+  core_->api().mpv_set_property_async(core_->handle(), 0, "pause",
+                                      MPV_FORMAT_FLAG, &paused);
   updatePause(false);
 }
 
 void PlayerController::pause() {
+#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+  if (native_playback_) {
+    if (native_playback_->nativeOwnsTransport() && native_scrub_intent_) {
+      setNativeScrubPauseIntent(true);
+      updatePause(true);
+      return;
+    }
+    if (native_playback_->nativeOwnsTransport() && native_seek_intent_) {
+      setNativeScrubPauseIntent(true);
+      updatePause(true);
+    }
+    const auto disposition = native_playback_->setPaused(true);
+    if (disposition == NativePlaybackOwner::PauseDisposition::NativeHandled ||
+        disposition == NativePlaybackOwner::PauseDisposition::NotOwned) {
+      return;
+    }
+  }
+#endif
   if (!engineReady())
     return;
   if (scrub_seek_) {
@@ -638,13 +954,12 @@ void PlayerController::pause() {
     updatePause(true);
     return;
   }
-  if (render_recovery_ &&
-      render_recovery_->request_serial == request_serial_) {
-    if (!render_recovery_->paused &&
-        !render_recovery_->position_overridden) {
+  if (render_recovery_ && render_recovery_->request_serial == request_serial_) {
+    if (!render_recovery_->paused && !render_recovery_->position_overridden) {
       double live_position = 0.0;
-      if (mpv_get_property(core_->handle(), "time-pos", MPV_FORMAT_DOUBLE,
-                           &live_position) >= 0 &&
+      if (core_->api().mpv_get_property(core_->handle(), "time-pos",
+                                        MPV_FORMAT_DOUBLE,
+                                        &live_position) >= 0 &&
           std::isfinite(live_position)) {
         render_recovery_->position = std::max(0.0, live_position);
       }
@@ -657,7 +972,8 @@ void PlayerController::pause() {
     startup_playback_sync_->intended_paused = true;
   }
   int paused = 1;
-  mpv_set_property_async(core_->handle(), 0, "pause", MPV_FORMAT_FLAG, &paused);
+  core_->api().mpv_set_property_async(core_->handle(), 0, "pause",
+                                      MPV_FORMAT_FLAG, &paused);
   updatePause(true);
 }
 
@@ -665,6 +981,18 @@ void PlayerController::togglePlayPause() { playing() ? pause() : play(); }
 
 void PlayerController::stop() {
   invalidateScrubGesture();
+  invalidateNativeSeekIntents();
+#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+  if (native_playback_) {
+    static_cast<void>(native_playback_->stop());
+    return;
+  }
+#endif
+  finishStopUi(true);
+}
+
+void PlayerController::finishStopUi(bool stop_compatibility_engine) {
+  invalidateNativeSeekIntents();
   ++request_serial_;
   if (request_serial_ == 0)
     ++request_serial_;
@@ -678,6 +1006,9 @@ void PlayerController::stop() {
   render_recovery_.reset();
   render_recovery_attempt_.reset();
   startup_playback_sync_.reset();
+#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+  routed_fallback_open_.reset();
+#endif
   redirect_ranges_.clear();
   active_event_playlist_entry_id_ = -1;
   terminal_playlist_entry_id_ = -1;
@@ -690,8 +1021,8 @@ void PlayerController::stop() {
   attached_subtitle_files_.clear();
   observed_current_path_ = false;
   cancelCaptionsForMediaChange();
-  if (engineReady())
-    sendCommand(core_->handle(), {QByteArrayLiteral("stop")});
+  if (stop_compatibility_engine && engineReady())
+    sendCommand(core_.get(), {QByteArrayLiteral("stop")});
   updatePause(true);
   updateIdle(true);
   updateEof(false);
@@ -701,15 +1032,464 @@ void PlayerController::stop() {
   requestVideoUpdate();
 }
 
+std::optional<std::uint64_t> PlayerController::reserveNativeSeekIdentity(
+    std::uint64_t &high_water) noexcept {
+  if (high_water == std::numeric_limits<std::uint64_t>::max())
+    return std::nullopt;
+  ++high_water;
+  // Zero is never a live protocol identity. Because the counter never wraps,
+  // this is defensive rather than a second allocation attempt.
+  if (high_water == 0)
+    return std::nullopt;
+  return high_water;
+}
+
+double PlayerController::boundedSeekTarget(double seconds) const noexcept {
+  const double maximum = duration_ > 0.0 ? duration_ : seconds;
+  return std::clamp(seconds, 0.0, std::max(0.0, maximum));
+}
+
+bool PlayerController::beginNativeScrubIntent() {
+  if (native_scrub_intent_)
+    return true;
+  const auto gesture = reserveNativeSeekIdentity(next_native_seek_gesture_id_);
+  if (!gesture)
+    return false;
+  const bool intended_paused =
+      native_seek_intent_ ? native_seek_intent_->intended_paused : paused_;
+  native_scrub_intent_ = NativeScrubIntent{
+      *gesture, position_, position_, 0, 0, intended_paused};
+  return true;
+}
+
+std::optional<PlayerController::NativePreviewIntent>
+PlayerController::makeNativePreviewIntent(double seconds) {
+  if (!native_scrub_intent_ || !std::isfinite(seconds))
+    return std::nullopt;
+  const auto request = reserveNativeSeekIdentity(next_native_seek_request_id_);
+  if (!request)
+    return std::nullopt;
+  return NativePreviewIntent{native_scrub_intent_->gesture, *request,
+                             boundedSeekTarget(seconds)};
+}
+
+std::optional<PlayerController::NativePreviewIntent>
+PlayerController::makeObservedNativePreviewIntent(
+    double seconds, void *context, NativePreviewDemandObserver observer) {
+  std::optional<NativePreviewIntent> intent = makeNativePreviewIntent(seconds);
+  if (intent && observer != nullptr)
+    observer(context, *intent);
+  return intent;
+}
+
+void PlayerController::dispatchNativePreviewIntent(
+    const NativePreviewIntent &intent, void *context,
+    NativePreviewSubmitter submitter) {
+  if (!native_scrub_intent_ ||
+      native_scrub_intent_->gesture != intent.gesture || intent.request == 0 ||
+      !std::isfinite(intent.target)) {
+    return;
+  }
+
+  // Stage both the visible desire and, when idle, its in-flight ownership
+  // before publishing the optimistic target. positionChanged handlers may
+  // synchronously request another preview; that movement must coalesce behind
+  // this exact request instead of recursively issuing another media command.
+  NativeScrubIntent &scrub = *native_scrub_intent_;
+  scrub.latest_preview_request = intent.request;
+  scrub.target = intent.target;
+  const bool ownsDispatch = scrub.dispatched_preview_request == 0;
+  if (ownsDispatch)
+    scrub.dispatched_preview_request = intent.request;
+  publishSeekTarget(intent.target);
+
+  // Publishing the optimistic handle is a synchronous Qt boundary. A signal
+  // handler may Stop, Commit, or replace the entire gesture before returning;
+  // never submit media work for an identity that no longer owns the slot.
+  if (!native_scrub_intent_ ||
+      native_scrub_intent_->gesture != intent.gesture ||
+      native_scrub_intent_->dispatched_preview_request != intent.request) {
+    return;
+  }
+  if (!ownsDispatch)
+    return;
+
+  if (submitter == nullptr) {
+    if (native_scrub_intent_ &&
+        native_scrub_intent_->gesture == intent.gesture &&
+        native_scrub_intent_->dispatched_preview_request == intent.request) {
+      native_scrub_intent_->dispatched_preview_request = 0;
+    }
+    return;
+  }
+
+  const NativePreviewSubmission submission = submitter(context, intent);
+  // The owner may synchronously drain a terminal observation while accepting
+  // this command. Such a completion has already released or replaced the
+  // slot; never recreate its ownership after returning from client code.
+  if (!native_scrub_intent_ ||
+      native_scrub_intent_->gesture != intent.gesture ||
+      native_scrub_intent_->dispatched_preview_request != intent.request) {
+    return;
+  }
+
+  switch (submission) {
+  case NativePreviewSubmission::Accepted:
+  case NativePreviewSubmission::Replaced:
+    return;
+  case NativePreviewSubmission::Stale:
+  case NativePreviewSubmission::Rejected:
+    break;
+  }
+
+  // Refusal is intentionally non-modal. Release the work slot but retain the
+  // newest request as a freshness barrier. If client reentrancy staged a newer
+  // desire while this request was being submitted, give that exact latest
+  // target one immediate opportunity instead of leaving it stranded.
+  native_scrub_intent_->dispatched_preview_request = 0;
+  if (native_scrub_intent_->latest_preview_request != intent.request) {
+    const NativePreviewIntent latest{
+        native_scrub_intent_->gesture,
+        native_scrub_intent_->latest_preview_request,
+        native_scrub_intent_->target};
+    dispatchNativePreviewIntent(latest, context, submitter);
+  }
+}
+
+std::optional<PlayerController::NativeSeekIntent>
+PlayerController::finishNativeScrubIntent(double seconds) {
+  if (!native_scrub_intent_)
+    return std::nullopt;
+  const NativeScrubIntent scrub = *native_scrub_intent_;
+  native_scrub_intent_.reset();
+  if (!std::isfinite(seconds))
+    return std::nullopt;
+  const auto request = reserveNativeSeekIdentity(next_native_seek_request_id_);
+  if (!request)
+    return std::nullopt;
+  return NativeSeekIntent{scrub.gesture, *request, boundedSeekTarget(seconds),
+                          scrub.origin, scrub.intended_paused};
+}
+
+std::optional<PlayerController::NativeSeekIntent>
+PlayerController::makeNativeSeekIntent(double seconds) {
+  if (!std::isfinite(seconds))
+    return std::nullopt;
+  const auto gesture = reserveNativeSeekIdentity(next_native_seek_gesture_id_);
+  if (!gesture)
+    return std::nullopt;
+  const auto request = reserveNativeSeekIdentity(next_native_seek_request_id_);
+  if (!request)
+    return std::nullopt;
+  const bool intended_paused =
+      native_seek_intent_ ? native_seek_intent_->intended_paused : paused_;
+  return NativeSeekIntent{*gesture, *request, boundedSeekTarget(seconds),
+                          position_, intended_paused};
+}
+
+PlayerController::NativeSeekDispatch
+PlayerController::dispatchNativeSeekIntent(const NativeSeekIntent &intent,
+                                           void *context,
+                                           NativeSeekSubmitter submitter) {
+  if (submitter == nullptr) {
+    publishSeekTarget(intent.rollback_position);
+    return NativeSeekDispatch::Consumed;
+  }
+  NativeSeekSubmissionState submission_state{
+      intent.gesture, intent.request, intent.target, NativeSeekTerminal::None,
+      native_seek_submission_};
+  native_seek_submission_ = &submission_state;
+  latest_native_seek_submission_request_ = intent.request;
+  const NativeSeekSubmission submission = submitter(context, intent);
+  native_seek_submission_ = submission_state.previous;
+  const bool superseded =
+      latest_native_seek_submission_request_ != intent.request;
+  // A synchronous observation drain can reenter seek submission. Once a
+  // newer request exists, the older call may neither publish/roll back its
+  // target nor fall through to compatibility playback.
+  if (superseded)
+    return NativeSeekDispatch::Consumed;
+  switch (submission) {
+  case NativeSeekSubmission::Accepted:
+    if (submission_state.terminal == NativeSeekTerminal::None) {
+      native_seek_intent_ = intent;
+      publishSeekTarget(intent.target);
+    } else if (submission_state.terminal == NativeSeekTerminal::Ready) {
+      publishSeekTarget(intent.target);
+      updateEof(false);
+      updateIdle(false);
+    } else {
+      publishSeekTarget(intent.rollback_position);
+    }
+    return NativeSeekDispatch::Consumed;
+  case NativeSeekSubmission::Rejected:
+    publishSeekTarget(intent.rollback_position);
+    return NativeSeekDispatch::Consumed;
+  case NativeSeekSubmission::Compatibility:
+    return NativeSeekDispatch::Compatibility;
+  }
+  publishSeekTarget(intent.rollback_position);
+  return NativeSeekDispatch::Consumed;
+}
+
+#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+void PlayerController::dispatchNativePreviewIntent(
+    const NativePreviewIntent &intent) {
+  const auto submit = [](void *context,
+                         const NativePreviewIntent &request) noexcept {
+    auto &owner = *static_cast<NativePlaybackOwner *>(context);
+    switch (
+        owner.previewFrame(request.target, request.gesture, request.request)) {
+    case NativePlaybackOwner::PreviewDisposition::Accepted:
+      return NativePreviewSubmission::Accepted;
+    case NativePlaybackOwner::PreviewDisposition::Replaced:
+      return NativePreviewSubmission::Replaced;
+    case NativePlaybackOwner::PreviewDisposition::Stale:
+      return NativePreviewSubmission::Stale;
+    case NativePlaybackOwner::PreviewDisposition::NotOwned:
+    case NativePlaybackOwner::PreviewDisposition::Rejected:
+      return NativePreviewSubmission::Rejected;
+    }
+    return NativePreviewSubmission::Rejected;
+  };
+  dispatchNativePreviewIntent(intent, native_playback_.get(), submit);
+}
+
+void PlayerController::nativePreviewPresented(
+    const ::wam::media::native_playback::PreviewPresented &presented) {
+  const auto submit = [](void *context,
+                         const NativePreviewIntent &request) noexcept {
+    auto &owner = *static_cast<NativePlaybackOwner *>(context);
+    switch (
+        owner.previewFrame(request.target, request.gesture, request.request)) {
+    case NativePlaybackOwner::PreviewDisposition::Accepted:
+      return NativePreviewSubmission::Accepted;
+    case NativePlaybackOwner::PreviewDisposition::Replaced:
+      return NativePreviewSubmission::Replaced;
+    case NativePlaybackOwner::PreviewDisposition::Stale:
+      return NativePreviewSubmission::Stale;
+    case NativePlaybackOwner::PreviewDisposition::NotOwned:
+    case NativePlaybackOwner::PreviewDisposition::Rejected:
+      return NativePreviewSubmission::Rejected;
+    }
+    return NativePreviewSubmission::Rejected;
+  };
+  static_cast<void>(completeNativePreviewPresented(
+      presented.gesture.value, presented.request.value,
+      presented.actualPresentationTimeSeconds, native_playback_.get(),
+      submit));
+}
+
+void PlayerController::nativePreviewFailed(
+    const ::wam::media::native_playback::PreviewFailed &failed) {
+  const auto submit = [](void *context,
+                         const NativePreviewIntent &request) noexcept {
+    auto &owner = *static_cast<NativePlaybackOwner *>(context);
+    switch (
+        owner.previewFrame(request.target, request.gesture, request.request)) {
+    case NativePlaybackOwner::PreviewDisposition::Accepted:
+      return NativePreviewSubmission::Accepted;
+    case NativePlaybackOwner::PreviewDisposition::Replaced:
+      return NativePreviewSubmission::Replaced;
+    case NativePlaybackOwner::PreviewDisposition::Stale:
+      return NativePreviewSubmission::Stale;
+    case NativePlaybackOwner::PreviewDisposition::NotOwned:
+    case NativePlaybackOwner::PreviewDisposition::Rejected:
+      return NativePreviewSubmission::Rejected;
+    }
+    return NativePreviewSubmission::Rejected;
+  };
+  static_cast<void>(completeNativePreviewFailed(
+      failed.gesture.value, failed.request.value, native_playback_.get(),
+      submit));
+}
+
+PlayerController::NativeSeekDispatch
+PlayerController::dispatchNativeSeekIntent(const NativeSeekIntent &intent) {
+  const auto submit = [](void *context,
+                         const NativeSeekIntent &request) noexcept {
+    auto &owner = *static_cast<NativePlaybackOwner *>(context);
+    switch (owner.commitSeek(request.target, request.gesture, request.request,
+                             request.intended_paused)) {
+    case NativePlaybackOwner::SeekDisposition::NativeHandled:
+      return NativeSeekSubmission::Accepted;
+    case NativePlaybackOwner::SeekDisposition::NativeRejected:
+      return NativeSeekSubmission::Rejected;
+    case NativePlaybackOwner::SeekDisposition::NotOwned:
+    case NativePlaybackOwner::SeekDisposition::FallbackHandled:
+      return NativeSeekSubmission::Compatibility;
+    }
+    return NativeSeekSubmission::Rejected;
+  };
+  return dispatchNativeSeekIntent(intent, native_playback_.get(), submit);
+}
+
+void PlayerController::nativeCommitReady(
+    const ::wam::media::native_playback::CommitReady &ready) {
+  if (!acceptNativeCommitReady(ready.gesture.value, ready.request.value,
+                               ready.targetSeconds)) {
+    return;
+  }
+  updateEof(false);
+  updateIdle(false);
+}
+#endif
+
+bool PlayerController::completeNativePreviewPresented(
+    std::uint64_t gesture, std::uint64_t request,
+    double actual_presentation_time, void *context,
+    NativePreviewSubmitter submitter) {
+  if (!native_scrub_intent_ || gesture == 0 || request == 0 ||
+      native_scrub_intent_->gesture != gesture ||
+      native_scrub_intent_->dispatched_preview_request != request ||
+      !std::isfinite(actual_presentation_time)) {
+    return false;
+  }
+
+  native_scrub_intent_->dispatched_preview_request = 0;
+  if (native_scrub_intent_->latest_preview_request == request) {
+    publishSeekTarget(boundedSeekTarget(actual_presentation_time));
+    return true;
+  }
+
+  // The frame really reached the screen and therefore completes the admitted
+  // work, but a newer pointer target owns the handle. Do not visually regress
+  // it to this older PTS; immediately spend the newly free slot on the single
+  // latest desired request instead.
+  const NativePreviewIntent latest{
+      native_scrub_intent_->gesture,
+      native_scrub_intent_->latest_preview_request,
+      native_scrub_intent_->target};
+  dispatchNativePreviewIntent(latest, context, submitter);
+  return true;
+}
+
+bool PlayerController::completeNativePreviewFailed(
+    std::uint64_t gesture, std::uint64_t request, void *context,
+    NativePreviewSubmitter submitter) {
+  if (!native_scrub_intent_ || gesture == 0 || request == 0 ||
+      native_scrub_intent_->gesture != gesture ||
+      native_scrub_intent_->dispatched_preview_request != request) {
+    return false;
+  }
+
+  native_scrub_intent_->dispatched_preview_request = 0;
+  if (native_scrub_intent_->latest_preview_request == request) {
+    return true;
+  }
+
+  // Failure retires only the exact admitted work. The newest pointer target
+  // still owns the visible handle and gets the newly free slot once; no stale
+  // PTS or rollback is published at this boundary.
+  const NativePreviewIntent latest{
+      native_scrub_intent_->gesture,
+      native_scrub_intent_->latest_preview_request,
+      native_scrub_intent_->target};
+  dispatchNativePreviewIntent(latest, context, submitter);
+  return true;
+}
+
+bool PlayerController::acceptNativeCommitReady(std::uint64_t gesture,
+                                               std::uint64_t request,
+                                               double target) {
+  for (NativeSeekSubmissionState *submission = native_seek_submission_;
+       submission != nullptr; submission = submission->previous) {
+    if (submission->gesture == gesture && submission->request == request &&
+        submission->target == target) {
+      submission->terminal = NativeSeekTerminal::Ready;
+      return true;
+    }
+  }
+  if (!native_seek_intent_ || native_seek_intent_->gesture != gesture ||
+      native_seek_intent_->request != request ||
+      native_seek_intent_->target != target) {
+    return false;
+  }
+  native_seek_intent_.reset();
+  return true;
+}
+
+void PlayerController::nativeCommitFailed(std::uint64_t gesture,
+                                          std::uint64_t request) noexcept {
+  for (NativeSeekSubmissionState *submission = native_seek_submission_;
+       submission != nullptr; submission = submission->previous) {
+    if (submission->gesture == gesture && submission->request == request) {
+      submission->terminal = NativeSeekTerminal::Failed;
+      return;
+    }
+  }
+  if (!native_seek_intent_ || native_seek_intent_->gesture != gesture ||
+      native_seek_intent_->request != request) {
+    return;
+  }
+  native_seek_intent_.reset();
+}
+
+void PlayerController::setNativeScrubPauseIntent(bool paused) {
+  if (native_scrub_intent_) {
+    native_scrub_intent_->intended_paused = paused;
+  } else if (native_seek_intent_) {
+    native_seek_intent_->intended_paused = paused;
+  }
+}
+
+void PlayerController::invalidateNativeScrubIntent() noexcept {
+  native_scrub_intent_.reset();
+}
+
+void PlayerController::invalidateNativeSeekIntents() noexcept {
+  native_scrub_intent_.reset();
+  native_seek_intent_.reset();
+  for (NativeSeekSubmissionState *submission = native_seek_submission_;
+       submission != nullptr; submission = submission->previous) {
+    submission->terminal = NativeSeekTerminal::Failed;
+  }
+}
+
+void PlayerController::publishNativeMainPosition(double position) {
+  // During a pointer gesture the optimistic target and its exact preview
+  // presentation own the visible playhead. Main audio/draw proofs still
+  // advance their owner-side high-water marks, but cannot repaint an older
+  // transport position over the user's latest target.
+  if (native_scrub_intent_)
+    return;
+  publishSeekTarget(position);
+}
+
+void PlayerController::publishSeekTarget(double target) {
+  if (!std::isfinite(target) || nearlyEqual(position_, target))
+    return;
+  position_ = target;
+  emit positionChanged();
+}
+
 void PlayerController::beginScrub() {
+#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+  if (native_playback_ && native_playback_->nativeOwnsTransport()) {
+    if (!beginNativeScrubIntent())
+      return;
+    const auto disposition = native_playback_->setPaused(true);
+    if (disposition == NativePlaybackOwner::PauseDisposition::NativeHandled) {
+      // Pointer-down starts the surface-budget handoff before the MouseArea's
+      // first immediate motion preview. Refusal stays silent; release still
+      // commits one exact seek and restores the captured logical pause intent.
+      static_cast<void>(native_playback_->preparePreviewHandoff());
+      return;
+    }
+    invalidateNativeScrubIntent();
+    if (disposition != NativePlaybackOwner::PauseDisposition::FallbackHandled) {
+      return;
+    }
+  }
+#endif
   if (!engineReady() || scrub_seek_ || render_recovery_ ||
       startup_playback_sync_ || !acceptsPlaybackObservation()) {
     return;
   }
 
   int live_paused = paused_ ? 1 : 0;
-  if (mpv_get_property(core_->handle(), "pause", MPV_FORMAT_FLAG,
-                       &live_paused) < 0) {
+  if (core_->api().mpv_get_property(core_->handle(), "pause", MPV_FORMAT_FLAG,
+                                    &live_paused) < 0) {
     return;
   }
   ++next_scrub_gesture_id_;
@@ -725,8 +1505,8 @@ void PlayerController::beginScrub() {
                           live_paused != 0};
 
   int physically_paused = 1;
-  if (mpv_set_property(core_->handle(), "pause", MPV_FORMAT_FLAG,
-                       &physically_paused) < 0) {
+  if (core_->api().mpv_set_property(core_->handle(), "pause", MPV_FORMAT_FLAG,
+                                    &physically_paused) < 0) {
     scrub_seek_.reset();
     return;
   }
@@ -734,6 +1514,28 @@ void PlayerController::beginScrub() {
 }
 
 void PlayerController::seekTo(double seconds) {
+#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+  if (native_playback_ && native_playback_->nativeOwnsTransport()) {
+    // Native accurate seek requires an exactly representable rational target
+    // (preflightCommitTarget rejects non-dyadic doubles). Positions derived
+    // from decoded frame PTS plus an offset — the arrow-key ±5 s path — are
+    // rarely dyadic, so floor every native seek target onto the same 1/64 s
+    // binary grid the resume path uses. Integer scrubber targets pass
+    // through unchanged.
+    if (std::isfinite(seconds) && seconds > 0.0)
+      seconds = std::floor(seconds * 64.0) / 64.0;
+    if (native_scrub_intent_) {
+      endScrub(seconds);
+      return;
+    }
+    if (auto intent = makeNativeSeekIntent(seconds)) {
+      if (dispatchNativeSeekIntent(*intent) == NativeSeekDispatch::Consumed)
+        return;
+    } else {
+      return;
+    }
+  }
+#endif
   if (!engineReady() || !std::isfinite(seconds))
     return;
   if (scrub_seek_) {
@@ -742,8 +1544,7 @@ void PlayerController::seekTo(double seconds) {
   }
   const double maximum = duration_ > 0.0 ? duration_ : seconds;
   const double target = std::clamp(seconds, 0.0, std::max(0.0, maximum));
-  if (render_recovery_ &&
-      render_recovery_->request_serial == request_serial_) {
+  if (render_recovery_ && render_recovery_->request_serial == request_serial_) {
     render_recovery_->position = target;
     render_recovery_->transport_restored = false;
     render_recovery_->position_overridden = true;
@@ -754,8 +1555,8 @@ void PlayerController::seekTo(double seconds) {
     startup_playback_sync_->position_overridden = true;
   }
   double value = target;
-  mpv_set_property_async(core_->handle(), 0, "time-pos", MPV_FORMAT_DOUBLE,
-                         &value);
+  core_->api().mpv_set_property_async(core_->handle(), 0, "time-pos",
+                                      MPV_FORMAT_DOUBLE, &value);
   if (!nearlyEqual(position_, target)) {
     position_ = target;
     emit positionChanged();
@@ -763,6 +1564,37 @@ void PlayerController::seekTo(double seconds) {
 }
 
 void PlayerController::previewSeekTo(double seconds) {
+#if defined(WAM_MPV_RUNTIME_TESTING)
+  if (native_preview_test_submitter_ != nullptr) {
+    if (auto intent = makeObservedNativePreviewIntent(
+            seconds, native_preview_test_demand_context_,
+            native_preview_test_demand_observer_)) {
+      dispatchNativePreviewIntent(*intent, native_preview_test_submit_context_,
+                                  native_preview_test_submitter_);
+    }
+    return;
+  }
+#endif
+#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+  if (native_playback_ && native_playback_->nativeOwnsTransport()) {
+    const auto observeDemand = [](void *context,
+                                  const NativePreviewIntent &intent) noexcept {
+      auto &controller = *static_cast<PlayerController *>(context);
+      auto &telemetry = NativeBenchmarkTelemetry::instance();
+      if (telemetry.enabled()) {
+        telemetry.previewDemanded(
+            ::wam::media::native_playback::GestureId{intent.gesture},
+            ::wam::media::native_playback::RequestId{intent.request},
+            intent.target, controller.engineReady());
+      }
+    };
+    if (auto intent =
+            makeObservedNativePreviewIntent(seconds, this, observeDemand)) {
+      dispatchNativePreviewIntent(*intent);
+    }
+    return;
+  }
+#endif
   if (!engineReady() || !std::isfinite(seconds))
     return;
   const double maximum = duration_ > 0.0 ? duration_ : seconds;
@@ -773,8 +1605,7 @@ void PlayerController::previewSeekTo(double seconds) {
     // the release path still performs one ordinary exact seek.
     return;
   }
-  if (render_recovery_ &&
-      render_recovery_->request_serial == request_serial_) {
+  if (render_recovery_ && render_recovery_->request_serial == request_serial_) {
     render_recovery_->position = target;
     render_recovery_->transport_restored = false;
     render_recovery_->position_overridden = true;
@@ -801,6 +1632,24 @@ void PlayerController::previewSeekTo(double seconds) {
 }
 
 void PlayerController::endScrub(double seconds) {
+#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+  if (native_playback_ && native_playback_->nativeOwnsTransport()) {
+    std::optional<NativeSeekIntent> intent;
+    if (native_scrub_intent_) {
+      intent = finishNativeScrubIntent(seconds);
+    } else {
+      // Timeline keyboard/click seeks intentionally use the same exact commit
+      // path even though they do not own a pointer gesture.
+      intent = makeNativeSeekIntent(seconds);
+    }
+    if (intent) {
+      if (dispatchNativeSeekIntent(*intent) == NativeSeekDispatch::Consumed)
+        return;
+    } else {
+      return;
+    }
+  }
+#endif
   if (!scrub_seek_) {
     seekTo(seconds);
     return;
@@ -811,8 +1660,7 @@ void PlayerController::endScrub(double seconds) {
     return;
   }
   const double maximum = duration_ > 0.0 ? duration_ : seconds;
-  const double target =
-      std::clamp(seconds, 0.0, std::max(0.0, maximum));
+  const double target = std::clamp(seconds, 0.0, std::max(0.0, maximum));
   scrub_seek_->final = true;
   scrub_seek_->pending_target = target;
   if (scrub_seek_->command == 0) {
@@ -825,10 +1673,33 @@ void PlayerController::endScrub(double seconds) {
   }
 }
 
-void PlayerController::dispatchScrubSeek(double target, bool final) {
+const char *PlayerController::scrubSeekMode(bool exact) {
+  return exact ? "absolute+exact" : "absolute+keyframes";
+}
+
+void PlayerController::armScrubTimeout(std::uint64_t gesture,
+                                       std::uint64_t request_serial,
+                                       std::uint64_t command) {
+  if (!scrub_timeout_timer_)
+    return;
+  scrub_timeout_timer_->stop();
+  scrub_timeout_gesture_ = gesture;
+  scrub_timeout_request_serial_ = request_serial;
+  scrub_timeout_command_ = command;
+  scrub_timeout_timer_->start(kScrubSeekTimeoutMs);
+}
+
+void PlayerController::cancelScrubTimeout() {
+  if (scrub_timeout_timer_)
+    scrub_timeout_timer_->stop();
+  scrub_timeout_gesture_ = 0;
+  scrub_timeout_request_serial_ = 0;
+  scrub_timeout_command_ = 0;
+}
+
+void PlayerController::dispatchScrubSeek(double target, bool exact) {
   if (!scrub_seek_ || !engineReady() || scrub_seek_->command != 0 ||
-      scrub_seek_->request_serial != request_serial_ ||
-      !committed_open_ ||
+      scrub_seek_->request_serial != request_serial_ || !committed_open_ ||
       committed_open_->request_serial != request_serial_ ||
       committed_open_->playlist_entry_id != scrub_seek_->playlist_entry_id ||
       active_event_playlist_entry_id_ != scrub_seek_->playlist_entry_id) {
@@ -845,29 +1716,27 @@ void PlayerController::dispatchScrubSeek(double target, bool final) {
 
   scrub_seek_->command = command;
   scrub_seek_->target = target;
-  scrub_seek_->final = final;
+  scrub_seek_->command_exact = exact;
   scrub_seek_->command_replied = false;
   scrub_seek_->seek_started = false;
   scrub_seek_->playback_restarted = false;
   scrub_seek_->authoritative_position.reset();
   const std::uint64_t gesture = scrub_seek_->gesture;
   const std::uint64_t request_serial = scrub_seek_->request_serial;
-  const int result = sendCommand(
-      core_->handle(),
-      {QByteArrayLiteral("seek"), QByteArray::number(target, 'g', 12),
-       QByteArrayLiteral("absolute+exact")},
-      reply_userdata);
+  const int result = sendCommand(core_.get(),
+                                 {QByteArrayLiteral("seek"),
+                                  QByteArray::number(target, 'g', 12),
+                                  QByteArray(scrubSeekMode(exact))},
+                                 reply_userdata);
   if (result < 0) {
     finishScrubGesture(true);
     return;
   }
 
   // Command completion alone does not mean a frame was decoded. Keep the
-  // capacity-one slot until a post-issuance playback restart also converges.
-  QTimer::singleShot(kScrubSeekTimeoutMs, this,
-                     [this, gesture, request_serial, command] {
-                       handleScrubTimeout(gesture, request_serial, command);
-                     });
+  // capacity-one slot until a post-issuance SEEK and playback restart identify
+  // a decoded frame. Exact release commands additionally converge to 50 ms.
+  armScrubTimeout(gesture, request_serial, command);
 }
 
 void PlayerController::handleScrubTimeout(std::uint64_t gesture,
@@ -893,12 +1762,13 @@ void PlayerController::handleScrubTimeout(std::uint64_t gesture,
   }
   if (engineReady() && !scrub_seek_->abort_pending) {
     scrub_seek_->abort_pending = true;
-    mpv_abort_async_command(core_->handle(), kScrubCommandReplyTag | command);
+    core_->api().mpv_abort_async_command(core_->handle(),
+                                         kScrubCommandReplyTag | command);
   }
 }
 
 void PlayerController::handleScrubCommandReply(std::uint64_t reply_userdata,
-                                                int error) {
+                                               int error) {
   const std::uint64_t command = reply_userdata & kScrubCommandReplyIdMask;
   if (!scrub_seek_ || scrub_seek_->request_serial != request_serial_ ||
       scrub_seek_->command != command) {
@@ -911,9 +1781,11 @@ void PlayerController::handleScrubCommandReply(std::uint64_t reply_userdata,
     return;
   }
   if (error < 0) {
+    cancelScrubTimeout();
     const std::optional<double> pending = scrub_seek_->pending_target;
     const bool final = scrub_seek_->final;
     scrub_seek_->command = 0;
+    scrub_seek_->command_exact = false;
     scrub_seek_->command_replied = false;
     scrub_seek_->seek_started = false;
     scrub_seek_->playback_restarted = false;
@@ -932,8 +1804,7 @@ void PlayerController::handleScrubCommandReply(std::uint64_t reply_userdata,
 }
 
 void PlayerController::handleScrubPlaybackRestart() {
-  if (!scrub_seek_ || scrub_seek_->command == 0 ||
-      !scrub_seek_->seek_started ||
+  if (!scrub_seek_ || scrub_seek_->command == 0 || !scrub_seek_->seek_started ||
       scrub_seek_->request_serial != request_serial_ || !committed_open_ ||
       committed_open_->request_serial != request_serial_ ||
       committed_open_->playlist_entry_id != scrub_seek_->playlist_entry_id ||
@@ -943,8 +1814,8 @@ void PlayerController::handleScrubPlaybackRestart() {
   }
   scrub_seek_->playback_restarted = true;
   double live_position = 0.0;
-  if (mpv_get_property(core_->handle(), "time-pos", MPV_FORMAT_DOUBLE,
-                       &live_position) >= 0 &&
+  if (core_->api().mpv_get_property(core_->handle(), "time-pos",
+                                    MPV_FORMAT_DOUBLE, &live_position) >= 0 &&
       std::isfinite(live_position)) {
     scrub_seek_->authoritative_position = std::max(0.0, live_position);
   }
@@ -957,22 +1828,33 @@ void PlayerController::maybeCompleteScrubSeek() {
     return;
   }
   if (!scrub_seek_->authoritative_position ||
+      !std::isfinite(*scrub_seek_->authoritative_position)) {
+    return;
+  }
+  if (scrub_seek_->command_exact &&
       std::abs(*scrub_seek_->authoritative_position - scrub_seek_->target) >
           kScrubConvergenceToleranceSeconds) {
     return;
   }
 
-  const bool final = scrub_seek_->final;
+  const bool released = scrub_seek_->final;
+  const bool completed_exact = scrub_seek_->command_exact;
+  const double completed_target = scrub_seek_->target;
   const std::optional<double> pending = scrub_seek_->pending_target;
+  cancelScrubTimeout();
   scrub_seek_->command = 0;
+  scrub_seek_->command_exact = false;
   scrub_seek_->command_replied = false;
   scrub_seek_->seek_started = false;
   scrub_seek_->playback_restarted = false;
   scrub_seek_->authoritative_position.reset();
   scrub_seek_->pending_target.reset();
-  if (final) {
-    if (pending && !nearlyEqual(*pending, scrub_seek_->target)) {
-      dispatchScrubSeek(*pending, true);
+  if (released) {
+    const double final_target = pending.value_or(completed_target);
+    // An approximate preview that drains after pointer release never counts
+    // as the release seek, even if its keyframe happens to equal the target.
+    if (!completed_exact || !nearlyEqual(final_target, completed_target)) {
+      dispatchScrubSeek(final_target, true);
       return;
     }
     finishScrubGesture(true);
@@ -985,6 +1867,7 @@ void PlayerController::maybeCompleteScrubSeek() {
 void PlayerController::finishScrubGesture(bool restore_transport) {
   if (!scrub_seek_)
     return;
+  cancelScrubTimeout();
   const bool intended_paused = scrub_seek_->intended_paused;
   const std::uint64_t active_command = scrub_seek_->command;
   const bool matching_lineage =
@@ -993,45 +1876,56 @@ void PlayerController::finishScrubGesture(bool restore_transport) {
       committed_open_->playlist_entry_id == scrub_seek_->playlist_entry_id &&
       active_event_playlist_entry_id_ == scrub_seek_->playlist_entry_id;
   if (active_command != 0 && engineReady()) {
-    mpv_abort_async_command(core_->handle(),
-                            kScrubCommandReplyTag | active_command);
+    core_->api().mpv_abort_async_command(
+        core_->handle(), kScrubCommandReplyTag | active_command);
   }
   scrub_seek_.reset();
   if (!restore_transport || !matching_lineage || !engineReady())
     return;
   int paused = intended_paused ? 1 : 0;
-  if (mpv_set_property(core_->handle(), "pause", MPV_FORMAT_FLAG, &paused) >=
-      0) {
+  if (core_->api().mpv_set_property(core_->handle(), "pause", MPV_FORMAT_FLAG,
+                                    &paused) >= 0) {
     updatePause(intended_paused);
   }
 }
 
-void PlayerController::invalidateScrubGesture() {
-  finishScrubGesture(false);
-}
+void PlayerController::invalidateScrubGesture() { finishScrubGesture(false); }
 
 void PlayerController::seekRelative(double seconds) {
+#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+  if (native_playback_ && native_playback_->nativeOwnsTransport()) {
+    if (std::isfinite(seconds))
+      seekTo(position_ + seconds);
+    return;
+  }
+#endif
   if (!engineReady() || !std::isfinite(seconds))
     return;
   if (scrub_seek_ || render_recovery_) {
     seekTo(position_ + seconds);
     return;
   }
-  sendCommand(core_->handle(),
+  sendCommand(core_.get(),
               {QByteArrayLiteral("seek"), QByteArray::number(seconds, 'g', 12),
                QByteArrayLiteral("relative")});
 }
 
-void PlayerController::skipBackward() { seekRelative(-5.0); }
-void PlayerController::skipForward() { seekRelative(5.0); }
+void PlayerController::skipBackward() { seekRelative(-seek_step_seconds_); }
+void PlayerController::skipForward() { seekRelative(seek_step_seconds_); }
 
 void PlayerController::toggleMute() { setMuted(!muted_); }
 
 void PlayerController::setMuted(bool muted) {
-  if (engineReady()) {
+#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+  const bool native_owned =
+      native_playback_ && native_playback_->setMuted(muted);
+#else
+  constexpr bool native_owned = false;
+#endif
+  if (!native_owned && engineReady()) {
     int value = muted ? 1 : 0;
-    mpv_set_property_async(core_->handle(), 0, "mute", MPV_FORMAT_FLAG,
-                           &value);
+    core_->api().mpv_set_property_async(core_->handle(), 0, "mute",
+                                        MPV_FORMAT_FLAG, &value);
   }
   if (muted_ == muted)
     return;
@@ -1043,10 +1937,17 @@ void PlayerController::setVolume(double volume) {
   if (!std::isfinite(volume))
     return;
   const double normalized = std::clamp(volume, 0.0, 1.0);
-  if (engineReady()) {
+#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+  const bool native_owned =
+      native_playback_ &&
+      native_playback_->setGain(static_cast<float>(normalized));
+#else
+  constexpr bool native_owned = false;
+#endif
+  if (!native_owned && engineReady()) {
     double mpv_volume = normalized * 100.0;
-    mpv_set_property_async(core_->handle(), 0, "volume", MPV_FORMAT_DOUBLE,
-                           &mpv_volume);
+    core_->api().mpv_set_property_async(core_->handle(), 0, "volume",
+                                        MPV_FORMAT_DOUBLE, &mpv_volume);
   }
   if (nearlyEqual(volume_, normalized))
     return;
@@ -1058,10 +1959,25 @@ void PlayerController::setRate(double rate) {
   if (!std::isfinite(rate))
     return;
   const double bounded = std::clamp(rate, kMinimumRate, kMaximumRate);
+#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+  if (native_playback_ && native_playback_->nativeOwnsTransport()) {
+    if (bounded != 1.0) {
+      setLastError(QStringLiteral(
+          "Playback speed changes are not available in native playback "
+          "yet."));
+      return;
+    }
+    if (!nearlyEqual(rate_, 1.0)) {
+      rate_ = 1.0;
+      emit rateChanged();
+    }
+    return;
+  }
+#endif
   if (engineReady()) {
     double value = bounded;
-    mpv_set_property_async(core_->handle(), 0, "speed", MPV_FORMAT_DOUBLE,
-                           &value);
+    core_->api().mpv_set_property_async(core_->handle(), 0, "speed",
+                                        MPV_FORMAT_DOUBLE, &value);
   }
   if (nearlyEqual(rate_, bounded))
     return;
@@ -1074,10 +1990,19 @@ void PlayerController::toggleCaptions() {
 }
 
 void PlayerController::setCaptionsVisible(bool visible) {
+#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+  if (native_playback_ && native_playback_->nativeOwnsTransport()) {
+    if (visible != captions_visible_) {
+      setLastError(QStringLiteral(
+          "Caption track changes are not available in native playback yet."));
+    }
+    return;
+  }
+#endif
   if (engineReady()) {
     int value = visible ? 1 : 0;
-    mpv_set_property_async(core_->handle(), 0, "sub-visibility",
-                           MPV_FORMAT_FLAG, &value);
+    core_->api().mpv_set_property_async(core_->handle(), 0, "sub-visibility",
+                                        MPV_FORMAT_FLAG, &value);
   }
   if (captions_visible_ == visible)
     return;
@@ -1088,10 +2013,19 @@ void PlayerController::setCaptionsVisible(bool visible) {
 void PlayerController::toggleFullscreen() { emit fullscreenToggleRequested(); }
 
 void PlayerController::setPreservePitch(bool preserve) {
+#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+  if (native_playback_ && native_playback_->nativeOwnsTransport()) {
+    if (preserve_pitch_ != preserve) {
+      preserve_pitch_ = preserve;
+      emit preservePitchChanged();
+    }
+    return;
+  }
+#endif
   if (engineReady()) {
     int value = preserve ? 1 : 0;
-    mpv_set_property_async(core_->handle(), 0, "audio-pitch-correction",
-                           MPV_FORMAT_FLAG, &value);
+    core_->api().mpv_set_property_async(
+        core_->handle(), 0, "audio-pitch-correction", MPV_FORMAT_FLAG, &value);
   }
   if (preserve_pitch_ == preserve)
     return;
@@ -1105,6 +2039,16 @@ void PlayerController::setAppearance(int appearance) {
     return;
   appearance_ = bounded;
   emit appearanceChanged();
+}
+
+void PlayerController::setSeekStepSeconds(double seconds) {
+  if (!std::isfinite(seconds))
+    return;
+  const double bounded = std::clamp(seconds, 1.0, 60.0);
+  if (nearlyEqual(seek_step_seconds_, bounded))
+    return;
+  seek_step_seconds_ = bounded;
+  emit seekStepSecondsChanged();
 }
 
 void PlayerController::setTrimIn(double seconds) {
@@ -1474,12 +2418,13 @@ bool PlayerController::attachSubtitleFile(
   const QByteArray path = displayPath(subtitle).toUtf8();
   std::array<const char *, 4> arguments{"sub-add", path.constData(), "select",
                                         nullptr};
-  const int result = mpv_command(core_->handle(), arguments.data());
+  const int result =
+      core_->api().mpv_command(core_->handle(), arguments.data());
   if (result < 0)
     return false;
   if (std::find(attached_subtitle_files_.begin(),
-                attached_subtitle_files_.end(), subtitle) ==
-      attached_subtitle_files_.end()) {
+                attached_subtitle_files_.end(),
+                subtitle) == attached_subtitle_files_.end()) {
     attached_subtitle_files_.push_back(subtitle);
   }
   setCaptionsVisible(true);
@@ -1490,14 +2435,36 @@ void PlayerController::drainMpvEvents() {
   if (!engineReady())
     return;
 
+#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+  struct NativeDrainScope final {
+    NativePlaybackOwner *owner{nullptr};
+    explicit NativeDrainScope(NativePlaybackOwner *value) : owner(value) {
+      if (owner)
+        owner->beginFallbackEventDrain();
+    }
+    ~NativeDrainScope() {
+      if (owner)
+        owner->endFallbackEventDrain();
+    }
+  } native_drain_scope{native_playback_.get()};
+#endif
+
   while (true) {
-    mpv_event *event = mpv_wait_event(core_->handle(), 0.0);
+    mpv_event *event = core_->api().mpv_wait_event(core_->handle(), 0.0);
     if (!event || event->event_id == MPV_EVENT_NONE)
       break;
 
     if (event->event_id == MPV_EVENT_COMMAND_REPLY) {
       const std::uint64_t reply_namespace =
           event->reply_userdata & kCommandReplyNamespaceMask;
+#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+      if (native_playback_ &&
+          reply_namespace == kFallbackStopCommandReplyNamespace) {
+        native_playback_->fallbackStopCommandReply(event->reply_userdata,
+                                                   event->error);
+        continue;
+      }
+#endif
       if ((event->reply_userdata & kScrubCommandReplyMask) ==
           kScrubCommandReplyTag) {
         handleScrubCommandReply(event->reply_userdata, event->error);
@@ -1512,6 +2479,17 @@ void PlayerController::drainMpvEvents() {
         continue;
       }
     }
+
+#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+    // A retained compatibility handle is dormant during native playback.
+    // Ignore its stale file/property stream, while the exact Stop command
+    // reply above and idle observation below remain admitted during fallback
+    // retirement.
+    if (native_playback_ &&
+        !native_playback_->acceptsFallbackPlaybackEvents()) {
+      continue;
+    }
+#endif
 
     if (event->event_id == MPV_EVENT_START_FILE) {
       const auto *start = static_cast<mpv_event_start_file *>(event->data);
@@ -1555,9 +2533,15 @@ void PlayerController::drainMpvEvents() {
       case ObservedProperty::Pause:
         applyObservedPause(readFlag(property, true));
         break;
-      case ObservedProperty::Idle:
-        applyObservedIdle(readFlag(property, true));
+      case ObservedProperty::Idle: {
+        const bool idle = readFlag(property, true);
+        applyObservedIdle(idle);
+#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+        if (native_playback_)
+          native_playback_->fallbackIdleChanged(idle);
+#endif
         break;
+      }
       case ObservedProperty::Position: {
         // mpv reports an unavailable property with no data while replacing a
         // file or video output. Preserve the last real timestamp so renderer
@@ -1675,7 +2659,13 @@ void PlayerController::requestVideoUpdate() {
 }
 
 bool PlayerController::needsRenderContext() const {
+#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+  return engineReady() && native_playback_ &&
+         native_playback_->needsFallbackRenderContext() &&
+         !requested_source_.isEmpty();
+#else
   return engineReady() && !requested_source_.isEmpty();
+#endif
 }
 
 void PlayerController::continuePendingOpen() {
@@ -1718,12 +2708,20 @@ bool PlayerController::flushPendingOpen(std::uint64_t render_stamp) {
   if (argument.isEmpty()) {
     abandonPendingOpen();
     setLastError(QStringLiteral("Unable to open an empty media location."));
+#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+    notifyRoutedFallbackOpenFailed();
+#endif
     return false;
   }
 
   const QUrl display_source = displayUrlForSource(source);
-  applyPlaybackBufferPolicy(core_->handle(),
-                            playbackSourceClass(display_source));
+  PlaybackSourceClass source_class = playbackSourceClass(display_source);
+#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+  if (routed_fallback_open_) {
+    source_class = routed_fallback_open_->source_class;
+  }
+#endif
+  applyPlaybackBufferPolicy(core_.get(), source_class);
   if (!core_->validateRenderTicket(ticket)) {
     continuePendingOpen();
     return true;
@@ -1737,7 +2735,7 @@ bool PlayerController::flushPendingOpen(std::uint64_t render_stamp) {
       kOpenCommandReplyNamespace | next_open_attempt_id_;
   const QByteArray utf8 = argument.toUtf8();
   const int result = sendCommand(
-      core_->handle(),
+      core_.get(),
       {QByteArrayLiteral("loadfile"), utf8, QByteArrayLiteral("replace")},
       reply_userdata);
   if (result < 0) {
@@ -1745,12 +2743,15 @@ bool PlayerController::flushPendingOpen(std::uint64_t render_stamp) {
     // an explicit subsequent open instead of spinning every frame.
     abandonPendingOpen();
     setLastError(QStringLiteral("Unable to open media: %1")
-                     .arg(QString::fromUtf8(mpv_error_string(result))));
+                     .arg(mpvErrorDetail(core_.get(), result)));
+#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+    notifyRoutedFallbackOpenFailed();
+#endif
     return false;
   }
 
-  open_attempt_ = OpenAttempt{next_open_attempt_id_, request_serial,
-                              render_stamp};
+  open_attempt_ =
+      OpenAttempt{next_open_attempt_id_, request_serial, render_stamp};
   setLastError({});
 
   // Do not clear pending_source_ here. mpv_command_async only queues work;
@@ -1803,8 +2804,7 @@ bool PlayerController::flushRenderRecovery(std::uint64_t render_stamp) {
   if (next_render_recovery_attempt_id_ == 0)
     next_render_recovery_attempt_id_ = 1;
   const std::uint64_t reply_userdata =
-      kRenderRecoveryCommandReplyNamespace |
-      next_render_recovery_attempt_id_;
+      kRenderRecoveryCommandReplyNamespace | next_render_recovery_attempt_id_;
   int result = MPV_ERROR_INVALID_PARAMETER;
   bool restarted_playlist_entry = false;
   if (render_recovery_->mode == RenderRecoveryMode::VideoReselect) {
@@ -1813,10 +2813,10 @@ bool PlayerController::flushRenderRecovery(std::uint64_t render_stamp) {
     // reselected after render-context teardown deselected the VO.
     const QByteArray track =
         QByteArray::number(render_recovery_->video_track_id);
-    result = sendCommand(
-        core_->handle(),
-        {QByteArrayLiteral("set"), QByteArrayLiteral("vid"), track},
-        reply_userdata);
+    result =
+        sendCommand(core_.get(),
+                    {QByteArrayLiteral("set"), QByteArrayLiteral("vid"), track},
+                    reply_userdata);
   } else {
     // With video-only media, deselecting the last A/V track unloads the file
     // despite keep-open. Restart the retained playlist entry in place whenever
@@ -1824,17 +2824,16 @@ bool PlayerController::flushRenderRecovery(std::uint64_t render_stamp) {
     // and the remaining sibling continuation. restoreRenderRecovery()
     // re-attaches WAM subtitles and exact selections before transport state.
     const std::int64_t playlist_position = playlistPositionForEntry(
-        core_->handle(), committed_open_->playlist_entry_id);
+        core_.get(), committed_open_->playlist_entry_id);
     render_recovery_->preserve_playlist_context =
         render_recovery_->preserve_playlist_context ||
-        playlistEntryCount(core_->handle()) > 1 || !redirect_ranges_.empty();
+        playlistEntryCount(core_.get()) > 1 || !redirect_ranges_.empty();
     if (playlist_position >= 0) {
       render_recovery_->playlist_position = playlist_position;
       const QByteArray position = QByteArray::number(playlist_position);
-      result = sendCommand(
-          core_->handle(),
-          {QByteArrayLiteral("playlist-play-index"), position},
-          reply_userdata);
+      result = sendCommand(core_.get(),
+                           {QByteArrayLiteral("playlist-play-index"), position},
+                           reply_userdata);
       restarted_playlist_entry = result >= 0;
     } else if (!render_recovery_->preserve_playlist_context) {
       // A standalone entry may have been removed by video-only VO teardown.
@@ -1842,28 +2841,30 @@ bool PlayerController::flushRenderRecovery(std::uint64_t render_stamp) {
       const QByteArray source =
           sourceArgument(render_recovery_->reload_source).toUtf8();
       if (!source.isEmpty()) {
-        result = sendCommand(
-            core_->handle(),
-            {QByteArrayLiteral("loadfile"), source,
-             QByteArrayLiteral("replace")},
-            reply_userdata);
+        result = sendCommand(core_.get(),
+                             {QByteArrayLiteral("loadfile"), source,
+                              QByteArrayLiteral("replace")},
+                             reply_userdata);
       }
     }
   }
   if (result < 0) {
     render_recovery_->accepted_render_stamp = render_stamp;
     committed_open_->render_stamp = render_stamp;
-    degradeRenderRecovery(
-        QStringLiteral("Unable to restore video output: %1")
-            .arg(QString::fromUtf8(mpv_error_string(result))));
+    degradeRenderRecovery(QStringLiteral("Unable to restore video output: %1")
+                              .arg(mpvErrorDetail(core_.get(), result)));
     return false;
   }
 
-  render_recovery_attempt_ = RenderRecoveryAttempt{
-      next_render_recovery_attempt_id_, request_serial_, render_stamp,
-      committed_open_->playlist_entry_id,
-      render_recovery_->video_track_id, render_recovery_->mode, -1,
-      restarted_playlist_entry};
+  render_recovery_attempt_ =
+      RenderRecoveryAttempt{next_render_recovery_attempt_id_,
+                            request_serial_,
+                            render_stamp,
+                            committed_open_->playlist_entry_id,
+                            render_recovery_->video_track_id,
+                            render_recovery_->mode,
+                            -1,
+                            restarted_playlist_entry};
   setLastError({});
 
   if (!core_->validateRenderTicket(ticket))
@@ -1872,9 +2873,8 @@ bool PlayerController::flushRenderRecovery(std::uint64_t render_stamp) {
 }
 
 void PlayerController::handleOpenCommandReply(std::uint64_t reply_userdata,
-                                               int error) {
-  const std::uint64_t attempt_id =
-      reply_userdata & kOpenCommandReplyIdMask;
+                                              int error) {
+  const std::uint64_t attempt_id = reply_userdata & kOpenCommandReplyIdMask;
   if (!open_attempt_ || open_attempt_->id != attempt_id)
     return;
 
@@ -1902,7 +2902,10 @@ void PlayerController::handleOpenCommandReply(std::uint64_t reply_userdata,
   if (error < 0) {
     abandonPendingOpen();
     setLastError(QStringLiteral("Unable to open media: %1")
-                     .arg(QString::fromUtf8(mpv_error_string(error))));
+                     .arg(mpvErrorDetail(core_.get(), error)));
+#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+    notifyRoutedFallbackOpenFailed();
+#endif
     return;
   }
 
@@ -1910,14 +2913,14 @@ void PlayerController::handleOpenCommandReply(std::uint64_t reply_userdata,
   updateSource(displayUrlForSource(loaded_source));
   updateMediaTitle(fallbackTitle(loaded_source));
   OpenAttempt committed = attempt;
-  const std::int64_t current_entry = currentPlaylistEntryId(core_->handle());
-  committed.playlist_entry_id = authoritativePlaylistEntry(
-      current_entry, attempt.playlist_entry_id);
+  const std::int64_t current_entry = currentPlaylistEntryId(core_.get());
+  committed.playlist_entry_id =
+      authoritativePlaylistEntry(current_entry, attempt.playlist_entry_id);
   committed_open_ = committed;
   int live_paused = paused_ ? 1 : 0;
   if (engineReady()) {
-    static_cast<void>(mpv_get_property(core_->handle(), "pause",
-                                       MPV_FORMAT_FLAG, &live_paused));
+    static_cast<void>(core_->api().mpv_get_property(
+        core_->handle(), "pause", MPV_FORMAT_FLAG, &live_paused));
   }
   StartupPlaybackSync startup_sync;
   startup_sync.request_serial = committed.request_serial;
@@ -1926,8 +2929,8 @@ void PlayerController::handleOpenCommandReply(std::uint64_t reply_userdata,
   startup_sync.intended_paused = live_paused != 0;
   startup_playback_sync_ = startup_sync;
   committed_entry_source_ = displayUrlForSource(loaded_source);
-  committed_playlist_position_ = playlistPositionForEntry(
-      core_->handle(), committed.playlist_entry_id);
+  committed_playlist_position_ =
+      playlistPositionForEntry(core_.get(), committed.playlist_entry_id);
   terminal_playlist_entry_id_ = -1;
   redirect_ranges_.clear();
   render_recovery_attempt_.reset();
@@ -1940,7 +2943,7 @@ void PlayerController::handleOpenCommandReply(std::uint64_t reply_userdata,
   selected_tracks_playlist_entry_id_ = -1;
   if (active_event_playlist_entry_id_ != committed.playlist_entry_id)
     active_event_playlist_entry_id_ = -1;
-  const std::int64_t video_track = currentVideoTrackId(core_->handle());
+  const std::int64_t video_track = currentVideoTrackId(core_.get());
   if (video_track > 0 && committed.playlist_entry_id >= 0) {
     selected_video_track_id_ = video_track;
     selected_tracks_playlist_entry_id_ = committed.playlist_entry_id;
@@ -1948,6 +2951,14 @@ void PlayerController::handleOpenCommandReply(std::uint64_t reply_userdata,
   pending_source_.clear();
   pending_request_serial_ = 0;
   open_attempt_.reset();
+#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+  if (native_playback_ && routed_fallback_open_) {
+    const RoutedFallbackOpen lineage = *routed_fallback_open_;
+    routed_fallback_open_.reset();
+    native_playback_->fallbackOpenSucceeded(lineage.attempt, lineage.serial,
+                                            lineage.source_key);
+  }
+#endif
 }
 
 std::int64_t PlayerController::authoritativePlaylistEntry(
@@ -1957,10 +2968,8 @@ std::int64_t PlayerController::authoritativePlaylistEntry(
 
 void PlayerController::handleRenderRecoveryCommandReply(
     std::uint64_t reply_userdata, int error) {
-  const std::uint64_t attempt_id =
-      reply_userdata & kCommandReplyIdMask;
-  if (!render_recovery_attempt_ ||
-      render_recovery_attempt_->id != attempt_id) {
+  const std::uint64_t attempt_id = reply_userdata & kCommandReplyIdMask;
+  if (!render_recovery_attempt_ || render_recovery_attempt_->id != attempt_id) {
     return;
   }
 
@@ -1983,15 +2992,13 @@ void PlayerController::handleRenderRecoveryCommandReply(
   if (error < 0) {
     render_recovery_->accepted_render_stamp = attempt.render_stamp;
     committed_open_->render_stamp = attempt.render_stamp;
-    degradeRenderRecovery(
-        QStringLiteral("Unable to restore video output: %1")
-            .arg(QString::fromUtf8(mpv_error_string(error))));
+    degradeRenderRecovery(QStringLiteral("Unable to restore video output: %1")
+                              .arg(mpvErrorDetail(core_.get(), error)));
     return;
   }
 
   if (attempt.mode == RenderRecoveryMode::FullReload) {
-    const std::int64_t current_entry =
-        currentPlaylistEntryId(core_->handle());
+    const std::int64_t current_entry = currentPlaylistEntryId(core_.get());
     const std::int64_t reloaded_entry = authoritativePlaylistEntry(
         current_entry, attempt.started_playlist_entry_id);
     if (reloaded_entry < 0) {
@@ -2002,15 +3009,12 @@ void PlayerController::handleRenderRecoveryCommandReply(
       return;
     }
     committed_open_->playlist_entry_id = reloaded_entry;
-    const QUrl live_source =
-        playlistEntrySource(core_->handle(), reloaded_entry);
-    committed_entry_source_ = live_source.isEmpty()
-                                  ? render_recovery_->reload_source
-                                  : live_source;
+    const QUrl live_source = playlistEntrySource(core_.get(), reloaded_entry);
+    committed_entry_source_ =
+        live_source.isEmpty() ? render_recovery_->reload_source : live_source;
     committed_playlist_position_ =
-        playlistPositionForEntry(core_->handle(), reloaded_entry);
-    if (committed_playlist_position_ < 0 &&
-        attempt.restarted_playlist_entry &&
+        playlistPositionForEntry(core_.get(), reloaded_entry);
+    if (committed_playlist_position_ < 0 && attempt.restarted_playlist_entry &&
         reloaded_entry == attempt.playlist_entry_id) {
       committed_playlist_position_ = render_recovery_->playlist_position;
     }
@@ -2019,8 +3023,7 @@ void PlayerController::handleRenderRecoveryCommandReply(
     if (active_event_playlist_entry_id_ != reloaded_entry)
       active_event_playlist_entry_id_ = -1;
   } else if (committed_open_->playlist_entry_id < 0 ||
-             attempt.playlist_entry_id !=
-                 committed_open_->playlist_entry_id) {
+             attempt.playlist_entry_id != committed_open_->playlist_entry_id) {
     return;
   }
 
@@ -2042,8 +3045,8 @@ bool PlayerController::playlistEntryBelongsToCurrentLineage(
   for (const PlaylistEntryRange &range : redirect_ranges_) {
     if (range.first < 0 || playlist_entry_id < range.first)
       continue;
-    const auto distance = static_cast<std::uint64_t>(playlist_entry_id -
-                                                     range.first);
+    const auto distance =
+        static_cast<std::uint64_t>(playlist_entry_id - range.first);
     if (distance < range.count)
       return true;
   }
@@ -2100,16 +3103,14 @@ void PlayerController::handleStartFile(std::int64_t playlist_entry_id) {
     startup_playback_sync_->retry_count = 0;
   }
   const std::int64_t live_playlist_position =
-      engineReady()
-          ? playlistPositionForEntry(core_->handle(), playlist_entry_id)
-          : -1;
+      engineReady() ? playlistPositionForEntry(core_.get(), playlist_entry_id)
+                    : -1;
   if (live_playlist_position >= 0 || entry_changed)
     committed_playlist_position_ = live_playlist_position;
   if (entry_changed) {
     committed_entry_source_ =
-        engineReady()
-            ? playlistEntrySource(core_->handle(), playlist_entry_id)
-            : QUrl{};
+        engineReady() ? playlistEntrySource(core_.get(), playlist_entry_id)
+                      : QUrl{};
   }
   active_event_playlist_entry_id_ = playlist_entry_id;
   terminal_playlist_entry_id_ = -1;
@@ -2126,18 +3127,15 @@ void PlayerController::handleStartFile(std::int64_t playlist_entry_id) {
     }
     render_recovery_ = std::move(adoption);
   }
-  if (render_recovery_ &&
-      render_recovery_->request_serial == request_serial_) {
+  if (render_recovery_ && render_recovery_->request_serial == request_serial_) {
     if (render_recovery_->accepted_render_stamp != 0 && core_ &&
         core_->validateRenderTicket(
             {render_recovery_->accepted_render_stamp})) {
-      committed_open_->render_stamp =
-          render_recovery_->accepted_render_stamp;
+      committed_open_->render_stamp = render_recovery_->accepted_render_stamp;
     }
     if (render_recovery_attempt_ &&
         render_recovery_attempt_->request_serial == request_serial_ &&
-        render_recovery_attempt_->mode ==
-            RenderRecoveryMode::VideoReselect) {
+        render_recovery_attempt_->mode == RenderRecoveryMode::VideoReselect) {
       render_recovery_attempt_->playlist_entry_id = playlist_entry_id;
     }
   }
@@ -2188,8 +3186,7 @@ void PlayerController::handleEndFile(const mpv_event_end_file &end) {
       (selected_tracks_playlist_entry_id_ !=
            committed_open_->playlist_entry_id ||
        selected_audio_track_id_ <= 0) &&
-      core_ &&
-      !core_->validateRenderTicket({committed_open_->render_stamp});
+      core_ && !core_->validateRenderTicket({committed_open_->render_stamp});
   if (expected_video_only_teardown)
     return;
 
@@ -2224,8 +3221,7 @@ void PlayerController::handleEndFile(const mpv_event_end_file &end) {
   }
 
   if (end.reason == MPV_END_FILE_REASON_REDIRECT) {
-    if (end.playlist_insert_id >= 0 &&
-        end.playlist_insert_num_entries > 0) {
+    if (end.playlist_insert_id >= 0 && end.playlist_insert_num_entries > 0) {
       redirect_ranges_.push_back(PlaylistEntryRange{
           end.playlist_insert_id,
           static_cast<std::uint64_t>(end.playlist_insert_num_entries)});
@@ -2239,10 +3235,8 @@ void PlayerController::handleEndFile(const mpv_event_end_file &end) {
       // replacement render generation: a redirect sibling may start next.
       // Carry only generation adoption so the sibling establishes a fresh
       // FILE_LOADED track snapshot instead of replaying the old child.
-      std::uint64_t adoption_stamp =
-          render_recovery_->accepted_render_stamp;
-      if ((!core_ ||
-           !core_->validateRenderTicket({adoption_stamp})) && core_) {
+      std::uint64_t adoption_stamp = render_recovery_->accepted_render_stamp;
+      if ((!core_ || !core_->validateRenderTicket({adoption_stamp})) && core_) {
         if (const auto ready = core_->readyRenderTicket())
           adoption_stamp = ready->stamp;
         else
@@ -2266,8 +3260,7 @@ void PlayerController::handleEndFile(const mpv_event_end_file &end) {
             !committed_open_ ||
             committed_open_->playlist_entry_id != terminal_entry ||
             active_event_playlist_entry_id_ >= 0 || !eof_reached_ ||
-            render_recovery_->mode !=
-                RenderRecoveryMode::NoReselection) {
+            render_recovery_->mode != RenderRecoveryMode::NoReselection) {
           return;
         }
         const std::uint64_t adoption_stamp =
@@ -2295,7 +3288,11 @@ void PlayerController::handleEndFile(const mpv_event_end_file &end) {
     resetTimeline();
     last_error_playlist_entry_id_ = end.playlist_entry_id;
     setLastError(QStringLiteral("Playback failed: %1")
-                     .arg(QString::fromUtf8(mpv_error_string(end.error))));
+                     .arg(mpvErrorDetail(core_.get(), end.error)));
+#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+    if (native_playback_)
+      native_playback_->fallbackPlaybackFailed();
+#endif
   }
 }
 
@@ -2304,16 +3301,14 @@ void PlayerController::handlePlaybackReady(bool file_loaded) {
     cacheCurrentEntrySource();
   if (file_loaded && last_error_playlist_entry_id_ >= 0 &&
       active_event_playlist_entry_id_ >= 0 &&
-      active_event_playlist_entry_id_ !=
-          last_error_playlist_entry_id_) {
+      active_event_playlist_entry_id_ != last_error_playlist_entry_id_) {
     last_error_playlist_entry_id_ = -1;
     setLastError({});
   }
   if (render_recovery_) {
     bool matching_lineage = false;
     if (committed_open_ && committed_open_->playlist_entry_id >= 0 &&
-        committed_open_->playlist_entry_id ==
-            active_event_playlist_entry_id_) {
+        committed_open_->playlist_entry_id == active_event_playlist_entry_id_) {
       matching_lineage = true;
     }
     if (render_recovery_attempt_ &&
@@ -2354,11 +3349,9 @@ bool PlayerController::acceptsPlaybackObservation() const {
          pending_request_serial_ == 0 && !open_attempt_ && !scrub_seek_ &&
          !render_recovery_ && !startup_playback_sync_ && committed_open_ &&
          committed_open_->request_serial == request_serial_ &&
-         committed_open_->playlist_entry_id >= 0 &&
-         core_ &&
+         committed_open_->playlist_entry_id >= 0 && core_ &&
          core_->validateRenderTicket({committed_open_->render_stamp}) &&
-         active_event_playlist_entry_id_ ==
-             committed_open_->playlist_entry_id;
+         active_event_playlist_entry_id_ == committed_open_->playlist_entry_id;
 }
 
 void PlayerController::applyObservedPause(bool paused) {
@@ -2413,69 +3406,56 @@ void PlayerController::applyObservedEof(bool eof_reached) {
     updateEof(eof_reached);
 }
 
-void PlayerController::applyObservedVideoTrack(
-    std::int64_t video_track_id) {
+void PlayerController::applyObservedVideoTrack(std::int64_t video_track_id) {
   if (!acceptsPlaybackObservation())
     return;
   selected_video_track_id_ = video_track_id >= 0 ? video_track_id : -1;
-  selected_tracks_playlist_entry_id_ =
-      committed_open_->playlist_entry_id;
+  selected_tracks_playlist_entry_id_ = committed_open_->playlist_entry_id;
 }
 
-void PlayerController::applyObservedAudioTrack(
-    std::int64_t audio_track_id) {
+void PlayerController::applyObservedAudioTrack(std::int64_t audio_track_id) {
   if (!acceptsPlaybackObservation())
     return;
   selected_audio_track_id_ = audio_track_id >= 0 ? audio_track_id : -1;
-  selected_tracks_playlist_entry_id_ =
-      committed_open_->playlist_entry_id;
+  selected_tracks_playlist_entry_id_ = committed_open_->playlist_entry_id;
 }
 
 void PlayerController::applyObservedSubtitleTrack(
     std::int64_t subtitle_track_id) {
   if (!acceptsPlaybackObservation())
     return;
-  selected_subtitle_track_id_ =
-      subtitle_track_id >= 0 ? subtitle_track_id : -1;
-  selected_tracks_playlist_entry_id_ =
-      committed_open_->playlist_entry_id;
+  selected_subtitle_track_id_ = subtitle_track_id >= 0 ? subtitle_track_id : -1;
+  selected_tracks_playlist_entry_id_ = committed_open_->playlist_entry_id;
 }
 
 void PlayerController::cacheCurrentTrackSelection() {
   if (!core_ || !engineReady() || !committed_open_ ||
       active_event_playlist_entry_id_ < 0 ||
-      active_event_playlist_entry_id_ !=
-          committed_open_->playlist_entry_id) {
+      active_event_playlist_entry_id_ != committed_open_->playlist_entry_id) {
     return;
   }
-  selected_video_track_id_ =
-      currentTrackSelection(core_->handle(), "vid");
-  selected_audio_track_id_ =
-      currentTrackSelection(core_->handle(), "aid");
-  selected_subtitle_track_id_ =
-      currentTrackSelection(core_->handle(), "sid");
-  selected_tracks_playlist_entry_id_ =
-      committed_open_->playlist_entry_id;
-  current_file_has_audio_track_ =
-      currentFileHasTrackType(core_->handle(), "audio");
+  selected_video_track_id_ = currentTrackSelection(core_.get(), "vid");
+  selected_audio_track_id_ = currentTrackSelection(core_.get(), "aid");
+  selected_subtitle_track_id_ = currentTrackSelection(core_.get(), "sid");
+  selected_tracks_playlist_entry_id_ = committed_open_->playlist_entry_id;
+  current_file_has_audio_track_ = currentFileHasTrackType(core_.get(), "audio");
 }
 
 void PlayerController::cacheCurrentEntrySource() {
   if (!core_ || !engineReady() || !committed_open_ ||
       committed_open_->playlist_entry_id < 0 ||
-      committed_open_->playlist_entry_id !=
-          active_event_playlist_entry_id_) {
+      committed_open_->playlist_entry_id != active_event_playlist_entry_id_) {
     return;
   }
-  char *path = mpv_get_property_string(core_->handle(), "path");
+  char *path = core_->api().mpv_get_property_string(core_->handle(), "path");
   if (!path)
     return;
   const QUrl source = urlFromMpvPath(QString::fromUtf8(path));
-  mpv_free(path);
+  core_->api().mpv_free(path);
   if (!source.isEmpty()) {
     committed_entry_source_ = source;
     committed_playlist_position_ = playlistPositionForEntry(
-        core_->handle(), committed_open_->playlist_entry_id);
+        core_.get(), committed_open_->playlist_entry_id);
   }
 }
 
@@ -2484,11 +3464,9 @@ void PlayerController::restoreRenderRecovery() {
       render_recovery_->request_serial != request_serial_ ||
       committed_open_->request_serial != request_serial_ ||
       render_recovery_->accepted_render_stamp == 0 ||
-      !core_->validateRenderTicket(
-          {render_recovery_->accepted_render_stamp}) ||
+      !core_->validateRenderTicket({render_recovery_->accepted_render_stamp}) ||
       committed_open_->playlist_entry_id < 0 ||
-      committed_open_->playlist_entry_id !=
-          active_event_playlist_entry_id_) {
+      committed_open_->playlist_entry_id != active_event_playlist_entry_id_) {
     return;
   }
 
@@ -2505,10 +3483,10 @@ void PlayerController::restoreRenderRecovery() {
         const bool select_last =
             recovery.subtitle_track_id > 0 &&
             index + 1 == recovery.external_subtitles.size();
-        std::array<const char *, 4> arguments{
-            "sub-add", path.constData(), select_last ? "select" : "auto",
-            nullptr};
-        if (mpv_command(core_->handle(), arguments.data()) < 0) {
+        std::array<const char *, 4> arguments{"sub-add", path.constData(),
+                                              select_last ? "select" : "auto",
+                                              nullptr};
+        if (core_->api().mpv_command(core_->handle(), arguments.data()) < 0) {
           scheduleRenderRecoveryRetry(
               QStringLiteral("Unable to restore external subtitles."));
           return;
@@ -2519,10 +3497,8 @@ void PlayerController::restoreRenderRecovery() {
     }
 
     if (!recovery.per_file_state_restored) {
-      if (!setTrackSelection(core_->handle(), "vid",
-                             recovery.video_track_id) ||
-          !setTrackSelection(core_->handle(), "aid",
-                             recovery.audio_track_id)) {
+      if (!setTrackSelection(core_.get(), "vid", recovery.video_track_id) ||
+          !setTrackSelection(core_.get(), "aid", recovery.audio_track_id)) {
         scheduleRenderRecoveryRetry(
             QStringLiteral("Unable to restore selected media tracks."));
         return;
@@ -2530,7 +3506,7 @@ void PlayerController::restoreRenderRecovery() {
       if (recovery.subtitle_track_id == 0 ||
           (recovery.subtitle_track_id > 0 &&
            recovery.external_subtitles.empty())) {
-        if (!setTrackSelection(core_->handle(), "sid",
+        if (!setTrackSelection(core_.get(), "sid",
                                recovery.subtitle_track_id)) {
           scheduleRenderRecoveryRetry(
               QStringLiteral("Unable to restore the selected subtitle."));
@@ -2538,8 +3514,8 @@ void PlayerController::restoreRenderRecovery() {
         }
       }
       int visible = captions_visible_ ? 1 : 0;
-      if (!setCoreProperty(core_->handle(), "sub-visibility",
-                           MPV_FORMAT_FLAG, &visible)) {
+      if (!setCoreProperty(core_.get(), "sub-visibility", MPV_FORMAT_FLAG,
+                           &visible)) {
         scheduleRenderRecoveryRetry(
             QStringLiteral("Unable to restore subtitle visibility."));
         return;
@@ -2553,20 +3529,17 @@ void PlayerController::restoreRenderRecovery() {
         (recovery.mode != RenderRecoveryMode::NoReselection &&
          !recovery.playback_restarted))
       return;
-    const auto has_video =
-        currentFileHasTrackType(core_->handle(), "video");
-    const auto has_audio =
-        currentFileHasTrackType(core_->handle(), "audio");
-    const auto has_subtitle =
-        currentFileHasTrackType(core_->handle(), "sub");
+    const auto has_video = currentFileHasTrackType(core_.get(), "video");
+    const auto has_audio = currentFileHasTrackType(core_.get(), "audio");
+    const auto has_subtitle = currentFileHasTrackType(core_.get(), "sub");
     if (!has_video || !has_audio || !has_subtitle) {
       scheduleRenderRecoveryRetry(
           QStringLiteral("Unable to read the restored media tracks."));
       return;
     }
-    std::int64_t video = currentTrackSelection(core_->handle(), "vid");
-    std::int64_t audio = currentTrackSelection(core_->handle(), "aid");
-    std::int64_t subtitle = currentTrackSelection(core_->handle(), "sid");
+    std::int64_t video = currentTrackSelection(core_.get(), "vid");
+    std::int64_t audio = currentTrackSelection(core_.get(), "aid");
+    std::int64_t subtitle = currentTrackSelection(core_.get(), "sid");
     if ((*has_video && video < 0) || (*has_audio && audio < 0) ||
         (*has_subtitle && subtitle < 0)) {
       scheduleRenderRecoveryRetry(
@@ -2589,16 +3562,14 @@ void PlayerController::restoreRenderRecovery() {
   if (recovery.mode != RenderRecoveryMode::NoReselection) {
     if (!recovery.playback_restarted)
       return;
-    const std::int64_t live_entry =
-        playingPlaylistEntryId(core_->handle());
+    const std::int64_t live_entry = playingPlaylistEntryId(core_.get());
     int idle = 1;
     const bool live_video =
         recovery.video_track_id <= 0 ||
-        currentTrackSelection(core_->handle(), "vid") ==
-            recovery.video_track_id;
+        currentTrackSelection(core_.get(), "vid") == recovery.video_track_id;
     if (live_entry != committed_open_->playlist_entry_id ||
-        mpv_get_property(core_->handle(), "idle-active", MPV_FORMAT_FLAG,
-                         &idle) < 0 ||
+        core_->api().mpv_get_property(core_->handle(), "idle-active",
+                                      MPV_FORMAT_FLAG, &idle) < 0 ||
         idle != 0 || !live_video) {
       scheduleRenderRecoveryRetry(
           QStringLiteral("Restored video output did not become ready."));
@@ -2612,8 +3583,7 @@ void PlayerController::restoreRenderRecovery() {
       // Re-apply only the latest pause intent; adopting the generation must
       // never rewind continuously playing audio.
       int paused = recovery.paused ? 1 : 0;
-      if (!setCoreProperty(core_->handle(), "pause", MPV_FORMAT_FLAG,
-                           &paused)) {
+      if (!setCoreProperty(core_.get(), "pause", MPV_FORMAT_FLAG, &paused)) {
         scheduleRenderRecoveryRetry(
             QStringLiteral("Unable to restore the playback state."));
         return;
@@ -2622,8 +3592,9 @@ void PlayerController::restoreRenderRecovery() {
     } else if (recovery.mode == RenderRecoveryMode::VideoReselect &&
                !recovery.paused && !recovery.position_overridden) {
       double live_position = 0.0;
-      if (mpv_get_property(core_->handle(), "time-pos", MPV_FORMAT_DOUBLE,
-                           &live_position) < 0 ||
+      if (core_->api().mpv_get_property(core_->handle(), "time-pos",
+                                        MPV_FORMAT_DOUBLE,
+                                        &live_position) < 0 ||
           !std::isfinite(live_position)) {
         scheduleRenderRecoveryRetry(
             QStringLiteral("Unable to sample the live playback position."));
@@ -2635,8 +3606,7 @@ void PlayerController::restoreRenderRecovery() {
         emit positionChanged();
       }
       int paused = 0;
-      if (!setCoreProperty(core_->handle(), "pause", MPV_FORMAT_FLAG,
-                           &paused)) {
+      if (!setCoreProperty(core_.get(), "pause", MPV_FORMAT_FLAG, &paused)) {
         scheduleRenderRecoveryRetry(
             QStringLiteral("Unable to restore the playback state."));
         return;
@@ -2644,15 +3614,14 @@ void PlayerController::restoreRenderRecovery() {
       recovery.transport_restored = true;
     } else if (recovery.position > 0.01) {
       double position = recovery.position;
-      if (!setCoreProperty(core_->handle(), "time-pos", MPV_FORMAT_DOUBLE,
+      if (!setCoreProperty(core_.get(), "time-pos", MPV_FORMAT_DOUBLE,
                            &position)) {
         scheduleRenderRecoveryRetry(
             QStringLiteral("Unable to restore the playback position."));
         return;
       }
       int paused = recovery.paused ? 1 : 0;
-      if (!setCoreProperty(core_->handle(), "pause", MPV_FORMAT_FLAG,
-                           &paused)) {
+      if (!setCoreProperty(core_.get(), "pause", MPV_FORMAT_FLAG, &paused)) {
         scheduleRenderRecoveryRetry(
             QStringLiteral("Unable to restore the playback state."));
         return;
@@ -2660,8 +3629,7 @@ void PlayerController::restoreRenderRecovery() {
       recovery.transport_restored = true;
     } else {
       int paused = recovery.paused ? 1 : 0;
-      if (!setCoreProperty(core_->handle(), "pause", MPV_FORMAT_FLAG,
-                           &paused)) {
+      if (!setCoreProperty(core_.get(), "pause", MPV_FORMAT_FLAG, &paused)) {
         scheduleRenderRecoveryRetry(
             QStringLiteral("Unable to restore the playback state."));
         return;
@@ -2683,26 +3651,23 @@ void PlayerController::queueRenderRecoveryCompletion() {
   ++next_render_recovery_completion_token_;
   if (next_render_recovery_completion_token_ == 0)
     ++next_render_recovery_completion_token_;
-  const std::uint64_t completion_token =
-      next_render_recovery_completion_token_;
+  const std::uint64_t completion_token = next_render_recovery_completion_token_;
   const std::uint64_t request_serial = render_recovery_->request_serial;
-  const std::uint64_t render_stamp =
-      render_recovery_->accepted_render_stamp;
-  const std::int64_t playlist_entry_id =
-      committed_open_->playlist_entry_id;
+  const std::uint64_t render_stamp = render_recovery_->accepted_render_stamp;
+  const std::int64_t playlist_entry_id = committed_open_->playlist_entry_id;
   render_recovery_->completion_token = completion_token;
 
   // mpv can enqueue transient pause/idle/eof property changes while replacing
   // video-only media. Keep the recovery gate through the remainder of the
   // current event drain, then discard those transitions and publish one live,
   // coherent transport snapshot before observations are accepted again.
-  QTimer::singleShot(
-      0, this,
-      [this, completion_token, request_serial, render_stamp,
-       playlist_entry_id] {
-        finishRenderRecoveryCompletion(completion_token, request_serial,
-                                       render_stamp, playlist_entry_id);
-      });
+  QTimer::singleShot(0, this,
+                     [this, completion_token, request_serial, render_stamp,
+                      playlist_entry_id] {
+                       finishRenderRecoveryCompletion(
+                           completion_token, request_serial, render_stamp,
+                           playlist_entry_id);
+                     });
 }
 
 void PlayerController::finishRenderRecoveryCompletion(
@@ -2759,27 +3724,27 @@ PlayerController::readLivePlaybackState() const {
   int eof_reached = 0;
   double position = 0.0;
   double duration = 0.0;
-  if (mpv_get_property(core_->handle(), "pause", MPV_FORMAT_FLAG,
-                       &paused) < 0 ||
-      mpv_get_property(core_->handle(), "idle-active", MPV_FORMAT_FLAG,
-                       &idle) < 0) {
+  if (core_->api().mpv_get_property(core_->handle(), "pause", MPV_FORMAT_FLAG,
+                                    &paused) < 0 ||
+      core_->api().mpv_get_property(core_->handle(), "idle-active",
+                                    MPV_FORMAT_FLAG, &idle) < 0) {
     return std::nullopt;
   }
 
   std::optional<bool> live_eof_reached;
-  if (mpv_get_property(core_->handle(), "eof-reached", MPV_FORMAT_FLAG,
-                       &eof_reached) >= 0) {
+  if (core_->api().mpv_get_property(core_->handle(), "eof-reached",
+                                    MPV_FORMAT_FLAG, &eof_reached) >= 0) {
     live_eof_reached = eof_reached != 0;
   }
   std::optional<double> live_position;
-  if (mpv_get_property(core_->handle(), "time-pos", MPV_FORMAT_DOUBLE,
-                       &position) >= 0 &&
+  if (core_->api().mpv_get_property(core_->handle(), "time-pos",
+                                    MPV_FORMAT_DOUBLE, &position) >= 0 &&
       std::isfinite(position)) {
     live_position = std::max(0.0, position);
   }
   std::optional<double> live_duration;
-  if (mpv_get_property(core_->handle(), "duration", MPV_FORMAT_DOUBLE,
-                       &duration) >= 0 &&
+  if (core_->api().mpv_get_property(core_->handle(), "duration",
+                                    MPV_FORMAT_DOUBLE, &duration) >= 0 &&
       std::isfinite(duration)) {
     live_duration = std::max(0.0, duration);
   }
@@ -2789,8 +3754,7 @@ PlayerController::readLivePlaybackState() const {
 }
 
 bool PlayerController::livePlaybackStateMatchesRecovery(
-    const RenderRecovery &recovery,
-    const LivePlaybackState &live_state) {
+    const RenderRecovery &recovery, const LivePlaybackState &live_state) {
   // Reaching EOF can make mpv pause itself before END_FILE is observable.
   // Likewise, an idle engine is already terminal. Both live terminal states
   // must win over the captured play intent instead of resurrecting playback.
@@ -2812,12 +3776,10 @@ void PlayerController::commitRenderRecovery(
 
   const bool was_playing = playing();
   const bool pause_changed = paused_ != live_state.paused;
-  const bool committed_eof =
-      live_state.eof_reached.value_or(eof_reached_);
+  const bool committed_eof = live_state.eof_reached.value_or(eof_reached_);
   const double committed_position =
       live_state.position.value_or(recovery.position);
-  const bool position_changed =
-      !nearlyEqual(position_, committed_position);
+  const bool position_changed = !nearlyEqual(position_, committed_position);
 
   // Assign the complete transport snapshot while recovery still gates mpv
   // observations. Clearing the gate is the final state mutation, so every
@@ -2829,8 +3791,7 @@ void PlayerController::commitRenderRecovery(
   selected_video_track_id_ = recovery.video_track_id;
   selected_audio_track_id_ = recovery.audio_track_id;
   selected_subtitle_track_id_ = recovery.subtitle_track_id;
-  selected_tracks_playlist_entry_id_ =
-      committed_open_->playlist_entry_id;
+  selected_tracks_playlist_entry_id_ = committed_open_->playlist_entry_id;
   current_file_has_audio_track_ = recovery.file_has_audio_track;
   render_recovery_.reset();
   if (live_state.duration)
@@ -2857,22 +3818,20 @@ void PlayerController::queueStartupPlaybackSync() {
   ++next_startup_playback_sync_token_;
   if (next_startup_playback_sync_token_ == 0)
     ++next_startup_playback_sync_token_;
-  const std::uint64_t completion_token =
-      next_startup_playback_sync_token_;
-  const std::uint64_t request_serial =
-      startup_playback_sync_->request_serial;
+  const std::uint64_t completion_token = next_startup_playback_sync_token_;
+  const std::uint64_t request_serial = startup_playback_sync_->request_serial;
   const std::uint64_t render_stamp = startup_playback_sync_->render_stamp;
   const std::int64_t playlist_entry_id =
       startup_playback_sync_->playlist_entry_id;
   startup_playback_sync_->completion_token = completion_token;
 
-  QTimer::singleShot(
-      0, this,
-      [this, completion_token, request_serial, render_stamp,
-       playlist_entry_id] {
-        finishStartupPlaybackSync(completion_token, request_serial,
-                                  render_stamp, playlist_entry_id);
-      });
+  QTimer::singleShot(0, this,
+                     [this, completion_token, request_serial, render_stamp,
+                      playlist_entry_id] {
+                       finishStartupPlaybackSync(completion_token,
+                                                 request_serial, render_stamp,
+                                                 playlist_entry_id);
+                     });
 }
 
 void PlayerController::finishStartupPlaybackSync(
@@ -2905,8 +3864,8 @@ void PlayerController::finishStartupPlaybackSync(
   startup_playback_sync_->completion_token = 0;
   const auto live_state = readLivePlaybackState();
   const bool live_state_matches =
-      live_state && livePlaybackStateMatchesStartupSync(
-                        *startup_playback_sync_, *live_state);
+      live_state &&
+      livePlaybackStateMatchesStartupSync(*startup_playback_sync_, *live_state);
   if (!live_state_matches) {
     if (startup_playback_sync_->retry_count < 3) {
       constexpr std::array<int, 3> kRetryDelaysMs{0, 16, 50};
@@ -2954,8 +3913,8 @@ void PlayerController::reconcileStartupPlaybackSync(
     return;
 
   LivePlaybackState reconciled_state = live_state;
-  const bool terminal = reconciled_state.idle ||
-                        reconciled_state.eof_reached.value_or(false);
+  const bool terminal =
+      reconciled_state.idle || reconciled_state.eof_reached.value_or(false);
   if (!terminal)
     reconciled_state.paused = startup_playback_sync_->intended_paused;
   commitStartupPlaybackSync(reconciled_state);
@@ -2969,14 +3928,12 @@ void PlayerController::commitStartupPlaybackSync(
   const StartupPlaybackSync startup_sync = *startup_playback_sync_;
   const bool was_playing = playing();
   const bool pause_changed = paused_ != live_state.paused;
-  const bool committed_eof =
-      live_state.eof_reached.value_or(eof_reached_);
+  const bool committed_eof = live_state.eof_reached.value_or(eof_reached_);
   const double committed_position =
       startup_sync.position_overridden
           ? startup_sync.intended_position.value_or(position_)
           : live_state.position.value_or(position_);
-  const bool position_changed =
-      !nearlyEqual(position_, committed_position);
+  const bool position_changed = !nearlyEqual(position_, committed_position);
 
   paused_ = live_state.paused;
   idle_ = live_state.idle;
@@ -3010,19 +3967,18 @@ void PlayerController::scheduleRenderRecoveryRetry(const QString &error) {
   const int retry_index = render_recovery_->restore_retry_count++;
   render_recovery_->restore_retry_queued = true;
   const std::uint64_t request_serial = render_recovery_->request_serial;
-  const std::uint64_t render_stamp =
-      render_recovery_->accepted_render_stamp;
-  QTimer::singleShot(
-      kRetryDelaysMs[static_cast<std::size_t>(retry_index)], this,
-      [this, request_serial, render_stamp] {
-        if (!render_recovery_ ||
-            render_recovery_->request_serial != request_serial ||
-            render_recovery_->accepted_render_stamp != render_stamp) {
-          return;
-        }
-        render_recovery_->restore_retry_queued = false;
-        restoreRenderRecovery();
-      });
+  const std::uint64_t render_stamp = render_recovery_->accepted_render_stamp;
+  QTimer::singleShot(kRetryDelaysMs[static_cast<std::size_t>(retry_index)],
+                     this, [this, request_serial, render_stamp] {
+                       if (!render_recovery_ ||
+                           render_recovery_->request_serial != request_serial ||
+                           render_recovery_->accepted_render_stamp !=
+                               render_stamp) {
+                         return;
+                       }
+                       render_recovery_->restore_retry_queued = false;
+                       restoreRenderRecovery();
+                     });
 }
 
 void PlayerController::degradeRenderRecovery(const QString &error) {
@@ -3034,26 +3990,26 @@ void PlayerController::degradeRenderRecovery(const QString &error) {
 
   if (core_ && engineReady()) {
     int paused = recovery.paused ? 1 : 0;
-    static_cast<void>(
-        mpv_set_property(core_->handle(), "pause", MPV_FORMAT_FLAG, &paused));
+    static_cast<void>(core_->api().mpv_set_property(core_->handle(), "pause",
+                                                    MPV_FORMAT_FLAG, &paused));
 
     int live_paused = paused;
-    if (mpv_get_property(core_->handle(), "pause", MPV_FORMAT_FLAG,
-                         &live_paused) >= 0) {
+    if (core_->api().mpv_get_property(core_->handle(), "pause", MPV_FORMAT_FLAG,
+                                      &live_paused) >= 0) {
       updatePause(live_paused != 0);
     } else {
       updatePause(recovery.paused);
     }
 
     int live_idle = 0;
-    if (mpv_get_property(core_->handle(), "idle-active", MPV_FORMAT_FLAG,
-                         &live_idle) >= 0) {
+    if (core_->api().mpv_get_property(core_->handle(), "idle-active",
+                                      MPV_FORMAT_FLAG, &live_idle) >= 0) {
       updateIdle(live_idle != 0);
     }
 
     double live_position = 0.0;
-    if (mpv_get_property(core_->handle(), "time-pos", MPV_FORMAT_DOUBLE,
-                         &live_position) >= 0 &&
+    if (core_->api().mpv_get_property(core_->handle(), "time-pos",
+                                      MPV_FORMAT_DOUBLE, &live_position) >= 0 &&
         std::isfinite(live_position)) {
       const double value = std::max(0.0, live_position);
       if (!nearlyEqual(position_, value)) {
@@ -3087,6 +4043,13 @@ void PlayerController::abandonPendingOpen() {
 
 void PlayerController::handleRenderInvalidated(
     std::uint64_t retired_render_stamp) {
+#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+  const std::shared_ptr<PlayerCore> notifying_core = core_;
+  if (native_playback_)
+    native_playback_->fallbackRenderStateChanged();
+  if (core_ != notifying_core)
+    return;
+#endif
   if (requested_source_.isEmpty())
     return;
 
@@ -3111,8 +4074,7 @@ void PlayerController::handleRenderInvalidated(
       render_recovery_attempt_->request_serial == request_serial_ &&
       render_recovery_attempt_->render_stamp == retired_render_stamp;
   const bool retired_committed_output =
-      committed_open_ &&
-      committed_open_->request_serial == request_serial_ &&
+      committed_open_ && committed_open_->request_serial == request_serial_ &&
       committed_open_->render_stamp == retired_render_stamp;
 
   if (retired_recovery_attempt || retired_committed_output) {
@@ -3133,8 +4095,7 @@ void PlayerController::handleRenderInvalidated(
       if (const auto live_state = readLivePlaybackState()) {
         startup_terminal_state =
             !startup_sync.position_overridden &&
-            (live_state->idle ||
-             live_state->eof_reached.value_or(false));
+            (live_state->idle || live_state->eof_reached.value_or(false));
         if (!startup_sync.position_overridden)
           startup_position = live_state->position;
         if (startup_terminal_state)
@@ -3154,9 +4115,8 @@ void PlayerController::handleRenderInvalidated(
           committed_open_ && committed_open_->playlist_entry_id >= 0 &&
           selected_tracks_playlist_entry_id_ ==
               committed_open_->playlist_entry_id;
-      const bool snapshot_proven =
-          cached_tracks_are_current &&
-          current_file_has_audio_track_.has_value();
+      const bool snapshot_proven = cached_tracks_are_current &&
+                                   current_file_has_audio_track_.has_value();
       std::int64_t video_track =
           cached_tracks_are_current ? selected_video_track_id_ : -1;
       std::int64_t audio_track =
@@ -3164,12 +4124,10 @@ void PlayerController::handleRenderInvalidated(
       std::int64_t subtitle_track =
           cached_tracks_are_current ? selected_subtitle_track_id_ : -1;
       if (engineReady()) {
-        const std::int64_t current_video =
-            currentTrackId(core_->handle(), "vid");
-        const std::int64_t current_audio =
-            currentTrackId(core_->handle(), "aid");
+        const std::int64_t current_video = currentTrackId(core_.get(), "vid");
+        const std::int64_t current_audio = currentTrackId(core_.get(), "aid");
         const std::int64_t current_subtitle =
-            currentTrackId(core_->handle(), "sid");
+            currentTrackId(core_.get(), "sid");
         if (current_video > 0)
           video_track = current_video;
         if (current_audio > 0)
@@ -3192,8 +4150,7 @@ void PlayerController::handleRenderInvalidated(
       }
       RenderRecovery recovery;
       recovery.request_serial = request_serial_;
-      recovery.position = std::max(
-          0.0, startup_position.value_or(position_));
+      recovery.position = std::max(0.0, startup_position.value_or(position_));
       recovery.paused = startup_paused_intent.value_or(paused_);
       recovery.mode = mode;
       recovery.video_track_id = video_track;
@@ -3206,11 +4163,11 @@ void PlayerController::handleRenderInvalidated(
       recovery.playlist_position = committed_playlist_position_;
       if (engineReady() && committed_open_) {
         const std::int64_t live_position = playlistPositionForEntry(
-            core_->handle(), committed_open_->playlist_entry_id);
+            core_.get(), committed_open_->playlist_entry_id);
         if (live_position >= 0)
           recovery.playlist_position = live_position;
         recovery.preserve_playlist_context =
-            playlistEntryCount(core_->handle()) > 1;
+            playlistEntryCount(core_.get()) > 1;
       }
       recovery.preserve_playlist_context =
           recovery.preserve_playlist_context || !redirect_ranges_.empty();
@@ -3248,16 +4205,34 @@ void PlayerController::handleRenderInitializationFailure(
     return;
   }
   last_reported_render_failure_stamp_ = render_stamp;
+#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+  const bool routed_fallback_failure = routed_fallback_open_.has_value();
+  if (routed_fallback_failure)
+    abandonPendingOpen();
+#endif
   setLastError(error);
+#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+  if (routed_fallback_failure)
+    notifyRoutedFallbackOpenFailed();
+#endif
 }
 
 void PlayerController::attachVideoItem(MpvVideoItem *item) {
   video_item_ = item;
+#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+  if (native_playback_)
+    native_playback_->attachSurface(item);
+#endif
   if (needsRenderContext())
     requestVideoUpdate();
 }
 
 void PlayerController::detachVideoItem(MpvVideoItem *item) {
+#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+  invalidateNativeSeekIntents();
+  if (native_playback_)
+    native_playback_->detachSurface(item);
+#endif
   if (video_item_ == item)
     video_item_.clear();
 }

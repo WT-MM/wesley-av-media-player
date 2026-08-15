@@ -1,8 +1,12 @@
+#define WAM_MPV_RUNTIME_TESTING 1
+
+#include "fakes/mpv_runtime/injected_mpv_runtime.hpp"
 #include "qt/player_controller.hpp"
 #include "qt/player_core_p.hpp"
 
 #include <QCoreApplication>
 #include <QEventLoop>
+#include <QTimer>
 #include <QUrl>
 
 #include <mpv/client.h>
@@ -12,7 +16,9 @@
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
+#include <limits>
 #include <memory>
+#include <string_view>
 #include <thread>
 
 namespace wam::qt {
@@ -22,8 +28,23 @@ namespace wam::qt {
 // to shipping code.
 class PlayerControllerTestAccess final {
  public:
+  static std::shared_ptr<const ::wam::playback::mpv::MpvRuntime> runtime() {
+    static const auto injected =
+        ::wam::playback::mpv::makeInjectedLinkedMpvRuntime();
+    return injected;
+  }
+
+  static bool provisionRuntime(PlayerController &controller) {
+    return controller.engineReady() || controller.fallback_runtime_ ||
+           controller.provisionMpvFallbackRuntime(runtime());
+  }
+
   static std::shared_ptr<PlayerCore> core(const PlayerController &controller) {
     return controller.core_;
+  }
+
+  static bool hasReadyApi(const PlayerController &controller) {
+    return controller.core_ && controller.core_->readyApi() != nullptr;
   }
 
   static void drainMpvEvents(PlayerController &controller) {
@@ -271,7 +292,8 @@ class PlayerControllerTestAccess final {
   }
 
   static bool initializeEngine(PlayerController &controller) {
-    return controller.initializePlaybackEngine();
+    return provisionRuntime(controller) &&
+           controller.initializePlaybackEngine();
   }
 
   static void seedCommittedMedia(PlayerController &controller,
@@ -434,6 +456,41 @@ class PlayerControllerTestAccess final {
     return controller.scrub_seek_ && controller.scrub_seek_->final;
   }
 
+  static bool scrubCommandExact(const PlayerController &controller) {
+    return controller.scrub_seek_ &&
+           controller.scrub_seek_->command_exact;
+  }
+
+  static const char *scrubCommandMode(const PlayerController &controller) {
+    return PlayerController::scrubSeekMode(scrubCommandExact(controller));
+  }
+
+  static QTimer *scrubTimeoutTimer(const PlayerController &controller) {
+    return controller.scrub_timeout_timer_;
+  }
+
+  static bool scrubTimeoutActive(const PlayerController &controller) {
+    return controller.scrub_timeout_timer_ &&
+           controller.scrub_timeout_timer_->isActive();
+  }
+
+  static std::uint64_t scrubTimeoutCommand(
+      const PlayerController &controller) {
+    return controller.scrub_timeout_command_;
+  }
+
+  static bool scrubTimeoutOwnsActiveCommand(
+      const PlayerController &controller) {
+    return controller.scrub_seek_ && controller.scrub_timeout_timer_ &&
+           controller.scrub_timeout_timer_->isActive() &&
+           controller.scrub_timeout_gesture_ ==
+               controller.scrub_seek_->gesture &&
+           controller.scrub_timeout_request_serial_ ==
+               controller.scrub_seek_->request_serial &&
+           controller.scrub_timeout_command_ ==
+               controller.scrub_seek_->command;
+  }
+
   static bool scrubSeekStarted(const PlayerController &controller) {
     return controller.scrub_seek_ && controller.scrub_seek_->seek_started;
   }
@@ -477,6 +534,13 @@ class PlayerControllerTestAccess final {
                            std::uint64_t command) {
     if (!controller.scrub_seek_)
       return;
+    if (controller.scrub_timeout_gesture_ ==
+            controller.scrub_seek_->gesture &&
+        controller.scrub_timeout_request_serial_ ==
+            controller.scrub_seek_->request_serial &&
+        controller.scrub_timeout_command_ == command) {
+      controller.cancelScrubTimeout();
+    }
     controller.handleScrubTimeout(controller.scrub_seek_->gesture,
                                   controller.scrub_seek_->request_serial,
                                   command);
@@ -487,10 +551,407 @@ class PlayerControllerTestAccess final {
     controller.finishScrubGesture(restore_transport);
   }
 
+  static bool beginNativeScrub(PlayerController &controller) {
+    return controller.beginNativeScrubIntent();
+  }
+
+  static bool previewNativeScrub(PlayerController &controller,
+                                 double target) {
+    auto intent = controller.makeNativePreviewIntent(target);
+    if (!intent)
+      return false;
+    controller.dispatchNativePreviewIntent(
+        *intent, nullptr,
+        [](void *, const PlayerController::NativePreviewIntent &) noexcept {
+          return PlayerController::NativePreviewSubmission::Accepted;
+        });
+    return true;
+  }
+
+  struct NativePreviewProbe {
+    PlayerController::NativePreviewSubmission result{
+        PlayerController::NativePreviewSubmission::Accepted};
+    unsigned submissions{0};
+    std::vector<std::uint64_t> requests;
+    std::vector<double> targets;
+    PlayerController *reenterController{nullptr};
+    double reenterTarget{0.0};
+    bool reentered{false};
+    PlayerController *presentController{nullptr};
+    bool presentDuringSubmit{false};
+    double presentedActual{0.0};
+    bool presentedDuringSubmitAccepted{false};
+    PlayerController *failController{nullptr};
+    bool failDuringSubmit{false};
+    bool failedDuringSubmitAccepted{false};
+    std::uint64_t *eventSequence{nullptr};
+    std::vector<std::uint64_t> submittedAt;
+  };
+
+  struct NativePreviewDemandProbe {
+    std::uint64_t eventSequence{0};
+    std::vector<std::uint64_t> requests;
+    std::vector<double> targets;
+    std::vector<std::uint64_t> observedAt;
+  };
+
+  static void observeNativePreviewDemand(
+      void *context,
+      const PlayerController::NativePreviewIntent &request) noexcept {
+    auto &capture = *static_cast<NativePreviewDemandProbe *>(context);
+    capture.requests.push_back(request.request);
+    capture.targets.push_back(request.target);
+    capture.observedAt.push_back(++capture.eventSequence);
+  }
+
+  static PlayerController::NativePreviewSubmission submitNativePreviewProbe(
+      void *context,
+      const PlayerController::NativePreviewIntent &request) noexcept {
+    auto &capture = *static_cast<NativePreviewProbe *>(context);
+    ++capture.submissions;
+    capture.requests.push_back(request.request);
+    capture.targets.push_back(request.target);
+    if (capture.eventSequence != nullptr)
+      capture.submittedAt.push_back(++*capture.eventSequence);
+    if (capture.reenterController != nullptr && !capture.reentered) {
+      capture.reentered = true;
+      static_cast<void>(submitNativePreview(*capture.reenterController,
+                                            capture.reenterTarget, capture));
+    }
+    if (capture.presentDuringSubmit && capture.presentController != nullptr) {
+      capture.presentDuringSubmit = false;
+      capture.presentedDuringSubmitAccepted =
+          capture.presentController->completeNativePreviewPresented(
+              request.gesture, request.request, capture.presentedActual,
+              &capture, &submitNativePreviewProbe);
+    }
+    if (capture.failDuringSubmit && capture.failController != nullptr) {
+      capture.failDuringSubmit = false;
+      capture.failedDuringSubmitAccepted =
+          capture.failController->completeNativePreviewFailed(
+              request.gesture, request.request, &capture,
+              &submitNativePreviewProbe);
+    }
+    return capture.result;
+  }
+
+  static void installPublicNativePreviewSeam(
+      PlayerController &controller, NativePreviewProbe &submissions,
+      NativePreviewDemandProbe &demands) {
+    controller.native_preview_test_submit_context_ = &submissions;
+    controller.native_preview_test_submitter_ = &submitNativePreviewProbe;
+    controller.native_preview_test_demand_context_ = &demands;
+    controller.native_preview_test_demand_observer_ =
+        &observeNativePreviewDemand;
+    submissions.eventSequence = &demands.eventSequence;
+  }
+
+  static void clearPublicNativePreviewSeam(PlayerController &controller) {
+    controller.native_preview_test_submit_context_ = nullptr;
+    controller.native_preview_test_submitter_ = nullptr;
+    controller.native_preview_test_demand_context_ = nullptr;
+    controller.native_preview_test_demand_observer_ = nullptr;
+  }
+
+  static bool submitNativePreview(PlayerController &controller, double target,
+                                  NativePreviewProbe &probe) {
+    auto intent = controller.makeNativePreviewIntent(target);
+    if (!intent)
+      return false;
+    controller.dispatchNativePreviewIntent(*intent, &probe,
+                                           &submitNativePreviewProbe);
+    return true;
+  }
+
+  static void rejectNativePreview(NativePreviewProbe &probe) {
+    probe.result = PlayerController::NativePreviewSubmission::Rejected;
+  }
+
+  static void acceptNativePreview(NativePreviewProbe &probe) {
+    probe.result = PlayerController::NativePreviewSubmission::Accepted;
+  }
+
+  static void replaceNativePreview(NativePreviewProbe &probe) {
+    probe.result = PlayerController::NativePreviewSubmission::Replaced;
+  }
+
+  static void staleNativePreview(NativePreviewProbe &probe) {
+    probe.result = PlayerController::NativePreviewSubmission::Stale;
+  }
+
+  static bool presentNativePreview(PlayerController &controller,
+                                   std::uint64_t gesture,
+                                   std::uint64_t request,
+                                   double actual,
+                                   NativePreviewProbe *probe = nullptr) {
+    return controller.completeNativePreviewPresented(
+        gesture, request, actual, probe,
+        probe != nullptr ? &submitNativePreviewProbe : nullptr);
+  }
+
+  static bool failNativePreview(PlayerController &controller,
+                                std::uint64_t gesture,
+                                std::uint64_t request,
+                                NativePreviewProbe *probe = nullptr) {
+    return controller.completeNativePreviewFailed(
+        gesture, request, probe,
+        probe != nullptr ? &submitNativePreviewProbe : nullptr);
+  }
+
+  static void publishNativeMainPosition(PlayerController &controller,
+                                        double position) {
+    controller.publishNativeMainPosition(position);
+  }
+
+  static std::uint64_t nativePreviewRequest(
+      const PlayerController &controller) {
+    return controller.native_scrub_intent_
+               ? controller.native_scrub_intent_->latest_preview_request
+               : 0;
+  }
+
+  static std::uint64_t nativeDispatchedPreviewRequest(
+      const PlayerController &controller) {
+    return controller.native_scrub_intent_
+               ? controller.native_scrub_intent_->dispatched_preview_request
+               : 0;
+  }
+
+  static bool endNativeScrub(PlayerController &controller, double target) {
+    auto intent = controller.finishNativeScrubIntent(target);
+    if (!intent)
+      return false;
+    return controller.dispatchNativeSeekIntent(
+               *intent, &controller,
+               [](void *, const PlayerController::NativeSeekIntent &) noexcept {
+                 return PlayerController::NativeSeekSubmission::Accepted;
+               }) == PlayerController::NativeSeekDispatch::Consumed;
+  }
+
+  static bool stageNativeSeek(PlayerController &controller, double target) {
+    auto intent = controller.makeNativeSeekIntent(target);
+    if (!intent)
+      return false;
+    return controller.dispatchNativeSeekIntent(
+               *intent, &controller,
+               [](void *, const PlayerController::NativeSeekIntent &) noexcept {
+                 return PlayerController::NativeSeekSubmission::Accepted;
+               }) == PlayerController::NativeSeekDispatch::Consumed;
+  }
+
+  struct NativeSeekProbe {
+    PlayerController::NativeSeekSubmission result{
+        PlayerController::NativeSeekSubmission::Accepted};
+    unsigned submissions{0};
+    std::uint64_t gesture{0};
+    std::uint64_t request{0};
+    double target{0.0};
+    bool intended_paused{true};
+    bool complete_during_submit{false};
+    bool fail_during_submit{false};
+    PlayerController *controller{nullptr};
+    bool nest_during_submit{false};
+    double nested_target{0.0};
+    NativeSeekProbe *nested_probe{nullptr};
+  };
+
+  static void rejectNativeSubmission(NativeSeekProbe &probe) {
+    probe.result = PlayerController::NativeSeekSubmission::Rejected;
+  }
+
+  static void useCompatibilitySubmission(NativeSeekProbe &probe) {
+    probe.result = PlayerController::NativeSeekSubmission::Compatibility;
+  }
+
+  static void completeNativeSubmissionSynchronously(
+      NativeSeekProbe &probe, PlayerController &controller) {
+    probe.controller = &controller;
+    probe.complete_during_submit = true;
+  }
+
+  static void failNativeSubmissionSynchronously(
+      NativeSeekProbe &probe, PlayerController &controller) {
+    probe.controller = &controller;
+    probe.fail_during_submit = true;
+  }
+
+  static void nestNativeSubmissionSynchronously(
+      NativeSeekProbe &probe, PlayerController &controller,
+      double target, NativeSeekProbe &nested_probe) {
+    probe.controller = &controller;
+    probe.nest_during_submit = true;
+    probe.nested_target = target;
+    probe.nested_probe = &nested_probe;
+  }
+
+  static bool submitNativeSeek(PlayerController &controller, double target,
+                               NativeSeekProbe &probe) {
+    auto intent = controller.makeNativeSeekIntent(target);
+    if (!intent)
+      return false;
+    return controller.dispatchNativeSeekIntent(
+               *intent, &probe,
+               [](void *context,
+                  const PlayerController::NativeSeekIntent &request) noexcept {
+                 auto &capture =
+                     *static_cast<NativeSeekProbe *>(context);
+                 ++capture.submissions;
+                 capture.gesture = request.gesture;
+                 capture.request = request.request;
+                 capture.target = request.target;
+                 capture.intended_paused = request.intended_paused;
+                 if (capture.complete_during_submit && capture.controller) {
+                   static_cast<void>(
+                       capture.controller->acceptNativeCommitReady(
+                           request.gesture, request.request, request.target));
+                 }
+                 if (capture.fail_during_submit && capture.controller) {
+                   capture.controller->nativeCommitFailed(
+                       request.gesture, request.request);
+                 }
+                 if (capture.nest_during_submit && capture.controller &&
+                     capture.nested_probe) {
+                   PlayerControllerTestAccess::submitNativeSeek(
+                       *capture.controller, capture.nested_target,
+                       *capture.nested_probe);
+                 }
+                 return capture.result;
+               }) == PlayerController::NativeSeekDispatch::Consumed;
+  }
+
+  static bool routesNativeSeekToCompatibility(PlayerController &controller,
+                                               double target,
+                                               NativeSeekProbe &probe) {
+    auto intent = controller.makeNativeSeekIntent(target);
+    if (!intent)
+      return false;
+    return controller.dispatchNativeSeekIntent(
+               *intent, &probe,
+               [](void *context,
+                  const PlayerController::NativeSeekIntent &request) noexcept {
+                 auto &capture = *static_cast<NativeSeekProbe *>(context);
+                 ++capture.submissions;
+                 capture.gesture = request.gesture;
+                 capture.request = request.request;
+                 capture.target = request.target;
+                 capture.intended_paused = request.intended_paused;
+                 return capture.result;
+               }) == PlayerController::NativeSeekDispatch::Compatibility;
+  }
+
+  static bool finishNativeScrub(PlayerController &controller, double target,
+                                NativeSeekProbe &probe) {
+    auto intent = controller.finishNativeScrubIntent(target);
+    if (!intent)
+      return false;
+    return controller.dispatchNativeSeekIntent(
+               *intent, &probe,
+               [](void *context,
+                  const PlayerController::NativeSeekIntent &request) noexcept {
+                 auto &capture =
+                     *static_cast<NativeSeekProbe *>(context);
+                 ++capture.submissions;
+                 capture.gesture = request.gesture;
+                 capture.request = request.request;
+                 capture.target = request.target;
+                 capture.intended_paused = request.intended_paused;
+                 if (capture.complete_during_submit && capture.controller) {
+                   static_cast<void>(
+                       capture.controller->acceptNativeCommitReady(
+                           request.gesture, request.request, request.target));
+                 }
+                 if (capture.fail_during_submit && capture.controller) {
+                   capture.controller->nativeCommitFailed(
+                       request.gesture, request.request);
+                 }
+                 return capture.result;
+               }) == PlayerController::NativeSeekDispatch::Consumed;
+  }
+
+  static bool completeNativeSeek(PlayerController &controller,
+                                 std::uint64_t gesture,
+                                 std::uint64_t request, double target) {
+    return controller.acceptNativeCommitReady(gesture, request, target);
+  }
+
+  static void failNativeSeek(PlayerController &controller,
+                             std::uint64_t gesture,
+                             std::uint64_t request) {
+    controller.nativeCommitFailed(gesture, request);
+  }
+
+  static bool hasNativeScrub(const PlayerController &controller) {
+    return controller.native_scrub_intent_.has_value();
+  }
+
+  static bool hasNativeSeek(const PlayerController &controller) {
+    return controller.native_seek_intent_.has_value();
+  }
+
+  static std::uint64_t nativeScrubGesture(
+      const PlayerController &controller) {
+    return controller.native_scrub_intent_
+               ? controller.native_scrub_intent_->gesture
+               : 0;
+  }
+
+  static std::uint64_t nativeSeekGesture(const PlayerController &controller) {
+    return controller.native_seek_intent_
+               ? controller.native_seek_intent_->gesture
+               : 0;
+  }
+
+  static std::uint64_t nativeSeekRequest(const PlayerController &controller) {
+    return controller.native_seek_intent_
+               ? controller.native_seek_intent_->request
+               : 0;
+  }
+
+  static double nativeScrubTarget(const PlayerController &controller) {
+    return controller.native_scrub_intent_
+               ? controller.native_scrub_intent_->target
+               : -1.0;
+  }
+
+  static double nativeSeekTarget(const PlayerController &controller) {
+    return controller.native_seek_intent_
+               ? controller.native_seek_intent_->target
+               : -1.0;
+  }
+
+  static bool nativeIntendsPause(const PlayerController &controller) {
+    if (controller.native_scrub_intent_)
+      return controller.native_scrub_intent_->intended_paused;
+    return controller.native_seek_intent_ &&
+           controller.native_seek_intent_->intended_paused;
+  }
+
+  static void setNativePauseIntent(PlayerController &controller, bool paused) {
+    controller.setNativeScrubPauseIntent(paused);
+  }
+
+  static void invalidateNativeSeek(PlayerController &controller) {
+    controller.invalidateNativeSeekIntents();
+  }
+
+  static void exhaustNativeGestureIds(PlayerController &controller) {
+    controller.next_native_seek_gesture_id_ =
+        std::numeric_limits<std::uint64_t>::max();
+  }
+
+  static void exhaustNativeRequestIds(PlayerController &controller) {
+    controller.next_native_seek_request_id_ =
+        std::numeric_limits<std::uint64_t>::max();
+  }
+
   static void setCachedPlaybackState(PlayerController &controller,
                                      double position, bool paused) {
     controller.position_ = position;
     controller.updatePause(paused);
+  }
+
+  static void setDuration(PlayerController &controller, double duration) {
+    controller.updateDuration(duration);
   }
 
   static void setCachedTransportState(PlayerController &controller,
@@ -563,7 +1024,7 @@ class PlayerControllerTestAccess final {
     return PlayerController::livePlaybackStateMatchesRecovery(
         *controller.render_recovery_,
         PlayerController::LivePlaybackState{paused, idle, eof_reached,
-                                            std::nullopt});
+                                            std::nullopt, std::nullopt});
   }
 
   static void applyObservedPlaybackState(PlayerController &controller,
@@ -764,6 +1225,9 @@ int main(int argc, char **argv) {
            "dormant transport preserves cached captions");
     expect(!controller.preservePitch(),
            "dormant transport preserves cached pitch correction");
+
+    expect(wam::qt::PlayerControllerTestAccess::provisionRuntime(controller),
+           "the fallback router can provision an injected runtime lazily");
 
     // This URL deliberately has no renderer and is never loaded: open() must
     // initialize libmpv, restore settings, then retain the request until the
@@ -1020,6 +1484,78 @@ int main(int argc, char **argv) {
   {
     using Access = wam::qt::PlayerControllerTestAccess;
     wam::qt::PlayerController controller;
+    Access::setCachedTransportState(controller, 10.0, false, false, false);
+    Access::setDuration(controller, 100.0);
+    expect(Access::beginNativeScrub(controller),
+           "preview-failure fixture owns one gesture");
+    const std::uint64_t gesture = Access::nativeScrubGesture(controller);
+    Access::NativePreviewProbe previews;
+    expect(Access::submitNativePreview(controller, 20.0, previews),
+           "preview-failure A dispatches");
+    const std::uint64_t request_a = Access::nativePreviewRequest(controller);
+    expect(Access::submitNativePreview(controller, 30.0, previews),
+           "preview-failure B coalesces");
+    const std::uint64_t request_b = Access::nativePreviewRequest(controller);
+    expect(Access::submitNativePreview(controller, 40.0, previews),
+           "preview-failure C replaces pending B");
+    const std::uint64_t request_c = Access::nativePreviewRequest(controller);
+
+    expect(!Access::failNativePreview(controller, gesture, request_b,
+                                      &previews) &&
+               previews.submissions == 1 &&
+               Access::nativeDispatchedPreviewRequest(controller) == request_a &&
+               nearlyEqual(controller.position(), 40.0),
+           "failure for never-dispatched B is stale and cannot move the handle");
+    expect(Access::failNativePreview(controller, gesture, request_a,
+                                    &previews) &&
+               previews.submissions == 2 &&
+               previews.requests.back() == request_c &&
+               Access::nativeDispatchedPreviewRequest(controller) == request_c &&
+               nearlyEqual(controller.position(), 40.0),
+           "exact A failure frees one slot and dispatches only latest C");
+    expect(Access::failNativePreview(controller, gesture, request_c,
+                                    &previews) &&
+               previews.submissions == 2 &&
+               Access::nativeDispatchedPreviewRequest(controller) == 0 &&
+               nearlyEqual(controller.position(), 40.0),
+           "latest C failure clears demand without retry or PTS regression");
+    expect(Access::submitNativePreview(controller, 50.0, previews) &&
+               previews.submissions == 3 &&
+               Access::nativeDispatchedPreviewRequest(controller) ==
+                   previews.requests.back() &&
+               nearlyEqual(controller.position(), 50.0),
+           "the next pointer move reuses the idle slot after latest failure");
+    Access::invalidateNativeSeek(controller);
+  }
+
+  {
+    using Access = wam::qt::PlayerControllerTestAccess;
+    wam::qt::PlayerController controller;
+    Access::setCachedTransportState(controller, 10.0, false, false, false);
+    Access::setDuration(controller, 100.0);
+    expect(Access::beginNativeScrub(controller),
+           "failed-lane retry fixture owns one gesture");
+    const std::uint64_t gesture = Access::nativeScrubGesture(controller);
+    Access::NativePreviewProbe previews;
+    expect(Access::submitNativePreview(controller, 20.0, previews),
+           "failed-lane retry A dispatches");
+    const std::uint64_t request_a = Access::nativePreviewRequest(controller);
+    expect(Access::submitNativePreview(controller, 30.0, previews),
+           "failed-lane retry B coalesces");
+    Access::rejectNativePreview(previews);
+    expect(Access::failNativePreview(controller, gesture, request_a,
+                                    &previews) &&
+               previews.submissions == 2 &&
+               nearlyEqual(previews.targets.back(), 30.0) &&
+               Access::nativeDispatchedPreviewRequest(controller) == 0 &&
+               nearlyEqual(controller.position(), 30.0),
+           "A failure attempts latest B once and synchronous refusal leaves "
+           "the slot idle without moving the handle");
+  }
+
+  {
+    using Access = wam::qt::PlayerControllerTestAccess;
+    wam::qt::PlayerController controller;
     const QUrl source(QStringLiteral("wam-test://tickets/current"));
     expect(Access::initializeEngine(controller),
            "A/V recovery has a live libmpv client");
@@ -1063,6 +1599,37 @@ int main(int argc, char **argv) {
            "a set-property reply alone cannot consume recovery");
     expect(Access::committedEntry(controller) == 177,
            "video reselection preserves subtitle and track-bearing entry");
+  }
+
+  {
+    using Access = wam::qt::PlayerControllerTestAccess;
+    wam::qt::PlayerController controller;
+    Access::setCachedTransportState(controller, 0.0, false, false, false);
+    Access::setDuration(controller, 1000.0);
+    expect(Access::beginNativeScrub(controller),
+           "failure replacement stress owns one native gesture");
+    const std::uint64_t gesture = Access::nativeScrubGesture(controller);
+    Access::NativePreviewProbe previews;
+    expect(Access::submitNativePreview(controller, 1.0, previews),
+           "failure replacement stress dispatches A");
+    const std::uint64_t first = Access::nativePreviewRequest(controller);
+    for (unsigned index = 2; index <= 512; ++index) {
+      expect(Access::submitNativePreview(controller, index, previews),
+             "failure replacement stress retains latest movement");
+    }
+    const std::uint64_t latest = Access::nativePreviewRequest(controller);
+    expect(previews.submissions == 1 &&
+               Access::failNativePreview(controller, gesture, first,
+                                         &previews) &&
+               previews.submissions == 2 && previews.requests.back() == latest &&
+               Access::nativeDispatchedPreviewRequest(controller) == latest &&
+               nearlyEqual(controller.position(), 512.0),
+           "A failure after 512 movements dispatches exactly the 512th desire");
+    expect(Access::failNativePreview(controller, gesture, latest, &previews) &&
+               previews.submissions == 2 &&
+               Access::nativeDispatchedPreviewRequest(controller) == 0 &&
+               nearlyEqual(controller.position(), 512.0),
+           "latest failure ends stress demand without recursive retry");
   }
 
   {
@@ -1291,8 +1858,11 @@ int main(int argc, char **argv) {
     Access::exhaustRecoveryRetry(
         controller, QStringLiteral("Unable to restore selected tracks."));
     expect(!Access::hasRenderRecovery(controller) &&
-               !controller.lastError().isEmpty(),
-           "bounded restore retry exhaustion degrades and ungates state");
+               !controller.lastError().isEmpty() &&
+               !Access::hasReadyApi(controller) &&
+               Access::core(controller)->handle() == nullptr,
+           "bounded restore retry exhaustion degrades without resolving a "
+           "dormant mpv table");
     Access::applyObservedTimeline(controller, 5.0, 25.0, false, false,
                                   false);
     expect(!controller.paused() && nearlyEqual(controller.position(), 5.0) &&
@@ -1650,6 +2220,11 @@ int main(int argc, char **argv) {
            "a current command failure terminates that pending attempt");
     expect(controller.source().isEmpty() && !controller.hasMedia(),
            "a failed command cannot publish ghost media");
+    expect(!Access::hasReadyApi(controller) &&
+               Access::core(controller)->handle() == nullptr &&
+               !controller.lastError().isEmpty(),
+           "a synthetic dormant failure reports a stable fallback detail "
+           "without resolving libmpv");
   }
 
   {
@@ -1693,12 +2268,24 @@ int main(int argc, char **argv) {
     controller.beginScrub();
     expect(Access::hasScrub(controller) && !controller.paused(),
            "beginScrub captures playing intent while physically pausing");
+    QTimer *const scrub_timer = Access::scrubTimeoutTimer(controller);
+    expect(scrub_timer && scrub_timer->isSingleShot() &&
+               !Access::scrubTimeoutActive(controller),
+           "one dormant single-shot timer is owned for the scrub gesture");
     Access::applyObservedPlaybackState(controller, 11.0, true);
     expect(!controller.paused() && nearlyEqual(controller.position(), 10.0),
            "physical pause and decoder position observations stay hidden");
 
     controller.previewSeekTo(20.0);
     const std::uint64_t first = Access::scrubCommand(controller);
+    expect(std::string_view(Access::scrubCommandMode(controller)) ==
+                   "absolute+keyframes" &&
+               !Access::scrubCommandExact(controller),
+           "pointer movement issues an approximate keyframe seek");
+    expect(Access::scrubTimeoutTimer(controller) == scrub_timer &&
+               Access::scrubTimeoutOwnsActiveCommand(controller) &&
+               Access::scrubTimeoutCommand(controller) == first,
+           "the reusable watchdog is armed to the full command identity");
     controller.previewSeekTo(30.0);
     controller.previewSeekTo(40.0);
     expect(first != 0 && Access::scrubCommand(controller) == first &&
@@ -1708,15 +2295,26 @@ int main(int argc, char **argv) {
 
     Access::scrubCommandReply(controller, first + 99);
     Access::scrubPlaybackRestart(controller);
-    expect(Access::scrubCommand(controller) == first,
+    Access::scrubTimeout(controller, first + 99);
+    expect(Access::scrubCommand(controller) == first &&
+               Access::scrubTimeoutActive(controller) &&
+               Access::scrubTimeoutCommand(controller) == first,
            "stale replies and restarts before SEEK cannot retire a flight");
     Access::scrubSeekStarted(controller);
     Access::scrubCommandReply(controller, first);
-    Access::scrubRestart(controller, 20.0);
+    expect(Access::scrubTimeoutActive(controller),
+           "a successful command reply keeps the decoded-frame watchdog");
+    Access::scrubRestart(controller, 7.0);
     const std::uint64_t second = Access::scrubCommand(controller);
     expect(second != 0 && second != first &&
-               nearlyEqual(Access::scrubTarget(controller), 40.0),
-           "reply plus converged restart dispatches only the latest preview");
+               nearlyEqual(Access::scrubTarget(controller), 40.0) &&
+               std::string_view(Access::scrubCommandMode(controller)) ==
+                   "absolute+keyframes" &&
+               Access::scrubTimeoutTimer(controller) == scrub_timer &&
+               Access::scrubTimeoutOwnsActiveCommand(controller) &&
+               Access::scrubTimeoutCommand(controller) == second,
+           "an approximate restart at any finite position dispatches only "
+           "the latest preview and rearms the same timer");
 
     controller.endScrub(55.0);
     expect(Access::scrubFinal(controller) &&
@@ -1730,16 +2328,28 @@ int main(int argc, char **argv) {
     Access::scrubCommandReply(controller, second);
     const std::uint64_t final = Access::scrubCommand(controller);
     expect(final != 0 && final != second &&
-               nearlyEqual(Access::scrubTarget(controller), 55.0),
-           "release target becomes the one final exact command");
+               nearlyEqual(Access::scrubTarget(controller), 55.0) &&
+               Access::scrubCommandExact(controller) &&
+               std::string_view(Access::scrubCommandMode(controller)) ==
+                   "absolute+exact" &&
+               Access::scrubTimeoutTimer(controller) == scrub_timer &&
+               Access::scrubTimeoutOwnsActiveCommand(controller) &&
+               Access::scrubTimeoutCommand(controller) == final,
+           "release target becomes the one final exact command on the same "
+           "watchdog");
     Access::scrubSeekStarted(controller);
     Access::scrubCommandReply(controller, final);
     Access::scrubRestart(controller, 54.0);
-    expect(Access::hasScrub(controller),
-           "an early restart waits for authoritative position convergence");
+    expect(Access::hasScrub(controller) &&
+               Access::scrubTimeoutOwnsActiveCommand(controller),
+           "an early restart keeps its watchdog while exact convergence "
+           "remains outside 50 ms");
     Access::scrubObservedPosition(controller, 55.0);
-    expect(!Access::hasScrub(controller) && !controller.paused(),
-           "later exact position convergence restores captured play intent");
+    expect(!Access::hasScrub(controller) && !controller.paused() &&
+               !Access::scrubTimeoutActive(controller) &&
+               Access::scrubTimeoutCommand(controller) == 0,
+           "later exact position convergence restores play intent and "
+           "cancels the reusable watchdog");
   }
 
   {
@@ -1774,7 +2384,8 @@ int main(int argc, char **argv) {
            "a failed preview still dispatches the retained final target");
     Access::scrubTimeout(controller, final);
     expect(Access::hasScrub(controller) &&
-               Access::scrubAbortPending(controller),
+               Access::scrubAbortPending(controller) &&
+               !Access::scrubTimeoutActive(controller),
            "timeout requests abort while retaining capacity-one ownership");
     Access::scrubCommandReply(controller, final, MPV_ERROR_COMMAND);
     expect(!Access::hasScrub(controller),
@@ -1810,6 +2421,10 @@ int main(int argc, char **argv) {
     Access::scrubRestart(controller, 12.0);
     controller.endScrub(13.0);
     const std::uint64_t final = Access::scrubCommand(controller);
+    expect(Access::scrubCommandExact(controller) &&
+               std::string_view(Access::scrubCommandMode(controller)) ==
+                   "absolute+exact",
+           "release after a drained preview still dispatches an exact seek");
     Access::scrubSeekStarted(controller);
     Access::scrubCommandReply(controller, final);
     Access::scrubRestart(controller, 13.0);
@@ -1821,8 +2436,9 @@ int main(int argc, char **argv) {
     const std::uint64_t retired = Access::scrubCommand(controller);
     const auto retired_render = Access::invalidateRenderer(controller);
     Access::renderInvalidated(controller, retired_render);
-    expect(!Access::hasScrub(controller),
-           "renderer invalidation burns active scrub ownership");
+    expect(!Access::hasScrub(controller) &&
+               !Access::scrubTimeoutActive(controller),
+           "renderer invalidation burns scrub ownership and its watchdog");
     Access::scrubCommandReply(controller, retired);
     expect(!Access::hasScrub(controller),
            "a stale reply cannot resurrect invalidated scrub ownership");
@@ -1856,8 +2472,12 @@ int main(int argc, char **argv) {
     const std::uint64_t reply_first = Access::scrubCommand(controller);
     controller.endScrub(15.1);
     Access::scrubCommandReply(controller, reply_first);
+    expect(Access::scrubTimeoutActive(controller) &&
+               Access::scrubTimeoutCommand(controller) == reply_first,
+           "reply-before-restart keeps its original timeout identity armed");
     Access::scrubTimeout(controller, reply_first);
-    expect(!Access::hasScrub(controller),
+    expect(!Access::hasScrub(controller) &&
+               !Access::scrubTimeoutActive(controller),
            "reply-first timeout drops pending final instead of overlapping "
            "an unproven decoder seek");
 
@@ -1866,6 +2486,561 @@ int main(int argc, char **argv) {
     Access::endFile(controller, MPV_END_FILE_REASON_EOF, 1003);
     expect(!Access::hasScrub(controller),
            "terminal EOF burns scrub ownership without restoring playback");
+  }
+
+  {
+    using Access = wam::qt::PlayerControllerTestAccess;
+    wam::qt::PlayerController controller;
+    Access::setCachedTransportState(controller, 10.0, false, false, false);
+    Access::setDuration(controller, 100.0);
+
+    expect(Access::beginNativeScrub(controller) &&
+               Access::hasNativeScrub(controller) &&
+               Access::nativeScrubGesture(controller) != 0 &&
+               !Access::nativeIntendsPause(controller),
+           "native scrub captures one nonzero gesture and playing intent");
+    const std::uint64_t gesture = Access::nativeScrubGesture(controller);
+    expect(Access::beginNativeScrub(controller) &&
+               Access::nativeScrubGesture(controller) == gesture,
+           "duplicate begin is idempotent within one native pointer gesture");
+
+    expect(Access::previewNativeScrub(controller, -5.0) &&
+               nearlyEqual(Access::nativeScrubTarget(controller), 0.0) &&
+               nearlyEqual(controller.position(), 0.0) &&
+               !Access::hasNativeSeek(controller),
+           "native preview clamps and moves the visible playhead without an "
+           "exact request");
+    expect(Access::previewNativeScrub(controller, 30.0) &&
+               Access::previewNativeScrub(controller, 40.0) &&
+               nearlyEqual(Access::nativeScrubTarget(controller), 40.0) &&
+               nearlyEqual(controller.position(), 40.0),
+           "native preview traffic retains only the latest visual target");
+    Access::setNativePauseIntent(controller, true);
+    expect(Access::nativeIntendsPause(controller),
+           "play/pause changes replace only native post-gesture intent");
+
+    expect(Access::endNativeScrub(controller, 55.0) &&
+               !Access::hasNativeScrub(controller) &&
+               Access::hasNativeSeek(controller) &&
+               Access::nativeSeekGesture(controller) == gesture &&
+               Access::nativeSeekRequest(controller) != 0 &&
+               nearlyEqual(Access::nativeSeekTarget(controller), 55.0) &&
+               nearlyEqual(controller.position(), 55.0) &&
+               Access::nativeIntendsPause(controller),
+           "native release creates one exact identity at the final target and "
+           "retains pause intent");
+    const std::uint64_t first_request = Access::nativeSeekRequest(controller);
+    expect(Access::stageNativeSeek(controller, 500.0) &&
+               Access::nativeSeekGesture(controller) != gesture &&
+               Access::nativeSeekRequest(controller) > first_request &&
+               nearlyEqual(Access::nativeSeekTarget(controller), 100.0) &&
+               nearlyEqual(controller.position(), 100.0),
+           "ordinary native seeks use fresh identities and clamp to duration");
+    expect(!Access::previewNativeScrub(
+               controller, std::numeric_limits<double>::quiet_NaN()) &&
+               controller.lastError().isEmpty(),
+           "invalid or unowned native preview stays silent instead of opening "
+           "an error dialog");
+    Access::invalidateNativeSeek(controller);
+    expect(!Access::hasNativeScrub(controller) &&
+               !Access::hasNativeSeek(controller),
+           "native Stop/open invalidation burns both gesture and exact intent");
+  }
+
+  {
+    using Access = wam::qt::PlayerControllerTestAccess;
+    wam::qt::PlayerController controller;
+    Access::setCachedTransportState(controller, 10.0, false, false, false);
+    Access::setDuration(controller, 100.0);
+    expect(Access::beginNativeScrub(controller),
+           "preview identity fixture owns one native gesture");
+    const std::uint64_t gesture = Access::nativeScrubGesture(controller);
+
+    Access::NativePreviewProbe previews;
+    Access::NativePreviewDemandProbe demands;
+    Access::installPublicNativePreviewSeam(controller, previews, demands);
+    controller.previewSeekTo(20.0);
+    const std::uint64_t request_a = Access::nativePreviewRequest(controller);
+    expect(request_a != 0 && previews.submissions == 1,
+           "public A demand is admitted immediately");
+    controller.previewSeekTo(30.0);
+    const std::uint64_t request_b = Access::nativePreviewRequest(controller);
+    controller.previewSeekTo(40.0);
+    const std::uint64_t request_c = Access::nativePreviewRequest(controller);
+    expect(previews.submissions == 1 && previews.requests.size() == 1 &&
+               previews.requests[0] == request_a && request_a < request_b &&
+               request_b < request_c &&
+               demands.requests ==
+                   std::vector<std::uint64_t>{request_a, request_b, request_c} &&
+               demands.targets == std::vector<double>{20.0, 30.0, 40.0} &&
+               demands.observedAt ==
+                   std::vector<std::uint64_t>{1, 3, 4} &&
+               previews.submittedAt == std::vector<std::uint64_t>{2} &&
+               Access::nativeDispatchedPreviewRequest(controller) ==
+                   request_a &&
+               nearlyEqual(controller.position(), 40.0),
+           "public A/B/C records each exact demand before pacing, publishes "
+           "optimistic C, and submits only A while native work is in flight");
+    Access::publishNativeMainPosition(controller, 10.25);
+    Access::publishNativeMainPosition(controller, 10.5);
+    expect(nearlyEqual(controller.position(), 40.0),
+           "paused audio clock and main-video draw drains advance privately "
+           "without repainting over optimistic C");
+    expect(!Access::presentNativePreview(controller, gesture, request_b,
+                                         29.9, &previews) &&
+               nearlyEqual(controller.position(), 40.0),
+           "a coalesced request that was never dispatched cannot publish");
+    expect(Access::presentNativePreview(controller, gesture, request_a, 19.9,
+                                        &previews) &&
+               previews.submissions == 2 && previews.requests.size() == 2 &&
+               previews.requests[1] == request_c &&
+               previews.submittedAt ==
+                   std::vector<std::uint64_t>{2, 5} &&
+               Access::nativeDispatchedPreviewRequest(controller) ==
+                   request_c &&
+               nearlyEqual(controller.position(), 40.0),
+           "A's real draw makes progress without regressing the C handle and "
+           "dispatches only previously timestamped demand C; B stays demand-only");
+    expect(Access::presentNativePreview(controller, gesture, request_c,
+                                        39.875, &previews) &&
+               nearlyEqual(controller.position(), 39.875),
+           "the exact latest C presentation publishes its actual PTS");
+    Access::clearPublicNativePreviewSeam(controller);
+
+    Access::NativeSeekProbe commit;
+    expect(Access::finishNativeScrub(controller, 42.0, commit) &&
+               commit.submissions == 1 && commit.gesture == gesture &&
+               commit.request > request_c &&
+               nearlyEqual(commit.target, 42.0) &&
+               !commit.intended_paused &&
+               !Access::presentNativePreview(controller, gesture,
+                                             request_c, 39.9, &previews) &&
+               nearlyEqual(controller.position(), 42.0),
+           "release burns preview completion, submits one fresh final commit, "
+           "and keeps the captured playing intent");
+    Access::invalidateNativeSeek(controller);
+
+    Access::setCachedTransportState(controller, 42.0, true, false, false);
+    expect(Access::beginNativeScrub(controller),
+           "paused preview fixture owns a new gesture");
+    const std::uint64_t paused_gesture =
+        Access::nativeScrubGesture(controller);
+    Access::NativePreviewProbe rejected;
+    Access::rejectNativePreview(rejected);
+    expect(Access::submitNativePreview(controller, 50.0, rejected) &&
+               rejected.submissions == 1 &&
+               Access::nativeDispatchedPreviewRequest(controller) == 0 &&
+               controller.lastError().isEmpty() &&
+               nearlyEqual(controller.position(), 50.0),
+           "preview refusal is quiet, releases demand, and retains the "
+           "optimistic pointer target");
+    Access::acceptNativePreview(rejected);
+    expect(Access::submitNativePreview(controller, 60.0, rejected) &&
+               rejected.submissions == 2 &&
+               Access::nativeDispatchedPreviewRequest(controller) ==
+                   rejected.requests[1] &&
+               nearlyEqual(controller.position(), 60.0),
+           "the next pointer target can issue after synchronous refusal");
+    Access::invalidateNativeSeek(controller);
+    expect(!Access::presentNativePreview(controller, paused_gesture,
+                                         rejected.requests[1], 59.9,
+                                         &rejected) &&
+               nearlyEqual(controller.position(), 60.0),
+           "Stop/open cancellation makes an otherwise exact presentation stale");
+  }
+
+  {
+    using Access = wam::qt::PlayerControllerTestAccess;
+    wam::qt::PlayerController controller;
+    Access::setCachedTransportState(controller, 0.0, false, false, false);
+    Access::setDuration(controller, 1000.0);
+    expect(Access::beginNativeScrub(controller),
+           "replacement stress owns one native gesture");
+    const std::uint64_t gesture = Access::nativeScrubGesture(controller);
+    Access::NativePreviewProbe previews;
+    expect(Access::submitNativePreview(controller, 1.0, previews),
+           "replacement stress dispatches its first request");
+    const std::uint64_t first = Access::nativePreviewRequest(controller);
+    for (unsigned index = 2; index <= 512; ++index) {
+      expect(Access::submitNativePreview(controller, index, previews),
+             "replacement stress retains each finite desired target");
+    }
+    const std::uint64_t latest = Access::nativePreviewRequest(controller);
+    expect(previews.submissions == 1 && latest > first &&
+               nearlyEqual(controller.position(), 512.0),
+           "512 movements retain bounded backend demand and an immediate "
+           "latest handle");
+    expect(Access::presentNativePreview(controller, gesture, first, 0.875,
+                                        &previews) &&
+               previews.submissions == 2 && previews.requests.back() == latest &&
+               nearlyEqual(controller.position(), 512.0),
+           "first completion dispatches only the 512th target");
+    expect(Access::presentNativePreview(controller, gesture, latest, 511.875,
+                                        &previews) &&
+               previews.submissions == 2 &&
+               nearlyEqual(controller.position(), 511.875),
+           "latest completion publishes without an intermediate command storm");
+  }
+
+  {
+    using Access = wam::qt::PlayerControllerTestAccess;
+    wam::qt::PlayerController controller;
+    Access::setCachedTransportState(controller, 10.0, false, false, false);
+    Access::setDuration(controller, 100.0);
+    expect(Access::beginNativeScrub(controller),
+           "release cancellation fixture owns a gesture");
+    const std::uint64_t gesture = Access::nativeScrubGesture(controller);
+    Access::NativePreviewProbe previews;
+    expect(Access::submitNativePreview(controller, 20.0, previews),
+           "release fixture dispatches A");
+    const std::uint64_t request_a = Access::nativePreviewRequest(controller);
+    expect(Access::submitNativePreview(controller, 30.0, previews),
+           "release fixture coalesces B");
+    Access::NativeSeekProbe commit;
+    expect(Access::finishNativeScrub(controller, 32.0, commit) &&
+               !Access::presentNativePreview(controller, gesture, request_a,
+                                             19.9, &previews) &&
+               !Access::failNativePreview(controller, gesture, request_a,
+                                          &previews) &&
+               previews.submissions == 1 &&
+               nearlyEqual(controller.position(), 32.0),
+           "release burns both preview terminals and A cannot dispatch B");
+  }
+
+  {
+    using Access = wam::qt::PlayerControllerTestAccess;
+    wam::qt::PlayerController controller;
+    Access::setCachedTransportState(controller, 10.0, false, false, false);
+    Access::setDuration(controller, 100.0);
+    expect(Access::beginNativeScrub(controller),
+           "reentrant preview fixture owns a gesture");
+    const std::uint64_t gesture = Access::nativeScrubGesture(controller);
+    Access::NativePreviewProbe previews;
+    previews.reenterController = &controller;
+    previews.reenterTarget = 30.0;
+    expect(Access::submitNativePreview(controller, 20.0, previews) &&
+               previews.submissions == 1 && previews.reentered &&
+               nearlyEqual(controller.position(), 30.0),
+           "synchronous submitter reentry coalesces instead of recursively "
+           "issuing media work");
+    const std::uint64_t request_a = previews.requests.front();
+    const std::uint64_t request_b = Access::nativePreviewRequest(controller);
+    expect(request_b > request_a &&
+               Access::presentNativePreview(controller, gesture, request_a,
+                                            19.9, &previews) &&
+               previews.submissions == 2 && previews.requests.back() == request_b &&
+               nearlyEqual(controller.position(), 30.0),
+           "reentrant latest desire dispatches once after A completes");
+    expect(Access::presentNativePreview(controller, gesture, request_b, 29.9,
+                                        &previews) &&
+               nearlyEqual(controller.position(), 29.9),
+           "reentrant follow-up publishes only its own exact presentation");
+  }
+
+  {
+    using Access = wam::qt::PlayerControllerTestAccess;
+    wam::qt::PlayerController controller;
+    Access::setCachedTransportState(controller, 10.0, false, false, false);
+    Access::setDuration(controller, 100.0);
+    expect(Access::beginNativeScrub(controller),
+           "synchronous failure fixture owns a gesture");
+
+    Access::NativePreviewProbe immediate;
+    immediate.failController = &controller;
+    immediate.failDuringSubmit = true;
+    expect(Access::submitNativePreview(controller, 20.0, immediate) &&
+               immediate.submissions == 1 &&
+               immediate.failedDuringSubmitAccepted &&
+               Access::nativeDispatchedPreviewRequest(controller) == 0 &&
+               nearlyEqual(controller.position(), 20.0),
+           "failure during submit retires A without the outer Accepted result "
+           "restoring its slot");
+    Access::invalidateNativeSeek(controller);
+
+    expect(Access::beginNativeScrub(controller),
+           "reentrant failure fixture owns a fresh gesture");
+    const std::uint64_t gesture = Access::nativeScrubGesture(controller);
+    Access::NativePreviewProbe reentrant;
+    reentrant.reenterController = &controller;
+    reentrant.reenterTarget = 40.0;
+    reentrant.failController = &controller;
+    reentrant.failDuringSubmit = true;
+    expect(Access::submitNativePreview(controller, 30.0, reentrant) &&
+               reentrant.reentered && reentrant.failedDuringSubmitAccepted &&
+               reentrant.submissions == 2 && reentrant.requests.size() == 2 &&
+               reentrant.requests[1] > reentrant.requests[0] &&
+               Access::nativeDispatchedPreviewRequest(controller) ==
+                   reentrant.requests[1] &&
+               nearlyEqual(controller.position(), 40.0),
+           "submitter reentry stages B before A failure and dispatches B once");
+    expect(Access::failNativePreview(controller, gesture,
+                                    reentrant.requests[1], &reentrant) &&
+               Access::nativeDispatchedPreviewRequest(controller) == 0,
+           "reentrant follow-up failure retires the exact B slot");
+  }
+
+  {
+    using Access = wam::qt::PlayerControllerTestAccess;
+    wam::qt::PlayerController controller;
+    Access::setCachedTransportState(controller, 10.0, false, false, false);
+    Access::setDuration(controller, 100.0);
+    expect(Access::beginNativeScrub(controller),
+           "position-signal Stop fixture owns a gesture");
+
+    Access::NativePreviewProbe retired;
+    bool stopped = false;
+    QMetaObject::Connection stop_connection;
+    stop_connection = QObject::connect(
+        &controller, &wam::qt::PlayerController::positionChanged, &controller,
+        [&] {
+          QObject::disconnect(stop_connection);
+          stopped = true;
+          Access::invalidateNativeSeek(controller);
+        });
+    expect(Access::submitNativePreview(controller, 20.0, retired) && stopped &&
+               retired.submissions == 0 &&
+               !Access::hasNativeScrub(controller),
+           "a synchronous positionChanged Stop prevents the retired preview "
+           "from reaching the backend");
+  }
+
+  {
+    using Access = wam::qt::PlayerControllerTestAccess;
+    wam::qt::PlayerController controller;
+    Access::setCachedTransportState(controller, 10.0, false, false, false);
+    Access::setDuration(controller, 100.0);
+    expect(Access::beginNativeScrub(controller),
+           "position-signal Commit fixture owns a gesture");
+
+    Access::NativePreviewProbe retired;
+    Access::NativeSeekProbe commit;
+    bool committed = false;
+    QMetaObject::Connection commit_connection;
+    commit_connection = QObject::connect(
+        &controller, &wam::qt::PlayerController::positionChanged, &controller,
+        [&] {
+          QObject::disconnect(commit_connection);
+          committed = Access::finishNativeScrub(controller, 25.0, commit);
+        });
+    expect(Access::submitNativePreview(controller, 20.0, retired) &&
+               committed && retired.submissions == 0 &&
+               commit.submissions == 1 && Access::hasNativeSeek(controller) &&
+               !Access::hasNativeScrub(controller) &&
+               nearlyEqual(controller.position(), 25.0),
+           "a synchronous positionChanged Commit burns the preview identity "
+           "before native preview submission");
+    Access::invalidateNativeSeek(controller);
+  }
+
+  {
+    using Access = wam::qt::PlayerControllerTestAccess;
+    wam::qt::PlayerController controller;
+    Access::setCachedTransportState(controller, 10.0, false, false, false);
+    Access::setDuration(controller, 100.0);
+    expect(Access::beginNativeScrub(controller),
+           "position-signal replacement fixture owns gesture A");
+    const std::uint64_t gesture_a = Access::nativeScrubGesture(controller);
+
+    Access::NativePreviewProbe retired;
+    Access::NativePreviewProbe replacement;
+    Access::NativeSeekProbe commit;
+    bool replaced = false;
+    QMetaObject::Connection replacement_connection;
+    replacement_connection = QObject::connect(
+        &controller, &wam::qt::PlayerController::positionChanged, &controller,
+        [&] {
+          QObject::disconnect(replacement_connection);
+          const bool committed =
+              Access::finishNativeScrub(controller, 25.0, commit);
+          const bool began = Access::beginNativeScrub(controller);
+          const bool previewed =
+              Access::submitNativePreview(controller, 40.0, replacement);
+          replaced = committed && began && previewed;
+        });
+    expect(Access::submitNativePreview(controller, 20.0, retired) && replaced &&
+               retired.submissions == 0 && commit.submissions == 1 &&
+               replacement.submissions == 1 &&
+               Access::nativeScrubGesture(controller) != gesture_a &&
+               Access::nativeDispatchedPreviewRequest(controller) ==
+                   replacement.requests.front() &&
+               nearlyEqual(controller.position(), 40.0),
+           "Commit followed by a new gesture submits only the replacement "
+           "preview after positionChanged reentry");
+    Access::invalidateNativeSeek(controller);
+  }
+
+  {
+    using Access = wam::qt::PlayerControllerTestAccess;
+    wam::qt::PlayerController controller;
+    Access::setCachedTransportState(controller, 10.0, false, false, false);
+    Access::setDuration(controller, 100.0);
+    expect(Access::beginNativeScrub(controller),
+           "preview outcome fixture owns a gesture");
+    const std::uint64_t gesture = Access::nativeScrubGesture(controller);
+
+    Access::NativePreviewProbe outcomes;
+    Access::replaceNativePreview(outcomes);
+    expect(Access::submitNativePreview(controller, 20.0, outcomes) &&
+               outcomes.submissions == 1 &&
+               Access::nativeDispatchedPreviewRequest(controller) ==
+                   outcomes.requests.back() &&
+               Access::presentNativePreview(
+                   controller, gesture, outcomes.requests.back(), 19.75,
+                   &outcomes),
+           "a synchronous Replaced disposition retains ownership until its "
+           "exact presentation");
+
+    Access::staleNativePreview(outcomes);
+    expect(Access::submitNativePreview(controller, 30.0, outcomes) &&
+               outcomes.submissions == 2 &&
+               Access::nativeDispatchedPreviewRequest(controller) == 0,
+           "a synchronous Stale disposition releases the work slot");
+
+    Access::acceptNativePreview(outcomes);
+    expect(Access::submitNativePreview(controller, 40.0, outcomes),
+           "a later request can reuse the slot after Stale");
+    const std::uint64_t finite_request = outcomes.requests.back();
+    expect(!Access::presentNativePreview(
+               controller, gesture, finite_request,
+               std::numeric_limits<double>::quiet_NaN(), &outcomes) &&
+               !Access::presentNativePreview(
+                   controller, gesture, finite_request,
+                   std::numeric_limits<double>::infinity(), &outcomes) &&
+               Access::nativeDispatchedPreviewRequest(controller) ==
+                   finite_request &&
+               Access::presentNativePreview(controller, gesture,
+                                            finite_request, 39.75, &outcomes),
+           "non-finite presentation facts are ignored without consuming the "
+           "valid in-flight identity");
+
+    Access::NativePreviewProbe synchronous;
+    synchronous.presentController = &controller;
+    synchronous.presentDuringSubmit = true;
+    synchronous.presentedActual = 49.75;
+    expect(Access::submitNativePreview(controller, 50.0, synchronous) &&
+               synchronous.submissions == 1 &&
+               synchronous.presentedDuringSubmitAccepted &&
+               Access::nativeDispatchedPreviewRequest(controller) == 0 &&
+               nearlyEqual(controller.position(), 49.75),
+           "Presented during submission is consumed once without restoring "
+           "the retired work slot");
+    Access::invalidateNativeSeek(controller);
+  }
+
+  {
+    using Access = wam::qt::PlayerControllerTestAccess;
+    wam::qt::PlayerController exhausted_gesture;
+    Access::exhaustNativeGestureIds(exhausted_gesture);
+    expect(!Access::beginNativeScrub(exhausted_gesture) &&
+               !Access::hasNativeScrub(exhausted_gesture),
+           "native gesture identity exhaustion never wraps to a live value");
+
+    wam::qt::PlayerController exhausted_request;
+    expect(Access::beginNativeScrub(exhausted_request),
+           "request exhaustion fixture first owns a gesture");
+    Access::exhaustNativeRequestIds(exhausted_request);
+    expect(!Access::endNativeScrub(exhausted_request, 1.0) &&
+               !Access::hasNativeScrub(exhausted_request) &&
+               !Access::hasNativeSeek(exhausted_request),
+           "native request identity exhaustion releases gesture without "
+           "forging a commit");
+  }
+
+  {
+    using Access = wam::qt::PlayerControllerTestAccess;
+    wam::qt::PlayerController controller;
+    Access::setCachedTransportState(controller, 12.0, false, false, false);
+    Access::setDuration(controller, 100.0);
+
+    Access::NativeSeekProbe release;
+    expect(Access::beginNativeScrub(controller),
+           "native dispatch fixture owns one pointer gesture");
+    const std::uint64_t release_gesture =
+        Access::nativeScrubGesture(controller);
+    expect(Access::previewNativeScrub(controller, 25.0) &&
+               Access::finishNativeScrub(controller, 30.0, release) &&
+               release.submissions == 1 &&
+               release.gesture == release_gesture && release.request != 0 &&
+               nearlyEqual(release.target, 30.0) &&
+               !release.intended_paused && Access::hasNativeSeek(controller),
+           "native release submits one exact command with the gesture, "
+           "request, target, and captured play intent");
+    expect(!Access::completeNativeSeek(controller, release.gesture,
+                                       release.request + 1,
+                                       release.target) &&
+               Access::hasNativeSeek(controller),
+           "a stale CommitReady identity cannot clear an accepted seek");
+    expect(Access::completeNativeSeek(controller, release.gesture,
+                                      release.request, release.target) &&
+               !Access::hasNativeSeek(controller),
+           "only exact CommitReady identity clears controller ownership");
+
+    Access::NativeSeekProbe rejected;
+    Access::rejectNativeSubmission(rejected);
+    expect(Access::submitNativeSeek(controller, 45.0, rejected) &&
+               rejected.submissions == 1 &&
+               !Access::hasNativeSeek(controller) &&
+               nearlyEqual(controller.position(), 30.0),
+           "a synchronous native refusal is consumed without staging a "
+           "false seek or leaving the optimistic playhead behind");
+
+    Access::NativeSeekProbe compatibility;
+    Access::useCompatibilitySubmission(compatibility);
+    expect(Access::routesNativeSeekToCompatibility(controller, 50.0,
+                                                    compatibility) &&
+               compatibility.submissions == 1 &&
+               !Access::hasNativeSeek(controller) &&
+               nearlyEqual(controller.position(), 30.0),
+           "a compatibility disposition falls through without claiming "
+           "native ownership or publishing an unsubmitted target");
+
+    Access::NativeSeekProbe immediate_ready;
+    Access::completeNativeSubmissionSynchronously(immediate_ready,
+                                                  controller);
+    expect(Access::submitNativeSeek(controller, 60.0, immediate_ready) &&
+               immediate_ready.submissions == 1 &&
+               !Access::hasNativeSeek(controller) &&
+               nearlyEqual(controller.position(), 60.0),
+           "CommitReady during submission is retained without a staging "
+           "race or permanently owned seek");
+
+    Access::NativeSeekProbe immediate_failure;
+    Access::failNativeSubmissionSynchronously(immediate_failure, controller);
+    expect(Access::submitNativeSeek(controller, 70.0, immediate_failure) &&
+               immediate_failure.submissions == 1 &&
+               !Access::hasNativeSeek(controller) &&
+               nearlyEqual(controller.position(), 60.0),
+           "failure during submission cannot be overwritten by late local "
+           "intent staging");
+
+    Access::NativeSeekProbe later_failure;
+    expect(Access::submitNativeSeek(controller, 80.0, later_failure) &&
+               Access::hasNativeSeek(controller),
+           "an accepted native command remains owned until a terminal fact");
+    Access::failNativeSeek(controller, later_failure.gesture,
+                           later_failure.request + 1);
+    expect(Access::hasNativeSeek(controller),
+           "a stale failure identity cannot clear an accepted native seek");
+    Access::failNativeSeek(controller, later_failure.gesture,
+                           later_failure.request);
+    expect(!Access::hasNativeSeek(controller),
+           "the exact failure identity clears controller ownership");
+
+    Access::NativeSeekProbe nested;
+    Access::NativeSeekProbe outer;
+    Access::rejectNativeSubmission(outer);
+    Access::nestNativeSubmissionSynchronously(outer, controller, 95.0,
+                                              nested);
+    expect(Access::submitNativeSeek(controller, 90.0, outer) &&
+               outer.submissions == 1 && nested.submissions == 1 &&
+               Access::hasNativeSeek(controller) &&
+               Access::nativeSeekGesture(controller) == nested.gesture &&
+               Access::nativeSeekRequest(controller) == nested.request &&
+               nearlyEqual(Access::nativeSeekTarget(controller), 95.0) &&
+               nearlyEqual(controller.position(), 95.0),
+           "a reentrant accepted seek supersedes the outer refusal without "
+           "rollback or compatibility fallthrough");
+    Access::failNativeSeek(controller, nested.gesture, nested.request);
   }
 
   // Any wakeup posted during initialization is context-bound to the destroyed

@@ -59,6 +59,32 @@ VideoToolbox helper's process footprint. It is engine-lab data and must not be
 compared directly with the full-player rows. See
 `benchmarks/BASELINES_2026-08-11.md` for the complete scoped record.
 
+### Native-video compressed-input budget
+
+The default-off native VideoToolbox experiment admits at most 8 MiB for one
+compressed H.264/HEVC access unit and 256 KiB for its one selected avcC or hvcC
+configuration atom. The AVFoundation path submits its retained
+`CMSampleBuffer` directly, so these are logical source-byte limits rather than
+application payload-copy allowances. Two VideoToolbox submissions plus the one
+AVAssetReader sample that can wait for capacity produce a conservative 24 MiB
+logical compressed-data envelope.
+
+For planning only, combining that envelope with the proposed separate 64 MiB
+decoded-surface gate and 1 MiB native-audio gate gives 89 MiB before codec
+configuration. The 256 KiB configuration can have three logical
+representations while the decoder is configured—the pipeline vector, temporary
+CFData, and retained format-description representation—so the conservative
+logical charge is 768 KiB transient and 256 KiB after configuration.
+That makes the planning totals 89.75 MiB transient and 89.25 MiB retained,
+rounded to a 90 MiB budget. The pipeline releases its vector before publishing
+Ready. A direct sample's selected atom is independently gated at 256 KiB and
+must byte-match the configured atom; the decoder does not retain its format as
+a second logically distinct configuration. These separate gates are not all
+active yet. The figures exclude
+AVFoundation, VideoToolbox, CoreAudio, Qt, IOSurface/driver, CoreMedia private
+overhead, and helper-process allocations, so they are not a whole-player or
+300 MiB release claim; hardware/OS coalition measurement remains required.
+
 ## Production efficiency policy
 
 Normal playback now uses mpv's audio-clock sync and direct bilinear sampler

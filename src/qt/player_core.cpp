@@ -1,5 +1,6 @@
 #include "player_core_p.hpp"
 
+#include "mpv_hwdec_interop_policy.hpp"
 #include "player_controller.hpp"
 
 #include <QByteArray>
@@ -13,6 +14,8 @@
 
 namespace wam::qt {
 namespace {
+
+using ::wam::playback::mpv::MpvApi;
 
 constexpr unsigned kRenderNotificationQueueAttempts = 3;
 constexpr unsigned kRenderNotificationDrainBatch = 4;
@@ -37,11 +40,12 @@ private:
   bool armed_ = true;
 };
 
-bool setOption(mpv_handle *handle, const char *name, const char *value) {
-  const int result = mpv_set_option_string(handle, name, value);
+bool setOption(const MpvApi &api, mpv_handle *handle, const char *name,
+               const char *value) {
+  const int result = api.mpv_set_option_string(handle, name, value);
   if (result < 0) {
     qWarning().nospace() << "WAM: unable to set mpv option " << name << '='
-                         << value << ": " << mpv_error_string(result);
+                         << value << ": " << api.mpv_error_string(result);
     return false;
   }
   return true;
@@ -64,15 +68,15 @@ void logDefaultExperimentValue(const char *name) {
                     << "=default; no option override applied.";
 }
 
-void applyRendererExperiments(mpv_handle *handle) {
+void applyRendererExperiments(const MpvApi &api, mpv_handle *handle) {
   if (qEnvironmentVariableIsSet("WAM_RENDER_PROFILE")) {
     const QByteArray profile = experimentValue("WAM_RENDER_PROFILE");
     if (profile == "fast" || profile == "efficient") {
       bool applied = true;
-      applied &= setOption(handle, "scale", "bilinear");
-      applied &= setOption(handle, "dscale", "bilinear");
-      applied &= setOption(handle, "correct-downscaling", "no");
-      applied &= setOption(handle, "linear-downscaling", "no");
+      applied &= setOption(api, handle, "scale", "bilinear");
+      applied &= setOption(api, handle, "dscale", "bilinear");
+      applied &= setOption(api, handle, "correct-downscaling", "no");
+      applied &= setOption(api, handle, "linear-downscaling", "no");
       if (applied) {
         qInfo().noquote().nospace()
             << "WAM: active renderer selection WAM_RENDER_PROFILE="
@@ -86,11 +90,11 @@ void applyRendererExperiments(mpv_handle *handle) {
       }
     } else if (profile == "quality") {
       bool applied = true;
-      applied &= setOption(handle, "scale", "spline36");
-      applied &= setOption(handle, "dscale", "mitchell");
-      applied &= setOption(handle, "correct-downscaling", "yes");
-      applied &= setOption(handle, "linear-downscaling", "yes");
-      applied &= setOption(handle, "sigmoid-upscaling", "yes");
+      applied &= setOption(api, handle, "scale", "spline36");
+      applied &= setOption(api, handle, "dscale", "mitchell");
+      applied &= setOption(api, handle, "correct-downscaling", "yes");
+      applied &= setOption(api, handle, "linear-downscaling", "yes");
+      applied &= setOption(api, handle, "sigmoid-upscaling", "yes");
       if (applied) {
         qInfo() << "WAM: active renderer selection"
                    " WAM_RENDER_PROFILE=quality: scale=spline36,"
@@ -111,14 +115,14 @@ void applyRendererExperiments(mpv_handle *handle) {
   if (qEnvironmentVariableIsSet("WAM_VIDEO_SYNC")) {
     const QByteArray video_sync = experimentValue("WAM_VIDEO_SYNC");
     if (video_sync == "audio") {
-      if (setOption(handle, "video-sync", "audio")) {
+      if (setOption(api, handle, "video-sync", "audio")) {
         qInfo() << "WAM: active renderer experiment WAM_VIDEO_SYNC=audio:"
                    " video-sync=audio.";
       } else {
         qWarning() << "WAM: WAM_VIDEO_SYNC=audio was not applied.";
       }
     } else if (video_sync == "display-resample") {
-      if (setOption(handle, "video-sync", "display-resample")) {
+      if (setOption(api, handle, "video-sync", "display-resample")) {
         qInfo() << "WAM: active renderer selection"
                    " WAM_VIDEO_SYNC=display-resample.";
       } else {
@@ -136,7 +140,7 @@ void applyRendererExperiments(mpv_handle *handle) {
   if (qEnvironmentVariableIsSet("WAM_SDR_FBO_FORMAT")) {
     const QByteArray fbo_format = experimentValue("WAM_SDR_FBO_FORMAT");
     if (fbo_format == "rgb10_a2" || fbo_format == "rgba8") {
-      if (setOption(handle, "fbo-format", fbo_format.constData())) {
+      if (setOption(api, handle, "fbo-format", fbo_format.constData())) {
         qInfo().noquote().nospace()
             << "WAM: active SDR-only renderer experiment "
                "WAM_SDR_FBO_FORMAT="
@@ -162,14 +166,24 @@ void applyRendererExperiments(mpv_handle *handle) {
 
 PlayerCore::PlayerCore(PlayerController *owner) : owner_(owner) {}
 
-bool PlayerCore::initialize() {
+bool PlayerCore::initialize(
+    std::shared_ptr<const ::wam::playback::mpv::MpvRuntime> runtime) {
   Q_ASSERT(!owner_ || QThread::currentThread() == owner_->thread());
   State expected = State::Dormant;
   if (!state_.compare_exchange_strong(expected, State::Initializing,
                                       std::memory_order_acq_rel))
     return expected == State::Ready;
 
-  mpv_handle *candidate = mpv_create();
+  if (!runtime || !runtime->api().complete()) {
+    initialization_error_ =
+        QStringLiteral("The compatibility media engine is unavailable.");
+    state_.store(State::Failed, std::memory_order_release);
+    return false;
+  }
+  runtime_ = std::move(runtime);
+  const MpvApi &api = runtime_->api();
+
+  mpv_handle *candidate = api.mpv_create();
   if (!candidate) {
     initialization_error_ =
         QStringLiteral("Unable to create the media engine.");
@@ -180,15 +194,15 @@ bool PlayerCore::initialize() {
   // The packaged application must behave identically regardless of a user's
   // standalone mpv configuration. Avoid loading user scripts, profiles, and
   // built-in overlays that WAM neither displays nor controls.
-  setOption(candidate, "config", "no");
-  setOption(candidate, "load-scripts", "no");
-  setOption(candidate, "load-auto-profiles", "no");
-  setOption(candidate, "load-stats-overlay", "no");
-  setOption(candidate, "load-console", "no");
-  setOption(candidate, "load-select", "no");
-  setOption(candidate, "load-context-menu", "no");
-  setOption(candidate, "load-commands", "no");
-  setOption(candidate, "load-positioning", "no");
+  setOption(api, candidate, "config", "no");
+  setOption(api, candidate, "load-scripts", "no");
+  setOption(api, candidate, "load-auto-profiles", "no");
+  setOption(api, candidate, "load-stats-overlay", "no");
+  setOption(api, candidate, "load-console", "no");
+  setOption(api, candidate, "load-select", "no");
+  setOption(api, candidate, "load-context-menu", "no");
+  setOption(api, candidate, "load-commands", "no");
+  setOption(api, candidate, "load-positioning", "no");
 
   // Keep mpv's own UI/input disabled: QML is the single UX layer. The render
   // API and hardware interop let supported decoders provide GPU-backed frames
@@ -197,64 +211,65 @@ bool PlayerCore::initialize() {
   // Qt owns the process-wide application/menu lifecycle. Prevent mpv's macOS
   // AppHub from installing its standalone-player activation policy, menu
   // shortcuts, and Touch Bar while initializing inside the Qt host.
-  setOption(candidate, "macos-app-activation-policy", "prohibited");
-  setOption(candidate, "macos-menu-shortcuts", "no");
+  setOption(api, candidate, "macos-app-activation-policy", "prohibited");
+  setOption(api, candidate, "macos-menu-shortcuts", "no");
 #endif
-  setOption(candidate, "vo", "libmpv");
-  setOption(candidate, "hwdec", "auto-safe");
-  setOption(candidate, "vd-lavc-dr", "auto");
-  setOption(candidate, "gpu-hwdec-interop", "auto");
+  setOption(api, candidate, "vo", "libmpv");
+  setOption(api, candidate, "hwdec", "auto-safe");
+  setOption(api, candidate, "vd-lavc-dr", "auto");
+  setOption(api, candidate, "gpu-hwdec-interop",
+            mpvGpuHwdecInterop(kMpvHwdecInteropHostPlatform));
   // Keep mpv's backend-specific hardware-frame reserve. A globally reduced
   // pool can starve fixed-allocation decoders such as D3D11VA and VAAPI even
   // when it happens to work with VideoToolbox's dynamic allocation path.
   // Audio-clock sync is mpv's lean, robust default. Display-resample remains
   // opt-in for viewers who prefer cadence correction over power efficiency.
-  setOption(candidate, "video-sync", "audio");
-  setOption(candidate, "audio-pitch-correction", "yes");
-  setOption(candidate, "keep-open", "yes");
-  setOption(candidate, "osc", "no");
-  setOption(candidate, "osd-level", "0");
-  setOption(candidate, "osd-bar", "no");
-  setOption(candidate, "osd-on-seek", "no");
-  setOption(candidate, "input-default-bindings", "no");
-  setOption(candidate, "input-builtin-bindings", "no");
-  setOption(candidate, "input-vo-keyboard", "no");
-  setOption(candidate, "input-cursor", "no");
-  setOption(candidate, "terminal", "no");
-  setOption(candidate, "msg-level", "all=warn");
-  setOption(candidate, "resume-playback", "no");
-  setOption(candidate, "autoload-files", "no");
-  setOption(candidate, "cover-art-auto", "no");
+  setOption(api, candidate, "video-sync", "audio");
+  setOption(api, candidate, "audio-pitch-correction", "yes");
+  setOption(api, candidate, "keep-open", "yes");
+  setOption(api, candidate, "osc", "no");
+  setOption(api, candidate, "osd-level", "0");
+  setOption(api, candidate, "osd-bar", "no");
+  setOption(api, candidate, "osd-on-seek", "no");
+  setOption(api, candidate, "input-default-bindings", "no");
+  setOption(api, candidate, "input-builtin-bindings", "no");
+  setOption(api, candidate, "input-vo-keyboard", "no");
+  setOption(api, candidate, "input-cursor", "no");
+  setOption(api, candidate, "terminal", "no");
+  setOption(api, candidate, "msg-level", "all=warn");
+  setOption(api, candidate, "resume-playback", "no");
+  setOption(api, candidate, "autoload-files", "no");
+  setOption(api, candidate, "cover-art-auto", "no");
 
   // These are conservative fallbacks for a source that bypasses WAM's normal
   // loadfile path. PlayerController supplies tighter per-file limits for local
   // files and bounded network limits for URLs.
-  setOption(candidate, "cache", "auto");
-  setOption(candidate, "cache-secs", "8");
-  setOption(candidate, "demuxer-readahead-secs", "3");
-  setOption(candidate, "demuxer-max-bytes", "32MiB");
-  setOption(candidate, "demuxer-max-back-bytes", "8MiB");
-  setOption(candidate, "demuxer-hysteresis-secs", "2");
+  setOption(api, candidate, "cache", "auto");
+  setOption(api, candidate, "cache-secs", "8");
+  setOption(api, candidate, "demuxer-readahead-secs", "3");
+  setOption(api, candidate, "demuxer-max-bytes", "32MiB");
+  setOption(api, candidate, "demuxer-max-back-bytes", "8MiB");
+  setOption(api, candidate, "demuxer-hysteresis-secs", "2");
 
   // Prefer the renderer's direct sampler path. Unlike forcing gpu-dumb-mode,
   // these settings still let mpv engage an advanced pipeline when HDR/color
   // conversion requires it, while ordinary SDR playback avoids intermediate
   // full-frame FBOs and multi-tap scaling shaders.
-  setOption(candidate, "scale", "bilinear");
-  setOption(candidate, "dscale", "bilinear");
-  setOption(candidate, "correct-downscaling", "no");
-  setOption(candidate, "linear-downscaling", "no");
-  setOption(candidate, "sigmoid-upscaling", "no");
-  setOption(candidate, "deband", "no");
-  setOption(candidate, "interpolation", "no");
-  applyRendererExperiments(candidate);
+  setOption(api, candidate, "scale", "bilinear");
+  setOption(api, candidate, "dscale", "bilinear");
+  setOption(api, candidate, "correct-downscaling", "no");
+  setOption(api, candidate, "linear-downscaling", "no");
+  setOption(api, candidate, "sigmoid-upscaling", "no");
+  setOption(api, candidate, "deband", "no");
+  setOption(api, candidate, "interpolation", "no");
+  applyRendererExperiments(api, candidate);
 
-  const int result = mpv_initialize(candidate);
+  const int result = api.mpv_initialize(candidate);
   if (result < 0) {
     initialization_error_ =
         QStringLiteral("Unable to initialize the media engine: %1")
-            .arg(QString::fromUtf8(mpv_error_string(result)));
-    mpv_terminate_destroy(candidate);
+            .arg(QString::fromUtf8(api.mpv_error_string(result)));
+    api.mpv_terminate_destroy(candidate);
     state_.store(State::Failed, std::memory_order_release);
     return false;
   }
@@ -262,13 +277,13 @@ bool PlayerCore::initialize() {
   // mpv's terminal output is disabled for a GUI app, but warning-level engine
   // diagnostics still need to reach WAM's log so playback failures can be
   // diagnosed instead of collapsing into the generic end-file error alone.
-  const int log_result = mpv_request_log_messages(candidate, "warn");
+  const int log_result = api.mpv_request_log_messages(candidate, "warn");
   if (log_result < 0) {
     qWarning() << "WAM: unable to enable media-engine diagnostics:"
-               << mpv_error_string(log_result);
+               << api.mpv_error_string(log_result);
   }
 
-  mpv_set_wakeup_callback(candidate, &PlayerCore::onMpvWakeup, this);
+  api.mpv_set_wakeup_callback(candidate, &PlayerCore::onMpvWakeup, this);
   {
     std::scoped_lock lock(render_mutex_);
     handle_ = candidate;
@@ -296,7 +311,7 @@ PlayerCore::~PlayerCore() {
     Q_ASSERT(!renderContextBusy());
     static_cast<void>(render_lifecycle_.invalidate());
   }
-  mpv_set_wakeup_callback(handle_, nullptr, nullptr);
+  api().mpv_set_wakeup_callback(handle_, nullptr, nullptr);
   terminateMpvHandle(handle_);
 }
 
@@ -320,6 +335,47 @@ void PlayerCore::detachOwner(PlayerController *owner) {
     pending_render_invalidation_stamp_ = 0;
     render_notification_drain_queued_ = false;
   }
+}
+
+bool PlayerCore::retireFallbackAfterRenderRelease(
+    PlayerController *owner) noexcept {
+  Q_ASSERT(!owner || QThread::currentThread() == owner->thread());
+  revokeRenderContext();
+  if (renderContextBusy() ||
+      RenderLifecycle::phase(renderLifecycleSnapshot()) !=
+          RenderPhase::Empty) {
+    return false;
+  }
+
+  mpv_handle *retired = nullptr;
+  {
+    std::scoped_lock lock(render_mutex_);
+    if (renderContextAllowed() || renderContextBusy() || render_context_ ||
+        !render_context_owner_.isNull() || render_context_callback_installed_ ||
+        render_context_keepalive_ ||
+        RenderLifecycle::phase(render_lifecycle_.snapshot()) !=
+            RenderPhase::Empty) {
+      return false;
+    }
+    retired = handle_;
+    handle_ = nullptr;
+  }
+
+  detachOwner(owner);
+
+  if (retired) {
+    // state remains Ready until both calls return so the immutable runtime is
+    // available to the existing exact teardown helper.
+    api().mpv_set_wakeup_callback(retired, nullptr, nullptr);
+    terminateMpvHandle(retired);
+  }
+  {
+    std::scoped_lock lock(render_mutex_);
+    runtime_.reset();
+    initialization_error_.clear();
+    state_.store(State::Dormant, std::memory_order_release);
+  }
+  return true;
 }
 
 void PlayerCore::allowRenderContext() noexcept {
@@ -401,8 +457,8 @@ void PlayerCore::setRenderContextUpdateCallback(
     return;
   }
 #endif
-  mpv_render_context_set_update_callback(context, callback,
-                                         callback_context);
+  api().mpv_render_context_set_update_callback(context, callback,
+                                               callback_context);
 }
 
 void PlayerCore::freeRenderContext(mpv_render_context *context) noexcept {
@@ -420,7 +476,7 @@ void PlayerCore::freeRenderContext(mpv_render_context *context) noexcept {
     return;
   }
 #endif
-  mpv_render_context_free(context);
+  api().mpv_render_context_free(context);
 }
 
 void PlayerCore::terminateMpvHandle(mpv_handle *handle) noexcept {
@@ -435,7 +491,7 @@ void PlayerCore::terminateMpvHandle(mpv_handle *handle) noexcept {
     }
   }
 #endif
-  mpv_terminate_destroy(handle);
+  api().mpv_terminate_destroy(handle);
 }
 
 bool PlayerCore::freeRenderContextResourceLocked(
@@ -641,7 +697,7 @@ bool PlayerCore::ensureRenderContext() {
   } else
 #endif
   {
-    result = mpv_render_context_create(&candidate, handle_, parameters);
+    result = api().mpv_render_context_create(&candidate, handle_, parameters);
   }
 
 #if defined(WAM_PLAYER_CORE_RENDER_CONTEXT_TESTING)
@@ -754,7 +810,7 @@ void PlayerCore::render(int framebuffer, int width, int height, bool flip_y) {
 
   // Rendering the current frame is also correct for redraws caused by an
   // expose or resize even when MPV_RENDER_UPDATE_FRAME is not set.
-  mpv_render_context_update(render_context_);
+  api().mpv_render_context_update(render_context_);
   mpv_opengl_fbo target{framebuffer, width, height, 0};
   int flip = flip_y ? 1 : 0;
   mpv_render_param parameters[] = {
@@ -762,7 +818,7 @@ void PlayerCore::render(int framebuffer, int width, int height, bool flip_y) {
       {MPV_RENDER_PARAM_FLIP_Y, &flip},
       {MPV_RENDER_PARAM_INVALID, nullptr},
   };
-  mpv_render_context_render(render_context_, parameters);
+  api().mpv_render_context_render(render_context_, parameters);
 }
 
 bool PlayerCore::releaseRenderContext() {
@@ -823,14 +879,19 @@ void PlayerCore::queueEventDrain() noexcept {
     } else
 #endif
     {
+      auto keepalive = weak_from_this().lock();
+      if (!keepalive)
+        return;
       queued = QMetaObject::invokeMethod(
           owner,
-          [this, owner] {
-            event_drain_queued_.store(false, std::memory_order_release);
+          [keepalive = std::move(keepalive), owner] {
+            keepalive->event_drain_queued_.store(false,
+                                                  std::memory_order_release);
             try {
               {
-                std::scoped_lock owner_lock(owner_mutex_);
-                if (owner_ != owner)
+                std::scoped_lock owner_lock(keepalive->owner_mutex_);
+                if (keepalive->owner_ != owner ||
+                    owner->core_.get() != keepalive.get())
                   return;
               }
 
@@ -841,8 +902,8 @@ void PlayerCore::queueEventDrain() noexcept {
               // context-bound to `owner`, so Qt guarantees the QObject remains
               // alive for the duration of the call.
 #if defined(WAM_PLAYER_CORE_RENDER_CONTEXT_TESTING)
-              if (drain_events_for_testing_) {
-                drain_events_for_testing_();
+              if (keepalive->drain_events_for_testing_) {
+                keepalive->drain_events_for_testing_();
               } else
 #endif
               {
@@ -881,20 +942,25 @@ void PlayerCore::queueVideoUpdate() noexcept {
     } else
 #endif
     {
+      auto keepalive = weak_from_this().lock();
+      if (!keepalive)
+        return;
       queued = QMetaObject::invokeMethod(
           owner,
-          [this, owner] {
+          [keepalive = std::move(keepalive), owner] {
             try {
               {
-                std::scoped_lock owner_lock(owner_mutex_);
-                if (owner_ != owner) {
-                  video_update_queued_.store(false, std::memory_order_release);
+                std::scoped_lock owner_lock(keepalive->owner_mutex_);
+                if (keepalive->owner_ != owner ||
+                    owner->core_.get() != keepalive.get()) {
+                  keepalive->video_update_queued_.store(
+                      false, std::memory_order_release);
                   return;
                 }
               }
 #if defined(WAM_PLAYER_CORE_RENDER_CONTEXT_TESTING)
-              if (request_video_update_for_testing_) {
-                request_video_update_for_testing_();
+              if (keepalive->request_video_update_for_testing_) {
+                keepalive->request_video_update_for_testing_();
               } else
 #endif
               {
@@ -903,7 +969,8 @@ void PlayerCore::queueVideoUpdate() noexcept {
             } catch (...) {
               // Rendering normally consumes this reservation. Failed owner
               // work did not request a frame, so make the callback retryable.
-              video_update_queued_.store(false, std::memory_order_release);
+              keepalive->video_update_queued_.store(
+                  false, std::memory_order_release);
             }
           },
           Qt::QueuedConnection);
@@ -1176,7 +1243,7 @@ void PlayerCore::postRenderInitializationErrorBestEffort(
     } else if (result < 0) {
       postInitializationError(
           QStringLiteral("Unable to initialize video rendering: %1")
-              .arg(QString::fromUtf8(mpv_error_string(result))),
+              .arg(QString::fromUtf8(api().mpv_error_string(result))),
           ticket);
     } else {
       postInitializationError(
@@ -1203,9 +1270,19 @@ void PlayerCore::postInitializationError(const QString &error,
     if (!owner_)
       return;
     PlayerController *owner = owner_;
+    auto keepalive = weak_from_this().lock();
+    if (!keepalive)
+      return;
     QMetaObject::invokeMethod(
         owner,
-        [owner, error, ticket] {
+        [keepalive = std::move(keepalive), owner, error, ticket] {
+          {
+            std::scoped_lock owner_lock(keepalive->owner_mutex_);
+            if (keepalive->owner_ != owner ||
+                owner->core_.get() != keepalive.get()) {
+              return;
+            }
+          }
           owner->handleRenderInitializationFailure(error, ticket.stamp);
         },
         Qt::QueuedConnection);

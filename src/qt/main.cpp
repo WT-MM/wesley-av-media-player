@@ -1,10 +1,18 @@
 #include "mpv_video_item.hpp"
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#include "native_benchmark_telemetry.hpp"
+#endif
+#if defined(Q_OS_MACOS)
+#include "macos_window_chrome.hpp"
+#endif
+#include "playback/mpv/mpv_runtime.hpp"
 #include "player_controller.hpp"
 #include "state_store.hpp"
 
 #include <QByteArrayView>
 #include <QCoreApplication>
 #include <QDebug>
+#include <QElapsedTimer>
 #include <QDir>
 #include <QFileInfo>
 #include <QGuiApplication>
@@ -20,18 +28,103 @@
 #include <QTimer>
 #include <QUrl>
 
-#include <mpv/client.h>
-
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <clocale>
 #include <cmath>
-#include <cstdio>
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace {
+
+// ---------------------------------------------------------------------------
+// Scripted seek driver (test/benchmark seam).
+//
+// WAM_TEST_SEEK_SCRIPT="target@when[,target@when...]" replays scrubber gestures
+// without a pointer, so seek verification and the scrub benchmark campaign can
+// run against a parked, non-frontmost window. "40.5@6,12@14" seeks to 40.5 s
+// once playback first reaches 6 s, then to 12 s once it reaches 14 s. It is
+// parsed only when WAM_NATIVE_BENCHMARK_TELEMETRY is also enabled, so a
+// shipping run can never observe it, and the telemetry stream is what proves
+// each scripted seek anyway.
+//
+// The driver drives the same public boundary the QML Scrubber does --
+// beginScrub / previewSeekTo / endScrub -- rather than a bare seekTo, so both
+// the preview lane and the exact commit are exercised. Targets are floored onto
+// the 1/64 s dyadic grid for the same reason auto-resume is: native commit
+// preflight admits only an exactly representable double.
+// ---------------------------------------------------------------------------
+struct ScriptedSeek {
+  double target{0.0};
+  double when{0.0};
+};
+
+constexpr double kSeekScriptGrid = 64.0;
+
+double onSeekScriptGrid(double seconds) {
+  if (!std::isfinite(seconds) || seconds <= 0.0)
+    return 0.0;
+  return std::floor(seconds * kSeekScriptGrid) / kSeekScriptGrid;
+}
+
+// Scripted warm-open driver. A cold process open pays QML, window, and GL
+// startup on the main queue, so its open-to-first-draw span is dominated by
+// launch work a warm open never repeats. The benchmark target is the warm
+// open -- the switch to another file inside a running player -- which a fresh
+// launch per measurement can never observe. Telemetry already accepts a
+// second in-process open/native/draw lineage; this only supplies the driver
+// for one, on the same opt-in as the scripted seek.
+struct ScriptedOpen {
+  QString path;
+  int delayMilliseconds{0};
+};
+
+std::vector<ScriptedOpen> parseOpenScript(const QByteArray &value) {
+  std::vector<ScriptedOpen> script;
+  for (const QByteArray &entry : value.split(',')) {
+    const QByteArray trimmed = entry.trimmed();
+    if (trimmed.isEmpty())
+      continue;
+    const qsizetype separator = trimmed.indexOf('@');
+    if (separator <= 0)
+      continue;
+    bool delay_ok = false;
+    const int delay =
+        QString::fromLatin1(trimmed.left(separator)).toInt(&delay_ok);
+    const QString path =
+        QString::fromUtf8(trimmed.sliced(separator + 1)).trimmed();
+    if (!delay_ok || delay < 0 || path.isEmpty())
+      continue;
+    script.push_back({path, delay});
+  }
+  return script;
+}
+
+std::vector<ScriptedSeek> parseSeekScript(const QByteArray &value) {
+  std::vector<ScriptedSeek> script;
+  for (const QByteArray &entry : value.split(',')) {
+    const QByteArray trimmed = entry.trimmed();
+    if (trimmed.isEmpty())
+      continue;
+    const qsizetype separator = trimmed.indexOf('@');
+    if (separator <= 0)
+      continue;
+    bool target_ok = false;
+    bool when_ok = false;
+    const double target =
+        QString::fromLatin1(trimmed.left(separator)).toDouble(&target_ok);
+    const double when =
+        QString::fromLatin1(trimmed.sliced(separator + 1)).toDouble(&when_ok);
+    if (!target_ok || !when_ok || !std::isfinite(target) ||
+        !std::isfinite(when) || target < 0.0 || when < 0.0)
+      continue;
+    script.push_back({onSeekScriptGrid(target), when});
+  }
+  return script;
+}
 
 bool hasArgument(const QCoreApplication &app, const QString &argument) {
   const auto arguments = app.arguments();
@@ -303,15 +396,15 @@ int verifyRuntime() {
                "WAM runtime verification failed: resume tracking is invalid."));
   }
 
-  const uint64_t linked_api = mpv_client_api_version();
-  const uint64_t compiled_api = MPV_CLIENT_API_VERSION;
-  if (linked_api == 0 || (linked_api >> 16) != (compiled_api >> 16)) {
+#ifndef Q_OS_MACOS
+  const auto linked_runtime =
+      wam::playback::mpv::MpvLinkedRuntimeFactory::create();
+  if (!linked_runtime) {
     return runtimeVerificationFailure(
-        3, QStringLiteral("WAM runtime verification failed: incompatible "
-                          "libmpv client API %1.%2.")
-               .arg(linked_api >> 16)
-               .arg(linked_api & 0xffff));
+        3, QStringLiteral("WAM runtime verification failed: %1.")
+               .arg(linked_runtime.detail));
   }
+#endif
 
   // Keep this check headless and side-effect free. Full PlayerController/mpv
   // initialization is exercised by the GUI smoke test; Homebrew's macOS mpv
@@ -336,9 +429,7 @@ int verifyRuntime() {
                .arg(component.errorString()));
   }
 
-  qInfo().nospace() << "WAM runtime verification passed (libmpv client API "
-                    << (linked_api >> 16) << '.' << (linked_api & 0xffff)
-                    << ").";
+  qInfo() << "WAM runtime verification passed.";
   return 0;
 }
 
@@ -391,6 +482,20 @@ int main(int argc, char *argv[]) {
   (void)state_store.load();
 
   wam::qt::PlayerController player;
+#ifndef Q_OS_MACOS
+  const auto linked_runtime =
+      wam::playback::mpv::MpvLinkedRuntimeFactory::create();
+  if (!linked_runtime ||
+      !player.provisionMpvFallbackRuntime(linked_runtime.runtime)) {
+    const QString detail =
+        linked_runtime.detail.isEmpty()
+            ? QStringLiteral("cannot retain the linked libmpv runtime")
+            : linked_runtime.detail;
+    return runtimeVerificationFailure(
+        3, QStringLiteral("WAM could not initialize its media engine: %1.")
+               .arg(detail));
+  }
+#endif
   if (const auto rate = initialPlaybackRate(app))
     player.setRate(*rate);
   const int saved_appearance =
@@ -399,12 +504,34 @@ int main(int argc, char *argv[]) {
   player.setVolume(
       static_cast<double>(std::clamp(state_store.state().volume, 0, 100)) /
       100.0);
+  player.setSeekStepSeconds(
+      static_cast<double>(std::clamp(state_store.state().seek_step_seconds,
+                                     1, 60)));
   applyColorScheme(app.styleHints(), saved_appearance);
 
-  QObject::connect(&player, &wam::qt::PlayerController::appearanceChanged, &app,
-                   [&app, &player] {
-                     applyColorScheme(app.styleHints(), player.appearance());
-                   });
+  QTimer persistence_timer;
+  persistence_timer.setInterval(static_cast<int>(
+      std::chrono::duration_cast<std::chrono::milliseconds>(
+          wam::StateCheckpointGate::kInterval)
+          .count()));
+  persistence_timer.setSingleShot(true);
+  // A precise one-shot is never delivered early, preserving the ten-second
+  // minimum between writes without any cost while the timer is inactive.
+  persistence_timer.setTimerType(Qt::PreciseTimer);
+  wam::StateCheckpointGate persistence_checkpoint;
+  const auto request_checkpoint = [&] {
+    if (persistence_checkpoint.request()) persistence_timer.start();
+  };
+
+  QObject::connect(
+      &player, &wam::qt::PlayerController::appearanceChanged, &app, [&] {
+        applyColorScheme(app.styleHints(), player.appearance());
+        request_checkpoint();
+      });
+  QObject::connect(&player, &wam::qt::PlayerController::volumeChanged, &app,
+                   request_checkpoint);
+  QObject::connect(&player, &wam::qt::PlayerController::seekStepSecondsChanged,
+                   &app, request_checkpoint);
 
   ResumeTracker resume_tracker;
   double resume_position = 0.0;
@@ -433,29 +560,38 @@ int main(int argc, char *argv[]) {
     if (!resume_pending || tracked_local_source.isEmpty() ||
         player.duration() <= 0.0)
       return;
+    // Wait for the transport to actually be running. Duration and source both
+    // arrive while the engine is still starting, and a seek issued into that
+    // window replaces the pending start instead of following it, which left a
+    // resumed open parked on its first frame. The request stays pending until
+    // a start it can follow, so a paused open simply keeps its position.
+    if (!player.playing() || player.position() <= 0.0)
+      return;
 
     resume_pending = false;
     if (resume_position < 5.0 || resume_position >= player.duration() - 5.0) {
       state_store.forget(persistentKey(tracked_local_source));
+      if (state_store.dirty()) request_checkpoint();
       return;
     }
-    player.seekTo(std::min(resume_position, player.duration()));
+    // Native seeking admits only an exactly representable target, and a
+    // remembered position is a decimal that has been through text. Floor it
+    // onto a binary grid, which every such value converts to exactly, so the
+    // restore seek is never rejected for its last fractional digits. A 1/64 s
+    // grid is finer than one video frame at any admitted rate.
+    constexpr double kResumeGrid = 64.0;
+    const double bounded = std::min(resume_position, player.duration());
+    player.seekTo(std::max(0.0, std::floor(bounded * kResumeGrid) / kResumeGrid));
   };
-
-  QTimer resume_timer;
-  resume_timer.setInterval(250);
-  resume_timer.setSingleShot(false);
-  QObject::connect(&resume_timer, &QTimer::timeout, &app, [&] {
-    apply_pending_resume();
-    if (!resume_pending)
-      resume_timer.stop();
-  });
 
   QObject::connect(
       &player, &wam::qt::PlayerController::positionChanged, &app, [&] {
         const double position = player.position();
         if (position > 0.0) {
+          apply_pending_resume();
           resume_tracker.observePosition(position);
+          if (!resume_tracker.snapshot().local_source.isEmpty())
+            request_checkpoint();
           return;
         }
 
@@ -472,6 +608,7 @@ int main(int argc, char *argv[]) {
               player.position() > 0.0 || player.duration() <= 0.0)
             return;
           resume_tracker.commitZeroPosition(generation);
+          request_checkpoint();
         });
       });
   QObject::connect(&player, &wam::qt::PlayerController::durationChanged, &app,
@@ -479,55 +616,193 @@ int main(int argc, char *argv[]) {
                      resume_tracker.observeDuration(player.duration());
                      apply_pending_resume();
                    });
+  QObject::connect(&player, &wam::qt::PlayerController::playingChanged, &app,
+                   [&] { apply_pending_resume(); });
   QObject::connect(
       &player, &wam::qt::PlayerController::sourceChanged, &app, [&] {
         const ResumeSnapshot previous =
             resume_tracker.transitionTo(localStateKey(player.source()));
         remember_position(previous);
+        if (state_store.dirty()) request_checkpoint();
         const QString &tracked_local_source =
             resume_tracker.snapshot().local_source;
         resume_position =
             tracked_local_source.isEmpty()
                 ? 0.0
                 : state_store.positionFor(persistentKey(tracked_local_source));
-        resume_pending = resume_position >= 5.0;
+        // Native accurate seek now serves AAC, so the restore seek keeps the
+        // native session instead of retiring it and a resumed open plays.
+        constexpr bool kAutoResumeEnabled = true;
+        resume_pending = kAutoResumeEnabled && resume_position >= 5.0;
         if (resume_pending)
-          resume_timer.start();
-        else
-          resume_timer.stop();
+          apply_pending_resume();
       });
 
-  const auto persist_state = [&] {
+  // Scripted seek driver. See ScriptedSeek above: telemetry-gated, replays the
+  // public scrubber gesture so a parked window needs no pointer.
+  std::vector<ScriptedSeek> seek_script;
+  std::size_t seek_script_index = 0;
+  int seek_script_attempts = 0;
+  bool seek_script_busy = false;
+  bool seek_script_awaiting = false;
+  double seek_script_target = 0.0;
+  QElapsedTimer seek_script_clock;
+  seek_script_clock.start();
+  qint64 seek_script_issued_ms = 0;
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+  if (wam::qt::NativeBenchmarkTelemetry::instance().enabled()) {
+    seek_script = parseSeekScript(qgetenv("WAM_TEST_SEEK_SCRIPT"));
+  }
+#endif
+  const auto advance_seek_script = [&] {
+    if (seek_script_index >= seek_script.size())
+      return;
+    // A commit target is admitted only while the session is prepared and has
+    // no commit already in flight, so a gesture can be refused for reasons
+    // that clear on their own. Confirm each scripted seek by arrival and
+    // retry a bounded number of times rather than silently skipping it.
+    if (seek_script_awaiting) {
+      if (std::abs(player.position() - seek_script_target) <= 1.0) {
+        seek_script_awaiting = false;
+        seek_script_attempts = 0;
+        ++seek_script_index;
+      } else if (seek_script_clock.elapsed() - seek_script_issued_ms > 2500) {
+        seek_script_awaiting = false;
+        if (++seek_script_attempts >= 5) {
+          seek_script_attempts = 0;
+          ++seek_script_index;
+        }
+      }
+      return;
+    }
+    if (seek_script_busy)
+      return;
+    const double position = player.position();
+    const double duration = player.duration();
+    const ScriptedSeek &next = seek_script[seek_script_index];
+    if (duration <= 0.0 || !player.playing() || position < next.when)
+      return;
+    const double target = onSeekScriptGrid(std::min(next.target, duration));
+    seek_script_busy = true;
+    // One pointer gesture: press, three motion previews, release-commit. The
+    // delays are the pacing a real drag has, which is what lets the preview
+    // lane actually decode before the exact commit lands.
+    player.beginScrub();
+    player.previewSeekTo(onSeekScriptGrid(std::max(0.0, target - 0.5)));
+    QTimer::singleShot(120, &app, [&, target] {
+      player.previewSeekTo(onSeekScriptGrid(std::max(0.0, target - 0.25)));
+    });
+    QTimer::singleShot(240, &app, [&, target] {
+      player.previewSeekTo(target);
+    });
+    QTimer::singleShot(360, &app, [&, target] {
+      player.endScrub(target);
+      seek_script_target = target;
+      seek_script_issued_ms = seek_script_clock.elapsed();
+      seek_script_awaiting = true;
+      seek_script_busy = false;
+    });
+  };
+  if (!seek_script.empty()) {
+    QObject::connect(&player, &wam::qt::PlayerController::positionChanged, &app,
+                     [&] { advance_seek_script(); });
+  }
+
+  const auto save_if_dirty = [&] {
     remember_tracked_position();
     state_store.state().volume = std::clamp(
         static_cast<int>(std::lround(player.volume() * 100.0)), 0, 100);
     state_store.state().appearance_theme = appearanceTheme(player.appearance());
-    (void)state_store.save();
+    state_store.state().seek_step_seconds = std::clamp(
+        static_cast<int>(std::lround(player.seekStepSeconds())), 1, 60);
+    return !state_store.dirty() || state_store.save();
   };
 
-  QTimer persistence_timer;
-  persistence_timer.setInterval(10'000);
-  QObject::connect(&persistence_timer, &QTimer::timeout, &app, persist_state);
-  QObject::connect(&app, &QCoreApplication::aboutToQuit, &app, persist_state);
+  QObject::connect(&persistence_timer, &QTimer::timeout, &app, [&] {
+    if (persistence_checkpoint.checkpoint(save_if_dirty))
+      persistence_timer.start();
+  });
+  QObject::connect(&app, &QCoreApplication::aboutToQuit, &app, [&] {
+    persistence_timer.stop();
+    (void)persistence_checkpoint.flushNow(save_if_dirty);
+  });
 
-  QQmlApplicationEngine engine;
-  engine.rootContext()->setContextProperty(QStringLiteral("player"), &player);
-  QObject::connect(
-      &engine, &QQmlApplicationEngine::objectCreationFailed, &app,
-      [] { QCoreApplication::exit(2); }, Qt::QueuedConnection);
-  engine.loadFromModule(QStringLiteral("Wam"), QStringLiteral("Main"));
+  int exit_code = 0;
+  {
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty(QStringLiteral("player"), &player);
+    QObject::connect(
+        &engine, &QQmlApplicationEngine::objectCreationFailed, &app,
+        [] { QCoreApplication::exit(2); }, Qt::QueuedConnection);
+    engine.loadFromModule(QStringLiteral("Wam"), QStringLiteral("Main"));
 
-  if (engine.rootObjects().isEmpty())
-    return 2;
-  if (!player.available())
-    return 3;
+    if (engine.rootObjects().isEmpty())
+      return 2;
+    if (!player.available())
+      return 3;
 
-  persistence_timer.start();
+#if defined(Q_OS_MACOS)
+    // The bridge installs the transparent full-size-content titlebar on
+    // construction and stays alive for the QML root window's lifetime so
+    // Main.qml can drive its fade/aspect-ratio/actual-size calls afterward.
+    std::unique_ptr<wam::qt::MacWindowChrome> window_chrome;
+    if (auto *root_window =
+            qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst())) {
+      window_chrome = std::make_unique<wam::qt::MacWindowChrome>(root_window);
+      engine.rootContext()->setContextProperty(
+          QStringLiteral("windowChrome"), window_chrome.get());
+    }
+#endif
 
-  const QUrl media = initialMediaUrl(app);
-  if (!media.isEmpty()) {
-    QTimer::singleShot(0, &player, [&player, media] { player.open(media); });
+    // A malformed on-disk state is dirty so it can be rewritten canonically.
+    // A missing/default state stays completely idle: no timer and no save.
+    if (state_store.dirty()) request_checkpoint();
+
+    const QUrl media = initialMediaUrl(app);
+    if (!media.isEmpty()) {
+      QTimer::singleShot(0, &player, [&player, media] { player.open(media); });
+    }
+
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+    // Warm-open measurement, on the scripted-seek opt-in. Each entry reopens
+    // in the already-running process, so its telemetry lineage is a warm open
+    // with no launch work in the span. Delays are cumulative from the initial
+    // open, which keeps each reopen clear of the previous one's first draw.
+    if (wam::qt::NativeBenchmarkTelemetry::instance().enabled()) {
+      const std::vector<ScriptedOpen> open_script =
+          parseOpenScript(qgetenv("WAM_TEST_REOPEN_SCRIPT"));
+      int cumulative = 0;
+      for (const ScriptedOpen &entry : open_script) {
+        cumulative += entry.delayMilliseconds;
+        const QString path = entry.path;
+        QTimer::singleShot(cumulative, &player, [&player, path] {
+          const QUrl target = mediaUrlFromArgument(path);
+          if (target.isValid())
+            player.open(target);
+        });
+      }
+
+      // Orderly quit for the benchmark harness. Telemetry buffers facts in
+      // memory and commits them at a checkpoint or at the terminal drain, so
+      // a signal-killed process loses every fact recorded after the last
+      // first draw. Quitting through the event loop lets that drain run.
+      bool quit_after_ok = false;
+      const int quit_after =
+          QString::fromLatin1(qgetenv("WAM_TEST_QUIT_AFTER_MS"))
+              .toInt(&quit_after_ok);
+      if (quit_after_ok && quit_after > 0) {
+        QTimer::singleShot(quit_after, &app, [] { QCoreApplication::quit(); });
+      }
+    }
+#endif
+
+    exit_code = app.exec();
   }
 
-  return app.exec();
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+  // The event loop and QML surface are gone, so no later production callsite
+  // can append a playback fact after this terminal stream commit.
+  (void)wam::qt::NativeBenchmarkTelemetry::instance().finish();
+#endif
+  return exit_code;
 }

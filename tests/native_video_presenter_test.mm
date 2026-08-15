@@ -1,21 +1,29 @@
+#define WAM_NATIVE_FRAME_LEASE_TESTING 1
+#define WAM_NATIVE_SURFACE_BUDGET_TESTING 1
 #define WAM_METAL_LAYER_PRESENTER_TESTING 1
-// Compile the presenter into this focused test translation unit so the
-// deterministic exception seams do not exist in wam_macos_native_video. The
-// static linker consequently extracts only the texture-cache implementation
-// from that production archive; the link/symbol check in local validation
-// guards against accidentally pulling a second presenter definition.
+// Compile the accounting implementation and presenter exception seams into
+// this focused test translation unit so neither test-only API exists in
+// wam_macos_native_video. The static linker consequently extracts only the
+// frame/texture-cache implementation from that production archive; the
+// link/symbol check in local validation guards against duplicate definitions.
+#include "platform/macos/native_surface_budget.mm"
 #include "platform/macos/metal_layer_presenter.mm"
 
 #include <CoreFoundation/CoreFoundation.h>
 #include <CoreVideo/CoreVideo.h>
+#include <IOSurface/IOSurface.h>
 
 #import <Metal/Metal.h>
 
+#include <array>
 #include <atomic>
+#include <cstdint>
 #include <cstdlib>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -68,9 +76,168 @@ CVPixelBufferRef createRequiredIOSurfacePixelBuffer(OSType format,
   return creation.buffer;
 }
 
+void resetSurfaceBudget() {
+  WAM_CHECK(wam::macos::NativeSurfaceBudgetTestAccess::reset());
+}
+
+void testFrameLeaseSurfaceBudget(wam::macos::FrameTiming timing) {
+  using wam::macos::FrameLease;
+  using wam::macos::FrameLeaseTestAccess;
+  using wam::macos::NativeSurfaceBudget;
+  using wam::macos::NativeSurfaceBudgetTestAccess;
+  using wam::macos::NativeSurfaceBudgetToken;
+  using wam::macos::kNativeSurfaceBudgetMaximumBytes;
+  using wam::macos::kNativeSurfaceBudgetMaximumSurfaces;
+
+  resetSurfaceBudget();
+  CVPixelBufferRef pixelBuffer = createRequiredIOSurfacePixelBuffer(
+      kCVPixelFormatType_32BGRA, 64, 32);
+  IOSurfaceRef surface = CVPixelBufferGetIOSurface(pixelBuffer);
+  WAM_CHECK(surface != nullptr);
+  const std::uint32_t surfaceID =
+      static_cast<std::uint32_t>(IOSurfaceGetID(surface));
+  const std::uint64_t surfaceBytes =
+      static_cast<std::uint64_t>(IOSurfaceGetAllocSize(surface));
+  WAM_CHECK(surfaceID != 0);
+  WAM_CHECK(surfaceBytes != 0);
+
+  FrameLease original(pixelBuffer, timing);
+  CVPixelBufferRelease(pixelBuffer);
+  WAM_CHECK(original);
+  WAM_CHECK(FrameLeaseTestAccess::surfaceBudgetToken(original));
+  WAM_CHECK(FrameLeaseTestAccess::surfaceBudgetToken(original).surfaceID() ==
+            surfaceID);
+  WAM_CHECK(FrameLeaseTestAccess::surfaceBudgetToken(original).bytes() ==
+            surfaceBytes);
+  auto stats = NativeSurfaceBudget::stats();
+  WAM_CHECK(stats.currentSurfaces == 1);
+  WAM_CHECK(stats.currentBytes == surfaceBytes);
+
+  // Every alias clones the existing publication reference. It never charges
+  // the same IOSurface a second time.
+  FrameLease copied(original);
+  FrameLease assigned;
+  assigned = original;
+  WAM_CHECK(copied);
+  WAM_CHECK(assigned);
+  WAM_CHECK(copied.pixelBuffer() == original.pixelBuffer());
+  WAM_CHECK(assigned.pixelBuffer() == original.pixelBuffer());
+  stats = NativeSurfaceBudget::stats();
+  WAM_CHECK(stats.currentSurfaces == 1);
+  WAM_CHECK(stats.currentBytes == surfaceBytes);
+
+  FrameLease moved(std::move(copied));
+  WAM_CHECK(moved);
+  WAM_CHECK(!copied);
+  WAM_CHECK(copied.pixelBuffer() == nullptr);
+  WAM_CHECK(copied.timing().generation == 0);
+  WAM_CHECK(!FrameLeaseTestAccess::surfaceBudgetToken(copied));
+  FrameLease moveAssigned;
+  moveAssigned = std::move(assigned);
+  WAM_CHECK(moveAssigned);
+  WAM_CHECK(!assigned);
+  WAM_CHECK(assigned.pixelBuffer() == nullptr);
+  WAM_CHECK(assigned.timing().generation == 0);
+  WAM_CHECK(!FrameLeaseTestAccess::surfaceBudgetToken(assigned));
+
+  moved.reset();
+  moveAssigned.reset();
+  WAM_CHECK(NativeSurfaceBudget::stats().currentSurfaces == 1);
+  original.reset();
+  WAM_CHECK(NativeSurfaceBudget::stats().currentSurfaces == 0);
+  WAM_CHECK(NativeSurfaceBudget::stats().currentBytes == 0);
+
+  // A saturated publication makes the copy constructor fail wholly empty. A
+  // copy assignment must provide the stronger guarantee and preserve its
+  // unrelated destination lease.
+  resetSurfaceBudget();
+  CVPixelBufferRef sourceBuffer = createRequiredIOSurfacePixelBuffer(
+      kCVPixelFormatType_32BGRA, 48, 24);
+  CVPixelBufferRef destinationBuffer = createRequiredIOSurfacePixelBuffer(
+      kCVPixelFormatType_32BGRA, 40, 20);
+  FrameLease source(sourceBuffer, timing);
+  FrameLease destination(destinationBuffer,
+                         {CMTimeMake(2, 1), CMTimeMake(1, 1), 19, false});
+  CVPixelBufferRelease(sourceBuffer);
+  CVPixelBufferRelease(destinationBuffer);
+  WAM_CHECK(source);
+  WAM_CHECK(destination);
+  CVPixelBufferRef preservedDestination = destination.pixelBuffer();
+  const std::uint64_t preservedGeneration = destination.timing().generation;
+  WAM_CHECK(NativeSurfaceBudgetTestAccess::forceReferenceCount(
+      FrameLeaseTestAccess::surfaceBudgetToken(source),
+      std::numeric_limits<std::uint32_t>::max()));
+  FrameLease failedCopy(source);
+  WAM_CHECK(!failedCopy);
+  WAM_CHECK(failedCopy.pixelBuffer() == nullptr);
+  WAM_CHECK(failedCopy.timing().generation == 0);
+  WAM_CHECK(!FrameLeaseTestAccess::surfaceBudgetToken(failedCopy));
+  destination = source;
+  WAM_CHECK(destination.pixelBuffer() == preservedDestination);
+  WAM_CHECK(destination.timing().generation == preservedGeneration);
+  WAM_CHECK(NativeSurfaceBudgetTestAccess::forceReferenceCount(
+      FrameLeaseTestAccess::surfaceBudgetToken(source), 1));
+  source.reset();
+  destination.reset();
+  WAM_CHECK(NativeSurfaceBudget::stats().currentSurfaces == 0);
+  WAM_CHECK(NativeSurfaceBudget::stats().currentBytes == 0);
+
+  // Exercise both hard ceilings without allocating the 64 MiB byte ceiling:
+  // accounting-only occupants fill the process budget, then the real
+  // IOSurface constructor must fail before retaining the borrowed buffer.
+  resetSurfaceBudget();
+  CVPixelBufferRef countCandidate = createRequiredIOSurfacePixelBuffer(
+      kCVPixelFormatType_32BGRA, 32, 16);
+  const std::uint32_t countCandidateID = static_cast<std::uint32_t>(
+      IOSurfaceGetID(CVPixelBufferGetIOSurface(countCandidate)));
+  std::array<NativeSurfaceBudgetToken,
+             static_cast<std::size_t>(kNativeSurfaceBudgetMaximumSurfaces)>
+      countOccupants;
+  for (std::size_t index = 0; index < countOccupants.size(); ++index) {
+    std::uint32_t identity =
+        static_cast<std::uint32_t>(0xf0000000U + index);
+    if (identity == countCandidateID || identity == 0) {
+      identity = static_cast<std::uint32_t>(0xe0000000U + index);
+    }
+    countOccupants[index] =
+        NativeSurfaceBudgetTestAccess::tryAcquire(identity, 1);
+    WAM_CHECK(countOccupants[index]);
+  }
+  FrameLease countDenied(countCandidate, timing);
+  WAM_CHECK(!countDenied);
+  WAM_CHECK(countDenied.pixelBuffer() == nullptr);
+  CVPixelBufferRelease(countCandidate);
+  for (NativeSurfaceBudgetToken &token : countOccupants) {
+    token.reset();
+  }
+  WAM_CHECK(NativeSurfaceBudget::stats().currentSurfaces == 0);
+
+  resetSurfaceBudget();
+  CVPixelBufferRef byteCandidate = createRequiredIOSurfacePixelBuffer(
+      kCVPixelFormatType_32BGRA, 32, 16);
+  const std::uint32_t byteCandidateID = static_cast<std::uint32_t>(
+      IOSurfaceGetID(CVPixelBufferGetIOSurface(byteCandidate)));
+  const std::uint32_t accountingIdentity =
+      byteCandidateID == 0xf1000000U ? 0xf1000001U : 0xf1000000U;
+  NativeSurfaceBudgetToken byteOccupant =
+      NativeSurfaceBudgetTestAccess::tryAcquire(
+          accountingIdentity, kNativeSurfaceBudgetMaximumBytes);
+  WAM_CHECK(byteOccupant);
+  FrameLease byteDenied(byteCandidate, timing);
+  WAM_CHECK(!byteDenied);
+  WAM_CHECK(byteDenied.pixelBuffer() == nullptr);
+  CVPixelBufferRelease(byteCandidate);
+  byteOccupant.reset();
+  WAM_CHECK(NativeSurfaceBudget::stats().currentSurfaces == 0);
+  WAM_CHECK(NativeSurfaceBudget::stats().currentBytes == 0);
+}
+
 } // namespace
 
-int main() {
+int main(int argc, char **argv) {
+  const bool surfaceBudgetOnly =
+      argc == 2 && std::string_view(argv[1]) == "--surface-budget-only";
+  WAM_CHECK(argc == 1 || surfaceBudgetOnly);
   static_assert(noexcept(std::declval<wam::macos::MetalLayerPresenter&>()
                              .present(
                                  std::declval<const wam::macos::FrameLease&>(),
@@ -103,11 +270,14 @@ int main() {
   WAM_CHECK(frame.pixelFormat() == kCVPixelFormatType_32BGRA);
   WAM_CHECK(frame.timing().generation == 4);
 
-  // Copies retain only the CoreVideo object; pixel memory is not duplicated.
+  // CPU-backed copies retain only the CoreVideo object; pixel memory is not
+  // duplicated and no IOSurface accounting token is required.
   wam::macos::FrameLease copied = frame;
   frame.reset();
   WAM_CHECK(copied);
   WAM_CHECK(copied.width() == cpuWidth);
+
+  testFrameLeaseSurfaceBudget(timing);
 
   // The decode-to-display handoff has a hard frame bound and rejects stale
   // generations, so seeks and a slow display cannot grow memory indefinitely.
@@ -204,6 +374,19 @@ int main() {
   CVPixelBufferRelease(nv12Buffer);
   WAM_CHECK(nv12Frame.isIOSurfaceBacked());
 
+  // Metal import must treat a failed FrameLease token clone as an atomic
+  // failure; it cannot return textures without retaining their source frame.
+  WAM_CHECK(wam::macos::NativeSurfaceBudgetTestAccess::forceReferenceCount(
+      wam::macos::FrameLeaseTestAccess::surfaceBudgetToken(nv12Frame),
+      std::numeric_limits<std::uint32_t>::max()));
+  auto failedBudgetImport = cache->importFrame(nv12Frame, &error);
+  WAM_CHECK(!failedBudgetImport.has_value());
+  WAM_CHECK(error ==
+            "could not clone decoded-surface accounting token for Metal "
+            "import");
+  WAM_CHECK(wam::macos::NativeSurfaceBudgetTestAccess::forceReferenceCount(
+      wam::macos::FrameLeaseTestAccess::surfaceBudgetToken(nv12Frame), 1));
+
   auto imported = cache->importFrame(nv12Frame, &error);
   WAM_CHECK(imported.has_value());
   WAM_CHECK(error.empty());
@@ -232,6 +415,12 @@ int main() {
   WAM_CHECK(bgraImport->plane(0).metalPixelFormat ==
             static_cast<std::uint64_t>(MTLPixelFormatBGRA8Unorm));
   WAM_CHECK(bgraImport->nativeTexture(0) != nullptr);
+
+  if (surfaceBudgetOnly) {
+    std::cout << "native FrameLease surface-budget and Metal-import checks "
+                 "passed\n";
+    return EXIT_SUCCESS;
+  }
 
   // Every potentially allocating stage in present() must fail closed without
   // leaking either an in-flight slot or a dispatch-group enter. This presenter
@@ -263,11 +452,16 @@ int main() {
         }
         WAM_CHECK(result == wam::macos::MetalPresentResult::Failed);
         WAM_CHECK(!wam::macos::MetalLayerPresenterTestAccess::faultPending());
-        WAM_CHECK(
-            error ==
-            (platformException
-                 ? "Metal presenter rejected a frame after a platform failure"
-                 : "Metal presenter rejected a frame after an internal failure"));
+        const std::string expectedError =
+            platformException
+                ? "Metal presenter rejected a frame after a platform failure"
+                : "Metal presenter rejected a frame after an internal failure";
+        if (error != expectedError) {
+          std::cerr << "unexpected Metal fault diagnostic for point "
+                    << static_cast<int>(point) << ": expected '"
+                    << expectedError << "', got '" << error << "'\n";
+        }
+        WAM_CHECK(error == expectedError);
         const wam::macos::MetalLayerPresenterStats after = presenter->stats();
         WAM_CHECK(after.inFlightFrames == before.inFlightFrames);
         WAM_CHECK(after.completedFrames == before.completedFrames);

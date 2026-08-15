@@ -21,9 +21,11 @@ import os
 import plistlib
 import re
 import signal
+import struct
 import subprocess
 import sys
 import time
+import uuid
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
@@ -34,6 +36,13 @@ DEFAULT_VLC_APP = Path("/Applications/VLC.app")
 DEFAULT_QUICKTIME_APP = Path("/System/Applications/QuickTime Player.app")
 DEFAULT_WINDOW = (1180, 720)
 HELPER_BASENAME = "VTDecoderXPCService"
+NATIVE_TELEMETRY_ENV = "WAM_NATIVE_BENCHMARK_TELEMETRY"
+NATIVE_TELEMETRY_RUN_ID_ENV = "WAM_NATIVE_BENCHMARK_RUN_ID"
+NATIVE_TELEMETRY_ASSET_SHA256_ENV = "WAM_NATIVE_BENCHMARK_ASSET_SHA256"
+NATIVE_TELEMETRY_SCHEMA = "wam.native.benchmark.v1"
+NATIVE_TELEMETRY_FRAMED_SCHEMA = "wam.native.benchmark.v2"
+NATIVE_TELEMETRY_CANDIDATE_ID_ENV = "WAM_NATIVE_BENCHMARK_CANDIDATE_ID"
+NATIVE_PROOF_INELIGIBLE_EXIT = 3
 PS_LSTART_FORMAT = "%a %b %d %H:%M:%S %Y"
 # `ps lstart` is only precise to one second. VLC's re-parented Rosetta peer can
 # therefore land in the next displayed second even though it was created as
@@ -45,6 +54,15 @@ FOREGROUND_SAMPLE_INTERVAL_S = 0.5
 # A missed deadline is itself contamination: once the gap exceeds 2.5 polling
 # periods, the harness can no longer prove that the target remained foreground.
 FOREGROUND_SAMPLE_GAP_FACTOR = 2.5
+DECODER_HELPER_SAMPLE_INTERVAL_S = 0.05
+# The helper proof is requested at 20 Hz. Allow two missed deadlines plus half
+# a period for scheduler jitter; anything larger leaves a material blind spot.
+# WAM_BENCH_HELPER_GAP_NS relaxes the cap for development machines whose
+# process-table read alone exceeds the strict budget; the effective value is
+# recorded in the continuity report, so a relaxed run is always identifiable.
+DECODER_HELPER_MAX_OBSERVATION_GAP_NS = int(
+    os.environ.get("WAM_BENCH_HELPER_GAP_NS", "125000000")
+)
 VLC_FATAL_VIDEO_LOG_PATTERNS = (
     "failed to adapt decoder format to display",
     "video output creation failed",
@@ -57,6 +75,10 @@ _NATIVE_WINDOW_READER: Any | None | bool = None
 
 class SuiteError(RuntimeError):
     """A benchmark setup or validation failure."""
+
+
+class NativeProofIneligible(SuiteError):
+    """The run cannot support a native-performance claim."""
 
 
 @dataclasses.dataclass(frozen=True)
@@ -84,6 +106,7 @@ class ResourceCoalition:
     coalition_id: int
     name: str | None
     bundle_id: str | None
+    active_count: int | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return dataclasses.asdict(self)
@@ -298,10 +321,16 @@ def parse_resource_coalition(raw: str) -> ResourceCoalition:
         value_match = re.search(rf"^\s*{re.escape(label)} = (.+?)\s*$", body, re.MULTILINE)
         return value_match.group(1).strip() if value_match else None
 
+    active_count_match = re.search(
+        r"^\s*active count = (\d+)\s*$", body, re.MULTILINE
+    )
+    if not active_count_match:
+        raise ValueError("resource coalition has no active process count")
     return ResourceCoalition(
         coalition_id=int(id_match.group(1)),
         name=optional_value("name"),
         bundle_id=optional_value("bundle ID"),
+        active_count=int(active_count_match.group(1)),
     )
 
 
@@ -394,6 +423,10 @@ def build_player_command(
     speed: float,
     start_time: float,
     window: tuple[int, int],
+    native_telemetry_path: Path | None = None,
+    native_run_id: str | None = None,
+    native_asset_sha256: str | None = None,
+    native_candidate_id: str | None = None,
 ) -> list[str]:
     if player == "vlc":
         width, height = window
@@ -410,19 +443,64 @@ def build_player_command(
             str(clip),
         ]
     if player == "wam":
+        native_identity = (
+            native_telemetry_path,
+            native_run_id,
+            native_asset_sha256,
+            native_candidate_id,
+        )
+        if any(value is not None for value in native_identity) and not all(
+            value is not None for value in native_identity
+        ):
+            raise SuiteError(
+                "WAM benchmark telemetry path, cryptographic run ID, and asset SHA-256 "
+                "must be supplied together"
+            )
+        if native_asset_sha256 is not None and not re.fullmatch(
+            r"[0-9a-f]{64}", native_asset_sha256
+        ):
+            raise SuiteError("WAM benchmark asset SHA-256 must be 64 lowercase hex digits")
+        if native_candidate_id is not None and not re.fullmatch(
+            r"[0-9a-f]{64}", native_candidate_id
+        ):
+            raise SuiteError("WAM benchmark candidate ID must be 64 lowercase hex digits")
         # LaunchServices gives the benchmark app its own macOS resource
         # coalition. Directly exec'ing WAM from the harness inherits Codex's
         # coalition and makes VideoToolbox helper ownership ambiguous.
-        return [
+        command = [
             "/usr/bin/open",
             "-n",
             "-W",
-            "-a",
-            str(app_bundle_for_executable(executable)),
-            "--args",
-            f"--rate={format_number(speed)}",
-            str(clip),
         ]
+        if native_telemetry_path is not None:
+            # LaunchServices does not reliably inherit arbitrary caller
+            # environment into an application. `open --env` makes this
+            # benchmark-only opt-in explicit, while `--stderr` keeps JSONL
+            # proof separate from ordinary launcher diagnostics.
+            command.extend(
+                [
+                    "--env",
+                    f"{NATIVE_TELEMETRY_ENV}=1",
+                    "--env",
+                    f"{NATIVE_TELEMETRY_RUN_ID_ENV}={native_run_id}",
+                    "--env",
+                    f"{NATIVE_TELEMETRY_ASSET_SHA256_ENV}={native_asset_sha256}",
+                    "--env",
+                    f"{NATIVE_TELEMETRY_CANDIDATE_ID_ENV}={native_candidate_id}",
+                    "--stderr",
+                    str(native_telemetry_path),
+                ]
+            )
+        command.extend(
+            [
+                "-a",
+                str(app_bundle_for_executable(executable)),
+                "--args",
+                f"--rate={format_number(speed)}",
+                str(clip),
+            ]
+        )
+        return command
     # Launch the system app through LaunchServices, as Finder does. On current
     # macOS releases invoking QuickTime's bundle executable directly can be
     # killed before AppKit finishes launching. `-n` creates a fresh instance
@@ -1080,6 +1158,367 @@ def partition_new_helpers_by_coalition(
     return owned, unrelated
 
 
+class DecoderHelperContinuityTracker:
+    """Prove the exact decoder-helper set for every measurement observation.
+
+    A helper's PID alone is not identity: PID reuse with a new process start is
+    recorded as contamination. The ever-seen set is retained independently of
+    the final process table, so a late same-coalition helper cannot escape the
+    proof merely by exiting before end validation.
+    """
+
+    def __init__(
+        self,
+        before: Mapping[int, ProcessIdentity],
+        main_identity: ProcessIdentity,
+        expected_helpers: Sequence[ProcessIdentity],
+        target_coalition_id: int,
+        *,
+        require_helper: bool,
+        table_reader: Callable[[], Mapping[int, ProcessIdentity]] = process_table,
+        coalition_reader: Callable[[int], ResourceCoalition] = process_resource_coalition,
+        clock_ns: Callable[[], int] = time.monotonic_ns,
+        maximum_observation_gap_ns: int = DECODER_HELPER_MAX_OBSERVATION_GAP_NS,
+    ) -> None:
+        if maximum_observation_gap_ns <= 0:
+            raise ValueError("maximum helper observation gap must be positive")
+        expected_by_pid: dict[int, ProcessIdentity] = {}
+        exact_keys: set[tuple[int, str, str]] = set()
+        for identity in expected_helpers:
+            key = (
+                identity.pid,
+                identity.started,
+                _normalized_executable(identity.executable),
+            )
+            if identity.pid in expected_by_pid or key in exact_keys:
+                raise SuiteError("decoder helper identities must be unique by PID and start")
+            if os.path.basename(identity.executable) != HELPER_BASENAME:
+                raise SuiteError(
+                    f"PID {identity.pid} is not an exact {HELPER_BASENAME} identity"
+                )
+            expected_by_pid[identity.pid] = identity
+            exact_keys.add(key)
+
+        self._before_helpers = helper_processes(before)
+        self.main_identity = main_identity
+        self.expected_helpers = expected_by_pid
+        self.target_coalition_id = target_coalition_id
+        self.require_helper = require_helper
+        self._table_reader = table_reader
+        self._coalition_reader = coalition_reader
+        self._clock_ns = clock_ns
+        self.maximum_observation_gap_ns = maximum_observation_gap_ns
+        self._samples: list[dict[str, Any]] = []
+        self._violation_keys: set[tuple[Any, ...]] = set()
+        self._violations: list[dict[str, Any]] = []
+        self._ever_same_coalition: dict[tuple[int, str, str], dict[str, Any]] = {}
+
+    @staticmethod
+    def _identity_key(identity: ProcessIdentity) -> tuple[int, str, str]:
+        return (
+            identity.pid,
+            identity.started,
+            _normalized_executable(identity.executable),
+        )
+
+    def _record_violation(
+        self,
+        reason: str,
+        sample_index: int,
+        identity: ProcessIdentity | None = None,
+        detail: str | None = None,
+    ) -> None:
+        key = (
+            reason,
+            identity.pid if identity is not None else None,
+            identity.started if identity is not None else None,
+            identity.executable if identity is not None else None,
+            detail,
+        )
+        if key in self._violation_keys:
+            return
+        self._violation_keys.add(key)
+        item: dict[str, Any] = {
+            "reason": reason,
+            "first_observed_sample": sample_index,
+        }
+        if identity is not None:
+            item["process"] = identity.as_dict()
+        if detail is not None:
+            item["detail"] = detail
+        self._violations.append(item)
+
+    def sample(self) -> dict[str, Any]:
+        observed_at_ns = self._clock_ns()
+        sample_index = len(self._samples)
+        sample: dict[str, Any] = {
+            "sample": sample_index,
+            "monotonic_ns": observed_at_ns,
+            "main_process": None,
+            "main_resource_coalition": None,
+            "helpers": [],
+            "unrelated_helpers": [],
+            "coalition_active_count_check": None,
+            "violations": [],
+        }
+        violations_before = len(self._violations)
+        if self._samples:
+            previous_ns = int(self._samples[-1]["monotonic_ns"])
+            gap_ns = observed_at_ns - previous_ns
+            if gap_ns <= 0 or gap_ns > self.maximum_observation_gap_ns:
+                self._record_violation(
+                    "decoder_helper_observation_gap",
+                    sample_index,
+                    detail=(
+                        f"observed {gap_ns}ns, maximum "
+                        f"{self.maximum_observation_gap_ns}ns"
+                    ),
+                )
+        try:
+            current = dict(self._table_reader())
+        except Exception as error:
+            self._record_violation(
+                "process_table_query_failed", sample_index, detail=str(error)
+            )
+            sample["violations"] = self._violations[violations_before:]
+            self._samples.append(sample)
+            return sample
+
+        observed_main = current.get(self.main_identity.pid)
+        sample["main_process"] = (
+            observed_main.as_dict() if observed_main is not None else None
+        )
+        if observed_main is None:
+            self._record_violation("main_process_missing", sample_index)
+        elif not same_identity(self.main_identity, observed_main):
+            self._record_violation(
+                "main_process_identity_changed", sample_index, observed_main
+            )
+        else:
+            try:
+                main_coalition = self._coalition_reader(observed_main.pid)
+            except Exception as error:
+                self._record_violation(
+                    "main_process_coalition_query_failed",
+                    sample_index,
+                    observed_main,
+                    str(error),
+                )
+            else:
+                sample["main_resource_coalition"] = main_coalition.as_dict()
+                if main_coalition.coalition_id != self.target_coalition_id:
+                    self._record_violation(
+                        "main_process_coalition_changed",
+                        sample_index,
+                        observed_main,
+                        detail=(
+                            f"observed {main_coalition.coalition_id}, expected "
+                            f"{self.target_coalition_id}"
+                        ),
+                    )
+
+        current_helpers = helper_processes(current)
+        for pid, expected in self.expected_helpers.items():
+            observed = current_helpers.get(pid)
+            if observed is None:
+                self._record_violation("decoder_helper_missing", sample_index, expected)
+
+        for pid, observed in current_helpers.items():
+            expected = self.expected_helpers.get(pid)
+            exact_expected_identity = (
+                expected is not None and same_identity(expected, observed)
+            )
+            if expected is not None and not exact_expected_identity:
+                self._record_violation(
+                    "decoder_helper_identity_changed",
+                    sample_index,
+                    observed,
+                    detail=f"expected start {expected.started!r}",
+                )
+            before_identity = self._before_helpers.get(pid)
+            try:
+                coalition = self._coalition_reader(pid)
+            except Exception as error:
+                self._record_violation(
+                    "decoder_helper_coalition_query_failed",
+                    sample_index,
+                    observed,
+                    str(error),
+                )
+                continue
+            evidence = {
+                "process": observed.as_dict(),
+                "resource_coalition": coalition.as_dict(),
+                "expected_at_measurement_start": exact_expected_identity,
+            }
+            if coalition.coalition_id == self.target_coalition_id:
+                sample["helpers"].append(evidence)
+                self._ever_same_coalition[self._identity_key(observed)] = evidence
+                if not exact_expected_identity:
+                    reason = (
+                        "preexisting_same_coalition_decoder_helper"
+                        if before_identity is not None
+                        and same_identity(before_identity, observed)
+                        else "late_same_coalition_decoder_helper"
+                    )
+                    self._record_violation(reason, sample_index, observed)
+            else:
+                sample["unrelated_helpers"].append(evidence)
+                if expected is not None:
+                    self._record_violation(
+                        "decoder_helper_coalition_changed",
+                        sample_index,
+                        observed,
+                        detail=(
+                            f"observed {coalition.coalition_id}, expected "
+                            f"{self.target_coalition_id}"
+                        ),
+                    )
+
+        sample["helpers"].sort(key=lambda item: item["process"]["pid"])
+        sample["unrelated_helpers"].sort(
+            key=lambda item: item["process"]["pid"]
+        )
+        expected_active_count = 1 + len(sample["helpers"])
+        active_count_observations: list[dict[str, Any]] = []
+        main_resource_coalition = sample["main_resource_coalition"]
+        if (
+            isinstance(main_resource_coalition, Mapping)
+            and main_resource_coalition.get("coalition_id")
+            == self.target_coalition_id
+            and observed_main is not None
+        ):
+            active_count_observations.append(
+                {
+                    "role": "app",
+                    "process": observed_main.as_dict(),
+                    "active_count": main_resource_coalition.get("active_count"),
+                }
+            )
+        active_count_observations.extend(
+            {
+                "role": "decoder_helper",
+                "process": evidence["process"],
+                "active_count": evidence["resource_coalition"].get(
+                    "active_count"
+                ),
+            }
+            for evidence in sample["helpers"]
+        )
+        for observation in active_count_observations:
+            identity_value = observation["process"]
+            identity = ProcessIdentity(
+                pid=int(identity_value["pid"]),
+                ppid=int(identity_value["ppid"]),
+                started=str(identity_value["started"]),
+                executable=str(identity_value["executable"]),
+            )
+            active_count = observation["active_count"]
+            if active_count is None:
+                self._record_violation(
+                    "resource_coalition_active_count_missing",
+                    sample_index,
+                    identity,
+                )
+            elif not isinstance(active_count, int) or isinstance(
+                active_count, bool
+            ):
+                self._record_violation(
+                    "resource_coalition_active_count_invalid",
+                    sample_index,
+                    identity,
+                    detail=f"observed {active_count!r}",
+                )
+            elif active_count > expected_active_count:
+                self._record_violation(
+                    "resource_coalition_surplus_member",
+                    sample_index,
+                    identity,
+                    detail=(
+                        f"active count {active_count}, exact app-plus-helper "
+                        f"count {expected_active_count}"
+                    ),
+                )
+            elif active_count < expected_active_count:
+                self._record_violation(
+                    "resource_coalition_active_count_mismatch",
+                    sample_index,
+                    identity,
+                    detail=(
+                        f"active count {active_count}, exact app-plus-helper "
+                        f"count {expected_active_count}"
+                    ),
+                )
+        sample["coalition_active_count_check"] = {
+            "expected_active_count": expected_active_count,
+            "observations": active_count_observations,
+            "all_observations_present": len(active_count_observations)
+            == expected_active_count,
+            "all_match": bool(active_count_observations)
+            and len(active_count_observations) == expected_active_count
+            and all(
+                isinstance(observation["active_count"], int)
+                and not isinstance(observation["active_count"], bool)
+                and observation["active_count"] == expected_active_count
+                for observation in active_count_observations
+            ),
+        }
+        sample["violations"] = self._violations[violations_before:]
+        self._samples.append(sample)
+        return sample
+
+    def report(self) -> dict[str, Any]:
+        if self.require_helper and not self.expected_helpers:
+            self._record_violation(
+                "no_same_coalition_decoder_helper_at_measurement_start", 0
+            )
+        if not self._samples:
+            self._record_violation("no_measurement_helper_observations", 0)
+        expected = sorted(
+            (identity.as_dict() for identity in self.expected_helpers.values()),
+            key=lambda item: item["pid"],
+        )
+        ever_seen = sorted(
+            self._ever_same_coalition.values(),
+            key=lambda item: (
+                item["process"]["pid"],
+                item["process"]["started"],
+            ),
+        )
+        return {
+            "valid": not self._violations,
+            "required_for_player": self.require_helper,
+            "maximum_observation_gap_ns": self.maximum_observation_gap_ns,
+            "target_coalition_id": self.target_coalition_id,
+            "expected_helpers": expected,
+            "expected_helper_count": len(expected),
+            "exact_identity_fields": ["pid", "started", "executable"],
+            "sample_count": len(self._samples),
+            "requested_observation_interval_ns": int(
+                DECODER_HELPER_SAMPLE_INTERVAL_S * 1_000_000_000
+            ),
+            "maximum_observation_gap_ns": self.maximum_observation_gap_ns,
+            "ever_seen_same_coalition_helpers": ever_seen,
+            "violations": list(self._violations),
+            "samples": list(self._samples),
+        }
+
+
+def require_clean_decoder_helper_continuity(report: Mapping[str, Any]) -> None:
+    if report.get("valid") is True:
+        return
+    violations = report.get("violations", ())
+    reasons = sorted(
+        {
+            str(item.get("reason"))
+            for item in violations
+            if isinstance(item, Mapping) and item.get("reason")
+        }
+    )
+    detail = ", ".join(reasons) if reasons else "proof unavailable"
+    raise SuiteError(f"decoder helper continuity proof failed: {detail}")
+
+
 def discover_companion_players_during_warmup(
     before: Mapping[int, ProcessIdentity],
     main_identity: ProcessIdentity,
@@ -1526,9 +1965,9 @@ def render_telemetry_availability(player: str) -> dict[str, Any]:
 
     reasons = {
         "wam": (
-            "The current standalone libmpv WAM build does not expose mpv's renderer "
-            "frame counters outside the process. No debug IPC or extra logging is "
-            "enabled during a benchmark because that would change runtime configuration."
+            "Decoded/presented/dropped-frame counters are not exported. WAM benchmark "
+            "launches separately request the env-gated native JSONL route and exact "
+            "FrameDrawn proof stream; a run without that proof is ineligible."
         ),
         "vlc": (
             "VLC's normal macOS AppleScript interface does not expose decoded, presented, "
@@ -1548,6 +1987,893 @@ def render_telemetry_availability(player: str) -> dict[str, Any]:
         "reason": reasons[player],
         "playback_configuration_changed_for_telemetry": False,
     }
+
+
+def parse_wam_native_telemetry(raw: str) -> dict[str, Any]:
+    """Parse WAM's opt-in JSONL without treating unrelated stderr as proof."""
+
+    if NATIVE_TELEMETRY_FRAMED_SCHEMA in raw:
+        return _parse_framed_wam_native_telemetry(raw)
+
+    required_integer_fields = (
+        "monotonic_ns",
+        "source_key",
+        "attempt",
+        "serial",
+        "generation",
+        "gesture",
+        "request",
+        "draw_sequence",
+        "process_id",
+        "process_start_abstime",
+    )
+    events: list[dict[str, Any]] = []
+    parse_errors: list[str] = []
+    ignored_line_count = 0
+    for line_number, raw_line in enumerate(raw.splitlines(), start=1):
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError:
+            # `open --stderr` owns the file, so ordinary Qt/AppKit diagnostics
+            # can share it. They are retained in the artifact but can never be
+            # mistaken for structured route proof.
+            ignored_line_count += 1
+            continue
+        if not isinstance(value, Mapping) or value.get("schema") != NATIVE_TELEMETRY_SCHEMA:
+            ignored_line_count += 1
+            continue
+
+        errors: list[str] = []
+        event_name = value.get("event")
+        if not isinstance(event_name, str) or not event_name:
+            errors.append("event must be a non-empty string")
+        route = value.get("route")
+        if route not in {"undecided", "native", "fallback"}:
+            errors.append("route must be undecided, native, or fallback")
+        if not isinstance(value.get("route_proof"), bool):
+            errors.append("route_proof must be boolean")
+        if not isinstance(value.get("libmpv_initialized"), bool):
+            errors.append("libmpv_initialized must be boolean")
+        for field in required_integer_fields:
+            number = value.get(field)
+            if not isinstance(number, int) or isinstance(number, bool) or number < 0:
+                errors.append(f"{field} must be a nonnegative integer")
+        run_id = value.get("run_id")
+        try:
+            normalized_run_id = str(uuid.UUID(run_id)) if isinstance(run_id, str) else None
+        except ValueError:
+            normalized_run_id = None
+        if normalized_run_id is None or normalized_run_id != run_id.lower():
+            errors.append("run_id must be a canonical UUID")
+        if value.get("process_id", 0) <= 0:
+            errors.append("process_id must be positive")
+        if value.get("process_start_abstime", 0) <= 0:
+            errors.append("process_start_abstime must be positive")
+        asset_sha256 = value.get("asset_sha256")
+        if not isinstance(asset_sha256, str) or re.fullmatch(
+            r"[0-9a-f]{64}", asset_sha256
+        ) is None:
+            errors.append("asset_sha256 must be 64 lowercase hex digits")
+        target = value.get("target_seconds")
+        if target is not None and (
+            not isinstance(target, (int, float))
+            or isinstance(target, bool)
+            or not math.isfinite(float(target))
+        ):
+            errors.append("target_seconds must be null or finite")
+        if errors:
+            parse_errors.append(f"line {line_number}: " + "; ".join(errors))
+            continue
+
+        events.append(
+            {
+                "line": line_number,
+                "schema": NATIVE_TELEMETRY_SCHEMA,
+                "event": event_name,
+                "monotonic_ns": value["monotonic_ns"],
+                "route": route,
+                "route_proof": value["route_proof"],
+                "source_key": value["source_key"],
+                "attempt": value["attempt"],
+                "serial": value["serial"],
+                "generation": value["generation"],
+                "gesture": value["gesture"],
+                "request": value["request"],
+                "draw_sequence": value["draw_sequence"],
+                "target_seconds": target,
+                "libmpv_initialized": value["libmpv_initialized"],
+                "run_id": run_id,
+                "process_id": value["process_id"],
+                "process_start_abstime": value["process_start_abstime"],
+                "asset_sha256": asset_sha256,
+            }
+        )
+
+    return {
+        "schema": NATIVE_TELEMETRY_SCHEMA,
+        "framing_schema": "legacy_uncommitted",
+        "stream_complete": False,
+        "candidate_id": None,
+        "matching_event_count": len(events),
+        "ignored_line_count": ignored_line_count,
+        "parse_errors": parse_errors,
+        "events": events,
+    }
+
+
+def _native_identity(value: Mapping[str, Any]) -> tuple[Any, ...]:
+    return (
+        value.get("run_id"),
+        value.get("process_id"),
+        value.get("process_start_abstime"),
+        value.get("asset_sha256"),
+        value.get("candidate_id"),
+    )
+
+
+def _exact_nonnegative_integer(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def _exact_positive_integer(value: Any) -> bool:
+    return _exact_nonnegative_integer(value) and value > 0
+
+
+def _validate_framed_identity(
+    value: Mapping[str, Any], line_number: int, errors: list[str]
+) -> tuple[Any, ...] | None:
+    run_id = value.get("run_id")
+    try:
+        normalized = str(uuid.UUID(run_id)) if isinstance(run_id, str) else None
+    except ValueError:
+        normalized = None
+    if normalized is None or normalized != str(run_id).lower():
+        errors.append(f"line {line_number}: run_id must be a canonical UUID")
+    process_id = value.get("process_id")
+    if not _exact_positive_integer(process_id):
+        errors.append(f"line {line_number}: process_id must be positive")
+    start = value.get("process_start_abstime")
+    if not _exact_positive_integer(start):
+        errors.append(f"line {line_number}: process_start_abstime must be positive")
+    for field in ("asset_sha256", "candidate_id"):
+        token = value.get(field)
+        if not isinstance(token, str) or re.fullmatch(r"[0-9a-f]{64}", token) is None:
+            errors.append(
+                f"line {line_number}: {field} must be 64 lowercase hex digits"
+            )
+    return _native_identity(value) if not errors else None
+
+
+def _validate_framed_event(
+    value: Mapping[str, Any], line_number: int, errors: list[str]
+) -> dict[str, Any] | None:
+    required_integer_fields = (
+        "batch",
+        "event_sequence",
+        "monotonic_ns",
+        "source_key",
+        "attempt",
+        "serial",
+        "generation",
+        "gesture",
+        "request",
+        "draw_sequence",
+        "process_id",
+        "process_start_abstime",
+    )
+    row_errors: list[str] = []
+    event_name = value.get("event")
+    if not isinstance(event_name, str) or not event_name:
+        row_errors.append("event must be a non-empty string")
+    route = value.get("route")
+    if route not in {"undecided", "native", "fallback"}:
+        row_errors.append("route must be undecided, native, or fallback")
+    if not isinstance(value.get("route_proof"), bool):
+        row_errors.append("route_proof must be boolean")
+    if not isinstance(value.get("libmpv_initialized"), bool):
+        row_errors.append("libmpv_initialized must be boolean")
+    for field in required_integer_fields:
+        number = value.get(field)
+        if not _exact_nonnegative_integer(number):
+            row_errors.append(f"{field} must be a nonnegative integer")
+    target = value.get("target_seconds")
+    if target is not None and (
+        not isinstance(target, (int, float))
+        or isinstance(target, bool)
+        or not math.isfinite(float(target))
+    ):
+        row_errors.append("target_seconds must be null or finite")
+    identity_errors: list[str] = []
+    _validate_framed_identity(value, line_number, identity_errors)
+    row_errors.extend(
+        message.split(": ", 1)[1] if ": " in message else message
+        for message in identity_errors
+    )
+    if row_errors:
+        errors.append(f"line {line_number}: " + "; ".join(row_errors))
+        return None
+    return {
+        "line": line_number,
+        "schema": NATIVE_TELEMETRY_FRAMED_SCHEMA,
+        "event": event_name,
+        "event_sequence": value["event_sequence"],
+        "batch": value["batch"],
+        "monotonic_ns": value["monotonic_ns"],
+        "route": route,
+        "route_proof": value["route_proof"],
+        "source_key": value["source_key"],
+        "attempt": value["attempt"],
+        "serial": value["serial"],
+        "generation": value["generation"],
+        "gesture": value["gesture"],
+        "request": value["request"],
+        "draw_sequence": value["draw_sequence"],
+        "target_seconds": target,
+        "libmpv_initialized": value["libmpv_initialized"],
+        "run_id": value["run_id"],
+        "process_id": value["process_id"],
+        "process_start_abstime": value["process_start_abstime"],
+        "asset_sha256": value["asset_sha256"],
+        "candidate_id": value["candidate_id"],
+    }
+
+
+def _parse_framed_wam_native_telemetry(raw: str) -> dict[str, Any]:
+    """Validate v2 batch framing and expose only a terminally committed stream."""
+
+    records: list[tuple[int, str, Mapping[str, Any]]] = []
+    parse_errors: list[str] = []
+    ignored_line_count = 0
+    if raw and not raw.endswith("\n"):
+        parse_errors.append("framed telemetry ends with a partial final line")
+    last_nonempty_line_number = 0
+    for line_number, raw_line in enumerate(raw.splitlines(), start=1):
+        line = raw_line.strip()
+        if not line:
+            continue
+        last_nonempty_line_number = line_number
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError as error:
+            if NATIVE_TELEMETRY_FRAMED_SCHEMA in line:
+                parse_errors.append(
+                    f"line {line_number}: truncated or malformed framed record: {error.msg}"
+                )
+            else:
+                ignored_line_count += 1
+            continue
+        if not isinstance(value, Mapping) or value.get("schema") != NATIVE_TELEMETRY_FRAMED_SCHEMA:
+            ignored_line_count += 1
+            continue
+        if raw_line != line:
+            parse_errors.append(
+                f"line {line_number}: framed records may not have surrounding whitespace"
+            )
+        records.append((line_number, line + "\n", value))
+
+    identity: tuple[Any, ...] | None = None
+    committed_events: list[dict[str, Any]] = []
+    provisional_events: list[dict[str, Any]] = []
+    expected_batch = 1
+    expected_event_sequence = 1
+    chain = bytes(32)
+    stream_commit_seen = False
+    stream_commit_line_number: int | None = None
+    cursor = 0
+
+    if not records:
+        parse_errors.append("framed telemetry has no matching records")
+    else:
+        line_number, _, header = records[0]
+        if (
+            header.get("record") != "stream_header"
+            or not _exact_nonnegative_integer(header.get("format_version"))
+            or header.get("format_version") != 2
+        ):
+            parse_errors.append(
+                f"line {line_number}: first framed record must be the v2 stream header"
+            )
+        else:
+            identity_errors: list[str] = []
+            identity = _validate_framed_identity(header, line_number, identity_errors)
+            parse_errors.extend(identity_errors)
+        cursor = 1
+
+    while cursor < len(records) and not stream_commit_seen:
+        line_number, _, value = records[cursor]
+        record_type = value.get("record")
+        if record_type == "stream_commit":
+            stream_commit_seen = True
+            stream_commit_line_number = line_number
+            if identity is None or _native_identity(value) != identity:
+                parse_errors.append(f"line {line_number}: stream commit identity changed")
+            expected_count = expected_event_sequence - 1
+            expected_first = 0 if expected_count == 0 else 1
+            expected_chain = chain.hex()
+            exact = {
+                "batch_count": expected_batch - 1,
+                "event_count": expected_count,
+                "first_sequence": expected_first,
+                "last_sequence": expected_count,
+                "chain_sha256": expected_chain,
+            }
+            for field, wanted in exact.items():
+                observed = value.get(field)
+                if (
+                    field != "chain_sha256"
+                    and not _exact_nonnegative_integer(observed)
+                ) or observed != wanted:
+                    parse_errors.append(
+                        f"line {line_number}: stream commit {field} does not match {wanted!r}"
+                    )
+            cursor += 1
+            break
+        if record_type != "batch_begin":
+            parse_errors.append(
+                f"line {line_number}: expected batch_begin or stream_commit"
+            )
+            cursor += 1
+            continue
+        if identity is None or _native_identity(value) != identity:
+            parse_errors.append(f"line {line_number}: batch identity changed")
+        count = value.get("event_count")
+        first = value.get("first_sequence")
+        last = value.get("last_sequence")
+        batch_value = value.get("batch")
+        if (
+            not _exact_positive_integer(count)
+            or not _exact_positive_integer(batch_value)
+            or not _exact_positive_integer(first)
+            or not _exact_positive_integer(last)
+            or batch_value != expected_batch
+            or first != expected_event_sequence
+            or last != expected_event_sequence + count - 1
+            or value.get("previous_chain_sha256") != chain.hex()
+        ):
+            parse_errors.append(f"line {line_number}: invalid batch framing metadata")
+            break
+        cursor += 1
+        raw_payload = bytearray()
+        batch_events: list[dict[str, Any]] = []
+        for offset in range(count):
+            if cursor >= len(records):
+                parse_errors.append(
+                    f"batch {expected_batch}: truncated before event {offset + 1}"
+                )
+                break
+            event_line_number, event_line, event_value = records[cursor]
+            if event_value.get("record") != "event":
+                parse_errors.append(
+                    f"line {event_line_number}: expected event {offset + 1} of batch {expected_batch}"
+                )
+                break
+            parsed_event = _validate_framed_event(
+                event_value, event_line_number, parse_errors
+            )
+            if (
+                parsed_event is None
+                or event_value.get("batch") != expected_batch
+                or event_value.get("event_sequence")
+                != expected_event_sequence + offset
+                or identity is None
+                or _native_identity(event_value) != identity
+            ):
+                parse_errors.append(
+                    f"line {event_line_number}: event does not match its batch identity/sequence"
+                )
+            else:
+                batch_events.append(parsed_event)
+            raw_payload.extend(event_line.encode("utf-8"))
+            cursor += 1
+        if len(batch_events) != count or cursor >= len(records):
+            break
+        commit_line_number, _, commit = records[cursor]
+        payload_digest = hashlib.sha256(raw_payload).digest()
+        chain_hasher = hashlib.sha256()
+        chain_hasher.update(chain)
+        chain_hasher.update(payload_digest)
+        chain_hasher.update(struct.pack(">QQQQ", expected_batch, count, first, last))
+        next_chain = chain_hasher.digest()
+        commit_integers_are_exact = all(
+            _exact_positive_integer(commit.get(field))
+            for field in ("batch", "event_count", "first_sequence", "last_sequence")
+        )
+        if (
+            commit.get("record") != "batch_commit"
+            or not commit_integers_are_exact
+            or commit.get("batch") != expected_batch
+            or commit.get("event_count") != count
+            or commit.get("first_sequence") != first
+            or commit.get("last_sequence") != last
+            or commit.get("payload_sha256") != payload_digest.hex()
+            or commit.get("chain_sha256") != next_chain.hex()
+            or identity is None
+            or _native_identity(commit) != identity
+        ):
+            parse_errors.append(
+                f"line {commit_line_number}: batch commit does not match its exact payload"
+            )
+            break
+        provisional_events.extend(batch_events)
+        chain = next_chain
+        expected_event_sequence += count
+        expected_batch += 1
+        cursor += 1
+
+    if stream_commit_seen and cursor != len(records):
+        line_number = records[cursor][0]
+        parse_errors.append(
+            f"line {line_number}: framed record appears after terminal stream commit"
+        )
+    if (
+        stream_commit_line_number is not None
+        and last_nonempty_line_number > stream_commit_line_number
+    ):
+        parse_errors.append(
+            f"line {last_nonempty_line_number}: bytes appear after terminal stream commit"
+        )
+    stream_complete = stream_commit_seen and not parse_errors
+    if stream_complete:
+        committed_events = provisional_events
+    return {
+        "schema": NATIVE_TELEMETRY_FRAMED_SCHEMA,
+        "framing_schema": NATIVE_TELEMETRY_FRAMED_SCHEMA,
+        "stream_complete": stream_complete,
+        "stream_status": (
+            "complete"
+            if stream_complete
+            else ("invalid" if parse_errors else "provisional")
+        ),
+        "stream_chain_sha256": chain.hex() if stream_complete else None,
+        "candidate_id": identity[4] if identity is not None else None,
+        "matching_event_count": len(committed_events),
+        "provisional_event_count": len(provisional_events),
+        "ignored_line_count": ignored_line_count,
+        "parse_errors": parse_errors,
+        "events": committed_events,
+        "provisional_events": provisional_events,
+    }
+
+
+def read_wam_native_telemetry(path: Path) -> dict[str, Any]:
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return {
+            "schema": NATIVE_TELEMETRY_SCHEMA,
+            "artifact": str(path),
+            "availability": "missing",
+            "matching_event_count": 0,
+            "ignored_line_count": 0,
+            "parse_errors": [],
+            "events": [],
+        }
+    except (OSError, UnicodeError) as error:
+        return {
+            "schema": NATIVE_TELEMETRY_SCHEMA,
+            "artifact": str(path),
+            "availability": "unreadable",
+            "error": str(error),
+            "matching_event_count": 0,
+            "ignored_line_count": 0,
+            "parse_errors": [],
+            "events": [],
+        }
+    parsed = parse_wam_native_telemetry(raw)
+    parsed["artifact"] = str(path)
+    if parsed["matching_event_count"] or parsed.get("provisional_event_count", 0):
+        parsed["availability"] = "available"
+    elif raw:
+        parsed["availability"] = "no_matching_events"
+    else:
+        parsed["availability"] = "empty"
+    return parsed
+
+
+def _matching_native_sessions(events: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    sessions: list[dict[str, Any]] = []
+    open_indices = [
+        index for index, event in enumerate(events) if event.get("event") == "open_requested"
+    ]
+    for open_position, open_index in enumerate(open_indices):
+        opened = events[open_index]
+        if opened.get("source_key", 0) <= 0 or opened.get("monotonic_ns", 0) <= 0:
+            continue
+        next_open = (
+            open_indices[open_position + 1]
+            if open_position + 1 < len(open_indices)
+            else len(events)
+        )
+        selected_candidates = [
+            (index, events[index])
+            for index in range(open_index + 1, next_open)
+            if events[index].get("event") == "native_selected"
+            and events[index].get("route") == "native"
+            and events[index].get("route_proof") is True
+            and events[index].get("source_key") == opened.get("source_key")
+            and events[index].get("attempt", 0) > 0
+            and events[index].get("serial", 0) > 0
+            and events[index].get("generation", 0) > 0
+            and events[index].get("monotonic_ns", 0)
+            >= opened.get("monotonic_ns", 0)
+        ]
+        matched: dict[str, Any] | None = None
+        for selected_index, selected in selected_candidates:
+            drawn = next(
+                (
+                    event
+                    for event in events[selected_index + 1 : next_open]
+                    if event.get("event") == "first_frame_drawn"
+                    and event.get("route") == "native"
+                    and event.get("attempt") == selected.get("attempt")
+                    and event.get("generation") == selected.get("generation")
+                    # Prepare reserves the generation at route selection, but
+                    # Start/SetRunState legitimately advance the exact command
+                    # serial before the covering draw proof. Require forward
+                    # progress in the same attempt/generation rather than the
+                    # impossible equality used by the old harness.
+                    and event.get("serial", 0) > selected.get("serial", 0)
+                    and event.get("draw_sequence", 0) > 0
+                    and event.get("monotonic_ns", 0) >= selected.get("monotonic_ns", 0)
+                ),
+                None,
+            )
+            if drawn is None:
+                continue
+            open_ns = int(opened["monotonic_ns"])
+            draw_ns = int(drawn["monotonic_ns"])
+            if draw_ns < open_ns:
+                continue
+            matched = {
+                "open_ordinal": open_position + 1,
+                "source_key": opened["source_key"],
+                "attempt": selected["attempt"],
+                # Keep serial as the selection serial for result-schema
+                # compatibility while exposing both exact command identities.
+                "serial": selected["serial"],
+                "native_selected_serial": selected["serial"],
+                "first_frame_drawn_serial": drawn["serial"],
+                "generation": selected["generation"],
+                "open_requested_monotonic_ns": open_ns,
+                "native_selected_monotonic_ns": selected["monotonic_ns"],
+                "first_frame_drawn_monotonic_ns": draw_ns,
+                "draw_sequence": drawn["draw_sequence"],
+                "open_request_to_first_draw_ms": (draw_ns - open_ns) / 1_000_000.0,
+            }
+            break
+        if matched is not None:
+            sessions.append(matched)
+    return sessions
+
+
+def summarize_wam_native_proof(
+    parsed: Mapping[str, Any],
+    launch_request_monotonic_ns: int,
+    expected_run_id: str | None = None,
+    expected_process_id: int | None = None,
+    expected_process_start_abstime: int | None = None,
+    expected_asset_sha256: str | None = None,
+    expected_candidate_id: str | None = None,
+    *,
+    require_stream_complete: bool = True,
+) -> dict[str, Any]:
+    stream_complete = parsed.get("stream_complete") is True
+    is_v2 = parsed.get("schema") == NATIVE_TELEMETRY_FRAMED_SCHEMA
+    event_key = (
+        "events"
+        if stream_complete or not is_v2
+        else "provisional_events"
+    )
+    events = [
+        event for event in parsed.get(event_key, ()) if isinstance(event, Mapping)
+    ]
+    sessions = _matching_native_sessions(events)
+    identities = {
+        (
+            event.get("run_id"),
+            event.get("process_id"),
+            event.get("process_start_abstime"),
+        )
+        for event in events
+    }
+    observed_identity = next(iter(identities)) if len(identities) == 1 else None
+    identity_matches = bool(observed_identity)
+    if observed_identity is not None:
+        identity_matches = (
+            (expected_run_id is None or observed_identity[0] == expected_run_id)
+            and (
+                expected_process_id is None
+                or observed_identity[1] == expected_process_id
+            )
+            and (
+                expected_process_start_abstime is None
+                or observed_identity[2] == expected_process_start_abstime
+            )
+        )
+    asset_tokens = {event.get("asset_sha256") for event in events}
+    observed_asset_sha256 = (
+        next(iter(asset_tokens)) if len(asset_tokens) == 1 else None
+    )
+    asset_identity_matches = bool(observed_asset_sha256)
+    if observed_asset_sha256 is not None:
+        asset_identity_matches = (
+            expected_asset_sha256 is None
+            or observed_asset_sha256 == expected_asset_sha256
+        )
+    candidate_tokens = {
+        event.get("candidate_id")
+        for event in events
+        if event.get("candidate_id") is not None
+    }
+    observed_candidate_id = (
+        next(iter(candidate_tokens)) if len(candidate_tokens) == 1 else None
+    )
+    candidate_identity_matches = bool(observed_candidate_id)
+    if observed_candidate_id is not None:
+        candidate_identity_matches = (
+            expected_candidate_id is None
+            or observed_candidate_id == expected_candidate_id
+        )
+    initial_open_index = next(
+        (
+            index
+            for index, event in enumerate(events)
+            if event.get("event") == "open_requested"
+        ),
+        None,
+    )
+    initial_open = (
+        events[initial_open_index] if initial_open_index is not None else None
+    )
+    initial_open_end = (
+        next(
+            (
+                index
+                for index in range(initial_open_index + 1, len(events))
+                if events[index].get("event") == "open_requested"
+            ),
+            len(events),
+        )
+        if initial_open_index is not None
+        else 0
+    )
+    initial_segment = (
+        events[initial_open_index + 1 : initial_open_end]
+        if initial_open_index is not None
+        else []
+    )
+    trial_events = (
+        events[initial_open_index:]
+        if initial_open_index is not None
+        else []
+    )
+    native_selected_events = [
+        event
+        for event in initial_segment
+        if event.get("event") == "native_selected"
+        and event.get("route") == "native"
+        and event.get("route_proof") is True
+        and initial_open is not None
+        and event.get("source_key") == initial_open.get("source_key")
+        and event.get("attempt", 0) > 0
+        and event.get("serial", 0) > 0
+        and event.get("generation", 0) > 0
+        and event.get("monotonic_ns", 0) >= initial_open.get("monotonic_ns", 0)
+    ]
+    all_fallback_events = [
+        event for event in events if event.get("event") == "fallback_selected"
+    ]
+    # The benchmark contract is process-trial wide after the first observed
+    # open: any well-formed route proof for compatibility fallback invalidates
+    # the measurement, including a later open or a transition after steady
+    # collection began. Pre-open or non-proof fallback-shaped records remain
+    # diagnostic and cannot poison an otherwise exact trial.
+    fallback_events = [
+        event
+        for event in (
+            events[initial_open_index + 1 :]
+            if initial_open_index is not None
+            else []
+        )
+        if event.get("event") == "fallback_selected"
+        and event.get("route") == "fallback"
+        and event.get("route_proof") is True
+        and event.get("source_key", 0) > 0
+        and event.get("attempt", 0) > 0
+        and event.get("serial", 0) > 0
+        and initial_open is not None
+        and event.get("monotonic_ns", 0) >= initial_open.get("monotonic_ns", 0)
+    ]
+    unrelated_fallback_events = [
+        event for event in all_fallback_events if event not in fallback_events
+    ]
+    # A native performance trial is process-wide after its first open. A
+    # later open, scrub, seek, or playback event that observes libmpv already
+    # initialized invalidates the same run just as decisively as the initial
+    # frame lineage does.
+    libmpv_never_initialized = bool(trial_events) and all(
+        event.get("libmpv_initialized") is False for event in trial_events
+    )
+    initial = next(
+        (session for session in sessions if session["open_ordinal"] == 1), None
+    )
+    warm = next(
+        (session for session in sessions if session["open_ordinal"] == 2), None
+    )
+    cold_latency_ms: float | None = None
+    if initial is not None:
+        cold_latency_ms = (
+            int(initial["first_frame_drawn_monotonic_ns"])
+            - launch_request_monotonic_ns
+        ) / 1_000_000.0
+    warm_latency_ms = (
+        float(warm["open_request_to_first_draw_ms"])
+        if warm is not None
+        else None
+    )
+
+    required_evidence = {
+        "native_selected": bool(native_selected_events),
+        "first_frame_drawn": initial is not None,
+        "no_fallback_selected": bool(trial_events) and not fallback_events,
+        "libmpv_never_initialized": libmpv_never_initialized,
+        "single_process_identity": len(identities) == 1,
+        "expected_process_identity": identity_matches,
+        "single_asset_identity": len(asset_tokens) == 1,
+        "expected_asset_identity": asset_identity_matches,
+        "single_candidate_identity": is_v2 and len(candidate_tokens) == 1,
+        "expected_candidate_identity": is_v2 and candidate_identity_matches,
+        "terminal_stream_commit": stream_complete,
+    }
+    reasons: list[str] = []
+    availability = parsed.get("availability")
+    if availability != "available":
+        reasons.append(f"native telemetry is {availability or 'unavailable'}")
+    if parsed.get("parse_errors"):
+        reasons.append("native telemetry contains invalid schema-matching events")
+    if require_stream_complete and (not is_v2 or not stream_complete):
+        reasons.append("native telemetry has no valid terminal stream commit")
+    if len(identities) != 1:
+        reasons.append("native telemetry does not have one exact run/process/start identity")
+    elif not identity_matches:
+        reasons.append("native telemetry run/process/start identity does not match the launched WAM")
+    if len(asset_tokens) != 1:
+        reasons.append("native telemetry does not have one exact asset SHA-256 identity")
+    elif not asset_identity_matches:
+        reasons.append("native telemetry asset SHA-256 does not match the launched clip bytes")
+    if is_v2 and len(candidate_tokens) != 1:
+        reasons.append("native telemetry does not have one exact candidate identity")
+    elif is_v2 and not candidate_identity_matches:
+        reasons.append("native telemetry candidate identity does not match the launched WAM")
+    if not required_evidence["native_selected"]:
+        reasons.append("no matching native_selected route proof was observed")
+    if not required_evidence["first_frame_drawn"]:
+        reasons.append("no matching exact first_frame_drawn proof was observed")
+    if fallback_events:
+        reasons.append("fallback_selected was observed after the trial's initial open")
+    if not libmpv_never_initialized:
+        reasons.append("libmpv_initialized=true was observed after the trial's initial open")
+    if cold_latency_ms is not None and cold_latency_ms < 0:
+        reasons.append("first_frame_drawn predates the harness launch request clock")
+
+    provisional_reasons = [
+        reason
+        for reason in reasons
+        if reason != "native telemetry has no valid terminal stream commit"
+    ]
+    provisional_eligible = not provisional_reasons
+    eligible = is_v2 and stream_complete and not provisional_reasons
+    return {
+        "status": (
+            "eligible"
+            if eligible
+            else ("provisional" if provisional_eligible else "ineligible")
+        ),
+        "eligible": eligible,
+        "provisional_eligible": provisional_eligible,
+        "route": "native" if initial is not None and not fallback_events else (
+            "fallback" if fallback_events else "unproven"
+        ),
+        "required_evidence": required_evidence,
+        "process_identity": (
+            {
+                "run_id": observed_identity[0],
+                "process_id": observed_identity[1],
+                "process_start_abstime": observed_identity[2],
+            }
+            if observed_identity is not None
+            else None
+        ),
+        "asset_identity": (
+            {"sha256": observed_asset_sha256}
+            if observed_asset_sha256 is not None
+            else None
+        ),
+        "candidate_identity": (
+            {"sha256": observed_candidate_id}
+            if observed_candidate_id is not None
+            else None
+        ),
+        "stream_complete": stream_complete,
+        "provisional": not stream_complete,
+        "libmpv_never_initialized": libmpv_never_initialized,
+        "reasons": reasons,
+        "latencies": {
+            # Python time.monotonic_ns and C++ steady_clock both use the
+            # process-independent macOS monotonic clock in this suite.
+            "cold_request_to_first_draw_ms": cold_latency_ms,
+            "open_request_to_first_draw_ms": (
+                float(initial["open_request_to_first_draw_ms"])
+                if initial is not None
+                else None
+            ),
+            "warm_request_to_first_draw_ms": warm_latency_ms,
+            "warm_measurement_available": warm is not None,
+        },
+        "sessions": sessions,
+        "fallback_events": fallback_events,
+        "unrelated_fallback_events": unrelated_fallback_events,
+        "telemetry": dict(parsed),
+    }
+
+
+def wait_for_wam_native_proof(
+    path: Path,
+    launch_request_monotonic_ns: int,
+    timeout: float,
+    expected_run_id: str | None = None,
+    expected_process_id: int | None = None,
+    expected_process_start_abstime: int | None = None,
+    expected_asset_sha256: str | None = None,
+    expected_candidate_id: str | None = None,
+) -> dict[str, Any]:
+    deadline = time.monotonic() + timeout
+    report = summarize_wam_native_proof(
+        read_wam_native_telemetry(path),
+        launch_request_monotonic_ns,
+        expected_run_id,
+        expected_process_id,
+        expected_process_start_abstime,
+        expected_asset_sha256,
+        expected_candidate_id,
+        require_stream_complete=False,
+    )
+    while not report["provisional_eligible"] and time.monotonic() < deadline:
+        if report["fallback_events"] or report["telemetry"]["parse_errors"]:
+            break
+        time.sleep(0.05)
+        report = summarize_wam_native_proof(
+            read_wam_native_telemetry(path),
+            launch_request_monotonic_ns,
+            expected_run_id,
+            expected_process_id,
+            expected_process_start_abstime,
+            expected_asset_sha256,
+            expected_candidate_id,
+            require_stream_complete=False,
+        )
+    return report
+
+
+def require_wam_native_proof(report: Mapping[str, Any]) -> None:
+    if report.get("eligible") is True:
+        return
+    reasons = report.get("reasons")
+    detail = "; ".join(str(reason) for reason in reasons) if reasons else "proof unavailable"
+    raise NativeProofIneligible(f"WAM native benchmark is ineligible: {detail}")
+
+
+def require_wam_native_provisional_proof(report: Mapping[str, Any]) -> None:
+    if report.get("provisional_eligible") is True and report.get("provisional") is True:
+        return
+    reasons = report.get("reasons")
+    detail = "; ".join(str(reason) for reason in reasons) if reasons else "proof unavailable"
+    raise NativeProofIneligible(
+        f"WAM live native checkpoint is ineligible: {detail}"
+    )
 
 
 def require_clock_progress(
@@ -1674,7 +3000,10 @@ def run_with_periodic_callback(
     callback: Callable[[], Any],
     poll_interval_s: float = 0.1,
 ) -> subprocess.CompletedProcess[str]:
-    """Run a quiet child while servicing a read-only validity sampler."""
+    """Run a quiet child while servicing a fixed-deadline read-only sampler."""
+
+    if not math.isfinite(poll_interval_s) or poll_interval_s <= 0:
+        raise ValueError("poll interval must be finite and positive")
 
     process = subprocess.Popen(
         list(command),
@@ -1684,18 +3013,33 @@ def run_with_periodic_callback(
         text=True,
         close_fds=True,
     )
-    deadline = time.monotonic() + timeout
+    started = time.monotonic()
+    deadline = started + timeout
+    next_callback = started
     try:
         while process.poll() is None:
-            callback()
-            remaining = deadline - time.monotonic()
+            now = time.monotonic()
+            remaining = deadline - now
             if remaining <= 0:
                 process.kill()
                 stdout, stderr = process.communicate()
                 raise subprocess.TimeoutExpired(
                     list(command), timeout, output=stdout, stderr=stderr
                 )
-            time.sleep(min(poll_interval_s, remaining))
+            if now < next_callback:
+                time.sleep(min(next_callback - now, remaining))
+                continue
+
+            callback()
+            next_callback += poll_interval_s
+            callback_ended = time.monotonic()
+            if callback_ended > next_callback:
+                # Preserve a fixed 20 Hz deadline grid without issuing bursts
+                # of back-to-back process-table queries after a slow sample.
+                missed = math.floor(
+                    (callback_ended - next_callback) / poll_interval_s
+                ) + 1
+                next_callback += missed * poll_interval_s
         stdout, stderr = process.communicate()
         callback()
         return subprocess.CompletedProcess(
@@ -1745,6 +3089,66 @@ def terminate_exact(identity: ProcessIdentity, timeout: float = 10.0) -> dict[st
     }
 
 
+def quit_exact_wam_orderly(
+    identity: ProcessIdentity,
+    *,
+    bundle_id: str = "com.wesleymaa.wam",
+    timeout: float = 10.0,
+) -> dict[str, Any]:
+    """Ask the one exact WAM instance to quit so aboutToQuit can commit proof."""
+
+    try:
+        current = process_table().get(identity.pid)
+    except SuiteError as error:
+        return {"pid": identity.pid, "status": "not_requested", "error": str(error)}
+    if current is None:
+        return {"pid": identity.pid, "status": "already_exited"}
+    if not same_identity(identity, current):
+        return {"pid": identity.pid, "status": "identity_changed_not_requested"}
+    script = r'''
+on run argv
+    set expectedPid to (item 1 of argv) as integer
+    set expectedBundleId to item 2 of argv
+    tell application "System Events"
+        set matches to every application process whose unix id is expectedPid
+        if (count of matches) is not 1 then error "exact WAM process unavailable"
+        set targetProcess to item 1 of matches
+        if bundle identifier of targetProcess is not expectedBundleId then error "bundle identity changed"
+        tell targetProcess to perform action "AXPress" of menu item "Quit WAM" of menu 1 of menu bar item "WAM" of menu bar 1
+    end tell
+end run
+'''
+    result = _osascript(script, timeout=min(timeout, 3.0), arguments=(str(identity.pid), bundle_id))
+    if result.returncode != 0:
+        return {
+            "pid": identity.pid,
+            "status": "orderly_quit_not_requested",
+            "error": result.stderr.strip() or f"osascript status {result.returncode}",
+        }
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            observed = process_table().get(identity.pid)
+        except SuiteError as error:
+            return {
+                "pid": identity.pid,
+                "status": "orderly_quit_sent_unverified",
+                "error": str(error),
+            }
+        if observed is None:
+            return {"pid": identity.pid, "status": "exited_after_orderly_quit"}
+        if not same_identity(identity, observed):
+            return {
+                "pid": identity.pid,
+                "status": "exited_or_identity_changed_after_orderly_quit",
+            }
+        time.sleep(0.05)
+    return {
+        "pid": identity.pid,
+        "status": "still_running_after_orderly_quit",
+    }
+
+
 def helper_exit_status(identities: Sequence[ProcessIdentity], timeout: float = 5.0) -> list[dict[str, Any]]:
     if not identities:
         return []
@@ -1775,16 +3179,61 @@ def _json_write(path: Path, value: Any) -> None:
 
 
 def _clip_metadata(clip: Path) -> dict[str, Any]:
-    stat = clip.stat()
     digest = hashlib.sha256()
+    byte_count = 0
     with clip.open("rb") as stream:
+        before = os.fstat(stream.fileno())
         for block in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(block)
+            byte_count += len(block)
+        after = os.fstat(stream.fileno())
+    path_after = clip.stat()
+    stable_fields = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
+    if any(getattr(before, field) != getattr(after, field) for field in stable_fields):
+        raise SuiteError("benchmark clip changed while its exact bytes were hashed")
+    if any(getattr(after, field) != getattr(path_after, field) for field in stable_fields):
+        raise SuiteError("benchmark clip path was replaced while its exact bytes were hashed")
+    if byte_count != after.st_size:
+        raise SuiteError("benchmark clip byte count changed while hashing")
     return {
         "path": str(clip),
-        "bytes": stat.st_size,
-        "mtime_ns": stat.st_mtime_ns,
+        "bytes": byte_count,
+        "mtime_ns": after.st_mtime_ns,
         "sha256": digest.hexdigest(),
+    }
+
+
+def _executable_candidate_token(executable: Path) -> dict[str, Any]:
+    """Bind telemetry to the exact entrypoint bytes; campaign proof is stronger."""
+
+    digest = hashlib.sha256()
+    byte_count = 0
+    with executable.open("rb") as stream:
+        before = os.fstat(stream.fileno())
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+            byte_count += len(block)
+        after = os.fstat(stream.fileno())
+    path_after = executable.stat()
+    stable_fields = ("st_dev", "st_ino", "st_mode", "st_uid", "st_gid", "st_size", "st_mtime_ns", "st_ctime_ns")
+    if any(getattr(before, field) != getattr(after, field) for field in stable_fields):
+        raise SuiteError("WAM executable changed while its telemetry token was hashed")
+    if any(getattr(after, field) != getattr(path_after, field) for field in stable_fields):
+        raise SuiteError("WAM executable path changed while its telemetry token was hashed")
+    if byte_count != after.st_size:
+        raise SuiteError("WAM executable byte count changed while hashing")
+    return {
+        "scope": "executable_entrypoint_bytes_only",
+        "sha256": digest.hexdigest(),
+        "bytes": byte_count,
+        "device": after.st_dev,
+        "inode": after.st_ino,
+        "mtime_ns": after.st_mtime_ns,
+        "ctime_ns": after.st_ctime_ns,
+        "release_gate_note": (
+            "correlation token only; shipping additionally requires the immutable "
+            "whole-bundle AppIdentity campaign join"
+        ),
     }
 
 
@@ -1798,11 +3247,16 @@ def _merge_orchestration(output: Path, orchestration: Mapping[str, Any]) -> None
 
 
 def artifact_paths(output: Path, player: str) -> dict[str, Path]:
-    return {
+    paths = {
         "sidecar": output.with_name(f"{output.stem}.orchestration.json"),
         "launch_log": output.with_name(f"{output.stem}.{player}.launch.log"),
         "raw_top": output.with_name(f"{output.stem}.top.txt"),
     }
+    if player == "wam":
+        paths["native_telemetry"] = output.with_name(
+            f"{output.stem}.wam.native.jsonl"
+        )
+    return paths
 
 
 def _assert_artifacts_are_new(output: Path, artifacts: Mapping[str, Path]) -> None:
@@ -1832,6 +3286,16 @@ def run_suite(args: argparse.Namespace) -> int:
     artifacts = artifact_paths(args.output, args.player)
     _assert_artifacts_are_new(args.output, artifacts)
 
+    # Hash the exact resolved bytes before LaunchServices is asked to open
+    # them. This token is propagated independently of the display name/path,
+    # so relabeling a different asset cannot satisfy native route proof.
+    clip_identity = _clip_metadata(clip)
+    candidate_token = (
+        _executable_candidate_token(executable)
+        if args.player == "wam"
+        else None
+    )
+
     before = process_table()
     already_running = matching_executable(before, executable)
     if already_running:
@@ -1840,15 +3304,26 @@ def run_suite(args: argparse.Namespace) -> int:
             f"{args.player} is already running as PID(s) {pids}; quit it first so automation cannot touch user playback"
         )
 
+    native_run_id = str(uuid.uuid4()) if args.player == "wam" else None
     command = build_player_command(
-        args.player, executable, clip, args.speed, args.start_time, args.window
+        args.player,
+        executable,
+        clip,
+        args.speed,
+        args.start_time,
+        args.window,
+        artifacts.get("native_telemetry"),
+        native_run_id,
+        clip_identity["sha256"] if args.player == "wam" else None,
+        candidate_token["sha256"] if candidate_token is not None else None,
     )
     orchestration: dict[str, Any] = {
         "schema": "wam.macos.orchestration.v1",
         "started_at": utc_now(),
         "player": args.player,
         "clip_id": args.clip_id or clip.stem,
-        "clip": _clip_metadata(clip),
+        "clip": dict(clip_identity),
+        "telemetry_candidate_token": candidate_token,
         "requested": {
             "speed": args.speed,
             "start_time_s": args.start_time,
@@ -1861,6 +3336,12 @@ def run_suite(args: argparse.Namespace) -> int:
             "command": command,
             "executable": str(executable),
             "log": str(artifacts["launch_log"]),
+            "expected_native_run_id": native_run_id,
+            "asset_identity": {
+                "canonical_path": str(clip),
+                "bytes": clip_identity["bytes"],
+                "sha256": clip_identity["sha256"],
+            },
         },
         "render_telemetry": render_telemetry_availability(args.player),
         "warnings": [],
@@ -1873,9 +3354,15 @@ def run_suite(args: argparse.Namespace) -> int:
     companions: dict[int, ProcessIdentity] = {}
     target_coalition: ResourceCoalition | None = None
     validity_tracker: ForegroundWindowValidityTracker | None = None
+    helper_continuity: DecoderHelperContinuityTracker | None = None
+    orderly_wam_quit: dict[str, Any] | None = None
     failure: BaseException | None = None
     collector_returncode: int | None = None
     try:
+        launch_request_monotonic_ns = time.monotonic_ns()
+        orchestration["launch"]["requested_at"] = utc_now()
+        orchestration["launch"]["request_monotonic_ns"] = launch_request_monotonic_ns
+        _json_write(artifacts["sidecar"], orchestration)
         launch = launch_player(command, executable, before, artifacts["launch_log"], args.launch_timeout)
         orchestration["launch"]["main_process"] = launch.identity.as_dict()
         target_coalition = process_resource_coalition(launch.identity.pid)
@@ -1901,6 +3388,39 @@ def run_suite(args: argparse.Namespace) -> int:
                 launch.identity.pid, args.window, args.launch_timeout
             )
             orchestration["validation_before_warmup"] = {"wam": wam_initial}
+            native_startup = wait_for_wam_native_proof(
+                artifacts["native_telemetry"],
+                launch_request_monotonic_ns,
+                args.launch_timeout,
+                expected_run_id=native_run_id,
+                expected_process_id=launch.identity.pid,
+                expected_asset_sha256=clip_identity["sha256"],
+                expected_candidate_id=candidate_token["sha256"],
+            )
+            process_identity = native_startup.get("process_identity")
+            if not isinstance(process_identity, Mapping):
+                raise NativeProofIneligible(
+                    "WAM native benchmark is ineligible: telemetry process identity unavailable"
+                )
+            orchestration["launch"]["telemetry_process_identity"] = dict(
+                process_identity
+            )
+            native_startup["measurement"] = {
+                "scope": "fresh LaunchServices request through exact native FrameDrawn",
+                "began_before_launch": True,
+                "launch_request_monotonic_ns": launch_request_monotonic_ns,
+                "cross_process_clock": (
+                    "macOS process-independent monotonic clock: Python monotonic_ns "
+                    "to C++ steady_clock"
+                ),
+                "warm_open_note": (
+                    "null unless a second in-process open_requested/native-selected/"
+                    "first-frame-drawn lineage is present"
+                ),
+            }
+            orchestration["native_startup"] = native_startup
+            _json_write(artifacts["sidecar"], orchestration)
+            require_wam_native_provisional_proof(native_startup)
         elif args.player == "quicktime":
             quicktime_initial = configure_quicktime(
                 clip.name,
@@ -2017,8 +3537,24 @@ def run_suite(args: argparse.Namespace) -> int:
         if not start_validation["lsof"]["media_open"]:
             raise SuiteError("the exact benchmark clip was not open at measurement start")
 
+        helper_continuity = DecoderHelperContinuityTracker(
+            before,
+            launch.identity,
+            live_helpers,
+            target_coalition.coalition_id,
+            require_helper=args.player == "wam",
+        )
+        helper_continuity.sample()
+        initial_helper_continuity = helper_continuity.report()
+        orchestration["decoder_helper_continuity"] = initial_helper_continuity
+        require_clean_decoder_helper_continuity(initial_helper_continuity)
+
         validity_tracker.begin_phase("measurement")
         playback_validation_started = time.monotonic()
+
+        def sample_measurement_validity() -> None:
+            validity_tracker.sample_if_due()
+            helper_continuity.sample()
 
         collector_command = build_collector_command(
             collector,
@@ -2036,7 +3572,8 @@ def run_suite(args: argparse.Namespace) -> int:
         collected = run_with_periodic_callback(
             collector_command,
             timeout=args.duration + 180.0,
-            callback=validity_tracker.sample_if_due,
+            callback=sample_measurement_validity,
+            poll_interval_s=DECODER_HELPER_SAMPLE_INTERVAL_S,
         )
         validity_tracker.end_phase()
         foreground_validity = validity_tracker.report()
@@ -2058,6 +3595,9 @@ def run_suite(args: argparse.Namespace) -> int:
         if not args.output.is_file():
             raise SuiteError("collector reported success but did not create its result JSON")
         require_clean_foreground_validity(foreground_validity, "measurement")
+        helper_continuity_report = helper_continuity.report()
+        orchestration["decoder_helper_continuity"] = helper_continuity_report
+        require_clean_decoder_helper_continuity(helper_continuity_report)
 
         end_table = process_table()
         end_validation: dict[str, Any] = {
@@ -2099,6 +3639,34 @@ def run_suite(args: argparse.Namespace) -> int:
             end_state = wam_window_state(launch.identity.pid)
             require_expected_wam_window_state(end_state, args.window)
             end_validation["wam"] = end_state
+            final_native_proof = summarize_wam_native_proof(
+                read_wam_native_telemetry(artifacts["native_telemetry"]),
+                launch_request_monotonic_ns,
+                native_run_id,
+                launch.identity.pid,
+                int(
+                    orchestration["launch"]["telemetry_process_identity"][
+                        "process_start_abstime"
+                    ]
+                ),
+                clip_identity["sha256"],
+                candidate_token["sha256"],
+                require_stream_complete=False,
+            )
+            final_native_proof["measurement"] = orchestration["native_startup"][
+                "measurement"
+            ]
+            final_native_proof["validated_after_measurement"] = True
+            orchestration["native_startup"] = final_native_proof
+            end_validation["native_route_proof"] = {
+                "eligible": final_native_proof["eligible"],
+                "route": final_native_proof["route"],
+                "required_evidence": final_native_proof["required_evidence"],
+                "libmpv_never_initialized": final_native_proof[
+                    "libmpv_never_initialized"
+                ],
+            }
+            require_wam_native_provisional_proof(final_native_proof)
         elif args.player == "quicktime" and end_validation["main_process_alive"]:
             end_state = quicktime_state(clip.name)
             require_expected_player_state(
@@ -2128,6 +3696,17 @@ def run_suite(args: argparse.Namespace) -> int:
         end_validation["launch_log"] = require_viable_video_output(
             args.player, artifacts["launch_log"]
         )
+        ending_clip_identity = _clip_metadata(clip)
+        end_validation["asset_identity"] = {
+            "canonical_path": str(clip),
+            "bytes": ending_clip_identity["bytes"],
+            "sha256": ending_clip_identity["sha256"],
+        }
+        if (
+            ending_clip_identity["bytes"] != clip_identity["bytes"]
+            or ending_clip_identity["sha256"] != clip_identity["sha256"]
+        ):
+            raise SuiteError("benchmark clip bytes changed after the prelaunch asset hash")
         orchestration["validation_at_measurement_end"] = end_validation
         if not end_validation["main_process_alive"]:
             raise SuiteError("player exited before measurement finished")
@@ -2145,6 +3724,15 @@ def run_suite(args: argparse.Namespace) -> int:
         failure = error
         orchestration["error"] = {"type": type(error).__name__, "message": str(error)}
     finally:
+        if helper_continuity is not None:
+            try:
+                orchestration["decoder_helper_continuity"] = (
+                    helper_continuity.report()
+                )
+            except BaseException as helper_error:
+                orchestration["warnings"].append(
+                    f"could not finalize decoder-helper continuity report: {helper_error}"
+                )
         if validity_tracker is not None:
             try:
                 validity_tracker.end_phase()
@@ -2173,8 +3761,35 @@ def run_suite(args: argparse.Namespace) -> int:
                 orchestration["warnings"].append(
                     f"could not complete final companion-process sweep: {cleanup_error}"
                 )
+            orderly_exit_proven = False
+            forced_cleanup_used = False
+            if args.player == "wam" and failure is None:
+                orderly_wam_quit = quit_exact_wam_orderly(
+                    launch.identity, timeout=args.launch_timeout
+                )
+                orderly_exit_proven = (
+                    orderly_wam_quit.get("status")
+                    == "exited_after_orderly_quit"
+                )
+                if not orderly_exit_proven:
+                    failure = NativeProofIneligible(
+                        "WAM did not complete an exact orderly quit; terminal "
+                        "telemetry commit cannot be trusted"
+                    )
+
+            # SIGTERM is never part of a qualifying WAM run. It is retained
+            # solely as best-effort cleanup after an earlier failure or an
+            # orderly-quit failure, and that fact is explicit in the artifact.
+            if args.player == "wam" and orderly_exit_proven:
+                main_cleanup = orderly_wam_quit
+            else:
+                main_cleanup = terminate_exact(launch.identity)
+                forced_cleanup_used = args.player == "wam"
             orchestration["termination"] = {
-                "main": terminate_exact(launch.identity),
+                "main": main_cleanup,
+                "orderly_quit": orderly_wam_quit,
+                "orderly_exit_proven": orderly_exit_proven,
+                "sigterm_is_nongating_cleanup_fallback": forced_cleanup_used,
                 "companions": [
                     terminate_exact(identity)
                     for identity in sorted(companions.values(), key=lambda item: item.pid)
@@ -2187,6 +3802,56 @@ def run_suite(args: argparse.Namespace) -> int:
                 pass
             orchestration["termination"]["launcher_returncode"] = launch.process.poll()
             launch.log_file.close()
+            if args.player == "wam" and orderly_exit_proven:
+                try:
+                    terminal_native_proof = summarize_wam_native_proof(
+                        read_wam_native_telemetry(artifacts["native_telemetry"]),
+                        launch_request_monotonic_ns,
+                        native_run_id,
+                        launch.identity.pid,
+                        int(
+                            orchestration["launch"]["telemetry_process_identity"][
+                                "process_start_abstime"
+                            ]
+                        ),
+                        clip_identity["sha256"],
+                        candidate_token["sha256"],
+                        require_stream_complete=True,
+                    )
+                    terminal_native_proof["measurement"] = orchestration[
+                        "native_startup"
+                    ]["measurement"]
+                    terminal_native_proof["validated_after_orderly_exit"] = True
+                    orchestration["native_startup"] = terminal_native_proof
+                    orchestration["termination"]["terminal_stream_commit"] = {
+                        "eligible": terminal_native_proof["eligible"],
+                        "stream_complete": terminal_native_proof["stream_complete"],
+                        "candidate_identity": terminal_native_proof[
+                            "candidate_identity"
+                        ],
+                        "reasons": terminal_native_proof["reasons"],
+                    }
+                    if terminal_native_proof.get("eligible") is not True:
+                        failure = NativeProofIneligible(
+                            "WAM terminal native proof is ineligible: "
+                            + "; ".join(terminal_native_proof.get("reasons", ()))
+                        )
+                except BaseException as terminal_error:
+                    orchestration["termination"]["terminal_stream_commit"] = {
+                        "eligible": False,
+                        "stream_complete": False,
+                        "error": str(terminal_error),
+                    }
+                    failure = NativeProofIneligible(
+                        "WAM terminal native proof could not be validated after "
+                        f"orderly exit: {terminal_error}"
+                    )
+            elif args.player == "wam":
+                orchestration["termination"]["terminal_stream_commit"] = {
+                    "eligible": False,
+                    "stream_complete": False,
+                    "reason": "exact orderly exit was not proven",
+                }
         orchestration["ended_at"] = utc_now()
         _json_write(artifacts["sidecar"], orchestration)
         if args.output.is_file():
@@ -2198,6 +3863,8 @@ def run_suite(args: argparse.Namespace) -> int:
 
     if failure is not None:
         if isinstance(failure, KeyboardInterrupt):
+            raise failure
+        if isinstance(failure, NativeProofIneligible):
             raise failure
         raise SuiteError(str(failure)) from failure
     return 0 if collector_returncode == 0 else 2
@@ -2239,6 +3906,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     except KeyboardInterrupt:
         print("benchmark interrupted; exact spawned process cleanup was attempted", file=sys.stderr)
         return 130
+    except NativeProofIneligible as error:
+        print(f"run_suite.py: {error}", file=sys.stderr)
+        return NATIVE_PROOF_INELIGIBLE_EXIT
     except SuiteError as error:
         print(f"run_suite.py: {error}", file=sys.stderr)
         return 2

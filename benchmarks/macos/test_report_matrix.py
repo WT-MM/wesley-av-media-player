@@ -270,6 +270,43 @@ class AggregateTests(ReportFixture):
         self.assertEqual(values["footprint_peak_mib"], 300.0)
         self.assertEqual(values["footprint_shared_adjusted_mib"], 700.0)
 
+    def test_native_startup_latency_is_reported_and_missing_warm_stays_na(self):
+        result = result_payload(
+            "case-a",
+            cpu=1,
+            power=2,
+            memory_mib=3,
+            footprint_current_mib=4,
+            footprint_peak_mib=5,
+            footprint_shared_mib=6,
+            context_switches=7,
+            faults=8,
+            pageins=9,
+        )
+        result["orchestration"] = {
+            "native_startup": {
+                "latencies": {
+                    "cold_request_to_first_draw_ms": 240.0,
+                    "open_request_to_first_draw_ms": 80.0,
+                    "warm_request_to_first_draw_ms": None,
+                }
+            }
+        }
+        relative = Path("results") / "native-startup.json"
+        self.write_json(relative, result)
+        path = self.write_manifest(
+            manifest([trial("case-a", "wam", 1, "completed", relative)])
+        )
+        snapshot = report_matrix.build_report(path)
+        row = self.row(snapshot, "case-a", "wam")
+        self.assertEqual(row["cold_request_to_first_draw_ms"].median, 240.0)
+        self.assertEqual(row["open_request_to_first_draw_ms"].median, 80.0)
+        self.assertEqual(row["warm_request_to_first_draw_ms"].count, 0)
+        self.assertIn("warm_request_to_first_draw_ms", [
+            metric.key for metric in snapshot.metrics
+        ])
+        self.assertIn("Warm N/A", report_matrix.markdown_text(snapshot))
+
 
 class LiveAndFailureTests(ReportFixture):
     def test_partial_live_manifest_preserves_failure_pending_and_unsupported_rows(self):
@@ -329,6 +366,25 @@ class LiveAndFailureTests(ReportFixture):
         self.assertEqual(csv_row["cpu_percent_median"], "")
         self.assertNotIn("process_gpu_counter_rate_median", csv_row)
         self.assertIn("N/A", report_matrix.markdown_text(snapshot))
+
+    def test_native_proof_ineligibility_remains_explicit(self):
+        path = self.write_manifest(
+            manifest(
+                [
+                    trial(
+                        "case-a",
+                        "wam",
+                        1,
+                        "n/a",
+                        reason="ineligible",
+                        detail="native route proof absent",
+                    )
+                ]
+            )
+        )
+        row = self.row(report_matrix.build_report(path), "case-a", "wam")
+        self.assertEqual(row["observed_support"], "ineligible")
+        self.assertIn("ineligible: native route proof absent", row["issues"])
 
     def test_preparing_manifest_with_no_trials_is_safe(self):
         path = self.write_manifest(manifest([], state="preparing"))

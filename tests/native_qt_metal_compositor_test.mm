@@ -30,6 +30,19 @@
 #include <memory>
 #include <set>
 #include <thread>
+#include <utility>
+
+#if defined(WAM_NATIVE_METAL_VIDEO_TESTING)
+namespace wam::macos {
+void failNextQtMetalSynchronizationTokenCopyForTesting() noexcept;
+void failNextQtMetalImportTokenCopyForTesting() noexcept;
+[[nodiscard]] std::uint64_t
+qtMetalSynchronizationTokenCopyFailuresForTesting() noexcept;
+[[nodiscard]] std::uint64_t
+qtMetalImportTokenCopyFailuresForTesting() noexcept;
+[[nodiscard]] std::uint64_t qtMetalNextResourceSerialForTesting() noexcept;
+}  // namespace wam::macos
+#endif
 
 namespace {
 
@@ -703,6 +716,159 @@ Item {
   checkColorNear(
       sampleLogicalPixel(migratedImage, migrationWindow, 20, 60),
       QColor(255, 255, 255), 4, "retained frame after window migration");
+
+#if defined(WAM_NATIVE_METAL_VIDEO_TESTING)
+  // Settle every Qt frame slot onto the current white resource before taking
+  // exact lifetime/accounting baselines for rejected handoffs.
+  window.requestUpdate();
+  for (int settle = 0;
+       settle < wam::macos::QtFrameSlotRetainer::kMaximumSlots + 1; ++settle) {
+    migrationWindow.requestUpdate();
+    WAM_CHECK(!migrationWindow.grabWindow().isNull());
+  }
+  WAM_CHECK(spinUntil(
+      [&] { return video->stats().activeResourceSets == 1; }, 5000));
+
+  const auto beforeSynchronizationFailure = video->stats();
+  const auto budgetBeforeSynchronizationFailure =
+      wam::macos::NativeSurfaceBudget::stats();
+  const std::uint64_t synchronizationFailuresBefore =
+      wam::macos::qtMetalSynchronizationTokenCopyFailuresForTesting();
+  const std::uint64_t serialBeforeSynchronizationFailure =
+      wam::macos::qtMetalNextResourceSerialForTesting();
+  PixelBufferCreation synchronizationFailure = tryCreateIOSurfacePixelBuffer(
+      kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, 320, 180);
+  WAM_CHECK(synchronizationFailure.status == kCVReturnSuccess &&
+            synchronizationFailure.buffer != nullptr);
+  WAM_CHECK(fillSolid(synchronizationFailure.buffer, {80, 112, 216}));
+  attachColorMetadata(synchronizationFailure.buffer,
+                      kCVImageBufferYCbCrMatrix_ITU_R_709_2,
+                      kCVImageBufferChromaLocation_Center);
+  IOSurfaceRef synchronizationFailureSurface =
+      CVPixelBufferGetIOSurface(synchronizationFailure.buffer);
+  WAM_CHECK(synchronizationFailureSurface != nullptr);
+  const std::uint64_t synchronizationFailureBytes =
+      static_cast<std::uint64_t>(
+          IOSurfaceGetAllocSize(synchronizationFailureSurface));
+  wam::macos::FrameLease synchronizationFailureLease(
+      synchronizationFailure.buffer);
+  WAM_CHECK(synchronizationFailureLease);
+  const auto synchronizationBudgetCharged =
+      wam::macos::NativeSurfaceBudget::stats();
+  WAM_CHECK(synchronizationBudgetCharged.currentSurfaces ==
+            budgetBeforeSynchronizationFailure.currentSurfaces + 1);
+  WAM_CHECK(synchronizationBudgetCharged.currentBytes ==
+            budgetBeforeSynchronizationFailure.currentBytes +
+                synchronizationFailureBytes);
+  CVPixelBufferRelease(synchronizationFailure.buffer);
+  wam::macos::failNextQtMetalSynchronizationTokenCopyForTesting();
+  video->submitFrame(std::move(synchronizationFailureLease));
+  migrationWindow.requestUpdate();
+  WAM_CHECK(spinUntil(
+      [&] {
+        const auto currentBudget = wam::macos::NativeSurfaceBudget::stats();
+        const std::uint64_t failureCount =
+            wam::macos::
+                qtMetalSynchronizationTokenCopyFailuresForTesting();
+        return video->stats().lastError.contains(
+                   QStringLiteral("scene-graph synchronization")) &&
+               failureCount == synchronizationFailuresBefore + 1 &&
+               currentBudget.currentSurfaces ==
+                   budgetBeforeSynchronizationFailure.currentSurfaces &&
+               currentBudget.currentBytes ==
+                   budgetBeforeSynchronizationFailure.currentBytes;
+      },
+      5000));
+  const auto afterSynchronizationFailure = video->stats();
+  WAM_CHECK(afterSynchronizationFailure.importedFrames ==
+            beforeSynchronizationFailure.importedFrames);
+  WAM_CHECK(afterSynchronizationFailure.activeResourceSets ==
+            beforeSynchronizationFailure.activeResourceSets);
+  WAM_CHECK(wam::macos::qtMetalNextResourceSerialForTesting() ==
+            serialBeforeSynchronizationFailure);
+  for (int retry = 0; retry < 3; ++retry) {
+    migrationWindow.requestUpdate();
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+  }
+  WAM_CHECK(
+      wam::macos::qtMetalSynchronizationTokenCopyFailuresForTesting() ==
+      synchronizationFailuresBefore + 1);
+  WAM_CHECK(video->stats().importedFrames ==
+            beforeSynchronizationFailure.importedFrames);
+  WAM_CHECK(wam::macos::qtMetalNextResourceSerialForTesting() ==
+            serialBeforeSynchronizationFailure);
+  checkColorNear(sampleLogicalPixel(migrationWindow.grabWindow(),
+                                    migrationWindow, 20, 60),
+                 QColor(255, 255, 255), 4,
+                 "frame after Metal synchronization token-copy failure");
+
+  const auto beforeImportFailure = video->stats();
+  const auto budgetBeforeImportFailure =
+      wam::macos::NativeSurfaceBudget::stats();
+  const std::uint64_t importFailuresBefore =
+      wam::macos::qtMetalImportTokenCopyFailuresForTesting();
+  const std::uint64_t serialBeforeImportFailure =
+      wam::macos::qtMetalNextResourceSerialForTesting();
+  PixelBufferCreation importFailure = tryCreateIOSurfacePixelBuffer(
+      kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, 320, 180);
+  WAM_CHECK(importFailure.status == kCVReturnSuccess &&
+            importFailure.buffer != nullptr);
+  WAM_CHECK(fillSolid(importFailure.buffer, {80, 112, 216}));
+  attachColorMetadata(importFailure.buffer,
+                      kCVImageBufferYCbCrMatrix_ITU_R_709_2,
+                      kCVImageBufferChromaLocation_Center);
+  IOSurfaceRef importFailureSurface =
+      CVPixelBufferGetIOSurface(importFailure.buffer);
+  WAM_CHECK(importFailureSurface != nullptr);
+  const std::uint64_t importFailureBytes = static_cast<std::uint64_t>(
+      IOSurfaceGetAllocSize(importFailureSurface));
+  wam::macos::FrameLease importFailureLease(importFailure.buffer);
+  WAM_CHECK(importFailureLease);
+  const auto importBudgetCharged =
+      wam::macos::NativeSurfaceBudget::stats();
+  WAM_CHECK(importBudgetCharged.currentSurfaces ==
+            budgetBeforeImportFailure.currentSurfaces + 1);
+  WAM_CHECK(importBudgetCharged.currentBytes ==
+            budgetBeforeImportFailure.currentBytes + importFailureBytes);
+  CVPixelBufferRelease(importFailure.buffer);
+  wam::macos::failNextQtMetalImportTokenCopyForTesting();
+  video->submitFrame(std::move(importFailureLease));
+  migrationWindow.requestUpdate();
+  WAM_CHECK(spinUntil(
+      [&] {
+        const auto currentBudget = wam::macos::NativeSurfaceBudget::stats();
+        return video->stats().lastError.contains(
+                   QStringLiteral("import accounting-token copy")) &&
+               wam::macos::qtMetalImportTokenCopyFailuresForTesting() ==
+                   importFailuresBefore + 1 &&
+               currentBudget.currentSurfaces ==
+                   budgetBeforeImportFailure.currentSurfaces &&
+               currentBudget.currentBytes ==
+                   budgetBeforeImportFailure.currentBytes;
+      },
+      5000));
+  const auto afterImportFailure = video->stats();
+  WAM_CHECK(afterImportFailure.importedFrames ==
+            beforeImportFailure.importedFrames);
+  WAM_CHECK(afterImportFailure.activeResourceSets ==
+            beforeImportFailure.activeResourceSets);
+  WAM_CHECK(wam::macos::qtMetalNextResourceSerialForTesting() ==
+            serialBeforeImportFailure);
+  for (int retry = 0; retry < 3; ++retry) {
+    migrationWindow.requestUpdate();
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+  }
+  WAM_CHECK(wam::macos::qtMetalImportTokenCopyFailuresForTesting() ==
+            importFailuresBefore + 1);
+  WAM_CHECK(video->stats().importedFrames ==
+            beforeImportFailure.importedFrames);
+  WAM_CHECK(wam::macos::qtMetalNextResourceSerialForTesting() ==
+            serialBeforeImportFailure);
+  checkColorNear(sampleLogicalPixel(migrationWindow.grabWindow(),
+                                    migrationWindow, 20, 60),
+                 QColor(255, 255, 255), 4,
+                 "frame after Metal import token-copy failure");
+#endif
 
   video->setParentItem(nullptr);
   migrationWindow.requestUpdate();

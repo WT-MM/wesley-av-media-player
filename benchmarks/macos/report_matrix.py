@@ -267,6 +267,24 @@ GPU_METRIC = MetricSpec(
     0,
 )
 
+NATIVE_STARTUP_METRICS: tuple[MetricSpec, ...] = tuple(
+    MetricSpec(
+        key,
+        label,
+        "ms",
+        lambda result, selected=key: path_number(
+            result,
+            ("orchestration", "native_startup", "latencies", selected),
+        ),
+        1,
+    )
+    for key, label in (
+        ("cold_request_to_first_draw_ms", "Cold request→draw ms"),
+        ("open_request_to_first_draw_ms", "Open request→draw ms"),
+        ("warm_request_to_first_draw_ms", "Warm request→draw ms"),
+    )
+)
+
 
 @dataclass(frozen=True)
 class Aggregate:
@@ -430,6 +448,8 @@ def _observed_support(valid_results: int, reasons: Counter[str]) -> str:
         return "supported"
     if reasons.get("unsupported"):
         return "unsupported"
+    if reasons.get("ineligible"):
+        return "ineligible"
     if reasons.get("failure"):
         return "failed"
     return "not yet measured"
@@ -530,7 +550,7 @@ def build_report(
                 ),
                 "issues": _issue_summary(group, artifact_errors),
             }
-            for metric in (*REQUIRED_METRICS, GPU_METRIC):
+            for metric in (*REQUIRED_METRICS, *NATIVE_STARTUP_METRICS, GPU_METRIC):
                 row[metric.key] = aggregate(metric.extractor(result) for result in results)
             if architecture_values:
                 row["architecture"] = architecture_values.get(player)
@@ -540,6 +560,12 @@ def build_report(
             rows.append(row)
 
     active_metrics = list(REQUIRED_METRICS)
+    if any(
+        row[metric.key].count
+        for row in rows
+        for metric in NATIVE_STARTUP_METRICS
+    ):
+        active_metrics.extend(NATIVE_STARTUP_METRICS)
     if any(row[GPU_METRIC.key].count for row in rows):
         active_metrics.append(GPU_METRIC)
     return ReportSnapshot(
@@ -720,6 +746,27 @@ def markdown_text(snapshot: ReportSnapshot) -> str:
             ),
         ]
     )
+    active_startup_metrics = [
+        metric for metric in NATIVE_STARTUP_METRICS if metric in snapshot.metrics
+    ]
+    if active_startup_metrics:
+        short_labels = {
+            "cold_request_to_first_draw_ms": "Cold",
+            "open_request_to_first_draw_ms": "Open",
+            "warm_request_to_first_draw_ms": "Warm",
+        }
+        columns.append(
+            (
+                "Native startup ms (cold / open / warm)",
+                lambda row: _format_metric_group(
+                    row,
+                    tuple(
+                        (short_labels[metric.key], metric)
+                        for metric in active_startup_metrics
+                    ),
+                ),
+            )
+        )
     if GPU_METRIC in snapshot.metrics:
         columns.append(
             (

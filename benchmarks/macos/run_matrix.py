@@ -36,6 +36,7 @@ DEFAULT_ALIAS_PARENT = Path("/private/tmp")
 DEFAULT_VLC_APP = Path("/Applications/VLC.app")
 DEFAULT_QUICKTIME_APP = Path("/System/Applications/QuickTime Player.app")
 PLAYERS = ("wam", "vlc", "quicktime")
+NATIVE_PROOF_INELIGIBLE_EXIT = 3
 DEFAULT_WINDOW = "1180x720"
 WAM_EXPERIMENT_ENV = (
     "WAM_RENDER_PROFILE",
@@ -468,13 +469,16 @@ def write_manifest(path: Path, manifest: dict[str, Any]) -> None:
 
 def runner_artifacts(trial: Trial) -> list[Path]:
     output = trial.output
-    return [
+    artifacts = [
         output,
         output.with_name(f"{output.stem}.orchestration.json"),
         output.with_name(f"{output.stem}.{trial.player}.launch.log"),
         output.with_name(f"{output.stem}.top.txt"),
         trial.runner_log,
     ]
+    if trial.player == "wam":
+        artifacts.append(output.with_name(f"{output.stem}.wam.native.jsonl"))
+    return artifacts
 
 
 def assert_trial_artifacts_are_new(trial: Trial) -> None:
@@ -615,6 +619,17 @@ def execute_trial(
         reason = "failure"
         detail = "runner exited successfully but did not create the expected result JSON"
         basis = "artifact validation"
+    elif returncode == NATIVE_PROOF_INELIGIBLE_EXIT and trial.player == "wam":
+        reason = "ineligible"
+        detail = _tail(
+            stderr.strip()
+            or "required native route and exact first-frame proof was unavailable",
+            1000,
+        )
+        basis = (
+            "env-gated native JSONL did not prove native_selected, an exact "
+            "first_frame_drawn, and absence of fallback_selected"
+        )
     elif expected_unsupported:
         reason = "unsupported"
         detail = _tail(stderr.strip() or f"runner exited with status {returncode}", 1000)
@@ -794,7 +809,7 @@ def run_matrix(args: argparse.Namespace, alias_parent: Path = DEFAULT_ALIAS_PARE
                 completed = False
             trial_failed_unexpectedly = not completed and entry.get("n_a", {}).get(
                 "reason"
-            ) not in {"unsupported"}
+            ) not in {"unsupported", "ineligible"}
             if trial_failed_unexpectedly:
                 unexpected_failure = True
             write_manifest(manifest_path, manifest)

@@ -77,13 +77,38 @@ application volume, so audio may be audible during a run.
 
 Each invocation reserves a new result directory and refuses to reuse an
 existing `--suite-id`. Its `manifest.json` is updated atomically before and
-after every trial. A successful trial is `completed`; an unsupported or failed
-trial is `n/a` with an explicit `unsupported`, `failure`, or `interrupted`
-reason. It is never represented as zero CPU, memory, GPU, or energy. By default
+after every trial. A successful trial is `completed`; an unsupported,
+ineligible, or failed trial is `n/a` with an explicit `unsupported`,
+`ineligible`, `failure`, or `interrupted` reason. It is never represented as
+zero CPU, memory, GPU, or energy. By default
 the runner attempts declared compatibility failures so a newly supported format
 can be discovered. Use `--skip-expected-unsupported` to record those declared
 pairs as N/A without launching them, or `--fail-fast` to stop after the first
 non-completion.
+
+### WAM native route and startup proof
+
+WAM trials opt into the production benchmark event stream only for the spawned
+application by passing `WAM_NATIVE_BENCHMARK_TELEMETRY=1` through LaunchServices.
+Application stderr is captured as `<result>.wam.native.jsonl`; ordinary stderr
+lines and foreign JSON schemas are retained there but never accepted as proof.
+QuickTime and VLC launch and validation paths are unchanged.
+
+The harness records its monotonic launch-request timestamp before invoking
+LaunchServices, then requires one matching `open_requested`, `native_selected`,
+and exact `first_frame_drawn` lineage from schema `wam.native.benchmark.v1`.
+Any `fallback_selected` event makes the WAM run ineligible, including one that
+appears after steady-state collection began. Missing, malformed, or older WAM
+builds without this stream also exit with the dedicated ineligible status; the
+matrix records N/A rather than accepting fallback measurements as native.
+
+Accepted result JSON contains
+`orchestration.native_startup.latencies.cold_request_to_first_draw_ms`, measured
+from the pre-launch harness request, and `open_request_to_first_draw_ms`, measured
+inside WAM from its open request to the matching real draw. The separate
+`warm_request_to_first_draw_ms` remains null unless the telemetry contains a
+second in-process open/native/draw lineage; a fresh application launch is never
+relabeled as a warm open.
 
 ## Report the matrix
 
@@ -110,6 +135,11 @@ peak, and shared-adjusted values are aggregated from each run's
 end-of-measurement observation. A legitimate measured zero remains zero;
 missing data, an unreadable artifact, a failed run, and an unsupported format
 remain explicit N/A states.
+
+When at least one accepted WAM result contains native startup timing, the
+matrix report adds cold-launch, internal-open, and warm-open request-to-draw
+columns using the same median [min–max] convention. Warm remains N/A until a
+real second in-process open is present.
 
 Current result files add these normalization fields without changing the v1
 schema identifier: `summary.top.measurement.elapsed_s`, top counter
@@ -180,9 +210,49 @@ build/wam_libmpv_offscreen_probe /path/to/tos-h264-4k24-180s.mp4
 
 Optional positional arguments select `hwdec-extra-frames`, `swapchain-depth`,
 render-API advanced control (`0` or `1`), `gpu-dumb-mode`, `fbo-format`, and
-`hwdec`, in that order. The probe verifies the active hardware decoder, A/V
-sync, and dropped-frame counters and reports process CPU, sampled physical
-footprint, context switches, render callbacks, and frames rendered.
+`hwdec`, followed by `gpu-hwdec-interop`, in that order. Existing invocations
+remain unchanged; the interop value defaults to `auto`. An explicitly supplied
+value that libmpv rejects fails probe setup, and the output records the
+requested value, configured value, and active `hwdec-interop` driver so a
+no-op or fallback is visible. For example, this compares an explicit
+VideoToolbox interop choice while retaining the preceding defaults:
+
+```sh
+build/wam_libmpv_offscreen_probe MEDIA 2 3 0 no auto auto-safe videotoolbox
+```
+
+In addition to the steady 20-second counters, the probe reports monotonic
+`mpv_initialize` time and load-submit-to-`START_FILE`, `FILE_LOADED`, first
+completed `MPV_RENDER_UPDATE_FRAME` render, and `PLAYBACK_RESTART` times. Fixed
+startup phase snapshots report elapsed time, CPU time consumed since probe
+entry, corresponding CPU percentage, and boundary physical footprint. Boundary
+footprints are point samples, not peaks; `max_sampled_footprint_bytes` retains
+the periodic peak sample. A load that does not reach `FILE_LOADED` within 15
+seconds fails instead of waiting indefinitely. Active decoder, interop, drop,
+and A/V-sync properties are requested asynchronously before renderer teardown,
+outside the measured interval, so advanced-control runs remain safe and the
+reported decoder evidence is not erased by teardown.
+
+Appending the literal `scrub` after `gpu-hwdec-interop` enables a deterministic
+headless scrub check:
+
+```sh
+build/wam_libmpv_offscreen_probe MEDIA 2 3 0 no auto auto-safe auto scrub
+```
+
+Scrub mode loads paused, then serially issues seven bounded
+`absolute+keyframes` preview seeks across the file and one final
+`absolute+exact` seek. It never has more than one seek in flight. Each seek must
+produce a matching command reply, a `SEEK` followed by `PLAYBACK_RESTART`, and
+a completed non-redraw/non-repeat frame render before the next seek is sent.
+The output includes per-seek event and first-frame latency, render callback and
+frame counts, multi-frame cadence when available, CPU consumed, and completion
+footprint. A timeout, queue overflow, redirect/multiple `START_FILE`, or early
+end fails the scrub run instead of producing a partial success.
+
+The probe verifies the active hardware decoder, A/V sync, and dropped-frame
+counters and reports process CPU, sampled physical footprint, context switches,
+render callbacks, and frames rendered.
 
 The offscreen target deliberately uses the shipping OpenGL renderer but a null
 audio output and no Qt scene graph. Its footprint excludes the separate

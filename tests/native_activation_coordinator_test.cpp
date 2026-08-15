@@ -952,6 +952,26 @@ void testCaptionFallbackSuccessAndFailure() {
                !coordinator.snapshot().pendingCaptionId,
            "caption failure leaves fallback video active and clears request");
   }
+
+  {
+    NativeActivationCoordinator coordinator;
+    const auto [token, first] = reachCaption(coordinator, 3, 44);
+    expect(coordinator.requestCaption(token, 45) == first,
+           "new caption waits behind the exact issued caption action");
+    ActionCompletion failed;
+    failed.succeeded = false;
+    const Action latest = coordinator.completeAction(first.serial, failed);
+    expectKind(latest, Action::Kind::AttachCaption,
+               "superseded caption failure advances to the latest request");
+    expect(latest.captionId == 45,
+           "superseded caption failure preserves the newest caption ID");
+    const Action done = coordinator.completeAction(latest.serial, {});
+    expectKind(done, Action::Kind::None,
+               "latest caption success settles without stale error surface");
+    expect(coordinator.snapshot().phase == Phase::FallbackActive &&
+               !coordinator.snapshot().pendingCaptionId,
+           "latest caption request survives an older attachment failure");
+  }
 }
 
 void testEofRaceAndIdentityQuarantine() {
