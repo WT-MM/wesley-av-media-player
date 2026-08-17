@@ -4,6 +4,7 @@
 #include "media/video_codec_configuration.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cerrno>
 #include <cmath>
 #include <cstring>
@@ -11,6 +12,7 @@
 #include <limits>
 #include <numeric>
 #include <optional>
+#include <span>
 #include <string_view>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -332,21 +334,23 @@ struct AssetState {
   }
 };
 
+// Takes the limits rather than the AssetState because the VP9 keyframe probe
+// below runs during preparation, before the AssetState's Cluster directory
+// exists; every other caller still passes state.limits.
 [[nodiscard]] ParseOptions parserOptions(
-    const AssetState& state,
+    const MediaSourceLimits& limits,
     std::span<const TrackConstraint> constraints) noexcept {
   ParseOptions options;
   options.maximumReadBytes = ParseOptions::kHardMaximumReadBytes;
-  options.maximumTracks = state.limits.maximumTracks;
-  options.maximumCodecPrivateBytes =
-      state.limits.maximumCodecConfigurationBytes;
-  options.maximumBlockBytes = std::max(state.limits.maximumVideoSampleBytes,
-                                       state.limits.maximumAudioSampleBytes);
+  options.maximumTracks = limits.maximumTracks;
+  options.maximumCodecPrivateBytes = limits.maximumCodecConfigurationBytes;
+  options.maximumBlockBytes = std::max(limits.maximumVideoSampleBytes,
+                                       limits.maximumAudioSampleBytes);
   options.maximumEncodedBlockBytes = kMaximumMatroskaEncodedBlockBytes;
-  options.maximumTrackTextBytes = state.limits.maximumTrackTextBytes;
+  options.maximumTrackTextBytes = limits.maximumTrackTextBytes;
   options.maximumLaceFrames = std::min(
       ParseOptions::kHardMaximumLaceFrames,
-      state.limits.maximumAudioSampleCount);
+      limits.maximumAudioSampleCount);
   options.maximumCues = kMaximumMatroskaCues;
   options.trackConstraints = constraints;
   return options;
@@ -413,7 +417,8 @@ inline constexpr std::uint64_t kAacPrimingAccessUnits{2};
 }
 
 [[nodiscard]] bool isVideoCodec(std::string_view id) noexcept {
-  return id == "V_MPEG4/ISO/AVC" || id == "V_MPEGH/ISO/HEVC";
+  return id == "V_MPEG4/ISO/AVC" || id == "V_MPEGH/ISO/HEVC" ||
+         id == "V_AV1" || id == "V_VP9";
 }
 
 [[nodiscard]] bool isAudioCodec(std::string_view id) noexcept {
@@ -550,32 +555,152 @@ trackDuration(const Info& info) noexcept {
       ticks * (static_cast<double>(info.timestampScaleNanoseconds) / 1.0e9));
 }
 
+// Reused as a workspace across blocks, never constructed per block. The
+// `frames` member is 256 * sizeof(FrameRange) = 4 KiB and a fresh instance
+// zero-fills all of it, so constructing one per parsed block spent 4 KiB of
+// stores to learn about a Block that carries one frame (video) or four
+// (laced AAC). On the seek path that is not a rounding error: a planGeneration
+// audio scan walks up to kMaximumMatroskaSeekClusters (8,192) Clusters, so a
+// dense file cost hundreds of megabytes of memset per seek. Only `emitted`
+// needs clearing between parses -- every other field is written by onBlock
+// before it is read, and `frames` is only ever read below `frameCount`.
+struct CapturedBlockVisitor final : Visitor {
+  void reset() noexcept { emitted = false; }
+
+  VisitorAction onBlock(const BlockHeader& value,
+                        std::span<const FrameRange> frameValues,
+                        const BlockGroupFields& groupValues,
+                        std::span<const std::int64_t> referenceValues) noexcept override {
+    header = value;
+    group = groupValues;
+    referenceCount = referenceValues.size();
+    frameCount = static_cast<std::uint16_t>(frameValues.size());
+    std::copy(frameValues.begin(), frameValues.end(), frames.begin());
+    emitted = true;
+    return VisitorAction::Continue;
+  }
+
+  BlockHeader header;
+  BlockGroupFields group;
+  std::array<FrameRange, ParseOptions::kHardMaximumLaceFrames> frames{};
+  std::size_t referenceCount{0};
+  std::uint16_t frameCount{0};
+  bool emitted{false};
+};
+
+struct VideoCodecIdentity {
+  MediaCodec codec{MediaCodec::Unknown};
+  MediaCodecConfigurationKind kind{MediaCodecConfigurationKind::None};
+};
+
+// A full map, not a default. The previous ternary sent every non-AVC CodecID to
+// HvcC, which was harmless only while HEVC was the sole other admitted codec
+// and became a silent mis-dispatch the moment a third one existed.
+[[nodiscard]] VideoCodecIdentity videoCodecIdentity(
+    std::string_view codecId) noexcept {
+  if (codecId == "V_MPEG4/ISO/AVC") {
+    return {MediaCodec::H264, MediaCodecConfigurationKind::AvcC};
+  }
+  if (codecId == "V_MPEGH/ISO/HEVC") {
+    return {MediaCodec::Hevc, MediaCodecConfigurationKind::HvcC};
+  }
+  if (codecId == "V_AV1") {
+    return {MediaCodec::Av1, MediaCodecConfigurationKind::Av1C};
+  }
+  if (codecId == "V_VP9") {
+    return {MediaCodec::Vp9, MediaCodecConfigurationKind::VpcC};
+  }
+  return {};
+}
+
+// VP9 in Matroska/WebM normally carries no CodecPrivate, so its facts have to
+// come from the bitstream. Reads the leading bytes of the first keyframe of
+// `trackNumber` within the first `maximumClusters` Clusters -- enough for the
+// VP9 uncompressed frame header and no more. Keyframe identification is the
+// same codec-agnostic rule the cursor uses.
+constexpr std::size_t kVp9KeyframeProbeClusters{4};
+
+[[nodiscard]] bool readFirstVideoKeyframePrefix(
+    SeekableByteReader& reader, std::span<const Cluster> clusters,
+    const ParseOptions& options, std::uint64_t trackNumber,
+    std::span<std::byte> prefix, std::size_t* copied,
+    CancellationToken cancellation) {
+  CapturedBlockVisitor visitor;
+  const std::size_t end =
+      std::min<std::size_t>(clusters.size(), kVp9KeyframeProbeClusters);
+  for (std::size_t index = 0; index < end; ++index) {
+    if (cancellation.cancelled()) {
+      return false;
+    }
+    auto cursor =
+        beginClusterChildCursor(reader, clusters[index].data, options);
+    if (!cursor) {
+      return false;
+    }
+    while (!cursor->done()) {
+      visitor.reset();
+      const ParseOutcome outcome = parseClusterChildAt(
+          reader, *cursor, visitor, options, cancellation);
+      if (!outcome.ok()) {
+        return false;
+      }
+      if (!visitor.emitted || visitor.header.trackNumber != trackNumber) {
+        continue;
+      }
+      const bool keyFrame = visitor.header.simpleBlock
+                                ? visitor.header.keyFrame
+                                : visitor.referenceCount == 0;
+      if (!keyFrame) {
+        continue;
+      }
+      // A laced or multi-frame video Block is rejected by the cursor anyway;
+      // proving facts from one is not something this admission will attempt.
+      if (visitor.frameCount != 1 ||
+          visitor.header.lacing != Lacing::None) {
+        return false;
+      }
+      const ByteRange frame = visitor.frames[0].bytes;
+      const auto amount = static_cast<std::size_t>(
+          std::min<std::uint64_t>(frame.size, prefix.size()));
+      if (amount == 0 || !reader.readAt(frame.offset, prefix.first(amount))) {
+        return false;
+      }
+      *copied = amount;
+      return true;
+    }
+  }
+  return false;
+}
+
 [[nodiscard]] bool makeVideoDescriptor(
     SeekableByteReader& reader, const TrackEntry& entry,
     const MediaSourceLimits& limits, MediaTime duration,
+    std::span<const Cluster> clusters,
+    std::span<const TrackConstraint> constraints,
     CancellationToken cancellation, MediaTrackDescriptor* result,
     TrackRuntime* runtime) {
-  if (!entry.video || !entry.codecPrivate ||
-      !selectedTrackFeaturesSupported(entry)) {
+  if (!entry.video || !selectedTrackFeaturesSupported(entry)) {
     return false;
   }
   const auto id = trackId(entry.number);
   if (!id) {
     return false;
   }
-  const std::string codecId = inlineString(entry.codecId);
-  const MediaCodec codec = codecId == "V_MPEG4/ISO/AVC"
-                               ? MediaCodec::H264
-                               : codecId == "V_MPEGH/ISO/HEVC"
-                                     ? MediaCodec::Hevc
-                                     : MediaCodec::Unknown;
-  const MediaCodecConfigurationKind kind =
-      codec == MediaCodec::H264 ? MediaCodecConfigurationKind::AvcC
-                                : MediaCodecConfigurationKind::HvcC;
+  const VideoCodecIdentity identity =
+      videoCodecIdentity(inlineString(entry.codecId));
+  const MediaCodec codec = identity.codec;
+  const MediaCodecConfigurationKind kind = identity.kind;
+  // CodecPrivate is the only fact source for AVC, HEVC, and AV1, so it stays
+  // mandatory for them. VP9 is the exception: WebM muxers routinely write no
+  // CodecPrivate at all because the VP9 bitstream is self-describing, so a
+  // missing one is normal rather than a defect.
+  if (codec == MediaCodec::Unknown ||
+      (!entry.codecPrivate && codec != MediaCodec::Vp9)) {
+    return false;
+  }
   // FlagInterlaced 0 (undetermined) and 2 (progressive) are the only values a
   // progressive-only v1 renderer can admit; 1 is interlaced content.
-  if (codec == MediaCodec::Unknown ||
-      (entry.video->interlaced != 0 && entry.video->interlaced != 2) ||
+  if ((entry.video->interlaced != 0 && entry.video->interlaced != 2) ||
       entry.video->stereoMode != 0 || entry.video->alphaMode != 0 ||
       entry.video->projectionPresent ||
       entry.video->colour.masteringMetadataPresent ||
@@ -584,7 +709,8 @@ trackDuration(const Info& info) noexcept {
     return false;
   }
   std::vector<std::byte> configuration;
-  if (!readRange(reader, *entry.codecPrivate, &configuration, cancellation)) {
+  if (entry.codecPrivate &&
+      !readRange(reader, *entry.codecPrivate, &configuration, cancellation)) {
     return false;
   }
   VideoCodecConfigurationLimits codecLimits;
@@ -592,10 +718,52 @@ trackDuration(const Info& info) noexcept {
   codecLimits.maximumWidth = limits.maximumCodedWidth;
   codecLimits.maximumHeight = limits.maximumCodedHeight;
   codecLimits.maximumPixels = limits.maximumCodedPixels;
-  const auto inspection = inspectVideoCodecConfiguration(
-      codec, kind, configuration, codecLimits);
-  if (!inspection.admitted()) {
-    return false;
+
+  VideoCodecConfigurationInspection inspection;
+  if (codec == MediaCodec::Vp9) {
+    // The proven facts come from the bitstream in every VP9 case, present
+    // CodecPrivate or not, because a vpcC carries no dimensions and the exact
+    // PixelWidth/PixelHeight cross-check below must keep working.
+    std::array<std::byte, kVp9KeyframeHeaderMaximumBytes> keyframe{};
+    std::size_t keyframeBytes = 0;
+    const ParseOptions options = parserOptions(limits, constraints);
+    if (!readFirstVideoKeyframePrefix(reader, clusters, options, entry.number,
+                                      keyframe, &keyframeBytes,
+                                      cancellation)) {
+      return false;
+    }
+    inspection = inspectVp9BitstreamKeyframe(
+        std::span<const std::byte>(keyframe).first(keyframeBytes), codecLimits);
+    if (!inspection.admitted()) {
+      return false;
+    }
+    if (configuration.empty()) {
+      // VideoToolbox returns kVTCouldNotFindVideoDecoderErr for VP9 unless the
+      // format description carries a vpcC atom, so one is synthesized from the
+      // proven bitstream facts rather than left absent.
+      std::array<std::byte, kVideoCodecVpcCBytes> synthesized{};
+      if (!buildVp9CodecConfiguration(*inspection.facts, synthesized)) {
+        return false;
+      }
+      configuration.assign(synthesized.begin(), synthesized.end());
+    } else {
+      // A real vpcC is adopted byte-identically, mirroring avcC and hvcC, but
+      // only after it is shown to describe the same stream the keyframe does.
+      const auto declared = inspectVideoCodecConfiguration(
+          codec, kind, configuration, codecLimits);
+      if (!declared.admitted() ||
+          declared.facts->profile != inspection.facts->profile ||
+          declared.facts->bitDepth != inspection.facts->bitDepth ||
+          declared.facts->sampleFormat != inspection.facts->sampleFormat) {
+        return false;
+      }
+    }
+  } else {
+    inspection =
+        inspectVideoCodecConfiguration(codec, kind, configuration, codecLimits);
+    if (!inspection.admitted()) {
+      return false;
+    }
   }
   const VideoCodecConfigurationFacts& facts = *inspection.facts;
   // DisplayUnit 0 is pixels; 4 is "unspecified" (Matroska v4), which carries
@@ -758,38 +926,6 @@ trackDuration(const Info& info) noexcept {
   return true;
 }
 
-// Reused as a workspace across blocks, never constructed per block. The
-// `frames` member is 256 * sizeof(FrameRange) = 4 KiB and a fresh instance
-// zero-fills all of it, so constructing one per parsed block spent 4 KiB of
-// stores to learn about a Block that carries one frame (video) or four
-// (laced AAC). On the seek path that is not a rounding error: a planGeneration
-// audio scan walks up to kMaximumMatroskaSeekClusters (8,192) Clusters, so a
-// dense file cost hundreds of megabytes of memset per seek. Only `emitted`
-// needs clearing between parses -- every other field is written by onBlock
-// before it is read, and `frames` is only ever read below `frameCount`.
-struct CapturedBlockVisitor final : Visitor {
-  void reset() noexcept { emitted = false; }
-
-  VisitorAction onBlock(const BlockHeader& value,
-                        std::span<const FrameRange> frameValues,
-                        const BlockGroupFields& groupValues,
-                        std::span<const std::int64_t> referenceValues) noexcept override {
-    header = value;
-    group = groupValues;
-    referenceCount = referenceValues.size();
-    frameCount = static_cast<std::uint16_t>(frameValues.size());
-    std::copy(frameValues.begin(), frameValues.end(), frames.begin());
-    emitted = true;
-    return VisitorAction::Continue;
-  }
-
-  BlockHeader header;
-  BlockGroupFields group;
-  std::array<FrameRange, ParseOptions::kHardMaximumLaceFrames> frames{};
-  std::size_t referenceCount{0};
-  std::uint16_t frameCount{0};
-  bool emitted{false};
-};
 
 [[nodiscard]] std::vector<TrackConstraint>
 cursorConstraints(const AssetState& state, MediaTrackId selected) {
@@ -858,7 +994,7 @@ template <typename Predicate>
     CancellationToken cancellation) {
   ScanResult result;
   std::vector<TrackConstraint> constraints = cursorConstraints(state, track);
-  ParseOptions options = parserOptions(state, constraints);
+  ParseOptions options = parserOptions(state.limits, constraints);
   CapturedBlockVisitor visitor;
   const std::size_t end = std::min<std::size_t>(
       state.clusters.size(), static_cast<std::size_t>(firstCluster) + maximumClusters);
@@ -1352,7 +1488,7 @@ std::unique_ptr<MatroskaCursor> MatroskaPreparedAsset::makeVideoCursor(
     cursor->clusterIndex = plan.videoClusterIndex;
     cursor->startBlockOffset = plan.videoBlockOffset;
     cursor->constraints = cursorConstraints(*impl_->state, cursor->track);
-    cursor->options = parserOptions(*impl_->state, cursor->constraints);
+    cursor->options = parserOptions(impl_->state->limits, cursor->constraints);
     return std::unique_ptr<MatroskaCursor>(
         new MatroskaCursor(std::move(cursor)));
   } catch (...) {
@@ -1375,7 +1511,7 @@ std::unique_ptr<MatroskaCursor> MatroskaPreparedAsset::makeAudioCursor(
     cursor->startFrameIndex = plan.audioFrameIndex;
     cursor->expectedAudioOrdinal = plan.audioAccessUnitOrdinal;
     cursor->constraints = cursorConstraints(*impl_->state, cursor->track);
-    cursor->options = parserOptions(*impl_->state, cursor->constraints);
+    cursor->options = parserOptions(impl_->state->limits, cursor->constraints);
     return std::unique_ptr<MatroskaCursor>(
         new MatroskaCursor(std::move(cursor)));
   } catch (...) {
@@ -1551,14 +1687,26 @@ MatroskaPrepareOutcome prepareMatroska(
         document.tracks, 1, requested.selection.preferredVideo);
     const TrackEntry* audio = chooseTrack(
         document.tracks, 2, requested.selection.preferredAudio);
-    if (video == nullptr ||
+    // A file that carries audio the native path cannot decode must fall back
+    // as a WHOLE FILE, not prepare video-only. Preparing video-only here would
+    // play a VP9+Opus WebM natively and completely silently, which is worse
+    // than the mpv fallback in every way; mpv plays the same file with sound.
+    // A file with no audio track at all is a different thing entirely and
+    // stays admitted video-only, which is the correct silent-video path.
+    const bool audioTrackPresent = std::any_of(
+        document.tracks.begin(), document.tracks.end(),
+        [](const TrackEntry& track) {
+          return track.enabled && track.type == 2;
+        });
+    if (video == nullptr || (audioTrackPresent && audio == nullptr) ||
         (requested.selection.requireAudio && audio == nullptr) ||
         (requested.selection.preferredAudio && audio == nullptr) ||
         requested.selection.preferredSubtitle) {
       // No admissible track for this request is an envelope verdict, not an
-      // error: a VP9 or subtitle-only Matroska must reach the caller as
-      // Unsupported so it falls back cleanly, rather than as Failed, which
-      // the session reports as a hard protocol fault on a blocking surface.
+      // error: an unsupported-codec or subtitle-only Matroska must reach the
+      // caller as Unsupported so it falls back cleanly, rather than as Failed,
+      // which the session reports as a hard protocol fault on a blocking
+      // surface.
       result.status = MatroskaDemuxStatus::Unsupported;
       result.error = MatroskaDemuxError::TrackSelection;
       result.message = "requested Matroska tracks are unavailable";
@@ -1587,10 +1735,11 @@ MatroskaPrepareOutcome prepareMatroska(
     }
     MediaTrackDescriptor videoDescriptor;
     if (!makeVideoDescriptor(*state->reader, *video, state->limits, *duration,
+                             document.clusters, state->constraints,
                              cancellation, &videoDescriptor, &state->video)) {
       result.error = MatroskaDemuxError::CodecConfiguration;
       result.status = MatroskaDemuxStatus::Unsupported;
-      result.message = "selected AVC/HEVC track was not admitted";
+      result.message = "selected AVC/HEVC/AV1/VP9 track was not admitted";
       return result;
     }
     descriptor->selectedVideo = videoDescriptor.id;

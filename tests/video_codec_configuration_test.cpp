@@ -630,11 +630,31 @@ void testApiAndHardBounds() {
   static_assert(noexcept(inspectVideoCodecConfiguration(
       MediaCodec::H264, MediaCodecConfigurationKind::AvcC, {})));
 
+  // VP9 is an admitted codec now, so this case proves the kind gate rather
+  // than the codec gate: VP9 facts may only be read out of a vpcC.
   expectError(inspectVideoCodecConfiguration(
                   MediaCodec::Vp9, MediaCodecConfigurationKind::CodecPrivate,
                   std::array{std::byte{1U}}),
+              VideoCodecConfigurationError::ConfigurationKindMismatch,
+              "VP9 facts are only read from a vpcC record");
+  expectError(inspectVideoCodecConfiguration(
+                  MediaCodec::Av1, MediaCodecConfigurationKind::VpcC,
+                  std::array{std::byte{1U}}),
+              VideoCodecConfigurationError::ConfigurationKindMismatch,
+              "AV1 facts are only read from an av1C record");
+  expectError(inspectVideoCodecConfiguration(
+                  MediaCodec::Aac, MediaCodecConfigurationKind::CodecPrivate,
+                  std::array{std::byte{1U}}),
               VideoCodecConfigurationError::UnsupportedCodec,
               "unsupported codec is rejected before record parsing");
+  expectError(inspectVideoCodecConfiguration(
+                  MediaCodec::Av1, MediaCodecConfigurationKind::Av1C, {}),
+              VideoCodecConfigurationError::EmptyConfiguration,
+              "empty AV1 configuration is rejected exactly");
+  static_assert(noexcept(inspectVp9BitstreamKeyframe({})));
+  expectError(inspectVp9BitstreamKeyframe({}),
+              VideoCodecConfigurationError::EmptyConfiguration,
+              "empty VP9 keyframe is rejected exactly");
   expectError(inspectVideoCodecConfiguration(MediaCodec::H264,
                                              MediaCodecConfigurationKind::HvcC,
                                              std::array{std::byte{1U}}),
@@ -1046,6 +1066,664 @@ void testHevcRejections() {
               "HEVC summary profile/depth cannot contradict its VPS/SPS");
 }
 
+
+// ---------------------------------------------------------------------------
+// AV1 and VP9.
+// ---------------------------------------------------------------------------
+
+struct PlainBitWriter {
+  std::vector<std::uint8_t> bytes;
+  std::size_t bitCount{0};
+
+  void put(std::uint32_t value, std::size_t count) {
+    for (std::size_t index = count; index-- > 0;) {
+      if (bitCount % 8U == 0U) {
+        bytes.push_back(0U);
+      }
+      const std::uint32_t bit = (value >> index) & 1U;
+      bytes.back() = static_cast<std::uint8_t>(
+          bytes.back() | (bit << (7U - (bitCount % 8U))));
+      ++bitCount;
+    }
+  }
+
+  void putTrailingBits() {
+    put(1U, 1U);
+    while (bitCount % 8U != 0U) {
+      put(0U, 1U);
+    }
+  }
+};
+
+struct Av1SequenceHeaderSpec {
+  std::uint32_t seqProfile{0};
+  std::uint32_t seqLevelIdx{8};
+  bool highBitdepth{false};
+  bool twelveBit{false};
+  bool monochrome{false};
+  bool colorDescriptionPresent{false};
+  std::uint32_t colorPrimaries{2};
+  std::uint32_t transferCharacteristics{2};
+  std::uint32_t matrixCoefficients{2};
+  bool fullRange{false};
+  std::uint32_t width{1920};
+  std::uint32_t height{1080};
+};
+
+// sequence_header_obu() payload with no timing info, no decoder model, no
+// initial display delay, and exactly one operating point: the shape every
+// consumer AV1 encoder writes.
+std::vector<std::uint8_t>
+makeAv1SequenceHeaderPayload(const Av1SequenceHeaderSpec &spec) {
+  PlainBitWriter writer;
+  writer.put(spec.seqProfile, 3U);
+  writer.put(0U, 1U); // still_picture
+  writer.put(0U, 1U); // reduced_still_picture_header
+  writer.put(0U, 1U); // timing_info_present_flag
+  writer.put(0U, 1U); // initial_display_delay_present_flag
+  writer.put(0U, 5U); // operating_points_cnt_minus_1
+  writer.put(0U, 12U); // operating_point_idc[0]
+  writer.put(spec.seqLevelIdx, 5U);
+  if (spec.seqLevelIdx > 7U) {
+    writer.put(0U, 1U); // seq_tier[0]
+  }
+  writer.put(15U, 4U); // frame_width_bits_minus_1
+  writer.put(15U, 4U); // frame_height_bits_minus_1
+  writer.put(spec.width - 1U, 16U);
+  writer.put(spec.height - 1U, 16U);
+  writer.put(0U, 1U); // frame_id_numbers_present_flag
+  writer.put(0U, 3U); // 128x128 superblock, filter intra, intra edge filter
+  writer.put(0U, 4U); // interintra, masked compound, warped motion, dual filter
+  writer.put(0U, 1U); // enable_order_hint
+  writer.put(1U, 1U); // seq_choose_screen_content_tools
+  writer.put(1U, 1U); // seq_choose_integer_mv
+  writer.put(0U, 3U); // enable_superres, enable_cdef, enable_restoration
+  writer.put(spec.highBitdepth ? 1U : 0U, 1U);
+  if (spec.seqProfile == 2U && spec.highBitdepth) {
+    writer.put(spec.twelveBit ? 1U : 0U, 1U);
+  }
+  if (spec.seqProfile != 1U) {
+    writer.put(spec.monochrome ? 1U : 0U, 1U);
+  }
+  writer.put(spec.colorDescriptionPresent ? 1U : 0U, 1U);
+  if (spec.colorDescriptionPresent) {
+    writer.put(spec.colorPrimaries, 8U);
+    writer.put(spec.transferCharacteristics, 8U);
+    writer.put(spec.matrixCoefficients, 8U);
+  }
+  const bool srgbShortcut =
+      spec.colorDescriptionPresent && spec.colorPrimaries == 1U &&
+      spec.transferCharacteristics == 13U && spec.matrixCoefficients == 0U;
+  if (spec.monochrome) {
+    writer.put(spec.fullRange ? 1U : 0U, 1U);
+    writer.putTrailingBits();
+    return writer.bytes;
+  }
+  if (!srgbShortcut) {
+    writer.put(spec.fullRange ? 1U : 0U, 1U);
+    const bool twelveBit = spec.seqProfile == 2U && spec.highBitdepth &&
+                           spec.twelveBit;
+    bool subsamplingX = spec.seqProfile != 1U;
+    bool subsamplingY = spec.seqProfile == 0U;
+    if (spec.seqProfile == 2U && twelveBit) {
+      writer.put(1U, 1U); // subsampling_x
+      writer.put(1U, 1U); // subsampling_y
+      subsamplingX = true;
+      subsamplingY = true;
+    }
+    if (subsamplingX && subsamplingY) {
+      writer.put(0U, 2U); // chroma_sample_position
+    }
+  }
+  writer.put(0U, 1U); // separate_uv_delta_q
+  writer.put(0U, 1U); // film_grain_params_present
+  writer.putTrailingBits();
+  return writer.bytes;
+}
+
+void appendLeb128(std::vector<std::uint8_t> &bytes, std::uint64_t value) {
+  do {
+    std::uint8_t chunk = static_cast<std::uint8_t>(value & 0x7FU);
+    value >>= 7U;
+    if (value != 0U) {
+      chunk = static_cast<std::uint8_t>(chunk | 0x80U);
+    }
+    bytes.push_back(chunk);
+  } while (value != 0U);
+}
+
+struct Av1cSpec {
+  Av1SequenceHeaderSpec sequence{};
+  std::uint8_t marker{0x81U};
+  bool declaredHighBitdepth{false};
+  bool declaredTwelveBit{false};
+  bool declaredMonochrome{false};
+  bool declaredSubsamplingX{true};
+  bool declaredSubsamplingY{true};
+  std::uint32_t declaredProfile{0};
+  bool presentationDelayPresent{false};
+  std::uint8_t presentationDelayMinusOne{0};
+  bool includeSequenceHeader{true};
+};
+
+std::vector<std::uint8_t> makeAv1C(const Av1cSpec &spec) {
+  std::vector<std::uint8_t> record;
+  record.push_back(spec.marker);
+  record.push_back(static_cast<std::uint8_t>((spec.declaredProfile << 5U) |
+                                             spec.sequence.seqLevelIdx));
+  record.push_back(static_cast<std::uint8_t>(
+      (spec.declaredHighBitdepth ? 0x40U : 0U) |
+      (spec.declaredTwelveBit ? 0x20U : 0U) |
+      (spec.declaredMonochrome ? 0x10U : 0U) |
+      (spec.declaredSubsamplingX ? 0x08U : 0U) |
+      (spec.declaredSubsamplingY ? 0x04U : 0U)));
+  record.push_back(static_cast<std::uint8_t>(
+      (spec.presentationDelayPresent ? 0x10U : 0U) |
+      (spec.presentationDelayMinusOne & 0x0FU)));
+  if (spec.includeSequenceHeader) {
+    const auto payload = makeAv1SequenceHeaderPayload(spec.sequence);
+    record.push_back(0x0AU); // type 1, obu_has_size_field
+    appendLeb128(record, payload.size());
+    record.insert(record.end(), payload.begin(), payload.end());
+  }
+  return record;
+}
+
+[[nodiscard]] VideoCodecConfigurationInspection
+inspectAv1(const std::vector<std::uint8_t> &bytes,
+           VideoCodecConfigurationLimits limits = {}) noexcept {
+  return inspectVideoCodecConfiguration(MediaCodec::Av1,
+                                        MediaCodecConfigurationKind::Av1C,
+                                        byteView(bytes), limits);
+}
+
+[[nodiscard]] VideoCodecConfigurationInspection
+inspectVpcc(const std::vector<std::uint8_t> &bytes,
+            VideoCodecConfigurationLimits limits = {}) noexcept {
+  return inspectVideoCodecConfiguration(MediaCodec::Vp9,
+                                        MediaCodecConfigurationKind::VpcC,
+                                        byteView(bytes), limits);
+}
+
+[[nodiscard]] VideoCodecConfigurationInspection
+inspectVp9Keyframe(const std::vector<std::uint8_t> &bytes,
+                   VideoCodecConfigurationLimits limits = {}) noexcept {
+  return inspectVp9BitstreamKeyframe(byteView(bytes), limits);
+}
+
+// The av1C from test-media/codec-envelope/av1-aac.mkv: 1920x1080, seq_profile
+// 0, 8-bit 4:2:0, level 8, no color description. Its 12-byte configOBU is a
+// real libaom sequence header, complete with an initial_display_delay operating
+// point, so it also exercises the parts of the walk a synthesized header omits.
+const std::vector<std::uint8_t> kRepositorySampleAv1C{
+    0x81, 0x08, 0x0c, 0x00, 0x0a, 0x0c, 0x02, 0x00, 0x00,
+    0x42, 0x95, 0x5d, 0xfe, 0x1b, 0x80, 0x5f, 0x00, 0x08};
+
+// The first 12 bytes of the first coded frame of
+// test-media/codec-envelope/vp9.webm, which is a keyframe. The Matroska Block
+// payload is byte-identical to the elementary-stream frame, so this is exactly
+// what the demuxer hands the bitstream parser.
+const std::vector<std::uint8_t> kRepositorySampleVp9Keyframe{
+    0x82, 0x49, 0x83, 0x42, 0x00, 0x77, 0xf0, 0x43, 0x76, 0x06, 0x38, 0x24};
+
+void testAv1() {
+  const auto repositorySample = inspectAv1(kRepositorySampleAv1C);
+  expect(repositorySample.admitted(),
+         "the repository's real 18-byte av1C is admitted");
+  if (repositorySample.facts) {
+    const auto &facts = *repositorySample.facts;
+    expect(facts.codec == MediaCodec::Av1 &&
+               facts.kind == MediaCodecConfigurationKind::Av1C &&
+               facts.sampleFormat == MediaVideoSampleFormat::Yuv420EightBit &&
+               facts.width == 1920U && facts.height == 1080U &&
+               facts.bitDepth == 8U && facts.profile == 0U &&
+               facts.nalLengthBytes == 0U && facts.maximumReorderFrames == 0U,
+           "real av1C yields 1920x1080 8-bit 4:2:0 Main with no reordering");
+    expect(!facts.color.colorDescriptionPresent,
+           "real av1C sequence header carries no color description");
+  }
+
+  allocation_probe::calls = 0U;
+  allocation_probe::active = true;
+  const auto allocationFree = inspectAv1(kRepositorySampleAv1C);
+  allocation_probe::active = false;
+  expect(allocationFree.admitted() && allocation_probe::calls == 0U,
+         "AV1 configuration inspection performs no heap allocation");
+
+  Av1cSpec bt709;
+  bt709.sequence.colorDescriptionPresent = true;
+  bt709.sequence.colorPrimaries = 1U;
+  bt709.sequence.transferCharacteristics = 1U;
+  bt709.sequence.matrixCoefficients = 1U;
+  const auto bt709Admitted = inspectAv1(makeAv1C(bt709));
+  expect(bt709Admitted.admitted(), "explicit BT.709 AV1 is admitted");
+  if (bt709Admitted.facts) {
+    const auto &color = bt709Admitted.facts->color;
+    expect(color.colorDescriptionPresent && color.colorPrimaries == 1U &&
+               color.transferCharacteristics == 1U &&
+               color.matrixCoefficients == 1U && !color.fullRange,
+           "AV1 explicit narrow-range BT.709 color facts are exact");
+  }
+
+  Av1cSpec tenBit;
+  tenBit.declaredHighBitdepth = true;
+  tenBit.sequence.highBitdepth = true;
+  const auto tenBitAdmitted = inspectAv1(makeAv1C(tenBit));
+  expect(tenBitAdmitted.admitted() && tenBitAdmitted.facts &&
+             tenBitAdmitted.facts->bitDepth == 10U &&
+             tenBitAdmitted.facts->sampleFormat ==
+                 MediaVideoSampleFormat::Yuv420TenBit,
+         "10-bit AV1 Main is admitted as 4:2:0 10-bit");
+
+  Av1cSpec delayed;
+  delayed.presentationDelayPresent = true;
+  delayed.presentationDelayMinusOne = 2U;
+  expect(inspectAv1(makeAv1C(delayed)).facts &&
+             inspectAv1(makeAv1C(delayed)).facts->maximumReorderFrames == 3U,
+         "av1C initial_presentation_delay becomes the reorder depth");
+
+  auto badMarker = kRepositorySampleAv1C;
+  badMarker[0] = 0x01U;
+  expectError(inspectAv1(badMarker),
+              VideoCodecConfigurationError::MalformedRecord,
+              "av1C marker bit must be set");
+  auto badVersion = kRepositorySampleAv1C;
+  badVersion[0] = 0x82U;
+  expectError(inspectAv1(badVersion),
+              VideoCodecConfigurationError::MalformedRecord,
+              "av1C version must be exactly 1");
+  auto reservedSet = kRepositorySampleAv1C;
+  reservedSet[3] = 0x20U;
+  expectError(inspectAv1(reservedSet),
+              VideoCodecConfigurationError::MalformedRecord,
+              "av1C reserved bits must be zero");
+  expectError(inspectAv1({0x81U, 0x08U, 0x0cU}),
+              VideoCodecConfigurationError::MalformedRecord,
+              "av1C shorter than its fixed bytes is rejected");
+
+  Av1cSpec professional;
+  professional.declaredProfile = 1U;
+  professional.sequence.seqProfile = 1U;
+  professional.declaredSubsamplingX = false;
+  professional.declaredSubsamplingY = false;
+  expectError(inspectAv1(makeAv1C(professional)),
+              VideoCodecConfigurationError::UnsupportedProfile,
+              "AV1 seq_profile other than 0 is not admitted");
+
+  Av1cSpec monochrome;
+  monochrome.declaredMonochrome = true;
+  monochrome.sequence.monochrome = true;
+  expectError(inspectAv1(makeAv1C(monochrome)),
+              VideoCodecConfigurationError::UnsupportedChromaFormat,
+              "monochrome AV1 is not admitted");
+
+  Av1cSpec notFourTwoZero;
+  notFourTwoZero.declaredSubsamplingY = false;
+  expectError(inspectAv1(makeAv1C(notFourTwoZero)),
+              VideoCodecConfigurationError::UnsupportedChromaFormat,
+              "AV1 that is not 4:2:0 is not admitted");
+
+  Av1cSpec twelveBit;
+  twelveBit.declaredHighBitdepth = true;
+  twelveBit.declaredTwelveBit = true;
+  expectError(inspectAv1(makeAv1C(twelveBit)),
+              VideoCodecConfigurationError::UnsupportedBitDepth,
+              "12-bit AV1 is not admitted");
+
+  Av1cSpec bt2020;
+  bt2020.sequence.colorDescriptionPresent = true;
+  bt2020.sequence.colorPrimaries = 9U;
+  bt2020.sequence.transferCharacteristics = 16U; // PQ
+  bt2020.sequence.matrixCoefficients = 9U;
+  expectError(inspectAv1(makeAv1C(bt2020)),
+              VideoCodecConfigurationError::UnsupportedColorDescription,
+              "BT.2020 PQ AV1 stays outside the SDR envelope");
+
+  Av1cSpec depthDisagreement;
+  depthDisagreement.declaredHighBitdepth = true;
+  expectError(inspectAv1(makeAv1C(depthDisagreement)),
+              VideoCodecConfigurationError::ParameterSetMismatch,
+              "av1C fixed bytes cannot contradict the sequence header");
+
+  Av1cSpec noSequenceHeader;
+  noSequenceHeader.includeSequenceHeader = false;
+  expectError(inspectAv1(makeAv1C(noSequenceHeader)),
+              VideoCodecConfigurationError::MissingParameterSet,
+              "av1C without a sequence header OBU proves nothing");
+
+  Av1cSpec oversized;
+  oversized.sequence.width = 3840U;
+  oversized.sequence.height = 2160U;
+  expectError(inspectAv1(makeAv1C(oversized)),
+              VideoCodecConfigurationError::DimensionLimitExceeded,
+              "AV1 dimensions remain capped at 1920x1080");
+
+  auto truncatedObu = makeAv1C({});
+  truncatedObu.pop_back();
+  expectError(inspectAv1(truncatedObu),
+              VideoCodecConfigurationError::MalformedRecord,
+              "an av1C OBU shorter than its declared size is rejected");
+
+  auto frameObu = makeAv1C({});
+  frameObu[4] = 0x32U; // obu_type 6 (OBU_FRAME) with obu_has_size_field
+  expectError(inspectAv1(frameObu),
+              VideoCodecConfigurationError::MalformedRecord,
+              "a frame OBU inside configOBUs is a malformed record");
+
+  VideoCodecConfigurationLimits noReorder;
+  noReorder.maximumReorderFrames = 0U;
+  expectError(inspectAv1(makeAv1C(delayed), noReorder),
+              VideoCodecConfigurationError::ReorderLimitExceeded,
+              "AV1 presentation delay honors a tightened reorder bound");
+}
+
+struct Vp9KeyframeSpec {
+  std::uint32_t frameMarker{2};
+  std::uint32_t profile{0};
+  std::uint32_t profile3Reserved{0};
+  std::uint32_t showExistingFrame{0};
+  std::uint32_t frameType{0};
+  std::uint32_t tenOrTwelveBit{0};
+  std::uint32_t colorSpace{2};
+  std::uint32_t colorRange{0};
+  std::uint32_t subsamplingX{1};
+  std::uint32_t subsamplingY{1};
+  std::uint32_t syncCode{0x498342U};
+  std::uint32_t width{1920};
+  std::uint32_t height{1080};
+};
+
+std::vector<std::uint8_t> makeVp9Keyframe(const Vp9KeyframeSpec &spec) {
+  PlainBitWriter writer;
+  writer.put(spec.frameMarker, 2U);
+  writer.put(spec.profile & 1U, 1U);        // profile_low_bit
+  writer.put((spec.profile >> 1U) & 1U, 1U); // profile_high_bit
+  if (spec.profile == 3U) {
+    writer.put(spec.profile3Reserved, 1U);
+  }
+  writer.put(spec.showExistingFrame, 1U);
+  writer.put(spec.frameType, 1U);
+  writer.put(1U, 1U); // show_frame
+  writer.put(0U, 1U); // error_resilient_mode
+  writer.put(spec.syncCode, 24U);
+  if (spec.profile >= 2U) {
+    writer.put(spec.tenOrTwelveBit, 1U);
+  }
+  writer.put(spec.colorSpace, 3U);
+  if (spec.colorSpace != 7U) {
+    writer.put(spec.colorRange, 1U);
+    if (spec.profile == 1U || spec.profile == 3U) {
+      writer.put(spec.subsamplingX, 1U);
+      writer.put(spec.subsamplingY, 1U);
+      writer.put(0U, 1U); // reserved_zero
+    }
+  } else if (spec.profile == 1U || spec.profile == 3U) {
+    writer.put(0U, 1U); // reserved_zero
+  }
+  writer.put(spec.width - 1U, 16U);
+  writer.put(spec.height - 1U, 16U);
+  // The parser stops here; the remaining uncompressed-header syntax is left as
+  // zero padding to a byte boundary, which is what a prefix read looks like.
+  while (writer.bitCount % 8U != 0U) {
+    writer.put(0U, 1U);
+  }
+  return writer.bytes;
+}
+
+std::vector<std::uint8_t>
+synthesizedVpcC(const VideoCodecConfigurationFacts &facts) {
+  std::array<std::byte, kVideoCodecVpcCBytes> record{};
+  if (!buildVp9CodecConfiguration(facts, record)) {
+    return {};
+  }
+  std::vector<std::uint8_t> bytes(record.size());
+  for (std::size_t index = 0; index < record.size(); ++index) {
+    bytes[index] = static_cast<std::uint8_t>(record[index]);
+  }
+  return bytes;
+}
+
+void testVp9() {
+  const auto repositorySample =
+      inspectVp9Keyframe(kRepositorySampleVp9Keyframe);
+  expect(repositorySample.admitted(),
+         "the repository's real VP9 keyframe header is admitted");
+  if (repositorySample.facts) {
+    const auto &facts = *repositorySample.facts;
+    expect(facts.codec == MediaCodec::Vp9 &&
+               facts.kind == MediaCodecConfigurationKind::VpcC &&
+               facts.sampleFormat == MediaVideoSampleFormat::Yuv420EightBit &&
+               facts.width == 1920U && facts.height == 1080U &&
+               facts.bitDepth == 8U && facts.profile == 0U &&
+               facts.nalLengthBytes == 0U && facts.maximumReorderFrames == 0U,
+           "real VP9 keyframe yields 1920x1080 profile 0 8-bit 4:2:0");
+    expect(!facts.color.colorDescriptionPresent && !facts.color.fullRange,
+           "real VP9 keyframe reports CS_UNKNOWN narrow range");
+  }
+
+  allocation_probe::calls = 0U;
+  allocation_probe::active = true;
+  const auto allocationFree =
+      inspectVp9Keyframe(kRepositorySampleVp9Keyframe);
+  allocation_probe::active = false;
+  expect(allocationFree.admitted() && allocation_probe::calls == 0U,
+         "VP9 keyframe inspection performs no heap allocation");
+
+  // A real coded keyframe is tens of kilobytes; the parser must read a bounded
+  // prefix of it and never depend on record exhaustion.
+  auto longFrame = kRepositorySampleVp9Keyframe;
+  longFrame.resize(4096U, 0xA5U);
+  expect(inspectVp9Keyframe(longFrame).admitted() &&
+             inspectVp9Keyframe(longFrame).facts->width == 1920U,
+         "VP9 keyframe facts come from a bounded header prefix");
+
+  // Round trip: proven bitstream facts -> synthesized vpcC -> the same facts.
+  if (repositorySample.facts) {
+    const auto synthesized = synthesizedVpcC(*repositorySample.facts);
+    expect(synthesized.size() == kVideoCodecVpcCBytes &&
+               synthesized[0] == 1U && synthesized[1] == 0U &&
+               synthesized[2] == 0U && synthesized[3] == 0U &&
+               synthesized[4] == 0U && synthesized[6] == 0x82U &&
+               synthesized[7] == 2U && synthesized[8] == 2U &&
+               synthesized[9] == 2U && synthesized[10] == 0U &&
+               synthesized[11] == 0U,
+           "a synthesized vpcC is version 1, profile 0, 8-bit 4:2:0 "
+           "narrow-range, unspecified color, no initialization data");
+    const auto roundTrip = inspectVpcc(synthesized);
+    expect(roundTrip.admitted() && roundTrip.facts &&
+               roundTrip.facts->profile == 0U &&
+               roundTrip.facts->bitDepth == 8U &&
+               roundTrip.facts->sampleFormat ==
+                   MediaVideoSampleFormat::Yuv420EightBit &&
+               !roundTrip.facts->color.colorDescriptionPresent &&
+               roundTrip.facts->width == 0U && roundTrip.facts->height == 0U,
+           "a synthesized vpcC round-trips and carries no dimensions");
+  }
+
+  const Vp9KeyframeSpec bt709Spec;
+  const auto bt709 = inspectVp9Keyframe(makeVp9Keyframe(bt709Spec));
+  expect(bt709.admitted() && bt709.facts &&
+             bt709.facts->color.colorDescriptionPresent &&
+             bt709.facts->color.colorPrimaries == 1U &&
+             bt709.facts->color.transferCharacteristics == 1U &&
+             bt709.facts->color.matrixCoefficients == 1U,
+         "VP9 CS_BT_709 yields the complete BT.709 description");
+  if (bt709.facts) {
+    const auto synthesized = synthesizedVpcC(*bt709.facts);
+    expect(synthesized.size() == kVideoCodecVpcCBytes &&
+               synthesized[7] == 1U && synthesized[8] == 1U &&
+               synthesized[9] == 1U,
+           "a synthesized vpcC carries the proven BT.709 color bytes");
+  }
+
+  Vp9KeyframeSpec bt601Spec;
+  bt601Spec.colorSpace = 1U;
+  const auto bt601 = inspectVp9Keyframe(makeVp9Keyframe(bt601Spec));
+  expect(bt601.admitted() && bt601.facts &&
+             bt601.facts->color.colorPrimaries == 2U &&
+             bt601.facts->color.transferCharacteristics == 2U &&
+             bt601.facts->color.matrixCoefficients == 5U,
+         "VP9 CS_BT_601 names only a matrix; primaries and transfer stay "
+         "unspecified rather than being invented");
+
+  Vp9KeyframeSpec fullRangeSpec;
+  fullRangeSpec.colorRange = 1U;
+  const auto fullRange = inspectVp9Keyframe(makeVp9Keyframe(fullRangeSpec));
+  expect(fullRange.admitted() && fullRange.facts &&
+             fullRange.facts->color.fullRange &&
+             synthesizedVpcC(*fullRange.facts)[6] == 0x83U,
+         "VP9 color_range reaches the synthesized vpcC full-range flag");
+
+  Vp9KeyframeSpec tenBitSpec;
+  tenBitSpec.profile = 2U;
+  const auto tenBit = inspectVp9Keyframe(makeVp9Keyframe(tenBitSpec));
+  expect(tenBit.admitted() && tenBit.facts && tenBit.facts->bitDepth == 10U &&
+             tenBit.facts->profile == 2U &&
+             tenBit.facts->sampleFormat ==
+                 MediaVideoSampleFormat::Yuv420TenBit,
+         "VP9 profile 2 10-bit 4:2:0 is admitted");
+  if (tenBit.facts) {
+    expect(synthesizedVpcC(*tenBit.facts)[6] == 0xA2U,
+           "a synthesized 10-bit vpcC encodes bit depth 10 and 4:2:0");
+  }
+
+  Vp9KeyframeSpec badMarker;
+  badMarker.frameMarker = 1U;
+  expectError(inspectVp9Keyframe(makeVp9Keyframe(badMarker)),
+              VideoCodecConfigurationError::MalformedRecord,
+              "VP9 frame_marker must be 2");
+
+  Vp9KeyframeSpec showExisting;
+  showExisting.showExistingFrame = 1U;
+  expectError(inspectVp9Keyframe(makeVp9Keyframe(showExisting)),
+              VideoCodecConfigurationError::MalformedRecord,
+              "a VP9 show_existing_frame is not a keyframe");
+
+  Vp9KeyframeSpec interFrame;
+  interFrame.frameType = 1U;
+  expectError(inspectVp9Keyframe(makeVp9Keyframe(interFrame)),
+              VideoCodecConfigurationError::MalformedRecord,
+              "a VP9 inter frame proves no configuration facts");
+
+  Vp9KeyframeSpec badSync;
+  badSync.syncCode = 0x498343U;
+  expectError(inspectVp9Keyframe(makeVp9Keyframe(badSync)),
+              VideoCodecConfigurationError::MalformedRecord,
+              "the VP9 frame_sync_code must be 49 83 42 exactly");
+
+  Vp9KeyframeSpec profileOne;
+  profileOne.profile = 1U;
+  profileOne.subsamplingX = 0U;
+  profileOne.subsamplingY = 0U;
+  expectError(inspectVp9Keyframe(makeVp9Keyframe(profileOne)),
+              VideoCodecConfigurationError::UnsupportedProfile,
+              "VP9 profile 1 is outside the 4:2:0 envelope");
+
+  Vp9KeyframeSpec twelveBit;
+  twelveBit.profile = 2U;
+  twelveBit.tenOrTwelveBit = 1U;
+  expectError(inspectVp9Keyframe(makeVp9Keyframe(twelveBit)),
+              VideoCodecConfigurationError::UnsupportedBitDepth,
+              "12-bit VP9 is not admitted");
+
+  Vp9KeyframeSpec bt2020;
+  bt2020.colorSpace = 5U;
+  expectError(inspectVp9Keyframe(makeVp9Keyframe(bt2020)),
+              VideoCodecConfigurationError::UnsupportedColorDescription,
+              "BT.2020 VP9 stays outside the SDR envelope");
+
+  Vp9KeyframeSpec smpte240;
+  smpte240.colorSpace = 4U;
+  expectError(inspectVp9Keyframe(makeVp9Keyframe(smpte240)),
+              VideoCodecConfigurationError::UnsupportedColorDescription,
+              "SMPTE 240M VP9 stays outside the SDR envelope");
+
+  Vp9KeyframeSpec reserved;
+  reserved.colorSpace = 6U;
+  expectError(inspectVp9Keyframe(makeVp9Keyframe(reserved)),
+              VideoCodecConfigurationError::MalformedRecord,
+              "the reserved VP9 color space is a malformed header");
+
+  Vp9KeyframeSpec srgb;
+  srgb.colorSpace = 7U;
+  expectError(inspectVp9Keyframe(makeVp9Keyframe(srgb)),
+              VideoCodecConfigurationError::UnsupportedChromaFormat,
+              "sRGB VP9 is 4:4:4 and is not admitted");
+
+  Vp9KeyframeSpec oversized;
+  oversized.width = 3840U;
+  oversized.height = 2160U;
+  expectError(inspectVp9Keyframe(makeVp9Keyframe(oversized)),
+              VideoCodecConfigurationError::DimensionLimitExceeded,
+              "VP9 dimensions remain capped at 1920x1080");
+
+  auto truncated = makeVp9Keyframe(bt709Spec);
+  truncated.resize(6U);
+  expectError(inspectVp9Keyframe(truncated),
+              VideoCodecConfigurationError::MalformedRecord,
+              "a VP9 header prefix too short to carry frame_size is rejected");
+
+  // vpcC record structure.
+  const std::vector<std::uint8_t> validVpcC{1U, 0U, 0U, 0U,    0U, 40U,
+                                            0x82U, 1U, 1U, 1U, 0U, 0U};
+  expect(inspectVpcc(validVpcC).admitted(),
+         "a well-formed BT.709 vpcC is admitted");
+  auto badVersion = validVpcC;
+  badVersion[0] = 0U;
+  expectError(inspectVpcc(badVersion),
+              VideoCodecConfigurationError::MalformedRecord,
+              "vpcC version must be exactly 1");
+  auto badFlags = validVpcC;
+  badFlags[2] = 1U;
+  expectError(inspectVpcc(badFlags),
+              VideoCodecConfigurationError::MalformedRecord,
+              "vpcC flags must be zero");
+  auto initializationData = validVpcC;
+  initializationData[11] = 4U;
+  expectError(inspectVpcc(initializationData),
+              VideoCodecConfigurationError::MalformedRecord,
+              "vpcC codec initialization data is not admitted");
+  auto shortRecord = validVpcC;
+  shortRecord.pop_back();
+  expectError(inspectVpcc(shortRecord),
+              VideoCodecConfigurationError::MalformedRecord,
+              "a vpcC is exactly twelve bytes");
+  auto profileOneRecord = validVpcC;
+  profileOneRecord[4] = 1U;
+  expectError(inspectVpcc(profileOneRecord),
+              VideoCodecConfigurationError::UnsupportedProfile,
+              "vpcC profile 1 is outside the 4:2:0 envelope");
+  auto fourFourFour = validVpcC;
+  fourFourFour[6] = 0x86U;
+  expectError(inspectVpcc(fourFourFour),
+              VideoCodecConfigurationError::UnsupportedChromaFormat,
+              "vpcC 4:4:4 chroma subsampling is not admitted");
+  auto twelveBitRecord = validVpcC;
+  twelveBitRecord[4] = 2U;
+  twelveBitRecord[6] = 0xC2U;
+  expectError(inspectVpcc(twelveBitRecord),
+              VideoCodecConfigurationError::UnsupportedBitDepth,
+              "vpcC 12-bit is not admitted");
+  auto profileDepthMismatch = validVpcC;
+  profileDepthMismatch[6] = 0xA2U;
+  expectError(inspectVpcc(profileDepthMismatch),
+              VideoCodecConfigurationError::UnsupportedProfile,
+              "vpcC profile 0 cannot claim 10-bit");
+  auto hdrRecord = validVpcC;
+  hdrRecord[7] = 9U;
+  hdrRecord[8] = 16U;
+  hdrRecord[9] = 9U;
+  expectError(inspectVpcc(hdrRecord),
+              VideoCodecConfigurationError::UnsupportedColorDescription,
+              "a BT.2020 PQ vpcC stays outside the SDR envelope");
+
+  VideoCodecConfigurationFacts notVp9;
+  notVp9.codec = MediaCodec::H264;
+  std::array<std::byte, kVideoCodecVpcCBytes> unused{};
+  expect(!buildVp9CodecConfiguration(notVp9, unused),
+         "vpcC synthesis refuses facts that are not admitted VP9 facts");
+}
+
 } // namespace
 
 int main() {
@@ -1054,10 +1732,12 @@ int main() {
   testH264Rejections();
   testCompactHevcMainAndMain10();
   testHevcRejections();
+  testAv1();
+  testVp9();
   if (failures != 0) {
     std::cerr << failures << " video codec configuration test(s) failed\n";
     return EXIT_FAILURE;
   }
-  std::cout << "Framework-neutral AVC/HEVC configuration tests passed\n";
+  std::cout << "Framework-neutral AVC/HEVC/AV1/VP9 configuration tests passed\n";
   return EXIT_SUCCESS;
 }

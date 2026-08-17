@@ -1,5 +1,6 @@
 #include "native_video_pipeline.hpp"
 
+#include "native_video_codec_capability.hpp"
 #include "native_video_limits.hpp"
 
 #import <AppKit/AppKit.h>
@@ -326,6 +327,8 @@ std::optional<std::vector<std::byte>> copyCodecConfiguration(
   const CFStringRef atomName =
       codec == kCMVideoCodecType_H264   ? CFSTR("avcC")
       : codec == kCMVideoCodecType_HEVC ? CFSTR("hvcC")
+      : codec == kCMVideoCodecType_VP9  ? CFSTR("vpcC")
+      : codec == kCMVideoCodecType_AV1  ? CFSTR("av1C")
                                         : nullptr;
   if (atomName == nullptr) {
     return std::nullopt;
@@ -696,6 +699,17 @@ NativeVideoCodecAdmission nativeVideoCodecAdmission(
   if (mediaSubtype == kCMVideoCodecType_HEVC) {
     return NativeVideoCodecAdmission::Hevc;
   }
+  // Machine-dependent by construction: a host without the VP9 supplemental
+  // decoder or without an AV1 block reports Unsupported here and the track
+  // falls back before any decompression session is attempted.
+  if (mediaSubtype == kCMVideoCodecType_VP9 &&
+      nativeVideoToolboxSupportsVp9()) {
+    return NativeVideoCodecAdmission::Vp9;
+  }
+  if (mediaSubtype == kCMVideoCodecType_AV1 &&
+      nativeVideoToolboxSupportsAv1()) {
+    return NativeVideoCodecAdmission::Av1;
+  }
   return NativeVideoCodecAdmission::Unsupported;
 }
 
@@ -950,6 +964,73 @@ NativeVideoSampleFormatAdmission hevcSampleFormatAdmission(
              : NativeVideoSampleFormatAdmission::Yuv420EightBit;
 }
 
+// vpcC (VPCodecConfigurationRecord, a full box):
+//   0      version (must be 1)
+//   1..3   flags
+//   4      profile
+//   5      level
+//   6      bitDepth(4) | chromaSubsampling(3) | videoFullRangeFlag(1)
+//   7..9   colourPrimaries / transferCharacteristics / matrixCoefficients
+//   10..11 codecInitializationDataSize
+// chromaSubsampling 0 and 1 are the two 4:2:0 chroma sitings; 2 is 4:2:2 and
+// 3 is 4:4:4, neither of which the NV12/P010 output contract can carry.
+[[nodiscard]] NativeVideoSampleFormatAdmission vp9SampleFormatAdmission(
+    std::span<const std::byte> codecConfiguration) noexcept {
+  if (codecConfiguration.size() < 12) {
+    return NativeVideoSampleFormatAdmission::Unsupported;
+  }
+  const auto* bytes =
+      reinterpret_cast<const std::uint8_t*>(codecConfiguration.data());
+  if (bytes[0] != 1) {
+    return NativeVideoSampleFormatAdmission::Unsupported;
+  }
+  const std::uint8_t bitDepth = static_cast<std::uint8_t>(bytes[6] >> 4U);
+  const std::uint8_t chromaSubsampling =
+      static_cast<std::uint8_t>((bytes[6] >> 1U) & 0x07U);
+  if (chromaSubsampling > 1U) {
+    return NativeVideoSampleFormatAdmission::Unsupported;
+  }
+  if (bitDepth == 8U) {
+    return NativeVideoSampleFormatAdmission::Yuv420EightBit;
+  }
+  if (bitDepth == 10U) {
+    return NativeVideoSampleFormatAdmission::Yuv420TenBit;
+  }
+  return NativeVideoSampleFormatAdmission::Unsupported;
+}
+
+// av1C (AV1CodecConfigurationRecord):
+//   0 marker(1) | version(7)
+//   1 seq_profile(3) | seq_level_idx_0(5)
+//   2 seq_tier_0(1) | high_bitdepth(1) | twelve_bit(1) | monochrome(1) |
+//     chroma_subsampling_x(1) | chroma_subsampling_y(1) |
+//     chroma_sample_position(2)
+//   3 reserved(3) | initial_presentation_delay_present(1) |
+//     initial_presentation_delay_minus_one(4)
+// 4:2:0 colour is monochrome=0 with both subsampling flags set; twelve_bit
+// with high_bitdepth is 12-bit and has no bi-planar output surface here.
+[[nodiscard]] NativeVideoSampleFormatAdmission av1SampleFormatAdmission(
+    std::span<const std::byte> codecConfiguration) noexcept {
+  if (codecConfiguration.size() < 4) {
+    return NativeVideoSampleFormatAdmission::Unsupported;
+  }
+  const auto* bytes =
+      reinterpret_cast<const std::uint8_t*>(codecConfiguration.data());
+  if ((bytes[0] & 0x80U) == 0U || (bytes[0] & 0x7fU) != 1U) {
+    return NativeVideoSampleFormatAdmission::Unsupported;
+  }
+  const bool highBitDepth = ((bytes[2] >> 6U) & 0x01U) != 0U;
+  const bool twelveBit = ((bytes[2] >> 5U) & 0x01U) != 0U;
+  const bool monochrome = ((bytes[2] >> 4U) & 0x01U) != 0U;
+  const bool subsamplingX = ((bytes[2] >> 3U) & 0x01U) != 0U;
+  const bool subsamplingY = ((bytes[2] >> 2U) & 0x01U) != 0U;
+  if (monochrome || !subsamplingX || !subsamplingY || twelveBit) {
+    return NativeVideoSampleFormatAdmission::Unsupported;
+  }
+  return highBitDepth ? NativeVideoSampleFormatAdmission::Yuv420TenBit
+                      : NativeVideoSampleFormatAdmission::Yuv420EightBit;
+}
+
 }  // namespace
 
 NativeVideoSampleFormatAdmission nativeVideoSampleFormatAdmission(
@@ -960,6 +1041,12 @@ NativeVideoSampleFormatAdmission nativeVideoSampleFormatAdmission(
   }
   if (mediaSubtype == kCMVideoCodecType_HEVC) {
     return hevcSampleFormatAdmission(codecConfiguration);
+  }
+  if (mediaSubtype == kCMVideoCodecType_VP9) {
+    return vp9SampleFormatAdmission(codecConfiguration);
+  }
+  if (mediaSubtype == kCMVideoCodecType_AV1) {
+    return av1SampleFormatAdmission(codecConfiguration);
   }
   return NativeVideoSampleFormatAdmission::Unsupported;
 }
@@ -2183,7 +2270,8 @@ struct NativeVideoPipeline::Impl
         NativeVideoCodecAdmission::Unsupported) {
       finishUncommittedPreparation(
           request, NativeVideoPrepareResult::Unsupported,
-          "native video currently supports H.264 and HEVC");
+          "native video currently supports H.264, HEVC, and "
+          "hardware-decodable VP9/AV1");
       return;
     }
     if (!CGAffineTransformIsIdentity(transform)) {
@@ -2247,7 +2335,7 @@ struct NativeVideoPipeline::Impl
     if (!configuration) {
       finishUncommittedPreparation(
           request, NativeVideoPrepareResult::Unsupported,
-          "video track lacks an avcC/hvcC configuration atom");
+          "video track lacks an avcC/hvcC/vpcC/av1C configuration atom");
       return;
     }
     if (nativeVideoSampleFormatAdmission(codec, *configuration) ==

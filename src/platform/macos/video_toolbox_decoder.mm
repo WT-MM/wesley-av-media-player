@@ -1,5 +1,6 @@
 #include "video_toolbox_decoder.hpp"
 
+#include "native_video_codec_capability.hpp"
 #include "native_video_limits.hpp"
 
 #include <CoreFoundation/CoreFoundation.h>
@@ -670,6 +671,47 @@ deriveCodecReorderFrameCount(const VideoStreamConfiguration &configuration) {
       }
     }
     return maximum;
+  }
+  if (configuration.codec == kCMVideoCodecType_VP9) {
+    // VP9 has no output reordering. Alternate-reference ("hidden") frames are
+    // decoded but never output at their own decode position; they reach the
+    // output only through show_existing_frame, which emits an already-decoded
+    // frame at the point the bitstream asks for it. Output order therefore
+    // equals bitstream order, which is why VP9 containers carry PTS == DTS on
+    // every packet. A vpcC record is still required for the session, but it
+    // carries no reorder signal at all, so the depth is a property of the
+    // codec: zero.
+    if (bytes.size() < 12 || bytes[0] != 1) {
+      return std::nullopt;
+    }
+    return std::size_t{0};
+  }
+  if (configuration.codec == kCMVideoCodecType_AV1) {
+    // AV1 shares VP9's output model (show_existing_frame, no composition
+    // offsets), so its intrinsic reorder depth is also zero. The one signal a
+    // stream can carry is the av1C initial presentation delay, which is the
+    // number of frames a conforming decoder may buffer before its first
+    // output; honour it as an upper bound when present.
+    //
+    // This value is deliberately NOT rounded up "to be safe". The pipeline
+    // treats it as a delivery hold floor, not merely a memory bound: the
+    // ordered drain refuses to emit a frame until more than this many frames
+    // are retained (see the presentable/moreFrames predicates), so every extra
+    // unit is a frame of added presentation latency and one more retained
+    // IOSurface. A value above maxPendingPresentationFrames also hard-fails
+    // configure(), which is the intended clean fallback rather than a silent
+    // over-allocation.
+    //
+    // av1C byte 3: reserved(3) | initial_presentation_delay_present(1) |
+    //              initial_presentation_delay_minus_one(4)
+    if (bytes.size() < 4 || (bytes[0] & 0x7fU) != 1U ||
+        (bytes[0] & 0x80U) == 0U) {
+      return std::nullopt;
+    }
+    if ((bytes[3] & 0x10U) == 0U) {
+      return std::size_t{0};
+    }
+    return static_cast<std::size_t>(bytes[3] & 0x0fU) + 1U;
   }
   return std::nullopt;
 }
@@ -1580,8 +1622,16 @@ void deliverDecodedFrame(const std::shared_ptr<AsyncDecodeState> &state,
 }
 
 CFStringRef codecConfigurationAtomName(CMVideoCodecType codec) noexcept {
+  // VideoToolbox cannot build a VP9 or AV1 decompression session without the
+  // codec configuration record: CMVideoFormatDescriptionCreate succeeds but
+  // session creation fails with kVTCouldNotFindVideoDecoderErr (-8971). The
+  // vpcC/av1C atoms travel through the exact same sample-description-extension
+  // dictionary as avcC/hvcC, so naming them here is the only change the
+  // format-description path needs.
   return codec == kCMVideoCodecType_H264   ? CFSTR("avcC")
          : codec == kCMVideoCodecType_HEVC ? CFSTR("hvcC")
+         : codec == kCMVideoCodecType_VP9  ? CFSTR("vpcC")
+         : codec == kCMVideoCodecType_AV1  ? CFSTR("av1C")
                                            : nullptr;
 }
 
@@ -1794,6 +1844,28 @@ requestedPixelFormat(const VideoStreamConfiguration &configuration) noexcept {
   } else if (configuration.codec == kCMVideoCodecType_H264 &&
              configuration.codecConfiguration.size() > 1) {
     tenBit = bytes[1] == 110;
+  } else if (configuration.codec == kCMVideoCodecType_VP9 &&
+             configuration.codecConfiguration.size() >= 12 &&
+             bytes[0] == 1) {
+    // vpcC byte 6: bitDepth(4) | chromaSubsampling(3) | videoFullRangeFlag(1).
+    // VP9 Profile 2 carries 10-bit 4:2:0 and must request P010. Getting this
+    // wrong is silent: VideoToolbox happily creates an NV12 session for 10-bit
+    // VP9 and downconverts, so the delivered format still matches the request
+    // and validateOutputSurfaceContract cannot catch it. The record must
+    // therefore be well-formed here, and it is: configure() already rejected
+    // any vpcC shorter than 12 bytes or with a version other than 1 through
+    // deriveCodecReorderFrameCount, which runs before this call.
+    tenBit = (bytes[6] >> 4U) >= 10U;
+  } else if (configuration.codec == kCMVideoCodecType_AV1 &&
+             configuration.codecConfiguration.size() >= 4 &&
+             (bytes[0] & 0x80U) != 0U && (bytes[0] & 0x7fU) == 1U) {
+    // av1C byte 2: seq_tier_0(1) | high_bitdepth(1) | twelve_bit(1) |
+    //              monochrome(1) | subsampling_x(1) | subsampling_y(1) |
+    //              chroma_sample_position(2). AV1 Main 10 sets high_bitdepth
+    //              with twelve_bit clear. Same fail-closed reasoning as VP9:
+    //              a malformed av1C never reaches here because configure()
+    //              rejected it first.
+    tenBit = ((bytes[2] >> 6U) & 0x01U) != 0U;
   }
   return tenBit ? kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange
                 : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange;
@@ -2764,14 +2836,25 @@ bool VideoToolboxDecoder::configure(
   if (error != nullptr) {
     error->clear();
   }
-  if ((configuration.codec != kCMVideoCodecType_H264 &&
-       configuration.codec != kCMVideoCodecType_HEVC) ||
-      configuration.codedSize.width <= 0 ||
+  // VP9 and AV1 are admitted only where this machine can actually decode them.
+  // VP9 additionally requires the supplemental decoder to have been
+  // registered, which the capability helper does before its first query, so
+  // consulting it here also satisfies the registration precondition for the
+  // decompression session created further below.
+  const bool admittedCodec =
+      configuration.codec == kCMVideoCodecType_H264 ||
+      configuration.codec == kCMVideoCodecType_HEVC ||
+      (configuration.codec == kCMVideoCodecType_VP9 &&
+       nativeVideoToolboxSupportsVp9()) ||
+      (configuration.codec == kCMVideoCodecType_AV1 &&
+       nativeVideoToolboxSupportsAv1());
+  if (!admittedCodec || configuration.codedSize.width <= 0 ||
       configuration.codedSize.height <= 0 ||
       configuration.codecConfiguration.empty()) {
     assignError(error,
-                "VideoToolbox requires H.264/HEVC, positive dimensions, and "
-                "an avcC/hvcC configuration atom");
+                "VideoToolbox requires a hardware-decodable "
+                "H.264/HEVC/VP9/AV1 stream, positive dimensions, and an "
+                "avcC/hvcC/vpcC/av1C configuration atom");
     return false;
   }
 

@@ -1,5 +1,6 @@
 #include "native_video_consumer.hpp"
 
+#include "native_video_codec_capability.hpp"
 #include "native_video_limits.hpp"
 
 #include <CoreFoundation/CoreFoundation.h>
@@ -271,13 +272,44 @@ void assignError(std::string* error, const char* message) {
   return false;
 }
 
+// VP9 and AV1 are admitted only when this machine can hardware-decode them,
+// so a host without the supplemental VP9 decoder or without an AV1 block
+// refuses the track here and the session falls back before any decompression
+// session is created.
+[[nodiscard]] bool admittedVideoCodec(media::MediaCodec codec) noexcept {
+  switch (codec) {
+    case media::MediaCodec::H264:
+    case media::MediaCodec::Hevc:
+      return true;
+    case media::MediaCodec::Vp9:
+      return nativeVideoToolboxSupportsVp9();
+    case media::MediaCodec::Av1:
+      return nativeVideoToolboxSupportsAv1();
+    default:
+      return false;
+  }
+}
+
+[[nodiscard]] CMVideoCodecType coreMediaVideoCodecType(
+    media::MediaCodec codec) noexcept {
+  switch (codec) {
+    case media::MediaCodec::Hevc:
+      return kCMVideoCodecType_HEVC;
+    case media::MediaCodec::Vp9:
+      return kCMVideoCodecType_VP9;
+    case media::MediaCodec::Av1:
+      return kCMVideoCodecType_AV1;
+    default:
+      return kCMVideoCodecType_H264;
+  }
+}
+
 [[nodiscard]] bool supportedVideoTrack(
     const media::MediaTrackDescriptor& track) noexcept {
   if (track.id == 0 || track.kind != media::MediaTrackKind::Video ||
       !track.video || !track.timeBase.valid() || track.timeBase.value <= 0 ||
       !track.duration.valid() || track.duration.value < 0 ||
-      (track.codec != media::MediaCodec::H264 &&
-       track.codec != media::MediaCodec::Hevc) ||
+      !admittedVideoCodec(track.codec) ||
       !native_video_limits::acceptsVideoCodecConfigurationSize(
           track.codecConfiguration.size()) ||
       (track.codec == media::MediaCodec::H264 &&
@@ -285,7 +317,13 @@ void assignError(std::string* error, const char* message) {
            media::MediaCodecConfigurationKind::AvcC) ||
       (track.codec == media::MediaCodec::Hevc &&
        track.codecConfigurationKind !=
-           media::MediaCodecConfigurationKind::HvcC)) {
+           media::MediaCodecConfigurationKind::HvcC) ||
+      (track.codec == media::MediaCodec::Av1 &&
+       track.codecConfigurationKind !=
+           media::MediaCodecConfigurationKind::Av1C) ||
+      (track.codec == media::MediaCodec::Vp9 &&
+       track.codecConfigurationKind !=
+           media::MediaCodecConfigurationKind::VpcC)) {
     return false;
   }
   const media::MediaVideoFormat& video = *track.video;
@@ -1324,9 +1362,7 @@ media::NativeMediaConsumeResult NativeVideoConsumer::configure(
   impl.armConsumed = true;
   impl.sink.flush(generation);
   const media::MediaVideoFormat& video = *track.video;
-  const CMVideoCodecType codec = track.codec == media::MediaCodec::H264
-                                     ? kCMVideoCodecType_H264
-                                     : kCMVideoCodecType_HEVC;
+  const CMVideoCodecType codec = coreMediaVideoCodecType(track.codec);
   const VideoStreamConfiguration configuration{
       codec,
       {static_cast<std::int32_t>(video.codedWidth),

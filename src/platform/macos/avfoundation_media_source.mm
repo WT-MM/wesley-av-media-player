@@ -1,5 +1,7 @@
 #include "avfoundation_media_source.hpp"
 
+#include "native_video_codec_capability.hpp"
+
 #import <AVFoundation/AVFoundation.h>
 #import <AudioToolbox/AudioToolbox.h>
 
@@ -925,6 +927,68 @@ class CodecRbspBitReader final {
   return media::MediaVideoSampleFormat::Yuv420EightBit;
 }
 
+// vpcC (VPCodecConfigurationRecord, a full box):
+//   0      version (must be 1)
+//   1..3   flags
+//   4      profile
+//   5      level
+//   6      bitDepth(4) | chromaSubsampling(3) | videoFullRangeFlag(1)
+//   7..9   colourPrimaries / transferCharacteristics / matrixCoefficients
+//   10..11 codecInitializationDataSize
+// chromaSubsampling 0 and 1 are the two 4:2:0 chroma sitings; 2 (4:2:2) and
+// 3 (4:4:4) have no bi-planar output surface in this lane.
+[[nodiscard]] media::MediaVideoSampleFormat parseVp9SampleFormat(
+    std::span<const std::byte> configuration) noexcept {
+  const auto bytes = std::span<const std::uint8_t>(
+      reinterpret_cast<const std::uint8_t*>(configuration.data()),
+      configuration.size());
+  if (bytes.size() < 12 || bytes[0] != 1) {
+    return media::MediaVideoSampleFormat::Unsupported;
+  }
+  const std::uint8_t bitDepth = static_cast<std::uint8_t>(bytes[6] >> 4U);
+  const std::uint8_t chromaSubsampling =
+      static_cast<std::uint8_t>((bytes[6] >> 1U) & 0x07U);
+  if (chromaSubsampling > 1U) {
+    return media::MediaVideoSampleFormat::Unsupported;
+  }
+  if (bitDepth == 8U) {
+    return media::MediaVideoSampleFormat::Yuv420EightBit;
+  }
+  if (bitDepth == 10U) {
+    return media::MediaVideoSampleFormat::Yuv420TenBit;
+  }
+  return media::MediaVideoSampleFormat::Unsupported;
+}
+
+// av1C (AV1CodecConfigurationRecord):
+//   0 marker(1) | version(7)
+//   1 seq_profile(3) | seq_level_idx_0(5)
+//   2 seq_tier_0(1) | high_bitdepth(1) | twelve_bit(1) | monochrome(1) |
+//     chroma_subsampling_x(1) | chroma_subsampling_y(1) |
+//     chroma_sample_position(2)
+//   3 reserved(3) | initial_presentation_delay_present(1) |
+//     initial_presentation_delay_minus_one(4)
+[[nodiscard]] media::MediaVideoSampleFormat parseAv1SampleFormat(
+    std::span<const std::byte> configuration) noexcept {
+  const auto bytes = std::span<const std::uint8_t>(
+      reinterpret_cast<const std::uint8_t*>(configuration.data()),
+      configuration.size());
+  if (bytes.size() < 4 || (bytes[0] & 0x80U) == 0U ||
+      (bytes[0] & 0x7fU) != 1U) {
+    return media::MediaVideoSampleFormat::Unsupported;
+  }
+  const bool highBitDepth = ((bytes[2] >> 6U) & 0x01U) != 0U;
+  const bool twelveBit = ((bytes[2] >> 5U) & 0x01U) != 0U;
+  const bool monochrome = ((bytes[2] >> 4U) & 0x01U) != 0U;
+  const bool subsamplingX = ((bytes[2] >> 3U) & 0x01U) != 0U;
+  const bool subsamplingY = ((bytes[2] >> 2U) & 0x01U) != 0U;
+  if (monochrome || !subsamplingX || !subsamplingY || twelveBit) {
+    return media::MediaVideoSampleFormat::Unsupported;
+  }
+  return highBitDepth ? media::MediaVideoSampleFormat::Yuv420TenBit
+                      : media::MediaVideoSampleFormat::Yuv420EightBit;
+}
+
 [[nodiscard]] media::MediaVideoSampleFormat parseHevcSampleFormat(
     std::span<const std::byte> configuration) noexcept {
   const auto bytes = std::span<const std::uint8_t>(
@@ -1189,8 +1253,51 @@ class CodecRbspBitReader final {
       return MediaCodec::H264;
     case kCMVideoCodecType_HEVC:
       return MediaCodec::Hevc;
+    case kCMVideoCodecType_AV1:
+      // AVFoundation demuxes and hardware-decodes av01-in-MP4 natively on
+      // machines with an AV1 block; on machines without one the capability
+      // gate keeps the codec Unknown so the whole asset falls back.
+      return nativeVideoToolboxSupportsAv1() ? MediaCodec::Av1
+                                             : MediaCodec::Unknown;
+    case kCMVideoCodecType_VP9:
+      // VP9-in-MP4 is rare, but the same gate applies: the supplemental
+      // decoder must be registered and reported before the track is admitted.
+      return nativeVideoToolboxSupportsVp9() ? MediaCodec::Vp9
+                                             : MediaCodec::Unknown;
     default:
       return MediaCodec::Unknown;
+  }
+}
+
+[[nodiscard]] CFStringRef videoCodecConfigurationAtomName(
+    CMVideoCodecType codec) noexcept {
+  switch (codec) {
+    case kCMVideoCodecType_H264:
+      return CFSTR("avcC");
+    case kCMVideoCodecType_HEVC:
+      return CFSTR("hvcC");
+    case kCMVideoCodecType_AV1:
+      return CFSTR("av1C");
+    case kCMVideoCodecType_VP9:
+      return CFSTR("vpcC");
+    default:
+      return nullptr;
+  }
+}
+
+[[nodiscard]] MediaCodecConfigurationKind videoCodecConfigurationKind(
+    CMVideoCodecType codec) noexcept {
+  switch (codec) {
+    case kCMVideoCodecType_H264:
+      return MediaCodecConfigurationKind::AvcC;
+    case kCMVideoCodecType_HEVC:
+      return MediaCodecConfigurationKind::HvcC;
+    case kCMVideoCodecType_AV1:
+      return MediaCodecConfigurationKind::Av1C;
+    case kCMVideoCodecType_VP9:
+      return MediaCodecConfigurationKind::VpcC;
+    default:
+      return MediaCodecConfigurationKind::None;
   }
 }
 
@@ -1351,9 +1458,16 @@ inspectVideoFormatFacts(
   }
 
   const media::MediaVideoSampleFormat sampleFormat =
-      codec == MediaCodec::H264 ? parseH264SampleFormat(configuration)
-                                : parseHevcSampleFormat(configuration);
-  if (codec == MediaCodec::Hevc) {
+      codec == MediaCodec::H264  ? parseH264SampleFormat(configuration)
+      : codec == MediaCodec::Vp9 ? parseVp9SampleFormat(configuration)
+      : codec == MediaCodec::Av1 ? parseAv1SampleFormat(configuration)
+                                 : parseHevcSampleFormat(configuration);
+  // VP9 Profile 2 and AV1 Main 10 reach the same 10-bit bi-planar output
+  // surface as HEVC Main 10, so they carry the identical SDR contract: the
+  // parsed depth must agree with the container's, and a 10-bit stream tagged
+  // outside BT.709/unspecified is refused here rather than at frame delivery.
+  if (codec == MediaCodec::Hevc || codec == MediaCodec::Vp9 ||
+      codec == MediaCodec::Av1) {
     if (sampleFormat == media::MediaVideoSampleFormat::Unsupported) {
       return std::nullopt;
     }
@@ -1422,13 +1536,16 @@ inspectVideoFormatFacts(
     assignError(error, "AVFoundation video codec is outside native v1");
     return std::nullopt;
   }
-  const CFStringRef atomName = subtype == kCMVideoCodecType_H264
-                                   ? CFSTR("avcC")
-                                   : CFSTR("hvcC");
+  const CFStringRef atomName = videoCodecConfigurationAtomName(subtype);
+  if (atomName == nullptr) {
+    assignError(error, "AVFoundation video codec is outside native v1");
+    return std::nullopt;
+  }
   auto configuration =
       copyAtom(format, atomName, limits.maximumCodecConfigurationBytes);
   if (!configuration) {
-    assignError(error, "video format lacks a bounded avcC/hvcC atom");
+    assignError(error,
+                "video format lacks a bounded avcC/hvcC/vpcC/av1C atom");
     return std::nullopt;
   }
   auto video = inspectVideoFormatFacts(format, codec, *configuration, limits);
@@ -1444,9 +1561,7 @@ inspectVideoFormatFacts(
   track.codec = codec;
   track.timeBase = {1, 600};
   track.duration = duration;
-  track.codecConfigurationKind = subtype == kCMVideoCodecType_H264
-                                     ? MediaCodecConfigurationKind::AvcC
-                                     : MediaCodecConfigurationKind::HvcC;
+  track.codecConfigurationKind = videoCodecConfigurationKind(subtype);
   track.codecConfiguration = std::move(*configuration);
   track.video = std::move(*video);
   return track;
@@ -1937,12 +2052,17 @@ void incrementInventory(media::MediaTrackInventory* inventory,
       media::findMediaTrack(descriptor, *descriptor.selectedVideo);
   if (track == nullptr || track->kind != MediaTrackKind::Video ||
       !track->video ||
-      (track->codec != MediaCodec::H264 && track->codec != MediaCodec::Hevc) ||
+      (track->codec != MediaCodec::H264 && track->codec != MediaCodec::Hevc &&
+       track->codec != MediaCodec::Av1 && track->codec != MediaCodec::Vp9) ||
       track->codecConfiguration.empty() ||
       (track->codec == MediaCodec::H264 &&
        track->codecConfigurationKind != MediaCodecConfigurationKind::AvcC) ||
       (track->codec == MediaCodec::Hevc &&
-       track->codecConfigurationKind != MediaCodecConfigurationKind::HvcC)) {
+       track->codecConfigurationKind != MediaCodecConfigurationKind::HvcC) ||
+      (track->codec == MediaCodec::Av1 &&
+       track->codecConfigurationKind != MediaCodecConfigurationKind::Av1C) ||
+      (track->codec == MediaCodec::Vp9 &&
+       track->codecConfigurationKind != MediaCodecConfigurationKind::VpcC)) {
     assignError(error,
                 "selected video codec is outside the native v1 contract");
     return false;

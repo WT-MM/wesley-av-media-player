@@ -259,6 +259,24 @@ constexpr std::array<std::uint8_t, 45> kSampleAvcC{
 constexpr std::uint32_t kSampleAvcWidth{1280};
 constexpr std::uint32_t kSampleAvcHeight{720};
 
+// The 18-byte av1C and the leading bytes of the first (key) frame from
+// test-media/codec-envelope. Both are byte-identical to the records admitted
+// by tests/video_codec_configuration_test.cpp; the Matroska Block payload for
+// VP9 is the elementary-stream frame verbatim, so the keyframe bytes below are
+// exactly what the demuxer hands the bitstream parser.
+constexpr std::array<std::uint8_t, 18> kSampleAv1C{
+    0x81, 0x08, 0x0c, 0x00, 0x0a, 0x0c, 0x02, 0x00, 0x00,
+    0x42, 0x95, 0x5d, 0xfe, 0x1b, 0x80, 0x5f, 0x00, 0x08};
+constexpr std::array<std::uint8_t, 12> kSampleVp9Keyframe{
+    0x82, 0x49, 0x83, 0x42, 0x00, 0x77, 0xf0, 0x43, 0x76, 0x06, 0x38, 0x24};
+// A real 12-byte vpcC for the same stream: version 1, profile 0, level 4.1,
+// 8-bit 4:2:0 co-located narrow range, unspecified colour.
+constexpr std::array<std::uint8_t, 12> kSampleVpcC{
+    0x01, 0x00, 0x00, 0x00, 0x00, 0x29, 0x82, 0x02, 0x02, 0x02, 0x00, 0x00};
+
+constexpr std::uint32_t kSampleCodecEnvelopeWidth{1920};
+constexpr std::uint32_t kSampleCodecEnvelopeHeight{1080};
+
 // Canonical two-byte AAC-LC AudioSpecificConfig: 48 kHz, stereo, 1024 samples.
 constexpr std::array<std::uint8_t, 2> kAacStereo48Asc{0x11, 0x90};
 
@@ -511,6 +529,13 @@ struct FixtureSpec {
   std::string videoCodecId{"V_MPEG4/ISO/AVC"};
   std::string audioCodecId{"A_AAC"};
   Bytes videoCodecPrivate{fromOctets(kSampleAvcC)};
+  // WebM muxers routinely write no CodecPrivate at all for VP9, so the
+  // element has to be omittable, not merely empty.
+  bool includeVideoCodecPrivate{true};
+  // When set, replaces the frame payload of every video random access point.
+  // VP9 admission proves its facts from the first keyframe's bitstream, so
+  // that keyframe has to carry a real VP9 uncompressed header.
+  Bytes videoKeyframePayload;
   Bytes audioCodecPrivate{fromOctets(kAacStereo48Asc)};
   std::optional<std::uint64_t> videoInterlaced;
   std::optional<std::uint64_t> videoCodecDelayNanoseconds;
@@ -577,7 +602,9 @@ Bytes videoTrackEntry(const FixtureSpec& spec) {
   }
   append(payload, asciiElement(kCodecIdId, spec.videoCodecId));
   append(payload, asciiElement(kLanguageId, "und"));
-  append(payload, element(kCodecPrivateId, spec.videoCodecPrivate));
+  if (spec.includeVideoCodecPrivate) {
+    append(payload, element(kCodecPrivateId, spec.videoCodecPrivate));
+  }
   append(payload, element(kVideoId, videoPayload));
   return element(kTrackEntryId, payload);
 }
@@ -713,7 +740,11 @@ Fixture buildFixture(const FixtureSpec& spec) {
       for (const VideoBlockPlan& plan : plans) {
         const std::int64_t tick =
             static_cast<std::int64_t>(base) + plan.relative;
-        const std::array<std::size_t, 1> sizes{plan.frameBytes};
+        const bool realKeyframe =
+            plan.keyFrame && !spec.videoKeyframePayload.empty();
+        const std::array<std::size_t, 1> sizes{
+            realKeyframe ? spec.videoKeyframePayload.size()
+                         : plan.frameBytes};
         BuiltBlock block =
             plan.simple
                 ? buildSimpleBlock(spec.videoTrackNumber, tick,
@@ -725,6 +756,14 @@ Fixture buildFixture(const FixtureSpec& spec) {
                                   static_cast<std::int16_t>(plan.relative),
                                   plan.references, plan.durationTicks,
                                   plan.invisible, Lacing::None, sizes, fill);
+        if (realKeyframe) {
+          // Frame ranges are still Block-relative here; buildCluster shifts
+          // them once the Block is placed.
+          std::copy(spec.videoKeyframePayload.begin(),
+                    spec.videoKeyframePayload.end(),
+                    block.bytes.begin() +
+                        static_cast<std::ptrdiff_t>(block.frames[0].offset));
+        }
         block.video = true;
         clusterBlocks[index].push_back(std::move(block));
       }
@@ -1137,6 +1176,27 @@ const char* errorName(MatroskaDemuxError error) {
   return "?";
 }
 
+// A WebM-shaped VP9 track: 1920x1080, no CodecPrivate, and every random access
+// point carrying the repository sample's real VP9 uncompressed frame header.
+FixtureSpec vp9FixtureSpec() {
+  FixtureSpec spec;
+  spec.videoCodecId = "V_VP9";
+  spec.includeVideoCodecPrivate = false;
+  spec.videoKeyframePayload = fromOctets(kSampleVp9Keyframe);
+  spec.videoPixelWidth = kSampleCodecEnvelopeWidth;
+  spec.videoPixelHeight = kSampleCodecEnvelopeHeight;
+  return spec;
+}
+
+FixtureSpec av1FixtureSpec() {
+  FixtureSpec spec;
+  spec.videoCodecId = "V_AV1";
+  spec.videoCodecPrivate = fromOctets(kSampleAv1C);
+  spec.videoPixelWidth = kSampleCodecEnvelopeWidth;
+  spec.videoPixelHeight = kSampleCodecEnvelopeHeight;
+  return spec;
+}
+
 void expectPrepareError(const FixtureSpec& spec, MatroskaDemuxError expected,
                         const char* message) {
   const PreparedFixture prepared = prepareFixture(spec);
@@ -1390,10 +1450,13 @@ void testCodecAdmissionAndSelection() {
                        "an avcC record under an HEVC CodecID is not admitted");
   }
   {
+    // V_VP9 is an admitted CodecID now, so an avcC under it is a codec
+    // configuration verdict rather than a track-selection one; nothing in the
+    // Block payloads is a VP9 keyframe header either.
     FixtureSpec spec;
     spec.videoCodecId = "V_VP9";
-    expectPrepareError(spec, MatroskaDemuxError::TrackSelection,
-                       "an unsupported video CodecID leaves no admitted video");
+    expectPrepareError(spec, MatroskaDemuxError::CodecConfiguration,
+                       "a VP9 track whose blocks are not VP9 is not admitted");
   }
   {
     FixtureSpec spec;
@@ -1402,14 +1465,157 @@ void testCodecAdmissionAndSelection() {
                        "a near-miss MPEG-4 video CodecID is not admitted");
   }
   {
+    // A WebM-shaped VP9 track: no CodecPrivate at all, facts proven from the
+    // first keyframe's uncompressed header, and a vpcC synthesized from them
+    // because VideoToolbox cannot open a VP9 session without one.
+    FixtureSpec spec = vp9FixtureSpec();
+    const PreparedFixture prepared = prepareFixture(spec);
+    expect(prepared.outcome.status == MatroskaDemuxStatus::Ready &&
+               prepared.outcome.asset != nullptr,
+           "a VP9 track with no CodecPrivate is admitted from its bitstream");
+    if (prepared.outcome.asset != nullptr) {
+      const wam::media::MediaTrackDescriptor& video =
+          prepared.outcome.asset->descriptor()->tracks.front();
+      expect(video.codec == MediaCodec::Vp9 &&
+                 video.codecConfigurationKind ==
+                     MediaCodecConfigurationKind::VpcC &&
+                 video.codecConfiguration.size() == kSampleVpcC.size(),
+             "VP9 admission produces a twelve-byte synthesized vpcC");
+      expect(std::equal(video.codecConfiguration.begin(),
+                        video.codecConfiguration.end(), kSampleVpcC.begin(),
+                        kSampleVpcC.end(),
+                        [](std::byte lhs, std::uint8_t rhs) {
+                          return lhs == static_cast<std::byte>(rhs);
+                        }),
+             "the synthesized vpcC matches the proven bitstream facts exactly");
+      expect(video.video && video.video->codedWidth ==
+                                kSampleCodecEnvelopeWidth &&
+                 video.video->codedHeight == kSampleCodecEnvelopeHeight &&
+                 video.video->bitsPerComponent == 8U &&
+                 video.video->sampleFormat ==
+                     MediaVideoSampleFormat::Yuv420EightBit,
+             "VP9 video format comes from the proven keyframe header");
+    }
+  }
+  {
+    // The same stream with a real vpcC present: it is adopted byte-identically
+    // rather than re-synthesized.
+    FixtureSpec spec = vp9FixtureSpec();
+    spec.includeVideoCodecPrivate = true;
+    spec.videoCodecPrivate = fromOctets(kSampleVpcC);
+    const PreparedFixture prepared = prepareFixture(spec);
+    expect(prepared.outcome.status == MatroskaDemuxStatus::Ready &&
+               prepared.outcome.asset != nullptr,
+           "a VP9 track with a real vpcC is admitted");
+    if (prepared.outcome.asset != nullptr) {
+      const wam::media::MediaTrackDescriptor& video =
+          prepared.outcome.asset->descriptor()->tracks.front();
+      expect(std::equal(video.codecConfiguration.begin(),
+                        video.codecConfiguration.end(), kSampleVpcC.begin(),
+                        kSampleVpcC.end(),
+                        [](std::byte lhs, std::uint8_t rhs) {
+                          return lhs == static_cast<std::byte>(rhs);
+                        }),
+             "a present vpcC is adopted byte-identically");
+    }
+  }
+  {
+    // A vpcC that contradicts the bitstream describes a different stream.
+    FixtureSpec spec = vp9FixtureSpec();
+    spec.includeVideoCodecPrivate = true;
+    auto contradicting = kSampleVpcC;
+    contradicting[4] = 2U;    // profile 2
+    contradicting[6] = 0xA2U; // 10-bit
+    spec.videoCodecPrivate = fromOctets(contradicting);
+    expectPrepareError(spec, MatroskaDemuxError::CodecConfiguration,
+                       "a vpcC that contradicts the keyframe is not admitted");
+  }
+  {
+    FixtureSpec spec = vp9FixtureSpec();
+    spec.videoPixelWidth = 1280;
+    expectPrepareError(
+        spec, MatroskaDemuxError::CodecConfiguration,
+        "PixelWidth must equal the VP9 bitstream's coded width exactly");
+  }
+  {
+    FixtureSpec spec = vp9FixtureSpec();
+    spec.videoKeyframePayload.clear();
+    expectPrepareError(spec, MatroskaDemuxError::CodecConfiguration,
+                       "VP9 with no readable keyframe header is not admitted");
+  }
+  {
+    // AV1 keeps CodecPrivate mandatory: the av1C is the only fact source.
+    FixtureSpec spec = av1FixtureSpec();
+    const PreparedFixture prepared = prepareFixture(spec);
+    expect(prepared.outcome.status == MatroskaDemuxStatus::Ready &&
+               prepared.outcome.asset != nullptr,
+           "an AV1 track with a real av1C is admitted");
+    if (prepared.outcome.asset != nullptr) {
+      const wam::media::MediaTrackDescriptor& video =
+          prepared.outcome.asset->descriptor()->tracks.front();
+      expect(video.codec == MediaCodec::Av1 &&
+                 video.codecConfigurationKind ==
+                     MediaCodecConfigurationKind::Av1C &&
+                 std::equal(video.codecConfiguration.begin(),
+                            video.codecConfiguration.end(),
+                            kSampleAv1C.begin(), kSampleAv1C.end(),
+                            [](std::byte lhs, std::uint8_t rhs) {
+                              return lhs == static_cast<std::byte>(rhs);
+                            }),
+             "the av1C is adopted byte-identically under Kind::Av1C");
+      expect(video.video &&
+                 video.video->codedWidth == kSampleCodecEnvelopeWidth &&
+                 video.video->codedHeight == kSampleCodecEnvelopeHeight &&
+                 video.video->sampleFormat ==
+                     MediaVideoSampleFormat::Yuv420EightBit,
+             "AV1 dimensions come from the Sequence Header OBU");
+    }
+  }
+  {
+    FixtureSpec spec = av1FixtureSpec();
+    spec.includeVideoCodecPrivate = false;
+    expectPrepareError(spec, MatroskaDemuxError::CodecConfiguration,
+                       "AV1 without CodecPrivate has no fact source");
+  }
+  {
+    FixtureSpec spec = av1FixtureSpec();
+    spec.videoPixelHeight = 1088;
+    expectPrepareError(
+        spec, MatroskaDemuxError::CodecConfiguration,
+        "PixelHeight must equal the AV1 sequence header height exactly");
+  }
+  {
+    // An avcC under V_AV1 must not reach the HEVC parser, which is what the
+    // previous CodecID-to-kind ternary would have done for every non-AVC id.
+    FixtureSpec spec;
+    spec.videoCodecId = "V_AV1";
+    expectPrepareError(spec, MatroskaDemuxError::CodecConfiguration,
+                       "an avcC record under an AV1 CodecID is not admitted");
+  }
+  {
+    // Product decision: a file that carries audio the native path cannot
+    // decode falls back as a whole file rather than preparing video-only.
+    // Preparing video-only here would play the common VP9+Opus WebM natively
+    // and completely silently; mpv plays the same file with sound. This
+    // deliberately replaces the previous contract, which admitted video-only
+    // whenever audio was optional.
     FixtureSpec spec;
     spec.audioCodecId = "A_OPUS";
+    expectPrepareError(
+        spec, MatroskaDemuxError::TrackSelection,
+        "a document whose only audio is undecodable falls back whole-file");
+  }
+  {
+    // The no-audio-track case is a different thing entirely and stays admitted
+    // as the correct silent-video path.
+    FixtureSpec spec;
+    spec.includeAudioTrack = false;
     const PreparedFixture prepared = prepareFixture(spec);
     expect(prepared.outcome.status == MatroskaDemuxStatus::Ready &&
                prepared.outcome.asset != nullptr &&
                prepared.outcome.asset->descriptor()->selectedAudio ==
                    std::nullopt,
-           "an unsupported audio CodecID prepares video-only when optional");
+           "a document with no audio track at all still prepares video-only");
   }
   {
     FixtureSpec spec;
