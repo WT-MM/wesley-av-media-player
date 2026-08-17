@@ -2051,6 +2051,13 @@ void PlayerController::setSeekStepSeconds(double seconds) {
   emit seekStepSecondsChanged();
 }
 
+void PlayerController::setWindowHugsVideo(bool hugsVideo) {
+  if (window_hugs_video_ == hugsVideo)
+    return;
+  window_hugs_video_ = hugsVideo;
+  emit windowHugsVideoChanged();
+}
+
 void PlayerController::setTrimIn(double seconds) {
   if (!std::isfinite(seconds))
     return;

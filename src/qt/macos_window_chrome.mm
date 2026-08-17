@@ -428,6 +428,14 @@ void setContentAspectRatio(QWindow *window, qreal width, qreal height) {
   ensureAspectLockMonitor();
 }
 
+bool interactiveResizeActive(QWindow *window) {
+  NSWindow *nsWindow = nsWindowFor(window);
+  if (!nsWindow)
+    return false;
+  InteractiveAspectLock &lock = aspectLock();
+  return lock.armed && lock.window == nsWindow;
+}
+
 void resizeToActualSize(QWindow *window, qreal videoPixelWidth,
                         qreal videoPixelHeight) {
   NSWindow *nsWindow = nsWindowFor(window);
@@ -719,6 +727,10 @@ void MacWindowChrome::setTitlebarRevealed(bool revealed, bool animated) {
 
 void MacWindowChrome::setContentAspectRatio(qreal width, qreal height) {
   wam::macos_window_chrome::setContentAspectRatio(window_, width, height);
+}
+
+bool MacWindowChrome::interactiveResizeActive() const {
+  return wam::macos_window_chrome::interactiveResizeActive(window_);
 }
 
 void MacWindowChrome::resizeToActualSize(qreal videoPixelWidth,
