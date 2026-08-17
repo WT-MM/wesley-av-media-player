@@ -28,3 +28,7 @@ CMakeUserPresets.json
 *.ips
 *.log
 .DS_Store
+
+# prototype build artifacts
+prototypes/**/build/
+prototypes/**/layerproto
