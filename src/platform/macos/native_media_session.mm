@@ -1,6 +1,7 @@
 #include "native_media_session.hpp"
 
 #include "avfoundation_media_source.hpp"
+#include "matroska_media_source.hpp"
 #include "native_silent_timebase.hpp"
 #include "native_video_limits.hpp"
 
@@ -28,6 +29,32 @@ namespace protocol = media::native_playback;
   try {
     return protocol::valid(binding.sourceKey) &&
            binding.localPath.is_absolute() && !binding.localPath.empty();
+  } catch (...) {
+    return false;
+  }
+}
+
+// Extension-only container routing for backend selection. This states which
+// demuxer is even capable of the container, never whether the media is
+// admissible: the selected source owns that decision and reports Unsupported
+// through the one existing fallback route. `.mka` is deliberately included so
+// an audio-only Matroska reaches the Matroska source and is rejected there for
+// having no video track, rather than being handed to a backend that cannot
+// parse the container at all.
+[[nodiscard]] bool matroskaLocalContainer(
+    const std::filesystem::path& path) noexcept {
+  try {
+    std::string extension = path.extension().string();
+    if (extension.empty() || extension.front() != '.') {
+      return false;
+    }
+    for (char& character : extension) {
+      if (character >= 'A' && character <= 'Z') {
+        character = static_cast<char>(character - 'A' + 'a');
+      }
+    }
+    return extension == ".mkv" || extension == ".mk3d" ||
+           extension == ".mka" || extension == ".webm";
   } catch (...) {
     return false;
   }
@@ -1052,11 +1079,20 @@ struct NativeMediaSession::Impl final {
     std::unique_ptr<NativeAudioSession> audio;
     std::unique_ptr<NativeVideoConsumer> video;
     try {
-      auto avfoundationSource =
-          std::make_unique<AVFoundationMediaSource>();
-      avfoundationSourceObserver = avfoundationSource.get();
+      // Container routing. AVFoundation cannot demux Matroska at all, so a
+      // Matroska/WebM local file is admitted through the neutral Matroska
+      // demuxer instead. Selection is by container only: the Matroska source
+      // still applies its own exact codec envelope and reports Unsupported for
+      // anything outside it (VP9, subtitle-only, audio-only, ...), which keeps
+      // the existing fallback path as the single rejection route.
+      std::unique_ptr<media::MediaSource> backendSource;
+      if (matroskaLocalContainer(binding.localPath)) {
+        backendSource = std::make_unique<MatroskaMediaSource>();
+      } else {
+        backendSource = std::make_unique<AVFoundationMediaSource>();
+      }
       source = std::make_unique<NativeV1AdmissionSource>(
-          std::move(avfoundationSource), cancellation);
+          std::move(backendSource), cancellation);
       NativeAudioSessionDependencies audioDependencies;
       audioDependencies.externalLifetime = childLifetime;
       audioDependencies.hostClock = dependencies.hostClock;
@@ -1209,8 +1245,14 @@ struct NativeMediaSession::Impl final {
         activeGeneration == 0) {
       return false;
     }
+    // The preview lane is an AVFoundation-only reader today. A Matroska
+    // generation therefore publishes no preview binding and the scrub lane
+    // stays inactive; main playback is unaffected.
+    auto previewAssetContext =
+        std::dynamic_pointer_cast<const AVFoundationAssetContext>(
+            assetContextSnapshot);
     AVFoundationPreviewBinding sourceBinding{
-        binding.localPath, descriptorSnapshot, {}, assetContextSnapshot};
+        binding.localPath, descriptorSnapshot, {}, previewAssetContext};
 #if defined(WAM_NATIVE_MEDIA_SESSION_TESTING)
     if (previewBindingObserver != nullptr &&
         !previewBindingObserver(previewBindingObserverContext,
@@ -1218,7 +1260,7 @@ struct NativeMediaSession::Impl final {
       return false;
     }
 #else
-    if (assetContextSnapshot == nullptr) {
+    if (previewAssetContext == nullptr) {
       return false;
     }
 #endif
@@ -1917,13 +1959,12 @@ if (descriptor == nullptr || !nativeV1Descriptor(*descriptor)) {
       return;
     }
 #else
-if (avfoundationSourceObserver == nullptr) {
-      prepareFailed = true;
-      static_cast<void>(publishFailure(protocol::FailureReason::Protocol));
-      return;
-    }
-    std::shared_ptr<const AVFoundationAssetContext> admittedAssetContext =
-        avfoundationSourceObserver->assetContext();
+    // Backend-neutral admission proof. The dispatcher republishes the exact
+    // immutable context the source admitted at Ready, so the session no longer
+    // needs a concrete AVFoundation observer to state this identity and the
+    // same check covers a Matroska generation unchanged.
+    std::shared_ptr<const media::MediaSourcePreparedContext>
+        admittedAssetContext = dispatcher->preparedContext();
     if (admittedAssetContext == nullptr ||
         admittedAssetContext->descriptor().get() != descriptor.get() ||
         !admittedAssetContext->matchesPreviewBinding(binding.localPath,
@@ -3030,11 +3071,14 @@ if (result != NativeAudioSessionProgress::Done) {
   std::unique_ptr<media::NativeMediaDispatcher> dispatcher;
   std::unique_ptr<NativePreviewFrameLane> previewLane;
   // Valid from graph construction through dispatcher destruction only.
-  AVFoundationMediaSource* avfoundationSourceObserver{nullptr};
   media::NativeVideoConsumer* videoObserver{nullptr};
   media::NativeAudioConsumer* audioObserver{nullptr};
   std::shared_ptr<const media::MediaSourceDescriptor> descriptorSnapshot;
-  std::shared_ptr<const AVFoundationAssetContext> assetContextSnapshot;
+  // Neutral backend identity. Native v1 admits more than one demux backend
+  // (AVFoundation and Matroska), so the session holds the contract's prepared
+  // context rather than one backend's concrete asset context. The preview lane
+  // is still AVFoundation-only and recovers its concrete type by cast below.
+  std::shared_ptr<const media::MediaSourcePreparedContext> assetContextSnapshot;
 #if defined(WAM_NATIVE_MEDIA_SESSION_TESTING)
   bool (*previewBindingObserver)(
       void*, const AVFoundationPreviewBinding&) noexcept{nullptr};

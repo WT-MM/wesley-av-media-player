@@ -208,14 +208,28 @@ private:
   std::size_t bitsRemaining_{0};
 };
 
+// ISO/IEC 23091-2 value 2 is "unspecified": it carries exactly as much color
+// information as an absent color description, which this function already
+// admits. Rejecting it while admitting absence is not a safety property, it is
+// an inconsistency -- and a costly one, because encoders routinely emit an
+// explicit matrix with unspecified primaries/transfer. The same stream is
+// admitted through AVFoundation today, so refusing it only here would make one
+// file play as .mp4 and fail as .mkv. Genuinely out-of-envelope descriptions
+// (BT.2020 primaries, PQ/HLG transfer) remain rejected exactly as before.
+[[nodiscard]] constexpr bool sdrColorComponentAdmitted(
+    std::uint32_t value, std::uint32_t bt709Value) noexcept {
+  return value == bt709Value || value == 2U;
+}
+
 [[nodiscard]] bool
 supportedSdrColor(const VideoCodecColorFacts &color) noexcept {
   if (!color.colorDescriptionPresent) {
     return true;
   }
-  return color.colorPrimaries == 1U && color.transferCharacteristics == 1U &&
-         (color.matrixCoefficients == 1U || color.matrixCoefficients == 5U ||
-          color.matrixCoefficients == 6U);
+  return sdrColorComponentAdmitted(color.colorPrimaries, 1U) &&
+         sdrColorComponentAdmitted(color.transferCharacteristics, 1U) &&
+         (color.matrixCoefficients == 1U || color.matrixCoefficients == 2U ||
+          color.matrixCoefficients == 5U || color.matrixCoefficients == 6U);
 }
 
 [[nodiscard]] bool parseVuiColorPrefix(RbspBitReader &bits,
@@ -1566,7 +1580,15 @@ inspectHvcC(std::span<const std::uint8_t> bytes,
     const bool parameterSet = nalType >= 32U && nalType <= 34U;
     if (parameterSet) {
       const std::size_t setIndex = nalType - 32U;
-      if ((arrayHeader & 0x80U) == 0U || parameterSetArrays[setIndex]) {
+      // array_completeness (bit 7) is a muxer convention, not a decodability
+      // property. ISO/IEC 14496-15 lets it be zero to say the elementary
+      // stream may also carry parameter sets in band, which VideoToolbox
+      // handles either way. The MP4 and Matroska hvcC records for one
+      // stream-copied stream are byte-identical apart from exactly this bit
+      // (0xa0/0xa1/0xa2 versus 0x20/0x21/0x22), so requiring it rejected the
+      // Matroska form of a stream that was admitted from MP4. A duplicate
+      // array for the same parameter-set type remains a hard mismatch.
+      if (parameterSetArrays[setIndex]) {
         return rejected(Error::ParameterSetMismatch);
       }
       parameterSetArrays[setIndex] = true;

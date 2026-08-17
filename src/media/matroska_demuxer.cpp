@@ -335,6 +335,39 @@ struct AssetState {
   return options;
 }
 
+// A muxer does not have to land AAC Blocks exactly on the access-unit grid.
+// FFmpeg writes each Block's timestamp relative to its Cluster and rounds both
+// values independently, so a 48 kHz stream in a 1 ms timebase legitimately
+// reports ticks 0, 21, 42, 64, 85, 106 where the exact grid is 0, 21, 43, 64,
+// 85, 107. Demanding an exact requantization match rejected essentially every
+// real AAC-in-Matroska file for being one tick off.
+//
+// One tick of container jitter is the most double rounding can introduce, so
+// admit that and no more. This does not weaken timing: presentation times are
+// still reconstructed from the exact ordinal grid rather than the container
+// tick, and the ordinal-continuity check at the cursor remains strict, so a
+// genuinely misplaced Block (off by whole access units, ~21 ticks here) is
+// still rejected.
+inline constexpr std::int64_t kMaximumAacGridTickResidual{1};
+
+// Whole AAC access units staged before the first audible frame of a non-origin
+// generation. Two is what the decoder needs to reach full precision, and it is
+// the same preroll the AVFoundation backend places for the identical reason.
+inline constexpr std::uint64_t kAacPrimingAccessUnits{2};
+
+[[nodiscard]] bool aacProjectionOnGrid(
+    const std::optional<AacTickGridProjection>& projection) noexcept {
+  if (!projection) {
+    return false;
+  }
+  if (projection->exactTickMatch) {
+    return true;
+  }
+  const std::int64_t residual = projection->signedTickResidual;
+  return residual >= -kMaximumAacGridTickResidual &&
+         residual <= kMaximumAacGridTickResidual;
+}
+
 [[nodiscard]] bool readRange(SeekableByteReader& reader, ByteRange range,
                              std::vector<std::byte>* bytes,
                              CancellationToken cancellation) {
@@ -454,9 +487,50 @@ trackDuration(const Info& info) noexcept {
       *info.durationTicks < 0.0) {
     return std::nullopt;
   }
+  // Matroska stores Duration as a float tick count measured in TimestampScale
+  // units. Converting it to seconds first destroys exactness: a real 72.021 s
+  // file becomes a binary64 whose exact rational needs a 2^46 denominator,
+  // which no longer fits MediaTime's int32 timescale, so the conversion fails
+  // closed and the whole container is rejected. Essentially every real file
+  // has a duration that is not a binary-exact number of seconds.
+  //
+  // Build the exact nanosecond rational instead and reduce it. Wherever the
+  // seconds path already succeeded this yields the identical reduced value,
+  // so this is strictly a widening of what is admitted.
+  const double ticks = *info.durationTicks;
+  double integralTicks = 0.0;
+  if (std::modf(ticks, &integralTicks) == 0.0 &&
+      integralTicks <=
+          static_cast<double>(std::numeric_limits<std::int64_t>::max())) {
+    const auto wholeTicks = static_cast<std::int64_t>(integralTicks);
+    const auto scale = static_cast<std::int64_t>(
+        info.timestampScaleNanoseconds);
+    constexpr std::int64_t kNanosecondsPerSecond{1'000'000'000};
+    if (scale > 0) {
+      const auto nanoseconds =
+          static_cast<__int128>(wholeTicks) * static_cast<__int128>(scale);
+      if (nanoseconds <=
+          static_cast<__int128>(std::numeric_limits<std::int64_t>::max())) {
+        auto numerator = static_cast<std::int64_t>(nanoseconds);
+        auto denominator = kNanosecondsPerSecond;
+        const std::int64_t divisor =
+            std::gcd(numerator == 0 ? denominator : numerator, denominator);
+        if (divisor > 0) {
+          numerator /= divisor;
+          denominator /= divisor;
+        }
+        if (denominator > 0 &&
+            denominator <= std::numeric_limits<std::int32_t>::max()) {
+          return MediaTime{numerator,
+                           static_cast<std::int32_t>(denominator)};
+        }
+      }
+    }
+  }
+  // Fractional or out-of-range tick counts keep the original conservative
+  // seconds conversion, which still fails closed when it cannot be exact.
   return exactNonnegativeMediaTime(
-      *info.durationTicks *
-      (static_cast<double>(info.timestampScaleNanoseconds) / 1.0e9));
+      ticks * (static_cast<double>(info.timestampScaleNanoseconds) / 1.0e9));
 }
 
 [[nodiscard]] bool makeVideoDescriptor(
@@ -529,15 +603,28 @@ trackDuration(const Info& info) noexcept {
   format.progressive = true;
   format.sampleFormat = facts.sampleFormat;
   if (facts.color.colorDescriptionPresent) {
-    format.colorPrimaries = facts.color.colorPrimaries == 1
-                                ? MediaColorPrimaries::Bt709
-                                : MediaColorPrimaries::OtherExplicit;
-    format.transferFunction = facts.color.transferCharacteristics == 1
-                                  ? MediaTransferFunction::Bt709
-                                  : MediaTransferFunction::OtherExplicit;
-    format.matrixCoefficients = facts.color.matrixCoefficients == 1
-                                    ? MediaMatrixCoefficients::Bt709
-                                    : MediaMatrixCoefficients::OtherExplicit;
+    // ISO/IEC 23091-2 value 2 is "unspecified", which carries no color
+    // information at all and is therefore Unknown, not OtherExplicit.
+    // OtherExplicit means "an explicit value this renderer does not support"
+    // and is a fallback proof; mapping unspecified onto it made every stream
+    // with a partial VUI (an explicit matrix but unspecified primaries and
+    // transfer, which is what encoders commonly emit) fail consumer
+    // configuration even though it carries no unsupported metadata.
+    format.colorPrimaries =
+        facts.color.colorPrimaries == 1   ? MediaColorPrimaries::Bt709
+        : facts.color.colorPrimaries == 2 ? MediaColorPrimaries::Unknown
+                                          : MediaColorPrimaries::OtherExplicit;
+    format.transferFunction =
+        facts.color.transferCharacteristics == 1
+            ? MediaTransferFunction::Bt709
+        : facts.color.transferCharacteristics == 2
+            ? MediaTransferFunction::Unknown
+            : MediaTransferFunction::OtherExplicit;
+    format.matrixCoefficients =
+        facts.color.matrixCoefficients == 1   ? MediaMatrixCoefficients::Bt709
+        : facts.color.matrixCoefficients == 2 ? MediaMatrixCoefficients::Unknown
+                                              : MediaMatrixCoefficients::
+                                                    OtherExplicit;
   }
   const VideoColour& colour = entry.video->colour;
   if (colour.primaries) {
@@ -594,13 +681,22 @@ trackDuration(const Info& info) noexcept {
   }
   const AacLcAdmission admission =
       parseAacLcAudioSpecificConfig(configuration);
+  // OutputSamplingFrequency must stay absent: a differing output rate signals
+  // SBR/HE-AAC, which is outside the AAC-LC envelope this source decodes.
+  //
+  // BitDepth is deliberately NOT a rejection. Matroska defines it for PCM; for
+  // a compressed AAC track it is informational and has no effect on the
+  // bitstream, the ASC, or the ES_Descriptor cookie built below. FFmpeg writes
+  // BitDepth=32 on every AAC track it muxes (reflecting float decoder output),
+  // so rejecting its presence rejected essentially all real AAC-in-Matroska
+  // while the identical stream was admitted from MP4.
   if (!admission.admitted() ||
       admission.configuration->sampleRate > limits.maximumAudioSampleRate ||
       admission.configuration->channelCount > limits.maximumAudioChannels ||
       entry.audio->samplingFrequency !=
           static_cast<double>(admission.configuration->sampleRate) ||
       entry.audio->channels != admission.configuration->channelCount ||
-      entry.audio->outputSamplingFrequency || entry.audio->bitDepth) {
+      entry.audio->outputSamplingFrequency) {
     return false;
   }
   const auto cookie = buildAacLcEsDescriptorCookie(*admission.configuration);
@@ -909,7 +1005,7 @@ MatroskaCursor::readNext(CancellationToken cancellation) noexcept {
           const auto projection = nearestAacAccessUnitForMatroskaTick(
               *tick, MediaTime{0, 1}, state.audio->audioSampleRate,
               state.timestampScaleNanoseconds);
-          if (!projection || !projection->exactTickMatch) {
+          if (!aacProjectionOnGrid(projection)) {
             return MatroskaCursorFailure{MatroskaDemuxError::InvalidTimeline,
                                          "AAC Block is off the exact AU grid"};
           }
@@ -1107,13 +1203,23 @@ MatroskaPlanOutcome MatroskaPreparedAsset::planGeneration(
       const std::uint64_t desiredOrdinal =
           static_cast<std::uint64_t>(*pcmFrame) /
           kAacLcSamplesPerAccessUnit;
+      // Stage whole access units ahead of the first audible one. A decoder
+      // reaches full precision only after a couple of AAC frames, so a
+      // consumer demands proof that the generation carries that preroll before
+      // it will publish PCM. desiredOrdinal alone is the AU *containing* the
+      // audible frame, which is never early enough to prove anything, so every
+      // non-origin seek would be refused downstream.
+      const std::uint64_t startOrdinal =
+          desiredOrdinal >= kAacPrimingAccessUnits
+              ? desiredOrdinal - kAacPrimingAccessUnits
+              : 0;
       const std::size_t cueCluster = cue.clusterIndex;
       const std::size_t searchStart = cueCluster == 0 ? 0 : cueCluster - 1;
       const ScanResult audioBlock = scanTrack(
           state, state.audio->id, static_cast<std::uint32_t>(searchStart),
           kMaximumMatroskaSeekClusters,
-          [&state, desiredOrdinal](std::uint32_t clusterIndex,
-                                   const CapturedBlockVisitor& block) {
+          [&state, startOrdinal](std::uint32_t clusterIndex,
+                                 const CapturedBlockVisitor& block) {
             const auto tick = signedBlockTick(
                 state.clusters[clusterIndex].timestampTick,
                 block.header.relativeTimestamp);
@@ -1123,10 +1229,10 @@ MatroskaPlanOutcome MatroskaPreparedAsset::planGeneration(
             const auto projection = nearestAacAccessUnitForMatroskaTick(
                 *tick, MediaTime{0, 1}, state.audio->audioSampleRate,
                 state.timestampScaleNanoseconds);
-            return projection && projection->exactTickMatch &&
-                   projection->accessUnitOrdinal <= desiredOrdinal &&
-                   desiredOrdinal < projection->accessUnitOrdinal +
-                                        block.frameCount;
+            return aacProjectionOnGrid(projection) &&
+                   projection->accessUnitOrdinal <= startOrdinal &&
+                   startOrdinal < projection->accessUnitOrdinal +
+                                      block.frameCount;
           },
           cancellation);
       if (audioBlock.error != MatroskaDemuxError::None || !audioBlock.block) {
@@ -1145,17 +1251,19 @@ MatroskaPlanOutcome MatroskaPreparedAsset::planGeneration(
       plan.audioClusterIndex = audioBlock.clusterIndex;
       plan.audioBlockOffset = audioBlock.block->header.containerEncoded.offset;
       plan.audioFrameIndex = static_cast<std::uint16_t>(
-          desiredOrdinal - projection->accessUnitOrdinal);
-      plan.audioAccessUnitOrdinal = desiredOrdinal;
+          startOrdinal - projection->accessUnitOrdinal);
+      plan.audioAccessUnitOrdinal = startOrdinal;
+      // decodeStart must name the first access unit the audio cursor actually
+      // emits, which is startOrdinal -- not the first AU of the Block that
+      // contains it. Naming the Block's first AU disagreed with the cursor
+      // whenever the seek landed mid-Block.
       const auto decode = aacAccessUnitGridTime(
-          {{0, 1}, projection->accessUnitOrdinal,
-           state.audio->audioSampleRate});
+          {{0, 1}, startOrdinal, state.audio->audioSampleRate});
       if (!decode) {
         outcome.error = MatroskaDemuxError::InvalidTimeline;
         return outcome;
       }
-      plan.audioWindow = {*decode, *presentationStart,
-                          projection->accessUnitOrdinal == 0};
+      plan.audioWindow = {*decode, *presentationStart, startOrdinal == 0};
     }
     outcome.status = MatroskaDemuxStatus::Ready;
     outcome.error = MatroskaDemuxError::None;
@@ -1368,6 +1476,11 @@ MatroskaPrepareOutcome prepareMatroska(
         (requested.selection.requireAudio && audio == nullptr) ||
         (requested.selection.preferredAudio && audio == nullptr) ||
         requested.selection.preferredSubtitle) {
+      // No admissible track for this request is an envelope verdict, not an
+      // error: a VP9 or subtitle-only Matroska must reach the caller as
+      // Unsupported so it falls back cleanly, rather than as Failed, which
+      // the session reports as a hard protocol fault on a blocking surface.
+      result.status = MatroskaDemuxStatus::Unsupported;
       result.error = MatroskaDemuxError::TrackSelection;
       result.message = "requested Matroska tracks are unavailable";
       return result;
@@ -1483,10 +1596,18 @@ MatroskaPrepareOutcome prepareMatroska(
           {cue.cueTime, *cluster,
            static_cast<std::uint32_t>(*cue.relativePosition)});
     }
-    if (state->cues.empty() || state->cues.front().timestampTick != 0 ||
+    // The first Cue does not have to sit exactly on tick zero. A stream-copied
+    // Matroska routinely places its first video keyframe a few milliseconds in
+    // (FFmpeg emits a first CueTime of 21 ms for a 30 fps remux, which is also
+    // why such a file reports 72.021 s rather than 72.000 s), and that cue is
+    // the true origin of the video timeline. Requiring literal zero rejected
+    // essentially every real remux. planGeneration already clamps any target
+    // at or before the first cue to cue zero, so a non-zero first cue needs no
+    // other special case; the strictly-increasing check below still holds.
+    if (state->cues.empty() ||
         state->cues.size() > kMaximumMatroskaCues) {
       result.error = MatroskaDemuxError::MissingCues;
-      result.message = "v1 requires selected-video Cues beginning at zero";
+      result.message = "v1 requires a bounded selected-video Cue index";
       return result;
     }
     for (std::size_t index = 1; index < state->cues.size(); ++index) {

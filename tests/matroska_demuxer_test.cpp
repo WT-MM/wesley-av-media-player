@@ -1522,10 +1522,17 @@ void testCodecAdmissionAndSelection() {
                        "SamplingFrequency must equal the ASC sampling rate");
   }
   {
+    // BitDepth is a PCM field. On a compressed AAC track it is informational
+    // and cannot affect the bitstream, the ASC, or the derived ES_Descriptor,
+    // so its presence is admitted and simply ignored. FFmpeg writes
+    // BitDepth=32 on every AAC track it muxes; rejecting it rejected
+    // essentially all real AAC-in-Matroska.
     FixtureSpec spec;
     spec.audioBitDepth = 16;
-    expectPrepareError(spec, MatroskaDemuxError::CodecConfiguration,
-                       "a compressed AAC track may not declare BitDepth");
+    const PreparedFixture prepared = prepareFixture(spec);
+    expect(prepared.outcome.status == MatroskaDemuxStatus::Ready &&
+               prepared.outcome.asset != nullptr,
+           "a compressed AAC track may declare an ignored BitDepth");
   }
   {
     FixtureSpec spec;
@@ -1603,15 +1610,25 @@ void expectAccuratePlan(const MatroskaPreparedAsset& asset, MediaTime target,
               plan.actualDecodeStart == tickTime(
                   static_cast<std::int64_t>(expectedCueTick)) &&
               order && *order != wam::media::MediaTimeOrder::Greater &&
-              ceiling && plan.audioWindow.presentationStart == *ceiling &&
+              ceiling && plan.audioWindow.presentationStart == *ceiling;
+    // decodeStart names the first access unit the audio cursor actually
+    // emits, which is the planned ordinal itself. It used to name the first AU
+    // of the Block containing it, which disagreed with the cursor on any
+    // mid-Block landing.
+    const std::uint64_t audibleOrdinal =
+        static_cast<std::uint64_t>(
+            *wam::media::exactAudioFrameIndex(*ceiling, kAudioSampleRate)) /
+        kAacLcSamplesPerAccessUnit;
+    // A non-origin generation stages two whole access units of decoder
+    // priming ahead of the first audible frame; at the origin there is
+    // nothing earlier to stage.
+    const std::uint64_t expectedOrdinal =
+        audibleOrdinal >= 2U ? audibleOrdinal - 2U : 0U;
+    matched = matched &&
               plan.audioWindow.decodeStart ==
-                  audioGridTime(plan.audioAccessUnitOrdinal -
-                                plan.audioFrameIndex) &&
-              plan.audioAccessUnitOrdinal ==
-                  static_cast<std::uint64_t>(
-                      *wam::media::exactAudioFrameIndex(*ceiling,
-                                                        kAudioSampleRate)) /
-                      kAacLcSamplesPerAccessUnit;
+                  audioGridTime(plan.audioAccessUnitOrdinal) &&
+              plan.audioAccessUnitOrdinal == expectedOrdinal &&
+              plan.audioWindow.startsAtStreamOrigin == (expectedOrdinal == 0U);
   }
   expect(matched, message);
 }
@@ -2400,10 +2417,17 @@ void testMalformedDocuments() {
                        "a document without Cues is refused");
   }
   {
+    // A stream-copied Matroska routinely places its first video keyframe a few
+    // milliseconds after zero (FFmpeg emits a first CueTime of 21 ms for a
+    // 30 fps remux), and that cue is the true origin of the video timeline.
+    // planGeneration clamps any earlier target to cue zero, so a non-zero
+    // first cue is admitted rather than rejected.
     FixtureSpec spec;
     spec.cues = CueVariant::NonZeroFirst;
-    expectPrepareError(spec, MatroskaDemuxError::MissingCues,
-                       "selected-video Cues must begin at tick zero");
+    const PreparedFixture prepared = prepareFixture(spec);
+    expect(prepared.outcome.status == MatroskaDemuxStatus::Ready &&
+               prepared.outcome.asset != nullptr,
+           "selected-video Cues may begin after tick zero");
   }
   {
     FixtureSpec spec;
