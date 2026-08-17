@@ -1359,10 +1359,22 @@ inspectVideoFormatFacts(
     }
     const std::uint8_t parsedBits =
         sampleFormat == media::MediaVideoSampleFormat::Yuv420TenBit ? 10 : 8;
+    // Main 10 carries the same SDR colour contract as Main. An unspecified
+    // primaries/transfer VUI is the ordinary "untagged BT.709 SDR" case that
+    // the 8-bit path already admits, and demanding an explicit tag here sent
+    // every untagged Main 10 SDR stream to the compatibility path. HDR is
+    // still excluded: BT.2020 primaries and the PQ/HLG transfers are refused
+    // by the modelled-colour gate in preservesLegacyNativeAdmission, and
+    // VideoToolbox's decoded-frame attachments are validated again before any
+    // frame is leased.
+    const bool tenBitColorOutsideSdr =
+        sampleFormat == media::MediaVideoSampleFormat::Yuv420TenBit &&
+        ((colorPrimaries != media::MediaColorPrimaries::Bt709 &&
+          colorPrimaries != media::MediaColorPrimaries::Unknown) ||
+         (transferFunction != media::MediaTransferFunction::Bt709 &&
+          transferFunction != media::MediaTransferFunction::Unknown));
     if ((bitsPerComponent != 0 && bitsPerComponent != parsedBits) ||
-        (sampleFormat == media::MediaVideoSampleFormat::Yuv420TenBit &&
-         (colorPrimaries != media::MediaColorPrimaries::Bt709 ||
-          transferFunction != media::MediaTransferFunction::Bt709))) {
+        tenBitColorOutsideSdr) {
       return std::nullopt;
     }
   }
@@ -1960,14 +1972,12 @@ void incrementInventory(media::MediaTrackInventory* inventory,
        video.bitsPerComponent == 8) ||
       (video.sampleFormat == media::MediaVideoSampleFormat::Yuv420TenBit &&
        video.bitsPerComponent == 10);
-  const bool hevcMain10HasExplicitSdrColor =
-      track->codec != MediaCodec::Hevc ||
-      video.sampleFormat != media::MediaVideoSampleFormat::Yuv420TenBit ||
-      (video.colorPrimaries == media::MediaColorPrimaries::Bt709 &&
-       video.transferFunction == media::MediaTransferFunction::Bt709);
+  // Main 10 shares the 8-bit SDR colour contract: supportedModeledColor above
+  // already confines primaries and transfer to {unspecified, BT.709}, so an
+  // untagged Main 10 stream is admitted as SDR exactly like an untagged Main
+  // one, while BT.2020/PQ/HLG remain rejected for both depths.
   if (!video.identityTransform || !video.progressive ||
       !supportedModeledColor || !hevcDepthMatches ||
-      !hevcMain10HasExplicitSdrColor ||
       video.unsupportedColorMetadataPresent ||
       video.dolbyVisionConfigurationPresent ||
       (video.sampleFormat != media::MediaVideoSampleFormat::Yuv420EightBit &&

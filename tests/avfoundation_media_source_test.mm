@@ -2341,7 +2341,7 @@ void testHevcDescriptorHardening() {
              main10Track->video->transferFunction ==
                  MediaTransferFunction::Bt709 &&
              main10WithoutBitsTrack->video->bitsPerComponent == 0,
-         "fixture-free Main10 requires and preserves explicit SDR BT.709");
+         "fixture-free Main10 preserves explicit SDR BT.709 and optional depth");
   if (main10Track) {
     MediaSourceDescriptor injected = *descriptor();
     MediaTrackDescriptor injectedHevc = *main10Track;
@@ -2351,8 +2351,16 @@ void testHevcDescriptorHardening() {
     expect(preservesLegacyNativeAdmission(injected, &error),
            "an injected exact Main10 descriptor passes the common SDR gate");
     injected.tracks[0].video->colorPrimaries = MediaColorPrimaries::Unknown;
+    injected.tracks[0].video->transferFunction = MediaTransferFunction::Unknown;
+    expect(preservesLegacyNativeAdmission(injected, &error),
+           "an injected untagged Main10 descriptor is admitted as SDR");
+    injected.tracks[0].video->transferFunction = MediaTransferFunction::Pq;
     expect(!preservesLegacyNativeAdmission(injected, &error),
-           "an injected Main10 descriptor cannot omit explicit BT.709");
+           "an injected Main10 descriptor with a PQ transfer stays non-native");
+    injected.tracks[0].video->transferFunction = MediaTransferFunction::Bt709;
+    injected.tracks[0].video->colorPrimaries = MediaColorPrimaries::Bt2020;
+    expect(!preservesLegacyNativeAdmission(injected, &error),
+           "an injected Main10 descriptor with BT.2020 primaries stays non-native");
     injected.tracks[0].video->colorPrimaries = MediaColorPrimaries::Bt709;
     injected.tracks[0].video->bitsPerComponent = 8;
     expect(!preservesLegacyNativeAdmission(injected, &error),
@@ -2377,14 +2385,25 @@ void testHevcDescriptorHardening() {
   auto mainWrongBits = makeVideoFormat(
       kCMVideoCodecType_HEVC, 16, 16,
       VideoFormatOptions{.bitsPerComponent = 10, .configuration = main});
-  expect(!inspectVideoFormat(
+  auto main10PqTransfer = makeVideoFormat(
+      kCMVideoCodecType_HEVC, 16, 16,
+      VideoFormatOptions{.pqTransfer = true,
+                         .bt709Primaries = true,
+                         .bitsPerComponent = 10,
+                         .configuration = main10});
+  // Untagged Main 10 colour now resolves to SDR exactly as untagged Main does.
+  expect(inspectVideoFormat(
              static_cast<CMVideoFormatDescriptionRef>(
                  main10WithoutColor.get()),
              32, {60, 1}, MediaSourceLimits{}, &error) &&
-             !inspectVideoFormat(
+             inspectVideoFormat(
                  static_cast<CMVideoFormatDescriptionRef>(
                      main10WithoutTransfer.get()),
-                 33, {60, 1}, MediaSourceLimits{}, &error) &&
+                 33, {60, 1}, MediaSourceLimits{}, &error),
+         "Main10 with unspecified primaries or transfer is admitted as SDR");
+  expect(!inspectVideoFormat(
+             static_cast<CMVideoFormatDescriptionRef>(main10PqTransfer.get()),
+             38, {60, 1}, MediaSourceLimits{}, &error) &&
              !inspectVideoFormat(
                  static_cast<CMVideoFormatDescriptionRef>(
                      main10WrongBits.get()),
@@ -2392,7 +2411,7 @@ void testHevcDescriptorHardening() {
              !inspectVideoFormat(
                  static_cast<CMVideoFormatDescriptionRef>(mainWrongBits.get()),
                  35, {60, 1}, MediaSourceLimits{}, &error),
-         "Main10 missing explicit BT.709 or contradictory hvcC depth fails closed");
+         "Main10 HDR transfer or contradictory hvcC depth fails closed");
 
   const auto rejectsConfiguration = [&error](
                                         const std::vector<std::uint8_t>& bytes) {
