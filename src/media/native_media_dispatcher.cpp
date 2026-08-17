@@ -9,6 +9,43 @@
 
 namespace wam::media {
 
+const char* nativeMediaDispatcherFailureName(
+    NativeMediaDispatcherFailure failure) noexcept {
+  switch (failure) {
+  case NativeMediaDispatcherFailure::None:
+    return "None";
+  case NativeMediaDispatcherFailure::MissingDependency:
+    return "MissingDependency";
+  case NativeMediaDispatcherFailure::InvalidOpenRequest:
+    return "InvalidOpenRequest";
+  case NativeMediaDispatcherFailure::SourceOpen:
+    return "SourceOpen";
+  case NativeMediaDispatcherFailure::InvalidDescriptor:
+    return "InvalidDescriptor";
+  case NativeMediaDispatcherFailure::InvalidTimeline:
+    return "InvalidTimeline";
+  case NativeMediaDispatcherFailure::ConsumerConfiguration:
+    return "ConsumerConfiguration";
+  case NativeMediaDispatcherFailure::ConsumerProtocol:
+    return "ConsumerProtocol";
+  case NativeMediaDispatcherFailure::SourceRead:
+    return "SourceRead";
+  case NativeMediaDispatcherFailure::InvalidSample:
+    return "InvalidSample";
+  case NativeMediaDispatcherFailure::InvalidEvent:
+    return "InvalidEvent";
+  case NativeMediaDispatcherFailure::FormatChanged:
+    return "FormatChanged";
+  case NativeMediaDispatcherFailure::Consumer:
+    return "Consumer";
+  case NativeMediaDispatcherFailure::Seek:
+    return "Seek";
+  case NativeMediaDispatcherFailure::Flush:
+    return "Flush";
+  }
+  return "Unknown";
+}
+
 namespace {
 
 template <typename Integer>
@@ -229,8 +266,10 @@ NativeMediaDispatcherOpenOutcome NativeMediaDispatcher::openLocalFile(
 
   saturatingIncrement(stats_.openAttempts);
   stats_.generation = generation;
+  failure_message_.clear();
   if (path.empty() || generation == 0 ||
       !validateMediaSourceInitialPosition(options.initialPosition, nullptr)) {
+    failure_message_ = "open request was not admissible";
     fail(NativeMediaDispatcherFailure::InvalidOpenRequest, generation);
     result.status = NativeMediaDispatcherOpenStatus::Failed;
     return result;
@@ -241,6 +280,7 @@ NativeMediaDispatcherOpenOutcome NativeMediaDispatcher::openLocalFile(
     // No source operation was entered, so there is no attempted generation to
     // cancel. In particular, do not let an arm rejection disturb an exact
     // operation that the source may already have published.
+    failure_message_ = "source refused to arm the open operation";
     fail(NativeMediaDispatcherFailure::SourceOpen);
     result.status = NativeMediaDispatcherOpenStatus::Failed;
     return result;
@@ -250,12 +290,14 @@ NativeMediaDispatcherOpenOutcome NativeMediaDispatcher::openLocalFile(
   try {
     opened = source_->openLocalFile(path, options, generation);
   } catch (...) {
+    failure_message_ = "source open threw";
     fail(NativeMediaDispatcherFailure::SourceOpen, generation);
     result.status = NativeMediaDispatcherOpenStatus::Failed;
     return result;
   }
 
   if (opened.generation != generation) {
+    failure_message_ = "source open reported a foreign generation";
     fail(NativeMediaDispatcherFailure::SourceOpen, generation);
     result.status = NativeMediaDispatcherOpenStatus::Failed;
     return result;
@@ -275,6 +317,9 @@ NativeMediaDispatcherOpenOutcome NativeMediaDispatcher::openLocalFile(
     result.status = NativeMediaDispatcherOpenStatus::Cancelled;
     return result;
   case MediaSourceOpenStatus::Failed:
+    // The source's own text is the only description of what actually went
+    // wrong; every layer above this point collapses onto a generic enum.
+    failure_message_ = opened.error;
     fail(NativeMediaDispatcherFailure::SourceOpen, generation);
     result.status = NativeMediaDispatcherOpenStatus::Failed;
     return result;
@@ -299,6 +344,9 @@ NativeMediaDispatcherOpenOutcome NativeMediaDispatcher::openLocalFile(
        !opened.descriptor->selectedAudio.has_value()) ||
       (!opened.descriptor->selectedVideo &&
        !opened.descriptor->selectedAudio)) {
+    failure_message_ = validationError.empty()
+                           ? std::string("descriptor admission refused")
+                           : validationError;
     fail(NativeMediaDispatcherFailure::InvalidDescriptor, generation);
     result.status = NativeMediaDispatcherOpenStatus::Failed;
     return result;
@@ -321,6 +369,7 @@ NativeMediaDispatcherOpenOutcome NativeMediaDispatcher::openLocalFile(
               : nullptr,
           opened.audioWindow, limits_.maximumAudioSeekPrerollSeconds);
   if (!timeline) {
+    failure_message_ = "generation timeline could not be derived";
     fail(NativeMediaDispatcherFailure::InvalidTimeline, generation);
     result.status = NativeMediaDispatcherOpenStatus::Failed;
     return result;
@@ -377,19 +426,26 @@ NativeMediaDispatcherOpenOutcome NativeMediaDispatcher::openLocalFile(
   OpenConfigureVerdict videoVerdict = OpenConfigureVerdict::Skipped;
   OpenConfigureVerdict audioVerdict = OpenConfigureVerdict::Skipped;
 
+  // Each port stages its refusal text in its own string. The audio configure
+  // runs on a worker thread, so it must never touch a dispatcher member; both
+  // are folded into failure_message_ on the owner thread after the join.
+  std::string videoConfigureError;
+  std::string audioConfigureError;
+
   const auto configureAudio = [this, audioTrack, generation,
-                               &configureTimeline,
+                               &configureTimeline, &audioConfigureError,
                                &audioVerdict]() noexcept {
     if (audioTrack == nullptr) {
       audioVerdict = OpenConfigureVerdict::Rejected;
       return;
     }
     try {
-      audioVerdict =
-          audio_->configure(*audioTrack, generation, configureTimeline,
-                            nullptr) == NativeMediaConsumeResult::Accepted
-              ? OpenConfigureVerdict::Accepted
-              : OpenConfigureVerdict::Rejected;
+      audioVerdict = audio_->configure(*audioTrack, generation,
+                                       configureTimeline,
+                                       &audioConfigureError) ==
+                             NativeMediaConsumeResult::Accepted
+                         ? OpenConfigureVerdict::Accepted
+                         : OpenConfigureVerdict::Rejected;
     } catch (...) {
       // An exception must never cross the thread boundary: it would bypass
       // the join and terminate. Record it and let the owner thread decide.
@@ -442,11 +498,12 @@ NativeMediaDispatcherOpenOutcome NativeMediaDispatcher::openLocalFile(
       videoVerdict = OpenConfigureVerdict::Rejected;
     } else {
       try {
-        videoVerdict =
-            video_->configure(*videoTrack, generation, configureTimeline,
-                              nullptr) == NativeMediaConsumeResult::Accepted
-                ? OpenConfigureVerdict::Accepted
-                : OpenConfigureVerdict::Rejected;
+        videoVerdict = video_->configure(*videoTrack, generation,
+                                         configureTimeline,
+                                         &videoConfigureError) ==
+                               NativeMediaConsumeResult::Accepted
+                           ? OpenConfigureVerdict::Accepted
+                           : OpenConfigureVerdict::Rejected;
       } catch (...) {
         videoVerdict = OpenConfigureVerdict::Threw;
       }
@@ -464,12 +521,24 @@ NativeMediaDispatcherOpenOutcome NativeMediaDispatcher::openLocalFile(
   // already accounted.
   if (videoVerdict != OpenConfigureVerdict::Skipped &&
       videoVerdict != OpenConfigureVerdict::Accepted) {
+    failure_message_ =
+        videoVerdict == OpenConfigureVerdict::Threw
+            ? "video configure threw"
+            : (videoConfigureError.empty() ? "video configure refused"
+                                           : "video configure refused: " +
+                                                 videoConfigureError);
     fail(NativeMediaDispatcherFailure::ConsumerConfiguration, generation);
     result.status = NativeMediaDispatcherOpenStatus::Failed;
     return result;
   }
   if (audioVerdict != OpenConfigureVerdict::Skipped &&
       audioVerdict != OpenConfigureVerdict::Accepted) {
+    failure_message_ =
+        audioVerdict == OpenConfigureVerdict::Threw
+            ? "audio configure threw"
+            : (audioConfigureError.empty() ? "audio configure refused"
+                                           : "audio configure refused: " +
+                                                 audioConfigureError);
     fail(NativeMediaDispatcherFailure::ConsumerConfiguration, generation);
     result.status = NativeMediaDispatcherOpenStatus::Failed;
     return result;
@@ -616,6 +685,7 @@ NativeMediaDispatcherStep NativeMediaDispatcher::step() noexcept {
     installPending(source_->readNext(stats_.generation));
     saturatingIncrement(stats_.sourceReads);
   } catch (...) {
+    failure_message_ = "source readNext threw";
     return failStep(NativeMediaDispatcherFailure::SourceRead);
   }
   return routePending();
@@ -916,6 +986,10 @@ NativeMediaDispatcher::timeline() const noexcept {
   return timeline_;
 }
 
+const std::string& NativeMediaDispatcher::failureMessage() const noexcept {
+  return failure_message_;
+}
+
 NativeMediaDispatcherStats NativeMediaDispatcher::stats() const noexcept {
   NativeMediaDispatcherStats result = stats_;
   result.operationGeneration =
@@ -1046,9 +1120,11 @@ NativeMediaDispatcherStep NativeMediaDispatcher::routePending() noexcept {
     NativeMediaSampleDelivery delivery(*sample);
     NativeMediaConsumeResult consumed{NativeMediaConsumeResult::Failed};
     try {
-      consumed = isVideo ? video_->trySample(delivery, nullptr)
-                         : audio_->trySample(delivery, nullptr);
+      failure_message_.clear();
+      consumed = isVideo ? video_->trySample(delivery, &failure_message_)
+                         : audio_->trySample(delivery, &failure_message_);
     } catch (...) {
+      failure_message_ = "consumer trySample threw";
       return failStep(NativeMediaDispatcherFailure::Consumer);
     }
 
@@ -1118,10 +1194,12 @@ NativeMediaDispatcherStep NativeMediaDispatcher::routePending() noexcept {
     }
     NativeMediaConsumeResult consumed{NativeMediaConsumeResult::Failed};
     try {
+      failure_message_.clear();
       consumed = isVideo
-                     ? video_->discontinuity(*discontinuity, nullptr)
-                     : audio_->discontinuity(*discontinuity, nullptr);
+                     ? video_->discontinuity(*discontinuity, &failure_message_)
+                     : audio_->discontinuity(*discontinuity, &failure_message_);
     } catch (...) {
+      failure_message_ = "consumer discontinuity threw";
       return failStep(NativeMediaDispatcherFailure::Consumer);
     }
     if (consumed == NativeMediaConsumeResult::Backpressure) {
@@ -1185,9 +1263,11 @@ NativeMediaDispatcherStep NativeMediaDispatcher::routePending() noexcept {
     }
     NativeMediaConsumeResult consumed{NativeMediaConsumeResult::Failed};
     try {
-      consumed = isVideo ? video_->endOfStream(*end, nullptr)
-                         : audio_->endOfStream(*end, nullptr);
+      failure_message_.clear();
+      consumed = isVideo ? video_->endOfStream(*end, &failure_message_)
+                         : audio_->endOfStream(*end, &failure_message_);
     } catch (...) {
+      failure_message_ = "consumer endOfStream threw";
       return failStep(NativeMediaDispatcherFailure::Consumer);
     }
     if (consumed == NativeMediaConsumeResult::Backpressure) {
@@ -1233,8 +1313,10 @@ NativeMediaDispatcherStep NativeMediaDispatcher::routePending() noexcept {
 
   if (auto* failure = std::get_if<MediaSourceFailure>(&*pending_)) {
     if (failure->generation != stats_.generation) {
+      failure_message_ = "source failure carried a foreign generation";
       return failStep(NativeMediaDispatcherFailure::InvalidEvent);
     }
+    failure_message_ = failure->error;
     return failStep(NativeMediaDispatcherFailure::SourceRead);
   }
 
@@ -1264,8 +1346,10 @@ NativeMediaDispatcherStep NativeMediaDispatcher::maintainAudio() noexcept {
   }
   NativeMediaConsumerProgress result{NativeMediaConsumerProgress::Failed};
   try {
-    result = audio_->drain(consumer_generation_, nullptr);
+    failure_message_.clear();
+    result = audio_->drain(consumer_generation_, &failure_message_);
   } catch (...) {
+    failure_message_ = "audio drain threw";
     return failStep(NativeMediaDispatcherFailure::Consumer);
   }
   switch (result) {
@@ -1315,8 +1399,10 @@ NativeMediaDispatcherStep NativeMediaDispatcher::maintainVideo() noexcept {
   }
   NativeMediaConsumerProgress result{NativeMediaConsumerProgress::Failed};
   try {
-    result = video_->drain(consumer_generation_, nullptr);
+    failure_message_.clear();
+    result = video_->drain(consumer_generation_, &failure_message_);
   } catch (...) {
+    failure_message_ = "video drain threw";
     return failStep(NativeMediaDispatcherFailure::Consumer);
   }
   switch (result) {

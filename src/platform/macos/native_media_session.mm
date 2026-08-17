@@ -10,8 +10,10 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstdio>
 #include <cstring>
 #include <dispatch/dispatch.h>
+#include <string>
 #include <limits>
 #include <mutex>
 #include <new>
@@ -23,6 +25,78 @@ namespace {
 
 using media::MediaGeneration;
 namespace protocol = media::native_playback;
+
+[[nodiscard]] const char* failureReasonName(
+    protocol::FailureReason reason) noexcept {
+  switch (reason) {
+  case protocol::FailureReason::Preparation:
+    return "Preparation";
+  case protocol::FailureReason::Startup:
+    return "Startup";
+  case protocol::FailureReason::Clock:
+    return "Clock";
+  case protocol::FailureReason::Decode:
+    return "Decode";
+  case protocol::FailureReason::AudioOutput:
+    return "AudioOutput";
+  case protocol::FailureReason::VideoOutput:
+    return "VideoOutput";
+  case protocol::FailureReason::Preview:
+    return "Preview";
+  case protocol::FailureReason::CommitSeek:
+    return "CommitSeek";
+  case protocol::FailureReason::Stop:
+    return "Stop";
+  case protocol::FailureReason::Protocol:
+    return "Protocol";
+  }
+  return "Unknown";
+}
+
+// One always-on stderr line per terminal native failure.
+//
+// The user-visible text is chosen from protocol::FailureReason, which is a
+// deliberately small vocabulary: every terminal dispatcher failure collapses
+// onto Protocol (open-status Failed) or Decode (a Failed step), so a field
+// report says only "Native playback rejected an internal command" and names
+// neither the seam that refused nor why. This line restores the three facts
+// that a single reproduction then makes fully diagnostic: which stage of the
+// session ran (open/start/steady), which NativeMediaDispatcherFailure class
+// actually fired, and the refusing seam's own error text.
+//
+// It is one line per terminal failure -- a session publishes at most a
+// handful in its whole lifetime -- so it is not env-gated. stderr is used
+// directly rather than Qt logging because this layer owns no Qt dependency,
+// and a plain stderr capture of the process is exactly where it must appear.
+void logNativeFailure(const char* stage, protocol::FailureReason reason,
+                      const media::NativeMediaDispatcher* dispatcher) noexcept {
+  try {
+    const char* failureClass = "NoDispatcher";
+    std::string message;
+    if (dispatcher != nullptr) {
+      failureClass =
+          media::nativeMediaDispatcherFailureName(dispatcher->stats().failure);
+      message = dispatcher->failureMessage();
+    }
+    // Keep the record one grep-able line: control characters and quotes in a
+    // backend's text must not be able to forge a second line or unbalance the
+    // quoted field.
+    for (char& character : message) {
+      if (character == '"') {
+        character = '\'';
+      } else if (static_cast<unsigned char>(character) < 0x20U) {
+        character = ' ';
+      }
+    }
+    std::fprintf(stderr,
+                 "WAM: native failure stage=%s reason=%s class=%s error=\"%s\"\n",
+                 stage, failureReasonName(reason), failureClass,
+                 message.c_str());
+    std::fflush(stderr);
+  } catch (...) {
+    // A diagnostic must never be able to fail a playback path.
+  }
+}
 
 [[nodiscard]] bool validLocalBinding(
     const NativeMediaSessionSourceBinding& binding) noexcept {
@@ -1855,6 +1929,8 @@ struct NativeMediaSession::Impl final {
     endLiveIssue();
     if (!graphBuilt) {
       prepareFailed = true;
+      logNativeFailure("open/graph", protocol::FailureReason::Preparation,
+                       dispatcher.get());
       static_cast<void>(publishFailure(protocol::FailureReason::Preparation,
                                        prepareCommand.stamp));
       return;
@@ -1881,6 +1957,8 @@ struct NativeMediaSession::Impl final {
     case NativeVideoConsumerArmProgress::StaleGeneration:
 case NativeVideoConsumerArmProgress::Failed:
       prepareFailed = true;
+      logNativeFailure("open/arm", protocol::FailureReason::Startup,
+                       dispatcher.get());
       static_cast<void>(publishFailure(protocol::FailureReason::Startup));
       return;
     }
@@ -1899,6 +1977,8 @@ case NativeVideoConsumerArmProgress::Failed:
     endLiveIssue();
 if (!transferred) {
       prepareFailed = true;
+      logNativeFailure("open/transfer", protocol::FailureReason::Startup,
+                       dispatcher.get());
       static_cast<void>(publishFailure(protocol::FailureReason::Startup));
       return;
     }
@@ -1936,15 +2016,21 @@ if (!transferred) {
       // source-level Unsupported result is a Startup failure requiring exact
       // Stop; UnsupportedSource would be a false generation-free proof.
 prepareFailed = true;
-      static_cast<void>(publishFailure(
-          opened.status == media::NativeMediaDispatcherOpenStatus::Failed
-              ? protocol::FailureReason::Protocol
-              : protocol::FailureReason::Startup));
+      {
+        const auto reason =
+            opened.status == media::NativeMediaDispatcherOpenStatus::Failed
+                ? protocol::FailureReason::Protocol
+                : protocol::FailureReason::Startup;
+        logNativeFailure("open", reason, dispatcher.get());
+        static_cast<void>(publishFailure(reason));
+      }
       return;
     }
     const auto descriptor = dispatcher->descriptor();
 if (descriptor == nullptr || !nativeV1Descriptor(*descriptor)) {
       prepareFailed = true;
+      logNativeFailure("open/descriptor", protocol::FailureReason::Protocol,
+                       dispatcher.get());
       static_cast<void>(publishFailure(protocol::FailureReason::Protocol));
       return;
     }
@@ -1969,6 +2055,8 @@ if (descriptor == nullptr || !nativeV1Descriptor(*descriptor)) {
         !admittedAssetContext->matchesPreviewBinding(binding.localPath,
                                                      descriptor)) {
       prepareFailed = true;
+      logNativeFailure("open/context", protocol::FailureReason::Protocol,
+                       dispatcher.get());
       static_cast<void>(publishFailure(protocol::FailureReason::Protocol));
       return;
     }
@@ -2029,6 +2117,8 @@ if (descriptor == nullptr || !nativeV1Descriptor(*descriptor)) {
       return;
     }
 if (audioControl.start == nullptr) {
+      logNativeFailure("start", protocol::FailureReason::Startup,
+                       dispatcher.get());
       static_cast<void>(publishFailure(protocol::FailureReason::Startup));
       startPending = false;
       return;
@@ -2049,6 +2139,8 @@ if (audioControl.start == nullptr) {
       return;
     }
 if (result != NativeAudioSessionProgress::Done) {
+      logNativeFailure("start/audio", protocol::FailureReason::Startup,
+                       dispatcher.get());
       static_cast<void>(publishFailure(protocol::FailureReason::Startup));
       startPending = false;
       return;
@@ -2970,6 +3062,8 @@ if (result != NativeAudioSessionProgress::Done) {
 #endif
             // Admission, stamp capture and the public terminal latch are one
             // mutex transaction inside publishFailure().
+            logNativeFailure("steady", protocol::FailureReason::Decode,
+                             dispatcher.get());
             static_cast<void>(publishFailure(protocol::FailureReason::Decode));
             continue;
           }

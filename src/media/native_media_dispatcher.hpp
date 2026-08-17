@@ -204,6 +204,13 @@ enum class NativeMediaDispatcherFailure : std::uint8_t {
   Flush,
 };
 
+// Stable diagnostic name for a terminal dispatcher failure. Every terminal
+// failure the session can publish collapses onto one of a handful of generic
+// protocol-level FailureReason values, so the exact class that actually fired
+// is otherwise unobservable from a stderr capture. Never returns nullptr.
+[[nodiscard]] const char* nativeMediaDispatcherFailureName(
+    NativeMediaDispatcherFailure failure) noexcept;
+
 enum class NativeMediaPendingKind : std::uint8_t {
   None,
   VideoSample,
@@ -533,6 +540,13 @@ class NativeMediaDispatcher final {
   // its own synchronization boundary for external telemetry.
   [[nodiscard]] NativeMediaDispatcherStats stats() const noexcept;
 
+  // Diagnostic-only. The error text produced by whichever port, source or
+  // validator refused the operation that drove this dispatcher terminal. Empty
+  // when the refusing seam produced no text. Deliberately kept out of stats()
+  // so the hot per-step POD copy stays allocation free; read it only on a
+  // failure path. Serialized on the dispatcher owner like every other method.
+  [[nodiscard]] const std::string& failureMessage() const noexcept;
+
   // Names the exact-seek commit window in which the audio route is paused at
   // the target with a primed ring and only a video draw can release it. See
   // the seek-settle note above the class. Idempotent; clearing it never
@@ -638,6 +652,9 @@ class NativeMediaDispatcher final {
   std::optional<NativeMediaGenerationTimeline> lifecycle_timeline_;
   MediaSourceLimits limits_{};
   NativeMediaDispatcherStats stats_{};
+  // Diagnostic text for the current terminal failure. Written only on failure
+  // paths on the dispatcher owner thread; cleared when a new open begins.
+  std::string failure_message_{};
   MediaGeneration consumer_generation_{0};
   MediaGeneration video_exposed_generation_{0};
   MediaGeneration audio_exposed_generation_{0};

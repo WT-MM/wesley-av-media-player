@@ -143,6 +143,27 @@ that was slower than Python until the architecture was fixed (3381 ms →
   anything — on this machine a fully reverted build fell back identically,
   which is the only reason the fallback was correctly attributed to the
   environment rather than to the diff.
+- GAP CLOSED 2026-08-17: a native failure now names its own class. The
+  user-facing text comes from `protocol::FailureReason`, a deliberately tiny
+  vocabulary — every terminal dispatcher failure collapses onto `Protocol`
+  (open-status `Failed`) or `Decode` (a `Failed` step) — so a field report
+  said only "Native playback rejected an internal command" and named neither
+  the seam that refused nor why. `native_media_session.mm`'s
+  `logNativeFailure()` now writes exactly one always-on stderr line per
+  terminal failure, in the form
+  `WAM: native failure stage=<open|open/graph|open/arm|open/transfer|open/descriptor|open/context|start|start/audio|steady> reason=<FailureReason> class=<NativeMediaDispatcherFailure> error="<refusing seam's own text>"`.
+  The class name comes from `nativeMediaDispatcherFailureName()` and the text
+  from `NativeMediaDispatcher::failureMessage()`, which retains whatever the
+  source, validator or consumer wrote into the `std::string* error` out-params
+  that the dispatcher previously passed `nullptr` for. It is deliberately not
+  env-gated (one line per terminal failure, a handful per session lifetime)
+  and deliberately not part of `stats()`, so the per-step POD copy stays
+  allocation free. This is what made the 2026-08-17 Matroska `FileChanged`
+  defect a one-reproduction diagnosis instead of a bisect: the first stormed
+  run printed
+  `stage=steady reason=Decode class=SourceRead error="Matroska file changed (FileChanged)"`,
+  which named the file, the predicate and the mechanism at once. Grep for
+  `WAM: native failure` in any plain stderr capture.
 - Suspect the instrument before the subject: verify the window is actually
   compositing (occlusion produces clock 1.0000 + frozen draws + late-drops
   at exactly the frame rate — a perfect counterfeit of starvation), verify
