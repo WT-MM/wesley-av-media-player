@@ -180,15 +180,36 @@ class StableFileReader final : public SeekableByteReader {
     return true;
   }
 
+  // The property this proves is exactly one thing: the bytes reachable through
+  // the retained descriptor are still the bytes the cluster/cue plan was built
+  // against. dev+ino catch a replaced file, size catches truncation and
+  // extension, and mtime catches any write to the content.
+  //
+  // st_ctime is deliberately NOT part of that identity, and used to be. ctime
+  // is the INODE-metadata timestamp: it moves for xattr writes, chmod, chown,
+  // link-count and rename -- none of which touch a single content byte. On
+  // macOS those happen to a media file constantly and from outside this
+  // process: Spotlight/mds indexing, iCloud/FileProvider sync bookkeeping,
+  // quarantine and last-used-date stamping. Including ctime therefore made
+  // this predicate report "the file changed" for events that are, by
+  // construction, not changes to the file's content -- an unfixable false
+  // positive whose probability grew with how long the demuxer held the plan
+  // and with how busy the machine's metadata daemons were. That is precisely
+  // the observed defect: a load-dependent Matroska-only open/playback failure
+  // (FileChanged -> SourceOpen/SourceRead -> Protocol/Decode -> fallback),
+  // where the AVFoundation route, which makes no such assertion, was immune.
+  //
+  // What dropping ctime gives up is only the case of an in-place, byte-count-
+  // preserving write whose mtime is then restored by an explicit utimes()
+  // call. That is deliberate forgery, not a hazard a local media player is
+  // defending against, and every honest mutation still moves mtime or size.
   [[nodiscard]] bool unchanged() const noexcept {
     struct stat facts {};
     return ::fstat(descriptor_, &facts) == 0 && facts.st_size >= 0 &&
            facts.st_dev == device_ && facts.st_ino == inode_ &&
            static_cast<std::uint64_t>(facts.st_size) == size_ &&
            facts.st_mtimespec.tv_sec == modifiedSeconds_ &&
-           facts.st_mtimespec.tv_nsec == modifiedNanoseconds_ &&
-           facts.st_ctimespec.tv_sec == changedSeconds_ &&
-           facts.st_ctimespec.tv_nsec == changedNanoseconds_;
+           facts.st_mtimespec.tv_nsec == modifiedNanoseconds_;
   }
 
  private:
@@ -196,9 +217,7 @@ class StableFileReader final : public SeekableByteReader {
       : descriptor_(descriptor), size_(static_cast<std::uint64_t>(facts.st_size)),
         device_(facts.st_dev), inode_(facts.st_ino),
         modifiedSeconds_(facts.st_mtimespec.tv_sec),
-        modifiedNanoseconds_(facts.st_mtimespec.tv_nsec),
-        changedSeconds_(facts.st_ctimespec.tv_sec),
-        changedNanoseconds_(facts.st_ctimespec.tv_nsec) {}
+        modifiedNanoseconds_(facts.st_mtimespec.tv_nsec) {}
 
   int descriptor_{-1};
   std::uint64_t size_{0};
@@ -206,8 +225,6 @@ class StableFileReader final : public SeekableByteReader {
   ino_t inode_{};
   time_t modifiedSeconds_{};
   long modifiedNanoseconds_{};
-  time_t changedSeconds_{};
-  long changedNanoseconds_{};
 };
 
 struct CollectedDocument final : Visitor {
@@ -1506,7 +1523,7 @@ MatroskaPrepareOutcome prepareMatroska(
     }
     if (!state->unchanged()) {
       result.error = MatroskaDemuxError::FileChanged;
-      result.message = "reader size changed during preparation";
+      result.message = "file identity changed during preparation";
       return result;
     }
     if (document.headerCount != 1 || document.segmentCount != 1 ||
