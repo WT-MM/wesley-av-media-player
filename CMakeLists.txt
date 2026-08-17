@@ -193,6 +193,8 @@ if(APPLE)
     src/media/matroska_aac.cpp
     src/media/matroska_ebml.hpp
     src/media/matroska_ebml.cpp
+    src/media/matroska_demuxer.hpp
+    src/media/matroska_demuxer.cpp
     src/media/video_codec_configuration.hpp
     src/media/video_codec_configuration.cpp
     src/media/native_media_source.hpp
@@ -356,6 +358,10 @@ if(APPLE)
       src/platform/macos/avfoundation_media_source.mm
       src/platform/macos/avfoundation_preview_source.hpp
       src/platform/macos/avfoundation_preview_source.mm
+      src/platform/macos/matroska_asset_context.hpp
+      src/platform/macos/matroska_asset_context.cpp
+      src/platform/macos/matroska_media_source.hpp
+      src/platform/macos/matroska_media_source.mm
       src/platform/macos/native_audio_converter.hpp
       src/platform/macos/native_audio_converter.mm
       src/platform/macos/native_audio_output.hpp
@@ -591,6 +597,11 @@ if(BUILD_TESTING)
     target_link_libraries(wam_matroska_aac_test PRIVATE wam_native_core)
     add_test(NAME matroska_aac COMMAND wam_matroska_aac_test)
 
+    add_executable(wam_matroska_demuxer_test
+      tests/matroska_demuxer_test.cpp)
+    target_link_libraries(wam_matroska_demuxer_test PRIVATE wam_native_core)
+    add_test(NAME matroska_demuxer COMMAND wam_matroska_demuxer_test)
+
     add_executable(wam_video_codec_configuration_test
       tests/video_codec_configuration_test.cpp)
     target_link_libraries(
@@ -644,6 +655,7 @@ if(BUILD_TESTING)
     foreach(WAM_NATIVE_CORE_TEST_TARGET IN ITEMS
         wam_matroska_aac_test
         wam_matroska_ebml_test
+        wam_matroska_demuxer_test
         wam_video_codec_configuration_test
         wam_native_media_source_test
         wam_native_media_backend_test
@@ -661,6 +673,7 @@ if(BUILD_TESTING)
     set_tests_properties(
       matroska_aac
       matroska_ebml
+      matroska_demuxer
       video_codec_configuration
       native_media_source
       native_media_backend

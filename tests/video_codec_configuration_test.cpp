@@ -936,14 +936,19 @@ void testHevcRejections() {
                 "HEVC array reserved bit is rejected");
   }
 
+  // array_completeness is a muxer convention, not a decodability property.
+  // ISO/IEC 14496-15 permits zero to mean the elementary stream may also carry
+  // parameter sets in band. One stream-copied HEVC stream produces hvcC
+  // records that are byte-identical in MP4 and Matroska apart from exactly
+  // this bit, so a cleared bit is admitted rather than rejected.
   auto incompleteArray = valid;
   const auto spsArray = hevcArrayOffset(incompleteArray, 33U);
   expect(spsArray.has_value(), "test locates HEVC SPS array");
   if (spsArray) {
     incompleteArray[*spsArray] &= 0x7FU;
-    expectError(inspectHevc(incompleteArray),
-                VideoCodecConfigurationError::ParameterSetMismatch,
-                "HEVC parameter-set arrays must be complete");
+    const auto inspection = inspectHevc(incompleteArray);
+    expect(inspection.admitted() && inspection.facts,
+           "HEVC parameter-set arrays may clear array_completeness");
   }
 
   auto ptlMismatch = valid;
