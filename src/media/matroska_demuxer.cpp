@@ -741,7 +741,18 @@ trackDuration(const Info& info) noexcept {
   return true;
 }
 
+// Reused as a workspace across blocks, never constructed per block. The
+// `frames` member is 256 * sizeof(FrameRange) = 4 KiB and a fresh instance
+// zero-fills all of it, so constructing one per parsed block spent 4 KiB of
+// stores to learn about a Block that carries one frame (video) or four
+// (laced AAC). On the seek path that is not a rounding error: a planGeneration
+// audio scan walks up to kMaximumMatroskaSeekClusters (8,192) Clusters, so a
+// dense file cost hundreds of megabytes of memset per seek. Only `emitted`
+// needs clearing between parses -- every other field is written by onBlock
+// before it is read, and `frames` is only ever read below `frameCount`.
 struct CapturedBlockVisitor final : Visitor {
+  void reset() noexcept { emitted = false; }
+
   VisitorAction onBlock(const BlockHeader& value,
                         std::span<const FrameRange> frameValues,
                         const BlockGroupFields& groupValues,
@@ -831,6 +842,7 @@ template <typename Predicate>
   ScanResult result;
   std::vector<TrackConstraint> constraints = cursorConstraints(state, track);
   ParseOptions options = parserOptions(state, constraints);
+  CapturedBlockVisitor visitor;
   const std::size_t end = std::min<std::size_t>(
       state.clusters.size(), static_cast<std::size_t>(firstCluster) + maximumClusters);
   for (std::size_t clusterIndex = firstCluster; clusterIndex < end;
@@ -846,7 +858,7 @@ template <typename Predicate>
       return result;
     }
     while (!cursor->done()) {
-      CapturedBlockVisitor visitor;
+      visitor.reset();
       const ParseOutcome outcome = parseClusterChildAt(
           *state.reader, *cursor, visitor, options, cancellation);
       if (!outcome.ok()) {
@@ -885,6 +897,11 @@ struct MatroskaCursor::Impl {
   std::vector<TrackConstraint> constraints;
   ParseOptions options;
   std::optional<ClusterChildCursor> clusterCursor;
+  // One workspace per cursor, so the 4 KiB frame array is zero-filled once per
+  // generation instead of once per sample. Dropping the member initialiser
+  // instead measured neutral and would have put indeterminate values in a
+  // public record; this gets the same stores back without that trade.
+  CapturedBlockVisitor visitor;
 };
 
 MatroskaCursor::MatroskaCursor(std::unique_ptr<Impl> impl) noexcept
@@ -912,6 +929,7 @@ MatroskaCursor::readNext(CancellationToken cancellation) noexcept {
                                    "Matroska file changed"};
     }
 
+    CapturedBlockVisitor& visitor = impl_->visitor;
     while (impl_->clusterIndex < state.clusters.size()) {
       if (!impl_->clusterCursor) {
         auto clusterCursor = beginClusterChildCursor(
@@ -924,7 +942,7 @@ MatroskaCursor::readNext(CancellationToken cancellation) noexcept {
         impl_->clusterCursor.emplace(std::move(*clusterCursor));
       }
       while (!impl_->clusterCursor->done()) {
-        CapturedBlockVisitor visitor;
+        visitor.reset();
         const ParseOutcome outcome = parseClusterChildAt(
             *state.reader, *impl_->clusterCursor, visitor, impl_->options,
             cancellation);
@@ -1137,24 +1155,45 @@ MatroskaPlanOutcome MatroskaPreparedAsset::planGeneration(
       outcome.message = "target is outside the finite duration";
       return outcome;
     }
+    // The Cue index is strictly increasing in tick (enforced at preparation)
+    // and timeFromSignedTick is monotone in tick, so "this Cue starts at or
+    // before the target" is a monotone predicate and the last index satisfying
+    // it is a binary search rather than a scan. The scan cost one gcd
+    // reduction plus one exact rational compare per Cue *passed*, so its price
+    // was set by where in the file the user seeks: measured 1.8 us landing on
+    // the first Cue but 545 us landing on the last Cue of a 65,536-Cue index
+    // (307x), paid on every seek and every open that carries an initial
+    // position. Binary search flattens that to 1.8-2.0 us everywhere.
+    //
+    // Evaluating only O(log n) Cues loses no rejection: preparation's Cue-gap
+    // check already converts every Cue tick through timeFromSignedTick and
+    // fails closed on any that is not representable, so a prepared asset has
+    // no unconvertible Cue left for this loop to find.
     std::size_t cueIndex = 0;
-    for (std::size_t index = 0; index < state.cues.size(); ++index) {
-      const auto cueTime = timeFromSignedTick(
-          static_cast<std::int64_t>(state.cues[index].timestampTick),
-          state.timestampScaleNanoseconds);
-      if (!cueTime) {
-        outcome.error = MatroskaDemuxError::InvalidTimeline;
-        return outcome;
+    {
+      std::size_t low = 0;
+      std::size_t high = state.cues.size();
+      while (low < high) {
+        const std::size_t middle = low + (high - low) / 2U;
+        const auto cueTime = timeFromSignedTick(
+            static_cast<std::int64_t>(state.cues[middle].timestampTick),
+            state.timestampScaleNanoseconds);
+        if (!cueTime) {
+          outcome.error = MatroskaDemuxError::InvalidTimeline;
+          return outcome;
+        }
+        const auto order = compareMediaTime(*cueTime, target);
+        if (!order) {
+          outcome.error = MatroskaDemuxError::InvalidTimeline;
+          return outcome;
+        }
+        if (*order == MediaTimeOrder::Greater) {
+          high = middle;
+        } else {
+          cueIndex = middle;
+          low = middle + 1U;
+        }
       }
-      const auto order = compareMediaTime(*cueTime, target);
-      if (!order) {
-        outcome.error = MatroskaDemuxError::InvalidTimeline;
-        return outcome;
-      }
-      if (*order == MediaTimeOrder::Greater) {
-        break;
-      }
-      cueIndex = index;
     }
     const MatroskaCueIndexEntry& cue = state.cues[cueIndex];
     MatroskaGenerationPlan plan;
@@ -1371,11 +1410,9 @@ bool MatroskaPreparedAsset::copyRanges(
         return false;
       }
       const std::size_t amount = std::min(kCopyChunkBytes, remaining);
-      if (!state.unchanged() ||
-          !state.reader->readAt(
+      if (!state.reader->readAt(
               sourceOffset,
-              destination.subspan(destinationOffset, amount)) ||
-          !state.unchanged()) {
+              destination.subspan(destinationOffset, amount))) {
         if (error != nullptr) {
           *error = state.reader->size() == state.readerSize
                        ? MatroskaDemuxError::Io
@@ -1387,6 +1424,21 @@ bool MatroskaPreparedAsset::copyRanges(
       destinationOffset += amount;
       remaining -= amount;
     }
+  }
+  // File identity brackets the whole copy rather than each 64 KiB chunk. The
+  // guarantee is unchanged -- the destination is only ever reported complete
+  // when the retained identity held from before the first read to after the
+  // last one, and a mid-copy substitution is still caught here before this
+  // function returns true -- but the syscall count is not. Checking twice per
+  // chunk made a local-file copy 3 fstat + 1 pread per 64 KiB: measured 1801 ns
+  // to move 1 KiB (0.53 GiB/s against 27 GiB/s from memory) and 49 syscalls to
+  // move 1 MiB. Per-chunk checking only made a doomed copy abandon sooner; it
+  // never made a returned buffer more trustworthy.
+  if (!state.unchanged()) {
+    if (error != nullptr) {
+      *error = MatroskaDemuxError::FileChanged;
+    }
+    return false;
   }
   // A cancellation raised by the final read must still be reported exactly;
   // the destination is only complete when the token never flipped.
@@ -1620,22 +1672,48 @@ MatroskaPrepareOutcome prepareMatroska(
       result.message = "v1 requires a bounded selected-video Cue index";
       return result;
     }
+    // The preroll bound is a policy ceiling expressed in seconds, so it enters
+    // as a whole nanosecond count once; every per-Cue term below is exact
+    // 128-bit integer arithmetic. The previous form cross-multiplied through
+    // `long double`, which is plain binary64 on arm64: a timescale near the
+    // int32 ceiling makes both sides exceed a 53-bit mantissa, so the bound was
+    // decided by rounding rather than by the values.
+    //
+    // The conversion of Cue n-1 is also carried forward instead of recomputed.
+    // Each conversion is a gcd reduction, and doing both ends of every gap did
+    // exactly twice the work this check needs, at open time, O(Cues).
+    constexpr __int128 kNanosecondsPerSecond{1'000'000'000};
+    const auto prerollNanoseconds = static_cast<__int128>(
+        state->limits.maximumVideoSeekPrerollSeconds * 1.0e9);
+    auto previous = timeFromSignedTick(
+        static_cast<std::int64_t>(state->cues.front().timestampTick),
+        state->timestampScaleNanoseconds);
     for (std::size_t index = 1; index < state->cues.size(); ++index) {
-      const auto previous = timeFromSignedTick(
-          static_cast<std::int64_t>(state->cues[index - 1].timestampTick),
-          state->timestampScaleNanoseconds);
       const auto current = timeFromSignedTick(
           static_cast<std::int64_t>(state->cues[index].timestampTick),
           state->timestampScaleNanoseconds);
-      if (!previous || !current ||
-          static_cast<long double>(current->value) * previous->timescale -
-                  static_cast<long double>(previous->value) * current->timescale >
-              static_cast<long double>(state->limits.maximumVideoSeekPrerollSeconds) *
-                  current->timescale * previous->timescale) {
+      if (!previous || !current) {
         result.error = MatroskaDemuxError::InvalidCue;
         result.message = "Cue gap exceeds the bounded seek preroll";
         return result;
       }
+      // (current - previous) > preroll, cross-multiplied by both timescales
+      // and by 1e9 so the seconds bound stays an integer nanosecond count.
+      // Magnitudes: |value| < 2^63 and timescale < 2^31 bound the left side by
+      // 2^124 and the right by 2^96, both inside __int128.
+      const __int128 gap =
+          (static_cast<__int128>(current->value) * previous->timescale -
+           static_cast<__int128>(previous->value) * current->timescale) *
+          kNanosecondsPerSecond;
+      const __int128 bound = prerollNanoseconds *
+                             static_cast<__int128>(current->timescale) *
+                             static_cast<__int128>(previous->timescale);
+      if (gap > bound) {
+        result.error = MatroskaDemuxError::InvalidCue;
+        result.message = "Cue gap exceeds the bounded seek preroll";
+        return result;
+      }
+      previous = current;
     }
 
     auto asset = std::shared_ptr<MatroskaPreparedAsset>(

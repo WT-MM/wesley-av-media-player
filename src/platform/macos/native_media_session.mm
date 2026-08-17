@@ -1134,9 +1134,8 @@ struct NativeMediaSession::Impl final {
               .lastOutputEventSequence;
         },
         [](void* context) noexcept {
-          const NativeVideoConsumerFacts facts =
-              static_cast<NativeVideoConsumer*>(context)->facts();
-          return facts.nextDueKnown ? facts.nextDueHostTicks : 0;
+          return static_cast<NativeVideoConsumer*>(context)
+              ->nextDueHostTicks();
         },
         [](void* context) noexcept {
           return static_cast<NativeVideoConsumer*>(context)

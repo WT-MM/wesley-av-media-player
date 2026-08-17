@@ -3033,6 +3033,44 @@ struct AVFoundationMediaSource::Impl {
   std::optional<MediaTime> requestedTarget;
   media::MediaSeekMode seekMode{media::MediaSeekMode::Accurate};
   std::string failure;
+
+  // Per-generation admission cache for the compressed sample's format
+  // description. sampleFormatMatchesTrack walks roughly two dozen
+  // CoreFoundation dictionary lookups and, for H.264/HEVC, an exp-Golomb walk
+  // of the SPS -- 2-10 us on EVERY frame, spent re-deriving an answer that
+  // cannot change while the format description object is the same one. This is
+  // the single largest per-frame cost the 2026-08-17 audit found anywhere in
+  // the pipeline, and it is per-open work executed per sample: the exact shape
+  // the "dispatch at the top, not in the loop" rule exists to catch.
+  //
+  // CMFormatDescription is immutable, so pointer identity is a sound proof --
+  // but only against a RETAINED reference, which is what stops a released
+  // description's address from being recycled by a different one and silently
+  // passing. A different pointer, or a different selected track, still takes
+  // the full validation path and still fails closed.
+  struct RetainedFormat {
+    RetainedFormat() = default;
+    RetainedFormat(const RetainedFormat&) = delete;
+    RetainedFormat& operator=(const RetainedFormat&) = delete;
+    ~RetainedFormat() {
+      if (value != nullptr) {
+        CFRelease(value);
+      }
+    }
+    void reset(CMFormatDescriptionRef next) noexcept {
+      if (next != nullptr) {
+        CFRetain(next);
+      }
+      if (value != nullptr) {
+        CFRelease(value);
+      }
+      value = next;
+    }
+    CMFormatDescriptionRef value{nullptr};
+  };
+  RetainedFormat admittedFormat;
+  const MediaTrackDescriptor* admittedFormatTrack{nullptr};
+
   MediaGeneration generation{0};
   MediaGeneration armedGeneration{0};
   bool open{false};
@@ -3234,11 +3272,22 @@ struct AVFoundationMediaSource::Impl {
       assignError(error, "compressed sample has inconsistent empty payload");
       return std::nullopt;
     }
-    if (track == nullptr ||
-        !sampleFormatMatchesTrack(sample, *track, limits)) {
+    if (track == nullptr) {
       assignError(error,
                   "sample format changed after immutable admission");
       return std::nullopt;
+    }
+    // Steady state is one pointer compare; see RetainedFormat above.
+    CMFormatDescriptionRef sampleFormat =
+        CMSampleBufferGetFormatDescription(sample);
+    if (sampleFormat != admittedFormat.value || track != admittedFormatTrack) {
+      if (!sampleFormatMatchesTrack(sample, *track, limits)) {
+        assignError(error,
+                    "sample format changed after immutable admission");
+        return std::nullopt;
+      }
+      admittedFormat.reset(sampleFormat);
+      admittedFormatTrack = track;
     }
     if ((kind == MediaSampleKind::EncodedVideo && sampleCount != 1) ||
         (kind == MediaSampleKind::EncodedAudio &&

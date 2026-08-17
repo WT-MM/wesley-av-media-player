@@ -444,6 +444,28 @@ class NativeMediaDispatcher final {
   // keeps a pathological bitrate from turning that count into a large lease.
   static constexpr std::size_t kAudioReadAheadPayloadBytes = 512U * 1024U;
 
+  // Worst-case retained read-ahead payload. The byte values above are read-
+  // ADMISSION high-waters, not ceilings: the event that crosses one is still
+  // stored, so one maximum sample may land on top of it. Spelling that out as
+  // a constant and asserting it matters because admission checks bytes
+  // (laneHasReadAheadRoom) but the lane writers enforce only the event count.
+  // The structural cap is therefore 24 x 8 MiB = 192 MiB of video payload --
+  // sixteen times the figure this header advertises -- held down only by an
+  // unchecked ordering invariant. These asserts pin the advertised number so a
+  // future change to either limit has to confront the real bound.
+  static constexpr std::size_t kMaximumRetainedVideoReadAheadBytes =
+      kVideoReadAheadPayloadBytes +
+      MediaSourceLimits::kHardMaximumVideoSampleBytes;
+  static constexpr std::size_t kMaximumRetainedAudioReadAheadBytes =
+      kAudioReadAheadPayloadBytes +
+      MediaSourceLimits::kHardMaximumAudioSampleBytes;
+  static_assert(kMaximumRetainedVideoReadAheadBytes <= 12U * 1024U * 1024U,
+                "retained video read-ahead exceeds its documented 12 MiB");
+  static_assert(kMaximumRetainedAudioReadAheadBytes <= 1024U * 1024U,
+                "retained audio read-ahead exceeds its documented 1 MiB");
+  static_assert(kLaneReadAheadEvents != 0,
+                "a zero-length lane makes read admission unreachable");
+
   NativeMediaDispatcher(std::unique_ptr<MediaSource> source,
                         std::unique_ptr<NativeVideoConsumer> video,
                         std::unique_ptr<NativeAudioConsumer> audio) noexcept;

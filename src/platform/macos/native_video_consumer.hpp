@@ -2,6 +2,7 @@
 
 #include "media/native_media_dispatcher.hpp"
 #include "native_media_clock.hpp"
+#include "native_surface_budget.hpp"
 #include "native_tracked_video_output.hpp"
 #include "video_toolbox_decoder.hpp"
 
@@ -195,6 +196,15 @@ class NativeVideoConsumer final : public media::NativeVideoConsumer {
   // cheap compressed bytes instead of scarce decoded surfaces.
   static constexpr std::size_t kMaximumDecodedSurfaceOwnership = 5;
 
+  // The ownership paragraph above is arithmetic, so assert it rather than
+  // trusting the prose to stay true: at most five decoder-held surfaces, one
+  // decoded-queue lease, one scheduler-held lease and the tracked output's one
+  // accepted lease, inside the process-wide budget. 5 + 1 + 1 + 1 = 8 <= 10.
+  static_assert(
+      kMaximumDecodedSurfaceOwnership + kDecodedQueueCapacity + 1U + 1U <=
+          static_cast<std::size_t>(kNativeSurfaceBudgetMaximumSurfaces),
+      "decoded-surface ownership must fit the process-wide surface budget");
+
   [[nodiscard]] static std::unique_ptr<NativeVideoConsumer> create(
       std::shared_ptr<void> externalLifetime,
       NativeVideoClockSeam clock,
@@ -279,6 +289,16 @@ class NativeVideoConsumer final : public media::NativeVideoConsumer {
   [[nodiscard]] std::optional<NativeTrackedVideoEvent>
   takeOutputEvent() noexcept;
   [[nodiscard]] NativeVideoConsumerFacts facts() const noexcept;
+
+  // Narrow read of the single field the video due-hint publisher needs.
+  // publishVideoDueHint runs on the worker loop at roughly 94 Hz and used to
+  // reach this value through facts(), which assembles the whole fact block and
+  // — on the tracked-output side — is not even a pure read (MainOutput::facts
+  // drains the event mailbox). Reading the one scalar keeps the worker's
+  // window against the GUI thread as small as the value actually needs.
+  // Both members are plain scalars written only by setDueHint/clearDueHint on
+  // this same worker thread, so no synchronisation is required or implied.
+  [[nodiscard]] std::uint64_t nextDueHostTicks() const noexcept;
 
  private:
   class Sink;

@@ -503,7 +503,7 @@ struct SampleBuildInputs {
 // order, which is the storage order the cursor emits in.
 [[nodiscard]] SampleBuildStatus buildCompressedSampleBuffer(
     const SampleBuildInputs& inputs, const MatroskaCompressedSample& sample,
-    std::vector<std::byte>& scratch, ScopedSampleBuffer* out,
+    ScopedSampleBuffer* out,
     std::string* error) {
   if (out == nullptr || inputs.asset == nullptr || inputs.format == nullptr) {
     assignError(error, "matroska sample factory has no admitted format");
@@ -522,28 +522,19 @@ struct SampleBuildInputs {
     return SampleBuildStatus::Failed;
   }
 
-  // One reusable destination per source keeps steady-state reads allocation
-  // free; the demuxer allocates nothing and requires an exactly sized span.
-  if (scratch.size() < bytes) {
-    scratch.resize(bytes);
-  }
-  const std::span<std::byte> destination(scratch.data(), bytes);
-  MatroskaDemuxError copyError = MatroskaDemuxError::None;
-  if (!inputs.asset->copyRanges({sample.frames.data(), frameCount}, destination,
-                                inputs.cancellation, &copyError)) {
-    if (copyError == MatroskaDemuxError::Cancelled) {
-      return SampleBuildStatus::Cancelled;
-    }
-    if (error != nullptr) {
-      *error = demuxErrorMessage("matroska payload copy failed", copyError);
-    }
-    return SampleBuildStatus::Failed;
-  }
-
+  // The CoreMedia block is allocated first and the demuxer writes payload
+  // bytes straight into it. Staging through a reusable member vector and then
+  // CMBlockBufferReplaceDataBytes moved every byte TWICE -- a copy this
+  // project's own performance document had recorded as a single copy, which is
+  // how a duplicated memcpy survives a careful review. The demuxer already
+  // takes an exactly sized destination span and allocates nothing, so the
+  // block's own memory is a legal destination and the scratch vector is gone.
+  // kCMBlockBufferAssureMemoryNowFlag makes the backing store real before the
+  // data pointer is taken.
   CMBlockBufferRef block = nullptr;
   OSStatus status = CMBlockBufferCreateWithMemoryBlock(
       kCFAllocatorDefault, nullptr, bytes, kCFAllocatorDefault, nullptr, 0,
-      bytes, 0, &block);
+      bytes, kCMBlockBufferAssureMemoryNowFlag, &block);
   if (status != noErr || block == nullptr) {
     if (block != nullptr) {
       CFRelease(block);
@@ -551,10 +542,30 @@ struct SampleBuildInputs {
     assignError(error, "matroska payload block allocation failed");
     return SampleBuildStatus::Failed;
   }
-  status = CMBlockBufferReplaceDataBytes(destination.data(), block, 0, bytes);
-  if (status != noErr) {
+  std::size_t lengthAtOffset = 0;
+  std::size_t totalLength = 0;
+  char* raw = nullptr;
+  status = CMBlockBufferGetDataPointer(block, 0, &lengthAtOffset, &totalLength,
+                                       &raw);
+  if (status != noErr || raw == nullptr || lengthAtOffset < bytes) {
     CFRelease(block);
-    assignError(error, "matroska payload block copy failed");
+    assignError(error, "matroska payload block is not contiguous");
+    return SampleBuildStatus::Failed;
+  }
+  const std::span<std::byte> destination(reinterpret_cast<std::byte*>(raw),
+                                         bytes);
+  MatroskaDemuxError copyError = MatroskaDemuxError::None;
+  if (!inputs.asset->copyRanges({sample.frames.data(), frameCount}, destination,
+                                inputs.cancellation, &copyError)) {
+    // A failed or cancelled copy leaves a partially written block that no
+    // caller ever sees; releasing it here is the whole cleanup.
+    CFRelease(block);
+    if (copyError == MatroskaDemuxError::Cancelled) {
+      return SampleBuildStatus::Cancelled;
+    }
+    if (error != nullptr) {
+      *error = demuxErrorMessage("matroska payload copy failed", copyError);
+    }
     return SampleBuildStatus::Failed;
   }
 
@@ -575,7 +586,13 @@ struct SampleBuildInputs {
         CMTimeMake(inputs.audioFramesPerPacket, inputs.audioSampleRate);
   }
 
-  std::array<std::size_t, kMaximumLaceFrames> sizes{};
+  // Deliberately not value-initialised. This is kMaximumLaceFrames * 8 B of
+  // stack (2 KiB) that a `{}` would zero on every single sample to describe a
+  // Block carrying one frame (video) or a handful (laced AAC). Every entry
+  // below frameCount is written before it is read -- video writes sizes[0],
+  // audio writes exactly frameCount entries -- and CoreMedia is handed the
+  // same frameCount as the entry count, so nothing ever reads past it.
+  std::array<std::size_t, kMaximumLaceFrames> sizes;
   CMItemCount numSamples = 1;
   CMItemCount sizeEntries = 1;
   if (inputs.video) {
@@ -718,7 +735,6 @@ struct MatroskaMediaSource::Impl {
   std::optional<StagedSample> audioHead;
   std::optional<MediaTime> requestedTarget;
   media::MediaSeekMode seekMode{media::MediaSeekMode::Accurate};
-  std::vector<std::byte> scratch;
   std::string failure;
   MediaGeneration generation{0};
   MediaGeneration armedGeneration{0};
@@ -934,7 +950,7 @@ struct MatroskaMediaSource::Impl {
     inputs.audioSampleRate = audioSampleRate;
     ScopedSampleBuffer owned;
     const SampleBuildStatus built =
-        buildCompressedSampleBuffer(inputs, raw, scratch, &owned, error);
+        buildCompressedSampleBuffer(inputs, raw, &owned, error);
     if (built != SampleBuildStatus::Built) {
       if (built == SampleBuildStatus::Cancelled) {
         publishCancellation(generation);

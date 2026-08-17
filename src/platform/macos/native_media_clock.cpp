@@ -534,6 +534,16 @@ bool NativeMediaClock::prepareSegmentState(
         return displacement <= kMaximumBoundaryDisplacementSeconds;
       };
 
+  // These are bit-exact double comparisons in admission logic, which is the
+  // shape of the 0.6x clock bug — but the operands are not independently
+  // computed floats. Both sides come from mediaTimeSecondsAtFrame(), a pure
+  // correctly-rounded 128-bit rational->double, evaluated at the SAME integer
+  // frame index (the producer requires prior_end_frame_ == streamFrameStart
+  // for a continuous segment). Equal frame index therefore implies an equal
+  // bit pattern by construction. The mapping stays injective past 95 years of
+  // 48 kHz media, so adjacent frames can never alias onto one double.
+  // Do not "relax" this to an epsilon: the bounded invariant that handles real
+  // hardware quantization is kMaximumBoundaryDisplacementSeconds, not this.
   auto sameStart = [](const SegmentState &existing,
                       const SegmentState &replacement) noexcept {
     return existing.valid &&
