@@ -58,10 +58,14 @@ struct NativeVideoContainerAdmissionHint {
       NativeVideoDemuxPreference::ProbeAvFoundation};
 };
 
+// VP9 and AV1 are machine-dependent: they are reported only when this host can
+// actually hardware-decode them (see native_video_codec_capability.hpp).
 enum class NativeVideoCodecAdmission : std::uint8_t {
   Unsupported,
   H264,
   Hevc,
+  Vp9,
+  Av1,
 };
 
 enum class NativeVideoSampleFormatAdmission : std::uint8_t {

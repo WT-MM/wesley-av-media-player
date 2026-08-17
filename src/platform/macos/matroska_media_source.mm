@@ -1,5 +1,7 @@
 #include "platform/macos/matroska_media_source.hpp"
 
+#include "platform/macos/native_video_codec_capability.hpp"
+
 #import <AudioToolbox/AudioToolbox.h>
 #import <CoreMedia/CoreMedia.h>
 
@@ -377,6 +379,22 @@ createVideoFormatDescription(const MediaTrackDescriptor& track) noexcept {
                  MediaCodecConfigurationKind::HvcC) {
     codec = kCMVideoCodecType_HEVC;
     atomName = CFSTR("hvcC");
+  } else if (track.codec == MediaCodec::Av1 &&
+             track.codecConfigurationKind ==
+                 MediaCodecConfigurationKind::Av1C &&
+             nativeVideoToolboxSupportsAv1()) {
+    codec = kCMVideoCodecType_AV1;
+    atomName = CFSTR("av1C");
+  } else if (track.codec == MediaCodec::Vp9 &&
+             track.codecConfigurationKind ==
+                 MediaCodecConfigurationKind::VpcC &&
+             nativeVideoToolboxSupportsVp9()) {
+    // Matroska rarely carries VP9 CodecPrivate, so the demuxer synthesizes the
+    // 12-byte vpcC from the keyframe bitstream. The non-empty guard above
+    // therefore still holds for VP9, and the record is handed to CoreMedia
+    // verbatim exactly like avcC/hvcC.
+    codec = kCMVideoCodecType_VP9;
+    atomName = CFSTR("vpcC");
   } else {
     return nullptr;
   }

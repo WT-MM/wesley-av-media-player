@@ -256,6 +256,8 @@ if(APPLE)
   set(WAM_MACOS_NATIVE_VIDEO_CORE_SOURCES
     src/platform/macos/native_surface_budget.hpp
     src/platform/macos/native_surface_budget.mm
+    src/platform/macos/native_video_codec_capability.hpp
+    src/platform/macos/native_video_codec_capability.mm
     src/platform/macos/native_video_limits.hpp
     src/platform/macos/native_video_presenter.hpp
     src/platform/macos/native_video_presenter.mm
@@ -885,7 +887,9 @@ if(BUILD_TESTING)
         src/platform/macos/avfoundation_asset_context.hpp
         src/platform/macos/avfoundation_asset_context.mm
         src/platform/macos/avfoundation_media_source.hpp
-        src/platform/macos/avfoundation_media_source.mm)
+        src/platform/macos/avfoundation_media_source.mm
+        src/platform/macos/native_video_codec_capability.hpp
+        src/platform/macos/native_video_codec_capability.mm)
       target_include_directories(
         wam_avfoundation_media_source_test PRIVATE src)
       target_compile_definitions(wam_avfoundation_media_source_test PRIVATE
@@ -898,7 +902,8 @@ if(BUILD_TESTING)
         "${WAM_COREVIDEO_FRAMEWORK}"
         "${WAM_FOUNDATION_FRAMEWORK}"
         "${WAM_AUDIOTOOLBOX_FRAMEWORK}"
-        "${WAM_AVFOUNDATION_FRAMEWORK}")
+        "${WAM_AVFOUNDATION_FRAMEWORK}"
+        "${WAM_VIDEOTOOLBOX_FRAMEWORK}")
       add_test(NAME macos_avfoundation_media_source
         COMMAND wam_avfoundation_media_source_test)
       set_tests_properties(macos_avfoundation_media_source PROPERTIES
@@ -980,6 +985,8 @@ if(BUILD_TESTING)
         src/platform/macos/native_video_consumer.mm
         src/platform/macos/native_surface_budget.hpp
         src/platform/macos/native_surface_budget.mm
+        src/platform/macos/native_video_codec_capability.hpp
+        src/platform/macos/native_video_codec_capability.mm
         src/platform/macos/native_video_presenter.hpp
         src/platform/macos/native_video_presenter.mm
         src/platform/macos/video_toolbox_decoder.hpp

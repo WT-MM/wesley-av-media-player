@@ -208,6 +208,104 @@ private:
   std::size_t bitsRemaining_{0};
 };
 
+// AV1 and VP9 headers are plain bit strings: neither codec uses the RBSP
+// emulation-prevention escaping that RbspBitReader must undo, and applying
+// that unescaping to them would corrupt any header containing 00 00 03. This
+// reader is otherwise the same shape -- bounded, allocation-free, and false on
+// any read that would run past the supplied bytes.
+class PlainBitReader final {
+public:
+  explicit PlainBitReader(std::span<const std::uint8_t> bytes) noexcept
+      : bytes_(bytes) {}
+
+  [[nodiscard]] bool readBit(bool &value) noexcept {
+    std::uint32_t bit = 0;
+    if (!readBits(1U, bit)) {
+      return false;
+    }
+    value = bit != 0U;
+    return true;
+  }
+
+  [[nodiscard]] bool readBits(std::size_t count,
+                              std::uint32_t &value) noexcept {
+    if (count > 32U || count > bitsRemaining()) {
+      return false;
+    }
+    value = 0;
+    for (std::size_t index = 0; index < count; ++index) {
+      const std::uint8_t current = bytes_[bitOffset_ / 8U];
+      const std::size_t shift = 7U - (bitOffset_ % 8U);
+      value = (value << 1U) |
+              static_cast<std::uint32_t>((current >> shift) & 1U);
+      ++bitOffset_;
+    }
+    return true;
+  }
+
+  [[nodiscard]] bool skipBits(std::size_t count) noexcept {
+    if (count > bitsRemaining()) {
+      return false;
+    }
+    bitOffset_ += count;
+    return true;
+  }
+
+  // AV1 uvlc(): a unary prefix of zeroes then that many suffix bits. A prefix
+  // of 32 or more is the spec's saturated "value unknown" encoding, which no
+  // field this parser needs may legitimately use, so it fails closed.
+  [[nodiscard]] bool readUvlc(std::uint32_t &value) noexcept {
+    std::size_t leadingZeroBits = 0;
+    while (true) {
+      bool bit = false;
+      if (!readBit(bit)) {
+        return false;
+      }
+      if (bit) {
+        break;
+      }
+      if (++leadingZeroBits >= 32U) {
+        return false;
+      }
+    }
+    std::uint32_t suffix = 0;
+    if (!readBits(leadingZeroBits, suffix)) {
+      return false;
+    }
+    const std::uint64_t decoded =
+        suffix + (std::uint64_t{1} << leadingZeroBits) - 1U;
+    if (decoded > std::numeric_limits<std::uint32_t>::max()) {
+      return false;
+    }
+    value = static_cast<std::uint32_t>(decoded);
+    return true;
+  }
+
+  // AV1 trailing_bits(): a single one bit then zero bits to the byte boundary,
+  // and nothing after it.
+  [[nodiscard]] bool finishTrailingBits() noexcept {
+    bool stopBit = false;
+    if (!readBit(stopBit) || !stopBit) {
+      return false;
+    }
+    while ((bitOffset_ % 8U) != 0U) {
+      bool padding = false;
+      if (!readBit(padding) || padding) {
+        return false;
+      }
+    }
+    return bitOffset_ == bytes_.size() * 8U;
+  }
+
+  [[nodiscard]] std::size_t bitsRemaining() const noexcept {
+    return bytes_.size() * 8U - bitOffset_;
+  }
+
+private:
+  std::span<const std::uint8_t> bytes_;
+  std::size_t bitOffset_{0};
+};
+
 // ISO/IEC 23091-2 value 2 is "unspecified": it carries exactly as much color
 // information as an absent color description, which this function already
 // admits. Rejecting it while admitting absence is not a safety property, it is
@@ -1704,18 +1802,620 @@ inspectHvcC(std::span<const std::uint8_t> bytes,
   return {Error::None, result};
 }
 
+// ---------------------------------------------------------------------------
+// AV1
+// ---------------------------------------------------------------------------
+
+constexpr std::uint8_t kAv1SequenceHeaderObu{1};
+constexpr std::uint8_t kAv1TemporalDelimiterObu{2};
+constexpr std::uint8_t kAv1MetadataObu{5};
+constexpr std::uint8_t kAv1PaddingObu{15};
+
+struct Av1SequenceHeaderFacts {
+  std::uint32_t width{0};
+  std::uint32_t height{0};
+  std::uint8_t seqProfile{0};
+  std::uint8_t bitDepth{0};
+  bool monochrome{false};
+  bool subsamplingX{false};
+  bool subsamplingY{false};
+  VideoCodecColorFacts color{};
+};
+
+[[nodiscard]] bool skipAv1TimingInfo(PlainBitReader &bits) noexcept {
+  bool equalPictureInterval = false;
+  std::uint32_t ignored = 0;
+  if (!bits.skipBits(64U) || !bits.readBit(equalPictureInterval)) {
+    return false;
+  }
+  return !equalPictureInterval || bits.readUvlc(ignored);
+}
+
+[[nodiscard]] bool
+skipAv1DecoderModelInfo(PlainBitReader &bits,
+                        std::uint32_t &bufferDelayLength) noexcept {
+  std::uint32_t bufferDelayLengthMinusOne = 0;
+  if (!bits.readBits(5U, bufferDelayLengthMinusOne) || !bits.skipBits(32U) ||
+      !bits.skipBits(10U)) {
+    return false;
+  }
+  bufferDelayLength = bufferDelayLengthMinusOne + 1U;
+  return true;
+}
+
+// sequence_header_obu() of AV1 (AV1 Bitstream & Decoding Process 5.5). Parsed
+// exactly through trailing_bits: an OBU this function cannot account for to
+// the last bit is rejected rather than guessed at, because the fields this
+// admission depends on (dimensions and color_config) sit at the end and a
+// mis-parsed prefix would silently relocate them.
+[[nodiscard]] Error
+parseAv1SequenceHeader(std::span<const std::uint8_t> payload,
+                       const VideoCodecConfigurationLimits &limits,
+                       Av1SequenceHeaderFacts &facts) noexcept {
+  PlainBitReader bits(payload);
+  std::uint32_t seqProfile = 0;
+  bool stillPicture = false;
+  bool reducedStillPictureHeader = false;
+  if (!bits.readBits(3U, seqProfile) || !bits.readBit(stillPicture) ||
+      !bits.readBit(reducedStillPictureHeader)) {
+    return Error::MalformedRecord;
+  }
+  facts.seqProfile = static_cast<std::uint8_t>(seqProfile);
+
+  bool decoderModelInfoPresent = false;
+  bool initialDisplayDelayPresent = false;
+  std::uint32_t bufferDelayLength = 0;
+  if (reducedStillPictureHeader) {
+    std::uint32_t levelIdx = 0;
+    if (!bits.readBits(5U, levelIdx)) {
+      return Error::MalformedRecord;
+    }
+  } else {
+    bool timingInfoPresent = false;
+    if (!bits.readBit(timingInfoPresent)) {
+      return Error::MalformedRecord;
+    }
+    if (timingInfoPresent) {
+      if (!skipAv1TimingInfo(bits) || !bits.readBit(decoderModelInfoPresent)) {
+        return Error::MalformedRecord;
+      }
+      if (decoderModelInfoPresent &&
+          !skipAv1DecoderModelInfo(bits, bufferDelayLength)) {
+        return Error::MalformedRecord;
+      }
+    }
+    std::uint32_t operatingPointsMinusOne = 0;
+    if (!bits.readBit(initialDisplayDelayPresent) ||
+        !bits.readBits(5U, operatingPointsMinusOne)) {
+      return Error::MalformedRecord;
+    }
+    for (std::uint32_t index = 0; index <= operatingPointsMinusOne; ++index) {
+      std::uint32_t idc = 0;
+      std::uint32_t levelIdx = 0;
+      if (!bits.readBits(12U, idc) || !bits.readBits(5U, levelIdx)) {
+        return Error::MalformedRecord;
+      }
+      if (levelIdx > 7U && !bits.skipBits(1U)) {
+        return Error::MalformedRecord;
+      }
+      if (decoderModelInfoPresent) {
+        bool operatingParametersPresent = false;
+        if (!bits.readBit(operatingParametersPresent)) {
+          return Error::MalformedRecord;
+        }
+        if (operatingParametersPresent &&
+            !bits.skipBits(std::size_t{2} * bufferDelayLength + 1U)) {
+          return Error::MalformedRecord;
+        }
+      }
+      if (initialDisplayDelayPresent) {
+        bool delayPresent = false;
+        if (!bits.readBit(delayPresent)) {
+          return Error::MalformedRecord;
+        }
+        if (delayPresent && !bits.skipBits(4U)) {
+          return Error::MalformedRecord;
+        }
+      }
+    }
+  }
+
+  std::uint32_t widthBitsMinusOne = 0;
+  std::uint32_t heightBitsMinusOne = 0;
+  std::uint32_t maxWidthMinusOne = 0;
+  std::uint32_t maxHeightMinusOne = 0;
+  if (!bits.readBits(4U, widthBitsMinusOne) ||
+      !bits.readBits(4U, heightBitsMinusOne) ||
+      !bits.readBits(widthBitsMinusOne + 1U, maxWidthMinusOne) ||
+      !bits.readBits(heightBitsMinusOne + 1U, maxHeightMinusOne)) {
+    return Error::MalformedRecord;
+  }
+  const std::uint64_t width = static_cast<std::uint64_t>(maxWidthMinusOne) + 1U;
+  const std::uint64_t height =
+      static_cast<std::uint64_t>(maxHeightMinusOne) + 1U;
+  if (width > limits.maximumWidth || height > limits.maximumHeight ||
+      width > limits.maximumPixels / height) {
+    return Error::DimensionLimitExceeded;
+  }
+  facts.width = static_cast<std::uint32_t>(width);
+  facts.height = static_cast<std::uint32_t>(height);
+
+  bool frameIdNumbersPresent = false;
+  if (!reducedStillPictureHeader && !bits.readBit(frameIdNumbersPresent)) {
+    return Error::MalformedRecord;
+  }
+  // delta_frame_id_length_minus_2 f(4) + additional_frame_id_length_minus_1
+  // f(3).
+  if (frameIdNumbersPresent && !bits.skipBits(7U)) {
+    return Error::MalformedRecord;
+  }
+  // use_128x128_superblock, enable_filter_intra, enable_intra_edge_filter.
+  if (!bits.skipBits(3U)) {
+    return Error::MalformedRecord;
+  }
+  if (!reducedStillPictureHeader) {
+    bool enableOrderHint = false;
+    bool chooseScreenContentTools = false;
+    bool forceScreenContentTools = true;
+    // enable_interintra_compound, enable_masked_compound,
+    // enable_warped_motion, enable_dual_filter.
+    if (!bits.skipBits(4U) || !bits.readBit(enableOrderHint)) {
+      return Error::MalformedRecord;
+    }
+    // enable_jnt_comp, enable_ref_frame_mvs.
+    if (enableOrderHint && !bits.skipBits(2U)) {
+      return Error::MalformedRecord;
+    }
+    if (!bits.readBit(chooseScreenContentTools)) {
+      return Error::MalformedRecord;
+    }
+    if (!chooseScreenContentTools && !bits.readBit(forceScreenContentTools)) {
+      return Error::MalformedRecord;
+    }
+    if (forceScreenContentTools) {
+      bool chooseIntegerMv = false;
+      if (!bits.readBit(chooseIntegerMv)) {
+        return Error::MalformedRecord;
+      }
+      if (!chooseIntegerMv && !bits.skipBits(1U)) {
+        return Error::MalformedRecord;
+      }
+    }
+    if (enableOrderHint && !bits.skipBits(3U)) {
+      return Error::MalformedRecord;
+    }
+  }
+  // enable_superres, enable_cdef, enable_restoration.
+  if (!bits.skipBits(3U)) {
+    return Error::MalformedRecord;
+  }
+
+  // color_config().
+  bool highBitdepth = false;
+  if (!bits.readBit(highBitdepth)) {
+    return Error::MalformedRecord;
+  }
+  if (seqProfile == 2U && highBitdepth) {
+    bool twelveBit = false;
+    if (!bits.readBit(twelveBit)) {
+      return Error::MalformedRecord;
+    }
+    facts.bitDepth = twelveBit ? 12U : 10U;
+  } else if (seqProfile <= 2U) {
+    facts.bitDepth = highBitdepth ? 10U : 8U;
+  } else {
+    return Error::UnsupportedProfile;
+  }
+  if (seqProfile == 1U) {
+    facts.monochrome = false;
+  } else if (!bits.readBit(facts.monochrome)) {
+    return Error::MalformedRecord;
+  }
+  facts.color.videoSignalTypePresent = true;
+  if (!bits.readBit(facts.color.colorDescriptionPresent)) {
+    return Error::MalformedRecord;
+  }
+  std::uint32_t primaries = 2U;
+  std::uint32_t transfer = 2U;
+  std::uint32_t matrix = 2U;
+  if (facts.color.colorDescriptionPresent) {
+    if (!bits.readBits(8U, primaries) || !bits.readBits(8U, transfer) ||
+        !bits.readBits(8U, matrix)) {
+      return Error::MalformedRecord;
+    }
+    // An absent description leaves the reported values at zero, matching the
+    // AVC and HEVC parsers; the spec's implied "unspecified" defaults are used
+    // only for the sRGB shortcut test below, which is a bitstream syntax
+    // decision rather than a reported fact.
+    facts.color.colorPrimaries = static_cast<std::uint8_t>(primaries);
+    facts.color.transferCharacteristics = static_cast<std::uint8_t>(transfer);
+    facts.color.matrixCoefficients = static_cast<std::uint8_t>(matrix);
+  }
+  if (facts.monochrome) {
+    if (!bits.readBit(facts.color.fullRange)) {
+      return Error::MalformedRecord;
+    }
+    facts.subsamplingX = true;
+    facts.subsamplingY = true;
+    return Error::None;
+  }
+  if (primaries == 1U && transfer == 13U && matrix == 0U) {
+    // The spec's sRGB shortcut: 4:4:4 full range with no coded color_range.
+    facts.color.fullRange = true;
+    facts.subsamplingX = false;
+    facts.subsamplingY = false;
+  } else {
+    if (!bits.readBit(facts.color.fullRange)) {
+      return Error::MalformedRecord;
+    }
+    if (seqProfile == 0U) {
+      facts.subsamplingX = true;
+      facts.subsamplingY = true;
+    } else if (seqProfile == 1U) {
+      facts.subsamplingX = false;
+      facts.subsamplingY = false;
+    } else if (facts.bitDepth == 12U) {
+      if (!bits.readBit(facts.subsamplingX)) {
+        return Error::MalformedRecord;
+      }
+      facts.subsamplingY = false;
+      if (facts.subsamplingX && !bits.readBit(facts.subsamplingY)) {
+        return Error::MalformedRecord;
+      }
+    } else {
+      facts.subsamplingX = true;
+      facts.subsamplingY = false;
+    }
+    // chroma_sample_position f(2).
+    if (facts.subsamplingX && facts.subsamplingY && !bits.skipBits(2U)) {
+      return Error::MalformedRecord;
+    }
+  }
+  // separate_uv_delta_q, then film_grain_params_present.
+  if (!bits.skipBits(2U)) {
+    return Error::MalformedRecord;
+  }
+  return bits.finishTrailingBits() ? Error::None : Error::MalformedRecord;
+}
+
+[[nodiscard]] bool readLeb128(std::span<const std::uint8_t> bytes,
+                              std::size_t &offset,
+                              std::uint64_t &value) noexcept {
+  value = 0;
+  for (std::size_t index = 0; index < 8U; ++index) {
+    if (offset >= bytes.size()) {
+      return false;
+    }
+    const std::uint8_t current = bytes[offset++];
+    value |= static_cast<std::uint64_t>(current & 0x7FU) << (index * 7U);
+    if ((current & 0x80U) == 0U) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Walks the av1C configOBUs. Only the OBU types a configuration record may
+// legitimately carry are tolerated; a frame or tile OBU inside a configuration
+// record is a malformed record, not payload to skip.
+[[nodiscard]] Error
+parseAv1ConfigObus(std::span<const std::uint8_t> bytes,
+                   const VideoCodecConfigurationLimits &limits,
+                   Av1SequenceHeaderFacts &facts, bool &found) noexcept {
+  found = false;
+  std::size_t offset = 0;
+  while (offset < bytes.size()) {
+    const std::uint8_t header = bytes[offset++];
+    // obu_forbidden_bit and obu_reserved_1bit are both zero in any conforming
+    // stream.
+    if ((header & 0x80U) != 0U || (header & 0x01U) != 0U) {
+      return Error::MalformedRecord;
+    }
+    const auto type = static_cast<std::uint8_t>((header >> 3U) & 0x0FU);
+    const bool extension = (header & 0x04U) != 0U;
+    const bool hasSizeField = (header & 0x02U) != 0U;
+    if (extension) {
+      // temporal_id f(3), spatial_id f(2), reserved f(3). A configuration
+      // record for a scalable stream is outside this admission.
+      if (offset >= bytes.size() || bytes[offset] != 0U) {
+        return Error::MalformedRecord;
+      }
+      ++offset;
+    }
+    std::uint64_t size = 0;
+    if (hasSizeField) {
+      if (!readLeb128(bytes, offset, size)) {
+        return Error::MalformedRecord;
+      }
+    } else {
+      size = bytes.size() - offset;
+    }
+    if (size > bytes.size() - offset) {
+      return Error::MalformedRecord;
+    }
+    const auto payload = bytes.subspan(offset, static_cast<std::size_t>(size));
+    offset += static_cast<std::size_t>(size);
+    switch (type) {
+    case kAv1SequenceHeaderObu: {
+      if (found) {
+        return Error::ParameterSetMismatch;
+      }
+      const Error error = parseAv1SequenceHeader(payload, limits, facts);
+      if (error != Error::None) {
+        return error;
+      }
+      found = true;
+      break;
+    }
+    case kAv1TemporalDelimiterObu:
+    case kAv1MetadataObu:
+    case kAv1PaddingObu:
+      break;
+    default:
+      return Error::MalformedRecord;
+    }
+  }
+  return Error::None;
+}
+
+[[nodiscard]] VideoCodecConfigurationInspection
+inspectAv1C(std::span<const std::uint8_t> bytes,
+            const VideoCodecConfigurationLimits &limits) noexcept {
+  // marker f(1) == 1 and version f(7) == 1 are jointly exactly 0x81.
+  if (bytes.size() < 4U || bytes[0] != 0x81U || (bytes[3] & 0xE0U) != 0U) {
+    return rejected(Error::MalformedRecord);
+  }
+  const auto seqProfile = static_cast<std::uint8_t>(bytes[1] >> 5U);
+  const bool highBitdepth = (bytes[2] & 0x40U) != 0U;
+  const bool twelveBit = (bytes[2] & 0x20U) != 0U;
+  const bool monochrome = (bytes[2] & 0x10U) != 0U;
+  const bool subsamplingX = (bytes[2] & 0x08U) != 0U;
+  const bool subsamplingY = (bytes[2] & 0x04U) != 0U;
+  const bool presentationDelayPresent = (bytes[3] & 0x10U) != 0U;
+  const auto presentationDelayMinusOne =
+      static_cast<std::uint8_t>(bytes[3] & 0x0FU);
+  if (seqProfile != 0U) {
+    return rejected(Error::UnsupportedProfile);
+  }
+  if (twelveBit) {
+    return rejected(Error::UnsupportedBitDepth);
+  }
+  if (monochrome || !subsamplingX || !subsamplingY) {
+    return rejected(Error::UnsupportedChromaFormat);
+  }
+  const std::uint32_t reorderFrames =
+      presentationDelayPresent
+          ? static_cast<std::uint32_t>(presentationDelayMinusOne) + 1U
+          : 0U;
+  if (reorderFrames > limits.maximumReorderFrames) {
+    return rejected(Error::ReorderLimitExceeded);
+  }
+
+  Av1SequenceHeaderFacts sequence;
+  bool found = false;
+  const Error error =
+      parseAv1ConfigObus(bytes.subspan(4U), limits, sequence, found);
+  if (error != Error::None) {
+    return rejected(error);
+  }
+  if (!found) {
+    return rejected(Error::MissingParameterSet);
+  }
+  // The av1C fixed bytes are a redundant copy of sequence header facts. A
+  // disagreement means one of the two is describing a different stream, so
+  // neither can be trusted.
+  if (sequence.seqProfile != seqProfile || sequence.monochrome != monochrome ||
+      sequence.subsamplingX != subsamplingX ||
+      sequence.subsamplingY != subsamplingY ||
+      sequence.bitDepth != (highBitdepth ? 10U : 8U)) {
+    return rejected(Error::ParameterSetMismatch);
+  }
+  if (!supportedSdrColor(sequence.color)) {
+    return rejected(Error::UnsupportedColorDescription);
+  }
+
+  VideoCodecConfigurationFacts result;
+  result.codec = MediaCodec::Av1;
+  result.kind = MediaCodecConfigurationKind::Av1C;
+  result.sampleFormat = sequence.bitDepth == 10U
+                            ? MediaVideoSampleFormat::Yuv420TenBit
+                            : MediaVideoSampleFormat::Yuv420EightBit;
+  result.width = sequence.width;
+  result.height = sequence.height;
+  result.bitDepth = sequence.bitDepth;
+  result.profile = seqProfile;
+  // AV1 access units are OBUs with their own length signalling; there is no
+  // AVC/HEVC-style NAL length prefix for a demuxer to strip or write.
+  result.nalLengthBytes = 0U;
+  result.maximumReorderFrames = static_cast<std::uint8_t>(reorderFrames);
+  result.color = sequence.color;
+  return {Error::None, result};
+}
+
+// ---------------------------------------------------------------------------
+// VP9
+// ---------------------------------------------------------------------------
+
+// The VP9 uncompressed header's color_space field names a matrix, not a full
+// color description: the bitstream carries no primaries or transfer function
+// at all. Claiming BT.601 primaries for a CS_BT_601 stream would invent a fact
+// the encoder never wrote, so everything except the BT.709 case -- where the
+// name does denote the complete BT.709 description -- reports ISO/IEC 23091-2
+// "unspecified" (2) for primaries and transfer and carries only the matrix.
+// That is also what makes CS_BT_601 and CS_SMPTE_170 admissible under
+// supportedSdrColor, whose matrix set {1, 2, 5, 6} was chosen for exactly the
+// BT.709/BT.601 family.
+[[nodiscard]] bool vp9ColorFromColorSpace(std::uint32_t colorSpace,
+                                          VideoCodecColorFacts &color) noexcept {
+  switch (colorSpace) {
+  case 0U: // CS_UNKNOWN
+    color.colorDescriptionPresent = false;
+    return true;
+  case 1U: // CS_BT_601
+    color.colorDescriptionPresent = true;
+    color.colorPrimaries = 2U;
+    color.transferCharacteristics = 2U;
+    color.matrixCoefficients = 5U;
+    return true;
+  case 2U: // CS_BT_709
+    color.colorDescriptionPresent = true;
+    color.colorPrimaries = 1U;
+    color.transferCharacteristics = 1U;
+    color.matrixCoefficients = 1U;
+    return true;
+  case 3U: // CS_SMPTE_170
+    color.colorDescriptionPresent = true;
+    color.colorPrimaries = 2U;
+    color.transferCharacteristics = 2U;
+    color.matrixCoefficients = 6U;
+    return true;
+  case 4U: // CS_SMPTE_240
+    color.colorDescriptionPresent = true;
+    color.colorPrimaries = 2U;
+    color.transferCharacteristics = 2U;
+    color.matrixCoefficients = 7U;
+    return true;
+  case 5U: // CS_BT_2020
+    color.colorDescriptionPresent = true;
+    color.colorPrimaries = 9U;
+    color.transferCharacteristics = 14U;
+    color.matrixCoefficients = 9U;
+    return true;
+  case 7U: // CS_SRGB
+    color.colorDescriptionPresent = true;
+    color.colorPrimaries = 1U;
+    color.transferCharacteristics = 13U;
+    color.matrixCoefficients = 0U;
+    return true;
+  default: // CS_RESERVED
+    return false;
+  }
+}
+
+// VP9 level from the coded picture size alone (VP9 Bitstream & Decoding
+// Process Specification, Annex A). The frame rate a level also bounds is not
+// visible from a single keyframe, so each bucket names the level whose luma
+// sample *rate* covers that picture size at 60 fps -- the highest rate this
+// renderer's dimension envelope can present. VideoToolbox does not validate
+// this field at all (0 and 40 both create a session), so the only requirement
+// on it is that it never understates the stream.
+[[nodiscard]] std::uint8_t vp9Level(std::uint32_t width,
+                                    std::uint32_t height) noexcept {
+  const std::uint64_t samples =
+      static_cast<std::uint64_t>(width) * static_cast<std::uint64_t>(height);
+  if (samples <= 36864U) {
+    return 11U;
+  }
+  if (samples <= 73728U) {
+    return 20U;
+  }
+  if (samples <= 122880U) {
+    return 21U;
+  }
+  if (samples <= 245760U) {
+    return 30U;
+  }
+  if (samples <= 552960U) {
+    return 31U;
+  }
+  if (samples <= 983040U) {
+    return 40U;
+  }
+  if (samples <= 2228224U) {
+    return 41U;
+  }
+  return 51U;
+}
+
+// VP Codec Configuration Box (VP Codec ISO Media File Format Binding, "vpcC"
+// version 1): a fixed 12-byte record with no codec initialization data.
+[[nodiscard]] VideoCodecConfigurationInspection
+inspectVpcC(std::span<const std::uint8_t> bytes,
+            const VideoCodecConfigurationLimits &limits) noexcept {
+  (void)limits;
+  if (bytes.size() != kVideoCodecVpcCBytes || bytes[0] != 1U ||
+      bytes[1] != 0U || bytes[2] != 0U || bytes[3] != 0U ||
+      readBigEndian16(bytes, 10U) != 0U) {
+    return rejected(Error::MalformedRecord);
+  }
+  const std::uint8_t profile = bytes[4];
+  const auto bitDepth = static_cast<std::uint8_t>(bytes[6] >> 4U);
+  const auto chromaSubsampling = static_cast<std::uint8_t>((bytes[6] >> 1U) & 0x07U);
+  const bool fullRange = (bytes[6] & 0x01U) != 0U;
+  if (profile != 0U && profile != 2U) {
+    return rejected(Error::UnsupportedProfile);
+  }
+  // 0 is 4:2:0 vertically co-sited, 1 is 4:2:0 co-located; 2 is 4:2:2 and 3 is
+  // 4:4:4, neither of which this renderer presents.
+  if (chromaSubsampling > 1U) {
+    return rejected(Error::UnsupportedChromaFormat);
+  }
+  if (bitDepth != 8U && bitDepth != 10U) {
+    return rejected(Error::UnsupportedBitDepth);
+  }
+  // VP9 profile 0 is 8-bit only and profile 2 is 10/12-bit only; a record that
+  // pairs them differently is describing an impossible stream.
+  if ((profile == 0U) != (bitDepth == 8U)) {
+    return rejected(Error::UnsupportedProfile);
+  }
+
+  VideoCodecColorFacts color;
+  color.videoSignalTypePresent = true;
+  color.fullRange = fullRange;
+  color.colorPrimaries = bytes[7];
+  color.transferCharacteristics = bytes[8];
+  color.matrixCoefficients = bytes[9];
+  // All three "unspecified" is exactly as much information as the VP9
+  // bitstream's CS_UNKNOWN, which reports no description at all. Treating them
+  // identically is what lets a synthesized record round-trip.
+  color.colorDescriptionPresent =
+      color.colorPrimaries != 2U || color.transferCharacteristics != 2U ||
+      color.matrixCoefficients != 2U;
+  if (!supportedSdrColor(color)) {
+    return rejected(Error::UnsupportedColorDescription);
+  }
+
+  VideoCodecConfigurationFacts result;
+  result.codec = MediaCodec::Vp9;
+  result.kind = MediaCodecConfigurationKind::VpcC;
+  result.sampleFormat = bitDepth == 10U
+                            ? MediaVideoSampleFormat::Yuv420TenBit
+                            : MediaVideoSampleFormat::Yuv420EightBit;
+  // A vpcC carries no dimensions whatsoever. Zero here is the honest answer
+  // and is documented at the declaration as a caller obligation.
+  result.width = 0U;
+  result.height = 0U;
+  result.bitDepth = bitDepth;
+  result.profile = profile;
+  result.nalLengthBytes = 0U;
+  result.maximumReorderFrames = 0U;
+  result.color = color;
+  return {Error::None, result};
+}
+
 } // namespace
 
 VideoCodecConfigurationInspection inspectVideoCodecConfiguration(
     MediaCodec codec, MediaCodecConfigurationKind kind,
     std::span<const std::byte> configuration,
     VideoCodecConfigurationLimits requestedLimits) noexcept {
-  if (codec != MediaCodec::H264 && codec != MediaCodec::Hevc) {
+  MediaCodecConfigurationKind expectedKind = MediaCodecConfigurationKind::None;
+  switch (codec) {
+  case MediaCodec::H264:
+    expectedKind = MediaCodecConfigurationKind::AvcC;
+    break;
+  case MediaCodec::Hevc:
+    expectedKind = MediaCodecConfigurationKind::HvcC;
+    break;
+  case MediaCodec::Av1:
+    expectedKind = MediaCodecConfigurationKind::Av1C;
+    break;
+  case MediaCodec::Vp9:
+    expectedKind = MediaCodecConfigurationKind::VpcC;
+    break;
+  default:
     return rejected(Error::UnsupportedCodec);
   }
-  const MediaCodecConfigurationKind expectedKind =
-      codec == MediaCodec::H264 ? MediaCodecConfigurationKind::AvcC
-                                : MediaCodecConfigurationKind::HvcC;
   if (kind != expectedKind) {
     return rejected(Error::ConfigurationKindMismatch);
   }
@@ -1727,8 +2427,189 @@ VideoCodecConfigurationInspection inspectVideoCodecConfiguration(
     return rejected(Error::ConfigurationTooLarge);
   }
   const auto bytes = asBytes(configuration);
-  return codec == MediaCodec::H264 ? inspectAvcC(bytes, limits)
-                                   : inspectHvcC(bytes, limits);
+  switch (codec) {
+  case MediaCodec::H264:
+    return inspectAvcC(bytes, limits);
+  case MediaCodec::Hevc:
+    return inspectHvcC(bytes, limits);
+  case MediaCodec::Av1:
+    return inspectAv1C(bytes, limits);
+  default:
+    return inspectVpcC(bytes, limits);
+  }
+}
+
+VideoCodecConfigurationInspection inspectVp9BitstreamKeyframe(
+    std::span<const std::byte> keyframe,
+    VideoCodecConfigurationLimits requestedLimits) noexcept {
+  if (keyframe.empty()) {
+    return rejected(Error::EmptyConfiguration);
+  }
+  const VideoCodecConfigurationLimits limits = effectiveLimits(requestedLimits);
+  const auto all = asBytes(keyframe);
+  const auto bytes = all.first(
+      std::min<std::size_t>(all.size(), kVp9KeyframeHeaderMaximumBytes));
+  PlainBitReader bits(bytes);
+
+  std::uint32_t frameMarker = 0;
+  bool profileLowBit = false;
+  bool profileHighBit = false;
+  if (!bits.readBits(2U, frameMarker) || frameMarker != 2U ||
+      !bits.readBit(profileLowBit) || !bits.readBit(profileHighBit)) {
+    return rejected(Error::MalformedRecord);
+  }
+  const auto profile = static_cast<std::uint8_t>(
+      (profileHighBit ? 2U : 0U) | (profileLowBit ? 1U : 0U));
+  if (profile == 3U) {
+    bool reservedZero = true;
+    if (!bits.readBit(reservedZero) || reservedZero) {
+      return rejected(Error::MalformedRecord);
+    }
+  }
+  bool showExistingFrame = false;
+  bool nonKeyFrame = false;
+  bool showFrame = false;
+  bool errorResilientMode = false;
+  std::uint32_t syncCode = 0;
+  if (!bits.readBit(showExistingFrame) || showExistingFrame ||
+      !bits.readBit(nonKeyFrame) || nonKeyFrame ||
+      !bits.readBit(showFrame) || !bits.readBit(errorResilientMode) ||
+      !bits.readBits(24U, syncCode) || syncCode != 0x498342U) {
+    return rejected(Error::MalformedRecord);
+  }
+
+  // color_config().
+  std::uint8_t bitDepth = 8U;
+  if (profile >= 2U) {
+    bool tenOrTwelveBit = false;
+    if (!bits.readBit(tenOrTwelveBit)) {
+      return rejected(Error::MalformedRecord);
+    }
+    bitDepth = tenOrTwelveBit ? 12U : 10U;
+  }
+  std::uint32_t colorSpace = 0;
+  if (!bits.readBits(3U, colorSpace)) {
+    return rejected(Error::MalformedRecord);
+  }
+  VideoCodecColorFacts color;
+  color.videoSignalTypePresent = true;
+  bool subsamplingX = true;
+  bool subsamplingY = true;
+  if (colorSpace != 7U) {
+    if (!bits.readBit(color.fullRange)) {
+      return rejected(Error::MalformedRecord);
+    }
+    if (profile == 1U || profile == 3U) {
+      bool reservedZero = true;
+      if (!bits.readBit(subsamplingX) || !bits.readBit(subsamplingY) ||
+          !bits.readBit(reservedZero) || reservedZero) {
+        return rejected(Error::MalformedRecord);
+      }
+    }
+  } else {
+    color.fullRange = true;
+    if (profile == 1U || profile == 3U) {
+      bool reservedZero = true;
+      if (!bits.readBit(reservedZero) || reservedZero) {
+        return rejected(Error::MalformedRecord);
+      }
+    }
+    subsamplingX = false;
+    subsamplingY = false;
+  }
+
+  // frame_size().
+  std::uint32_t widthMinusOne = 0;
+  std::uint32_t heightMinusOne = 0;
+  if (!bits.readBits(16U, widthMinusOne) ||
+      !bits.readBits(16U, heightMinusOne)) {
+    return rejected(Error::MalformedRecord);
+  }
+
+  if (profile != 0U && profile != 2U) {
+    return rejected(Error::UnsupportedProfile);
+  }
+  if (!subsamplingX || !subsamplingY) {
+    return rejected(Error::UnsupportedChromaFormat);
+  }
+  if (bitDepth != 8U && bitDepth != 10U) {
+    return rejected(Error::UnsupportedBitDepth);
+  }
+  const std::uint64_t width = static_cast<std::uint64_t>(widthMinusOne) + 1U;
+  const std::uint64_t height = static_cast<std::uint64_t>(heightMinusOne) + 1U;
+  if (width > limits.maximumWidth || height > limits.maximumHeight ||
+      width > limits.maximumPixels / height) {
+    return rejected(Error::DimensionLimitExceeded);
+  }
+  if (!vp9ColorFromColorSpace(colorSpace, color)) {
+    return rejected(Error::MalformedRecord);
+  }
+  if (!supportedSdrColor(color)) {
+    return rejected(Error::UnsupportedColorDescription);
+  }
+
+  VideoCodecConfigurationFacts result;
+  result.codec = MediaCodec::Vp9;
+  result.kind = MediaCodecConfigurationKind::VpcC;
+  result.sampleFormat = bitDepth == 10U
+                            ? MediaVideoSampleFormat::Yuv420TenBit
+                            : MediaVideoSampleFormat::Yuv420EightBit;
+  result.width = static_cast<std::uint32_t>(width);
+  result.height = static_cast<std::uint32_t>(height);
+  result.bitDepth = bitDepth;
+  result.profile = profile;
+  result.nalLengthBytes = 0U;
+  // VP9 has no reordering: every frame is shown in coded order, and a
+  // show_existing_frame repeat carries no independent presentation delay.
+  result.maximumReorderFrames = 0U;
+  result.color = color;
+  return {Error::None, result};
+}
+
+bool buildVp9CodecConfiguration(
+    const VideoCodecConfigurationFacts &facts,
+    std::span<std::byte, kVideoCodecVpcCBytes> configuration) noexcept {
+  const MediaVideoSampleFormat expectedFormat =
+      facts.bitDepth == 10U ? MediaVideoSampleFormat::Yuv420TenBit
+                            : MediaVideoSampleFormat::Yuv420EightBit;
+  if (facts.codec != MediaCodec::Vp9 ||
+      facts.kind != MediaCodecConfigurationKind::VpcC ||
+      (facts.profile != 0U && facts.profile != 2U) ||
+      (facts.bitDepth != 8U && facts.bitDepth != 10U) ||
+      (facts.profile == 0U) != (facts.bitDepth == 8U) ||
+      facts.sampleFormat != expectedFormat || facts.width == 0U ||
+      facts.height == 0U) {
+    return false;
+  }
+  // A color description the bitstream did not carry is written as ISO/IEC
+  // 23091-2 "unspecified" (2), never promoted to BT.709.
+  const std::uint8_t primaries =
+      facts.color.colorDescriptionPresent ? facts.color.colorPrimaries : 2U;
+  const std::uint8_t transfer = facts.color.colorDescriptionPresent
+                                    ? facts.color.transferCharacteristics
+                                    : 2U;
+  const std::uint8_t matrix =
+      facts.color.colorDescriptionPresent ? facts.color.matrixCoefficients : 2U;
+  constexpr std::uint8_t kChromaSubsampling420Colocated{1};
+  const std::array<std::uint8_t, kVideoCodecVpcCBytes> record{
+      1U,
+      0U,
+      0U,
+      0U,
+      facts.profile,
+      vp9Level(facts.width, facts.height),
+      static_cast<std::uint8_t>((facts.bitDepth << 4U) |
+                                (kChromaSubsampling420Colocated << 1U) |
+                                (facts.color.fullRange ? 1U : 0U)),
+      primaries,
+      transfer,
+      matrix,
+      0U,
+      0U};
+  for (std::size_t index = 0; index < record.size(); ++index) {
+    configuration[index] = static_cast<std::byte>(record[index]);
+  }
+  return true;
 }
 
 } // namespace wam::media

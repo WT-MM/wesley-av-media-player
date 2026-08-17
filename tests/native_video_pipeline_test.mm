@@ -1,4 +1,5 @@
 #include "platform/macos/native_video_pipeline.hpp"
+#include "platform/macos/native_video_codec_capability.hpp"
 #include "platform/macos/native_video_limits.hpp"
 
 #import <AppKit/AppKit.h>
@@ -371,10 +372,18 @@ void checkAdmissionModel() {
             NativeVideoCodecAdmission::H264);
   WAM_CHECK(wam::macos::nativeVideoCodecAdmission(kCMVideoCodecType_HEVC) ==
             NativeVideoCodecAdmission::Hevc);
+  // VP9 and AV1 admission is machine-dependent: the supplemental VP9 decoder
+  // may be absent and AV1 hardware decode exists only from Apple M3 onward.
+  // Assert the contract against the same capability authority the production
+  // gate consults, so this stays honest on hosts without the hardware.
   WAM_CHECK(wam::macos::nativeVideoCodecAdmission(kCMVideoCodecType_VP9) ==
-            NativeVideoCodecAdmission::Unsupported);
+            (wam::macos::nativeVideoToolboxSupportsVp9()
+                 ? NativeVideoCodecAdmission::Vp9
+                 : NativeVideoCodecAdmission::Unsupported));
   WAM_CHECK(wam::macos::nativeVideoCodecAdmission(kCMVideoCodecType_AV1) ==
-            NativeVideoCodecAdmission::Unsupported);
+            (wam::macos::nativeVideoToolboxSupportsAv1()
+                 ? NativeVideoCodecAdmission::Av1
+                 : NativeVideoCodecAdmission::Unsupported));
   WAM_CHECK(wam::macos::nativeVideoCodecAdmission(0x7a7a7a7aU) ==
             NativeVideoCodecAdmission::Unsupported);
   checkSampleFormatAdmissionModel();
