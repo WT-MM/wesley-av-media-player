@@ -581,16 +581,26 @@ trackDuration(const Info& info) noexcept {
     return false;
   }
   const VideoCodecConfigurationFacts& facts = *inspection.facts;
+  // DisplayUnit 0 is pixels; 4 is "unspecified" (Matroska v4), which carries
+  // no display-size information at all and is therefore only admissible when
+  // DisplayWidth/DisplayHeight are absent -- exactly the shape OBS records
+  // (unit 4, no dims). Units 1-3 (centimetres, inches, display aspect ratio)
+  // express a non-pixel display geometry this square-pixel v1 renderer does
+  // not model, and stay rejected.
+  const bool displayGeometryAdmitted =
+      entry.green_mesa_11->displayUnit == 0
+          ? (!entry.green_mesa_11->displayWidth ||
+             *entry.green_mesa_11->displayWidth == facts.width) &&
+                (!entry.green_mesa_11->displayHeight ||
+                 *entry.green_mesa_11->displayHeight == facts.height)
+          : entry.green_mesa_11->displayUnit == 4 && !entry.green_mesa_11->displayWidth &&
+                !entry.green_mesa_11->displayHeight;
   if (!entry.green_mesa_11->pixelWidth || !entry.green_mesa_11->pixelHeight ||
       *entry.green_mesa_11->pixelWidth != facts.width ||
       *entry.green_mesa_11->pixelHeight != facts.height ||
       entry.green_mesa_11->cropTop != 0 || entry.green_mesa_11->cropBottom != 0 ||
       entry.green_mesa_11->cropLeft != 0 || entry.green_mesa_11->cropRight != 0 ||
-      entry.green_mesa_11->displayUnit != 0 ||
-      (entry.green_mesa_11->displayWidth &&
-       *entry.green_mesa_11->displayWidth != facts.width) ||
-      (entry.green_mesa_11->displayHeight &&
-       *entry.green_mesa_11->displayHeight != facts.height)) {
+      !displayGeometryAdmitted) {
     return false;
   }
 
