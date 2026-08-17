@@ -1,0 +1,835 @@
+{
+  "window_seconds": 20.00720733302296,
+  "cpu_percent_of_one_core": 4.998198815830967,
+  "helper_cpu_percent_of_one_core": 2.798991336865341,
+  "helper_pids_sampled": [
+    80672
+  ],
+  "gpu_percent_of_device": 0.0,
+  "agx_gpu_time_delta": 0,
+  "agx_client_count_start": 1,
+  "agx_client_count_end": 1,
+  "footprint_start": {
+    "processes": [
+      {
+        "pid": 80671,
+        "name": "layerproto",
+        "translated": false,
+        "phys_footprint_bytes": 22479568,
+        "phys_footprint_peak_bytes": 22512336,
+        "graphics_categories_bytes": 425984,
+        "graphics_category_detail": {
+          "IOAccelerator": 65536,
+          "Accelerate image backing stores": 131072,
+          "IOSurface": 131072,
+          "IOAccelerator (graphics)": 16384,
+          "CoreGraphics": 32768,
+          "IOKit": 49152
+        }
+      }
+    ],
+    "phys_footprint_bytes": 22479568,
+    "peak_phys_footprint_bytes": 22512336,
+    "in_process_graphics_categories_bytes": 425984,
+    "total_footprint_bytes": 22430416,
+    "peak_policy": "sum of each process's kernel-reported peak; individual peaks may have occurred at different times",
+    "unmapped_pool_note": "AGX driver-owned unmapped render-pass pool is NOT included: `footprint --unmapped` requires root"
+  },
+  "footprint_end": {
+    "processes": [
+      {
+        "pid": 80671,
+        "name": "layerproto",
+        "translated": false,
+        "phys_footprint_bytes": 22758120,
+        "phys_footprint_peak_bytes": 22758120,
+        "graphics_categories_bytes": 425984,
+        "graphics_category_detail": {
+          "IOAccelerator": 65536,
+          "Accelerate image backing stores": 131072,
+          "IOSurface": 131072,
+          "IOAccelerator (graphics)": 16384,
+          "CoreGraphics": 32768,
+          "IOKit": 49152
+        }
+      }
+    ],
+    "phys_footprint_bytes": 22758120,
+    "peak_phys_footprint_bytes": 22758120,
+    "in_process_graphics_categories_bytes": 425984,
+    "total_footprint_bytes": 22708968,
+    "peak_policy": "sum of each process's kernel-reported peak; individual peaks may have occurred at different times",
+    "unmapped_pool_note": "AGX driver-owned unmapped render-pass pool is NOT included: `footprint --unmapped` requires root"
+  },
+  "footprint_verbose": {
+    "owned_physical_footprint_graphics_line": null,
+    "owned_graphics_line_present": false,
+    "graphics_rows_bytes": 634310,
+    "graphics_rows_detail": {
+      "27 IOSurface": 131072,
+      "1 __AUTH_CONST .../AGXMetalG15X_M1": 114688,
+      "2 IOAccelerator": 65536,
+      "6 IOKit": 49152,
+      "1 __DATA_CONST .../AGXMetalG15X_M1": 49152,
+      "1 __DATA .../CoreGraphics": 39936,
+      "2 CoreGraphics": 32768,
+      "2 __DATA .../AGXMetalG15X_M1": 32768,
+      "1 __DATA_DIRTY .../Metal": 18432,
+      "1 __AUTH .../AGXMetalG15X_M1": 16384,
+      "2 IOAccelerator (graphics)": 16384,
+      "1 __DATA .../Metal": 16384,
+      "1 __DATA_DIRTY .../CoreGraphics": 11264,
+      "1 __AUTH .../Metal": 10240,
+      "1 __DATA_CONST .../Metal": 8560,
+      "1 __DATA_DIRTY .../MetalTools": 8136,
+      "1 __DATA_CONST .../IOSurface": 4520,
+      "1 __DATA .../GPUWrangler": 3560,
+      "1 __DATA_DIRTY .../IOGPU": 2088,
+      "1 __DATA_DIRTY .../IOKit": 972,
+      "1 __DATA_DIRTY .../IOSurface": 832,
+      "1 __DATA_CONST .../IOAccelerator": 584,
+      "1 __DATA_DIRTY .../GPURawCounter": 480,
+      "1 __DATA_DIRTY .../IOAccelerator": 400,
+      "1 __DATA_DIRTY .../libswiftMetalKit.dylib": 16,
+      "1 __DATA .../libswiftIOKit.dylib": 1,
+      "1 __DATA .../libswiftMetalKit.dylib": 1,
+      "1 __TEXT .../AGXMetalG15X_M1": 0,
+      "1 __LINKEDIT .../AGXMetalG15X_M1": 0,
+      "1 __AUTH_CONST .../CoreGraphics": 0,
+      "1 __DATA_CONST .../WebGPU": 0,
+      "1 __AUTH .../IOGPU": 0,
+      "1 __TEXT .../IOAccelerator": 0,
+      "1 __DATA_DIRTY .../MetalPerformanceShaders": 0,
+      "1 __TEXT .../libswiftCoreGraphics.dylib": 0,
+      "1 __AUTH_CONST .../libswiftMetalKit.dylib": 0,
+      "1 __DATA .../MetalTools": 0,
+      "1 __DATA_CONST .../MetalPerformanceShaders": 0,
+      "1 __DATA .../WebGPU": 0,
+      "1 __DATA_CONST .../libGPUCompilerUtils.dylib": 0,
+      "1 __TEXT .../IOSurfaceAccelerator": 0,
+      "1 __AUTH .../WebGPU": 0,
+      "1 __DATA_DIRTY .../IOKitten": 0,
+      "1 __TEXT .../IOKitten": 0,
+      "1 __DATA_CONST .../GPURawCounter": 0,
+      "1 __AUTH_CONST .../GPURawCounter": 0,
+      "1 __AUTH_CONST .../WebGPU": 0,
+      "1 __TEXT .../GraphicsServices": 0,
+      "1 __DATA .../MetalFX": 0,
+      "1 __DATA_CONST .../MetalFX": 0,
+      "1 __DATA_CONST .../MetalKit": 0,
+      "1 __AUTH_CONST .../GPUInfo": 0,
+      "1 __TEXT .../libswiftIOKit.dylib": 0,
+      "1 __AUTH_CONST .../IOGPU": 0,
+      "1 __DATA .../IOSurface": 0,
+      "1 __TEXT .../IOKit": 0,
+      "1 __AUTH_CONST .../IOAccelerator": 0,
+      "1 __DATA .../GPUInfo": 0,
+      "1 __TEXT .../MetalFX": 0,
+      "1 __TEXT .../MetalPerformanceShadersGraph": 0,
+      "1 __AUTH .../MetalPerformanceShadersGraph": 0,
+      "1 __AUTH_CONST .../IOKitten": 0,
+      "1 __DATA_CONST .../CoreGraphics": 0,
+      "1 __DATA_CONST .../libswiftIOKit.dylib": 0,
+      "1 __DATA .../IOKitten": 0,
+      "1 __TEXT .../GPUWrangler": 0,
+      "1 __DATA_CONST .../libswiftMetal.dylib": 0,
+      "1 __AUTH_CONST .../GraphicsServices": 0,
+      "1 __DATA .../GPURawCounter": 0,
+      "1 __AUTH_CONST .../Metal": 0,
+      "1 __DATA_CONST .../IOKitten": 0,
+      "1 __AUTH_CONST .../IOKit": 0,
+      "1 __TEXT .../libGPUCompilerUtils.dylib": 0,
+      "1 __DATA_CONST .../IOSurfaceAccelerator": 0,
+      "1 __AUTH_CONST .../MetalTools": 0,
+      "1 __TEXT .../MetalPerformanceShaders": 0,
+      "1 __TEXT .../GPUInfo": 0,
+      "1 __DATA_DIRTY .../GraphicsServices": 0,
+      "1 __TEXT .../Metal": 0,
+      "1 __DATA .../MetalPerformanceShadersGraph": 0,
+      "1 __AUTH_CONST .../MetalKit": 0,
+      "1 __TEXT .../libswiftMetal.dylib": 0,
+      "1 __AUTH_CONST .../MetalFX": 0,
+      "1 __TEXT .../GPURawCounter": 0,
+      "1 GPU Carveout (reserved)": 0,
+      "1 __AUTH_CONST .../GPUWrangler": 0,
+      "1 __AUTH_CONST .../MetalPerformanceShadersGraph": 0,
+      "1 __AUTH_CONST .../IOSurfaceAccelerator": 0,
+      "1 __DATA_CONST .../GPUInfo": 0,
+      "1 __AUTH .../MetalFX": 0,
+      "1 __DATA_DIRTY .../libswiftMetal.dylib": 0,
+      "1 __DATA_CONST .../GPUWrangler": 0,
+      "1 __AUTH .../IOSurface": 0,
+      "1 __DATA .../GraphicsServices": 0,
+      "1 __DATA_CONST .../libswiftMetalKit.dylib": 0,
+      "1 __DATA .../libswiftMetal.dylib": 0,
+      "1 __AUTH .../IOKit": 0,
+      "1 __DATA_CONST .../IOGPU": 0,
+      "1 __DATA_DIRTY .../MetalKit": 0,
+      "1 __DATA_CONST .../GraphicsServices": 0,
+      "1 __AUTH .../MetalTools": 0,
+      "1 __TEXT .../MetalKit": 0,
+      "1 __DATA .../MetalKit": 0,
+      "1 __TEXT .../libswiftMetalKit.dylib": 0,
+      "1 __DATA_CONST .../IOKit": 0,
+      "1 __DATA_CONST .../MetalPerformanceShadersGraph": 0,
+      "1 __AUTH_CONST .../IOSurface": 0,
+      "1 __TEXT .../MetalTools": 0,
+      "1 __DATA .../IOKit": 0,
+      "1 __DATA .../IOGPU": 0,
+      "1 __DATA_DIRTY .../MetalPerformanceShadersGraph": 0,
+      "1 __DATA_CONST .../MetalTools": 0,
+      "1 __TEXT .../CoreGraphics": 0,
+      "1 __AUTH_CONST .../libGPUCompilerUtils.dylib": 0,
+      "1 __DATA .../IOAccelerator": 0,
+      "1 __AUTH .../CoreGraphics": 0,
+      "1 __AUTH_CONST .../libswiftMetal.dylib": 0,
+      "1 __TEXT .../WebGPU": 0,
+      "1 __TEXT .../IOGPU": 0,
+      "1 __DATA_DIRTY .../IOSurfaceAccelerator": 0,
+      "1 __AUTH_CONST .../MetalPerformanceShaders": 0,
+      "1 __TEXT .../IOSurface": 0,
+      "1 __AUTH .../IOAccelerator": 0,
+      "1 __DATA_DIRTY .../WebGPU": 0
+    },
+    "verbose_total_bytes": null,
+    "verbose_phys_footprint_bytes": 23068672
+  },
+  "helper_pids_confirmed": [
+    80672
+  ],
+  "helper_pids_spurious": [],
+  "mode": "asbdl-decoded",
+  "run": 1,
+  "pid": 80671,
+  "helper_pids_attributed": [
+    80672
+  ],
+  "quiet_before": {
+    "cpu_idle_percent": 70.285,
+    "heaviest_process": [
+      97.5,
+      "/System/Library/PrivateFrameworks/MediaAnalysis.framework/Versions/A/mediaanalysisd"
+    ]
+  },
+  "quiet_after": {
+    "cpu_idle_percent": 34.75,
+    "heaviest_process": [
+      68.4,
+      "/System/Library/PrivateFrameworks/StorageManagement.framework/PlugIns/StorageManagementService"
+    ]
+  },
+  "machine_contended": true,
+  "free_bytes_before": 9068040192,
+  "free_bytes_after": 9085411328,
+  "app": {
+    "mode": "asbdl-decoded",
+    "clip": "/Users/wesleymaa/Documents/WAM/.cache/benchmarks/media/adhoc-native-1080p/h264-high.mp4",
+    "duration_requested_s": 28.0,
+    "duration_s": 28.405,
+    "pixel_format": "420YpCbCr8BiPlanarVideoRange (decoded CVPixelBuffer)",
+    "timing_mechanism": "AVSampleBufferRenderSynchronizer + layer.sampleBufferRenderer (macOS 14+); frames displayed at PTS on the synchronizer timebase; kCMSampleBufferAttachmentKey_DisplayImmediately NOT used",
+    "frames_read": 845,
+    "frames_enqueued": 845,
+    "frames_proven_displayed": 844,
+    "frames_expected": 852.2,
+    "effective_display_fps": 29.713,
+    "reader_loop_restarts": 0,
+    "enqueue_limit": 0,
+    "occlusion_samples": 28,
+    "occluded_samples": 0,
+    "occluded_samples_after_grace": 0,
+    "not_ready_transitions": 843,
+    "requires_flush_events": 0,
+    "failed_to_decode_events": 0,
+    "dropped_no_drawable": 0,
+    "ready_for_display_seen": true,
+    "ready_for_display_after_first_enqueue_ms": 9.987,
+    "layer_status_final": "rendering",
+    "layer_error_final": "",
+    "iosurface_note": "",
+    "contents_ever_set": false,
+    "vsync_samples": 3358,
+    "vsync_wall_span_s": 27.989,
+    "vsync_timeline_span_s": 27.977,
+    "timeline_vs_wall_ratio": 0.99959,
+    "proof_latency_vs_inferred_display_ms": {
+      "n": 840,
+      "min": -201.618,
+      "median": -131.499,
+      "mean": -131.488,
+      "p95": -122.957,
+      "max": -0.766
+    },
+    "proof_latency_vs_enqueue_ms": {
+      "n": 844,
+      "min": 0.028,
+      "median": 36.047,
+      "mean": 32.882,
+      "p95": 37.367,
+      "max": 107.591
+    },
+    "ack2_latency_vs_inferred_display_ms": {
+      "n": 840,
+      "min": -201.618,
+      "median": -131.491,
+      "mean": -131.482,
+      "p95": -122.95,
+      "max": -0.762
+    },
+    "ack2_minus_ack1_ms": {
+      "n": 844,
+      "min": 0.001,
+      "median": 0.006,
+      "mean": 0.006,
+      "p95": 0.013,
+      "max": 0.027
+    },
+    "video_performance_metrics_samples": 57,
+    "video_performance_metrics_first": {
+      "elapsed_s": 0.485,
+      "totalNumberOfFrames": 20,
+      "numberOfDroppedFrames": 0,
+      "numberOfCorruptedFrames": 0,
+      "numberOfFramesDisplayedUsingOptimizedCompositing": 14,
+      "totalAccumulatedFrameDelay": 0.0
+    },
+    "video_performance_metrics_last": {
+      "elapsed_s": 27.985,
+      "totalNumberOfFrames": 845,
+      "numberOfDroppedFrames": 0,
+      "numberOfCorruptedFrames": 0,
+      "numberOfFramesDisplayedUsingOptimizedCompositing": 839,
+      "totalAccumulatedFrameDelay": 0.0
+    },
+    "metrics_total_minus_dropped": 845,
+    "metrics_total_vs_enqueued_delta": 0,
+    "feed_discipline": "greedy",
+    "jit_lead_s": 0.2,
+    "consumed_notifications": 1688,
+    "consumed_distinct_frames": 844,
+    "consumed_second_acks": 844,
+    "consumed_third_or_more_acks": 0,
+    "consumed_out_of_order": 0,
+    "consumed_payload_mismatches": 0,
+    "first_fill_count": 2,
+    "inflight_depth": {
+      "n": 28,
+      "min": 1.0,
+      "median": 1.0,
+      "mean": 1.0,
+      "p95": 1.0,
+      "max": 1.0,
+      "observed_max": 1
+    },
+    "paused_probe_count": 0,
+    "paused_probe_nonnull": 0,
+    "paused_probe_identified_frame": 0,
+    "paused_probe_covers_position": 0,
+    "paused_probe_nonnull_while_playing": 0,
+    "paused_probe_delay_ms": {
+      "n": 0,
+      "min": 0.0,
+      "median": 0.0,
+      "mean": 0.0,
+      "p95": 0.0,
+      "max": 0.0
+    },
+    "paused_probes": [],
+    "consumed_notifier_classes": {
+      "__NSCFType": 1688
+    },
+    "overlay_at_elapsed_s": -1.0,
+    "surface_probe_n": 0,
+    "surface_use_count": {
+      "n": 0,
+      "min": 0.0,
+      "median": 0.0,
+      "mean": 0.0,
+      "max": 0.0
+    },
+    "occlusion_test_ran": false,
+    "enqueued_while_occluded": 0,
+    "consumed_while_occluded": 0,
+    "flush_ran": false,
+    "inflight_at_flush": 0,
+    "consumed_after_flush": 0,
+    "metrics_series": [
+      {
+        "elapsed_s": 0.485,
+        "total": 20,
+        "dropped": 0,
+        "corrupted": 0,
+        "optimized": 14,
+        "delay": 0.0
+      },
+      {
+        "elapsed_s": 0.985,
+        "total": 35,
+        "dropped": 0,
+        "corrupted": 0,
+        "optimized": 29,
+        "delay": 0.0
+      },
+      {
+        "elapsed_s": 1.485,
+        "total": 50,
+        "dropped": 0,
+        "corrupted": 0,
+        "optimized": 44,
+        "delay": 0.0
+      },
+      {
+        "elapsed_s": 1.985,
+        "total": 65,
+        "dropped": 0,
+        "corrupted": 0,
+        "optimized": 59,
+        "delay": 0.0
+      },
+      {
+        "elapsed_s": 2.486,
+        "total": 80,
+        "dropped": 0,
+        "corrupted": 0,
+        "optimized": 74,
+        "delay": 0.0
+      },
+      {
+        "elapsed_s": 2.985,
+        "total": 95,
+        "dropped": 0,
+        "corrupted": 0,
+        "optimized": 89,
+        "delay": 0.0
+      },
+      {
+        "elapsed_s": 3.485,
+        "total": 110,
+        "dropped": 0,
+        "corrupted": 0,
+        "optimized": 104,
+        "delay": 0.0
+      },
+      {
+        "elapsed_s": 3.986,
+        "total": 125,
+        "dropped": 0,
+        "corrupted": 0,
+        "optimized": 119,
+        "delay": 0.0
+      },
+      {
+        "elapsed_s": 4.485,
+        "total": 140,
+        "dropped": 0,
+        "corrupted": 0,
+        "optimized": 134,
+        "delay": 0.0
+      },
+      {
+        "elapsed_s": 4.985,
+        "total": 155,
+        "dropped": 0,
+        "corrupted": 0,
+        "optimized": 149,
+        "delay": 0.0
+      },
+      {
+        "elapsed_s": 5.485,
+        "total": 170,
+        "dropped": 0,
+        "corrupted": 0,
+        "optimized": 164,
+        "delay": 0.0
+      },
+      {
+        "elapsed_s": 5.985,
+        "total": 185,
+        "dropped": 0,
+        "corrupted": 0,
+        "optimized": 179,
+        "delay": 0.0
+      },
+      {
+        "elapsed_s": 6.485,
+        "total": 200,
+        "dropped": 0,
+        "corrupted": 0,
+        "optimized": 194,
+        "delay": 0.0
+      },
+      {
+        "elapsed_s": 6.985,
+        "total": 215,
+        "dropped": 0,
+        "corrupted": 0,
+        "optimized": 209,
+        "delay": 0.0
+      },
+      {
+        "elapsed_s": 7.485,
+        "total": 230,
+        "dropped": 0,
+        "corrupted": 0,
+        "optimized": 224,
+        "delay": 0.0
+      },
+      {
+        "elapsed_s": 7.985,
+        "total": 245,
+        "dropped": 0,
+        "corrupted": 0,
+        "optimized": 239,
+        "delay": 0.0
+      },
+      {
+        "elapsed_s": 8.485,
+        "total": 260,
+        "dropped": 0,
+        "corrupted": 0,
+        "optimized": 254,
+        "delay": 0.0
+      },
+      {
+        "elapsed_s": 8.985,
+        "total": 275,
+        "dropped": 0,
+        "corrupted": 0,
+        "optimized": 269,
+        "delay": 0.0
+      },
+      {
+        "elapsed_s": 9.485,
+        "total": 290,
+        "dropped": 0,
+        "corrupted": 0,
+        "optimized": 284,
+        "delay": 0.0
+      },
+      {
+        "elapsed_s": 9.985,
+        "total": 305,
+        "dropped": 0,
+        "corrupted": 0,
+        "optimized": 299,
+        "delay": 0.0
+      },
+      {
+        "elapsed_s": 10.485,
+        "total": 320,
+        "dropped": 0,
+        "corrupted": 0,
+        "optimized": 314,
+        "delay": 0.0
+      },
+      {
+        "elapsed_s": 10.985,
+        "total": 335,
+        "dropped": 0,
+        "corrupted": 0,
+        "optimized": 329,
+        "delay": 0.0
+      },
+      {
+        "elapsed_s": 11.485,
+        "total": 350,
+        "dropped": 0,
+        "corrupted": 0,
+        "optimized": 344,
+        "delay": 0.0
+      },
+      {
+        "elapsed_s": 11.985,
+        "total": 365,
+        "dropped": 0,
+        "corrupted": 0,
+        "optimized": 359,
+        "delay": 0.0
+      },
+      {
+        "elapsed_s": 12.485,
+        "total": 380,
+        "dropped": 0,
+        "corrupted": 0,
+        "optimized": 374,
+        "delay": 0.0
+      },
+      {
+        "elapsed_s": 12.985,
+        "total": 395,
+        "dropped": 0,
+        "corrupted": 0,
+        "optimized": 389,
+        "delay": 0.0
+      },
+      {
+        "elapsed_s": 13.485,
+        "total": 410,
+        "dropped": 0,
+        "corrupted": 0,
+        "optimized": 404,
+        "delay": 0.0
+      },
+      {
+        "elapsed_s": 13.985,
+        "total": 425,
+        "dropped": 0,
+        "corrupted": 0,
+        "optimized": 419,
+        "delay": 0.0
+      },
+      {
+        "elapsed_s": 14.485,
+        "total": 440,
+        "dropped": 0,
+        "corrupted": 0,
+        "optimized": 434,
+        "delay": 0.0
+      },
+      {
+        "elapsed_s": 14.985,
+        "total": 455,
+        "dropped": 0,
+        "corrupted": 0,
+        "optimized": 449,
+        "delay": 0.0
+      },
+      {
+        "elapsed_s": 15.485,
+        "total": 470,
+        "dropped": 0,
+        "corrupted": 0,
+        "optimized": 464,
+        "delay": 0.0
+      },
+      {
+        "elapsed_s": 15.985,
+        "total": 485,
+        "dropped": 0,
+        "corrupted": 0,
+        "optimized": 479,
+        "delay": 0.0
+      },
+      {
+        "elapsed_s": 16.485,
+        "total": 500,
+        "dropped": 0,
+        "corrupted": 0,
+        "optimized": 494,
+        "delay": 0.0
+      },
+      {
+        "elapsed_s": 16.985,
+        "total": 515,
+        "dropped": 0,
+        "corrupted": 0,
+        "optimized": 509,
+        "delay": 0.0
+      },
+      {
+        "elapsed_s": 17.485,
+        "total": 530,
+        "dropped": 0,
+        "corrupted": 0,
+        "optimized": 524,
+        "delay": 0.0
+      },
+      {
+        "elapsed_s": 17.985,
+        "total": 545,
+        "dropped": 0,
+        "corrupted": 0,
+        "optimized": 539,
+        "delay": 0.0
+      },
+      {
+        "elapsed_s": 18.485,
+        "total": 560,
+        "dropped": 0,
+        "corrupted": 0,
+        "optimized": 554,
+        "delay": 0.0
+      },
+      {
+        "elapsed_s": 18.985,
+        "total": 575,
+        "dropped": 0,
+        "corrupted": 0,
+        "optimized": 569,
+        "delay": 0.0
+      },
+      {
+        "elapsed_s": 19.485,
+        "total": 590,
+        "dropped": 0,
+        "corrupted": 0,
+        "optimized": 584,
+        "delay": 0.0
+      },
+      {
+        "elapsed_s": 19.985,
+        "total": 605,
+        "dropped": 0,
+        "corrupted": 0,
+        "optimized": 599,
+        "delay": 0.0
+      },
+      {
+        "elapsed_s": 20.485,
+        "total": 620,
+        "dropped": 0,
+        "corrupted": 0,
+        "optimized": 614,
+        "delay": 0.0
+      },
+      {
+        "elapsed_s": 20.985,
+        "total": 635,
+        "dropped": 0,
+        "corrupted": 0,
+        "optimized": 629,
+        "delay": 0.0
+      },
+      {
+        "elapsed_s": 21.485,
+        "total": 650,
+        "dropped": 0,
+        "corrupted": 0,
+        "optimized": 644,
+        "delay": 0.0
+      },
+      {
+        "elapsed_s": 21.985,
+        "total": 665,
+        "dropped": 0,
+        "corrupted": 0,
+        "optimized": 659,
+        "delay": 0.0
+      },
+      {
+        "elapsed_s": 22.485,
+        "total": 680,
+        "dropped": 0,
+        "corrupted": 0,
+        "optimized": 674,
+        "delay": 0.0
+      },
+      {
+        "elapsed_s": 22.985,
+        "total": 695,
+        "dropped": 0,
+        "corrupted": 0,
+        "optimized": 689,
+        "delay": 0.0
+      },
+      {
+        "elapsed_s": 23.485,
+        "total": 710,
+        "dropped": 0,
+        "corrupted": 0,
+        "optimized": 704,
+        "delay": 0.0
+      },
+      {
+        "elapsed_s": 23.985,
+        "total": 725,
+        "dropped": 0,
+        "corrupted": 0,
+        "optimized": 719,
+        "delay": 0.0
+      },
+      {
+        "elapsed_s": 24.485,
+        "total": 740,
+        "dropped": 0,
+        "corrupted": 0,
+        "optimized": 734,
+        "delay": 0.0
+      },
+      {
+        "elapsed_s": 24.986,
+        "total": 755,
+        "dropped": 0,
+        "corrupted": 0,
+        "optimized": 749,
+        "delay": 0.0
+      },
+      {
+        "elapsed_s": 25.485,
+        "total": 770,
+        "dropped": 0,
+        "corrupted": 0,
+        "optimized": 764,
+        "delay": 0.0
+      },
+      {
+        "elapsed_s": 25.985,
+        "total": 785,
+        "dropped": 0,
+        "corrupted": 0,
+        "optimized": 779,
+        "delay": 0.0
+      },
+      {
+        "elapsed_s": 26.485,
+        "total": 800,
+        "dropped": 0,
+        "corrupted": 0,
+        "optimized": 794,
+        "delay": 0.0
+      },
+      {
+        "elapsed_s": 26.985,
+        "total": 815,
+        "dropped": 0,
+        "corrupted": 0,
+        "optimized": 809,
+        "delay": 0.0
+      },
+      {
+        "elapsed_s": 27.485,
+        "total": 830,
+        "dropped": 0,
+        "corrupted": 0,
+        "optimized": 824,
+        "delay": 0.0
+      },
+      {
+        "elapsed_s": 27.985,
+        "total": 845,
+        "dropped": 0,
+        "corrupted": 0,
+        "optimized": 839,
+        "delay": 0.0
+      },
+      {
+        "elapsed_s": 27.985,
+        "total": 845,
+        "dropped": 0,
+        "corrupted": 0,
+        "optimized": 839,
+        "delay": 0.0
+      }
+    ],
+    "events": [
+      {
+        "host_ns": 163087655736875,
+        "what": "first-fill-boundary"
+      },
+      {
+        "host_ns": 163087659214291,
+        "what": "readyForDisplay=YES"
+      },
+      {
+        "host_ns": 163087671671958,
+        "what": "synchronizer-rate-1.0"
+      }
+    ],
+    "occlusion_ok": true,
+    "fps_sustained": true,
+    "no_clip_wrap": true,
+    "valid": true
+  },
+  "app_valid": true,
+  "attempt": 1
+}

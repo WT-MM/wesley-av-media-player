@@ -1,0 +1,50 @@
+{
+  "window_seconds": 20.010032582998974,
+  "cpu_percent_of_one_core": 0.0,
+  "helper_cpu_percent_of_one_core": 0.0,
+  "helper_pids_sampled": [],
+  "gpu_percent_of_device": 0.0,
+  "agx_gpu_time_delta": 0,
+  "agx_client_count_start": 0,
+  "agx_client_count_end": 0,
+  "footprint_start": {
+    "error": "footprint: Unable to analyze process with pid 81760 (try as root?)\nfootprint: Unable to find any processes matching the supplied process names or pids (try as root?)"
+  },
+  "footprint_end": {
+    "error": "footprint: Unable to analyze process with pid 81760 (try as root?)\nfootprint: Unable to find any processes matching the supplied process names or pids (try as root?)"
+  },
+  "footprint_verbose": {
+    "owned_physical_footprint_graphics_line": null,
+    "owned_graphics_line_present": false,
+    "graphics_rows_bytes": 0,
+    "graphics_rows_detail": {},
+    "verbose_total_bytes": null,
+    "verbose_phys_footprint_bytes": null
+  },
+  "helper_pids_confirmed": [],
+  "helper_pids_spurious": [],
+  "mode": "asbdl-compressed",
+  "run": 1,
+  "pid": 81760,
+  "helper_pids_attributed": [],
+  "quiet_before": {
+    "cpu_idle_percent": 72.12,
+    "heaviest_process": [
+      87.4,
+      "/System/Library/PrivateFrameworks/FileProvider.framework/Support/fileproviderd"
+    ]
+  },
+  "quiet_after": {
+    "cpu_idle_percent": 57.6,
+    "heaviest_process": [
+      78.8,
+      "/System/Library/PrivateFrameworks/FileProvider.framework/Support/fileproviderd"
+    ]
+  },
+  "machine_contended": true,
+  "free_bytes_before": 9166897152,
+  "free_bytes_after": 9122516992,
+  "app": {},
+  "app_valid": false,
+  "attempt": 1
+}
