@@ -602,6 +602,20 @@ if(BUILD_TESTING)
     target_link_libraries(wam_matroska_demuxer_test PRIVATE wam_native_core)
     add_test(NAME matroska_demuxer COMMAND wam_matroska_demuxer_test)
 
+    # Regime microbenchmarks for the demuxer. EXCLUDE_FROM_ALL keeps it off the
+    # default build; the ctest entry carries the `benchmark` label so it never
+    # enters the required-test regex, which names tests explicitly.
+    add_executable(wam_matroska_demuxer_bench EXCLUDE_FROM_ALL
+      benchmarks/matroska_demuxer_bench.cpp)
+    target_link_libraries(wam_matroska_demuxer_bench PRIVATE wam_native_core)
+    target_compile_features(wam_matroska_demuxer_bench PRIVATE cxx_std_20)
+    target_compile_options(wam_matroska_demuxer_bench PRIVATE
+      -Wall -Wextra -Wpedantic)
+    add_test(NAME matroska_demuxer_bench
+      COMMAND wam_matroska_demuxer_bench --quick)
+    set_tests_properties(matroska_demuxer_bench PROPERTIES
+      LABELS benchmark TIMEOUT 600 DISABLED FALSE)
+
     add_executable(wam_video_codec_configuration_test
       tests/video_codec_configuration_test.cpp)
     target_link_libraries(

@@ -30,6 +30,16 @@ enum class NativeMediaSegmentContinuity : std::uint8_t {
   Continuous,
 };
 
+// INVARIANT on mediaStart/mediaEnd: both endpoints must originate from
+// mediaTimeSecondsAtFrame() on the same origin and rate. That function is a
+// correctly-rounded 128-bit rational-to-double, so an equal integer frame
+// index implies an identical bit pattern, and the mapping stays injective past
+// 95 years of 48 kHz media. The exact ==/!= comparisons in the admission logic
+// are therefore frame-index identity tests wearing a double's clothes, not
+// float equality tests -- see the note above `sameStart` in
+// native_media_clock.cpp. A producer that computes either endpoint any other
+// way breaks admission silently; the bounded invariant that absorbs real
+// hardware quantization is kMaximumBoundaryDisplacementSeconds, not these.
 struct NativeMediaSegment {
   std::uint64_t serial{0};
   std::uint64_t firstHostTicks{0};

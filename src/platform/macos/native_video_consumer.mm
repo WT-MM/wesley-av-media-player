@@ -23,7 +23,26 @@ using media::MediaTimeOrder;
 using WideSigned = __int128_t;
 using WideUnsigned = __uint128_t;
 
-constexpr std::size_t kMaximumPresentationReorderFrames = 8;
+// Lowered 8 -> 4 on 2026-08-17. This value is handed to VideoToolbox as
+// maxPendingPresentationFrames, and decodedSurfaceOwnershipBound() raises the
+// route's own ownership ceiling to codecReorderFrames + 1 whenever the codec
+// demands it -- so a reorder cap of 8 quietly authorised 9 decoded surfaces
+// against a documented share of 5, and the static_assert below is what makes
+// that contradiction fail to compile instead of failing in the field.
+//
+// The trade, stated plainly: a stream whose SPS declares a reorder depth
+// above 4 now fails configure() and routes to the compatibility fallback,
+// loudly, instead of silently overrunning the surface budget. Typical x264
+// and x265 output has a reorder depth of 2-4, so this refuses deep-reorder
+// encodes and nothing that a normal encoder produces. Raising the budget was
+// the other way to satisfy the assert and was rejected: the surface budget is
+// a memory contract, not a tuning knob.
+constexpr std::size_t kMaximumPresentationReorderFrames = 4;
+static_assert(kMaximumPresentationReorderFrames + 1 <=
+                  NativeVideoConsumer::kMaximumDecodedSurfaceOwnership,
+              "the codec reorder cap must fit the documented decoded-surface "
+              "ownership share, because decodedSurfaceOwnershipBound() will "
+              "raise the route's ceiling to codecReorderFrames + 1");
 std::mutex gQuarantineMutex;
 bool gConsumerClaimed{false};
 std::atomic<std::uint64_t> gRejectedCreates{0};
@@ -541,8 +560,21 @@ struct NativeVideoConsumer::Impl {
         currentClock->rate <= 0.0) {
       return;
     }
+    // The `> currentClock->mediaSeconds` precondition is the CALLER's to
+    // establish, and it already does, exactly: the sole caller proves
+    // startAgainstClock == Greater through compareTimeToDouble, which is an
+    // exact rational comparison. Repeating the test here in double seconds
+    // re-decided it lossily, so a presentation time that is genuinely later
+    // could compare equal after rounding and silently drop the due hint --
+    // leaving scheduleHeld to return Blocked with no deadline at all. The
+    // audio route self-heals on its ~10 ms pump, but a silent-timebase
+    // generation is driven entirely by these deadlines.
+    //
+    // The !seconds check stays: the tick arithmetic below needs the value.
+    // The nonpositive-delta guard below still rejects a caller that violated
+    // the precondition, so nothing is admitted that was not admitted before.
     const auto seconds = media::mediaTimeSeconds(presentation);
-    if (!seconds || *seconds <= currentClock->mediaSeconds) {
+    if (!seconds) {
       return;
     }
     const double ticks =
@@ -2105,6 +2137,12 @@ NativeVideoConsumer::takeOutputEvent() noexcept {
       std::move(impl_->lastTerminalEvent);
   impl_->lastTerminalEvent.reset();
   return result;
+}
+
+std::uint64_t NativeVideoConsumer::nextDueHostTicks() const noexcept {
+  return impl_ == nullptr
+             ? 0
+             : (impl_->nextDueKnown ? impl_->nextDueHostTicks : 0);
 }
 
 NativeVideoConsumerFacts NativeVideoConsumer::facts() const noexcept {
