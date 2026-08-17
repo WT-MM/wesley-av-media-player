@@ -63,6 +63,12 @@ class PlayerController final : public QObject {
                  appearanceChanged)
   Q_PROPERTY(double seekStepSeconds READ seekStepSeconds WRITE
                  setSeekStepSeconds NOTIFY seekStepSecondsChanged)
+  // QuickTime-style floating window: when true, the windowed frame is kept
+  // hugging the current video's aspect ratio (no letterbox bars). Purely a
+  // QML/window-chrome behavior toggle; the controller only stores and
+  // persists it. Default on. See qml/Main.qml's re-snap machinery.
+  Q_PROPERTY(bool windowHugsVideo READ windowHugsVideo WRITE
+                 setWindowHugsVideo NOTIFY windowHugsVideoChanged)
   Q_PROPERTY(double trimIn READ trimIn WRITE setTrimIn NOTIFY trimInChanged)
   Q_PROPERTY(double trimOut READ trimOut WRITE setTrimOut NOTIFY trimOutChanged)
   Q_PROPERTY(bool exporting READ exporting NOTIFY exportingChanged)
@@ -111,6 +117,9 @@ public:
   // Seconds skipped by the Left/Right arrow shortcuts and the transport's
   // skip buttons. Whole-second values in [1, 60]; default 5.
   [[nodiscard]] double seekStepSeconds() const { return seek_step_seconds_; }
+  // See the Q_PROPERTY doc above: purely a persisted preference the QML
+  // window chrome reads and reacts to.
+  [[nodiscard]] bool windowHugsVideo() const { return window_hugs_video_; }
   [[nodiscard]] double trimIn() const { return trim_in_; }
   [[nodiscard]] double trimOut() const { return trim_out_; }
   [[nodiscard]] bool exporting() const { return exporting_; }
@@ -145,6 +154,7 @@ public:
   Q_INVOKABLE void setPreservePitch(bool preserve);
   Q_INVOKABLE void setAppearance(int appearance);
   Q_INVOKABLE void setSeekStepSeconds(double seconds);
+  Q_INVOKABLE void setWindowHugsVideo(bool hugsVideo);
   Q_INVOKABLE void setTrimIn(double seconds);
   Q_INVOKABLE void setTrimOut(double seconds);
   Q_INVOKABLE void exportSelection();
@@ -175,6 +185,7 @@ signals:
   void preservePitchChanged();
   void appearanceChanged();
   void seekStepSecondsChanged();
+  void windowHugsVideoChanged();
   void trimInChanged();
   void trimOutChanged();
   void exportingChanged();
@@ -569,6 +580,7 @@ private:
   QString media_title_;
   int appearance_ = 0;
   double seek_step_seconds_ = 5.0;
+  bool window_hugs_video_ = true;
   QString last_error_;
   QString last_notice_;
   QString export_status_;

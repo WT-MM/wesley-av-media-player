@@ -22,7 +22,7 @@ Window {
 
     title: "Preferences"
     width: 360
-    height: 232
+    height: 400
     minimumWidth: width
     minimumHeight: height
     maximumWidth: width
@@ -130,6 +130,62 @@ Window {
                     value: Math.round(prefs.player.seekStepSeconds)
                     when: !customSpin.activeFocus
                     restoreMode: Binding.RestoreNone
+                }
+            }
+        }
+
+        Item {
+            width: 1
+            height: 8
+        }
+
+        Text {
+            text: "WINDOW"
+            color: prefs.secondary
+            font.pixelSize: 11
+            font.weight: Font.DemiBold
+            font.letterSpacing: 0.8
+        }
+
+        Text {
+            width: parent.width
+            text: "Keep the window hugging the video with no letterbox bars, the way QuickTime Player does. Off allows free-form resizing that can show bars."
+            color: prefs.secondary
+            font.pixelSize: 12
+            wrapMode: Text.WordWrap
+        }
+
+        Item {
+            width: 1
+            height: 2
+        }
+
+        CheckBox {
+            id: hugsVideoCheck
+            text: "Window hugs the video"
+            Accessible.name: "Window hugs the video"
+            // Initial declarative binding for the value at creation time.
+            // AbstractButton's own click handling does a direct imperative
+            // write to `checked` on every toggle, which -- per ordinary QML
+            // property semantics -- detaches this binding the first time the
+            // box is clicked (the same hazard qml/PreferencesWindow.qml's
+            // seek-step SpinBox already guards against for its own `value`,
+            // there via a `when` clause). A plain Binding element would stay
+            // detached forever after that first click. The Connections below
+            // is what keeps this box honest afterward: it does not depend on
+            // any binding surviving, it just re-writes `checked` imperatively
+            // every time the controller's real value changes, including
+            // changes made from the View menu while this window is open.
+            checked: prefs.player.windowHugsVideo
+            onToggled: prefs.player.setWindowHugsVideo(checked)
+
+            palette.text: prefs.foreground
+            palette.windowText: prefs.foreground
+
+            Connections {
+                target: prefs.player
+                function onWindowHugsVideoChanged() {
+                    hugsVideoCheck.checked = prefs.player.windowHugsVideo;
                 }
             }
         }

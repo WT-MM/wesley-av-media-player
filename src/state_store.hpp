@@ -24,6 +24,13 @@ struct PersistentState {
   // seconds. Whole seconds only, clamped to [1, 60]; the Preferences window
   // offers 5/10/15/30 as one-click presets plus free entry across that range.
   int seek_step_seconds = 5;
+  // QuickTime-style floating window: when true, the windowed (non-fullscreen)
+  // frame is continuously kept at the current video's aspect ratio so
+  // playback never shows letterbox bars, re-snapping after any resize that
+  // would otherwise leave one. Default on, since that is the behavior the
+  // Preferences window frames as the norm; off restores free-form resizing
+  // where bars can appear. Fullscreen is unaffected either way.
+  bool window_hugs_video = true;
   std::unordered_map<std::string, double> positions;
 
   bool operator==(const PersistentState&) const = default;

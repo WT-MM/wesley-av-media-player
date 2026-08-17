@@ -62,6 +62,13 @@ void setTitlebarControlsRevealed(QWindow *window, bool revealed,
 // A non-positive dimension clears the lock so the window resizes freely.
 void setContentAspectRatio(QWindow *window, qreal width, qreal height);
 
+// True for the exact span setContentAspectRatio's interactive-only lock is
+// armed on `window` -- from a border mouse-down that starts a drag-resize
+// until the matching mouse-up. QML's continuous aspect-hugging re-snap
+// (window_hugs_video) reads this so it never fights a live drag, which is
+// already aspect-locked on its own for that entire span.
+[[nodiscard]] bool interactiveResizeActive(QWindow *window);
+
 // Resizes `window` so a `videoPixelWidth` x `videoPixelHeight` video renders
 // at 1:1 native pixels (dividing by the window's screen's backing scale
 // factor), centered on that screen and clamped to its visible frame.
@@ -115,6 +122,7 @@ public:
 
   Q_INVOKABLE void setTitlebarRevealed(bool revealed, bool animated = true);
   Q_INVOKABLE void setContentAspectRatio(qreal width, qreal height);
+  Q_INVOKABLE bool interactiveResizeActive() const;
   Q_INVOKABLE void resizeToActualSize(qreal videoPixelWidth,
                                       qreal videoPixelHeight);
   Q_INVOKABLE void resizeToFitScreen(qreal videoWidth, qreal videoHeight);

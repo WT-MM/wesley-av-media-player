@@ -204,6 +204,7 @@ int main() {
   first.state().performance_profile = 0;
   first.state().appearance_theme = wam::AppearanceTheme::Dark;
   first.state().seek_step_seconds = 15;
+  first.state().window_hugs_video = false;
   first.remember("/tmp/a file.mp4", 42.5);
   first.remember("https://example.com/live", 30.0);
   expect(first.dirty(), "state mutation becomes dirty");
@@ -218,6 +219,8 @@ int main() {
   expect(second.state().appearance_theme == wam::AppearanceTheme::Dark,
          "theme round trips");
   expect(second.state().seek_step_seconds == 15, "seek step round trips");
+  expect(second.state().window_hugs_video == false,
+         "window hugs video round trips");
   expect(second.positionFor("/tmp/a file.mp4") == 42.5, "position round trips");
   expect(second.positionFor("https://example.com/live") == 0.0,
          "network positions are not persisted");
@@ -232,6 +235,8 @@ int main() {
          "legacy state defaults to light theme");
   expect(legacy.state().seek_step_seconds == 5,
          "legacy state without seek_step defaults to five seconds");
+  expect(legacy.state().window_hugs_video == true,
+         "legacy state without hugs_video defaults on");
 
   {
     std::ofstream out_of_range(path, std::ios::trunc);
@@ -365,6 +370,8 @@ int main() {
          "second load resets an omitted theme to its default");
   expect(repeated.state().seek_step_seconds == 5,
          "second load resets an omitted seek step to its default");
+  expect(repeated.state().window_hugs_video == true,
+         "second load resets an omitted hugs_video to its default");
   expect(repeated.state().positions.empty(),
          "second load replaces rather than accumulates positions");
   expect(!repeated.dirty(),

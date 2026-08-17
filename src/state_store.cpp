@@ -165,6 +165,12 @@ bool parseRecord(std::string_view line, PersistentState& state,
     state.seek_step_seconds = std::clamp(value, 1, 60);
     return true;
   }
+  if (key == "hugs_video") {
+    int value = 0;
+    if (!parseNumber(line, value)) return false;
+    state.window_hugs_video = value != 0;
+    return true;
+  }
   if (key == "theme") {
     const std::string_view value = takeToken(line);
     trim(line);
@@ -298,6 +304,7 @@ bool StateStore::save() const {
     output << "restore " << (snapshot.restore_positions ? 1 : 0) << '\n';
     output << "theme " << themeName(snapshot.appearance_theme) << '\n';
     output << "seek_step " << snapshot.seek_step_seconds << '\n';
+    output << "hugs_video " << (snapshot.window_hugs_video ? 1 : 0) << '\n';
     for (const auto& [source, seconds] : snapshot.positions)
       output << "position " << std::quoted(source) << ' ' << seconds << '\n';
     output.flush();

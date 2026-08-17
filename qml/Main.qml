@@ -55,6 +55,37 @@ ApplicationWindow {
     // so a re-open of the same file cannot resize the window a second time
     // (see onVideoNaturalSizeChanged).
     property url snappedSource: ""
+    // True when the process was launched by the benchmark harness -- the
+    // window chrome bridge is not guaranteed to exist yet at binding-eval
+    // time (see the "typeof windowChrome" guards throughout this file), so
+    // this mirrors windowChrome.benchmarkMode defensively.
+    readonly property bool benchmarkModeActive: (typeof windowChrome !== "undefined" && windowChrome) ? windowChrome.benchmarkMode : false
+    // "window hugs the video" (QuickTime-style floating, no letterbox bars)
+    // is only actually in effect windowed, with media loaded whose aspect is
+    // known, and never under the benchmark harness -- which owns window
+    // geometry outright and rejects any bounds change it did not make
+    // itself. onWindowHugsVideoActiveChanged (below) is what schedules the
+    // continuous re-snap, so every one of those gates has to live in this
+    // single computed property rather than be re-checked ad hoc.
+    readonly property bool windowHugsVideoActive: root.controller.windowHugsVideo
+        && !root.benchmarkModeActive
+        && root.controller.hasMedia
+        && root.visibility !== Window.FullScreen
+        && root.videoNaturalSize.width > 0
+        && root.videoNaturalSize.height > 0
+    // The default 360pt minimum height letterboxes a wide (e.g. cinemascope)
+    // video pinned at minimumWidth: the window cannot shrink its height
+    // below 360 even though the video itself needs less at that width. While
+    // hugging is active, relax the floor to whatever height keeps the
+    // minimum-width corner on-aspect, but never raise it above 360 -- a
+    // portrait video's derived height is already well above 360, so the
+    // ordinary floor stays put and does no harm there.
+    readonly property real effectiveMinimumHeight: {
+        if (!root.windowHugsVideoActive)
+            return 360;
+        const derived = root.minimumWidth / (root.videoNaturalSize.width / root.videoNaturalSize.height);
+        return derived < 360 ? derived : 360;
+    }
     readonly property bool nativeDialogVisible:
         (mediaDialogLoader.item && mediaDialogLoader.item.visible)
         || (exportDialogLoader.item && exportDialogLoader.item.visible)
@@ -65,7 +96,7 @@ ApplicationWindow {
     width: 1180
     height: 720
     minimumWidth: 560
-    minimumHeight: 360
+    minimumHeight: root.effectiveMinimumHeight
     title: controller.hasMedia && controller.mediaTitle.length > 0 ? controller.mediaTitle + " — WAM" : "WAM"
     color: "transparent"
 
@@ -340,6 +371,33 @@ ApplicationWindow {
         return true;
     }
 
+    // "window hugs the video": re-snap the windowed frame to the current
+    // video's aspect ratio whenever something has left it off-aspect --
+    // a programmatic/AX resize (the benchmark harness's own resizes are
+    // excluded via windowHugsVideoActive's benchmarkModeActive gate), the
+    // minimumHeight clamp engaging, or a media change to a different aspect.
+    // Always called off hugsVideoResnapTimer's debounce, never directly from
+    // a width/height change, so it only ever observes settled geometry.
+    function maybeResnapToHugVideo() {
+        if (!root.windowHugsVideoActive)
+            return;
+        if (typeof windowChrome === "undefined" || !windowChrome)
+            return;
+        // The interactive drag itself is already aspect-locked by AppKit
+        // (see macos_window_chrome.mm's InteractiveAspectLock), but a
+        // programmatic snap issued mid-drag is exactly the kind of fight
+        // this feature must never start.
+        if (windowChrome.interactiveResizeActive())
+            return;
+        const aspect = root.videoNaturalSize.width / root.videoNaturalSize.height;
+        if (!(aspect > 0))
+            return;
+        const expectedHeight = root.width / aspect;
+        if (Math.abs(expectedHeight - root.height) <= 1)
+            return;
+        windowChrome.snapToVideoAspectRatio(root.videoNaturalSize.width, root.videoNaturalSize.height);
+    }
+
     function rememberDialogFocus() {
         dialogFocusReturnItem = root.activeFocusItem || stage;
     }
@@ -386,6 +444,20 @@ ApplicationWindow {
         interval: 3000
         repeat: false
         onTriggered: root.hideControlsIfIdle()
+    }
+
+    Timer {
+        id: hugsVideoResnapTimer
+        // Debounced, not immediate: restarted from every width/height change
+        // below, so a live drag (already aspect-locked by
+        // windowChrome.setContentAspectRatio's interactive lock, and further
+        // guarded by interactiveResizeActive() in maybeResnapToHugVideo) or
+        // an in-flight zoom animation (resizeToFitScreen/resizeToActualSize,
+        // ~240ms) keeps pushing this out instead of racing either one -- it
+        // only actually runs once the frame has been still for 200ms.
+        interval: 200
+        repeat: false
+        onTriggered: root.maybeResnapToHugVideo()
     }
 
     Timer {
@@ -639,8 +711,27 @@ ApplicationWindow {
     // The real macOS desktop menu bar (Qt.labs.platform, not an in-window
     // QtQuick Controls one) -- see qml/AppMenuBar.qml.
     AppMenuBar {
+        id: appMenuBar
         controller: root.controller
         appRoot: root
+    }
+
+    // Keeps the View menu's "Window Hugs Video" checkbox following the
+    // controller's actual value, both for external changes (Preferences)
+    // and to undo Qt.labs.platform's own direct write to `checked` on every
+    // click -- which, per ordinary QML property semantics, detaches any
+    // plain Binding on that property for good the first time the item is
+    // clicked. Connections sidesteps that: it does not establish a binding
+    // at all, just an imperative re-write triggered by the real signal, so
+    // it keeps working after any number of clicks. Declared here, not inside
+    // qml/AppMenuBar.qml, because Qt.labs.platform's MenuItem has no default
+    // property to hold a Connections block as its own child -- see
+    // hugsVideoMenuItem's alias there.
+    Connections {
+        target: root.controller
+        function onWindowHugsVideoChanged() {
+            appMenuBar.hugsVideoMenuItem.checked = root.controller.windowHugsVideo;
+        }
     }
 
     // ApplicationWindow automatically extends `background` to cover the whole
@@ -1163,6 +1254,17 @@ ApplicationWindow {
         root.snappedSource = root.controller.source;
         windowChrome.snapToVideoAspectRatio(root.videoNaturalSize.width, root.videoNaturalSize.height);
     }
+
+    // Continuous "window hugs the video" upkeep. Every one of these can leave
+    // the frame off-aspect while hugging is active: a resize (drag, AX/
+    // AppleScript, or this very re-snap settling), the setting being flipped
+    // on with bars already showing, media changing to a different aspect, or
+    // fullscreen exiting back into a stale windowed frame. All three route
+    // through the same debounced check; see hugsVideoResnapTimer and
+    // maybeResnapToHugVideo above.
+    onWidthChanged: hugsVideoResnapTimer.restart()
+    onHeightChanged: hugsVideoResnapTimer.restart()
+    onWindowHugsVideoActiveChanged: hugsVideoResnapTimer.restart()
 
     onControlsRevealedChanged: {
         if (typeof windowChrome === "undefined" || !windowChrome)

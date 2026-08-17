@@ -26,6 +26,12 @@ Platform.MenuBar {
     // resizeToFitScreen, visibility) that live there rather than on the
     // player controller.
     required property var appRoot
+    // Exposed so qml/Main.qml can keep this item's `checked` state in sync
+    // with the controller: Qt.labs.platform's MenuItem is not a QQuickItem,
+    // so it has no default property and cannot hold a declarative Binding as
+    // its own child (unlike, say, qml/PreferencesWindow.qml's CheckBox). A
+    // property alias is not content, so it does not hit that restriction.
+    readonly property alias hugsVideoMenuItem: hugsVideoMenuItem
 
     function stepLabel(action) {
         const step = Number(root.controller.seekStepSeconds);
@@ -118,6 +124,23 @@ Platform.MenuBar {
             text: root.appRoot.visibility === Window.FullScreen ? "Exit Full Screen" : "Enter Full Screen"
             enabled: root.controller.hasMedia
             onTriggered: root.controller.toggleFullscreen()
+        }
+        Platform.MenuSeparator {}
+        // QuickTime-style floating window: keep the windowed frame hugging
+        // the video's aspect ratio (no letterbox bars). Bound both ways --
+        // `checked` below is only this item's *initial* value; Qt.labs.
+        // platform's own checkable toggle does a direct imperative write to
+        // `checked` on every click, which detaches a plain binding for good
+        // (ordinary QML property semantics). qml/Main.qml holds a Connections
+        // block (see hugsVideoMenuItem's alias above) that re-syncs `checked`
+        // imperatively every time the controller's real value changes, which
+        // does not depend on any binding having survived.
+        Platform.MenuItem {
+            id: hugsVideoMenuItem
+            text: "Window Hugs Video"
+            checkable: true
+            checked: root.controller.windowHugsVideo
+            onTriggered: root.controller.setWindowHugsVideo(checked)
         }
     }
 
