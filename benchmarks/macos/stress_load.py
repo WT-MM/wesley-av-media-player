@@ -773,17 +773,34 @@ STATE_TSV = Path.home() / "Library" / "Application Support" / "WAM" / "state.tsv
 # the very thing these runs measure. The clip names below are the ones the
 # benchmark corpus uses; scrubbing them leaves the user's real history alone.
 STATE_SCRUB_PATTERNS = (
-    "adhoc-native-1080p", "leflexitac", "local-clip", "pyflexitac",
+    "adhoc-native-1080p", "leflexitac", "pyflexitac",
 )
+# Clips used in ad hoc validation are scrubbed too, but their names stay out
+# of the repository: one substring per line in this untracked file.
+LOCAL_SCRUB_PATTERNS_PATH = (
+    PROJECT_ROOT / ".cache" / "benchmarks" / "local_scrub_patterns.txt"
+)
+
+
+def _scrub_patterns() -> tuple:
+    extra = ()
+    if LOCAL_SCRUB_PATTERNS_PATH.exists():
+        extra = tuple(
+            line.strip()
+            for line in LOCAL_SCRUB_PATTERNS_PATH.read_text(
+                encoding="utf-8").splitlines()
+            if line.strip())
+    return STATE_SCRUB_PATTERNS + extra
 
 
 def scrub_state(path: Path = STATE_TSV) -> int:
     """Drop benchmark clips from the resume ledger. Returns lines removed."""
     if not path.exists():
         return 0
+    patterns = _scrub_patterns()
     lines = path.read_text(encoding="utf-8", errors="replace").splitlines(True)
     keep = [ln for ln in lines
-            if not any(pattern in ln for pattern in STATE_SCRUB_PATTERNS)]
+            if not any(pattern in ln for pattern in patterns)]
     if len(keep) != len(lines):
         tmp = path.with_suffix(path.suffix + ".tmp")
         tmp.write_text("".join(keep), encoding="utf-8")
