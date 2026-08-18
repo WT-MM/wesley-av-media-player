@@ -1096,6 +1096,48 @@ biPlanarSurfaceLayout(OSType pixelFormat) noexcept {
   }
 }
 
+// The AGX lossless-compressed counterpart of a bounded native decode format,
+// or 0 for a format that has none. Apple silicon video decoders emit these
+// natively; a display layer consumes them unchanged, while any in-process
+// sampler needs the uncompressed form and therefore pays a per-frame
+// VTPixelTransferSession to get it.
+OSType losslessCounterpartFormat(OSType pixelFormat) noexcept {
+  switch (pixelFormat) {
+  case kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange:
+    return kCVPixelFormatType_Lossless_420YpCbCr8BiPlanarVideoRange;
+  case kCVPixelFormatType_420YpCbCr8BiPlanarFullRange:
+    return kCVPixelFormatType_Lossless_420YpCbCr8BiPlanarFullRange;
+  // The 10-bit lossless forms are compressed-*packed*: they carry no padding
+  // bits between pixels, so they are not layout-compatible with the padded
+  // 'x420'/'xf20' surfaces an in-process sampler expects. That costs nothing
+  // here, because a display layer never inspects the layout.
+  case kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange:
+    return kCVPixelFormatType_Lossless_420YpCbCr10PackedBiPlanarVideoRange;
+  case kCVPixelFormatType_420YpCbCr10BiPlanarFullRange:
+    return kCVPixelFormatType_Lossless_420YpCbCr10PackedBiPlanarFullRange;
+  default:
+    return 0;
+  }
+}
+
+// The exact set of output formats a given interop contract admits. Pinned
+// contracts admit only what they asked for; the display-layer contract leaves
+// the format unpinned and therefore also admits the lossless counterpart the
+// decoder produces natively. Nothing else is ever admitted -- an unpinned
+// session that returned, say, BGRA would be a silent per-frame conversion in
+// the other direction, which is precisely the cost this contract removes.
+bool admitsOutputPixelFormat(OSType pixelFormat, OSType expectedPixelFormat,
+                             VideoToolboxOutputInterop outputInterop) noexcept {
+  if (pixelFormat == expectedPixelFormat) {
+    return true;
+  }
+  if (outputInterop != VideoToolboxOutputInterop::DisplayLayer) {
+    return false;
+  }
+  const OSType lossless = losslessCounterpartFormat(expectedPixelFormat);
+  return lossless != 0 && pixelFormat == lossless;
+}
+
 bool validateOutputSurfaceContract(CVPixelBufferRef pixelBuffer,
                                    OSType expectedPixelFormat,
                                    VideoToolboxOutputInterop outputInterop,
@@ -1105,7 +1147,8 @@ bool validateOutputSurfaceContract(CVPixelBufferRef pixelBuffer,
     return false;
   }
   const OSType pixelFormat = CVPixelBufferGetPixelFormatType(pixelBuffer);
-  if (pixelFormat != expectedPixelFormat) {
+  if (!admitsOutputPixelFormat(pixelFormat, expectedPixelFormat,
+                               outputInterop)) {
     assignError(error,
                 "VideoToolbox output pixel format " +
                     std::to_string(pixelFormat) +
@@ -1118,7 +1161,11 @@ bool validateOutputSurfaceContract(CVPixelBufferRef pixelBuffer,
     assignError(error, "VideoToolbox produced a frame without an IOSurface");
     return false;
   }
-  if (outputInterop == VideoToolboxOutputInterop::Metal) {
+  if (outputInterop == VideoToolboxOutputInterop::Metal ||
+      outputInterop == VideoToolboxOutputInterop::DisplayLayer) {
+    // A display layer consumes whatever biplanar surface the decoder produced,
+    // including the lossless one, so there is no plane layout to verify beyond
+    // the IOSurface backing already proven above.
     return true;
   }
   if (outputInterop != VideoToolboxOutputInterop::OpenGL) {
@@ -2202,33 +2249,49 @@ struct VideoToolboxDecoder::Impl {
           kCVPixelBufferIOSurfaceOpenGLTextureCompatibilityKey,
           kCFBooleanTrue);
     }
-    const std::int32_t pixelFormatValue =
-        static_cast<std::int32_t>(outputPixelFormat);
+    // Pinning the output format is what forces the per-frame
+    // VTPixelTransferSession: the decoder's native surface is AGX
+    // lossless-compressed, and asking for the uncompressed fourcc makes
+    // VideoToolbox decompress every frame through IOSurfaceAccelerator inside
+    // VTDecoderXPCService. A display-layer presenter never samples the surface,
+    // so it leaves the format unpinned and takes whatever the decoder produced.
+    // The pinned contracts keep the pin: measured on this box, an unpinned
+    // session that also carries OpenGL texture compatibility returns BGRA,
+    // which would be a far worse conversion than the one being removed.
+    const bool pinOutputPixelFormat =
+        options.outputInterop != VideoToolboxOutputInterop::DisplayLayer;
     CFNumberRef pixelFormatNumber = nullptr;
+    if (pinOutputPixelFormat) {
+      const std::int32_t pixelFormatValue =
+          static_cast<std::int32_t>(outputPixelFormat);
 #if defined(WAM_NATIVE_VIDEO_TESTING)
-    if (!consumeCFAllocationFailure(
-            VideoToolboxDecoderTestCFAllocationPoint::PixelFormatNumber))
+      if (!consumeCFAllocationFailure(
+              VideoToolboxDecoderTestCFAllocationPoint::PixelFormatNumber))
 #endif
-    {
-      pixelFormatNumber = CFNumberCreate(
-          kCFAllocatorDefault, kCFNumberSInt32Type, &pixelFormatValue);
+      {
+        pixelFormatNumber = CFNumberCreate(
+            kCFAllocatorDefault, kCFNumberSInt32Type, &pixelFormatValue);
+      }
+      if (pixelFormatNumber == nullptr) {
+        CFRelease(imageAttributes);
+        CFRelease(emptyIOSurfaceProperties);
+        CFRelease(decoderSpecification);
+        assignError(error,
+                    "could not allocate the output pixel-format request");
+        return false;
+      }
+      CFDictionarySetValue(imageAttributes, kCVPixelBufferPixelFormatTypeKey,
+                           pixelFormatNumber);
     }
-    if (pixelFormatNumber == nullptr) {
-      CFRelease(imageAttributes);
-      CFRelease(emptyIOSurfaceProperties);
-      CFRelease(decoderSpecification);
-      assignError(error, "could not allocate the output pixel-format request");
-      return false;
-    }
-    CFDictionarySetValue(imageAttributes, kCVPixelBufferPixelFormatTypeKey,
-                         pixelFormatNumber);
 
     const VTDecompressionOutputCallbackRecord callbackRecord{
         &Impl::decompressionOutputCallback, this};
     const OSStatus status = VTDecompressionSessionCreate(
         kCFAllocatorDefault, formatDescription, decoderSpecification,
         imageAttributes, &callbackRecord, &session);
-    CFRelease(pixelFormatNumber);
+    if (pixelFormatNumber != nullptr) {
+      CFRelease(pixelFormatNumber);
+    }
     CFRelease(imageAttributes);
     CFRelease(emptyIOSurfaceProperties);
     CFRelease(decoderSpecification);
@@ -2822,7 +2885,8 @@ VideoToolboxDecoder::VideoToolboxDecoder(VideoToolboxDecoderOptions options)
         "VideoToolbox presentation reorder bound must be greater than zero");
   }
   if (options.outputInterop != VideoToolboxOutputInterop::Metal &&
-      options.outputInterop != VideoToolboxOutputInterop::OpenGL) {
+      options.outputInterop != VideoToolboxOutputInterop::OpenGL &&
+      options.outputInterop != VideoToolboxOutputInterop::DisplayLayer) {
     throw std::invalid_argument(
         "unsupported VideoToolbox output interop contract");
   }

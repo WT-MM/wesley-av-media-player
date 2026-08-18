@@ -374,6 +374,14 @@ class NativeTrackedVideoArbiter::MainOutput final
                : progress;
   }
 
+  // A pure facade fact: the arbiter neither samples nor converts the surface,
+  // so the answer is whatever the wrapped presenter can consume. Forwarding is
+  // what keeps the decoder's format contract keyed on the real presenter rather
+  // than on the wrapper that happens to sit in front of it.
+  [[nodiscard]] bool presentsDecodedSurfacesDirectly() const noexcept override {
+    return state_->output->presentsDecodedSurfacesDirectly();
+  }
+
   [[nodiscard]] NativeTrackedVideoOutputFacts facts()
       const noexcept override {
     state_->pumpEvent();

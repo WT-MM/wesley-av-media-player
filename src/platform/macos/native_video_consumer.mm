@@ -536,6 +536,19 @@ class NativeVideoConsumer::Sink final : public DecodedFrameSink {
   bool ended_{false};
 };
 
+// The decoded-surface contract this consumer must request, decided by the
+// presenter that will consume the surfaces. A display-layer presenter never
+// samples them, so the decoder leaves its output format unpinned and takes the
+// hardware's native lossless surface; every other presenter samples in process
+// and needs the pinned uncompressed one. Both the construction and the
+// post-configure proof read this same function, so they cannot disagree.
+[[nodiscard]] VideoToolboxOutputInterop decodedSurfaceInteropFor(
+    const NativeTrackedVideoOutput* output) noexcept {
+  return output != nullptr && output->presentsDecodedSurfacesDirectly()
+             ? VideoToolboxOutputInterop::DisplayLayer
+             : VideoToolboxOutputInterop::OpenGL;
+}
+
 struct NativeVideoConsumer::Impl {
   Impl(std::shared_ptr<void> lifetime,
        NativeVideoClockSeam mediaClock,
@@ -545,10 +558,13 @@ struct NativeVideoConsumer::Impl {
         clock(mediaClock),
         output(std::move(trackedOutput)),
         wake(wakeSeam),
+        // `output` is declared before `decoder`, so it is already the live
+        // presenter here and the interop is decided once, from the presenter
+        // itself, rather than from an environment read in the decode path.
         decoder(VideoToolboxDecoderOptions{
             NativeVideoConsumer::kMaximumDecoderInFlightFrames,
             kMaximumPresentationReorderFrames,
-            VideoToolboxOutputInterop::OpenGL,
+            decodedSurfaceInteropFor(output.get()),
             VideoToolboxDecoderProgressHandler{wake.signal, wake.context}}) {}
 
   // Every latch names the exact gate it tripped. The message is retained in
@@ -1436,7 +1452,8 @@ media::NativeMediaConsumeResult NativeVideoConsumer::configure(
   const VideoToolboxDecoderStats decoderFacts = impl.decoder.stats();
   if (!decoderFacts.configured || decoderFacts.generation != generation ||
       decoderFacts.maxInFlightFrames != kMaximumDecoderInFlightFrames ||
-      decoderFacts.outputInterop != VideoToolboxOutputInterop::OpenGL) {
+      decoderFacts.outputInterop !=
+          decodedSurfaceInteropFor(impl.output.get())) {
     impl.latch(NativeVideoConsumerFailure::DecoderConfiguration,
                "native video decoder configuration proof failed", error);
     return media::NativeMediaConsumeResult::Failed;

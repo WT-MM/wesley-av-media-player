@@ -50,9 +50,21 @@ struct VideoToolboxDecoderFrameRefConSlotStats {
 // adds CGL IOSurface texture compatibility while retaining Metal compatibility,
 // so an opt-in native OpenGL presenter can fail back without changing the
 // decoded-frame ownership contract.
+//
+// DisplayLayer is for presenters that hand the decoded surface straight to a
+// CoreAnimation display layer and never sample it from this process. That
+// contract is what lets the decoder stop pinning its output pixel format.
+// Measured on an M3 Max (macOS 26.3.1): the AVD block natively produces
+// AGX lossless-compressed biplanar surfaces ('&8v0'), and pinning the
+// uncompressed '420v' fourcc makes VideoToolbox run a VTPixelTransferSession
+// through IOSurfaceAcceleratorTransformSurface over *every decoded frame* --
+// which cost WAM's VTDecoderXPCService 5.60 % of one core against QuickTime's
+// 2.77 % for the same clip. Metal and OpenGL keep the pin because an
+// in-process sampler cannot read a lossless surface; a display layer can.
 enum class VideoToolboxOutputInterop : std::uint8_t {
   Metal,
   OpenGL,
+  DisplayLayer,
 };
 
 // Owner-driven presentation/EOS progress. Progress means one frame was
