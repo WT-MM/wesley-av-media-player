@@ -2,6 +2,7 @@
 
 #include "native_audio_output.hpp"
 #include "native_layer_host_view.hpp"
+#include "native_layer_presentation_state.hpp"
 #include "native_layer_video_output.hpp"
 #include "native_qt_gl_output.hpp"
 #include "native_tracked_video_arbiter.hpp"
@@ -54,24 +55,15 @@ void assignError(std::string* error, const char* message) noexcept {
   }
 }
 
-// Runtime presentation selection, mirroring the existing
-// WAM_NATIVE_BENCHMARK_TELEMETRY env opt-in rather than inventing a mechanism.
-// WAM_PRESENTATION=layer selects the AVSampleBufferDisplayLayer presenter,
-// WAM_PRESENTATION=scenegraph selects the Qt OpenGL one. The GL path stays a
-// full implementation and remains the default until the layer route has been
-// verified on the full clip matrix, so a field problem is a relaunch away from
-// the known-good path rather than a rebuild (DESIGN.md section 8).
+// Runtime presentation selection. The decision itself lives in
+// native_layer_presentation_state.hpp so this factory and main.cpp's QML
+// transparency flag cannot disagree; see the rationale and the default there.
+// The GL path stays a full implementation behind WAM_PRESENTATION=scenegraph.
 enum class PresentationRoute : std::uint8_t { SceneGraph, Layer };
 
 [[nodiscard]] PresentationRoute selectedPresentationRoute() noexcept {
-  const char* value = std::getenv("WAM_PRESENTATION");
-  if (value == nullptr) {
-    return PresentationRoute::SceneGraph;
-  }
-  if (std::strcmp(value, "layer") == 0) {
-    return PresentationRoute::Layer;
-  }
-  return PresentationRoute::SceneGraph;
+  return layerPresentationRouteSelected() ? PresentationRoute::Layer
+                                          : PresentationRoute::SceneGraph;
 }
 
 // The Qt view handle the layer must be installed beneath. Derived from the
