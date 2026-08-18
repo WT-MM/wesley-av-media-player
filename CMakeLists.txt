@@ -283,6 +283,10 @@ if(APPLE)
   add_library(wam_macos_native_qt_tracked STATIC
     src/platform/macos/native_qt_gl_output.hpp
     src/platform/macos/native_qt_gl_output.mm
+    src/platform/macos/native_layer_video_output.hpp
+    src/platform/macos/native_layer_video_output.mm
+    src/platform/macos/native_layer_host_view.hpp
+    src/platform/macos/native_layer_host_view.mm
     src/platform/macos/qt_gl_video_item.hpp
     src/platform/macos/qt_gl_video_item.mm)
   target_include_directories(wam_macos_native_qt_tracked PUBLIC src)
@@ -299,7 +303,9 @@ if(APPLE)
       Qt6::Gui
       Qt6::Quick
     PRIVATE
-      "${WAM_OPENGL_FRAMEWORK}")
+      "${WAM_OPENGL_FRAMEWORK}"
+      "-framework AVFoundation"
+      "-framework QuartzCore")
   set_target_properties(wam_macos_native_qt_tracked PROPERTIES
     AUTOMOC ON
     LINKER_LANGUAGE OBJCXX)
