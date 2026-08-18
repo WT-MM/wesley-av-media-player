@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <bit>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <memory>
@@ -57,6 +58,42 @@ AudioComponent systemFindNext(
 OSStatus systemInstanceNew(void *, AudioComponent component,
                            AudioComponentInstance *instance) {
   return AudioComponentInstanceNew(component, instance);
+}
+
+// Device IO buffer size to request. NativeAudioOutput::kDeviceBufferFrames is
+// what ships; WAM_AUDIO_IO_FRAMES exists so that one binary can serve both arms
+// of a paired wake-rate measurement. Measuring the two sizes by rebuilding
+// between arms would confound the treatment with every other difference two
+// builds can carry, which on a machine whose ambient load and default audio
+// device both drift is not a difference anyone can subtract afterwards.
+//
+// The override is admitted only if it satisfies the same inequalities the
+// constant does -- a power of two, within one render slice, and covered
+// kRingDevicePeriodsOfHeadroom times over by the ring's guaranteed occupancy.
+// So it can select a size the ring has been proven to feed and nothing else;
+// it is a measurement seam, not an escape hatch. Read once per process.
+[[nodiscard]] std::uint32_t requestedDeviceBufferFrames() noexcept {
+  static const std::uint32_t frames = []() noexcept -> std::uint32_t {
+    const char *const raw = std::getenv("WAM_AUDIO_IO_FRAMES");
+    if (raw == nullptr) {
+      return NativeAudioOutput::kDeviceBufferFrames;
+    }
+    std::uint32_t parsed = 0;
+    for (const char *cursor = raw; *cursor != '\0'; ++cursor) {
+      if (*cursor < '0' || *cursor > '9' ||
+          parsed > NativeAudioOutput::kMaximumFramesPerSlice) {
+        return NativeAudioOutput::kDeviceBufferFrames;
+      }
+      parsed = parsed * 10U + static_cast<std::uint32_t>(*cursor - '0');
+    }
+    const bool admissible =
+        parsed != 0 && (parsed & (parsed - 1)) == 0 &&
+        parsed <= NativeAudioOutput::kMaximumFramesPerSlice &&
+        parsed * NativeAudioOutput::kRingDevicePeriodsOfHeadroom <=
+            NativeAudioOutput::kGuaranteedRingFrames;
+    return admissible ? parsed : NativeAudioOutput::kDeviceBufferFrames;
+  }();
+  return frames;
 }
 
 OSStatus systemInstanceDispose(void *, AudioComponentInstance instance) {
@@ -704,6 +741,52 @@ NativeAudioOutputProgress NativeAudioOutput::configure(
     return NativeAudioOutputProgress::Failed;
   }
 
+  // Device IO buffer size. Unstated, the device simply keeps whatever the last
+  // client on it left behind. Two reasons to state it:
+  //
+  //   Wake rate. Every render callback is a real-time thread wake and the rate
+  //   is exactly sampleRate/frames. The system default of 512 frames costs
+  //   93.75 wakes/s at 48 kHz; kDeviceBufferFrames halves that, and the ring
+  //   headroom proof for the larger slice is the static_assert block beside the
+  //   constant.
+  //
+  //   Boundedness. render() rejects any callback asking for more than
+  //   kMaximumFramesPerSlice frames. A device another client had pushed above
+  //   that size would therefore fail every callback for the whole session with
+  //   no way back. Naming a size we have proven we can serve removes that
+  //   exposure instead of inheriting it.
+  //
+  // The set is best effort: the property is device-global and its admissible
+  // range belongs to the device, so a device that clamps or refuses is still a
+  // device we can render to. Only the read-back is load-bearing, and only one
+  // outcome is fatal -- an accepted size the render slice cannot cover.
+  {
+    UInt32 requestedDeviceFrames = requestedDeviceBufferFrames();
+    static_cast<void>(setProperty(kAudioDevicePropertyBufferFrameSize,
+                                  kAudioUnitScope_Global, 0,
+                                  &requestedDeviceFrames,
+                                  sizeof(requestedDeviceFrames)));
+    UInt32 acceptedDeviceFrames = 0;
+    propertySize = sizeof(acceptedDeviceFrames);
+    const OSStatus deviceFramesStatus =
+        getProperty(kAudioDevicePropertyBufferFrameSize,
+                    kAudioUnitScope_Global, 0, &acceptedDeviceFrames,
+                    &propertySize);
+    const bool reported = deviceFramesStatus == noErr &&
+                          propertySize == sizeof(acceptedDeviceFrames) &&
+                          acceptedDeviceFrames != 0;
+    if (reported && acceptedDeviceFrames > kMaximumFramesPerSlice) {
+      latchFailure(NativeAudioOutputFailure::DeviceBufferFramesUnsupported,
+                   kAudioUnitErr_InvalidPropertyValue);
+      static_cast<void>(close());
+      return NativeAudioOutputProgress::Failed;
+    }
+    // A device that will not report its size is not a failure: render()
+    // enforces the same bound on every individual callback regardless.
+    device_buffer_frames_.store(reported ? acceptedDeviceFrames : 0,
+                                std::memory_order_release);
+  }
+
   const AudioStreamBasicDescription requestedFormat = clientFormat();
   status = setProperty(kAudioUnitProperty_StreamFormat,
                        kAudioUnitScope_Input, 0, &requestedFormat,
@@ -1157,6 +1240,7 @@ NativeAudioOutputProgress NativeAudioOutput::closeStep() noexcept {
   published_activated_.store(false, std::memory_order_release);
   activated_ = false;
   device_rate_ = 0.0;
+  device_buffer_frames_.store(0, std::memory_order_release);
   stopped_.store(true, std::memory_order_release);
   setState(NativeAudioOutputState::Closed);
 
@@ -1719,6 +1803,8 @@ NativeAudioOutputFacts NativeAudioOutput::facts() const noexcept {
   result.stateWakeRequests =
       state_wake_requests_.load(std::memory_order_relaxed);
   result.sampleRate = published_sample_rate_.load(std::memory_order_relaxed);
+  result.deviceBufferFrames =
+      device_buffer_frames_.load(std::memory_order_acquire);
   result.callbackEntries =
       callback_entries_.load(std::memory_order_acquire);
   const std::uint64_t admission =
