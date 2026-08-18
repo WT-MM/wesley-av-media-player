@@ -442,6 +442,31 @@ int main(int argc, char *argv[]) {
   // without a full-frame intermediate texture or CPU readback.
   QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
 
+  // Qt Quick sizes its texture atlas from the *screen*, not from what the
+  // scene actually contains: on a 16" M3 Max that is a 4096x2048 RGBA8 atlas,
+  // 32 MiB of GPU memory allocated the first time anything small is atlassed
+  // and held for the window's whole lifetime. Nothing reclaims it --
+  // QQuickWindow::releaseResources() only clears CPU-side caches (measured:
+  // IOAccelerator unchanged at 33 MB with and without it), and the atlas is
+  // freed only by scene-graph invalidation, which on the basic render loop
+  // macOS+OpenGL selects happens once, at window destruction.
+  //
+  // WAM's entire scene-graph content is the chrome: a title string (which goes
+  // to the glyph cache, not here) and a few Canvas-drawn transport icons, none
+  // wider than ~60 device pixels. 512x512 is 1 MiB and still atlasses anything
+  // up to 128px (Qt's limit is a quarter of the atlas width). Anything larger
+  // transparently gets its own texture, so this trades batching, never
+  // correctness. Measured on h264-high.mp4, layer route, window parked
+  // 640x360: IOAccelerator (graphics) 33 MB -> 2.1 MB, process footprint
+  // 117 MB -> 61 MB.
+  //
+  // Set only if the environment has not already spoken, so the knob stays
+  // available for debugging without a rebuild.
+  if (!qEnvironmentVariableIsSet("QSG_ATLAS_WIDTH"))
+    qputenv("QSG_ATLAS_WIDTH", "512");
+  if (!qEnvironmentVariableIsSet("QSG_ATLAS_HEIGHT"))
+    qputenv("QSG_ATLAS_HEIGHT", "512");
+
   QSurfaceFormat format;
   format.setRenderableType(QSurfaceFormat::OpenGL);
   format.setProfile(QSurfaceFormat::CoreProfile);
