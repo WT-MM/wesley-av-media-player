@@ -7,6 +7,7 @@
 #if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
 #include "native_benchmark_telemetry.hpp"
 #include "native_playback_owner.hpp"
+#include "platform/macos/native_layer_presentation_state.hpp"
 #endif
 
 #include <QByteArray>
@@ -2661,6 +2662,17 @@ void PlayerController::drainMpvEvents() {
 }
 
 void PlayerController::requestVideoUpdate() {
+#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+  // On the CALayer presentation route the frame is already on screen: the
+  // AVSampleBufferDisplayLayer sitting below Qt's view was handed the decoded
+  // IOSurface and WindowServer composites it directly. The Qt video item has
+  // nothing to paint, so dirtying the scene here would buy a full scene-graph
+  // render+swap per frame for no pixels -- measured at ~30 render passes per
+  // second, against zero when the item stops updating and the chrome is hidden.
+  // That is the pivot's headline cost, so it is not spent.
+  if (wam::macos::nativeLayerPresentationActive())
+    return;
+#endif
   if (video_item_)
     video_item_->update();
 }

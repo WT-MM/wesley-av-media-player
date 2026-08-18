@@ -736,6 +736,19 @@ int main(int argc, char *argv[]) {
   {
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty(QStringLiteral("player"), &player);
+#if defined(Q_OS_MACOS)
+    // On the CALayer presentation route the video is an
+    // AVSampleBufferDisplayLayer sitting *below* Qt's view, so the QML
+    // background must stop painting opaque black over it. Read the same
+    // WAM_PRESENTATION opt-in the session factory selects on
+    // (native_media_session_system.mm) so the two cannot disagree.
+    engine.rootContext()->setContextProperty(
+        QStringLiteral("layerPresentation"),
+        qgetenv("WAM_PRESENTATION") == QByteArrayLiteral("layer"));
+#else
+    engine.rootContext()->setContextProperty(
+        QStringLiteral("layerPresentation"), false);
+#endif
     QObject::connect(
         &engine, &QQmlApplicationEngine::objectCreationFailed, &app,
         [] { QCoreApplication::exit(2); }, Qt::QueuedConnection);

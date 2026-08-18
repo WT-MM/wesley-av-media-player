@@ -742,7 +742,15 @@ ApplicationWindow {
     // instead of video bleeding underneath it.
     background: Rectangle {
         id: videoBackdrop
-        color: controller.hasMedia ? "#000000" : root.darkAppearance ? "#111215" : "#f5f5f3"
+        // On the layer presentation route the video is composited by
+        // WindowServer from an AVSampleBufferDisplayLayer underneath Qt's view,
+        // so this backdrop has to become a transparent hole once media is open
+        // or it paints opaque black straight over the video. The no-media
+        // colours are unchanged: with nothing playing there is no layer content
+        // to reveal.
+        color: controller.hasMedia
+               ? (layerPresentation ? "transparent" : "#000000")
+               : root.darkAppearance ? "#111215" : "#f5f5f3"
 
         Behavior on color {
             ColorAnimation {

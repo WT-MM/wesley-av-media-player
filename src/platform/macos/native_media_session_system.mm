@@ -1,13 +1,20 @@
 #include "native_media_session_system.hpp"
 
 #include "native_audio_output.hpp"
+#include "native_layer_host_view.hpp"
+#include "native_layer_video_output.hpp"
 #include "native_qt_gl_output.hpp"
 #include "native_tracked_video_arbiter.hpp"
+
+#include <QQuickItem>
+#include <QQuickWindow>
 
 #include <CoreAudio/HostTime.h>
 
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
+#include <cstring>
 #include <limits>
 #include <memory>
 #include <utility>
@@ -22,6 +29,9 @@ struct NativeMediaSessionSystemLifetime final {
   std::shared_ptr<void> caller;
   std::shared_ptr<NativeMediaSessionWake> wake;
   std::shared_ptr<NativeTrackedVideoArbiter> videoArbiter;
+  // Non-null only on the layer route. Outlives the output it feeds, so the
+  // host view is removed from the window after the presenter has closed.
+  std::shared_ptr<NativeLayerHostView> layerHost;
 };
 
 void assignError(std::string* error, const char* message) noexcept {
@@ -42,6 +52,41 @@ void assignError(std::string* error, const char* message) noexcept {
   } catch (...) {
     return false;
   }
+}
+
+// Runtime presentation selection, mirroring the existing
+// WAM_NATIVE_BENCHMARK_TELEMETRY env opt-in rather than inventing a mechanism.
+// WAM_PRESENTATION=layer selects the AVSampleBufferDisplayLayer presenter,
+// WAM_PRESENTATION=scenegraph selects the Qt OpenGL one. The GL path stays a
+// full implementation and remains the default until the layer route has been
+// verified on the full clip matrix, so a field problem is a relaunch away from
+// the known-good path rather than a rebuild (DESIGN.md section 8).
+enum class PresentationRoute : std::uint8_t { SceneGraph, Layer };
+
+[[nodiscard]] PresentationRoute selectedPresentationRoute() noexcept {
+  const char* value = std::getenv("WAM_PRESENTATION");
+  if (value == nullptr) {
+    return PresentationRoute::SceneGraph;
+  }
+  if (std::strcmp(value, "layer") == 0) {
+    return PresentationRoute::Layer;
+  }
+  return PresentationRoute::SceneGraph;
+}
+
+// The Qt view handle the layer must be installed beneath. Derived from the
+// video item's own window, so no change to main.cpp's window plumbing is
+// needed: the item already lives in the window whose content view hosts the
+// scene.
+[[nodiscard]] void* qtViewHandleForItem(QtGlVideoItem* videoItem) noexcept {
+  if (videoItem == nullptr) {
+    return nullptr;
+  }
+  QQuickWindow* window = videoItem->window();
+  if (window == nullptr) {
+    return nullptr;
+  }
+  return reinterpret_cast<void*>(window->winId());
 }
 
 [[nodiscard]] std::uint64_t readSystemHostTicks(void*) noexcept {
@@ -110,15 +155,37 @@ std::unique_ptr<NativeMediaSession> createNativeMediaSessionSystem(
       return {};
     }
 
-    std::shared_ptr<NativeQtGlOutput> concreteOutput =
-        NativeQtGlOutput::createTracked(videoItem, wake->trackedVideo(),
-                                        error);
-    if (concreteOutput == nullptr) {
-      assignError(error,
-                  "system tracked native video output creation failed");
-      return {};
+    std::shared_ptr<NativeTrackedVideoOutput> trackedOutput;
+    std::shared_ptr<NativeLayerHostView> layerHost;
+    if (selectedPresentationRoute() == PresentationRoute::Layer) {
+      // The layer presenter issues no in-process render pass, which is the
+      // whole objective (DESIGN.md section 6). Everything downstream of this
+      // pointer -- consumer, arbiter, session, owner, telemetry, commit-seek,
+      // preview -- is typed on the interface and is unchanged by the choice.
+      std::string layerError;
+      layerHost = NativeLayerHostView::create(qtViewHandleForItem(videoItem),
+                                              &layerError);
+      if (layerHost != nullptr) {
+        trackedOutput = NativeLayerVideoOutput::createTracked(
+            layerHost->displayLayer(), wake->trackedVideo(), &layerError);
+      }
+      if (trackedOutput == nullptr) {
+        // A layer route that cannot be installed is not a session failure: the
+        // GL path is a full implementation and stays the fallback.
+        layerHost.reset();
+      }
     }
-    std::shared_ptr<NativeTrackedVideoOutput> trackedOutput = concreteOutput;
+    if (trackedOutput == nullptr) {
+      std::shared_ptr<NativeQtGlOutput> concreteOutput =
+          NativeQtGlOutput::createTracked(videoItem, wake->trackedVideo(),
+                                          error);
+      if (concreteOutput == nullptr) {
+        assignError(error,
+                    "system tracked native video output creation failed");
+        return {};
+      }
+      trackedOutput = concreteOutput;
+    }
     std::shared_ptr<NativeTrackedVideoArbiter> videoArbiter =
         NativeTrackedVideoArbiter::create(std::move(trackedOutput), error);
     if (videoArbiter == nullptr) {
@@ -138,7 +205,7 @@ std::unique_ptr<NativeMediaSession> createNativeMediaSessionSystem(
 
     auto retained = std::make_shared<NativeMediaSessionSystemLifetime>(
         NativeMediaSessionSystemLifetime{std::move(externalLifetime), wake,
-                                         videoArbiter});
+                                         videoArbiter, std::move(layerHost)});
 
     NativeMediaSessionDependencies dependencies;
     dependencies.externalLifetime = std::move(retained);
