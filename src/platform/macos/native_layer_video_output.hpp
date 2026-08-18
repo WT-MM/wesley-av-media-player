@@ -106,6 +106,14 @@ class NativeLayerVideoOutput final : public NativeTrackedVideoOutput {
       std::uint64_t finalGeneration) noexcept override;
   [[nodiscard]] NativeTrackedVideoOutputFacts facts() const noexcept override;
 
+  // AVSampleBufferDisplayLayer composites the decoded IOSurface out of process;
+  // this output enqueues it and never reads a pixel, so the decoder is free to
+  // deliver its native lossless surface instead of paying a per-frame
+  // VTPixelTransferSession to hand back an uncompressed one.
+  [[nodiscard]] bool presentsDecodedSurfacesDirectly() const noexcept override {
+    return true;
+  }
+
   // Activates the first generation. The tracked contract requires an accepted
   // generation before any submit; the GL output reaches this through its
   // scheduler seam, and the layer output exposes it directly because it has no

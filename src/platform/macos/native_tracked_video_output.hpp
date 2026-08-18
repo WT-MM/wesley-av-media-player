@@ -135,6 +135,19 @@ class NativeTrackedVideoOutput {
       std::uint64_t finalGeneration) noexcept = 0;
   [[nodiscard]] virtual NativeTrackedVideoOutputFacts facts()
       const noexcept = 0;
+
+  // True when this output hands the decoded surface straight to a
+  // CoreAnimation display layer and nothing in this process ever samples it.
+  // That is the only condition under which the decoder may leave its output
+  // pixel format unpinned and take the AGX lossless-compressed surface the
+  // hardware produces natively -- which is worth roughly half of the decoder
+  // service's CPU, because the pinned format costs a VTPixelTransferSession per
+  // frame. Defaults to false: an output that samples the surface (Qt's GL or
+  // Metal scene graph) must keep the pinned uncompressed contract, and a new
+  // output that forgets to answer gets the safe answer.
+  [[nodiscard]] virtual bool presentsDecodedSurfacesDirectly() const noexcept {
+    return false;
+  }
 };
 
 }  // namespace wam::macos
