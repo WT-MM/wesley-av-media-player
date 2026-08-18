@@ -5,16 +5,21 @@
 
 namespace wam::macos {
 
-// Owns the NSView that carries the AVSampleBufferDisplayLayer, installed
-// directly beneath Qt's own NSView in the window's content view.
+// Owns the NSView that carries the AVSampleBufferDisplayLayer, installed as
+// Qt's own NSView's immediately-lower SIBLING.
 //
 // This is option S1 from DESIGN.md section 2, chosen over reaching into Qt's
-// private layer tree:
+// private layer tree. On Qt 6 the QNSView is itself the window's content view,
+// so the shared parent is the window's frame view:
 //
 //   NSWindow (full-size content view, transparent titlebar)
-//   |__ contentView
+//   |__ frameView
 //       |__ hostView   (layer-hosted, layer = AVSampleBufferDisplayLayer)  BELOW
 //       |__ QNSView    (Qt Quick, OpenGL, clear background, alpha 8)       ABOVE
+//       |__ titlebar container (AppKit traffic lights)                     ABOVE
+//
+// Sibling, not child: a subview always composites above its superview's own
+// content, so hosting the layer *inside* Qt's view hides every pixel Qt draws.
 //
 // WindowServer composites the layer's IOSurface directly, so this process
 // issues no render pass for video. Qt renders only chrome and is transparent

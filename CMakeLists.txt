@@ -1013,6 +1013,35 @@ if(BUILD_TESTING)
         COMMAND wam_native_video_consumer_test)
       set_tests_properties(macos_native_video_consumer PROPERTIES TIMEOUT 30)
 
+      # Layer-presentation contract gate. The presenter is headless by
+      # construction -- createTracked(nullptr, ...) builds its own detached
+      # AVSampleBufferDisplayLayer, which accepts and acknowledges enqueues
+      # without ever joining a view hierarchy -- so it compiles here beside the
+      # other fixture-free native gates rather than in the Qt window block.
+      # Only the presenter itself is compiled in; FrameLease and the surface
+      # budget come from the one production video core.
+      add_executable(wam_native_layer_video_output_test
+        tests/native_layer_video_output_test.mm
+        src/platform/macos/native_layer_video_output.hpp
+        src/platform/macos/native_layer_video_output.mm)
+      target_include_directories(
+        wam_native_layer_video_output_test PRIVATE src)
+      target_link_libraries(wam_native_layer_video_output_test PRIVATE
+        wam_native_core
+        wam_macos_native_video_core
+        "${WAM_COREFOUNDATION_FRAMEWORK}"
+        "${WAM_COREMEDIA_FRAMEWORK}"
+        "${WAM_COREVIDEO_FRAMEWORK}"
+        "${WAM_FOUNDATION_FRAMEWORK}"
+        "${WAM_IOSURFACE_FRAMEWORK}"
+        "${WAM_AVFOUNDATION_FRAMEWORK}"
+        "${WAM_QUARTZCORE_FRAMEWORK}")
+      add_test(NAME macos_native_layer_video_output
+        COMMAND wam_native_layer_video_output_test)
+      set_tests_properties(macos_native_layer_video_output PROPERTIES
+        TIMEOUT 30
+        SKIP_RETURN_CODE 77)
+
       # The arbiter has no test-only class layout. Exercise the single
       # production implementation through the backend archive instead of
       # compiling a second copy into this executable.
@@ -1142,6 +1171,7 @@ if(BUILD_TESTING)
           wam_native_audio_output_test
           wam_native_surface_budget_test
           wam_native_video_consumer_test
+          wam_native_layer_video_output_test
           wam_native_tracked_video_arbiter_test
           wam_native_preview_frame_lane_test
           wam_native_media_session_test

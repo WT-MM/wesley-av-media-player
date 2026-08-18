@@ -1,6 +1,7 @@
 #include "mpv_video_item.hpp"
 #if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
 #include "native_benchmark_telemetry.hpp"
+#include "platform/macos/native_layer_presentation_state.hpp"
 #endif
 #if defined(Q_OS_MACOS)
 #include "macos_window_chrome.hpp"
@@ -736,15 +737,15 @@ int main(int argc, char *argv[]) {
   {
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty(QStringLiteral("player"), &player);
-#if defined(Q_OS_MACOS)
+#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
     // On the CALayer presentation route the video is an
     // AVSampleBufferDisplayLayer sitting *below* Qt's view, so the QML
-    // background must stop painting opaque black over it. Read the same
-    // WAM_PRESENTATION opt-in the session factory selects on
-    // (native_media_session_system.mm) so the two cannot disagree.
+    // background must stop painting opaque black over it. The route decision
+    // is shared with the session factory (native_layer_presentation_state.hpp)
+    // so the two cannot disagree.
     engine.rootContext()->setContextProperty(
         QStringLiteral("layerPresentation"),
-        qgetenv("WAM_PRESENTATION") == QByteArrayLiteral("layer"));
+        wam::macos::layerPresentationRouteSelected());
 #else
     engine.rootContext()->setContextProperty(
         QStringLiteral("layerPresentation"), false);

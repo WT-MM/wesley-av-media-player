@@ -127,6 +127,19 @@ struct NativeLayerVideoOutput::State
 
   NativeLayerVideoOutputHealth healthCounters{};
 
+  // Once-only latch for this output's share of the process-wide presentation
+  // gate. closeProgress() and ~NativeLayerVideoOutput both end presentation and
+  // either may run first (or both, in that order), so the release has to be
+  // idempotent per output or a normal close-then-destroy would double-release a
+  // counter that other outputs share.
+  std::atomic<bool> presentationRetained{false};
+
+  void releasePresentationOnceNoexcept() noexcept {
+    if (presentationRetained.exchange(false, std::memory_order_acq_rel)) {
+      releaseNativeLayerPresentation();
+    }
+  }
+
   ~State() {
     if (formatDescription != nullptr) {
       CFRelease(formatDescription);
@@ -434,7 +447,7 @@ NativeLayerVideoOutput::~NativeLayerVideoOutput() {
   if (state == nullptr) {
     return;
   }
-  setNativeLayerPresentationActive(false);
+  state->releasePresentationOnceNoexcept();
   state->closeWakeGateNoexcept();
   std::lock_guard lock(state->mutex);
   state->releaseAllLeasesLocked();
@@ -490,9 +503,14 @@ std::shared_ptr<NativeLayerVideoOutput> NativeLayerVideoOutput::createTracked(
       state->renderer = renderer;
     }
     state->wake = wake;
-    setNativeLayerPresentationActive(true);
-    return std::shared_ptr<NativeLayerVideoOutput>(
-        new NativeLayerVideoOutput(std::move(state)));
+    auto output = std::shared_ptr<NativeLayerVideoOutput>(
+        new NativeLayerVideoOutput(state));
+    // Retained only once the output exists, so a throwing construction cannot
+    // leak a share of the gate; released exactly once by closeProgress() or the
+    // destructor. Nothing can submit a frame before this returns.
+    state->presentationRetained.store(true, std::memory_order_release);
+    retainNativeLayerPresentation();
+    return output;
   } catch (...) {
     assignErrorNoexcept(error, "layer video output construction threw");
     return {};
@@ -835,9 +853,9 @@ NativeTrackedVideoOutputProgress NativeLayerVideoOutput::closeProgress(
     state->closeDone = true;
     state->closed = true;
   }
-  // The route is no longer presenting; the Qt video item resumes per-frame
-  // updates so a libmpv fallback still paints.
-  setNativeLayerPresentationActive(false);
+  // This output is no longer presenting. Once the last one has released, the
+  // Qt video item resumes per-frame updates so a libmpv fallback still paints.
+  state->releasePresentationOnceNoexcept();
   return NativeTrackedVideoOutputProgress::Done;
 }
 

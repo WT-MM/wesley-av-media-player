@@ -61,13 +61,36 @@ std::shared_ptr<NativeLayerHostView> NativeLayerHostView::create(
       assignError(error, "layer host view requires a content view");
       return {};
     }
-    // Qt's view is normally the content view itself or a direct child of it.
-    // The sibling insertion below needs a common parent, so walk up until the
-    // view whose superview is the content view.
+    // The host view must become Qt's SIBLING, never its child: a subview always
+    // composites above its superview's own content, so parenting the display
+    // layer under Qt's view puts the video over every pixel Qt draws -- the
+    // chrome disappears while the AppKit traffic lights, which live outside the
+    // content view entirely, survive.
+    //
+    // On Qt 6 the QNSView *is* the window's content view (verified at runtime:
+    // the handle behind QWindow::winId() compares equal to window.contentView),
+    // so the common parent is the window's frame view and the DESIGN.md S1
+    // sandwich is:
+    //
+    //   frameView
+    //   |__ hostView                (AVSampleBufferDisplayLayer)      BELOW
+    //   |__ QNSView == contentView  (Qt Quick, transparent)           ABOVE
+    //   |__ NSTitlebarContainerView (traffic lights)                  ABOVE
+    //
+    // Walking up from Qt's view to whichever ancestor is a direct child of the
+    // content view keeps the older arrangement (Qt hosted inside the content
+    // view) working unchanged; the loop simply stops one level higher when Qt
+    // owns the content view itself.
     NSView* sibling = qtView;
-    while (sibling != nil && sibling.superview != contentView &&
-           sibling != contentView) {
+    while (sibling != contentView && sibling.superview != nil &&
+           sibling.superview != contentView) {
       sibling = sibling.superview;
+    }
+    NSView* siblingParent = sibling.superview;
+    if (siblingParent == nil) {
+      assignError(error,
+                  "layer host view found no view to install the layer beneath");
+      return {};
     }
 
     AVSampleBufferDisplayLayer* layer =
@@ -90,7 +113,9 @@ std::shared_ptr<NativeLayerHostView> NativeLayerHostView::create(
       @"sublayers" : [NSNull null],
     };
 
-    NSView* hostView = [[NSView alloc] initWithFrame:contentView.bounds];
+    // sibling.frame is already in siblingParent's coordinates, so this covers
+    // exactly the area Qt covers whichever level the insertion landed on.
+    NSView* hostView = [[NSView alloc] initWithFrame:sibling.frame];
     // Layer-HOSTED, not layer-backed: the layer must be assigned before
     // wantsLayer, or AppKit creates its own backing layer and ignores this one.
     hostView.layer = layer;
@@ -98,16 +123,23 @@ std::shared_ptr<NativeLayerHostView> NativeLayerHostView::create(
     hostView.layerContentsRedrawPolicy = NSViewLayerContentsRedrawNever;
     hostView.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
 
-    if (sibling != nil && sibling != contentView) {
-      [contentView addSubview:hostView
+    [siblingParent addSubview:hostView
                    positioned:NSWindowBelow
                    relativeTo:sibling];
-    } else {
-      // Qt owns the content view itself; the video layer becomes its
-      // bottom-most subview, which is the same z-order relationship.
-      [contentView addSubview:hostView
-                   positioned:NSWindowBelow
-                   relativeTo:nil];
+
+    // The whole route depends on this one ordering fact, and AppKit is free to
+    // decline a requested position (NSThemeFrame manages its own children), so
+    // it is asserted rather than assumed. Failing here falls back to the GL
+    // route, which is correct-but-slower -- strictly better than shipping a
+    // window whose chrome is invisible.
+    const NSUInteger hostIndex = [siblingParent.subviews indexOfObject:hostView];
+    const NSUInteger qtIndex = [siblingParent.subviews indexOfObject:sibling];
+    if (hostIndex == NSNotFound || qtIndex == NSNotFound ||
+        hostIndex >= qtIndex) {
+      [hostView removeFromSuperview];
+      assignError(error,
+                  "layer host view could not be ordered beneath Qt's view");
+      return {};
     }
 
     auto impl = std::make_unique<Impl>();
