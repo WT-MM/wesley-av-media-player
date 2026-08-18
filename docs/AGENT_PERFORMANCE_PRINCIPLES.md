@@ -28,29 +28,53 @@ that was slower than Python until the architecture was fixed (3381 ms →
    strings only on terminal error paths (cold — acceptable).
 3. **Sample factories** (`avfoundation_media_source.mm`,
    `matroska_media_source.mm`): per-AU/per-frame cadence (~77/s at
-   1080p30+AAC). The Matroska factory reuses a member `scratch` vector
-   (workspace pattern: grows to high-water, then allocation-free) and
-   (demuxer cursors are payload-free by design — offsets only).
-   CORRECTION 2026-08-17: this document previously claimed the Matroska
-   factory "copies payload bytes exactly once". It did not — it copied
-   them TWICE, `readAt` into a member scratch vector and then
-   `CMBlockBufferReplaceDataBytes` from that scratch into the CoreMedia
-   block. The second copy is now deleted: the CMBlockBuffer is created
-   first and `copyRanges` writes straight into its memory, so the claim is
-   true as of this date rather than aspirational. AVFoundation has one
-   framework-internal copy and no WAM-side copy.
+   1080p30+AAC). Demuxer cursors are payload-free by design — offsets only —
+   so the factory is the only place payload bytes are moved. The Matroska
+   factory creates the CMBlockBuffer first and has `copyRanges` `pread`
+   straight into its memory: one copy, no scratch vector. AVFoundation has
+   one framework-internal copy and no WAM-side copy.
+
+   This paragraph has now been wrong in BOTH directions, so the history is
+   recorded once and the numbers replace the reasoning. It first claimed
+   the factory "copies payload bytes exactly once" while it in fact copied
+   twice (`readAt` into a member `scratch` vector, then
+   `CMBlockBufferReplaceDataBytes` into the block). The 2026-08-17 audit
+   deleted the second copy and asserted, unmeasured, that this was a ~30%
+   staging win. MEASURED 2026-08-17 live on the layer route (h264-high.mkv,
+   1080p30 + AAC, mean 32,628 B per video sample), all three staging paths
+   compiled into one binary and selected at runtime, run back-to-back:
+
+   | run position | staging path | CM alloc | payload copy | total |
+   | --- | --- | --- | --- | --- |
+   | 1 (cold cache) | direct write | 4.7 µs | 392 µs | 397 µs |
+   | 2 | scratch + `ReplaceDataBytes` | 9.7 µs | 59 µs | 69 µs |
+   | 3 | direct write + page pre-touch | 6.7 µs | 17 µs | 24 µs |
+   | 1 (cold cache) | direct write + page pre-touch | 4.3 µs | 51 µs | 56 µs |
+   | 2 | scratch + `ReplaceDataBytes` | 4.5 µs | 12.9 µs | 17.5 µs |
+   | 3 | direct write | 2.6 µs | 15.6 µs | 18.4 µs |
+
+   READ THE POSITION COLUMN, NOT THE PATH COLUMN. The first three rows ran
+   in one order and the last three in the reverse order, and in BOTH orders
+   the slowest arm is whichever one ran first. The variable that moves this
+   number by 20x is whether the clip's pages are already resident, which no
+   staging path controls; once the file is warm all three arms land within
+   12.9–18.4 µs of each other. The "30% duplicate-memcpy win" was never
+   measured and is not there to find — at 30 fps the entire spread between
+   the warm arms is under 0.2 ms/s. VERDICT: the current one-copy path
+   stays, not because it is faster but because it is simpler and provably
+   not slower. Anyone re-measuring this MUST alternate the run order or
+   they will rediscover the page cache and name it something else.
+
    Remaining deviation: one `std::make_shared` storage-token allocation per
    sample, plus CM's own CMSampleBuffer/CMBlockBuffer allocations
-   (API-imposed). CORRECTION: the token is a FIXED ~48–64 B control block,
-   not payload-scaled, and is one of roughly six allocations per frame —
-   about 0.7% of staging. Measuring it in isolation costs ~71 ns against
-   ~21 ns for the pooled alternative the paragraph below sketches: ~4 µs/s
-   at the 77 samples/s production cadence, against a pool that would have
-   to keep every token alive until CoreMedia asynchronously releases the
-   block that borrows it. VERDICT: measured-acceptable, and the pool is
-   explicitly NOT worth its lifetime hazard. The removable cost here was
-   never the token — it was the duplicate memcpy above (~30% of staging),
-   which is why "profile before pooling" is the rule and not a slogan.
+   (API-imposed). The token is a FIXED ~48–64 B control block, not
+   payload-scaled, and is one of roughly six allocations per frame.
+   Measuring it in isolation costs ~71 ns against ~21 ns for a pooled
+   alternative: ~4 µs/s at the 77 samples/s production cadence, against a
+   pool that would have to keep every token alive until CoreMedia
+   asynchronously releases the block that borrows it. VERDICT:
+   measured-acceptable, and the pool is explicitly NOT worth its lifetime
+   hazard.
 4. **Demuxer cursors** (`matroska_demuxer.cpp`): capacity-one, payload-free,
    fixed 24-byte/16-byte index entries with `static_assert` layout
    contracts, hard caps (65,536 clusters/cues ≈ 2.5 MiB worst case).
@@ -196,6 +220,15 @@ build.
 | cursor readNext (AAC) | 64 clusters x 25 blocks | 2,248 |
 | copyRanges (memory) | 1 KiB / 64 KiB / 1 MiB | 23 / 694 / 13,603 |
 | copyRanges (real file) | 1 KiB / 64 KiB / 1 MiB | 930 / 2,316 / 34,804 |
+
+DO NOT USE THE `copyRanges (real file)` ROW TO PREDICT PRODUCTION. Corrected
+2026-08-17 against live measurement: that row's file is small and already
+resident, so it prices a warm page-cache hit. In the player, a 32 KiB video
+access unit out of a 71 MB clip measured 392 µs on the first pass and 13–18 µs
+once warm — 170x the benchmark figure at the cold end. The benchmark measures
+the copy loop; production is dominated by page residency, which the benchmark
+deliberately holds constant. Both numbers are honest and they answer different
+questions.
 | staging token (make_shared) | 384 B / 8 KiB / 256 KiB | 47 / 168 / 1,653 |
 | staging token (pooled) | 8 KiB | 14 |
 
@@ -235,14 +268,82 @@ timescale near the int32 ceiling put both sides past a 53-bit mantissa, so
 the bound was decided by rounding. Now exact `__int128` against an integer
 nanosecond bound, with the magnitude argument in a comment.
 
+## The A/V merge key is decode order, not presentation order (2026-08-17)
+
+Recorded here because it presented as a performance defect, was chased as one,
+and was not one.
+
+SYMPTOM: on the layer route, `h264-high.mkv` drew 18.1 fps with 543 late
+frames and `hevc-main.mkv` drew 8.6 fps with 930 late frames, while
+`vp9-aac.mkv`, `av1-aac.mkv` and every MP4 were clean at 30 fps.
+`drawn == submitted` and `superseded == 0`: the scheduler was retiring frames
+before they were ever submitted.
+
+ROOT CAUSE: `matroska_media_source.mm` merges its staged video and audio heads
+by comparing one timestamp from each, and used the video sample's
+PRESENTATION time as that key. Matroska carries no DTS and its cursor emits in
+storage order, which is DECODE order. For a stream with B-frames those two
+orders are different orders — storage 0, 3, 1, 2 presents as 0, 1, 2, 3 — so
+keying the merge on presentation time made the merge hold each B-frame until
+the audio lane had advanced past the following P-frame's timestamp. The B-frames
+were then handed downstream after the audio clock had already passed their own
+presentation time, and `scheduleHeld()` correctly discarded them as late:
+`pts + duration <= clock`. `avfoundation_media_source.mm` never had the defect
+because MP4 carries a DTS and it keys on `dts.valid() ? dts : pts` — the DTS
+*is* the decode-order key. The fix gives the Matroska video lane the same lead
+by construction (`kVideoMergeLeadNanoseconds`, bounded by reorder depth x frame
+duration on one side and by the dispatcher's video read-ahead caps on the
+other).
+
+| clip | merge key | fps | drawn | late |
+| --- | --- | --- | --- | --- |
+| h264-high.mkv | presentation time | 18.13 | 834 | 543 |
+| h264-high.mkv | decode-order lead | 30.01 | 1385 | 0 |
+| hevc-main.mkv | presentation time | 8.62 | 375 | 930 |
+| hevc-main.mkv | decode-order lead | 30.02 | 1083 | 0 |
+
+WHAT THIS COST, AND THE LESSON THAT IS ACTUALLY WORTH THE WORDS: the symptom
+correlated beautifully with bitrate. Late frames rose monotonically with bytes
+per compressed frame across the whole corpus (vp9 11.3 KB clean, av1 25.8 KB
+clean, h264 32.6 KB late, hevc 41.4 KB worst), which is exactly the shape a
+per-sample staging cost makes, and the staging path had just been rewritten.
+It was a coincidence of which clips happened to carry B-frames. Three
+measurements killed it:
+
+- **a dose-response null** — three staging paths in one binary, selected at
+  runtime so no rebuild separated the arms: staging latency moved 17x
+  (397 µs → 69 µs → 24 µs per sample) and the late-frame rate did not move at
+  all (12.10 → 12.28 → 12.26 late/s);
+- **an inversion** — `hevc-main.mkv` had the CHEAPEST staging of the reordered
+  clips (209 µs) and the WORST lateness (21.5 late/s), while clean
+  `av1-aac.mkv` had MORE expensive staging (263 µs) and 0.05 late/s;
+- **a discriminator** — `h264-silent.mkv` has B-frames and is clean at 0 late,
+  because it has no audio track and therefore no merge to lose.
+
+Correlation with the obvious scalar is not a mechanism, and "the thing that
+changed most recently" is not a diagnosis. Vary the suspect at runtime and
+watch whether the symptom follows.
+
 ## UNVERIFIED LIVE — read before trusting the 2026-08-17 slice
 
 Everything in that slice is green on the required ctest regex, the five known
 GL failures are unchanged, and the demuxer work is measured by the benchmark
-above. What is NOT established is live playback health, because no run in that
-session could obtain a compositing window (see the activation note above): a
-control build with the changes reverted fell back identically, so the diff is
-exonerated, but "does not cause the fallback" is not "verified playing".
+above. What was NOT established at the time was live playback health, because
+no run in that session could obtain a compositing window (see the activation
+note above): a control build with the changes reverted fell back identically,
+so the diff was exonerated, but "does not cause the fallback" is not "verified
+playing".
+
+PARTIALLY CLOSED 2026-08-17 (later session, layer route). Live compositing runs
+were obtained by launching detached with `open -n -g --env ... --stderr ...`
+against `build/WAM.app` and letting `WAM_TEST_QUIT_AFTER_MS` end the run — a
+SIGTERM produces an empty telemetry stream, so a killed run is an unusable run.
+Under that harness the whole corpus plays: h264-high.mkv, hevc-main.mkv,
+vp9-aac.mkv, av1-aac.mkv, h264-silent.mkv and h264-high.mp4 all reach 30 fps
+with 0 late frames and 0 audio underruns once the merge-key defect above is
+fixed. Still NOT verified live: the reorder cap lowered from 8 to 4, because no
+clip in the corpus exceeds `has_b_frames=2` and none of these runs exercised
+the refusal path.
 
 The one change that most needs a live run is the reorder cap lowered from 8 to
 4 in `native_video_consumer.mm`, because it is the only change that can refuse

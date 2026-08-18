@@ -196,12 +196,41 @@ class NativeVideoConsumer final : public media::NativeVideoConsumer {
   // cheap compressed bytes instead of scarce decoded surfaces.
   static constexpr std::size_t kMaximumDecodedSurfaceOwnership = 5;
 
+  // Decoded surfaces the tracked output itself may hold at once. This is a
+  // property of the presenter, not of the consumer, so it is stated here as the
+  // budget input it is and asserted against each implementation's own ceiling.
+  //
+  //   NativeQtGlOutput          1 -- the single admitted FrameLease. Qt's
+  //                                  scene graph copies nothing and the item
+  //                                  releases on the next delivery.
+  //   NativeLayerVideoOutput    2 -- the admitted FrameLease plus its
+  //                                  predecessor, retired only one enqueue
+  //                                  later. AVSampleBufferDisplayLayer retains
+  //                                  the CVPixelBuffer it is displaying, so
+  //                                  releasing the predecessor at enqueue time
+  //                                  would leave a live IOSurface that the
+  //                                  renderer still owns and this process no
+  //                                  longer charges against NativeSurfaceBudget
+  //                                  -- an accounting lie, and the decoder pool
+  //                                  would grow behind the budget's back.
+  //                                  Phase A measured renderer retention at
+  //                                  max 1 (median 1) in decoded mode, so one
+  //                                  retirement slot covers it with the
+  //                                  capacity-one admission this boundary
+  //                                  already enforces.
+  //
+  // The maximum across implementations is what the budget must absorb, because
+  // the construction site selects one at runtime.
+  static constexpr std::size_t kMaximumTrackedOutputSurfaceOwnership = 2;
+
   // The ownership paragraph above is arithmetic, so assert it rather than
   // trusting the prose to stay true: at most five decoder-held surfaces, one
-  // decoded-queue lease, one scheduler-held lease and the tracked output's one
-  // accepted lease, inside the process-wide budget. 5 + 1 + 1 + 1 = 8 <= 10.
+  // decoded-queue lease, one scheduler-held lease and the tracked output's
+  // accepted-plus-retiring leases, inside the process-wide budget.
+  // 5 + 1 + 1 + 2 = 9 <= 10, leaving one surface of headroom.
   static_assert(
-      kMaximumDecodedSurfaceOwnership + kDecodedQueueCapacity + 1U + 1U <=
+      kMaximumDecodedSurfaceOwnership + kDecodedQueueCapacity + 1U +
+              kMaximumTrackedOutputSurfaceOwnership <=
           static_cast<std::size_t>(kNativeSurfaceBudgetMaximumSurfaces),
       "decoded-surface ownership must fit the process-wide surface budget");
 
@@ -285,6 +314,7 @@ class NativeVideoConsumer final : public media::NativeVideoConsumer {
   // Emergency/destructor teardown only. Router-visible retirement must use
   // retire() so no layer invents a terminal generation.
   [[nodiscard]] media::NativeMediaConsumerProgress close() noexcept override;
+  [[nodiscard]] const std::string& failureText() const noexcept override;
 
   [[nodiscard]] std::optional<NativeTrackedVideoEvent>
   takeOutputEvent() noexcept;

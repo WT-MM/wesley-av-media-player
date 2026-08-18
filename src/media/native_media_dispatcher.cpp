@@ -1531,6 +1531,7 @@ NativeMediaDispatcherStep NativeMediaDispatcher::checkReadCapacity() noexcept {
     try {
       result = audio_->capacity(consumer_generation_);
     } catch (...) {
+      failure_message_ = "audio consumer capacity threw";
       return failStep(NativeMediaDispatcherFailure::Consumer);
     }
     if (result == NativeMediaConsumeResult::Backpressure) {
@@ -1541,6 +1542,14 @@ NativeMediaDispatcherStep NativeMediaDispatcher::checkReadCapacity() noexcept {
                       NativeMediaDispatcherWait::CallAgain,
                       stats_.selectedAudio);
     } else if (result != NativeMediaConsumeResult::Accepted) {
+      // NativeAudioConsumer::capacity() carries no error out-parameter, so the
+      // port cannot say which of its gates refused, and unlike the video port
+      // it exposes no failureText() for failStep() to adopt. Name that limit
+      // in the message itself rather than emit a bare empty string: a field
+      // report then at least identifies the seam and says why it is mute.
+      failure_message_ =
+          "audio consumer refused capacity and reports no reason (audio port "
+          "exposes no error channel)";
       return failStep(result == NativeMediaConsumeResult::Drained
                           ? NativeMediaDispatcherFailure::ConsumerProtocol
                           : NativeMediaDispatcherFailure::Consumer);
@@ -1553,6 +1562,7 @@ NativeMediaDispatcherStep NativeMediaDispatcher::checkReadCapacity() noexcept {
     try {
       result = video_->capacity(consumer_generation_);
     } catch (...) {
+      failure_message_ = "video consumer capacity threw";
       return failStep(NativeMediaDispatcherFailure::Consumer);
     }
     if (result == NativeMediaConsumeResult::Backpressure) {
@@ -1828,7 +1838,41 @@ NativeMediaDispatcherStep NativeMediaDispatcher::makeStep(
 }
 
 NativeMediaDispatcherStep NativeMediaDispatcher::failStep(
-    NativeMediaDispatcherFailure failure) noexcept {
+    NativeMediaDispatcherFailure failure,
+    std::source_location origin) noexcept {
+  // Consumer results that carry no error out-parameter -- capacity(), and the
+  // whole lifecycle set -- can still fail a step, and only the port knows
+  // which of its internal gates refused. Without this the always-on stderr
+  // failure line reports class=Consumer with error="" for every one of them,
+  // which names the seam but not the branch. Adopt the port's own gate text
+  // when this step published nothing more specific.
+  if (failure_message_.empty() && video_ != nullptr &&
+      (failure == NativeMediaDispatcherFailure::Consumer ||
+       failure == NativeMediaDispatcherFailure::ConsumerProtocol)) {
+    try {
+      failure_message_ = video_->failureText();
+    } catch (...) {
+      // A copy for a diagnostic string must never change the failure this
+      // step already decided. Leaving failure_message_ empty degrades the
+      // stderr line back to its previous behaviour and nothing more.
+    }
+  }
+  // Last resort, and the reason the stderr failure line can no longer carry an
+  // empty error string. A seam that fails without publishing a reason is a
+  // real and recurring shape here -- capacity(), and every lifecycle result,
+  // carry no error out-parameter at all -- and naming the refusing step beats
+  // reporting nothing. This is a diagnostic of last resort, not a substitute
+  // for a seam saying what it refused: prefer fixing the seam.
+  if (failure_message_.empty()) {
+    try {
+      failure_message_ = std::string("no reason was published by the failing "
+                                     "step (") +
+                         origin.function_name() + ":" +
+                         std::to_string(origin.line()) + ")";
+    } catch (...) {
+      // A diagnostic must never change the failure this step already decided.
+    }
+  }
   releaseRetainedEvents();
   fail(failure, stats_.generation);
   return makeStep(NativeMediaDispatcherAction::Failed,

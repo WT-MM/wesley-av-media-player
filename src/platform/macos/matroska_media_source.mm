@@ -500,6 +500,46 @@ enum class SampleBuildStatus : std::uint8_t {
   Failed,
 };
 
+// How far ahead of its own presentation time a video sample sorts in the A/V
+// merge. Matroska carries no decode timestamp, and the cursor emits in storage
+// order, which is DECODE order -- so for a stream with B-frames the emission
+// order and the presentation order are not the same order. Keying the merge on
+// the presentation time therefore sorted every B-frame BEHIND audio that had
+// already played past it, and the frame reached the presentation scheduler
+// after its interval had closed. This constant reconstructs the lead that a
+// DTS-bearing container hands the merge for free.
+//
+// The bound: the displacement between decode order and presentation order is
+// at most (reorder depth) x (frame duration). The consumer refuses any stream
+// above a reorder depth of 4, and at the lowest frame rate this player admits
+// a frame is well under 42 ms, so 4 x 42 ms = 168 ms is the worst case; 250 ms
+// clears it with margin. The cost of the lead is bounded in the other
+// direction by the dispatcher's video read-ahead budget: 250 ms is 7.5 frames
+// at 30 fps against a 24-event lane, and 312 KiB at 10 Mbit/s against a 4 MiB
+// high-water mark, so a leading video lane cannot overrun either cap.
+constexpr std::int64_t kVideoMergeLeadNanoseconds{250'000'000};
+
+// Exact: the lead converted into the presentation timestamp's own timescale,
+// rounded UP so the key never lands short of the reorder window, computed in
+// 128 bits so the intermediate cannot overflow (a timescale is at most INT32_MAX,
+// so the product is at most 2.5e8 x 2.1e9 = 5.4e17, and the quotient at most
+// 5.4e8 ticks). The result is an ordering key only -- it is never published as
+// a timestamp, and `MediaSample::presentationTime` keeps the exact container
+// value.
+[[nodiscard]] constexpr MediaTime videoMergeOrderKey(
+    MediaTime presentation) noexcept {
+  if (!presentation.valid()) {
+    return presentation;
+  }
+  const __int128 ticks =
+      (static_cast<__int128>(kVideoMergeLeadNanoseconds) *
+           static_cast<__int128>(presentation.timescale) +
+       999'999'999) /
+      1'000'000'000;
+  return MediaTime{presentation.value - static_cast<std::int64_t>(ticks),
+                   presentation.timescale};
+}
+
 struct SampleBuildInputs {
   const MatroskaPreparedAsset* asset{nullptr};
   CancellationToken cancellation{};
@@ -1020,10 +1060,18 @@ struct MatroskaMediaSource::Impl {
       return std::nullopt;
     }
     // Matroska cursors emit in storage order, which is decode order, and never
-    // produce a payload-free marker, so the merge key is simply the exact
-    // presentation time. Video wins ties because no DTS exists to break them.
-    return StagedSample{*selected, raw.presentationTime, std::move(sample),
-                        bytes};
+    // produce a payload-free marker. Audio therefore merges on its exact
+    // presentation time, but VIDEO MUST NOT: with B-frames, decode order and
+    // presentation order differ, and keying video on its presentation time is
+    // what made a reordered MKV deliver its B-frames after the audio clock had
+    // already passed them. The video lane sorts on a key that leads its
+    // presentation time by the bounded reorder window instead -- the same lead
+    // `avfoundation_media_source.mm` gets from `dts.valid() ? dts : pts`.
+    // Video still wins ties because no DTS exists to break them.
+    const MediaTime orderTime = video
+                                    ? videoMergeOrderKey(raw.presentationTime)
+                                    : raw.presentationTime;
+    return StagedSample{*selected, orderTime, std::move(sample), bytes};
   }
 
   [[nodiscard]] bool stage(bool video, bool admission, std::string* error) {
