@@ -110,6 +110,14 @@ process runs lighter than QuickTime's. The MKV repeat reproduces the table
 zero late frames; playback holds 30 fps at clock 1.0000 while fully occluded
 and under saturated CPU/GPU load. Warm open is 61 ms median, ≤ 73 ms p95.
 
+A later same-session paired comparison (absolute levels shift with ambient
+load between sessions, so only paired arms are claims) removed a per-frame
+pixel-transfer pass the decode session had been forcing on the CALayer route:
+coalition CPU fell 18% (to below QuickTime's same-session measurement), energy
+fell 18% to a tie with QuickTime, and the decoder helper's memory halved to
+27.9 MB — half of QuickTime's own helper. The decoder service now runs the
+same threads doing the same work as QuickTime's.
+
 Against VLC 3.0.21 an earlier campaign on the same machine measured WAM at 37%
 less CPU and 27% less energy — with the caveat that VLC ships x86_64-only and
 runs under Rosetta 2 on this hardware, so part of that gap is translation
