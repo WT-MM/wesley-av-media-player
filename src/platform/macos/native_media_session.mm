@@ -73,10 +73,29 @@ void logNativeFailure(const char* stage, protocol::FailureReason reason,
   try {
     const char* failureClass = "NoDispatcher";
     std::string message;
+    bool dispatcherFailed = false;
     if (dispatcher != nullptr) {
-      failureClass =
-          media::nativeMediaDispatcherFailureName(dispatcher->stats().failure);
+      const media::NativeMediaDispatcherFailure failure =
+          dispatcher->stats().failure;
+      dispatcherFailed = failure != media::NativeMediaDispatcherFailure::None;
+      failureClass = media::nativeMediaDispatcherFailureName(failure);
       message = dispatcher->failureMessage();
+    }
+    // An empty error field is the one thing this line must never print: it
+    // costs a reproduction to learn what a single word would have said. The
+    // dispatcher now names the refusing step itself, so the remaining empty
+    // cases are the ones where the dispatcher is not the failing party at
+    // all -- it was never created, or it never failed and the session did.
+    // Say which, rather than say nothing.
+    if (message.empty()) {
+      if (dispatcher == nullptr) {
+        message = "no dispatcher was created for this session";
+      } else if (!dispatcherFailed) {
+        message =
+            "the session failed while the dispatcher reported no failure";
+      } else {
+        message = "the failing seam published no reason";
+      }
     }
     // Keep the record one grep-able line: control characters and quotes in a
     // backend's text must not be able to forge a second line or unbalance the

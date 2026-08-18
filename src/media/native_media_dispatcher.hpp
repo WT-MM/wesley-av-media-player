@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <memory>
 #include <optional>
+#include <source_location>
 #include <string>
 
 namespace wam::media {
@@ -131,6 +132,17 @@ class NativeVideoConsumer {
       MediaGeneration retiredGeneration,
       MediaGeneration invalidationGeneration) noexcept = 0;
   [[nodiscard]] virtual NativeMediaConsumerProgress close() noexcept = 0;
+
+  // Text for the port's own latched failure gate, for the results above that
+  // carry no error out-parameter: capacity(), cancel(), flush(), retire() and
+  // close() can all fail a step, and only the port knows which internal gate
+  // refused. The dispatcher adopts this when a failed step published nothing
+  // more specific, so a terminal Consumer failure is never reported with an
+  // empty message. Empty means the port has nothing to add to its result.
+  [[nodiscard]] virtual const std::string& failureText() const noexcept {
+    static const std::string none;
+    return none;
+  }
 };
 
 class NativeAudioConsumer {
@@ -588,8 +600,14 @@ class NativeMediaDispatcher final {
   [[nodiscard]] NativeMediaDispatcherStep makeStep(
       NativeMediaDispatcherAction action, NativeMediaDispatcherWait wait,
       MediaTrackId track = 0) noexcept;
+  // The defaulted source_location is evaluated at each CALL site, so every one
+  // of the failStep() callers identifies itself without being edited. It is
+  // the last-resort name for a failure whose seam published no reason: see the
+  // definition, which guarantees the stderr failure line is never emitted with
+  // an empty error string.
   [[nodiscard]] NativeMediaDispatcherStep failStep(
-      NativeMediaDispatcherFailure failure) noexcept;
+      NativeMediaDispatcherFailure failure,
+      std::source_location origin = std::source_location::current()) noexcept;
   void fail(NativeMediaDispatcherFailure failure,
             MediaGeneration sourceGeneration = 0) noexcept;
   void beginLifecycle(NativeMediaDispatcherLifecycleKind kind,
