@@ -125,6 +125,9 @@ enum class NativeAudioOutputFailure : std::uint8_t {
   FrameCursorOverflow,
   RenderCoreFailed,
   NativeException,
+  // Appended, never inserted: the numeric value of every enumerator above is
+  // already carried in telemetry.
+  DeviceBufferFramesUnsupported,
 };
 
 // Independently atomic, bounded facts rather than a transactional snapshot.
@@ -156,6 +159,10 @@ struct NativeAudioOutputFacts {
   std::uint32_t sampleRate{0};
   std::uint32_t callbackEntries{0};
   std::uint32_t admittedCallbacks{0};
+  // The device IO buffer size the HAL accepted, in frames, or 0 when the
+  // device would not report one. The render callback rate is sampleRate
+  // divided by this, so it is the process's audio wake rate made observable.
+  std::uint32_t deviceBufferFrames{0};
   bool configured{false};
   bool activated{false};
   bool started{false};
@@ -218,6 +225,57 @@ class NativeAudioOutput final
   static constexpr std::uint32_t kChannels = 2;
   static constexpr std::uint32_t kMaximumFramesPerSlice =
       static_cast<std::uint32_t>(NativePcmRing::kFramesPerSlab);
+
+  // Smallest PCM block the producer can put into one ring slab. The producer's
+  // admission unit is a slab, not a frame: pump() converts one input lease per
+  // call and publishes exactly one slab from it, so a slab carries one
+  // delivered sample's decoded frames. AAC-LC's access unit is 1024 frames and
+  // is the smallest among the admitted codecs (MP3 is 1152, ALAC up to 4096),
+  // and a container may deliver exactly one access unit per sample. 1024 is
+  // therefore the floor on what a slab is guaranteed to hold.
+  static constexpr std::uint32_t kMinimumFramesPerPublishedSlab = 1024;
+
+  // Frames a completely full ring is *guaranteed* to hold. Deliberately not
+  // kSlabCount * kFramesPerSlab: that is the ring's storage, not its reachable
+  // occupancy, because occupancy is counted in slabs and a slab may be short.
+  static constexpr std::uint32_t kGuaranteedRingFrames =
+      static_cast<std::uint32_t>(NativePcmRing::kSlabCount) *
+      kMinimumFramesPerPublishedSlab;
+
+  // Device periods of producer headroom the ring must carry. The producer is
+  // rearmed by the slab-retirement edge that this render callback raises, so it
+  // gets one scheduling opportunity per device period; requiring the ring to
+  // span four periods is what keeps a single late producer pass from
+  // underrunning rather than merely narrowing the window.
+  static constexpr std::uint32_t kRingDevicePeriodsOfHeadroom = 4;
+
+  // Device IO buffer size requested from the HAL. Every render callback is a
+  // real-time thread wake and the wake rate is exactly sampleRate/frames, so
+  // this constant is the process's largest single wake-rate lever. Measured on
+  // the default output device at 48 kHz: 512 -> 93.78 callbacks/s, 1024 ->
+  // 46.88, 2048 -> 23.39, 4096 -> 11.67. Left unset the device keeps whatever
+  // the previous client left behind, which is both unbounded from our side and
+  // (at the system default of 512) twice the wake rate the ring can support.
+  static constexpr std::uint32_t kDeviceBufferFrames = 1024;
+
+  // A device period must fit in one render slice, or render() rejects every
+  // callback as an invalid buffer.
+  static_assert(kDeviceBufferFrames <= kMaximumFramesPerSlice);
+  // ... and the ring must be able to cover kRingDevicePeriodsOfHeadroom of
+  // them. This is the inequality that pins kDeviceBufferFrames to 1024 today:
+  // 1024 * 4 == 4 * 1024 == kGuaranteedRingFrames, exactly. Raising the
+  // requested size requires raising NativePcmRing::kSlabCount (or proving a
+  // larger kMinimumFramesPerPublishedSlab) in the same change.
+  static_assert(kDeviceBufferFrames * kRingDevicePeriodsOfHeadroom <=
+                kGuaranteedRingFrames);
+  // The guaranteed occupancy can never exceed the storage that backs it.
+  static_assert(kGuaranteedRingFrames <=
+                static_cast<std::uint32_t>(NativePcmRing::kSlabCount) *
+                    static_cast<std::uint32_t>(NativePcmRing::kFramesPerSlab));
+  // Non-zero, and a power of two so the HAL accepts it verbatim on every
+  // device whose range covers it.
+  static_assert(kDeviceBufferFrames != 0 &&
+                (kDeviceBufferFrames & (kDeviceBufferFrames - 1)) == 0);
 
   [[nodiscard]] static std::shared_ptr<NativeAudioOutput> create(
       NativeAudioRenderCore &renderCore,
@@ -400,6 +458,7 @@ class NativeAudioOutput final
   std::atomic<std::uint64_t> generation_{0};
   std::atomic<std::uint64_t> frame_cursor_{0};
   std::atomic<std::uint32_t> published_sample_rate_{0};
+  std::atomic<std::uint32_t> device_buffer_frames_{0};
   std::atomic<bool> configured_{false};
   std::atomic<bool> published_activated_{false};
   std::atomic<bool> started_{false};

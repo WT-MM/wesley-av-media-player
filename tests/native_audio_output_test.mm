@@ -213,6 +213,16 @@ struct FakeAudioUnit {
   bool listenerAttached{false};
   std::uint32_t maximumFrames{
       NativeAudioOutput::kMaximumFramesPerSlice};
+  // Device IO buffer size. deviceBufferFrames models what the HAL reports back
+  // after a set; deviceBufferFramesClamp lets a test model a device that
+  // honours the property but lands somewhere else, and
+  // deviceBufferFramesSupported models a device that refuses it outright (the
+  // default-constructed value below matches the real system default so a test
+  // that never touches these fields still sees a plausible device).
+  std::uint32_t deviceBufferFrames{512};
+  std::uint32_t requestedDeviceBufferFrames{0};
+  std::uint32_t deviceBufferFramesClamp{0};
+  bool deviceBufferFramesSupported{true};
   double deviceRate{kSampleRate};
   double hostFrequency{kHostTicksPerSecond};
   AudioStreamBasicDescription clientFormat{};
@@ -319,6 +329,21 @@ struct FakeAudioUnit {
       }
       return result;
     }
+    if (property == kAudioDevicePropertyBufferFrameSize &&
+        scope == kAudioUnitScope_Global) {
+      if (!fake.deviceBufferFramesSupported) {
+        return kAudioUnitErr_InvalidProperty;
+      }
+      if (data == nullptr || dataSize != sizeof(std::uint32_t)) {
+        return kAudio_ParamError;
+      }
+      fake.requestedDeviceBufferFrames =
+          *static_cast<const std::uint32_t *>(data);
+      fake.deviceBufferFrames = fake.deviceBufferFramesClamp != 0
+                                    ? fake.deviceBufferFramesClamp
+                                    : fake.requestedDeviceBufferFrames;
+      return noErr;
+    }
     if (property == kAudioUnitProperty_StreamFormat &&
         scope == kAudioUnitScope_Input) {
       const OSStatus result = fake.status(Call::SetClientFormat);
@@ -376,6 +401,18 @@ struct FakeAudioUnit {
         *dataSize = sizeof(std::uint32_t);
       }
       return result;
+    }
+    if (property == kAudioDevicePropertyBufferFrameSize &&
+        scope == kAudioUnitScope_Global) {
+      if (!fake.deviceBufferFramesSupported) {
+        return kAudioUnitErr_InvalidProperty;
+      }
+      if (*dataSize < sizeof(std::uint32_t)) {
+        return kAudio_ParamError;
+      }
+      *static_cast<std::uint32_t *>(data) = fake.deviceBufferFrames;
+      *dataSize = sizeof(std::uint32_t);
+      return noErr;
     }
     if (property == kAudioUnitProperty_StreamFormat &&
         scope == kAudioUnitScope_Input) {
@@ -2052,8 +2089,106 @@ void testRetryableTeardownOrdering() {
 
 }  // namespace
 
+// The device IO buffer size is the process's audio wake rate: the render
+// callback fires exactly sampleRate/frames times a second. configure() states
+// it rather than inheriting whatever the previous client on the device left
+// behind, which fixes the wake rate and, just as importantly, bounds it -- a
+// device left above kMaximumFramesPerSlice would otherwise fail every callback
+// for the whole session.
+void testDeviceBufferFramesConfiguration() {
+  // The requested size is only sound because the ring can cover it. Restate
+  // the bound here so a future change to either constant fails at the test
+  // boundary as well as at the header.
+  static_assert(NativeAudioOutput::kDeviceBufferFrames *
+                    NativeAudioOutput::kRingDevicePeriodsOfHeadroom <=
+                NativeAudioOutput::kGuaranteedRingFrames);
+  static_assert(NativeAudioOutput::kDeviceBufferFrames <=
+                NativeAudioOutput::kMaximumFramesPerSlice);
+  static_assert(NativeAudioOutput::kGuaranteedRingFrames ==
+                static_cast<std::uint32_t>(NativePcmRing::kSlabCount) *
+                    NativeAudioOutput::kMinimumFramesPerPublishedSlab);
+
+  Fixture accepted;
+  expect(accepted.configure() &&
+             accepted.fake.requestedDeviceBufferFrames ==
+                 NativeAudioOutput::kDeviceBufferFrames &&
+             accepted.fake.deviceBufferFrames ==
+                 NativeAudioOutput::kDeviceBufferFrames &&
+             accepted.output->facts().deviceBufferFrames ==
+                 NativeAudioOutput::kDeviceBufferFrames &&
+             accepted.output->facts().failure ==
+                 NativeAudioOutputFailure::None,
+         "configure states the device IO buffer size and publishes the size "
+         "the device accepted");
+  accepted.cleanup();
+
+  // A device is free to land somewhere else. A smaller period is always safe:
+  // it only costs wakes, it cannot outrun the ring.
+  Fixture clamped;
+  clamped.fake.deviceBufferFramesClamp = 256;
+  expect(clamped.output->configure(clamped.configuration()) ==
+             NativeAudioOutputProgress::Done &&
+             clamped.fake.requestedDeviceBufferFrames ==
+                 NativeAudioOutput::kDeviceBufferFrames &&
+             clamped.output->facts().deviceBufferFrames == 256 &&
+             clamped.output->facts().failure ==
+                 NativeAudioOutputFailure::None,
+         "a device that clamps the request downwards is admitted at the size "
+         "it actually chose");
+  clamped.cleanup();
+
+  // A period the render slice cannot cover must fail here, once, rather than
+  // failing every callback for the life of the session.
+  Fixture oversized;
+  oversized.fake.deviceBufferFramesClamp =
+      NativeAudioOutput::kMaximumFramesPerSlice + 1U;
+  expect(oversized.output->configure(oversized.configuration()) ==
+             NativeAudioOutputProgress::Failed &&
+             oversized.output->facts().failure ==
+                 NativeAudioOutputFailure::DeviceBufferFramesUnsupported &&
+             oversized.output->facts().deviceBufferFrames == 0,
+         "a device period larger than one render slice fails configuration");
+  oversized.cleanup();
+
+  // The WAM_AUDIO_IO_FRAMES measurement seam admits only sizes that satisfy
+  // the same inequalities the shipped constant does, so a paired A/B can run
+  // from one binary without the environment ever being able to select a size
+  // the ring has not been proven to feed.
+  {
+    // The seam is read once per process (a function-local static), so only the
+    // first value observed in this process is testable through configure().
+    // Restate the admission predicate itself here instead, which is the part
+    // that has to hold for every candidate a harness might pass.
+    const auto admissible = [](std::uint32_t frames) {
+      return frames != 0 && (frames & (frames - 1)) == 0 &&
+             frames <= NativeAudioOutput::kMaximumFramesPerSlice &&
+             frames * NativeAudioOutput::kRingDevicePeriodsOfHeadroom <=
+                 NativeAudioOutput::kGuaranteedRingFrames;
+    };
+    expect(admissible(512) && admissible(NativeAudioOutput::kDeviceBufferFrames),
+           "the baseline and shipped device periods are both admissible");
+    expect(!admissible(0) && !admissible(3) && !admissible(768) &&
+               !admissible(2048) && !admissible(8192),
+           "zero, non-powers of two, and any size the ring cannot cover four "
+           "times over are all rejected");
+  }
+
+  // A device that refuses the property outright is still a device we can
+  // render to: render() enforces the same per-callback bound regardless.
+  Fixture unsupported;
+  unsupported.fake.deviceBufferFramesSupported = false;
+  expect(unsupported.output->configure(unsupported.configuration()) ==
+             NativeAudioOutputProgress::Done &&
+             unsupported.output->facts().failure ==
+                 NativeAudioOutputFailure::None &&
+             unsupported.output->facts().deviceBufferFrames == 0,
+         "a device that will not report its IO buffer size still configures");
+  unsupported.cleanup();
+}
+
 int main() {
   @autoreleasepool {
+    testDeviceBufferFramesConfiguration();
     testConfigurationAndExactDeviceFormat();
     testPartialInitializationAndStartUnwind();
     testTimestampModesAndRationalCarry();
