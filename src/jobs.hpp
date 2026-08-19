@@ -80,6 +80,54 @@ class BackgroundJob {
   std::string label_;
 };
 
+// Every external file WAM launches or loads is located through one ordered
+// search, most trusted first:
+//
+//   1. the runtime packaged inside the app, so a shipping build never depends
+//      on anything installed on the host;
+//   2. the developer runtime beside the build tree (`build/runtime`), which is
+//      what scripts/build_whisper.sh and scripts/fetch_whisper_model.sh fill;
+//   3. an explicit environment override (WAM_FFMPEG, WAM_WHISPER_CLI,
+//      WAM_WHISPER_MODEL);
+//   4. the standard package-manager prefixes;
+//   5. PATH.
+//
+// PATH is deliberately last and never the whole answer. A GUI launch goes
+// through LaunchServices, which hands the process the stock
+// /usr/bin:/bin:/usr/sbin:/sbin -- no /opt/homebrew/bin -- so a PATH-only
+// lookup fails for every launch that did not come from a shell even when the
+// tool is installed.
+struct ToolSearch {
+  std::string tool;                               // "FFmpeg"
+  std::string file;                               // "ffmpeg"
+  std::vector<std::filesystem::path> candidates;  // probe order
+};
+
+// Answers whether one candidate is usable. Injected so the ordering can be
+// tested without touching the filesystem.
+using ToolProbe = std::function<bool(const std::filesystem::path&)>;
+
+ToolSearch executableSearch(const char* tool, const char* file,
+                            const char* argv0);
+ToolSearch captionModelSearch(const char* argv0);
+
+// Pure over `probe`: the first accepted candidate, or an empty path.
+std::filesystem::path resolveTool(const ToolSearch& search,
+                                  const ToolProbe& probe);
+
+// Real-filesystem probes: a regular file that is executable, and a regular
+// non-empty file respectively.
+bool toolIsExecutable(const std::filesystem::path& path);
+bool toolFileExists(const std::filesystem::path& path);
+
+// Names what was looked for and every place it was looked in, for the
+// error/notice channel.
+std::string toolSearchFailure(const ToolSearch& search);
+
+// Best-effort convenience wrappers over the search above. They fall back to
+// the bare name / the packaged location so callers that only need a path keep
+// a non-empty result; callers that must report a failure should run the search
+// themselves and use toolSearchFailure().
 std::filesystem::path findBundledTool(const char* executable, const char* argv0);
 std::filesystem::path defaultWhisperModel(const char* argv0);
 

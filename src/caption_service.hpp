@@ -31,9 +31,11 @@ struct CaptionTools {
   std::filesystem::path model;
 };
 
-// Resolves the tools using the same bundle layout as the rest of WAM. Bare
-// executable names are intentional fallbacks and are resolved through PATH
-// when a request starts.
+// Resolves the tools through wam::executableSearch / wam::captionModelSearch
+// (see jobs.hpp): packaged runtime, development runtime, environment override,
+// standard install prefixes, then PATH. A bare executable name survives here
+// only when nothing matched; the request re-runs the same search so the
+// failure can name every location that was tried.
 CaptionTools findCaptionTools(const char *argv0);
 
 struct CaptionOptions {

@@ -7,8 +7,10 @@
 #include <fstream>
 #include <iostream>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <utility>
+#include <vector>
 
 #ifndef _WIN32
 #include <cerrno>
@@ -400,6 +402,72 @@ int main(int argc, char** argv) {
     expect(std::chrono::steady_clock::now() - started_at < std::chrono::seconds(3),
            "destructor cancels and joins promptly");
   }
+  {
+    // Tool resolution order. resolveTool is pure over its probe, so the whole
+    // precedence rule is testable without installing anything.
+#ifdef _WIN32
+    const auto search = wam::executableSearch("FFmpeg", "ffmpeg.exe", nullptr);
+#else
+    const auto search = wam::executableSearch("FFmpeg", "ffmpeg", nullptr);
+#endif
+    expect(search.candidates.size() >= 2,
+           "an executable search probes more than one location");
+
+    const auto index = [&search](std::string_view fragment) {
+      for (std::size_t i = 0; i < search.candidates.size(); ++i) {
+        if (search.candidates[i].string().find(fragment) != std::string::npos)
+          return static_cast<long>(i);
+      }
+      return -1L;
+    };
+
+#ifndef _WIN32
+    const long homebrew = index("/opt/homebrew/bin/");
+    const long local = index("/usr/local/bin/");
+    const long macports = index("/opt/local/bin/");
+    expect(homebrew >= 0 && local > homebrew && macports > local,
+           "standard install prefixes are probed in a stable order");
+    // Everything WAM ships or a developer stages must outrank the host.
+    expect(homebrew > 0,
+           "a packaged/development runtime is probed before any host install");
+#endif
+
+    // First acceptance wins, and nothing after it is probed.
+    std::vector<std::filesystem::path> probed;
+    const auto accept_second = [&probed, &search](
+                                   const std::filesystem::path& candidate) {
+      probed.push_back(candidate);
+      return search.candidates.size() > 1 && candidate == search.candidates[1];
+    };
+    const auto resolved = wam::resolveTool(search, accept_second);
+    expect(search.candidates.size() < 2 || resolved == search.candidates[1],
+           "resolution returns the first accepted candidate");
+    expect(probed.size() == 2, "resolution stops at the first match");
+
+    expect(wam::resolveTool(search,
+                            [](const std::filesystem::path&) { return false; })
+               .empty(),
+           "a search that matches nothing resolves to an empty path");
+
+    const auto failure = wam::toolSearchFailure(search);
+    expect(failure.find("FFmpeg") != std::string::npos,
+           "a failure names the tool");
+    expect(failure.find(search.file) != std::string::npos,
+           "a failure names the file that was looked for");
+    expect(failure.find(search.candidates.front().string()) !=
+               std::string::npos,
+           "a failure lists where WAM looked");
+
+    const auto model = wam::captionModelSearch(nullptr);
+    expect(!model.candidates.empty(),
+           "the caption model has at least one known location");
+    expect(index("ggml-base.en.bin") < 0,
+           "the model is not searched for on the executable path");
+    expect(model.candidates.front().string().find("ggml-base.en.bin") !=
+               std::string::npos,
+           "the model search looks for the pinned model file");
+  }
+
   std::cout << "jobs tests passed\n";
   return failures == 0 ? 0 : 1;
 }

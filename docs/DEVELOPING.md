@@ -55,6 +55,26 @@ scripts/bundle_macos.zsh \
   build/runtime/models/ggml-base.en.bin
 ```
 
+The two runtime scripts are all `build/WAM.app` needs for captions:
+
+```sh
+scripts/build_whisper.sh build/runtime/whisper-cli
+scripts/fetch_whisper_model.sh build/runtime/models/ggml-base.en.bin
+```
+
+`build/runtime` is a first-class search location, so captions work in the
+development app without bundling anything. WAM resolves every external tool in
+one order, most trusted first: the runtime packaged in the app
+(`Contents/Resources/tools`, `Contents/Resources/models`), the development
+runtime in `build/runtime`, an explicit `WAM_FFMPEG` / `WAM_WHISPER_CLI` /
+`WAM_WHISPER_MODEL` override, `/opt/homebrew/bin`, `/usr/local/bin`,
+`/opt/local/bin`, and only then `PATH`. PATH comes last on purpose: a GUI
+launch goes through LaunchServices and inherits only
+`/usr/bin:/bin:/usr/sbin:/sbin`, so a PATH-only lookup cannot see a Homebrew
+install and fails for every launch that did not come from a shell. FFmpeg is
+not built by either script; a Homebrew/MacPorts install is found by the
+standard prefixes above.
+
 That local command produces an ad-hoc-signed development package. Public macOS
 artifacts are built only by `.github/workflows/release-macos.yml`, which uses a
 protected `macos-release` environment, checksum-pinned dependencies built for
