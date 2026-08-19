@@ -20,7 +20,23 @@ class NativePcmRing final {
 public:
   static constexpr std::size_t kChannels = 2;
   static constexpr std::size_t kFramesPerSlab = 4096;
-  static constexpr std::size_t kSlabCount = 4;
+  // Occupancy is counted in SLABS and the producer's admission unit is one
+  // slab per converted input lease, so the reachable occupancy is
+  // kSlabCount * (frames the codec puts in a slab), which for AAC-LC is 1024
+  // -- not kSlabCount * kFramesPerSlab. Four slabs therefore carried exactly
+  // four 1024-frame device periods of producer headroom, which was correct
+  // while one device frame consumed exactly one media frame.
+  //
+  // Pitch-preserved playback rate breaks that identity: at 4x a single
+  // 1024-frame device callback consumes 4096 MEDIA frames, i.e. the entire
+  // four-slab reachable occupancy, leaving the producer zero headroom and
+  // manufacturing a permanent underrun. The headroom inequality is really
+  //   kDeviceBufferFrames * kMaximumNativeRate * kRingDevicePeriodsOfHeadroom
+  //       <= kSlabCount * kMinimumFramesPerPublishedSlab
+  // = 1024 * 4 * 4 = 16384 <= kSlabCount * 1024, so kSlabCount must be at
+  // least 16. See the static_asserts in native_audio_output.hpp, which are
+  // the enforcing statement of exactly this inequality.
+  static constexpr std::size_t kSlabCount = 16;
   static constexpr std::size_t kSamplesPerSlab = kFramesPerSlab * kChannels;
   static constexpr std::size_t kPcmPayloadBytes =
       kSlabCount * kSamplesPerSlab * sizeof(float);
@@ -168,7 +184,10 @@ private:
   };
 
   static_assert(sizeof(PcmStorage) == kPcmPayloadBytes);
-  static_assert(kPcmPayloadBytes == 131072);
+  // 16 slabs x 4096 frames x 2 channels x 4 bytes. The figure is spelled out
+  // so that a change to kSlabCount or kFramesPerSlab has to state its new
+  // resident cost here rather than growing it silently.
+  static_assert(kPcmPayloadBytes == 524288);
   static_assert(sizeof(float) == 4);
   static_assert(std::atomic<std::uint64_t>::is_always_lock_free);
   static_assert(std::atomic<std::size_t>::is_always_lock_free);

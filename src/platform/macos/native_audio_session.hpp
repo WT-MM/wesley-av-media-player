@@ -227,6 +227,14 @@ class NativeAudioSession final : public media::NativeAudioConsumer {
   // callback-visible control revision.
   [[nodiscard]] NativeAudioSessionProgress setGain(float gain) noexcept;
   [[nodiscard]] NativeAudioSessionProgress setMuted(bool muted) noexcept;
+  // Pitch-preserved playback rate as an exact rational. Cached like gain, so
+  // a rate set before configure survives into the configured session and a
+  // rate set during playback is latched by the render callback at its next
+  // boundary without any lifecycle transition. Rejects a rate the output
+  // cannot serve (outside the admitted window, or no time-stretch unit
+  // available) and leaves the previous rate in force.
+  [[nodiscard]] NativeAudioSessionProgress
+  setRate(NativePlaybackRate rate) noexcept;
   // Stops the output AudioUnit for a pause that has already settled, so a
   // paused session pays no periodic real-time wake at all. Every render
   // callback is such a wake, and a paused callback does nothing but memset

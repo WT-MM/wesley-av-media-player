@@ -202,6 +202,11 @@ public:
   [[nodiscard]] Transition
   retireStoppingAfterSynchronousTeardown(Tick now) noexcept;
   [[nodiscard]] Transition setPaused(bool paused, Tick now) noexcept;
+  // Retains the intended pitch-preserved playback rate and, when a native
+  // generation is already active, re-issues the run state carrying it. Rates
+  // outside the advertised window are refused here rather than folded into a
+  // command the native engine would then have to reject.
+  [[nodiscard]] Transition setRate(double rate, Tick now) noexcept;
   [[nodiscard]] Transition previewFrame(const PreviewFrameRequest &request,
                                         Tick now) noexcept;
   [[nodiscard]] Transition commitSeek(const CommitSeekRequest &request,
@@ -296,6 +301,11 @@ private:
   bool fallbackReservationExhausted_{false};
   double initialPositionSeconds_{0.0};
   bool intendedPaused_{true};
+  // The rate every SetRunState this router emits carries. It is a session
+  // intent, not per-generation state: it survives seeks and warm replacement
+  // exactly the way the paused intent does, matching the compatibility
+  // engine, which also keeps its speed across an open.
+  double intendedRate_{native::kVersion1Rate};
   Tick lastTick_{};
   Tick deadline_{};
   bool deadlineArmed_{false};

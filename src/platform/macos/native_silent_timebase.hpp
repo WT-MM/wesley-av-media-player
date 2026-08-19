@@ -61,6 +61,12 @@ class NativeSilentTimebase final {
   // Accepted and discarded; see the class comment.
   [[nodiscard]] NativeAudioSessionProgress setGain(float gain) noexcept;
   [[nodiscard]] NativeAudioSessionProgress setMuted(bool muted) noexcept;
+  // Playback rate on the silent route is a pure host-clock scaling: there is
+  // no PCM to stretch, so the exact rational is handed straight to the clock
+  // as its running slope. A rate set while paused is cached and takes effect
+  // at the next resume, which is the same discipline the audio route uses.
+  [[nodiscard]] NativeAudioSessionProgress
+  setRate(NativePlaybackRate rate) noexcept;
   // Freezes the timebase at its current position and closes admission. The
   // session samples visibleClock() immediately afterwards for the Ended
   // position, so this must leave a valid, paused, current publication.
@@ -80,6 +86,8 @@ class NativeSilentTimebase final {
 
   NativeMediaClock clock_;
   media::MediaGeneration generation_{0};
+  NativePlaybackRate rate_{};
+  bool running_{false};
   bool retired_{false};
 };
 

@@ -320,6 +320,28 @@ Transition PlaybackRouter::retireStoppingAfterSynchronousTeardown(
   return routeAfterStop(now);
 }
 
+Transition PlaybackRouter::setRate(double rate, Tick now) noexcept {
+  if (!acceptTick(now)) {
+    return invalid();
+  }
+  if (native::routeForRate(rate) != native::RateRoute::NativeVersion1) {
+    return ignored();
+  }
+  intendedRate_ = rate;
+  if (state_ != State::NativeActive) {
+    // Seeking, starting and ended states all issue their own authoritative
+    // run state later; retaining the intent is the whole job here.
+    return applied();
+  }
+  native::Serial serial;
+  if (!reserveLiveSerial(serial)) {
+    return beginNativeStop(false, now);
+  }
+  native::SetRunState command{
+      {attempt_, serial}, generation_, intendedPaused_, intendedRate_};
+  return applied(nativeRunAction(command));
+}
+
 Transition PlaybackRouter::setPaused(bool paused, Tick now) noexcept {
   if (!acceptTick(now)) {
     return invalid();
@@ -335,7 +357,7 @@ Transition PlaybackRouter::setPaused(bool paused, Tick now) noexcept {
       return beginNativeStop(false, now);
     }
     native::SetRunState command{
-        {attempt_, serial}, generation_, paused, native::kVersion1Rate};
+        {attempt_, serial}, generation_, paused, intendedRate_};
     return applied(nativeRunAction(command));
   }
   if (state_ == State::NativeSeeking) {
@@ -583,7 +605,7 @@ Transition PlaybackRouter::onNativeStarted(const native::Started &event,
   state_ = State::NativeActive;
   deadlineArmed_ = false;
   native::SetRunState command{
-      {attempt_, serial}, generation_, intendedPaused_, native::kVersion1Rate};
+      {attempt_, serial}, generation_, intendedPaused_, intendedRate_};
   return applied(nativeRunAction(command));
 }
 
@@ -620,7 +642,7 @@ Transition PlaybackRouter::onNativeCommitReady(
   commitDrawBaseline_ = 0;
   state_ = State::NativeActive;
   native::SetRunState command{{attempt_, serial}, generation_,
-                              intendedPaused_, native::kVersion1Rate};
+                              intendedPaused_, intendedRate_};
   return applied(nativeRunAction(command));
 }
 

@@ -39,7 +39,7 @@ bool NativeSilentTimebase::activate(media::MediaGeneration generation,
     return false;
   }
   if (generation_ == 0) {
-    if (!clock_.anchor(generation, positionSeconds, protocol::kVersion1Rate,
+    if (!clock_.anchor(generation, positionSeconds, rate_.toDouble(),
                        false)) {
       return false;
     }
@@ -54,6 +54,7 @@ bool NativeSilentTimebase::activate(media::MediaGeneration generation,
     }
   }
   generation_ = generation;
+  running_ = false;
   return true;
 }
 
@@ -69,11 +70,35 @@ NativeAudioSessionProgress NativeSilentTimebase::setPaused(
   if (retired_ || generation_ == 0) {
     return NativeAudioSessionProgress::Invalid;
   }
-  const bool applied = paused ? clock_.pause(generation_)
-                              : clock_.run(generation_,
-                                           protocol::kVersion1Rate);
-  return applied ? NativeAudioSessionProgress::Done
-                 : NativeAudioSessionProgress::Failed;
+  const bool applied =
+      paused ? clock_.pause(generation_)
+             : clock_.run(generation_, rate_.toDouble());
+  if (!applied) {
+    return NativeAudioSessionProgress::Failed;
+  }
+  running_ = !paused;
+  return NativeAudioSessionProgress::Done;
+}
+
+NativeAudioSessionProgress NativeSilentTimebase::setRate(
+    NativePlaybackRate rate) noexcept {
+  if (retired_ || !rate.valid()) {
+    return NativeAudioSessionProgress::Invalid;
+  }
+  if (rate == rate_) {
+    return NativeAudioSessionProgress::Done;
+  }
+  rate_ = rate;
+  if (generation_ == 0 || !running_) {
+    // Nothing is advancing yet; the new slope is picked up by the resume.
+    return NativeAudioSessionProgress::Done;
+  }
+  // Re-running an already running generation re-anchors it at the position it
+  // has reached and continues from there at the new slope. That is exactly a
+  // rate change: no media time is created or destroyed at the boundary.
+  return clock_.run(generation_, rate_.toDouble())
+             ? NativeAudioSessionProgress::Done
+             : NativeAudioSessionProgress::Failed;
 }
 
 NativeAudioSessionProgress NativeSilentTimebase::setGain(float) noexcept {
@@ -90,8 +115,11 @@ NativeAudioSessionProgress NativeSilentTimebase::stop() noexcept {
   if (retired_ || generation_ == 0) {
     return NativeAudioSessionProgress::Invalid;
   }
-  return clock_.pause(generation_) ? NativeAudioSessionProgress::Done
-                                   : NativeAudioSessionProgress::Failed;
+  if (!clock_.pause(generation_)) {
+    return NativeAudioSessionProgress::Failed;
+  }
+  running_ = false;
+  return NativeAudioSessionProgress::Done;
 }
 
 NativeMediaClockSnapshot NativeSilentTimebase::visibleClock() const noexcept {

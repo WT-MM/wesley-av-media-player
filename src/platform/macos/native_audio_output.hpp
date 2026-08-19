@@ -1,6 +1,7 @@
 #pragma once
 
 #include "native_audio_render_core.hpp"
+#include "native_audio_stretch_stage.hpp"
 
 #include <AudioToolbox/AudioToolbox.h>
 
@@ -249,6 +250,13 @@ class NativeAudioOutput final
   // underrunning rather than merely narrowing the window.
   static constexpr std::uint32_t kRingDevicePeriodsOfHeadroom = 4;
 
+  // Media frames one device period can consume at the fastest admitted
+  // playback rate. Below rate support this was the device period itself; a
+  // time-stretched callback emits the same number of device frames but eats
+  // rate times as many media frames, and the ring is stocked in MEDIA frames.
+  // Every headroom inequality in this file is stated in that unit.
+  static constexpr std::uint32_t kMaximumRateNumerator = 4;
+
   // Device IO buffer size requested from the HAL. Every render callback is a
   // real-time thread wake and the wake rate is exactly sampleRate/frames, so
   // this constant is the process's largest single wake-rate lever. Measured on
@@ -262,11 +270,13 @@ class NativeAudioOutput final
   // callback as an invalid buffer.
   static_assert(kDeviceBufferFrames <= kMaximumFramesPerSlice);
   // ... and the ring must be able to cover kRingDevicePeriodsOfHeadroom of
-  // them. This is the inequality that pins kDeviceBufferFrames to 1024 today:
-  // 1024 * 4 == 4 * 1024 == kGuaranteedRingFrames, exactly. Raising the
-  // requested size requires raising NativePcmRing::kSlabCount (or proving a
-  // larger kMinimumFramesPerPublishedSlab) in the same change.
-  static_assert(kDeviceBufferFrames * kRingDevicePeriodsOfHeadroom <=
+  // them AT THE FASTEST ADMITTED RATE. This is the inequality that pins
+  // NativePcmRing::kSlabCount to 16: 1024 * 4 (rate) * 4 (periods) == 16384 ==
+  // 16 * kMinimumFramesPerPublishedSlab, exactly. Raising the requested size,
+  // or the maximum rate, requires raising kSlabCount (or proving a larger
+  // kMinimumFramesPerPublishedSlab) in the same change.
+  static_assert(kDeviceBufferFrames * kMaximumRateNumerator *
+                    kRingDevicePeriodsOfHeadroom <=
                 kGuaranteedRingFrames);
   // The guaranteed occupancy can never exceed the storage that backs it.
   static_assert(kGuaranteedRingFrames <=
@@ -298,6 +308,16 @@ class NativeAudioOutput final
   activate(std::uint64_t generation, std::uint64_t streamFrameCursor,
            media::MediaTime mediaOrigin,
            media::MediaTime pausedClockPosition) noexcept;
+
+  // Publishes an exact rational playback rate. Owner-thread only, and safe
+  // while the render callback runs: the pitch-preserving stage is created
+  // here on first non-unit use and the callback latches the new rational at
+  // its own boundary. The unit rate never creates a stage, so the default
+  // path keeps exactly the cost profile it had before rate support existed.
+  // Failure means the stage could not be created or the rate is outside the
+  // admitted window; the previously accepted rate stays in force.
+  [[nodiscard]] bool setRate(NativePlaybackRate rate) noexcept;
+  [[nodiscard]] NativePlaybackRate rate() const noexcept;
 
   [[nodiscard]] NativeAudioOutputProgress start() noexcept;
   [[nodiscard]] NativeAudioOutputProgress stop() noexcept;
@@ -397,6 +417,12 @@ class NativeAudioOutput final
   const NativeAudioUnitCallTable calls_;
   const NativeAudioOutputWakeSeam wake_;
 
+  // Created lazily on the first non-unit rate and destroyed with the output.
+  // Its absence is the proof that a unit-rate session paid nothing for rate
+  // support: no component lookup, no instance, no workspace, no property
+  // traffic.
+  std::unique_ptr<NativeAudioStretchUnit> stretch_;
+
   AudioComponentInstance unit_{nullptr};
   std::uint64_t host_ticks_per_second_{0};
   __uint128_t timing_remainder_{0};
@@ -481,5 +507,15 @@ class NativeAudioOutput final
 
   friend struct NativeAudioOutputTestAccess;
 };
+
+// Media frames one device period of `deviceBufferFrames` can consume at the
+// fastest admitted playback rate. Below rate support this was the device
+// period itself; a time-stretched callback emits the same number of device
+// frames but eats rate times as many media frames, and the ring is stocked in
+// MEDIA frames. Every producer-headroom inequality is stated in that unit.
+[[nodiscard]] constexpr std::uint32_t maximumMediaFramesPerDevicePeriod(
+    std::uint32_t deviceBufferFrames) noexcept {
+  return deviceBufferFrames * NativeAudioOutput::kMaximumRateNumerator;
+}
 
 }  // namespace wam::macos
