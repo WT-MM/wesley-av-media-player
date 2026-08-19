@@ -17,6 +17,14 @@ FocusScope {
     property bool volumePopupOpen: false
     readonly property bool volumePopupWanted: compact
         && (muteButton.hovered || volumePopupHover.hovered || popupVolumeSlider.pressed)
+    // The speed panel's window, and the exact grid the native engine admits.
+    // src/media/native_playback_contract.hpp snaps every requested rate onto
+    // a multiple of 1/64 inside [0.25, 4] before it reaches the clock, so the
+    // slider snaps to the same grid here -- otherwise the label would show a
+    // number the engine is not actually playing.
+    readonly property real minimumRate: 0.25
+    readonly property real maximumRate: 4
+    readonly property int rateGrid: 64
     readonly property bool hovered: panelHover.hovered
     // A pointer merely resting on the transport (no button down) counts as
     // "active" too -- otherwise the idle timer in Main.qml can fade the
@@ -25,6 +33,11 @@ FocusScope {
     // to honor (see Main.qml's hideControlsIfIdle/transportInteractionChanged).
     readonly property bool interactionActive: hovered
         || volumePopupOpen
+        // The speed panel lives in the window overlay, so the pointer can be
+        // inside it without ever hovering the transport. Counting it as
+        // activity is what stops Main.qml's idle timer fading the chrome out
+        // from under an open panel.
+        || speedPopup.visible
         || panelDrag.pressed
         || timeline.scrubbing
         || volumeSlider.pressed
@@ -47,6 +60,33 @@ FocusScope {
         // Preferences window only ever writes integers), but it is stored as
         // a double to match seekRelative's signature -- drop a stray ".0".
         return Number(seconds).toFixed(seconds % 1 === 0 ? 0 : 1);
+    }
+
+    // Rate <-> slider travel. Logarithmic: t = 0 is 0.25x, t = 1 is 4x, and
+    // every doubling costs the same travel, so 0.25-1 and 1-4 get exactly
+    // half the track each and 1.0 falls on the midpoint.
+    function rateForTravel(travel) {
+        return snapRate(Math.pow(2, travel * 4 - 2));
+    }
+
+    function travelForRate(rate) {
+        const bounded = Math.min(maximumRate, Math.max(minimumRate, rate));
+        return (Math.log(bounded) / Math.LN2 + 2) / 4;
+    }
+
+    function snapRate(rate) {
+        const bounded = Math.min(maximumRate, Math.max(minimumRate, rate));
+        return Math.round(bounded * rateGrid) / rateGrid;
+    }
+
+    function applyRate(rate) {
+        root.player.setRate(snapRate(rate));
+    }
+
+    // "2x" for the whole rates the presets use, "1.36x" for a grid step in
+    // between -- the same rule the speed button has always used.
+    function formatRate(rate) {
+        return Number(rate).toFixed(rate % 1 === 0 ? 0 : 2) + "×";
     }
 
     function formatTime(seconds) {
@@ -91,6 +131,17 @@ FocusScope {
     onCompactChanged: {
         if (!compact)
             volumePopupOpen = false;
+        else
+            speedPopup.close(); // the speed button itself is hidden here
+    }
+    // `suppressed` drives opacity straight to 0 regardless of
+    // interactionActive (window deactivated, Quick Edit taking the width),
+    // and the panel lives in the window overlay rather than inside the
+    // faded item -- so it has to be dismissed rather than left floating over
+    // a chrome that is no longer there.
+    onSuppressedChanged: {
+        if (suppressed)
+            speedPopup.close();
     }
 
     Timer {
@@ -203,16 +254,21 @@ FocusScope {
         id: volumeCluster
         anchors.left: parent.left
         anchors.leftMargin: 11
-        anchors.bottom: parent.bottom
-        anchors.bottomMargin: 7
+        // Every cluster shares the transport's centre line -- see the note on
+        // the transport Row below.
+        anchors.verticalCenter: transport.verticalCenter
         spacing: 0
 
         IconButton {
             id: muteButton
+            anchors.verticalCenter: parent.verticalCenter
             compact: true
+            toolTipClearItem: glass
             iconName: root.player.muted || root.player.volume <= 0 ? "volumeMuted" : "volume"
             accessibleName: root.player.muted ? "Unmute" : "Mute"
-            toolTip: accessibleName
+            // The flyout occupies the space the tip would be lifted into, and
+            // says as much as the tip does once it is up.
+            toolTip: root.volumePopupOpen ? "" : accessibleName
             onClicked: {
                 root.player.toggleMute();
                 root.interaction();
@@ -221,6 +277,7 @@ FocusScope {
 
         Slider {
             id: volumeSlider
+            anchors.verticalCenter: parent.verticalCenter
             width: 72
             height: 30
             from: 0
@@ -354,6 +411,13 @@ FocusScope {
         }
     }
 
+    // The transport trio owns the bar's centre line. A Row only positions its
+    // children horizontally, so without the verticalCenter anchors below the
+    // two 30pt arrow buttons hung from the top of a 42pt-tall row and sat a
+    // full 6pt above the round button's centre -- which is what made the
+    // round button read as "not centred between the arrows" even though the
+    // horizontal spacing was already exact. The volume and utility clusters
+    // anchor to this row's centre for the same reason.
     Row {
         id: transport
         anchors.horizontalCenter: parent.horizontalCenter
@@ -363,7 +427,9 @@ FocusScope {
 
         IconButton {
             id: backButton
+            anchors.verticalCenter: parent.verticalCenter
             compact: true
+            toolTipClearItem: glass
             iconName: "backward5"
             accessibleName: "Back " + root.formatStepSeconds(root.player.seekStepSeconds) + " seconds"
             toolTip: accessibleName + " (Left Arrow)"
@@ -375,9 +441,11 @@ FocusScope {
 
         IconButton {
             id: playButton
+            anchors.verticalCenter: parent.verticalCenter
             iconName: root.player.playing ? "pause" : "play"
             emphasized: true
             compact: true
+            toolTipClearItem: glass
             accessibleName: root.player.playing ? "Pause" : "Play"
             toolTip: accessibleName + " (Space)"
             onClicked: {
@@ -388,7 +456,9 @@ FocusScope {
 
         IconButton {
             id: forwardButton
+            anchors.verticalCenter: parent.verticalCenter
             compact: true
+            toolTipClearItem: glass
             iconName: "forward5"
             accessibleName: "Forward " + root.formatStepSeconds(root.player.seekStepSeconds) + " seconds"
             toolTip: accessibleName + " (Right Arrow)"
@@ -403,30 +473,212 @@ FocusScope {
         id: utilityCluster
         anchors.right: parent.right
         anchors.rightMargin: 10
-        anchors.bottom: parent.bottom
-        anchors.bottomMargin: 7
+        anchors.verticalCenter: transport.verticalCenter
         spacing: 0
 
         QuietButton {
             id: rateButton
-            text: Number(root.player.rate).toFixed(root.player.rate % 1 === 0 ? 0 : 2) + "×"
+            anchors.verticalCenter: parent.verticalCenter
+            text: root.formatRate(root.player.rate)
             accessibleName: "Playback speed"
-            toolTip: "Playback speed"
+            // The panel answers the question the tip would; leaving the tip
+            // up would only stack a second floating card under it.
+            toolTip: speedPopup.visible ? "" : "Playback speed"
+            toolTipClearItem: glass
             compact: true
             visible: !root.compact
+            selected: speedPopup.opened
             onClicked: {
-                const choices = [0.5, 1, 1.25, 1.5, 2];
-                let next = choices.find(value => value > root.player.rate + 0.01);
-                if (next === undefined)
-                    next = choices[0];
-                root.player.setRate(next);
+                // CloseOnPressOutsideParent deliberately excludes this
+                // button, so the press that reaches onClicked while the
+                // panel is up is a genuine toggle rather than the
+                // close-then-reopen flicker a plain CloseOnPressOutside
+                // would produce.
+                if (speedPopup.opened)
+                    speedPopup.close();
+                else
+                    speedPopup.open();
                 root.interaction();
+            }
+
+            // Speed panel. A real Popup rather than a plain Rectangle like
+            // the volume flyout, because this one has to answer Escape and a
+            // click anywhere outside itself; closePolicy gives both for free.
+            // It is parented to the button but lifted clear of the whole
+            // panel, so it never covers the scrubber, and it is closed
+            // explicitly whenever the chrome is taken away underneath it.
+            Popup {
+                id: speedPopup
+
+                readonly property real anchorLeft: utilityCluster.x + rateButton.x
+
+                width: 268
+                padding: 14
+                focus: true
+                modal: false
+                dim: false
+                closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
+                // Centred on the speed button, then kept inside the panel's
+                // own width so it never hangs off the glass.
+                x: Math.max(10 - anchorLeft,
+                            Math.min(root.width - width - 10 - anchorLeft,
+                                     (rateButton.width - width) / 2))
+                y: -(utilityCluster.y + rateButton.y) - height - 10
+
+                background: Rectangle {
+                    radius: 14
+                    color: "#d51b1b1e"
+                }
+
+                enter: Transition {
+                    NumberAnimation {
+                        property: "opacity"
+                        from: 0
+                        to: 1
+                        duration: 135
+                        easing.type: Easing.OutCubic
+                    }
+                }
+
+                exit: Transition {
+                    NumberAnimation {
+                        property: "opacity"
+                        from: 1
+                        to: 0
+                        duration: 135
+                        easing.type: Easing.OutCubic
+                    }
+                }
+
+                contentItem: Column {
+                    spacing: 9
+
+                    Item {
+                        width: parent.width
+                        height: 14
+
+                        Text {
+                            anchors.left: parent.left
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: "Speed"
+                            color: "#c8ffffff"
+                            font.pixelSize: 10
+                            font.weight: Font.Medium
+                            Accessible.ignored: true
+                        }
+
+                        Text {
+                            anchors.right: parent.right
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: root.formatRate(root.player.rate)
+                            color: "#f7f7f8"
+                            font.pixelSize: 12
+                            font.weight: Font.DemiBold
+                            Accessible.ignored: true
+                        }
+                    }
+
+                    Slider {
+                        id: speedSlider
+                        width: parent.width
+                        height: 26
+                        from: 0
+                        to: 1
+                        hoverEnabled: true
+                        focusPolicy: Qt.TabFocus
+                        Accessible.name: "Playback speed"
+                        Accessible.role: Accessible.Slider
+                        // Live-apply. PlayerController::setRate is a
+                        // pitch-preserved, glitch-free change on the native
+                        // route and already expects a slider emitting on
+                        // every motion event, so the picture and the label
+                        // follow the thumb instead of waiting for release.
+                        onMoved: {
+                            const rate = root.rateForTravel(value);
+                            if (rate === 1)
+                                value = 0.5; // magnetic detent at 1x
+                            root.applyRate(rate);
+                            root.interaction();
+                        }
+
+                        Binding {
+                            target: speedSlider
+                            property: "value"
+                            value: root.travelForRate(root.player.rate)
+                            when: !speedSlider.pressed
+                            restoreMode: Binding.RestoreNone
+                        }
+
+                        background: Item {
+                            x: speedSlider.leftPadding
+                            y: speedSlider.topPadding + speedSlider.availableHeight / 2 - 1
+                            width: speedSlider.availableWidth
+                            height: 2
+
+                            Rectangle {
+                                anchors.fill: parent
+                                radius: 2
+                                color: "#70ffffff"
+                            }
+
+                            // Filled from the 1x detent rather than from the
+                            // left end: the track then reads as "how far from
+                            // normal speed", and the midpoint needs no
+                            // separate tick mark to be findable.
+                            Rectangle {
+                                x: Math.min(0.5, speedSlider.visualPosition) * parent.width
+                                width: Math.abs(speedSlider.visualPosition - 0.5) * parent.width
+                                height: parent.height
+                                radius: 2
+                                color: "#d8ffffff"
+                            }
+                        }
+
+                        handle: Rectangle {
+                            x: speedSlider.leftPadding + speedSlider.visualPosition * (speedSlider.availableWidth - width)
+                            y: speedSlider.topPadding + speedSlider.availableHeight / 2 - height / 2
+                            implicitWidth: 8
+                            implicitHeight: 8
+                            radius: width / 2
+                            color: "white"
+                        }
+                    }
+
+                    Row {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        spacing: 4
+
+                        Repeater {
+                            model: [0.25, 0.5, 1, 1.5, 2, 4]
+
+                            QuietButton {
+                                required property real modelData
+
+                                text: Number(modelData).toString()
+                                accessibleName: "Speed " + root.formatRate(modelData)
+                                compact: true
+                                fontSize: 12
+                                implicitWidth: Math.max(implicitContentWidth + 14, 34)
+                                implicitHeight: 24
+                                selected: Math.abs(root.player.rate - modelData) < 1e-9
+                                selectedColor: "#f5f5f6"
+                                selectedForeground: "#17191e"
+                                onClicked: {
+                                    root.applyRate(modelData);
+                                    root.interaction();
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
 
         IconButton {
             id: captionsButton
+            anchors.verticalCenter: parent.verticalCenter
             compact: true
+            toolTipClearItem: glass
             iconName: "captions"
             accessibleName: root.player.captionsVisible ? "Hide captions" : "Show captions"
             toolTip: accessibleName
@@ -438,7 +690,9 @@ FocusScope {
 
         IconButton {
             id: editButton
+            anchors.verticalCenter: parent.verticalCenter
             compact: true
+            toolTipClearItem: glass
             iconName: "edit"
             accessibleName: "Quick Edit"
             toolTip: "Open Quick Edit (E)"
@@ -450,7 +704,9 @@ FocusScope {
 
         IconButton {
             id: fullscreenButton
+            anchors.verticalCenter: parent.verticalCenter
             compact: true
+            toolTipClearItem: glass
             iconName: "fullscreen"
             accessibleName: "Enter full screen"
             toolTip: "Full screen (F)"

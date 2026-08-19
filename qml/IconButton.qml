@@ -12,6 +12,8 @@ AbstractButton {
     property color pressedColor: emphasized ? "#dddddf" : "#44ffffff"
     property bool emphasized: false
     property bool compact: false
+    // The panel the tooltip has to stay clear of -- see ChromeToolTip.qml.
+    property Item toolTipClearItem: null
 
     implicitWidth: emphasized ? (compact ? 42 : 48) : (compact ? 30 : 36)
     implicitHeight: implicitWidth
@@ -23,9 +25,11 @@ AbstractButton {
     Accessible.description: toolTip
     Accessible.onPressAction: control.clicked()
 
-    ToolTip.visible: (hovered || activeFocus) && toolTip.length > 0
-    ToolTip.text: toolTip
-    ToolTip.delay: 650
+    ChromeToolTip {
+        text: control.toolTip
+        clearItem: control.toolTipClearItem
+        visible: (control.hovered || control.activeFocus) && control.toolTip.length > 0
+    }
 
     background: Rectangle {
         radius: width / 2
@@ -56,9 +60,15 @@ AbstractButton {
 
     contentItem: Canvas {
         id: glyph
-        anchors.centerIn: parent
-        width: control.emphasized ? (control.compact ? 18 : 22) : (control.compact ? 16 : 19)
-        height: width
+        // Deliberately unsized and unanchored. A Control lays its own
+        // contentItem out over the padding box (padding is 0 here), so
+        // declaring a smaller width/height here does nothing -- Control's
+        // resizeContent() overwrites it, and every path below is therefore
+        // authored in normalised coordinates across the whole button box.
+        // The sizes that used to be declared here were inert, which is why
+        // the play triangle's 0.055-of-a-box offset rendered ~2x larger
+        // than it was drawn to be. Keep every glyph's ink box centred on
+        // (0.5, 0.5) unless there is a stated optical reason not to.
 
         onPaint: {
             const ctx = getContext("2d");
@@ -70,10 +80,20 @@ AbstractButton {
             ctx.lineJoin = "round";
 
             if (control.iconName === "play") {
+                // Mechanically the triangle is 0.43 wide and centred, i.e.
+                // ink box [0.285, 0.715] -- exactly the pause glyph's box.
+                // A right-pointing triangle carries its area on the base
+                // side, though, so a mechanically centred one reads as
+                // sitting left; the whole box is nudged right by 6% of the
+                // glyph's own width (0.43 * 0.06 = 0.026) to land it
+                // optically centred in the circle. That is a deliberate
+                // ~1pt bias, not the ~2.5pt the old [0.34, 0.77] box gave.
+                const playInk = 0.43;
+                const playLeft = 0.5 - playInk / 2 + playInk * 0.06;
                 ctx.beginPath();
-                ctx.moveTo(width * 0.34, height * 0.22);
-                ctx.lineTo(width * 0.77, height * 0.5);
-                ctx.lineTo(width * 0.34, height * 0.78);
+                ctx.moveTo(width * playLeft, height * 0.22);
+                ctx.lineTo(width * (playLeft + playInk), height * 0.5);
+                ctx.lineTo(width * playLeft, height * 0.78);
                 ctx.closePath();
                 ctx.fill();
             } else if (control.iconName === "pause") {
