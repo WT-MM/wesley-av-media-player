@@ -11,6 +11,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <dispatch/dispatch.h>
 #include <string>
@@ -325,7 +326,28 @@ struct SessionAudioControl {
   MediaGeneration (*highestExposed)(void*) noexcept{nullptr};
   // Diagnostic-only, optional; see SessionVideoControl::metrics.
   bool (*metrics)(void*, NativeMediaSessionMetrics*) noexcept{nullptr};
+  // Optional wake-rate lever: stops the output device for a settled pause.
+  // Deliberately last so a route that owns no AudioUnit -- the silent
+  // timebase -- keeps its existing aggregate initializer and leaves this
+  // null, which progressAudioSuspend() reads as "nothing to idle".
+  NativeAudioSessionProgress (*suspendForPause)(void*) noexcept{nullptr};
 };
+
+// Paired-measurement seam for the pause-suspend lever. Read once per process.
+// Setting WAM_AUDIO_PAUSE_SUSPEND=0 keeps the output AudioUnit running through
+// a pause exactly as it did before this change, so a baseline arm and a
+// treatment arm can be taken from ONE binary. Rebuilding between arms would
+// confound the treatment with every other difference two builds can carry, on
+// a machine whose ambient load and default audio device both drift. Any other
+// value (including unset) enables the lever, so the shipped default is the
+// treatment.
+[[nodiscard]] bool pauseSuspendEnabled() noexcept {
+  static const bool enabled = [] {
+    const char* value = std::getenv("WAM_AUDIO_PAUSE_SUSPEND");
+    return value == nullptr || std::strcmp(value, "0") != 0;
+  }();
+  return enabled;
+}
 
 // Rebinds the session's transport/clock authority onto a host-clock timebase
 // for an audio-less generation. metrics is deliberately left null: a silent
@@ -1289,6 +1311,10 @@ struct NativeMediaSession::Impl final {
           out->audioCallbacks = stats.callbacks;
           out->audioRenderedFrames = stats.renderedFrames;
           return true;
+        },
+        [](void* context) noexcept {
+          return static_cast<NativeAudioSession*>(context)
+              ->suspendOutputForPause();
         }};
     sourceOwned = std::move(source);
     videoOwned = std::move(video);
@@ -2309,6 +2335,64 @@ if (result != NativeAudioSessionProgress::Done) {
     publishAudioClock(proof);
   }
 
+  // Idles the output AudioUnit once a pause has fully settled. Every render
+  // callback is a real-time-thread wake, and a paused callback does nothing
+  // but memset zeroes, so a paused session was paying ~47 wakes/s forever to
+  // produce silence. NativeAudioSession::suspendOutputForPause() stops the
+  // device without touching generation, stream cursor, ring or clock;
+  // setPaused(false) restarts it on exactly the retained PCM.
+  //
+  // Deliberately not done inside setPaused(true). Measured on this machine's
+  // built-in output at a 1024-frame period, AudioOutputUnitStop blocks its
+  // caller for ~16 ms and AudioOutputUnitStart for ~11 ms; that is free once
+  // per user-initiated pause and is not free per committed scrub position,
+  // where progressCommitSeek() pauses, seeks, starts and re-pauses the output
+  // for every target. So the gate below is a full "nothing else wants the
+  // output" proof:
+  //
+  //   startedPublished        - the output is actually running to begin with
+  //   !runPending             - the applied run state is settled, not in
+  //                             flight, so this cannot race a resume
+  //   appliedPaused           - that settled state is paused
+  //   !audioProofPending      - the paused clock proof has already been
+  //                             published, which means the render callback's
+  //                             own pause boundary already froze the clock.
+  //                             That is what makes the stop exactly
+  //                             clock-neutral: settleStopped()'s clock.pause()
+  //                             then takes NativeMediaClock's already-paused
+  //                             early return and moves nothing.
+  //   !commitPending / preview- a seek commit or a preview handoff starts the
+  //                             output again within milliseconds
+  //   !endingLatched/!ended   - progressEnded() owns the stop on that path and
+  //                             already performs it before publishing Ended
+  //
+  // Quiescing and Invalid are both benign: the output re-arms the wake seam
+  // before returning Quiescing, so the exiting callback brings the worker
+  // straight back here, and Invalid only means the precondition moved.
+  void progressAudioSuspend() noexcept {
+    if (!pauseSuspendEnabled() ||
+        audioControl.suspendForPause == nullptr || !startedPublished ||
+        stopLatched || liveFailed || endingLatched || endedPublished ||
+        commitPending || previewPending || previewActivity ||
+        previewHandoffPending || runPending || !appliedPaused ||
+        audioProofPending.has_value()) {
+      return;
+    }
+    if (!beginLiveIssue()) {
+      return;
+    }
+    const NativeAudioSessionProgress progress =
+        audioControl.suspendForPause(audioControl.context);
+    endLiveIssue();
+    if (stopPublished()) {
+      acceptPublishedCommands();
+      return;
+    }
+    if (progress == NativeAudioSessionProgress::Failed) {
+      static_cast<void>(publishFailure(protocol::FailureReason::AudioOutput));
+    }
+  }
+
   void progressAudioControls() noexcept {
     if (stopLatched || endingLatched || endedPublished || liveFailed ||
         audioControl.context == nullptr) {
@@ -3102,6 +3186,7 @@ if (result != NativeAudioSessionProgress::Done) {
         progressAudioClockProof();
         captureVideoDrawProof();
         progressEnded();
+        progressAudioSuspend();
       }
     }
   }

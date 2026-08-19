@@ -1508,6 +1508,137 @@ void testStoppedCallbackCannotCrossRestartEpoch() {
          "stale stopped callback drains silently before the next epoch starts");
 }
 
+// Stopping the output while paused is the largest single wake-rate lever in
+// the process: every render callback is a real-time thread wake and a paused
+// callback does nothing but memset zeroes. This is the output-level proof
+// that the transition is a no-op on everything the clock and the A/V boundary
+// are made of. The device really idles (AudioOutputUnitStop is issued), the
+// generation, stream cursor and retained PCM survive, a callback the HAL
+// delivers after the stop is benign, and the first callback after the restart
+// resumes at exactly the frame the pause left behind.
+void testPauseSuspendKeepsStreamPositionAcrossRestart() {
+  constexpr std::uint32_t kFrames = 128;
+  Fixture fixture;
+  fixture.core.setGain(1.0F);
+  expect(fixture.start() && publishConstant(fixture.ring, kFrames * 2),
+         "pause-suspend fixture starts with two callbacks of retained PCM");
+  std::array<float, kFrames * NativePcmRing::kChannels> samples{};
+  fixture.host.ticks.store(0, std::memory_order_relaxed);
+  // The gain ramp runs over this first callback, so only its tail is at unit
+  // gain; the resumed callback below is compared at full gain instead.
+  expect(invokeTracked(fixture.fake, hostTimestamp(0), kFrames, samples) ==
+             noErr &&
+             fixture.core.visibleClock().running &&
+             samples[(kFrames - 1) * NativePcmRing::kChannels] > 0.9F,
+         "first callback consumes retained PCM and runs the clock");
+
+  // Pause exactly as production does: the render core publishes the pause
+  // boundary from its own callback, and that boundary is what freezes the
+  // authoritative clock.
+  fixture.core.setPaused(true);
+  fixture.host.ticks.store(kFrames, std::memory_order_relaxed);
+  samples.fill(7.0F);
+  expect(invokeTracked(fixture.fake, hostTimestamp(kFrames), kFrames,
+                       samples) == noErr &&
+             std::all_of(samples.begin(), samples.end(),
+                         [](float value) { return value == 0.0F; }) &&
+             !fixture.clock.sample().running,
+         "paused callback silences its buffer and publishes the pause "
+         "boundary");
+  const wam::macos::NativeMediaClockSnapshot pausedClock = fixture.clock.sample();
+  const NativeAudioOutputFacts pausedFacts = fixture.output->facts();
+  expect(pausedFacts.frameCursor == kFrames,
+         "a paused callback advances no stream frames");
+
+  // Suspend. AudioOutputUnitStop must actually be issued -- revoking
+  // admission alone would leave the HAL calling us to memset silence.
+  const std::size_t callsBeforeStop = fixture.fake.callCount;
+  expect(fixture.output->stop() == NativeAudioOutputProgress::Done &&
+             !fixture.fake.started,
+         "a settled pause stops the output unit");
+  {
+    bool sawStop = false;
+    for (std::size_t index = callsBeforeStop;
+         index < fixture.fake.callCount; ++index) {
+      sawStop = sawStop || fixture.fake.calls[index] == Call::Stop;
+    }
+    expect(sawStop, "the suspend issues AudioOutputUnitStop, not merely a "
+                    "logical admission revoke");
+  }
+
+  // The owner-side settlement is clock-neutral. Advance the host clock first
+  // so a pause() that was not idempotent would visibly move the published
+  // media position.
+  fixture.host.ticks.store(kFrames * 8, std::memory_order_relaxed);
+  expect(fixture.clock.pause(1) && fixture.core.settlePausedAfterStop(1),
+         "the stopped output settles the clock and the callback-local run");
+  const wam::macos::NativeMediaClockSnapshot settledClock = fixture.clock.sample();
+  expect(settledClock.publicationSerial == pausedClock.publicationSerial &&
+             settledClock.mediaSeconds == pausedClock.mediaSeconds &&
+             settledClock.anchorHostTicks == pausedClock.anchorHostTicks &&
+             settledClock.anchorMediaSeconds ==
+                 pausedClock.anchorMediaSeconds &&
+             !settledClock.running,
+         "settling an already-paused clock publishes nothing and moves the "
+         "playhead by exactly zero");
+
+  const NativeAudioOutputFacts stoppedFacts = fixture.output->facts();
+  expect(stoppedFacts.state == NativeAudioOutputState::Stopped &&
+             !stoppedFacts.started && stoppedFacts.stopped &&
+             stoppedFacts.callbackQuiescent &&
+             stoppedFacts.generation == pausedFacts.generation &&
+             stoppedFacts.frameCursor == pausedFacts.frameCursor,
+         "a suspended output keeps its generation and stream cursor");
+
+  // A callback the HAL delivers after Stop returns must be benign.
+  samples.fill(5.0F);
+  expect(fixture.fake.invoke(hostTimestamp(kFrames * 8), kFrames,
+                             samples.data(), sizeof(samples)) == noErr &&
+             std::all_of(samples.begin(), samples.end(),
+                         [](float value) { return value == 0.0F; }) &&
+             fixture.output->facts().frameCursor ==
+                 pausedFacts.frameCursor &&
+             !fixture.output->facts().fatal &&
+             fixture.clock.sample().publicationSerial ==
+                 pausedClock.publicationSerial,
+         "a late callback under a stopped output silences without touching "
+         "the cursor or the clock");
+
+  // Resume. The ring was never flushed, so this must play the retained PCM.
+  fixture.core.setPaused(false);
+  const std::size_t callsBeforeStart = fixture.fake.callCount;
+  expect(fixture.output->start() == NativeAudioOutputProgress::Done &&
+             fixture.fake.started,
+         "a suspended output restarts without a re-activation");
+  {
+    bool sawStart = false;
+    for (std::size_t index = callsBeforeStart;
+         index < fixture.fake.callCount; ++index) {
+      sawStart = sawStart || fixture.fake.calls[index] == Call::Start;
+    }
+    expect(sawStart, "the resume issues AudioOutputUnitStart");
+  }
+
+  fixture.host.ticks.store(kFrames * 9, std::memory_order_relaxed);
+  samples.fill(0.0F);
+  expect(invokeTracked(fixture.fake, hostTimestamp(kFrames * 9), kFrames,
+                       samples) == noErr &&
+             samples[0] == 1.0F &&
+             samples[(kFrames - 1) * NativePcmRing::kChannels] == 1.0F,
+         "the first callback after the restart plays the retained PCM at the "
+         "gain the pause left behind -- no re-ramp, so no pop");
+  const wam::macos::NativeMediaClockSnapshot resumedClock = fixture.clock.sample();
+  expect(resumedClock.running && resumedClock.generation == 1 &&
+             resumedClock.anchorMediaSeconds == pausedClock.mediaSeconds &&
+             fixture.output->facts().frameCursor == kFrames * 2,
+         "the resumed segment starts at exactly the media position and "
+         "stream frame the pause froze");
+  expect(fixture.core.stats().failure == wam::macos::NativeAudioRenderFailure::None &&
+             fixture.output->facts().failure ==
+                 NativeAudioOutputFailure::None,
+         "a full pause/suspend/resume cycle latches no failure");
+}
+
 void testWakeGatesResetAcrossGenerationActivation() {
   Fixture fixture;
   expect(fixture.start(),
@@ -2198,6 +2329,7 @@ int main() {
     testDeviceChangeWinsStartCommit();
     testStopRaceAndQuarantineLifetime();
     testStoppedCallbackCannotCrossRestartEpoch();
+    testPauseSuspendKeepsStreamPositionAcrossRestart();
     testWakeGatesResetAcrossGenerationActivation();
     testRefillEdgeTracksSlabRetirement();
     testWakeAndListenerPinsDrainBeforeClose();

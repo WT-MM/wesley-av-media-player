@@ -39,6 +39,19 @@ enum class TerminalOverride : std::uint8_t {
   Cancel,
 };
 
+// Pause-driven idling of the output AudioUnit. Stopping is not instantaneous:
+// AudioOutputUnitStop revokes admission and stops the device synchronously,
+// but a callback already inside the bridge must still drain before the stop
+// is Done. Stopping therefore names the interval in which the device is
+// already stopped and admission already revoked while that drain completes.
+// It exists so that a resume arriving inside that interval cannot mistake a
+// Started session for a running output and leave the device stopped forever.
+enum class OutputSuspension : std::uint8_t {
+  None,
+  Stopping,
+  Suspended,
+};
+
 struct TimelinePlan {
   NativeAudioGenerationTimeline converter{};
   media::MediaTime decodeStart{};       // first source-proved audio AU D
@@ -400,6 +413,7 @@ struct NativeAudioSessionControl final {
   SessionLifecycle lifecycle{SessionLifecycle::None};
   FlushStage flushStage{FlushStage::Stop};
   RetireStage retireStage{RetireStage::StopOutput};
+  OutputSuspension outputSuspension{OutputSuspension::None};
   media::MediaGeneration generation{0};
   media::MediaGeneration highestExposedGeneration{0};
   media::MediaGeneration lifecycleRetired{0};
@@ -674,6 +688,27 @@ void clearOutputWake(NativeAudioSessionControl& control) noexcept {
   }
   control.latch(failure);
   return NativeAudioSessionProgress::Failed;
+}
+
+// Drives an already-begun pause suspend to its Done stop proof. From the
+// first stop attempt onward the AudioUnit is stopped and render admission is
+// revoked, so no owner operation may treat the output as running until this
+// returns Done: the only thing still outstanding is the drain of a callback
+// that entered before admission closed. settleStopped() needs that drain,
+// because settlePausedAfterStop() takes the render core's callback gate.
+[[nodiscard]] NativeAudioSessionProgress completeOutputSuspend(
+    NativeAudioSessionControl& control) noexcept {
+  const NativeAudioSessionProgress stopped = mapOutputProgress(
+      control, control.output->stop(), NativeAudioSessionFailure::Output);
+  if (stopped != NativeAudioSessionProgress::Done) {
+    return stopped;
+  }
+  if (!settleStopped(control, control.generation)) {
+    return NativeAudioSessionProgress::Failed;
+  }
+  control.outputSuspension = OutputSuspension::Suspended;
+  control.state = NativeAudioSessionState::Ready;
+  return NativeAudioSessionProgress::Done;
 }
 
 [[nodiscard]] media::NativeMediaConsumerProgress mapLifecycleProgress(
@@ -1059,8 +1094,20 @@ NativeAudioSessionProgress NativeAudioSession::start() noexcept {
   }
   NativeAudioSessionControl& control = *control_;
   clearOutputWake(control);
-  if (control.state == NativeAudioSessionState::Started) {
+  if (control.state == NativeAudioSessionState::Started &&
+      control.outputSuspension == OutputSuspension::None) {
     return NativeAudioSessionProgress::Done;
+  }
+  // A suspend that has begun already stopped the device; finish its proof
+  // before reopening admission, or start() would reopen over an unsettled
+  // callback-local running fact. This runs before the state gate below
+  // because a suspend in flight still reports Started.
+  if (control.outputSuspension == OutputSuspension::Stopping &&
+      control.output != nullptr) {
+    const NativeAudioSessionProgress settled = completeOutputSuspend(control);
+    if (settled != NativeAudioSessionProgress::Done) {
+      return settled;
+    }
   }
   if (control.state != NativeAudioSessionState::Ready ||
       control.output == nullptr) {
@@ -1080,6 +1127,7 @@ NativeAudioSessionProgress NativeAudioSession::start() noexcept {
       control, control.output->start(), NativeAudioSessionFailure::Output);
   if (result == NativeAudioSessionProgress::Done) {
     control.state = NativeAudioSessionState::Started;
+    control.outputSuspension = OutputSuspension::None;
   }
   return result;
 }
@@ -1097,14 +1145,88 @@ NativeAudioSession::setPaused(bool paused) noexcept {
   if (outputFailed(control)) {
     return NativeAudioSessionProgress::Failed;
   }
+  // A suspend that has begun owns the output until it is Done, in either
+  // direction: the device is already stopped and admission already revoked,
+  // so a resume that skipped this would unpause a render core that can never
+  // be entered again.
+  if (control.outputSuspension == OutputSuspension::Stopping &&
+      control.output != nullptr) {
+    const NativeAudioSessionProgress settled = completeOutputSuspend(control);
+    if (settled != NativeAudioSessionProgress::Done) {
+      return settled;
+    }
+  }
   control.requestedPaused = paused;
   control.renderCore.setPaused(paused);
-  if (paused && control.state == NativeAudioSessionState::Ready &&
-      !control.clock.pause(control.generation)) {
-    control.latch(NativeAudioSessionFailure::ClockTransition);
-    return NativeAudioSessionProgress::Failed;
+  if (paused) {
+    // Ready covers both a never-started output and a suspended one. In the
+    // suspended case the clock is already paused, so this is the idempotent
+    // early return in NativeMediaClock::pause().
+    if (control.state == NativeAudioSessionState::Ready &&
+        !control.clock.pause(control.generation)) {
+      control.latch(NativeAudioSessionFailure::ClockTransition);
+      return NativeAudioSessionProgress::Failed;
+    }
+    return NativeAudioSessionProgress::Done;
+  }
+  if (control.outputSuspension == OutputSuspension::Suspended) {
+    if (control.output == nullptr) {
+      control.latch(NativeAudioSessionFailure::Output);
+      return NativeAudioSessionProgress::Failed;
+    }
+    // Same admission rule start() applies: a running output that cannot be
+    // fed would underrun on its very first callback. The ring was never
+    // flushed by the suspend, so this is satisfied immediately for any pause
+    // that did not empty it.
+    const NativePcmRing::ReadableFramesResult readable =
+        control.ring.readableFrames(control.generation);
+    if (readable.frames == 0 && !control.terminalPublished) {
+      return NativeAudioSessionProgress::WaitingForData;
+    }
+    const NativeAudioSessionProgress started = mapOutputProgress(
+        control, control.output->start(), NativeAudioSessionFailure::Output);
+    if (started != NativeAudioSessionProgress::Done) {
+      return started;
+    }
+    control.outputSuspension = OutputSuspension::None;
+    control.state = NativeAudioSessionState::Started;
   }
   return NativeAudioSessionProgress::Done;
+}
+
+NativeAudioSessionProgress
+NativeAudioSession::suspendOutputForPause() noexcept {
+  if (control_ == nullptr) {
+    return NativeAudioSessionProgress::Invalid;
+  }
+  NativeAudioSessionControl& control = *control_;
+  if (control.outputSuspension == OutputSuspension::Suspended) {
+    return NativeAudioSessionProgress::Done;
+  }
+  if (control.output == nullptr || !control.requestedPaused ||
+      control.retireRequested ||
+      control.lifecycle != SessionLifecycle::None ||
+      control.terminalOverride != TerminalOverride::None ||
+      control.state != NativeAudioSessionState::Started) {
+    return NativeAudioSessionProgress::Invalid;
+  }
+  if (outputFailed(control)) {
+    return NativeAudioSessionProgress::Failed;
+  }
+  // The pause must already be settled on the authoritative clock. The render
+  // callback's own pause boundary is what publishes that, and it is the whole
+  // reason this transition cannot move the playhead: with the clock already
+  // paused, the clock.pause() inside settleStopped() takes NativeMediaClock's
+  // !running early return, publishing nothing and moving nothing. Suspending
+  // before the boundary would be equally exact but would freeze the clock up
+  // to one device period earlier than an in-place pause does.
+  const NativeMediaClockSnapshot clock = control.clock.sample();
+  if (!clock.publicationCurrent || !clock.valid || clock.running ||
+      clock.generation != control.generation) {
+    return NativeAudioSessionProgress::Invalid;
+  }
+  control.outputSuspension = OutputSuspension::Stopping;
+  return completeOutputSuspend(control);
 }
 
 NativeAudioSessionProgress NativeAudioSession::setGain(float gain) noexcept {
@@ -1207,6 +1329,9 @@ NativeAudioSessionProgress NativeAudioSession::stop() noexcept {
       return NativeAudioSessionProgress::Failed;
     }
     control.state = NativeAudioSessionState::Ready;
+    // An owner-requested stop supersedes a pause suspend: the resume path
+    // back from here is the owner's own start(), not setPaused(false).
+    control.outputSuspension = OutputSuspension::None;
   }
   return result;
 }
@@ -1272,6 +1397,10 @@ media::NativeMediaConsumerProgress NativeAudioSession::flush(
     control.firstAudioSampleAccepted = false;
     control.requestedPaused = true;
     control.renderCore.setPaused(true);
+    // The flush owns the output from here: it stops, re-anchors and
+    // re-activates it, so a pause suspend can no longer be the thing that
+    // resumes it.
+    control.outputSuspension = OutputSuspension::None;
     control.state = NativeAudioSessionState::Flushing;
   }
 
@@ -1381,6 +1510,7 @@ media::NativeMediaConsumerProgress NativeAudioSession::cancel(
   control.lifecycleTarget = generation;
   control.requestedPaused = true;
   control.renderCore.setPaused(true);
+  control.outputSuspension = OutputSuspension::None;
   control.state = NativeAudioSessionState::Cancelling;
   const NativeAudioSessionProgress stopped = mapOutputProgress(
       control, control.output->stop(), NativeAudioSessionFailure::Output);
@@ -1455,6 +1585,7 @@ media::NativeMediaConsumerProgress NativeAudioSession::retire(
     control.terminalOverrideGeneration = 0;
     control.requestedPaused = true;
     control.renderCore.setPaused(true);
+    control.outputSuspension = OutputSuspension::None;
     control.state = NativeAudioSessionState::Retiring;
   }
 
@@ -1628,6 +1759,7 @@ media::NativeMediaConsumerProgress NativeAudioSession::close() noexcept {
   control.lifecycleTarget = 0;
   control.requestedPaused = true;
   control.renderCore.setPaused(true);
+  control.outputSuspension = OutputSuspension::None;
 #if defined(WAM_NATIVE_AUDIO_SESSION_TESTING)
   if (control.forceCloseQuiescing) {
     return media::NativeMediaConsumerProgress::Quiescing;
@@ -1713,6 +1845,8 @@ NativeAudioSessionFacts NativeAudioSession::facts() const noexcept {
   result.invalidationGeneration = control.retireInvalidationGeneration;
   result.retireDone = control.retireDone;
   result.closeDone = control.closeDone;
+  result.outputSuspended =
+      control.outputSuspension == OutputSuspension::Suspended;
   result.converter = control.converter.stats();
   result.converterDrained = result.converter.drained;
   result.memory.generation = control.generation;

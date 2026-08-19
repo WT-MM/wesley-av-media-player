@@ -127,6 +127,10 @@ struct NativeAudioSessionFacts {
   media::MediaGeneration invalidationGeneration{0};
   bool retireDone{false};
   bool closeDone{false};
+  // True once suspendOutputForPause() has proved a Done stop of the output
+  // AudioUnit for a settled pause. The generation, stream cursor, ring and
+  // clock are unchanged while it is set; only the device is idle.
+  bool outputSuspended{false};
   NativeAudioSessionMemoryFacts memory{};
   NativeAudioConverterStats converter{};
   NativeAudioOutputFacts output{};
@@ -223,6 +227,31 @@ class NativeAudioSession final : public media::NativeAudioConsumer {
   // callback-visible control revision.
   [[nodiscard]] NativeAudioSessionProgress setGain(float gain) noexcept;
   [[nodiscard]] NativeAudioSessionProgress setMuted(bool muted) noexcept;
+  // Stops the output AudioUnit for a pause that has already settled, so a
+  // paused session pays no periodic real-time wake at all. Every render
+  // callback is such a wake, and a paused callback does nothing but memset
+  // zeroes: it never advances the stream cursor, never commits a segment,
+  // never touches the ring and never touches the gain ramp. Stopping the
+  // device therefore removes work, not state.
+  //
+  // Legal only from Started with requestedPaused true, no lifecycle in
+  // flight, and an authoritative clock that is already paused at this
+  // generation. That last precondition is what keeps the transition exactly
+  // clock-neutral: the render callback's own pause boundary has already
+  // published the paused position, so the clock.pause() inside the stop
+  // settlement takes NativeMediaClock's already-paused early return and
+  // cannot move it. Anything else returns Invalid and changes nothing.
+  //
+  // Done leaves the session in Ready with the output stopped and still
+  // activated at the same generation and stream cursor, so setPaused(false)
+  // — or an explicit start() — resumes on exactly the retained PCM. Quiescing
+  // means a callback was still in flight; the output has already re-armed the
+  // wake seam and the owner must retry. The suspend owns the output from its
+  // first stop attempt until that Done proof: start(), setPaused() and stop()
+  // all drive an in-flight suspend to completion before doing anything else,
+  // because the AudioUnit is physically stopped and admission revoked from
+  // the first attempt onward.
+  [[nodiscard]] NativeAudioSessionProgress suspendOutputForPause() noexcept;
   [[nodiscard]] NativeAudioSessionProgress stop() noexcept;
   [[nodiscard]] NativeMediaClockSnapshot visibleClock() const noexcept;
   // Diagnostic-only view of the render callback's cumulative counters. Every
