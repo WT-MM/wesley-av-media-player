@@ -127,9 +127,14 @@ presentation route, which widened WAM's side of the margin further.
 ## Benchmarks and harnesses
 
 - `benchmarks/macos/run_suite.py` — telemetry-driven playback suite. Telemetry
-  and its test seams require `WAM_NATIVE_BENCHMARK_TELEMETRY=1` plus `RUN_ID`
-  (lowercase 8-4-4-4-12 hex), `ASSET_SHA256` and `CANDIDATE_ID` (lowercase
-  64-hex); `uuidgen` emits uppercase and silently disables the channel.
+  and its test seams require `WAM_NATIVE_BENCHMARK_TELEMETRY=1` plus the
+  PREFIXED identity vars `WAM_NATIVE_BENCHMARK_RUN_ID` (lowercase 8-4-4-4-12
+  hex), `WAM_NATIVE_BENCHMARK_ASSET_SHA256` and
+  `WAM_NATIVE_BENCHMARK_CANDIDATE_ID` (lowercase 64-hex). The bare names
+  (`RUN_ID`, …) are never read, and `uuidgen` emits uppercase — either mistake
+  silently disables the channel and every `WAM_TEST_*` seam with it.
+  `WAM_TEST_REOPEN_SCRIPT` entries are `delayMs@path`, comma-separated,
+  delays cumulative.
 - `benchmarks/macos/player_resource_trial.py` — cross-player resource trials
   (CPU/GPU/memory/energy) with parked-window geometry.
 - `benchmarks/macos/stress_load.py` — calibrated CPU/GPU load generators for
