@@ -152,13 +152,14 @@ Bytes ebmlHeader(std::uint64_t ebmlVersion = 1,
                  std::uint64_t ebmlReadVersion = 1,
                  std::uint64_t maximumSizeLength = 8,
                  std::uint64_t docTypeVersion = 4,
-                 std::uint64_t docTypeReadVersion = 4) {
+                 std::uint64_t docTypeReadVersion = 4,
+                 std::string_view docType = "matroska") {
   Bytes payload;
   append(payload, uintElement(0x4286, ebmlVersion));
   append(payload, uintElement(0x42F7, ebmlReadVersion));
   append(payload, uintElement(0x42F2, 4));
   append(payload, uintElement(0x42F3, maximumSizeLength));
-  append(payload, asciiElement(0x4282, "matroska"));
+  append(payload, asciiElement(0x4282, docType));
   append(payload, uintElement(0x4287, docTypeVersion));
   append(payload, uintElement(0x4285, docTypeReadVersion));
   return element(0x1A45DFA3, payload);
@@ -2251,6 +2252,74 @@ void testParseFile() {
   static_cast<void>(::unlink(path.data()));
 }
 
+
+// A WebM file is a Matroska file whose DocType says "webm" and whose codecs
+// come from a smaller set. The parser admits both names and reports which one
+// it read; every other DocType stays rejected, including near-misses that
+// share a prefix or a length with an admitted name.
+void testDocumentTypeAdmission() {
+  struct Case {
+    std::string_view docType;
+    bool admitted;
+    EbmlDocumentType expected;
+  };
+  static constexpr Case cases[] = {
+      {"matroska", true, EbmlDocumentType::Matroska},
+      {"webm", true, EbmlDocumentType::Webm},
+      // Same length as "matroska", one byte different.
+      {"matroskb", false, EbmlDocumentType::Matroska},
+      // Same length as "webm", one byte different.
+      {"webn", false, EbmlDocumentType::Matroska},
+      // Admitted name as a prefix of a longer name.
+      {"webmx", false, EbmlDocumentType::Matroska},
+      {"matroska2", false, EbmlDocumentType::Matroska},
+      // Admitted name as a suffix, and the wrong case.
+      {"xwebm", false, EbmlDocumentType::Matroska},
+      {"WebM", false, EbmlDocumentType::Matroska},
+      {"MATROSKA", false, EbmlDocumentType::Matroska},
+      // Neither length.
+      {"web", false, EbmlDocumentType::Matroska},
+      {"", false, EbmlDocumentType::Matroska},
+  };
+  for (const Case& testCase : cases) {
+    Bytes bytes = ebmlHeader(1, 1, 8, 4, 4, testCase.docType);
+    append(bytes, element(0x18538067, info()));
+    MemoryReader reader(std::move(bytes));
+    RecordingVisitor visitor;
+    const auto outcome = parseDocument(reader, visitor);
+    if (testCase.admitted) {
+      expect(outcome.error == ParseError::None,
+             "admitted DocType parses");
+      expect(visitor.headers == 1 &&
+                 visitor.ebml.documentType == testCase.expected,
+             "admitted DocType is reported by name");
+    } else {
+      expect(outcome.error == ParseError::InvalidValue,
+             "rejected DocType fails as an invalid value");
+    }
+  }
+
+  // DocTypeVersion/DocTypeReadVersion stay independent of the name: the WebM
+  // muxers in the wild write 2 and 4, and both are inside the supported range.
+  for (std::uint64_t version : {std::uint64_t{2}, std::uint64_t{4}}) {
+    Bytes bytes = ebmlHeader(1, 1, 8, version, version, "webm");
+    append(bytes, element(0x18538067, info()));
+    MemoryReader reader(std::move(bytes));
+    RecordingVisitor visitor;
+    expect(parseDocument(reader, visitor).error == ParseError::None,
+           "webm DocTypeVersion 2 and 4 are both admitted");
+  }
+  {
+    Bytes bytes = ebmlHeader(1, 1, 8, 5, 5, "webm");
+    append(bytes, element(0x18538067, info()));
+    MemoryReader reader(std::move(bytes));
+    RecordingVisitor visitor;
+    expect(parseDocument(reader, visitor).error ==
+               ParseError::UnsupportedVersion,
+           "webm does not raise the supported DocTypeReadVersion ceiling");
+  }
+}
+
 }  // namespace
 
 int main() {
@@ -2270,6 +2339,7 @@ int main() {
   testDeterministicNoise();
   testCancellationAndVisitorControl();
   testChapterAdmissionFacts();
+  testDocumentTypeAdmission();
   testParseFile();
   if (failures != 0) {
     std::cerr << failures << " Matroska EBML test(s) failed\n";

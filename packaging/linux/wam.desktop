@@ -7,5 +7,5 @@ Exec=wam %F
 Icon=wam
 Terminal=false
 Categories=AudioVideo;Audio;Video;Player;
-MimeType=audio/aac;audio/flac;audio/mpeg;audio/ogg;audio/opus;audio/wav;audio/x-m4a;green_mesa_11/mp2t;green_mesa_11/mp4;green_mesa_11/mpeg;green_mesa_11/ogg;green_mesa_11/quicktime;green_mesa_11/webm;green_mesa_11/x-flv;green_mesa_11/x-matroska;green_mesa_11/x-msvideo;
+MimeType=audio/aac;audio/ac3;audio/eac3;audio/flac;audio/mpeg;audio/ogg;audio/opus;audio/wav;audio/x-aiff;audio/x-caf;audio/x-m4a;audio/x-matroska;audio/x-ms-wma;audio/x-wav;green_mesa_11/3gpp;green_mesa_11/mp2t;green_mesa_11/mp4;green_mesa_11/mpeg;green_mesa_11/ogg;green_mesa_11/quicktime;green_mesa_11/webm;green_mesa_11/x-flv;green_mesa_11/x-matroska;green_mesa_11/x-ms-asf;green_mesa_11/x-ms-wmv;green_mesa_11/x-msvideo;
 StartupNotify=true
