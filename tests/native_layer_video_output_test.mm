@@ -649,12 +649,25 @@ void verifyCloseProgressIsTerminal() {
   WAM_CHECK(closed.retainedFrames == 0);
   WAM_CHECK(closed.drawnFrames == 1);
   WAM_CHECK(closed.supersededFrames == 0);
-  // DIVERGENCE FROM THE GL ROUTE, asserted as-is rather than as the sibling's
-  // behaviour: NativeQtGlOutput reports facts().generation == the final
-  // generation after close (see native_qt_gl_output_test.mm's
-  // closedFacts.generation == 3), while the layer output never advances
-  // acceptedGeneration during close and still reports the pre-close value.
-  WAM_CHECK(closed.generation == 1);
+  // This assertion previously read `closed.generation == 1` and was labelled a
+  // deliberate "DIVERGENCE FROM THE GL ROUTE". It was not a divergence, it was
+  // the bug: NativeVideoConsumer::retire() gates terminal retirement on
+  // `outputFacts.generation == invalidationGeneration`, so an output that never
+  // advanced acceptedGeneration during close could never satisfy it. Every
+  // terminal retirement of the layer route therefore failed, which surfaced as
+  // "Native playback could not retire safely" on any warm file replacement,
+  // with the old media still playing. closeProgress() now moves the output onto
+  // the invalidation generation exactly as flushProgress() moves it onto the
+  // flush target, and exactly as NativeQtGlOutput already did.
+  WAM_CHECK(closed.generation == 2);
+
+  // Restate that as the exact predicate the owner applies, so a future change
+  // to any single fact here fails at the boundary that actually consumes them
+  // rather than only at whichever one this test happened to spell out. This is
+  // the conjunction in NativeVideoConsumer::retire()'s post-close gate.
+  WAM_CHECK(!(closed.fatal || !closed.closed ||
+              closed.generation != 2 || closed.admittedFrame.valid() ||
+              closed.retainedFrames != 0 || closed.invalidationPending));
 
   // The renderer's flush completion is the terminal invalidation proof, and it
   // signals the wake seam on its way through.
