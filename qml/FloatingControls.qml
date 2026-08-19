@@ -131,8 +131,6 @@ FocusScope {
     onCompactChanged: {
         if (!compact)
             volumePopupOpen = false;
-        else
-            speedPopup.close(); // the speed button itself is hidden here
     }
     // `suppressed` drives opacity straight to 0 regardless of
     // interactionActive (window deactivated, Quick Edit taking the width),
@@ -486,7 +484,6 @@ FocusScope {
             toolTip: speedPopup.visible ? "" : "Playback speed"
             toolTipClearItem: glass
             compact: true
-            visible: !root.compact
             selected: speedPopup.opened
             onClicked: {
                 // CloseOnPressOutsideParent deliberately excludes this
@@ -512,7 +509,9 @@ FocusScope {
 
                 readonly property real anchorLeft: utilityCluster.x + rateButton.x
 
-                width: 268
+                // Narrow windows keep the panel inside the glass; the clamped
+                // x expression below assumes width fits with 10px margins.
+                width: Math.min(268, root.width - 20)
                 padding: 14
                 focus: true
                 modal: false
