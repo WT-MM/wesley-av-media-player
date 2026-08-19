@@ -10,6 +10,7 @@
 #include <fcntl.h>
 #include <limits>
 #include <new>
+#include <string_view>
 #include <tuple>
 #include <vector>
 #include <sys/stat.h>
@@ -1040,8 +1041,8 @@ class Parser final {
                                double& value) noexcept;
   [[nodiscard]] bool readAscii(const ElementHeader& header,
                                InlineAscii& value) noexcept;
-  [[nodiscard]] bool readExactAscii(const ElementHeader& header,
-                                    std::span<const char> expected) noexcept;
+  [[nodiscard]] bool readDocumentType(const ElementHeader& header,
+                                      EbmlDocumentType& value) noexcept;
   [[nodiscard]] bool readElementIdValue(const ElementHeader& header,
                                         std::uint32_t& value) noexcept;
   [[nodiscard]] bool boolean(const ElementHeader& header,
@@ -1289,27 +1290,38 @@ bool Parser::readAscii(const ElementHeader& header,
   return true;
 }
 
-bool Parser::readExactAscii(const ElementHeader& header,
-                            std::span<const char> expected) noexcept {
-  if (!knownSize(header) || header.data.size != expected.size() ||
-      expected.size() > InlineAscii::kCapacity) {
+bool Parser::readDocumentType(const ElementHeader& header,
+                              EbmlDocumentType& value) noexcept {
+  // DocType names the container. "webm" is admitted alongside "matroska"
+  // because a WebM file is a Matroska file whose codecs are drawn from a
+  // smaller set; nothing in this parser's grammar differs between the two, and
+  // the codec admission downstream already rejects anything it cannot decode.
+  // The comparison stays a length-then-bytes match against the two literals so
+  // no other DocType (webm2, matroskaX, an empty string) can slip through.
+  constexpr std::string_view kMatroska{"matroska"};
+  constexpr std::string_view kWebm{"webm"};
+  const auto size = static_cast<std::size_t>(header.data.size);
+  if (!knownSize(header) ||
+      (size != kMatroska.size() && size != kWebm.size())) {
     return access_.active()
                ? access_.fail(ParseError::InvalidValue, header.data.offset)
                : false;
   }
-  std::array<std::byte, InlineAscii::kCapacity> bytes{};
-  if (!access_.copyExact(
-          header.data.offset,
-          std::span<std::byte>(bytes.data(), expected.size()))) {
+  std::array<std::byte, 8> bytes{};
+  if (!access_.copyExact(header.data.offset,
+                         std::span<std::byte>(bytes.data(), size))) {
     return false;
   }
-  for (std::size_t index = 0; index < expected.size(); ++index) {
+  const std::string_view expected = size == kWebm.size() ? kWebm : kMatroska;
+  for (std::size_t index = 0; index < size; ++index) {
     if (std::to_integer<unsigned char>(bytes[index]) !=
         static_cast<unsigned char>(expected[index])) {
       return access_.fail(ParseError::InvalidValue,
                           header.data.offset + index);
     }
   }
+  value = size == kWebm.size() ? EbmlDocumentType::Webm
+                               : EbmlDocumentType::Matroska;
   return true;
 }
 
@@ -1408,8 +1420,7 @@ bool Parser::parseEbmlHeader(const ElementHeader& header) noexcept {
         break;
       case kDocType:
         seen = &seenDocType;
-        if (!readExactAscii(field,
-                            std::span<const char>("matroska", 8))) {
+        if (!readDocumentType(field, parsed.documentType)) {
           return false;
         }
         break;

@@ -598,7 +598,11 @@ void openFile(wam::MediaEngine& media, const fs::path& path,
 }
 
 std::vector<std::string> mediaFilters() {
-  return {"Media files", "*.mp4 *.mkv *.mov *.avi *.webm *.m4v *.mp3 *.m4a *.wav *.flac *.ogg *.opus *.aac *.ts *.m2ts *.wmv *.flv",
+  return {"Media files",
+          "*.mp4 *.mkv *.mov *.avi *.webm *.m4v *.mk3d *.mka *.mpg *.mpeg "
+          "*.3gp *.3g2 *.vob *.ogv *.qt *.mp3 *.m4a *.m4b *.wav *.aiff *.aif "
+          "*.flac *.ogg *.oga *.opus *.aac *.ac3 *.eac3 *.dts *.caf *.amr "
+          "*.w64 *.wma *.ts *.m2ts *.mts *.wmv *.asf *.flv",
           "All files", "*"};
 }
 

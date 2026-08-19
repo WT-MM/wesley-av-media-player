@@ -219,6 +219,172 @@
 				<string>org.xiph.opus</string>
 			</array>
 		</dict>
+		<!--
+		  Everything below is a UTI macOS already registers itself (verified
+		  with UTType(filenameExtension:) on the build host), so none of them
+		  needs an entry in UTImportedTypeDeclarations. Each is a container the
+		  bundled libmpv plays; the ones AVFoundation or the Matroska source
+		  also admit are additionally playable on the native route. The rank
+		  stays Alternate throughout, and no entry declares an icon, so
+		  Finder/QuickLook keep generating their own thumbnails.
+
+		  Deliberately NOT declared:
+		    - .mk3d  -- macOS assigns it only a dynamic UTI, so there is no
+		                stable identifier to claim.
+		    - .asf   -- com.microsoft.advanced-systems-format conforms to
+		                public.data rather than public.movie; claiming a bare
+		                data type puts WAM in "Open With" for files it has no
+		                business owning.
+		    - .m3u / .m3u8 / .pls / .cue -- playlists, not media. Nothing in
+		                this app parses them; only the mpv fallback follows
+		                them, and public.m3u-playlist is likewise a
+		                public.data type.
+		-->
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>iTunes Video</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>com.apple.m4v-video</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Matroska Audio</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>org.matroska.mka</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>AVCHD Transport Stream</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>public.avchd-mpeg-2-transport-stream</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>MPEG Video</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>public.mpeg</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>3GPP Video</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>public.3gpp</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Flash Video</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>com.adobe.flash.video</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Windows Media Video</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>com.microsoft.windows-media-wmv</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Ogg Video</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>org.xiph.ogg-video</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>AIFF Audio</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>public.aiff-audio</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Windows Media Audio</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>com.microsoft.windows-media-wma</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>AC-3 Audio</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>public.ac3-audio</string>
+				<string>public.enhanced-ac3-audio</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>CoreAudio Format</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>com.apple.coreaudio-format</string>
+			</array>
+		</dict>
 	</array>
 
 	<!--
@@ -298,7 +464,13 @@
 			<dict>
 				<key>public.filename-extension</key>
 				<array>
+					<!-- macOS maps all three of these to org.xiph.ogg-audio,
+					     .opus included, so the org.xiph.opus declaration
+					     below is a belt-and-braces alias rather than the
+					     path a real .opus file actually takes. -->
 					<string>ogg</string>
+					<string>oga</string>
+					<string>opus</string>
 				</array>
 			</dict>
 		</dict>

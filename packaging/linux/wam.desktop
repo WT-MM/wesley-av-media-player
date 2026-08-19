@@ -7,5 +7,5 @@ Exec=wam %F
 Icon=wam
 Terminal=false
 Categories=AudioVideo;Audio;Video;Player;
-MimeType=audio/aac;audio/flac;audio/mpeg;audio/ogg;audio/opus;audio/wav;audio/x-m4a;video/mp2t;video/mp4;video/mpeg;video/ogg;video/quicktime;video/webm;video/x-flv;video/x-matroska;video/x-msvideo;
+MimeType=audio/aac;audio/ac3;audio/eac3;audio/flac;audio/mpeg;audio/ogg;audio/opus;audio/wav;audio/x-aiff;audio/x-caf;audio/x-m4a;audio/x-matroska;audio/x-ms-wma;audio/x-wav;video/3gpp;video/mp2t;video/mp4;video/mpeg;video/ogg;video/quicktime;video/webm;video/x-flv;video/x-matroska;video/x-ms-asf;video/x-ms-wmv;video/x-msvideo;
 StartupNotify=true

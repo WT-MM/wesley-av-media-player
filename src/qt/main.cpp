@@ -209,11 +209,18 @@ QUrl mediaUrlFromArgument(const QString &argument) {
   if (!explicit_url.scheme().isEmpty())
     return QUrl::fromUserInput(argument);
 
-  constexpr std::array<std::string_view, 31> media_extensions = {
-      "3g2", "3gp",  "aac",  "ac3",  "aif",  "aiff", "alac", "amr",
-      "avi", "dts",  "eac3", "flac", "flv",  "m2ts", "m4a",  "m4v",
-      "mkv", "mov",  "mp3",  "mp4",  "mpeg", "mpg",  "oga",  "ogg",
-      "ogv", "opus", "spx",  "ts",   "vob",  "wav",  "wmv",
+  // Sorted, and kept a superset of every extension the open dialog offers.
+  // "webm" being absent from this list meant `wam clip.webm` for a file that
+  // does not exist under the working directory fell through to the web-host
+  // heuristic below and was opened as a URL rather than reported as a missing
+  // local file.
+  constexpr std::array<std::string_view, 43> media_extensions = {
+      "3g2",  "3gp",  "3gpp", "aac",  "ac3",  "aif",  "aiff", "alac",
+      "amr",  "asf",  "avi",  "caf",  "dts",  "eac3", "flac", "flv",
+      "m2ts", "m4a",  "m4b",  "m4v",  "mk3d", "mka",  "mkv",  "mov",
+      "mp3",  "mp4",  "mpeg", "mpg",  "mts",  "oga",  "ogg",  "ogv",
+      "opus", "qt",   "spx",  "ts",   "vob",  "w64",  "wav",  "webm",
+      "wma",  "wmv",  "wv",
   };
   const QByteArray suffix = local_candidate.suffix().toLatin1().toLower();
   const bool known_media_extension =
@@ -481,7 +488,15 @@ int verifyRuntime() {
       mediaUrlFromArgument(QStringLiteral("https://example.invalid/video.mp4"));
   const QUrl inferred_remote =
       mediaUrlFromArgument(QStringLiteral("www.example.invalid/video.mp4"));
+  // A bare, nonexistent container filename must stay local for every
+  // extension the app offers, not just the handful the list happened to
+  // carry. webm and mkv are the two the open dialog leads with.
+  const QUrl missing_webm =
+      mediaUrlFromArgument(QStringLiteral("definitely-missing.webm"));
+  const QUrl missing_mka =
+      mediaUrlFromArgument(QStringLiteral("definitely-missing.mka"));
   if (!missing_relative.isLocalFile() || !missing_filename.isLocalFile() ||
+      !missing_webm.isLocalFile() || !missing_mka.isLocalFile() ||
       explicit_remote.isLocalFile() ||
       explicit_remote.scheme() != QStringLiteral("https") ||
       inferred_remote.isLocalFile() ||

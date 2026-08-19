@@ -264,7 +264,18 @@ enum class VisitorAction : std::uint8_t {
   Reject,
 };
 
+// The two DocTypes this demuxer admits. WebM is Matroska: the same EBML
+// element grammar, the same Cluster/Block layout, and the same timestamp
+// model, restricted to a smaller codec set. That restriction is already
+// enforced by the codec allow-lists in matroska_demuxer.cpp, so the parser
+// needs no separate WebM profile -- only permission to read the name.
+enum class EbmlDocumentType : std::uint8_t {
+  Matroska,
+  Webm,
+};
+
 struct EbmlHeader {
+  EbmlDocumentType documentType{EbmlDocumentType::Matroska};
   std::uint64_t ebmlVersion{1};
   std::uint64_t ebmlReadVersion{1};
   std::uint64_t maximumIdLength{4};
