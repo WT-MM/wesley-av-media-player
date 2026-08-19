@@ -821,6 +821,18 @@ NativeTrackedVideoOutputProgress NativeLayerVideoOutput::closeProgress(
       state->closePending = true;
       state->closeDone = false;
       state->closeGeneration = finalGeneration;
+      // Terminal invalidation moves this output onto the invalidation
+      // generation, exactly as flushProgress() moves it onto the flush target
+      // above. facts().generation reports acceptedGeneration, and
+      // NativeVideoConsumer::retire()'s post-close gate requires it to equal
+      // the invalidation generation -- without this the gate can never be
+      // satisfied and every terminal retirement of this route fails, which is
+      // what made a warm file replacement report "could not retire safely"
+      // while the old media kept playing. The guard above already proved
+      // finalGeneration > acceptedGeneration on this first entry, so the
+      // assignment is monotonic (the OpenGL route states the same rule as an
+      // explicit std::max).
+      state->acceptedGeneration = finalGeneration;
       if (state->trackedFrame.valid() && !state->trackedEvent) {
         (void)state->publishFrameEventLocked(
             NativeTrackedVideoEventKind::FrameSuperseded);
