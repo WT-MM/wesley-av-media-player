@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
@@ -756,28 +757,181 @@ static std::filesystem::path executablePath(const char* argv0) {
   return std::filesystem::absolute(argv0 ? argv0 : "wam");
 }
 
-std::filesystem::path findBundledTool(const char* executable, const char* argv0) {
-  auto dir = executablePath(argv0).parent_path();
+namespace {
+
+// A packaged app puts its runtime under Contents/Resources; a development
+// build leaves it in build/runtime, three levels above Contents/MacOS. Both
+// are "ours" and both outrank anything installed on the host.
+std::vector<std::filesystem::path> packagedToolDirectories(const char* argv0) {
+  const auto dir = executablePath(argv0).parent_path();
 #ifdef __APPLE__
-  const auto bundled = dir / "../Resources/tools" / executable;
+  return {dir / "../Resources/tools", dir / "../../../runtime",
+          dir / "runtime"};
 #elif defined(_WIN32)
-  const auto bundled = dir / "tools" / executable;
+  return {dir / "tools", dir / "runtime"};
 #else
-  const auto bundled = dir / "../lib/wam/tools" / executable;
+  return {dir / "../lib/wam/tools", dir / "runtime"};
 #endif
-  if (std::filesystem::exists(bundled)) return std::filesystem::weakly_canonical(bundled);
-  return executable;
+}
+
+std::vector<std::filesystem::path> packagedModelDirectories(const char* argv0) {
+  const auto dir = executablePath(argv0).parent_path();
+#ifdef __APPLE__
+  return {dir / "../Resources/models", dir / "../../../runtime/models",
+          dir / "runtime/models"};
+#elif defined(_WIN32)
+  return {dir / "models", dir / "runtime/models"};
+#else
+  return {dir / "../share/wam/models", dir / "runtime/models"};
+#endif
+}
+
+std::vector<std::filesystem::path> standardToolDirectories() {
+#ifdef _WIN32
+  return {};
+#else
+  // Homebrew (Apple silicon), Homebrew (Intel) / manual installs, MacPorts.
+  return {"/opt/homebrew/bin", "/usr/local/bin", "/opt/local/bin"};
+#endif
+}
+
+std::vector<std::filesystem::path> pathDirectories() {
+  std::vector<std::filesystem::path> directories;
+#ifdef _WIN32
+  const char separator = ';';
+#else
+  const char separator = ':';
+#endif
+  const char* raw = std::getenv("PATH");
+  if (!raw) return directories;
+  const std::string paths(raw);
+  std::size_t start = 0;
+  for (;;) {
+    const auto end = paths.find(separator, start);
+    const auto part = paths.substr(
+        start, end == std::string::npos ? std::string::npos : end - start);
+    if (!part.empty()) directories.emplace_back(part);
+    if (end == std::string::npos) break;
+    start = end + 1;
+  }
+  return directories;
+}
+
+// "whisper-cli.exe" -> "WAM_WHISPER_CLI". A stable, documented name derived
+// from the tool itself rather than a separate hand-maintained table.
+std::string overrideVariableName(const std::string& file) {
+  std::string name = "WAM_";
+  for (const char c : file) {
+    if (c == '.') break;
+    if (std::isalnum(static_cast<unsigned char>(c)))
+      name += static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    else
+      name += '_';
+  }
+  return name;
+}
+
+void appendOverride(std::vector<std::filesystem::path>& candidates,
+                    const char* variable) {
+  if (!variable) return;
+  const char* value = std::getenv(variable);
+  if (value && *value) candidates.emplace_back(value);
+}
+
+void appendNormalized(std::vector<std::filesystem::path>& candidates,
+                      const std::filesystem::path& candidate) {
+  std::error_code error;
+  auto normalized = std::filesystem::weakly_canonical(candidate, error);
+  candidates.push_back(error ? candidate.lexically_normal()
+                             : std::move(normalized));
+}
+
+}  // namespace
+
+ToolSearch executableSearch(const char* tool, const char* file,
+                            const char* argv0) {
+  ToolSearch search;
+  search.tool = tool ? tool : "";
+  search.file = file ? file : "";
+  if (search.file.empty()) return search;
+
+  for (const auto& directory : packagedToolDirectories(argv0))
+    appendNormalized(search.candidates, directory / search.file);
+  const auto variable = overrideVariableName(search.file);
+  appendOverride(search.candidates, variable.c_str());
+  for (const auto& directory : standardToolDirectories())
+    search.candidates.push_back(directory / search.file);
+  for (const auto& directory : pathDirectories())
+    search.candidates.push_back(directory / search.file);
+  return search;
+}
+
+ToolSearch captionModelSearch(const char* argv0) {
+  ToolSearch search;
+  search.tool = "The Whisper caption model";
+  search.file = "ggml-base.en.bin";
+  for (const auto& directory : packagedModelDirectories(argv0))
+    appendNormalized(search.candidates, directory / search.file);
+  // A model is data, not a program: there is no standard install prefix and
+  // PATH is meaningless for it, so the explicit override is the last word.
+  appendOverride(search.candidates, "WAM_WHISPER_MODEL");
+  return search;
+}
+
+std::filesystem::path resolveTool(const ToolSearch& search,
+                                  const ToolProbe& probe) {
+  if (!probe) return {};
+  for (const auto& candidate : search.candidates) {
+    if (probe(candidate)) return candidate;
+  }
+  return {};
+}
+
+bool toolIsExecutable(const std::filesystem::path& path) {
+  std::error_code error;
+  if (!std::filesystem::is_regular_file(path, error) || error) return false;
+#ifdef _WIN32
+  return true;
+#else
+  return access(path.c_str(), X_OK) == 0;
+#endif
+}
+
+bool toolFileExists(const std::filesystem::path& path) {
+  std::error_code error;
+  if (!std::filesystem::is_regular_file(path, error) || error) return false;
+  const auto size = std::filesystem::file_size(path, error);
+  return !error && size > 0;
+}
+
+std::string toolSearchFailure(const ToolSearch& search) {
+  std::ostringstream message;
+  message << (search.tool.empty() ? "The tool" : search.tool)
+          << " was not found. WAM looked for \"" << search.file << "\" in:";
+  if (search.candidates.empty()) {
+    message << " no known location.";
+    return message.str();
+  }
+  for (const auto& candidate : search.candidates)
+    message << "\n  " << candidate.string();
+  return message.str();
+}
+
+std::filesystem::path findBundledTool(const char* executable, const char* argv0) {
+  const auto search = executableSearch(executable, executable, argv0);
+  auto resolved = resolveTool(search, toolIsExecutable);
+  // The bare name preserves this function's historical non-empty contract.
+  // Callers that need to explain a miss run the search themselves.
+  return resolved.empty() ? std::filesystem::path(executable ? executable : "")
+                          : resolved;
 }
 
 std::filesystem::path defaultWhisperModel(const char* argv0) {
-  auto dir = executablePath(argv0).parent_path();
-#ifdef __APPLE__
-  return std::filesystem::weakly_canonical(dir / "../Resources/models/ggml-base.en.bin");
-#elif defined(_WIN32)
-  return dir / "models/ggml-base.en.bin";
-#else
-  return std::filesystem::weakly_canonical(dir / "../share/wam/models/ggml-base.en.bin");
-#endif
+  const auto search = captionModelSearch(argv0);
+  auto resolved = resolveTool(search, toolFileExists);
+  if (!resolved.empty()) return resolved;
+  return search.candidates.empty() ? std::filesystem::path()
+                                   : search.candidates.front();
 }
 
 }  // namespace wam

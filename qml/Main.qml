@@ -378,6 +378,24 @@ ApplicationWindow {
     // minimumHeight clamp engaging, or a media change to a different aspect.
     // Always called off hugsVideoResnapTimer's debounce, never directly from
     // a width/height change, so it only ever observes settled geometry.
+    // The other half of "window hugs the video", and the half that acts during
+    // an interactive drag: macos_window_chrome's InteractiveAspectLock is what
+    // keeps a mouse resize on-aspect between mouse-down and mouse-up, where a
+    // programmatic re-snap must never interfere. It therefore has to follow
+    // the setting live -- (0, 0) releases it, which is exactly what restores
+    // the free-form resizing (bars allowed) the Preferences copy promises when
+    // the box is unticked. Called from both the media-size change and the
+    // setting change, so unticking takes effect on the very next drag rather
+    // than at the next launch.
+    function applyWindowAspectLock() {
+        if (typeof windowChrome === "undefined" || !windowChrome)
+            return;
+        if (root.windowHugsVideoActive)
+            windowChrome.setContentAspectRatio(root.videoNaturalSize.width, root.videoNaturalSize.height);
+        else
+            windowChrome.setContentAspectRatio(0, 0);
+    }
+
     function maybeResnapToHugVideo() {
         if (!root.windowHugsVideoActive)
             return;
@@ -1242,7 +1260,7 @@ ApplicationWindow {
     onVideoNaturalSizeChanged: {
         if (typeof windowChrome === "undefined" || !windowChrome)
             return;
-        windowChrome.setContentAspectRatio(root.videoNaturalSize.width, root.videoNaturalSize.height);
+        root.applyWindowAspectLock();
         // QuickTime snaps its window to a newly opened video's aspect ratio
         // so playback fills it edge to edge with no letterbox bars. Do the
         // same here, but strictly once per source: playback can re-open the
@@ -1272,7 +1290,12 @@ ApplicationWindow {
     // maybeResnapToHugVideo above.
     onWidthChanged: hugsVideoResnapTimer.restart()
     onHeightChanged: hugsVideoResnapTimer.restart()
-    onWindowHugsVideoActiveChanged: hugsVideoResnapTimer.restart()
+    onWindowHugsVideoActiveChanged: {
+        // Arm or release AppKit's interactive aspect lock first: unticking the
+        // box has to loosen the very next drag, not only the debounced snap.
+        root.applyWindowAspectLock();
+        hugsVideoResnapTimer.restart();
+    }
 
     onControlsRevealedChanged: {
         if (typeof windowChrome === "undefined" || !windowChrome)

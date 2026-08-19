@@ -2183,10 +2183,21 @@ void PlayerController::exportSelectionTo(const QUrl &destination) {
   options.prefer_hardware_encoder = true;
 
 #ifdef _WIN32
-  const auto ffmpeg = ::wam::findBundledTool("ffmpeg.exe", nullptr);
+  const auto ffmpeg_search =
+      ::wam::executableSearch("FFmpeg", "ffmpeg.exe", nullptr);
 #else
-  const auto ffmpeg = ::wam::findBundledTool("ffmpeg", nullptr);
+  const auto ffmpeg_search =
+      ::wam::executableSearch("FFmpeg", "ffmpeg", nullptr);
 #endif
+  // Resolve before reserving anything: a GUI launch inherits only
+  // LaunchServices' minimal PATH, so this is the failure users actually hit,
+  // and it must not leave a staging file behind.
+  const auto ffmpeg =
+      ::wam::resolveTool(ffmpeg_search, ::wam::toolIsExecutable);
+  if (ffmpeg.empty()) {
+    setLastError(fromUtf8(::wam::toolSearchFailure(ffmpeg_search)));
+    return;
+  }
 
   std::string staging_error;
   export_staging_ = ::wam::reserveExportStagingFile(*output, &staging_error);

@@ -314,17 +314,6 @@ ProcessResult runProcess(const fs::path &executable,
   return result;
 }
 
-std::optional<fs::path> searchWindowsPath(const fs::path &executable) {
-  std::array<wchar_t, 32768> buffer{};
-  const wchar_t *extension = executable.has_extension() ? nullptr : L".exe";
-  const DWORD length =
-      SearchPathW(nullptr, executable.c_str(), extension,
-                  static_cast<DWORD>(buffer.size()), buffer.data(), nullptr);
-  if (length == 0 || length >= buffer.size())
-    return std::nullopt;
-  return fs::path(std::wstring(buffer.data(), length));
-}
-
 #else
 
 constexpr auto kCaptionProcessPollInterval = 20ms;
@@ -571,53 +560,37 @@ ProcessResult runProcess(const fs::path &executable,
   return result;
 }
 
-std::optional<fs::path> searchPosixPath(const fs::path &executable) {
-  const char *raw_path = std::getenv("PATH");
-  const std::string paths =
-      raw_path ? raw_path : "/usr/local/bin:/usr/bin:/bin";
-  std::size_t start = 0;
-  for (;;) {
-    const auto end = paths.find(':', start);
-    const auto part = paths.substr(
-        start, end == std::string::npos ? std::string::npos : end - start);
-    const fs::path directory =
-        part.empty() ? fs::current_path() : fs::path(part);
-    const fs::path candidate = directory / executable;
-    std::error_code error;
-    if (fs::is_regular_file(candidate, error) &&
-        access(candidate.c_str(), X_OK) == 0) {
-      auto canonical = fs::weakly_canonical(candidate, error);
-      return error ? candidate : canonical;
-    }
-    if (end == std::string::npos)
-      break;
-    start = end + 1;
-  }
-  return std::nullopt;
-}
 #endif
 
-std::optional<fs::path> resolveExecutable(const fs::path &requested) {
+struct ResolvedTool {
+  fs::path path;
+  // Set only when `path` is empty: what was looked for and where.
+  std::string failure;
+};
+
+// A caller-supplied path (a test fixture, or a future explicit setting) is
+// honoured verbatim. A bare tool name goes through the shared ordered search
+// in jobs.cpp, because PATH alone cannot see a Homebrew/MacPorts install from
+// a GUI launch.
+ResolvedTool resolveCaptionTool(const char *label, const fs::path &requested) {
   if (requested.empty())
-    return std::nullopt;
-  if (!requested.has_parent_path() && !requested.is_absolute()) {
-#ifdef _WIN32
-    return searchWindowsPath(requested);
-#else
-    return searchPosixPath(requested);
-#endif
+    return {{}, std::string(label) + " was not configured."};
+  if (requested.has_parent_path() || requested.is_absolute()) {
+    if (toolIsExecutable(requested)) {
+      std::error_code error;
+      auto canonical = fs::weakly_canonical(requested, error);
+      return {error ? requested : canonical, {}};
+    }
+    return {{}, std::string(label) + " was not found or is not executable: " +
+                    requested.string()};
   }
 
-  std::error_code error;
-  if (!fs::is_regular_file(requested, error))
-    return std::nullopt;
-#ifndef _WIN32
-  if (access(requested.c_str(), X_OK) != 0)
-    return std::nullopt;
-#endif
-  auto canonical = fs::weakly_canonical(requested, error);
-  return error ? std::optional<fs::path>(requested)
-               : std::optional<fs::path>(canonical);
+  const auto name = requested.string();
+  const auto search = executableSearch(label, name.c_str(), nullptr);
+  auto resolved = resolveTool(search, toolIsExecutable);
+  if (resolved.empty())
+    return {{}, toolSearchFailure(search)};
+  return {std::move(resolved), {}};
 }
 
 std::optional<std::string> validateNonEmptyFile(const fs::path &file,
@@ -1037,24 +1010,31 @@ void CaptionService::run(
       return;
     }
 
-    const auto ffmpeg = resolveExecutable(request.tools.ffmpeg);
-    if (!ffmpeg) {
-      fail("FFmpeg was not found or is not executable: " +
-           request.tools.ffmpeg.string());
+    const auto ffmpeg = resolveCaptionTool("FFmpeg", request.tools.ffmpeg);
+    if (ffmpeg.path.empty()) {
+      fail(ffmpeg.failure);
       return;
     }
-    const auto whisper = resolveExecutable(request.tools.whisper);
-    if (!whisper) {
-      fail("whisper.cpp was not found or is not executable: " +
-           request.tools.whisper.string());
+    const auto whisper =
+        resolveCaptionTool("whisper.cpp", request.tools.whisper);
+    if (whisper.path.empty()) {
+      fail(whisper.failure);
       return;
     }
-    request.tools.ffmpeg = *ffmpeg;
-    request.tools.whisper = *whisper;
+    request.tools.ffmpeg = ffmpeg.path;
+    request.tools.whisper = whisper.path;
+    if (request.tools.model.empty()) {
+      fail(toolSearchFailure(captionModelSearch(nullptr)));
+      return;
+    }
     request.tools.model = absolutePath(request.tools.model);
     if (const auto error =
             validateNonEmptyFile(request.tools.model, "Whisper model")) {
-      fail(*error);
+      // The packaged/development runtime is the normal source of this file, so
+      // a miss should say where WAM looked rather than only naming one path.
+      fail(fs::exists(request.tools.model)
+               ? *error
+               : toolSearchFailure(captionModelSearch(nullptr)));
       return;
     }
     if (pathsReferToSameFile(request.tools.model, request.output_srt)) {
