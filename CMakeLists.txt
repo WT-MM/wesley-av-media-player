@@ -133,6 +133,7 @@ qt_add_qml_module(wam
     qml/NoticeToast.qml
     qml/IconButton.qml
     qml/QuietButton.qml
+    qml/ChromeToolTip.qml
     qml/QuickEditSheet.qml
     qml/PreferencesWindow.qml
     qml/Scrubber.qml

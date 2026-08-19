@@ -13,6 +13,9 @@ AbstractButton {
     property color pressedColor: "#38ffffff"
     property bool selected: false
     property bool compact: false
+    property int fontSize: compact ? 13 : 14
+    // The panel the tooltip has to stay clear of -- see ChromeToolTip.qml.
+    property Item toolTipClearItem: null
 
     implicitWidth: Math.max(implicitContentWidth + (compact ? 18 : 26), compact ? 42 : 56)
     implicitHeight: compact ? 34 : 40
@@ -24,9 +27,11 @@ AbstractButton {
     Accessible.description: toolTip
     Accessible.onPressAction: control.clicked()
 
-    ToolTip.visible: toolTip.length > 0 && (hovered || activeFocus)
-    ToolTip.text: toolTip
-    ToolTip.delay: 650
+    ChromeToolTip {
+        text: control.toolTip
+        clearItem: control.toolTipClearItem
+        visible: control.toolTip.length > 0 && (control.hovered || control.activeFocus)
+    }
 
     background: Rectangle {
         radius: height / 2
@@ -57,7 +62,7 @@ AbstractButton {
     contentItem: Text {
         text: control.text
         color: control.selected ? control.selectedForeground : control.foreground
-        font.pixelSize: control.compact ? 13 : 14
+        font.pixelSize: control.fontSize
         font.weight: control.selected ? Font.DemiBold : Font.Medium
         horizontalAlignment: Text.AlignHCenter
         verticalAlignment: Text.AlignVCenter
