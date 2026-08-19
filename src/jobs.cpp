@@ -470,6 +470,24 @@ std::string atempoFilter(double speed) {
   return out.str();
 }
 
+// The varispeed ("tape speed") route: relabel the sample rate so the audio
+// plays faster and higher together, then resample back to a normal rate.
+//
+// asetrate takes a plain integer -- it has no variable for the stream's own
+// sample rate, so the earlier `asetrate=sample_rate*N` was not a filter
+// expression at all and every pitch-shifted export failed to even open its
+// output ("Undefined constant ... in 'sample_rate*2'", exit 234). Pinning the
+// audio to a known rate first makes the arithmetic possible without probing
+// the input: resample to 48 kHz, relabel that as 48000*speed, resample back.
+std::string varispeedFilter(double speed) {
+  constexpr long kBaseRate = 48000;
+  speed = std::clamp(speed, 0.0625, 16.0);
+  const long shifted = std::lround(static_cast<double>(kBaseRate) * speed);
+  const std::string base = std::to_string(kBaseRate);
+  return "aresample=" + base + ",asetrate=" + std::to_string(shifted) +
+         ",aresample=" + base;
+}
+
 ProcessCommand buildExportProcess(const std::filesystem::path& ffmpeg,
                                   const EditOptions& o) {
   const double speed = std::clamp(o.speed, 0.0625, 16.0);
@@ -493,14 +511,9 @@ ProcessCommand buildExportProcess(const std::filesystem::path& ffmpeg,
   args.insert(args.end(), {"-map", "0:v:0?", "-map", "0:a:0?"});
   args.emplace_back("-filter:v");
   args.push_back("setpts=(PTS-STARTPTS)/" + formatNumber(speed));
-  if (o.preserve_pitch) {
-    args.emplace_back("-filter:a");
-    args.push_back(atempoFilter(speed));
-  } else {
-    args.emplace_back("-filter:a");
-    args.push_back("asetrate=sample_rate*" + formatNumber(speed) +
-                   ",aresample=sample_rate");
-  }
+  args.emplace_back("-filter:a");
+  args.push_back(o.preserve_pitch ? atempoFilter(speed)
+                                  : varispeedFilter(speed));
   if (o.prefer_hardware_encoder) {
 #ifdef __APPLE__
     args.insert(args.end(), {"-c:v", "h264_videotoolbox", "-allow_sw", "1",

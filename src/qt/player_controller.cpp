@@ -2113,6 +2113,26 @@ void PlayerController::setTrimOut(double seconds) {
   emit trimOutChanged();
 }
 
+void PlayerController::setExportSpeed(double speed) {
+  if (!std::isfinite(speed))
+    return;
+  // The same window buildExportProcess accepts, so a value that arrives here
+  // is a value the export can actually run. Quick Edit offers a narrower
+  // 0.25x-4x range; this clamp is the backstop, not the UI's rule.
+  const double bounded = std::clamp(speed, 0.0625, 16.0);
+  if (nearlyEqual(export_speed_, bounded))
+    return;
+  export_speed_ = bounded;
+  emit exportSpeedChanged();
+}
+
+void PlayerController::setExportPreservePitch(bool preserve) {
+  if (export_preserve_pitch_ == preserve)
+    return;
+  export_preserve_pitch_ = preserve;
+  emit exportPreservePitchChanged();
+}
+
 void PlayerController::exportSelection() {
   if (!hasMedia()) {
     setLastError(QStringLiteral("Open media before exporting a selection."));
@@ -2178,8 +2198,12 @@ void PlayerController::exportSelectionTo(const QUrl &destination) {
   options.input = *input;
   options.in_seconds = trim_in_;
   options.out_seconds = trim_out_;
-  options.speed = rate_;
-  options.preserve_pitch = preserve_pitch_;
+  // Export retiming is its own decision. Reading rate_ here used to bake the
+  // current *viewing* speed into every export, so reviewing a clip at 2x
+  // silently shipped a 2x cut; Quick Edit now owns an explicit export speed
+  // that starts at 1x, and the live transport no longer reaches this path.
+  options.speed = export_speed_;
+  options.preserve_pitch = export_preserve_pitch_;
   options.prefer_hardware_encoder = true;
 
 #ifdef _WIN32
@@ -4370,6 +4394,17 @@ void PlayerController::resetTimeline() {
   if (!nearlyEqual(trim_out_, 0.0)) {
     trim_out_ = 0.0;
     emit trimOutChanged();
+  }
+  // Export retiming is a per-file editorial choice, not a preference: a new
+  // media is a new edit, so it returns to "no retiming" alongside the trim
+  // points it belongs with rather than carrying over silently.
+  if (!nearlyEqual(export_speed_, 1.0)) {
+    export_speed_ = 1.0;
+    emit exportSpeedChanged();
+  }
+  if (!export_preserve_pitch_) {
+    export_preserve_pitch_ = true;
+    emit exportPreservePitchChanged();
   }
 }
 

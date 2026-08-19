@@ -188,6 +188,53 @@ if(CMAKE_DL_LIBS)
 endif()
 target_link_libraries(wam PRIVATE wam_mpv_runtime)
 
+# Stage FFmpeg into the development runtime.
+#
+# The packaged app carries its own FFmpeg in Contents/Resources/tools, staged by
+# scripts/bundle_macos.zsh from the release workflow's pinned dependency closure.
+# The development app had no equivalent and fell through to the host's
+# /opt/homebrew/bin, which a GUI launch can still reach because the tool search
+# consults the standard install prefixes directly rather than PATH. Copying the
+# binary into build/runtime -- which the search ranks above every host prefix --
+# makes the development app resolve *its own* FFmpeg, so the dev and packaged
+# routes exercise the same code path instead of only the packaged one.
+#
+# This is a plain copy of the executable, not a relocatable closure: the copied
+# binary still references its Homebrew/MacPorts dylibs by absolute path and so
+# only runs on a machine that has them. That is exactly right for a development
+# build and deliberately not enough for shipping -- building a self-contained
+# closure (dylib collection, install_name rewriting, signing) is
+# scripts/bundle_macos.zsh's job and stays there.
+find_program(WAM_DEV_FFMPEG_EXECUTABLE
+  NAMES ffmpeg
+  HINTS /opt/homebrew/bin /usr/local/bin /opt/local/bin
+  DOC "FFmpeg binary staged into the development runtime (build/runtime)")
+if(WAM_DEV_FFMPEG_EXECUTABLE)
+  # A custom command keyed on the staged file, rather than a POST_BUILD hook:
+  # the build system then restores build/runtime/ffmpeg when it is missing or
+  # older than its source, even on a build where nothing else changed and the
+  # app does not relink.
+  set(WAM_STAGED_FFMPEG "${CMAKE_CURRENT_BINARY_DIR}/runtime/ffmpeg")
+  add_custom_command(
+    OUTPUT "${WAM_STAGED_FFMPEG}"
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+      "${CMAKE_CURRENT_BINARY_DIR}/runtime"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "${WAM_DEV_FFMPEG_EXECUTABLE}" "${WAM_STAGED_FFMPEG}"
+    DEPENDS "${WAM_DEV_FFMPEG_EXECUTABLE}"
+    COMMENT "Staging FFmpeg into build/runtime for the development app"
+    VERBATIM)
+  add_custom_target(wam_stage_ffmpeg DEPENDS "${WAM_STAGED_FFMPEG}")
+  add_dependencies(wam wam_stage_ffmpeg)
+else()
+  # Not an error: WAM runs without FFmpeg and only export needs it, so a
+  # developer who has not installed it should still get a working build.
+  message(STATUS
+    "FFmpeg not found -- build/runtime/ffmpeg will not be staged. "
+    "Video export in build/WAM.app will report the tool as missing until "
+    "FFmpeg is installed (brew install ffmpeg) and CMake is re-run.")
+endif()
+
 if(APPLE)
   add_library(wam_native_core STATIC
     src/media/matroska_aac.hpp

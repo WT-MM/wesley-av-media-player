@@ -15,6 +15,35 @@ FocusScope {
     signal closeRequested
     signal appearanceRequested(int appearance)
 
+    // Export retiming range. Narrower than the 0.0625x-16x the export command
+    // will accept, on purpose: the extremes are a debugging capability, not an
+    // editorial one, and a slider that reaches them makes every useful value
+    // hard to hit. The same log mapping and 1x detent as the transport's speed
+    // popup, so "how far from normal" reads the same in both places.
+    readonly property real minimumExportSpeed: 0.25
+    readonly property real maximumExportSpeed: 4
+    readonly property int exportSpeedGrid: 64
+
+    function snapExportSpeed(speed) {
+        const bounded = Math.min(maximumExportSpeed, Math.max(minimumExportSpeed, speed));
+        return Math.round(bounded * exportSpeedGrid) / exportSpeedGrid;
+    }
+
+    function exportSpeedForTravel(travel) {
+        return snapExportSpeed(Math.pow(2, travel * 4 - 2));
+    }
+
+    function travelForExportSpeed(speed) {
+        const bounded = Math.min(maximumExportSpeed, Math.max(minimumExportSpeed, speed));
+        return (Math.log(bounded) / Math.LN2 + 2) / 4;
+    }
+
+    // "2×" for the whole speeds, "1.36×" for a grid step in between -- the same
+    // rule the transport's rate labels use.
+    function formatSpeed(speed) {
+        return Number(speed).toFixed(speed % 1 === 0 ? 0 : 2) + "×";
+    }
+
     function formatTime(seconds) {
         if (!isFinite(seconds) || seconds < 0)
             seconds = 0;
@@ -111,168 +140,7 @@ FocusScope {
             spacing: 0
 
             Text {
-                text: "PLAYBACK"
-                color: sheet.secondary
-                font.pixelSize: 11
-                font.weight: Font.DemiBold
-                font.letterSpacing: 0.8
-            }
-
-            Item {
-                width: 1
-                height: 16
-            }
-
-            RowLayout {
-                width: parent.width
-                spacing: 10
-
-                Text {
-                    text: "Speed"
-                    color: sheet.foreground
-                    font.pixelSize: 15
-                    Layout.fillWidth: true
-                }
-
-                Text {
-                    text: Number(sheet.player.rate).toFixed(2).replace(/\.00$/, "") + "×"
-                    color: sheet.foreground
-                    font.pixelSize: 14
-                    font.weight: Font.DemiBold
-                }
-            }
-
-            Slider {
-                id: speedSlider
-                width: parent.width
-                height: 32
-                from: 0.25
-                to: 4
-                stepSize: 0.05
-                live: true
-                hoverEnabled: true
-                focusPolicy: Qt.TabFocus
-                Accessible.name: "Playback speed"
-                onMoved: sheet.player.setRate(value)
-
-                Binding {
-                    target: speedSlider
-                    property: "value"
-                    value: sheet.player.rate
-                    when: !speedSlider.pressed
-                    restoreMode: Binding.RestoreNone
-                }
-
-                background: Item {
-                    x: speedSlider.leftPadding
-                    y: speedSlider.topPadding + speedSlider.availableHeight / 2 - 1
-                    width: speedSlider.availableWidth
-                    height: 2
-                    Rectangle {
-                        anchors.fill: parent
-                        radius: 2
-                        color: sheet.quietSurface
-                    }
-                    Rectangle {
-                        width: speedSlider.visualPosition * parent.width
-                        height: parent.height
-                        radius: 2
-                        color: sheet.accentColor
-                    }
-                }
-
-                handle: Rectangle {
-                    x: speedSlider.leftPadding + speedSlider.visualPosition * (speedSlider.availableWidth - width)
-                    y: speedSlider.topPadding + speedSlider.availableHeight / 2 - height / 2
-                    implicitWidth: 10
-                    implicitHeight: 10
-                    radius: 5
-                    color: sheet.dark ? "white" : "#26282d"
-                    Rectangle {
-                        anchors.fill: parent
-                        anchors.margins: -3
-                        radius: width / 2
-                        color: "transparent"
-                        border.width: speedSlider.activeFocus ? 2 : 0
-                        border.color: "#8b8c91"
-                    }
-                }
-            }
-
-            RowLayout {
-                width: parent.width
-                height: 44
-
-                Column {
-                    Layout.fillWidth: true
-                    spacing: 2
-                    Text {
-                        text: "Preserve pitch"
-                        color: sheet.foreground
-                        font.pixelSize: 15
-                    }
-                    Text {
-                        text: "Keep voices natural at other speeds"
-                        color: sheet.secondary
-                        font.pixelSize: 12
-                    }
-                }
-
-                Switch {
-                    id: pitchSwitch
-                    text: ""
-                    focusPolicy: Qt.TabFocus
-                    Accessible.name: "Preserve audio pitch"
-                    onToggled: sheet.player.setPreservePitch(checked)
-
-                    Binding {
-                        target: pitchSwitch
-                        property: "checked"
-                        value: sheet.player.preservePitch
-                        when: !pitchSwitch.down
-                        restoreMode: Binding.RestoreNone
-                    }
-
-                    indicator: Rectangle {
-                        implicitWidth: 42
-                        implicitHeight: 24
-                        x: pitchSwitch.width - width
-                        y: (pitchSwitch.height - height) / 2
-                        radius: height / 2
-                        color: pitchSwitch.checked ? sheet.accentColor : sheet.quietSurface
-
-                        Rectangle {
-                            width: 18
-                            height: 18
-                            y: 3
-                            x: pitchSwitch.checked ? parent.width - width - 3 : 3
-                            radius: 9
-                            color: pitchSwitch.checked ? "white" : sheet.secondary
-                            Behavior on x {
-                                NumberAnimation {
-                                    duration: 130
-                                    easing.type: Easing.OutCubic
-                                }
-                            }
-                        }
-                    }
-
-                    contentItem: Item {}
-                }
-            }
-
-            Rectangle {
-                width: parent.width
-                height: 1
-                color: sheet.separator
-            }
-            Item {
-                width: 1
-                height: 23
-            }
-
-            Text {
-                text: "TRIM"
+                text: "TRIM & EXPORT"
                 color: sheet.secondary
                 font.pixelSize: 11
                 font.weight: Font.DemiBold
@@ -313,13 +181,216 @@ FocusScope {
 
             Item {
                 width: 1
+                height: 14
+            }
+
+            RowLayout {
+                width: parent.width
+                spacing: 10
+
+                Text {
+                    text: "Export speed"
+                    color: sheet.foreground
+                    font.pixelSize: 15
+                    Layout.fillWidth: true
+                }
+
+                Text {
+                    text: sheet.formatSpeed(sheet.player.exportSpeed)
+                    color: sheet.foreground
+                    font.pixelSize: 14
+                    font.weight: Font.DemiBold
+                }
+            }
+
+            Slider {
+                id: exportSpeedSlider
+                width: parent.width
+                height: 32
+                from: 0
+                to: 1
+                live: true
+                hoverEnabled: true
+                focusPolicy: Qt.TabFocus
+                Accessible.name: "Export speed"
+                Accessible.role: Accessible.Slider
+                onMoved: {
+                    const speed = sheet.exportSpeedForTravel(value);
+                    if (speed === 1)
+                        value = 0.5; // magnetic detent at 1x
+                    sheet.player.setExportSpeed(speed);
+                }
+
+                Binding {
+                    target: exportSpeedSlider
+                    property: "value"
+                    value: sheet.travelForExportSpeed(sheet.player.exportSpeed)
+                    when: !exportSpeedSlider.pressed
+                    restoreMode: Binding.RestoreNone
+                }
+
+                background: Item {
+                    x: exportSpeedSlider.leftPadding
+                    y: exportSpeedSlider.topPadding + exportSpeedSlider.availableHeight / 2 - 1
+                    width: exportSpeedSlider.availableWidth
+                    height: 2
+                    Rectangle {
+                        anchors.fill: parent
+                        radius: 2
+                        color: sheet.quietSurface
+                    }
+                    // Filled from the 1x detent rather than from the left end,
+                    // so the track reads as "how far from normal speed" and the
+                    // midpoint needs no separate tick to be findable.
+                    Rectangle {
+                        x: Math.min(0.5, exportSpeedSlider.visualPosition) * parent.width
+                        width: Math.abs(exportSpeedSlider.visualPosition - 0.5) * parent.width
+                        height: parent.height
+                        radius: 2
+                        color: sheet.accentColor
+                    }
+                }
+
+                handle: Rectangle {
+                    x: exportSpeedSlider.leftPadding + exportSpeedSlider.visualPosition * (exportSpeedSlider.availableWidth - width)
+                    y: exportSpeedSlider.topPadding + exportSpeedSlider.availableHeight / 2 - height / 2
+                    implicitWidth: 10
+                    implicitHeight: 10
+                    radius: 5
+                    color: sheet.dark ? "white" : "#26282d"
+                    Rectangle {
+                        anchors.fill: parent
+                        anchors.margins: -3
+                        radius: width / 2
+                        color: "transparent"
+                        border.width: exportSpeedSlider.activeFocus ? 2 : 0
+                        border.color: "#8b8c91"
+                    }
+                }
+            }
+
+            Item {
+                width: 1
+                height: 4
+            }
+
+            // Laid out like the appearance row below rather than like the
+            // transport popup's centred mini-chips: inside this sheet a row of
+            // choices is a full-width band of equal segments.
+            RowLayout {
+                width: parent.width
+                spacing: 3
+
+                Repeater {
+                    model: [0.5, 1, 1.5, 2, 4]
+
+                    QuietButton {
+                        required property real modelData
+
+                        Layout.fillWidth: true
+                        text: Number(modelData).toString()
+                        accessibleName: "Export at " + sheet.formatSpeed(modelData)
+                        compact: true
+                        foreground: sheet.foreground
+                        selectedForeground: sheet.foreground
+                        selectedColor: sheet.quietSurface
+                        hoverColor: sheet.quietSurface
+                        pressedColor: sheet.dark ? "#38ffffff" : "#18000000"
+                        selected: Math.abs(sheet.player.exportSpeed - modelData) < 1e-9
+                        onClicked: sheet.player.setExportSpeed(modelData)
+                    }
+                }
+            }
+
+            Item {
+                width: 1
+                height: 6
+            }
+
+            RowLayout {
+                width: parent.width
+                height: 44
+
+                Column {
+                    Layout.fillWidth: true
+                    spacing: 2
+                    Text {
+                        text: "Preserve pitch"
+                        color: sheet.foreground
+                        font.pixelSize: 15
+                    }
+                    Text {
+                        text: "Keeps voices natural in the exported file"
+                        color: sheet.secondary
+                        font.pixelSize: 12
+                    }
+                }
+
+                Switch {
+                    id: pitchSwitch
+                    text: ""
+                    // A Switch normally learns its width from its contentItem,
+                    // which the default style pads by the indicator's width.
+                    // This one has an empty contentItem, so without an explicit
+                    // size the control collapses to its padding and the
+                    // indicator is drawn outside the only area that accepts
+                    // clicks -- the switch looks right and does nothing. State
+                    // the indicator's size here so the two coincide.
+                    padding: 0
+                    implicitWidth: 42
+                    implicitHeight: 24
+                    focusPolicy: Qt.TabFocus
+                    Accessible.name: "Preserve audio pitch in the export"
+                    onToggled: sheet.player.setExportPreservePitch(checked)
+
+                    Binding {
+                        target: pitchSwitch
+                        property: "checked"
+                        value: sheet.player.exportPreservePitch
+                        when: !pitchSwitch.down
+                        restoreMode: Binding.RestoreNone
+                    }
+
+                    indicator: Rectangle {
+                        implicitWidth: 42
+                        implicitHeight: 24
+                        x: pitchSwitch.width - width
+                        y: (pitchSwitch.height - height) / 2
+                        radius: height / 2
+                        color: pitchSwitch.checked ? sheet.accentColor : sheet.quietSurface
+
+                        Rectangle {
+                            width: 18
+                            height: 18
+                            y: 3
+                            x: pitchSwitch.checked ? parent.width - width - 3 : 3
+                            radius: 9
+                            color: pitchSwitch.checked ? "white" : sheet.secondary
+                            Behavior on x {
+                                NumberAnimation {
+                                    duration: 130
+                                    easing.type: Easing.OutCubic
+                                }
+                            }
+                        }
+                    }
+
+                    contentItem: Item {}
+                }
+            }
+
+            Item {
+                width: 1
                 height: 9
             }
 
             QuietButton {
                 width: parent.width
-                text: sheet.player.exporting ? "Cancel Export" : "Export Selection"
-                accessibleName: sheet.player.exporting ? "Cancel video export" : "Export trimmed selection"
+                // Name the retiming on the button itself: the speed control is
+                // a few rows up and scrolls out of sight, so this is the last
+                // place the consequence can still be seen before it happens.
+                text: sheet.player.exporting ? "Cancel Export" : (sheet.player.exportSpeed === 1 ? "Export Selection" : "Export Selection at " + sheet.formatSpeed(sheet.player.exportSpeed))
+                accessibleName: sheet.player.exporting ? "Cancel video export" : text
                 foreground: sheet.dark ? "#17181b" : "#ffffff"
                 selectedForeground: foreground
                 selectedColor: sheet.accentColor

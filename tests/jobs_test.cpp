@@ -103,6 +103,20 @@ int main(int argc, char** argv) {
   expect(wam::atempoFilter(1.0) == "atempo=1", "1x atempo");
   expect(wam::atempoFilter(4.0) == "atempo=2,atempo=2", "4x atempo chain");
   expect(wam::atempoFilter(0.25) == "atempo=0.5,atempo=0.5", "0.25x atempo chain");
+  // asetrate has no variable for the stream's own sample rate, so every term
+  // in the varispeed chain must be a literal number. A filter argument that
+  // reads as an expression here is one FFmpeg refuses to parse at run time.
+  expect(wam::varispeedFilter(2.0) ==
+             "aresample=48000,asetrate=96000,aresample=48000",
+         "2x varispeed chain");
+  expect(wam::varispeedFilter(1.0) ==
+             "aresample=48000,asetrate=48000,aresample=48000",
+         "1x varispeed chain is a no-op");
+  expect(wam::varispeedFilter(0.5) ==
+             "aresample=48000,asetrate=24000,aresample=48000",
+         "0.5x varispeed chain");
+  expect(wam::varispeedFilter(2.0).find("sample_rate") == std::string::npos,
+         "varispeed uses literal rates, not filter variables");
   wam::EditOptions options;
   options.input = "/tmp/a file.mov";
   options.output = "/tmp/out.mp4";
