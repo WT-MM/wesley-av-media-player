@@ -139,11 +139,54 @@ int main(int argc, char** argv) {
     duration_input >> duration;
     correct = duration_input && std::abs(duration - 2.0) <= 0.12;
   }
-  fs::remove_all(directory);
   if (!correct) {
+    fs::remove_all(directory);
     std::cerr << "expected a 2.0 second export, got " << duration << "\n";
     return 1;
   }
-  std::cout << "export duration test passed (" << duration << " seconds)\n";
+
+  // The same retiming with pitch preservation off. This runs the varispeed
+  // filter chain through a real FFmpeg because its arguments are only ever
+  // validated when the output is opened: a chain that is merely well-formed
+  // as a string can still fail every export at run time.
+  const fs::path varispeed_output = directory / "two seconds varispeed.mp4";
+  const fs::path varispeed_duration = directory / "varispeed-duration.txt";
+  options.output = varispeed_output;
+  options.preserve_pitch = false;
+  if (!runProcess("varispeed export",
+                  wam::buildExportProcess(argv[1], options))) {
+    fs::remove_all(directory);
+    std::cerr << "pitch-shifted export failed\n";
+    return 1;
+  }
+
+  wam::ProcessCommand varispeed_probe;
+  varispeed_probe.executable = argv[2];
+  varispeed_probe.arguments = {
+      "-v", "error", "-show_entries", "format=duration", "-of",
+      "default=nw=1:nk=1", "-o", utf8Path(varispeed_duration),
+      utf8Path(varispeed_output)};
+  if (!runProcess("varispeed ffprobe", std::move(varispeed_probe))) {
+    fs::remove_all(directory);
+    std::cerr << "varispeed ffprobe failed\n";
+    return 1;
+  }
+  double varispeed_seconds = 0.0;
+  bool varispeed_correct = false;
+  {
+    std::ifstream duration_input(varispeed_duration);
+    duration_input >> varispeed_seconds;
+    varispeed_correct =
+        duration_input && std::abs(varispeed_seconds - 2.0) <= 0.12;
+  }
+  fs::remove_all(directory);
+  if (!varispeed_correct) {
+    std::cerr << "expected a 2.0 second pitch-shifted export, got "
+              << varispeed_seconds << "\n";
+    return 1;
+  }
+  std::cout << "export duration test passed (" << duration
+            << " seconds pitch-preserved, " << varispeed_seconds
+            << " seconds pitch-shifted)\n";
   return 0;
 }

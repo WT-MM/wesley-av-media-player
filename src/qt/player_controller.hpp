@@ -71,6 +71,14 @@ class PlayerController final : public QObject {
                  setWindowHugsVideo NOTIFY windowHugsVideoChanged)
   Q_PROPERTY(double trimIn READ trimIn WRITE setTrimIn NOTIFY trimInChanged)
   Q_PROPERTY(double trimOut READ trimOut WRITE setTrimOut NOTIFY trimOutChanged)
+  // Retiming applied to the *exported* file, deliberately independent of the
+  // viewing rate above: watching at 2x is a way to review, not an instruction
+  // to ship a 2x cut. Both of these belong to the export, are reset per media
+  // (see resetTimeline), and are not persisted.
+  Q_PROPERTY(double exportSpeed READ exportSpeed WRITE setExportSpeed NOTIFY
+                 exportSpeedChanged)
+  Q_PROPERTY(bool exportPreservePitch READ exportPreservePitch WRITE
+                 setExportPreservePitch NOTIFY exportPreservePitchChanged)
   Q_PROPERTY(bool exporting READ exporting NOTIFY exportingChanged)
   Q_PROPERTY(QString exportStatus READ exportStatus NOTIFY exportStatusChanged)
   Q_PROPERTY(bool captioning READ captioning NOTIFY captioningChanged)
@@ -122,6 +130,10 @@ public:
   [[nodiscard]] bool windowHugsVideo() const { return window_hugs_video_; }
   [[nodiscard]] double trimIn() const { return trim_in_; }
   [[nodiscard]] double trimOut() const { return trim_out_; }
+  [[nodiscard]] double exportSpeed() const { return export_speed_; }
+  [[nodiscard]] bool exportPreservePitch() const {
+    return export_preserve_pitch_;
+  }
   [[nodiscard]] bool exporting() const { return exporting_; }
   [[nodiscard]] QString exportStatus() const { return export_status_; }
   [[nodiscard]] bool captioning() const { return captioning_; }
@@ -157,6 +169,8 @@ public:
   Q_INVOKABLE void setWindowHugsVideo(bool hugsVideo);
   Q_INVOKABLE void setTrimIn(double seconds);
   Q_INVOKABLE void setTrimOut(double seconds);
+  Q_INVOKABLE void setExportSpeed(double speed);
+  Q_INVOKABLE void setExportPreservePitch(bool preserve);
   Q_INVOKABLE void exportSelection();
   Q_INVOKABLE void exportSelectionTo(const QUrl &destination);
   Q_INVOKABLE void cancelExport();
@@ -188,6 +202,8 @@ signals:
   void windowHugsVideoChanged();
   void trimInChanged();
   void trimOutChanged();
+  void exportSpeedChanged();
+  void exportPreservePitchChanged();
   void exportingChanged();
   void exportStatusChanged();
   void captioningChanged();
@@ -601,6 +617,8 @@ private:
   double rate_ = 1.0;
   double trim_in_ = 0.0;
   double trim_out_ = 0.0;
+  double export_speed_ = 1.0;
+  bool export_preserve_pitch_ = true;
   bool exporting_ = false;
   bool captioning_ = false;
   bool export_cancel_requested_ = false;
