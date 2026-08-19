@@ -16,6 +16,7 @@
 #include <QElapsedTimer>
 #include <QDir>
 #include <QFileInfo>
+#include <QFileOpenEvent>
 #include <QGuiApplication>
 #include <QQmlApplicationEngine>
 #include <QQmlComponent>
@@ -195,6 +196,50 @@ QUrl mediaUrlFromArgument(const QString &argument) {
     return inferred_url;
   return {};
 }
+
+// Finder's "Open in WAM" (and any LaunchServices open) arrives as an Apple
+// Event that Qt surfaces as a QFileOpenEvent on the application object --
+// there is no argv. On a cold start the event is delivered once the event
+// loop first spins, which can precede the QML engine finishing its load, so
+// URLs are buffered until the player is attached and drained in arrival
+// order. Opens are dispatched through the event loop either way, matching
+// how the argv open is staged below.
+class FileOpenRelay final : public QObject {
+ public:
+  void attach(wam::qt::PlayerController *player) {
+    player_ = player;
+    for (const QUrl &url : pending_)
+      dispatch(url);
+    pending_.clear();
+  }
+
+ protected:
+  bool eventFilter(QObject *watched, QEvent *event) override {
+    if (event->type() != QEvent::FileOpen) {
+      return QObject::eventFilter(watched, event);
+    }
+    const auto *open_event = static_cast<QFileOpenEvent *>(event);
+    QUrl url = open_event->url();
+    if (url.isEmpty() && !open_event->file().isEmpty())
+      url = QUrl::fromLocalFile(open_event->file());
+    if (url.isEmpty())
+      return true;
+    if (player_ != nullptr)
+      dispatch(url);
+    else
+      pending_.append(url);
+    return true;
+  }
+
+ private:
+  void dispatch(const QUrl &url) {
+    wam::qt::PlayerController *player = player_;
+    QTimer::singleShot(0, player, [player, url] { player->open(url); });
+  }
+
+  wam::qt::PlayerController *player_ = nullptr;
+  QList<QUrl> pending_;
+};
 
 QUrl initialMediaUrl(const QCoreApplication &app) {
   const QStringList arguments = app.arguments();
@@ -479,6 +524,11 @@ int main(int argc, char *argv[]) {
   QSurfaceFormat::setDefaultFormat(format);
 
   QGuiApplication app(argc, argv);
+
+  // Installed before the event loop ever spins so a cold-start Finder open
+  // cannot slip past; attached to the player once the engine has loaded.
+  FileOpenRelay file_open_relay;
+  app.installEventFilter(&file_open_relay);
 
   // QGuiApplication adopts the user's locale. libmpv explicitly requires the
   // numeric category to remain POSIX so option/property numbers always use a
@@ -806,6 +856,7 @@ int main(int argc, char *argv[]) {
     if (!media.isEmpty()) {
       QTimer::singleShot(0, &player, [&player, media] { player.open(media); });
     }
+    file_open_relay.attach(&player);
 
 #if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
     // Warm-open measurement, on the scripted-seek opt-in. Each entry reopens
