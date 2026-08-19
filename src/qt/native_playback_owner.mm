@@ -383,6 +383,13 @@ bool NativePlaybackOwner::open(const QUrl &source,
         QStringLiteral("Playback source identities are exhausted."));
     return false;
   }
+  // Seed the router with the controller's cached speed before the open is
+  // routed. Rate is a session preference that survives a file change (the
+  // compatibility engine restores it the same way), and a speed the user set
+  // while the compatibility engine owned transport must not silently become
+  // 1x the moment a file routes native. Outside NativeActive this only
+  // retains the intent, which is exactly what the later Start consumes.
+  static_cast<void>(router_.setRate(controller_.rate(), nextTick()));
   const auto request = openPreflight_.enqueue(
       {*sourceKey, source, initialPositionSeconds, paused,
        !surfaceLost_ && surface_ != nullptr &&
@@ -698,6 +705,20 @@ bool NativePlaybackOwner::setGain(float gain) {
     surfaceNativeError(
         QStringLiteral("Native audio rejected the volume change."));
   }
+  return true;
+}
+
+bool NativePlaybackOwner::setRate(double rate) {
+  Q_ASSERT(QThread::currentThread() == controller_.thread());
+  if (!nativeOwnsTransport()) {
+    return false;
+  }
+  const playback_router::Transition transition =
+      router_.setRate(rate, nextTick());
+  if (!applied(transition)) {
+    return false;
+  }
+  execute(transition);
   return true;
 }
 

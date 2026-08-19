@@ -69,7 +69,8 @@ OSStatus systemInstanceNew(void *, AudioComponent component,
 //
 // The override is admitted only if it satisfies the same inequalities the
 // constant does -- a power of two, within one render slice, and covered
-// kRingDevicePeriodsOfHeadroom times over by the ring's guaranteed occupancy.
+// kRingDevicePeriodsOfHeadroom times over by the ring's guaranteed occupancy
+// AT THE FASTEST ADMITTED PLAYBACK RATE, which is what actually drains it.
 // So it can select a size the ring has been proven to feed and nothing else;
 // it is a measurement seam, not an escape hatch. Read once per process.
 [[nodiscard]] std::uint32_t requestedDeviceBufferFrames() noexcept {
@@ -89,7 +90,8 @@ OSStatus systemInstanceNew(void *, AudioComponent component,
     const bool admissible =
         parsed != 0 && (parsed & (parsed - 1)) == 0 &&
         parsed <= NativeAudioOutput::kMaximumFramesPerSlice &&
-        parsed * NativeAudioOutput::kRingDevicePeriodsOfHeadroom <=
+        maximumMediaFramesPerDevicePeriod(parsed) *
+                NativeAudioOutput::kRingDevicePeriodsOfHeadroom <=
             NativeAudioOutput::kGuaranteedRingFrames;
     return admissible ? parsed : NativeAudioOutput::kDeviceBufferFrames;
   }();
@@ -909,6 +911,29 @@ NativeAudioOutputProgress NativeAudioOutput::configure(
   configured_.store(true, std::memory_order_release);
   setState(NativeAudioOutputState::Stopped);
   return NativeAudioOutputProgress::Done;
+}
+
+bool NativeAudioOutput::setRate(NativePlaybackRate rate) noexcept {
+  if (!rate.valid()) {
+    return false;
+  }
+  if (!rate.unity() && !stretch_) {
+    if (sample_rate_ == 0) {
+      // The stream rate is only known from configure() onwards. Refusing here
+      // is honest: there is no session to apply a rate to yet.
+      return false;
+    }
+    auto stretch = NativeAudioStretchUnit::create(sample_rate_);
+    if (!stretch || !render_core_.attachStretchStage(stretch->stage())) {
+      return false;
+    }
+    stretch_ = std::move(stretch);
+  }
+  return render_core_.setRate(rate);
+}
+
+NativePlaybackRate NativeAudioOutput::rate() const noexcept {
+  return render_core_.requestedRate();
 }
 
 NativeAudioOutputProgress NativeAudioOutput::activate(

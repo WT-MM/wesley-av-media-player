@@ -786,7 +786,16 @@ void PlayerController::prepareRoutedOpenIntent(const QUrl &source) {
 }
 
 bool PlayerController::nativeRouteAdmissionAllowed() const noexcept {
+  // The native engine now serves the advertised pitch-preserved window, so a
+  // non-unit speed no longer routes the file away from it. Anything outside
+  // that window still does: the compatibility engine has no such bound.
+#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+  return native_protocol::routeForRate(rate_) ==
+             native_protocol::RateRoute::NativeVersion1 &&
+         video_item_;
+#else
   return rate_ == 1.0 && video_item_;
+#endif
 }
 
 bool PlayerController::beginRoutedFallbackOpen(
@@ -1962,16 +1971,26 @@ void PlayerController::setRate(double rate) {
   const double bounded = std::clamp(rate, kMinimumRate, kMaximumRate);
 #if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   if (native_playback_ && native_playback_->nativeOwnsTransport()) {
-    if (bounded != 1.0) {
-      setLastError(QStringLiteral(
-          "Playback speed changes are not available in native playback "
-          "yet."));
+    // The native engine serves the advertised pitch-preserved window itself.
+    // Only a rate outside that window still needs a refusal, and it gets the
+    // non-blocking notice channel rather than a modal error: the speed slider
+    // emits on every motion event, and an error dialog per pixel of drag is
+    // not feedback, it is a trap.
+    if (native_protocol::routeForRate(bounded) !=
+        native_protocol::RateRoute::NativeVersion1) {
+      setLastNotice(
+          QStringLiteral("Native playback supports speeds from 0.25x to 4x."));
       return;
     }
-    if (!nearlyEqual(rate_, 1.0)) {
-      rate_ = 1.0;
-      emit rateChanged();
+    if (!native_playback_->setRate(bounded)) {
+      setLastNotice(
+          QStringLiteral("Native playback could not change the speed."));
+      return;
     }
+    if (nearlyEqual(rate_, bounded))
+      return;
+    rate_ = bounded;
+    emit rateChanged();
     return;
   }
 #endif
@@ -2016,6 +2035,15 @@ void PlayerController::toggleFullscreen() { emit fullscreenToggleRequested(); }
 void PlayerController::setPreservePitch(bool preserve) {
 #if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   if (native_playback_ && native_playback_->nativeOwnsTransport()) {
+    // The native engine time-stretches and has no varispeed path at all, so
+    // pitch is always preserved. Accepting the toggle silently would let the
+    // switch claim a mode the engine does not have; say so once, on the
+    // non-blocking channel, and leave the switch where it was.
+    if (!preserve && preserve_pitch_) {
+      setLastNotice(QStringLiteral(
+          "Native playback always preserves pitch when changing speed."));
+      return;
+    }
     if (preserve_pitch_ != preserve) {
       preserve_pitch_ = preserve;
       emit preservePitchChanged();

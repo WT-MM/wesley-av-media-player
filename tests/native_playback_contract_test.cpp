@@ -56,7 +56,31 @@ void testLocalValidationAndRateRouting() {
   static_assert(validPosition(-0.0));
   static_assert(!validPosition(-1.0));
   static_assert(routeForRate(1.0) == RateRoute::NativeVersion1);
-  static_assert(routeForRate(0.5) == RateRoute::Fallback);
+  // The advertised pitch-preserved window is served natively; only rates
+  // outside it fall back.
+  static_assert(routeForRate(0.5) == RateRoute::NativeVersion1);
+  static_assert(routeForRate(0.25) == RateRoute::NativeVersion1);
+  static_assert(routeForRate(4.0) == RateRoute::NativeVersion1);
+  static_assert(routeForRate(0.2) == RateRoute::Fallback);
+  static_assert(routeForRate(4.001) == RateRoute::Fallback);
+  static_assert(routeForRate(16.0) == RateRoute::Fallback);
+  // Admission snaps onto the exact 1/64 grid, so no double ever reaches the
+  // clock: the reduced rational is the only representation that crosses.
+  static_assert(nativeRateRatio(1.0) == PlaybackRateRatio{1, 1});
+  static_assert(nativeRateRatio(0.25) == PlaybackRateRatio{1, 4});
+  static_assert(nativeRateRatio(0.5) == PlaybackRateRatio{1, 2});
+  static_assert(nativeRateRatio(1.5) == PlaybackRateRatio{3, 2});
+  static_assert(nativeRateRatio(1.25) == PlaybackRateRatio{5, 4});
+  static_assert(nativeRateRatio(2.0) == PlaybackRateRatio{2, 1});
+  static_assert(nativeRateRatio(4.0) == PlaybackRateRatio{4, 1});
+  // A slider position that is not a binary rational snaps to its nearest
+  // grid neighbour and stays there deterministically.
+  static_assert(nativeRateRatio(0.3) == PlaybackRateRatio{19, 64});
+  static_assert(nativeRateRatio(1.1) == PlaybackRateRatio{35, 32});
+  // Every admitted ratio has a denominator dividing the grid, which is what
+  // makes outputFrames * p / q exact for a 1024-frame device period.
+  static_assert(kNativeRateGrid % nativeRateRatio(0.3).denominator == 0);
+  static_assert(1024U % kNativeRateGrid == 0);
   static_assert(follows(stamp(1), stamp(2)));
   static_assert(!follows(stamp(2), stamp(2)));
   static_assert(canReserveLiveSerialAfter(Serial{1}));
@@ -111,8 +135,14 @@ void testLocalValidationAndRateRouting() {
          "a NaN rate routes to fallback");
   expect(routeForRate(infinity) == RateRoute::Fallback,
          "an infinite rate routes to fallback");
-  expect(routeForRate(1.0000001) == RateRoute::Fallback,
-         "version 1 does not approximate unsupported rates");
+  expect(routeForRate(1.0000001) == RateRoute::NativeVersion1,
+         "a rate inside the advertised window is served natively");
+  expect(nativeRateRatio(1.0000001) == (PlaybackRateRatio{1, 1}),
+         "admission snaps to the exact grid rather than approximating");
+  expect(routeForRate(0.0) == RateRoute::Fallback,
+         "a zero rate is outside the native window");
+  expect(routeForRate(-1.0) == RateRoute::Fallback,
+         "a negative rate is outside the native window");
 
   expect(!valid(Prepare{}), "default Prepare has zero lineage and source");
   expect(!valid(Prepare{stamp(1), SourceKey{}, kPreparedGeneration, 0.0}),
@@ -139,7 +169,9 @@ void testLocalValidationAndRateRouting() {
          "Start rejects a zero prepared generation");
   expect(!valid(Start{stamp(2), kPreparedGeneration, false}),
          "Start must establish the prepared generation paused");
-  expect(!valid(SetRunState{stamp(3), kPreparedGeneration, false, 1.25}),
+  expect(valid(SetRunState{stamp(3), kPreparedGeneration, false, 1.25}),
+         "a run rate inside the advertised window is a native command");
+  expect(!valid(SetRunState{stamp(3), kPreparedGeneration, false, 8.0}),
          "unsupported run rates do not enter the native command stream");
 
   expect(!valid(PreviewFrame{stamp(4), kPreparedGeneration, GestureId{},
@@ -575,8 +607,12 @@ void testCommitNeedsExactClockAndDrawProof() {
   wrong.audioClock.paused = false;
   expect(!valid(wrong), "commit clock proof must be paused");
   wrong = ready;
-  wrong.audioClock.rate = 1.25;
+  wrong.audioClock.rate = 8.0;
   expect(!valid(wrong), "commit clock proof rejects unsupported rate");
+  wrong = ready;
+  wrong.audioClock.rate = 1.25;
+  expect(valid(wrong),
+         "commit clock proof accepts a rate inside the advertised window");
   wrong = ready;
   wrong.audioClock.anchor = AudioClockAnchorId{};
   expect(!valid(wrong), "commit clock proof requires a nonzero anchor ID");

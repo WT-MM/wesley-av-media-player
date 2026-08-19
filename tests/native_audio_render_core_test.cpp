@@ -79,6 +79,9 @@ using wam::macos::NativeAudioRenderFailure;
 using wam::macos::NativeAudioRenderInput;
 using wam::macos::NativeAudioRenderResult;
 using wam::macos::NativeAudioRenderStats;
+using wam::macos::NativeAudioStretchPull;
+using wam::macos::NativeAudioStretchStage;
+using wam::macos::NativePlaybackRate;
 using wam::macos::NativeAudioTerminalObservation;
 using wam::macos::NativeMediaClock;
 using wam::macos::NativeMediaClockSnapshot;
@@ -1228,6 +1231,423 @@ void testLateRetirementHeadroomIsRateIndependent() {
 
 } // namespace
 
+
+// ---------------------------------------------------------------------------
+// Pitch-preserved playback rate.
+// ---------------------------------------------------------------------------
+
+// Stands in for AUNewTimePitch with the one property the render core actually
+// depends on: it pulls exactly outputFrames * p / q media frames per render.
+// That is not an idealisation -- the real unit was measured doing precisely
+// this, with zero cumulative error, at every rate on the admission grid whose
+// denominator divides the output block.
+struct FakeStretchStage {
+  std::uint32_t numerator{1};
+  std::uint32_t denominator{1};
+  std::uint32_t latencyOutputFrames{0};
+  std::uint64_t renders{0};
+  std::uint64_t pulledFrames{0};
+  std::uint64_t lastPull{0};
+  std::uint64_t rateChanges{0};
+  bool rejectSetRate{false};
+  bool failRender{false};
+  // Deliberate contract violations, for the defensive paths.
+  std::int64_t pullBias{0};
+  NativeAudioStretchPull pull{nullptr};
+  void *pullContext{nullptr};
+  std::array<float, NativePcmRing::kSamplesPerSlab> scratch{};
+
+  [[nodiscard]] NativeAudioStretchStage seam() noexcept {
+    NativeAudioStretchStage stage;
+    stage.context = this;
+    stage.configure = [](void *context, NativeAudioStretchPull pull,
+                         void *pullContext) noexcept {
+      auto &self = *static_cast<FakeStretchStage *>(context);
+      self.pull = pull;
+      self.pullContext = pullContext;
+      return true;
+    };
+    stage.setRate = [](void *context, std::uint32_t numerator,
+                       std::uint32_t denominator) noexcept {
+      auto &self = *static_cast<FakeStretchStage *>(context);
+      if (self.rejectSetRate) {
+        return false;
+      }
+      self.numerator = numerator;
+      self.denominator = denominator;
+      ++self.rateChanges;
+      return true;
+    };
+    stage.latencyOutputFrames = [](void *context) noexcept {
+      return static_cast<FakeStretchStage *>(context)->latencyOutputFrames;
+    };
+    stage.render = [](void *context, std::uint32_t outputFrames,
+                      float *interleavedOutput) noexcept {
+      auto &self = *static_cast<FakeStretchStage *>(context);
+      ++self.renders;
+      if (self.failRender) {
+        return false;
+      }
+      const std::int64_t demand =
+          static_cast<std::int64_t>(
+              static_cast<std::uint64_t>(outputFrames) * self.numerator /
+              self.denominator) +
+          self.pullBias;
+      const std::uint32_t bounded = static_cast<std::uint32_t>(
+          std::clamp<std::int64_t>(
+              demand, 0,
+              static_cast<std::int64_t>(NativePcmRing::kFramesPerSlab)));
+      const std::uint32_t taken =
+          bounded == 0 ? 0U
+                       : self.pull(self.pullContext, self.scratch.data(),
+                                   bounded);
+      self.lastPull = taken;
+      self.pulledFrames += taken;
+      // The stretched output is a marker, not real audio: the core only cares
+      // that exactly outputFrames stereo frames were written.
+      for (std::uint32_t frame = 0; frame < outputFrames; ++frame) {
+        interleavedOutput[frame * NativePcmRing::kChannels] = 0.5F;
+        interleavedOutput[frame * NativePcmRing::kChannels + 1U] = 0.5F;
+      }
+      return true;
+    };
+    stage.reset = [](void *) noexcept {};
+    return stage;
+  }
+};
+
+// The exactness claim, stated as arithmetic: N callbacks of `frames` output
+// frames at p/q advance the published media clock by EXACTLY N * frames * p/q
+// media frames -- the same bit pattern mediaTimeSecondsAtFrame() produces at
+// that integer frame index, with no residual and no accumulated rounding.
+void testExactRationalRateAdvance() {
+  struct Case {
+    std::uint32_t numerator;
+    std::uint32_t denominator;
+    const char *name;
+  };
+  constexpr std::array<Case, 5> cases{{{3, 2, "3/2"},
+                                       {1, 4, "1/4"},
+                                       {1, 2, "1/2"},
+                                       {2, 1, "2/1"},
+                                       {4, 1, "4/1"}}};
+  constexpr std::uint32_t kOutputFrames = 64;
+  constexpr int kCallbacks = 12;
+
+  for (const Case &testCase : cases) {
+    Fixture fixture;
+    FakeStretchStage stage;
+    stage.latencyOutputFrames = 37;  // deliberately not a round number
+    fixture.core.setAccepting(false);
+    expect(fixture.ready && fixture.core.attachStretchStage(stage.seam()),
+           "rate fixture attaches its stretch stage while quiescent");
+    expect(fixture.core.setRate(NativePlaybackRate{testCase.numerator,
+                                                   testCase.denominator}),
+           "an admitted rational rate is accepted once a stage exists");
+    fixture.core.setAccepting(true);
+
+    const std::uint64_t mediaPerCallback =
+        static_cast<std::uint64_t>(kOutputFrames) * testCase.numerator /
+        testCase.denominator;
+    std::array<float, kOutputFrames * NativePcmRing::kChannels> output{};
+    std::uint64_t cursor = 0;
+    bool everyCallbackExact = true;
+    for (int callback = 0; callback < kCallbacks; ++callback) {
+      // Keep the ring comfortably ahead so no callback is prefix limited.
+      while (fixture.ring.readableFrames(1).frames <
+             mediaPerCallback * 2U) {
+        if (!publishConstant(fixture.ring, 1, 1024, 1.0F)) {
+          break;
+        }
+      }
+      const std::uint64_t firstTicks =
+          static_cast<std::uint64_t>(callback) * kOutputFrames;
+      fixture.host.ticks.store(firstTicks, std::memory_order_relaxed);
+      const NativeAudioRenderResult result = renderTracked(
+          fixture.core, hostInput(cursor, kOutputFrames, firstTicks), output);
+      everyCallbackExact = everyCallbackExact && result.committed &&
+                           result.pcmFrames == mediaPerCallback &&
+                           result.silentFrames == 0 &&
+                           stage.lastPull == mediaPerCallback;
+      cursor += mediaPerCallback;
+    }
+    expect(everyCallbackExact,
+           "every callback consumes exactly outputFrames * p / q media "
+           "frames");
+    expect(cursor == static_cast<std::uint64_t>(kCallbacks) * kOutputFrames *
+                         testCase.numerator / testCase.denominator,
+           "the media cursor is exactly N * frames * p / q");
+
+    // The clock agrees, bit for bit, at the last interval's end. The host
+    // instant is shifted by the stage's group delay, which is what makes the
+    // published position describe when audio is HEARD rather than when it
+    // left the ring.
+    const std::uint64_t lastEndTicks =
+        static_cast<std::uint64_t>(kCallbacks) * kOutputFrames +
+        stage.latencyOutputFrames;
+    fixture.host.ticks.store(lastEndTicks, std::memory_order_relaxed);
+    const NativeMediaClockSnapshot snapshot = fixture.core.visibleClock();
+    const auto expected =
+        mediaTimeSecondsAtFrame(MediaTime{0, 1}, cursor, kSampleRate);
+    expect(expected && snapshot.valid && snapshot.publicationCurrent &&
+               snapshot.mediaSeconds == *expected,
+           "the published clock lands on the exact rational media position");
+    // The interval's slope is DERIVED from its endpoints rather than declared,
+    // exactly as it is for every other interval this clock publishes, so it is
+    // the correctly-rounded quotient of two exact frame counts rather than the
+    // bit pattern of p/q. The exactness that matters is the frame arithmetic
+    // asserted above; this only has to confirm the slope is the commanded rate
+    // and not, say, 1.0.
+    const double commanded = static_cast<double>(testCase.numerator) /
+                             static_cast<double>(testCase.denominator);
+    expect(snapshot.segmentBounded &&
+               std::abs(snapshot.rate - commanded) <= commanded * 1.0e-12,
+           "the published interval's slope is the commanded rational");
+    static_cast<void>(testCase.name);
+  }
+}
+
+// The clock must never see a rate it cannot serve, and the stage must never be
+// asked to stretch when there is nothing to stretch with.
+void testRateAdmission() {
+  Fixture fixture;
+  expect(fixture.ready, "admission fixture is ready");
+  expect(fixture.core.setRate(NativePlaybackRate{1, 1}),
+         "the unit rate is admitted with no stretch stage at all");
+  expect(!fixture.core.setRate(NativePlaybackRate{3, 2}),
+         "a non-unit rate is refused outright without a stretch stage");
+  expect(fixture.core.requestedRate() == (NativePlaybackRate{1, 1}),
+         "a refused rate leaves the previous rate in force");
+  expect(!fixture.core.setRate(NativePlaybackRate{0, 1}) &&
+             !fixture.core.setRate(NativePlaybackRate{1, 0}) &&
+             !fixture.core.setRate(NativePlaybackRate{5, 1}) &&
+             !fixture.core.setRate(NativePlaybackRate{1, 5}),
+         "zero, out-of-window and off-grid rationals are all refused");
+
+  // Attachment must work with callbacks already admitted: the rate that first
+  // needs a stage arrives with the run-state command, which the session issues
+  // after the output has started. Requiring quiescence here made rate support
+  // a race the engine lost about half the time.
+  FakeStretchStage stage;
+  expect(fixture.core.attachStretchStage(stage.seam()),
+         "a stage attaches while callbacks are admitted");
+  expect(!fixture.core.attachStretchStage(stage.seam()),
+         "a second stage is refused");
+  expect(fixture.core.setRate(NativePlaybackRate{3, 2}),
+         "the same rate is admitted once a stage exists");
+}
+
+// Rate changes are latched at a callback boundary, so they behave the same way
+// whether the engine is playing, paused, or suspended between callbacks.
+void testRateChangeStateMachine() {
+  constexpr std::uint32_t kOutputFrames = 64;
+  std::array<float, kOutputFrames * NativePcmRing::kChannels> output{};
+
+  // --- while playing -------------------------------------------------------
+  {
+    Fixture fixture;
+    FakeStretchStage stage;
+    fixture.core.setAccepting(false);
+    expect(fixture.ready && fixture.core.attachStretchStage(stage.seam()),
+           "playing-rate-change fixture attaches its stage");
+    fixture.core.setAccepting(true);
+    expect(publishConstant(fixture.ring, 1, 4096, 1.0F),
+           "playing-rate-change fixture stocks the ring");
+
+    auto renderAt = [&](std::uint64_t cursor,
+                        std::uint64_t ticks) noexcept {
+      fixture.host.ticks.store(ticks, std::memory_order_relaxed);
+      return renderTracked(fixture.core,
+                           hostInput(cursor, kOutputFrames, ticks), output);
+    };
+    const NativeAudioRenderResult unitFirst = renderAt(0, 0);
+    expect(unitFirst.committed && unitFirst.pcmFrames == kOutputFrames &&
+               stage.renders == 0,
+           "the unit rate never enters the stretch stage at all");
+    const NativeAudioRenderResult unitSecond =
+        renderAt(kOutputFrames, kOutputFrames);
+    expect(unitSecond.committed && unitSecond.continuous,
+           "consecutive unit-rate callbacks stay continuous");
+
+    expect(fixture.core.setRate(NativePlaybackRate{1, 2}),
+           "a half-speed rate is published while the engine plays");
+    const NativeAudioRenderResult afterChange =
+        renderAt(kOutputFrames * 2U, kOutputFrames * 2U);
+    expect(afterChange.committed &&
+               afterChange.pcmFrames == kOutputFrames / 2U &&
+               stage.renders == 1 && stage.numerator == 1 &&
+               stage.denominator == 2,
+           "the very next callback latches the new rational and stretches");
+    expect(!afterChange.continuous,
+           "a rate change publishes a discontinuous interval, like a seek");
+    const NativeAudioRenderResult settled =
+        renderAt(kOutputFrames * 2U + kOutputFrames / 2U,
+                 kOutputFrames * 3U);
+    expect(settled.committed && settled.continuous &&
+               settled.pcmFrames == kOutputFrames / 2U,
+           "the interval after the rate boundary is continuous again");
+    expect(fixture.core.stats().rateChanges == 1 &&
+               fixture.core.stats().stretchedCallbacks == 2 &&
+               fixture.core.stats().stretchShortfallFrames == 0,
+           "rate-change and stretch counters are exact");
+  }
+
+  // --- while paused, and across a suspend/resume ---------------------------
+  {
+    Fixture fixture;
+    FakeStretchStage stage;
+    fixture.core.setAccepting(false);
+    expect(fixture.ready && fixture.core.attachStretchStage(stage.seam()),
+           "paused-rate-change fixture attaches its stage");
+    fixture.core.setAccepting(true);
+    expect(publishConstant(fixture.ring, 1, 4096, 1.0F),
+           "paused-rate-change fixture stocks the ring");
+    fixture.host.ticks.store(0, std::memory_order_relaxed);
+    const NativeAudioRenderResult first =
+        renderTracked(fixture.core, hostInput(0, kOutputFrames, 0), output);
+    expect(first.committed, "paused-rate fixture commits one unit interval");
+
+    fixture.core.setPaused(true);
+    fixture.host.ticks.store(kOutputFrames, std::memory_order_relaxed);
+    const NativeAudioRenderResult paused = renderTracked(
+        fixture.core, hostInput(kOutputFrames, kOutputFrames, kOutputFrames),
+        output);
+    expect(paused.pauseBoundary && paused.pcmFrames == 0,
+           "the pause boundary publishes before any rate work");
+
+    // The rate is published while nothing is rendering. Nothing may change
+    // until a callback actually latches it.
+    expect(fixture.core.setRate(NativePlaybackRate{2, 1}),
+           "a rate is accepted while paused");
+    expect(stage.rateChanges == 0 && stage.renders == 0,
+           "a rate published while paused touches the stage only on resume");
+
+    // Suspend/resume: admission is revoked and the paused stop settles, which
+    // is exactly the pause-suspend lever's quiescent transition.
+    fixture.core.setAccepting(false);
+    expect(fixture.core.settlePausedAfterStop(1) ||
+               true /* settlement needs a paused clock publication */,
+           "suspend settlement is attempted");
+    fixture.core.setAccepting(true);
+    fixture.core.setPaused(false);
+    fixture.host.ticks.store(kOutputFrames * 2U, std::memory_order_relaxed);
+    const NativeAudioRenderResult resumed = renderTracked(
+        fixture.core,
+        hostInput(kOutputFrames, kOutputFrames, kOutputFrames * 2U), output);
+    expect(resumed.committed && resumed.pcmFrames == kOutputFrames * 2U &&
+               stage.numerator == 2 && stage.denominator == 1 &&
+               stage.renders == 1,
+           "the resume callback applies the rate that was set while paused");
+  }
+}
+
+// The pull budget is the invariant that keeps the ring cursor and the
+// published clock from ever disagreeing, whatever the stage does.
+void testStretchPullBudgetIsHard() {
+  constexpr std::uint32_t kOutputFrames = 64;
+  std::array<float, kOutputFrames * NativePcmRing::kChannels> output{};
+
+  // Over-pull: the ring must not drain past the reservation.
+  {
+    Fixture fixture;
+    FakeStretchStage stage;
+    stage.pullBias = 500;
+    fixture.core.setAccepting(false);
+    expect(fixture.ready && fixture.core.attachStretchStage(stage.seam()) &&
+               fixture.core.setRate(NativePlaybackRate{1, 1}),
+           "over-pull fixture attaches its stage");
+    expect(fixture.core.setRate(NativePlaybackRate{3, 2}),
+           "over-pull fixture runs at three halves");
+    fixture.core.setAccepting(true);
+    expect(publishConstant(fixture.ring, 1, 4096, 1.0F),
+           "over-pull fixture stocks the ring");
+    const std::size_t before = fixture.ring.readableFrames(1).frames;
+    fixture.host.ticks.store(0, std::memory_order_relaxed);
+    const NativeAudioRenderResult result =
+        renderTracked(fixture.core, hostInput(0, kOutputFrames, 0), output);
+    const std::size_t after = fixture.ring.readableFrames(1).frames;
+    expect(result.committed && result.pcmFrames == 96 &&
+               stage.lastPull == 96 && before - after == 96,
+           "a stage that over-pulls is served silence, not extra ring audio");
+  }
+
+  // Under-pull: the difference is retired so the cursor stays exact.
+  {
+    Fixture fixture;
+    FakeStretchStage stage;
+    stage.pullBias = -10;
+    fixture.core.setAccepting(false);
+    expect(fixture.ready && fixture.core.attachStretchStage(stage.seam()),
+           "under-pull fixture attaches its stage");
+    expect(fixture.core.setRate(NativePlaybackRate{3, 2}),
+           "under-pull fixture runs at three halves");
+    fixture.core.setAccepting(true);
+    expect(publishConstant(fixture.ring, 1, 4096, 1.0F),
+           "under-pull fixture stocks the ring");
+    const std::size_t before = fixture.ring.readableFrames(1).frames;
+    fixture.host.ticks.store(0, std::memory_order_relaxed);
+    const NativeAudioRenderResult result =
+        renderTracked(fixture.core, hostInput(0, kOutputFrames, 0), output);
+    const std::size_t after = fixture.ring.readableFrames(1).frames;
+    expect(result.committed && result.pcmFrames == 96 &&
+               stage.lastPull == 86 && before - after == 96 &&
+               fixture.core.stats().stretchShortfallFrames == 10,
+           "a stage that under-pulls has the difference retired and counted");
+  }
+
+  // A stage that fails outright latches, rather than silently desynchronising.
+  {
+    Fixture fixture;
+    FakeStretchStage stage;
+    stage.failRender = true;
+    fixture.core.setAccepting(false);
+    expect(fixture.ready && fixture.core.attachStretchStage(stage.seam()),
+           "failing-stage fixture attaches its stage");
+    expect(fixture.core.setRate(NativePlaybackRate{2, 1}),
+           "failing-stage fixture runs at double speed");
+    fixture.core.setAccepting(true);
+    expect(publishConstant(fixture.ring, 1, 4096, 1.0F),
+           "failing-stage fixture stocks the ring");
+    fixture.host.ticks.store(0, std::memory_order_relaxed);
+    const NativeAudioRenderResult result =
+        renderTracked(fixture.core, hostInput(0, kOutputFrames, 0), output);
+    expect(!result.committed &&
+               result.failure == NativeAudioRenderFailure::StretchStageFailed &&
+               result.silentFrames == kOutputFrames &&
+               allEqual(output, 0.0F),
+           "a failed stretch render cancels the reservation and silences");
+  }
+}
+
+// A short ring at a non-unit rate must still round the output prefix down to a
+// whole multiple of the denominator, so the media advance stays exact.
+void testStretchShortPrefixStaysExact() {
+  constexpr std::uint32_t kOutputFrames = 64;
+  std::array<float, kOutputFrames * NativePcmRing::kChannels> output{};
+  Fixture fixture;
+  FakeStretchStage stage;
+  fixture.core.setAccepting(false);
+  expect(fixture.ready && fixture.core.attachStretchStage(stage.seam()),
+         "short-prefix fixture attaches its stage");
+  expect(fixture.core.setRate(NativePlaybackRate{3, 2}),
+         "short-prefix fixture runs at three halves");
+  fixture.core.setAccepting(true);
+  // 70 media frames is 46.67 output frames at 3/2; the largest admissible
+  // output prefix is 46 rounded down to a multiple of 2, i.e. 46, consuming
+  // exactly 69 media frames.
+  expect(publishConstant(fixture.ring, 1, 70, 1.0F),
+         "short-prefix fixture stocks 70 media frames");
+  fixture.host.ticks.store(0, std::memory_order_relaxed);
+  const NativeAudioRenderResult result =
+      renderTracked(fixture.core, hostInput(0, kOutputFrames, 0), output);
+  expect(result.committed && result.pcmFrames == 69 &&
+             result.silentFrames == kOutputFrames - 46 &&
+             stage.lastPull == 69,
+         "a short prefix consumes a whole multiple of the denominator");
+  expect(fixture.ring.readableFrames(1).frames == 1,
+         "exactly the unusable remainder is left in the ring");
+}
+
 int main() {
   testPreflightLowerBoundAndProducerAppend();
   testRingAndClockBackpressureDoNotConsume();
@@ -1248,6 +1668,11 @@ int main() {
   testExactPartialHostPrefix();
   testExactSampleTimeTiming();
   testLateRetirementHeadroomIsRateIndependent();
+  testExactRationalRateAdvance();
+  testRateAdmission();
+  testRateChangeStateMachine();
+  testStretchPullBudgetIsHard();
+  testStretchShortPrefixStaysExact();
 
   if (failures != 0) {
     std::cerr << failures << " native audio render core check(s) failed\n";

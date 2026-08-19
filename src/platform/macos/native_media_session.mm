@@ -331,6 +331,10 @@ struct SessionAudioControl {
   // timebase -- keeps its existing aggregate initializer and leaves this
   // null, which progressAudioSuspend() reads as "nothing to idle".
   NativeAudioSessionProgress (*suspendForPause)(void*) noexcept{nullptr};
+  // Optional pitch-preserved playback rate, applied as an exact rational. A
+  // route that leaves this null is served only at the unit rate.
+  NativeAudioSessionProgress (*setRate)(void*,
+                                        NativePlaybackRate) noexcept{nullptr};
 };
 
 // Paired-measurement seam for the pause-suspend lever. Read once per process.
@@ -379,7 +383,13 @@ struct SessionAudioControl {
         return static_cast<NativeSilentTimebase*>(context)
             ->highestExposedGeneration();
       },
-      nullptr};
+      nullptr,
+      // No AudioUnit to idle on this route ...
+      nullptr,
+      // ... but rate is real here: it scales the host-clock slope directly.
+      [](void* context, NativePlaybackRate rate) noexcept {
+        return static_cast<NativeSilentTimebase*>(context)->setRate(rate);
+      }};
 }
 
 struct SessionPreviewControl {
@@ -1315,6 +1325,9 @@ struct NativeMediaSession::Impl final {
         [](void* context) noexcept {
           return static_cast<NativeAudioSession*>(context)
               ->suspendOutputForPause();
+        },
+        [](void* context, NativePlaybackRate rate) noexcept {
+          return static_cast<NativeAudioSession*>(context)->setRate(rate);
         }};
     sourceOwned = std::move(source);
     videoOwned = std::move(video);
@@ -2235,6 +2248,16 @@ if (result != NativeAudioSessionProgress::Done) {
         acceptPublishedCommands();
         return;
       }
+      // Rate is a soft control, exactly like gain: it is snapped onto the
+      // exact admission grid and published to the audio route, and a refusal
+      // (no time-stretch unit on this machine) leaves the previous rate in
+      // force rather than failing the transport. The clock's own authority is
+      // unaffected either way -- it derives its rate from the intervals the
+      // render callback publishes, not from this command.
+      if (audioControl.setRate != nullptr) {
+        static_cast<void>(audioControl.setRate(
+            audioControl.context, protocol::nativeRateRatio(issued.rate)));
+      }
       const NativeAudioSessionProgress result = audioControl.setPaused(
           audioControl.context, issued.paused);
       endLiveIssue();
@@ -2325,10 +2348,15 @@ if (result != NativeAudioSessionProgress::Done) {
         protocol::AudioClockAnchorId{clock.publicationSerial},
         clock.mediaSeconds,
         true,
-        protocol::kVersion1Rate};
+        clock.rate};
+    // protocol::valid(proof) is what now decides the rate: it admits exactly
+    // the advertised pitch-preserved window and nothing else. Pinning the
+    // literal unit rate here would have refused every proof the moment the
+    // engine gained a rate at all, and a paused clock reports the DECLARED
+    // rate, which is the playback rate.
     if (!clock.publicationCurrent || !clock.valid || clock.running ||
         clock.generation != command.generation.value ||
-        clock.rate != protocol::kVersion1Rate || !protocol::valid(proof)) {
+        !protocol::valid(proof)) {
       return;
     }
     audioProofPending.reset();
@@ -2682,10 +2710,9 @@ if (result != NativeAudioSessionProgress::Done) {
     const protocol::AudioClockProof proof{
         commitCommand.stamp, commitCommand.targetGeneration,
         protocol::AudioClockAnchorId{clock.publicationSerial},
-        clock.mediaSeconds, true, protocol::kVersion1Rate};
+        clock.mediaSeconds, true, clock.rate};
     if (clock.publicationCurrent && clock.valid && !clock.running &&
         clock.generation == commitCommand.targetGeneration.value &&
-        clock.rate == protocol::kVersion1Rate &&
         clock.mediaSeconds == commitCommand.targetSeconds &&
         protocol::valid(proof)) {
       childLifetime->clock->snapshot = clock;
@@ -2897,7 +2924,8 @@ if (result != NativeAudioSessionProgress::Done) {
     }
     if (!clock.publicationCurrent || !clock.valid || clock.running ||
         clock.generation != activeGeneration ||
-        clock.rate != protocol::kVersion1Rate ||
+        protocol::routeForRate(clock.rate) !=
+            protocol::RateRoute::NativeVersion1 ||
         !protocol::validPosition(clock.mediaSeconds)) {
       static_cast<void>(publishFailure(protocol::FailureReason::Clock));
       return;

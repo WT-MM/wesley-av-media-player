@@ -1,9 +1,11 @@
 #pragma once
 
 #include "media/native_media_source.hpp"
+#include "media/native_playback_contract.hpp"
 #include "native_media_clock.hpp"
 #include "native_pcm_ring.hpp"
 
+#include <array>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -12,6 +14,51 @@
 namespace wam::macos {
 
 struct NativeAudioRenderCoreTestAccess;
+
+using NativePlaybackRate = media::native_playback::PlaybackRateRatio;
+
+// Seam the render callback uses to obtain time-stretched (pitch-preserved)
+// audio at a non-unit rate. It is deliberately a pure function table so the
+// core stays testable without CoreAudio and so nothing about AudioUnit
+// lifetime leaks into the callback.
+//
+// CONTRACT, all of it enforced by the core:
+//  * render() is called only from the render callback, only after setRate()
+//    established the exact rational the core is accounting at, and only with
+//    an output frame count the core has already proven is a multiple of the
+//    rate denominator.
+//  * render() must produce exactly outputFrames interleaved stereo frames and
+//    obtain its input solely by calling the pull function registered through
+//    configure(). It must not allocate, block, or log.
+//  * The core's pull function is hard-budgeted: it serves at most the media
+//    frames the core reserved clock time for, and zero-fills anything beyond.
+//    A stage that over-pulls therefore corrupts only its own output, never
+//    the ring cursor or the published clock.
+//  * latencyOutputFrames() is the stage's group delay at the currently set
+//    rate, in OUTPUT frames. The core shifts the segment's host endpoints
+//    forward by exactly that much so the clock describes when audio is
+//    HEARD rather than when it left the ring.
+using NativeAudioStretchPull = std::uint32_t (*)(void *context,
+                                                 float *interleaved,
+                                                 std::uint32_t frames) noexcept;
+
+struct NativeAudioStretchStage {
+  void *context{nullptr};
+  bool (*configure)(void *context, NativeAudioStretchPull pull,
+                    void *pullContext) noexcept {nullptr};
+  bool (*setRate)(void *context, std::uint32_t numerator,
+                  std::uint32_t denominator) noexcept {nullptr};
+  std::uint32_t (*latencyOutputFrames)(void *context) noexcept {nullptr};
+  bool (*render)(void *context, std::uint32_t outputFrames,
+                 float *interleavedOutput) noexcept {nullptr};
+  void (*reset)(void *context) noexcept {nullptr};
+
+  [[nodiscard]] constexpr bool usable() const noexcept {
+    return context != nullptr && configure != nullptr && setRate != nullptr &&
+           latencyOutputFrames != nullptr && render != nullptr &&
+           reset != nullptr;
+  }
+};
 
 // Exact callback metadata supplied by the platform adapter. streamFrameStart
 // is the generation-local media cursor. Host endpoints use the exact rational
@@ -48,6 +95,9 @@ enum class NativeAudioRenderFailure : std::uint8_t {
   ResumeRejected,
   RingContractViolation,
   ClockCommitFailed,
+  // Appended, never inserted: the numeric value of every enumerator above is
+  // already carried in telemetry.
+  StretchStageFailed,
 };
 
 struct NativeAudioRenderResult {
@@ -88,6 +138,13 @@ struct NativeAudioRenderStats {
   std::uint64_t metadataCorrections{0};
   std::uint64_t pauseBoundaries{0};
   std::uint64_t endOfStreamFacts{0};
+  // Callbacks that ran through the pitch-preserving stretch stage, and the
+  // media frames the stage pulled short of (or over) the exact reservation.
+  // A healthy non-unit rate keeps stretchShortfallFrames at zero.
+  std::uint64_t stretchedCallbacks{0};
+  std::uint64_t stretchShortfallFrames{0};
+  std::uint64_t rateChanges{0};
+  NativePlaybackRate rate{};
   NativeAudioRenderFailure failure{NativeAudioRenderFailure::None};
 };
 
@@ -157,6 +214,25 @@ public:
   void setGain(float gain) noexcept;
   void setMuted(bool muted) noexcept;
 
+  // Installs the pitch-preserving stretch stage. Called by the serialized
+  // owner exactly once, and the stage must outlive the core. It is safe while
+  // the render callback is running: the stage table is written first and then
+  // published through a release store that the callback acquires, so a
+  // callback either sees no stage at all or sees a fully written one. It must
+  // be safe there, because the rate that first needs a stage arrives with the
+  // run-state command, which is issued after callbacks are already admitted.
+  // Without a stage the core admits only the unit rate.
+  [[nodiscard]] bool attachStretchStage(
+      NativeAudioStretchStage stage) noexcept;
+
+  // Publishes a requested exact rational playback rate. Lock-free and safe
+  // from the serialized owner thread while the render callback runs: the
+  // callback latches it at a callback boundary, which is the only place the
+  // stage's rate and the core's frame accounting can change together. The
+  // unit rate is always admitted; anything else requires an attached stage.
+  [[nodiscard]] bool setRate(NativePlaybackRate rate) noexcept;
+  [[nodiscard]] NativePlaybackRate requestedRate() const noexcept;
+
   // Marks the exact generation-local frame after the final decoded PCM frame.
   // The boundary is immutable until clearTerminal() or activate(). EOF is a
   // one-shot fact only when a valid callback begins exactly at this boundary
@@ -205,6 +281,16 @@ private:
   [[nodiscard]] bool timingRange(NativeAudioRenderInput input,
                                  std::uint64_t *firstHostTicks,
                                  std::uint64_t *endHostTicks) const noexcept;
+  // Exact host-tick duration of `outputFrames` device frames on this
+  // callback's immutable rational, used both for segment endpoints and for
+  // the stretch stage's group-delay shift.
+  [[nodiscard]] static bool hostTicksForOutputFrames(
+      NativeAudioRenderInput input, std::uint64_t outputFrames,
+      std::uint64_t *ticks) noexcept;
+  // Serves one stretch-stage pull out of the ring under the hard media-frame
+  // budget the callback reserved clock time for.
+  static std::uint32_t stretchPull(void *context, float *interleaved,
+                                   std::uint32_t frames) noexcept;
 
   NativePcmRing &ring_;
   NativeMediaClock &clock_;
@@ -219,6 +305,13 @@ private:
   std::atomic<std::uint64_t> terminal_observed_generation_{0};
   std::atomic<std::uint32_t> target_gain_bits_{0};
   std::atomic<bool> muted_{false};
+  // Packed numerator<<32 | denominator. One 64-bit atomic keeps the pair
+  // indivisible, so the callback can never latch half of a rate change.
+  std::atomic<std::uint64_t> requested_rate_{
+      (std::uint64_t{1} << 32U) | 1U};
+  // Release/acquire publication of stretch_. False means the callback must
+  // not read that table at all, which is also what pins it to the unit rate.
+  std::atomic<bool> stretch_installed_{false};
 
   alignas(128) std::atomic_flag callback_gate_ = ATOMIC_FLAG_INIT;
   std::uint64_t activation_cursor_frame_{0};
@@ -240,6 +333,16 @@ private:
   bool next_discontinuous_{true};
   bool prior_sample_time_valid_{false};
   bool pause_fact_published_{false};
+  // Callback-local stretch state. active_rate_ is the rational every media
+  // frame since the last rate boundary was accounted at; stretch_latency_
+  // is the stage's group delay in output frames at that rate.
+  NativeAudioStretchStage stretch_{};
+  NativePlaybackRate active_rate_{};
+  std::uint32_t stretch_latency_output_frames_{0};
+  // Hard pull budget for the current callback, and what the stage took.
+  std::uint32_t pull_budget_frames_{0};
+  std::uint32_t pull_taken_frames_{0};
+  bool pull_ring_failed_{false};
   std::atomic<bool> first_segment_committed_{false};
   NativeMediaClockSnapshot cached_paused_clock_{};
 
@@ -254,6 +357,9 @@ private:
   std::atomic<std::uint64_t> metadata_corrections_{0};
   std::atomic<std::uint64_t> pause_boundaries_{0};
   std::atomic<std::uint64_t> eof_facts_{0};
+  std::atomic<std::uint64_t> stretched_callbacks_{0};
+  std::atomic<std::uint64_t> stretch_shortfall_frames_{0};
+  std::atomic<std::uint64_t> rate_changes_{0};
 
   TestHook after_preflight_hook_{nullptr};
   void *after_preflight_context_{nullptr};

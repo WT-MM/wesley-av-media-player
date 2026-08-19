@@ -439,6 +439,7 @@ struct NativeAudioSessionControl final {
   float appliedGain{1.0F};
   bool requestedMuted{false};
   bool appliedMuted{false};
+  NativePlaybackRate requestedRate{};
   std::uint64_t controlRevision{0};
   std::uint64_t appliedControlRevision{0};
   bool endOfStreamRequested{false};
@@ -874,6 +875,15 @@ media::NativeMediaConsumeResult NativeAudioSession::configure(
                                  control.hostClock.ticksPerSecond,
                                  plan->sampleRate,
                                  plan->clockPosition});
+  // The stream rate is known only from here on, so a cached non-unit rate can
+  // only now be turned into a real stretch stage. A refusal drops back to the
+  // unit rate rather than failing the whole configure: playing at 1x is a
+  // better outcome than not playing.
+  if (outputConfigured == NativeAudioOutputProgress::Done &&
+      !control.requestedRate.unity() &&
+      !control.output->setRate(control.requestedRate)) {
+    control.requestedRate = NativePlaybackRate{};
+  }
   if (outputConfigured != NativeAudioOutputProgress::Done) {
     control.latch(NativeAudioSessionFailure::OutputConfiguration);
     assignError(error, "native audio output configuration failed");
@@ -1243,6 +1253,27 @@ NativeAudioSessionProgress NativeAudioSession::setGain(float gain) noexcept {
   control.renderCore.setGain(control.requestedGain);
   control.appliedGain = control.requestedGain;
   control.appliedMuted = control.requestedMuted;
+  control.appliedControlRevision = control.controlRevision;
+  return NativeAudioSessionProgress::Done;
+}
+
+NativeAudioSessionProgress NativeAudioSession::setRate(
+    NativePlaybackRate rate) noexcept {
+  if (control_ == nullptr || !rate.valid()) {
+    return NativeAudioSessionProgress::Invalid;
+  }
+  NativeAudioSessionControl& control = *control_;
+  if (!acceptsAudioControls(control.state)) {
+    return NativeAudioSessionProgress::Invalid;
+  }
+  // Before configure there is no output to create a stretch unit against, so
+  // the request is merely cached; configure re-publishes it exactly the way
+  // it re-publishes the cached gain/mute pair.
+  if (control.output != nullptr && !control.output->setRate(rate)) {
+    return NativeAudioSessionProgress::Invalid;
+  }
+  control.requestedRate = rate;
+  advanceControlRevision(control.controlRevision);
   control.appliedControlRevision = control.controlRevision;
   return NativeAudioSessionProgress::Done;
 }

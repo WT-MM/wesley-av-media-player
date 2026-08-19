@@ -259,15 +259,30 @@ void testReadableFramesPreflight() {
   NativePcmRingTestAccess::setPublishedSlabMetadata(
       malformedRing, 2, 14,
       static_cast<std::uint32_t>(NativePcmRing::kFramesPerSlab + 1));
+  // Three of the published slabs were corrupted above (stale generation, zero
+  // frames, oversized frame count); every remaining slab still carries its
+  // one frame.
+  constexpr std::size_t kSurvivingSlabs = NativePcmRing::kSlabCount - 3;
   const auto malformed = malformedRing.readableFrames(14);
-  expect(malformed.frames == 1 && malformed.staleSlabs == 1 &&
+  expect(malformed.frames == kSurvivingSlabs && malformed.staleSlabs == 1 &&
              malformedRing.queuedSlabs() == NativePcmRing::kSlabCount,
          "preflight logically skips stale, zero, and oversized metadata");
-  std::array<float, 2> survivingOutput{};
+  std::array<float, kSurvivingSlabs * NativePcmRing::kChannels>
+      survivingOutput{};
   const auto malformedConsume = malformedRing.consume(14, survivingOutput);
+  decltype(survivingOutput) expectedSurviving{};
+  for (std::size_t index = 0; index < kSurvivingSlabs; ++index) {
+    // Slabs 0, 1 and 2 were the corrupted ones, so the first survivor is the
+    // fourth published slab, whose sample value is 4.
+    expectedSurviving[index * NativePcmRing::kChannels] =
+        static_cast<float>(index + 4);
+    expectedSurviving[index * NativePcmRing::kChannels + 1] =
+        static_cast<float>(index + 4);
+  }
   expect(malformedConsume.pcmFrames == malformed.frames &&
              malformedConsume.staleSlabs == malformed.staleSlabs &&
-             !malformedConsume.underrun && allEqual(survivingOutput, 4.0F) &&
+             !malformedConsume.underrun &&
+             survivingOutput == expectedSurviving &&
              malformedRing.queuedSlabs() == 0 &&
              malformedRing.stats().unreadPcmBytes == 0,
          "preflight metadata filtering exactly matches destructive consume");
@@ -304,19 +319,26 @@ void testFixedCapacityPhysicalAndCursorWraparound() {
     frame.fill(static_cast<float>(index + 1));
     expect(ring.publish(17, frame, 1) ==
                NativePcmRing::PublishResult::Published,
-           "each of four physical slabs publishes");
+           "each physical slab publishes");
   }
   expect(ring.publish(17, frame, 1) == NativePcmRing::PublishResult::Full &&
              ring.queuedSlabs() == NativePcmRing::kSlabCount,
-         "fifth slab is explicit bounded backpressure");
+         "one slab past capacity is explicit bounded backpressure");
 
-  std::array<float, 8> firstCycle{};
+  std::array<float, NativePcmRing::kSlabCount * NativePcmRing::kChannels>
+      firstCycle{};
   const auto firstCycleResult = ring.consume(17, firstCycle);
-  const std::array<float, 8> expectedFirstCycle{1.0F, 1.0F, 2.0F, 2.0F,
-                                                3.0F, 3.0F, 4.0F, 4.0F};
-  expect(firstCycleResult.pcmFrames == 4 && !firstCycleResult.underrun &&
+  decltype(firstCycle) expectedFirstCycle{};
+  for (std::size_t index = 0; index < NativePcmRing::kSlabCount; ++index) {
+    expectedFirstCycle[index * NativePcmRing::kChannels] =
+        static_cast<float>(index + 1);
+    expectedFirstCycle[index * NativePcmRing::kChannels + 1] =
+        static_cast<float>(index + 1);
+  }
+  expect(firstCycleResult.pcmFrames == NativePcmRing::kSlabCount &&
+             !firstCycleResult.underrun &&
              firstCycle == expectedFirstCycle && ring.queuedSlabs() == 0,
-         "full ring drains in FIFO order within four slab visits");
+         "full ring drains in FIFO order within one slab visit each");
 
   std::array<float, 2> output{};
   for (std::size_t index = 0; index < 37; ++index) {
@@ -340,12 +362,19 @@ void testFixedCapacityPhysicalAndCursorWraparound() {
                NativePcmRing::PublishResult::Published,
            "cursor wrap publish stays within capacity");
   }
-  std::array<float, 8> wrappedOutput{};
+  std::array<float, NativePcmRing::kSlabCount * NativePcmRing::kChannels>
+      wrappedOutput{};
   const auto wrappedReadable = cursorWrap.readableFrames(19);
   const auto wrapped = cursorWrap.consume(19, wrappedOutput);
-  const std::array<float, 8> expectedWrapped{20.0F, 20.0F, 21.0F, 21.0F,
-                                             22.0F, 22.0F, 23.0F, 23.0F};
-  expect(wrappedReadable.frames == 4 && wrappedReadable.staleSlabs == 0 &&
+  decltype(wrappedOutput) expectedWrapped{};
+  for (std::size_t index = 0; index < NativePcmRing::kSlabCount; ++index) {
+    expectedWrapped[index * NativePcmRing::kChannels] =
+        static_cast<float>(20 + index);
+    expectedWrapped[index * NativePcmRing::kChannels + 1] =
+        static_cast<float>(20 + index);
+  }
+  expect(wrappedReadable.frames == NativePcmRing::kSlabCount &&
+             wrappedReadable.staleSlabs == 0 &&
              wrapped.pcmFrames == wrappedReadable.frames &&
              wrappedOutput == expectedWrapped && cursorWrap.queuedSlabs() == 0,
          "preflight and consume preserve modular cursor-wrap ordering");
@@ -356,8 +385,9 @@ void testFixedCapacityPhysicalAndCursorWraparound() {
          "incoherent cursor snapshot cannot underflow to a false full ring");
 
   const auto stats = ring.stats();
-  expect(stats.publishedSlabs == 41 && stats.fullPublishes == 1 &&
-             stats.consumedFrames == 41,
+  const std::size_t expectedSlabs = NativePcmRing::kSlabCount + 37;
+  expect(stats.publishedSlabs == expectedSlabs && stats.fullPublishes == 1 &&
+             stats.consumedFrames == expectedSlabs,
          "capacity and physical-wrap statistics are exact");
 }
 
@@ -659,9 +689,12 @@ void testConcurrentProducerConsumerStress() {
 int main() {
   static_assert(NativePcmRing::kChannels == 2);
   static_assert(NativePcmRing::kFramesPerSlab == 4096);
-  static_assert(NativePcmRing::kSlabCount == 4);
-  static_assert(4U * 4096U * 2U * sizeof(float) == 131072U);
-  static_assert(NativePcmRing::kPcmPayloadBytes == 128U * 1024U);
+  // 16, not 4: at the maximum admitted playback rate one 1024-frame device
+  // period consumes 4096 media frames, so four slabs would leave the producer
+  // no headroom at all. See the comment on kSlabCount.
+  static_assert(NativePcmRing::kSlabCount == 16);
+  static_assert(16U * 4096U * 2U * sizeof(float) == 524288U);
+  static_assert(NativePcmRing::kPcmPayloadBytes == 512U * 1024U);
   static_assert(!std::is_copy_constructible_v<NativePcmRing>);
   static_assert(!std::is_move_constructible_v<NativePcmRing>);
   static_assert(

@@ -625,7 +625,12 @@ struct WakeCounter {
 struct Fixture {
   std::uint64_t hostFrequency{kHostTicksPerSecond};
   FakeHostClock host;
-  NativePcmRing ring{1};
+  // Heap-backed. One ring is half a megabyte of PCM payload -- the capacity
+  // the maximum playback rate needs -- and several of these fixtures are live
+  // in one stack frame, which overflows the 8 MiB main-thread stack outright.
+  std::unique_ptr<NativePcmRing> ringStorage{
+      std::make_unique<NativePcmRing>(1)};
+  NativePcmRing &ring{*ringStorage};
   NativeMediaClock clock;
   NativeAudioRenderCore core;
   FakeAudioUnit fake;
@@ -739,7 +744,8 @@ OSStatus invokeTracked(FakeAudioUnit &fake, AudioTimeStamp timestamp,
 void testConfigurationAndExactDeviceFormat() {
   {
     FakeHostClock host;
-    NativePcmRing ring(1);
+    auto ringStorage = std::make_unique<NativePcmRing>(1);
+    NativePcmRing &ring = *ringStorage;
     NativeMediaClock clock(host.seam(kHostTicksPerSecond));
     NativeAudioRenderCore core(ring, clock, kHostTicksPerSecond);
     FakeAudioUnit fake;
@@ -894,7 +900,8 @@ void testConfigurationAndExactDeviceFormat() {
   dualOrigin.cleanup();
 
   FakeHostClock mismatchedHost;
-  NativePcmRing mismatchedRing(1);
+  auto mismatchedRingStorage = std::make_unique<NativePcmRing>(1);
+  NativePcmRing &mismatchedRing = *mismatchedRingStorage;
   NativeMediaClock mismatchedClock(
       mismatchedHost.seam(kHostTicksPerSecond * 2U));
   NativeAudioRenderCore mismatchedCore(
@@ -1440,7 +1447,8 @@ void testStopRaceAndQuarantineLifetime() {
          "premature wrapper release retains callback context in quarantine");
 
   FakeHostClock secondHost;
-  NativePcmRing secondRing(1);
+  auto secondRingStorage = std::make_unique<NativePcmRing>(1);
+  NativePcmRing &secondRing = *secondRingStorage;
   NativeMediaClock secondClock(secondHost.seam(kHostTicksPerSecond));
   NativeAudioRenderCore secondCore(secondRing, secondClock,
                                    kHostTicksPerSecond);
@@ -2230,7 +2238,8 @@ void testDeviceBufferFramesConfiguration() {
   // The requested size is only sound because the ring can cover it. Restate
   // the bound here so a future change to either constant fails at the test
   // boundary as well as at the header.
-  static_assert(NativeAudioOutput::kDeviceBufferFrames *
+  static_assert(wam::macos::maximumMediaFramesPerDevicePeriod(
+                    NativeAudioOutput::kDeviceBufferFrames) *
                     NativeAudioOutput::kRingDevicePeriodsOfHeadroom <=
                 NativeAudioOutput::kGuaranteedRingFrames);
   static_assert(NativeAudioOutput::kDeviceBufferFrames <=
@@ -2293,7 +2302,8 @@ void testDeviceBufferFramesConfiguration() {
     const auto admissible = [](std::uint32_t frames) {
       return frames != 0 && (frames & (frames - 1)) == 0 &&
              frames <= NativeAudioOutput::kMaximumFramesPerSlice &&
-             frames * NativeAudioOutput::kRingDevicePeriodsOfHeadroom <=
+             wam::macos::maximumMediaFramesPerDevicePeriod(frames) *
+                     NativeAudioOutput::kRingDevicePeriodsOfHeadroom <=
                  NativeAudioOutput::kGuaranteedRingFrames;
     };
     expect(admissible(512) && admissible(NativeAudioOutput::kDeviceBufferFrames),

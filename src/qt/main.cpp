@@ -72,6 +72,61 @@ double onSeekScriptGrid(double seconds) {
   return std::floor(seconds * kSeekScriptGrid) / kSeekScriptGrid;
 }
 
+// ---------------------------------------------------------------------------
+// Scripted playback-rate driver (test/benchmark seam).
+//
+// WAM_TEST_RATE_SCRIPT="entry@delayMs[,entry@delayMs...]" replays speed and
+// transport gestures without a pointer, so pitch-preserved rate verification
+// can run against a parked, non-frontmost window exactly the way the scrubber
+// campaign does. An entry is either a speed ("1.5") or a transport letter
+// ("p" to pause, "r" to resume). Delays are cumulative from process start,
+// matching WAM_TEST_REOPEN_SCRIPT. Like the seek script, it is parsed only
+// when WAM_NATIVE_BENCHMARK_TELEMETRY is enabled, so a shipping run can never
+// observe it.
+//
+// It drives PlayerController::setRate / setPaused -- the same public boundary
+// the QML speed control and the play button use -- rather than reaching into
+// the engine, so the routing, admission and notice paths are all exercised.
+// ---------------------------------------------------------------------------
+struct ScriptedRate {
+  double rate{0.0};
+  int delayMilliseconds{0};
+  bool pause{false};
+  bool resume{false};
+};
+
+std::vector<ScriptedRate> parseRateScript(const QByteArray &raw) {
+  std::vector<ScriptedRate> entries;
+  const QString text = QString::fromUtf8(raw).trimmed();
+  if (text.isEmpty())
+    return entries;
+  const QStringList parts = text.split(QLatin1Char(','), Qt::SkipEmptyParts);
+  for (const QString &part : parts) {
+    const QStringList fields = part.split(QLatin1Char('@'));
+    if (fields.size() != 2)
+      continue;
+    const QString token = fields.at(0).trimmed();
+    bool delayOk = false;
+    const int delay = fields.at(1).trimmed().toInt(&delayOk);
+    if (!delayOk || delay < 0)
+      continue;
+    ScriptedRate entry;
+    entry.delayMilliseconds = delay;
+    if (token.compare(QStringLiteral("p"), Qt::CaseInsensitive) == 0) {
+      entry.pause = true;
+    } else if (token.compare(QStringLiteral("r"), Qt::CaseInsensitive) == 0) {
+      entry.resume = true;
+    } else {
+      bool rateOk = false;
+      entry.rate = token.toDouble(&rateOk);
+      if (!rateOk || !std::isfinite(entry.rate) || entry.rate <= 0.0)
+        continue;
+    }
+    entries.push_back(entry);
+  }
+  return entries;
+}
+
 // Scripted warm-open driver. A cold process open pays QML, window, and GL
 // startup on the main queue, so its open-to-first-draw span is dominated by
 // launch work a warm open never repeats. The benchmark target is the warm
@@ -874,6 +929,23 @@ int main(int argc, char *argv[]) {
           const QUrl target = mediaUrlFromArgument(path);
           if (target.isValid())
             player.open(target);
+        });
+      }
+
+      const std::vector<ScriptedRate> rate_script =
+          parseRateScript(qgetenv("WAM_TEST_RATE_SCRIPT"));
+      int rateCumulative = 0;
+      for (const ScriptedRate &entry : rate_script) {
+        rateCumulative += entry.delayMilliseconds;
+        const ScriptedRate scheduled = entry;
+        QTimer::singleShot(rateCumulative, &player, [&player, scheduled] {
+          if (scheduled.pause) {
+            player.pause();
+          } else if (scheduled.resume) {
+            player.play();
+          } else {
+            player.setRate(scheduled.rate);
+          }
         });
       }
 

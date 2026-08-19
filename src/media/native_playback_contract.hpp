@@ -176,16 +176,109 @@ freshStopInvalidation(Generation invalidation,
 
 inline constexpr double kVersion1Rate = 1.0;
 
+// Advertised pitch-preserved playback-rate window. Both endpoints are exact
+// binary rationals and both are exactly representable on the admission grid
+// below.
+inline constexpr double kMinimumNativeRate = 0.25;
+inline constexpr double kMaximumNativeRate = 4.0;
+
+// The admission grid. Every rate that reaches the native engine is first
+// snapped to a multiple of 1/kNativeRateGrid, so it is an EXACT rational p/q
+// with q dividing kNativeRateGrid -- never a UI double folded into the clock.
+// 64 is chosen for two independent reasons and both are load bearing:
+//   * it divides the device IO buffer (1024 frames), so the media advance
+//     per render callback, outputFrames * p / q, is an exact integer with no
+//     residual to carry and no rounding for the stretch stage to disagree
+//     with; and
+//   * its step, 1/64 = 1.5625%, is finer than half of the smallest step any
+//     rate control in this application produces (the 0.05 speed slider), so
+//     snapping never crosses a neighbouring control position and the worst
+//     displacement from the requested speed is 1/128 -- inaudible, and far
+//     below the ~4% pitch/tempo just-noticeable difference.
+inline constexpr std::uint32_t kNativeRateGrid = 64;
+
+// An exact playback rate as the reduced rational numerator/denominator. This
+// is the only representation permitted past the protocol boundary; the media
+// clock's rate is derived from integer frame counts built out of it, never
+// from a double.
+struct PlaybackRateRatio {
+  std::uint32_t numerator{1};
+  std::uint32_t denominator{1};
+
+  [[nodiscard]] constexpr bool unity() const noexcept {
+    return numerator == denominator;
+  }
+  [[nodiscard]] constexpr bool valid() const noexcept {
+    return numerator != 0 && denominator != 0 &&
+           kNativeRateGrid % denominator == 0 &&
+           numerator * 4U >= denominator && numerator <= denominator * 4U;
+  }
+  // Exact: both operands are small integers and the quotient of two exactly
+  // representable integers is correctly rounded exactly once.
+  [[nodiscard]] constexpr double toDouble() const noexcept {
+    return static_cast<double>(numerator) / static_cast<double>(denominator);
+  }
+
+  friend constexpr bool operator==(PlaybackRateRatio,
+                                   PlaybackRateRatio) = default;
+};
+
+[[nodiscard]] constexpr std::uint32_t
+gcd32(std::uint32_t a, std::uint32_t b) noexcept {
+  while (b != 0) {
+    const std::uint32_t t = a % b;
+    a = b;
+    b = t;
+  }
+  return a;
+}
+
+// Snaps an arbitrary requested speed onto the admission grid and reduces it.
+// Out-of-window and non-finite inputs collapse to the nearest admitted
+// endpoint; the caller decides separately whether that counts as acceptance.
+[[nodiscard]] constexpr PlaybackRateRatio
+nativeRateRatio(double rate) noexcept {
+  // constexpr-safe finiteness: NaN fails every comparison.
+  const bool ordered = rate == rate;
+  double bounded = ordered ? rate : kVersion1Rate;
+  if (bounded < kMinimumNativeRate) {
+    bounded = kMinimumNativeRate;
+  }
+  if (bounded > kMaximumNativeRate) {
+    bounded = kMaximumNativeRate;
+  }
+  const double scaled = bounded * static_cast<double>(kNativeRateGrid);
+  // Round half away from zero; the operand is positive and below 257.
+  auto ticks = static_cast<std::uint32_t>(scaled + 0.5);
+  const std::uint32_t minimumTicks = kNativeRateGrid / 4U;
+  const std::uint32_t maximumTicks = kNativeRateGrid * 4U;
+  if (ticks < minimumTicks) {
+    ticks = minimumTicks;
+  }
+  if (ticks > maximumTicks) {
+    ticks = maximumTicks;
+  }
+  const std::uint32_t divisor = gcd32(ticks, kNativeRateGrid);
+  return PlaybackRateRatio{ticks / divisor, kNativeRateGrid / divisor};
+}
+
 enum class RateRoute : std::uint8_t {
   NativeVersion1,
   Fallback,
 };
 
-// Time stretching is intentionally absent from version 1. No approximation
-// or epsilon is permitted at this boundary.
+// Rates inside the advertised pitch-preserved window are served natively; the
+// engine snaps them onto the exact 1/64 admission grid. Anything outside the
+// window (or non-finite) still routes to the compatibility engine, which has
+// no such bound. No epsilon is permitted at this boundary: admission is
+// decided on the exact snapped rational, not on a tolerance around a double.
 [[nodiscard]] constexpr RateRoute routeForRate(double rate) noexcept {
-  return rate == kVersion1Rate ? RateRoute::NativeVersion1
-                               : RateRoute::Fallback;
+  const bool ordered = rate == rate;
+  if (!ordered || rate < kMinimumNativeRate || rate > kMaximumNativeRate) {
+    return RateRoute::Fallback;
+  }
+  return nativeRateRatio(rate).valid() ? RateRoute::NativeVersion1
+                                       : RateRoute::Fallback;
 }
 
 struct PreparedDescriptor {

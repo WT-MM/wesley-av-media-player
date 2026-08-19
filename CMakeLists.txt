@@ -374,6 +374,8 @@ if(APPLE)
       src/platform/macos/native_audio_converter.mm
       src/platform/macos/native_audio_output.hpp
       src/platform/macos/native_audio_output.mm
+      src/platform/macos/native_audio_stretch_stage.hpp
+      src/platform/macos/native_audio_stretch_stage.mm
       src/platform/macos/native_audio_session.hpp
       src/platform/macos/native_audio_session.mm
       src/platform/macos/native_media_session.hpp
@@ -958,7 +960,9 @@ if(BUILD_TESTING)
       add_executable(wam_native_audio_output_test
         tests/native_audio_output_test.mm
         src/platform/macos/native_audio_output.hpp
-        src/platform/macos/native_audio_output.mm)
+        src/platform/macos/native_audio_output.mm
+        src/platform/macos/native_audio_stretch_stage.hpp
+        src/platform/macos/native_audio_stretch_stage.mm)
       target_include_directories(wam_native_audio_output_test PRIVATE src)
       target_link_libraries(wam_native_audio_output_test PRIVATE
         wam_native_core
