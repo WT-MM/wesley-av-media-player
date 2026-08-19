@@ -102,7 +102,7 @@ FocusScope {
     }
 
     implicitWidth: 660
-    implicitHeight: compact ? 98 : 90
+    implicitHeight: compact ? 104 : 96
     opacity: !player.hasMedia || suppressed ? 0 : (revealed ? 1 : 0)
     enabled: opacity > 0.05 || interactionActive
     visible: opacity > 0 || interactionActive
@@ -420,7 +420,7 @@ FocusScope {
         id: transport
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.bottom: parent.bottom
-        anchors.bottomMargin: 4
+        anchors.bottomMargin: 10
         spacing: root.compact ? 1 : 3
 
         IconButton {
