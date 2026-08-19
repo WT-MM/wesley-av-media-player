@@ -233,8 +233,12 @@ class NativeAudioSession final : public media::NativeAudioConsumer {
   // boundary without any lifecycle transition. Rejects a rate the output
   // cannot serve (outside the admitted window, or no time-stretch unit
   // available) and leaves the previous rate in force.
+  // preservePitch travels with the rate rather than as a control of its own,
+  // because the two are one decision: the stage's pitch offset is a pure
+  // function of the pair, so they can never be seen to disagree. True keeps
+  // the original pitch at every speed; false is classic varispeed.
   [[nodiscard]] NativeAudioSessionProgress
-  setRate(NativePlaybackRate rate) noexcept;
+  setRate(NativePlaybackRate rate, bool preservePitch) noexcept;
   // Stops the output AudioUnit for a pause that has already settled, so a
   // paused session pays no periodic real-time wake at all. Every render
   // callback is such a wake, and a paused callback does nothing but memset

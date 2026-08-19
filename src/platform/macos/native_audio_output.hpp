@@ -318,6 +318,12 @@ class NativeAudioOutput final
   // admitted window; the previously accepted rate stays in force.
   [[nodiscard]] bool setRate(NativePlaybackRate rate) noexcept;
   [[nodiscard]] NativePlaybackRate rate() const noexcept;
+  // Live "Preserve pitch at other speeds" preference. Never fails and never
+  // needs a stretch unit of its own: it is stored in the render core and the
+  // stage picks it up at the next callback boundary, at the unit rate as a
+  // no-op and otherwise as the stage's pitch offset.
+  void setPreservePitch(bool preserve) noexcept;
+  [[nodiscard]] bool preservePitch() const noexcept;
 
   [[nodiscard]] NativeAudioOutputProgress start() noexcept;
   [[nodiscard]] NativeAudioOutputProgress stop() noexcept;

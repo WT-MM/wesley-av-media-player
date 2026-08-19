@@ -310,6 +310,14 @@ struct SetRunState {
   Generation generation;
   bool paused{true};
   double rate{kVersion1Rate};
+  // Live playback only. True time-stretches, keeping the original pitch at
+  // any rate; false is classic varispeed, where pitch scales with the rate.
+  // It rides with the rate rather than travelling as a command of its own
+  // because the two are one decision at the audio stage, and no ordering
+  // between them can then be observed. At kVersion1Rate it means nothing --
+  // a rate of 1 shifts pitch by zero either way -- so it never affects
+  // whether a command is valid.
+  bool preservePitch{true};
 };
 
 struct PreviewFrame {

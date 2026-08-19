@@ -1005,6 +1005,23 @@ if(BUILD_TESTING)
       set_tests_properties(macos_native_audio_converter PROPERTIES
         TIMEOUT 20)
 
+      add_executable(wam_native_audio_stretch_stage_test
+        tests/native_audio_stretch_stage_test.mm
+        src/platform/macos/native_audio_stretch_stage.hpp
+        src/platform/macos/native_audio_stretch_stage.mm)
+      target_include_directories(wam_native_audio_stretch_stage_test
+        PRIVATE src)
+      target_link_libraries(wam_native_audio_stretch_stage_test PRIVATE
+        wam_native_core
+        "${WAM_COREMEDIA_FRAMEWORK}"
+        "${WAM_FOUNDATION_FRAMEWORK}"
+        "${WAM_AUDIOTOOLBOX_FRAMEWORK}"
+        "${WAM_COREAUDIO_FRAMEWORK}")
+      add_test(NAME macos_native_audio_stretch_stage
+        COMMAND wam_native_audio_stretch_stage_test)
+      set_tests_properties(macos_native_audio_stretch_stage PROPERTIES
+        TIMEOUT 60)
+
       add_executable(wam_native_audio_output_test
         tests/native_audio_output_test.mm
         src/platform/macos/native_audio_output.hpp
@@ -1221,6 +1238,7 @@ if(BUILD_TESTING)
           wam_avfoundation_preview_source_test
           wam_native_audio_converter_test
           wam_native_audio_output_test
+          wam_native_audio_stretch_stage_test
           wam_native_surface_budget_test
           wam_native_video_consumer_test
           wam_native_layer_video_output_test

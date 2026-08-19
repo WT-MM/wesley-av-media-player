@@ -95,11 +95,15 @@ public:
 
   [[nodiscard]] bool setGain(float gain);
   [[nodiscard]] bool setMuted(bool muted);
-  // Applies a pitch-preserved playback rate on the native route. False means
-  // native does not own transport, so the caller must drive the
-  // compatibility engine instead. True with no native session yet is a
-  // retained intent, exactly like setPaused before Start.
+  // Applies a playback rate on the native route. False means native does not
+  // own transport, so the caller must drive the compatibility engine
+  // instead. True with no native session yet is a retained intent, exactly
+  // like setPaused before Start.
   [[nodiscard]] bool setRate(double rate);
+  // Applies the live "Preserve pitch at other speeds" preference on the
+  // native route, with the same ownership and retention semantics as
+  // setRate. The rate in force is unchanged either way.
+  [[nodiscard]] bool setPreservePitch(bool preserve);
 
   [[nodiscard]] bool nativeOwnsTransport() const noexcept;
   [[nodiscard]] bool fallbackOwnsTransport() const noexcept;

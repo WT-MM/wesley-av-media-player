@@ -1249,6 +1249,8 @@ struct FakeStretchStage {
   std::uint64_t pulledFrames{0};
   std::uint64_t lastPull{0};
   std::uint64_t rateChanges{0};
+  bool preservePitch{true};
+  std::uint64_t pitchChanges{0};
   bool rejectSetRate{false};
   bool failRender{false};
   // Deliberate contract violations, for the defensive paths.
@@ -1268,13 +1270,18 @@ struct FakeStretchStage {
       return true;
     };
     stage.setRate = [](void *context, std::uint32_t numerator,
-                       std::uint32_t denominator) noexcept {
+                       std::uint32_t denominator,
+                       bool preservePitch) noexcept {
       auto &self = *static_cast<FakeStretchStage *>(context);
       if (self.rejectSetRate) {
         return false;
       }
       self.numerator = numerator;
       self.denominator = denominator;
+      if (self.preservePitch != preservePitch) {
+        self.preservePitch = preservePitch;
+        ++self.pitchChanges;
+      }
       ++self.rateChanges;
       return true;
     };
@@ -1648,6 +1655,95 @@ void testStretchShortPrefixStaysExact() {
          "exactly the unusable remainder is left in the ring");
 }
 
+// The live preserve-pitch preference reaches the stage at the same boundary a
+// rate does, but costs nothing anywhere else: rate 1.0 is untouched by it, and
+// a pitch-only change is not a discontinuity, because the frames consumed and
+// the schedule they are consumed on are identical.
+void testPreservePitchLatch() {
+  constexpr std::uint32_t kOutputFrames = 64;
+  std::array<float, kOutputFrames * NativePcmRing::kChannels> output{};
+
+  // --- at the unit rate: the toggle must be a complete no-op ---------------
+  {
+    Fixture fixture;
+    FakeStretchStage stage;
+    fixture.core.setAccepting(false);
+    expect(fixture.ready && fixture.core.attachStretchStage(stage.seam()),
+           "unit-rate pitch fixture attaches its stage");
+    fixture.core.setAccepting(true);
+    expect(publishConstant(fixture.ring, 1, 4096, 1.0F),
+           "unit-rate pitch fixture stocks the ring");
+    auto renderAt = [&](std::uint64_t cursor,
+                        std::uint64_t ticks) noexcept {
+      fixture.host.ticks.store(ticks, std::memory_order_relaxed);
+      return renderTracked(fixture.core,
+                           hostInput(cursor, kOutputFrames, ticks), output);
+    };
+    expect(fixture.core.preservePitch(),
+           "pitch preservation is the default the engine already had");
+    const NativeAudioRenderResult first = renderAt(0, 0);
+    expect(first.committed && first.pcmFrames == kOutputFrames,
+           "unit-rate pitch fixture commits its first interval");
+    fixture.core.setPreservePitch(false);
+    expect(!fixture.core.preservePitch(),
+           "the published preference is readable back");
+    const NativeAudioRenderResult after =
+        renderAt(kOutputFrames, kOutputFrames);
+    expect(after.committed && after.continuous &&
+               after.pcmFrames == kOutputFrames && stage.renders == 0 &&
+               stage.rateChanges == 0 && stage.pitchChanges == 0,
+           "at rate 1.0 the toggle reaches no stage and breaks no interval");
+    expect(fixture.core.stats().rateChanges == 0,
+           "a toggle at the unit rate is not counted as a rate change");
+  }
+
+  // --- at a non-unit rate: the stage learns it, nothing else moves ---------
+  {
+    Fixture fixture;
+    FakeStretchStage stage;
+    fixture.core.setAccepting(false);
+    expect(fixture.ready && fixture.core.attachStretchStage(stage.seam()),
+           "stretched pitch fixture attaches its stage");
+    expect(fixture.core.setRate(NativePlaybackRate{2, 1}),
+           "stretched pitch fixture runs at double speed");
+    fixture.core.setAccepting(true);
+    expect(publishConstant(fixture.ring, 1, 4096, 1.0F),
+           "stretched pitch fixture stocks the ring");
+    auto renderAt = [&](std::uint64_t cursor,
+                        std::uint64_t ticks) noexcept {
+      fixture.host.ticks.store(ticks, std::memory_order_relaxed);
+      return renderTracked(fixture.core,
+                           hostInput(cursor, kOutputFrames, ticks), output);
+    };
+    const NativeAudioRenderResult latched = renderAt(0, 0);
+    expect(latched.committed && latched.pcmFrames == kOutputFrames * 2U &&
+               stage.rateChanges == 1 && stage.preservePitch &&
+               stage.pitchChanges == 0,
+           "the first stretched callback latches the rate at preserved pitch");
+    const NativeAudioRenderResult settled =
+        renderAt(kOutputFrames * 2U, kOutputFrames);
+    expect(settled.committed && settled.continuous &&
+               stage.rateChanges == 1,
+           "an unchanged pair leaves the stage alone");
+
+    fixture.core.setPreservePitch(false);
+    const NativeAudioRenderResult varispeed =
+        renderAt(kOutputFrames * 4U, kOutputFrames * 2U);
+    expect(varispeed.committed && !stage.preservePitch &&
+               stage.pitchChanges == 1 && stage.rateChanges == 2 &&
+               stage.numerator == 2 && stage.denominator == 1,
+           "the next callback carries the preference to the stage with the "
+           "same rational");
+    expect(varispeed.pcmFrames == kOutputFrames * 2U &&
+               stage.lastPull == kOutputFrames * 2U,
+           "the consumption ratio is exactly outputFrames * p / q either way");
+    expect(varispeed.continuous,
+           "a pitch-only change is not a discontinuity");
+    expect(fixture.core.stats().rateChanges == 1,
+           "only real rate changes are counted as rate changes");
+  }
+}
+
 int main() {
   testPreflightLowerBoundAndProducerAppend();
   testRingAndClockBackpressureDoNotConsume();
@@ -1673,6 +1769,7 @@ int main() {
   testRateChangeStateMachine();
   testStretchPullBudgetIsHard();
   testStretchShortPrefixStaysExact();
+  testPreservePitchLatch();
 
   if (failures != 0) {
     std::cerr << failures << " native audio render core check(s) failed\n";

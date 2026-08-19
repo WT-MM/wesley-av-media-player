@@ -24,6 +24,13 @@ namespace wam::macos {
 // takes effect on the very next render with no transition block and no click.
 // Parameter range is 1/32..32, covering the advertised 0.25..4 window.
 //
+// PITCH. The unit's pitch parameter is independent of its rate parameter, so
+// the "Preserve pitch at other speeds" preference is served without a second
+// code path and without touching frame accounting: pitch preserved is an
+// offset of 0 cents, and varispeed is an offset of 1200 * log2(rate) cents,
+// which scales the output pitch by exactly the rate. Input demand stays
+// round(outputFrames * rate) either way -- measured, see the stage test.
+//
 // THE ONE COST is group delay: the unit declares 2048 + 2048/rate output frames
 // of latency at 48 kHz. That is constant per rate and is what
 // latencyOutputFrames() reports, so the render core can shift its published
@@ -61,6 +68,17 @@ class NativeAudioStretchUnit final {
     return latency_base_frames_;
   }
 
+  // The unit's pitch parameter is in cents and is limited to +/- 2400, which
+  // is exactly the 0.25x..4x window expressed as 1200 * log2(rate).
+  static constexpr double kPitchCentsLimit = 2400.0;
+
+  // Pitch offset the stage applies for an exact rational rate. Zero whenever
+  // pitch is preserved, and zero at the unit rate either way -- a rate of 1
+  // is 0 cents, so the toggle cannot perturb 1x.
+  [[nodiscard]] static float pitchCents(std::uint32_t numerator,
+                                        std::uint32_t denominator,
+                                        bool preservePitch) noexcept;
+
  private:
   explicit NativeAudioStretchUnit(std::uint32_t sampleRate) noexcept;
 
@@ -71,7 +89,8 @@ class NativeAudioStretchUnit final {
   static bool stageConfigure(void *context, NativeAudioStretchPull pull,
                              void *pullContext) noexcept;
   static bool stageSetRate(void *context, std::uint32_t numerator,
-                           std::uint32_t denominator) noexcept;
+                           std::uint32_t denominator,
+                           bool preservePitch) noexcept;
   static std::uint32_t stageLatency(void *context) noexcept;
   static bool stageRender(void *context, std::uint32_t outputFrames,
                           float *interleavedOutput) noexcept;
@@ -101,6 +120,7 @@ class NativeAudioStretchUnit final {
   std::uint32_t latency_base_frames_{0};
   std::uint32_t numerator_{1};
   std::uint32_t denominator_{1};
+  bool preserve_pitch_{true};
   std::uint64_t render_sample_time_{0};
 };
 

@@ -936,6 +936,14 @@ NativePlaybackRate NativeAudioOutput::rate() const noexcept {
   return render_core_.requestedRate();
 }
 
+void NativeAudioOutput::setPreservePitch(bool preserve) noexcept {
+  render_core_.setPreservePitch(preserve);
+}
+
+bool NativeAudioOutput::preservePitch() const noexcept {
+  return render_core_.preservePitch();
+}
+
 NativeAudioOutputProgress NativeAudioOutput::activate(
     std::uint64_t generation, std::uint64_t streamFrameCursor,
     media::MediaTime mediaOrigin,

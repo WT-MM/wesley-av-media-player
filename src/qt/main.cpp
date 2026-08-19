@@ -639,6 +639,7 @@ int main(int argc, char *argv[]) {
       static_cast<double>(std::clamp(state_store.state().seek_step_seconds,
                                      1, 60)));
   player.setWindowHugsVideo(state_store.state().window_hugs_video);
+  player.setPreservePitch(state_store.state().preserve_pitch);
   applyColorScheme(app.styleHints(), saved_appearance);
 
   QTimer persistence_timer;
@@ -667,6 +668,8 @@ int main(int argc, char *argv[]) {
   QObject::connect(&player,
                    &wam::qt::PlayerController::windowHugsVideoChanged, &app,
                    request_checkpoint);
+  QObject::connect(&player, &wam::qt::PlayerController::preservePitchChanged,
+                   &app, request_checkpoint);
 
   ResumeTracker resume_tracker;
   double resume_position = 0.0;
@@ -851,6 +854,7 @@ int main(int argc, char *argv[]) {
     state_store.state().seek_step_seconds = std::clamp(
         static_cast<int>(std::lround(player.seekStepSeconds())), 1, 60);
     state_store.state().window_hugs_video = player.windowHugsVideo();
+    state_store.state().preserve_pitch = player.preservePitch();
     return !state_store.dirty() || state_store.save();
   };
 

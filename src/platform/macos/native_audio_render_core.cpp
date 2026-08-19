@@ -272,14 +272,22 @@ bool NativeAudioRenderCore::setRate(NativePlaybackRate rate) noexcept {
     return false;
   }
   if (!rate.unity() && !stretch_installed_.load(std::memory_order_acquire)) {
-    // Without a stretch stage the only honest answer is refusal: resampling
-    // would change pitch, which is not the advertised behaviour.
+    // Without a stretch stage the only honest answer is refusal: there is
+    // nothing in the path that can retime the audio at all.
     return false;
   }
   requested_rate_.store((static_cast<std::uint64_t>(rate.numerator) << 32U) |
                             static_cast<std::uint64_t>(rate.denominator),
                         std::memory_order_release);
   return true;
+}
+
+void NativeAudioRenderCore::setPreservePitch(bool preserve) noexcept {
+  requested_preserve_pitch_.store(preserve, std::memory_order_release);
+}
+
+bool NativeAudioRenderCore::preservePitch() const noexcept {
+  return requested_preserve_pitch_.load(std::memory_order_acquire);
 }
 
 NativePlaybackRate NativeAudioRenderCore::requestedRate() const noexcept {
@@ -591,13 +599,17 @@ NativeAudioRenderResult NativeAudioRenderCore::render(
   // same shape the clock already absorbs across a seek or a pause.
   {
     const NativePlaybackRate requested = requestedRate();
+    const bool requestedPreservePitch =
+        requested_preserve_pitch_.load(std::memory_order_acquire);
     const bool stretchAvailable =
         stretch_installed_.load(std::memory_order_acquire);
-    if (requested != active_rate_ && requested.valid() &&
+    const bool rateChanged = requested != active_rate_;
+    const bool pitchChanged = requestedPreservePitch != active_preserve_pitch_;
+    if ((rateChanged || pitchChanged) && requested.valid() &&
         (requested.unity() || stretchAvailable)) {
       if (!requested.unity() &&
           !stretch_.setRate(stretch_.context, requested.numerator,
-                            requested.denominator)) {
+                            requested.denominator, requestedPreservePitch)) {
         silenceAll();
         result.failure = NativeAudioRenderFailure::StretchStageFailed;
         latchFailure(result.failure);
@@ -605,12 +617,22 @@ NativeAudioRenderResult NativeAudioRenderCore::render(
         return result;
       }
       active_rate_ = requested;
-      stretch_latency_output_frames_ =
-          requested.unity() ? 0U
-                            : stretch_.latencyOutputFrames(stretch_.context);
-      next_discontinuous_ = true;
-      prior_sample_time_valid_ = false;
-      saturatingAdd(rate_changes_, 1);
+      // Latched even at the unit rate, where nothing is applied: the pitch
+      // offset of rate 1 is zero cents, so a toggle at 1x is a pure
+      // bookkeeping update that leaves this callback -- and its output --
+      // exactly as it was.
+      active_preserve_pitch_ = requestedPreservePitch;
+      if (rateChanged) {
+        // Group delay is a function of the rate alone, so only a rate change
+        // moves the endpoint shift and only a rate change is a discontinuity.
+        // A pitch-only change consumes the same frames on the same schedule.
+        stretch_latency_output_frames_ =
+            requested.unity() ? 0U
+                              : stretch_.latencyOutputFrames(stretch_.context);
+        next_discontinuous_ = true;
+        prior_sample_time_valid_ = false;
+        saturatingAdd(rate_changes_, 1);
+      }
     }
   }
   const NativePlaybackRate rate = active_rate_;

@@ -31,6 +31,12 @@ struct PersistentState {
   // Preferences window frames as the norm; off restores free-form resizing
   // where bars can appear. Fullscreen is unaffected either way.
   bool window_hugs_video = true;
+  // Live playback only: when true, speeds other than 1x keep the original
+  // pitch (time stretching); when false they behave like classic varispeed,
+  // where pitch rises and falls with the speed. Default on, which is the
+  // behavior every route already had. Quick Edit's export-scoped preserve
+  // pitch is a separate, per-export choice and is deliberately not this.
+  bool preserve_pitch = true;
   std::unordered_map<std::string, double> positions;
 
   bool operator==(const PersistentState&) const = default;
