@@ -5,9 +5,9 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Window
 
-// A small, QuickTime-Preferences-style panel. Deliberately minimal today --
-// one control -- but laid out (section header, description, a settings
-// column) so a second preference can be added later without restructuring.
+// A small, QuickTime-Preferences-style panel. One column of sections, each a
+// header, a plain-language description and its controls, so another
+// preference is an append rather than a restructure.
 Window {
     id: prefs
 
@@ -22,7 +22,7 @@ Window {
 
     title: "Preferences"
     width: 360
-    height: 400
+    height: 612
     minimumWidth: width
     minimumHeight: height
     maximumWidth: width
@@ -186,6 +186,54 @@ Window {
                 target: prefs.player
                 function onWindowHugsVideoChanged() {
                     hugsVideoCheck.checked = prefs.player.windowHugsVideo;
+                }
+            }
+        }
+
+        Item {
+            width: 1
+            height: 8
+        }
+
+        Text {
+            text: "PLAYBACK SPEED"
+            color: prefs.secondary
+            font.pixelSize: 11
+            font.weight: Font.DemiBold
+            font.letterSpacing: 0.8
+        }
+
+        Text {
+            width: parent.width
+            text: "Keep voices and music at their natural pitch when you play faster or slower. Off sounds like classic varispeed, where the pitch rises and falls with the speed. Applies while you watch; exporting has its own setting."
+            color: prefs.secondary
+            font.pixelSize: 12
+            wrapMode: Text.WordWrap
+        }
+
+        Item {
+            width: 1
+            height: 2
+        }
+
+        CheckBox {
+            id: preservePitchCheck
+            text: "Preserve pitch at other speeds"
+            Accessible.name: "Preserve pitch at other speeds"
+            // Same binding hazard, same guard as the box above: the first
+            // click detaches the declarative binding, so the Connections
+            // below re-writes `checked` from the controller's real value
+            // whenever it changes for any other reason.
+            checked: prefs.player.preservePitch
+            onToggled: prefs.player.setPreservePitch(checked)
+
+            palette.text: prefs.foreground
+            palette.windowText: prefs.foreground
+
+            Connections {
+                target: prefs.player
+                function onPreservePitchChanged() {
+                    preservePitchCheck.checked = prefs.player.preservePitch;
                 }
             }
         }

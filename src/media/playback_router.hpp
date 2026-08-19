@@ -202,11 +202,16 @@ public:
   [[nodiscard]] Transition
   retireStoppingAfterSynchronousTeardown(Tick now) noexcept;
   [[nodiscard]] Transition setPaused(bool paused, Tick now) noexcept;
-  // Retains the intended pitch-preserved playback rate and, when a native
+  // Retains the intended playback rate and, when a native
   // generation is already active, re-issues the run state carrying it. Rates
   // outside the advertised window are refused here rather than folded into a
   // command the native engine would then have to reject.
   [[nodiscard]] Transition setRate(double rate, Tick now) noexcept;
+  // Retains the live "Preserve pitch at other speeds" preference and, when a
+  // native generation is already active, re-issues the run state carrying it.
+  // Always accepted: at the unit rate it applies nothing, and at every other
+  // rate the audio stage serves both settings.
+  [[nodiscard]] Transition setPreservePitch(bool preserve, Tick now) noexcept;
   [[nodiscard]] Transition previewFrame(const PreviewFrameRequest &request,
                                         Tick now) noexcept;
   [[nodiscard]] Transition commitSeek(const CommitSeekRequest &request,
@@ -306,6 +311,9 @@ private:
   // exactly the way the paused intent does, matching the compatibility
   // engine, which also keeps its speed across an open.
   double intendedRate_{native::kVersion1Rate};
+  // Retained on exactly the same terms as intendedRate_, and carried by the
+  // same command, because at the audio stage the two are one decision.
+  bool intendedPreservePitch_{true};
   Tick lastTick_{};
   Tick deadline_{};
   bool deadlineArmed_{false};

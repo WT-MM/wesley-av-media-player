@@ -390,6 +390,11 @@ bool NativePlaybackOwner::open(const QUrl &source,
   // 1x the moment a file routes native. Outside NativeActive this only
   // retains the intent, which is exactly what the later Start consumes.
   static_cast<void>(router_.setRate(controller_.rate(), nextTick()));
+  // The pitch preference is seeded on the same terms, and for the same
+  // reason: it is a persisted application setting, not per-file state, so a
+  // file that routes native must not silently revert it to the default.
+  static_cast<void>(
+      router_.setPreservePitch(controller_.preservePitch(), nextTick()));
   const auto request = openPreflight_.enqueue(
       {*sourceKey, source, initialPositionSeconds, paused,
        !surfaceLost_ && surface_ != nullptr &&
@@ -715,6 +720,20 @@ bool NativePlaybackOwner::setRate(double rate) {
   }
   const playback_router::Transition transition =
       router_.setRate(rate, nextTick());
+  if (!applied(transition)) {
+    return false;
+  }
+  execute(transition);
+  return true;
+}
+
+bool NativePlaybackOwner::setPreservePitch(bool preserve) {
+  Q_ASSERT(QThread::currentThread() == controller_.thread());
+  if (!nativeOwnsTransport()) {
+    return false;
+  }
+  const playback_router::Transition transition =
+      router_.setPreservePitch(preserve, nextTick());
   if (!applied(transition)) {
     return false;
   }

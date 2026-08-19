@@ -2035,15 +2035,11 @@ void PlayerController::toggleFullscreen() { emit fullscreenToggleRequested(); }
 void PlayerController::setPreservePitch(bool preserve) {
 #if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   if (native_playback_ && native_playback_->nativeOwnsTransport()) {
-    // The native engine time-stretches and has no varispeed path at all, so
-    // pitch is always preserved. Accepting the toggle silently would let the
-    // switch claim a mode the engine does not have; say so once, on the
-    // non-blocking channel, and leave the switch where it was.
-    if (!preserve && preserve_pitch_) {
-      setLastNotice(QStringLiteral(
-          "Native playback always preserves pitch when changing speed."));
-      return;
-    }
+    // The native stretch stage serves both modes: pitch preserved is a zero
+    // pitch offset on the time-stretch unit, varispeed is an offset of
+    // 1200 * log2(rate) cents on the same unit. Nothing to refuse, and it
+    // applies live -- the render callback latches it at its next boundary.
+    static_cast<void>(native_playback_->setPreservePitch(preserve));
     if (preserve_pitch_ != preserve) {
       preserve_pitch_ = preserve;
       emit preservePitchChanged();

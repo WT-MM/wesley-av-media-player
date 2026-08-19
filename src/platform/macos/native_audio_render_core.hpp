@@ -46,8 +46,13 @@ struct NativeAudioStretchStage {
   void *context{nullptr};
   bool (*configure)(void *context, NativeAudioStretchPull pull,
                     void *pullContext) noexcept {nullptr};
+  // Rate and pitch move together, in one call, because they are one decision:
+  // the pitch offset a stage applies is a pure function of the rate and the
+  // preserve-pitch preference, so no ordering between them can ever be
+  // observed. preservePitch true is the historical behaviour (offset zero).
   bool (*setRate)(void *context, std::uint32_t numerator,
-                  std::uint32_t denominator) noexcept {nullptr};
+                  std::uint32_t denominator,
+                  bool preservePitch) noexcept {nullptr};
   std::uint32_t (*latencyOutputFrames)(void *context) noexcept {nullptr};
   bool (*render)(void *context, std::uint32_t outputFrames,
                  float *interleavedOutput) noexcept {nullptr};
@@ -233,6 +238,15 @@ public:
   [[nodiscard]] bool setRate(NativePlaybackRate rate) noexcept;
   [[nodiscard]] NativePlaybackRate requestedRate() const noexcept;
 
+  // Publishes the live "Preserve pitch at other speeds" preference. Latched at
+  // the same callback boundary as the rate, and for the same reason: the stage
+  // must never disagree with the rational the core is accounting at. It never
+  // fails and never requires a stage -- with no stage, or at the unit rate,
+  // there is nothing to apply, because the pitch offset of rate 1 is zero
+  // cents. Rate 1.0 is therefore bit-identical whatever this is set to.
+  void setPreservePitch(bool preserve) noexcept;
+  [[nodiscard]] bool preservePitch() const noexcept;
+
   // Marks the exact generation-local frame after the final decoded PCM frame.
   // The boundary is immutable until clearTerminal() or activate(). EOF is a
   // one-shot fact only when a valid callback begins exactly at this boundary
@@ -309,6 +323,10 @@ private:
   // indivisible, so the callback can never latch half of a rate change.
   std::atomic<std::uint64_t> requested_rate_{
       (std::uint64_t{1} << 32U) | 1U};
+  // Independent of the rate, so it needs no packing: a callback that latches
+  // one without the other simply applies the pair it reads, and both are
+  // idempotent. Default true is the behaviour every route already had.
+  std::atomic<bool> requested_preserve_pitch_{true};
   // Release/acquire publication of stretch_. False means the callback must
   // not read that table at all, which is also what pins it to the unit rate.
   std::atomic<bool> stretch_installed_{false};
@@ -338,6 +356,7 @@ private:
   // is the stage's group delay in output frames at that rate.
   NativeAudioStretchStage stretch_{};
   NativePlaybackRate active_rate_{};
+  bool active_preserve_pitch_{true};
   std::uint32_t stretch_latency_output_frames_{0};
   // Hard pull budget for the current callback, and what the stage took.
   std::uint32_t pull_budget_frames_{0};

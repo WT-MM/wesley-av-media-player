@@ -214,9 +214,27 @@ bool NativeAudioStretchUnit::stageConfigure(
   return true;
 }
 
+float NativeAudioStretchUnit::pitchCents(std::uint32_t numerator,
+                                         std::uint32_t denominator,
+                                         bool preservePitch) noexcept {
+  if (preservePitch || numerator == denominator || numerator == 0 ||
+      denominator == 0) {
+    return 0.0F;
+  }
+  // Varispeed by cents. A rate of r played back as if the tape ran r times
+  // faster raises every partial by exactly r, which in the unit's parameter
+  // domain is 1200 * log2(r) cents. The advertised window lands exactly on
+  // the parameter's own limits: 4x -> +2400, 0.25x -> -2400.
+  const double rate = static_cast<double>(numerator) /
+                      static_cast<double>(denominator);
+  const double cents = 1200.0 * std::log2(rate);
+  return static_cast<float>(
+      std::clamp(cents, -kPitchCentsLimit, kPitchCentsLimit));
+}
+
 bool NativeAudioStretchUnit::stageSetRate(
-    void *context, std::uint32_t numerator,
-    std::uint32_t denominator) noexcept {
+    void *context, std::uint32_t numerator, std::uint32_t denominator,
+    bool preservePitch) noexcept {
   auto *self = static_cast<NativeAudioStretchUnit *>(context);
   if (self == nullptr || self->unit_ == nullptr || numerator == 0 ||
       denominator == 0) {
@@ -235,8 +253,21 @@ bool NativeAudioStretchUnit::stageSetRate(
                             0) != noErr) {
     return false;
   }
+  // Pitch is ORTHOGONAL to rate in this unit: it shifts the spectrum of the
+  // frames the rate parameter already decided to consume, so the input demand
+  // stays exactly round(outputFrames * rate) at any offset. That is what lets
+  // the render core keep one cursor and no drift term whether the toggle is
+  // on or off; the stretch-stage test measures it rather than assuming it.
+  if (AudioUnitSetParameter(
+          self->unit_, kNewTimePitchParam_Pitch, kAudioUnitScope_Global, 0,
+          static_cast<AudioUnitParameterValue>(
+              pitchCents(numerator, denominator, preservePitch)),
+          0) != noErr) {
+    return false;
+  }
   self->numerator_ = numerator;
   self->denominator_ = denominator;
+  self->preserve_pitch_ = preservePitch;
   return true;
 }
 

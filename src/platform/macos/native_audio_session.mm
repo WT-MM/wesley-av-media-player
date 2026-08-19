@@ -440,6 +440,7 @@ struct NativeAudioSessionControl final {
   bool requestedMuted{false};
   bool appliedMuted{false};
   NativePlaybackRate requestedRate{};
+  bool requestedPreservePitch{true};
   std::uint64_t controlRevision{0};
   std::uint64_t appliedControlRevision{0};
   bool endOfStreamRequested{false};
@@ -879,10 +880,14 @@ media::NativeMediaConsumeResult NativeAudioSession::configure(
   // only now be turned into a real stretch stage. A refusal drops back to the
   // unit rate rather than failing the whole configure: playing at 1x is a
   // better outcome than not playing.
-  if (outputConfigured == NativeAudioOutputProgress::Done &&
-      !control.requestedRate.unity() &&
-      !control.output->setRate(control.requestedRate)) {
-    control.requestedRate = NativePlaybackRate{};
+  if (outputConfigured == NativeAudioOutputProgress::Done) {
+    // The preference is republished unconditionally, exactly like the cached
+    // gain/mute pair: it cannot fail, and at the unit rate it applies nothing.
+    control.output->setPreservePitch(control.requestedPreservePitch);
+    if (!control.requestedRate.unity() &&
+        !control.output->setRate(control.requestedRate)) {
+      control.requestedRate = NativePlaybackRate{};
+    }
   }
   if (outputConfigured != NativeAudioOutputProgress::Done) {
     control.latch(NativeAudioSessionFailure::OutputConfiguration);
@@ -1258,7 +1263,7 @@ NativeAudioSessionProgress NativeAudioSession::setGain(float gain) noexcept {
 }
 
 NativeAudioSessionProgress NativeAudioSession::setRate(
-    NativePlaybackRate rate) noexcept {
+    NativePlaybackRate rate, bool preservePitch) noexcept {
   if (control_ == nullptr || !rate.valid()) {
     return NativeAudioSessionProgress::Invalid;
   }
@@ -1269,8 +1274,17 @@ NativeAudioSessionProgress NativeAudioSession::setRate(
   // Before configure there is no output to create a stretch unit against, so
   // the request is merely cached; configure re-publishes it exactly the way
   // it re-publishes the cached gain/mute pair.
-  if (control.output != nullptr && !control.output->setRate(rate)) {
-    return NativeAudioSessionProgress::Invalid;
+  // Pitch is published first and cached unconditionally: it cannot fail, and
+  // doing it first means the callback never latches the new rate while the
+  // old preference is still in force. A refused rate therefore leaves the
+  // previous rate running at the newly requested pitch behaviour, which is
+  // the only combination that is true of what the engine is doing.
+  control.requestedPreservePitch = preservePitch;
+  if (control.output != nullptr) {
+    control.output->setPreservePitch(preservePitch);
+    if (!control.output->setRate(rate)) {
+      return NativeAudioSessionProgress::Invalid;
+    }
   }
   control.requestedRate = rate;
   advanceControlRevision(control.controlRevision);

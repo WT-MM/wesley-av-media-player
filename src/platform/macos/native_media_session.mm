@@ -331,10 +331,12 @@ struct SessionAudioControl {
   // timebase -- keeps its existing aggregate initializer and leaves this
   // null, which progressAudioSuspend() reads as "nothing to idle".
   NativeAudioSessionProgress (*suspendForPause)(void*) noexcept{nullptr};
-  // Optional pitch-preserved playback rate, applied as an exact rational. A
-  // route that leaves this null is served only at the unit rate.
-  NativeAudioSessionProgress (*setRate)(void*,
-                                        NativePlaybackRate) noexcept{nullptr};
+  // Optional playback rate, applied as an exact rational together with the
+  // live preserve-pitch preference (true = time-stretched, false =
+  // varispeed). A route that leaves this null is served only at the unit
+  // rate, where the preference has nothing to apply.
+  NativeAudioSessionProgress (*setRate)(void*, NativePlaybackRate,
+                                        bool) noexcept{nullptr};
 };
 
 // Paired-measurement seam for the pause-suspend lever. Read once per process.
@@ -387,7 +389,9 @@ struct SessionAudioControl {
       // No AudioUnit to idle on this route ...
       nullptr,
       // ... but rate is real here: it scales the host-clock slope directly.
-      [](void* context, NativePlaybackRate rate) noexcept {
+      // Pitch is not: a silent generation has no audio to shift, so the
+      // preference is accepted and ignored rather than refused.
+      [](void* context, NativePlaybackRate rate, bool) noexcept {
         return static_cast<NativeSilentTimebase*>(context)->setRate(rate);
       }};
 }
@@ -1326,8 +1330,10 @@ struct NativeMediaSession::Impl final {
           return static_cast<NativeAudioSession*>(context)
               ->suspendOutputForPause();
         },
-        [](void* context, NativePlaybackRate rate) noexcept {
-          return static_cast<NativeAudioSession*>(context)->setRate(rate);
+        [](void* context, NativePlaybackRate rate,
+           bool preservePitch) noexcept {
+          return static_cast<NativeAudioSession*>(context)->setRate(
+              rate, preservePitch);
         }};
     sourceOwned = std::move(source);
     videoOwned = std::move(video);
@@ -2253,10 +2259,13 @@ if (result != NativeAudioSessionProgress::Done) {
       // (no time-stretch unit on this machine) leaves the previous rate in
       // force rather than failing the transport. The clock's own authority is
       // unaffected either way -- it derives its rate from the intervals the
-      // render callback publishes, not from this command.
+      // render callback publishes, not from this command. The live
+      // preserve-pitch preference rides on the same command because it is
+      // part of the same decision, and it is equally soft.
       if (audioControl.setRate != nullptr) {
         static_cast<void>(audioControl.setRate(
-            audioControl.context, protocol::nativeRateRatio(issued.rate)));
+            audioControl.context, protocol::nativeRateRatio(issued.rate),
+            issued.preservePitch));
       }
       const NativeAudioSessionProgress result = audioControl.setPaused(
           audioControl.context, issued.paused);

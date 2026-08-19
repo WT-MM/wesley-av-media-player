@@ -337,8 +337,30 @@ Transition PlaybackRouter::setRate(double rate, Tick now) noexcept {
   if (!reserveLiveSerial(serial)) {
     return beginNativeStop(false, now);
   }
-  native::SetRunState command{
-      {attempt_, serial}, generation_, intendedPaused_, intendedRate_};
+  native::SetRunState command{{attempt_, serial}, generation_,
+                              intendedPaused_, intendedRate_,
+                              intendedPreservePitch_};
+  return applied(nativeRunAction(command));
+}
+
+Transition PlaybackRouter::setPreservePitch(bool preserve, Tick now) noexcept {
+  if (!acceptTick(now)) {
+    return invalid();
+  }
+  intendedPreservePitch_ = preserve;
+  if (state_ != State::NativeActive) {
+    // Same shape as setRate: seeking, starting and ended states all issue
+    // their own authoritative run state later, carrying this intent with
+    // them, so retaining it is the whole job here.
+    return applied();
+  }
+  native::Serial serial;
+  if (!reserveLiveSerial(serial)) {
+    return beginNativeStop(false, now);
+  }
+  native::SetRunState command{{attempt_, serial}, generation_,
+                              intendedPaused_, intendedRate_,
+                              intendedPreservePitch_};
   return applied(nativeRunAction(command));
 }
 
@@ -356,8 +378,8 @@ Transition PlaybackRouter::setPaused(bool paused, Tick now) noexcept {
     if (!reserveLiveSerial(serial)) {
       return beginNativeStop(false, now);
     }
-    native::SetRunState command{
-        {attempt_, serial}, generation_, paused, intendedRate_};
+    native::SetRunState command{{attempt_, serial}, generation_, paused,
+                                intendedRate_, intendedPreservePitch_};
     return applied(nativeRunAction(command));
   }
   if (state_ == State::NativeSeeking) {
@@ -604,8 +626,9 @@ Transition PlaybackRouter::onNativeStarted(const native::Started &event,
   }
   state_ = State::NativeActive;
   deadlineArmed_ = false;
-  native::SetRunState command{
-      {attempt_, serial}, generation_, intendedPaused_, intendedRate_};
+  native::SetRunState command{{attempt_, serial}, generation_,
+                              intendedPaused_, intendedRate_,
+                              intendedPreservePitch_};
   return applied(nativeRunAction(command));
 }
 
@@ -642,7 +665,8 @@ Transition PlaybackRouter::onNativeCommitReady(
   commitDrawBaseline_ = 0;
   state_ = State::NativeActive;
   native::SetRunState command{{attempt_, serial}, generation_,
-                              intendedPaused_, intendedRate_};
+                              intendedPaused_, intendedRate_,
+                              intendedPreservePitch_};
   return applied(nativeRunAction(command));
 }
 

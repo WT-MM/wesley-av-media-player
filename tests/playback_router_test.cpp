@@ -75,6 +75,53 @@ void nativeSuccessHasZeroFallback() {
          "a router with no queued replacement reports no pending source key");
 }
 
+// Rate and the live preserve-pitch preference are one session intent: every
+// run state carries both, a change made while a generation is active re-issues
+// the pair, and a change made before one is retained for the run state the
+// start will publish.
+void runStateCarriesRateAndPitchTogether() {
+  router::PlaybackRouter router;
+  const auto prepare = action(router.open(nativeOpen(31, false), {1}),
+                              router::ActionKind::NativePrepare,
+                              "pitch fixture prepares natively")
+                           .prepare;
+  // Retained before there is anything to issue against, exactly like rate.
+  expect(router.setPreservePitch(false, {2}).status ==
+             router::Status::Applied,
+         "the preference is retained before a generation is active");
+  expect(router.setRate(2.0, {3}).status == router::Status::Applied,
+         "a rate is retained before a generation is active");
+  const auto start =
+      action(router.onNativePrepared(preparedFor(prepare), {4}),
+             router::ActionKind::NativeStart, "pitch fixture starts native")
+          .start;
+  const auto run = action(router.onNativeStarted(
+                              {start.stamp, start.preparedGeneration, 0}, {5}),
+                          router::ActionKind::NativeSetRunState,
+                          "the start publishes the retained run intent")
+                       .runState;
+  expect(run.rate == 2.0 && !run.preservePitch,
+         "the first run state carries both retained intents");
+
+  const auto reissued =
+      action(router.setPreservePitch(true, {6}),
+             router::ActionKind::NativeSetRunState,
+             "a live preference change re-issues the run state")
+          .runState;
+  expect(reissued.preservePitch && reissued.rate == 2.0 &&
+             !reissued.paused,
+         "the re-issued run state keeps the rate and the pause intent");
+  expect(native::follows(run.stamp, reissued.stamp),
+         "the re-issued run state advances the command lineage");
+
+  const auto rated = action(router.setRate(1.5, {7}),
+                            router::ActionKind::NativeSetRunState,
+                            "a live rate change re-issues the run state")
+                         .runState;
+  expect(rated.rate == 1.5 && rated.preservePitch,
+         "a rate change carries the preference in force");
+}
+
 void unsupportedIsTheOnlyImmediateFallback() {
   router::PlaybackRouter router;
   const auto prepare =
@@ -995,6 +1042,7 @@ void naturalEndRetainsNativeUntilExactStop() {
 
 int main() {
   nativeSuccessHasZeroFallback();
+  runStateCarriesRateAndPitchTogether();
   unsupportedIsTheOnlyImmediateFallback();
   allocationFailureRequiresExactStopProof();
   admissionFailureBeforeResourcesIsImmediateFallback();

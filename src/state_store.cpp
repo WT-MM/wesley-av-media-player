@@ -171,6 +171,12 @@ bool parseRecord(std::string_view line, PersistentState& state,
     state.window_hugs_video = value != 0;
     return true;
   }
+  if (key == "preserve_pitch") {
+    int value = 0;
+    if (!parseNumber(line, value)) return false;
+    state.preserve_pitch = value != 0;
+    return true;
+  }
   if (key == "theme") {
     const std::string_view value = takeToken(line);
     trim(line);
@@ -305,6 +311,7 @@ bool StateStore::save() const {
     output << "theme " << themeName(snapshot.appearance_theme) << '\n';
     output << "seek_step " << snapshot.seek_step_seconds << '\n';
     output << "hugs_video " << (snapshot.window_hugs_video ? 1 : 0) << '\n';
+    output << "preserve_pitch " << (snapshot.preserve_pitch ? 1 : 0) << '\n';
     for (const auto& [source, seconds] : snapshot.positions)
       output << "position " << std::quoted(source) << ' ' << seconds << '\n';
     output.flush();

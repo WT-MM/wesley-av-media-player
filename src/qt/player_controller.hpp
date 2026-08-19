@@ -57,6 +57,13 @@ class PlayerController final : public QObject {
   Q_PROPERTY(double rate READ rate WRITE setRate NOTIFY rateChanged)
   Q_PROPERTY(bool captionsVisible READ captionsVisible WRITE setCaptionsVisible
                  NOTIFY captionsVisibleChanged)
+  // LIVE PLAYBACK ONLY: at speeds other than 1x, true keeps the original
+  // pitch (time stretching) and false is classic varispeed, where pitch
+  // rises and falls with the speed. Both routes serve both modes and apply
+  // the change mid-playback -- native through the stretch stage's pitch
+  // offset in cents, the compatibility engine through mpv's
+  // audio-pitch-correction. This is the persisted Preferences setting;
+  // Quick Edit's Preserve pitch is a separate, export-scoped choice.
   Q_PROPERTY(bool preservePitch READ preservePitch WRITE setPreservePitch NOTIFY
                  preservePitchChanged)
   Q_PROPERTY(int appearance READ appearance WRITE setAppearance NOTIFY
