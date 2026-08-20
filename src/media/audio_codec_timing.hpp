@@ -2,6 +2,9 @@
 
 #include "media/native_media_source.hpp"
 
+#include <cstdint>
+#include <optional>
+
 namespace wam::media {
 
 // True for audio codecs whose first access unit legitimately presents BEFORE
@@ -19,12 +22,115 @@ namespace wam::media {
 // layers that has to relax for it.
 [[nodiscard]] constexpr bool
 audioCodecPrecedesStreamOrigin(MediaCodec codec) noexcept {
+  switch (codec) {
   // Vorbis joins Opus for the same structural reason stated differently by the
   // format: its first packet carries only half an overlap-add window and
   // decodes to no samples, so access unit 0 presents one block before media
   // zero. Where Opus states the offset as a CodecDelay/pre-skip field, Vorbis
   // implies it, but it lands in exactly the same arithmetic.
-  return codec == MediaCodec::Opus || codec == MediaCodec::Vorbis;
+  case MediaCodec::Opus:
+  case MediaCodec::Vorbis:
+  // AC-3 and E-AC-3 state a 256-frame CodecDelay -- the decoder delay Apple's
+  // decoder also swallows -- so access unit 0 presents 256 frames early.
+  case MediaCodec::Ac3:
+  case MediaCodec::Eac3:
+  // MP3 states the LAME encoder delay plus the 529-frame decoder delay
+  // (1105 frames from every ffmpeg mux).
+  case MediaCodec::Mp3:
+  // AAC states one 1024-frame access unit of encoder priming whenever the mux
+  // encoded rather than copied the track. Honouring it exactly is what
+  // replaced the historic whole-file fallback for CodecDelay-bearing AAC.
+  case MediaCodec::Aac:
+    return true;
+  default:
+    // FLAC states no CodecDelay and its decoder swallows nothing, so its
+    // access unit 0 is media frame 0 exactly. It deliberately does NOT join
+    // this predicate even though it does state an exact duration below.
+    return false;
+  }
+}
+
+// True for codecs whose Matroska descriptor states the audio track's duration
+// as the EXACT decoded sample count after every trim, rather than as the
+// container's declared Duration. Only such a track may be used as the
+// publication ceiling: an approximate ceiling either truncates audible samples
+// or lets the clock free-run past the end of the stream.
+//
+// This is deliberately a SEPARATE predicate from
+// audioCodecPrecedesStreamOrigin, which the two roles shared until this sweep.
+// They are genuinely different questions and the codec sets differ at both
+// ends: FLAC states an exact duration (STREAMINFO carries the total sample
+// count) but starts at origin, while AAC precedes the origin but reaches this
+// pipeline from AVFoundation as well as from Matroska -- and an AVFoundation
+// track's duration is the container's estimate, not a decoded sample count.
+[[nodiscard]] constexpr bool
+audioCodecStatesExactDecodedDuration(MediaCodec codec) noexcept {
+  switch (codec) {
+  case MediaCodec::Opus:
+  case MediaCodec::Vorbis:
+  case MediaCodec::Ac3:
+  case MediaCodec::Eac3:
+  case MediaCodec::Mp3:
+  case MediaCodec::Flac:
+    return true;
+  default:
+    return false;
+  }
+}
+
+// Recovers an exact frame count from a Matroska duration stated in
+// nanoseconds (CodecDelay, DiscardPadding).
+//
+// Nanoseconds cannot express an arbitrary frame count: gcd(48000, 1e9) = 16000
+// and gcd(44100, 1e9) = 100, so at every rate only some frame counts land on an
+// integer nanosecond. Demanding an exact multiple would reject most real files
+// -- measured, not theorised, in the Opus work. One nanosecond is a small
+// fraction of a frame at every admitted rate, so the nearest whole frame count
+// is unique and recovers the muxer's own integer exactly. The residual is
+// bounded at one nanosecond so a value that was never a rounded frame count is
+// refused rather than silently snapped.
+//
+// Returns empty for a negative value (that asks for padding to be ADDED, which
+// this pipeline cannot manufacture), a zero sample rate, a residual over one
+// nanosecond, or a result beyond maximumFrames.
+//
+// This is the rate-generic form of the identical arithmetic in
+// opusFramesFromNanoseconds and vorbisFramesFromNanoseconds. Those two are left
+// exactly as they are: their bounds are codec-specific and their proofs are
+// already landed, so this shared copy serves the codecs added by this sweep
+// rather than re-deriving theirs.
+[[nodiscard]] constexpr std::optional<std::uint32_t>
+matroskaFramesFromNanoseconds(std::int64_t nanoseconds,
+                              std::uint32_t sampleRate,
+                              std::uint32_t maximumFrames) noexcept {
+  if (nanoseconds < 0 || sampleRate == 0U) {
+    return std::nullopt;
+  }
+  const auto magnitude = static_cast<std::uint64_t>(nanoseconds);
+  // Bound the magnitude BEFORE forming the product so a hostile value can never
+  // wrap the multiplication. One frame past the ceiling, so the frame-count
+  // check below -- not this overflow guard -- is what states the ceiling.
+  const std::uint64_t maximumNanoseconds =
+      UINT64_C(1'000'000'000) * (static_cast<std::uint64_t>(maximumFrames) + 1U) /
+      static_cast<std::uint64_t>(sampleRate);
+  if (magnitude > maximumNanoseconds) {
+    return std::nullopt;
+  }
+  const std::uint64_t product =
+      magnitude * static_cast<std::uint64_t>(sampleRate);
+  const std::uint64_t frames =
+      (product + UINT64_C(500'000'000)) / UINT64_C(1'000'000'000);
+  const std::uint64_t exact = frames * UINT64_C(1'000'000'000);
+  const std::uint64_t residual =
+      product > exact ? product - exact : exact - product;
+  // One nanosecond, expressed in the product's own units.
+  if (residual > static_cast<std::uint64_t>(sampleRate)) {
+    return std::nullopt;
+  }
+  if (frames > maximumFrames) {
+    return std::nullopt;
+  }
+  return static_cast<std::uint32_t>(frames);
 }
 
 } // namespace wam::media

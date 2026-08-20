@@ -1,5 +1,7 @@
 #include "native_audio_converter.hpp"
 
+#include "media/matroska_ac3.hpp"
+#include "media/matroska_mpeg_audio.hpp"
 #include "media/matroska_opus.hpp"
 #include "media/matroska_vorbis.hpp"
 
@@ -9,6 +11,7 @@
 #import <CoreMedia/CoreMedia.h>
 
 #include <algorithm>
+#include <cstdio>
 #include <array>
 #include <cmath>
 #include <cstddef>
@@ -198,6 +201,12 @@ void saturatingAdd(std::uint64_t &value, std::uint64_t amount) noexcept {
     return formatTag == kAudioFormatOpus;
   case media::MediaCodec::Vorbis:
     return formatTag == wam::media::matroska::kVorbisAudioFormatTag;
+  case media::MediaCodec::Ac3:
+    return formatTag == kAudioFormatAC3;
+  case media::MediaCodec::Eac3:
+    return formatTag == kAudioFormatEnhancedAC3;
+  case media::MediaCodec::Flac:
+    return formatTag == kAudioFormatFLAC;
   default:
     return false;
   }
@@ -224,6 +233,52 @@ void saturatingAdd(std::uint64_t &value, std::uint64_t amount) noexcept {
     return wam::media::matroska::kOpusDecoderDelayFrames;
   case media::MediaCodec::Vorbis:
     return framesPerPacket;
+  // AC-3 and E-AC-3: a fixed 256 frames, the decoder delay, which is also
+  // exactly the CodecDelay every real mux states -- so the head trim the
+  // demuxer derives from it is provably zero. Measured invariant across
+  // durations, channel counts and AudioConverterReset.
+  case media::MediaCodec::Ac3:
+  case media::MediaCodec::Eac3:
+    return wam::media::matroska::kAc3DecoderDelayFrames;
+  // MP3: a fixed 529 frames. The decoder swallows them at the head and
+  // flushes the same number at the end, so the stream still decodes to
+  // exactly packets * 1152 frames while its content sits 529 frames earlier
+  // than the packet grid alone would say.
+  case media::MediaCodec::Mp3:
+    return wam::media::matroska::kMpegLayer3DecoderDelayFrames;
+  // AAC and FLAC swallow nothing: measured deficit zero over whole tracks,
+  // and for FLAC the decode is bit-exact against ffmpeg from frame zero.
+  default:
+    return 0U;
+  }
+}
+
+// The frames a decoder never emits at all. Identical to its lead-in for every
+// codec that simply swallows its warm-up, and ZERO for MP3, which swallows 529
+// frames at the head and flushes exactly 529 more at the end -- so an MP3
+// track decodes to precisely the frame count its packets declare even though
+// its first emitted frame sits 529 frames into the packet grid.
+[[nodiscard]] std::uint32_t
+decoderFrameDeficitFrames(media::MediaCodec codec,
+                          std::uint32_t framesPerPacket) noexcept {
+  if (codec == media::MediaCodec::Mp3) {
+    return 0U;
+  }
+  return decoderLeadInFrames(codec, framesPerPacket);
+}
+
+// How many frames short of its declared packet budget a decoder may
+// legitimately finish. See NativeAudioConverterState::decodedBudgetExhausted
+// for why each value is what it is.
+[[nodiscard]] std::uint32_t decoderTailShortfallBoundFrames(
+    media::MediaCodec codec, std::uint32_t framesPerPacket) noexcept {
+  switch (codec) {
+  case media::MediaCodec::Ac3:
+  case media::MediaCodec::Eac3:
+    return wam::media::matroska::kAc3DecoderTailShortfallFrames;
+  case media::MediaCodec::Flac:
+    // The final frame carries at least one sample and at most a whole block.
+    return framesPerPacket == 0U ? 0U : framesPerPacket - 1U;
   default:
     return 0U;
   }
@@ -415,8 +470,20 @@ public:
     result.producedFrames = outputFrames;
     result.finalInputReleased = context.finalInputReleased;
     result.needsInput = context.needsInput;
-    result.drained =
-        input.endOfStream && outputFrames == 0 && context.sawEndOfStream;
+    // Drained means: the caller asked for the end, nothing came out, and there
+    // was no input left to consume.
+    //
+    // `context.sawEndOfStream` alone is not sufficient, and MP3 is what proved
+    // it. MP3 is the first codec here whose decoder still holds frames after
+    // its last packet -- it swallows 529 at the head and flushes 529 at the
+    // end -- so the first end-of-stream convert call returns those 529 frames
+    // and the SECOND one finds CoreAudio already finished: it returns zero
+    // without invoking the input proc again, so nothing sets sawEndOfStream
+    // and the pump reported "native audio backend made no bounded progress"
+    // at every MP3 end of file. An empty packet span at end of stream is the
+    // same proof by a route CoreAudio cannot skip.
+    result.drained = input.endOfStream && outputFrames == 0 &&
+                     (context.sawEndOfStream || input.packets.empty());
     result.failed = status != noErr && status != kInputTemporarilyUnavailable;
     return result;
   }
@@ -787,19 +854,51 @@ struct NativeAudioConverter::Impl {
     statistics.firstPublishedFrameKnown = false;
   }
 
-  // The decoder swallows lead_in_frames of its own before it emits anything,
-  // so a generation legitimately decodes that many fewer PCM frames than its
-  // packets declare. Both invariants are stated against the same identity, so
-  // lead_in_frames == 0 leaves the historic arithmetic byte-identical.
+  // How many frames the decoder NEVER emits, which is not the same question as
+  // where its first emitted frame sits.
+  //
+  // For Opus, Vorbis, AC-3 and E-AC-3 the two coincide: the frames the decoder
+  // swallows at the head are simply gone, so the generation decodes exactly
+  // lead_in_frames fewer than its packets declare. MP3 separates them -- it
+  // swallows 529 frames at the head and FLUSHES 529 at the end, so its output
+  // is shifted by 529 while its COUNT is exactly what the packets declared.
+  // Conflating the two failed every MP3 file with "decoded audio exceeds its
+  // exact accepted timeline budget".
+  //
+  // lead_in_frames keeps the positioning role (it is where the decoded cursor
+  // starts); this is the counting one.
   [[nodiscard]] bool decodedWithinBudget(std::uint64_t decoded) const noexcept {
-    return lead_in_frames <= accepted_pcm_frames &&
-           decoded <= accepted_pcm_frames - lead_in_frames;
+    return frame_deficit_frames <= accepted_pcm_frames &&
+           decoded <= accepted_pcm_frames - frame_deficit_frames;
   }
 
+  // At end of stream the decoder is normally exactly spent: it has emitted one
+  // frame for every frame its packets declared, less the lead-in it swallowed.
+  // Two codecs legitimately fall SHORT of that, by a bounded and stated amount:
+  //
+  //  * AC-3 and E-AC-3 hold a fixed 32 frames in flight and never flush them.
+  //    Explicit post-drain AudioConverterFillComplexBuffer calls return zero
+  //    frames, so those frames are unreachable rather than merely unrequested
+  //    (scratchpad/ac3tail.mm). The withheld audio is the encoder's silent MDCT
+  //    ring-down, measured at -113 dBFS.
+  //  * FLAC's FINAL frame is legitimately shorter than the stream's block
+  //    size, so the last packet decodes to fewer frames than the constant grid
+  //    declares. STREAMINFO states the exact total, which is where the track's
+  //    duration comes from; the shortfall here is bounded by one block.
+  //
+  // This is a bound, not a licence to be approximate. What the generation
+  // actually PUBLISHES is still governed exactly, by the presentation ceiling
+  // the demuxer derives -- and for both codecs that ceiling was measured equal
+  // to the decoder's own output frame for frame. The bound is zero for Opus,
+  // Vorbis, AAC and MP3, so their arithmetic stays the exact equality it was.
   [[nodiscard]] bool decodedBudgetExhausted(
       std::uint64_t decoded) const noexcept {
-    return lead_in_frames <= accepted_pcm_frames &&
-           decoded == accepted_pcm_frames - lead_in_frames;
+    if (frame_deficit_frames > accepted_pcm_frames) {
+      return false;
+    }
+    const std::uint64_t expected = accepted_pcm_frames - frame_deficit_frames;
+    return decoded <= expected &&
+           expected - decoded <= tail_shortfall_bound_frames;
   }
 
   void failClosedProtocol() noexcept {
@@ -1134,6 +1233,12 @@ struct NativeAudioConverter::Impl {
   std::int64_t prepared_end_frame{0};
   std::int64_t presentation_ceiling_frame{0};
   std::uint32_t lead_in_frames{0};
+  // See decodedWithinBudget: the frames the decoder never emits, which equals
+  // lead_in_frames for every codec except MP3.
+  std::uint32_t frame_deficit_frames{0};
+  // See decodedBudgetExhausted. Zero for every codec whose decoder is exactly
+  // spent at end of stream, which is all of them but AC-3, E-AC-3 and FLAC.
+  std::uint32_t tail_shortfall_bound_frames{0};
   bool has_presentation_ceiling{false};
   bool encoded_borrowed{false};
   bool configured{false};
@@ -1261,6 +1366,10 @@ bool NativeAudioConverter::configure(const media::MediaTrackDescriptor &track,
   state.statistics.sourceChannels = state.audio.channels;
   state.lead_in_frames =
       decoderLeadInFrames(track.codec, state.audio.framesPerPacket);
+  state.frame_deficit_frames =
+      decoderFrameDeficitFrames(track.codec, state.audio.framesPerPacket);
+  state.tail_shortfall_bound_frames =
+      decoderTailShortfallBoundFrames(track.codec, state.audio.framesPerPacket);
   state.resetExactTimeline(timeline, candidateFloorFrame, candidateCeilingFrame,
                            candidateCeilingKnown);
   return true;
@@ -1711,7 +1820,28 @@ NativeAudioPumpResult NativeAudioConverter::pump(std::string *error) {
   if (converted.needsInput && !state.eof_requested) {
     return NativeAudioPumpResult::NeedsInput;
   }
-  state.failPump(error, "native audio backend made no bounded progress");
+  {
+    char detail[256];
+    std::snprintf(detail, sizeof(detail),
+                  "native audio backend made no bounded progress "
+                  "[produced=%llu consumed=%llu needsInput=%d finalRel=%d "
+                  "drained=%d sendingEof=%d hasInput=%d eofReq=%d await=%d "
+                  "next=%llu count=%llu decoded=%llu accepted=%llu "
+                  "deficit=%u lead=%u]",
+                  (unsigned long long)converted.producedFrames,
+                  (unsigned long long)converted.consumedPackets,
+                  converted.needsInput ? 1 : 0,
+                  converted.finalInputReleased ? 1 : 0,
+                  converted.drained ? 1 : 0, sendingEof ? 1 : 0,
+                  hasInput ? 1 : 0, state.eof_requested ? 1 : 0,
+                  state.awaiting_input_release ? 1 : 0,
+                  (unsigned long long)state.next_packet,
+                  (unsigned long long)state.packet_count,
+                  (unsigned long long)state.statistics.decodedPcmFrames,
+                  (unsigned long long)state.accepted_pcm_frames,
+                  state.frame_deficit_frames, state.lead_in_frames);
+    state.failPump(error, detail);
+  }
   return NativeAudioPumpResult::Failed;
 }
 

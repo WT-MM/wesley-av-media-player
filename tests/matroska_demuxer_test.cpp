@@ -236,13 +236,13 @@ Bytes doubleElement(std::uint32_t id, double value) {
   return element(id, payload);
 }
 
-Bytes ebmlHeader() {
+Bytes ebmlHeader(const std::string& docType = "matroska") {
   Bytes payload;
   append(payload, uintElement(0x4286, 1));
   append(payload, uintElement(0x42F7, 1));
   append(payload, uintElement(0x42F2, 4));
   append(payload, uintElement(0x42F3, 8));
-  append(payload, asciiElement(0x4282, "matroska"));
+  append(payload, asciiElement(0x4282, docType));
   append(payload, uintElement(0x4287, 4));
   append(payload, uintElement(0x4285, 2));
   return element(kEbmlHeaderId, payload);
@@ -583,6 +583,9 @@ struct FixtureSpec {
   bool includeSubtitleTrack{true};
   std::string videoCodecId{"V_MPEG4/ISO/AVC"};
   std::string audioCodecId{"A_AAC"};
+  // WebM is Matroska with a smaller codec set. Writing "webm" here is what
+  // exercises the DocType-scoped audio allow-list.
+  std::string docType{"matroska"};
   Bytes videoCodecPrivate{fromOctets(kSampleAvcC)};
   // WebM muxers routinely write no CodecPrivate at all for VP9, so the
   // element has to be omittable, not merely empty.
@@ -960,7 +963,7 @@ Fixture buildFixture(const FixtureSpec& spec) {
     append(segmentPayload, cuesElement(cuePoints));
   }
 
-  fixture.bytes = ebmlHeader();
+  fixture.bytes = ebmlHeader(spec.docType);
   const Bytes segmentElement = element(kSegmentId, segmentPayload);
   const auto segmentPrefix =
       static_cast<std::uint64_t>(segmentElement.size() - segmentPayload.size());
@@ -1783,12 +1786,13 @@ void testCodecAdmissionAndSelection() {
     // replaces the previous contract, which admitted video-only whenever
     // audio was optional.
     //
-    // The example used to be A_OPUS, then A_VORBIS; both are now decoded
-    // natively. FLAC is the current stand-in for "audio this source does not
-    // decode" -- it is a codec Matroska can carry that isAudioCodec() does not
-    // name, so the track is never selected in the first place.
+    // The example used to be A_OPUS, then A_VORBIS, then A_FLAC; all three are
+    // now decoded natively. DTS is the current stand-in for "audio this source
+    // does not decode" -- Apple ships no DTS decoder at all, so it is a codec
+    // Matroska can carry that isAudioCodec() does not name, and the track is
+    // never selected in the first place.
     FixtureSpec spec;
-    spec.audioCodecId = "A_FLAC";
+    spec.audioCodecId = "A_DTS";
     expectPrepareError(
         spec, MatroskaDemuxError::TrackSelection,
         "a document whose only audio is undecodable falls back whole-file");
@@ -1807,7 +1811,7 @@ void testCodecAdmissionAndSelection() {
   }
   {
     FixtureSpec spec;
-    spec.audioCodecId = "A_FLAC";
+    spec.audioCodecId = "A_DTS";
     MediaSourceOpenOptions options;
     options.selection.requireAudio = true;
     const PreparedFixture prepared = prepareFixture(spec, options);
@@ -1816,15 +1820,99 @@ void testCodecAdmissionAndSelection() {
            "requireAudio rejects a document whose audio codec is unsupported");
   }
   {
-    // The historic rule stands for AAC: a nonzero CodecDelay on the selected
-    // audio track is refused, because nothing proves what that delay means for
-    // an AAC stream. Opus is the single exception, and only because its delay
-    // is cross-checked against the OpusHead pre-skip at admission.
+    // THE headline change of the audio sweep. AAC's CodecDelay used to be
+    // refused outright, which is why every AAC track FFmpeg *encodes* -- as
+    // opposed to copies -- fell back as a whole file. 21,333,333 ns is one
+    // 1024-frame access unit at 48 kHz, which is the only priming AAC-LC can
+    // have, and it is now honoured as an exact head trim.
+    FixtureSpec spec;
+    spec.audioCodecDelayNanoseconds = 21'333'333;
+    const PreparedFixture prepared = prepareFixture(spec);
+    expect(prepared.outcome.status == MatroskaDemuxStatus::Ready &&
+               prepared.outcome.asset != nullptr,
+           "an AAC track whose CodecDelay is exactly one access unit is now "
+           "admitted");
+  }
+  {
+    // Any OTHER value is priming this path cannot prove, so the distrust the
+    // historic rule expressed is kept exactly where it is still earned.
+    // 6,500,000 ns is 312 frames at 48 kHz -- an Opus pre-skip, not an AAC
+    // access unit.
     FixtureSpec spec;
     spec.audioCodecDelayNanoseconds = 6'500'000;
     expectPrepareError(
         spec, MatroskaDemuxError::CodecConfiguration,
-        "a nonzero CodecDelay on an AAC track still falls back");
+        "an AAC CodecDelay that is not one whole access unit still falls back");
+  }
+  {
+    // A_AC3, A_EAC3, A_FLAC and A_MPEG/L3 are now selectable CodecIDs, so a
+    // track carrying one reaches codec admission instead of failing track
+    // selection. The default fixture's audio payload is not a syncframe of
+    // any of them, so admission is what refuses it -- and the verdict moving
+    // from TrackSelection to CodecConfiguration is the proof that selection
+    // now admits the CodecID.
+    for (const char *codecId : {"A_AC3", "A_EAC3", "A_MPEG/L3"}) {
+      FixtureSpec spec;
+      spec.audioCodecId = codecId;
+      expectPrepareError(spec, MatroskaDemuxError::CodecConfiguration,
+                         "a selectable AC-3/E-AC-3/MP3 CodecID falls back at "
+                         "admission, not at track selection");
+    }
+    {
+      // Diagnostic control for the loop above: with the default A_AAC CodecID
+      // the identical document prepares, so the refusals are the new codecs'
+      // admission gates and not something about the fixture.
+      const PreparedFixture control = prepareFixture({});
+      expect(control.outcome.status == MatroskaDemuxStatus::Ready,
+             "the same document with A_AAC still prepares");
+    }
+  }
+  {
+    // WebM's audio codec set is Vorbis and Opus. AC-3, E-AC-3, FLAC and MP3
+    // are legal in Matroska and NOT legal in WebM, so a file whose DocType
+    // says "webm" while carrying one of them is malformed -- and admitting it
+    // would mean this source plays a file no other WebM decoder would.
+    //
+    // The verdict is TrackSelection rather than CodecConfiguration, which is
+    // the load-bearing half: the track is never SELECTED, so this is the
+    // DocType allow-list refusing it and not the codec admission that the
+    // Matroska-DocType cases above exercise.
+    for (const char *codecId : {"A_AC3", "A_EAC3", "A_MPEG/L3", "A_FLAC"}) {
+      FixtureSpec spec;
+      spec.docType = "webm";
+      spec.audioCodecId = codecId;
+      expectPrepareError(spec, MatroskaDemuxError::TrackSelection,
+                         "AC-3, E-AC-3, MP3 and FLAC are not selectable in a "
+                         "WebM DocType");
+    }
+    {
+      // The same document in a Matroska DocType reaches codec admission, so
+      // the refusal above is provably the DocType gate.
+      FixtureSpec spec;
+      spec.audioCodecId = "A_FLAC";
+      expectPrepareError(spec, MatroskaDemuxError::CodecConfiguration,
+                         "the identical A_FLAC track in a Matroska DocType "
+                         "reaches codec admission instead");
+    }
+    {
+      // AAC is not WebM-legal either, but it WAS selectable in a WebM DocType
+      // before this work and the rule is deliberately not extended to it: a
+      // consistent gate that turned working files into fallbacks would be a
+      // worse trade than an inconsistent one that changes nothing it was not
+      // asked to. This case pins that decision rather than describing the
+      // format.
+      FixtureSpec spec;
+      spec.docType = "webm";
+      const PreparedFixture prepared = prepareFixture(spec);
+      expect(prepared.outcome.status == MatroskaDemuxStatus::Ready &&
+                 prepared.outcome.asset != nullptr,
+             "AAC in a WebM DocType keeps preparing, exactly as before");
+    }
+    FixtureSpec flac;
+    flac.audioCodecId = "A_FLAC";
+    expectPrepareError(flac, MatroskaDemuxError::CodecConfiguration,
+                       "an A_FLAC track whose CodecPrivate is not a fLaC "
+                       "stream header falls back at admission");
   }
   {
     FixtureSpec spec;

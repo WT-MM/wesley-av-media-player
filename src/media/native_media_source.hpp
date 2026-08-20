@@ -97,6 +97,16 @@ enum class MediaCodec : std::uint8_t {
   // on any Apple platform and is decoded by the libvpx software stage, which is
   // why it is the only video codec here that is not a VideoToolbox codec.
   Vp8,
+  // Appended 2026-08-20 under the same APPEND-ONLY amendment. Every value
+  // above keeps its existing ordinal. All three are decoded by AudioToolbox:
+  // Apple ships licensed AC-3 and E-AC-3 decoders ('ac-3' / 'ec-3') and a FLAC
+  // decoder ('flac'), all three reported by
+  // kAudioFormatProperty_DecodeFormatIDs on this platform. MP3 needed no new
+  // enumerator -- Mp3 already existed above and was simply never reachable
+  // from Matroska.
+  Ac3,
+  Eac3,
+  Flac,
 };
 
 enum class MediaCodecConfigurationKind : std::uint8_t {

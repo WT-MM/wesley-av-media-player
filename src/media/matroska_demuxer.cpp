@@ -1,6 +1,10 @@
 #include "media/matroska_demuxer.hpp"
 
+#include "media/audio_codec_timing.hpp"
 #include "media/matroska_aac.hpp"
+#include "media/matroska_ac3.hpp"
+#include "media/matroska_flac.hpp"
+#include "media/matroska_mpeg_audio.hpp"
 #include "media/matroska_opus.hpp"
 #include "media/matroska_vorbis.hpp"
 #include "media/video_codec_configuration.hpp"
@@ -27,6 +31,14 @@ constexpr std::size_t kCopyChunkBytes{64U * 1024U};
 constexpr std::uint32_t kAacFormatTag{0x61616320U};
 constexpr std::uint32_t kOpusFormatTag{0x6F707573U};
 constexpr std::uint32_t kVorbisFormatTag{kVorbisAudioFormatTag};
+// 'ac-3', 'ec-3', 'flac', '.mp3' -- kAudioFormatAC3, kAudioFormatEnhancedAC3,
+// kAudioFormatFLAC and kAudioFormatMPEGLayer3. Spelled numerically here so the
+// demuxer stays free of the AudioToolbox headers, exactly as the AAC and Opus
+// tags already are.
+constexpr std::uint32_t kAc3FormatTag{0x61632D33U};
+constexpr std::uint32_t kEnhancedAc3FormatTag{0x65632D33U};
+constexpr std::uint32_t kFlacFormatTag{0x666C6163U};
+constexpr std::uint32_t kMpegLayer3FormatTag{0x2E6D7033U};
 constexpr std::uint32_t kMonoLayoutTag{0x00640001U};
 constexpr std::uint32_t kStereoLayoutTag{0x00650002U};
 
@@ -479,17 +491,46 @@ inline constexpr std::size_t kOpusTailProbeClusters{8};
 }
 
 [[nodiscard]] bool isAudioCodec(std::string_view id) noexcept {
-  return id == "A_AAC" || id == "A_OPUS" || id == "A_VORBIS";
+  return id == "A_AAC" || id == "A_OPUS" || id == "A_VORBIS" ||
+         id == "A_AC3" || id == "A_EAC3" || id == "A_FLAC" ||
+         id == "A_MPEG/L3";
+}
+
+// WebM's audio codec set is Vorbis and Opus. AC-3, E-AC-3, FLAC and MP3 are
+// legal in Matroska and are NOT legal in WebM, so a file whose DocType says
+// "webm" while carrying one of them is malformed. Admitting it would mean this
+// source plays a file that no other WebM decoder would, which is a worse
+// outcome than the mpv fallback -- mpv is not bound by the DocType either, so
+// the file still plays, just not down this path.
+//
+// The rule is deliberately scoped to the four CodecIDs this source has just
+// started admitting, and NOT applied to AAC. AAC is not WebM-legal either, but
+// an AAC track in a WebM DocType was selectable before this work and playing
+// it natively is not a behaviour this change set has any reason to remove. A
+// consistent rule that quietly turned working files into fallbacks would be a
+// worse trade than an inconsistent one that changes nothing it was not asked
+// to.
+[[nodiscard]] bool
+audioCodecAllowedInDocument(std::string_view codecId,
+                            EbmlDocumentType documentType) noexcept {
+  if (documentType != EbmlDocumentType::Webm) {
+    return true;
+  }
+  return codecId != "A_AC3" && codecId != "A_EAC3" && codecId != "A_FLAC" &&
+         codecId != "A_MPEG/L3";
 }
 
 [[nodiscard]] const TrackEntry* chooseTrack(
     const std::vector<TrackEntry>& tracks, std::uint64_t type,
-    std::optional<MediaTrackId> preferred) noexcept {
-  const auto admitted = [type](const TrackEntry& track) {
+    std::optional<MediaTrackId> preferred,
+    EbmlDocumentType documentType) noexcept {
+  const auto admitted = [type, documentType](const TrackEntry& track) {
     const std::string_view codec(track.codecId.view().data(),
                                  track.codecId.view().size());
     return track.enabled && track.type == type && trackId(track.number) &&
-           (type == 1 ? isVideoCodec(codec) : isAudioCodec(codec));
+           (type == 1 ? isVideoCodec(codec)
+                      : (isAudioCodec(codec) &&
+                         audioCodecAllowedInDocument(codec, documentType)));
   };
   if (preferred) {
     const auto found = std::find_if(
@@ -1116,6 +1157,516 @@ template <typename OnBlock>
                              cancellation, probe);
 }
 
+// Reads the first frame of the first Block belonging to an audio track.
+//
+// AC-3, E-AC-3 and MP3 carry NO CodecPrivate -- every parameter the pipeline
+// needs is restated in each syncframe -- so this is where their admission gets
+// its bytes. It is the exact analogue of the head half of
+// probeOpusPacketGrid, which reads the first packet's TOC for the same reason.
+[[nodiscard]] bool probeFirstAudioFrame(
+    SeekableByteReader& reader, std::span<const Cluster> clusters,
+    const ParseOptions& options, std::uint64_t trackNumber,
+    std::size_t maximumBytes, CancellationToken cancellation,
+    std::vector<std::byte>* bytes) {
+  bool found = false;
+  for (std::size_t index = 0; index < clusters.size() && !found; ++index) {
+    if (cancellation.cancelled()) {
+      return false;
+    }
+    bool failed = false;
+    if (!visitTrackBlocksInCluster(
+            reader, clusters[index], options, trackNumber, cancellation, index,
+            [&](std::size_t, const CapturedBlockVisitor& block) {
+              if (found) {
+                return true;
+              }
+              if (block.frameCount == 0) {
+                failed = true;
+                return false;
+              }
+              const ByteRange frame = block.frames[0].bytes;
+              if (frame.size == 0 || frame.size > maximumBytes) {
+                failed = true;
+                return false;
+              }
+              try {
+                bytes->resize(static_cast<std::size_t>(frame.size));
+              } catch (...) {
+                failed = true;
+                return false;
+              }
+              if (!reader.readAt(frame.offset, std::span<std::byte>(*bytes))) {
+                failed = true;
+                return false;
+              }
+              found = true;
+              return true;
+            })) {
+      return false;
+    }
+    if (failed) {
+      return false;
+    }
+  }
+  return found;
+}
+
+// The exact end of a decoded audio stream, in track-rate frames from media
+// zero, shared by every codec whose duration is derived rather than read:
+//
+//   published = (lastOrdinal + lacedFrames) * S - CodecDelay - tailTrim
+//
+// which is the Opus identity with the pre-skip generalised to CodecDelay. The
+// tail trim is the LARGER of what the container asks for (DiscardPadding) and
+// what the decoder withholds anyway (kAc3DecoderTailShortfallFrames for AC-3,
+// zero for everything else). Taking the maximum is what keeps the stated
+// duration equal to what the pipeline can actually render: a ceiling above the
+// renderable count would leave the clock waiting at end of file for frames
+// that never arrive, and one below it would truncate audible samples.
+struct ExactAudioDuration {
+  MediaTime duration{0, 1};
+  std::uint32_t discardFrames{0};
+  std::uint64_t endFrame{0};
+};
+
+[[nodiscard]] bool exactAudioDurationFromTail(
+    const OpusPacketGridProbe& probe, std::uint32_t sampleRate,
+    std::uint32_t samplesPerAccessUnit,
+    std::uint64_t timestampScaleNanoseconds, std::uint32_t codecDelayFrames,
+    std::uint32_t decoderTailShortfallFrames, std::int64_t tickTolerance,
+    ExactAudioDuration* out) noexcept {
+  if (sampleRate == 0U || samplesPerAccessUnit == 0U) {
+    return false;
+  }
+  const auto tailProjection = nearestAacAccessUnitForMatroskaTick(
+      probe.tailBlockTick, MediaTime{0, 1}, sampleRate,
+      timestampScaleNanoseconds, samplesPerAccessUnit);
+  if (!aacProjectionOnGrid(tailProjection, tickTolerance)) {
+    return false;
+  }
+  // A DiscardPadding of a whole access unit or more would mean the final Block
+  // contributes nothing, which no muxer emits and the ordinal arithmetic below
+  // does not model.
+  const auto discardFrames = matroskaFramesFromNanoseconds(
+      probe.tailDiscardPaddingNanoseconds, sampleRate,
+      samplesPerAccessUnit - 1U);
+  if (!discardFrames) {
+    return false;
+  }
+  const std::uint32_t tailTrim =
+      std::max(*discardFrames, decoderTailShortfallFrames);
+  if (tailTrim >= samplesPerAccessUnit) {
+    return false;
+  }
+  const __int128 endOrdinal =
+      static_cast<__int128>(tailProjection->accessUnitOrdinal) +
+      static_cast<__int128>(probe.tailBlockFrameCount);
+  const __int128 endFrame =
+      endOrdinal * static_cast<__int128>(samplesPerAccessUnit) -
+      static_cast<__int128>(codecDelayFrames) -
+      static_cast<__int128>(tailTrim);
+  if (endFrame <= 0 ||
+      endFrame > static_cast<__int128>(std::numeric_limits<std::int64_t>::max())) {
+    return false;
+  }
+  const auto endFrameValue = static_cast<std::uint64_t>(endFrame);
+  const std::uint64_t divisor =
+      std::gcd(endFrameValue, static_cast<std::uint64_t>(sampleRate));
+  const MediaTime duration{static_cast<std::int64_t>(endFrameValue / divisor),
+                           static_cast<std::int32_t>(sampleRate / divisor)};
+  if (!duration.valid()) {
+    return false;
+  }
+  out->duration = duration;
+  out->discardFrames = *discardFrames;
+  out->endFrame = endFrameValue;
+  return true;
+}
+
+// The presentation-grid origin for a track whose access unit 0 presents
+// codecDelayFrames early. Reduced in the frame domain so no nanosecond
+// rounding can ever enter the origin.
+[[nodiscard]] bool exactPresentationOrigin(std::uint32_t codecDelayFrames,
+                                           std::uint32_t sampleRate,
+                                           MediaTime* origin) noexcept {
+  if (sampleRate == 0U) {
+    return false;
+  }
+  if (codecDelayFrames == 0U) {
+    *origin = MediaTime{0, 1};
+    return true;
+  }
+  const std::uint64_t divisor =
+      std::gcd(static_cast<std::uint64_t>(codecDelayFrames),
+               static_cast<std::uint64_t>(sampleRate));
+  const MediaTime candidate{
+      -static_cast<std::int64_t>(codecDelayFrames / divisor),
+      static_cast<std::int32_t>(sampleRate / divisor)};
+  if (!candidate.valid()) {
+    return false;
+  }
+  *origin = candidate;
+  return true;
+}
+
+// Shared tail of every audio descriptor added by this sweep: the fields are
+// identical once the codec-specific admission has produced a sample rate, a
+// channel count, an access unit size, a magic cookie and an exact duration.
+struct AudioDescriptorFields {
+  MediaCodec codec{MediaCodec::Unknown};
+  std::uint32_t formatTag{0};
+  std::uint32_t sampleRate{0};
+  std::uint8_t channelCount{0};
+  std::uint32_t samplesPerAccessUnit{0};
+  std::uint32_t codecDelayFrames{0};
+  MediaTime duration{0, 1};
+  MediaTime origin{0, 1};
+  std::span<const std::byte> magicCookie{};
+  bool tailBlockKnown{false};
+  std::uint64_t tailBlockOffset{0};
+  std::int64_t tailDiscardPaddingNanoseconds{0};
+};
+
+void fillAudioDescriptor(const TrackEntry& entry, MediaTrackId id,
+                         const AudioDescriptorFields& fields,
+                         MediaTrackDescriptor* result, TrackRuntime* runtime) {
+  result->id = id;
+  result->kind = MediaTrackKind::Audio;
+  result->codec = fields.codec;
+  result->timeBase =
+      MediaTime{1, static_cast<std::int32_t>(fields.sampleRate)};
+  // As with Opus and Vorbis, this is NOT the container's declared Duration: it
+  // is the exact decoded sample count after every trim, which the audio
+  // consumer uses as the tail-trim ceiling.
+  result->duration = fields.duration;
+  result->language = inlineString(entry.language);
+  result->codecConfigurationKind = MediaCodecConfigurationKind::AudioMagicCookie;
+  result->codecConfiguration.assign(fields.magicCookie.begin(),
+                                    fields.magicCookie.end());
+  MediaAudioFormat format;
+  format.sampleRate = fields.sampleRate;
+  format.channels = fields.channelCount;
+  format.formatTag = fields.formatTag;
+  format.framesPerPacket = fields.samplesPerAccessUnit;
+  format.channelLayoutTag =
+      fields.channelCount == 1 ? kMonoLayoutTag : kStereoLayoutTag;
+  format.channelLayoutPresent = true;
+  result->audio = format;
+  runtime->entry = entry;
+  runtime->id = id;
+  runtime->kind = MediaTrackKind::Audio;
+  runtime->codec = fields.codec;
+  runtime->audioSampleRate = fields.sampleRate;
+  runtime->audioSamplesPerAccessUnit = fields.samplesPerAccessUnit;
+  runtime->audioPresentationOrigin = fields.origin;
+  // Two ticks, for the reason the Opus work established: ffmpeg builds a Block
+  // timestamp as round(presentationMs) + round(delayMs), two roundings that add
+  // a systematic tick on top of ordinary cluster jitter. Still an order of
+  // magnitude below one access unit for every codec here (32 ticks for AC-3,
+  // 26 for MP3, 21 for AAC, 104 for FLAC), so a Block misplaced by whole
+  // access units is still rejected.
+  runtime->audioTickResidualTolerance = kMaximumOpusGridTickResidual;
+  runtime->audioGridOffsetFrames = fields.codecDelayFrames;
+  runtime->audioPrimingAccessUnits = kAacPrimingAccessUnits;
+  runtime->audioTailBlockKnown = fields.tailBlockKnown;
+  runtime->audioTailBlockOffset = fields.tailBlockOffset;
+  runtime->audioTailDiscardPaddingNanoseconds =
+      fields.tailDiscardPaddingNanoseconds;
+}
+
+// Common admission gates for the codecs this sweep adds. CodecDelay is allowed
+// (and then proven exactly, per codec); SeekPreRoll is not -- none of these
+// formats states one, and a mux that does is describing warm-up this path has
+// not reasoned about.
+[[nodiscard]] bool sweepTrackFeaturesSupported(const TrackEntry& entry) noexcept {
+  return entry.audio && entry.seekPreRollNanoseconds == 0 &&
+         selectedTrackFeaturesSupported(entry, true) &&
+         !entry.audio->outputSamplingFrequency;
+}
+
+[[nodiscard]] bool audioFormatAgrees(const TrackEntry& entry,
+                                     const MediaSourceLimits& limits,
+                                     std::uint32_t sampleRate,
+                                     std::uint8_t channelCount) noexcept {
+  // Multichannel is refused at admission rather than downstream. The whole
+  // output chain is stereo (NativePcmRing::kChannels == 2), and the
+  // AudioConverter's own 5.1 downmix was measured unacceptable for both
+  // families in this sweep: AC-3 gets a normalised Lt/Rt at -10.7 dB against
+  // ffmpeg's Lo/Ro, and FLAC has centre, LFE and both surrounds silently
+  // dropped. Falling back to mpv plays those files correctly; admitting them
+  // would play them wrongly.
+  return channelCount >= 1U && channelCount <= 2U &&
+         sampleRate <= limits.maximumAudioSampleRate &&
+         channelCount <= limits.maximumAudioChannels &&
+         entry.audio->samplingFrequency == static_cast<double>(sampleRate) &&
+         entry.audio->channels == channelCount;
+}
+
+[[nodiscard]] bool makeAc3AudioDescriptor(
+    SeekableByteReader& reader, const TrackEntry& entry,
+    const MediaSourceLimits& limits, std::span<const Cluster> clusters,
+    std::span<const TrackConstraint> constraints,
+    std::uint64_t timestampScaleNanoseconds, bool enhanced,
+    CancellationToken cancellation, MediaTrackDescriptor* result,
+    TrackRuntime* runtime) {
+  const auto id = trackId(entry.number);
+  // AC-3 states everything in-band, so a CodecPrivate would be a blob this
+  // source does not interpret. Refuse rather than ignore it.
+  if (!id || !sweepTrackFeaturesSupported(entry) ||
+      (entry.codecPrivate && entry.codecPrivate->size != 0)) {
+    return false;
+  }
+  ParseOptions options = parserOptions(limits, constraints);
+  std::vector<std::byte> frame;
+  if (!probeFirstAudioFrame(reader, clusters, options, entry.number,
+                            static_cast<std::size_t>(
+                                limits.maximumAudioSampleBytes),
+                            cancellation, &frame)) {
+    return false;
+  }
+  const Ac3Admission admission = parseAc3Syncframe(frame, enhanced);
+  if (!admission.admitted()) {
+    return false;
+  }
+  const Ac3Configuration& configuration = *admission.configuration;
+  if (!audioFormatAgrees(entry, limits, configuration.sampleRate,
+                         configuration.channelCount)) {
+    return false;
+  }
+  // THE identity that makes the AC-3 trim exact: AudioToolbox swallows a fixed
+  // 256-frame decoder delay, and every real mux states exactly that number as
+  // CodecDelay. Requiring them to agree means the head trim is provably zero
+  // instead of derived, and a mux that disagrees falls back rather than being
+  // played 5 ms out of sync. The comparison is made in the frame domain the
+  // nanosecond value was rounded from.
+  if (entry.codecDelayNanoseconds >
+      static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
+    return false;
+  }
+  const auto codecDelayFrames = matroskaFramesFromNanoseconds(
+      static_cast<std::int64_t>(entry.codecDelayNanoseconds),
+      configuration.sampleRate, configuration.samplesPerAccessUnit - 1U);
+  if (!codecDelayFrames || *codecDelayFrames != kAc3DecoderDelayFrames) {
+    return false;
+  }
+
+  OpusPacketGridProbe probe;
+  probe.samplesPerAccessUnit = configuration.samplesPerAccessUnit;
+  if (!probeAudioTailBlock(reader, clusters, options, entry.number,
+                           cancellation, &probe)) {
+    return false;
+  }
+  ExactAudioDuration exact;
+  if (!exactAudioDurationFromTail(
+          probe, configuration.sampleRate, configuration.samplesPerAccessUnit,
+          timestampScaleNanoseconds, *codecDelayFrames,
+          kAc3DecoderTailShortfallFrames, kMaximumOpusGridTickResidual,
+          &exact)) {
+    return false;
+  }
+  MediaTime origin;
+  if (!exactPresentationOrigin(*codecDelayFrames, configuration.sampleRate,
+                               &origin)) {
+    return false;
+  }
+
+  AudioDescriptorFields fields;
+  fields.codec = enhanced ? MediaCodec::Eac3 : MediaCodec::Ac3;
+  fields.formatTag = enhanced ? kEnhancedAc3FormatTag : kAc3FormatTag;
+  fields.sampleRate = configuration.sampleRate;
+  fields.channelCount = configuration.channelCount;
+  fields.samplesPerAccessUnit = configuration.samplesPerAccessUnit;
+  fields.codecDelayFrames = *codecDelayFrames;
+  fields.duration = exact.duration;
+  fields.origin = origin;
+  // AC-3 takes no magic cookie at all -- measured: AudioConverterNew succeeds
+  // and decodes with the property never set.
+  fields.magicCookie = {};
+  fields.tailBlockKnown = true;
+  fields.tailBlockOffset = probe.tailBlockOffset;
+  fields.tailDiscardPaddingNanoseconds = probe.tailDiscardPaddingNanoseconds;
+  fillAudioDescriptor(entry, *id, fields, result, runtime);
+  result->codecConfigurationKind = MediaCodecConfigurationKind::None;
+  return true;
+}
+
+[[nodiscard]] bool makeMpegAudioDescriptor(
+    SeekableByteReader& reader, const TrackEntry& entry,
+    const MediaSourceLimits& limits, std::span<const Cluster> clusters,
+    std::span<const TrackConstraint> constraints,
+    std::uint64_t timestampScaleNanoseconds, CancellationToken cancellation,
+    MediaTrackDescriptor* result, TrackRuntime* runtime) {
+  const auto id = trackId(entry.number);
+  if (!id || !sweepTrackFeaturesSupported(entry) ||
+      (entry.codecPrivate && entry.codecPrivate->size != 0)) {
+    return false;
+  }
+  ParseOptions options = parserOptions(limits, constraints);
+  std::vector<std::byte> frame;
+  if (!probeFirstAudioFrame(reader, clusters, options, entry.number,
+                            static_cast<std::size_t>(
+                                limits.maximumAudioSampleBytes),
+                            cancellation, &frame)) {
+    return false;
+  }
+  const MpegAudioAdmission admission = parseMpegAudioFrameHeader(frame);
+  if (!admission.admitted()) {
+    return false;
+  }
+  const MpegAudioConfiguration& configuration = *admission.configuration;
+  if (!audioFormatAgrees(entry, limits, configuration.sampleRate,
+                         configuration.channelCount)) {
+    return false;
+  }
+  if (entry.codecDelayNanoseconds >
+      static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
+    return false;
+  }
+  // MP3's CodecDelay is the LAME encoder delay PLUS the 529-frame decoder
+  // delay, and AudioToolbox swallows the decoder half itself. So the container
+  // must state at least the decoder's own delay -- a smaller value could not
+  // have come from a real mux and would ask for a negative head trim.
+  const auto codecDelayFrames = matroskaFramesFromNanoseconds(
+      static_cast<std::int64_t>(entry.codecDelayNanoseconds),
+      configuration.sampleRate, configuration.samplesPerAccessUnit - 1U);
+  if (!codecDelayFrames || *codecDelayFrames < kMpegLayer3DecoderDelayFrames) {
+    return false;
+  }
+
+  OpusPacketGridProbe probe;
+  probe.samplesPerAccessUnit = configuration.samplesPerAccessUnit;
+  if (!probeAudioTailBlock(reader, clusters, options, entry.number,
+                           cancellation, &probe)) {
+    return false;
+  }
+  ExactAudioDuration exact;
+  if (!exactAudioDurationFromTail(probe, configuration.sampleRate,
+                                  configuration.samplesPerAccessUnit,
+                                  timestampScaleNanoseconds, *codecDelayFrames,
+                                  0U, kMaximumOpusGridTickResidual, &exact)) {
+    return false;
+  }
+  MediaTime origin;
+  if (!exactPresentationOrigin(*codecDelayFrames, configuration.sampleRate,
+                               &origin)) {
+    return false;
+  }
+
+  AudioDescriptorFields fields;
+  fields.codec = MediaCodec::Mp3;
+  fields.formatTag = kMpegLayer3FormatTag;
+  fields.sampleRate = configuration.sampleRate;
+  fields.channelCount = configuration.channelCount;
+  fields.samplesPerAccessUnit = configuration.samplesPerAccessUnit;
+  fields.codecDelayFrames = *codecDelayFrames;
+  fields.duration = exact.duration;
+  fields.origin = origin;
+  fields.magicCookie = {};
+  fields.tailBlockKnown = true;
+  fields.tailBlockOffset = probe.tailBlockOffset;
+  fields.tailDiscardPaddingNanoseconds = probe.tailDiscardPaddingNanoseconds;
+  fillAudioDescriptor(entry, *id, fields, result, runtime);
+  result->codecConfigurationKind = MediaCodecConfigurationKind::None;
+  return true;
+}
+
+[[nodiscard]] bool makeFlacAudioDescriptor(
+    SeekableByteReader& reader, const TrackEntry& entry,
+    const MediaSourceLimits& limits, std::span<const Cluster> clusters,
+    std::span<const TrackConstraint> constraints,
+    std::uint64_t timestampScaleNanoseconds, CancellationToken cancellation,
+    MediaTrackDescriptor* result, TrackRuntime* runtime) {
+  const auto id = trackId(entry.number);
+  // FLAC states no CodecDelay: its decoder swallows nothing and its first
+  // sample is media frame 0. A mux that claims otherwise is describing a
+  // stream this path has not reasoned about.
+  if (!id || !sweepTrackFeaturesSupported(entry) || !entry.codecPrivate ||
+      entry.codecDelayNanoseconds != 0) {
+    return false;
+  }
+  std::vector<std::byte> codecPrivate;
+  if (!readRange(reader, *entry.codecPrivate, &codecPrivate, cancellation)) {
+    return false;
+  }
+  const FlacAdmission admission = parseFlacCodecPrivate(codecPrivate);
+  if (!admission.admitted()) {
+    return false;
+  }
+  const FlacConfiguration& configuration = *admission.configuration;
+  if (!audioFormatAgrees(entry, limits, configuration.sampleRate,
+                         configuration.channelCount)) {
+    return false;
+  }
+  const auto cookie = buildFlacMagicCookie(codecPrivate);
+  if (!cookie) {
+    return false;
+  }
+
+  // FLAC is the one codec here whose duration is READ rather than derived:
+  // STREAMINFO carries the total decoded sample count. That number is still
+  // cross-checked against the container, because two independent statements of
+  // the same length that disagree mean one of them is wrong: the last Block
+  // must be the access unit that CONTAINS the final sample.
+  ParseOptions options = parserOptions(limits, constraints);
+  OpusPacketGridProbe probe;
+  probe.samplesPerAccessUnit = configuration.blockSize;
+  if (!probeAudioTailBlock(reader, clusters, options, entry.number,
+                           cancellation, &probe)) {
+    return false;
+  }
+  // No FLAC mux states DiscardPadding, and honouring one would double-count
+  // against STREAMINFO's total, so any value at all falls back.
+  if (probe.tailDiscardPaddingNanoseconds != 0) {
+    return false;
+  }
+  const auto tailProjection = nearestAacAccessUnitForMatroskaTick(
+      probe.tailBlockTick, MediaTime{0, 1}, configuration.sampleRate,
+      timestampScaleNanoseconds, configuration.blockSize);
+  if (!aacProjectionOnGrid(tailProjection, kMaximumOpusGridTickResidual)) {
+    return false;
+  }
+  const __int128 lastOrdinal =
+      static_cast<__int128>(tailProjection->accessUnitOrdinal);
+  const __int128 endOrdinal =
+      lastOrdinal + static_cast<__int128>(probe.tailBlockFrameCount);
+  const __int128 blockSize = static_cast<__int128>(configuration.blockSize);
+  const __int128 total = static_cast<__int128>(configuration.totalSamples);
+  // Strictly after the start of the final access unit and no later than its
+  // end: FLAC's last frame is legitimately short, so equality is expected at
+  // the top and impossible at the bottom.
+  if (total <= (endOrdinal - 1) * blockSize || total > endOrdinal * blockSize) {
+    return false;
+  }
+  if (total > static_cast<__int128>(std::numeric_limits<std::int64_t>::max())) {
+    return false;
+  }
+  const std::uint64_t divisor =
+      std::gcd(configuration.totalSamples,
+               static_cast<std::uint64_t>(configuration.sampleRate));
+  const MediaTime duration{
+      static_cast<std::int64_t>(configuration.totalSamples / divisor),
+      static_cast<std::int32_t>(configuration.sampleRate / divisor)};
+  if (!duration.valid()) {
+    return false;
+  }
+
+  AudioDescriptorFields fields;
+  fields.codec = MediaCodec::Flac;
+  fields.formatTag = kFlacFormatTag;
+  fields.sampleRate = configuration.sampleRate;
+  fields.channelCount = configuration.channelCount;
+  fields.samplesPerAccessUnit = configuration.blockSize;
+  fields.codecDelayFrames = 0;
+  fields.duration = duration;
+  fields.origin = MediaTime{0, 1};
+  fields.magicCookie = cookie->view();
+  // Deliberately false: with no DiscardPadding admitted anywhere, the cursor's
+  // blockFeaturesSupported refuses every Block that carries one.
+  fields.tailBlockKnown = false;
+  fillAudioDescriptor(entry, *id, fields, result, runtime);
+  return true;
+}
+
 [[nodiscard]] bool makeVorbisAudioDescriptor(
     SeekableByteReader& reader, const TrackEntry& entry,
     const MediaSourceLimits& limits, std::span<const Cluster> clusters,
@@ -1456,8 +2007,35 @@ template <typename OnBlock>
                                      constraints, timestampScaleNanoseconds,
                                      cancellation, result, runtime);
   }
+  if (inlineString(entry.codecId) == "A_AC3") {
+    return makeAc3AudioDescriptor(reader, entry, limits, clusters, constraints,
+                                  timestampScaleNanoseconds, false,
+                                  cancellation, result, runtime);
+  }
+  if (inlineString(entry.codecId) == "A_EAC3") {
+    return makeAc3AudioDescriptor(reader, entry, limits, clusters, constraints,
+                                  timestampScaleNanoseconds, true, cancellation,
+                                  result, runtime);
+  }
+  if (inlineString(entry.codecId) == "A_MPEG/L3") {
+    return makeMpegAudioDescriptor(reader, entry, limits, clusters, constraints,
+                                   timestampScaleNanoseconds, cancellation,
+                                   result, runtime);
+  }
+  if (inlineString(entry.codecId) == "A_FLAC") {
+    return makeFlacAudioDescriptor(reader, entry, limits, clusters, constraints,
+                                   timestampScaleNanoseconds, cancellation,
+                                   result, runtime);
+  }
+  (void)duration;
+  // AAC's CodecDelay used to be refused outright, which is why every AAC track
+  // FFmpeg encodes -- as opposed to copies -- fell back as a whole file. It is
+  // now honoured exactly, and the proof is the same shape as Opus': the
+  // container's stated delay must be a number the format could have produced,
+  // and the head trim is derived from it rather than guessed.
   if (!entry.audio || !entry.codecPrivate ||
-      !selectedTrackFeaturesSupported(entry)) {
+      !selectedTrackFeaturesSupported(entry, true) ||
+      entry.seekPreRollNanoseconds != 0) {
     return false;
   }
   const auto id = trackId(entry.number);
@@ -1492,36 +2070,65 @@ template <typename OnBlock>
   if (!cookie) {
     return false;
   }
-  result->id = *id;
-  result->kind = MediaTrackKind::Audio;
-  result->codec = MediaCodec::Aac;
-  result->timeBase =
-      MediaTime{1, static_cast<std::int32_t>(admission.configuration->sampleRate)};
-  result->duration = duration;
-  result->language = inlineString(entry.language);
-  result->codecConfigurationKind =
-      MediaCodecConfigurationKind::AudioMagicCookie;
-  result->codecConfiguration.assign(cookie->view().begin(), cookie->view().end());
-  MediaAudioFormat format;
-  format.sampleRate = admission.configuration->sampleRate;
-  format.channels = admission.configuration->channelCount;
-  format.formatTag = kAacFormatTag;
-  format.framesPerPacket = kAacLcSamplesPerAccessUnit;
-  format.channelLayoutTag = admission.configuration->channelCount == 1
-                                ? kMonoLayoutTag
-                                : kStereoLayoutTag;
-  format.channelLayoutPresent = true;
-  result->audio = format;
-  runtime->entry = entry;
-  runtime->id = *id;
-  runtime->kind = MediaTrackKind::Audio;
-  runtime->codec = MediaCodec::Aac;
-  runtime->audioSampleRate = admission.configuration->sampleRate;
-  runtime->audioSamplesPerAccessUnit = kAacLcSamplesPerAccessUnit;
-  runtime->audioPresentationOrigin = MediaTime{0, 1};
-  runtime->audioTickResidualTolerance = kMaximumAacGridTickResidual;
-  runtime->audioGridOffsetFrames = 0;
-  runtime->audioPrimingAccessUnits = kAacPrimingAccessUnits;
+  const std::uint32_t sampleRate = admission.configuration->sampleRate;
+
+  // AAC's encoder priming is exactly one access unit and nothing else. FFmpeg
+  // states 21,333,333 ns on a 48 kHz track, which is 1024 frames; a track that
+  // was copied rather than encoded states nothing at all. Any OTHER value
+  // describes priming this path cannot prove, so it falls back rather than
+  // being trimmed on a derivation -- the same discipline as the Opus
+  // CodecDelay == preSkip identity.
+  //
+  // AudioToolbox's AAC decoder swallows NOTHING of its own (measured: a
+  // 283-packet track decodes to exactly 283 * 1024 frames), so the head trim
+  // the pipeline owes is the whole CodecDelay. At that offset the decode
+  // matches ffmpeg's own container-trimmed decode over every frame.
+  if (entry.codecDelayNanoseconds >
+      static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
+    return false;
+  }
+  const auto codecDelayFrames = matroskaFramesFromNanoseconds(
+      static_cast<std::int64_t>(entry.codecDelayNanoseconds), sampleRate,
+      kAacLcSamplesPerAccessUnit);
+  if (!codecDelayFrames ||
+      (*codecDelayFrames != 0U &&
+       *codecDelayFrames != kAacLcSamplesPerAccessUnit)) {
+    return false;
+  }
+
+  ParseOptions options = parserOptions(limits, constraints);
+  OpusPacketGridProbe probe;
+  probe.samplesPerAccessUnit = kAacLcSamplesPerAccessUnit;
+  if (!probeAudioTailBlock(reader, clusters, options, entry.number,
+                           cancellation, &probe)) {
+    return false;
+  }
+  ExactAudioDuration exact;
+  if (!exactAudioDurationFromTail(probe, sampleRate,
+                                  kAacLcSamplesPerAccessUnit,
+                                  timestampScaleNanoseconds, *codecDelayFrames,
+                                  0U, kMaximumOpusGridTickResidual, &exact)) {
+    return false;
+  }
+  MediaTime origin;
+  if (!exactPresentationOrigin(*codecDelayFrames, sampleRate, &origin)) {
+    return false;
+  }
+
+  AudioDescriptorFields fields;
+  fields.codec = MediaCodec::Aac;
+  fields.formatTag = kAacFormatTag;
+  fields.sampleRate = sampleRate;
+  fields.channelCount = admission.configuration->channelCount;
+  fields.samplesPerAccessUnit = kAacLcSamplesPerAccessUnit;
+  fields.codecDelayFrames = *codecDelayFrames;
+  fields.duration = exact.duration;
+  fields.origin = origin;
+  fields.magicCookie = cookie->view();
+  fields.tailBlockKnown = true;
+  fields.tailBlockOffset = probe.tailBlockOffset;
+  fields.tailDiscardPaddingNanoseconds = probe.tailDiscardPaddingNanoseconds;
+  fillAudioDescriptor(entry, *id, fields, result, runtime);
   return true;
 }
 
@@ -1829,6 +2436,55 @@ MatroskaCursor::readNext(CancellationToken cancellation) noexcept {
                 return MatroskaCursorFailure{
                     MatroskaDemuxError::UnsupportedTrack,
                     "Opus packet duration is not constant"};
+              }
+            }
+          }
+          // AC-3, E-AC-3 and MP3 restate every stream parameter in each frame
+          // header rather than in a CodecPrivate, so the same argument applies
+          // with more force than it does for Opus: nothing but the header
+          // would reveal a mid-stream change of sample rate or channel mode,
+          // and either one silently desyncs the ordinal grid the timestamps
+          // are rebuilt from. Each emitted frame is re-proved against the
+          // admission.
+          if (state.audio->codec == MediaCodec::Ac3 ||
+              state.audio->codec == MediaCodec::Eac3 ||
+              state.audio->codec == MediaCodec::Mp3) {
+            const bool mpeg = state.audio->codec == MediaCodec::Mp3;
+            const bool enhanced = state.audio->codec == MediaCodec::Eac3;
+            Ac3Configuration ac3Configuration;
+            ac3Configuration.sampleRate = state.audio->audioSampleRate;
+            ac3Configuration.channelCount = static_cast<std::uint8_t>(
+                state.audio->entry.audio ? state.audio->entry.audio->channels
+                                         : 0U);
+            ac3Configuration.samplesPerAccessUnit = samplesPerAccessUnit;
+            ac3Configuration.enhanced = enhanced;
+            MpegAudioConfiguration mpegConfiguration;
+            mpegConfiguration.sampleRate = ac3Configuration.sampleRate;
+            mpegConfiguration.channelCount = ac3Configuration.channelCount;
+            mpegConfiguration.samplesPerAccessUnit = samplesPerAccessUnit;
+            for (std::uint16_t index = 0; index < visitor.frameCount; ++index) {
+              std::array<std::byte, kAc3MinimumSyncframeBytes> header{};
+              const ByteRange frame = visitor.frames[index].bytes;
+              const auto amount = static_cast<std::size_t>(
+                  std::min<std::uint64_t>(frame.size, header.size()));
+              if (amount == 0 ||
+                  !state.reader->readAt(
+                      frame.offset,
+                      std::span<std::byte>(header).first(amount))) {
+                return MatroskaCursorFailure{MatroskaDemuxError::Io,
+                                             "audio frame header is unreadable"};
+              }
+              const std::span<const std::byte> bytes =
+                  std::span<const std::byte>(header).first(amount);
+              const bool matched =
+                  mpeg ? mpegAudioFrameMatches(bytes, frame.size,
+                                               mpegConfiguration)
+                       : ac3SyncframeMatches(bytes, frame.size,
+                                             ac3Configuration, enhanced);
+              if (!matched) {
+                return MatroskaCursorFailure{
+                    MatroskaDemuxError::UnsupportedTrack,
+                    "audio frame header does not match the admitted stream"};
               }
             }
           }
@@ -2337,10 +2993,13 @@ MatroskaPrepareOutcome prepareMatroska(
     }
     state->timestampScaleNanoseconds =
         document.info->timestampScaleNanoseconds;
+    const EbmlDocumentType documentType =
+        document.header ? document.header->documentType
+                        : EbmlDocumentType::Matroska;
     const TrackEntry* video = chooseTrack(
-        document.tracks, 1, requested.selection.preferredVideo);
+        document.tracks, 1, requested.selection.preferredVideo, documentType);
     const TrackEntry* audio = chooseTrack(
-        document.tracks, 2, requested.selection.preferredAudio);
+        document.tracks, 2, requested.selection.preferredAudio, documentType);
     // A file that carries audio the native path cannot decode must fall back
     // as a WHOLE FILE, not prepare video-only. Preparing video-only here would
     // play a VP9+Opus WebM natively and completely silently, which is worse

@@ -1,0 +1,2121 @@
+#include "media/mpegts_demuxer.hpp"
+
+#include "media/matroska_aac.hpp"
+#include "media/video_codec_configuration.hpp"
+
+#include <algorithm>
+#include <array>
+#include <cerrno>
+#include <cstring>
+#include <fcntl.h>
+#include <limits>
+#include <numeric>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <utility>
+#include <vector>
+
+namespace wam::media::mpegts {
+
+// The AAC-LC admission and ES_Descriptor cookie builder are container-neutral
+// despite living in the Matroska namespace: they take an AudioSpecificConfig
+// and emit the CoreAudio magic cookie. Reusing them is what makes an
+// ADTS-sourced AAC track byte-identical to a Matroska-sourced one downstream.
+using matroska::AacLcAdmission;
+using matroska::AacLcConfiguration;
+using matroska::AacLcEsDescriptorCookie;
+using matroska::buildAacLcEsDescriptorCookie;
+using matroska::kAacLcSamplesPerAccessUnit;
+using matroska::parseAacLcAudioSpecificConfig;
+
+namespace {
+
+constexpr std::uint32_t kAacFormatTag{0x61616320U};        // 'aac '
+constexpr std::uint32_t kMpegLayer2FormatTag{0x2E6D7032U}; // '.mp2'
+constexpr std::uint32_t kMpegLayer3FormatTag{0x2E6D7033U}; // '.mp3'
+constexpr std::uint32_t kMonoLayoutTag{0x00640001U};
+constexpr std::uint32_t kStereoLayoutTag{0x00650002U};
+
+// How many consecutive sync bytes at a candidate stride prove framing. Ten
+// gives a false-positive probability of 2^-80 against random data while
+// needing only 10 * 204 = 2,040 bytes of probe, so even a two-packet file is
+// still decided from real evidence rather than from one lucky byte.
+constexpr std::size_t kFramingConfirmations{10};
+
+// ---------------------------------------------------------------------------
+// Local file reader
+// ---------------------------------------------------------------------------
+
+// Copied from matroska_demuxer.cpp rather than shared, because that class is
+// in an anonymous namespace and is not linkable from here. The identity
+// rationale below is copied WITH it deliberately: if the two ever drift, the
+// reason each field is present must drift with them.
+//
+// The property this proves is exactly one thing: the bytes reachable through
+// the retained descriptor are still the bytes the index was built against.
+// dev+ino catch a replaced file, size catches truncation and extension, and
+// mtime catches any write to the content.
+//
+// st_ctime is deliberately NOT part of that identity. ctime is the
+// INODE-metadata timestamp: it moves for xattr writes, chmod, chown,
+// link-count and rename -- none of which touch a single content byte. On macOS
+// those happen to a media file constantly and from outside this process:
+// Spotlight/mds indexing, iCloud/FileProvider sync bookkeeping, quarantine and
+// last-used-date stamping. Including ctime made the Matroska predicate report
+// "the file changed" for events that are, by construction, not changes to the
+// file's content -- a load-dependent false positive that produced a real
+// playback defect. What dropping ctime gives up is only an in-place,
+// byte-count-preserving write whose mtime is then restored by an explicit
+// utimes() call, which is deliberate forgery rather than a hazard a local
+// media player defends against.
+class StableFileReader final : public SeekableByteReader {
+ public:
+  static std::shared_ptr<StableFileReader>
+  open(const std::filesystem::path& path) noexcept {
+    const int descriptor = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
+    if (descriptor < 0) {
+      return nullptr;
+    }
+    struct stat facts {};
+    if (::fstat(descriptor, &facts) != 0 || facts.st_size < 0 ||
+        !S_ISREG(facts.st_mode)) {
+      ::close(descriptor);
+      return nullptr;
+    }
+    try {
+      return std::shared_ptr<StableFileReader>(
+          new StableFileReader(descriptor, facts));
+    } catch (...) {
+      ::close(descriptor);
+      return nullptr;
+    }
+  }
+
+  ~StableFileReader() override { ::close(descriptor_); }
+
+  [[nodiscard]] std::uint64_t size() const noexcept override { return size_; }
+
+  [[nodiscard]] bool readAt(std::uint64_t offset,
+                            std::span<std::byte> destination) noexcept
+      override {
+    if (destination.empty()) {
+      return offset <= size_;
+    }
+    if (offset > size_ || destination.size() > size_ - offset ||
+        offset >
+            static_cast<std::uint64_t>(std::numeric_limits<off_t>::max())) {
+      return false;
+    }
+    std::size_t copied = 0;
+    while (copied < destination.size()) {
+      const std::uint64_t current = offset + copied;
+      const ssize_t result =
+          ::pread(descriptor_, destination.data() + copied,
+                  destination.size() - copied, static_cast<off_t>(current));
+      if (result < 0 && errno == EINTR) {
+        continue;
+      }
+      if (result <= 0) {
+        return false;
+      }
+      copied += static_cast<std::size_t>(result);
+    }
+    return true;
+  }
+
+  [[nodiscard]] bool unchanged() const noexcept {
+    struct stat facts {};
+    return ::fstat(descriptor_, &facts) == 0 && facts.st_size >= 0 &&
+           facts.st_dev == device_ && facts.st_ino == inode_ &&
+           static_cast<std::uint64_t>(facts.st_size) == size_ &&
+           facts.st_mtimespec.tv_sec == modifiedSeconds_ &&
+           facts.st_mtimespec.tv_nsec == modifiedNanoseconds_;
+  }
+
+ private:
+  StableFileReader(int descriptor, const struct stat& facts) noexcept
+      : descriptor_(descriptor),
+        size_(static_cast<std::uint64_t>(facts.st_size)),
+        device_(facts.st_dev), inode_(facts.st_ino),
+        modifiedSeconds_(facts.st_mtimespec.tv_sec),
+        modifiedNanoseconds_(facts.st_mtimespec.tv_nsec) {}
+
+  int descriptor_{-1};
+  std::uint64_t size_{0};
+  dev_t device_{};
+  ino_t inode_{};
+  time_t modifiedSeconds_{};
+  long modifiedNanoseconds_{};
+};
+
+// ---------------------------------------------------------------------------
+// Windowed sequential reader
+// ---------------------------------------------------------------------------
+
+// One 64 KiB workspace, reused for the life of the walk. Reset counts, never
+// free capacity: this object is a member of every scan and cursor, and no
+// packet read allocates.
+class ReadWindow {
+ public:
+  explicit ReadWindow(SeekableByteReader& reader) noexcept
+      : reader_(&reader), fileSize_(reader.size()) {}
+
+  [[nodiscard]] std::uint64_t fileSize() const noexcept { return fileSize_; }
+
+  // Returns exactly `length` bytes at `offset`, or an empty span. The window
+  // is refilled at `offset` when the request straddles or misses it, so a
+  // packet crossing the window edge costs one refill, never a partial read.
+  [[nodiscard]] std::span<const std::byte> at(std::uint64_t offset,
+                                              std::size_t length) noexcept {
+    if (length == 0) {
+      return {};
+    }
+    if (length > storage_.size() || offset > fileSize_ ||
+        length > fileSize_ - offset) {
+      return {};
+    }
+    if (!(offset >= windowOffset_ && windowSize_ >= length &&
+          offset - windowOffset_ <= windowSize_ - length)) {
+      const std::uint64_t available = fileSize_ - offset;
+      const std::size_t want = static_cast<std::size_t>(
+          std::min<std::uint64_t>(storage_.size(), available));
+      if (!reader_->readAt(offset, std::span<std::byte>(storage_.data(),
+                                                        want))) {
+        windowSize_ = 0;
+        return {};
+      }
+      windowOffset_ = offset;
+      windowSize_ = want;
+      ++refills_;
+    }
+    return std::span<const std::byte>(
+        storage_.data() + (offset - windowOffset_), length);
+  }
+
+  [[nodiscard]] std::uint64_t refills() const noexcept { return refills_; }
+
+ private:
+  SeekableByteReader* reader_{nullptr};
+  std::uint64_t fileSize_{0};
+  std::uint64_t windowOffset_{std::numeric_limits<std::uint64_t>::max()};
+  std::uint64_t refills_{0};
+  std::size_t windowSize_{0};
+  std::array<std::byte, kMpegTsReadWindowBytes> storage_{};
+};
+
+// ---------------------------------------------------------------------------
+// Access-unit assembly for one elementary stream
+// ---------------------------------------------------------------------------
+
+// The exact 90 kHz timeline value of a raw 33-bit timestamp, extended past
+// rollover and rebased on the stream origin.
+struct StreamWalk {
+  TimestampUnwrapper pts;
+  TimestampUnwrapper dts;
+  ContinuityTracker continuity;
+  std::array<std::byte, kMpegTsAccessUnitProbeBytes> probe{};
+  std::uint64_t firstPacketOffset{0};
+  std::int64_t ptsTick{0};
+  std::int64_t dtsTick{0};
+  std::uint32_t rawBytes{0};
+  std::uint32_t probeFilled{0};
+  std::uint32_t headerSkipBytes{0};
+  std::uint32_t packetCount{0};
+  std::uint16_t pid{kNullPid};
+  MediaCodec codec{MediaCodec::Unknown};
+  bool video{false};
+  bool collecting{false};
+  bool pendingHeader{false};
+  bool hasPts{false};
+  bool hasDts{false};
+  bool randomAccess{false};
+  bool discontinuity{false};
+  bool continuityGap{false};
+
+  void beginUnit(std::uint64_t offset) noexcept {
+    firstPacketOffset = offset;
+    rawBytes = 0;
+    probeFilled = 0;
+    headerSkipBytes = 0;
+    packetCount = 0;
+    collecting = true;
+    pendingHeader = true;
+    hasPts = false;
+    hasDts = false;
+    randomAccess = false;
+    discontinuity = false;
+    continuityGap = false;
+  }
+
+  void discardUnit() noexcept {
+    collecting = false;
+    pendingHeader = false;
+    rawBytes = 0;
+    probeFilled = 0;
+  }
+
+  // Appends one packet's payload. Only the bounded probe prefix is copied;
+  // everything beyond it is counted, never moved. This is the single place the
+  // demuxer touches payload bytes, and it touches at most 4 KiB per unit.
+  void appendPayload(std::span<const std::byte> payload) noexcept {
+    if (probeFilled < probe.size()) {
+      const std::size_t room = probe.size() - probeFilled;
+      const std::size_t take = std::min(room, payload.size());
+      std::memcpy(probe.data() + probeFilled, payload.data(), take);
+      probeFilled = static_cast<std::uint32_t>(probeFilled + take);
+    }
+    rawBytes = static_cast<std::uint32_t>(
+        std::min<std::uint64_t>(std::numeric_limits<std::uint32_t>::max(),
+                                static_cast<std::uint64_t>(rawBytes) +
+                                    payload.size()));
+    ++packetCount;
+  }
+
+  // Attempts to complete the PES header from what the probe holds. Returns
+  // false only when the bytes present are positively not a PES header; a
+  // still-incomplete header leaves pendingHeader set.
+  [[nodiscard]] bool tryHeader() noexcept {
+    if (!pendingHeader) {
+      return true;
+    }
+    PesHeader header{};
+    const std::span<const std::byte> view(probe.data(), probeFilled);
+    const PesStatus status = decodePesHeader(view, header);
+    if (status == PesStatus::Incomplete) {
+      return true;
+    }
+    if (status != PesStatus::Ok) {
+      return false;
+    }
+    headerSkipBytes = header.headerBytes;
+    if (header.hasPts) {
+      ptsTick = pts.extend(header.pts);
+      hasPts = true;
+    }
+    if (header.hasDts) {
+      dtsTick = dts.extend(header.dts);
+      hasDts = true;
+    } else if (header.hasPts) {
+      // Without an explicit DTS the decode time IS the presentation time; the
+      // unwrapper is fed so its epoch tracks the stream even for streams that
+      // only ever carry PTS.
+      dtsTick = dts.extend(header.pts);
+      hasDts = false;
+    }
+    pendingHeader = false;
+    return true;
+  }
+};
+
+// ---------------------------------------------------------------------------
+// Asset state
+// ---------------------------------------------------------------------------
+
+struct TrackFacts {
+  MediaTrackId id{0};
+  std::uint16_t pid{kNullPid};
+  std::uint8_t streamType{0};
+  MediaCodec codec{MediaCodec::Unknown};
+  MediaTrackKind kind{MediaTrackKind::Metadata};
+  std::uint32_t sampleRate{0};
+  std::uint32_t channels{0};
+  std::uint32_t samplesPerFrame{0};
+};
+
+struct AssetState {
+  std::shared_ptr<SeekableByteReader> reader;
+  std::shared_ptr<StableFileReader> localReader;
+  std::uint64_t readerSize{0};
+  std::filesystem::path path;
+  MediaSourceLimits limits;
+  MpegTsFraming framing{};
+  std::shared_ptr<const MediaSourceDescriptor> descriptor;
+  std::vector<MpegTsIndexEntry> index;
+  std::int64_t originTick{0};
+  std::int64_t endTick{0};
+  std::uint16_t programNumber{0};
+  std::uint16_t pcrPid{kNullPid};
+  TrackFacts video{};
+  TrackFacts audio{};
+  bool hasVideo{false};
+  bool hasAudio{false};
+
+  [[nodiscard]] bool unchanged() const noexcept {
+    return reader != nullptr && reader->size() == readerSize &&
+           (localReader == nullptr || localReader->unchanged());
+  }
+};
+
+[[nodiscard]] std::optional<MediaTime> rebasedTime(std::int64_t tick,
+                                                   std::int64_t origin) noexcept {
+  const __int128 delta = static_cast<__int128>(tick) - origin;
+  if (delta < std::numeric_limits<std::int64_t>::min() ||
+      delta > std::numeric_limits<std::int64_t>::max()) {
+    return std::nullopt;
+  }
+  return mediaTimeFromTicks(static_cast<std::int64_t>(delta));
+}
+
+// ---------------------------------------------------------------------------
+// avcC synthesis from in-band Annex-B parameter sets
+// ---------------------------------------------------------------------------
+
+// Transport Stream carries H.264 as Annex-B with in-band SPS/PPS and no
+// out-of-band configuration record, but VideoToolbox wants an avcC and
+// length-prefixed NALs. The record is synthesized here so the descriptor can
+// be validated by exactly the same inspector the Matroska path uses; the
+// sample-side Annex-B to AVCC repack happens in the platform builder.
+//
+// lengthSizeMinusOne is 3 (four-byte lengths) because inspectAvcC hard-requires
+// it, and no extension tail is emitted because the inspector accepts exact
+// exhaustion after the PPS array and rejects anything it does not recognise.
+[[nodiscard]] bool buildAvcCFromAnnexB(std::span<const std::byte> unit,
+                                       std::vector<std::byte>& record) {
+  std::array<AnnexBNal, 8> sequenceSets{};
+  std::array<AnnexBNal, 8> pictureSets{};
+  std::size_t sequenceCount = 0;
+  std::size_t pictureCount = 0;
+
+  AnnexBNal nal{};
+  std::uint32_t cursor = 0;
+  while (nextAnnexBNal(unit, cursor, MediaCodec::H264, nal)) {
+    if (nal.size == 0) {
+      break;
+    }
+    if (nal.type == 7 && sequenceCount < sequenceSets.size()) {
+      sequenceSets[sequenceCount++] = nal;
+    } else if (nal.type == 8 && pictureCount < pictureSets.size()) {
+      pictureSets[pictureCount++] = nal;
+    }
+    const std::uint32_t advance = nal.offset + nal.size;
+    if (advance <= cursor || advance >= unit.size()) {
+      break;
+    }
+    cursor = advance;
+  }
+  if (sequenceCount == 0 || pictureCount == 0) {
+    return false;
+  }
+  const AnnexBNal& sps = sequenceSets[0];
+  if (sps.size < 4) {
+    return false;
+  }
+  const std::uint8_t* spsBytes =
+      reinterpret_cast<const std::uint8_t*>(unit.data() + sps.offset);
+
+  record.clear();
+  record.push_back(std::byte{0x01});
+  record.push_back(static_cast<std::byte>(spsBytes[1]));
+  record.push_back(static_cast<std::byte>(spsBytes[2]));
+  record.push_back(static_cast<std::byte>(spsBytes[3]));
+  record.push_back(std::byte{0xFF});  // '111111' + lengthSizeMinusOne = 3
+  record.push_back(
+      static_cast<std::byte>(0xE0U | static_cast<std::uint8_t>(sequenceCount)));
+  for (std::size_t i = 0; i < sequenceCount; ++i) {
+    const AnnexBNal& entry = sequenceSets[i];
+    if (entry.size > 0xFFFFU) {
+      return false;
+    }
+    record.push_back(static_cast<std::byte>((entry.size >> 8) & 0xFFU));
+    record.push_back(static_cast<std::byte>(entry.size & 0xFFU));
+    record.insert(record.end(), unit.begin() + entry.offset,
+                  unit.begin() + entry.offset + entry.size);
+  }
+  record.push_back(static_cast<std::byte>(pictureCount));
+  for (std::size_t i = 0; i < pictureCount; ++i) {
+    const AnnexBNal& entry = pictureSets[i];
+    if (entry.size > 0xFFFFU) {
+      return false;
+    }
+    record.push_back(static_cast<std::byte>((entry.size >> 8) & 0xFFU));
+    record.push_back(static_cast<std::byte>(entry.size & 0xFFU));
+    record.insert(record.end(), unit.begin() + entry.offset,
+                  unit.begin() + entry.offset + entry.size);
+  }
+  return true;
+}
+
+// A two-byte AudioSpecificConfig recovered from an ADTS header, which is the
+// exact form the shared AAC admission already accepts.
+[[nodiscard]] bool audioSpecificConfigFromAdts(
+    const AdtsHeader& adts, std::array<std::byte, 2>& config) noexcept {
+  if (adts.profileObjectType == 0 || adts.profileObjectType > 31 ||
+      adts.samplingFrequencyIndex > 12 || adts.channelConfiguration == 0 ||
+      adts.channelConfiguration > 7) {
+    return false;
+  }
+  const std::uint16_t packed = static_cast<std::uint16_t>(
+      (static_cast<std::uint16_t>(adts.profileObjectType) << 11) |
+      (static_cast<std::uint16_t>(adts.samplingFrequencyIndex) << 7) |
+      (static_cast<std::uint16_t>(adts.channelConfiguration) << 3));
+  config[0] = static_cast<std::byte>((packed >> 8) & 0xFFU);
+  config[1] = static_cast<std::byte>(packed & 0xFFU);
+  return true;
+}
+
+}  // namespace
+
+const char* mpegTsDemuxErrorName(MpegTsDemuxError error) noexcept {
+  switch (error) {
+    case MpegTsDemuxError::None:
+      return "None";
+    case MpegTsDemuxError::InvalidRequest:
+      return "InvalidRequest";
+    case MpegTsDemuxError::NotTransportStream:
+      return "NotTransportStream";
+    case MpegTsDemuxError::InvalidContainer:
+      return "InvalidContainer";
+    case MpegTsDemuxError::MissingProgramTable:
+      return "MissingProgramTable";
+    case MpegTsDemuxError::ProgramSelection:
+      return "ProgramSelection";
+    case MpegTsDemuxError::UnsupportedStreamType:
+      return "UnsupportedStreamType";
+    case MpegTsDemuxError::CodecConfiguration:
+      return "CodecConfiguration";
+    case MpegTsDemuxError::InvalidTimeline:
+      return "InvalidTimeline";
+    case MpegTsDemuxError::IndexLimit:
+      return "IndexLimit";
+    case MpegTsDemuxError::SampleLimit:
+      return "SampleLimit";
+    case MpegTsDemuxError::ScanLimit:
+      return "ScanLimit";
+    case MpegTsDemuxError::FileChanged:
+      return "FileChanged";
+    case MpegTsDemuxError::Io:
+      return "Io";
+    case MpegTsDemuxError::Cancelled:
+      return "Cancelled";
+  }
+  return "Unknown";
+}
+
+bool detectMpegTsFraming(std::span<const std::byte> probe,
+                         std::uint64_t fileSize,
+                         MpegTsFraming& framing) noexcept {
+  framing = MpegTsFraming{};
+  static constexpr std::array<std::uint32_t, 3> kStrides{
+      static_cast<std::uint32_t>(kTsPacketBytes),
+      static_cast<std::uint32_t>(kM2tsPacketBytes),
+      static_cast<std::uint32_t>(kRsPacketBytes)};
+  for (const std::uint32_t stride : kStrides) {
+    // A candidate first-sync offset can never exceed one stride: if the file
+    // begins mid-packet, the next packet boundary is within `stride` bytes.
+    for (std::uint32_t start = 0; start < stride; ++start) {
+      if (start >= probe.size() || probe[start] != kSyncByte) {
+        continue;
+      }
+      std::size_t confirmed = 1;
+      bool broken = false;
+      for (std::size_t k = 1; k < kFramingConfirmations; ++k) {
+        const std::size_t at = static_cast<std::size_t>(start) + k * stride;
+        if (at >= probe.size()) {
+          break;  // ran out of probe, not a mismatch
+        }
+        if (probe[at] != kSyncByte) {
+          broken = true;
+          break;
+        }
+        ++confirmed;
+      }
+      if (broken) {
+        continue;
+      }
+      // A single sync byte is not evidence. Demand either the full
+      // confirmation run or every packet the file can hold, whichever is
+      // smaller, so a two-packet file is still decided from real repetitions.
+      const std::uint64_t possible =
+          fileSize > start ? (fileSize - start) / stride : 0;
+      const std::size_t required = static_cast<std::size_t>(
+          std::min<std::uint64_t>(kFramingConfirmations, possible));
+      if (required < 2 || confirmed < required) {
+        continue;
+      }
+      framing.firstSyncOffset = start;
+      framing.packetStride = stride;
+      framing.timestampedPackets = stride == kM2tsPacketBytes;
+      framing.packetCount = static_cast<std::uint32_t>(std::min<std::uint64_t>(
+          std::numeric_limits<std::uint32_t>::max(), possible));
+      return true;
+    }
+  }
+  return false;
+}
+
+// ---------------------------------------------------------------------------
+// Packet walking shared by every scan, the cursor and the gather
+// ---------------------------------------------------------------------------
+
+namespace {
+
+enum class WalkStatus : std::uint8_t {
+  Ok,
+  End,
+  Resynchronized,
+  Io,
+};
+
+// Advances to the next transport packet, resynchronizing across corruption.
+// `offset` is in/out: on Ok it names the packet returned and is advanced past
+// it. Resynchronization is reported, never silent — a caller that must not
+// tolerate loss can refuse on the verdict.
+class PacketWalker {
+ public:
+  PacketWalker(ReadWindow& window, MpegTsFraming framing) noexcept
+      : window_(&window), framing_(framing) {}
+
+  [[nodiscard]] WalkStatus next(std::uint64_t& offset,
+                                std::span<const std::byte>& packet) noexcept {
+    if (offset >= window_->fileSize()) {
+      return WalkStatus::End;
+    }
+    std::span<const std::byte> bytes = window_->at(offset, kTsPacketBytes);
+    if (!bytes.empty() && bytes[0] == kSyncByte) {
+      packet = bytes;
+      offset += framing_.packetStride;
+      return WalkStatus::Ok;
+    }
+    if (bytes.empty()) {
+      // Either a short tail or a read failure; a tail shorter than one packet
+      // is the end of usable data, not an error.
+      return offset + kTsPacketBytes > window_->fileSize() ? WalkStatus::End
+                                                           : WalkStatus::Io;
+    }
+    return resynchronize(offset, packet);
+  }
+
+  [[nodiscard]] std::uint32_t resynchronizations() const noexcept {
+    return resynchronizations_;
+  }
+
+ private:
+  // Byte-wise search for a position whose sync byte repeats at the stride.
+  // Bounded by one read window per attempt and by kResyncWindowPackets total,
+  // so corruption costs a bounded scan and never an unbounded hunt.
+  [[nodiscard]] WalkStatus resynchronize(std::uint64_t& offset,
+                                         std::span<const std::byte>& packet) noexcept {
+    static constexpr std::uint64_t kResyncSpanBytes{4U * 1024U * 1024U};
+    const std::uint64_t limit = std::min<std::uint64_t>(
+        window_->fileSize(), offset + kResyncSpanBytes);
+    for (std::uint64_t candidate = offset; candidate + kTsPacketBytes <= limit;
+         ++candidate) {
+      const std::span<const std::byte> head = window_->at(candidate, 1);
+      if (head.empty()) {
+        return WalkStatus::Io;
+      }
+      if (head[0] != kSyncByte) {
+        continue;
+      }
+      // Confirm with the next packet's sync byte where one exists.
+      const std::uint64_t follower = candidate + framing_.packetStride;
+      if (follower + 1 <= window_->fileSize()) {
+        const std::span<const std::byte> nextHead = window_->at(follower, 1);
+        if (nextHead.empty() || nextHead[0] != kSyncByte) {
+          continue;
+        }
+      }
+      const std::span<const std::byte> bytes =
+          window_->at(candidate, kTsPacketBytes);
+      if (bytes.empty()) {
+        return WalkStatus::Io;
+      }
+      ++resynchronizations_;
+      packet = bytes;
+      offset = candidate + framing_.packetStride;
+      return WalkStatus::Resynchronized;
+    }
+    offset = limit;
+    return WalkStatus::End;
+  }
+
+  ReadWindow* window_{nullptr};
+  MpegTsFraming framing_{};
+  std::uint32_t resynchronizations_{0};
+};
+
+// The packet offset at or after `position` that is aligned to the framing.
+[[nodiscard]] std::uint64_t alignPacketOffset(const MpegTsFraming& framing,
+                                              std::uint64_t position) noexcept {
+  if (position <= framing.firstSyncOffset) {
+    return framing.firstSyncOffset;
+  }
+  const std::uint64_t delta = position - framing.firstSyncOffset;
+  const std::uint64_t packets =
+      (delta + framing.packetStride - 1) / framing.packetStride;
+  return framing.firstSyncOffset + packets * framing.packetStride;
+}
+
+}  // namespace
+
+// ---------------------------------------------------------------------------
+// Prepared asset
+// ---------------------------------------------------------------------------
+
+struct MpegTsPreparedAsset::Impl {
+  explicit Impl(std::shared_ptr<AssetState> value) noexcept
+      : state(std::move(value)) {}
+  std::shared_ptr<AssetState> state;
+};
+
+MpegTsPreparedAsset::MpegTsPreparedAsset(std::unique_ptr<Impl> impl) noexcept
+    : impl_(std::move(impl)) {}
+MpegTsPreparedAsset::~MpegTsPreparedAsset() = default;
+
+const std::filesystem::path& MpegTsPreparedAsset::path() const noexcept {
+  return impl_->state->path;
+}
+const std::shared_ptr<const MediaSourceDescriptor>&
+MpegTsPreparedAsset::descriptor() const noexcept {
+  return impl_->state->descriptor;
+}
+const MediaSourceLimits& MpegTsPreparedAsset::limits() const noexcept {
+  return impl_->state->limits;
+}
+MpegTsFraming MpegTsPreparedAsset::framing() const noexcept {
+  return impl_->state->framing;
+}
+std::uint16_t MpegTsPreparedAsset::programNumber() const noexcept {
+  return impl_->state->programNumber;
+}
+std::span<const MpegTsIndexEntry> MpegTsPreparedAsset::index() const noexcept {
+  return impl_->state->index;
+}
+std::int64_t MpegTsPreparedAsset::originTick() const noexcept {
+  return impl_->state->originTick;
+}
+
+// ---------------------------------------------------------------------------
+// Cursor
+// ---------------------------------------------------------------------------
+
+struct MpegTsCursor::Impl {
+  std::shared_ptr<const AssetState> state;
+  std::unique_ptr<ReadWindow> window;
+  std::optional<PacketWalker> walker;
+  StreamWalk walk;
+  std::uint64_t position{0};
+  std::uint32_t continuityGaps{0};
+  bool ended{false};
+};
+
+MpegTsCursor::MpegTsCursor(std::unique_ptr<Impl> impl) noexcept
+    : impl_(std::move(impl)) {}
+MpegTsCursor::~MpegTsCursor() = default;
+MpegTsCursor::MpegTsCursor(MpegTsCursor&&) noexcept = default;
+MpegTsCursor& MpegTsCursor::operator=(MpegTsCursor&&) noexcept = default;
+
+std::uint32_t MpegTsCursor::continuityGaps() const noexcept {
+  return impl_ == nullptr ? 0U : impl_->continuityGaps;
+}
+std::uint32_t MpegTsCursor::resynchronizations() const noexcept {
+  if (impl_ == nullptr || !impl_->walker) {
+    return 0;
+  }
+  return impl_->walker->resynchronizations();
+}
+
+namespace {
+
+// Completes the access unit the walk holds and turns it into a sample.
+[[nodiscard]] std::optional<MpegTsCompressedSample>
+finishUnit(const AssetState& state, StreamWalk& walk, MediaTrackId track,
+           std::uint64_t scanEnd) noexcept {
+  if (!walk.collecting || walk.pendingHeader ||
+      walk.rawBytes <= walk.headerSkipBytes) {
+    walk.discardUnit();
+    return std::nullopt;
+  }
+  MpegTsCompressedSample sample{};
+  sample.firstPacketOffset = walk.firstPacketOffset;
+  sample.packetScanEnd = scanEnd;
+  sample.payloadBytes = walk.rawBytes - walk.headerSkipBytes;
+  sample.headerSkipBytes = walk.headerSkipBytes;
+  sample.track = track;
+  sample.pid = walk.pid;
+  sample.kind = walk.video ? MediaSampleKind::EncodedVideo
+                           : MediaSampleKind::EncodedAudio;
+  sample.discontinuity = walk.discontinuity;
+  sample.continuityGap = walk.continuityGap;
+
+  if (walk.hasPts) {
+    const std::optional<MediaTime> presentation =
+        rebasedTime(walk.ptsTick, state.originTick);
+    if (!presentation) {
+      walk.discardUnit();
+      return std::nullopt;
+    }
+    sample.presentationTime = *presentation;
+  }
+  const std::optional<MediaTime> decode =
+      rebasedTime(walk.dtsTick, state.originTick);
+  if (decode) {
+    sample.decodeTime = *decode;
+  }
+
+  if (walk.video) {
+    const std::size_t probeLength =
+        walk.probeFilled > walk.headerSkipBytes
+            ? static_cast<std::size_t>(walk.probeFilled - walk.headerSkipBytes)
+            : 0U;
+    const std::span<const std::byte> unit(walk.probe.data() +
+                                              walk.headerSkipBytes,
+                                          probeLength);
+    const AccessUnitScan scan = scanAccessUnit(unit, walk.codec);
+    // random_access_indicator is the mux's own claim; the bitstream scan is
+    // the proof. A sample is a keyframe when either says so, but only the
+    // bitstream can say it is decodable from a cold decoder.
+    sample.keyFrame = scan.keyFrame || walk.randomAccess;
+    sample.decodableFromCold = scan.decodableFromCold;
+  } else {
+    sample.keyFrame = true;
+    sample.decodableFromCold = true;
+  }
+  walk.discardUnit();
+  return sample;
+}
+
+}  // namespace
+
+MpegTsCursorReadResult
+MpegTsCursor::readNext(CancellationToken cancellation) noexcept {
+  if (impl_ == nullptr) {
+    return MpegTsCursorFailure{MpegTsDemuxError::InvalidRequest,
+                               "mpeg-ts cursor is not open"};
+  }
+  if (impl_->ended) {
+    return MpegTsCursorEnd{};
+  }
+  if (cancellation.cancelled()) {
+    return MpegTsCursorCancelled{};
+  }
+  const AssetState& state = *impl_->state;
+  if (!state.unchanged()) {
+    return MpegTsCursorFailure{MpegTsDemuxError::FileChanged,
+                               "mpeg-ts file changed during playback"};
+  }
+
+  StreamWalk& walk = impl_->walk;
+  PacketWalker& walker = *impl_->walker;
+  std::uint64_t probes = 0;
+
+  while (true) {
+    // A cancellation probe every 1,024 packets bounds the latency of a stop
+    // request to ~192 KiB of walking without paying a function call per packet.
+    if ((++probes & 0x3FFU) == 0 && cancellation.cancelled()) {
+      return MpegTsCursorCancelled{};
+    }
+    const std::uint64_t packetOffset = impl_->position;
+    std::span<const std::byte> packet;
+    const WalkStatus status = walker.next(impl_->position, packet);
+    if (status == WalkStatus::Io) {
+      return MpegTsCursorFailure{MpegTsDemuxError::Io,
+                                 "mpeg-ts packet read failed"};
+    }
+    if (status == WalkStatus::End) {
+      impl_->ended = true;
+      const std::optional<MpegTsCompressedSample> tail =
+          finishUnit(state, walk, walk.pid, impl_->position);
+      if (tail) {
+        return *tail;
+      }
+      return MpegTsCursorEnd{};
+    }
+    if (status == WalkStatus::Resynchronized && walk.collecting) {
+      // Bytes were lost inside the unit under construction. Note it on the
+      // sample rather than dropping the unit: a decoder handles a damaged
+      // access unit far better than the pipeline handles a hole.
+      walk.continuityGap = true;
+    }
+
+    TsPacketHeader header{};
+    if (decodeTsPacket(packet, header) != TsPacketStatus::Ok) {
+      continue;
+    }
+    if (header.pid != walk.pid) {
+      continue;
+    }
+    if (header.transportError) {
+      walk.continuityGap = true;
+      continue;
+    }
+    const ContinuityVerdict verdict = walk.continuity.observe(header);
+    if (verdict == ContinuityVerdict::Duplicate) {
+      continue;
+    }
+    if (verdict == ContinuityVerdict::Gap) {
+      ++impl_->continuityGaps;
+      walk.continuityGap = true;
+    }
+    if (verdict == ContinuityVerdict::Discontinuous) {
+      walk.discontinuity = true;
+      walk.pts.resynchronize();
+      walk.dts.resynchronize();
+    }
+    if (!header.hasPayload || header.payloadSize == 0) {
+      continue;
+    }
+
+    // random_access_indicator is honoured ONLY on a payload-unit start, and
+    // this is not a nicety. 13818-1 2.4.3.4 says the indicator means the
+    // current or a SUBSEQUENT packet of this PID begins a random access point,
+    // so ffmpeg sets it on the last packet before a keyframe's PES as well as
+    // on the PES packet itself. An earlier version applied it to whichever
+    // unit was under construction, which marked the access unit BEFORE every
+    // keyframe as a keyframe too: measured 39 keyframes against ffprobe's 20
+    // on seek.ts and 5 against 3 on h264-aac.ts, an almost exactly 2n-1 shape
+    // that is the signature of an off-by-one, not of a codec disagreement.
+    // Restricting it to the unit-start packet makes the count exact.
+    if (header.payloadUnitStart) {
+      std::optional<MpegTsCompressedSample> completed;
+      if (walk.collecting) {
+        completed = finishUnit(state, walk, walk.pid, packetOffset);
+      }
+      const bool wasRandomAccess = header.randomAccess;
+      walk.beginUnit(packetOffset);
+      walk.randomAccess = wasRandomAccess;
+      walk.appendPayload(
+          packet.subspan(header.payloadOffset, header.payloadSize));
+      if (!walk.tryHeader()) {
+        walk.discardUnit();
+      }
+      if (completed) {
+        if (completed->payloadBytes > kMaximumMpegTsAccessUnitBytes) {
+          return MpegTsCursorFailure{
+              MpegTsDemuxError::SampleLimit,
+              "mpeg-ts access unit exceeds the admitted sample size"};
+        }
+        completed->track = walk.pid;
+        return *completed;
+      }
+      continue;
+    }
+
+    if (!walk.collecting) {
+      continue;  // payload before the first unit start: not ours to keep
+    }
+    if (walk.packetCount >= kMaximumMpegTsAccessUnitPackets) {
+      return MpegTsCursorFailure{
+          MpegTsDemuxError::SampleLimit,
+          "mpeg-ts access unit spans more packets than the cap admits"};
+    }
+    walk.appendPayload(
+        packet.subspan(header.payloadOffset, header.payloadSize));
+    if (!walk.tryHeader()) {
+      walk.discardUnit();
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Payload gather
+// ---------------------------------------------------------------------------
+
+bool MpegTsPreparedAsset::copyAccessUnit(const MpegTsCompressedSample& sample,
+                                         std::span<std::byte> destination,
+                                         CancellationToken cancellation,
+                                         MpegTsDemuxError* error) const
+    noexcept {
+  if (error != nullptr) {
+    *error = MpegTsDemuxError::None;
+  }
+  const AssetState& state = *impl_->state;
+  if (!state.unchanged()) {
+    if (error != nullptr) {
+      *error = MpegTsDemuxError::FileChanged;
+    }
+    return false;
+  }
+  if (destination.size() != sample.payloadBytes) {
+    if (error != nullptr) {
+      *error = MpegTsDemuxError::InvalidRequest;
+    }
+    return false;
+  }
+  if (destination.empty()) {
+    return !cancellation.cancelled();
+  }
+
+  try {
+    ReadWindow window(*state.reader);
+    PacketWalker walker(window, state.framing);
+    std::uint64_t position = sample.firstPacketOffset;
+    std::size_t written = 0;
+    std::uint32_t skipRemaining = sample.headerSkipBytes;
+    std::uint32_t packets = 0;
+    bool first = true;
+
+    while (written < destination.size()) {
+      if (cancellation.cancelled()) {
+        if (error != nullptr) {
+          *error = MpegTsDemuxError::Cancelled;
+        }
+        return false;
+      }
+      if (++packets > kMaximumMpegTsAccessUnitPackets) {
+        if (error != nullptr) {
+          *error = MpegTsDemuxError::SampleLimit;
+        }
+        return false;
+      }
+      const std::uint64_t packetOffset = position;
+      std::span<const std::byte> packet;
+      const WalkStatus status = walker.next(position, packet);
+      if (status == WalkStatus::End) {
+        break;
+      }
+      if (status == WalkStatus::Io) {
+        if (error != nullptr) {
+          *error = state.reader->size() == state.readerSize
+                       ? MpegTsDemuxError::Io
+                       : MpegTsDemuxError::FileChanged;
+        }
+        return false;
+      }
+      TsPacketHeader header{};
+      if (decodeTsPacket(packet, header) != TsPacketStatus::Ok ||
+          header.pid != sample.pid || !header.hasPayload ||
+          header.payloadSize == 0) {
+        continue;
+      }
+      // A payload-unit start after the first packet is the NEXT access unit;
+      // the gather must stop there even if the recorded byte count disagrees,
+      // because the packet stream is the authority.
+      if (header.payloadUnitStart && !first &&
+          packetOffset != sample.firstPacketOffset) {
+        break;
+      }
+      first = false;
+      std::span<const std::byte> payload =
+          packet.subspan(header.payloadOffset, header.payloadSize);
+      if (skipRemaining > 0) {
+        const std::uint32_t drop = static_cast<std::uint32_t>(
+            std::min<std::size_t>(skipRemaining, payload.size()));
+        payload = payload.subspan(drop);
+        skipRemaining -= drop;
+        if (payload.empty()) {
+          continue;
+        }
+      }
+      const std::size_t take =
+          std::min(payload.size(), destination.size() - written);
+      std::memcpy(destination.data() + written, payload.data(), take);
+      written += take;
+    }
+
+    if (written != destination.size()) {
+      if (error != nullptr) {
+        *error = MpegTsDemuxError::Io;
+      }
+      return false;
+    }
+    if (!state.unchanged()) {
+      if (error != nullptr) {
+        *error = MpegTsDemuxError::FileChanged;
+      }
+      return false;
+    }
+    if (cancellation.cancelled()) {
+      if (error != nullptr) {
+        *error = MpegTsDemuxError::Cancelled;
+      }
+      return false;
+    }
+    return true;
+  } catch (...) {
+    if (error != nullptr) {
+      *error = MpegTsDemuxError::Io;
+    }
+    return false;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Generation planning
+// ---------------------------------------------------------------------------
+
+MpegTsPlanOutcome
+MpegTsPreparedAsset::planGeneration(MediaTime target, MediaSeekMode mode,
+                                    CancellationToken cancellation) const
+    noexcept {
+  MpegTsPlanOutcome result{};
+  try {
+    const AssetState& state = *impl_->state;
+    if (cancellation.cancelled()) {
+      result.status = MpegTsDemuxStatus::Cancelled;
+      result.error = MpegTsDemuxError::Cancelled;
+      return result;
+    }
+    if (!state.unchanged()) {
+      result.error = MpegTsDemuxError::FileChanged;
+      result.message = "mpeg-ts file changed before planning";
+      return result;
+    }
+    if (!target.valid() || target.value < 0) {
+      result.error = MpegTsDemuxError::InvalidRequest;
+      result.message = "seek target must be a valid nonnegative time";
+      return result;
+    }
+    if (state.index.empty()) {
+      result.error = MpegTsDemuxError::InvalidTimeline;
+      result.message = "mpeg-ts index is empty";
+      return result;
+    }
+
+    // Exact rational target -> 90 kHz ticks, rounded DOWN so the plan never
+    // starts after the requested time. __int128 keeps a large timescale exact.
+    const __int128 scaled = (static_cast<__int128>(target.value) *
+                             static_cast<__int128>(kTimestampHz)) /
+                            static_cast<__int128>(target.timescale);
+    if (scaled > std::numeric_limits<std::int64_t>::max()) {
+      result.error = MpegTsDemuxError::InvalidRequest;
+      result.message = "seek target is outside the 90 kHz timeline";
+      return result;
+    }
+    const std::int64_t targetTick =
+        state.originTick + static_cast<std::int64_t>(scaled);
+
+    // Binary search: the last index entry at or before the target. The ticks
+    // are already unwrapped, so this is a plain integer compare even across a
+    // 33-bit rollover boundary.
+    const std::span<const MpegTsIndexEntry> entries(state.index);
+    std::size_t low = 0;
+    std::size_t high = entries.size();
+    while (low < high) {
+      const std::size_t mid = low + (high - low) / 2;
+      if (entries[mid].tick <= targetTick) {
+        low = mid + 1;
+      } else {
+        high = mid;
+      }
+    }
+    const std::size_t landedIndex = low == 0 ? 0 : low - 1;
+    const MpegTsIndexEntry landed = entries[landedIndex];
+
+    MpegTsGenerationPlan plan{};
+    plan.requestedTarget = target;
+    plan.mode = mode;
+    plan.landedTick = landed.tick;
+
+    // Refine forward from the bracket to the first video access unit that is
+    // decodable from a cold decoder. Transport Stream has no index, so this is
+    // where seek accuracy actually comes from — and the scan is bounded, so a
+    // stream with no random access point in range is refused, not chased.
+    std::uint64_t videoStart = landed.packetOffset;
+    std::int64_t videoStartTick = landed.tick;
+    std::uint32_t refinePackets = 0;
+    if (state.hasVideo) {
+      // BOUNDED BACKOFF, and it is the whole seek algorithm.
+      //
+      // The bisection lands on a PCR index point at or before the target, but
+      // the last random access point can be EARLIER than that index point:
+      // index points are spaced by BYTES and keyframes by TIME, so any stream
+      // whose GOP is longer than the index spacing routinely puts the two on
+      // opposite sides. A forward-only scan from the landed point then either
+      // refuses an entirely seekable file (measured: every seek past 1.5 s in
+      // a one-keyframe fixture came back ScanLimit) or, worse, silently lands
+      // AFTER the target and skips the frame the user asked for (measured: six
+      // of eight off-grid targets in a 20 s, 1 s-GOP fixture).
+      //
+      // So the scan tracks the two candidates separately — the last cold
+      // random access point at or before the target, and the first one after
+      // it — and steps back one index entry at a time until it has the former.
+      // Cost is bounded by the backoff count times the index spacing; reaching
+      // entry zero means the stream genuinely has no random access point at or
+      // before the target, and the first-after candidate is then used so the
+      // seek still lands rather than being refused.
+      constexpr std::size_t kMaximumIndexBackoff{16};
+      std::optional<MpegTsCompressedSample> atOrBefore;
+      std::optional<MpegTsCompressedSample> firstAfter;
+      std::int64_t atOrBeforeTick = 0;
+      std::int64_t firstAfterTick = 0;
+
+      for (std::size_t backoff = 0;
+           backoff <= kMaximumIndexBackoff && !atOrBefore; ++backoff) {
+        const std::size_t startIndex =
+            landedIndex >= backoff ? landedIndex - backoff : 0;
+        ReadWindow window(*state.reader);
+        PacketWalker walker(window, state.framing);
+        StreamWalk walk{};
+        walk.pid = state.video.pid;
+        walk.codec = state.video.codec;
+        walk.video = true;
+        std::uint64_t position = alignPacketOffset(
+            state.framing, entries[startIndex].packetOffset);
+        const std::uint64_t scanLimit = std::min<std::uint64_t>(
+            state.readerSize, position + kMpegTsSeekScanBytes);
+
+        while (position < scanLimit) {
+          if ((++refinePackets & 0x3FFU) == 0 && cancellation.cancelled()) {
+            result.status = MpegTsDemuxStatus::Cancelled;
+            result.error = MpegTsDemuxError::Cancelled;
+            return result;
+          }
+          const std::uint64_t packetOffset = position;
+          std::span<const std::byte> packet;
+          const WalkStatus status = walker.next(position, packet);
+          if (status == WalkStatus::End) {
+            break;
+          }
+          if (status == WalkStatus::Io) {
+            result.error = MpegTsDemuxError::Io;
+            result.message = "mpeg-ts seek scan read failed";
+            return result;
+          }
+          TsPacketHeader header{};
+          if (decodeTsPacket(packet, header) != TsPacketStatus::Ok ||
+              header.pid != walk.pid || !header.hasPayload ||
+              header.payloadSize == 0) {
+            continue;
+          }
+          // Same unit-start-only rule as readNext; see the note there.
+          if (!header.payloadUnitStart) {
+            if (walk.collecting) {
+              walk.appendPayload(
+                  packet.subspan(header.payloadOffset, header.payloadSize));
+              if (!walk.tryHeader()) {
+                walk.discardUnit();
+              }
+            }
+            continue;
+          }
+
+          bool done = false;
+          if (walk.collecting) {
+            const std::optional<MpegTsCompressedSample> unit =
+                finishUnit(state, walk, walk.pid, packetOffset);
+            if (unit && unit->decodableFromCold &&
+                unit->presentationTime.valid()) {
+              const std::int64_t unitTick =
+                  state.originTick +
+                  static_cast<std::int64_t>(
+                      (static_cast<__int128>(unit->presentationTime.value) *
+                       kTimestampHz) /
+                      unit->presentationTime.timescale);
+              if (unitTick <= targetTick) {
+                atOrBefore = *unit;
+                atOrBeforeTick = unitTick;
+              } else {
+                if (!firstAfter || unitTick < firstAfterTick) {
+                  firstAfter = *unit;
+                  firstAfterTick = unitTick;
+                }
+                // Nothing later can be a better at-or-before candidate.
+                done = true;
+              }
+            }
+          }
+          const bool wasRandomAccess = header.randomAccess;
+          walk.beginUnit(packetOffset);
+          walk.randomAccess = wasRandomAccess;
+          walk.appendPayload(
+              packet.subspan(header.payloadOffset, header.payloadSize));
+          if (!walk.tryHeader()) {
+            walk.discardUnit();
+          }
+          if (done) {
+            break;
+          }
+        }
+        if (startIndex == 0) {
+          break;  // nothing earlier to back off to
+        }
+      }
+
+      // KeyFrame mode asks for the nearest random access point in either
+      // direction; Accurate mode must never skip the requested frame and so
+      // only ever accepts the at-or-before candidate when one exists.
+      const MpegTsCompressedSample* chosen = nullptr;
+      if (mode == MediaSeekMode::KeyFrame && atOrBefore && firstAfter) {
+        chosen = (targetTick - atOrBeforeTick) <= (firstAfterTick - targetTick)
+                     ? &*atOrBefore
+                     : &*firstAfter;
+        videoStartTick =
+            chosen == &*atOrBefore ? atOrBeforeTick : firstAfterTick;
+      } else if (atOrBefore) {
+        chosen = &*atOrBefore;
+        videoStartTick = atOrBeforeTick;
+      } else if (firstAfter) {
+        chosen = &*firstAfter;
+        videoStartTick = firstAfterTick;
+      }
+      if (chosen == nullptr) {
+        result.error = MpegTsDemuxError::ScanLimit;
+        result.message =
+            "no decodable random access point within the bounded seek scan";
+        return result;
+      }
+      videoStart = chosen->firstPacketOffset;
+    }
+
+    plan.videoPacketOffset = videoStart;
+    plan.audioPacketOffset = videoStart;
+    plan.refineScanPackets = refinePackets;
+    const std::optional<MediaTime> decodeStart =
+        rebasedTime(videoStartTick, state.originTick);
+    if (!decodeStart) {
+      result.error = MpegTsDemuxError::InvalidTimeline;
+      result.message = "seek landed outside the representable timeline";
+      return result;
+    }
+    plan.actualDecodeStart = *decodeStart;
+    if (state.hasAudio) {
+      plan.audioWindow.decodeStart = *decodeStart;
+      plan.audioWindow.presentationStart =
+          landedIndex == 0 && targetTick <= state.originTick ? *decodeStart
+                                                             : target;
+      plan.audioWindow.startsAtStreamOrigin = videoStartTick <= state.originTick;
+      if (compareMediaTime(plan.audioWindow.presentationStart,
+                           plan.audioWindow.decodeStart) ==
+          MediaTimeOrder::Less) {
+        plan.audioWindow.presentationStart = plan.audioWindow.decodeStart;
+      }
+    }
+
+    result.status = MpegTsDemuxStatus::Ready;
+    result.error = MpegTsDemuxError::None;
+    result.plan = plan;
+    return result;
+  } catch (...) {
+    result.error = MpegTsDemuxError::Io;
+    result.message = "mpeg-ts planning allocation failed";
+    return result;
+  }
+}
+
+std::unique_ptr<MpegTsCursor>
+MpegTsPreparedAsset::makeVideoCursor(const MpegTsGenerationPlan& plan) const
+    noexcept {
+  try {
+    const AssetState& state = *impl_->state;
+    if (!state.hasVideo) {
+      return nullptr;
+    }
+    auto impl = std::make_unique<MpegTsCursor::Impl>();
+    impl->state = impl_->state;
+    impl->window = std::make_unique<ReadWindow>(*state.reader);
+    impl->walker.emplace(*impl->window, state.framing);
+    impl->walk.pid = state.video.pid;
+    impl->walk.codec = state.video.codec;
+    impl->walk.video = true;
+    impl->position =
+        alignPacketOffset(state.framing, plan.videoPacketOffset);
+    return std::unique_ptr<MpegTsCursor>(new MpegTsCursor(std::move(impl)));
+  } catch (...) {
+    return nullptr;
+  }
+}
+
+std::unique_ptr<MpegTsCursor>
+MpegTsPreparedAsset::makeAudioCursor(const MpegTsGenerationPlan& plan) const
+    noexcept {
+  try {
+    const AssetState& state = *impl_->state;
+    if (!state.hasAudio) {
+      return nullptr;
+    }
+    auto impl = std::make_unique<MpegTsCursor::Impl>();
+    impl->state = impl_->state;
+    impl->window = std::make_unique<ReadWindow>(*state.reader);
+    impl->walker.emplace(*impl->window, state.framing);
+    impl->walk.pid = state.audio.pid;
+    impl->walk.codec = state.audio.codec;
+    impl->walk.video = false;
+    impl->position =
+        alignPacketOffset(state.framing, plan.audioPacketOffset);
+    return std::unique_ptr<MpegTsCursor>(new MpegTsCursor(std::move(impl)));
+  } catch (...) {
+    return nullptr;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Preparation
+// ---------------------------------------------------------------------------
+
+namespace {
+
+struct ProgramScanResult {
+  ProgramAssociationTable pat{};
+  ProgramMapTable pmt{};
+  bool hasPat{false};
+  bool hasPmt{false};
+};
+
+// One bounded forward pass that collects the PAT and the PMT of the first
+// video-bearing program. Stops the moment it has both.
+[[nodiscard]] MpegTsDemuxError
+scanPrograms(ReadWindow& window, const MpegTsFraming& framing,
+             CancellationToken cancellation, ProgramScanResult& out) noexcept {
+  PacketWalker walker(window, framing);
+  SectionAssembler patAssembler;
+  std::array<SectionAssembler, kMaximumPrograms> pmtAssemblers{};
+  std::uint64_t position = framing.firstSyncOffset;
+  const std::uint64_t limit = std::min<std::uint64_t>(
+      window.fileSize(), position + kMpegTsProgramScanBytes);
+  std::uint64_t probes = 0;
+
+  while (position < limit) {
+    if ((++probes & 0x3FFU) == 0 && cancellation.cancelled()) {
+      return MpegTsDemuxError::Cancelled;
+    }
+    std::span<const std::byte> packet;
+    const WalkStatus status = walker.next(position, packet);
+    if (status == WalkStatus::End) {
+      break;
+    }
+    if (status == WalkStatus::Io) {
+      return MpegTsDemuxError::Io;
+    }
+    TsPacketHeader header{};
+    if (decodeTsPacket(packet, header) != TsPacketStatus::Ok ||
+        !header.hasPayload || header.payloadSize == 0 ||
+        header.transportError) {
+      continue;
+    }
+    const std::span<const std::byte> payload =
+        packet.subspan(header.payloadOffset, header.payloadSize);
+
+    if (header.pid == kPatPid) {
+      if (patAssembler.feed(payload, header.payloadUnitStart) ==
+          SectionStatus::Ready) {
+        ProgramAssociationTable table{};
+        if (parseProgramAssociationSection(patAssembler.section(),
+                                           patAssembler.header(), table) &&
+            table.programCount > 0) {
+          out.pat = table;
+          out.hasPat = true;
+        }
+      }
+      continue;
+    }
+    if (!out.hasPat) {
+      continue;
+    }
+    for (std::uint8_t i = 0; i < out.pat.programCount; ++i) {
+      if (out.pat.programs[i].pmtPid != header.pid) {
+        continue;
+      }
+      if (pmtAssemblers[i].feed(payload, header.payloadUnitStart) !=
+          SectionStatus::Ready) {
+        break;
+      }
+      ProgramMapTable table{};
+      if (!parseProgramMapSection(pmtAssemblers[i].section(),
+                                  pmtAssemblers[i].header(), table)) {
+        break;
+      }
+      bool video = false;
+      for (std::uint8_t s = 0; s < table.streamCount; ++s) {
+        if (table.streams[s].kind == MediaTrackKind::Video) {
+          video = true;
+          break;
+        }
+      }
+      // First video-bearing program in PAT order wins, exactly as specified.
+      if (video && (!out.hasPmt || i < out.pat.programCount)) {
+        out.pmt = table;
+        out.hasPmt = true;
+        return MpegTsDemuxError::None;
+      }
+      break;
+    }
+  }
+  if (!out.hasPat) {
+    return MpegTsDemuxError::MissingProgramTable;
+  }
+  if (!out.hasPmt) {
+    return MpegTsDemuxError::ProgramSelection;
+  }
+  return MpegTsDemuxError::None;
+}
+
+struct FirstUnitFacts {
+  std::vector<std::byte> parameterSets;
+  std::array<std::byte, 16> audioHeaderBytes{};
+  std::uint64_t firstVideoPacket{0};
+  std::int64_t firstVideoPts{0};
+  std::int64_t firstAudioPts{0};
+  std::uint32_t audioHeaderSize{0};
+  bool hasVideoPts{false};
+  bool hasAudioPts{false};
+  bool hasParameterSets{false};
+  bool hasAudioHeader{false};
+};
+
+// One bounded pass that finds, for each selected stream, the first access unit
+// and everything preparation needs from it: the parameter sets that become the
+// codec configuration, the first audio frame header, and the first PTS of each.
+[[nodiscard]] MpegTsDemuxError
+scanFirstUnits(ReadWindow& window, const MpegTsFraming& framing,
+               std::uint16_t videoPid, MediaCodec videoCodec,
+               std::uint16_t audioPid, CancellationToken cancellation,
+               FirstUnitFacts& facts) {
+  PacketWalker walker(window, framing);
+  StreamWalk video{};
+  video.pid = videoPid;
+  video.codec = videoCodec;
+  video.video = true;
+  StreamWalk audio{};
+  audio.pid = audioPid;
+  audio.video = false;
+
+  std::uint64_t position = framing.firstSyncOffset;
+  const std::uint64_t limit = std::min<std::uint64_t>(
+      window.fileSize(), position + kMpegTsProgramScanBytes);
+  std::uint64_t probes = 0;
+  const bool wantVideo = videoPid != kNullPid;
+  const bool wantAudio = audioPid != kNullPid;
+
+  while (position < limit) {
+    if ((++probes & 0x3FFU) == 0 && cancellation.cancelled()) {
+      return MpegTsDemuxError::Cancelled;
+    }
+    const std::uint64_t packetOffset = position;
+    std::span<const std::byte> packet;
+    const WalkStatus status = walker.next(position, packet);
+    if (status == WalkStatus::End) {
+      break;
+    }
+    if (status == WalkStatus::Io) {
+      return MpegTsDemuxError::Io;
+    }
+    TsPacketHeader header{};
+    if (decodeTsPacket(packet, header) != TsPacketStatus::Ok ||
+        !header.hasPayload || header.payloadSize == 0) {
+      continue;
+    }
+    StreamWalk* walk = nullptr;
+    if (wantVideo && header.pid == videoPid) {
+      walk = &video;
+    } else if (wantAudio && header.pid == audioPid) {
+      walk = &audio;
+    }
+    if (walk == nullptr) {
+      continue;
+    }
+    if (header.payloadUnitStart) {
+      if (walk->collecting && !walk->pendingHeader &&
+          walk->rawBytes > walk->headerSkipBytes) {
+        const std::size_t length = walk->probeFilled > walk->headerSkipBytes
+                                       ? walk->probeFilled -
+                                             walk->headerSkipBytes
+                                       : 0U;
+        const std::span<const std::byte> unit(
+            walk->probe.data() + walk->headerSkipBytes, length);
+        if (walk->video) {
+          if (!facts.hasVideoPts && walk->hasPts) {
+            facts.firstVideoPts = walk->ptsTick;
+            facts.hasVideoPts = true;
+            facts.firstVideoPacket = walk->firstPacketOffset;
+          }
+          if (!facts.hasParameterSets) {
+            const AccessUnitScan scan = scanAccessUnit(unit, walk->codec);
+            if (scan.hasParameterSets && scan.parameterSetSize > 0 &&
+                scan.parameterSetOffset + scan.parameterSetSize <=
+                    unit.size()) {
+              facts.parameterSets.assign(
+                  unit.begin() + scan.parameterSetOffset,
+                  unit.begin() + scan.parameterSetOffset +
+                      scan.parameterSetSize);
+              facts.hasParameterSets = true;
+            }
+          }
+        } else {
+          if (!facts.hasAudioPts && walk->hasPts) {
+            facts.firstAudioPts = walk->ptsTick;
+            facts.hasAudioPts = true;
+          }
+          if (!facts.hasAudioHeader && unit.size() >= 4) {
+            const std::size_t take =
+                std::min<std::size_t>(facts.audioHeaderBytes.size(),
+                                      unit.size());
+            std::memcpy(facts.audioHeaderBytes.data(), unit.data(), take);
+            facts.audioHeaderSize = static_cast<std::uint32_t>(take);
+            facts.hasAudioHeader = true;
+          }
+        }
+      }
+      walk->beginUnit(packetOffset);
+    }
+    if (walk->collecting) {
+      walk->appendPayload(
+          packet.subspan(header.payloadOffset, header.payloadSize));
+      if (!walk->tryHeader()) {
+        walk->discardUnit();
+      }
+    }
+    const bool videoDone =
+        !wantVideo || (facts.hasVideoPts &&
+                       (facts.hasParameterSets || videoCodec == MediaCodec::Unknown));
+    const bool audioDone = !wantAudio || (facts.hasAudioPts && facts.hasAudioHeader);
+    if (videoDone && audioDone) {
+      return MpegTsDemuxError::None;
+    }
+  }
+  return MpegTsDemuxError::None;
+}
+
+// Finds the first PCR at or after `from` on `pcrPid`, within one bounded probe
+// window. Returns false when the window holds none, which is reported rather
+// than interpolated.
+[[nodiscard]] bool probePcr(ReadWindow& window, const MpegTsFraming& framing,
+                            std::uint16_t pcrPid, std::uint64_t from,
+                            std::uint64_t& packetOffset,
+                            std::uint64_t& pcrBase) noexcept {
+  PacketWalker walker(window, framing);
+  std::uint64_t position = alignPacketOffset(framing, from);
+  const std::uint64_t limit = std::min<std::uint64_t>(
+      window.fileSize(), position + kMpegTsProbeWindowBytes);
+  while (position < limit) {
+    const std::uint64_t offset = position;
+    std::span<const std::byte> packet;
+    const WalkStatus status = walker.next(position, packet);
+    if (status == WalkStatus::End || status == WalkStatus::Io) {
+      return false;
+    }
+    TsPacketHeader header{};
+    if (decodeTsPacket(packet, header) != TsPacketStatus::Ok) {
+      continue;
+    }
+    if (header.pid != pcrPid || !header.hasPcr) {
+      continue;
+    }
+    packetOffset = offset;
+    pcrBase = header.pcrBase;
+    return true;
+  }
+  return false;
+}
+
+// Finds the LAST PCR in the file by probing backwards in bounded windows.
+[[nodiscard]] bool probeLastPcr(ReadWindow& window,
+                                const MpegTsFraming& framing,
+                                std::uint16_t pcrPid,
+                                std::uint64_t& pcrBase) noexcept {
+  const std::uint64_t size = window.fileSize();
+  // Four windows back is 2 MiB, which contains a PCR for anything this player
+  // admits; beyond that the file is refused rather than guessed at.
+  for (int attempt = 1; attempt <= 4; ++attempt) {
+    const std::uint64_t span =
+        static_cast<std::uint64_t>(attempt) * kMpegTsProbeWindowBytes;
+    const std::uint64_t from = size > span ? size - span : 0;
+    PacketWalker walker(window, framing);
+    std::uint64_t position = alignPacketOffset(framing, from);
+    bool found = false;
+    while (position < size) {
+      std::span<const std::byte> packet;
+      const WalkStatus status = walker.next(position, packet);
+      if (status == WalkStatus::End || status == WalkStatus::Io) {
+        break;
+      }
+      TsPacketHeader header{};
+      if (decodeTsPacket(packet, header) != TsPacketStatus::Ok) {
+        continue;
+      }
+      if (header.pid == pcrPid && header.hasPcr) {
+        pcrBase = header.pcrBase;
+        found = true;
+      }
+    }
+    if (found) {
+      return true;
+    }
+    if (from == 0) {
+      break;
+    }
+  }
+  return false;
+}
+
+}  // namespace
+
+MpegTsPrepareOutcome prepareMpegTs(std::shared_ptr<SeekableByteReader> reader,
+                                   std::filesystem::path path,
+                                   const MediaSourceOpenOptions& requested,
+                                   CancellationToken cancellation) noexcept {
+  MpegTsPrepareOutcome result{};
+  try {
+    if (reader == nullptr || reader->size() == 0 || path.empty()) {
+      result.error = MpegTsDemuxError::InvalidRequest;
+      result.message = "mpeg-ts preparation requires a reader and a path";
+      return result;
+    }
+    std::string initialError;
+    if (!validateMediaSourceInitialPosition(requested.initialPosition,
+                                            &initialError)) {
+      result.error = MpegTsDemuxError::InvalidRequest;
+      result.message = std::move(initialError);
+      return result;
+    }
+    if (cancellation.cancelled()) {
+      result.status = MpegTsDemuxStatus::Cancelled;
+      result.error = MpegTsDemuxError::Cancelled;
+      return result;
+    }
+
+    auto state = std::make_shared<AssetState>();
+    state->reader = std::move(reader);
+    state->readerSize = state->reader->size();
+    state->path = std::move(path);
+    state->limits = clampMediaSourceLimits(requested.limits);
+
+    ReadWindow window(*state->reader);
+
+    // --- framing -----------------------------------------------------------
+    {
+      const std::size_t probeBytes = static_cast<std::size_t>(
+          std::min<std::uint64_t>(kMpegTsReadWindowBytes, state->readerSize));
+      const std::span<const std::byte> probe = window.at(0, probeBytes);
+      if (probe.empty()) {
+        result.error = MpegTsDemuxError::Io;
+        result.message = "could not read the mpeg-ts probe window";
+        return result;
+      }
+      if (!detectMpegTsFraming(probe, state->readerSize, state->framing)) {
+        result.status = MpegTsDemuxStatus::Unsupported;
+        result.error = MpegTsDemuxError::NotTransportStream;
+        result.message = "no consistent transport stream packet framing";
+        return result;
+      }
+    }
+
+    // --- programs ----------------------------------------------------------
+    ProgramScanResult programs{};
+    {
+      const MpegTsDemuxError error =
+          scanPrograms(window, state->framing, cancellation, programs);
+      if (error == MpegTsDemuxError::Cancelled) {
+        result.status = MpegTsDemuxStatus::Cancelled;
+        result.error = error;
+        return result;
+      }
+      if (error != MpegTsDemuxError::None) {
+        result.status = error == MpegTsDemuxError::Io
+                            ? MpegTsDemuxStatus::Failed
+                            : MpegTsDemuxStatus::Unsupported;
+        result.error = error;
+        result.message =
+            error == MpegTsDemuxError::MissingProgramTable
+                ? "no program association table within the bounded scan"
+                : "no program carries a video elementary stream";
+        return result;
+      }
+    }
+    state->programNumber = programs.pmt.programNumber;
+    state->pcrPid = programs.pmt.pcrPid;
+
+    // --- stream selection --------------------------------------------------
+    MediaTrackInventory inventory{};
+    const ElementaryStream* videoStream = nullptr;
+    const ElementaryStream* audioStream = nullptr;
+    std::uint8_t rejectedVideoType = 0;
+    std::uint8_t rejectedAudioType = 0;
+    for (std::uint8_t i = 0; i < programs.pmt.streamCount; ++i) {
+      const ElementaryStream& stream = programs.pmt.streams[i];
+      if (stream.kind == MediaTrackKind::Video) {
+        if (inventory.video < std::numeric_limits<std::uint8_t>::max()) {
+          ++inventory.video;
+        }
+        if (videoStream == nullptr && stream.codec != MediaCodec::Unknown) {
+          videoStream = &stream;
+        } else if (videoStream == nullptr && rejectedVideoType == 0) {
+          rejectedVideoType = stream.streamType;
+        }
+      } else if (stream.kind == MediaTrackKind::Audio) {
+        if (inventory.audio < std::numeric_limits<std::uint8_t>::max()) {
+          ++inventory.audio;
+        }
+        if (audioStream == nullptr && stream.codec != MediaCodec::Unknown) {
+          audioStream = &stream;
+        } else if (audioStream == nullptr && rejectedAudioType == 0) {
+          rejectedAudioType = stream.streamType;
+        }
+      } else {
+        if (inventory.metadata < std::numeric_limits<std::uint8_t>::max()) {
+          ++inventory.metadata;
+        }
+      }
+    }
+    inventory.total = static_cast<std::uint8_t>(
+        std::min<int>(255, inventory.video + inventory.audio +
+                               inventory.metadata));
+
+    if (videoStream == nullptr) {
+      result.status = MpegTsDemuxStatus::Unsupported;
+      result.error = rejectedVideoType != 0
+                         ? MpegTsDemuxError::UnsupportedStreamType
+                         : MpegTsDemuxError::ProgramSelection;
+      // Name the refused type. MPEG-2 video (0x02) has no MediaCodec
+      // enumerator yet; that is a recorded, authorized-append-pending gap and
+      // it must reach the caller by name rather than as a silent skip.
+      result.message =
+          rejectedVideoType != 0
+              ? std::string("mpeg-ts video stream type is not routable: 0x") +
+                    "0123456789ABCDEF"[(rejectedVideoType >> 4) & 0x0FU] +
+                    "0123456789ABCDEF"[rejectedVideoType & 0x0FU]
+              : std::string("selected mpeg-ts program has no video stream");
+      return result;
+    }
+    if (videoStream->codec != MediaCodec::H264) {
+      result.status = MpegTsDemuxStatus::Unsupported;
+      result.error = MpegTsDemuxError::UnsupportedStreamType;
+      result.message =
+          "mpeg-ts video admission is H.264 only in this slice; HEVC needs "
+          "hvcC synthesis and MPEG-2 needs a MediaCodec enumerator";
+      return result;
+    }
+
+    state->video.pid = videoStream->elementaryPid;
+    state->video.streamType = videoStream->streamType;
+    state->video.codec = videoStream->codec;
+    state->video.kind = MediaTrackKind::Video;
+    state->video.id = videoStream->elementaryPid;
+    state->hasVideo = true;
+    if (audioStream != nullptr) {
+      state->audio.pid = audioStream->elementaryPid;
+      state->audio.streamType = audioStream->streamType;
+      state->audio.codec = audioStream->codec;
+      state->audio.kind = MediaTrackKind::Audio;
+      state->audio.id = audioStream->elementaryPid;
+      state->hasAudio = true;
+    }
+    static_cast<void>(rejectedAudioType);
+
+    // --- first access units ------------------------------------------------
+    FirstUnitFacts facts{};
+    {
+      const MpegTsDemuxError error = scanFirstUnits(
+          window, state->framing, state->video.pid, state->video.codec,
+          state->hasAudio ? state->audio.pid : kNullPid, cancellation, facts);
+      if (error == MpegTsDemuxError::Cancelled) {
+        result.status = MpegTsDemuxStatus::Cancelled;
+        result.error = error;
+        return result;
+      }
+      if (error != MpegTsDemuxError::None) {
+        result.error = error;
+        result.message = "mpeg-ts elementary stream scan failed";
+        return result;
+      }
+    }
+    if (!facts.hasVideoPts) {
+      result.error = MpegTsDemuxError::InvalidTimeline;
+      result.message = "no video presentation timestamp in the bounded scan";
+      return result;
+    }
+    if (!facts.hasParameterSets) {
+      result.status = MpegTsDemuxStatus::Unsupported;
+      result.error = MpegTsDemuxError::CodecConfiguration;
+      result.message = "no in-band H.264 parameter sets in the bounded scan";
+      return result;
+    }
+
+    // --- timeline ----------------------------------------------------------
+    state->originTick = facts.hasAudioPts
+                            ? std::min(facts.firstVideoPts, facts.firstAudioPts)
+                            : facts.firstVideoPts;
+
+    std::uint64_t firstPcrBase = 0;
+    std::uint64_t lastPcrBase = 0;
+    std::uint64_t pcrOffset = 0;
+    MediaTime duration{};
+    if (state->pcrPid != kNullPid &&
+        probePcr(window, state->framing, state->pcrPid,
+                 state->framing.firstSyncOffset, pcrOffset, firstPcrBase) &&
+        probeLastPcr(window, state->framing, state->pcrPid, lastPcrBase)) {
+      TimestampUnwrapper pcrUnwrap;
+      const std::int64_t first = pcrUnwrap.extend(firstPcrBase);
+      const std::int64_t last = pcrUnwrap.extend(lastPcrBase);
+      if (last > first) {
+        const std::optional<MediaTime> span =
+            mediaTimeFromTicks(last - state->originTick);
+        if (span && span->value > 0) {
+          duration = *span;
+        }
+      }
+      state->endTick = last;
+    }
+    if (!duration.valid()) {
+      result.error = MpegTsDemuxError::InvalidTimeline;
+      result.message = "could not derive a positive duration from the PCR";
+      return result;
+    }
+
+    // --- index -------------------------------------------------------------
+    // A sparse PCR index, built rather than read. Probe points are evenly
+    // spaced by byte position; each probe is one bounded read that finds the
+    // next PCR after that position. The result is monotone in both byte offset
+    // and (unwrapped) tick, which is exactly what the bisection needs.
+    {
+      TimestampUnwrapper indexUnwrap;
+      const std::uint64_t span = state->readerSize;
+      const std::size_t probes =
+          static_cast<std::size_t>(std::min<std::uint64_t>(
+              kMpegTsIndexProbeCount,
+              std::max<std::uint64_t>(1, span / kMpegTsProbeWindowBytes + 1)));
+      state->index.reserve(probes + 1);
+      std::uint64_t previousOffset = 0;
+      std::int64_t previousTick = std::numeric_limits<std::int64_t>::min();
+      for (std::size_t i = 0; i < probes; ++i) {
+        if (cancellation.cancelled()) {
+          result.status = MpegTsDemuxStatus::Cancelled;
+          result.error = MpegTsDemuxError::Cancelled;
+          return result;
+        }
+        const std::uint64_t from =
+            state->framing.firstSyncOffset + (span / probes) * i;
+        std::uint64_t offset = 0;
+        std::uint64_t base = 0;
+        if (!probePcr(window, state->framing, state->pcrPid, from, offset,
+                      base)) {
+          continue;
+        }
+        const std::int64_t tick = indexUnwrap.extend(base);
+        if (!state->index.empty() &&
+            (offset <= previousOffset || tick <= previousTick)) {
+          continue;  // not strictly increasing: drop rather than corrupt
+        }
+        if (state->index.size() >= kMaximumMpegTsIndexEntries) {
+          result.error = MpegTsDemuxError::IndexLimit;
+          result.message = "mpeg-ts index exceeded its hard entry cap";
+          return result;
+        }
+        MpegTsIndexEntry entry{};
+        entry.packetOffset = offset;
+        entry.tick = tick;
+        entry.flags = MpegTsIndexEntry::kFlagFromPcr;
+        state->index.push_back(entry);
+        previousOffset = offset;
+        previousTick = tick;
+      }
+      if (state->index.empty()) {
+        result.error = MpegTsDemuxError::InvalidTimeline;
+        result.message = "no program clock reference found for the index";
+        return result;
+      }
+      // The first index entry must not sort after the stream origin, or a seek
+      // to zero has nothing to bisect against.
+      if (state->index.front().tick > state->originTick) {
+        MpegTsIndexEntry entry{};
+        entry.packetOffset = state->framing.firstSyncOffset;
+        entry.tick = state->originTick;
+        entry.flags = MpegTsIndexEntry::kFlagFromPcr;
+        state->index.insert(state->index.begin(), entry);
+      }
+    }
+
+    if (!state->unchanged()) {
+      result.error = MpegTsDemuxError::FileChanged;
+      result.message = "file identity changed during preparation";
+      return result;
+    }
+
+    // --- descriptor --------------------------------------------------------
+    auto descriptor = std::make_shared<MediaSourceDescriptor>();
+    descriptor->duration = duration;
+    descriptor->inventory = inventory;
+
+    {
+      std::vector<std::byte> avcc;
+      if (!buildAvcCFromAnnexB(facts.parameterSets, avcc)) {
+        result.status = MpegTsDemuxStatus::Unsupported;
+        result.error = MpegTsDemuxError::CodecConfiguration;
+        result.message = "could not synthesize an avcC from in-band SPS/PPS";
+        return result;
+      }
+      VideoCodecConfigurationLimits codecLimits{};
+      codecLimits.maximumWidth = state->limits.maximumCodedWidth;
+      codecLimits.maximumHeight = state->limits.maximumCodedHeight;
+      codecLimits.maximumPixels = state->limits.maximumCodedPixels;
+      const VideoCodecConfigurationInspection inspection =
+          inspectVideoCodecConfiguration(MediaCodec::H264,
+                                         MediaCodecConfigurationKind::AvcC,
+                                         avcc, codecLimits);
+      if (!inspection.admitted()) {
+        result.status = MpegTsDemuxStatus::Unsupported;
+        result.error = MpegTsDemuxError::CodecConfiguration;
+        result.message =
+            "synthesized avcC was refused by the shared codec inspector";
+        return result;
+      }
+      const VideoCodecConfigurationFacts& codec = *inspection.facts;
+
+      MediaTrackDescriptor track{};
+      track.id = state->video.id;
+      track.kind = MediaTrackKind::Video;
+      track.codec = MediaCodec::H264;
+      track.timeBase = MediaTime{1, kTimestampHz};
+      track.duration = duration;
+      track.codecConfigurationKind = MediaCodecConfigurationKind::AvcC;
+      track.codecConfiguration = std::move(avcc);
+      MediaVideoFormat format{};
+      format.codedWidth = codec.width;
+      format.codedHeight = codec.height;
+      format.displayWidth = codec.width;
+      format.displayHeight = codec.height;
+      format.bitsPerComponent = codec.bitDepth;
+      format.progressive = true;
+      format.sampleFormat = codec.sampleFormat;
+      if (codec.color.colorDescriptionPresent) {
+        // ISO/IEC 23091-2 value 2 is "unspecified" and carries no information,
+        // so it is Unknown rather than OtherExplicit.
+        format.colorPrimaries =
+            codec.color.colorPrimaries == 1   ? MediaColorPrimaries::Bt709
+            : codec.color.colorPrimaries == 2 ? MediaColorPrimaries::Unknown
+                                              : MediaColorPrimaries::OtherExplicit;
+        format.transferFunction =
+            codec.color.transferCharacteristics == 1
+                ? MediaTransferFunction::Bt709
+            : codec.color.transferCharacteristics == 2
+                ? MediaTransferFunction::Unknown
+                : MediaTransferFunction::OtherExplicit;
+        format.matrixCoefficients =
+            codec.color.matrixCoefficients == 1   ? MediaMatrixCoefficients::Bt709
+            : codec.color.matrixCoefficients == 2 ? MediaMatrixCoefficients::Unknown
+                                                  : MediaMatrixCoefficients::OtherExplicit;
+      }
+      track.video = format;
+      descriptor->selectedVideo = track.id;
+      descriptor->tracks.push_back(std::move(track));
+    }
+
+    if (state->hasAudio) {
+      MediaTrackDescriptor track{};
+      track.id = state->audio.id;
+      track.kind = MediaTrackKind::Audio;
+      track.codec = state->audio.codec;
+      track.duration = duration;
+      MediaAudioFormat format{};
+      bool admitted = false;
+
+      const std::span<const std::byte> audioHeader(
+          facts.audioHeaderBytes.data(), facts.audioHeaderSize);
+      if (state->audio.codec == MediaCodec::Aac) {
+        AdtsHeader adts{};
+        std::array<std::byte, 2> config{};
+        if (facts.hasAudioHeader && parseAdtsHeader(audioHeader, adts) &&
+            audioSpecificConfigFromAdts(adts, config)) {
+          const AacLcAdmission admission =
+              parseAacLcAudioSpecificConfig(config);
+          if (admission.admitted()) {
+            const std::optional<AacLcEsDescriptorCookie> cookie =
+                buildAacLcEsDescriptorCookie(*admission.configuration);
+            if (cookie) {
+              track.timeBase = MediaTime{
+                  1, static_cast<std::int32_t>(
+                         admission.configuration->sampleRate)};
+              track.codecConfigurationKind =
+                  MediaCodecConfigurationKind::AudioMagicCookie;
+              track.codecConfiguration.assign(cookie->view().begin(),
+                                              cookie->view().end());
+              format.sampleRate =
+                  static_cast<double>(admission.configuration->sampleRate);
+              format.channels = admission.configuration->channelCount;
+              format.formatTag = kAacFormatTag;
+              format.framesPerPacket = kAacLcSamplesPerAccessUnit;
+              format.channelLayoutTag =
+                  admission.configuration->channelCount == 1 ? kMonoLayoutTag
+                                                             : kStereoLayoutTag;
+              format.channelLayoutPresent = true;
+              state->audio.sampleRate = admission.configuration->sampleRate;
+              state->audio.channels = admission.configuration->channelCount;
+              state->audio.samplesPerFrame = kAacLcSamplesPerAccessUnit;
+              admitted = true;
+            }
+          }
+        }
+      } else if (state->audio.codec == MediaCodec::Mp3) {
+        MpegAudioFrame frame{};
+        if (facts.hasAudioHeader && parseMpegAudioFrame(audioHeader, frame) &&
+            frame.channels > 0 && frame.channels <= 2) {
+          track.timeBase =
+              MediaTime{1, static_cast<std::int32_t>(frame.sampleRate)};
+          track.codecConfigurationKind = MediaCodecConfigurationKind::None;
+          format.sampleRate = static_cast<double>(frame.sampleRate);
+          format.channels = frame.channels;
+          format.formatTag = frame.layer == 3 ? kMpegLayer3FormatTag
+                                              : kMpegLayer2FormatTag;
+          format.framesPerPacket = frame.samplesPerFrame;
+          format.channelLayoutTag =
+              frame.channels == 1 ? kMonoLayoutTag : kStereoLayoutTag;
+          format.channelLayoutPresent = true;
+          state->audio.sampleRate = frame.sampleRate;
+          state->audio.channels = frame.channels;
+          state->audio.samplesPerFrame = frame.samplesPerFrame;
+          admitted = true;
+        }
+      }
+
+      if (admitted) {
+        track.audio = format;
+        descriptor->selectedAudio = track.id;
+        descriptor->tracks.push_back(std::move(track));
+      } else {
+        // The audio stream stays in the inventory and out of the selection.
+        // Refusing the whole file for an unroutable audio track would reject
+        // playable video, which is exactly the silent-drop failure mode this
+        // demuxer is built to avoid — so it is a recorded downgrade, not a
+        // silent one, and the caller sees selectedAudio absent.
+        state->hasAudio = false;
+      }
+    }
+
+    std::string descriptorError;
+    if (!validateMediaSourceDescriptor(*descriptor, state->limits,
+                                       &descriptorError)) {
+      result.error = MpegTsDemuxError::CodecConfiguration;
+      result.message = std::move(descriptorError);
+      return result;
+    }
+    state->descriptor = descriptor;
+
+    auto asset = std::shared_ptr<MpegTsPreparedAsset>(new MpegTsPreparedAsset(
+        std::make_unique<MpegTsPreparedAsset::Impl>(state)));
+
+    if (requested.initialPosition) {
+      const MpegTsPlanOutcome planned =
+          asset->planGeneration(requested.initialPosition->target,
+                                requested.initialPosition->mode, cancellation);
+      if (planned.status != MpegTsDemuxStatus::Ready) {
+        result.status = planned.status;
+        result.error = planned.error;
+        result.message = planned.message;
+        return result;
+      }
+    }
+
+    result.status = MpegTsDemuxStatus::Ready;
+    result.error = MpegTsDemuxError::None;
+    result.asset = std::move(asset);
+    return result;
+  } catch (...) {
+    result.error = MpegTsDemuxError::Io;
+    result.message = "mpeg-ts preparation allocation failed";
+    return result;
+  }
+}
+
+MpegTsPrepareOutcome
+prepareMpegTsLocalFile(const std::filesystem::path& path,
+                       const MediaSourceOpenOptions& options,
+                       CancellationToken cancellation) noexcept {
+  if (cancellation.cancelled()) {
+    return {MpegTsDemuxStatus::Cancelled, MpegTsDemuxError::Cancelled, nullptr,
+            {}};
+  }
+  std::shared_ptr<StableFileReader> reader = StableFileReader::open(path);
+  if (reader == nullptr) {
+    return {MpegTsDemuxStatus::Failed, MpegTsDemuxError::Io, nullptr,
+            "could not open the local mpeg-ts file"};
+  }
+  MpegTsPrepareOutcome outcome =
+      prepareMpegTs(reader, path, options, cancellation);
+  if (outcome.asset) {
+    const_cast<AssetState*>(outcome.asset->impl_->state.get())->localReader =
+        std::move(reader);
+  }
+  return outcome;
+}
+
+}  // namespace wam::media::mpegts
