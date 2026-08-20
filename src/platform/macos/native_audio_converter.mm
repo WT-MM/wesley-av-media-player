@@ -1,6 +1,7 @@
 #include "native_audio_converter.hpp"
 
 #include "media/matroska_opus.hpp"
+#include "media/matroska_vorbis.hpp"
 
 #include <vector>
 
@@ -195,21 +196,37 @@ void saturatingAdd(std::uint64_t &value, std::uint64_t amount) noexcept {
     return formatTag == kAudioFormatMPEGLayer3;
   case media::MediaCodec::Opus:
     return formatTag == kAudioFormatOpus;
+  case media::MediaCodec::Vorbis:
+    return formatTag == wam::media::matroska::kVorbisAudioFormatTag;
   default:
     return false;
   }
 }
 
-// AudioToolbox swallows exactly this many leading frames from every freshly
-// created Opus converter and ignores the OpusHead pre-skip while doing it, so
-// a generation decodes this many fewer frames than its packets declare. It is
-// a property of the decoder, not of the container, which is why it is stated
-// here and not carried in the timeline.
+// AudioToolbox swallows this many leading frames before it emits anything, so a
+// generation decodes this many fewer frames than its packets declare. It is a
+// property of the decoder, not of the container, which is why it is stated here
+// and not carried in the timeline.
+//
+// Opus: a fixed 120 frames, the libopus decoder delay, which AudioToolbox drops
+// while ignoring the OpusHead pre-skip entirely.
+//
+// Vorbis: exactly one access unit. The format's first packet carries only the
+// left half of an overlap-add window and decodes to zero samples by
+// specification, so the swallow is the packet size rather than a constant.
+// Measured invariant across fresh converters and across AudioConverterReset
+// alike -- see scratchpad/vorbreset_probe.mm -- which is why Vorbis keeps the
+// cheap reset that Opus had to give up.
 [[nodiscard]] std::uint32_t decoderLeadInFrames(
-    media::MediaCodec codec) noexcept {
-  return codec == media::MediaCodec::Opus
-             ? wam::media::matroska::kOpusDecoderDelayFrames
-             : 0U;
+    media::MediaCodec codec, std::uint32_t framesPerPacket) noexcept {
+  switch (codec) {
+  case media::MediaCodec::Opus:
+    return wam::media::matroska::kOpusDecoderDelayFrames;
+  case media::MediaCodec::Vorbis:
+    return framesPerPacket;
+  default:
+    return 0U;
+  }
 }
 
 constexpr std::size_t kChannelLayoutPrefixBytes =
@@ -1242,7 +1259,8 @@ bool NativeAudioConverter::configure(const media::MediaTrackDescriptor &track,
   state.statistics.generation = generation;
   state.statistics.sampleRate = state.sample_rate;
   state.statistics.sourceChannels = state.audio.channels;
-  state.lead_in_frames = decoderLeadInFrames(track.codec);
+  state.lead_in_frames =
+      decoderLeadInFrames(track.codec, state.audio.framesPerPacket);
   state.resetExactTimeline(timeline, candidateFloorFrame, candidateCeilingFrame,
                            candidateCeilingKnown);
   return true;

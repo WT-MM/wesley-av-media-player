@@ -242,6 +242,8 @@ if(APPLE)
     src/media/audio_codec_timing.hpp
     src/media/matroska_opus.hpp
     src/media/matroska_opus.cpp
+    src/media/matroska_vorbis.hpp
+    src/media/matroska_vorbis.cpp
     src/media/matroska_ebml.hpp
     src/media/matroska_ebml.cpp
     src/media/matroska_demuxer.hpp
@@ -669,6 +671,11 @@ if(BUILD_TESTING)
     target_link_libraries(wam_matroska_opus_test PRIVATE wam_native_core)
     add_test(NAME matroska_opus COMMAND wam_matroska_opus_test)
 
+    add_executable(wam_matroska_vorbis_test
+      tests/matroska_vorbis_test.cpp)
+    target_link_libraries(wam_matroska_vorbis_test PRIVATE wam_native_core)
+    add_test(NAME matroska_vorbis COMMAND wam_matroska_vorbis_test)
+
     add_executable(wam_matroska_demuxer_test
       tests/matroska_demuxer_test.cpp)
     target_link_libraries(wam_matroska_demuxer_test PRIVATE wam_native_core)
@@ -742,6 +749,7 @@ if(BUILD_TESTING)
         wam_matroska_aac_test
         wam_matroska_ebml_test
         wam_matroska_opus_test
+        wam_matroska_vorbis_test
         wam_matroska_demuxer_test
         wam_video_codec_configuration_test
         wam_native_media_source_test
@@ -761,6 +769,7 @@ if(BUILD_TESTING)
       matroska_aac
       matroska_ebml
       matroska_opus
+      matroska_vorbis
       matroska_demuxer
       video_codec_configuration
       native_media_source

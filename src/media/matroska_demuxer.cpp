@@ -2,6 +2,7 @@
 
 #include "media/matroska_aac.hpp"
 #include "media/matroska_opus.hpp"
+#include "media/matroska_vorbis.hpp"
 #include "media/video_codec_configuration.hpp"
 
 #include <algorithm>
@@ -25,6 +26,7 @@ namespace {
 constexpr std::size_t kCopyChunkBytes{64U * 1024U};
 constexpr std::uint32_t kAacFormatTag{0x61616320U};
 constexpr std::uint32_t kOpusFormatTag{0x6F707573U};
+constexpr std::uint32_t kVorbisFormatTag{kVorbisAudioFormatTag};
 constexpr std::uint32_t kMonoLayoutTag{0x00640001U};
 constexpr std::uint32_t kStereoLayoutTag{0x00650002U};
 
@@ -468,7 +470,7 @@ inline constexpr std::size_t kOpusTailProbeClusters{8};
 }
 
 [[nodiscard]] bool isAudioCodec(std::string_view id) noexcept {
-  return id == "A_AAC" || id == "A_OPUS";
+  return id == "A_AAC" || id == "A_OPUS" || id == "A_VORBIS";
 }
 
 [[nodiscard]] const TrackEntry* chooseTrack(
@@ -924,6 +926,83 @@ struct OpusPacketGridProbe {
   bool found{false};
 };
 
+// Visits every Block belonging to one track inside one cluster. Shared by the
+// Opus and Vorbis probes so the tail search below has exactly one
+// implementation.
+template <typename OnBlock>
+[[nodiscard]] bool visitTrackBlocksInCluster(
+    SeekableByteReader& reader, const Cluster& cluster,
+    const ParseOptions& options, std::uint64_t trackNumber,
+    CancellationToken cancellation, std::size_t index, const OnBlock& onBlock) {
+  auto cursor = beginClusterChildCursor(reader, cluster.data, options);
+  if (!cursor) {
+    return false;
+  }
+  CapturedBlockVisitor visitor;
+  while (!cursor->done()) {
+    visitor.reset();
+    const ParseOutcome outcome =
+        parseClusterChildAt(reader, *cursor, visitor, options, cancellation);
+    if (!outcome.ok()) {
+      return false;
+    }
+    if (!visitor.emitted || visitor.header.trackNumber != trackNumber) {
+      continue;
+    }
+    if (!onBlock(index, visitor)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// Tail: the last audio Block in the file carries the DiscardPadding, so the
+// exact end of the decoded stream is its grid end minus that padding. Codec
+// independent -- both Opus and Vorbis state their end-of-stream overrun this
+// way.
+[[nodiscard]] bool probeAudioTailBlock(
+    SeekableByteReader& reader, std::span<const Cluster> clusters,
+    const ParseOptions& options, std::uint64_t trackNumber,
+    CancellationToken cancellation, OpusPacketGridProbe* probe) {
+  const std::size_t tailStart =
+      clusters.size() > kOpusTailProbeClusters
+          ? clusters.size() - kOpusTailProbeClusters
+          : 0;
+  for (std::size_t index = tailStart; index < clusters.size(); ++index) {
+    if (cancellation.cancelled()) {
+      return false;
+    }
+    if (!clusters[index].timestamp) {
+      return false;
+    }
+    bool failed = false;
+    if (!visitTrackBlocksInCluster(
+            reader, clusters[index], options, trackNumber, cancellation, index,
+            [&](std::size_t clusterIndex, const CapturedBlockVisitor& block) {
+              const auto tick = signedBlockTick(
+                  *clusters[clusterIndex].timestamp,
+                  block.header.relativeTimestamp);
+              if (!tick || block.frameCount == 0) {
+                failed = true;
+                return false;
+              }
+              probe->tailBlockOffset = block.header.containerEncoded.offset;
+              probe->tailBlockTick = *tick;
+              probe->tailBlockFrameCount = block.frameCount;
+              probe->tailDiscardPaddingNanoseconds =
+                  block.group.discardPaddingNanoseconds.value_or(0);
+              probe->found = true;
+              return true;
+            })) {
+      return false;
+    }
+    if (failed) {
+      return false;
+    }
+  }
+  return probe->found;
+}
+
 [[nodiscard]] bool probeOpusPacketGrid(
     SeekableByteReader& reader, std::span<const Cluster> clusters,
     const ParseOptions& options, std::uint64_t trackNumber,
@@ -931,29 +1010,10 @@ struct OpusPacketGridProbe {
   if (clusters.empty()) {
     return false;
   }
-  CapturedBlockVisitor visitor;
   const auto visitCluster = [&](std::size_t index,
                                 const auto& onBlock) -> bool {
-    auto cursor = beginClusterChildCursor(reader, clusters[index].data,
-                                          options);
-    if (!cursor) {
-      return false;
-    }
-    while (!cursor->done()) {
-      visitor.reset();
-      const ParseOutcome outcome =
-          parseClusterChildAt(reader, *cursor, visitor, options, cancellation);
-      if (!outcome.ok()) {
-        return false;
-      }
-      if (!visitor.emitted || visitor.header.trackNumber != trackNumber) {
-        continue;
-      }
-      if (!onBlock(index, visitor)) {
-        return false;
-      }
-    }
-    return true;
+    return visitTrackBlocksInCluster(reader, clusters[index], options,
+                                     trackNumber, cancellation, index, onBlock);
   };
 
   // Head: the first audio Block's first frame states the packet duration the
@@ -1001,43 +1061,172 @@ struct OpusPacketGridProbe {
     return false;
   }
 
-  // Tail: the last audio Block in the file carries the DiscardPadding, so the
-  // exact end of the decoded stream is its grid end minus that padding.
-  const std::size_t tailStart =
-      clusters.size() > kOpusTailProbeClusters
-          ? clusters.size() - kOpusTailProbeClusters
-          : 0;
-  for (std::size_t index = tailStart; index < clusters.size(); ++index) {
-    if (cancellation.cancelled()) {
-      return false;
-    }
-    if (!clusters[index].timestamp) {
-      return false;
-    }
-    bool failed = false;
-    if (!visitCluster(index, [&](std::size_t clusterIndex,
-                                 const CapturedBlockVisitor& block) {
-          const auto tick = signedBlockTick(*clusters[clusterIndex].timestamp,
-                                            block.header.relativeTimestamp);
-          if (!tick || block.frameCount == 0) {
-            failed = true;
-            return false;
-          }
-          probe->tailBlockOffset = block.header.containerEncoded.offset;
-          probe->tailBlockTick = *tick;
-          probe->tailBlockFrameCount = block.frameCount;
-          probe->tailDiscardPaddingNanoseconds =
-              block.group.discardPaddingNanoseconds.value_or(0);
-          probe->found = true;
-          return true;
-        })) {
-      return false;
-    }
-    if (failed) {
-      return false;
-    }
+  return probeAudioTailBlock(reader, clusters, options, trackNumber,
+                             cancellation, probe);
+}
+
+[[nodiscard]] bool makeVorbisAudioDescriptor(
+    SeekableByteReader& reader, const TrackEntry& entry,
+    const MediaSourceLimits& limits, std::span<const Cluster> clusters,
+    std::span<const TrackConstraint> constraints,
+    std::uint64_t timestampScaleNanoseconds, CancellationToken cancellation,
+    MediaTrackDescriptor* result, TrackRuntime* runtime) {
+  const auto id = trackId(entry.number);
+  // Vorbis carries a CodecDelay -- measured, not assumed: ffmpeg writes
+  // 23,219,955 ns for a 44.1 kHz track, which is one 1024-frame block. It
+  // states no SeekPreRoll, and a track that does is describing warm-up this
+  // path has not reasoned about, so it still falls back.
+  if (!id || !entry.audio || !entry.codecPrivate ||
+      !selectedTrackFeaturesSupported(entry, true) ||
+      entry.seekPreRollNanoseconds != 0U || clusters.empty()) {
+    return false;
   }
-  return probe->found;
+  std::vector<std::byte> header;
+  if (!readRange(reader, *entry.codecPrivate, &header, cancellation)) {
+    return false;
+  }
+  const VorbisAdmission admission = parseVorbisCodecPrivate(header);
+  if (!admission.admitted()) {
+    return false;
+  }
+  const VorbisConfiguration& configuration = *admission.configuration;
+  const std::uint32_t sampleRate = configuration.sampleRate;
+  const std::uint32_t samplesPerAccessUnit =
+      configuration.samplesPerAccessUnit();
+  // The identification header and the Matroska Audio element must agree; a
+  // disagreement means the container is describing a stream different from the
+  // one the decoder would produce.
+  if (entry.audio->samplingFrequency != static_cast<double>(sampleRate) ||
+      entry.audio->channels != configuration.channelCount ||
+      entry.audio->outputSamplingFrequency ||
+      sampleRate > limits.maximumAudioSampleRate ||
+      configuration.channelCount > limits.maximumAudioChannels ||
+      samplesPerAccessUnit == 0U) {
+    return false;
+  }
+
+  // THE identity that makes the Vorbis trim exact, and the happy discovery
+  // that it is checkable at all: the offset of the presentation grid is
+  // derived from the format (one overlap-add block, samplesPerAccessUnit
+  // frames), and the container states the same number independently as
+  // CodecDelay. Requiring them to agree means a file whose muxer disagreed
+  // with the format falls back instead of being trimmed on a guess. The
+  // comparison is made in the frame domain the nanosecond value was rounded
+  // from, because 1024/44100 s is not a whole number of nanoseconds.
+  if (entry.codecDelayNanoseconds >
+      static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
+    return false;
+  }
+  const auto codecDelayFrames = vorbisFramesFromNanoseconds(
+      static_cast<std::int64_t>(entry.codecDelayNanoseconds), sampleRate);
+  if (!codecDelayFrames || *codecDelayFrames != samplesPerAccessUnit) {
+    return false;
+  }
+
+  ParseOptions options = parserOptions(limits, constraints);
+  OpusPacketGridProbe probe;
+  probe.samplesPerAccessUnit = samplesPerAccessUnit;
+  if (!probeAudioTailBlock(reader, clusters, options, entry.number,
+                           cancellation, &probe)) {
+    return false;
+  }
+  // Vorbis states no SeekPreRoll. The AAC floor of two access units is already
+  // what the format needs: one packet is swallowed as the decoder's lead-in and
+  // the next primes the overlap-add window, so the first published frame after
+  // a seek is fully reconstructed.
+  const std::uint64_t priming = kAacPrimingAccessUnits;
+  static_assert(kAacPrimingAccessUnits <= kMaximumAudioPrimingAccessUnits);
+
+  // Presentation-grid origin is one access unit before zero: Vorbis' first
+  // packet carries only half an overlap-add window and decodes to no samples,
+  // so ordinal 0 presents samplesPerAccessUnit frames early. This is the exact
+  // structural analogue of the Opus pre-skip and it flows through the same
+  // fields. Reduced in the frame domain so no rounding enters the origin.
+  const std::uint64_t originDivisor =
+      std::gcd(static_cast<std::uint64_t>(samplesPerAccessUnit),
+               static_cast<std::uint64_t>(sampleRate));
+  const MediaTime origin{
+      -static_cast<std::int64_t>(samplesPerAccessUnit / originDivisor),
+      static_cast<std::int32_t>(sampleRate / originDivisor)};
+  if (!origin.valid()) {
+    return false;
+  }
+
+  // Exact end of the decoded stream, in track-rate frames from media zero:
+  //   (lastOrdinal + lacedFrames) * samplesPerAccessUnit
+  //     - samplesPerAccessUnit - discardPadding
+  const auto tailProjection = nearestAacAccessUnitForMatroskaTick(
+      probe.tailBlockTick, MediaTime{0, 1}, sampleRate,
+      timestampScaleNanoseconds, samplesPerAccessUnit);
+  if (!aacProjectionOnGrid(tailProjection, kMaximumOpusGridTickResidual)) {
+    return false;
+  }
+  const auto discardFrames = vorbisFramesFromNanoseconds(
+      probe.tailDiscardPaddingNanoseconds, sampleRate);
+  if (!discardFrames || *discardFrames >= samplesPerAccessUnit) {
+    return false;
+  }
+  const __int128 endOrdinal =
+      static_cast<__int128>(tailProjection->accessUnitOrdinal) +
+      static_cast<__int128>(probe.tailBlockFrameCount);
+  const __int128 endFrame =
+      endOrdinal * static_cast<__int128>(samplesPerAccessUnit) -
+      static_cast<__int128>(samplesPerAccessUnit) -
+      static_cast<__int128>(*discardFrames);
+  if (endFrame <= 0 ||
+      endFrame > static_cast<__int128>(std::numeric_limits<std::int64_t>::max())) {
+    return false;
+  }
+  const auto endFrameValue = static_cast<std::uint64_t>(endFrame);
+  const std::uint64_t durationDivisor =
+      std::gcd(endFrameValue, static_cast<std::uint64_t>(sampleRate));
+  const MediaTime exactDuration{
+      static_cast<std::int64_t>(endFrameValue / durationDivisor),
+      static_cast<std::int32_t>(sampleRate / durationDivisor)};
+  if (!exactDuration.valid()) {
+    return false;
+  }
+
+  result->id = *id;
+  result->kind = MediaTrackKind::Audio;
+  result->codec = MediaCodec::Vorbis;
+  result->timeBase = MediaTime{1, static_cast<std::int32_t>(sampleRate)};
+  // As with Opus, this is the exact decoded sample count after both trims, not
+  // the container's declared Duration: the audio consumer uses it as the
+  // tail-trim ceiling.
+  result->duration = exactDuration;
+  result->language = inlineString(entry.language);
+  result->codecConfigurationKind = MediaCodecConfigurationKind::AudioMagicCookie;
+  result->codecConfiguration.assign(header.begin(), header.end());
+  MediaAudioFormat format;
+  format.sampleRate = sampleRate;
+  format.channels = configuration.channelCount;
+  format.formatTag = kVorbisFormatTag;
+  format.framesPerPacket = samplesPerAccessUnit;
+  format.channelLayoutTag =
+      configuration.channelCount == 1 ? kMonoLayoutTag : kStereoLayoutTag;
+  format.channelLayoutPresent = true;
+  result->audio = format;
+  runtime->entry = entry;
+  runtime->id = *id;
+  runtime->kind = MediaTrackKind::Audio;
+  runtime->codec = MediaCodec::Vorbis;
+  runtime->audioSampleRate = sampleRate;
+  runtime->audioSamplesPerAccessUnit = samplesPerAccessUnit;
+  runtime->audioPresentationOrigin = origin;
+  // Measured worst residual on an ffmpeg mux is 0.72 ticks, which the AAC
+  // tolerance of 1 would already pass. Two is kept because the residual is a
+  // cluster-timestamp rounding artefact whose sign varies, and two ticks is
+  // still an order of magnitude below one access unit (23 ticks at 1024
+  // frames / 44.1 kHz).
+  runtime->audioTickResidualTolerance = kMaximumOpusGridTickResidual;
+  runtime->audioGridOffsetFrames = samplesPerAccessUnit;
+  runtime->audioPrimingAccessUnits = priming;
+  runtime->audioTailBlockKnown = true;
+  runtime->audioTailBlockOffset = probe.tailBlockOffset;
+  runtime->audioTailDiscardPaddingNanoseconds =
+      probe.tailDiscardPaddingNanoseconds;
+  return true;
 }
 
 [[nodiscard]] bool makeOpusAudioDescriptor(
@@ -1210,6 +1399,11 @@ struct OpusPacketGridProbe {
     return makeOpusAudioDescriptor(reader, entry, limits, clusters, constraints,
                                    timestampScaleNanoseconds, cancellation,
                                    result, runtime);
+  }
+  if (inlineString(entry.codecId) == "A_VORBIS") {
+    return makeVorbisAudioDescriptor(reader, entry, limits, clusters,
+                                     constraints, timestampScaleNanoseconds,
+                                     cancellation, result, runtime);
   }
   if (!entry.audio || !entry.codecPrivate ||
       !selectedTrackFeaturesSupported(entry)) {

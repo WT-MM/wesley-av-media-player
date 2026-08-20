@@ -19,7 +19,12 @@ namespace wam::media {
 // layers that has to relax for it.
 [[nodiscard]] constexpr bool
 audioCodecPrecedesStreamOrigin(MediaCodec codec) noexcept {
-  return codec == MediaCodec::Opus;
+  // Vorbis joins Opus for the same structural reason stated differently by the
+  // format: its first packet carries only half an overlap-add window and
+  // decodes to no samples, so access unit 0 presents one block before media
+  // zero. Where Opus states the offset as a CodecDelay/pre-skip field, Vorbis
+  // implies it, but it lands in exactly the same arithmetic.
+  return codec == MediaCodec::Opus || codec == MediaCodec::Vorbis;
 }
 
 } // namespace wam::media

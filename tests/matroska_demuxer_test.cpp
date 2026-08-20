@@ -300,6 +300,48 @@ Bytes fromOctets(std::span<const std::uint8_t> octets) {
   return result;
 }
 
+// A Matroska A_VORBIS CodecPrivate: a packet-count byte, Xiph-lacing lengths
+// for the identification and comment headers, then the three payloads. Stereo
+// at kAudioSampleRate, with the packed block-size byte left to the caller so a
+// test can vary that one field and nothing else.
+Bytes vorbisCodecPrivate(std::uint8_t packedBlockSizes) {
+  Bytes identification(30U, std::byte{0});
+  identification[0] = std::byte{0x01};
+  const char *magic = "vorbis";
+  for (std::size_t index = 0; index < 6U; ++index) {
+    identification[index + 1U] =
+        static_cast<std::byte>(static_cast<std::uint8_t>(magic[index]));
+  }
+  identification[11] = std::byte{0x02};
+  for (std::size_t index = 0; index < 4U; ++index) {
+    identification[12U + index] =
+        static_cast<std::byte>((kAudioSampleRate >> (8U * index)) & 0xFFU);
+  }
+  identification[28] = static_cast<std::byte>(packedBlockSizes);
+  identification[29] = std::byte{0x01};
+
+  const auto namedHeader = [magic](std::uint8_t type, std::size_t size) {
+    Bytes header(size, std::byte{0x5A});
+    header[0] = static_cast<std::byte>(type);
+    for (std::size_t index = 0; index < 6U; ++index) {
+      header[index + 1U] =
+          static_cast<std::byte>(static_cast<std::uint8_t>(magic[index]));
+    }
+    return header;
+  };
+  const Bytes comment = namedHeader(3U, 16U);
+  const Bytes setup = namedHeader(5U, 64U);
+
+  Bytes blob;
+  blob.push_back(std::byte{0x02});
+  blob.push_back(static_cast<std::byte>(identification.size()));
+  blob.push_back(static_cast<std::byte>(comment.size()));
+  blob.insert(blob.end(), identification.begin(), identification.end());
+  blob.insert(blob.end(), comment.begin(), comment.end());
+  blob.insert(blob.end(), setup.begin(), setup.end());
+  return blob;
+}
+
 // ---------------------------------------------------------------------------
 // Block, Cluster, and document assembly with exact retained byte facts.
 // ---------------------------------------------------------------------------
@@ -1617,10 +1659,12 @@ void testCodecAdmissionAndSelection() {
     // replaces the previous contract, which admitted video-only whenever
     // audio was optional.
     //
-    // The example used to be A_OPUS, which is now decoded natively. Vorbis is
-    // the current stand-in for "audio this source does not decode".
+    // The example used to be A_OPUS, then A_VORBIS; both are now decoded
+    // natively. FLAC is the current stand-in for "audio this source does not
+    // decode" -- it is a codec Matroska can carry that isAudioCodec() does not
+    // name, so the track is never selected in the first place.
     FixtureSpec spec;
-    spec.audioCodecId = "A_VORBIS";
+    spec.audioCodecId = "A_FLAC";
     expectPrepareError(
         spec, MatroskaDemuxError::TrackSelection,
         "a document whose only audio is undecodable falls back whole-file");
@@ -1639,7 +1683,7 @@ void testCodecAdmissionAndSelection() {
   }
   {
     FixtureSpec spec;
-    spec.audioCodecId = "A_VORBIS";
+    spec.audioCodecId = "A_FLAC";
     MediaSourceOpenOptions options;
     options.selection.requireAudio = true;
     const PreparedFixture prepared = prepareFixture(spec, options);
@@ -1695,6 +1739,41 @@ void testCodecAdmissionAndSelection() {
     expectPrepareError(
         spec, MatroskaDemuxError::CodecConfiguration,
         "an Opus track with no CodecDelay at all falls back");
+  }
+  {
+    // A_VORBIS is likewise a decodable CodecID now, so its refusals are codec
+    // admission rather than track selection.
+    FixtureSpec spec;
+    spec.audioCodecId = "A_VORBIS";
+    expectPrepareError(
+        spec, MatroskaDemuxError::CodecConfiguration,
+        "a Vorbis track whose CodecPrivate is not Xiph-laced headers falls "
+        "back");
+  }
+  {
+    // Well-formed headers, but the container states no CodecDelay to
+    // corroborate the one-block presentation offset the trim is derived from.
+    FixtureSpec spec;
+    spec.audioCodecId = "A_VORBIS";
+    spec.audioCodecPrivate = vorbisCodecPrivate(0xBBU);
+    expectPrepareError(
+        spec, MatroskaDemuxError::CodecConfiguration,
+        "a Vorbis track with no CodecDelay at all falls back");
+  }
+  {
+    // The variable-block-size refusal, at the demuxer level. 0xB8 is
+    // blocksize0 256 / blocksize1 2048 -- exactly what reference libvorbis
+    // emits -- whose per-packet duration this demuxer's constant-rate grid
+    // cannot represent. It falls back deliberately, with a correct CodecDelay
+    // present, so the refusal is provably the block-size gate and nothing else.
+    FixtureSpec spec;
+    spec.audioCodecId = "A_VORBIS";
+    spec.audioCodecPrivate = vorbisCodecPrivate(0xB8U);
+    spec.audioCodecDelayNanoseconds = 21'333'333;
+    expectPrepareError(
+        spec, MatroskaDemuxError::CodecConfiguration,
+        "a Vorbis track with unequal block sizes falls back rather than "
+        "being placed on a constant-duration grid");
   }
   {
     FixtureSpec spec;
