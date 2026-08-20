@@ -1,6 +1,7 @@
 #include "native_audio_session.hpp"
 
 #include "media/audio_codec_timing.hpp"
+#include "media/matroska_vorbis.hpp"
 
 #import <AudioToolbox/AudioToolbox.h>
 
@@ -169,6 +170,9 @@ void assignError(std::string* error, const char* message) noexcept {
     return track.audio->formatTag == kAudioFormatMPEGLayer3;
   case media::MediaCodec::Opus:
     return track.audio->formatTag == kAudioFormatOpus;
+  case media::MediaCodec::Vorbis:
+    return track.audio->formatTag ==
+           wam::media::matroska::kVorbisAudioFormatTag;
   default:
     return false;
   }
