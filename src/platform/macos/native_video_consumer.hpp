@@ -4,6 +4,8 @@
 #include "native_media_clock.hpp"
 #include "native_surface_budget.hpp"
 #include "native_tracked_video_output.hpp"
+#include "software_vp8_decoder.hpp"
+#include "video_decode_lane.hpp"
 #include "video_toolbox_decoder.hpp"
 
 #include <cstddef>
@@ -233,6 +235,28 @@ class NativeVideoConsumer final : public media::NativeVideoConsumer {
               kMaximumTrackedOutputSurfaceOwnership <=
           static_cast<std::size_t>(kNativeSurfaceBudgetMaximumSurfaces),
       "decoded-surface ownership must fit the process-wide surface budget");
+
+  // The software VP8 stage owns its surfaces differently: libvpx decodes
+  // synchronously, so there is no in-flight submission window and the only
+  // decoder-held surface is the one frame waiting for drainPresentation().
+  // Every VP8 surface in the process comes from that stage's one bounded
+  // CVPixelBufferPool, so the pool's depth IS this route's whole VP8
+  // footprint -- which is what makes these two asserts the entire accounting
+  // rather than a sample of it. The pool must additionally cover what the
+  // renderer retains past WAM's last lease, which no lease count can see and
+  // which was therefore measured (software_vp8_decoder.hpp).
+  // 1 + 1 + 1 + 2 + 1 = 6 <= 10, leaving four surfaces of headroom.
+  static_assert(kSoftwareVp8PoolDepth ==
+                    kSoftwareVp8DecoderOwnedSurfaces + kDecodedQueueCapacity +
+                        1U + kMaximumTrackedOutputSurfaceOwnership +
+                        kSoftwareVp8RendererRetainedSurfaces,
+                "the software VP8 pool depth must equal the surfaces this "
+                "route can hold at one instant, or the pool becomes either a "
+                "stall or an unbounded allocator");
+  static_assert(kSoftwareVp8PoolDepth <=
+                    static_cast<std::size_t>(kNativeSurfaceBudgetMaximumSurfaces),
+                "software VP8 pool depth must fit the process-wide surface "
+                "budget");
 
   [[nodiscard]] static std::unique_ptr<NativeVideoConsumer> create(
       std::shared_ptr<void> externalLifetime,
