@@ -86,6 +86,41 @@ Item {
                     "a stationary pointer never emits a duplicate target");
         }
 
+        function test_pointerTargetsAreContinuousNotStepQuantized() {
+            // Slider.valueAt() rounds through stepSize. Routing pointer motion
+            // through it snapped every drag onto five-second stops: the handle
+            // did not sit under the pointer and a whole drag produced only a
+            // handful of distinct preview targets. Pointer positions between
+            // two keyboard steps must resolve to their own distinct values.
+            verify(scrubber.stepSize > 0,
+                   "the keyboard step is still configured");
+            scrubber.beginPreviewPacing();
+
+            const fractions = [0.071, 0.072, 0.073, 0.074];
+            const seen = [];
+            for (let i = 0; i < fractions.length; ++i) {
+                const value = scrubber.valueForPointer(pointerAt(fractions[i]));
+                fuzzyCompare(value, fractions[i] * 100, 0.001,
+                             "the pointer target interpolates the timeline");
+                verify(seen.indexOf(value) === -1,
+                       "neighbouring pointer positions stay distinct");
+                seen.push(value);
+            }
+
+            // A quarter-timeline drag sampled at pointer cadence must produce a
+            // distinct target per sample, not one per keyboard step.
+            scrubber.previewAt(pointerAt(0.10));
+            compare(previews.length, 1);
+            let emitted = 1;
+            for (let s = 1; s <= 20; ++s) {
+                scrubber.previewAt(pointerAt(0.10 + s * 0.25 / 20));
+                scrubber.advancePreviewPacer(0.016);
+            }
+            verify(previews.length >= 20,
+                   "a paced quarter-timeline drag emits a target per frame, "
+                   + "got " + previews.length);
+        }
+
         function test_fractionalFramesAdaptWithoutBursting() {
             scrubber.beginPreviewPacing();
             scrubber.previewAt(pointerAt(0.10));

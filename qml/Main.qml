@@ -542,7 +542,7 @@ ApplicationWindow {
         FileDialog {
             title: "Open Media"
             fileMode: FileDialog.OpenFile
-            nameFilters: ["Media files (*.mp4 *.mkv *.mov *.avi *.webm *.m4v *.mp3 *.m4a *.wav *.flac *.ogg *.opus *.aac *.ts *.m2ts *.wmv *.flv *.m3u *.m3u8 *.pls *.cue)", "All files (*)"]
+            nameFilters: ["Media files (*.mp4 *.mkv *.mov *.avi *.webm *.m4v *.mk3d *.mka *.mpg *.mpeg *.3gp *.3g2 *.vob *.ogv *.qt *.mp3 *.m4a *.m4b *.wav *.aiff *.aif *.flac *.ogg *.oga *.opus *.aac *.ac3 *.eac3 *.dts *.caf *.amr *.w64 *.wma *.ts *.m2ts *.mts *.wmv *.asf *.flv *.m3u *.m3u8 *.pls *.cue)", "All files (*)"]
             onAccepted: {
                 root.controller.open(selectedFile);
                 root.revealControls();
