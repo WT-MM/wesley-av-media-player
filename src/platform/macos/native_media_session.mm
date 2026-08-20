@@ -803,6 +803,9 @@ struct NativeMediaSession::Impl final {
         publicPreviewPending = false;
         publishedCommit.reset();
         publicCommitPending = false;
+        // A live failure supersedes an open commit handshake; nothing will
+        // answer it, and ending must not stay suppressed behind it.
+        commitRunStatePending = false;
       }
       if (factMailbox.has_value()) {
         pendingFailure = protocol::Failed{stamp, reason};
@@ -889,6 +892,7 @@ struct NativeMediaSession::Impl final {
       appliedPaused = true;
       publicAppliedPaused = true;
       publicCommitPending = false;
+      commitRunStatePending = true;
       publishedStart.reset();
       startPending = false;
       publicStartAccepted = true;
@@ -2872,7 +2876,7 @@ if (result != NativeAudioSessionProgress::Done) {
     std::lock_guard lock(mutex);
     if (!dispatcherExhausted || endingLatched || endedPublished ||
         liveFailed || publishedStop.has_value() || publicCommitPending ||
-        !startedPublished ||
+        commitRunStatePending || !startedPublished ||
         !protocol::validLive(latestAcceptedStamp)) {
       return endingLatched;
     }
@@ -3293,6 +3297,18 @@ if (result != NativeAudioSessionProgress::Done) {
   bool publicEnded{false};
   bool publicLiveFailed{false};
   bool publicCommitPending{false};
+  // A CommitReady has been published and the promoted generation's
+  // authoritative SetRunState has not arrived yet. The commit protocol
+  // guarantees that command -- the Router issues it synchronously from
+  // onNativeCommitReady -- and setRunState() already refuses a run command
+  // that arrives before the CommitReady is taken, so the handshake is not
+  // complete when publicCommitPending clears; it is complete when the run
+  // command lands. Ending must not latch inside that window: it would capture
+  // the CommitSeek stamp as endingStamp while the Router has already reserved
+  // a newer serial for the run command, so the Ended fact would be dropped by
+  // endedMatches, and the run command itself would be refused with Ignored and
+  // retire the whole native route.
+  bool commitRunStatePending{false};
   bool publicPreviewHandoffPending{false};
   bool publicPreviewHandoffReady{false};
   bool publicPreviewHandoffFailed{false};
@@ -3688,6 +3704,7 @@ NativeMediaSessionCommandStatus NativeMediaSession::setRunState(
       impl_->latestAcceptedStamp = command.stamp;
       impl_->endingStamp = command.stamp;
       impl_->publicRequestedRunStamp = command.stamp;
+      impl_->commitRunStatePending = false;
       return NativeMediaSessionCommandStatus::Accepted;
     }
     // A child issue that already owns the live permit linearized before this
@@ -3710,6 +3727,9 @@ NativeMediaSessionCommandStatus NativeMediaSession::setRunState(
     impl_->publishedRun = command;
     impl_->publicRequestedRunStamp = command.stamp;
     impl_->latestAcceptedStamp = command.stamp;
+    // The commit handshake is complete: endingStamp captured from here on is
+    // the stamp the Router is actually waiting on.
+    impl_->commitRunStatePending = false;
   }
   if (command.paused) {
     impl_->dependencies.wake->publishVideoDueHostTicks(0);
@@ -3808,6 +3828,8 @@ NativeMediaSessionCommandStatus NativeMediaSession::commitSeek(
     impl_->audioClockSlot.reset();
     impl_->videoDrawSlot.reset();
     impl_->commitReadySlot.reset();
+    // A newer commit supersedes any handshake the previous one left open.
+    impl_->commitRunStatePending = false;
     impl_->observationRetryWakeUsed = false;
     impl_->latestAcceptedStamp = command.stamp;
   }
@@ -3964,6 +3986,8 @@ NativeMediaSessionCommandStatus NativeMediaSession::stop(
     impl_->previewFailedSlot.reset();
     impl_->commitReadySlot.reset();
     impl_->publicCommitPending = false;
+    // Retirement supersedes an open commit handshake; nothing will answer it.
+    impl_->commitRunStatePending = false;
     impl_->publicPreviewHandoffPending = false;
     impl_->publicPreviewHandoffReady = false;
     impl_->publicPreviewHandoffFailed = false;

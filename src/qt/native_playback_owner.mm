@@ -869,7 +869,13 @@ NativePlaybackOwner::executeAction(const playback_router::Action &action) {
       return rejectNativeCommand(action.runState.stamp);
     }
     const auto status = nativeSession_->setRunState(action.runState);
-    if (status != macos::NativeMediaSessionCommandStatus::Accepted) {
+    // Ignored is the session saying it is already terminal -- stopped, ended,
+    // or live-failed -- so there is nothing a run command could change. That
+    // is benign, exactly as it is for NativeStop below, and retiring the whole
+    // native route over it turns a normal end of media into a fallback to mpv.
+    // Invalid and Closed remain real protocol breaks.
+    if (status != macos::NativeMediaSessionCommandStatus::Accepted &&
+        status != macos::NativeMediaSessionCommandStatus::Ignored) {
       return rejectNativeCommand(action.runState.stamp);
     }
     return std::nullopt;

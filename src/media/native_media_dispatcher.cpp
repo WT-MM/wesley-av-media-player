@@ -1543,13 +1543,20 @@ NativeMediaDispatcherStep NativeMediaDispatcher::checkReadCapacity() noexcept {
                       stats_.selectedAudio);
     } else if (result != NativeMediaConsumeResult::Accepted) {
       // NativeAudioConsumer::capacity() carries no error out-parameter, so the
-      // port cannot say which of its gates refused, and unlike the video port
-      // it exposes no failureText() for failStep() to adopt. Name that limit
-      // in the message itself rather than emit a bare empty string: a field
-      // report then at least identifies the seam and says why it is mute.
-      failure_message_ =
-          "audio consumer refused capacity and reports no reason (audio port "
-          "exposes no error channel)";
+      // port cannot say which of its gates refused through this result. It
+      // does now expose failureText(), so prefer the port's own latched gate
+      // and fall back to naming the seam only when the port has nothing to
+      // add -- a bare empty string here would name neither.
+      try {
+        failure_message_ =
+            audio_ != nullptr ? audio_->failureText() : std::string();
+      } catch (...) {
+        failure_message_.clear();
+      }
+      if (failure_message_.empty()) {
+        failure_message_ = "audio consumer refused capacity and its port "
+                           "published no latched failure";
+      }
       return failStep(result == NativeMediaConsumeResult::Drained
                           ? NativeMediaDispatcherFailure::ConsumerProtocol
                           : NativeMediaDispatcherFailure::Consumer);
@@ -1846,11 +1853,16 @@ NativeMediaDispatcherStep NativeMediaDispatcher::failStep(
   // failure line reports class=Consumer with error="" for every one of them,
   // which names the seam but not the branch. Adopt the port's own gate text
   // when this step published nothing more specific.
-  if (failure_message_.empty() && video_ != nullptr &&
+  if (failure_message_.empty() &&
       (failure == NativeMediaDispatcherFailure::Consumer ||
        failure == NativeMediaDispatcherFailure::ConsumerProtocol)) {
     try {
-      failure_message_ = video_->failureText();
+      if (video_ != nullptr) {
+        failure_message_ = video_->failureText();
+      }
+      if (failure_message_.empty() && audio_ != nullptr) {
+        failure_message_ = audio_->failureText();
+      }
     } catch (...) {
       // A copy for a diagnostic string must never change the failure this
       // step already decided. Leaving failure_message_ empty degrades the

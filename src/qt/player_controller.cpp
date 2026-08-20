@@ -1071,30 +1071,33 @@ double PlayerController::exactNativeSeekTarget(double seconds) const noexcept {
   //
   // Floor every native target onto the same 1/64 s binary grid the resume and
   // scripted-seek paths use (15.6 ms, below one frame at 60 fps, so the
-  // handle and the picture stay visually identical), and hold the target out
-  // of the final frame so a drag to the end of the timeline commits instead
-  // of being refused.
+  // handle and the picture stay visually identical), and hold the target
+  // strictly below the duration so a drag to the end of the timeline commits
+  // instead of being refused.
   //
-  // The end guard is 1/8 s rather than one grid step because a target that
-  // lands inside the last frame's presentation interval is accepted, drawn,
-  // and then immediately overtaken by end of stream, and the commit's own
-  // SetRunState is refused by the ending session -- which retires the whole
-  // native route with "Native playback rejected an internal lifecycle
-  // command". Measured on a 40 s 30 fps clip: a commit to 39.984375 (inside
-  // the last frame) retires native every time, 39.75 and earlier never do.
-  // 1/8 s clears one frame at 10 fps, the slowest rate in the corpus, is
-  // exactly representable, and is sub-pixel on any real timeline.
+  // The guard is exactly one grid step, which is the whole of what the
+  // preflight's strict inequality needs. It was briefly 1/8 s, to hide a
+  // separate defect: a target inside the last frame's presentation interval
+  // was accepted and drawn, end of stream then overtook the commit, and the
+  // commit's own post-promotion SetRunState was refused by the just-ended
+  // session -- retiring the whole native route with "Native playback rejected
+  // an internal lifecycle command". That was never a seek-arithmetic problem;
+  // it was NativeMediaSession latching Ended inside the commit handshake,
+  // before the run command the commit protocol promises. Fixed there
+  // (commitRunStatePending), so the last frame is reachable again and the
+  // final 1/8 s of every clip is no longer dead to the scrubber.
   constexpr double kSeekGrid = 64.0;
-  constexpr double kEndGuardSeconds = 0.125;
   const double bounded = boundedSeekTarget(seconds);
   if (!std::isfinite(bounded) || bounded <= 0.0)
     return 0.0;
-  double target = bounded;
-  if (duration_ > 0.0)
-    target = std::min(target, duration_ - kEndGuardSeconds);
+  double target = std::floor(bounded * kSeekGrid) / kSeekGrid;
+  // Strictly inside the duration, on the grid: the largest admissible target
+  // is the last grid point below duration_, not duration_ itself.
+  if (duration_ > 0.0 && target >= duration_)
+    target = std::floor((duration_ - 1.0 / kSeekGrid) * kSeekGrid) / kSeekGrid;
   if (!(target > 0.0))
     return 0.0;
-  return std::floor(target * kSeekGrid) / kSeekGrid;
+  return target;
 }
 
 bool PlayerController::beginNativeScrubIntent() {

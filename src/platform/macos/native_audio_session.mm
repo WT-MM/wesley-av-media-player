@@ -6,6 +6,7 @@
 #include <array>
 #include <atomic>
 #include <cmath>
+#include <cstdio>
 #include <limits>
 #include <mutex>
 #include <numeric>
@@ -430,6 +431,15 @@ struct NativeAudioSessionControl final {
   media::NativeMediaGenerationTimeline lifecycleTimeline{};
   NativeAudioGenerationTimeline converterTimeline{};
   TimelinePlan lifecyclePlan{};
+  // Set when a StreamFormat notification froze a graph that was running, so
+  // the reconciliation knows to start the output again once the device proves
+  // unchanged. Cleared as soon as that restart is Done, or when the owner
+  // takes the session somewhere the restart no longer applies.
+  bool deviceChangeResumePending{false};
+  std::uint64_t deviceChangeRecoveries{0};
+  // Owned by publishFailureText(); NativeAudioSession::failureText() hands out
+  // a reference to it, so it is never cleared once set.
+  std::string failureText;
   bool claimHeld{true};
   bool resourceEntered{false};
   bool configured{false};
@@ -541,6 +551,140 @@ void quarantine(
   if (gSessionQuarantine == nullptr) {
     gSessionQuarantine = control;
     saturatingIncrement(gQuarantineTransfers);
+  }
+}
+
+[[nodiscard]] const char* outputFailureName(
+    NativeAudioOutputFailure failure) noexcept {
+  switch (failure) {
+  case NativeAudioOutputFailure::None: return "None";
+  case NativeAudioOutputFailure::InvalidConfiguration:
+    return "InvalidConfiguration";
+  case NativeAudioOutputFailure::ComponentUnavailable:
+    return "ComponentUnavailable";
+  case NativeAudioOutputFailure::InstanceCreationFailed:
+    return "InstanceCreationFailed";
+  case NativeAudioOutputFailure::DeviceFormatQueryFailed:
+    return "DeviceFormatQueryFailed";
+  case NativeAudioOutputFailure::DeviceRateMismatch:
+    return "DeviceRateMismatch";
+  case NativeAudioOutputFailure::DeviceListenerInstallationFailed:
+    return "DeviceListenerInstallationFailed";
+  case NativeAudioOutputFailure::DeviceListenerRemovalFailed:
+    return "DeviceListenerRemovalFailed";
+  case NativeAudioOutputFailure::MaximumFramesConfigurationFailed:
+    return "MaximumFramesConfigurationFailed";
+  case NativeAudioOutputFailure::ClientFormatConfigurationFailed:
+    return "ClientFormatConfigurationFailed";
+  case NativeAudioOutputFailure::RenderCoreActivationFailed:
+    return "RenderCoreActivationFailed";
+  case NativeAudioOutputFailure::CallbackInstallationFailed:
+    return "CallbackInstallationFailed";
+  case NativeAudioOutputFailure::InitializationFailed:
+    return "InitializationFailed";
+  case NativeAudioOutputFailure::StartFailed: return "StartFailed";
+  case NativeAudioOutputFailure::StopFailed: return "StopFailed";
+  case NativeAudioOutputFailure::UninitializationFailed:
+    return "UninitializationFailed";
+  case NativeAudioOutputFailure::CallbackDetachmentFailed:
+    return "CallbackDetachmentFailed";
+  case NativeAudioOutputFailure::InstanceDisposalFailed:
+    return "InstanceDisposalFailed";
+  case NativeAudioOutputFailure::InvalidCallbackBuffer:
+    return "InvalidCallbackBuffer";
+  case NativeAudioOutputFailure::InvalidCallbackTimestamp:
+    return "InvalidCallbackTimestamp";
+  case NativeAudioOutputFailure::ReentrantCallback:
+    return "ReentrantCallback";
+  case NativeAudioOutputFailure::FrameCursorOverflow:
+    return "FrameCursorOverflow";
+  case NativeAudioOutputFailure::RenderCoreFailed: return "RenderCoreFailed";
+  case NativeAudioOutputFailure::NativeException: return "NativeException";
+  case NativeAudioOutputFailure::DeviceBufferFramesUnsupported:
+    return "DeviceBufferFramesUnsupported";
+  }
+  return "Unknown";
+}
+
+[[nodiscard]] const char* renderFailureName(
+    NativeAudioRenderFailure failure) noexcept {
+  switch (failure) {
+  case NativeAudioRenderFailure::None: return "None";
+  case NativeAudioRenderFailure::InvalidInput: return "InvalidInput";
+  case NativeAudioRenderFailure::ReentrantCallback:
+    return "ReentrantCallback";
+  case NativeAudioRenderFailure::ResumeRejected: return "ResumeRejected";
+  case NativeAudioRenderFailure::RingContractViolation:
+    return "RingContractViolation";
+  case NativeAudioRenderFailure::ClockCommitFailed:
+    return "ClockCommitFailed";
+  case NativeAudioRenderFailure::StretchStageFailed:
+    return "StretchStageFailed";
+  }
+  return "Unknown";
+}
+
+[[nodiscard]] const char* sessionFailureName(
+    NativeAudioSessionFailure failure) noexcept {
+  switch (failure) {
+  case NativeAudioSessionFailure::None: return "None";
+  case NativeAudioSessionFailure::InvalidDependency:
+    return "InvalidDependency";
+  case NativeAudioSessionFailure::OutputUnavailable:
+    return "OutputUnavailable";
+  case NativeAudioSessionFailure::ConverterConfiguration:
+    return "ConverterConfiguration";
+  case NativeAudioSessionFailure::ClockActivation: return "ClockActivation";
+  case NativeAudioSessionFailure::OutputConfiguration:
+    return "OutputConfiguration";
+  case NativeAudioSessionFailure::Converter: return "Converter";
+  case NativeAudioSessionFailure::Output: return "Output";
+  case NativeAudioSessionFailure::Discontinuity: return "Discontinuity";
+  case NativeAudioSessionFailure::ConsumerProtocol: return "ConsumerProtocol";
+  case NativeAudioSessionFailure::RingTransition: return "RingTransition";
+  case NativeAudioSessionFailure::ClockTransition: return "ClockTransition";
+  case NativeAudioSessionFailure::OutputActivation:
+    return "OutputActivation";
+  case NativeAudioSessionFailure::TerminalPublication:
+    return "TerminalPublication";
+  }
+  return "Unknown";
+}
+
+// Names the gate that actually refused, for every audio result that would
+// otherwise reach the dispatcher's failure line carrying nothing. The two
+// leaves that can fail without an error out-parameter are the output
+// AudioUnit and the render core, and only this session can see either, so it
+// is the only place the text can be composed at all. Cached in the control
+// block so failureText() can hand out a stable reference.
+void publishFailureText(NativeAudioSessionControl& control,
+                        std::string* error) noexcept {
+  try {
+    const NativeAudioOutputFailure outputFailure =
+        control.output != nullptr ? control.output->facts().failure
+                                  : NativeAudioOutputFailure::None;
+    const NativeAudioRenderFailure renderFailure = control.renderCore.failure();
+    if (outputFailure != NativeAudioOutputFailure::None) {
+      control.failureText =
+          std::string("audio output: ") + outputFailureName(outputFailure) +
+          " (osStatus " +
+          std::to_string(
+              static_cast<long long>(control.output->facts().osStatus)) +
+          ")";
+    } else if (renderFailure != NativeAudioRenderFailure::None) {
+      control.failureText =
+          std::string("audio render core: ") + renderFailureName(renderFailure);
+    } else if (control.failure != NativeAudioSessionFailure::None) {
+      control.failureText =
+          std::string("audio session: ") + sessionFailureName(control.failure);
+    } else {
+      return;
+    }
+    if (error != nullptr && error->empty()) {
+      *error = control.failureText;
+    }
+  } catch (...) {
+    // A diagnostic string must never change the failure already decided.
   }
 }
 
@@ -711,6 +855,134 @@ void clearOutputWake(NativeAudioSessionControl& control) noexcept {
   control.outputSuspension = OutputSuspension::Suspended;
   control.state = NativeAudioSessionState::Ready;
   return NativeAudioSessionProgress::Done;
+}
+
+// Outcome of one reconciliation pass over an outstanding StreamFormat
+// notification. Idle means there was nothing to do.
+enum class DeviceReconcile : std::uint8_t {
+  Idle,
+  Progressed,
+  Failed,
+};
+
+// The owner-thread half of the StreamFormat listener, and the reason a
+// notification no longer ends native audio. The listener revoked render
+// admission without knowing whether the device actually changed; this decides.
+//
+// A rate that really moved fails closed, exactly as start()'s own revalidation
+// does. An unchanged rate is recovered by reusing the pause-suspend lever's
+// machinery verbatim: freeze the graph, take the output to a proved stop, then
+// start it again. Reuse is not incidental. A device that stops under a running
+// graph must not leave the authoritative clock free-running across the silent
+// gap, and settlePausedAfterStop() is what reconciles the callback-local
+// running fact and forces the next callback to establish a fresh host-tick
+// anchor. Doing anything cheaper would resume audio against a clock that had
+// advanced while nothing was rendering.
+[[nodiscard]] DeviceReconcile reconcileOutputDeviceChange(
+    NativeAudioSessionControl& control) noexcept {
+  if (control.output == nullptr) {
+    return DeviceReconcile::Idle;
+  }
+  const NativeAudioOutputFacts facts = control.output->facts();
+  if (facts.fatal) {
+    // Already latched by something else; outputFailed() owns the report.
+    return DeviceReconcile::Idle;
+  }
+  if (!facts.deviceChangePending && !control.deviceChangeResumePending) {
+    return DeviceReconcile::Idle;
+  }
+  // Teardown owns the output outright once any of these is in flight, and a
+  // retiring/closing session has no interest in resuming a device.
+  if (control.retireRequested || control.closeDone ||
+      control.lifecycle != SessionLifecycle::None ||
+      control.terminalOverride != TerminalOverride::None ||
+      (control.state != NativeAudioSessionState::Started &&
+       control.state != NativeAudioSessionState::Ready)) {
+    control.deviceChangeResumePending = false;
+    return DeviceReconcile::Idle;
+  }
+
+  if (facts.deviceChangePending) {
+    if (control.state == NativeAudioSessionState::Started &&
+        control.outputSuspension == OutputSuspension::None) {
+      // The device went out from under a running graph. Freeze it the way a
+      // pause suspend does, and remember that this freeze was not the user's
+      // idea so the resume below can undo it.
+      control.deviceChangeResumePending = true;
+      control.renderCore.setPaused(true);
+      if (!control.clock.pause(control.generation)) {
+        control.latch(NativeAudioSessionFailure::ClockTransition);
+        return DeviceReconcile::Failed;
+      }
+      control.outputSuspension = OutputSuspension::Stopping;
+    }
+    const NativeAudioOutputProgress reconciled =
+        control.output->reconcileDeviceChange();
+    if (reconciled == NativeAudioOutputProgress::Quiescing) {
+      return DeviceReconcile::Progressed;
+    }
+    if (reconciled != NativeAudioOutputProgress::Done) {
+      control.latch(NativeAudioSessionFailure::Output);
+      return DeviceReconcile::Failed;
+    }
+    // reconcileDeviceChange() proved a Done stop; finish the suspend
+    // bookkeeping so the session and the output agree the device is idle.
+    if (control.outputSuspension == OutputSuspension::Stopping) {
+      if (!settleStopped(control, control.generation)) {
+        return DeviceReconcile::Failed;
+      }
+      control.outputSuspension = OutputSuspension::Suspended;
+      control.state = NativeAudioSessionState::Ready;
+    }
+    return DeviceReconcile::Progressed;
+  }
+
+  // The device is valid again. Resume only a freeze this reconciliation
+  // caused: a user pause that happened to overlap it keeps the device idle.
+  if (!control.deviceChangeResumePending) {
+    return DeviceReconcile::Idle;
+  }
+  if (control.outputSuspension != OutputSuspension::Suspended ||
+      control.requestedPaused) {
+    control.deviceChangeResumePending = false;
+    return DeviceReconcile::Idle;
+  }
+  // Same admission rule start() applies: a running output that cannot be fed
+  // would underrun on its very first callback.
+  const NativePcmRing::ReadableFramesResult readable =
+      control.ring.readableFrames(control.generation);
+  if (readable.frames == 0 && !control.terminalPublished) {
+    return DeviceReconcile::Progressed;
+  }
+  control.renderCore.setPaused(false);
+  const NativeAudioSessionProgress started = mapOutputProgress(
+      control, control.output->start(), NativeAudioSessionFailure::Output);
+  if (started == NativeAudioSessionProgress::Failed ||
+      started == NativeAudioSessionProgress::Invalid) {
+    return DeviceReconcile::Failed;
+  }
+  if (started != NativeAudioSessionProgress::Done) {
+    return DeviceReconcile::Progressed;
+  }
+  control.outputSuspension = OutputSuspension::None;
+  control.state = NativeAudioSessionState::Started;
+  control.deviceChangeResumePending = false;
+  if (control.deviceChangeRecoveries !=
+      std::numeric_limits<std::uint64_t>::max()) {
+    ++control.deviceChangeRecoveries;
+  }
+  // Always on, and one grep-able line. A device notification used to end
+  // native audio outright and report nothing; a recovery that leaves no trace
+  // would make the same class of problem just as invisible the next time.
+  // Bounded: one line per notification, and notifications are rare.
+  std::fprintf(stderr,
+               "WAM: audio device republished its format; native audio "
+               "recovered (notifications=%llu recoveries=%llu)\n",
+               static_cast<unsigned long long>(
+                   control.output->facts().deviceChangeSerial),
+               static_cast<unsigned long long>(control.deviceChangeRecoveries));
+  std::fflush(stderr);
+  return DeviceReconcile::Progressed;
 }
 
 [[nodiscard]] media::NativeMediaConsumerProgress mapLifecycleProgress(
@@ -1093,8 +1365,25 @@ media::NativeMediaConsumerProgress NativeAudioSession::drain(
       control.state == NativeAudioSessionState::Retiring ||
       control.state == NativeAudioSessionState::Closing ||
       control.state == NativeAudioSessionState::Closed ||
-      control.state == NativeAudioSessionState::Cancelled ||
-      outputFailed(control)) {
+      control.state == NativeAudioSessionState::Cancelled) {
+    publishFailureText(control, error);
+    return media::NativeMediaConsumerProgress::Failed;
+  }
+  // The dispatcher pumps drain() on every wake, and the StreamFormat listener
+  // signals exactly that wake, so this is the seam where an outstanding device
+  // notification is decided. It runs before outputFailed() because it is what
+  // decides whether there is a failure at all.
+  switch (reconcileOutputDeviceChange(control)) {
+  case DeviceReconcile::Idle:
+    break;
+  case DeviceReconcile::Progressed:
+    return media::NativeMediaConsumerProgress::Progress;
+  case DeviceReconcile::Failed:
+    publishFailureText(control, error);
+    return media::NativeMediaConsumerProgress::Failed;
+  }
+  if (outputFailed(control)) {
+    publishFailureText(control, error);
     return media::NativeMediaConsumerProgress::Failed;
   }
   if (terminalObserved(control)) {
@@ -1779,6 +2068,11 @@ media::NativeMediaConsumerProgress NativeAudioSession::retire(
   control.state = NativeAudioSessionState::Closed;
   releaseClaim(control);
   return media::NativeMediaConsumerProgress::Done;
+}
+
+const std::string& NativeAudioSession::failureText() const noexcept {
+  static const std::string none;
+  return control_ == nullptr ? none : control_->failureText;
 }
 
 media::NativeMediaConsumerProgress NativeAudioSession::close() noexcept {
