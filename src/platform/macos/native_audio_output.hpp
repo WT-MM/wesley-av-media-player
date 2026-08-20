@@ -164,6 +164,13 @@ struct NativeAudioOutputFacts {
   // device would not report one. The render callback rate is sampleRate
   // divided by this, so it is the process's audio wake rate made observable.
   std::uint32_t deviceBufferFrames{0};
+  // Notifications the StreamFormat listener has recorded, and whether one is
+  // still unreconciled. The listener cannot tell a real device change from the
+  // HAL re-publishing an unchanged format, so it only records; the count is
+  // what makes "the listener fired" observable to a test or a log.
+  std::uint64_t deviceChangeSerial{0};
+  std::uint64_t deviceChangeReconciliations{0};
+  bool deviceChangePending{false};
   bool configured{false};
   bool activated{false};
   bool started{false};
@@ -194,11 +201,18 @@ struct NativeAudioOutputFacts {
 // client domain. No sample-rate conversion is ever performed by this code.
 // A StreamFormat property listener remains installed for the complete unit
 // lifetime. The device rate observed at the first configure()-time query is
-// latched; every later query must still equal it. Any live device/default-
-// format change therefore immediately revokes render admission, latches a
-// fatal rate failure, and wakes the serialized owner. Device invalidation and
-// start admission share one atomic commit gate, so neither can overwrite the
-// other.
+// latched; every later query must still equal it. A StreamFormat notification
+// immediately revokes render admission, records the notification and wakes the
+// serialized owner -- but it does NOT decide that the device changed, because
+// the HAL posts this notification for reasons that leave the rate alone (a
+// device re-publishing its unchanged format shortly after first audio, or
+// another process changing the device-global IO buffer size). The listener
+// cannot read a property from notification context, so the owner re-reads
+// StreamFormat in reconcileDeviceChange(): only a rate that no longer equals
+// the latched one is fatal, and an unchanged rate is recovered by a clean
+// stop/start. Device invalidation and start admission share one atomic commit
+// gate, so neither can overwrite the other, and the notification serial makes
+// a notification that lands mid-reconciliation impossible to lose.
 //
 // stop() first revokes callback/core admission, then stops the AudioUnit. It
 // never spins: Quiescing asks the owner to retry after an entered callback
@@ -328,6 +342,23 @@ class NativeAudioOutput final
   [[nodiscard]] NativeAudioOutputProgress start() noexcept;
   [[nodiscard]] NativeAudioOutputProgress stop() noexcept;
   [[nodiscard]] NativeAudioOutputProgress close() noexcept;
+
+  // Serialized owner half of the StreamFormat listener. The listener runs in
+  // HAL notification context and cannot read a property, so it only revokes
+  // admission and records the notification; deciding what the notification
+  // MEANT is this call's job and belongs on the owner thread.
+  //
+  // Done with facts().deviceChangePending false means the device is proven
+  // unchanged and the output is back at a Done stop, ready for start(). The
+  // owner is responsible for restarting it: this call deliberately does not,
+  // because only the owner knows whether the graph should be running.
+  // Failed latches DeviceRateMismatch and is reserved for a rate that really
+  // moved off the value configure() latched, or a format query that failed.
+  // Quiescing means a callback entered before admission closed has not drained
+  // yet, or a fresh notification arrived mid-reconciliation; call again.
+  // Done with nothing pending, and Invalid outside a configured unit, are both
+  // no-ops.
+  [[nodiscard]] NativeAudioOutputProgress reconcileDeviceChange() noexcept;
 
   [[nodiscard]] NativeAudioOutputFacts facts() const noexcept;
 
@@ -480,6 +511,7 @@ class NativeAudioOutput final
   std::atomic<std::uint64_t> admission_gate_{kAdmissionClosed};
   std::atomic<std::uint64_t> admission_epoch_{1};
   std::atomic<std::uint64_t> device_change_serial_{0};
+  std::atomic<std::uint64_t> device_change_reconciliations_{0};
   std::atomic_flag render_gate_ = ATOMIC_FLAG_INIT;
 
   alignas(128) std::atomic<std::uint8_t> state_{

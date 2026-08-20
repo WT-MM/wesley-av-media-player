@@ -1171,6 +1171,74 @@ NativeAudioOutputProgress NativeAudioOutput::stop() noexcept {
   return NativeAudioOutputProgress::Done;
 }
 
+NativeAudioOutputProgress
+NativeAudioOutput::reconcileDeviceChange() noexcept {
+  if (failure_.load(std::memory_order_acquire) !=
+      static_cast<std::uint8_t>(NativeAudioOutputFailure::None)) {
+    return NativeAudioOutputProgress::Failed;
+  }
+  if ((admission_gate_.load(std::memory_order_acquire) &
+       kAdmissionDeviceInvalid) == 0) {
+    return NativeAudioOutputProgress::Done;
+  }
+  const NativeAudioOutputState state = static_cast<NativeAudioOutputState>(
+      state_.load(std::memory_order_acquire));
+  if (!configured_.load(std::memory_order_acquire) || unit_ == nullptr ||
+      state == NativeAudioOutputState::Closed ||
+      state == NativeAudioOutputState::Configuring ||
+      state == NativeAudioOutputState::Detaching) {
+    return NativeAudioOutputProgress::Invalid;
+  }
+
+  // Read the serial BEFORE the query: a notification that lands after this is
+  // one this reconciliation cannot have seen, and the re-check below turns it
+  // into another pass rather than a lost invalidation.
+  const std::uint64_t serial =
+      device_change_serial_.load(std::memory_order_acquire);
+
+  AudioStreamBasicDescription deviceFormat{};
+  UInt32 propertySize = sizeof(deviceFormat);
+  const OSStatus status = getProperty(kAudioUnitProperty_StreamFormat,
+                                      kAudioUnitScope_Output, 0,
+                                      &deviceFormat, &propertySize);
+  if (status != noErr || propertySize != sizeof(deviceFormat)) {
+    latchFailure(NativeAudioOutputFailure::DeviceFormatQueryFailed, status);
+    return NativeAudioOutputProgress::Failed;
+  }
+  // The one genuinely fatal case, and the only one the old listener could
+  // ever be right about: the device is no longer running at the rate
+  // configure() latched, so every host-tick prediction already made against
+  // it is void. Fail closed exactly as start()'s own revalidation does.
+  if (!validDeviceRate(deviceFormat)) {
+    latchFailure(NativeAudioOutputFailure::DeviceRateMismatch,
+                 kAudioUnitErr_FormatNotSupported);
+    return NativeAudioOutputProgress::Failed;
+  }
+
+  // Unchanged. The listener revoked admission but never stopped the unit, so
+  // the device is still running underneath an unfed render core. Take it to a
+  // proved stop: that is the only state from which start() may reopen
+  // admission, and it is what gives the next callback a fresh host-tick
+  // anchor across the silent gap.
+  const NativeAudioOutputProgress stopped = stop();
+  if (stopped != NativeAudioOutputProgress::Done) {
+    return stopped;
+  }
+
+  admission_gate_.fetch_and(~kAdmissionDeviceInvalid,
+                            std::memory_order_acq_rel);
+  if (device_change_serial_.load(std::memory_order_acquire) != serial) {
+    // A notification arrived while this pass was running; its invalidation
+    // may have been cleared by the fetch_and above. Re-arm and let the owner
+    // run the whole predicate again against the newer format.
+    admission_gate_.fetch_or(kAdmissionClosed | kAdmissionDeviceInvalid,
+                             std::memory_order_acq_rel);
+    return quiescing();
+  }
+  boundedCounterAdd(device_change_reconciliations_, 1);
+  return NativeAudioOutputProgress::Done;
+}
+
 NativeAudioOutputProgress NativeAudioOutput::close() noexcept {
   return closeStep();
 }
@@ -1595,8 +1663,15 @@ void NativeAudioOutput::devicePropertyChanged(
   output->started_.store(false, std::memory_order_release);
   output->stopped_.store(false, std::memory_order_release);
   output->setState(NativeAudioOutputState::Stopping);
-  output->latchFailure(NativeAudioOutputFailure::DeviceRateMismatch,
-                       kAudioUnitErr_FormatNotSupported);
+  // Deliberately no latchFailure here. This runs in HAL notification context,
+  // where no property may be read, so the only honest thing the listener can
+  // say is "the format was republished" -- not "the device changed". Declaring
+  // a fatal DeviceRateMismatch from here ended native audio for the whole
+  // session on notifications whose rate was identical (the built-in speaker
+  // re-publishing its format ~2.5 s after first audio; another client changing
+  // the device-global IO buffer size). Admission is already revoked above, so
+  // nothing renders into a device that may have moved; reconcileDeviceChange()
+  // on the serialized owner re-reads StreamFormat and decides.
   BridgeExitPinGuard exitPin(bridge);
   static_cast<void>(signalWake(wake));
   if (output->after_listener_wake_hook_ != nullptr) {
@@ -1845,6 +1920,11 @@ NativeAudioOutputFacts NativeAudioOutput::facts() const noexcept {
   result.admittedCallbacks = static_cast<std::uint32_t>(
       std::min<std::uint64_t>(admission & kAdmissionCountMask,
                               std::numeric_limits<std::uint32_t>::max()));
+  result.deviceChangePending = (admission & kAdmissionDeviceInvalid) != 0;
+  result.deviceChangeSerial =
+      device_change_serial_.load(std::memory_order_acquire);
+  result.deviceChangeReconciliations =
+      device_change_reconciliations_.load(std::memory_order_relaxed);
   result.configured = configured_.load(std::memory_order_acquire);
   result.activated = published_activated_.load(std::memory_order_acquire);
   result.started = started_.load(std::memory_order_acquire);

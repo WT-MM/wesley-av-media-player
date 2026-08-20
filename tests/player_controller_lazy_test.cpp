@@ -2533,12 +2533,15 @@ int main(int argc, char **argv) {
     // A target at or past the duration used to clamp to the duration exactly,
     // which NativeMediaSession::preflightCommitTarget always refuses (it
     // requires seconds < duration), so the seek was surfaced as an error
-    // instead of happening. The clamp now reserves a 1/8 s end guard.
+    // instead of happening. The clamp reserves exactly one 1/64 s grid step,
+    // which is the whole of what that strict inequality needs. It briefly
+    // reserved 1/8 s to hide the near-EOF commit defect, which is now fixed
+    // in NativeMediaSession itself (commitRunStatePending).
     expect(Access::stageNativeSeek(controller, 500.0) &&
                Access::nativeSeekGesture(controller) != gesture &&
                Access::nativeSeekRequest(controller) > first_request &&
-               nearlyEqual(Access::nativeSeekTarget(controller), 99.875) &&
-               nearlyEqual(controller.position(), 99.875),
+               nearlyEqual(Access::nativeSeekTarget(controller), 99.984375) &&
+               nearlyEqual(controller.position(), 99.984375),
            "ordinary native seeks use fresh identities and clamp strictly "
            "inside the duration");
     expect(!Access::previewNativeScrub(
@@ -2589,8 +2592,9 @@ int main(int argc, char **argv) {
 
     expect(Access::previewNativeScrub(controller, 99.9999999) &&
                onGrid(Access::nativeScrubTarget(controller)) &&
-               nearlyEqual(Access::nativeScrubTarget(controller), 99.875),
-           "a preview at the right end of the track stops at the end guard");
+               nearlyEqual(Access::nativeScrubTarget(controller), 99.984375),
+           "a preview at the right end of the track stops one grid step short "
+           "of the duration");
 
     Access::NativeSeekProbe exact_commit;
     expect(Access::finishNativeScrub(controller, 63.4821, exact_commit) &&
@@ -2604,9 +2608,9 @@ int main(int argc, char **argv) {
     expect(Access::beginNativeScrub(controller), "second gesture begins");
     expect(Access::finishNativeScrub(controller, 100.0, end_commit) &&
                onGrid(end_commit.target) && end_commit.target < 100.0 &&
-               nearlyEqual(end_commit.target, 99.875),
-           "a drag to the end of the timeline commits inside the duration "
-           "instead of being refused");
+               nearlyEqual(end_commit.target, 99.984375),
+           "a drag to the end of the timeline commits on the last grid point "
+           "inside the duration instead of being refused");
   }
 
   {

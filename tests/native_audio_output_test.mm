@@ -526,6 +526,13 @@ struct FakeAudioUnit {
 
   void changeDeviceRate(double rate) noexcept {
     deviceRate = rate;
+    republishDeviceFormat();
+  }
+
+  // The notification the HAL posts without changing anything: the built-in
+  // speaker re-publishing its format a couple of seconds after first audio,
+  // or another client moving the device-global IO buffer size.
+  void republishDeviceFormat() noexcept {
     if (listenerAttached && listener != nullptr) {
       listener(listenerContext, reinterpret_cast<AudioUnit>(&unitToken),
                kAudioUnitProperty_StreamFormat, kAudioUnitScope_Output, 0);
@@ -825,15 +832,93 @@ void testConfigurationAndExactDeviceFormat() {
   gTrackAllocations.store(true, std::memory_order_release);
   liveChange.fake.changeDeviceRate(44100.0);
   gTrackAllocations.store(false, std::memory_order_release);
+  // The listener records and revokes; it never decides. It runs in HAL
+  // notification context where no property may be read, so latching a fatal
+  // rate failure from there ended native audio on notifications whose rate had
+  // not moved at all.
   expect(liveChange.output->facts().failure ==
-             NativeAudioOutputFailure::DeviceRateMismatch &&
+             NativeAudioOutputFailure::None &&
+             liveChange.output->facts().deviceChangePending &&
+             liveChange.output->facts().deviceChangeSerial == 1 &&
              !liveChange.output->facts().started &&
              !liveChange.output->facts().stopped &&
              liveChange.wake.calls.load(std::memory_order_relaxed) == 1 &&
              gAllocations.load(std::memory_order_relaxed) ==
                  allocationsBeforeChange,
-         "live stream-format notification revokes audio and wakes owner");
+         "live stream-format notification revokes audio and wakes owner "
+         "without deciding the device changed");
+  expect(liveChange.output->reconcileDeviceChange() ==
+             NativeAudioOutputProgress::Failed &&
+             liveChange.output->facts().failure ==
+                 NativeAudioOutputFailure::DeviceRateMismatch &&
+             liveChange.output->facts().osStatus ==
+                 kAudioUnitErr_FormatNotSupported &&
+             liveChange.output->facts().deviceChangeReconciliations == 0,
+         "the serialized owner re-reads the format and fails closed on a rate "
+         "that really moved");
   liveChange.cleanup();
+
+  // The defect this whole seam exists for: a notification that carries the
+  // same rate must not end native audio. The owner proves the rate, takes the
+  // unit to a clean stop, and the graph starts again on the same generation.
+  Fixture republished;
+  expect(republished.start(),
+         "republished-format fixture starts with exact-rate proof");
+  republished.wake.clear();
+  const std::uint64_t allocationsBeforeRepublish =
+      gAllocations.load(std::memory_order_relaxed);
+  gTrackAllocations.store(true, std::memory_order_release);
+  republished.fake.republishDeviceFormat();
+  gTrackAllocations.store(false, std::memory_order_release);
+  expect(republished.output->facts().failure ==
+             NativeAudioOutputFailure::None &&
+             republished.output->facts().deviceChangePending &&
+             republished.output->facts().deviceChangeSerial == 1 &&
+             !republished.output->facts().started &&
+             republished.wake.calls.load(std::memory_order_relaxed) == 1 &&
+             gAllocations.load(std::memory_order_relaxed) ==
+                 allocationsBeforeRepublish,
+         "an unchanged-format notification revokes admission allocation-free "
+         "like any other");
+  expect(republished.output->reconcileDeviceChange() ==
+             NativeAudioOutputProgress::Done &&
+             republished.output->facts().failure ==
+                 NativeAudioOutputFailure::None &&
+             !republished.output->facts().deviceChangePending &&
+             republished.output->facts().deviceChangeReconciliations == 1 &&
+             republished.output->facts().stopped &&
+             !republished.output->facts().started &&
+             republished.output->facts().state ==
+                 NativeAudioOutputState::Stopped,
+         "an unchanged rate reconciles to a clean stop instead of a fatal "
+         "latch");
+  expect(republished.output->start() == NativeAudioOutputProgress::Done &&
+             republished.output->facts().started &&
+             republished.output->facts().failure ==
+                 NativeAudioOutputFailure::None,
+         "the reconciled output starts again on the same generation");
+  // Idempotence: nothing outstanding means nothing to do.
+  expect(republished.output->reconcileDeviceChange() ==
+             NativeAudioOutputProgress::Done &&
+             republished.output->facts().deviceChangeReconciliations == 1 &&
+             republished.output->facts().started,
+         "reconciling with no notification outstanding is a no-op");
+  // And it survives being hammered, which is what two WAM instances sharing
+  // one device do to each other through the buffer-size property.
+  for (int notification = 0; notification != 4; ++notification) {
+    republished.fake.republishDeviceFormat();
+    expect(republished.output->reconcileDeviceChange() ==
+               NativeAudioOutputProgress::Done &&
+               republished.output->start() ==
+                   NativeAudioOutputProgress::Done &&
+               republished.output->facts().failure ==
+                   NativeAudioOutputFailure::None,
+           "repeated unchanged-format notifications each recover");
+  }
+  expect(republished.output->facts().deviceChangeSerial == 5 &&
+             republished.output->facts().deviceChangeReconciliations == 5,
+         "every notification is counted and every one is reconciled");
+  republished.cleanup();
 
   Fixture duringStartChange;
   expect(duringStartChange.configure(),
@@ -1254,9 +1339,12 @@ void testStreamRateBelowDeviceRateUsesUnitConverter() {
   // A device that changes away from the latched rate is still fatal, even
   // though the stream rate never equalled it.
   converted.fake.changeDeviceRate(44100.0);
-  expect(converted.output->facts().failure ==
-             NativeAudioOutputFailure::DeviceRateMismatch &&
-             !converted.output->facts().started,
+  expect(converted.output->facts().deviceChangePending &&
+             !converted.output->facts().started &&
+             converted.output->reconcileDeviceChange() ==
+                 NativeAudioOutputProgress::Failed &&
+             converted.output->facts().failure ==
+                 NativeAudioOutputFailure::DeviceRateMismatch,
          "a live device rate change remains fatal under unit conversion");
   converted.cleanup();
 }

@@ -174,6 +174,16 @@ class NativeAudioConsumer {
       MediaGeneration retiredGeneration,
       MediaGeneration invalidationGeneration) noexcept = 0;
   [[nodiscard]] virtual NativeMediaConsumerProgress close() noexcept = 0;
+
+  // See NativeVideoConsumer::failureText(). The audio port needs it for the
+  // same reason and one more: its two failing leaves -- the output AudioUnit
+  // and the render core -- fail asynchronously, off any call that carries an
+  // error out-parameter, so without this a fatal audio output failure reaches
+  // the dispatcher's failure line with nothing to say.
+  [[nodiscard]] virtual const std::string& failureText() const noexcept {
+    static const std::string none;
+    return none;
+  }
 };
 
 // Every lifecycle method above must be idempotent for its exact arguments.

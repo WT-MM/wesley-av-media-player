@@ -212,6 +212,9 @@ class NativeAudioSession final : public media::NativeAudioConsumer {
       media::MediaGeneration invalidationGeneration) noexcept override;
   // Emergency/quarantine teardown only; this never creates retirement proof.
   [[nodiscard]] media::NativeMediaConsumerProgress close() noexcept override;
+  // Names the leaf and gate that refused, e.g. "audio output:
+  // DeviceRateMismatch (osStatus -10868)". Empty until a failure is latched.
+  [[nodiscard]] const std::string& failureText() const noexcept override;
 
   // start() opens output admission only after at least one exact PCM frame is
   // prebuffered, or after an empty generation has published its terminal. A
