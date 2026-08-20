@@ -85,6 +85,11 @@ struct AacFrameGridPosition {
   MediaTime origin{};
   std::uint64_t accessUnitOrdinal{0};
   std::uint32_t sampleRate{0};
+  // Appended with an AAC-LC default so every existing aggregate initialiser
+  // keeps its exact meaning. Opus reuses this grid with its own packet
+  // duration (and a nonzero origin of -CodecDelay), which is the only reason
+  // the constant became a field.
+  std::uint32_t samplesPerAccessUnit{kAacLcSamplesPerAccessUnit};
 };
 
 // Returns the reduced exact rational timestamp when it fits MediaTime.
@@ -122,6 +127,7 @@ struct AacTickGridProjection {
 [[nodiscard]] std::optional<AacTickGridProjection>
 nearestAacAccessUnitForMatroskaTick(
     std::int64_t observedTick, MediaTime origin, std::uint32_t sampleRate,
-    std::uint64_t timestampScaleNanoseconds) noexcept;
+    std::uint64_t timestampScaleNanoseconds,
+    std::uint32_t samplesPerAccessUnit = kAacLcSamplesPerAccessUnit) noexcept;
 
 } // namespace wam::media::matroska

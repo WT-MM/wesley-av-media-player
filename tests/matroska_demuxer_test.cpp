@@ -90,6 +90,7 @@ constexpr std::uint32_t kCodecIdId{0x86};
 constexpr std::uint32_t kCodecPrivateId{0x63A2};
 constexpr std::uint32_t kLanguageId{0x22B59C};
 constexpr std::uint32_t kCodecDelayId{0x56AA};
+constexpr std::uint32_t kSeekPreRollId{0x56BB};
 constexpr std::uint32_t kVideoId{0xE0};
 constexpr std::uint32_t kFlagInterlacedId{0x9A};
 constexpr std::uint32_t kPixelWidthId{0xB0};
@@ -279,6 +280,12 @@ constexpr std::uint32_t kSampleCodecEnvelopeHeight{1080};
 
 // Canonical two-byte AAC-LC AudioSpecificConfig: 48 kHz, stereo, 1024 samples.
 constexpr std::array<std::uint8_t, 2> kAacStereo48Asc{0x11, 0x90};
+
+// The canonical 19-byte OpusHead every ffmpeg mux writes: version 1, stereo,
+// pre-skip 312, 48 kHz encoder input, unity gain, channel mapping family 0.
+constexpr std::array<std::uint8_t, 19> kOpusHeadStereo312{
+    0x4F, 0x70, 0x75, 0x73, 0x48, 0x65, 0x61, 0x64, 0x01, 0x02,
+    0x38, 0x01, 0x80, 0xBB, 0x00, 0x00, 0x00, 0x00, 0x00};
 
 constexpr std::uint32_t kAudioSampleRate{48'000};
 constexpr std::uint64_t kTimestampScaleNanoseconds{1'000'000};
@@ -544,6 +551,8 @@ struct FixtureSpec {
   double audioSamplingFrequency{static_cast<double>(kAudioSampleRate)};
   std::uint64_t audioChannels{2};
   std::optional<std::uint64_t> audioBitDepth;
+  std::optional<std::uint64_t> audioCodecDelayNanoseconds;
+  std::optional<std::uint64_t> audioSeekPreRollNanoseconds;
   std::uint64_t videoTrackNumber{1};
   std::uint64_t audioTrackNumber{2};
   std::size_t largeVideoFrameBytes{0};
@@ -624,6 +633,14 @@ Bytes audioTrackEntry(const FixtureSpec& spec) {
   append(payload, uintElement(kTrackTypeId, 2));
   append(payload, asciiElement(kCodecIdId, spec.audioCodecId));
   append(payload, asciiElement(kLanguageId, "eng"));
+  if (spec.audioCodecDelayNanoseconds) {
+    append(payload,
+           uintElement(kCodecDelayId, *spec.audioCodecDelayNanoseconds));
+  }
+  if (spec.audioSeekPreRollNanoseconds) {
+    append(payload,
+           uintElement(kSeekPreRollId, *spec.audioSeekPreRollNanoseconds));
+  }
   append(payload, element(kCodecPrivateId, spec.audioCodecPrivate));
   append(payload, element(kAudioId, audioPayload));
   return element(kTrackEntryId, payload);
@@ -1595,12 +1612,15 @@ void testCodecAdmissionAndSelection() {
   {
     // Product decision: a file that carries audio the native path cannot
     // decode falls back as a whole file rather than preparing video-only.
-    // Preparing video-only here would play the common VP9+Opus WebM natively
-    // and completely silently; mpv plays the same file with sound. This
-    // deliberately replaces the previous contract, which admitted video-only
-    // whenever audio was optional.
+    // Preparing video-only would play the file natively and completely
+    // silently; mpv plays the same file with sound. This deliberately
+    // replaces the previous contract, which admitted video-only whenever
+    // audio was optional.
+    //
+    // The example used to be A_OPUS, which is now decoded natively. Vorbis is
+    // the current stand-in for "audio this source does not decode".
     FixtureSpec spec;
-    spec.audioCodecId = "A_OPUS";
+    spec.audioCodecId = "A_VORBIS";
     expectPrepareError(
         spec, MatroskaDemuxError::TrackSelection,
         "a document whose only audio is undecodable falls back whole-file");
@@ -1619,13 +1639,62 @@ void testCodecAdmissionAndSelection() {
   }
   {
     FixtureSpec spec;
-    spec.audioCodecId = "A_OPUS";
+    spec.audioCodecId = "A_VORBIS";
     MediaSourceOpenOptions options;
     options.selection.requireAudio = true;
     const PreparedFixture prepared = prepareFixture(spec, options);
     expect(prepared.outcome.asset == nullptr &&
                prepared.outcome.error == MatroskaDemuxError::TrackSelection,
            "requireAudio rejects a document whose audio codec is unsupported");
+  }
+  {
+    // The historic rule stands for AAC: a nonzero CodecDelay on the selected
+    // audio track is refused, because nothing proves what that delay means for
+    // an AAC stream. Opus is the single exception, and only because its delay
+    // is cross-checked against the OpusHead pre-skip at admission.
+    FixtureSpec spec;
+    spec.audioCodecDelayNanoseconds = 6'500'000;
+    expectPrepareError(
+        spec, MatroskaDemuxError::CodecConfiguration,
+        "a nonzero CodecDelay on an AAC track still falls back");
+  }
+  {
+    FixtureSpec spec;
+    spec.audioSeekPreRollNanoseconds = 80'000'000;
+    expectPrepareError(
+        spec, MatroskaDemuxError::CodecConfiguration,
+        "a nonzero SeekPreRoll on an AAC track still falls back");
+  }
+  {
+    // A_OPUS is now a decodable CodecID, so track selection admits it and the
+    // verdict moves to codec admission -- which refuses a CodecPrivate that is
+    // not an OpusHead identification header.
+    FixtureSpec spec;
+    spec.audioCodecId = "A_OPUS";
+    expectPrepareError(
+        spec, MatroskaDemuxError::CodecConfiguration,
+        "an Opus track whose CodecPrivate is not an OpusHead falls back");
+  }
+  {
+    // A well-formed OpusHead whose pre-skip the container's CodecDelay does
+    // not corroborate is refused rather than guessed at: every downstream trim
+    // is derived from that one number.
+    FixtureSpec spec;
+    spec.audioCodecId = "A_OPUS";
+    spec.audioCodecPrivate = fromOctets(kOpusHeadStereo312);
+    spec.audioCodecDelayNanoseconds = 6'500'000 + 100'000;
+    expectPrepareError(
+        spec, MatroskaDemuxError::CodecConfiguration,
+        "an Opus track whose CodecDelay disagrees with its pre-skip falls "
+        "back");
+  }
+  {
+    FixtureSpec spec;
+    spec.audioCodecId = "A_OPUS";
+    spec.audioCodecPrivate = fromOctets(kOpusHeadStereo312);
+    expectPrepareError(
+        spec, MatroskaDemuxError::CodecConfiguration,
+        "an Opus track with no CodecDelay at all falls back");
   }
   {
     FixtureSpec spec;

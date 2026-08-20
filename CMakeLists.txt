@@ -239,6 +239,9 @@ if(APPLE)
   add_library(wam_native_core STATIC
     src/media/matroska_aac.hpp
     src/media/matroska_aac.cpp
+    src/media/audio_codec_timing.hpp
+    src/media/matroska_opus.hpp
+    src/media/matroska_opus.cpp
     src/media/matroska_ebml.hpp
     src/media/matroska_ebml.cpp
     src/media/matroska_demuxer.hpp
@@ -661,6 +664,11 @@ if(BUILD_TESTING)
     target_link_libraries(wam_matroska_aac_test PRIVATE wam_native_core)
     add_test(NAME matroska_aac COMMAND wam_matroska_aac_test)
 
+    add_executable(wam_matroska_opus_test
+      tests/matroska_opus_test.cpp)
+    target_link_libraries(wam_matroska_opus_test PRIVATE wam_native_core)
+    add_test(NAME matroska_opus COMMAND wam_matroska_opus_test)
+
     add_executable(wam_matroska_demuxer_test
       tests/matroska_demuxer_test.cpp)
     target_link_libraries(wam_matroska_demuxer_test PRIVATE wam_native_core)
@@ -733,6 +741,7 @@ if(BUILD_TESTING)
     foreach(WAM_NATIVE_CORE_TEST_TARGET IN ITEMS
         wam_matroska_aac_test
         wam_matroska_ebml_test
+        wam_matroska_opus_test
         wam_matroska_demuxer_test
         wam_video_codec_configuration_test
         wam_native_media_source_test
@@ -751,6 +760,7 @@ if(BUILD_TESTING)
     set_tests_properties(
       matroska_aac
       matroska_ebml
+      matroska_opus
       matroska_demuxer
       video_codec_configuration
       native_media_source
@@ -1009,6 +1019,25 @@ if(BUILD_TESTING)
       add_test(NAME macos_native_audio_converter
         COMMAND wam_native_audio_converter_test)
       set_tests_properties(macos_native_audio_converter PROPERTIES
+        TIMEOUT 20)
+
+      # New Opus behaviour lives alongside the frozen converter contract
+      # rather than inside it.
+      add_executable(wam_native_audio_converter_opus_test
+        tests/native_audio_converter_opus_test.mm
+        src/platform/macos/native_audio_converter.hpp
+        src/platform/macos/native_audio_converter.mm)
+      target_include_directories(wam_native_audio_converter_opus_test
+        PRIVATE src)
+      target_link_libraries(wam_native_audio_converter_opus_test PRIVATE
+        wam_native_core
+        "${WAM_COREFOUNDATION_FRAMEWORK}"
+        "${WAM_COREMEDIA_FRAMEWORK}"
+        "${WAM_FOUNDATION_FRAMEWORK}"
+        "${WAM_AUDIOTOOLBOX_FRAMEWORK}")
+      add_test(NAME macos_native_audio_converter_opus
+        COMMAND wam_native_audio_converter_opus_test)
+      set_tests_properties(macos_native_audio_converter_opus PROPERTIES
         TIMEOUT 20)
 
       add_executable(wam_native_audio_stretch_stage_test

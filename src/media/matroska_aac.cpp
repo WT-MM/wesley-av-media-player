@@ -328,7 +328,8 @@ buildAacLcEsDescriptorCookie(const AacLcConfiguration &configuration) noexcept {
 
 std::optional<MediaTime>
 aacAccessUnitGridTime(AacFrameGridPosition position) noexcept {
-  if (!position.origin.valid() || !supportedSampleRate(position.sampleRate)) {
+  if (!position.origin.valid() || !supportedSampleRate(position.sampleRate) ||
+      position.samplesPerAccessUnit == 0U) {
     return std::nullopt;
   }
 
@@ -337,7 +338,7 @@ aacAccessUnitGridTime(AacFrameGridPosition position) noexcept {
       static_cast<WideSigned>(position.sampleRate);
   const WideUnsigned ordinalNumerator =
       static_cast<WideUnsigned>(position.accessUnitOrdinal) *
-      static_cast<WideUnsigned>(kAacLcSamplesPerAccessUnit) *
+      static_cast<WideUnsigned>(position.samplesPerAccessUnit) *
       static_cast<WideUnsigned>(
           static_cast<std::uint32_t>(position.origin.timescale));
   // The largest supported operands require at most 106 signed bits.
@@ -425,9 +426,10 @@ bool matroskaTickMatchesAacAccessUnit(
 
 std::optional<AacTickGridProjection> nearestAacAccessUnitForMatroskaTick(
     std::int64_t observedTick, MediaTime origin, std::uint32_t sampleRate,
-    std::uint64_t timestampScaleNanoseconds) noexcept {
+    std::uint64_t timestampScaleNanoseconds,
+    std::uint32_t samplesPerAccessUnitValue) noexcept {
   if (!origin.valid() || !supportedSampleRate(sampleRate) ||
-      timestampScaleNanoseconds == 0U) {
+      timestampScaleNanoseconds == 0U || samplesPerAccessUnitValue == 0U) {
     return std::nullopt;
   }
 
@@ -468,7 +470,7 @@ std::optional<AacTickGridProjection> nearestAacAccessUnitForMatroskaTick(
 
   // ordinal = elapsedSeconds * sampleRate / 1024. Cross-cancel before the
   // checked products so the one ties-to-even division sees the exact ratio.
-  WideUnsigned samplesPerAccessUnit = kAacLcSamplesPerAccessUnit;
+  WideUnsigned samplesPerAccessUnit = samplesPerAccessUnitValue;
   WideUnsigned rate = sampleRate;
   const WideUnsigned numeratorCancellation =
       wideGcd(unsignedMagnitude(elapsedNumerator), samplesPerAccessUnit);
@@ -498,7 +500,8 @@ std::optional<AacTickGridProjection> nearestAacAccessUnitForMatroskaTick(
   }
 
   const auto ordinal = static_cast<std::uint64_t>(roundedOrdinal->magnitude);
-  const AacFrameGridPosition grid{origin, ordinal, sampleRate};
+  const AacFrameGridPosition grid{origin, ordinal, sampleRate,
+                                  samplesPerAccessUnitValue};
   const auto exactPresentationTime = aacAccessUnitGridTime(grid);
   const auto quantizedGridTick =
       nearestMatroskaTick(grid, timestampScaleNanoseconds);

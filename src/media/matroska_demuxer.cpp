@@ -1,6 +1,7 @@
 #include "media/matroska_demuxer.hpp"
 
 #include "media/matroska_aac.hpp"
+#include "media/matroska_opus.hpp"
 #include "media/video_codec_configuration.hpp"
 
 #include <algorithm>
@@ -23,6 +24,7 @@ namespace {
 
 constexpr std::size_t kCopyChunkBytes{64U * 1024U};
 constexpr std::uint32_t kAacFormatTag{0x61616320U};
+constexpr std::uint32_t kOpusFormatTag{0x6F707573U};
 constexpr std::uint32_t kMonoLayoutTag{0x00640001U};
 constexpr std::uint32_t kStereoLayoutTag{0x00650002U};
 
@@ -312,6 +314,31 @@ struct TrackRuntime {
   MediaTrackKind kind{MediaTrackKind::Metadata};
   MediaCodec codec{MediaCodec::Unknown};
   std::uint32_t audioSampleRate{0};
+  // Two grids, deliberately separate.
+  //
+  // Container ticks always live on the CODEC grid: Matroska defines a Block's
+  // timestamp as the codec time, from which CodecDelay MUST be subtracted to
+  // obtain the presentation time. Ordinal k's tick is therefore
+  // k * samplesPerAccessUnit / sampleRate with origin zero for every codec.
+  //
+  // Presentation times live on the PRESENTATION grid, whose origin is
+  // -CodecDelay. Ordinal 0 of an Opus track legitimately presents preSkip
+  // frames before media time zero; for AAC the two grids coincide.
+  std::uint32_t audioSamplesPerAccessUnit{kAacLcSamplesPerAccessUnit};
+  MediaTime audioPresentationOrigin{0, 1};
+  // Presentation frame index of ordinal 0 is -audioGridOffsetFrames. It is the
+  // Opus pre-skip and zero for every other codec.
+  std::uint32_t audioGridOffsetFrames{0};
+  // Always assigned by makeAudioDescriptor; the literal keeps this struct
+  // declarable above kMaximumAacGridTickResidual, which is 1.
+  std::int64_t audioTickResidualTolerance{1};
+  std::uint64_t audioPrimingAccessUnits{0};
+  // The one Block permitted to carry DiscardPadding, and the exact value it
+  // must carry. Both are proven at preparation; the cursor accepts nothing
+  // else, so a mid-stream padding element still fails the generation closed.
+  bool audioTailBlockKnown{false};
+  std::uint64_t audioTailBlockOffset{0};
+  std::int64_t audioTailDiscardPaddingNanoseconds{0};
 };
 
 struct AssetState {
@@ -371,13 +398,33 @@ struct AssetState {
 // still rejected.
 inline constexpr std::int64_t kMaximumAacGridTickResidual{1};
 
+// Opus needs one tick more. Matroska stores a Block's timestamp on the codec
+// grid and states CodecDelay separately, and FFmpeg builds that timestamp as
+// round(presentationMilliseconds) + round(delayMilliseconds) -- two roundings
+// of values that are exactly half a tick apart for every ffmpeg Opus mux. The
+// result is a systematic +1 tick on top of the one tick of ordinary container
+// jitter. Two ticks is still an order of magnitude below one access unit (20
+// ticks at 20 ms packets), so a genuinely misplaced Block is still rejected.
+inline constexpr std::int64_t kMaximumOpusGridTickResidual{2};
+
 // Whole AAC access units staged before the first audible frame of a non-origin
 // generation. Two is what the decoder needs to reach full precision, and it is
 // the same preroll the AVFoundation backend places for the identical reason.
 inline constexpr std::uint64_t kAacPrimingAccessUnits{2};
 
+// Opus states its own decoder warm-up as SeekPreRoll (80 ms from every real
+// encoder). Two 20 ms packets would stage only 40 ms, so the priming is the
+// larger of the AAC floor and whatever the track actually asks for.
+inline constexpr std::uint64_t kMaximumAudioPrimingAccessUnits{64};
+
+// How far back from the end of file the last audio Block is looked for. The
+// tail trim is only representable when it is found, so this bound is a
+// fall-back-to-mpv threshold rather than a heuristic.
+inline constexpr std::size_t kOpusTailProbeClusters{8};
+
 [[nodiscard]] bool aacProjectionOnGrid(
-    const std::optional<AacTickGridProjection>& projection) noexcept {
+    const std::optional<AacTickGridProjection>& projection,
+    std::int64_t tolerance = kMaximumAacGridTickResidual) noexcept {
   if (!projection) {
     return false;
   }
@@ -385,8 +432,7 @@ inline constexpr std::uint64_t kAacPrimingAccessUnits{2};
     return true;
   }
   const std::int64_t residual = projection->signedTickResidual;
-  return residual >= -kMaximumAacGridTickResidual &&
-         residual <= kMaximumAacGridTickResidual;
+  return residual >= -tolerance && residual <= tolerance;
 }
 
 [[nodiscard]] bool readRange(SeekableByteReader& reader, ByteRange range,
@@ -422,7 +468,7 @@ inline constexpr std::uint64_t kAacPrimingAccessUnits{2};
 }
 
 [[nodiscard]] bool isAudioCodec(std::string_view id) noexcept {
-  return id == "A_AAC";
+  return id == "A_AAC" || id == "A_OPUS";
 }
 
 [[nodiscard]] const TrackEntry* chooseTrack(
@@ -452,10 +498,18 @@ inline constexpr std::uint64_t kAacPrimingAccessUnits{2};
   return first == tracks.end() ? nullptr : &*first;
 }
 
+// CodecDelay and SeekPreRoll are refused by default and always have been:
+// honouring a delay the pipeline did not actually apply is a silent A/V shift,
+// so distrust was the right default while nothing could prove the arithmetic.
+// Opus is the single exception, and only because its delay IS provable -- the
+// container's CodecDelay must be exactly the OpusHead pre-skip expressed in
+// nanoseconds, which is checked at admission. AAC keeps the historic rule.
 [[nodiscard]] bool selectedTrackFeaturesSupported(
-    const TrackEntry& track) noexcept {
+    const TrackEntry& track, bool allowCodecDelay = false) noexcept {
   return track.timestampScale == 1.0 && !track.timestampOffsetPresent &&
-         track.codecDelayNanoseconds == 0 && track.seekPreRollNanoseconds == 0 &&
+         (allowCodecDelay ||
+          (track.codecDelayNanoseconds == 0 &&
+           track.seekPreRollNanoseconds == 0)) &&
          !track.contentEncodingsPresent && !track.trackOperationPresent &&
          !track.blockAdditionMappingPresent;
 }
@@ -857,11 +911,306 @@ constexpr std::size_t kVp9KeyframeProbeClusters{4};
   return true;
 }
 
+// Both ends of the Opus packet grid, proven from the bitstream rather than
+// assumed. The head gives the constant packet duration; the tail gives the
+// exact sample count, which is the only way to state a duration that agrees
+// with the DiscardPadding trim.
+struct OpusPacketGridProbe {
+  std::uint32_t samplesPerAccessUnit{0};
+  std::uint64_t tailBlockOffset{0};
+  std::int64_t tailBlockTick{0};
+  std::uint16_t tailBlockFrameCount{0};
+  std::int64_t tailDiscardPaddingNanoseconds{0};
+  bool found{false};
+};
+
+[[nodiscard]] bool probeOpusPacketGrid(
+    SeekableByteReader& reader, std::span<const Cluster> clusters,
+    const ParseOptions& options, std::uint64_t trackNumber,
+    CancellationToken cancellation, OpusPacketGridProbe* probe) {
+  if (clusters.empty()) {
+    return false;
+  }
+  CapturedBlockVisitor visitor;
+  const auto visitCluster = [&](std::size_t index,
+                                const auto& onBlock) -> bool {
+    auto cursor = beginClusterChildCursor(reader, clusters[index].data,
+                                          options);
+    if (!cursor) {
+      return false;
+    }
+    while (!cursor->done()) {
+      visitor.reset();
+      const ParseOutcome outcome =
+          parseClusterChildAt(reader, *cursor, visitor, options, cancellation);
+      if (!outcome.ok()) {
+        return false;
+      }
+      if (!visitor.emitted || visitor.header.trackNumber != trackNumber) {
+        continue;
+      }
+      if (!onBlock(index, visitor)) {
+        return false;
+      }
+    }
+    return true;
+  };
+
+  // Head: the first audio Block's first frame states the packet duration the
+  // whole track must keep. Every later Block is re-checked in the cursor.
+  bool headFound = false;
+  for (std::size_t index = 0; index < clusters.size() && !headFound; ++index) {
+    if (cancellation.cancelled()) {
+      return false;
+    }
+    bool failed = false;
+    if (!visitCluster(index, [&](std::size_t, const CapturedBlockVisitor& block) {
+          if (headFound) {
+            return true;
+          }
+          if (block.frameCount == 0) {
+            failed = true;
+            return false;
+          }
+          std::array<std::byte, 2> toc{};
+          const ByteRange frame = block.frames[0].bytes;
+          const auto amount = static_cast<std::size_t>(
+              std::min<std::uint64_t>(frame.size, toc.size()));
+          if (amount == 0 ||
+              !reader.readAt(frame.offset, std::span<std::byte>(toc).first(amount))) {
+            failed = true;
+            return false;
+          }
+          const auto frames = opusPacketFrameCount(
+              std::span<const std::byte>(toc).first(amount));
+          if (!frames) {
+            failed = true;
+            return false;
+          }
+          probe->samplesPerAccessUnit = *frames;
+          headFound = true;
+          return true;
+        })) {
+      return false;
+    }
+    if (failed) {
+      return false;
+    }
+  }
+  if (!headFound) {
+    return false;
+  }
+
+  // Tail: the last audio Block in the file carries the DiscardPadding, so the
+  // exact end of the decoded stream is its grid end minus that padding.
+  const std::size_t tailStart =
+      clusters.size() > kOpusTailProbeClusters
+          ? clusters.size() - kOpusTailProbeClusters
+          : 0;
+  for (std::size_t index = tailStart; index < clusters.size(); ++index) {
+    if (cancellation.cancelled()) {
+      return false;
+    }
+    if (!clusters[index].timestamp) {
+      return false;
+    }
+    bool failed = false;
+    if (!visitCluster(index, [&](std::size_t clusterIndex,
+                                 const CapturedBlockVisitor& block) {
+          const auto tick = signedBlockTick(*clusters[clusterIndex].timestamp,
+                                            block.header.relativeTimestamp);
+          if (!tick || block.frameCount == 0) {
+            failed = true;
+            return false;
+          }
+          probe->tailBlockOffset = block.header.containerEncoded.offset;
+          probe->tailBlockTick = *tick;
+          probe->tailBlockFrameCount = block.frameCount;
+          probe->tailDiscardPaddingNanoseconds =
+              block.group.discardPaddingNanoseconds.value_or(0);
+          probe->found = true;
+          return true;
+        })) {
+      return false;
+    }
+    if (failed) {
+      return false;
+    }
+  }
+  return probe->found;
+}
+
+[[nodiscard]] bool makeOpusAudioDescriptor(
+    SeekableByteReader& reader, const TrackEntry& entry,
+    const MediaSourceLimits& limits, std::span<const Cluster> clusters,
+    std::span<const TrackConstraint> constraints,
+    std::uint64_t timestampScaleNanoseconds, CancellationToken cancellation,
+    MediaTrackDescriptor* result, TrackRuntime* runtime) {
+  const auto id = trackId(entry.number);
+  if (!id || !entry.audio || !entry.codecPrivate ||
+      !selectedTrackFeaturesSupported(entry, true)) {
+    return false;
+  }
+  std::vector<std::byte> header;
+  if (!readRange(reader, *entry.codecPrivate, &header, cancellation)) {
+    return false;
+  }
+  const OpusAdmission admission = parseOpusIdentificationHeader(header);
+  if (!admission.admitted()) {
+    return false;
+  }
+  const OpusConfiguration& configuration = *admission.configuration;
+  // Opus always decodes at 48 kHz; a Matroska SamplingFrequency that says
+  // anything else describes a stream this source would silently resample.
+  if (entry.audio->samplingFrequency !=
+          static_cast<double>(kOpusOutputSampleRate) ||
+      entry.audio->channels != configuration.channelCount ||
+      entry.audio->outputSamplingFrequency ||
+      kOpusOutputSampleRate > limits.maximumAudioSampleRate ||
+      configuration.channelCount > limits.maximumAudioChannels) {
+    return false;
+  }
+  // THE identity that makes the whole trim exact: the container's CodecDelay
+  // must be the header's pre-skip and nothing else. Everything downstream --
+  // the presentation-grid origin, the head trim of preSkip - 120, the stated
+  // duration -- is derived from one number, so the container's and the
+  // header's statements of it must agree or the file falls back. CodecDelay is
+  // stated in nanoseconds, which cannot express every frame count exactly, so
+  // the comparison is made in the frame domain the value was rounded from.
+  if (entry.codecDelayNanoseconds >
+          static_cast<std::uint64_t>(
+              std::numeric_limits<std::int64_t>::max())) {
+    return false;
+  }
+  const auto codecDelayFrames = opusFramesFromNanoseconds(
+      static_cast<std::int64_t>(entry.codecDelayNanoseconds));
+  if (!codecDelayFrames || *codecDelayFrames != configuration.preSkipFrames) {
+    return false;
+  }
+  ParseOptions options = parserOptions(limits, constraints);
+  OpusPacketGridProbe probe;
+  if (!probeOpusPacketGrid(reader, clusters, options, entry.number, cancellation,
+                           &probe)) {
+    return false;
+  }
+  // SeekPreRoll is what the encoder says the decoder needs after a jump.
+  const std::uint64_t preRollFrames =
+      entry.seekPreRollNanoseconds / UINT64_C(1'000'000'000) >
+              kMaximumOpusPacketFrames
+          ? 0U
+          : entry.seekPreRollNanoseconds * kOpusOutputSampleRate /
+                UINT64_C(1'000'000'000);
+  const std::uint64_t preRollAccessUnits =
+      (preRollFrames + probe.samplesPerAccessUnit - 1U) /
+      probe.samplesPerAccessUnit;
+  const std::uint64_t priming =
+      std::max<std::uint64_t>(kAacPrimingAccessUnits, preRollAccessUnits);
+  if (priming > kMaximumAudioPrimingAccessUnits) {
+    return false;
+  }
+
+  // Presentation-grid origin is -CodecDelay exactly: ordinal 0 presents
+  // preSkip frames before media time zero. Reduced in the 48 kHz frame domain
+  // so no nanosecond rounding can ever enter the origin.
+  const std::uint64_t originDivisor =
+      std::gcd(static_cast<std::uint64_t>(configuration.preSkipFrames),
+               static_cast<std::uint64_t>(kOpusOutputSampleRate));
+  const MediaTime origin{
+      -static_cast<std::int64_t>(configuration.preSkipFrames / originDivisor),
+      static_cast<std::int32_t>(kOpusOutputSampleRate / originDivisor)};
+  if (!origin.valid()) {
+    return false;
+  }
+
+  // Exact end of the decoded stream, in 48 kHz frames from media time zero:
+  //   (lastOrdinal + lacedFrames) * samplesPerAccessUnit
+  //     - preSkip - discardPadding
+  const auto tailProjection = nearestAacAccessUnitForMatroskaTick(
+      probe.tailBlockTick, MediaTime{0, 1}, kOpusOutputSampleRate,
+      timestampScaleNanoseconds, probe.samplesPerAccessUnit);
+  if (!aacProjectionOnGrid(tailProjection, kMaximumOpusGridTickResidual)) {
+    return false;
+  }
+  const auto discardFrames =
+      opusFramesFromNanoseconds(probe.tailDiscardPaddingNanoseconds);
+  const auto headTrim = opusHeadTrimFrames(configuration);
+  if (!discardFrames || !headTrim ||
+      *discardFrames >= probe.samplesPerAccessUnit) {
+    return false;
+  }
+  const __int128 endOrdinal =
+      static_cast<__int128>(tailProjection->accessUnitOrdinal) +
+      static_cast<__int128>(probe.tailBlockFrameCount);
+  const __int128 endFrame =
+      endOrdinal * static_cast<__int128>(probe.samplesPerAccessUnit) -
+      static_cast<__int128>(configuration.preSkipFrames) -
+      static_cast<__int128>(*discardFrames);
+  if (endFrame <= 0 ||
+      endFrame > static_cast<__int128>(std::numeric_limits<std::int64_t>::max())) {
+    return false;
+  }
+  const auto endFrameValue = static_cast<std::uint64_t>(endFrame);
+  const std::uint64_t durationDivisor =
+      std::gcd(endFrameValue, static_cast<std::uint64_t>(kOpusOutputSampleRate));
+  const MediaTime exactDuration{
+      static_cast<std::int64_t>(endFrameValue / durationDivisor),
+      static_cast<std::int32_t>(kOpusOutputSampleRate / durationDivisor)};
+  if (!exactDuration.valid()) {
+    return false;
+  }
+
+  result->id = *id;
+  result->kind = MediaTrackKind::Audio;
+  result->codec = MediaCodec::Opus;
+  result->timeBase =
+      MediaTime{1, static_cast<std::int32_t>(kOpusOutputSampleRate)};
+  // Unlike every other track duration in this demuxer, this one is NOT the
+  // container's declared Duration: it is the exact decoded sample count after
+  // both trims. The audio consumer uses it as the tail-trim ceiling, so an
+  // approximate value here would be an approximate end of file.
+  result->duration = exactDuration;
+  result->language = inlineString(entry.language);
+  result->codecConfigurationKind = MediaCodecConfigurationKind::AudioMagicCookie;
+  result->codecConfiguration.assign(header.begin(), header.end());
+  MediaAudioFormat format;
+  format.sampleRate = kOpusOutputSampleRate;
+  format.channels = configuration.channelCount;
+  format.formatTag = kOpusFormatTag;
+  format.framesPerPacket = probe.samplesPerAccessUnit;
+  format.channelLayoutTag =
+      configuration.channelCount == 1 ? kMonoLayoutTag : kStereoLayoutTag;
+  format.channelLayoutPresent = true;
+  result->audio = format;
+  runtime->entry = entry;
+  runtime->id = *id;
+  runtime->kind = MediaTrackKind::Audio;
+  runtime->codec = MediaCodec::Opus;
+  runtime->audioSampleRate = kOpusOutputSampleRate;
+  runtime->audioSamplesPerAccessUnit = probe.samplesPerAccessUnit;
+  runtime->audioPresentationOrigin = origin;
+  runtime->audioTickResidualTolerance = kMaximumOpusGridTickResidual;
+  runtime->audioGridOffsetFrames = configuration.preSkipFrames;
+  runtime->audioPrimingAccessUnits = priming;
+  runtime->audioTailBlockKnown = true;
+  runtime->audioTailBlockOffset = probe.tailBlockOffset;
+  runtime->audioTailDiscardPaddingNanoseconds =
+      probe.tailDiscardPaddingNanoseconds;
+  return true;
+}
+
 [[nodiscard]] bool makeAudioDescriptor(
     SeekableByteReader& reader, const TrackEntry& entry,
     const MediaSourceLimits& limits, MediaTime duration,
+    std::span<const Cluster> clusters,
+    std::span<const TrackConstraint> constraints,
+    std::uint64_t timestampScaleNanoseconds,
     CancellationToken cancellation, MediaTrackDescriptor* result,
     TrackRuntime* runtime) {
+  if (inlineString(entry.codecId) == "A_OPUS") {
+    return makeOpusAudioDescriptor(reader, entry, limits, clusters, constraints,
+                                   timestampScaleNanoseconds, cancellation,
+                                   result, runtime);
+  }
   if (!entry.audio || !entry.codecPrivate ||
       !selectedTrackFeaturesSupported(entry)) {
     return false;
@@ -923,6 +1272,11 @@ constexpr std::size_t kVp9KeyframeProbeClusters{4};
   runtime->kind = MediaTrackKind::Audio;
   runtime->codec = MediaCodec::Aac;
   runtime->audioSampleRate = admission.configuration->sampleRate;
+  runtime->audioSamplesPerAccessUnit = kAacLcSamplesPerAccessUnit;
+  runtime->audioPresentationOrigin = MediaTime{0, 1};
+  runtime->audioTickResidualTolerance = kMaximumAacGridTickResidual;
+  runtime->audioGridOffsetFrames = 0;
+  runtime->audioPrimingAccessUnits = kAacPrimingAccessUnits;
   return true;
 }
 
@@ -941,10 +1295,25 @@ cursorConstraints(const AssetState& state, MediaTrackId selected) {
   return result;
 }
 
+// DiscardPadding is honoured for exactly one Block per file: the last Block of
+// an Opus track, whose offset and value were both proven at preparation. It is
+// a PCM tail trim, so admitting it anywhere else -- or admitting a value the
+// stated duration was not derived from -- would let decoded audio outrun the
+// timeline the clock counts.
 [[nodiscard]] bool blockFeaturesSupported(
-    const CapturedBlockVisitor& block) noexcept {
-  return !block.group.codecState && !block.group.discardPaddingNanoseconds &&
-         !block.group.blockAdditionsPresent;
+    const CapturedBlockVisitor& block,
+    const std::optional<TrackRuntime>& audio) noexcept {
+  if (block.group.codecState || block.group.blockAdditionsPresent) {
+    return false;
+  }
+  if (!block.group.discardPaddingNanoseconds) {
+    return true;
+  }
+  return audio && audio->audioTailBlockKnown &&
+         block.header.trackNumber == audio->entry.number &&
+         block.header.containerEncoded.offset == audio->audioTailBlockOffset &&
+         *block.group.discardPaddingNanoseconds ==
+             audio->audioTailDiscardPaddingNanoseconds;
 }
 
 [[nodiscard]] bool clusterRangeValid(
@@ -1119,7 +1488,7 @@ MatroskaCursor::readNext(CancellationToken cancellation) noexcept {
           }
           impl_->startFound = true;
         }
-        if (!blockFeaturesSupported(visitor)) {
+        if (!blockFeaturesSupported(visitor, state.audio)) {
           return MatroskaCursorFailure{MatroskaDemuxError::UnsupportedTrack,
                                        "unsupported BlockGroup feature"};
         }
@@ -1181,14 +1550,42 @@ MatroskaCursor::readNext(CancellationToken cancellation) noexcept {
               visitor.frameCount == 0 ||
               visitor.frameCount > state.limits.maximumAudioSampleCount) {
             return MatroskaCursorFailure{MatroskaDemuxError::UnsupportedTrack,
-                                         "invalid AAC Block"};
+                                         "invalid audio Block"};
           }
+          const std::uint32_t samplesPerAccessUnit =
+              state.audio->audioSamplesPerAccessUnit;
           const auto projection = nearestAacAccessUnitForMatroskaTick(
               *tick, MediaTime{0, 1}, state.audio->audioSampleRate,
-              state.timestampScaleNanoseconds);
-          if (!aacProjectionOnGrid(projection)) {
+              state.timestampScaleNanoseconds, samplesPerAccessUnit);
+          if (!aacProjectionOnGrid(projection,
+                                   state.audio->audioTickResidualTolerance)) {
             return MatroskaCursorFailure{MatroskaDemuxError::InvalidTimeline,
-                                         "AAC Block is off the exact AU grid"};
+                                         "audio Block is off the exact AU grid"};
+          }
+          // Opus packets carry their own duration in the TOC byte. A track
+          // that changes packet duration mid-stream would silently desync the
+          // ordinal grid the timestamps are rebuilt from, so every emitted
+          // packet is re-proved against the duration admission recorded.
+          if (state.audio->codec == MediaCodec::Opus) {
+            for (std::uint16_t index = 0; index < visitor.frameCount; ++index) {
+              std::array<std::byte, 2> toc{};
+              const ByteRange frame = visitor.frames[index].bytes;
+              const auto amount = static_cast<std::size_t>(
+                  std::min<std::uint64_t>(frame.size, toc.size()));
+              if (amount == 0 ||
+                  !state.reader->readAt(
+                      frame.offset, std::span<std::byte>(toc).first(amount))) {
+                return MatroskaCursorFailure{MatroskaDemuxError::Io,
+                                             "Opus packet TOC is unreadable"};
+              }
+              const auto frames = opusPacketFrameCount(
+                  std::span<const std::byte>(toc).first(amount));
+              if (!frames || *frames != samplesPerAccessUnit) {
+                return MatroskaCursorFailure{
+                    MatroskaDemuxError::UnsupportedTrack,
+                    "Opus packet duration is not constant"};
+              }
+            }
           }
           std::uint16_t firstFrame = 0;
           if (visitor.header.containerEncoded.offset == impl_->startBlockOffset) {
@@ -1198,7 +1595,7 @@ MatroskaCursor::readNext(CancellationToken cancellation) noexcept {
               projection->accessUnitOrdinal + firstFrame !=
                   impl_->expectedAudioOrdinal) {
             return MatroskaCursorFailure{MatroskaDemuxError::InvalidTimeline,
-                                         "AAC ordinal discontinuity"};
+                                         "audio ordinal discontinuity"};
           }
           std::size_t bytes = 0;
           for (std::uint16_t index = firstFrame; index < visitor.frameCount;
@@ -1207,27 +1604,28 @@ MatroskaCursor::readNext(CancellationToken cancellation) noexcept {
             if (frameBytes > state.limits.maximumAudioSampleBytes ||
                 bytes > state.limits.maximumAudioSampleBytes - frameBytes) {
               return MatroskaCursorFailure{MatroskaDemuxError::SampleLimit,
-                                           "AAC sample exceeds byte cap"};
+                                           "audio sample exceeds byte cap"};
             }
             sample.frames[sample.frameCount++] = visitor.frames[index];
             bytes += static_cast<std::size_t>(frameBytes);
           }
           sample.aggregateBytes = bytes;
           const auto presentation = aacAccessUnitGridTime(
-              {{0, 1}, impl_->expectedAudioOrdinal,
-               state.audio->audioSampleRate});
+              {state.audio->audioPresentationOrigin,
+               impl_->expectedAudioOrdinal, state.audio->audioSampleRate,
+               samplesPerAccessUnit});
           const auto duration = timeFromNanosecondsUnsigned(
               (static_cast<std::uint64_t>(sample.frameCount) *
-               kAacLcSamplesPerAccessUnit * UINT64_C(1'000'000'000)) /
+               samplesPerAccessUnit * UINT64_C(1'000'000'000)) /
               state.audio->audioSampleRate);
           if (!presentation) {
             return MatroskaCursorFailure{MatroskaDemuxError::InvalidTimeline,
-                                         "AAC presentation overflow"};
+                                         "audio presentation overflow"};
           }
           sample.presentationTime = *presentation;
           const std::uint64_t frameCount =
               static_cast<std::uint64_t>(sample.frameCount) *
-              kAacLcSamplesPerAccessUnit;
+              samplesPerAccessUnit;
           const std::uint64_t divisor =
               std::gcd(frameCount,
                        static_cast<std::uint64_t>(state.audio->audioSampleRate));
@@ -1239,7 +1637,7 @@ MatroskaCursor::readNext(CancellationToken cancellation) noexcept {
               denominator > static_cast<std::uint64_t>(
                                 std::numeric_limits<std::int32_t>::max())) {
             return MatroskaCursorFailure{MatroskaDemuxError::InvalidTimeline,
-                                         "AAC duration overflow"};
+                                         "audio duration overflow"};
           }
           sample.duration = MediaTime{static_cast<std::int64_t>(numerator),
                                       static_cast<std::int32_t>(denominator)};
@@ -1402,26 +1800,36 @@ MatroskaPlanOutcome MatroskaPreparedAsset::planGeneration(
         outcome.error = MatroskaDemuxError::InvalidTimeline;
         return outcome;
       }
+      const std::uint32_t samplesPerAccessUnit =
+          state.audio->audioSamplesPerAccessUnit;
+      const MediaTime presentationOrigin = state.audio->audioPresentationOrigin;
+      const std::int64_t tickTolerance =
+          state.audio->audioTickResidualTolerance;
+      // Ordinal k spans media frames [k*S - offset, (k+1)*S - offset), so the
+      // ordinal containing a media frame is (frame + offset) / S. The offset is
+      // the Opus pre-skip and zero for AAC, which keeps the AAC expression
+      // arithmetically identical to the one this replaced.
       const std::uint64_t desiredOrdinal =
-          static_cast<std::uint64_t>(*pcmFrame) /
-          kAacLcSamplesPerAccessUnit;
+          (static_cast<std::uint64_t>(*pcmFrame) +
+           state.audio->audioGridOffsetFrames) /
+          samplesPerAccessUnit;
       // Stage whole access units ahead of the first audible one. A decoder
-      // reaches full precision only after a couple of AAC frames, so a
-      // consumer demands proof that the generation carries that preroll before
-      // it will publish PCM. desiredOrdinal alone is the AU *containing* the
-      // audible frame, which is never early enough to prove anything, so every
-      // non-origin seek would be refused downstream.
+      // reaches full precision only after a couple of frames, so a consumer
+      // demands proof that the generation carries that preroll before it will
+      // publish PCM. desiredOrdinal alone is the AU *containing* the audible
+      // frame, which is never early enough to prove anything, so every
+      // non-origin seek would be refused downstream. Opus states the warm-up
+      // it needs as SeekPreRoll and gets that many access units instead.
+      const std::uint64_t priming = state.audio->audioPrimingAccessUnits;
       const std::uint64_t startOrdinal =
-          desiredOrdinal >= kAacPrimingAccessUnits
-              ? desiredOrdinal - kAacPrimingAccessUnits
-              : 0;
+          desiredOrdinal >= priming ? desiredOrdinal - priming : 0;
       const std::size_t cueCluster = cue.clusterIndex;
       const std::size_t searchStart = cueCluster == 0 ? 0 : cueCluster - 1;
       const ScanResult audioBlock = scanTrack(
           state, state.audio->id, static_cast<std::uint32_t>(searchStart),
           kMaximumMatroskaSeekClusters,
-          [&state, startOrdinal](std::uint32_t clusterIndex,
-                                 const CapturedBlockVisitor& block) {
+          [&state, startOrdinal, samplesPerAccessUnit, tickTolerance](
+              std::uint32_t clusterIndex, const CapturedBlockVisitor& block) {
             const auto tick = signedBlockTick(
                 state.clusters[clusterIndex].timestampTick,
                 block.header.relativeTimestamp);
@@ -1430,8 +1838,8 @@ MatroskaPlanOutcome MatroskaPreparedAsset::planGeneration(
             }
             const auto projection = nearestAacAccessUnitForMatroskaTick(
                 *tick, MediaTime{0, 1}, state.audio->audioSampleRate,
-                state.timestampScaleNanoseconds);
-            return aacProjectionOnGrid(projection) &&
+                state.timestampScaleNanoseconds, samplesPerAccessUnit);
+            return aacProjectionOnGrid(projection, tickTolerance) &&
                    projection->accessUnitOrdinal <= startOrdinal &&
                    startOrdinal < projection->accessUnitOrdinal +
                                       block.frameCount;
@@ -1441,7 +1849,7 @@ MatroskaPlanOutcome MatroskaPreparedAsset::planGeneration(
         outcome.error = audioBlock.error == MatroskaDemuxError::None
                             ? MatroskaDemuxError::InvalidTimeline
                             : audioBlock.error;
-        outcome.message = "AAC access unit for seek target was not found";
+        outcome.message = "audio access unit for seek target was not found";
         return outcome;
       }
       const auto audioTick = signedBlockTick(
@@ -1449,7 +1857,7 @@ MatroskaPlanOutcome MatroskaPreparedAsset::planGeneration(
           audioBlock.block->header.relativeTimestamp);
       const auto projection = nearestAacAccessUnitForMatroskaTick(
           *audioTick, MediaTime{0, 1}, state.audio->audioSampleRate,
-          state.timestampScaleNanoseconds);
+          state.timestampScaleNanoseconds, samplesPerAccessUnit);
       plan.audioClusterIndex = audioBlock.clusterIndex;
       plan.audioBlockOffset = audioBlock.block->header.containerEncoded.offset;
       plan.audioFrameIndex = static_cast<std::uint16_t>(
@@ -1460,7 +1868,8 @@ MatroskaPlanOutcome MatroskaPreparedAsset::planGeneration(
       // contains it. Naming the Block's first AU disagreed with the cursor
       // whenever the seek landed mid-Block.
       const auto decode = aacAccessUnitGridTime(
-          {{0, 1}, startOrdinal, state.audio->audioSampleRate});
+          {presentationOrigin, startOrdinal, state.audio->audioSampleRate,
+           samplesPerAccessUnit});
       if (!decode) {
         outcome.error = MatroskaDemuxError::InvalidTimeline;
         return outcome;
@@ -1748,11 +2157,13 @@ MatroskaPrepareOutcome prepareMatroska(
       MediaTrackDescriptor audioDescriptor;
       TrackRuntime audioRuntime;
       if (!makeAudioDescriptor(*state->reader, *audio, state->limits, *duration,
+                               document.clusters, state->constraints,
+                               state->timestampScaleNanoseconds,
                                cancellation, &audioDescriptor,
                                &audioRuntime)) {
         result.error = MatroskaDemuxError::CodecConfiguration;
         result.status = MatroskaDemuxStatus::Unsupported;
-        result.message = "selected AAC-LC track was not admitted";
+        result.message = "selected AAC-LC or Opus track was not admitted";
         return result;
       }
       descriptor->selectedAudio = audioDescriptor.id;

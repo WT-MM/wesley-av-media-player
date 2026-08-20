@@ -83,6 +83,16 @@ struct NativeAudioGenerationTimeline {
   // other fresh decoder generation must prove that its first compressed audio
   // sample is an ImmediatePlayoutFrame before conversion.
   bool startsAtStreamOrigin{true};
+  // Mirror image of presentationFloor: the source timestamp of the first PCM
+  // frame the generation may NOT publish. It exists because a constant-frame
+  // codec cannot end mid-packet -- an Opus encoder always emits a final full
+  // packet and states the overrun as Matroska DiscardPadding -- so the decoded
+  // tail has to be discarded at exact frame granularity. The discarded frames
+  // still count as decoded, so the generation's exact accepted-frame budget is
+  // unchanged; only publication stops early. Appended with an inert default so
+  // every existing aggregate initialiser keeps its exact meaning.
+  media::MediaTime presentationCeiling{};
+  bool trimAfterCeiling{false};
 };
 
 class NativeAudioConverter;

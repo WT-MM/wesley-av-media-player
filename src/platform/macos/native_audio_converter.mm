@@ -1,5 +1,9 @@
 #include "native_audio_converter.hpp"
 
+#include "media/matroska_opus.hpp"
+
+#include <vector>
+
 #import <AudioToolbox/AudioToolbox.h>
 #import <CoreMedia/CoreMedia.h>
 
@@ -189,9 +193,23 @@ void saturatingAdd(std::uint64_t &value, std::uint64_t amount) noexcept {
     return formatTag == kAudioFormatAppleLossless;
   case media::MediaCodec::Mp3:
     return formatTag == kAudioFormatMPEGLayer3;
+  case media::MediaCodec::Opus:
+    return formatTag == kAudioFormatOpus;
   default:
     return false;
   }
+}
+
+// AudioToolbox swallows exactly this many leading frames from every freshly
+// created Opus converter and ignores the OpusHead pre-skip while doing it, so
+// a generation decodes this many fewer frames than its packets declare. It is
+// a property of the decoder, not of the container, which is why it is stated
+// here and not carried in the timeline.
+[[nodiscard]] std::uint32_t decoderLeadInFrames(
+    media::MediaCodec codec) noexcept {
+  return codec == media::MediaCodec::Opus
+             ? wam::media::matroska::kOpusDecoderDelayFrames
+             : 0U;
 }
 
 constexpr std::size_t kChannelLayoutPrefixBytes =
@@ -283,6 +301,19 @@ public:
     input_asbd_ = exactAsbd(configuration.input);
     output_asbd_ = floatOutputAsbd(configuration.outputSampleRate,
                                    configuration.outputChannels);
+    try {
+      cookie_.assign(configuration.magicCookie.begin(),
+                     configuration.magicCookie.end());
+    } catch (...) {
+      assignError(error, "AudioConverter magic cookie could not be retained");
+      return false;
+    }
+    layout_present_ = configuration.input.channelLayoutPresent;
+    layout_tag_ = configuration.input.channelLayoutTag;
+    return createConverter(error);
+  }
+
+  [[nodiscard]] bool createConverter(std::string *error) {
     OSStatus status =
         AudioConverterNew(&input_asbd_, &output_asbd_, &converter_);
     if (status != noErr || converter_ == nullptr) {
@@ -317,20 +348,19 @@ public:
         return false;
       }
     }
-    if (!configuration.magicCookie.empty()) {
+    if (!cookie_.empty()) {
       status = AudioConverterSetProperty(
           converter_, kAudioConverterDecompressionMagicCookie,
-          static_cast<UInt32>(configuration.magicCookie.size()),
-          configuration.magicCookie.data());
+          static_cast<UInt32>(cookie_.size()), cookie_.data());
       if (status != noErr) {
         close();
         assignError(error, "AudioConverter rejected the audio magic cookie");
         return false;
       }
     }
-    if (configuration.input.channelLayoutPresent) {
+    if (layout_present_) {
       AudioChannelLayout layout{};
-      layout.mChannelLayoutTag = configuration.input.channelLayoutTag;
+      layout.mChannelLayoutTag = layout_tag_;
       status = AudioConverterSetProperty(converter_,
                                          kAudioConverterInputChannelLayout,
                                          kChannelLayoutPrefixBytes, &layout);
@@ -379,12 +409,27 @@ public:
       assignError(error, "AudioConverter is not configured");
       return false;
     }
+    input_storage_outstanding_ = false;
+    outstanding_storage_was_final_ = false;
+    // AudioConverterReset does NOT restore an Opus converter's priming state:
+    // measured, a reset converter emits the decoder's 120-frame startup
+    // transient as real output instead of swallowing it, so the same stream
+    // decodes to a different frame count depending on whether the generation
+    // was configured or flushed. Rebuilding the converter restores the single
+    // invariant the whole Opus trim is derived from. Every other codec keeps
+    // the cheaper reset it has always used.
+    if (input_asbd_.mFormatID == kAudioFormatOpus) {
+      AudioConverterDispose(converter_);
+      converter_ = nullptr;
+      if (!createConverter(error)) {
+        return false;
+      }
+      return true;
+    }
     if (AudioConverterReset(converter_) != noErr) {
       assignError(error, "AudioConverter reset failed");
       return false;
     }
-    input_storage_outstanding_ = false;
-    outstanding_storage_was_final_ = false;
     return true;
   }
 
@@ -393,6 +438,9 @@ public:
       AudioConverterDispose(converter_);
       converter_ = nullptr;
     }
+    cookie_.clear();
+    layout_present_ = false;
+    layout_tag_ = 0;
     input_storage_outstanding_ = false;
     outstanding_storage_was_final_ = false;
   }
@@ -472,6 +520,10 @@ private:
   }
 
   AudioConverterRef converter_{nullptr};
+  // Retained so the converter can be rebuilt identically on reset.
+  std::vector<std::byte> cookie_;
+  std::uint32_t layout_tag_{0};
+  bool layout_present_{false};
   AudioStreamBasicDescription input_asbd_{};
   AudioStreamBasicDescription output_asbd_{};
   std::array<AudioStreamPacketDescription, kMaximumPacketsPerFill>
@@ -699,9 +751,13 @@ struct NativeAudioConverter::Impl {
   }
 
   void resetExactTimeline(NativeAudioGenerationTimeline value,
-                          std::int64_t floorFrame) noexcept {
+                          std::int64_t floorFrame,
+                          std::int64_t ceilingFrame,
+                          bool ceilingKnown) noexcept {
     timeline = value;
     presentation_floor_frame = floorFrame;
+    presentation_ceiling_frame = ceilingFrame;
+    has_presentation_ceiling = ceilingKnown;
     has_input_timeline = false;
     expected_input_frame = 0;
     decoded_cursor_frame = 0;
@@ -712,6 +768,21 @@ struct NativeAudioConverter::Impl {
     statistics.presentationFloorFrame = floorFrame;
     statistics.firstPublishedFrame = 0;
     statistics.firstPublishedFrameKnown = false;
+  }
+
+  // The decoder swallows lead_in_frames of its own before it emits anything,
+  // so a generation legitimately decodes that many fewer PCM frames than its
+  // packets declare. Both invariants are stated against the same identity, so
+  // lead_in_frames == 0 leaves the historic arithmetic byte-identical.
+  [[nodiscard]] bool decodedWithinBudget(std::uint64_t decoded) const noexcept {
+    return lead_in_frames <= accepted_pcm_frames &&
+           decoded <= accepted_pcm_frames - lead_in_frames;
+  }
+
+  [[nodiscard]] bool decodedBudgetExhausted(
+      std::uint64_t decoded) const noexcept {
+    return lead_in_frames <= accepted_pcm_frames &&
+           decoded == accepted_pcm_frames - lead_in_frames;
   }
 
   void failClosedProtocol() noexcept {
@@ -1044,6 +1115,9 @@ struct NativeAudioConverter::Impl {
   std::int64_t decoded_cursor_frame{0};
   std::int64_t prepared_start_frame{0};
   std::int64_t prepared_end_frame{0};
+  std::int64_t presentation_ceiling_frame{0};
+  std::uint32_t lead_in_frames{0};
+  bool has_presentation_ceiling{false};
   bool encoded_borrowed{false};
   bool configured{false};
   bool cancelled{false};
@@ -1065,6 +1139,33 @@ NativeAudioConverter::NativeAudioConverter(
 
 NativeAudioConverter::~NativeAudioConverter() { close(); }
 
+namespace {
+
+// Resolves the tail-trim ceiling to an exact frame index. A generation that
+// declares a ceiling it cannot express exactly is refused rather than trimmed
+// approximately.
+[[nodiscard]] bool resolveCeiling(const NativeAudioGenerationTimeline &timeline,
+                                  std::uint32_t sampleRate,
+                                  std::int64_t floorFrame,
+                                  std::int64_t *ceilingFrame,
+                                  bool *ceilingKnown) noexcept {
+  if (!timeline.trimAfterCeiling) {
+    *ceilingFrame = 0;
+    *ceilingKnown = false;
+    return true;
+  }
+  std::int64_t frame = 0;
+  if (!exactFrame(timeline.presentationCeiling, sampleRate, &frame) ||
+      frame < floorFrame) {
+    return false;
+  }
+  *ceilingFrame = frame;
+  *ceilingKnown = true;
+  return true;
+}
+
+} // namespace
+
 bool NativeAudioConverter::configure(const media::MediaTrackDescriptor &track,
                                      media::MediaGeneration generation,
                                      std::string *error) {
@@ -1078,6 +1179,8 @@ bool NativeAudioConverter::configure(const media::MediaTrackDescriptor &track,
   auto &state = *impl_;
   std::uint32_t candidateSampleRate = 0;
   std::int64_t candidateFloorFrame = 0;
+  std::int64_t candidateCeilingFrame = 0;
+  bool candidateCeilingKnown = false;
   if (generation == 0 || state.ring.generation() != generation ||
       track.id == 0 || track.kind != media::MediaTrackKind::Audio ||
       !track.audio || !supportedCodec(track.codec, track.audio->formatTag) ||
@@ -1087,6 +1190,8 @@ bool NativeAudioConverter::configure(const media::MediaTrackDescriptor &track,
       !supportedRate(track.audio->sampleRate, &candidateSampleRate) ||
       !exactFrame(timeline.presentationFloor, candidateSampleRate,
                   &candidateFloorFrame) ||
+      !resolveCeiling(timeline, candidateSampleRate, candidateFloorFrame,
+                      &candidateCeilingFrame, &candidateCeilingKnown) ||
       track.codecConfiguration.size() > state.cookie_storage.size() ||
       (!track.codecConfiguration.empty() &&
        track.codecConfigurationKind !=
@@ -1137,7 +1242,9 @@ bool NativeAudioConverter::configure(const media::MediaTrackDescriptor &track,
   state.statistics.generation = generation;
   state.statistics.sampleRate = state.sample_rate;
   state.statistics.sourceChannels = state.audio.channels;
-  state.resetExactTimeline(timeline, candidateFloorFrame);
+  state.lead_in_frames = decoderLeadInFrames(track.codec);
+  state.resetExactTimeline(timeline, candidateFloorFrame, candidateCeilingFrame,
+                           candidateCeilingKnown);
   return true;
 }
 
@@ -1353,7 +1460,13 @@ bool NativeAudioConverter::commitPrepared(
   state.peak_retained_payload_bytes =
       std::max(state.peak_retained_payload_bytes, retainedBytes);
   if (!state.has_input_timeline) {
-    state.decoded_cursor_frame = state.prepared_start_frame;
+    // The first PCM frame this generation will see is not the first frame of
+    // the first packet: the decoder has already consumed its own lead-in.
+    if (!checkedFrameEnd(state.prepared_start_frame, state.lead_in_frames,
+                         &state.decoded_cursor_frame)) {
+      state.failClosedProtocol();
+      return false;
+    }
     state.has_input_timeline = true;
   }
   state.expected_input_frame = state.prepared_end_frame;
@@ -1444,7 +1557,7 @@ NativeAudioPumpResult NativeAudioConverter::pump(std::string *error) {
       (!state.has_input_timeline ||
        !checkedAdd(state.statistics.decodedPcmFrames, converted.producedFrames,
                    &decodedAfter) ||
-       decodedAfter > state.accepted_pcm_frames ||
+       !state.decodedWithinBudget(decodedAfter) ||
        !checkedFrameEnd(state.decoded_cursor_frame, converted.producedFrames,
                         &cursorAfter))) {
     state.failPump(error,
@@ -1478,16 +1591,36 @@ NativeAudioPumpResult NativeAudioConverter::pump(std::string *error) {
         return NativeAudioPumpResult::Failed;
       }
     }
-    const std::uint64_t publishFrames = converted.producedFrames - discarded;
+    std::int64_t publishStart = 0;
+    if (!checkedFrameEnd(state.decoded_cursor_frame, discarded,
+                         &publishStart)) {
+      state.failPump(error, "generation-local PCM accounting overflowed");
+      return NativeAudioPumpResult::Failed;
+    }
+    // Mirror image of the head trim. The final packet of a constant-frame
+    // codec always overruns the stream's exact end; those frames are decoded
+    // (so the budget identity above still holds) but never published.
+    std::uint64_t tailDiscarded = 0;
+    if (state.has_presentation_ceiling &&
+        cursorAfter > state.presentation_ceiling_frame) {
+      const std::int64_t keepEnd =
+          std::max(publishStart, state.presentation_ceiling_frame);
+      if (!frameDistance(keepEnd, cursorAfter, &tailDiscarded) ||
+          tailDiscarded > converted.producedFrames - discarded) {
+        state.failPump(error, "end-of-stream PCM trim is not frame-exact");
+        return NativeAudioPumpResult::Failed;
+      }
+    }
+    const std::uint64_t publishFrames =
+        converted.producedFrames - discarded - tailDiscarded;
     std::uint64_t discardedAfter = 0;
     std::uint64_t publishedAfter = 0;
-    std::int64_t publishStart = 0;
-    if (!checkedAdd(state.statistics.discardedTrimFrames, discarded,
+    std::uint64_t trimmed = 0;
+    if (!checkedAdd(discarded, tailDiscarded, &trimmed) ||
+        !checkedAdd(state.statistics.discardedTrimFrames, trimmed,
                     &discardedAfter) ||
         !checkedAdd(state.statistics.publishedPcmFrames, publishFrames,
-                    &publishedAfter) ||
-        !checkedFrameEnd(state.decoded_cursor_frame, discarded,
-                         &publishStart)) {
+                    &publishedAfter)) {
       state.failPump(error, "generation-local PCM accounting overflowed");
       return NativeAudioPumpResult::Failed;
     }
@@ -1503,7 +1636,7 @@ NativeAudioPumpResult NativeAudioConverter::pump(std::string *error) {
     }
     if (publishFrames == 0) {
       if (converted.drained) {
-        if (decodedAfter != state.accepted_pcm_frames) {
+        if (!state.decodedBudgetExhausted(decodedAfter)) {
           state.failPump(
               error, "audio backend drained before its exact timeline ended");
           return NativeAudioPumpResult::Failed;
@@ -1536,7 +1669,7 @@ NativeAudioPumpResult NativeAudioConverter::pump(std::string *error) {
     }
     saturatingAdd(state.statistics.publishedSlabs, 1);
     if (converted.drained) {
-      if (decodedAfter != state.accepted_pcm_frames) {
+      if (!state.decodedBudgetExhausted(decodedAfter)) {
         state.failPump(error,
                        "audio backend drained before its exact timeline ended");
         return NativeAudioPumpResult::Failed;
@@ -1546,7 +1679,7 @@ NativeAudioPumpResult NativeAudioConverter::pump(std::string *error) {
     return NativeAudioPumpResult::Published;
   }
   if (converted.drained) {
-    if (state.statistics.decodedPcmFrames != state.accepted_pcm_frames) {
+    if (!state.decodedBudgetExhausted(state.statistics.decodedPcmFrames)) {
       state.failPump(error,
                      "audio backend drained before its exact timeline ended");
       return NativeAudioPumpResult::Failed;
@@ -1615,10 +1748,14 @@ bool NativeAudioConverter::flush(
     NativeAudioGenerationTimeline timeline) noexcept {
   auto &state = *impl_;
   std::int64_t floorFrame = 0;
+  std::int64_t ceilingFrame = 0;
+  bool ceilingKnown = false;
   if (!state.configured || nextGeneration == 0 ||
       nextGeneration <= state.statistics.generation ||
       state.ring.generation() != nextGeneration ||
-      !exactFrame(timeline.presentationFloor, state.sample_rate, &floorFrame)) {
+      !exactFrame(timeline.presentationFloor, state.sample_rate, &floorFrame) ||
+      !resolveCeiling(timeline, state.sample_rate, floorFrame, &ceilingFrame,
+                      &ceilingKnown)) {
     return false;
   }
   try {
@@ -1658,7 +1795,7 @@ bool NativeAudioConverter::flush(
   state.statistics.sampleRetained = false;
   state.statistics.endOfStreamRequested = false;
   state.statistics.drained = false;
-  state.resetExactTimeline(timeline, floorFrame);
+  state.resetExactTimeline(timeline, floorFrame, ceilingFrame, ceilingKnown);
   return true;
 }
 

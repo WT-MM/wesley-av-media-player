@@ -439,9 +439,27 @@ struct MatroskaMediaSource::Impl {
       assignError(error, "matroska sample refers to an unknown track");
       return std::nullopt;
     }
-    if (!raw.presentationTime.valid() || raw.presentationTime.value < 0 ||
+    // Video timing is always nonnegative. Audio is not: Matroska stores an
+    // audio Block's timestamp on the codec grid and states CodecDelay
+    // separately, so the first access unit of an Opus track legitimately
+    // presents before media time zero. The demuxer bounds that lead-in at
+    // admission (the pre-skip ceiling) and the window's decodeStart names it
+    // exactly, so the negative window is proved rather than tolerated: it must
+    // be exactly the planned decode start, which the check below enforces for
+    // the first staged unit and ordinal continuity enforces thereafter.
+    const bool negativeStartAllowed =
+        !video && audioDecodeStart.valid() && audioDecodeStart.value < 0;
+    if (!raw.presentationTime.valid() ||
+        (raw.presentationTime.value < 0 && !negativeStartAllowed) ||
         (raw.duration.valid() && raw.duration.value < 0)) {
       assignError(error, "matroska sample has no exact nonnegative timing");
+      return std::nullopt;
+    }
+    if (raw.presentationTime.value < 0 &&
+        media::compareMediaTime(raw.presentationTime, audioDecodeStart) !=
+            MediaTimeOrder::Equal) {
+      assignError(error,
+                  "matroska audio access unit precedes its planned window");
       return std::nullopt;
     }
     // The demuxer never invents a decode timestamp; a cursor that produced one

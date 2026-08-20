@@ -1,5 +1,7 @@
 #include "native_audio_session.hpp"
 
+#include "media/audio_codec_timing.hpp"
+
 #import <AudioToolbox/AudioToolbox.h>
 
 #include <algorithm>
@@ -165,9 +167,24 @@ void assignError(std::string* error, const char* message) noexcept {
     return track.audio->formatTag == kAudioFormatAppleLossless;
   case media::MediaCodec::Mp3:
     return track.audio->formatTag == kAudioFormatMPEGLayer3;
+  case media::MediaCodec::Opus:
+    return track.audio->formatTag == kAudioFormatOpus;
   default:
     return false;
   }
+}
+
+// Opus is the one admitted codec whose first access unit legitimately presents
+// before media time zero: Matroska stores a Block's timestamp on the codec
+// grid and states CodecDelay separately, so access unit 0 of every real Opus
+// mux starts pre-skip frames early. The generation therefore decodes a bounded
+// preroll it must not publish -- exactly what trimBeforeFloor already means --
+// and it is also the only codec whose track duration is the exact decoded
+// sample count rather than a container estimate, which is what makes it usable
+// as the tail-trim ceiling.
+[[nodiscard]] bool codecStartsBeforeStreamOrigin(
+    const media::MediaTrackDescriptor& track) noexcept {
+  return media::audioCodecPrecedesStreamOrigin(track.codec);
 }
 
 [[nodiscard]] bool supportedLayout(const media::MediaAudioFormat& audio)
@@ -206,7 +223,7 @@ void assignError(std::string* error, const char* message) noexcept {
 [[nodiscard]] std::optional<TimelinePlan> timelinePlanForRate(
     media::MediaGeneration generation,
     const media::NativeMediaGenerationTimeline& timeline,
-    std::uint32_t sampleRate) noexcept {
+    std::uint32_t sampleRate, bool audioMayPrecedeStreamOrigin) noexcept {
   std::int64_t floorFrame = 0;
   std::int64_t decodeFrame = 0;
   if (generation == 0 || timeline.generation != generation ||
@@ -219,7 +236,7 @@ void assignError(std::string* error, const char* message) noexcept {
                   &decodeFrame) ||
       !exactFrame(timeline.audioWindow.presentationStart, sampleRate,
                   &floorFrame) ||
-      decodeFrame < 0 ||
+      (decodeFrame < 0 && !audioMayPrecedeStreamOrigin) ||
       floorFrame < 0) {
     return std::nullopt;
   }
@@ -253,9 +270,12 @@ void assignError(std::string* error, const char* message) noexcept {
       !audioDecodeAgainstFloor ||
       *audioDecodeAgainstFloor == media::MediaTimeOrder::Greater ||
       !audioDecodeAgainstOrigin ||
-      *audioDecodeAgainstOrigin == media::MediaTimeOrder::Less ||
+      (*audioDecodeAgainstOrigin == media::MediaTimeOrder::Less &&
+       !audioMayPrecedeStreamOrigin) ||
+      // An audio window that begins before media time zero can only be the
+      // stream origin: there is nothing earlier for it to be.
       timeline.audioWindow.startsAtStreamOrigin !=
-          (*audioDecodeAgainstOrigin == media::MediaTimeOrder::Equal)) {
+          (*audioDecodeAgainstOrigin != media::MediaTimeOrder::Greater)) {
     return std::nullopt;
   }
 
@@ -278,12 +298,15 @@ void assignError(std::string* error, const char* message) noexcept {
     break;
   case media::MediaSeekMode::KeyFrame:
     if (*actualAgainstFloor != media::MediaTimeOrder::Equal ||
-        *audioDecodeAgainstFloor != media::MediaTimeOrder::Equal ||
+        (*audioDecodeAgainstFloor != media::MediaTimeOrder::Equal &&
+         !audioMayPrecedeStreamOrigin) ||
         media::compareMediaTime(timeline.audioWindow.presentationStart,
                                 timeline.presentationFloor) !=
             media::MediaTimeOrder::Equal) {
       return std::nullopt;
     }
+    trimBeforeFloor =
+        *audioDecodeAgainstFloor == media::MediaTimeOrder::Less;
     break;
   default:
     return std::nullopt;
@@ -301,6 +324,36 @@ void assignError(std::string* error, const char* message) noexcept {
   result.floorFrame = floorFrame;
   result.sampleRate = sampleRate;
   return result;
+}
+
+// The tail-trim ceiling and the pre-origin allowance are codec facts, so they
+// have to survive into every later flush, which never sees the descriptor
+// again. Both call sites therefore go through this one function.
+[[nodiscard]] std::optional<TimelinePlan> timelinePlanFor(
+    media::MediaGeneration generation,
+    const media::NativeMediaGenerationTimeline& timeline,
+    std::uint32_t sampleRate, bool audioMayPrecedeStreamOrigin,
+    bool trimAfterCeiling, media::MediaTime presentationCeiling) noexcept {
+  auto plan = timelinePlanForRate(generation, timeline, sampleRate,
+                                  audioMayPrecedeStreamOrigin);
+  if (!plan) {
+    return std::nullopt;
+  }
+  if (trimAfterCeiling) {
+    // The demuxer states an Opus track's duration as the exact decoded sample
+    // count after both trims, so it is the frame the generation must stop
+    // publishing at. A track that cannot state it exactly is not admitted
+    // natively at all rather than played a few milliseconds long.
+    std::int64_t ceilingFrame = 0;
+    if (!presentationCeiling.valid() ||
+        !exactFrame(presentationCeiling, sampleRate, &ceilingFrame) ||
+        ceilingFrame <= plan->floorFrame) {
+      return std::nullopt;
+    }
+    plan->converter.presentationCeiling = presentationCeiling;
+    plan->converter.trimAfterCeiling = true;
+  }
+  return plan;
 }
 
 [[nodiscard]] std::optional<TimelinePlan> preflight(
@@ -325,7 +378,9 @@ void assignError(std::string* error, const char* message) noexcept {
            media::MediaCodecConfigurationKind::None)) {
     return std::nullopt;
   }
-  return timelinePlanForRate(generation, timeline, sampleRate);
+  return timelinePlanFor(generation, timeline, sampleRate,
+                         codecStartsBeforeStreamOrigin(track),
+                         codecStartsBeforeStreamOrigin(track), track.duration);
 }
 
 [[nodiscard]] bool sameTimeline(
@@ -424,6 +479,11 @@ struct NativeAudioSessionControl final {
   media::MediaGeneration completedFlushTarget{0};
   media::MediaTrackId track{0};
   std::uint32_t sampleRate{0};
+  // Codec facts fixed at configure() and reused by every later flush, which
+  // does not see the track descriptor again.
+  bool audioMayPrecedeStreamOrigin{false};
+  bool trimAfterCeiling{false};
+  media::MediaTime presentationCeiling{};
   std::int64_t presentationFloorFrame{0};
   media::MediaTime mediaOrigin{};
   media::MediaTime audioDecodeStart{};
@@ -1169,6 +1229,9 @@ media::NativeMediaConsumeResult NativeAudioSession::configure(
 
   control.track = track.id;
   control.sampleRate = plan->sampleRate;
+  control.audioMayPrecedeStreamOrigin = codecStartsBeforeStreamOrigin(track);
+  control.trimAfterCeiling = plan->converter.trimAfterCeiling;
+  control.presentationCeiling = plan->converter.presentationCeiling;
   control.presentationFloorFrame = plan->floorFrame;
   control.mediaOrigin = plan->mediaOrigin;
   control.audioDecodeStart = plan->decodeStart;
@@ -1716,8 +1779,10 @@ media::NativeMediaConsumerProgress NativeAudioSession::flush(
                  ? media::NativeMediaConsumerProgress::StaleGeneration
                  : media::NativeMediaConsumerProgress::Failed;
     }
-    const std::optional<TimelinePlan> plan =
-        timelinePlanForRate(nextGeneration, timeline, control.sampleRate);
+    const std::optional<TimelinePlan> plan = timelinePlanFor(
+        nextGeneration, timeline, control.sampleRate,
+        control.audioMayPrecedeStreamOrigin, control.trimAfterCeiling,
+        control.presentationCeiling);
     if (!plan) {
       control.latch(NativeAudioSessionFailure::ClockTransition);
       return media::NativeMediaConsumerProgress::Failed;
