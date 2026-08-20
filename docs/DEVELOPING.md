@@ -12,7 +12,11 @@ arithmetic drives scheduling, and decoded frames are handed to an
 `AVSampleBufferDisplayLayer` that WindowServer composites beneath the Qt-drawn
 chrome — so during steady playback the app issues zero GPU render passes of
 its own. H.264, HEVC (8/10-bit), VP9, and AV1 play natively across MP4, MOV,
-and MKV. Anything the native engine declines falls back seamlessly to
+MKV, and WebM; Opus and (uniform-blocksize) Vorbis audio decode natively via
+AudioToolbox, and VP8 decodes through an in-pipeline libvpx stage
+(`WAM_ENABLE_SOFTWARE_VP8`, on when libvpx is present — release packaging
+must carry libvpx in the pinned closure before enabling it in bundled
+builds). Anything the native engine declines falls back seamlessly to
 libmpv/FFmpeg, which also provides playback on other platforms, broad
 container/subtitle/network-stream support, background exports, and — via
 whisper.cpp — private, on-device captions. Deeper reading:

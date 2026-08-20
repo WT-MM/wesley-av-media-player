@@ -19,8 +19,10 @@ The chrome fades while you watch — what's left is just your video.
   or training run is saturating the machine, and WAM doesn't fight them for
   the GPU. ([Full methodology and tables](docs/DEVELOPING.md#measured-performance).)
 - **Plays what QuickTime won't.** H.264, HEVC (8/10-bit), VP9, and AV1 decode
-  natively in hardware across MP4, MOV, and MKV. Anything else falls back
-  seamlessly to a bundled mpv/FFmpeg engine — no codec-pack hunting.
+  natively in hardware across MP4, MOV, MKV, and WebM — with Opus and Vorbis
+  audio decoded natively too, and VP8 handled by an in-pipeline software
+  stage. Anything else falls back seamlessly to a bundled mpv/FFmpeg engine —
+  no codec-pack hunting.
 - **Stays out of your way.** Edge-to-edge video under a translucent title band
   and floating transport that fade while watching; aspect-exact window resize;
   double-click to fit the screen; keeps playing when unfocused, occluded, or
