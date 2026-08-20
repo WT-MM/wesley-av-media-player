@@ -91,6 +91,12 @@ enum class MediaCodec : std::uint8_t {
   Opus,
   Vorbis,
   Pcm,
+  // Appended 2026-08-20 under the SESSION_HANDOFF amendment that authorises an
+  // APPEND-ONLY addition to this otherwise frozen enum. Every value above keeps
+  // its existing ordinal; Vp8 takes the next one. VP8 has no hardware decoder
+  // on any Apple platform and is decoded by the libvpx software stage, which is
+  // why it is the only video codec here that is not a VideoToolbox codec.
+  Vp8,
 };
 
 enum class MediaCodecConfigurationKind : std::uint8_t {

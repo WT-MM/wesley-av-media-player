@@ -1251,6 +1251,12 @@ inspectVp9Keyframe(const std::vector<std::uint8_t> &bytes,
   return inspectVp9BitstreamKeyframe(byteView(bytes), limits);
 }
 
+[[nodiscard]] VideoCodecConfigurationInspection
+inspectVp8Keyframe(const std::vector<std::uint8_t> &bytes,
+                   VideoCodecConfigurationLimits limits = {}) noexcept {
+  return inspectVp8BitstreamKeyframe(byteView(bytes), limits);
+}
+
 // The av1C from test-media/codec-envelope/av1-aac.mkv: 1920x1080, seq_profile
 // 0, 8-bit 4:2:0, level 8, no color description. Its 12-byte configOBU is a
 // real libaom sequence header, complete with an initial_display_delay operating
@@ -1481,6 +1487,239 @@ synthesizedVpcC(const VideoCodecConfigurationFacts &facts) {
     bytes[index] = static_cast<std::uint8_t>(record[index]);
   }
   return bytes;
+}
+
+// The first ten bytes of the first coded frame of
+// scratchpad/fixtures/vp8_vorbis60.webm (1920x1080) and of
+// scratchpad/fixtures/vp8_vorbis.webm (640x360), both key frames. A Matroska
+// Block payload is byte-identical to the elementary-stream frame, so this is
+// exactly what the demuxer hands the bitstream parser.
+const std::vector<std::uint8_t> kRealVp8Keyframe1080p{
+    0x10, 0xb1, 0x03, 0x9d, 0x01, 0x2a, 0x80, 0x07, 0x38, 0x04};
+const std::vector<std::uint8_t> kRealVp8Keyframe360p{
+    0xf0, 0xd0, 0x00, 0x9d, 0x01, 0x2a, 0x80, 0x02, 0x68, 0x01};
+
+// Builds a VP8 key frame header from its fields so each gate can be tripped
+// one at a time. RFC 6386 section 9.1: a three-byte little-endian frame tag,
+// the three-byte start code, then two little-endian 16-bit fields carrying a
+// 14-bit dimension and a 2-bit scale.
+struct Vp8KeyframeSpec {
+  std::uint32_t frameType{0};
+  std::uint32_t version{0};
+  std::uint32_t showFrame{1};
+  std::uint32_t firstPartitionSize{7560};
+  std::uint32_t width{1920};
+  std::uint32_t height{1080};
+  std::uint32_t horizontalScale{0};
+  std::uint32_t verticalScale{0};
+  std::uint8_t startCode0{0x9d};
+  std::uint8_t startCode1{0x01};
+  std::uint8_t startCode2{0x2a};
+};
+
+std::vector<std::uint8_t> makeVp8Keyframe(const Vp8KeyframeSpec &spec) {
+  const std::uint32_t tag = (spec.frameType & 0x1U) |
+                            ((spec.version & 0x7U) << 1U) |
+                            ((spec.showFrame & 0x1U) << 4U) |
+                            ((spec.firstPartitionSize & 0x7FFFFU) << 5U);
+  const std::uint32_t widthField =
+      (spec.width & 0x3FFFU) | ((spec.horizontalScale & 0x3U) << 14U);
+  const std::uint32_t heightField =
+      (spec.height & 0x3FFFU) | ((spec.verticalScale & 0x3U) << 14U);
+  return {static_cast<std::uint8_t>(tag & 0xFFU),
+          static_cast<std::uint8_t>((tag >> 8U) & 0xFFU),
+          static_cast<std::uint8_t>((tag >> 16U) & 0xFFU),
+          spec.startCode0,
+          spec.startCode1,
+          spec.startCode2,
+          static_cast<std::uint8_t>(widthField & 0xFFU),
+          static_cast<std::uint8_t>((widthField >> 8U) & 0xFFU),
+          static_cast<std::uint8_t>(heightField & 0xFFU),
+          static_cast<std::uint8_t>((heightField >> 8U) & 0xFFU)};
+}
+
+void testVp8() {
+  // The exact header size is both necessary and sufficient, and is asserted so
+  // a change to the constant has to restate why.
+  static_assert(kVp8KeyframeHeaderMaximumBytes == 10U);
+  static_assert(noexcept(inspectVp8BitstreamKeyframe({})));
+
+  const auto real1080p = inspectVp8Keyframe(kRealVp8Keyframe1080p);
+  expect(real1080p.admitted(),
+         "a real 1080p VP8 key frame header is admitted");
+  if (real1080p.facts) {
+    const auto &facts = *real1080p.facts;
+    expect(facts.codec == MediaCodec::Vp8 &&
+               facts.kind == MediaCodecConfigurationKind::VpcC &&
+               facts.sampleFormat == MediaVideoSampleFormat::Yuv420EightBit &&
+               facts.width == 1920U && facts.height == 1080U &&
+               facts.bitDepth == 8U && facts.profile == 0U &&
+               facts.nalLengthBytes == 0U,
+           "real VP8 key frame yields 1920x1080 8-bit 4:2:0");
+    // VP8 has no B-frames and never displays an alternate-reference frame, so
+    // decode order is presentation order. This is the fact the consumer's
+    // reorder machinery collapses onto.
+    expect(facts.maximumReorderFrames == 0U,
+           "VP8 states a zero reorder depth");
+    // RFC 6386 has one colour space and no primaries or transfer syntax, so
+    // the bitstream states no colour description at all.
+    expect(!facts.color.colorDescriptionPresent && !facts.color.fullRange,
+           "VP8 reports no colour description");
+  }
+
+  const auto real360p = inspectVp8Keyframe(kRealVp8Keyframe360p);
+  expect(real360p.admitted() && real360p.facts &&
+             real360p.facts->width == 640U && real360p.facts->height == 360U,
+         "a real 640x360 VP8 key frame header is admitted");
+
+  allocation_probe::calls = 0U;
+  allocation_probe::active = true;
+  const auto allocationFree = inspectVp8Keyframe(kRealVp8Keyframe1080p);
+  allocation_probe::active = false;
+  expect(allocationFree.admitted() && allocation_probe::calls == 0U,
+         "VP8 key frame inspection performs no heap allocation");
+
+  // A real coded key frame is tens of kilobytes; the parser reads a bounded
+  // ten-byte prefix and never depends on record exhaustion.
+  auto longFrame = kRealVp8Keyframe1080p;
+  longFrame.resize(4096U, 0xA5U);
+  expect(inspectVp8Keyframe(longFrame).admitted() &&
+             inspectVp8Keyframe(longFrame).facts->width == 1920U,
+         "VP8 key frame facts come from a bounded header prefix");
+
+  expectError(inspectVp8BitstreamKeyframe({}),
+              VideoCodecConfigurationError::EmptyConfiguration,
+              "an empty VP8 key frame is refused");
+  for (std::size_t truncated = 1; truncated < 10U; ++truncated) {
+    auto shortFrame = kRealVp8Keyframe1080p;
+    shortFrame.resize(truncated);
+    expectError(inspectVp8Keyframe(shortFrame),
+                VideoCodecConfigurationError::MalformedRecord,
+                "a VP8 header shorter than ten bytes is refused");
+  }
+
+  Vp8KeyframeSpec interFrame;
+  interFrame.frameType = 1U;
+  expectError(inspectVp8Keyframe(makeVp8Keyframe(interFrame)),
+              VideoCodecConfigurationError::MalformedRecord,
+              "an inter frame is refused where a key frame was located");
+  Vp8KeyframeSpec hidden;
+  hidden.showFrame = 0U;
+  expectError(inspectVp8Keyframe(makeVp8Keyframe(hidden)),
+              VideoCodecConfigurationError::MalformedRecord,
+              "a key frame that is not shown is refused");
+  Vp8KeyframeSpec emptyPartition;
+  emptyPartition.firstPartitionSize = 0U;
+  expectError(inspectVp8Keyframe(makeVp8Keyframe(emptyPartition)),
+              VideoCodecConfigurationError::MalformedRecord,
+              "a zero first-partition size is refused");
+  for (std::uint32_t version = 4U; version <= 7U; ++version) {
+    Vp8KeyframeSpec reserved;
+    reserved.version = version;
+    expectError(inspectVp8Keyframe(makeVp8Keyframe(reserved)),
+                VideoCodecConfigurationError::UnsupportedProfile,
+                "a reserved VP8 version is refused");
+  }
+  for (std::uint32_t version = 0U; version <= 3U; ++version) {
+    Vp8KeyframeSpec defined;
+    defined.version = version;
+    const auto inspection = inspectVp8Keyframe(makeVp8Keyframe(defined));
+    expect(inspection.admitted() && inspection.facts->profile == 0U,
+           "every defined VP8 version is admitted and reports vpcC profile 0");
+  }
+  Vp8KeyframeSpec badStart0;
+  badStart0.startCode0 = 0x9eU;
+  expectError(inspectVp8Keyframe(makeVp8Keyframe(badStart0)),
+              VideoCodecConfigurationError::MalformedRecord,
+              "a corrupt VP8 start code byte 0 is refused");
+  Vp8KeyframeSpec badStart1;
+  badStart1.startCode1 = 0x00U;
+  expectError(inspectVp8Keyframe(makeVp8Keyframe(badStart1)),
+              VideoCodecConfigurationError::MalformedRecord,
+              "a corrupt VP8 start code byte 1 is refused");
+  Vp8KeyframeSpec badStart2;
+  badStart2.startCode2 = 0x2bU;
+  expectError(inspectVp8Keyframe(makeVp8Keyframe(badStart2)),
+              VideoCodecConfigurationError::MalformedRecord,
+              "a corrupt VP8 start code byte 2 is refused");
+  Vp8KeyframeSpec horizontalScale;
+  horizontalScale.horizontalScale = 1U;
+  expectError(inspectVp8Keyframe(makeVp8Keyframe(horizontalScale)),
+              VideoCodecConfigurationError::UnsupportedProfile,
+              "a horizontally upscaled VP8 stream is refused");
+  Vp8KeyframeSpec verticalScale;
+  verticalScale.verticalScale = 3U;
+  expectError(inspectVp8Keyframe(makeVp8Keyframe(verticalScale)),
+              VideoCodecConfigurationError::UnsupportedProfile,
+              "a vertically upscaled VP8 stream is refused");
+  Vp8KeyframeSpec zeroWidth;
+  zeroWidth.width = 0U;
+  expectError(inspectVp8Keyframe(makeVp8Keyframe(zeroWidth)),
+              VideoCodecConfigurationError::MalformedRecord,
+              "a zero-width VP8 key frame is refused");
+  Vp8KeyframeSpec zeroHeight;
+  zeroHeight.height = 0U;
+  expectError(inspectVp8Keyframe(makeVp8Keyframe(zeroHeight)),
+              VideoCodecConfigurationError::MalformedRecord,
+              "a zero-height VP8 key frame is refused");
+
+  // The 14-bit dimension ceiling is 16383, which is above the renderer's own
+  // envelope, so the limit gate rather than the field width decides.
+  VideoCodecConfigurationLimits narrow;
+  narrow.maximumWidth = 1280U;
+  narrow.maximumHeight = 720U;
+  narrow.maximumPixels = 1280U * 720U;
+  expectError(inspectVp8Keyframe(kRealVp8Keyframe1080p, narrow),
+              VideoCodecConfigurationError::DimensionLimitExceeded,
+              "a VP8 key frame above the dimension limit is refused");
+  Vp8KeyframeSpec maximumField;
+  maximumField.width = 16383U;
+  maximumField.height = 16383U;
+  expectError(inspectVp8Keyframe(makeVp8Keyframe(maximumField)),
+              VideoCodecConfigurationError::DimensionLimitExceeded,
+              "the widest expressible VP8 frame exceeds the default limits");
+
+  // Round trip: proven bitstream facts -> synthesized vpcC. Nothing parses the
+  // record back, so the assertion is on its exact bytes.
+  if (real1080p.facts) {
+    std::array<std::byte, kVideoCodecVpcCBytes> record{};
+    expect(buildVp8CodecConfiguration(*real1080p.facts, record),
+           "VP8 vpcC synthesis accepts proven VP8 facts");
+    const auto at = [&record](std::size_t index) {
+      return static_cast<std::uint8_t>(record[index]);
+    };
+    expect(at(0) == 1U && at(1) == 0U && at(2) == 0U && at(3) == 0U &&
+               at(4) == 0U && at(6) == 0x82U && at(7) == 2U && at(8) == 2U &&
+               at(9) == 2U && at(10) == 0U && at(11) == 0U,
+           "a synthesized VP8 vpcC is version 1, profile 0, 8-bit 4:2:0 "
+           "colocated, narrow range, unspecified colour, no initialisation "
+           "data");
+    expect(at(5) != 0U, "a synthesized VP8 vpcC states a nonzero level");
+  }
+
+  VideoCodecConfigurationFacts notVp8;
+  notVp8.codec = MediaCodec::Vp9;
+  notVp8.kind = MediaCodecConfigurationKind::VpcC;
+  notVp8.bitDepth = 8U;
+  notVp8.sampleFormat = MediaVideoSampleFormat::Yuv420EightBit;
+  notVp8.width = 1920U;
+  notVp8.height = 1080U;
+  std::array<std::byte, kVideoCodecVpcCBytes> unusedVp8{};
+  expect(!buildVp8CodecConfiguration(notVp8, unusedVp8),
+         "VP8 vpcC synthesis refuses facts that are not admitted VP8 facts");
+  if (real1080p.facts) {
+    expect(!buildVp9CodecConfiguration(*real1080p.facts, unusedVp8),
+           "VP9 vpcC synthesis refuses VP8 facts");
+  }
+
+  // inspectVideoCodecConfiguration() is the record-parsing entry point and has
+  // no VP8 record to parse, so it must refuse the codec rather than fall
+  // through to the vpcC parser.
+  expectError(inspectVideoCodecConfiguration(
+                  MediaCodec::Vp8, MediaCodecConfigurationKind::VpcC,
+                  byteView(kRealVp8Keyframe1080p)),
+              VideoCodecConfigurationError::UnsupportedCodec,
+              "VP8 has no decoder configuration record to inspect");
 }
 
 void testVp9() {
@@ -1734,10 +1973,11 @@ int main() {
   testHevcRejections();
   testAv1();
   testVp9();
+  testVp8();
   if (failures != 0) {
     std::cerr << failures << " video codec configuration test(s) failed\n";
     return EXIT_FAILURE;
   }
-  std::cout << "Framework-neutral AVC/HEVC/AV1/VP9 configuration tests passed\n";
+  std::cout << "Framework-neutral AVC/HEVC/AV1/VP9/VP8 configuration tests passed\n";
   return EXIT_SUCCESS;
 }

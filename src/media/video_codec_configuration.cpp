@@ -2566,6 +2566,137 @@ VideoCodecConfigurationInspection inspectVp9BitstreamKeyframe(
   return {Error::None, result};
 }
 
+VideoCodecConfigurationInspection inspectVp8BitstreamKeyframe(
+    std::span<const std::byte> keyframe,
+    VideoCodecConfigurationLimits requestedLimits) noexcept {
+  if (keyframe.size() < kVp8KeyframeHeaderMaximumBytes) {
+    // Ten bytes is the exact size of a VP8 key frame's uncompressed header.
+    // Anything shorter cannot state a dimension, so it fails closed rather
+    // than being extrapolated.
+    return rejected(keyframe.empty() ? Error::EmptyConfiguration
+                                     : Error::MalformedRecord);
+  }
+  const VideoCodecConfigurationLimits limits = effectiveLimits(requestedLimits);
+  const auto bytes = asBytes(keyframe);
+
+  // Frame tag: three bytes, little endian, RFC 6386 section 9.1.
+  const std::uint32_t tag = static_cast<std::uint32_t>(bytes[0]) |
+                            (static_cast<std::uint32_t>(bytes[1]) << 8U) |
+                            (static_cast<std::uint32_t>(bytes[2]) << 16U);
+  const std::uint32_t frameType = tag & 0x1U;
+  const std::uint32_t version = (tag >> 1U) & 0x7U;
+  const std::uint32_t showFrame = (tag >> 4U) & 0x1U;
+  const std::uint32_t firstPartitionSize = (tag >> 5U) & 0x7FFFFU;
+  if (frameType != 0U) {
+    // Not a key frame. The caller located this access unit by the container's
+    // own key-frame flag, so a disagreement is a mux this admission refuses.
+    return rejected(Error::MalformedRecord);
+  }
+  if (showFrame != 1U) {
+    // A key frame that is not shown cannot be the first displayed picture.
+    return rejected(Error::MalformedRecord);
+  }
+  if (version > 3U) {
+    // RFC 6386 section 9.1 defines versions 0-3; 4-7 are reserved and select
+    // reconstruction filters this decoder has no defined behaviour for.
+    return rejected(Error::UnsupportedProfile);
+  }
+  if (firstPartitionSize == 0U) {
+    return rejected(Error::MalformedRecord);
+  }
+  if (bytes[3] != 0x9DU || bytes[4] != 0x01U || bytes[5] != 0x2AU) {
+    return rejected(Error::MalformedRecord);
+  }
+
+  const std::uint32_t widthField = static_cast<std::uint32_t>(bytes[6]) |
+                                   (static_cast<std::uint32_t>(bytes[7]) << 8U);
+  const std::uint32_t heightField =
+      static_cast<std::uint32_t>(bytes[8]) |
+      (static_cast<std::uint32_t>(bytes[9]) << 8U);
+  const std::uint64_t width = widthField & 0x3FFFU;
+  const std::uint64_t height = heightField & 0x3FFFU;
+  const std::uint32_t horizontalScale = widthField >> 14U;
+  const std::uint32_t verticalScale = heightField >> 14U;
+  if (horizontalScale != 0U || verticalScale != 0U) {
+    // Upscaling is an optional display-time operation this square-pixel v1
+    // renderer does not model, and the container's PixelWidth/PixelHeight
+    // cross-check would disagree with the coded size anyway. It is a bitstream
+    // option this admission declines, so it reports UnsupportedProfile rather
+    // than claiming the record is malformed.
+    return rejected(Error::UnsupportedProfile);
+  }
+  if (width == 0U || height == 0U) {
+    return rejected(Error::MalformedRecord);
+  }
+  if (width > limits.maximumWidth || height > limits.maximumHeight ||
+      width > limits.maximumPixels / height) {
+    return rejected(Error::DimensionLimitExceeded);
+  }
+
+  VideoCodecConfigurationFacts result;
+  result.codec = MediaCodec::Vp8;
+  result.kind = MediaCodecConfigurationKind::VpcC;
+  // VP8 is 8-bit 4:2:0 and nothing else: RFC 6386 has no profile, bit depth or
+  // chroma-format syntax element at all.
+  result.sampleFormat = MediaVideoSampleFormat::Yuv420EightBit;
+  result.width = static_cast<std::uint32_t>(width);
+  result.height = static_cast<std::uint32_t>(height);
+  result.bitDepth = 8U;
+  // The vpcC "profile" field for vp08 is 0. `version` is a reconstruction
+  // filter selector, not a profile, so it is deliberately not reported here.
+  result.profile = 0U;
+  result.nalLengthBytes = 0U;
+  // VP8 has no B-frames and no show_existing_frame: altref frames are never
+  // displayed and every shown frame is shown in coded order, so decode order
+  // is presentation order and no reorder buffer exists.
+  result.maximumReorderFrames = 0U;
+  // The bitstream states no colour description. See the header comment.
+  result.color = VideoCodecColorFacts{};
+  return {Error::None, result};
+}
+
+bool buildVp8CodecConfiguration(
+    const VideoCodecConfigurationFacts &facts,
+    std::span<std::byte, kVideoCodecVpcCBytes> configuration) noexcept {
+  if (facts.codec != MediaCodec::Vp8 ||
+      facts.kind != MediaCodecConfigurationKind::VpcC || facts.profile != 0U ||
+      facts.bitDepth != 8U ||
+      facts.sampleFormat != MediaVideoSampleFormat::Yuv420EightBit ||
+      facts.width == 0U || facts.height == 0U) {
+    return false;
+  }
+  const std::uint8_t primaries =
+      facts.color.colorDescriptionPresent ? facts.color.colorPrimaries : 2U;
+  const std::uint8_t transfer = facts.color.colorDescriptionPresent
+                                    ? facts.color.transferCharacteristics
+                                    : 2U;
+  const std::uint8_t matrix =
+      facts.color.colorDescriptionPresent ? facts.color.matrixCoefficients : 2U;
+  constexpr std::uint8_t kChromaSubsampling420Colocated{1};
+  // vp9Level() buckets by luma sample rate and is codec-neutral arithmetic;
+  // VP8 has no level syntax of its own, so the field states the same
+  // never-understated bound VP9 uses.
+  const std::array<std::uint8_t, kVideoCodecVpcCBytes> record{
+      1U,
+      0U,
+      0U,
+      0U,
+      0U,
+      vp9Level(facts.width, facts.height),
+      static_cast<std::uint8_t>((8U << 4U) |
+                                (kChromaSubsampling420Colocated << 1U) |
+                                (facts.color.fullRange ? 1U : 0U)),
+      primaries,
+      transfer,
+      matrix,
+      0U,
+      0U};
+  for (std::size_t index = 0; index < record.size(); ++index) {
+    configuration[index] = static_cast<std::byte>(record[index]);
+  }
+  return true;
+}
+
 bool buildVp9CodecConfiguration(
     const VideoCodecConfigurationFacts &facts,
     std::span<std::byte, kVideoCodecVpcCBytes> configuration) noexcept {

@@ -27,6 +27,43 @@ option(WAM_ENABLE_MACOS_NATIVE_VIDEO
 option(WAM_ENABLE_MACOS_NATIVE_VIDEO_ACTIVATION
   "Compile the dormant macOS native-video activation seam"
   OFF)
+# VP8 is the one video codec in WAM's envelope that no Apple hardware decodes,
+# so it needs a software decode stage. libvpx supplies it. Discovery is
+# best-effort and the option defaults to whatever discovery found: a machine
+# without libvpx configures cleanly and simply keeps routing VP8 to the
+# compatibility fallback, exactly as before this stage existed.
+#
+# PACKAGING: this adds a real runtime dependency. Development builds link the
+# Homebrew dylib by absolute path -- the same shape as the staged FFmpeg
+# binary -- but a shipped app needs libvpx added to the pinned, relocatable
+# closure in scripts/bundle_macos.zsh and to the release workflow's
+# checksum-pinned media archive. Until that lands, a bundled WAM.app must be
+# built with WAM_ENABLE_SOFTWARE_VP8=OFF or it will not launch off this
+# machine.
+find_package(PkgConfig QUIET)
+set(WAM_LIBVPX_FOUND OFF)
+if(APPLE AND PkgConfig_FOUND)
+  pkg_check_modules(WAM_LIBVPX QUIET IMPORTED_TARGET vpx)
+  if(WAM_LIBVPX_FOUND)
+    message(STATUS "libvpx ${WAM_LIBVPX_VERSION} found -- software VP8 decode "
+      "is available")
+  endif()
+endif()
+option(WAM_ENABLE_SOFTWARE_VP8
+  "Decode VP8 in software with libvpx (no Apple hardware decoder exists)"
+  ${WAM_LIBVPX_FOUND})
+if(WAM_ENABLE_SOFTWARE_VP8 AND NOT WAM_LIBVPX_FOUND)
+  message(FATAL_ERROR
+    "WAM_ENABLE_SOFTWARE_VP8=ON but libvpx was not found by pkg-config. "
+    "Install it (brew install libvpx) or configure with "
+    "-DWAM_ENABLE_SOFTWARE_VP8=OFF.")
+endif()
+if(NOT WAM_ENABLE_SOFTWARE_VP8)
+  message(STATUS
+    "Software VP8 decode is off -- VP8 sources route to the compatibility "
+    "fallback.")
+endif()
+
 set(WAM_NATIVE_VIDEO_TEST_FIXTURE "" CACHE FILEPATH
   "Optional H.264 B-frame fixture used by the macOS VideoToolbox test")
 set(WAM_NATIVE_VIDEO_10BIT_TEST_FIXTURE "" CACHE FILEPATH
@@ -269,6 +306,12 @@ if(APPLE)
   target_compile_features(wam_native_core PUBLIC cxx_std_20)
   target_compile_options(wam_native_core PRIVATE
     -Wall -Wextra -Wpedantic)
+  if(WAM_ENABLE_SOFTWARE_VP8)
+    # The demuxer must not name V_VP8 in a build whose platform layer cannot
+    # decode it: admitting the track and then failing the open is a worse
+    # fallback than never selecting it.
+    target_compile_definitions(wam_native_core PUBLIC WAM_ENABLE_SOFTWARE_VP8)
+  endif()
 endif()
 
 if(APPLE)
@@ -315,7 +358,10 @@ if(APPLE)
     src/platform/macos/native_video_presenter.hpp
     src/platform/macos/native_video_presenter.mm
     src/platform/macos/video_toolbox_decoder.hpp
-    src/platform/macos/video_toolbox_decoder.mm)
+    src/platform/macos/video_toolbox_decoder.mm
+    src/platform/macos/software_vp8_decoder.hpp
+    src/platform/macos/software_vp8_decoder.mm
+    src/platform/macos/video_decode_lane.hpp)
   add_library(wam_macos_native_video_core STATIC
     ${WAM_MACOS_NATIVE_VIDEO_CORE_SOURCES})
   target_include_directories(wam_macos_native_video_core PUBLIC src)
@@ -330,6 +376,12 @@ if(APPLE)
     "${WAM_FOUNDATION_FRAMEWORK}"
     "${WAM_IOSURFACE_FRAMEWORK}"
     "${WAM_VIDEOTOOLBOX_FRAMEWORK}")
+  if(WAM_ENABLE_SOFTWARE_VP8)
+    target_compile_definitions(wam_macos_native_video_core PUBLIC
+      WAM_ENABLE_SOFTWARE_VP8)
+    target_link_libraries(wam_macos_native_video_core PUBLIC
+      PkgConfig::WAM_LIBVPX)
+  endif()
   set_target_properties(wam_macos_native_video_core PROPERTIES
     LINKER_LANGUAGE OBJCXX)
 
@@ -1098,6 +1150,44 @@ if(BUILD_TESTING)
         COMMAND wam_native_surface_budget_test)
       set_tests_properties(macos_native_surface_budget PROPERTIES TIMEOUT 20)
 
+      # The libvpx VP8 decode stage: bounded pool, I420 -> NV12 conversion,
+      # stage lifecycle, and the once-per-open lane selection. Fixture-free --
+      # the decode arm encodes its own VP8 stream with libvpx.
+      if(WAM_ENABLE_SOFTWARE_VP8)
+        add_executable(wam_software_vp8_test
+          tests/software_vp8_test.mm
+          src/platform/macos/software_vp8_decoder.hpp
+          src/platform/macos/software_vp8_decoder.mm
+          src/platform/macos/video_decode_lane.hpp
+          src/platform/macos/native_surface_budget.hpp
+          src/platform/macos/native_surface_budget.mm
+          src/platform/macos/native_video_presenter.hpp
+          src/platform/macos/native_video_presenter.mm
+          src/platform/macos/native_video_codec_capability.hpp
+          src/platform/macos/native_video_codec_capability.mm
+          src/platform/macos/video_toolbox_decoder.hpp
+          src/platform/macos/video_toolbox_decoder.mm)
+        target_include_directories(wam_software_vp8_test PRIVATE src)
+        target_compile_definitions(wam_software_vp8_test PRIVATE
+          WAM_ENABLE_SOFTWARE_VP8
+          WAM_SOFTWARE_VP8_TESTING=1)
+        target_link_libraries(wam_software_vp8_test PRIVATE
+          PkgConfig::WAM_LIBVPX
+          "${WAM_COREFOUNDATION_FRAMEWORK}"
+          "${WAM_COREMEDIA_FRAMEWORK}"
+          "${WAM_COREVIDEO_FRAMEWORK}"
+          "${WAM_FOUNDATION_FRAMEWORK}"
+          "${WAM_IOSURFACE_FRAMEWORK}"
+          "${WAM_VIDEOTOOLBOX_FRAMEWORK}")
+        target_compile_options(wam_software_vp8_test PRIVATE
+          "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>"
+          -Wall -Wextra -Wpedantic)
+        set_target_properties(wam_software_vp8_test PROPERTIES
+          LINKER_LANGUAGE OBJCXX)
+        add_test(NAME macos_software_vp8 COMMAND wam_software_vp8_test)
+        set_tests_properties(macos_software_vp8 PROPERTIES TIMEOUT 60)
+      endif()
+
       add_executable(wam_native_video_consumer_test
         tests/native_video_consumer_test.mm
         src/platform/macos/native_video_consumer.hpp
@@ -1109,10 +1199,17 @@ if(BUILD_TESTING)
         src/platform/macos/native_video_presenter.hpp
         src/platform/macos/native_video_presenter.mm
         src/platform/macos/video_toolbox_decoder.hpp
-        src/platform/macos/video_toolbox_decoder.mm)
+        src/platform/macos/video_toolbox_decoder.mm
+        src/platform/macos/software_vp8_decoder.hpp
+        src/platform/macos/software_vp8_decoder.mm
+        src/platform/macos/video_decode_lane.hpp)
       target_include_directories(wam_native_video_consumer_test PRIVATE src)
       target_compile_definitions(wam_native_video_consumer_test PRIVATE
         WAM_NATIVE_VIDEO_CONSUMER_TESTING=1)
+      if(WAM_ENABLE_SOFTWARE_VP8)
+        target_link_libraries(wam_native_video_consumer_test PRIVATE
+          PkgConfig::WAM_LIBVPX)
+      endif()
       target_link_libraries(wam_native_video_consumer_test PRIVATE
         wam_native_core
         "${WAM_COREFOUNDATION_FRAMEWORK}"
@@ -1530,6 +1627,15 @@ if(BUILD_TESTING)
       target_compile_definitions(wam_video_toolbox_decoder_test PRIVATE
         WAM_NATIVE_VIDEO_TESTING=1
         GL_SILENCE_DEPRECATION=1)
+      if(WAM_ENABLE_SOFTWARE_VP8)
+        # This target compiles the core sources directly rather than linking
+        # the library, so it needs the same feature definition and the same
+        # libvpx link the library carries.
+        target_compile_definitions(wam_video_toolbox_decoder_test PRIVATE
+          WAM_ENABLE_SOFTWARE_VP8)
+        target_link_libraries(wam_video_toolbox_decoder_test PRIVATE
+          PkgConfig::WAM_LIBVPX)
+      endif()
       target_link_libraries(wam_video_toolbox_decoder_test PRIVATE
         "${WAM_COREFOUNDATION_FRAMEWORK}"
         "${WAM_COREMEDIA_FRAMEWORK}"
@@ -1618,6 +1724,16 @@ if(BUILD_TESTING)
       target_compile_definitions(
         wam_macos_native_video_pipeline_test_impl PRIVATE
         WAM_NATIVE_VIDEO_PIPELINE_TESTING=1)
+      if(WAM_ENABLE_SOFTWARE_VP8)
+        # Compiles the core sources directly instead of linking the library,
+        # so it needs the same feature definition and libvpx link.
+        target_compile_definitions(
+          wam_macos_native_video_pipeline_test_impl PUBLIC
+          WAM_ENABLE_SOFTWARE_VP8)
+        target_link_libraries(
+          wam_macos_native_video_pipeline_test_impl PUBLIC
+          PkgConfig::WAM_LIBVPX)
+      endif()
       target_compile_options(
         wam_macos_native_video_pipeline_test_impl PRIVATE
         "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>"

@@ -466,7 +466,16 @@ inline constexpr std::size_t kOpusTailProbeClusters{8};
 
 [[nodiscard]] bool isVideoCodec(std::string_view id) noexcept {
   return id == "V_MPEG4/ISO/AVC" || id == "V_MPEGH/ISO/HEVC" ||
-         id == "V_AV1" || id == "V_VP9";
+         id == "V_AV1" || id == "V_VP9"
+#if defined(WAM_ENABLE_SOFTWARE_VP8)
+         // VP8 has no hardware decoder on any Apple platform, so it is a
+         // selectable CodecID exactly when this build linked the libvpx
+         // software stage. Naming it in a build that cannot decode it would
+         // select the track and then fail the open, which is a strictly worse
+         // fallback than never selecting it.
+         || id == "V_VP8"
+#endif
+      ;
 }
 
 [[nodiscard]] bool isAudioCodec(std::string_view id) noexcept {
@@ -666,14 +675,23 @@ struct VideoCodecIdentity {
   if (codecId == "V_VP9") {
     return {MediaCodec::Vp9, MediaCodecConfigurationKind::VpcC};
   }
+#if defined(WAM_ENABLE_SOFTWARE_VP8)
+  if (codecId == "V_VP8") {
+    // A VPCodecConfigurationBox describes vp08 as well as vp09. WebM never
+    // carries one for VP8, so this kind names the record makeVideoDescriptor
+    // synthesizes from the key frame, exactly as it does for VP9.
+    return {MediaCodec::Vp8, MediaCodecConfigurationKind::VpcC};
+  }
+#endif
   return {};
 }
 
-// VP9 in Matroska/WebM normally carries no CodecPrivate, so its facts have to
-// come from the bitstream. Reads the leading bytes of the first keyframe of
-// `trackNumber` within the first `maximumClusters` Clusters -- enough for the
-// VP9 uncompressed frame header and no more. Keyframe identification is the
-// same codec-agnostic rule the cursor uses.
+// VP9 and VP8 in Matroska/WebM normally carry no CodecPrivate, so their facts
+// have to come from the bitstream. Reads the leading bytes of the first
+// keyframe of `trackNumber` within the first `maximumClusters` Clusters --
+// enough for the VP9 uncompressed frame header or the VP8 key frame header and
+// no more. Keyframe identification is the same codec-agnostic rule the cursor
+// uses.
 constexpr std::size_t kVp9KeyframeProbeClusters{4};
 
 [[nodiscard]] bool readFirstVideoKeyframePrefix(
@@ -747,11 +765,14 @@ constexpr std::size_t kVp9KeyframeProbeClusters{4};
   const MediaCodec codec = identity.codec;
   const MediaCodecConfigurationKind kind = identity.kind;
   // CodecPrivate is the only fact source for AVC, HEVC, and AV1, so it stays
-  // mandatory for them. VP9 is the exception: WebM muxers routinely write no
-  // CodecPrivate at all because the VP9 bitstream is self-describing, so a
-  // missing one is normal rather than a defect.
+  // mandatory for them. VP9 and VP8 are the exceptions: WebM muxers routinely
+  // write no CodecPrivate at all because both bitstreams are self-describing,
+  // so a missing one is normal rather than a defect. VP8 goes further -- RFC
+  // 6386 defines no configuration record, so a VP8 CodecPrivate is refused
+  // outright below rather than adopted.
   if (codec == MediaCodec::Unknown ||
-      (!entry.codecPrivate && codec != MediaCodec::Vp9)) {
+      (!entry.codecPrivate && codec != MediaCodec::Vp9 &&
+       codec != MediaCodec::Vp8)) {
     return false;
   }
   // FlagInterlaced 0 (undetermined) and 2 (progressive) are the only values a
@@ -776,7 +797,37 @@ constexpr std::size_t kVp9KeyframeProbeClusters{4};
   codecLimits.maximumPixels = limits.maximumCodedPixels;
 
   VideoCodecConfigurationInspection inspection;
-  if (codec == MediaCodec::Vp9) {
+  if (codec == MediaCodec::Vp8) {
+    // RFC 6386 defines no VP8 configuration record, so a CodecPrivate on a
+    // V_VP8 track describes nothing this decoder could honour and is refused
+    // rather than ignored: adopting it silently would make a mux that carries
+    // one indistinguishable from a conforming one.
+    if (!configuration.empty()) {
+      return false;
+    }
+    std::array<std::byte, kVp8KeyframeHeaderMaximumBytes> keyframe{};
+    std::size_t keyframeBytes = 0;
+    const ParseOptions options = parserOptions(limits, constraints);
+    if (!readFirstVideoKeyframePrefix(reader, clusters, options, entry.number,
+                                      keyframe, &keyframeBytes,
+                                      cancellation) ||
+        keyframeBytes != keyframe.size()) {
+      return false;
+    }
+    inspection = inspectVp8BitstreamKeyframe(keyframe, codecLimits);
+    if (!inspection.admitted()) {
+      return false;
+    }
+    // Nothing in the native lane parses this back -- libvpx needs no
+    // configuration at all -- but the whole pipeline's codec-configuration
+    // envelope is "nonempty and bounded", so VP8 states its proven facts as a
+    // vpcC rather than becoming the one codec with an empty record.
+    std::array<std::byte, kVideoCodecVpcCBytes> synthesized{};
+    if (!buildVp8CodecConfiguration(*inspection.facts, synthesized)) {
+      return false;
+    }
+    configuration.assign(synthesized.begin(), synthesized.end());
+  } else if (codec == MediaCodec::Vp9) {
     // The proven facts come from the bitstream in every VP9 case, present
     // CodecPrivate or not, because a vpcC carries no dimensions and the exact
     // PixelWidth/PixelHeight cross-check below must keep working.
@@ -2342,7 +2393,7 @@ MatroskaPrepareOutcome prepareMatroska(
                              cancellation, &videoDescriptor, &state->video)) {
       result.error = MatroskaDemuxError::CodecConfiguration;
       result.status = MatroskaDemuxStatus::Unsupported;
-      result.message = "selected AVC/HEVC/AV1/VP9 track was not admitted";
+      result.message = "selected AVC/HEVC/AV1/VP9/VP8 track was not admitted";
       return result;
     }
     descriptor->selectedVideo = videoDescriptor.id;

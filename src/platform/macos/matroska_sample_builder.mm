@@ -1,6 +1,7 @@
 #include "platform/macos/matroska_sample_builder.hpp"
 
 #include "platform/macos/native_video_codec_capability.hpp"
+#include "platform/macos/software_vp8_decoder.hpp"
 
 #import <CoreMedia/CoreMedia.h>
 
@@ -267,6 +268,19 @@ CMVideoFormatDescriptionRef createMatroskaVideoFormatDescription(
     // therefore still holds for VP9, and the record is handed to CoreMedia
     // verbatim exactly like avcC/hvcC.
     codec = kCMVideoCodecType_VP9;
+    atomName = CFSTR("vpcC");
+  } else if (track.codec == MediaCodec::Vp8 &&
+             track.codecConfigurationKind ==
+                 MediaCodecConfigurationKind::VpcC &&
+             SoftwareVp8Decoder::available()) {
+    // VP8 has no CoreMedia codec type and no Apple decoder. This description
+    // exists so the compressed access unit travels the same CMSampleBuffer
+    // carriage every other codec uses; NativeVideoConsumer keys the libvpx
+    // stage on exactly this four-character code, and VideoToolbox refuses it,
+    // so the sample can never reach a decompression session. The 12-byte
+    // vpcC the demuxer synthesized from the key frame rides along unread --
+    // libvpx needs no configuration record at all.
+    codec = kWamVideoCodecTypeVp8;
     atomName = CFSTR("vpcC");
   } else {
     return nullptr;

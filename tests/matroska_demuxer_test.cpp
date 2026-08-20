@@ -275,6 +275,12 @@ constexpr std::array<std::uint8_t, 12> kSampleVp9Keyframe{
 constexpr std::array<std::uint8_t, 12> kSampleVpcC{
     0x01, 0x00, 0x00, 0x00, 0x00, 0x29, 0x82, 0x02, 0x02, 0x02, 0x00, 0x00};
 
+// The first ten bytes of the first coded frame of
+// scratchpad/fixtures/vp8_vorbis60.webm, a 1920x1080 key frame: the three-byte
+// frame tag, the 9d 01 2a start code, and the two 14-bit dimension fields.
+constexpr std::array<std::uint8_t, 10> kSampleVp8Keyframe{
+    0x10, 0xb1, 0x03, 0x9d, 0x01, 0x2a, 0x80, 0x07, 0x38, 0x04};
+
 constexpr std::uint32_t kSampleCodecEnvelopeWidth{1920};
 constexpr std::uint32_t kSampleCodecEnvelopeHeight{1080};
 
@@ -1247,6 +1253,18 @@ FixtureSpec vp9FixtureSpec() {
   return spec;
 }
 
+// A WebM-shaped VP8 track: 1920x1080, no CodecPrivate (RFC 6386 defines none),
+// and every random access point carrying a real VP8 key frame header.
+FixtureSpec vp8FixtureSpec() {
+  FixtureSpec spec;
+  spec.videoCodecId = "V_VP8";
+  spec.includeVideoCodecPrivate = false;
+  spec.videoKeyframePayload = fromOctets(kSampleVp8Keyframe);
+  spec.videoPixelWidth = kSampleCodecEnvelopeWidth;
+  spec.videoPixelHeight = kSampleCodecEnvelopeHeight;
+  return spec;
+}
+
 FixtureSpec av1FixtureSpec() {
   FixtureSpec spec;
   spec.videoCodecId = "V_AV1";
@@ -1602,6 +1620,112 @@ void testCodecAdmissionAndSelection() {
     expectPrepareError(spec, MatroskaDemuxError::CodecConfiguration,
                        "VP9 with no readable keyframe header is not admitted");
   }
+#if defined(WAM_ENABLE_SOFTWARE_VP8)
+  {
+    // A WebM-shaped VP8 track. RFC 6386 defines no configuration record at
+    // all, so the facts come from the key frame header and a vpcC is
+    // synthesized from them purely to keep VP8 inside the pipeline's
+    // "codec configuration is nonempty and bounded" envelope.
+    FixtureSpec spec = vp8FixtureSpec();
+    const PreparedFixture prepared = prepareFixture(spec);
+    expect(prepared.outcome.status == MatroskaDemuxStatus::Ready &&
+               prepared.outcome.asset != nullptr,
+           "a VP8 track with no CodecPrivate is admitted from its bitstream");
+    if (prepared.outcome.asset != nullptr) {
+      const wam::media::MediaTrackDescriptor& video =
+          prepared.outcome.asset->descriptor()->tracks.front();
+      expect(video.codec == MediaCodec::Vp8 &&
+                 video.codecConfigurationKind ==
+                     MediaCodecConfigurationKind::VpcC &&
+                 video.codecConfiguration.size() == kSampleVpcC.size(),
+             "VP8 admission produces a twelve-byte synthesized vpcC");
+      // A VPCodecConfigurationBox describes vp08 and vp09 alike, and both are
+      // profile 0, 8-bit, 4:2:0 co-located, narrow range and unspecified
+      // colour here, so the same geometry yields byte-identical records. The
+      // codec is distinguished by the sample entry, not by this box.
+      expect(std::equal(video.codecConfiguration.begin(),
+                        video.codecConfiguration.end(), kSampleVpcC.begin(),
+                        kSampleVpcC.end(),
+                        [](std::byte lhs, std::uint8_t rhs) {
+                          return lhs == static_cast<std::byte>(rhs);
+                        }),
+             "the synthesized VP8 vpcC matches the proven bitstream facts");
+      expect(video.video && video.video->codedWidth ==
+                                kSampleCodecEnvelopeWidth &&
+                 video.video->codedHeight == kSampleCodecEnvelopeHeight &&
+                 video.video->bitsPerComponent == 8U &&
+                 video.video->sampleFormat ==
+                     MediaVideoSampleFormat::Yuv420EightBit,
+             "VP8 video format comes from the proven key frame header");
+      // The bitstream states no colour description at all (RFC 6386 has one
+      // colour space and no primaries or transfer syntax), so the container's
+      // Colour element -- which this fixture writes as the BT.709 triple -- is
+      // the only thing that can describe it.
+      expect(video.video->colorPrimaries == MediaColorPrimaries::Bt709 &&
+                 video.video->transferFunction ==
+                     MediaTransferFunction::Bt709 &&
+                 video.video->matrixCoefficients ==
+                     MediaMatrixCoefficients::Bt709,
+             "VP8 colour comes from the container, never from the bitstream");
+    }
+  }
+  {
+    // VP8 has no configuration record, so a V_VP8 track that carries one
+    // describes something this decoder cannot honour. Refusing it outright is
+    // what keeps such a mux distinguishable from a conforming one.
+    FixtureSpec spec = vp8FixtureSpec();
+    spec.includeVideoCodecPrivate = true;
+    spec.videoCodecPrivate = fromOctets(kSampleVpcC);
+    expectPrepareError(spec, MatroskaDemuxError::CodecConfiguration,
+                       "a VP8 track carrying a CodecPrivate is not admitted");
+  }
+  {
+    FixtureSpec spec = vp8FixtureSpec();
+    spec.videoPixelWidth = 1280;
+    expectPrepareError(
+        spec, MatroskaDemuxError::CodecConfiguration,
+        "PixelWidth must equal the VP8 bitstream's coded width exactly");
+  }
+  {
+    FixtureSpec spec = vp8FixtureSpec();
+    spec.videoPixelHeight = 720;
+    expectPrepareError(
+        spec, MatroskaDemuxError::CodecConfiguration,
+        "PixelHeight must equal the VP8 bitstream's coded height exactly");
+  }
+  {
+    FixtureSpec spec = vp8FixtureSpec();
+    spec.videoKeyframePayload.clear();
+    expectPrepareError(spec, MatroskaDemuxError::CodecConfiguration,
+                       "VP8 with no readable key frame header is not admitted");
+  }
+  {
+    // The header is exactly ten bytes; a shorter random access point cannot
+    // state a dimension and must fail closed rather than be extrapolated.
+    FixtureSpec spec = vp8FixtureSpec();
+    spec.videoKeyframePayload =
+        fromOctets(std::span<const std::uint8_t>(kSampleVp8Keyframe).first(9));
+    expectPrepareError(spec, MatroskaDemuxError::CodecConfiguration,
+                       "a VP8 key frame shorter than its header is refused");
+  }
+  {
+    // A V_VP8 CodecID over blocks that are not VP8 at all.
+    FixtureSpec spec;
+    spec.videoCodecId = "V_VP8";
+    spec.includeVideoCodecPrivate = false;
+    expectPrepareError(spec, MatroskaDemuxError::CodecConfiguration,
+                       "a VP8 track whose blocks are not VP8 is not admitted");
+  }
+#else
+  {
+    // Without the libvpx stage compiled in, V_VP8 must not even be named as a
+    // video CodecID: admitting the track and then failing the open is a worse
+    // fallback than never selecting it.
+    FixtureSpec spec = vp8FixtureSpec();
+    expectPrepareError(spec, MatroskaDemuxError::TrackSelection,
+                       "V_VP8 is not a selectable CodecID without libvpx");
+  }
+#endif
   {
     // AV1 keeps CodecPrivate mandatory: the av1C is the only fact source.
     FixtureSpec spec = av1FixtureSpec();

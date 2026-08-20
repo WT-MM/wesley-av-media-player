@@ -275,7 +275,9 @@ void assignError(std::string* error, const char* message) {
 // VP9 and AV1 are admitted only when this machine can hardware-decode them,
 // so a host without the supplemental VP9 decoder or without an AV1 block
 // refuses the track here and the session falls back before any decompression
-// session is created.
+// session is created. VP8 is the opposite case: no Apple silicon has ever had
+// a VP8 block and none ever will, so it is admitted exactly when this build
+// linked the libvpx software stage, and never consults VideoToolbox at all.
 [[nodiscard]] bool admittedVideoCodec(media::MediaCodec codec) noexcept {
   switch (codec) {
     case media::MediaCodec::H264:
@@ -285,11 +287,16 @@ void assignError(std::string* error, const char* message) {
       return nativeVideoToolboxSupportsVp9();
     case media::MediaCodec::Av1:
       return nativeVideoToolboxSupportsAv1();
+    case media::MediaCodec::Vp8:
+      return VideoDecodeLane::softwareVp8Available();
     default:
       return false;
   }
 }
 
+// NOTE FOR ANY NEW ENUMERATOR: the default arm returns H.264, so a codec that
+// forgets to name itself here is silently decoded as H.264. Every value
+// admittedVideoCodec() returns true for must appear above that default.
 [[nodiscard]] CMVideoCodecType coreMediaVideoCodecType(
     media::MediaCodec codec) noexcept {
   switch (codec) {
@@ -299,6 +306,11 @@ void assignError(std::string* error, const char* message) {
       return kCMVideoCodecType_VP9;
     case media::MediaCodec::Av1:
       return kCMVideoCodecType_AV1;
+    case media::MediaCodec::Vp8:
+      // Not a VideoToolbox codec type at all. VideoDecodeLane keys the
+      // software stage on exactly this value, and VideoToolbox refuses it, so
+      // a VP8 stream can never reach a decompression session.
+      return kWamVideoCodecTypeVp8;
     default:
       return kCMVideoCodecType_H264;
   }
@@ -322,6 +334,9 @@ void assignError(std::string* error, const char* message) {
        track.codecConfigurationKind !=
            media::MediaCodecConfigurationKind::Av1C) ||
       (track.codec == media::MediaCodec::Vp9 &&
+       track.codecConfigurationKind !=
+           media::MediaCodecConfigurationKind::VpcC) ||
+      (track.codec == media::MediaCodec::Vp8 &&
        track.codecConfigurationKind !=
            media::MediaCodecConfigurationKind::VpcC)) {
     return false;
@@ -954,7 +969,7 @@ struct NativeVideoConsumer::Impl {
   std::shared_ptr<NativeTrackedVideoOutput> output;
   const NativeVideoConsumerWakeSeam wake;
   Sink sink;
-  VideoToolboxDecoder decoder;
+  VideoDecodeLane decoder;
 
   NativeVideoConsumerFailure failure{NativeVideoConsumerFailure::None};
   // Gate text for the latched failure. Set once, by the first latch.

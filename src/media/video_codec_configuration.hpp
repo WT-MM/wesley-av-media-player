@@ -141,4 +141,42 @@ inline constexpr std::size_t kVideoCodecVpcCBytes{12};
     const VideoCodecConfigurationFacts &facts,
     std::span<std::byte, kVideoCodecVpcCBytes> configuration) noexcept;
 
+// VP8 in Matroska/WebM never carries a CodecPrivate: the bitstream is fully
+// self-describing and RFC 6386 defines no decoder configuration record at all.
+// The only rigorous fact source is therefore the key frame header, which is
+// plain little-endian bytes rather than a bit string:
+//
+//   byte 0..2   frame tag: bit 0 frame_type (0 = key frame), bits 1..3
+//               version, bit 4 show_frame, bits 5..23 first_part_size
+//   byte 3..5   start code 0x9d 0x01 0x2a (key frames only)
+//   byte 6..7   little-endian: 14-bit width,  2-bit horizontal scale
+//   byte 8..9   little-endian: 14-bit height, 2-bit vertical scale
+//
+// Ten bytes are therefore both necessary and sufficient, and this function
+// reads no further -- the two bool-coded bits that follow (color_space,
+// clamping_type) would require the arithmetic decoder and are deliberately not
+// consulted. VP8 has exactly one colour space (RFC 6386 section 9.2: BT.601
+// primaries and matrix, and the bitstream carries no primaries or transfer
+// function of its own), so the reported facts state no colour description at
+// all, exactly as VP9's CS_UNKNOWN branch does, and the container's Colour
+// element remains the only source that can promote it.
+//
+// The reported facts carry MediaCodecConfigurationKind::VpcC because a
+// VPCodecConfigurationBox describes vp08 as well as vp09, and synthesizing one
+// keeps VP8 inside the same non-empty codec-configuration envelope every other
+// admitted video codec occupies.
+inline constexpr std::size_t kVp8KeyframeHeaderMaximumBytes{10};
+[[nodiscard]] VideoCodecConfigurationInspection inspectVp8BitstreamKeyframe(
+    std::span<const std::byte> keyframe,
+    VideoCodecConfigurationLimits limits = {}) noexcept;
+
+// Writes exactly kVideoCodecVpcCBytes bytes and returns false, leaving
+// `configuration` untouched, when `facts` are not admitted VP8 facts. Nothing
+// in the native lane parses this record back -- libvpx needs no configuration
+// -- but CoreMedia's format description carries it, so it is built from the
+// proven facts rather than zero-filled.
+[[nodiscard]] bool buildVp8CodecConfiguration(
+    const VideoCodecConfigurationFacts &facts,
+    std::span<std::byte, kVideoCodecVpcCBytes> configuration) noexcept;
+
 } // namespace wam::media
