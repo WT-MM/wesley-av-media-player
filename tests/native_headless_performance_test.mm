@@ -29,12 +29,12 @@ namespace {
 using wam::macos::AVFoundationAssetContext;
 using wam::macos::AVFoundationAssetContextFacts;
 using wam::macos::AVFoundationMediaSource;
-using wam::macos::AVFoundationPreviewBinding;
-using wam::macos::AVFoundationPreviewEndOfStream;
-using wam::macos::AVFoundationPreviewFailure;
-using wam::macos::AVFoundationPreviewReadResult;
+using wam::macos::NativePreviewBinding;
+using wam::macos::NativePreviewEndOfStream;
+using wam::macos::NativePreviewFailure;
+using wam::macos::NativePreviewReadResult;
 using wam::macos::AVFoundationPreviewSource;
-using wam::macos::AVFoundationPreviewStatus;
+using wam::macos::NativePreviewStatus;
 using wam::media::MediaDiscontinuity;
 using wam::media::MediaSample;
 using wam::media::MediaSampleKind;
@@ -394,7 +394,7 @@ void writeTimingReport(const std::filesystem::path& fixture,
   require(mainSource.stats().seeksAccepted == reusedSeekCount,
           "main source did not publish every accepted seek");
 
-  AVFoundationPreviewBinding previewBinding;
+  NativePreviewBinding previewBinding;
   previewBinding.localPath = fixture;
   previewBinding.descriptor = opened.descriptor;
   previewBinding.limits = options.limits;
@@ -411,7 +411,7 @@ void writeTimingReport(const std::filesystem::path& fixture,
   const auto begun = preview->begin({previewEpoch, previewTarget});
   report.previewStartMilliseconds =
       milliseconds(Clock::now() - previewStarted);
-  require(begun.status == AVFoundationPreviewStatus::Ready,
+  require(begun.status == NativePreviewStatus::Ready,
           std::string("shared-context preview reader failed: ") +
               begun.error);
 
@@ -432,18 +432,18 @@ void writeTimingReport(const std::filesystem::path& fixture,
   std::optional<MediaSample> previewSample;
   for (std::size_t reads = 0; reads < 512 && !previewSample.has_value();
        ++reads) {
-    AVFoundationPreviewReadResult result = preview->readNext(previewEpoch);
+    NativePreviewReadResult result = preview->readNext(previewEpoch);
     if (std::holds_alternative<MediaSample>(result)) {
       MediaSample sample = std::move(std::get<MediaSample>(result));
       if (!sample.decodeOnly) {
         previewSample.emplace(std::move(sample));
       }
     } else if (!std::holds_alternative<MediaDiscontinuity>(result)) {
-      if (std::holds_alternative<AVFoundationPreviewFailure>(result)) {
+      if (std::holds_alternative<NativePreviewFailure>(result)) {
         fail(std::string("preview sample read failed: ") +
-             std::get<AVFoundationPreviewFailure>(result).error);
+             std::get<NativePreviewFailure>(result).error);
       }
-      if (std::holds_alternative<AVFoundationPreviewEndOfStream>(result)) {
+      if (std::holds_alternative<NativePreviewEndOfStream>(result)) {
         fail("preview reached end of stream before yielding a sample");
       }
       fail("preview sample read was cancelled or rejected");
@@ -474,7 +474,7 @@ void writeTimingReport(const std::filesystem::path& fixture,
             "a valid forward preview retarget was rejected");
     bool presented = false;
     for (std::size_t reads = 0; reads < 64 && !presented; ++reads) {
-      AVFoundationPreviewReadResult result = preview->readNext(previewEpoch);
+      NativePreviewReadResult result = preview->readNext(previewEpoch);
       if (std::holds_alternative<MediaSample>(result)) {
         MediaSample sample = std::move(std::get<MediaSample>(result));
         require(sample.kind == MediaSampleKind::EncodedVideo &&
@@ -484,9 +484,9 @@ void writeTimingReport(const std::filesystem::path& fixture,
                 "retargeted preview sample exceeded its payload bound");
         presented = !sample.decodeOnly;
       } else if (!std::holds_alternative<MediaDiscontinuity>(result)) {
-        if (std::holds_alternative<AVFoundationPreviewFailure>(result)) {
+        if (std::holds_alternative<NativePreviewFailure>(result)) {
           fail(std::string("retargeted preview read failed: ") +
-               std::get<AVFoundationPreviewFailure>(result).error);
+               std::get<NativePreviewFailure>(result).error);
         }
         fail("retargeted preview did not reach a presentable sample");
       }

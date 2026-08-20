@@ -418,6 +418,12 @@ if(APPLE)
       src/platform/macos/matroska_asset_context.cpp
       src/platform/macos/matroska_media_source.hpp
       src/platform/macos/matroska_media_source.mm
+      src/platform/macos/matroska_preview_source.hpp
+      src/platform/macos/matroska_preview_source.mm
+      src/platform/macos/matroska_sample_builder.hpp
+      src/platform/macos/matroska_sample_builder.mm
+      src/platform/macos/native_preview_source.hpp
+      src/platform/macos/native_preview_source.mm
       src/platform/macos/native_audio_converter.hpp
       src/platform/macos/native_audio_converter.mm
       src/platform/macos/native_audio_output.hpp
@@ -1125,6 +1131,42 @@ if(BUILD_TESTING)
       set_tests_properties(macos_native_tracked_video_arbiter PROPERTIES
         TIMEOUT 20)
 
+      # The Matroska preview source's own contract. It links the main
+      # Matroska media source as well, so the promoted sample builders in
+      # matroska_sample_builder.hpp are proved to serve both consumers from
+      # one definition rather than two copies.
+      add_executable(wam_matroska_preview_source_test
+        tests/matroska_preview_source_test.mm
+        src/platform/macos/matroska_asset_context.hpp
+        src/platform/macos/matroska_asset_context.cpp
+        src/platform/macos/matroska_media_source.hpp
+        src/platform/macos/matroska_media_source.mm
+        src/platform/macos/matroska_preview_source.hpp
+        src/platform/macos/matroska_preview_source.mm
+        src/platform/macos/matroska_sample_builder.hpp
+        src/platform/macos/matroska_sample_builder.mm
+        src/platform/macos/avfoundation_asset_context.hpp
+        src/platform/macos/avfoundation_asset_context.mm
+        src/platform/macos/avfoundation_preview_source.hpp
+        src/platform/macos/avfoundation_preview_source.mm
+        src/platform/macos/native_preview_source.hpp
+        src/platform/macos/native_preview_source.mm)
+      target_include_directories(
+        wam_matroska_preview_source_test PRIVATE src)
+      target_link_libraries(wam_matroska_preview_source_test PRIVATE
+        wam_native_core
+        wam_macos_native_video_core
+        "${WAM_COREMEDIA_FRAMEWORK}"
+        "${WAM_COREFOUNDATION_FRAMEWORK}"
+        "${WAM_COREGRAPHICS_FRAMEWORK}"
+        "${WAM_FOUNDATION_FRAMEWORK}"
+        "${WAM_AUDIOTOOLBOX_FRAMEWORK}"
+        "${WAM_AVFOUNDATION_FRAMEWORK}")
+      add_test(NAME macos_matroska_preview_source
+        COMMAND wam_matroska_preview_source_test)
+      set_tests_properties(macos_matroska_preview_source PROPERTIES
+        TIMEOUT 20)
+
       # The lane's deterministic synthetic-frame seam is absent from the
       # shipping class. Compile the lane and its source dependency privately
       # under one macro, while reusing the production decoder/video core.
@@ -1164,6 +1206,14 @@ if(BUILD_TESTING)
         src/platform/macos/avfoundation_asset_context.mm
         src/platform/macos/avfoundation_preview_source.hpp
         src/platform/macos/avfoundation_preview_source.mm
+        src/platform/macos/matroska_asset_context.hpp
+        src/platform/macos/matroska_asset_context.cpp
+        src/platform/macos/matroska_preview_source.hpp
+        src/platform/macos/matroska_preview_source.mm
+        src/platform/macos/matroska_sample_builder.hpp
+        src/platform/macos/matroska_sample_builder.mm
+        src/platform/macos/native_preview_source.hpp
+        src/platform/macos/native_preview_source.mm
         src/platform/macos/native_media_session.hpp
         src/platform/macos/native_media_session.mm
         src/platform/macos/native_media_clock.hpp
@@ -1177,6 +1227,7 @@ if(BUILD_TESTING)
         WAM_AVFOUNDATION_ASSET_CONTEXT_TESTING=1
         WAM_NATIVE_MEDIA_SESSION_TESTING=1)
       target_link_libraries(wam_native_media_session_test PRIVATE
+        wam_native_core
         wam_macos_native_video_core
         "${WAM_FOUNDATION_FRAMEWORK}"
         "${WAM_COREMEDIA_FRAMEWORK}"
@@ -1236,6 +1287,7 @@ if(BUILD_TESTING)
       foreach(WAM_HEADLESS_NATIVE_TEST_TARGET IN ITEMS
           wam_avfoundation_media_source_test
           wam_avfoundation_preview_source_test
+          wam_matroska_preview_source_test
           wam_native_audio_converter_test
           wam_native_audio_output_test
           wam_native_audio_stretch_stage_test

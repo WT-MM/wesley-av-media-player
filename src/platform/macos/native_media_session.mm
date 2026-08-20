@@ -1386,22 +1386,17 @@ struct NativeMediaSession::Impl final {
         activeGeneration == 0) {
       return false;
     }
-    // The preview lane is an AVFoundation-only reader today. A Matroska
-    // generation therefore publishes no preview binding and the scrub lane
-    // stays inactive; main playback is unaffected.
-    auto previewAssetContext =
-        std::dynamic_pointer_cast<const AVFoundationAssetContext>(
-            assetContextSnapshot);
-    AVFoundationPreviewBinding sourceBinding{
-        binding.localPath, descriptorSnapshot, {}, previewAssetContext};
+    // Every backend that admitted a main generation can also be previewed:
+    // the binding carries the neutral prepared context, and
+    // createNativePreviewSource() selects the reader from its backendKind().
+    // A context this build cannot preview yields a null source below, and the
+    // scrub lane simply stays inactive without disturbing main playback.
+    NativePreviewBinding sourceBinding{
+        binding.localPath, descriptorSnapshot, {}, assetContextSnapshot};
 #if defined(WAM_NATIVE_MEDIA_SESSION_TESTING)
     if (previewBindingObserver != nullptr &&
         !previewBindingObserver(previewBindingObserverContext,
                                 sourceBinding)) {
-      return false;
-    }
-#else
-    if (previewAssetContext == nullptr) {
       return false;
     }
 #endif
@@ -1409,6 +1404,13 @@ struct NativeMediaSession::Impl final {
       return previewControl.pump != nullptr &&
              previewControl.takePresented != nullptr &&
              previewControl.stop != nullptr;
+    }
+    if (assetContextSnapshot == nullptr) {
+      return false;
+    }
+    auto previewSource = createNativePreviewSource(sourceBinding);
+    if (previewSource == nullptr) {
+      return false;
     }
     const NativeTrackedVideoOutputWakeSeam edge =
         dependencies.wake->trackedVideo();
@@ -1418,7 +1420,8 @@ struct NativeMediaSession::Impl final {
     previewLane = NativePreviewFrameLane::create(
         std::move(laneBinding), dependencies.previewOutput,
         NativePreviewFrameLaneWakeSeam{childLifetime, edge.signal,
-                                       edge.context});
+                                       edge.context},
+        std::move(previewSource));
     if (previewLane == nullptr) {
       return false;
     }
@@ -3331,7 +3334,7 @@ if (result != NativeAudioSessionProgress::Done) {
   std::shared_ptr<const media::MediaSourcePreparedContext> assetContextSnapshot;
 #if defined(WAM_NATIVE_MEDIA_SESSION_TESTING)
   bool (*previewBindingObserver)(
-      void*, const AVFoundationPreviewBinding&) noexcept{nullptr};
+      void*, const NativePreviewBinding&) noexcept{nullptr};
   void* previewBindingObserverContext{nullptr};
 #endif
   SessionVideoControl videoControl{};

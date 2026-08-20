@@ -2,16 +2,13 @@
 
 #include "media/native_media_source.hpp"
 #include "platform/macos/avfoundation_asset_context.hpp"
+#include "platform/macos/native_preview_source.hpp"
 
 #include <CoreMedia/CoreMedia.h>
 
-#include <cstddef>
 #include <cstdint>
-#include <filesystem>
 #include <memory>
 #include <string>
-#include <type_traits>
-#include <variant>
 
 namespace wam::macos {
 
@@ -21,41 +18,26 @@ using AVFoundationPreviewCancelInterleaveHook = void (*)(
     std::uint64_t epoch, void* context) noexcept;
 #endif
 
-// Immutable input shared by every short-lived preview reader. The descriptor
-// is the one already admitted by the main native source. Preview never selects
-// tracks, opens audio, or publishes its private epochs as playback generations.
-struct AVFoundationPreviewBinding {
-  std::filesystem::path localPath;
-  std::shared_ptr<const media::MediaSourceDescriptor> descriptor;
-  media::MediaSourceLimits limits{};
-  // Production sessions provide the immutable context admitted by the main
-  // source. Null keeps the standalone cold-load path available for isolated
-  // preview use and injected tests.
-  std::shared_ptr<const AVFoundationAssetContext> assetContext{};
-};
+// The shared preview vocabulary -- binding, request, status, read result and
+// facts -- lives in `native_preview_source.hpp`; only the AVFoundation-specific
+// backend seams below are named here.
 
-struct AVFoundationPreviewRequest {
-  // Private, strictly increasing cancellation identity. This value is used in
-  // returned MediaSample::generation only inside the preview graph; it must
-  // never be passed to NativeMediaDispatcher or NativeAudioSession.
-  std::uint64_t epoch{0};
-  media::MediaTime target{};
+#if defined(WAM_AVFOUNDATION_PREVIEW_SOURCE_TESTING)
+// Exact snapshots from the production shared-context branch. The probe models
+// one failed reader initialization followed by one successfully started
+// reader, while using the same accounting methods as ProductionPreviewGeneration.
+struct AVFoundationPreviewSharedContextProbe {
+  bool sharedLoadReady{false};
+  NativePreviewBackendFacts backendBefore{};
+  NativePreviewBackendFacts backendAfterSharedLoad{};
+  NativePreviewBackendFacts backendAfterCreationFailure{};
+  NativePreviewBackendFacts backendAfterStartedReader{};
+  AVFoundationAssetContextFacts contextBefore{};
+  AVFoundationAssetContextFacts contextAfterSharedLoad{};
+  AVFoundationAssetContextFacts contextAfterCreationFailure{};
+  AVFoundationAssetContextFacts contextAfterStartedReader{};
 };
-
-enum class AVFoundationPreviewStatus : std::uint8_t {
-  Rejected,
-  Ready,
-  Unsupported,
-  Cancelled,
-  Failed,
-};
-
-struct AVFoundationPreviewBeginOutcome {
-  AVFoundationPreviewStatus status{AVFoundationPreviewStatus::Rejected};
-  std::uint64_t epoch{0};
-  media::MediaTime actualDecodeStart{};
-  std::string error;
-};
+#endif
 
 enum class AVFoundationPreviewSampleStatus : std::uint8_t {
   Sample,
@@ -73,54 +55,8 @@ struct AVFoundationPreviewCopiedSample {
   std::string error;
 };
 
-struct AVFoundationPreviewEndOfStream {
-  std::uint64_t epoch{0};
-};
-
-struct AVFoundationPreviewCancelled {
-  std::uint64_t epoch{0};
-};
-
-struct AVFoundationPreviewFailure {
-  std::uint64_t epoch{0};
-  std::string error;
-};
-
-using AVFoundationPreviewReadResult =
-    std::variant<media::MediaSample, media::MediaDiscontinuity,
-                 AVFoundationPreviewEndOfStream, AVFoundationPreviewCancelled,
-                 AVFoundationPreviewFailure>;
-
-// Production facts are cumulative across reader replacement. assetLoad* is
-// the cold immutable-asset/track admission cost; later preview requests reuse
-// that cache and create only a video AVAssetReader.
-struct AVFoundationPreviewBackendFacts {
-  std::uint64_t assetLoadAttempts{0};
-  std::uint64_t assetLoadsCompleted{0};
-  std::uint64_t assetLoadNanoseconds{0};
-  std::uint64_t readersCreated{0};
-  std::uint64_t readersStarted{0};
-};
-
-#if defined(WAM_AVFOUNDATION_PREVIEW_SOURCE_TESTING)
-// Exact snapshots from the production shared-context branch. The probe models
-// one failed reader initialization followed by one successfully started
-// reader, while using the same accounting methods as ProductionPreviewGeneration.
-struct AVFoundationPreviewSharedContextProbe {
-  bool sharedLoadReady{false};
-  AVFoundationPreviewBackendFacts backendBefore{};
-  AVFoundationPreviewBackendFacts backendAfterSharedLoad{};
-  AVFoundationPreviewBackendFacts backendAfterCreationFailure{};
-  AVFoundationPreviewBackendFacts backendAfterStartedReader{};
-  AVFoundationAssetContextFacts contextBefore{};
-  AVFoundationAssetContextFacts contextAfterSharedLoad{};
-  AVFoundationAssetContextFacts contextAfterCreationFailure{};
-  AVFoundationAssetContextFacts contextAfterStartedReader{};
-};
-#endif
-
 struct AVFoundationPreviewGenerationStart {
-  AVFoundationPreviewStatus status{AVFoundationPreviewStatus::Failed};
+  NativePreviewStatus status{NativePreviewStatus::Failed};
   media::MediaTime actualDecodeStart{};
   std::string error;
 };
@@ -146,77 +82,34 @@ class AVFoundationPreviewBackend {
   // Construction must be bounded and nonblocking. Asset loading, sync lookup,
   // and reader creation stay in Generation::start().
   [[nodiscard]] virtual std::shared_ptr<AVFoundationPreviewGeneration>
-  makeGeneration(const AVFoundationPreviewBinding& binding,
-                 AVFoundationPreviewRequest request) = 0;
-  [[nodiscard]] virtual AVFoundationPreviewBackendFacts facts()
-      const noexcept = 0;
+  makeGeneration(const NativePreviewBinding& binding,
+                 NativePreviewRequest request) = 0;
+  [[nodiscard]] virtual NativePreviewBackendFacts facts() const noexcept = 0;
 };
 
-struct AVFoundationPreviewSourceFacts {
-  // Exact public cancellation slot. It can remain nonzero while an older
-  // reader is being retired before the matching new reader is constructed.
-  std::uint64_t operationEpoch{0};
-  std::uint64_t activeEpoch{0};
-  std::uint64_t epochHighWater{0};
-  media::MediaTime target{};
-  media::MediaTime actualDecodeStart{};
-  std::size_t stagedSampleBuffers{0};
-  std::size_t peakStagedSampleBuffers{0};
-  std::uint64_t samplesRead{0};
-  std::uint64_t discontinuitiesRead{0};
-  // Accepted nondecreasing retargets served by the already-open reader. This
-  // is the exact complement to backend.readersCreated for forward scrub
-  // coalescing: no AVAssetReader is constructed or restarted for these.
-  std::uint64_t forwardRetargets{0};
-  bool open{false};
-  bool cancelled{false};
-  AVFoundationPreviewBackendFacts backend{};
-};
-
-// Allocation-free owner-thread snapshot of the one copied CoreMedia sample
-// temporarily owned inside readNext(). A zero-byte discontinuity may set
-// stagedSamples without charging compressed bytes.
-struct AVFoundationPreviewSourceMemoryFacts {
-  std::size_t stagedSamples{0};
-  std::uint64_t currentStagedCompressedBytes{0};
-  std::uint64_t peakStagedCompressedBytes{0};
-};
-static_assert(
-    std::is_trivially_copyable_v<AVFoundationPreviewSourceMemoryFacts>);
-
-// Bounded video-only preview pull source. A newer valid epoch cancels and
-// replaces the active reader before it creates the next one. At most one
-// copied CMSampleBuffer is staged while readNext() validates and transfers its
-// +1 reference; after return the source itself retains no sample buffer.
-class AVFoundationPreviewSource final {
+// AVFoundation implementation of the neutral preview pull source. One
+// AVAssetReader per private epoch, preceded by a bounded full-sync back-walk
+// because AVFoundation exposes no random-access index this source can consult.
+class AVFoundationPreviewSource final : public NativePreviewSource {
  public:
   [[nodiscard]] static std::unique_ptr<AVFoundationPreviewSource>
-  create(AVFoundationPreviewBinding binding) noexcept;
+  create(NativePreviewBinding binding) noexcept;
   [[nodiscard]] static std::unique_ptr<AVFoundationPreviewSource>
-  create(AVFoundationPreviewBinding binding,
+  create(NativePreviewBinding binding,
          std::shared_ptr<AVFoundationPreviewBackend> backend) noexcept;
-  ~AVFoundationPreviewSource();
+  ~AVFoundationPreviewSource() override;
 
-  AVFoundationPreviewSource(const AVFoundationPreviewSource&) = delete;
-  AVFoundationPreviewSource& operator=(const AVFoundationPreviewSource&) =
-      delete;
-
-  [[nodiscard]] AVFoundationPreviewBeginOutcome
-  begin(AVFoundationPreviewRequest request) noexcept;
-  // Advances the exact target of the currently open private epoch without
-  // replacing its AVAssetReader. This owner-confined operation is valid only
-  // for a nondecreasing in-duration target. It never changes the epoch,
-  // constructs a reader, or makes a cancelled/end-of-stream reader pullable.
+  [[nodiscard]] NativePreviewBeginOutcome
+  begin(NativePreviewRequest request) noexcept override;
   [[nodiscard]] bool advanceTarget(std::uint64_t expectedEpoch,
-                                   media::MediaTime target) noexcept;
-  [[nodiscard]] AVFoundationPreviewReadResult
-  readNext(std::uint64_t expectedEpoch) noexcept;
-  void requestCancel(std::uint64_t epoch) noexcept;
-  void close() noexcept;
-  [[nodiscard]] AVFoundationPreviewSourceFacts facts() const noexcept;
-  // Owner-thread only. requestCancel() never samples or mutates these facts.
-  [[nodiscard]] AVFoundationPreviewSourceMemoryFacts memoryFacts()
-      const noexcept;
+                                   media::MediaTime target) noexcept override;
+  [[nodiscard]] NativePreviewReadResult
+  readNext(std::uint64_t expectedEpoch) noexcept override;
+  void requestCancel(std::uint64_t epoch) noexcept override;
+  void close() noexcept override;
+  [[nodiscard]] NativePreviewSourceFacts facts() const noexcept override;
+  [[nodiscard]] NativePreviewSourceMemoryFacts memoryFacts()
+      const noexcept override;
 
  private:
   struct Impl;
@@ -238,7 +131,7 @@ struct AVFoundationPreviewSourceTestAccess {
       AVFoundationPreviewCancelInterleaveHook hook,
       void* context) noexcept;
   [[nodiscard]] static AVFoundationPreviewSharedContextProbe
-  probeSharedContext(AVFoundationPreviewBinding binding) noexcept;
+  probeSharedContext(NativePreviewBinding binding) noexcept;
 };
 #endif
 

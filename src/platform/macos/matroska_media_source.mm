@@ -1,5 +1,6 @@
 #include "platform/macos/matroska_media_source.hpp"
 
+#include "platform/macos/matroska_sample_builder.hpp"
 #include "platform/macos/native_video_codec_capability.hpp"
 
 #import <AudioToolbox/AudioToolbox.h>
@@ -51,39 +52,6 @@ using media::matroska::MatroskaPreparedAsset;
 constexpr std::size_t kMaximumLaceFrames{
     media::matroska::ParseOptions::kHardMaximumLaceFrames};
 
-// Exact Matroska tick -> MediaTime. A tick is timestampScaleNanoseconds
-// nanoseconds, so the reduced nanosecond rational is exact and never rounds
-// through double the way a seconds conversion would.
-[[nodiscard]] std::optional<MediaTime> matroskaTickTime(
-    std::int64_t tick, std::uint64_t timestampScaleNanoseconds) noexcept {
-  if (timestampScaleNanoseconds == 0) {
-    return std::nullopt;
-  }
-  constexpr std::int64_t kNanosecondsPerSecond{1'000'000'000};
-  const auto scale =
-      static_cast<__int128>(timestampScaleNanoseconds);
-  const auto nanoseconds = static_cast<__int128>(tick) * scale;
-  if (nanoseconds > static_cast<__int128>(
-                        std::numeric_limits<std::int64_t>::max()) ||
-      nanoseconds < static_cast<__int128>(
-                        std::numeric_limits<std::int64_t>::min())) {
-    return std::nullopt;
-  }
-  auto numerator = static_cast<std::int64_t>(nanoseconds);
-  auto denominator = kNanosecondsPerSecond;
-  const std::int64_t divisor =
-      std::gcd(numerator == 0 ? denominator : numerator, denominator);
-  if (divisor > 0) {
-    numerator /= divisor;
-    denominator /= divisor;
-  }
-  if (denominator <= 0 ||
-      denominator > std::numeric_limits<std::int32_t>::max()) {
-    return std::nullopt;
-  }
-  return MediaTime{numerator, static_cast<std::int32_t>(denominator)};
-}
-
 // Decoder preroll the audio converter demands ahead of the first audible frame
 // of a generation that does not begin at the stream origin, stated in whole
 // compressed access units. This is the same constant the AVFoundation backend
@@ -102,122 +70,6 @@ void assignError(std::string* error, const char* message) {
 [[nodiscard]] std::uint64_t saturatingIncrement(std::uint64_t value) noexcept {
   return value == std::numeric_limits<std::uint64_t>::max() ? value
                                                             : value + 1;
-}
-
-[[nodiscard]] const char* matroskaErrorName(MatroskaDemuxError error) noexcept {
-  switch (error) {
-  case MatroskaDemuxError::None:
-    return "None";
-  case MatroskaDemuxError::InvalidRequest:
-    return "InvalidRequest";
-  case MatroskaDemuxError::InvalidContainer:
-    return "InvalidContainer";
-  case MatroskaDemuxError::UnsupportedContainer:
-    return "UnsupportedContainer";
-  case MatroskaDemuxError::TrackSelection:
-    return "TrackSelection";
-  case MatroskaDemuxError::UnsupportedTrack:
-    return "UnsupportedTrack";
-  case MatroskaDemuxError::CodecConfiguration:
-    return "CodecConfiguration";
-  case MatroskaDemuxError::InvalidTimeline:
-    return "InvalidTimeline";
-  case MatroskaDemuxError::MissingCues:
-    return "MissingCues";
-  case MatroskaDemuxError::InvalidCue:
-    return "InvalidCue";
-  case MatroskaDemuxError::IndexLimit:
-    return "IndexLimit";
-  case MatroskaDemuxError::SampleLimit:
-    return "SampleLimit";
-  case MatroskaDemuxError::FileChanged:
-    return "FileChanged";
-  case MatroskaDemuxError::Io:
-    return "Io";
-  case MatroskaDemuxError::Cancelled:
-    return "Cancelled";
-  }
-  return "Unknown";
-}
-
-// The neutral header owns no FileChanged status, so a mid-stream identity
-// change has to travel as a MediaSourceFailure. Naming the demuxer error inside
-// the message keeps that fact recoverable by an owner that must distinguish a
-// swapped file from an ordinary read error.
-[[nodiscard]] std::string demuxErrorMessage(const char* what,
-                                            MatroskaDemuxError error) {
-  std::string message(what);
-  message += " (";
-  message += matroskaErrorName(error);
-  message += ")";
-  return message;
-}
-
-// Exact sum of two container rationals. The intermediate product needs the full
-// 128-bit range: adjacent media ticks at a nanosecond timescale are already
-// above 2^53, so converting through double would silently move a sample across
-// the accurate-seek boundary. Copied verbatim from the AVFoundation backend so
-// both sources answer decodeOnly identically for the same interval.
-[[nodiscard]] std::optional<MediaTime> checkedExactTimeSum(
-    MediaTime lhs, MediaTime rhs) noexcept {
-  if (!lhs.valid() || !rhs.valid()) {
-    return std::nullopt;
-  }
-
-  using WideSigned = __int128_t;
-  using WideUnsigned = __uint128_t;
-  const WideSigned numerator =
-      static_cast<WideSigned>(lhs.value) *
-          static_cast<WideSigned>(rhs.timescale) +
-      static_cast<WideSigned>(rhs.value) *
-          static_cast<WideSigned>(lhs.timescale);
-  const std::uint64_t denominator =
-      static_cast<std::uint64_t>(static_cast<std::uint32_t>(lhs.timescale)) *
-      static_cast<std::uint64_t>(static_cast<std::uint32_t>(rhs.timescale));
-  if (denominator == 0) {
-    return std::nullopt;
-  }
-
-  const WideUnsigned magnitude =
-      numerator < 0 ? static_cast<WideUnsigned>(-(numerator + 1)) + 1
-                    : static_cast<WideUnsigned>(numerator);
-  const std::uint64_t common = std::gcd(
-      denominator, static_cast<std::uint64_t>(magnitude % denominator));
-  const WideSigned reducedNumerator =
-      numerator / static_cast<WideSigned>(common);
-  const std::uint64_t reducedDenominator = denominator / common;
-  if (reducedNumerator <
-          static_cast<WideSigned>(std::numeric_limits<std::int64_t>::min()) ||
-      reducedNumerator >
-          static_cast<WideSigned>(std::numeric_limits<std::int64_t>::max()) ||
-      reducedDenominator >
-          static_cast<std::uint64_t>(std::numeric_limits<std::int32_t>::max())) {
-    return std::nullopt;
-  }
-  return MediaTime{static_cast<std::int64_t>(reducedNumerator),
-                   static_cast<std::int32_t>(reducedDenominator)};
-}
-
-[[nodiscard]] std::optional<bool> accurateVideoDecodeOnlyFacts(
-    MediaTime presentationTime, MediaTime duration, MediaTime target,
-    std::string* error) noexcept {
-  if (!presentationTime.valid() || !duration.valid() || duration.value <= 0) {
-    assignError(error, "accurate video sample has no exact positive interval");
-    return std::nullopt;
-  }
-  const auto intervalEnd = checkedExactTimeSum(presentationTime, duration);
-  if (!intervalEnd) {
-    assignError(error,
-                "accurate video sample interval is not exactly representable");
-    return std::nullopt;
-  }
-  const auto endAgainstTarget = media::compareMediaTime(*intervalEnd, target);
-  if (!endAgainstTarget) {
-    assignError(error,
-                "video sample interval and seek target have incomparable time");
-    return std::nullopt;
-  }
-  return *endAgainstTarget != MediaTimeOrder::Greater;
 }
 
 [[nodiscard]] bool exactNonnegativeTimeWithinDuration(
@@ -244,206 +96,6 @@ void assignError(std::string* error, const char* message) {
     return std::nullopt;
   }
   return integral;
-}
-
-class ScopedSampleBuffer final {
- public:
-  ScopedSampleBuffer() noexcept = default;
-  explicit ScopedSampleBuffer(CMSampleBufferRef owned) noexcept
-      : value_(owned) {}
-  ~ScopedSampleBuffer() {
-    if (value_ != nullptr) {
-      CFRelease(value_);
-    }
-  }
-
-  ScopedSampleBuffer(ScopedSampleBuffer&& other) noexcept
-      : value_(other.value_) {
-    other.value_ = nullptr;
-  }
-  ScopedSampleBuffer& operator=(ScopedSampleBuffer&& other) noexcept {
-    if (this != &other) {
-      if (value_ != nullptr) {
-        CFRelease(value_);
-      }
-      value_ = other.value_;
-      other.value_ = nullptr;
-    }
-    return *this;
-  }
-  ScopedSampleBuffer(const ScopedSampleBuffer&) = delete;
-  ScopedSampleBuffer& operator=(const ScopedSampleBuffer&) = delete;
-
-  [[nodiscard]] CMSampleBufferRef get() const noexcept { return value_; }
-  [[nodiscard]] CMSampleBufferRef release() noexcept {
-    CMSampleBufferRef owned = value_;
-    value_ = nullptr;
-    return owned;
-  }
-
- private:
-  CMSampleBufferRef value_{nullptr};
-};
-
-// Owns the +1 on one retained CoreMedia buffer for the lifetime of every lease
-// taken against it. Shape copied from the AVFoundation backend's storage so the
-// native video consumer and audio converter accept Matroska samples unchanged.
-class MatroskaCoreMediaSampleStorage final : public MediaPayloadStorage {
- public:
-  MatroskaCoreMediaSampleStorage(CMSampleBufferRef ownedSample,
-                                 std::size_t byteSize) noexcept
-      : sample_(ownedSample), byte_size_(byteSize) {}
-  ~MatroskaCoreMediaSampleStorage() override {
-    if (sample_ != nullptr) {
-      CFRelease(sample_);
-    }
-  }
-
-  MatroskaCoreMediaSampleStorage(const MatroskaCoreMediaSampleStorage&) =
-      delete;
-  MatroskaCoreMediaSampleStorage& operator=(
-      const MatroskaCoreMediaSampleStorage&) = delete;
-
-  [[nodiscard]] std::size_t byteSize() const noexcept override {
-    return byte_size_;
-  }
-
-  [[nodiscard]] std::span<const std::byte>
-  contiguousBytes() const noexcept override {
-    CMBlockBufferRef block = CMSampleBufferGetDataBuffer(sample_);
-    if (block == nullptr) {
-      return {};
-    }
-    char* data = nullptr;
-    std::size_t contiguousLength = 0;
-    std::size_t totalLength = 0;
-    const OSStatus status = CMBlockBufferGetDataPointer(
-        block, 0, &contiguousLength, &totalLength, &data);
-    if (status != noErr || data == nullptr || totalLength != byte_size_ ||
-        contiguousLength != totalLength) {
-      return {};
-    }
-    return {reinterpret_cast<const std::byte*>(data), totalLength};
-  }
-
-  [[nodiscard]] bool copyBytes(
-      std::size_t offset,
-      std::span<std::byte> destination) const noexcept override {
-    if (offset > byte_size_ || destination.size() > byte_size_ - offset) {
-      return false;
-    }
-    if (destination.empty()) {
-      return true;
-    }
-    CMBlockBufferRef block = CMSampleBufferGetDataBuffer(sample_);
-    return block != nullptr &&
-           CMBlockBufferCopyDataBytes(block, offset, destination.size(),
-                                      destination.data()) == noErr;
-  }
-
- protected:
-  [[nodiscard]] std::optional<media::NativePayloadKind>
-  nativePayloadKind() const noexcept override {
-    return media::NativePayloadKind::CoreMediaSampleBuffer;
-  }
-  [[nodiscard]] const void* borrowedNativePayload() const noexcept override {
-    return sample_;
-  }
-
- private:
-  CMSampleBufferRef sample_{nullptr};
-  std::size_t byte_size_{0};
-};
-
-// The decoder builds its own format description from exactly these inputs, so
-// building this one identically is what lets VideoToolbox adopt the sample's
-// description instead of rejecting a second, differently-encoded one. The
-// configuration record is handed to CoreMedia verbatim: rewriting, reordering,
-// or re-emitting an avcC/hvcC atom would change bytes the decoder compares.
-[[nodiscard]] CMVideoFormatDescriptionRef
-createVideoFormatDescription(const MediaTrackDescriptor& track) noexcept {
-  if (!track.video || track.kind != MediaTrackKind::Video ||
-      track.codecConfiguration.empty() ||
-      track.codecConfiguration.size() >
-          static_cast<std::size_t>(std::numeric_limits<CFIndex>::max())) {
-    return nullptr;
-  }
-  CMVideoCodecType codec = 0;
-  CFStringRef atomName = nullptr;
-  if (track.codec == MediaCodec::H264 &&
-      track.codecConfigurationKind == MediaCodecConfigurationKind::AvcC) {
-    codec = kCMVideoCodecType_H264;
-    atomName = CFSTR("avcC");
-  } else if (track.codec == MediaCodec::Hevc &&
-             track.codecConfigurationKind ==
-                 MediaCodecConfigurationKind::HvcC) {
-    codec = kCMVideoCodecType_HEVC;
-    atomName = CFSTR("hvcC");
-  } else if (track.codec == MediaCodec::Av1 &&
-             track.codecConfigurationKind ==
-                 MediaCodecConfigurationKind::Av1C &&
-             nativeVideoToolboxSupportsAv1()) {
-    codec = kCMVideoCodecType_AV1;
-    atomName = CFSTR("av1C");
-  } else if (track.codec == MediaCodec::Vp9 &&
-             track.codecConfigurationKind ==
-                 MediaCodecConfigurationKind::VpcC &&
-             nativeVideoToolboxSupportsVp9()) {
-    // Matroska rarely carries VP9 CodecPrivate, so the demuxer synthesizes the
-    // 12-byte vpcC from the keyframe bitstream. The non-empty guard above
-    // therefore still holds for VP9, and the record is handed to CoreMedia
-    // verbatim exactly like avcC/hvcC.
-    codec = kCMVideoCodecType_VP9;
-    atomName = CFSTR("vpcC");
-  } else {
-    return nullptr;
-  }
-  const std::uint32_t width = track.video->codedWidth;
-  const std::uint32_t height = track.video->codedHeight;
-  const auto dimensionCeiling =
-      static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max());
-  if (width == 0 || height == 0 || width > dimensionCeiling ||
-      height > dimensionCeiling) {
-    return nullptr;
-  }
-
-  CFDataRef atomData = CFDataCreate(
-      kCFAllocatorDefault,
-      reinterpret_cast<const UInt8*>(track.codecConfiguration.data()),
-      static_cast<CFIndex>(track.codecConfiguration.size()));
-  if (atomData == nullptr) {
-    return nullptr;
-  }
-  const void* atomKeys[] = {atomName};
-  const void* atomValues[] = {atomData};
-  CFDictionaryRef atoms = CFDictionaryCreate(
-      kCFAllocatorDefault, atomKeys, atomValues, 1,
-      &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
-  CFDictionaryRef extensions = nullptr;
-  if (atoms != nullptr) {
-    const void* extensionKeys[] = {
-        kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms};
-    const void* extensionValues[] = {atoms};
-    extensions = CFDictionaryCreate(
-        kCFAllocatorDefault, extensionKeys, extensionValues, 1,
-        &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
-  }
-  CMVideoFormatDescriptionRef description = nullptr;
-  if (extensions != nullptr) {
-    const OSStatus status = CMVideoFormatDescriptionCreate(
-        kCFAllocatorDefault, codec, static_cast<std::int32_t>(width),
-        static_cast<std::int32_t>(height), extensions, &description);
-    if (status != noErr && description != nullptr) {
-      CFRelease(description);
-      description = nullptr;
-    }
-    CFRelease(extensions);
-  }
-  if (atoms != nullptr) {
-    CFRelease(atoms);
-  }
-  CFRelease(atomData);
-  return description;
 }
 
 // The converter compares every ASBD field, the magic cookie bytes, and the
@@ -494,12 +146,6 @@ createAudioFormatDescription(const MediaTrackDescriptor& track) noexcept {
   return status == noErr ? description : nullptr;
 }
 
-enum class SampleBuildStatus : std::uint8_t {
-  Built,
-  Cancelled,
-  Failed,
-};
-
 // How far ahead of its own presentation time a video sample sorts in the A/V
 // merge. Matroska carries no decode timestamp, and the cursor emits in storage
 // order, which is DECODE order -- so for a stream with B-frames the emission
@@ -538,189 +184,6 @@ constexpr std::int64_t kVideoMergeLeadNanoseconds{250'000'000};
       1'000'000'000;
   return MediaTime{presentation.value - static_cast<std::int64_t>(ticks),
                    presentation.timescale};
-}
-
-struct SampleBuildInputs {
-  const MatroskaPreparedAsset* asset{nullptr};
-  CancellationToken cancellation{};
-  CMFormatDescriptionRef format{nullptr};
-  bool video{true};
-  // Only meaningful for audio: the exact media-timeline extent of one access
-  // unit, which CoreMedia expands into the per-unit stamps the converter reads.
-  std::int64_t audioFramesPerPacket{0};
-  std::int32_t audioSampleRate{0};
-};
-
-// Materializes one payload-free cursor sample into a retained CMSampleBuffer.
-//
-// Timing is the load-bearing decision here. Container rationals are carried
-// straight into CMTimeMake as {value, timescale}; converting through seconds
-// would reintroduce exactly the rounding the demuxer was built to avoid. The
-// decode stamp is always invalid because Matroska carries no DTS and the
-// demuxer refuses to invent one - VideoToolbox then decodes in submission
-// order, which is the storage order the cursor emits in.
-[[nodiscard]] SampleBuildStatus buildCompressedSampleBuffer(
-    const SampleBuildInputs& inputs, const MatroskaCompressedSample& sample,
-    ScopedSampleBuffer* out,
-    std::string* error) {
-  if (out == nullptr || inputs.asset == nullptr || inputs.format == nullptr) {
-    assignError(error, "matroska sample factory has no admitted format");
-    return SampleBuildStatus::Failed;
-  }
-  const std::size_t bytes = sample.aggregateBytes;
-  const std::size_t frameCount = sample.frameCount;
-  if (bytes == 0 || frameCount == 0 || frameCount > kMaximumLaceFrames ||
-      (inputs.video && frameCount != 1)) {
-    assignError(error, "matroska sample has an inconsistent frame layout");
-    return SampleBuildStatus::Failed;
-  }
-  if (!inputs.video &&
-      (inputs.audioSampleRate <= 0 || inputs.audioFramesPerPacket <= 0)) {
-    assignError(error, "matroska audio sample has no exact packet grid");
-    return SampleBuildStatus::Failed;
-  }
-
-  // The CoreMedia block is allocated first and the demuxer writes payload
-  // bytes straight into it. Staging through a reusable member vector and then
-  // CMBlockBufferReplaceDataBytes moved every byte TWICE -- a copy this
-  // project's own performance document had recorded as a single copy, which is
-  // how a duplicated memcpy survives a careful review. The demuxer already
-  // takes an exactly sized destination span and allocates nothing, so the
-  // block's own memory is a legal destination and the scratch vector is gone.
-  // kCMBlockBufferAssureMemoryNowFlag makes the backing store real before the
-  // data pointer is taken.
-  CMBlockBufferRef block = nullptr;
-  OSStatus status = CMBlockBufferCreateWithMemoryBlock(
-      kCFAllocatorDefault, nullptr, bytes, kCFAllocatorDefault, nullptr, 0,
-      bytes, kCMBlockBufferAssureMemoryNowFlag, &block);
-  if (status != noErr || block == nullptr) {
-    if (block != nullptr) {
-      CFRelease(block);
-    }
-    assignError(error, "matroska payload block allocation failed");
-    return SampleBuildStatus::Failed;
-  }
-  std::size_t lengthAtOffset = 0;
-  std::size_t totalLength = 0;
-  char* raw = nullptr;
-  status = CMBlockBufferGetDataPointer(block, 0, &lengthAtOffset, &totalLength,
-                                       &raw);
-  if (status != noErr || raw == nullptr || lengthAtOffset < bytes) {
-    CFRelease(block);
-    assignError(error, "matroska payload block is not contiguous");
-    return SampleBuildStatus::Failed;
-  }
-  const std::span<std::byte> destination(reinterpret_cast<std::byte*>(raw),
-                                         bytes);
-  MatroskaDemuxError copyError = MatroskaDemuxError::None;
-  if (!inputs.asset->copyRanges({sample.frames.data(), frameCount}, destination,
-                                inputs.cancellation, &copyError)) {
-    // A failed or cancelled copy leaves a partially written block that no
-    // caller ever sees; releasing it here is the whole cleanup.
-    CFRelease(block);
-    if (copyError == MatroskaDemuxError::Cancelled) {
-      return SampleBuildStatus::Cancelled;
-    }
-    if (error != nullptr) {
-      *error = demuxErrorMessage("matroska payload copy failed", copyError);
-    }
-    return SampleBuildStatus::Failed;
-  }
-
-  CMSampleTimingInfo timing{};
-  timing.presentationTimeStamp = CMTimeMake(sample.presentationTime.value,
-                                            sample.presentationTime.timescale);
-  timing.decodeTimeStamp = kCMTimeInvalid;
-  if (inputs.video) {
-    timing.duration = sample.duration.valid()
-                          ? CMTimeMake(sample.duration.value,
-                                       sample.duration.timescale)
-                          : kCMTimeInvalid;
-  } else {
-    // One timing entry whose duration is a single access unit. CoreMedia then
-    // derives each laced unit's own stamp, which is what the converter's
-    // per-packet timeline walk validates against the packet frame counts.
-    timing.duration =
-        CMTimeMake(inputs.audioFramesPerPacket, inputs.audioSampleRate);
-  }
-
-  // Deliberately not value-initialised. This is kMaximumLaceFrames * 8 B of
-  // stack (2 KiB) that a `{}` would zero on every single sample to describe a
-  // Block carrying one frame (video) or a handful (laced AAC). Every entry
-  // below frameCount is written before it is read -- video writes sizes[0],
-  // audio writes exactly frameCount entries -- and CoreMedia is handed the
-  // same frameCount as the entry count, so nothing ever reads past it.
-  std::array<std::size_t, kMaximumLaceFrames> sizes;
-  CMItemCount numSamples = 1;
-  CMItemCount sizeEntries = 1;
-  if (inputs.video) {
-    sizes[0] = bytes;
-  } else {
-    std::size_t total = 0;
-    for (std::size_t index = 0; index < frameCount; ++index) {
-      const std::uint64_t frameBytes = sample.frames[index].bytes.size;
-      if (frameBytes == 0 || frameBytes > bytes - total) {
-        CFRelease(block);
-        assignError(error, "matroska laced access unit sizes are inconsistent");
-        return SampleBuildStatus::Failed;
-      }
-      sizes[index] = static_cast<std::size_t>(frameBytes);
-      total += sizes[index];
-    }
-    if (total != bytes) {
-      CFRelease(block);
-      assignError(error,
-                  "matroska laced access units do not span the payload");
-      return SampleBuildStatus::Failed;
-    }
-    numSamples = static_cast<CMItemCount>(frameCount);
-    sizeEntries = numSamples;
-  }
-
-  CMSampleBufferRef created = nullptr;
-  status = CMSampleBufferCreateReady(kCFAllocatorDefault, block, inputs.format,
-                                     numSamples, 1, &timing, sizeEntries,
-                                     sizes.data(), &created);
-  CFRelease(block);
-  if (status != noErr || created == nullptr) {
-    if (created != nullptr) {
-      CFRelease(created);
-    }
-    assignError(error, "matroska sample buffer creation failed");
-    return SampleBuildStatus::Failed;
-  }
-  ScopedSampleBuffer owned(created);
-  if (CMSampleBufferGetNumSamples(created) != numSamples ||
-      !CMSampleBufferDataIsReady(created) || !CMSampleBufferIsValid(created)) {
-    assignError(error, "matroska sample buffer did not admit its access units");
-    return SampleBuildStatus::Failed;
-  }
-
-  if (inputs.video) {
-    // Video only. The demuxer reports keyFrame == false for every AAC access
-    // unit because Matroska states audio blocks that way by convention, not
-    // because the unit depends on another one; marking audio NotSync would
-    // publish a decode dependency the codec does not have. The audio
-    // attachment array is therefore left exactly as CoreMedia created it,
-    // apart from the one-shot playout proof the source states separately.
-    CFArrayRef attachments =
-        CMSampleBufferGetSampleAttachmentsArray(created, true);
-    if (attachments == nullptr || CFArrayGetCount(attachments) != 1) {
-      assignError(error, "matroska video sample has no sync attachment slot");
-      return SampleBuildStatus::Failed;
-    }
-    auto* attachment = static_cast<CFMutableDictionaryRef>(
-        const_cast<void*>(CFArrayGetValueAtIndex(attachments, 0)));
-    CFDictionarySetValue(attachment, kCMSampleAttachmentKey_NotSync,
-                         sample.keyFrame ? kCFBooleanFalse : kCFBooleanTrue);
-    if (sample.keyFrame) {
-      CFDictionarySetValue(attachment, kCMSampleAttachmentKey_DependsOnOthers,
-                           kCFBooleanFalse);
-    }
-  }
-
-  *out = std::move(owned);
-  return SampleBuildStatus::Built;
 }
 
 // States the ImmediatePlayoutFrame proof the converter requires before it will
@@ -998,7 +461,7 @@ struct MatroskaMediaSource::Impl {
       return std::nullopt;
     }
 
-    SampleBuildInputs inputs;
+    MatroskaSampleBuildInputs inputs;
     inputs.asset = assetContext->asset().get();
     inputs.cancellation = cancellation();
     inputs.format = video ? static_cast<CMFormatDescriptionRef>(videoFormat)
@@ -1006,11 +469,11 @@ struct MatroskaMediaSource::Impl {
     inputs.video = video;
     inputs.audioFramesPerPacket = audioFramesPerPacket;
     inputs.audioSampleRate = audioSampleRate;
-    ScopedSampleBuffer owned;
-    const SampleBuildStatus built =
-        buildCompressedSampleBuffer(inputs, raw, &owned, error);
-    if (built != SampleBuildStatus::Built) {
-      if (built == SampleBuildStatus::Cancelled) {
+    MatroskaScopedSampleBuffer owned;
+    const MatroskaSampleBuildStatus built =
+        buildMatroskaCompressedSampleBuffer(inputs, raw, &owned, error);
+    if (built != MatroskaSampleBuildStatus::Built) {
+      if (built == MatroskaSampleBuildStatus::Cancelled) {
         publishCancellation(generation);
         assignError(error, "matroska payload copy was cancelled");
       }
@@ -1049,7 +512,7 @@ struct MatroskaMediaSource::Impl {
     sample.payload = MediaPayloadLease(std::move(storage));
     if (video && requestedTarget &&
         seekMode == media::MediaSeekMode::Accurate) {
-      const auto decodeOnly = accurateVideoDecodeOnlyFacts(
+      const auto decodeOnly = matroskaAccurateVideoDecodeOnly(
           raw.presentationTime, raw.duration, *requestedTarget, error);
       if (!decodeOnly) {
         return std::nullopt;
@@ -1097,7 +560,7 @@ struct MatroskaMediaSource::Impl {
     }
     if (const auto* failed = std::get_if<MatroskaCursorFailure>(&result)) {
       if (error != nullptr) {
-        *error = demuxErrorMessage(failed->message.empty()
+        *error = matroskaDemuxErrorMessage(failed->message.empty()
                                        ? "matroska cursor read failed"
                                        : failed->message.c_str(),
                                    failed->error);
@@ -1284,7 +747,7 @@ struct MatroskaMediaSource::Impl {
       }
       if (prepared.status != MatroskaDemuxStatus::Ready ||
           prepared.asset == nullptr) {
-        started.error = demuxErrorMessage(
+        started.error = matroskaDemuxErrorMessage(
             prepared.message.empty() ? "matroska preparation failed"
                                      : prepared.message.c_str(),
             prepared.error);
@@ -1357,7 +820,7 @@ struct MatroskaMediaSource::Impl {
         break;
       }
       started.error =
-          demuxErrorMessage(planned.message.empty()
+          matroskaDemuxErrorMessage(planned.message.empty()
                                 ? "matroska generation planning failed"
                                 : planned.message.c_str(),
                             planned.error);
@@ -1411,7 +874,7 @@ struct MatroskaMediaSource::Impl {
       const MediaTrackDescriptor* video =
           media::findMediaTrack(*descriptor, *descriptor->selectedVideo);
       videoFormat = video == nullptr ? nullptr
-                                     : createVideoFormatDescription(*video);
+                                     : createMatroskaVideoFormatDescription(*video);
       if (videoFormat == nullptr) {
         started.status = media::MediaSourceOpenStatus::Unsupported;
         started.error = "matroska video track has no admissible CoreMedia "

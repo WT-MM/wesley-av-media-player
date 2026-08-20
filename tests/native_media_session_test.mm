@@ -828,7 +828,7 @@ bool queueObservations(std::shared_ptr<void> lifetime,
 
 bool observePreviewBinding(
     void* context,
-    const AVFoundationPreviewBinding& binding) noexcept {
+    const NativePreviewBinding& binding) noexcept {
   auto& state = *static_cast<GraphState*>(context);
   const bool exact = state.assetContext != nullptr &&
                      binding.assetContext.get() ==
@@ -2616,6 +2616,119 @@ void testExhaustionStopsAudioBeforeOneEnded() {
       waitFact<protocol::Stopped>(*session, "Ended fixture Stopped"));
 }
 
+// D6. A commit that lands inside the last frame's presentation interval used
+// to retire the whole native route. latchEnding() suppressed end of stream
+// only while publicCommitPending was set, but publishCommitReady clears that
+// flag at publication -- so media exhaustion arriving between CommitReady and
+// the Router's promised post-commit SetRunState let Ended latch inside the
+// handshake. Ended then carried the stale CommitSeek stamp (dropped by
+// endedMatches), and the promised run command was answered Ignored, which the
+// owner escalates to a Protocol failure and an mpv fallback.
+//
+// The fix is the commitRunStatePending latch: ending is held until the run
+// command the commit protocol guarantees actually lands. This fixture pins
+// exactly that window. Pre-fix it fails three ways at once -- ending latches
+// early, the run command is refused, and the lifecycle fact that arrives is
+// not the Ended this test waits for.
+void testNearEndCommitHoldsEndingUntilItsRunStateLands() {
+  auto state = std::make_shared<GraphState>();
+  state->descriptor = descriptor();
+  // Backpressure keeps the dispatcher fed until the fixture chooses the exact
+  // moment media runs out.
+  state->blockCapacity.store(true, std::memory_order_release);
+  std::shared_ptr<NativeMediaSessionWake> wake;
+  auto session = sessionFor(&state, &wake);
+  expect(prepare(*session, prepareCommand()) ==
+             NativeMediaSessionCommandStatus::Accepted,
+         "near-EOF commit Prepare accepted");
+  static_cast<void>(
+      waitFact<protocol::Prepared>(*session, "near-EOF commit Prepared"));
+  expect(session->start({{{1}, {2}}, {7}, true}) ==
+             NativeMediaSessionCommandStatus::Accepted,
+         "near-EOF commit Start accepted");
+  static_cast<void>(
+      waitFact<protocol::Started>(*session, "near-EOF commit Started"));
+
+  // A quarter second short of the ten-second timeline, exactly representable
+  // both as a MediaTime and in the fake video proof's 600 Hz timescale. The
+  // shipping defect was reached with a target inside the final frame's
+  // presentation interval, but the sub-frame arithmetic is not what breaks:
+  // what breaks is exhaustion arriving between CommitReady and the run
+  // command the commit protocol promises, and any near-end commit can lose
+  // that race. The end-to-end matrix covers the exact 39.984375 case.
+  constexpr double kNearTimelineEnd = 9.75;
+  const auto target = session->preflightCommitTarget(kNearTimelineEnd);
+  expect(target.has_value(),
+         "a near-end commit target is exactly representable");
+  if (!target.has_value()) {
+    return;
+  }
+  const protocol::CommitSeek commit = commitCommand(3, 8, kNearTimelineEnd);
+  state->beginCommitLifecycle(commit.targetGeneration.value);
+  expect(session->commitSeek(commit, *target) ==
+             NativeMediaSessionCommandStatus::Accepted,
+         "near-EOF CommitSeek accepted");
+  publishCommitDraw(*state, 8, 1, kNearTimelineEnd);
+  wake->video().signal(wake->video().context);
+  const protocol::CommitReady ready = waitFact<protocol::CommitReady>(
+      *session, "near-EOF commit publishes exact readiness");
+  expect(protocol::commitReadyMatches(commit, target->drawBaseline(), ready) &&
+             session->facts().generation == 8,
+         "near-EOF CommitReady installs the target generation");
+  expectExactCommitLifecycle(
+      state->finishCommitLifecycle(),
+      "near-EOF commit flushes before one target start, then pause and proofs");
+
+  // The handshake is open: CommitReady has been taken and the Router has not
+  // yet issued the run command it promises. Media runs out right here.
+  state->clockPosition.store(kNearTimelineEnd, std::memory_order_release);
+  state->blockCapacity.store(false, std::memory_order_release);
+  const std::uint64_t stopsBeforeExhaustion =
+      state->audioStopCalls.load(std::memory_order_acquire);
+  bool heldThroughout = true;
+  const auto holdUntil =
+      std::chrono::steady_clock::now() + std::chrono::milliseconds(300);
+  while (std::chrono::steady_clock::now() < holdUntil) {
+    wake->video().signal(wake->video().context);
+    wake->audio().signal(wake->audio().context);
+    const NativeMediaSessionFacts facts = session->facts();
+    if (facts.ending || facts.endedProofPublished || facts.liveFailed) {
+      heldThroughout = false;
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  expect(heldThroughout,
+         "exhaustion inside the commit handshake does not latch ending");
+  expect(state->audioStopCalls.load(std::memory_order_acquire) ==
+             stopsBeforeExhaustion,
+         "held ending never begins its audio Stop while the handshake is open");
+
+  // The promised post-commit run command. Pre-fix the ending latch had already
+  // captured the CommitSeek stamp, so this was answered Ignored.
+  expect(session->setRunState({{{1}, {4}}, {8}, false, 1.0}) ==
+             NativeMediaSessionCommandStatus::Accepted,
+         "the promised post-commit SetRunState is accepted, not ignored");
+
+  // Only now may ending latch, and it must carry the run command's stamp --
+  // the one the Router is actually waiting on -- so endedMatches admits it.
+  const protocol::Ended ended = waitFact<protocol::Ended>(
+      *session, "the completed handshake releases a clean Ended");
+  expect(ended.stamp == protocol::Stamp{{1}, {4}} &&
+             ended.generation == protocol::Generation{8} &&
+             ended.finalPositionSeconds == kNearTimelineEnd,
+         "Ended echoes the post-commit run stamp on the committed generation");
+  const NativeMediaSessionFacts endedFacts = session->facts();
+  expect(endedFacts.ending && endedFacts.endedProofPublished &&
+             !endedFacts.liveFailed,
+         "the near-EOF commit ends the session without a live failure");
+  expect(session->stop({{{1}, {5}}, {9}}) ==
+             NativeMediaSessionCommandStatus::Accepted,
+         "near-EOF ended ownership still retires on an exact Stop");
+  static_cast<void>(
+      waitFact<protocol::Stopped>(*session, "near-EOF commit Stopped"));
+}
+
 void testStopWinsEndedPreviewPresentationCompletion() {
   auto state = std::make_shared<GraphState>();
   state->descriptor = descriptor();
@@ -2994,6 +3107,7 @@ int main() {
   testWakeClearBeforeDrainPreservesLateRun();
   testGainMuteAndExactProofObservations();
   testExhaustionStopsAudioBeforeOneEnded();
+  testNearEndCommitHoldsEndingUntilItsRunStateLands();
   testStopWinsEndedPreviewPresentationCompletion();
   testStopPrecedesQuiescingNaturalEnd();
   testStopAcceptedBeforeLiveIssuePreventsMutation();

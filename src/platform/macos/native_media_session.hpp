@@ -1,6 +1,7 @@
 #pragma once
 
 #include "media/native_playback_contract.hpp"
+#include "avfoundation_asset_context.hpp"
 #include "native_audio_session.hpp"
 #include "native_preview_frame_lane.hpp"
 #include "native_tracked_video_arbiter.hpp"
@@ -403,7 +404,7 @@ struct NativeMediaSessionTestGraph {
   std::shared_ptr<const AVFoundationAssetContext> assetContext;
   bool (*observePreviewBinding)(
       void* context,
-      const AVFoundationPreviewBinding& binding) noexcept{nullptr};
+      const NativePreviewBinding& binding) noexcept{nullptr};
   void* previewBindingObserverContext{nullptr};
 };
 

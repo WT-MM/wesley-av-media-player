@@ -187,8 +187,8 @@ std::shared_ptr<const MediaSourceDescriptor> mainDescriptor() {
   return result;
 }
 
-AVFoundationPreviewBinding binding() {
-  return AVFoundationPreviewBinding{
+NativePreviewBinding binding() {
+  return NativePreviewBinding{
       std::filesystem::path("/private/tmp/wam-preview-fixture.mov"),
       descriptor(), {}};
 }
@@ -202,7 +202,7 @@ struct Gate final {
 
 struct Plan final {
   std::uint64_t epoch{0};
-  AVFoundationPreviewStatus status{AVFoundationPreviewStatus::Ready};
+  NativePreviewStatus status{NativePreviewStatus::Ready};
   MediaTime actualStart{0, 1};
   std::vector<CMSampleBufferRef> samples;
   std::shared_ptr<Gate> startGate;
@@ -246,9 +246,9 @@ class FakeGeneration final : public AVFoundationPreviewGeneration {
       });
     }
     if (cancelled_.load(std::memory_order_acquire)) {
-      return {AVFoundationPreviewStatus::Cancelled, {}, {}};
+      return {NativePreviewStatus::Cancelled, {}, {}};
     }
-    if (plan_.status == AVFoundationPreviewStatus::Ready) {
+    if (plan_.status == NativePreviewStatus::Ready) {
       successfulStarts.fetch_add(1, std::memory_order_relaxed);
     }
     return {plan_.status, plan_.actualStart, {}};
@@ -306,8 +306,8 @@ class FakeGeneration final : public AVFoundationPreviewGeneration {
 class FakeBackend final : public AVFoundationPreviewBackend {
  public:
   [[nodiscard]] std::shared_ptr<AVFoundationPreviewGeneration>
-  makeGeneration(const AVFoundationPreviewBinding& suppliedBinding,
-                 AVFoundationPreviewRequest request) override {
+  makeGeneration(const NativePreviewBinding& suppliedBinding,
+                 NativePreviewRequest request) override {
     requests.push_back(request);
     paths.push_back(suppliedBinding.localPath);
     if (plans.empty()) {
@@ -320,9 +320,9 @@ class FakeBackend final : public AVFoundationPreviewBackend {
     return generation;
   }
 
-  [[nodiscard]] AVFoundationPreviewBackendFacts facts()
+  [[nodiscard]] NativePreviewBackendFacts facts()
       const noexcept override {
-    AVFoundationPreviewBackendFacts result = suppliedFacts;
+    NativePreviewBackendFacts result = suppliedFacts;
     result.readersCreated += made.size();
     for (const auto& generation : made) {
       result.readersStarted +=
@@ -332,10 +332,10 @@ class FakeBackend final : public AVFoundationPreviewBackend {
   }
 
   std::deque<Plan> plans;
-  std::vector<AVFoundationPreviewRequest> requests;
+  std::vector<NativePreviewRequest> requests;
   std::vector<std::filesystem::path> paths;
   std::vector<std::shared_ptr<FakeGeneration>> made;
-  AVFoundationPreviewBackendFacts suppliedFacts{1, 1, 123'456, 0, 0};
+  NativePreviewBackendFacts suppliedFacts{1, 1, 123'456, 0, 0};
 };
 
 struct CancelInterleave final {
@@ -379,12 +379,12 @@ void testSharedAssetContextIdentityAndLifetime() {
          "preview should accept exact main asset identity");
 
   auto backend = std::make_shared<FakeBackend>();
-  backend->plans.push_back(Plan{90, AVFoundationPreviewStatus::Ready,
+  backend->plans.push_back(Plan{90, NativePreviewStatus::Ready,
                                 {0, 1}, {}, nullptr, false, false});
-  AVFoundationPreviewBinding sharedBinding{path, admitted, {}, context};
+  NativePreviewBinding sharedBinding{path, admitted, {}, context};
   auto source = AVFoundationPreviewSource::create(sharedBinding, backend);
   expect(source != nullptr && source->begin({90, {1, 1}}).status ==
-                                  AVFoundationPreviewStatus::Ready,
+                                  NativePreviewStatus::Ready,
          "injected preview should retain and accept the shared context");
   const AVFoundationAssetContextFacts unchangedLoads = context->facts();
   expect(unchangedLoads.assetMetadataLoadBatches == 1 &&
@@ -399,7 +399,7 @@ void testSharedAssetContextIdentityAndLifetime() {
          "shared asset should retire after main and preview leases end");
 
   auto copied = std::make_shared<MediaSourceDescriptor>(*admitted);
-  AVFoundationPreviewBinding forgedBinding{path, admitted, {}};
+  NativePreviewBinding forgedBinding{path, admitted, {}};
   forgedBinding.descriptor = std::move(copied);
   forgedBinding.assetContext = makeAVFoundationAssetContextForTesting(
       path, mainOptions, admitted);
@@ -408,7 +408,7 @@ void testSharedAssetContextIdentityAndLifetime() {
              nullptr,
          "byte-equal copied descriptor cannot forge preview context identity");
 
-  AVFoundationPreviewBinding wrongPath{path, admitted, {}};
+  NativePreviewBinding wrongPath{path, admitted, {}};
   wrongPath.assetContext = makeAVFoundationAssetContextForTesting(
       path, mainOptions, wrongPath.descriptor);
   wrongPath.localPath = "/private/tmp/other-preview.mov";
@@ -455,7 +455,7 @@ void testProductionSharedContextLoadAndReaderAccounting() {
 
     const AVFoundationPreviewSharedContextProbe probe =
         AVFoundationPreviewSourceTestAccess::probeSharedContext(
-            AVFoundationPreviewBinding{path, admitted, {}, context});
+            NativePreviewBinding{path, admitted, {}, context});
     expect(probe.sharedLoadReady,
            "production preview should borrow the prepared shared handles");
     expect(probe.backendBefore.assetLoadAttempts == 0 &&
@@ -499,14 +499,14 @@ void testVideoOnlyReadAndBound() {
   auto covering =
       makeSample(format.get(), CMTimeMake(5, 1), CMTimeMake(1, 1), false);
   auto backend = std::make_shared<FakeBackend>();
-  backend->plans.push_back(Plan{7, AVFoundationPreviewStatus::Ready, {4, 1},
+  backend->plans.push_back(Plan{7, NativePreviewStatus::Ready, {4, 1},
                                 {discontinuity.get(), preroll.get(),
                                  covering.get()},
                                 nullptr, false, false});
   auto source = AVFoundationPreviewSource::create(binding(), backend);
   expect(source != nullptr, "valid preview source should be created");
   const auto begun = source->begin({7, {5, 1}});
-  expect(begun.status == AVFoundationPreviewStatus::Ready &&
+  expect(begun.status == NativePreviewStatus::Ready &&
              begun.actualDecodeStart == MediaTime{4, 1} &&
              backend->requests.size() == 1 &&
              backend->requests[0].epoch == 7 &&
@@ -517,7 +517,7 @@ void testVideoOnlyReadAndBound() {
              source->memoryFacts().peakStagedCompressedBytes == 0,
          "preview memory facts should begin empty");
 
-  AVFoundationPreviewReadResult marker = source->readNext(7);
+  NativePreviewReadResult marker = source->readNext(7);
   expect(std::holds_alternative<MediaDiscontinuity>(marker) &&
              std::get<MediaDiscontinuity>(marker).generation == 7 &&
              std::get<MediaDiscontinuity>(marker).track == 1 &&
@@ -527,7 +527,7 @@ void testVideoOnlyReadAndBound() {
              source->memoryFacts().currentStagedCompressedBytes == 0 &&
              source->memoryFacts().peakStagedCompressedBytes == 0,
          "zero-byte discontinuity staging should not charge compressed bytes");
-  AVFoundationPreviewReadResult first = source->readNext(7);
+  NativePreviewReadResult first = source->readNext(7);
   expect(std::holds_alternative<MediaSample>(first),
          "first preview read should return encoded video");
   if (std::holds_alternative<MediaSample>(first)) {
@@ -540,14 +540,14 @@ void testVideoOnlyReadAndBound() {
                native->opaqueAddress() == preroll.get(),
            "preview sample should be zero-copy, video-only, and private-epoch tagged");
   }
-  AVFoundationPreviewReadResult second = source->readNext(7);
+  NativePreviewReadResult second = source->readNext(7);
   expect(std::holds_alternative<MediaSample>(second) &&
              !std::get<MediaSample>(second).decodeOnly &&
              !std::get<MediaSample>(second).keyFrame,
          "the first frame strictly extending beyond target is presentable");
-  expect(std::holds_alternative<AVFoundationPreviewEndOfStream>(
+  expect(std::holds_alternative<NativePreviewEndOfStream>(
              source->readNext(7)) &&
-             std::holds_alternative<AVFoundationPreviewEndOfStream>(
+             std::holds_alternative<NativePreviewEndOfStream>(
                  source->readNext(7)),
          "preview EOS should be idempotent without another reader pull");
 
@@ -572,23 +572,23 @@ void testVideoOnlyReadAndBound() {
 
 void testLatestEpochReplacesExactly() {
   auto backend = std::make_shared<FakeBackend>();
-  backend->plans.push_back(Plan{10, AVFoundationPreviewStatus::Ready,
+  backend->plans.push_back(Plan{10, NativePreviewStatus::Ready,
                                 {0, 1}, {}, nullptr, false, false});
-  backend->plans.push_back(Plan{11, AVFoundationPreviewStatus::Ready,
+  backend->plans.push_back(Plan{11, NativePreviewStatus::Ready,
                                 {3, 1}, {}, nullptr, false, false});
   auto source = AVFoundationPreviewSource::create(binding(), backend);
   expect(source->begin({10, {2, 1}}).status ==
-             AVFoundationPreviewStatus::Ready,
+             NativePreviewStatus::Ready,
          "first preview epoch should start");
   expect(source->begin({11, {4, 1}}).status ==
-             AVFoundationPreviewStatus::Ready,
+             NativePreviewStatus::Ready,
          "newer preview epoch should replace the first");
   expect(backend->made[0]->cancels.load() == 1 &&
              backend->made[1]->cancels.load() == 0,
          "replacement should cancel only the active older reader");
 
   const auto stale = source->begin({10, {1, 1}});
-  expect(stale.status == AVFoundationPreviewStatus::Rejected &&
+  expect(stale.status == NativePreviewStatus::Rejected &&
              backend->requests.size() == 2 &&
              backend->made[1]->cancels.load() == 0,
          "stale replacement should be inert and retain latest ownership");
@@ -599,7 +599,7 @@ void testLatestEpochReplacesExactly() {
   source->requestCancel(11);
   expect(backend->made[1]->cancels.load() == 1 && source->facts().cancelled,
          "exact cancellation should promptly reach only the active reader");
-  expect(std::holds_alternative<AVFoundationPreviewCancelled>(
+  expect(std::holds_alternative<NativePreviewCancelled>(
              source->readNext(11)) &&
              !source->facts().open && source->facts().activeEpoch == 0,
          "cancelled read should retire source ownership");
@@ -607,11 +607,11 @@ void testLatestEpochReplacesExactly() {
 
 void testForwardRetargetKeepsOneReader() {
   auto backend = std::make_shared<FakeBackend>();
-  backend->plans.push_back(Plan{13, AVFoundationPreviewStatus::Ready,
+  backend->plans.push_back(Plan{13, NativePreviewStatus::Ready,
                                 {0, 1}, {}, nullptr, false, false});
   auto source = AVFoundationPreviewSource::create(binding(), backend);
   expect(source->begin({13, {2, 1}}).status ==
-                 AVFoundationPreviewStatus::Ready &&
+                 NativePreviewStatus::Ready &&
              source->advanceTarget(13, {3, 1}) &&
              source->advanceTarget(13, {7, 2}),
          "nondecreasing exact targets should reuse the active reader");
@@ -640,9 +640,9 @@ void testCancellationInterruptsBlockingStart() {
   auto gate = std::make_shared<Gate>();
   auto backend = std::make_shared<FakeBackend>();
   backend->plans.push_back(
-      Plan{21, AVFoundationPreviewStatus::Ready, {0, 1}, {}, gate});
+      Plan{21, NativePreviewStatus::Ready, {0, 1}, {}, gate});
   auto source = AVFoundationPreviewSource::create(binding(), backend);
-  AVFoundationPreviewBeginOutcome outcome;
+  NativePreviewBeginOutcome outcome;
   std::thread worker([&] { outcome = source->begin({21, {9, 1}}); });
   {
     std::unique_lock lock(gate->mutex);
@@ -655,7 +655,7 @@ void testCancellationInterruptsBlockingStart() {
          "stale cancel cannot interrupt blocking preview start");
   source->requestCancel(21);
   worker.join();
-  expect(outcome.status == AVFoundationPreviewStatus::Cancelled &&
+  expect(outcome.status == NativePreviewStatus::Cancelled &&
              backend->made[0]->cancels.load() >= 1 &&
              source->facts().activeEpoch == 0 && !source->facts().open,
          "exact cancel should interrupt and retire blocking preview start");
@@ -664,17 +664,17 @@ void testCancellationInterruptsBlockingStart() {
 void testReplacementPublishesCancelBeforeOldRetirement() {
   auto retirementGate = std::make_shared<Gate>();
   auto backend = std::make_shared<FakeBackend>();
-  backend->plans.push_back(Plan{24, AVFoundationPreviewStatus::Ready,
+  backend->plans.push_back(Plan{24, NativePreviewStatus::Ready,
                                 {0, 1}, {}, nullptr, false, false});
-  backend->plans.push_back(Plan{25, AVFoundationPreviewStatus::Ready,
+  backend->plans.push_back(Plan{25, NativePreviewStatus::Ready,
                                 {3, 1}, {}, nullptr, false, false});
   auto source = AVFoundationPreviewSource::create(binding(), backend);
   expect(source->begin({24, {1, 1}}).status ==
-             AVFoundationPreviewStatus::Ready,
+             NativePreviewStatus::Ready,
          "replacement race fixture should own its first reader");
   backend->made[0]->cancelGate = retirementGate;
 
-  AVFoundationPreviewBeginOutcome replacement;
+  NativePreviewBeginOutcome replacement;
   std::thread worker([&] { replacement = source->begin({25, {4, 1}}); });
   {
     std::unique_lock lock(retirementGate->mutex);
@@ -691,7 +691,7 @@ void testReplacementPublishesCancelBeforeOldRetirement() {
     retirementGate->changed.notify_all();
   }
   worker.join();
-  expect(replacement.status == AVFoundationPreviewStatus::Cancelled &&
+  expect(replacement.status == NativePreviewStatus::Cancelled &&
              backend->requests.size() == 1 &&
              source->facts().operationEpoch == 0 &&
              source->facts().activeEpoch == 0,
@@ -700,13 +700,13 @@ void testReplacementPublishesCancelBeforeOldRetirement() {
 
 void testStaleCancelCannotOverwriteNewCancel() {
   auto backend = std::make_shared<FakeBackend>();
-  backend->plans.push_back(Plan{26, AVFoundationPreviewStatus::Ready,
+  backend->plans.push_back(Plan{26, NativePreviewStatus::Ready,
                                 {0, 1}, {}, nullptr, false, false});
-  backend->plans.push_back(Plan{27, AVFoundationPreviewStatus::Ready,
+  backend->plans.push_back(Plan{27, NativePreviewStatus::Ready,
                                 {3, 1}, {}, nullptr, false, false});
   auto source = AVFoundationPreviewSource::create(binding(), backend);
   expect(source->begin({26, {1, 1}}).status ==
-             AVFoundationPreviewStatus::Ready,
+             NativePreviewStatus::Ready,
          "two-canceller fixture should own the older epoch");
   CancelInterleave interleave;
   interleave.blockedEpoch = 26;
@@ -719,7 +719,7 @@ void testStaleCancelCannotOverwriteNewCancel() {
     interleave.changed.wait(lock, [&] { return interleave.entered; });
   }
   expect(source->begin({27, {4, 1}}).status ==
-             AVFoundationPreviewStatus::Ready,
+             NativePreviewStatus::Ready,
          "replacement should start while stale cancel is paused before publication");
   source->requestCancel(27);
   expect(source->facts().cancelled && source->facts().operationEpoch == 27,
@@ -733,7 +733,7 @@ void testStaleCancelCannotOverwriteNewCancel() {
   AVFoundationPreviewSourceTestAccess::setCancelInterleaveHook(
       *source, nullptr, nullptr);
   expect(source->facts().cancelled &&
-             std::holds_alternative<AVFoundationPreviewCancelled>(
+             std::holds_alternative<NativePreviewCancelled>(
                  source->readNext(27)) &&
              source->facts().operationEpoch == 0,
          "resumed stale cancellation cannot erase the newer epoch latch");
@@ -747,42 +747,42 @@ void testFailuresAndValidationFailClosed() {
          "preview source should reject a relative path before backend work");
 
   auto backend = std::make_shared<FakeBackend>();
-  backend->plans.push_back(Plan{30, AVFoundationPreviewStatus::Ready,
+  backend->plans.push_back(Plan{30, NativePreviewStatus::Ready,
                                 {6, 1}, {}, nullptr, true});
   auto source = AVFoundationPreviewSource::create(binding(), backend);
   expect(source->begin({30, {5, 1}}).status ==
-             AVFoundationPreviewStatus::Failed &&
+             NativePreviewStatus::Failed &&
              !source->facts().open,
          "backend exceptions should fail closed and retire the reader");
   expect(source->begin({30, {5, 1}}).status ==
-             AVFoundationPreviewStatus::Rejected,
+             NativePreviewStatus::Rejected,
          "failed epochs remain burned and cannot be replayed");
   expect(source->begin({31, {-1, 1}}).status ==
-             AVFoundationPreviewStatus::Rejected &&
+             NativePreviewStatus::Rejected &&
              source->begin({32, {61, 1}}).status ==
-                 AVFoundationPreviewStatus::Rejected,
+                 NativePreviewStatus::Rejected,
          "negative and past-duration targets should fail before reader creation");
 
   auto beyondBackend = std::make_shared<FakeBackend>();
-  beyondBackend->plans.push_back(Plan{40, AVFoundationPreviewStatus::Ready,
+  beyondBackend->plans.push_back(Plan{40, NativePreviewStatus::Ready,
                                       {8, 1}, {}, nullptr, false, false});
   auto beyond = AVFoundationPreviewSource::create(binding(), beyondBackend);
   expect(beyond->begin({40, {7, 1}}).status ==
-             AVFoundationPreviewStatus::Failed &&
+             NativePreviewStatus::Failed &&
              !beyond->facts().open,
          "a backend cannot claim a decode start after the exact target");
 }
 
 void testReadExceptionReleasesStageAndOwnership() {
   auto backend = std::make_shared<FakeBackend>();
-  backend->plans.push_back(Plan{50, AVFoundationPreviewStatus::Ready,
+  backend->plans.push_back(Plan{50, NativePreviewStatus::Ready,
                                 {0, 1}, {}, nullptr, false, true});
   auto source = AVFoundationPreviewSource::create(binding(), backend);
   expect(source->begin({50, {1, 1}}).status ==
-             AVFoundationPreviewStatus::Ready,
+             NativePreviewStatus::Ready,
          "read exception fixture should start");
   const auto read = source->readNext(50);
-  expect(std::holds_alternative<AVFoundationPreviewFailure>(read) &&
+  expect(std::holds_alternative<NativePreviewFailure>(read) &&
              source->facts().stagedSampleBuffers == 0 &&
              source->facts().activeEpoch == 0 && !source->facts().open,
          "read exception should leave no staged sample or live reader");

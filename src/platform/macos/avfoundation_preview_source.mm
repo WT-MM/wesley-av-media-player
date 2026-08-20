@@ -116,7 +116,7 @@ void assignError(std::string* error, const char* message) {
 }
 
 [[nodiscard]] bool validBinding(
-    const AVFoundationPreviewBinding& binding) noexcept {
+    const NativePreviewBinding& binding) noexcept {
   try {
     if (binding.localPath.empty() || !binding.localPath.is_absolute() ||
         binding.descriptor == nullptr ||
@@ -126,9 +126,15 @@ void assignError(std::string* error, const char* message) {
         !binding.descriptor->selectedVideo.has_value()) {
       return false;
     }
+    // A supplied context must be this backend's own. Selection normally
+    // happens in createNativePreviewSource(), but the standalone create()
+    // entry points are reachable directly and must refuse a foreign context
+    // rather than silently fall back to a second cold asset load.
     if (binding.assetContext != nullptr &&
-        !binding.assetContext->matchesPreviewBinding(
-            binding.localPath, binding.descriptor)) {
+        (binding.assetContext->backendKind() !=
+             media::MediaSourceBackendKind::AVFoundation ||
+         !binding.assetContext->matchesPreviewBinding(
+             binding.localPath, binding.descriptor))) {
       return false;
     }
     const MediaTrackDescriptor* track = media::findMediaTrack(
@@ -143,8 +149,8 @@ void assignError(std::string* error, const char* message) {
   }
 }
 
-[[nodiscard]] bool validRequest(const AVFoundationPreviewBinding& binding,
-                                AVFoundationPreviewRequest request) noexcept {
+[[nodiscard]] bool validRequest(const NativePreviewBinding& binding,
+                                NativePreviewRequest request) noexcept {
   return request.epoch != 0 && binding.descriptor != nullptr &&
          withinDuration(request.target, binding.descriptor->duration);
 }
@@ -446,8 +452,12 @@ struct AsyncLoadState final {
 
 class ProductionAssetContext final {
  public:
-  explicit ProductionAssetContext(AVFoundationPreviewBinding binding)
-      : binding_(std::move(binding)), shared_(binding_.assetContext) {}
+  explicit ProductionAssetContext(NativePreviewBinding binding)
+      : binding_(std::move(binding)),
+        // validBinding() has already refused any non-AVFoundation context, so
+        // a null here means the standalone cold-load path, never a mismatch.
+        shared_(std::dynamic_pointer_cast<const AVFoundationAssetContext>(
+            binding_.assetContext)) {}
 
   [[nodiscard]] bool ensureLoaded(const std::atomic<bool>& cancelled,
                                   std::string* error) {
@@ -601,7 +611,7 @@ class ProductionAssetContext final {
   [[nodiscard]] AVAssetTrack* videoTrack() const noexcept {
     return videoTrack_;
   }
-  [[nodiscard]] const AVFoundationPreviewBinding& binding() const noexcept {
+  [[nodiscard]] const NativePreviewBinding& binding() const noexcept {
     return binding_;
   }
 
@@ -620,8 +630,8 @@ class ProductionAssetContext final {
     }
   }
 
-  [[nodiscard]] AVFoundationPreviewBackendFacts facts() const noexcept {
-    return AVFoundationPreviewBackendFacts{
+  [[nodiscard]] NativePreviewBackendFacts facts() const noexcept {
+    return NativePreviewBackendFacts{
         assetLoadAttempts_.load(std::memory_order_relaxed),
         assetLoadsCompleted_.load(std::memory_order_relaxed),
         assetLoadNanoseconds_.load(std::memory_order_relaxed),
@@ -630,7 +640,7 @@ class ProductionAssetContext final {
   }
 
  private:
-  AVFoundationPreviewBinding binding_;
+  NativePreviewBinding binding_;
   std::shared_ptr<const AVFoundationAssetContext> shared_;
   mutable std::mutex loadMutex_;
   __strong AVURLAsset* asset_{nil};
@@ -647,7 +657,7 @@ class ProductionPreviewGeneration final
     : public AVFoundationPreviewGeneration {
  public:
   ProductionPreviewGeneration(std::shared_ptr<ProductionAssetContext> context,
-                              AVFoundationPreviewRequest request)
+                              NativePreviewRequest request)
       : context_(std::move(context)), request_(request) {}
 
   [[nodiscard]] std::uint64_t epoch() const noexcept override {
@@ -658,13 +668,13 @@ class ProductionPreviewGeneration final
     @autoreleasepool {
       AVFoundationPreviewGenerationStart result;
       if (cancelled_.load(std::memory_order_acquire)) {
-        result.status = AVFoundationPreviewStatus::Cancelled;
+        result.status = NativePreviewStatus::Cancelled;
         return result;
       }
       if (!context_->ensureLoaded(cancelled_, &result.error)) {
         result.status = cancelled_.load(std::memory_order_acquire)
-                            ? AVFoundationPreviewStatus::Cancelled
-                            : AVFoundationPreviewStatus::Unsupported;
+                            ? NativePreviewStatus::Cancelled
+                            : NativePreviewStatus::Unsupported;
         return result;
       }
       AVAssetTrack* track = context_->videoTrack();
@@ -683,7 +693,7 @@ class ProductionPreviewGeneration final
       for (std::size_t step = 0;
            cursor != nil && step != kMaximumSyncCursorSteps; ++step) {
         if (cancelled_.load(std::memory_order_acquire)) {
-          result.status = AVFoundationPreviewStatus::Cancelled;
+          result.status = NativePreviewStatus::Cancelled;
           return result;
         }
         // An open-GOP random-access point presents after its own leading
@@ -704,7 +714,7 @@ class ProductionPreviewGeneration final
       if (!exactStart.has_value() || exactStart->value < 0 ||
           media::compareMediaTime(*exactStart, request_.target) ==
               MediaTimeOrder::Greater) {
-        result.status = AVFoundationPreviewStatus::Unsupported;
+        result.status = NativePreviewStatus::Unsupported;
         result.error = "preview could not locate a bounded full-sync start";
         return result;
       }
@@ -716,7 +726,7 @@ class ProductionPreviewGeneration final
       if (!CMTIME_IS_NUMERIC(preroll) ||
           CMTimeCompare(preroll, kCMTimeZero) < 0 ||
           CMTimeCompare(preroll, maximumPreroll) > 0) {
-        result.status = AVFoundationPreviewStatus::Unsupported;
+        result.status = NativePreviewStatus::Unsupported;
         result.error = "preview target exceeds bounded sync preroll";
         return result;
       }
@@ -736,7 +746,7 @@ class ProductionPreviewGeneration final
                                            outputSettings:nil];
       output.alwaysCopiesSampleData = NO;
       if (output == nil || ![reader canAddOutput:output]) {
-        result.status = AVFoundationPreviewStatus::Unsupported;
+        result.status = NativePreviewStatus::Unsupported;
         result.error = "preview reader cannot expose compressed video";
         return result;
       }
@@ -752,7 +762,7 @@ class ProductionPreviewGeneration final
           remaining.epoch != 0 || remaining.timescale <= 0 ||
           CMTimeCompare(remaining, kCMTimeZero) < 0 ||
           !CMTIMERANGE_IS_VALID(range)) {
-        result.status = AVFoundationPreviewStatus::Unsupported;
+        result.status = NativePreviewStatus::Unsupported;
         result.error = "preview reader range is not exact";
         return result;
       }
@@ -764,7 +774,7 @@ class ProductionPreviewGeneration final
       }
       if (cancelled_.load(std::memory_order_acquire)) {
         [reader cancelReading];
-        result.status = AVFoundationPreviewStatus::Cancelled;
+        result.status = NativePreviewStatus::Cancelled;
         return result;
       }
       if (![reader startReading]) {
@@ -773,7 +783,7 @@ class ProductionPreviewGeneration final
         return result;
       }
       context_->readerStarted();
-      result.status = AVFoundationPreviewStatus::Ready;
+      result.status = NativePreviewStatus::Ready;
       result.actualDecodeStart = *exactStart;
       return result;
     }
@@ -836,7 +846,7 @@ class ProductionPreviewGeneration final
 
  private:
   std::shared_ptr<ProductionAssetContext> context_;
-  AVFoundationPreviewRequest request_;
+  NativePreviewRequest request_;
   std::atomic<bool> cancelled_{false};
   std::mutex objectsMutex_;
   __strong AVAssetReader* reader_{nil};
@@ -845,17 +855,17 @@ class ProductionPreviewGeneration final
 
 class ProductionPreviewBackend final : public AVFoundationPreviewBackend {
  public:
-  explicit ProductionPreviewBackend(AVFoundationPreviewBinding binding)
+  explicit ProductionPreviewBackend(NativePreviewBinding binding)
       : context_(
             std::make_shared<ProductionAssetContext>(std::move(binding))) {}
 
   [[nodiscard]] std::shared_ptr<AVFoundationPreviewGeneration>
-  makeGeneration(const AVFoundationPreviewBinding&,
-                 AVFoundationPreviewRequest request) override {
+  makeGeneration(const NativePreviewBinding&,
+                 NativePreviewRequest request) override {
     return std::make_shared<ProductionPreviewGeneration>(context_, request);
   }
 
-  [[nodiscard]] AVFoundationPreviewBackendFacts facts()
+  [[nodiscard]] NativePreviewBackendFacts facts()
       const noexcept override {
     return context_->facts();
   }
@@ -867,7 +877,7 @@ class ProductionPreviewBackend final : public AVFoundationPreviewBackend {
 }  // namespace
 
 struct AVFoundationPreviewSource::Impl final {
-  Impl(AVFoundationPreviewBinding suppliedBinding,
+  Impl(NativePreviewBinding suppliedBinding,
        std::shared_ptr<AVFoundationPreviewBackend> suppliedBackend)
       : binding(std::move(suppliedBinding)),
         backend(std::move(suppliedBackend)) {}
@@ -920,7 +930,7 @@ struct AVFoundationPreviewSource::Impl final {
     decodeStartScale.store(value.timescale, std::memory_order_release);
   }
 
-  AVFoundationPreviewBinding binding;
+  NativePreviewBinding binding;
   std::shared_ptr<AVFoundationPreviewBackend> backend;
   std::shared_ptr<AVFoundationPreviewGeneration> ownerGeneration;
   std::shared_ptr<AVFoundationPreviewGeneration> publishedGeneration;
@@ -957,7 +967,7 @@ AVFoundationPreviewSource::AVFoundationPreviewSource(
 
 std::unique_ptr<AVFoundationPreviewSource>
 AVFoundationPreviewSource::create(
-    AVFoundationPreviewBinding binding) noexcept {
+    NativePreviewBinding binding) noexcept {
   if (!validBinding(binding)) {
     return {};
   }
@@ -972,7 +982,7 @@ AVFoundationPreviewSource::create(
 
 std::unique_ptr<AVFoundationPreviewSource>
 AVFoundationPreviewSource::create(
-    AVFoundationPreviewBinding binding,
+    NativePreviewBinding binding,
     std::shared_ptr<AVFoundationPreviewBackend> backend) noexcept {
   if (!validBinding(binding) || backend == nullptr) {
     return {};
@@ -988,9 +998,9 @@ AVFoundationPreviewSource::create(
 
 AVFoundationPreviewSource::~AVFoundationPreviewSource() { close(); }
 
-AVFoundationPreviewBeginOutcome AVFoundationPreviewSource::begin(
-    AVFoundationPreviewRequest request) noexcept {
-  AVFoundationPreviewBeginOutcome outcome;
+NativePreviewBeginOutcome AVFoundationPreviewSource::begin(
+    NativePreviewRequest request) noexcept {
+  NativePreviewBeginOutcome outcome;
   outcome.epoch = request.epoch;
   if (impl_ == nullptr || !validRequest(impl_->binding, request) ||
       request.epoch <=
@@ -1017,7 +1027,7 @@ AVFoundationPreviewBeginOutcome AVFoundationPreviewSource::begin(
 
     if (impl_->cancelledEpoch.load(std::memory_order_acquire) ==
         request.epoch) {
-      outcome.status = AVFoundationPreviewStatus::Cancelled;
+      outcome.status = NativePreviewStatus::Cancelled;
       impl_->retireActive();
       return outcome;
     }
@@ -1026,7 +1036,7 @@ AVFoundationPreviewBeginOutcome AVFoundationPreviewSource::begin(
         impl_->backend->makeGeneration(impl_->binding, request);
     if (impl_->ownerGeneration == nullptr ||
         impl_->ownerGeneration->epoch() != request.epoch) {
-      outcome.status = AVFoundationPreviewStatus::Failed;
+      outcome.status = NativePreviewStatus::Failed;
       outcome.error = "preview backend returned the wrong epoch";
       impl_->retireActive();
       return outcome;
@@ -1042,20 +1052,20 @@ AVFoundationPreviewBeginOutcome AVFoundationPreviewSource::begin(
         impl_->ownerGeneration->start();
     if (impl_->cancelledEpoch.load(std::memory_order_acquire) ==
             request.epoch ||
-        started.status == AVFoundationPreviewStatus::Cancelled) {
-      outcome.status = AVFoundationPreviewStatus::Cancelled;
+        started.status == NativePreviewStatus::Cancelled) {
+      outcome.status = NativePreviewStatus::Cancelled;
       outcome.error = std::move(started.error);
       impl_->retireActive();
       return outcome;
     }
-    if (started.status != AVFoundationPreviewStatus::Ready ||
+    if (started.status != NativePreviewStatus::Ready ||
         !started.actualDecodeStart.valid() ||
         started.actualDecodeStart.value < 0 ||
         media::compareMediaTime(started.actualDecodeStart, request.target) ==
             MediaTimeOrder::Greater) {
       outcome.status =
-          started.status == AVFoundationPreviewStatus::Ready
-              ? AVFoundationPreviewStatus::Failed
+          started.status == NativePreviewStatus::Ready
+              ? NativePreviewStatus::Failed
               : started.status;
       outcome.error = started.error.empty()
                           ? "preview start proof is incomplete"
@@ -1066,34 +1076,34 @@ AVFoundationPreviewBeginOutcome AVFoundationPreviewSource::begin(
     impl_->actualDecodeStart = started.actualDecodeStart;
     impl_->publishDecodeStart(started.actualDecodeStart);
     impl_->open.store(true, std::memory_order_release);
-    outcome.status = AVFoundationPreviewStatus::Ready;
+    outcome.status = NativePreviewStatus::Ready;
     outcome.actualDecodeStart = started.actualDecodeStart;
     return outcome;
   } catch (const std::exception& exception) {
-    outcome.status = AVFoundationPreviewStatus::Failed;
+    outcome.status = NativePreviewStatus::Failed;
     outcome.error = exception.what();
   } catch (...) {
-    outcome.status = AVFoundationPreviewStatus::Failed;
+    outcome.status = NativePreviewStatus::Failed;
     outcome.error = "preview start raised an unknown exception";
   }
   impl_->retireActive();
   return outcome;
 }
 
-AVFoundationPreviewReadResult AVFoundationPreviewSource::readNext(
+NativePreviewReadResult AVFoundationPreviewSource::readNext(
     std::uint64_t expectedEpoch) noexcept {
   if (impl_ == nullptr || expectedEpoch == 0 ||
       expectedEpoch != impl_->activeEpoch.load(std::memory_order_acquire) ||
       !impl_->open.load(std::memory_order_acquire)) {
-    return AVFoundationPreviewCancelled{expectedEpoch};
+    return NativePreviewCancelled{expectedEpoch};
   }
   if (impl_->cancelledEpoch.load(std::memory_order_acquire) ==
       expectedEpoch) {
     impl_->retireActive();
-    return AVFoundationPreviewCancelled{expectedEpoch};
+    return NativePreviewCancelled{expectedEpoch};
   }
   if (impl_->eos) {
-    return AVFoundationPreviewEndOfStream{expectedEpoch};
+    return NativePreviewEndOfStream{expectedEpoch};
   }
   try {
     AVFoundationPreviewCopiedSample copied =
@@ -1125,12 +1135,12 @@ AVFoundationPreviewReadResult AVFoundationPreviewSource::readNext(
         copied.status == AVFoundationPreviewSampleStatus::Cancelled) {
       clearStage();
       impl_->retireActive();
-      return AVFoundationPreviewCancelled{expectedEpoch};
+      return NativePreviewCancelled{expectedEpoch};
     }
     if (copied.status == AVFoundationPreviewSampleStatus::EndOfStream) {
       clearStage();
       impl_->eos = true;
-      return AVFoundationPreviewEndOfStream{expectedEpoch};
+      return NativePreviewEndOfStream{expectedEpoch};
     }
     if (copied.status != AVFoundationPreviewSampleStatus::Sample ||
         copied.sample == nullptr) {
@@ -1139,7 +1149,7 @@ AVFoundationPreviewReadResult AVFoundationPreviewSource::readNext(
           copied.error.empty() ? "preview sample read failed"
                                : std::move(copied.error);
       impl_->retireActive();
-      return AVFoundationPreviewFailure{expectedEpoch, std::move(error)};
+      return NativePreviewFailure{expectedEpoch, std::move(error)};
     }
     const MediaTrackDescriptor* track = media::findMediaTrack(
         *impl_->binding.descriptor,
@@ -1170,7 +1180,7 @@ AVFoundationPreviewReadResult AVFoundationPreviewSource::readNext(
       clearStage();
       if (!valid) {
         impl_->retireActive();
-        return AVFoundationPreviewFailure{
+        return NativePreviewFailure{
             expectedEpoch,
             discontinuityError.empty()
                 ? "preview discontinuity is invalid"
@@ -1179,7 +1189,7 @@ AVFoundationPreviewReadResult AVFoundationPreviewSource::readNext(
       if (impl_->cancelledEpoch.load(std::memory_order_acquire) ==
           expectedEpoch) {
         impl_->retireActive();
-        return AVFoundationPreviewCancelled{expectedEpoch};
+        return NativePreviewCancelled{expectedEpoch};
       }
       impl_->discontinuitiesRead.fetch_add(1, std::memory_order_relaxed);
       return discontinuity;
@@ -1197,12 +1207,12 @@ AVFoundationPreviewReadResult AVFoundationPreviewSource::readNext(
         error = "preview selected video track disappeared";
       }
       impl_->retireActive();
-      return AVFoundationPreviewFailure{expectedEpoch, std::move(error)};
+      return NativePreviewFailure{expectedEpoch, std::move(error)};
     }
     if (impl_->cancelledEpoch.load(std::memory_order_acquire) ==
         expectedEpoch) {
       impl_->retireActive();
-      return AVFoundationPreviewCancelled{expectedEpoch};
+      return NativePreviewCancelled{expectedEpoch};
     }
     impl_->samplesRead.fetch_add(1, std::memory_order_relaxed);
     return std::move(*sample);
@@ -1211,13 +1221,13 @@ AVFoundationPreviewReadResult AVFoundationPreviewSource::readNext(
                                               std::memory_order_release);
     impl_->stagedSampleBuffers.store(0, std::memory_order_release);
     impl_->retireActive();
-    return AVFoundationPreviewFailure{expectedEpoch, exception.what()};
+    return NativePreviewFailure{expectedEpoch, exception.what()};
   } catch (...) {
     impl_->currentStagedCompressedBytes.store(0,
                                               std::memory_order_release);
     impl_->stagedSampleBuffers.store(0, std::memory_order_release);
     impl_->retireActive();
-    return AVFoundationPreviewFailure{
+    return NativePreviewFailure{
         expectedEpoch, "preview read raised an unknown exception"};
   }
 }
@@ -1299,9 +1309,9 @@ void AVFoundationPreviewSource::close() noexcept {
   }
 }
 
-AVFoundationPreviewSourceFacts AVFoundationPreviewSource::facts()
+NativePreviewSourceFacts AVFoundationPreviewSource::facts()
     const noexcept {
-  AVFoundationPreviewSourceFacts result;
+  NativePreviewSourceFacts result;
   if (impl_ == nullptr) {
     return result;
   }
@@ -1336,9 +1346,9 @@ AVFoundationPreviewSourceFacts AVFoundationPreviewSource::facts()
   return result;
 }
 
-AVFoundationPreviewSourceMemoryFacts
+NativePreviewSourceMemoryFacts
 AVFoundationPreviewSource::memoryFacts() const noexcept {
-  AVFoundationPreviewSourceMemoryFacts result;
+  NativePreviewSourceMemoryFacts result;
   if (impl_ == nullptr) {
     return result;
   }
@@ -1366,11 +1376,12 @@ void AVFoundationPreviewSourceTestAccess::setCancelInterleaveHook(
 
 AVFoundationPreviewSharedContextProbe
 AVFoundationPreviewSourceTestAccess::probeSharedContext(
-    AVFoundationPreviewBinding binding) noexcept {
+    NativePreviewBinding binding) noexcept {
   AVFoundationPreviewSharedContextProbe probe;
   try {
     const std::shared_ptr<const AVFoundationAssetContext> shared =
-        binding.assetContext;
+        std::dynamic_pointer_cast<const AVFoundationAssetContext>(
+            binding.assetContext);
     if (shared == nullptr) {
       return probe;
     }
