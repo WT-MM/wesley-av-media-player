@@ -161,7 +161,7 @@ constexpr std::uint64_t kMaximumSequentialAdvanceSeconds = 1;
 }
 
 [[nodiscard]] const media::MediaTrackDescriptor* selectedVideoTrack(
-    const AVFoundationPreviewBinding& binding) noexcept {
+    const NativePreviewBinding& binding) noexcept {
   if (binding.descriptor == nullptr ||
       !binding.descriptor->selectedVideo.has_value()) {
     return nullptr;
@@ -381,7 +381,7 @@ struct NativePreviewFrameLane::Impl final {
   Impl(NativePreviewFrameLaneBinding laneBinding,
        std::shared_ptr<NativeTrackedVideoPreviewPort> previewOutput,
        NativePreviewFrameLaneWakeSeam wakeSeam,
-       std::unique_ptr<AVFoundationPreviewSource> previewSource,
+       std::unique_ptr<NativePreviewSource> previewSource,
        bool bypass)
       : binding(std::move(laneBinding)), output(std::move(previewOutput)),
         wake(wakeSeam), high_pass_35(std::move(previewSource)), sink(wakeSeam),
@@ -525,7 +525,7 @@ struct NativePreviewFrameLane::Impl final {
   NativePreviewFrameLaneBinding binding;
   std::shared_ptr<NativeTrackedVideoPreviewPort> output;
   const NativePreviewFrameLaneWakeSeam wake;
-  std::unique_ptr<AVFoundationPreviewSource> high_pass_35;
+  std::unique_ptr<NativePreviewSource> high_pass_35;
   PreviewFrameSink sink;
   VideoToolboxDecoder decoder;
   const bool bypassDecoder{false};
@@ -566,15 +566,12 @@ NativePreviewFrameLane::NativePreviewFrameLane(
 std::unique_ptr<NativePreviewFrameLane> NativePreviewFrameLane::create(
     NativePreviewFrameLaneBinding binding,
     std::shared_ptr<NativeTrackedVideoPreviewPort> output,
-    NativePreviewFrameLaneWakeSeam wake) noexcept {
-  if (!validBinding(binding, output, wake)) {
+    NativePreviewFrameLaneWakeSeam wake,
+    std::unique_ptr<NativePreviewSource> high_pass_35) noexcept {
+  if (!validBinding(binding, output, wake) || high_pass_35 == nullptr) {
     return {};
   }
   try {
-    auto high_pass_35 = AVFoundationPreviewSource::create(binding.high_pass_35);
-    if (high_pass_35 == nullptr) {
-      return {};
-    }
     auto impl = std::make_unique<Impl>(
         std::move(binding), std::move(output), wake, std::move(high_pass_35), false);
     if (!impl->prepareDecoder()) {
@@ -867,10 +864,10 @@ NativePreviewFramePumpProgress NativePreviewFrameLane::pump() noexcept {
       impl_->active.emplace();
       impl_->active->request = std::move(request);
       impl_->active->epoch = epoch;
-      const AVFoundationPreviewBeginOutcome begun = impl_->high_pass_35->begin(
+      const NativePreviewBeginOutcome begun = impl_->high_pass_35->begin(
           {epoch, impl_->active->request.target});
-      if (begun.status != AVFoundationPreviewStatus::Ready) {
-        if (begun.status == AVFoundationPreviewStatus::Cancelled) {
+      if (begun.status != NativePreviewStatus::Ready) {
+        if (begun.status == NativePreviewStatus::Cancelled) {
           impl_->active->cancelling = true;
           return NativePreviewFramePumpProgress::Progress;
         }
@@ -1060,7 +1057,7 @@ NativePreviewFramePumpProgress NativePreviewFrameLane::pump() noexcept {
     if (active.sourceEnded) {
       return NativePreviewFramePumpProgress::Quiescing;
     }
-    AVFoundationPreviewReadResult read = impl_->high_pass_35->readNext(active.epoch);
+    NativePreviewReadResult read = impl_->high_pass_35->readNext(active.epoch);
     if (auto* sample = std::get_if<MediaSample>(&read)) {
       if (sample->generation != active.epoch ||
           sample->kind != media::MediaSampleKind::EncodedVideo ||
@@ -1084,15 +1081,15 @@ NativePreviewFramePumpProgress NativePreviewFrameLane::pump() noexcept {
     if (std::holds_alternative<media::MediaDiscontinuity>(read)) {
       return NativePreviewFramePumpProgress::Progress;
     }
-    if (std::holds_alternative<AVFoundationPreviewEndOfStream>(read)) {
+    if (std::holds_alternative<NativePreviewEndOfStream>(read)) {
       active.sourceEnded = true;
       return NativePreviewFramePumpProgress::Progress;
     }
-    if (std::holds_alternative<AVFoundationPreviewCancelled>(read)) {
+    if (std::holds_alternative<NativePreviewCancelled>(read)) {
       active.cancelling = true;
       return NativePreviewFramePumpProgress::Progress;
     }
-    const auto* failure = std::get_if<AVFoundationPreviewFailure>(&read);
+    const auto* failure = std::get_if<NativePreviewFailure>(&read);
     impl_->latchFailure(failure == nullptr || failure->error.empty()
                             ? "preview high_pass_35 read failed"
                             : failure->error);
@@ -1231,7 +1228,7 @@ NativePreviewFrameLane::memoryFacts() const noexcept {
   if (impl_ == nullptr) {
     return result;
   }
-  const AVFoundationPreviewSourceMemoryFacts high_pass_35 =
+  const NativePreviewSourceMemoryFacts high_pass_35 =
       impl_->high_pass_35->memoryFacts();
   const VideoToolboxDecoderMemoryFacts decoder =
       impl_->decoder.memoryFacts();
@@ -1258,7 +1255,7 @@ NativePreviewFrameLaneTestAccess::create(
     NativePreviewFrameLaneBinding binding,
     std::shared_ptr<NativeTrackedVideoPreviewPort> output,
     NativePreviewFrameLaneWakeSeam wake,
-    std::unique_ptr<AVFoundationPreviewSource> high_pass_35) noexcept {
+    std::unique_ptr<NativePreviewSource> high_pass_35) noexcept {
   if (!validBinding(binding, output, wake) || high_pass_35 == nullptr) {
     return {};
   }

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "avfoundation_preview_source.hpp"
+#include "native_preview_source.hpp"
 #include "media/native_playback_contract.hpp"
 #include "native_tracked_video_arbiter.hpp"
 #include "video_toolbox_decoder.hpp"
@@ -26,7 +26,7 @@ struct NativePreviewFrameLaneWakeSeam {
 };
 
 struct NativePreviewFrameLaneBinding {
-  AVFoundationPreviewBinding high_pass_35;
+  NativePreviewBinding high_pass_35;
   preview_protocol::Generation activePlaybackGeneration{};
   // The exact owner stamp immediately preceding this lane's first preview.
   // Every accepted PreviewFrame must follow it in the same attempt.
@@ -112,7 +112,7 @@ struct NativePreviewFrameLaneFacts {
   bool stopped{false};
   bool failed{false};
   std::string error;
-  AVFoundationPreviewSourceFacts high_pass_35{};
+  NativePreviewSourceFacts high_pass_35{};
   VideoToolboxDecoderStats decoder{};
 };
 
@@ -138,7 +138,7 @@ struct NativePreviewFrameLaneTestAccess;
 
 // Owner-thread, wake-driven preview graph:
 //
-//   AVFoundationPreviewSource -> VideoToolboxDecoder -> one-frame sink
+//   NativePreviewSource -> VideoToolboxDecoder -> one-frame sink
 //   -> NativeTrackedVideoPreviewPort -> exact compositor FrameDrawn
 //
 // request(), pump(), cancel(), stop(), takePresented(), and facts() are all
@@ -147,10 +147,15 @@ struct NativePreviewFrameLaneTestAccess;
 // audio state, dispatcher generation, or presenter lifecycle operation.
 class NativePreviewFrameLane final {
  public:
+  // The concrete pull high_pass_35 is chosen by the owner, which is the one layer
+  // that already knows the admitted backend; the lane itself names no
+  // container format. `createNativePreviewSource(binding.high_pass_35)` is the
+  // production factory for it.
   [[nodiscard]] static std::unique_ptr<NativePreviewFrameLane> create(
       NativePreviewFrameLaneBinding binding,
       std::shared_ptr<NativeTrackedVideoPreviewPort> output,
-      NativePreviewFrameLaneWakeSeam wake) noexcept;
+      NativePreviewFrameLaneWakeSeam wake,
+      std::unique_ptr<NativePreviewSource> high_pass_35) noexcept;
   [[nodiscard]] static std::optional<NativePreviewFrameTarget>
   preflightTarget(double seconds) noexcept;
 
@@ -194,7 +199,7 @@ struct NativePreviewFrameLaneTestAccess {
       NativePreviewFrameLaneBinding binding,
       std::shared_ptr<NativeTrackedVideoPreviewPort> output,
       NativePreviewFrameLaneWakeSeam wake,
-      std::unique_ptr<AVFoundationPreviewSource> high_pass_35) noexcept;
+      std::unique_ptr<NativePreviewSource> high_pass_35) noexcept;
   [[nodiscard]] static bool injectDecodedFrame(
       NativePreviewFrameLane& lane, FrameLease frame) noexcept;
   static void endDecodedStream(NativePreviewFrameLane& lane) noexcept;

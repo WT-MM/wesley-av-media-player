@@ -1,4 +1,6 @@
 #include "platform/macos/native_preview_frame_lane.hpp"
+
+#include "platform/macos/avfoundation_preview_source.hpp"
 #include "platform/macos/native_surface_budget.hpp"
 
 #include <CoreVideo/CoreVideo.h>
@@ -112,7 +114,7 @@ std::shared_ptr<const MediaSourceDescriptor> descriptor() {
   return result;
 }
 
-AVFoundationPreviewBinding sourceBinding() {
+NativePreviewBinding sourceBinding() {
   return {"/private/tmp/wam-preview-lane-fixture.mov", descriptor(), {}};
 }
 
@@ -132,7 +134,7 @@ protocol::PreviewFrame command(std::uint64_t serial,
 
 class FakeGeneration final : public AVFoundationPreviewGeneration {
  public:
-  explicit FakeGeneration(AVFoundationPreviewRequest request) noexcept
+  explicit FakeGeneration(NativePreviewRequest request) noexcept
       : request_(request) {}
 
   [[nodiscard]] std::uint64_t epoch() const noexcept override {
@@ -142,9 +144,9 @@ class FakeGeneration final : public AVFoundationPreviewGeneration {
   [[nodiscard]] AVFoundationPreviewGenerationStart start() override {
     ++starts;
     return cancelled ? AVFoundationPreviewGenerationStart{
-                           AVFoundationPreviewStatus::Cancelled, {}, {}}
+                           NativePreviewStatus::Cancelled, {}, {}}
                      : AVFoundationPreviewGenerationStart{
-                           AVFoundationPreviewStatus::Ready, {0, 1}, {}};
+                           NativePreviewStatus::Ready, {0, 1}, {}};
   }
 
   [[nodiscard]] AVFoundationPreviewCopiedSample
@@ -166,7 +168,7 @@ class FakeGeneration final : public AVFoundationPreviewGeneration {
     ++cancels;
   }
 
-  AVFoundationPreviewRequest request_{};
+  NativePreviewRequest request_{};
   std::uint64_t starts{0};
   std::uint64_t reads{0};
   std::uint64_t cancels{0};
@@ -178,8 +180,8 @@ class FakeGeneration final : public AVFoundationPreviewGeneration {
 class FakeSourceBackend final : public AVFoundationPreviewBackend {
  public:
   [[nodiscard]] std::shared_ptr<AVFoundationPreviewGeneration>
-  makeGeneration(const AVFoundationPreviewBinding&,
-                 AVFoundationPreviewRequest request) override {
+  makeGeneration(const NativePreviewBinding&,
+                 NativePreviewRequest request) override {
     requests.push_back(request);
     auto generation = std::make_shared<FakeGeneration>(request);
     generation->sample = sample;
@@ -187,15 +189,15 @@ class FakeSourceBackend final : public AVFoundationPreviewBackend {
     return generation;
   }
 
-  [[nodiscard]] AVFoundationPreviewBackendFacts facts()
+  [[nodiscard]] NativePreviewBackendFacts facts()
       const noexcept override {
-    AVFoundationPreviewBackendFacts result;
+    NativePreviewBackendFacts result;
     result.readersCreated = requests.size();
     result.readersStarted = generations.size();
     return result;
   }
 
-  std::vector<AVFoundationPreviewRequest> requests;
+  std::vector<NativePreviewRequest> requests;
   std::vector<std::shared_ptr<FakeGeneration>> generations;
   CMSampleBufferRef sample{nullptr};
 };
