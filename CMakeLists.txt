@@ -281,10 +281,20 @@ if(APPLE)
     src/media/matroska_opus.cpp
     src/media/matroska_vorbis.hpp
     src/media/matroska_vorbis.cpp
+    src/media/matroska_ac3.hpp
+    src/media/matroska_ac3.cpp
+    src/media/matroska_flac.hpp
+    src/media/matroska_flac.cpp
+    src/media/matroska_mpeg_audio.hpp
+    src/media/matroska_mpeg_audio.cpp
     src/media/matroska_ebml.hpp
     src/media/matroska_ebml.cpp
     src/media/matroska_demuxer.hpp
     src/media/matroska_demuxer.cpp
+    src/media/mpegts_packet.hpp
+    src/media/mpegts_packet.cpp
+    src/media/mpegts_demuxer.hpp
+    src/media/mpegts_demuxer.cpp
     src/media/video_codec_configuration.hpp
     src/media/video_codec_configuration.cpp
     src/media/native_media_source.hpp
@@ -728,10 +738,30 @@ if(BUILD_TESTING)
     target_link_libraries(wam_matroska_vorbis_test PRIVATE wam_native_core)
     add_test(NAME matroska_vorbis COMMAND wam_matroska_vorbis_test)
 
+    add_executable(wam_matroska_ac3_test
+      tests/matroska_ac3_test.cpp)
+    target_link_libraries(wam_matroska_ac3_test PRIVATE wam_native_core)
+    add_test(NAME matroska_ac3 COMMAND wam_matroska_ac3_test)
+
+    add_executable(wam_matroska_flac_test
+      tests/matroska_flac_test.cpp)
+    target_link_libraries(wam_matroska_flac_test PRIVATE wam_native_core)
+    add_test(NAME matroska_flac COMMAND wam_matroska_flac_test)
+
+    add_executable(wam_matroska_mpeg_audio_test
+      tests/matroska_mpeg_audio_test.cpp)
+    target_link_libraries(wam_matroska_mpeg_audio_test PRIVATE wam_native_core)
+    add_test(NAME matroska_mpeg_audio COMMAND wam_matroska_mpeg_audio_test)
+
     add_executable(wam_matroska_demuxer_test
       tests/matroska_demuxer_test.cpp)
     target_link_libraries(wam_matroska_demuxer_test PRIVATE wam_native_core)
     add_test(NAME matroska_demuxer COMMAND wam_matroska_demuxer_test)
+
+    add_executable(wam_mpegts_demuxer_test
+      tests/mpegts_demuxer_test.cpp)
+    target_link_libraries(wam_mpegts_demuxer_test PRIVATE wam_native_core)
+    add_test(NAME mpegts_demuxer COMMAND wam_mpegts_demuxer_test)
 
     # Regime microbenchmarks for the demuxer. EXCLUDE_FROM_ALL keeps it off the
     # default build; the ctest entry carries the `benchmark` label so it never
@@ -802,7 +832,11 @@ if(BUILD_TESTING)
         wam_matroska_ebml_test
         wam_matroska_opus_test
         wam_matroska_vorbis_test
+        wam_matroska_ac3_test
+        wam_matroska_flac_test
+        wam_matroska_mpeg_audio_test
         wam_matroska_demuxer_test
+        wam_mpegts_demuxer_test
         wam_video_codec_configuration_test
         wam_native_media_source_test
         wam_native_media_backend_test
@@ -822,7 +856,11 @@ if(BUILD_TESTING)
       matroska_ebml
       matroska_opus
       matroska_vorbis
+      matroska_ac3
+      matroska_flac
+      matroska_mpeg_audio
       matroska_demuxer
+      mpegts_demuxer
       video_codec_configuration
       native_media_source
       native_media_backend

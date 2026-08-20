@@ -103,10 +103,24 @@ void assignError(std::string* error, const char* message) {
 // from the descriptor rather than re-derived from the cookie.
 [[nodiscard]] CMAudioFormatDescriptionRef
 createAudioFormatDescription(const MediaTrackDescriptor& track) noexcept {
+  // Two shapes are admitted, and exactly two. A codec that HAS a magic cookie
+  // must present it as one; a codec that has none must present nothing at all.
+  //
+  // The second shape is new: AC-3, E-AC-3 and MP3 restate every parameter in
+  // each frame header and take no cookie whatsoever -- measured, not assumed,
+  // in scratchpad/sweep_probe.mm, where AudioConverterNew succeeds and decodes
+  // with the cookie property never set. Demanding a cookie here refused all
+  // three at open with no diagnostic beyond "the session failed while the
+  // dispatcher reported no failure".
+  const bool cookiePresent =
+      track.codecConfigurationKind ==
+          MediaCodecConfigurationKind::AudioMagicCookie &&
+      !track.codecConfiguration.empty();
+  const bool cookieAbsent =
+      track.codecConfigurationKind == MediaCodecConfigurationKind::None &&
+      track.codecConfiguration.empty();
   if (!track.audio || track.kind != MediaTrackKind::Audio ||
-      track.codecConfigurationKind !=
-          MediaCodecConfigurationKind::AudioMagicCookie ||
-      track.codecConfiguration.empty()) {
+      (!cookiePresent && !cookieAbsent)) {
     return nullptr;
   }
   const media::MediaAudioFormat& audio = *track.audio;
@@ -137,7 +151,8 @@ createAudioFormatDescription(const MediaTrackDescriptor& track) noexcept {
   CMAudioFormatDescriptionRef description = nullptr;
   const OSStatus status = CMAudioFormatDescriptionCreate(
       kCFAllocatorDefault, &asbd, layoutSize, layoutPointer,
-      track.codecConfiguration.size(), track.codecConfiguration.data(), nullptr,
+      track.codecConfiguration.size(),
+      cookiePresent ? track.codecConfiguration.data() : nullptr, nullptr,
       &description);
   if (status != noErr && description != nullptr) {
     CFRelease(description);

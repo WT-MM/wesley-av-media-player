@@ -173,22 +173,56 @@ void assignError(std::string* error, const char* message) noexcept {
   case media::MediaCodec::Vorbis:
     return track.audio->formatTag ==
            wam::media::matroska::kVorbisAudioFormatTag;
+  case media::MediaCodec::Ac3:
+    return track.audio->formatTag == kAudioFormatAC3;
+  case media::MediaCodec::Eac3:
+    return track.audio->formatTag == kAudioFormatEnhancedAC3;
+  case media::MediaCodec::Flac:
+    return track.audio->formatTag == kAudioFormatFLAC;
   default:
     return false;
   }
 }
 
-// Opus is the one admitted codec whose first access unit legitimately presents
-// before media time zero: Matroska stores a Block's timestamp on the codec
-// grid and states CodecDelay separately, so access unit 0 of every real Opus
-// mux starts pre-skip frames early. The generation therefore decodes a bounded
-// preroll it must not publish -- exactly what trimBeforeFloor already means --
-// and it is also the only codec whose track duration is the exact decoded
-// sample count rather than a container estimate, which is what makes it usable
-// as the tail-trim ceiling.
+// Whether this track's first access unit legitimately presents before media
+// time zero: Matroska stores a Block's timestamp on the codec grid and states
+// CodecDelay separately, so access unit 0 of an Opus, Vorbis, AC-3, E-AC-3,
+// MP3 or CodecDelay-bearing AAC track starts early. The generation therefore
+// decodes a bounded preroll it must not publish -- exactly what
+// trimBeforeFloor already means.
 [[nodiscard]] bool codecStartsBeforeStreamOrigin(
     const media::MediaTrackDescriptor& track) noexcept {
   return media::audioCodecPrecedesStreamOrigin(track.codec);
+}
+
+// Whether this track's stated duration is the exact decoded sample count, and
+// therefore usable as the frame the generation must stop publishing at.
+//
+// Until this sweep the answer was the SAME predicate as the one above, because
+// the two codecs that needed either needed both. They are genuinely different
+// questions and the sets now differ at both ends: FLAC states an exact
+// duration but starts at the origin, and AAC precedes the origin but reaches
+// this pipeline from AVFoundation as well as from Matroska.
+//
+// AAC is the reason for the second clause. Only the Matroska descriptor states
+// a decoded sample count; an AVFoundation track's duration is the container's
+// own number, which is not required to be a whole number of frames at all. The
+// ceiling is therefore taken only when the stated duration IS an exact whole
+// frame count -- which the Matroska path always produces by construction, and
+// which an approximate container duration cannot fake into being wrong: if it
+// is not exact the track simply keeps today's behaviour instead of failing the
+// whole session, and if it is exact then it is the true end of the track and
+// stopping there is right.
+[[nodiscard]] bool codecStatesExactDecodedDuration(
+    const media::MediaTrackDescriptor& track, std::uint32_t sampleRate) noexcept {
+  if (!media::audioCodecStatesExactDecodedDuration(track.codec)) {
+    if (track.codec != media::MediaCodec::Aac) {
+      return false;
+    }
+  }
+  std::int64_t ceilingFrame = 0;
+  return exactFrame(track.duration, sampleRate, &ceilingFrame) &&
+         ceilingFrame > 0;
 }
 
 [[nodiscard]] bool supportedLayout(const media::MediaAudioFormat& audio)
@@ -384,7 +418,8 @@ void assignError(std::string* error, const char* message) noexcept {
   }
   return timelinePlanFor(generation, timeline, sampleRate,
                          codecStartsBeforeStreamOrigin(track),
-                         codecStartsBeforeStreamOrigin(track), track.duration);
+                         codecStatesExactDecodedDuration(track, sampleRate),
+                         track.duration);
 }
 
 [[nodiscard]] bool sameTimeline(
