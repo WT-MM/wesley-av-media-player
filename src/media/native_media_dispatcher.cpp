@@ -1,5 +1,7 @@
 #include "media/native_media_dispatcher.hpp"
 
+#include "media/audio_codec_timing.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -143,6 +145,8 @@ enum class OpenConfigureVerdict : std::uint8_t {
   }
   const auto sampleRate =
       static_cast<std::uint32_t>(selectedAudio->audio->sampleRate);
+  const bool audioMayPrecedeOrigin =
+      audioCodecPrecedesStreamOrigin(selectedAudio->codec);
   if (selectedAudio->audio->sampleRate != static_cast<double>(sampleRate) ||
       !audioWindow.decodeStart.valid() ||
       !audioWindow.presentationStart.valid()) {
@@ -159,15 +163,19 @@ enum class OpenConfigureVerdict : std::uint8_t {
   const auto presentationAgainstAudioDuration =
       compareMediaTime(audioWindow.presentationStart,
                        selectedAudio->duration);
-  if (!decodeFrame || !presentationFrame || *decodeFrame < 0 ||
+  if (!decodeFrame || !presentationFrame ||
+      (*decodeFrame < 0 && !audioMayPrecedeOrigin) ||
       *presentationFrame < *decodeFrame || !decodeAgainstOrigin ||
-      *decodeAgainstOrigin == MediaTimeOrder::Less ||
+      (*decodeAgainstOrigin == MediaTimeOrder::Less &&
+       !audioMayPrecedeOrigin) ||
       !presentationAgainstDuration ||
       *presentationAgainstDuration == MediaTimeOrder::Greater ||
       !presentationAgainstAudioDuration ||
       *presentationAgainstAudioDuration == MediaTimeOrder::Greater ||
+      // A window that begins before media time zero can only be the stream
+      // origin; there is nothing earlier for it to be.
       audioWindow.startsAtStreamOrigin !=
-          (*decodeAgainstOrigin == MediaTimeOrder::Equal)) {
+          (*decodeAgainstOrigin != MediaTimeOrder::Greater)) {
     return std::nullopt;
   }
   const std::uint64_t prerollFrames = static_cast<std::uint64_t>(
@@ -194,7 +202,7 @@ enum class OpenConfigureVerdict : std::uint8_t {
   case MediaSeekMode::KeyFrame:
     // v1 keyframe audio is admitted only when the common RAP/decode floor is
     // itself frame-aligned. It does not inherit Accurate target ceiling.
-    if (*decodeFrame != *presentationFrame ||
+    if ((*decodeFrame != *presentationFrame && !audioMayPrecedeOrigin) ||
         compareMediaTime(audioWindow.presentationStart,
                          timeline.presentationFloor) !=
             MediaTimeOrder::Equal) {
