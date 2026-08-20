@@ -2530,12 +2530,17 @@ int main(int argc, char **argv) {
            "native release creates one exact identity at the final target and "
            "retains pause intent");
     const std::uint64_t first_request = Access::nativeSeekRequest(controller);
+    // A target at or past the duration used to clamp to the duration exactly,
+    // which NativeMediaSession::preflightCommitTarget always refuses (it
+    // requires seconds < duration), so the seek was surfaced as an error
+    // instead of happening. The clamp now reserves a 1/8 s end guard.
     expect(Access::stageNativeSeek(controller, 500.0) &&
                Access::nativeSeekGesture(controller) != gesture &&
                Access::nativeSeekRequest(controller) > first_request &&
-               nearlyEqual(Access::nativeSeekTarget(controller), 100.0) &&
-               nearlyEqual(controller.position(), 100.0),
-           "ordinary native seeks use fresh identities and clamp to duration");
+               nearlyEqual(Access::nativeSeekTarget(controller), 99.875) &&
+               nearlyEqual(controller.position(), 99.875),
+           "ordinary native seeks use fresh identities and clamp strictly "
+           "inside the duration");
     expect(!Access::previewNativeScrub(
                controller, std::numeric_limits<double>::quiet_NaN()) &&
                controller.lastError().isEmpty(),
@@ -2545,6 +2550,63 @@ int main(int argc, char **argv) {
     expect(!Access::hasNativeScrub(controller) &&
                !Access::hasNativeSeek(controller),
            "native Stop/open invalidation burns both gesture and exact intent");
+  }
+
+  {
+    // Pointer scrubbing produces arbitrary interpolated doubles. Both native
+    // preflights admit only media::exactNonnegativeMediaTime, so every native
+    // preview and commit target has to leave the controller already exact --
+    // otherwise a real drag is refused with "Native seeking cannot represent
+    // this exact target" and nothing moves.
+    using Access = wam::qt::PlayerControllerTestAccess;
+    wam::qt::PlayerController controller;
+    Access::setCachedTransportState(controller, 10.0, false, false, false);
+    Access::setDuration(controller, 100.0);
+    expect(Access::beginNativeScrub(controller),
+           "exactness fixture owns one native gesture");
+
+    // media::exactNonnegativeMediaTime admits k / 2^n with n <= 30. Landing on
+    // the 1/64 s grid is the sufficient condition the controller guarantees,
+    // and it is checkable here without linking the media translation unit.
+    const auto onGrid = [](double seconds) {
+      const double ticks = seconds * 64.0;
+      return std::isfinite(ticks) && ticks == std::floor(ticks);
+    };
+
+    const double pointer_targets[] = {37.412839, 0.0001,  12.5,
+                                      63.4821,   98.9375, 1.0 / 3.0};
+    for (const double raw : pointer_targets) {
+      expect(Access::previewNativeScrub(controller, raw),
+             "an arbitrary pointer target is admitted as a preview");
+      const double preview = Access::nativeScrubTarget(controller);
+      expect(onGrid(preview),
+             "every native preview target is exactly representable");
+      expect(preview <= raw + 1.0 / 64.0 && preview >= raw - 1.0 / 64.0 &&
+                 preview < 100.0,
+             "the preview target stays within one 1/64 s grid step of the "
+             "pointer and strictly inside the duration");
+    }
+
+    expect(Access::previewNativeScrub(controller, 99.9999999) &&
+               onGrid(Access::nativeScrubTarget(controller)) &&
+               nearlyEqual(Access::nativeScrubTarget(controller), 99.875),
+           "a preview at the right end of the track stops at the end guard");
+
+    Access::NativeSeekProbe exact_commit;
+    expect(Access::finishNativeScrub(controller, 63.4821, exact_commit) &&
+               onGrid(exact_commit.target) &&
+               nearlyEqual(exact_commit.target, 63.46875),
+           "a released drag commits the exact grid point under the pointer");
+
+    // The right end of the track is the duration itself; committing it exactly
+    // is always refused downstream, so it must land one grid step short.
+    Access::NativeSeekProbe end_commit;
+    expect(Access::beginNativeScrub(controller), "second gesture begins");
+    expect(Access::finishNativeScrub(controller, 100.0, end_commit) &&
+               onGrid(end_commit.target) && end_commit.target < 100.0 &&
+               nearlyEqual(end_commit.target, 99.875),
+           "a drag to the end of the timeline commits inside the duration "
+           "instead of being refused");
   }
 
   {

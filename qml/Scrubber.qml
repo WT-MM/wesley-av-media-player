@@ -50,7 +50,14 @@ Slider {
         let normalized = Math.max(0, Math.min(1, (pointerX - leftPadding) / availableWidth));
         if (mirrored)
             normalized = 1 - normalized;
-        return valueAt(normalized);
+        // Interpolate directly instead of through Slider.valueAt(): valueAt()
+        // rounds its result through stepSize, and stepSize is the five-second
+        // keyboard step. Routing pointer motion through it quantized every drag
+        // onto five-second stops -- a twenty-pixel pointer move jumped a whole
+        // five seconds, the handle never sat where the pointer was, and a
+        // four-second drag produced only five distinct preview targets. Keyboard
+        // stepping still uses stepSize; only pointer scrubbing is continuous.
+        return from + (to - from) * normalized;
     }
 
     function samePreviewTarget(left, right) {

@@ -449,6 +449,10 @@ private:
   [[nodiscard]] static std::optional<std::uint64_t>
   reserveNativeSeekIdentity(std::uint64_t &high_water) noexcept;
   [[nodiscard]] double boundedSeekTarget(double seconds) const noexcept;
+  // boundedSeekTarget restated for the native route, which admits only a
+  // target that is both exactly representable as a rational media time and
+  // strictly inside the duration. See the definition for the exactness rule.
+  [[nodiscard]] double exactNativeSeekTarget(double seconds) const noexcept;
   [[nodiscard]] bool beginNativeScrubIntent();
   [[nodiscard]] std::optional<NativePreviewIntent>
   makeNativePreviewIntent(double seconds);

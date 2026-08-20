@@ -1059,6 +1059,44 @@ double PlayerController::boundedSeekTarget(double seconds) const noexcept {
   return std::clamp(seconds, 0.0, std::max(0.0, maximum));
 }
 
+double PlayerController::exactNativeSeekTarget(double seconds) const noexcept {
+  // Both native preflights -- NativeMediaSession::preflightCommitTarget and
+  // preflightPreviewTarget -- require media::exactNonnegativeMediaTime, which
+  // admits a double only when it is k / 2^n with n <= 30, and additionally
+  // require the target to be strictly less than the duration. A pointer drag
+  // produces neither: an interpolated timeline position is essentially never
+  // dyadic, and the right end of the track is exactly the duration. Both
+  // refusals surface as "Native seeking cannot represent this exact target"
+  // with no seek at all.
+  //
+  // Floor every native target onto the same 1/64 s binary grid the resume and
+  // scripted-seek paths use (15.6 ms, below one frame at 60 fps, so the
+  // handle and the picture stay visually identical), and hold the target out
+  // of the final frame so a drag to the end of the timeline commits instead
+  // of being refused.
+  //
+  // The end guard is 1/8 s rather than one grid step because a target that
+  // lands inside the last frame's presentation interval is accepted, drawn,
+  // and then immediately overtaken by end of stream, and the commit's own
+  // SetRunState is refused by the ending session -- which retires the whole
+  // native route with "Native playback rejected an internal lifecycle
+  // command". Measured on a 40 s 30 fps clip: a commit to 39.984375 (inside
+  // the last frame) retires native every time, 39.75 and earlier never do.
+  // 1/8 s clears one frame at 10 fps, the slowest rate in the corpus, is
+  // exactly representable, and is sub-pixel on any real timeline.
+  constexpr double kSeekGrid = 64.0;
+  constexpr double kEndGuardSeconds = 0.125;
+  const double bounded = boundedSeekTarget(seconds);
+  if (!std::isfinite(bounded) || bounded <= 0.0)
+    return 0.0;
+  double target = bounded;
+  if (duration_ > 0.0)
+    target = std::min(target, duration_ - kEndGuardSeconds);
+  if (!(target > 0.0))
+    return 0.0;
+  return std::floor(target * kSeekGrid) / kSeekGrid;
+}
+
 bool PlayerController::beginNativeScrubIntent() {
   if (native_scrub_intent_)
     return true;
@@ -1080,7 +1118,7 @@ PlayerController::makeNativePreviewIntent(double seconds) {
   if (!request)
     return std::nullopt;
   return NativePreviewIntent{native_scrub_intent_->gesture, *request,
-                             boundedSeekTarget(seconds)};
+                             exactNativeSeekTarget(seconds)};
 }
 
 std::optional<PlayerController::NativePreviewIntent>
@@ -1177,8 +1215,9 @@ PlayerController::finishNativeScrubIntent(double seconds) {
   const auto request = reserveNativeSeekIdentity(next_native_seek_request_id_);
   if (!request)
     return std::nullopt;
-  return NativeSeekIntent{scrub.gesture, *request, boundedSeekTarget(seconds),
-                          scrub.origin, scrub.intended_paused};
+  return NativeSeekIntent{scrub.gesture, *request,
+                          exactNativeSeekTarget(seconds), scrub.origin,
+                          scrub.intended_paused};
 }
 
 std::optional<PlayerController::NativeSeekIntent>
@@ -1193,7 +1232,7 @@ PlayerController::makeNativeSeekIntent(double seconds) {
     return std::nullopt;
   const bool intended_paused =
       native_seek_intent_ ? native_seek_intent_->intended_paused : paused_;
-  return NativeSeekIntent{*gesture, *request, boundedSeekTarget(seconds),
+  return NativeSeekIntent{*gesture, *request, exactNativeSeekTarget(seconds),
                           position_, intended_paused};
 }
 
@@ -1526,14 +1565,13 @@ void PlayerController::beginScrub() {
 void PlayerController::seekTo(double seconds) {
 #if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   if (native_playback_ && native_playback_->nativeOwnsTransport()) {
-    // Native accurate seek requires an exactly representable rational target
-    // (preflightCommitTarget rejects non-dyadic doubles). Positions derived
-    // from decoded frame PTS plus an offset — the arrow-key ±5 s path — are
-    // rarely dyadic, so floor every native seek target onto the same 1/64 s
-    // binary grid the resume path uses. Integer scrubber targets pass
-    // through unchanged.
-    if (std::isfinite(seconds) && seconds > 0.0)
-      seconds = std::floor(seconds * 64.0) / 64.0;
+    // Native accurate seek requires an exactly representable rational target;
+    // exactNativeSeekTarget owns that rule for every native entry point, and
+    // the intent factories below apply it. Applying it here too keeps the
+    // value handed to endScrub identical to the one a direct seek would use.
+    if (!std::isfinite(seconds))
+      return;
+    seconds = exactNativeSeekTarget(seconds);
     if (native_scrub_intent_) {
       endScrub(seconds);
       return;
