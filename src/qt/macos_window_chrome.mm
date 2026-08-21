@@ -1,6 +1,9 @@
 #include "macos_window_chrome.hpp"
 
+#include <QDebug>
+#include <QFileInfo>
 #include <QPointer>
+#include <QString>
 #include <QUrl>
 #include <QWindow>
 
@@ -409,6 +412,32 @@ bool pointerInTitlebarBand(QWindow *window) {
   return NSMouseInRect(NSEvent.mouseLocation, band, NO);
 }
 
+bool canRevealInFinder(const QUrl &source) {
+  if (!source.isLocalFile())
+    return false;
+  const QString path = source.toLocalFile();
+  if (path.isEmpty())
+    return false;
+  // QFileInfo rather than -[NSFileManager fileExistsAtPath:] only to keep the
+  // NSString bridge on the one path that genuinely needs it, below.
+  return QFileInfo::exists(path);
+}
+
+bool revealInFinder(const QUrl &source) {
+  if (!canRevealInFinder(source))
+    return false;
+  NSURL *url = [NSURL fileURLWithPath:source.toLocalFile().toNSString()];
+  if (!url)
+    return false;
+  // The one-URL form of the multi-selection API: Finder opens (or reuses) a
+  // window on the file's parent directory and selects the file in it, which
+  // is exactly the system "Show in Finder" behavior and is why this is not
+  // done with -openURL: on the parent folder -- that would open the folder
+  // without selecting anything.
+  [NSWorkspace.sharedWorkspace activateFileViewerSelectingURLs:@[ url ]];
+  return true;
+}
+
 void setContentAspectRatio(QWindow *window, qreal width, qreal height) {
   NSWindow *nsWindow = nsWindowFor(window);
   if (!nsWindow)
@@ -802,6 +831,18 @@ qreal MacWindowChrome::titlebarHeight() const {
 
 bool MacWindowChrome::pointerInTitlebarBand() const {
   return wam::macos_window_chrome::pointerInTitlebarBand(window_);
+}
+
+bool MacWindowChrome::revealInFinder(const QUrl &source) const {
+  const bool revealed = wam::macos_window_chrome::revealInFinder(source);
+  // One line per explicit user gesture, never per frame. It is also the
+  // cheapest signal there is that the caret's URL plumbing reached AppKit
+  // with the right file, which is otherwise only observable by watching a
+  // Finder window appear.
+  qInfo().noquote().nospace()
+      << "WAM: reveal in Finder " << (revealed ? "requested for " : "declined ")
+      << source.toString();
+  return revealed;
 }
 
 } // namespace wam::qt

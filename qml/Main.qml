@@ -51,6 +51,18 @@ ApplicationWindow {
     // (0, 0) for audio-only media or before "windowChrome" exists. Drives the
     // native window's aspect-ratio lock and its double-click "Actual Size".
     property size videoNaturalSize: Qt.size(0, 0)
+    // Whether the title band shows its reveal-in-Finder caret: only for media
+    // Finder could actually show, which means a local file. `controller.source`
+    // is always a fully-formed URL by the time QML sees it (PlayerController's
+    // displayUrlForSource resolves bare paths to file: URLs before committing
+    // them), so the scheme is the whole test -- a stream, and no media at all,
+    // have no folder to reveal. The matching "and it is still on disk" half of
+    // the test lives in MacWindowChrome::revealInFinder, deliberately not here:
+    // it is a filesystem hit, and no binding would be re-evaluated if the file
+    // were deleted mid-playback anyway.
+    readonly property bool titleRevealable: (typeof revealInFinderSupported !== "undefined" && revealInFinderSupported)
+        && controller.hasMedia
+        && String(controller.source).startsWith("file:")
     // The source whose aspect ratio the window has already been snapped to,
     // so a re-open of the same file cannot resize the window a second time
     // (see onVideoNaturalSizeChanged).
@@ -831,6 +843,7 @@ ApplicationWindow {
             }
 
             Text {
+                id: titleLabel
                 anchors.centerIn: parent
                 // The traffic lights occupy the leftmost ~71pt of the band;
                 // reserving that much on both sides keeps the title centred
@@ -851,6 +864,132 @@ ApplicationWindow {
                 // this label is a sighted-only restatement of it, not a
                 // second source of truth.
                 Accessible.ignored: true
+            }
+
+            // Reveal in Finder: a small chevron sitting just off the end of
+            // the filename, the same gesture macOS puts behind a document
+            // window's proxy title.
+            //
+            // Anchored to the title's right edge rather than laid out with it
+            // inside a centred Row, which was the other candidate. Two things
+            // decided it: the filename keeps the exact position macOS centres
+            // a window title at -- the existing centring and elide-width maths
+            // are untouched -- and, because the caret comes and goes with the
+            // source (local file yes, stream no), a Row would slide the
+            // filename sideways on every such change. The group therefore
+            // reads as "title, centred, with a caret hung off it" rather than
+            // as a centred pair, which is also how it looks. Measured off a
+            // 480pt-wide window: the filename's own centre lands 0.2pt from
+            // the window centre (i.e. exactly where it was before), and the
+            // filename-plus-caret pair centres 7pt right of it -- under 1.5%
+            // of the window's width, well below the offset at which a title
+            // stops reading as centred.
+            //
+            // It inherits the band's opacity, so it fades in and out with the
+            // filename and the traffic lights on one schedule; it adds no
+            // timer and no animation that runs while the chrome is hidden.
+            Item {
+                id: revealCaret
+                anchors.left: titleLabel.right
+                // Negative because the margin is measured to the edge of the
+                // hit box, not to the ink: the chevron is 9pt of ink centred
+                // in a 22pt box, so it already starts 6.5pt inside. At +2 the
+                // measured gap from the filename's last glyph to the caret's
+                // first stroke was 10pt, which read as detached; -2 puts it
+                // at 6pt, where it reads as belonging to the name.
+                anchors.leftMargin: -2
+                anchors.verticalCenter: titleLabel.verticalCenter
+                // The hit target, not the glyph: a comfortable 22pt box
+                // around ~9x4pt of ink.
+                width: 22
+                height: 22
+                visible: root.titleRevealable
+                // The band is deliberately never `visible: false` (see the
+                // note on its opacity above) so it can still catch the
+                // pointer arriving while the chrome is faded out. Without
+                // this the caret would inherit that and take clicks while
+                // invisible. Entering the band reveals the chrome first, so
+                // this costs the user nothing.
+                enabled: root.controlsRevealed
+
+                Accessible.role: Accessible.Button
+                Accessible.name: "Show in Finder"
+                Accessible.description: "Show in Finder"
+                Accessible.onPressAction: revealCaret.reveal()
+
+                function reveal() {
+                    if (typeof windowChrome !== "undefined" && windowChrome)
+                        windowChrome.revealInFinder(root.controller.source);
+                    // Finder takes activation from here, which fades this
+                    // window's chrome out. Re-arming the idle timer keeps the
+                    // band up for the moment the pointer is still on it.
+                    root.revealControls();
+                }
+
+                // The same hover and pressed washes IconButton uses for the
+                // floating transport's controls, at the same radius, so the
+                // one control in the titlebar reacts exactly like the ones
+                // below it.
+                Rectangle {
+                    anchors.centerIn: parent
+                    width: 18
+                    height: 18
+                    radius: width / 2
+                    color: revealTap.pressed
+                        ? "#44ffffff"
+                        : caretHover.hovered ? "#2dffffff" : "transparent"
+
+                    Behavior on color {
+                        ColorAnimation {
+                            duration: 100
+                        }
+                    }
+                }
+
+                Canvas {
+                    anchors.fill: parent
+                    // Ink box [0.31, 0.69] x [0.415, 0.585] of the 22pt hit
+                    // box: ~8.4pt wide, ~3.7pt tall, centred on (0.5, 0.5).
+                    // Deliberately smaller and quieter than a transport icon
+                    // -- it has to sit beside 13pt text without competing
+                    // with it for the eye.
+                    onPaint: {
+                        const ctx = getContext("2d");
+                        ctx.clearRect(0, 0, width, height);
+                        // Soft white at ~65%: present next to the title's
+                        // solid white, never louder than it.
+                        ctx.strokeStyle = "#a6ffffff";
+                        ctx.lineWidth = 1.5;
+                        ctx.lineCap = "round";
+                        ctx.lineJoin = "round";
+                        ctx.beginPath();
+                        ctx.moveTo(width * 0.31, height * 0.415);
+                        ctx.lineTo(width * 0.5, height * 0.585);
+                        ctx.lineTo(width * 0.69, height * 0.415);
+                        ctx.stroke();
+                    }
+                }
+
+                HoverHandler {
+                    id: caretHover
+                    cursorShape: Qt.PointingHandCursor
+                }
+
+                TapHandler {
+                    id: revealTap
+                    acceptedButtons: Qt.LeftButton
+                    gesturePolicy: TapHandler.ReleaseWithinBounds
+                    onTapped: revealCaret.reveal()
+                }
+
+                ChromeToolTip {
+                    text: "Show in Finder"
+                    // The band starts at the window's own top edge, so the
+                    // ordinary above-the-button placement would put this
+                    // outside the window entirely.
+                    below: true
+                    visible: caretHover.hovered && revealCaret.enabled
+                }
             }
 
             // Hovering the band pins the whole chrome revealed. This handler
