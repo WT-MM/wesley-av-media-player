@@ -1006,6 +1006,20 @@ int main(int argc, char *argv[]) {
     engine.rootContext()->setContextProperty(
         QStringLiteral("layerPresentation"), false);
 #endif
+    // Whether the title band may offer its reveal-in-Finder caret. Set here,
+    // before the engine loads, rather than read off the "windowChrome" bridge
+    // in QML: that bridge only exists once the root window has been created
+    // (below), which is after every binding in Main.qml has first evaluated,
+    // and a `typeof windowChrome` test is not a dependency any binding would
+    // ever be re-run for. Same shape, and the same reason, as
+    // `layerPresentation` above.
+#if defined(Q_OS_MACOS)
+    engine.rootContext()->setContextProperty(
+        QStringLiteral("revealInFinderSupported"), true);
+#else
+    engine.rootContext()->setContextProperty(
+        QStringLiteral("revealInFinderSupported"), false);
+#endif
     QObject::connect(
         &engine, &QQmlApplicationEngine::objectCreationFailed, &app,
         [] { QCoreApplication::exit(2); }, Qt::QueuedConnection);

@@ -21,6 +21,11 @@ ToolTip {
     // The panel this tip must clear. Null keeps the ordinary
     // directly-above-the-button placement (Quick Edit, Preferences).
     property Item clearItem: null
+    // Flips the tip to hang *below* its button instead of above it. The
+    // titlebar band starts at the window's own top edge, so a tip placed
+    // above a control in that band lands outside the window entirely. Not
+    // combinable with clearItem -- nothing in the chrome needs both.
+    property bool below: false
     // Breathing room between the tip and whatever it is clearing.
     readonly property real gap: 8
 
@@ -41,6 +46,11 @@ ToolTip {
         if (!parent)
             return;
         const centred = (parent.width - width) / 2;
+        if (below) {
+            x = centred;
+            y = parent.height + gap;
+            return;
+        }
         if (!clearItem) {
             x = centred;
             y = -height - gap;

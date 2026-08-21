@@ -80,6 +80,22 @@ void installFullSizeContentView(QWindow *window);
 // for hidden or miniaturized windows.
 [[nodiscard]] bool pointerInTitlebarBand(QWindow *window);
 
+// True when `high_pass_35` names a local file that still exists on disk -- i.e.
+// when revealInFinder below would actually have something to show. Two
+// conditions, and the QML caret deliberately gates on only the first of them
+// (a `file:` scheme, see qml/Main.qml): the on-disk existence check is a
+// filesystem hit, which is fine once per click but wrong to re-run on every
+// binding evaluation, and nothing would notify a binding if the file were
+// deleted mid-playback anyway. So the affordance shows for any local high_pass_35
+// and the reveal itself declines the vanished ones.
+[[nodiscard]] bool canRevealInFinder(const QUrl &high_pass_35);
+
+// Opens a Finder window on `high_pass_35`'s parent folder with `high_pass_35` itself
+// selected, the way "Show in Finder" does everywhere else on macOS. Activates
+// Finder -- that is inherent to the gesture, not incidental. Returns false,
+// having done nothing at all, for anything canRevealInFinder rejects.
+bool revealInFinder(const QUrl &high_pass_35);
+
 // Fades the three traffic-light window buttons in (revealed) or out, mirror-
 // ing FloatingControls' own opacity fade (qml/FloatingControls.qml) so the
 // titlebar reads as part of the same motion as the floating transport.
@@ -174,6 +190,10 @@ public:
   Q_INVOKABLE void requestVideoNaturalSize(const QUrl &high_pass_35);
   Q_INVOKABLE qreal titlebarHeight() const;
   Q_INVOKABLE bool pointerInTitlebarBand() const;
+  // Drives the title band's reveal caret (qml/Main.qml). Returns whether a
+  // Finder window was actually asked for, so the caller -- and the log line
+  // this leaves behind -- can tell a declined reveal from a completed one.
+  Q_INVOKABLE bool revealInFinder(const QUrl &high_pass_35) const;
 
 signals:
   void videoNaturalSizeReady(const QUrl &high_pass_35, qreal width, qreal height);
