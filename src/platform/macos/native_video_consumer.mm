@@ -283,6 +283,18 @@ void assignError(std::string* error, const char* message) {
     case media::MediaCodec::H264:
     case media::MediaCodec::Hevc:
       return true;
+    // MPEG-2 is the third case again, and a third answer: every Apple Silicon
+    // machine decodes it, but through a SOFTWARE VideoToolbox decoder --
+    // VTIsHardwareDecodeSupported(kCMVideoCodecType_MPEG2Video) is 0 and
+    // UsingHardwareAcceleratedVideoDecoder is unavailable, measured in
+    // scratchpad/vt_mpeg2_probe.mm on 2026-08-20, where a session built from
+    // nothing but coded width and height decoded 60 access units 1:1. It is
+    // therefore admitted unconditionally like H.264 rather than gated on a
+    // capability query that would answer 0, but it does NOT carry the H.264
+    // route's power profile and the SD rates MPEG-2-in-TS actually is are why
+    // that is acceptable.
+    case media::MediaCodec::Mpeg2Video:
+      return true;
     case media::MediaCodec::Vp9:
       return nativeVideoToolboxSupportsVp9();
     case media::MediaCodec::Av1:
@@ -311,6 +323,8 @@ void assignError(std::string* error, const char* message) {
       // software stage on exactly this value, and VideoToolbox refuses it, so
       // a VP8 stream can never reach a decompression session.
       return kWamVideoCodecTypeVp8;
+    case media::MediaCodec::Mpeg2Video:
+      return kCMVideoCodecType_MPEG2Video;
     default:
       return kCMVideoCodecType_H264;
   }
@@ -322,8 +336,14 @@ void assignError(std::string* error, const char* message) {
       !track.video || !track.timeBase.valid() || track.timeBase.value <= 0 ||
       !track.duration.valid() || track.duration.value < 0 ||
       !admittedVideoCodec(track.codec) ||
-      !native_video_limits::acceptsVideoCodecConfigurationSize(
-          track.codecConfiguration.size()) ||
+      // The size gate refuses zero, which is right for every codec that HAS a
+      // configuration record and wrong for the one that does not: MPEG-2's
+      // sequence header is in band and an empty vector is its only correct
+      // descriptor. The codec-specific shape checks below still hold it to
+      // exactly that, so this exemption cannot admit a malformed record.
+      (track.codec != media::MediaCodec::Mpeg2Video &&
+       !native_video_limits::acceptsVideoCodecConfigurationSize(
+           track.codecConfiguration.size())) ||
       (track.codec == media::MediaCodec::H264 &&
        track.codecConfigurationKind !=
            media::MediaCodecConfigurationKind::AvcC) ||
@@ -338,7 +358,16 @@ void assignError(std::string* error, const char* message) {
            media::MediaCodecConfigurationKind::VpcC) ||
       (track.codec == media::MediaCodec::Vp8 &&
        track.codecConfigurationKind !=
-           media::MediaCodecConfigurationKind::VpcC)) {
+           media::MediaCodecConfigurationKind::VpcC) ||
+      // The inverse of every line above it: MPEG-2 has no decoder
+      // configuration record, so it must present NONE and an empty vector.
+      // Admitting a record here would let a malformed descriptor reach
+      // CMVideoFormatDescriptionCreate, which takes a null extensions
+      // dictionary for this codec and would silently ignore it.
+      (track.codec == media::MediaCodec::Mpeg2Video &&
+       (track.codecConfigurationKind !=
+            media::MediaCodecConfigurationKind::None ||
+        !track.codecConfiguration.empty()))) {
     return false;
   }
   const media::MediaVideoFormat& video = *track.video;
@@ -1451,13 +1480,24 @@ media::NativeMediaConsumeResult NativeVideoConsumer::configure(
   impl.sink.flush(generation);
   const media::MediaVideoFormat& video = *track.video;
   const CMVideoCodecType codec = coreMediaVideoCodecType(track.codec);
+  // Every other codec on this route REQUIRES a hardware decoder, and that
+  // requirement is what makes a host without a VP9 or AV1 block fall back
+  // instead of quietly burning battery in software. MPEG-2 is the one codec
+  // whose only decoder on Apple Silicon IS software --
+  // VTIsHardwareDecodeSupported(kCMVideoCodecType_MPEG2Video) is 0, measured
+  // 2026-08-20 -- so requiring hardware for it fails
+  // VTDecompressionSessionCreate with kVTCouldNotFindVideoDecoderErr (-12906)
+  // and refuses a stream that demonstrably decodes. It still PREFERS hardware,
+  // which costs nothing and keeps the request identical for every codec that
+  // has a block.
+  const bool requireHardwareDecode = track.codec != media::MediaCodec::Mpeg2Video;
   const VideoStreamConfiguration configuration{
       codec,
       {static_cast<std::int32_t>(video.codedWidth),
        static_cast<std::int32_t>(video.codedHeight)},
       track.codecConfiguration,
       true,
-      true,
+      requireHardwareDecode,
       generation};
   if (!impl.decoder.configure(configuration, impl.sink, error)) {
     impl.latch(NativeVideoConsumerFailure::DecoderConfiguration,

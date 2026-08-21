@@ -672,6 +672,30 @@ deriveCodecReorderFrameCount(const VideoStreamConfiguration &configuration) {
     }
     return maximum;
   }
+  if (configuration.codec == kCMVideoCodecType_MPEG2Video) {
+    // One, and it is a property of the codec rather than of the stream.
+    //
+    // MPEG-2 reorders through exactly two reference frame stores: a B picture
+    // is output at its own decode position, and the only picture ever held
+    // back is the FUTURE anchor decoded ahead of the B pictures that reference
+    // it. That is true regardless of how many consecutive B pictures a GOP
+    // codes -- an M of 3 and an M of 12 both hold exactly one anchor -- so the
+    // depth is 1 for every legal MPEG-2 stream and never needs a bitstream
+    // parse. There is nothing to parse in any case: MPEG-2 carries no decoder
+    // configuration record, so `bytes` is empty here by contract.
+    //
+    // Stating 1 rather than 0 costs one retained frame on a stream that codes
+    // no B pictures at all, which both of this project's MPEG-2 fixtures are
+    // (ffmpeg's mpeg2video encoder defaults to max_b_frames = 0, so `-g 12`
+    // produces a flat I-P-P-...-P GOP, measured 2026-08-20). That cost is one
+    // frame of startup hold at SD rates and is the right side to be wrong on:
+    // understating the depth reorders output, while overstating it by one
+    // delays it by one frame.
+    if (!bytes.empty()) {
+      return std::nullopt;
+    }
+    return std::size_t{1};
+  }
   if (configuration.codec == kCMVideoCodecType_VP9) {
     // VP9 has no output reordering. Alternate-reference ("hidden") frames are
     // decoded but never output at their own decode position; they reach the
@@ -1682,6 +1706,24 @@ CFStringRef codecConfigurationAtomName(CMVideoCodecType codec) noexcept {
                                            : nullptr;
 }
 
+// True for a codec that has NO out-of-band decoder configuration record at
+// all, so that "no atom" is the correct format description rather than a
+// missing one.
+//
+// MPEG-2 is the only such codec this decoder admits. Its sequence header is
+// in band, `CMVideoFormatDescriptionCreate` takes a null extensions argument,
+// and a session built that way decoded 60 access units 1:1 in
+// scratchpad/vt_mpeg2_probe.mm. Every other admitted codec must present its
+// atom, and the atom-name lookup above stays the authority on which one.
+//
+// This predicate exists rather than being folded into the null return above
+// because the two "nullptr" cases mean opposite things: an unknown codec has
+// no atom NAME and must be refused, while MPEG-2 has no atom and must be
+// admitted.
+bool codecCarriesNoConfigurationRecord(CMVideoCodecType codec) noexcept {
+  return codec == kCMVideoCodecType_MPEG2Video;
+}
+
 struct CodecConfigurationAtomMetadata {
   CMVideoCodecType codec{0};
   CFDataRef atom{nullptr}; // Borrowed from the format-description extensions.
@@ -1692,10 +1734,19 @@ bool inspectCodecConfigurationExtensions(
     CMVideoCodecType codec, CFDictionaryRef extensions,
     CodecConfigurationAtomMetadata &metadata, std::string *error) {
   metadata = {};
+  if (codecCarriesNoConfigurationRecord(codec)) {
+    // The absence IS the admitted shape. Nothing borrows an atom, nothing
+    // compares one, and the equality check below treats two absences as equal.
+    metadata.codec = codec;
+    metadata.atom = nullptr;
+    metadata.byteLength = 0;
+    return true;
+  }
   const CFStringRef atomName = codecConfigurationAtomName(codec);
   if (atomName == nullptr) {
     assignError(error,
-                "direct CoreMedia sample format is not H.264 or HEVC");
+                "direct CoreMedia sample format is not a codec with an "
+                "admitted configuration record");
     return false;
   }
   if (extensions == nullptr ||
@@ -1764,7 +1815,12 @@ bool equivalentCodecConfigurationAtoms(
     const CodecConfigurationAtomMetadata &direct, std::string *error) {
   if (configured.codec != direct.codec ||
       configured.byteLength != direct.byteLength ||
-      (configured.atom != direct.atom &&
+      // Two absences are equal; one absence against one record is not. The
+      // null guard is load-bearing: CFEqual on a null operand is undefined,
+      // and MPEG-2 reaches here with both sides null.
+      (configured.atom == nullptr) != (direct.atom == nullptr) ||
+      (configured.atom != nullptr && direct.atom != nullptr &&
+       configured.atom != direct.atom &&
        !CFEqual(configured.atom, direct.atom))) {
     assignError(error,
                 "direct CoreMedia sample avcC/hvcC does not exactly match "
@@ -1792,6 +1848,9 @@ bool equivalentFormatCodecConfigurations(
 
 bool admitsCodecConfigurationMetadata(
     const VideoStreamConfiguration &configuration) noexcept {
+  if (codecCarriesNoConfigurationRecord(configuration.codec)) {
+    return configuration.codecConfiguration.empty();
+  }
   return codecConfigurationAtomName(configuration.codec) != nullptr &&
          native_video_limits::acceptsVideoCodecConfigurationSize(
              configuration.codecConfiguration.size()) &&
@@ -1808,6 +1867,18 @@ OSStatus createFormatDescription(const VideoStreamConfiguration &configuration,
 
   if (!admitsCodecConfigurationMetadata(configuration)) {
     return paramErr;
+  }
+  if (codecCarriesNoConfigurationRecord(configuration.codec)) {
+    // A null extensions dictionary, not an empty one. Proved in
+    // scratchpad/vt_mpeg2_probe.mm.
+    const OSStatus status = CMVideoFormatDescriptionCreate(
+        kCFAllocatorDefault, configuration.codec, configuration.codedSize.width,
+        configuration.codedSize.height, nullptr, descriptionOut);
+    if (status != noErr && *descriptionOut != nullptr) {
+      CFRelease(*descriptionOut);
+      *descriptionOut = nullptr;
+    }
+    return status;
   }
   const CFStringRef atomName = codecConfigurationAtomName(configuration.codec);
 
@@ -2258,8 +2329,26 @@ struct VideoToolboxDecoder::Impl {
     // The pinned contracts keep the pin: measured on this box, an unpinned
     // session that also carries OpenGL texture compatibility returns BGRA,
     // which would be a far worse conversion than the one being removed.
+    //
+    // MPEG-2 is the one codec that must pin REGARDLESS of the interop. Its
+    // decoder on this platform is software, and its native output is `2vuy`
+    // (kCVPixelFormatType_422YpCbCr8, packed 4:2:2) -- measured in
+    // scratchpad/vt_mpeg2_pixfmt.mm, where an unpinned session decodes to
+    // 2vuy and a pinned one decodes the same bytes to 420v. Nothing
+    // downstream of this decoder accepts a packed 4:2:2 surface: the display
+    // layer, the Metal mapper and the OpenGL importer are all bi-planar, and
+    // an unpinned MPEG-2 session therefore fails the output-surface contract
+    // on its very first frame ("output pixel format 846624121 did not match
+    // the bounded native decode contract 875704438"). Pinning costs the same
+    // per-frame VTPixelTransferSession the non-display-layer contracts already
+    // pay, and MPEG-2-in-TS is SD, which is why that is affordable here.
+    const CMVideoCodecType sessionCodec =
+        formatDescription != nullptr
+            ? CMFormatDescriptionGetMediaSubType(formatDescription)
+            : 0;
     const bool pinOutputPixelFormat =
-        options.outputInterop != VideoToolboxOutputInterop::DisplayLayer;
+        options.outputInterop != VideoToolboxOutputInterop::DisplayLayer ||
+        codecCarriesNoConfigurationRecord(sessionCodec);
     CFNumberRef pixelFormatNumber = nullptr;
     if (pinOutputPixelFormat) {
       const std::int32_t pixelFormatValue =
@@ -2908,17 +2997,27 @@ bool VideoToolboxDecoder::configure(
   const bool admittedCodec =
       configuration.codec == kCMVideoCodecType_H264 ||
       configuration.codec == kCMVideoCodecType_HEVC ||
+      // MPEG-2 decodes through VideoToolbox's SOFTWARE decoder on this
+      // platform, so it is admitted without a capability query -- the query
+      // would answer 0 and refuse a stream that demonstrably decodes.
+      configuration.codec == kCMVideoCodecType_MPEG2Video ||
       (configuration.codec == kCMVideoCodecType_VP9 &&
        nativeVideoToolboxSupportsVp9()) ||
       (configuration.codec == kCMVideoCodecType_AV1 &&
        nativeVideoToolboxSupportsAv1());
+  // The record requirement is inverted for MPEG-2 and stated that way: it must
+  // present NO record, because it has none.
+  const bool admittedConfigurationShape =
+      codecCarriesNoConfigurationRecord(configuration.codec)
+          ? configuration.codecConfiguration.empty()
+          : !configuration.codecConfiguration.empty();
   if (!admittedCodec || configuration.codedSize.width <= 0 ||
-      configuration.codedSize.height <= 0 ||
-      configuration.codecConfiguration.empty()) {
+      configuration.codedSize.height <= 0 || !admittedConfigurationShape) {
     assignError(error,
-                "VideoToolbox requires a hardware-decodable "
-                "H.264/HEVC/VP9/AV1 stream, positive dimensions, and an "
-                "avcC/hvcC/vpcC/av1C configuration atom");
+                "VideoToolbox requires a decodable "
+                "H.264/HEVC/VP9/AV1/MPEG-2 stream, positive dimensions, and "
+                "the configuration record shape its codec states "
+                "(avcC/hvcC/vpcC/av1C, or none at all for MPEG-2)");
     return false;
   }
 

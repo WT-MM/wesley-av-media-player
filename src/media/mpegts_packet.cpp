@@ -388,24 +388,38 @@ MediaCodec codecForStreamType(std::uint8_t streamType, bool ac3Descriptor,
       return MediaCodec::Aac;
     case static_cast<std::uint8_t>(TsStreamType::Mpeg1Audio):
     case static_cast<std::uint8_t>(TsStreamType::Mpeg2Audio):
+      // One routing family covers MPEG-1/2 Layer I-III. The exact layer is
+      // read from the frame header at admission and becomes the '.mp1'/'.mp2'/
+      // '.mp3' format tag; MediaCodec::Mp3 is the family, not the layer.
       return MediaCodec::Mp3;
+    case static_cast<std::uint8_t>(TsStreamType::Mpeg2Video):
+      // Appended to MediaCodec 2026-08-20 under the SESSION_HANDOFF amendment.
+      // VideoToolbox decodes this through a software decoder and needs no
+      // out-of-band configuration record.
+      return MediaCodec::Mpeg2Video;
+    case static_cast<std::uint8_t>(TsStreamType::Ac3Atsc):
+      return MediaCodec::Ac3;
+    case static_cast<std::uint8_t>(TsStreamType::Eac3Atsc):
+      return MediaCodec::Eac3;
     case static_cast<std::uint8_t>(TsStreamType::PrivatePes):
       // DVB carries AC-3 as private PES qualified by a descriptor. Without one
       // the stream is genuinely unidentified and must stay Unknown rather than
-      // be guessed at.
-      if (ac3Descriptor || eac3Descriptor || registrationAc3) {
-        return MediaCodec::Unknown;  // see note below
+      // be guessed at. E-AC-3 is checked first because a stream may legally
+      // carry both descriptors and the enhanced one is the more specific fact.
+      if (eac3Descriptor) {
+        return MediaCodec::Eac3;
+      }
+      if (ac3Descriptor || registrationAc3) {
+        return MediaCodec::Ac3;
       }
       return MediaCodec::Unknown;
     default:
       break;
   }
-  // MPEG-2 video (0x02), MPEG-1 video (0x01), AC-3 (0x81) and E-AC-3 (0x87)
-  // have no MediaCodec enumerator today. That is a deliberate, recorded gap:
-  // MediaCodec is a frozen contract and appending to it requires the same
-  // authorization the Vp8 append received. The demuxer therefore reports the
-  // raw stream type in its verdict so the seam above can refuse by name
-  // instead of silently dropping a track.
+  // MPEG-1 video (0x01), MPEG-4 part 2 (0x10), LATM AAC (0x11) and DTS (0x82)
+  // still have no route. That remains a deliberate, recorded gap: the demuxer
+  // reports the raw stream type in its verdict so the seam above refuses by
+  // name instead of silently dropping a track.
   static_cast<void>(ac3Descriptor);
   static_cast<void>(eac3Descriptor);
   static_cast<void>(registrationAc3);
@@ -939,7 +953,9 @@ bool parseAdtsHeader(std::span<const std::byte> bytes,
 bool parseAc3SyncFrame(std::span<const std::byte> bytes,
                        Ac3SyncFrame& frame) noexcept {
   frame = Ac3SyncFrame{};
-  if (bytes.size() < 6) {
+  // Seven bytes, not six: acmod is read out of byte 6 below, and a six-byte
+  // span would read past the end of the span to find it.
+  if (bytes.size() < 7) {
     return false;
   }
   if (byteAt(bytes, 0) != 0x0BU || byteAt(bytes, 1) != 0x77U) {
@@ -965,10 +981,25 @@ bool parseAc3SyncFrame(std::span<const std::byte> bytes,
       96,  120, 144, 168, 192, 240, 288,  336,  384, 480,
       576, 672, 768, 960, 1152, 1344, 1536, 1728, 1920};
   const std::size_t index = static_cast<std::size_t>(frmsizecod) / 2U;
+  // The odd half of each frmsizecod pair carries ONE MORE 16-bit word, and
+  // only at 44.1 kHz. 48 kHz and 32 kHz divide 1,536 samples evenly at every
+  // admitted bit rate, so both codes of a pair name the same size there; 44.1
+  // kHz does not, and A/52 Table 5.18 alternates the frame length to keep the
+  // average bit rate exact.
+  //
+  // Omitting this is not a rounding error, it is a hard framing failure: a
+  // real 128 kb/s 44.1 kHz stream alternates 556 and 558 bytes (measured on
+  // fixtures/ac3.es -- sync words at 0, 556, 1114, 1672, 2228, ... and
+  // frmsizecod alternating 16, 17, 17, 16, 17), so a parser that always
+  // reports the even size walks off the sync word on the second frame of every
+  // PES payload and the whole audio track is refused.
+  const std::uint32_t oddWord =
+      fscod == 1 ? static_cast<std::uint32_t>(frmsizecod & 1U) : 0U;
   const std::uint32_t words =
       fscod == 0 ? kWords48[index]
-                 : (fscod == 1 ? static_cast<std::uint32_t>(kWords441[index])
-                               : kWords32[index]);
+                 : (fscod == 1
+                        ? static_cast<std::uint32_t>(kWords441[index]) + oddWord
+                        : kWords32[index]);
   frame.sampleRate = kRates[fscod];
   frame.frameBytes = words * 2U;
 

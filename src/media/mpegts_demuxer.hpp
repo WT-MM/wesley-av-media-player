@@ -288,6 +288,14 @@ class MpegTsPreparedAsset final
   // which is what makes a file muxed across the 33-bit wrap present a plain
   // monotone timeline starting at zero.
   [[nodiscard]] std::int64_t originTick() const noexcept;
+  // Exported timestamp of the FIRST video access unit. It is zero only when
+  // video is also the earliest stream in the mux; every real ffmpeg transport
+  // stream emits audio a few milliseconds ahead of video, so a plain open at
+  // zero legitimately finds its first video picture slightly later. A media
+  // source needs this to tell that case apart from a seek that really skipped
+  // content, which is the same distinction Matroska draws against its first
+  // Cue.
+  [[nodiscard]] MediaTime videoOriginTime() const noexcept;
 
   [[nodiscard]] MpegTsPlanOutcome planGeneration(
       MediaTime target, MediaSeekMode mode,

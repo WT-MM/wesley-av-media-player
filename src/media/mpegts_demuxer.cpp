@@ -33,8 +33,15 @@ namespace {
 constexpr std::uint32_t kAacFormatTag{0x61616320U};        // 'aac '
 constexpr std::uint32_t kMpegLayer2FormatTag{0x2E6D7032U}; // '.mp2'
 constexpr std::uint32_t kMpegLayer3FormatTag{0x2E6D7033U}; // '.mp3'
+constexpr std::uint32_t kAc3FormatTag{0x61632D33U};        // 'ac-3'
+constexpr std::uint32_t kEnhancedAc3FormatTag{0x65632D33U};// 'ec-3'
 constexpr std::uint32_t kMonoLayoutTag{0x00640001U};
 constexpr std::uint32_t kStereoLayoutTag{0x00650002U};
+
+// ATSC A/52 codes six 256-sample audio blocks per syncframe. E-AC-3 may code
+// 1, 2, 3 or 6; only the six-block shape is admitted, which the media source
+// re-proves per frame from the frame's own byte length rather than assuming.
+constexpr std::uint32_t kAc3SamplesPerSyncFrame{1536};
 
 // How many consecutive sync bytes at a candidate stride prove framing. Ten
 // gives a false-positive probability of 2^-80 against random data while
@@ -337,6 +344,31 @@ struct AssetState {
   std::uint16_t pcrPid{kNullPid};
   TrackFacts video{};
   TrackFacts audio{};
+  // Exact nominal video frame extent in 90 kHz ticks.
+  //
+  // Transport Stream states NO per-sample duration: a PES header carries a
+  // presentation time and nothing about how long the picture is shown. Every
+  // downstream video consumer in this player compares a sample's exact
+  // presentation INTERVAL against the timeline and refuses a sample whose
+  // duration is absent or non-positive (native_video_consumer.mm:1658), so an
+  // interval has to be established at admission rather than left invalid the
+  // way the Matroska path leaves the decode timestamp.
+  //
+  // Two sources, in priority order, and never a guess:
+  //   1. MPEG-2 states frame_rate_code in its sequence header, and 13818-2
+  //      Table 6-4 divides 90 kHz exactly for every legal code including the
+  //      1000/1001 family (90000*1001/30000 = 3003). That is authoritative.
+  //   2. Otherwise the smallest positive DECODE-timestamp delta across the
+  //      first bounded run of access units. Decode order is monotone by
+  //      definition, so for constant-frame-rate content -- which every stream
+  //      this player admits is -- the minimum delta IS the frame extent, and
+  //      B-picture reordering cannot perturb it the way a PTS delta would.
+  // A stream that yields neither is refused by verdict, because publishing a
+  // fabricated interval would make every accurate-seek decision downstream
+  // wrong by an unknown amount.
+  std::uint32_t videoFrameDurationTicks{0};
+  // Extended 90 kHz tick of the first video access unit, before rebasing.
+  std::int64_t videoOriginTick{0};
   bool hasVideo{false};
   bool hasAudio{false};
 
@@ -685,6 +717,13 @@ std::int64_t MpegTsPreparedAsset::originTick() const noexcept {
   return impl_->state->originTick;
 }
 
+MediaTime MpegTsPreparedAsset::videoOriginTime() const noexcept {
+  const AssetState& state = *impl_->state;
+  const std::optional<MediaTime> time =
+      rebasedTime(state.videoOriginTick, state.originTick);
+  return time.value_or(MediaTime{});
+}
+
 // ---------------------------------------------------------------------------
 // Cursor
 // ---------------------------------------------------------------------------
@@ -754,6 +793,15 @@ finishUnit(const AssetState& state, StreamWalk& walk, MediaTrackId track,
   }
 
   if (walk.video) {
+    // The exact nominal frame extent established at admission, reduced against
+    // the 90 kHz base so the interval arithmetic downstream stays integral.
+    if (state.videoFrameDurationTicks > 0) {
+      const std::optional<MediaTime> extent = mediaTimeFromTicks(
+          static_cast<std::int64_t>(state.videoFrameDurationTicks));
+      if (extent) {
+        sample.duration = *extent;
+      }
+    }
     const std::size_t probeLength =
         walk.probeFilled > walk.headerSkipBytes
             ? static_cast<std::size_t>(walk.probeFilled - walk.headerSkipBytes)
@@ -1430,18 +1478,50 @@ scanPrograms(ReadWindow& window, const MpegTsFraming& framing,
   return MpegTsDemuxError::None;
 }
 
+// How many consecutive video access units the timing scan observes before it
+// is willing to state a frame extent. Eight units is under a third of a second
+// at 25 fps and costs nothing against the 4 MiB program scan that already
+// bounds this pass, while giving seven deltas to take a minimum over -- enough
+// that one dropped or duplicated unit cannot set the answer on its own.
+inline constexpr std::uint32_t kMpegTsTimingUnits{8};
+
 struct FirstUnitFacts {
   std::vector<std::byte> parameterSets;
   std::array<std::byte, 16> audioHeaderBytes{};
+  // Decode timestamps of the first kMpegTsTimingUnits video access units, in
+  // emission (decode) order. StreamWalk always populates a decode tick, using
+  // the presentation timestamp for streams that carry no explicit DTS.
+  std::array<std::int64_t, kMpegTsTimingUnits> videoDecodeTicks{};
   std::uint64_t firstVideoPacket{0};
   std::int64_t firstVideoPts{0};
   std::int64_t firstAudioPts{0};
   std::uint32_t audioHeaderSize{0};
+  std::uint32_t videoDecodeTickCount{0};
   bool hasVideoPts{false};
   bool hasAudioPts{false};
   bool hasParameterSets{false};
   bool hasAudioHeader{false};
 };
+
+// Smallest positive decode-timestamp delta across the observed run, or zero
+// when the run proves nothing. Integer throughout.
+[[nodiscard]] std::uint32_t
+measuredFrameDurationTicks(const FirstUnitFacts& facts) noexcept {
+  std::int64_t best = 0;
+  for (std::uint32_t i = 1; i < facts.videoDecodeTickCount; ++i) {
+    const std::int64_t delta =
+        facts.videoDecodeTicks[i] - facts.videoDecodeTicks[i - 1];
+    if (delta > 0 && (best == 0 || delta < best)) {
+      best = delta;
+    }
+  }
+  // A frame extent above one second is not a frame rate this player admits and
+  // is far more likely to be a timestamp anomaly than a real 1 fps stream.
+  if (best <= 0 || best > kTimestampHz) {
+    return 0;
+  }
+  return static_cast<std::uint32_t>(best);
+}
 
 // One bounded pass that finds, for each selected stream, the first access unit
 // and everything preparation needs from it: the parameter sets that become the
@@ -1509,6 +1589,11 @@ scanFirstUnits(ReadWindow& window, const MpegTsFraming& framing,
             facts.hasVideoPts = true;
             facts.firstVideoPacket = walk->firstPacketOffset;
           }
+          if (walk->hasPts &&
+              facts.videoDecodeTickCount < kMpegTsTimingUnits) {
+            facts.videoDecodeTicks[facts.videoDecodeTickCount] = walk->dtsTick;
+            ++facts.videoDecodeTickCount;
+          }
           if (!facts.hasParameterSets) {
             const AccessUnitScan scan = scanAccessUnit(unit, walk->codec);
             if (scan.hasParameterSets && scan.parameterSetSize > 0 &&
@@ -1547,6 +1632,7 @@ scanFirstUnits(ReadWindow& window, const MpegTsFraming& framing,
     }
     const bool videoDone =
         !wantVideo || (facts.hasVideoPts &&
+                       facts.videoDecodeTickCount >= kMpegTsTimingUnits &&
                        (facts.hasParameterSets || videoCodec == MediaCodec::Unknown));
     const bool audioDone = !wantAudio || (facts.hasAudioPts && facts.hasAudioHeader);
     if (videoDone && audioDone) {
@@ -1626,6 +1712,93 @@ scanFirstUnits(ReadWindow& window, const MpegTsFraming& framing,
     }
   }
   return false;
+}
+
+// Highest presentation timestamp carried by either selected elementary stream,
+// found by scanning the tail of the file.
+//
+// This exists because the PROGRAM CLOCK REFERENCE IS NOT THE END OF THE MEDIA.
+// A PCR states when a byte should arrive at the decoder, and 13818-1's whole
+// buffering model puts the presentation of a picture one end-to-end buffer
+// delay AFTER the byte that carried it. Deriving the duration from the last
+// PCR therefore under-reports by exactly that delay -- measured across this
+// corpus it is 0.73 s to 0.88 s, every time, in the same direction. That is
+// not a rounding error: it shortens the scrubber's range by most of a second,
+// makes seeks near the end unrepresentable, and (the way it was actually
+// found) truncates real audio whenever the short value happens to land on the
+// audio frame grid, which is what made `video.ts` publish 247,424 of its
+// 289,792 decoded frames and then starve the clock.
+//
+// Unwrapping cannot use a TimestampUnwrapper here, because a tail scan has not
+// seen the stream that established the epoch. The PCR-derived end tick is
+// within one buffer delay of the true end, so each raw 33-bit value is lifted
+// into the epoch nearest that anchor -- exact integer arithmetic, and correct
+// across the 33-bit wrap because a wrap period is 26 h 30 m while the
+// ambiguity being resolved is under a second.
+[[nodiscard]] std::int64_t liftNearAnchor(std::uint64_t raw,
+                                          std::int64_t anchor) noexcept {
+  std::int64_t candidate =
+      (anchor / kTimestampModulus) * kTimestampModulus +
+      static_cast<std::int64_t>(raw);
+  while (candidate - anchor > kTimestampWrapThreshold) {
+    candidate -= kTimestampModulus;
+  }
+  while (anchor - candidate > kTimestampWrapThreshold) {
+    candidate += kTimestampModulus;
+  }
+  return candidate;
+}
+
+[[nodiscard]] bool probeLastPresentationTick(ReadWindow& window,
+                                             const MpegTsFraming& framing,
+                                             std::uint16_t videoPid,
+                                             std::uint16_t audioPid,
+                                             std::int64_t anchor,
+                                             std::int64_t& lastTick) noexcept {
+  const std::uint64_t size = window.fileSize();
+  bool found = false;
+  // The same four-window (2 MiB) tail budget probeLastPcr uses, and for the
+  // same reason: it is a bounded refusal boundary rather than an unbounded
+  // hunt backwards through a file.
+  for (int attempt = 1; attempt <= 4 && !found; ++attempt) {
+    const std::uint64_t span =
+        static_cast<std::uint64_t>(attempt) * kMpegTsProbeWindowBytes;
+    const std::uint64_t from = size > span ? size - span : 0;
+    PacketWalker walker(window, framing);
+    std::uint64_t position = alignPacketOffset(framing, from);
+    while (position < size) {
+      std::span<const std::byte> packet;
+      const WalkStatus status = walker.next(position, packet);
+      if (status == WalkStatus::End || status == WalkStatus::Io) {
+        break;
+      }
+      TsPacketHeader header{};
+      if (decodeTsPacket(packet, header) != TsPacketStatus::Ok ||
+          !header.hasPayload || !header.payloadUnitStart ||
+          header.payloadSize == 0) {
+        continue;
+      }
+      if (header.pid != videoPid && header.pid != audioPid) {
+        continue;
+      }
+      PesHeader pes{};
+      if (decodePesHeader(packet.subspan(header.payloadOffset,
+                                         header.payloadSize),
+                          pes) != PesStatus::Ok ||
+          !pes.hasPts) {
+        continue;
+      }
+      const std::int64_t tick = liftNearAnchor(pes.pts, anchor);
+      if (!found || tick > lastTick) {
+        lastTick = tick;
+        found = true;
+      }
+    }
+    if (from == 0) {
+      break;
+    }
+  }
+  return found;
 }
 
 }  // namespace
@@ -1757,12 +1930,13 @@ MpegTsPrepareOutcome prepareMpegTs(std::shared_ptr<SeekableByteReader> reader,
               : std::string("selected mpeg-ts program has no video stream");
       return result;
     }
-    if (videoStream->codec != MediaCodec::H264) {
+    if (videoStream->codec != MediaCodec::H264 &&
+        videoStream->codec != MediaCodec::Mpeg2Video) {
       result.status = MpegTsDemuxStatus::Unsupported;
       result.error = MpegTsDemuxError::UnsupportedStreamType;
       result.message =
-          "mpeg-ts video admission is H.264 only in this slice; HEVC needs "
-          "hvcC synthesis and MPEG-2 needs a MediaCodec enumerator";
+          "mpeg-ts video admission is H.264 and MPEG-2 only; HEVC needs hvcC "
+          "synthesis from in-band VPS/SPS/PPS";
       return result;
     }
 
@@ -1807,11 +1981,36 @@ MpegTsPrepareOutcome prepareMpegTs(std::shared_ptr<SeekableByteReader> reader,
     if (!facts.hasParameterSets) {
       result.status = MpegTsDemuxStatus::Unsupported;
       result.error = MpegTsDemuxError::CodecConfiguration;
-      result.message = "no in-band H.264 parameter sets in the bounded scan";
+      result.message =
+          state->video.codec == MediaCodec::Mpeg2Video
+              ? "no in-band MPEG-2 sequence header in the bounded scan"
+              : "no in-band H.264 parameter sets in the bounded scan";
+      return result;
+    }
+
+    // --- video frame extent -------------------------------------------------
+    // See AssetState::videoFrameDurationTicks for why this is established here
+    // and never left to a downstream guess.
+    if (state->video.codec == MediaCodec::Mpeg2Video) {
+      const std::optional<Mpeg2SequenceHeader> sequence =
+          parseMpeg2SequenceHeader(facts.parameterSets);
+      if (sequence) {
+        state->videoFrameDurationTicks =
+            mpeg2FrameDurationTicks(sequence->frameRateCode);
+      }
+    }
+    if (state->videoFrameDurationTicks == 0) {
+      state->videoFrameDurationTicks = measuredFrameDurationTicks(facts);
+    }
+    if (state->videoFrameDurationTicks == 0) {
+      result.error = MpegTsDemuxError::InvalidTimeline;
+      result.message =
+          "no exact video frame extent could be established from the stream";
       return result;
     }
 
     // --- timeline ----------------------------------------------------------
+    state->videoOriginTick = facts.firstVideoPts;
     state->originTick = facts.hasAudioPts
                             ? std::min(facts.firstVideoPts, facts.firstAudioPts)
                             : facts.firstVideoPts;
@@ -1827,14 +2026,31 @@ MpegTsPrepareOutcome prepareMpegTs(std::shared_ptr<SeekableByteReader> reader,
       TimestampUnwrapper pcrUnwrap;
       const std::int64_t first = pcrUnwrap.extend(firstPcrBase);
       const std::int64_t last = pcrUnwrap.extend(lastPcrBase);
-      if (last > first) {
+      std::int64_t endTick = last;
+      // The last PCR is a floor on the end of the media, never the end itself.
+      // Prefer the highest presentation timestamp either selected stream
+      // carries, extended by one video frame so the final picture's whole
+      // interval is inside the timeline.
+      std::int64_t lastPresentation = 0;
+      if (probeLastPresentationTick(
+              window, state->framing, state->video.pid,
+              state->hasAudio ? state->audio.pid : kNullPid, last,
+              lastPresentation)) {
+        const std::int64_t presentationEnd =
+            lastPresentation +
+            static_cast<std::int64_t>(state->videoFrameDurationTicks);
+        if (presentationEnd > endTick) {
+          endTick = presentationEnd;
+        }
+      }
+      if (endTick > first) {
         const std::optional<MediaTime> span =
-            mediaTimeFromTicks(last - state->originTick);
+            mediaTimeFromTicks(endTick - state->originTick);
         if (span && span->value > 0) {
           duration = *span;
         }
       }
-      state->endTick = last;
+      state->endTick = endTick;
     }
     if (!duration.valid()) {
       result.error = MpegTsDemuxError::InvalidTimeline;
@@ -1916,7 +2132,53 @@ MpegTsPrepareOutcome prepareMpegTs(std::shared_ptr<SeekableByteReader> reader,
     descriptor->duration = duration;
     descriptor->inventory = inventory;
 
-    {
+    if (state->video.codec == MediaCodec::Mpeg2Video) {
+      // MPEG-2 needs NO decoder configuration record at all: the sequence
+      // header is in-band and CMVideoFormatDescriptionCreate takes a null
+      // extensions dictionary (measured in scratchpad/vt_mpeg2_probe.mm).
+      // `inspectVideoCodecConfiguration` therefore has nothing to inspect, and
+      // the geometry gate it would have applied is restated by hand here so
+      // MPEG-2 is held to the same admission envelope as every other codec.
+      const std::optional<Mpeg2SequenceHeader> sequence =
+          parseMpeg2SequenceHeader(facts.parameterSets);
+      if (!sequence || sequence->width == 0 || sequence->height == 0) {
+        result.status = MpegTsDemuxStatus::Unsupported;
+        result.error = MpegTsDemuxError::CodecConfiguration;
+        result.message = "in-band MPEG-2 sequence header has no geometry";
+        return result;
+      }
+      const std::uint64_t pixels = static_cast<std::uint64_t>(sequence->width) *
+                                   static_cast<std::uint64_t>(sequence->height);
+      if (sequence->width > state->limits.maximumCodedWidth ||
+          sequence->height > state->limits.maximumCodedHeight ||
+          pixels > state->limits.maximumCodedPixels) {
+        result.status = MpegTsDemuxStatus::Unsupported;
+        result.error = MpegTsDemuxError::CodecConfiguration;
+        result.message = "mpeg-2 geometry exceeds the native admission ceiling";
+        return result;
+      }
+      MediaTrackDescriptor track{};
+      track.id = state->video.id;
+      track.kind = MediaTrackKind::Video;
+      track.codec = MediaCodec::Mpeg2Video;
+      track.timeBase = MediaTime{1, kTimestampHz};
+      track.duration = duration;
+      // The validator admits a None configuration kind only with an empty
+      // configuration vector, which is exactly the truth for MPEG-2.
+      track.codecConfigurationKind = MediaCodecConfigurationKind::None;
+      track.codecConfiguration.clear();
+      MediaVideoFormat format{};
+      format.codedWidth = sequence->width;
+      format.codedHeight = sequence->height;
+      format.displayWidth = sequence->width;
+      format.displayHeight = sequence->height;
+      format.bitsPerComponent = 8;
+      format.progressive = true;
+      format.sampleFormat = MediaVideoSampleFormat::Yuv420EightBit;
+      track.video = format;
+      descriptor->selectedVideo = track.id;
+      descriptor->tracks.push_back(std::move(track));
+    } else {
       std::vector<std::byte> avcc;
       if (!buildAvcCFromAnnexB(facts.parameterSets, avcc)) {
         result.status = MpegTsDemuxStatus::Unsupported;
@@ -2024,6 +2286,43 @@ MpegTsPrepareOutcome prepareMpegTs(std::shared_ptr<SeekableByteReader> reader,
               admitted = true;
             }
           }
+        }
+      } else if (state->audio.codec == MediaCodec::Ac3 ||
+                 state->audio.codec == MediaCodec::Eac3) {
+        // AC-3 and E-AC-3 restate every parameter in each syncframe and take
+        // NO magic cookie -- measured by the parallel Matroska audio lane in
+        // scratchpad/sweep_probe.mm, where AudioConverterNew succeeds with the
+        // cookie property never set. This reuses that codec-level admission,
+        // not Matroska's block-level framing: a TS PES carries whole
+        // syncframes back to back and the media source splits them itself.
+        Ac3SyncFrame frame{};
+        if (facts.hasAudioHeader && parseAc3SyncFrame(audioHeader, frame) &&
+            frame.channels > 0 &&
+            frame.channels <= state->limits.maximumAudioChannels &&
+            frame.sampleRate > 0) {
+          track.timeBase =
+              MediaTime{1, static_cast<std::int32_t>(frame.sampleRate)};
+          track.codecConfigurationKind = MediaCodecConfigurationKind::None;
+          format.sampleRate = static_cast<double>(frame.sampleRate);
+          format.channels = frame.channels;
+          format.formatTag = state->audio.codec == MediaCodec::Eac3
+                                 ? kEnhancedAc3FormatTag
+                                 : kAc3FormatTag;
+          // A-52 codes 6 blocks of 256 samples per syncframe. E-AC-3 may code
+          // 1, 2, 3 or 6; the parallel lane measured that only the 6-block
+          // shape is admitted, and a short frame is refused below by the
+          // per-frame walk in the media source rather than guessed at here.
+          format.framesPerPacket = kAc3SamplesPerSyncFrame;
+          format.channelLayoutTag =
+              frame.channels == 1 ? kMonoLayoutTag
+              : frame.channels == 2
+                  ? kStereoLayoutTag
+                  : 0U;
+          format.channelLayoutPresent = frame.channels <= 2;
+          state->audio.sampleRate = frame.sampleRate;
+          state->audio.channels = frame.channels;
+          state->audio.samplesPerFrame = kAc3SamplesPerSyncFrame;
+          admitted = frame.channels <= 2;
         }
       } else if (state->audio.codec == MediaCodec::Mp3) {
         MpegAudioFrame frame{};

@@ -2,6 +2,7 @@
 
 #include "platform/macos/avfoundation_preview_source.hpp"
 #include "platform/macos/matroska_preview_source.hpp"
+#include "platform/macos/mpegts_preview_source.hpp"
 
 #include <utility>
 
@@ -21,6 +22,8 @@ std::unique_ptr<NativePreviewSource> createNativePreviewSource(
     return AVFoundationPreviewSource::create(std::move(binding));
   case media::MediaSourceBackendKind::Matroska:
     return MatroskaPreviewSource::create(std::move(binding));
+  case media::MediaSourceBackendKind::MpegTs:
+    return MpegTsPreviewSource::create(std::move(binding));
   }
   return {};
 }

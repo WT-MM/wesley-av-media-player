@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -28,7 +29,10 @@ using wam::media::MediaCodec;
 using wam::media::MediaCodecConfigurationKind;
 using wam::media::MediaSampleKind;
 using wam::media::MediaSeekMode;
+using wam::media::MediaSourceDescriptor;
 using wam::media::MediaSourceOpenOptions;
+using wam::media::MediaTrackDescriptor;
+using wam::media::findMediaTrack;
 using wam::media::MediaTime;
 using wam::media::MediaTimeOrder;
 using wam::media::MediaTrackKind;
@@ -548,11 +552,11 @@ void testProgramMapParsing() {
          "the DVB AC-3 descriptor is recognised on a private PES stream");
   expect(table.streams[2].kind == MediaTrackKind::Audio,
          "a descriptor-qualified private stream is audio");
-  expect(table.streams[2].codec == MediaCodec::Unknown,
-         "AC-3 has no MediaCodec enumerator and must not be silently mapped");
+  expect(table.streams[2].codec == MediaCodec::Ac3,
+         "a DVB AC-3 descriptor routes a private PES stream to AC-3");
   expect(table.streams[3].kind == MediaTrackKind::Video &&
-             table.streams[3].codec == MediaCodec::Unknown,
-         "MPEG-2 video is recognised as video but has no enumerator yet");
+             table.streams[3].codec == MediaCodec::Mpeg2Video,
+         "stream type 0x02 routes to MPEG-2 video");
   expect(table.streams[4].codec == MediaCodec::Mp3 &&
              table.streams[4].kind == MediaTrackKind::Audio,
          "stream type 0x03 routes to the MPEG audio family");
@@ -801,6 +805,31 @@ void testElementaryAudioFraming() {
   Bytes badAc3 = ac3;
   badAc3[1] = octet(0x78);
   expect(!parseAc3SyncFrame(badAc3, frame), "a broken AC-3 syncword is refused");
+
+  // 44.1 kHz alternates its frame length to keep the average bit rate exact,
+  // and the odd half of each frmsizecod pair is one 16-bit word longer. A real
+  // 128 kb/s mono stream therefore runs 556, 558, 558, 556, 558, ... and a
+  // parser that reports the even size for both codes walks off the sync word
+  // on the second frame of every PES payload. Both halves are pinned here.
+  Bytes ac3even;
+  append(ac3even, {0x0B, 0x77, 0x00, 0x00, 0x50, 0x40, 0x20});  // fscod 1, code 16
+  expect(parseAc3SyncFrame(ac3even, frame), "a 44.1 kHz AC-3 frame parses");
+  expect(frame.sampleRate == 44'100, "fscod 1 is 44.1 kHz");
+  expect(frame.frameBytes == 556,
+         "frmsizecod 16 at 44.1 kHz is exactly 556 bytes");
+  Bytes ac3odd;
+  append(ac3odd, {0x0B, 0x77, 0x00, 0x00, 0x51, 0x40, 0x20});  // fscod 1, code 17
+  expect(parseAc3SyncFrame(ac3odd, frame), "the odd pair half parses");
+  expect(frame.frameBytes == 558,
+         "frmsizecod 17 at 44.1 kHz is exactly 558 bytes -- one word more");
+  Bytes ac348odd;
+  append(ac348odd, {0x0B, 0x77, 0x00, 0x00, 0x01, 0x40, 0x20});  // fscod 0, code 1
+  expect(parseAc3SyncFrame(ac348odd, frame) && frame.frameBytes == 128,
+         "48 kHz frame sizes do NOT alternate: both halves are 128 bytes");
+  Bytes shortAc3 = ac3;
+  shortAc3.resize(6);
+  expect(!parseAc3SyncFrame(shortAc3, frame),
+         "a span too short to hold acmod is refused rather than read past");
 
   // MPEG-1 Layer II, 44.1 kHz, 128 kbit/s stereo.
   Bytes mp2;
@@ -1488,13 +1517,14 @@ void testFileIdentityAndCancellation() {
 
 void testUnsupportedStreamTypeVerdicts() {
   const std::filesystem::path root = fixtureRoot();
+  // HEVC is the only video codec still outside the envelope, and the point of
+  // the test is that it is refused BY NAME and as an envelope verdict, so the
+  // session falls back cleanly instead of reporting a protocol fault.
   struct Case {
     const char* file;
     const char* label;
   };
-  const std::array<Case, 3> cases{{
-      {"mpeg2-mp2.ts", "mpeg2-mp2.ts (MPEG-2 video)"},
-      {"mpeg2-mp3.ts", "mpeg2-mp3.ts (MPEG-2 video)"},
+  const std::array<Case, 1> cases{{
       {"hevc-ac3.ts", "hevc-ac3.ts (HEVC)"},
   }};
   for (const Case& entry : cases) {
@@ -1504,9 +1534,6 @@ void testUnsupportedStreamTypeVerdicts() {
       continue;
     }
     const MpegTsPrepareOutcome outcome = prepareMpegTsLocalFile(path, {});
-    // These are Unsupported by design in this slice, and the point of the test
-    // is that they are refused BY NAME and as an envelope verdict, so the
-    // session falls back cleanly instead of reporting a protocol fault.
     expect(outcome.status == MpegTsDemuxStatus::Unsupported,
            "a stream outside the admitted codec envelope is Unsupported");
     expect(outcome.error == MpegTsDemuxError::UnsupportedStreamType,
@@ -1517,6 +1544,157 @@ void testUnsupportedStreamTypeVerdicts() {
               << mpegTsDemuxErrorName(outcome.error) << ": " << outcome.message
               << '\n';
   }
+}
+
+// MPEG-2 video and the MPEG-audio/AC-3 families are now inside the envelope.
+// This is the other half of the verdict test: what used to be refused by name
+// must now be admitted with an exact descriptor, a positive frame extent, and
+// -- where the audio codec is routable -- a selected audio track.
+void testMpeg2AndAc3Admission() {
+  const std::filesystem::path root = fixtureRoot();
+  struct Case {
+    const char* file;
+    const char* label;
+    MediaCodec video;
+    MediaCodec audio;
+  };
+  const std::array<Case, 3> cases{{
+      {"mpeg2-mp2.ts", "mpeg2-mp2.ts", MediaCodec::Mpeg2Video, MediaCodec::Mp3},
+      {"mpeg2-mp3.ts", "mpeg2-mp3.ts", MediaCodec::Mpeg2Video, MediaCodec::Mp3},
+      {"h264-ac3.m2ts", "h264-ac3.m2ts", MediaCodec::H264, MediaCodec::Ac3},
+  }};
+  for (const Case& entry : cases) {
+    const std::filesystem::path path = root / entry.file;
+    if (root.empty() || !std::filesystem::exists(path)) {
+      skip(entry.label);
+      continue;
+    }
+    const MpegTsPrepareOutcome outcome = prepareMpegTsLocalFile(path, {});
+    expect(outcome.status == MpegTsDemuxStatus::Ready,
+           "the fixture is admitted");
+    if (outcome.asset == nullptr) {
+      continue;
+    }
+    const MediaSourceDescriptor& descriptor = *outcome.asset->descriptor();
+    expect(descriptor.selectedVideo.has_value(), "a video track is selected");
+    expect(descriptor.selectedAudio.has_value(), "an audio track is selected");
+    const MediaTrackDescriptor* video =
+        findMediaTrack(descriptor, *descriptor.selectedVideo);
+    const MediaTrackDescriptor* audio =
+        descriptor.selectedAudio
+            ? findMediaTrack(descriptor, *descriptor.selectedAudio)
+            : nullptr;
+    expect(video != nullptr && video->codec == entry.video,
+           "the video codec is the expected one");
+    expect(audio != nullptr && audio->codec == entry.audio,
+           "the audio codec is the expected one");
+    if (video != nullptr && entry.video == MediaCodec::Mpeg2Video) {
+      // MPEG-2 needs no decoder configuration record at all, and the
+      // descriptor validator admits a None kind only alongside an empty one.
+      expect(video->codecConfigurationKind ==
+                     MediaCodecConfigurationKind::None &&
+                 video->codecConfiguration.empty(),
+             "MPEG-2 carries no configuration record");
+    }
+    // Every video sample must state a positive interval: the native video
+    // consumer refuses a sample whose duration is absent or non-positive.
+    const MpegTsPlanOutcome planned =
+        outcome.asset->planGeneration(MediaTime{0, 1}, MediaSeekMode::Accurate);
+    expect(planned.status == MpegTsDemuxStatus::Ready && planned.plan.has_value(),
+           "a generation plans from the origin");
+    if (!planned.plan) {
+      continue;
+    }
+    std::unique_ptr<MpegTsCursor> cursor =
+        outcome.asset->makeVideoCursor(*planned.plan);
+    expect(cursor != nullptr, "a video cursor is created");
+    std::size_t units = 0;
+    bool everyUnitHasPositiveDuration = true;
+    MediaTime firstDuration{};
+    while (cursor != nullptr && units < 32) {
+      const MpegTsCursorReadResult read = cursor->readNext();
+      const auto* sample = std::get_if<MpegTsCompressedSample>(&read);
+      if (sample == nullptr) {
+        break;
+      }
+      if (units == 0) {
+        firstDuration = sample->duration;
+      }
+      if (!sample->duration.valid() || sample->duration.value <= 0) {
+        everyUnitHasPositiveDuration = false;
+      }
+      ++units;
+    }
+    expect(units > 0, "the video cursor produces access units");
+    expect(everyUnitHasPositiveDuration,
+           "every video access unit states a positive frame extent");
+    std::cerr << "  " << entry.label << " -> video "
+              << (video != nullptr ? video->video->codedWidth : 0) << "x"
+              << (video != nullptr ? video->video->codedHeight : 0)
+              << ", frame extent " << firstDuration.value << "/"
+              << firstDuration.timescale << " s, audio "
+              << (audio != nullptr ? audio->audio->sampleRate : 0.0) << " Hz x"
+              << (audio != nullptr ? audio->audio->channels : 0U)
+              << ", framesPerPacket "
+              << (audio != nullptr ? audio->audio->framesPerPacket : 0U)
+              << '\n';
+  }
+}
+
+// The exported duration must be the end of the MEDIA, not the last program
+// clock reference.
+//
+// 13818-1's buffering model puts a picture's presentation one end-to-end buffer
+// delay after the byte that carried it, so the last PCR sits most of a second
+// before the last presentation time -- measured across this corpus, 0.73 s to
+// 0.88 s, every time, in the same direction. A PCR-derived duration therefore
+// shortens the scrubber's range, makes seeks near the end unrepresentable, and
+// truncates published audio whenever the short value lands on the audio frame
+// grid. Ground truth is ffprobe's container duration for each fixture.
+void testDurationAgainstGroundTruth() {
+  const std::filesystem::path root = fixtureRoot();
+  struct Case {
+    const char* file;
+    double seconds;  // ffprobe's stated container duration
+  };
+  const std::array<Case, 7> cases{{
+      {"h264-aac.ts", 3.02},
+      {"mpeg2-mp2.ts", 3.01},
+      {"mpeg2-mp3.ts", 3.01},
+      {"h264-ac3.m2ts", 3.01},
+      {"video.ts", 6.02},
+      {"L_video.ts", 20.02},
+      {"seek.ts", 20.02},
+  }};
+  double worst = 0.0;
+  for (const Case& entry : cases) {
+    const std::filesystem::path path = root / entry.file;
+    if (root.empty() || !std::filesystem::exists(path)) {
+      skip(entry.file);
+      continue;
+    }
+    const MpegTsPrepareOutcome outcome = prepareMpegTsLocalFile(path, {});
+    expect(outcome.status == MpegTsDemuxStatus::Ready && outcome.asset,
+           "the fixture is admitted");
+    if (!outcome.asset) {
+      continue;
+    }
+    const auto seconds =
+        wam::media::mediaTimeSeconds(outcome.asset->descriptor()->duration);
+    expect(seconds.has_value(), "the duration is exactly representable");
+    if (!seconds) {
+      continue;
+    }
+    const double error = *seconds - entry.seconds;
+    worst = std::max(worst, std::abs(error));
+    // 50 ms is comfortably above ffprobe's own centisecond quantisation and
+    // one frame of jitter, and an order of magnitude below the 0.73 s the
+    // PCR-derived value was wrong by.
+    expect(std::abs(error) < 0.05,
+           "the duration is within 50 ms of the container's own");
+  }
+  std::cerr << "  duration: worst error " << worst
+            << " s against ffprobe across the corpus\n";
 }
 
 }  // namespace
@@ -1542,6 +1720,8 @@ int main() {
   testSeekAccuracy();
   testFileIdentityAndCancellation();
   testUnsupportedStreamTypeVerdicts();
+  testMpeg2AndAc3Admission();
+  testDurationAgainstGroundTruth();
 
   if (skipped != 0) {
     std::cerr << skipped << " MPEG-TS test group(s) skipped\n";

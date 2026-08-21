@@ -2,6 +2,7 @@
 
 #include "avfoundation_media_source.hpp"
 #include "matroska_media_source.hpp"
+#include "mpegts_media_source.hpp"
 #include "native_silent_timebase.hpp"
 #include "native_video_limits.hpp"
 
@@ -149,6 +150,40 @@ void logNativeFailure(const char* stage, protocol::FailureReason reason,
     }
     return extension == ".mkv" || extension == ".mk3d" ||
            extension == ".mka" || extension == ".webm";
+  } catch (...) {
+    return false;
+  }
+}
+
+// The same extension-only statement for MPEG-2 Transport Stream.
+//
+// This is a BEHAVIOURAL CHANGE and it is deliberate rather than quiet: `.ts`
+// already reached NativeVideoDemuxPreference::ProbeAvFoundation, and
+// AVFoundation can open some transport streams, so routing them here moves
+// files that already worked onto a new path. The mitigation is structural
+// rather than hopeful -- every refusal in the MPEG-TS demuxer is an
+// `Unsupported` verdict rather than a `Failed` one, so anything outside its
+// envelope (HEVC, DTS, LATM AAC, a program with no video) falls back through
+// the single existing rejection route instead of reporting a protocol fault.
+//
+// `.mpg`/`.mpeg` are deliberately NOT included. Those extensions name MPEG
+// PROGRAM streams far more often than transport streams, and a program stream
+// is a different container this demuxer would refuse at its first sync-byte
+// probe. Sending them here would trade a working AVFoundation route for a
+// guaranteed fallback.
+[[nodiscard]] bool mpegTsLocalContainer(
+    const std::filesystem::path& path) noexcept {
+  try {
+    std::string extension = path.extension().string();
+    if (extension.empty() || extension.front() != '.') {
+      return false;
+    }
+    for (char& character : extension) {
+      if (character >= 'A' && character <= 'Z') {
+        character = static_cast<char>(character - 'A' + 'a');
+      }
+    }
+    return extension == ".ts" || extension == ".m2ts" || extension == ".mts";
   } catch (...) {
     return false;
   }
@@ -1221,6 +1256,8 @@ struct NativeMediaSession::Impl final {
       std::unique_ptr<media::MediaSource> backendSource;
       if (matroskaLocalContainer(binding.localPath)) {
         backendSource = std::make_unique<MatroskaMediaSource>();
+      } else if (mpegTsLocalContainer(binding.localPath)) {
+        backendSource = std::make_unique<MpegTsMediaSource>();
       } else {
         backendSource = std::make_unique<AVFoundationMediaSource>();
       }

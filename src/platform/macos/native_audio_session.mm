@@ -167,7 +167,11 @@ void assignError(std::string* error, const char* message) noexcept {
   case media::MediaCodec::Alac:
     return track.audio->formatTag == kAudioFormatAppleLossless;
   case media::MediaCodec::Mp3:
-    return track.audio->formatTag == kAudioFormatMPEGLayer3;
+    // The routing family, not one layer. Layer II reaches this arm from
+    // MPEG-TS stream types 0x03/0x04, and it is admitted here for exactly the
+    // measured reason stated at the matching arm in native_audio_converter.mm.
+    return track.audio->formatTag == kAudioFormatMPEGLayer3 ||
+           track.audio->formatTag == kAudioFormatMPEGLayer2;
   case media::MediaCodec::Opus:
     return track.audio->formatTag == kAudioFormatOpus;
   case media::MediaCodec::Vorbis:

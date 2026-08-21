@@ -107,6 +107,16 @@ enum class MediaCodec : std::uint8_t {
   Ac3,
   Eac3,
   Flac,
+  // Appended 2026-08-20 under the same APPEND-ONLY amendment, for
+  // MPEG-2-in-Transport-Stream. Every value above keeps its existing ordinal.
+  // VideoToolbox decodes MPEG-2 on Apple Silicon through a SOFTWARE decoder --
+  // VTIsHardwareDecodeSupported(kCMVideoCodecType_MPEG2Video) is 0 and
+  // UsingHardwareAcceleratedVideoDecoder is unavailable, measured 2026-08-20 --
+  // so this is the second video codec here that is not a hardware VideoToolbox
+  // codec, alongside Vp8. It needs NO codec configuration record: the sequence
+  // header is in-band and CMVideoFormatDescriptionCreate takes a null
+  // extensions dictionary.
+  Mpeg2Video,
 };
 
 enum class MediaCodecConfigurationKind : std::uint8_t {
@@ -546,6 +556,11 @@ struct MediaSourceOpenOptions {
 enum class MediaSourceBackendKind : std::uint8_t {
   AVFoundation,
   Matroska,
+  // Appended 2026-08-20 under the same APPEND-ONLY amendment. MPEG-2 Transport
+  // Stream is demuxed by src/media/mpegts_demuxer.*; unlike the two above it
+  // carries an explicit PES DTS, which is why its media source keys the A/V
+  // merge on real decode timestamps rather than on a synthetic ordering lead.
+  MpegTs,
 };
 
 class MediaSourcePreparedContext {

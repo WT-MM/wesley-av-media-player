@@ -186,9 +186,15 @@ constexpr std::uint64_t kMaximumSequentialAdvanceSeconds = 1;
          preview_protocol::validLive(binding.acceptedThrough) &&
          track != nullptr && track->video->codedWidth != 0 &&
          track->video->codedHeight != 0 &&
-         !track->codecConfiguration.empty() &&
+         // MPEG-2 is the one admitted codec with NO decoder configuration
+         // record: its sequence header is in band and an empty vector is its
+         // only correct descriptor. Every other codec must present one.
+         (track->codec == media::MediaCodec::Mpeg2Video
+              ? track->codecConfiguration.empty()
+              : !track->codecConfiguration.empty()) &&
          (track->codec == media::MediaCodec::H264 ||
-          track->codec == media::MediaCodec::Hevc);
+          track->codec == media::MediaCodec::Hevc ||
+          track->codec == media::MediaCodec::Mpeg2Video);
 }
 
 [[nodiscard]] CMSampleBufferRef nativeSample(
@@ -403,13 +409,20 @@ struct NativePreviewFrameLane::Impl final {
         return false;
       }
       const media::MediaVideoFormat& video = *track->video;
+      // MPEG-2's only decoder on this platform is software, so requiring
+      // hardware here fails VTDecompressionSessionCreate with -12906 on a
+      // stream the main playback lane decodes perfectly well. It still
+      // PREFERS hardware, exactly as the main video consumer does.
+      const bool requireHardwareDecode =
+          track->codec != media::MediaCodec::Mpeg2Video;
       const VideoStreamConfiguration configuration{
-          track->codec == media::MediaCodec::H264
-              ? kCMVideoCodecType_H264
+          track->codec == media::MediaCodec::H264 ? kCMVideoCodecType_H264
+          : track->codec == media::MediaCodec::Mpeg2Video
+              ? kCMVideoCodecType_MPEG2Video
               : kCMVideoCodecType_HEVC,
           {static_cast<std::int32_t>(video.codedWidth),
            static_cast<std::int32_t>(video.codedHeight)},
-          track->codecConfiguration, true, true,
+          track->codecConfiguration, true, requireHardwareDecode,
           binding.activePlaybackGeneration.value};
       std::string configurationError;
       if (!decoder.configure(configuration, sink, &configurationError)) {
