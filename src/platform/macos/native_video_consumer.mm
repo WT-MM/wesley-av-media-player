@@ -295,6 +295,19 @@ void assignError(std::string* error, const char* message) {
     // that is acceptable.
     case media::MediaCodec::Mpeg2Video:
       return true;
+    // MPEG-4 Part 2 is the fourth answer again. Its VideoToolbox decoder is
+    // software like MPEG-2's (VTIsHardwareDecodeSupported is 0 and
+    // UsingHardwareAcceleratedVideoDecoder is unavailable, measured in
+    // scratchpad/vt_asp_probe2.mm on 2026-08-20), so it is likewise admitted
+    // without a capability query that would answer 0. What it does NOT get is
+    // an unconditional yes to the whole codec: Apple's decoder implements
+    // SIMPLE PROFILE only, and Advanced Simple Profile -- Xvid, DivX 4/5/6,
+    // anything with B-VOPs or quarter-pel -- fails session creation outright.
+    // That gate is enforced upstream, on the bitstream headers, by
+    // media::inspectMpeg4VisualHeaders(); by the time a track reaches here its
+    // profile has already been proven.
+    case media::MediaCodec::Mpeg4Visual:
+      return true;
     case media::MediaCodec::Vp9:
       return nativeVideoToolboxSupportsVp9();
     case media::MediaCodec::Av1:
@@ -325,6 +338,8 @@ void assignError(std::string* error, const char* message) {
       return kWamVideoCodecTypeVp8;
     case media::MediaCodec::Mpeg2Video:
       return kCMVideoCodecType_MPEG2Video;
+    case media::MediaCodec::Mpeg4Visual:
+      return kCMVideoCodecType_MPEG4Video;
     default:
       return kCMVideoCodecType_H264;
   }
@@ -359,6 +374,13 @@ void assignError(std::string* error, const char* message) {
       (track.codec == media::MediaCodec::Vp8 &&
        track.codecConfigurationKind !=
            media::MediaCodecConfigurationKind::VpcC) ||
+      // MPEG-4 Part 2's record is the esds the demuxer synthesized from the
+      // Matroska CodecPrivate headers. CodecPrivate is the enumerator that
+      // names an opaque codec-private configuration record; there is no Esds
+      // enumerator and adding one is not authorised.
+      (track.codec == media::MediaCodec::Mpeg4Visual &&
+       track.codecConfigurationKind !=
+           media::MediaCodecConfigurationKind::CodecPrivate) ||
       // The inverse of every line above it: MPEG-2 has no decoder
       // configuration record, so it must present NONE and an empty vector.
       // Admitting a record here would let a malformed descriptor reach
@@ -1489,8 +1511,13 @@ media::NativeMediaConsumeResult NativeVideoConsumer::configure(
   // VTDecompressionSessionCreate with kVTCouldNotFindVideoDecoderErr (-12906)
   // and refuses a stream that demonstrably decodes. It still PREFERS hardware,
   // which costs nothing and keeps the request identical for every codec that
-  // has a block.
-  const bool requireHardwareDecode = track.codec != media::MediaCodec::Mpeg2Video;
+  // has a block. MPEG-4 Part 2 is the second such codec:
+  // VTIsHardwareDecodeSupported(kCMVideoCodecType_MPEG4Video) is 0 and
+  // UsingHardwareAcceleratedVideoDecoder is unavailable on the session,
+  // measured 2026-08-20.
+  const bool requireHardwareDecode =
+      track.codec != media::MediaCodec::Mpeg2Video &&
+      track.codec != media::MediaCodec::Mpeg4Visual;
   const VideoStreamConfiguration configuration{
       codec,
       {static_cast<std::int32_t>(video.codedWidth),

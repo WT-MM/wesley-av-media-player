@@ -282,6 +282,17 @@ CMVideoFormatDescriptionRef createMatroskaVideoFormatDescription(
     // libvpx needs no configuration record at all.
     codec = kWamVideoCodecTypeVp8;
     atomName = CFSTR("vpcC");
+  } else if (track.codec == MediaCodec::Mpeg4Visual &&
+             track.codecConfigurationKind ==
+                 MediaCodecConfigurationKind::CodecPrivate) {
+    // MPEG-4 Part 2 Simple Profile. The demuxer already turned the Matroska
+    // CodecPrivate headers into the ES_Descriptor CoreMedia demands, so the
+    // record travels verbatim exactly like avcC and hvcC. Measured: the raw
+    // headers in band, and an ES_Descriptor without the esds box's four
+    // version/flags bytes, both fail VTDecompressionSessionCreate with
+    // kVTVideoDecoderBadDataErr; this shape decodes.
+    codec = kCMVideoCodecType_MPEG4Video;
+    atomName = CFSTR("esds");
   } else {
     return nullptr;
   }

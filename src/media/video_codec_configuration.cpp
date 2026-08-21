@@ -2393,7 +2393,513 @@ inspectVpcC(std::span<const std::uint8_t> bytes,
   return {Error::None, result};
 }
 
+// ---------------------------------------------------------------------------
+// MPEG-4 Part 2 (ISO/IEC 14496-2) headers, and the esds that carries them.
+// ---------------------------------------------------------------------------
+
+// ISO/IEC 14496-2 Table 6-3. VideoObject occupies 0x00..0x1F and
+// VideoObjectLayer 0x20..0x2F; the rest are single-byte identities.
+constexpr std::uint8_t kMpeg4VideoObjectFirst{0x00};
+constexpr std::uint8_t kMpeg4VideoObjectLast{0x1F};
+constexpr std::uint8_t kMpeg4VideoObjectLayerFirst{0x20};
+constexpr std::uint8_t kMpeg4VideoObjectLayerLast{0x2F};
+constexpr std::uint8_t kMpeg4VopStartCode{0xB6};
+constexpr std::uint8_t kMpeg4VisualObjectSequenceStartCode{0xB0};
+constexpr std::uint8_t kMpeg4VisualObjectSequenceEndCode{0xB1};
+constexpr std::uint8_t kMpeg4UserDataStartCode{0xB2};
+constexpr std::uint8_t kMpeg4VisualObjectStartCode{0xB5};
+
+// The only video_object_type_indication and video_object_layer_verid pair
+// Apple's decoder accepts. See the header for the measurement that establishes
+// this and for why the profile byte is not the gate.
+constexpr std::uint32_t kMpeg4SimpleVideoObjectType{1};
+constexpr std::uint32_t kMpeg4Version1Verid{1};
+
+// ISO/IEC 14496-2 Table G-1, the Simple Profile rows: levels 1, 2 and 3 are
+// 0x01..0x03, and the later-added levels 0 and 0b are 0x08 and 0x09. Every
+// other value names a profile whose VideoObjectLayer this parser refuses
+// anyway; requiring agreement between the two means a stream that mislabels
+// itself in either direction is refused rather than silently mis-decoded.
+[[nodiscard]] constexpr bool
+mpeg4SimpleProfileIndication(std::uint8_t profileAndLevel) noexcept {
+  return profileAndLevel == 0x01U || profileAndLevel == 0x02U ||
+         profileAndLevel == 0x03U || profileAndLevel == 0x08U ||
+         profileAndLevel == 0x09U;
+}
+
+// ISO/IEC 14496-2 6.3.3: the fixed_vop_time_increment field is as many bits as
+// it takes to represent vop_time_increment_resolution - 1, and never fewer
+// than one. Exact integer bit-length arithmetic -- no log2 through double.
+[[nodiscard]] constexpr std::size_t
+mpeg4TimeIncrementBits(std::uint32_t resolution) noexcept {
+  std::size_t bits = 0;
+  for (std::uint32_t remaining = resolution - 1U; remaining != 0U;
+       remaining >>= 1U) {
+    ++bits;
+  }
+  return bits == 0U ? std::size_t{1} : bits;
+}
+
+struct Mpeg4VisualHeaders {
+  std::span<const std::uint8_t> visualObject;
+  std::span<const std::uint8_t> videoObjectLayer;
+  std::uint8_t profileAndLevel{0};
+  bool sequenceSeen{false};
+};
+
+// Splits the record on start codes. The record must BEGIN with one, must carry
+// a VisualObjectSequence (the only source of profile_and_level_indication) and
+// a VideoObjectLayer, and must carry no VOP: a configuration record holds
+// headers, and coded frame data hiding inside one is a malformed record rather
+// than something to skip past.
+[[nodiscard]] bool
+splitMpeg4VisualHeaders(std::span<const std::uint8_t> bytes,
+                        Mpeg4VisualHeaders &out) noexcept {
+  if (bytes.size() < 5U || bytes[0] != 0U || bytes[1] != 0U ||
+      bytes[2] != 1U) {
+    return false;
+  }
+  std::size_t index = 0;
+  while (index + 3U < bytes.size()) {
+    if (bytes[index] != 0U || bytes[index + 1U] != 0U ||
+        bytes[index + 2U] != 1U) {
+      ++index;
+      continue;
+    }
+    const std::uint8_t code = bytes[index + 3U];
+    const std::size_t payload = index + 4U;
+    // Find where this element's payload ends: the next start code, or the end.
+    std::size_t next = payload;
+    while (next + 3U <= bytes.size()) {
+      if (next + 2U < bytes.size() && bytes[next] == 0U &&
+          bytes[next + 1U] == 0U && bytes[next + 2U] == 1U) {
+        break;
+      }
+      ++next;
+    }
+    if (next + 3U > bytes.size()) {
+      next = bytes.size();
+    }
+    if (code == kMpeg4VopStartCode) {
+      return false;
+    }
+    if (code == kMpeg4VisualObjectSequenceStartCode) {
+      if (payload >= bytes.size()) {
+        return false;
+      }
+      out.profileAndLevel = bytes[payload];
+      out.sequenceSeen = true;
+    } else if (code == kMpeg4VisualObjectStartCode) {
+      out.visualObject = bytes.subspan(payload, next - payload);
+    } else if (code >= kMpeg4VideoObjectLayerFirst &&
+               code <= kMpeg4VideoObjectLayerLast) {
+      if (out.videoObjectLayer.empty()) {
+        out.videoObjectLayer = bytes.subspan(payload, next - payload);
+      }
+    } else if (code != kMpeg4UserDataStartCode &&
+               code != kMpeg4VisualObjectSequenceEndCode &&
+               !(code >= kMpeg4VideoObjectFirst &&
+                 code <= kMpeg4VideoObjectLast)) {
+      // Anything else (GroupOfVOP, still-texture, mesh, face) does not belong
+      // in a Simple Profile configuration record.
+      return false;
+    }
+    index = next;
+  }
+  return out.sequenceSeen && !out.videoObjectLayer.empty();
+}
+
+// ISO/IEC 14496-2 6.2.2 VisualObject. Everything before video_signal_type is
+// read only to reach it: this element carries the codec's ONLY colour
+// description, and it is optional, which is why an absent one reports no
+// description at all rather than an assumed BT.709.
+[[nodiscard]] bool parseMpeg4VisualObject(std::span<const std::uint8_t> bytes,
+                                          VideoCodecColorFacts &color,
+                                          std::uint32_t &verid) noexcept {
+  PlainBitReader bits(bytes);
+  bool identifierPresent = false;
+  if (!bits.readBit(identifierPresent)) {
+    return false;
+  }
+  verid = kMpeg4Version1Verid;
+  if (identifierPresent) {
+    if (!bits.readBits(4U, verid) || !bits.skipBits(3U)) {
+      return false;
+    }
+  }
+  std::uint32_t visualObjectType = 0;
+  if (!bits.readBits(4U, visualObjectType)) {
+    return false;
+  }
+  // 1 is "video ID"; 2 is still texture. Only the former is a coded video
+  // object layer, which is the only thing this player decodes.
+  if (visualObjectType != 1U) {
+    return false;
+  }
+  bool videoSignalType = false;
+  if (!bits.readBit(videoSignalType)) {
+    return false;
+  }
+  if (!videoSignalType) {
+    return true;
+  }
+  bool videoRange = false;
+  bool colourDescription = false;
+  if (!bits.skipBits(3U) || !bits.readBit(videoRange) ||
+      !bits.readBit(colourDescription)) {
+    return false;
+  }
+  color.videoSignalTypePresent = true;
+  color.fullRange = videoRange;
+  if (!colourDescription) {
+    return true;
+  }
+  std::uint32_t primaries = 0;
+  std::uint32_t transfer = 0;
+  std::uint32_t matrix = 0;
+  if (!bits.readBits(8U, primaries) || !bits.readBits(8U, transfer) ||
+      !bits.readBits(8U, matrix)) {
+    return false;
+  }
+  color.colorDescriptionPresent = true;
+  color.colorPrimaries = static_cast<std::uint8_t>(primaries);
+  color.transferCharacteristics = static_cast<std::uint8_t>(transfer);
+  color.matrixCoefficients = static_cast<std::uint8_t>(matrix);
+  return true;
+}
+
+struct Mpeg4VideoObjectLayer {
+  std::uint32_t videoObjectType{0};
+  std::uint32_t verid{kMpeg4Version1Verid};
+  std::uint32_t shape{0};
+  std::uint32_t chromaFormat{1};
+  std::uint32_t width{0};
+  std::uint32_t height{0};
+  bool controlParametersPresent{false};
+  bool interlaced{false};
+  bool spriteEnabled{false};
+};
+
+// ISO/IEC 14496-2 6.2.3 VideoObjectLayer, parsed only as far as sprite_enable
+// -- the last field this admission has an opinion about. Nothing after it can
+// change the verdict for a rectangular Simple Profile layer.
+[[nodiscard]] bool
+parseMpeg4VideoObjectLayer(std::span<const std::uint8_t> bytes,
+                           Mpeg4VideoObjectLayer &out) noexcept {
+  PlainBitReader bits(bytes);
+  bool randomAccessible = false;
+  if (!bits.readBit(randomAccessible) ||
+      !bits.readBits(8U, out.videoObjectType)) {
+    return false;
+  }
+  bool identifierPresent = false;
+  if (!bits.readBit(identifierPresent)) {
+    return false;
+  }
+  if (identifierPresent) {
+    if (!bits.readBits(4U, out.verid) || !bits.skipBits(3U)) {
+      return false;
+    }
+  }
+  std::uint32_t aspectRatioInfo = 0;
+  if (!bits.readBits(4U, aspectRatioInfo)) {
+    return false;
+  }
+  // 0x0F is extended_PAR: an explicit 8-bit numerator and denominator follow.
+  if (aspectRatioInfo == 0x0FU && !bits.skipBits(16U)) {
+    return false;
+  }
+  bool controlParameters = false;
+  if (!bits.readBit(controlParameters)) {
+    return false;
+  }
+  out.controlParametersPresent = controlParameters;
+  if (controlParameters) {
+    bool lowDelay = false;
+    bool vbvParameters = false;
+    if (!bits.readBits(2U, out.chromaFormat) || !bits.readBit(lowDelay) ||
+        !bits.readBit(vbvParameters)) {
+      return false;
+    }
+    if (vbvParameters) {
+      // first_half_bit_rate(15) marker latter_half_bit_rate(15) marker
+      // first_half_vbv_buffer_size(15) marker latter_half_vbv_buffer_size(3)
+      // first_half_vbv_occupancy(11) marker latter_half_vbv_occupancy(15)
+      // marker -- 79 bits in total, none of which this player consults.
+      if (!bits.skipBits(79U)) {
+        return false;
+      }
+    }
+  }
+  if (!bits.readBits(2U, out.shape)) {
+    return false;
+  }
+  // Grayscale shape in a version 2 or later layer carries a 4-bit extension.
+  // Unreachable for the Simple Profile this admits, but parsing it keeps the
+  // reader honest about where the following marker bit is.
+  if (out.shape == 3U && out.verid != kMpeg4Version1Verid &&
+      !bits.skipBits(4U)) {
+    return false;
+  }
+  bool marker = false;
+  std::uint32_t timeIncrementResolution = 0;
+  if (!bits.readBit(marker) || !marker ||
+      !bits.readBits(16U, timeIncrementResolution) || !bits.readBit(marker) ||
+      !marker) {
+    return false;
+  }
+  if (timeIncrementResolution == 0U) {
+    return false;
+  }
+  bool fixedVopRate = false;
+  if (!bits.readBit(fixedVopRate)) {
+    return false;
+  }
+  if (fixedVopRate &&
+      !bits.skipBits(mpeg4TimeIncrementBits(timeIncrementResolution))) {
+    return false;
+  }
+  // Shape 2 is "binary only", which codes no luma at all and therefore states
+  // no dimensions. It is not a Simple Profile shape and is refused above, but
+  // the reader must not walk off the end while proving that.
+  if (out.shape == 2U) {
+    return true;
+  }
+  if (out.shape == 0U) {
+    if (!bits.readBit(marker) || !marker || !bits.readBits(13U, out.width) ||
+        !bits.readBit(marker) || !marker ||
+        !bits.readBits(13U, out.height) || !bits.readBit(marker) || !marker) {
+      return false;
+    }
+  }
+  bool interlaced = false;
+  bool obmcDisable = false;
+  if (!bits.readBit(interlaced) || !bits.readBit(obmcDisable)) {
+    return false;
+  }
+  out.interlaced = interlaced;
+  std::uint32_t spriteEnable = 0;
+  // One bit in a version 1 layer; two from version 2 onward.
+  if (!bits.readBits(out.verid == kMpeg4Version1Verid ? 1U : 2U,
+                     spriteEnable)) {
+    return false;
+  }
+  out.spriteEnabled = spriteEnable != 0U;
+  return true;
+}
+
+[[nodiscard]] VideoCodecConfigurationInspection
+inspectMpeg4Visual(std::span<const std::uint8_t> bytes,
+                   const VideoCodecConfigurationLimits &limits) noexcept {
+  Mpeg4VisualHeaders headers;
+  if (!splitMpeg4VisualHeaders(bytes, headers)) {
+    return rejected(Error::MalformedRecord);
+  }
+  if (!mpeg4SimpleProfileIndication(headers.profileAndLevel)) {
+    return rejected(Error::UnsupportedProfile);
+  }
+  VideoCodecColorFacts color;
+  std::uint32_t visualObjectVerid = kMpeg4Version1Verid;
+  // The VisualObject element is not optional in a conforming sequence, and it
+  // is the only place a colour description can live.
+  if (headers.visualObject.empty() ||
+      !parseMpeg4VisualObject(headers.visualObject, color,
+                              visualObjectVerid)) {
+    return rejected(Error::MalformedRecord);
+  }
+  Mpeg4VideoObjectLayer layer;
+  if (!parseMpeg4VideoObjectLayer(headers.videoObjectLayer, layer)) {
+    return rejected(Error::MalformedRecord);
+  }
+  // THE GATE. Both fields, and the profile byte, must independently say Simple
+  // Profile version 1 -- this is what VideoToolbox itself enforces, measured.
+  if (layer.videoObjectType != kMpeg4SimpleVideoObjectType ||
+      layer.verid != kMpeg4Version1Verid ||
+      visualObjectVerid != kMpeg4Version1Verid) {
+    return rejected(Error::UnsupportedProfile);
+  }
+  // Everything below is a feature Simple Profile forbids, so a layer that
+  // claims Simple and then uses one is describing an impossible stream.
+  if (layer.shape != 0U || layer.interlaced || layer.spriteEnabled) {
+    return rejected(Error::MalformedRecord);
+  }
+  // chroma_format 1 is 4:2:0 and is the only value Simple Profile defines. It
+  // is only present when vol_control_parameters are, and defaults to 4:2:0.
+  if (layer.controlParametersPresent && layer.chromaFormat != 1U) {
+    return rejected(Error::UnsupportedChromaFormat);
+  }
+  if (layer.width == 0U || layer.height == 0U ||
+      layer.width > limits.maximumWidth ||
+      layer.height > limits.maximumHeight ||
+      layer.width > limits.maximumPixels / layer.height) {
+    return rejected(Error::DimensionLimitExceeded);
+  }
+  if (!supportedSdrColor(color)) {
+    return rejected(Error::UnsupportedColorDescription);
+  }
+
+  VideoCodecConfigurationFacts result;
+  result.codec = MediaCodec::Mpeg4Visual;
+  result.kind = MediaCodecConfigurationKind::CodecPrivate;
+  // Simple Profile is 8-bit 4:2:0 and defines no other sampling.
+  result.sampleFormat = MediaVideoSampleFormat::Yuv420EightBit;
+  result.width = layer.width;
+  result.height = layer.height;
+  result.bitDepth = 8U;
+  result.profile = headers.profileAndLevel;
+  result.nalLengthBytes = 0U;
+  // Simple Profile forbids B-VOPs, so decode order is presentation order and
+  // nothing is ever held back. This zero is what lets the Matroska route carry
+  // the codec with no reorder window at all.
+  result.maximumReorderFrames = 0U;
+  result.color = color;
+  return {Error::None, result};
+}
+
+// Writes an ISO/IEC 14496-1 descriptor length in the four-byte expandable
+// form. Always four bytes so the overhead is a constant the caller can size a
+// buffer from; CoreMedia accepts it (measured) and so does every MP4 parser,
+// because the form is what the standard's own expandable syntax specifies.
+void writeMpeg4DescriptorLength(std::span<std::byte> out, std::size_t offset,
+                                std::size_t length) noexcept {
+  out[offset] =
+      static_cast<std::byte>(((length >> 21U) & 0x7FU) | 0x80U);
+  out[offset + 1U] =
+      static_cast<std::byte>(((length >> 14U) & 0x7FU) | 0x80U);
+  out[offset + 2U] =
+      static_cast<std::byte>(((length >> 7U) & 0x7FU) | 0x80U);
+  out[offset + 3U] = static_cast<std::byte>(length & 0x7FU);
+}
+
+// Unwraps the DecoderSpecificInfo out of the esds this player stores. Reads
+// the descriptor tree rather than assuming the exact bytes buildMpeg4VisualEsds
+// writes, so a record that arrived some other way is still inspected honestly.
+[[nodiscard]] bool
+mpeg4VisualEsdsDecoderSpecificInfo(std::span<const std::uint8_t> esds,
+                                   std::span<const std::uint8_t> &out) noexcept {
+  // version(1) + flags(3), which must be zero.
+  if (esds.size() < 5U || esds[0] != 0U || esds[1] != 0U || esds[2] != 0U ||
+      esds[3] != 0U) {
+    return false;
+  }
+  std::size_t offset = 4U;
+  const auto readDescriptor = [&](std::uint8_t &tag, std::size_t &length,
+                                  std::size_t &payload) noexcept -> bool {
+    if (offset >= esds.size()) {
+      return false;
+    }
+    tag = esds[offset++];
+    length = 0;
+    for (std::size_t index = 0; index < 4U; ++index) {
+      if (offset >= esds.size()) {
+        return false;
+      }
+      const std::uint8_t byte = esds[offset++];
+      length = (length << 7U) | static_cast<std::size_t>(byte & 0x7FU);
+      if ((byte & 0x80U) == 0U) {
+        break;
+      }
+      if (index == 3U) {
+        return false;
+      }
+    }
+    payload = offset;
+    return length <= esds.size() - offset;
+  };
+  std::uint8_t tag = 0;
+  std::size_t length = 0;
+  std::size_t payload = 0;
+  if (!readDescriptor(tag, length, payload) || tag != 0x03U) {
+    return false;
+  }
+  // ES_ID(2) + a flags byte whose optional trailers this player never writes.
+  if (length < 3U || esds[payload + 2U] != 0U) {
+    return false;
+  }
+  offset = payload + 3U;
+  if (!readDescriptor(tag, length, payload) || tag != 0x04U || length < 13U) {
+    return false;
+  }
+  // objectTypeIndication 0x20 is MPEG-4 Visual; streamType 4 is visual.
+  if (esds[payload] != 0x20U || (esds[payload + 1U] >> 2U) != 0x04U) {
+    return false;
+  }
+  // The DecoderConfigDescriptor's declared length bounds everything nested
+  // inside it. Enforcing that is what makes a wrong length a parse failure
+  // rather than a record that happens to decode anyway.
+  const std::size_t decoderConfigEnd = payload + length;
+  offset = payload + 13U;
+  if (!readDescriptor(tag, length, payload) || tag != 0x05U || length == 0U ||
+      payload + length != decoderConfigEnd) {
+    return false;
+  }
+  out = esds.subspan(payload, length);
+  return true;
+}
+
 } // namespace
+
+VideoCodecConfigurationInspection
+inspectMpeg4VisualHeaders(std::span<const std::byte> headers,
+                          VideoCodecConfigurationLimits requestedLimits) noexcept {
+  if (headers.empty()) {
+    return rejected(Error::EmptyConfiguration);
+  }
+  const VideoCodecConfigurationLimits limits = effectiveLimits(requestedLimits);
+  if (headers.size() > limits.maximumConfigurationBytes) {
+    return rejected(Error::ConfigurationTooLarge);
+  }
+  return inspectMpeg4Visual(asBytes(headers), limits);
+}
+
+bool buildMpeg4VisualEsds(std::span<const std::byte> headers,
+                          std::span<std::byte> esds, std::size_t *written,
+                          VideoCodecConfigurationLimits limits) noexcept {
+  if (written == nullptr) {
+    return false;
+  }
+  const std::size_t total = kMpeg4VisualEsdsOverheadBytes + headers.size();
+  if (headers.empty() || esds.size() < total) {
+    return false;
+  }
+  // An esds is never built around bytes this player would refuse to decode:
+  // the record it produces is handed straight to CoreMedia.
+  if (!inspectMpeg4VisualHeaders(headers, limits).admitted()) {
+    return false;
+  }
+  std::fill_n(esds.begin(), total, std::byte{0});
+  // esds full-box version and flags.
+  std::size_t offset = 4U;
+  esds[offset++] = std::byte{0x03U}; // ES_DescrTag
+  writeMpeg4DescriptorLength(esds, offset, total - 9U);
+  offset += 4U;
+  esds[offset++] = std::byte{0x00U}; // ES_ID high
+  esds[offset++] = std::byte{0x01U}; // ES_ID low
+  esds[offset++] = std::byte{0x00U}; // streamDependence/URL/OCR flags, priority
+  esds[offset++] = std::byte{0x04U}; // DecoderConfigDescrTag
+  // The DecoderConfigDescriptor's payload is objectTypeIndication(1) +
+  // streamType(1) + bufferSizeDB(3) + maxBitrate(4) + avgBitrate(4) = 13,
+  // followed by the DecSpecificInfo descriptor: tag(1) + length(4) + headers.
+  writeMpeg4DescriptorLength(esds, offset, headers.size() + 18U);
+  offset += 4U;
+  esds[offset++] = std::byte{0x20U}; // objectTypeIndication: MPEG-4 Visual
+  esds[offset++] = std::byte{(0x04U << 2U) | 0x01U}; // streamType visual
+  // bufferSizeDB(3), maxBitrate(4) and avgBitrate(4) are left zero: they are
+  // rate hints for a conforming buffer model this player does not implement,
+  // and VideoToolbox decodes with them zero (measured).
+  offset += 11U;
+  esds[offset++] = std::byte{0x05U}; // DecSpecificInfoTag
+  writeMpeg4DescriptorLength(esds, offset, headers.size());
+  offset += 4U;
+  std::copy(headers.begin(), headers.end(), esds.begin() + static_cast<std::ptrdiff_t>(offset));
+  offset += headers.size();
+  esds[offset++] = std::byte{0x06U}; // SLConfigDescrTag
+  writeMpeg4DescriptorLength(esds, offset, 1U);
+  offset += 4U;
+  esds[offset++] = std::byte{0x02U}; // predefined: MP4 stream
+  *written = offset;
+  return offset == total;
+}
 
 VideoCodecConfigurationInspection inspectVideoCodecConfiguration(
     MediaCodec codec, MediaCodecConfigurationKind kind,
@@ -2412,6 +2918,14 @@ VideoCodecConfigurationInspection inspectVideoCodecConfiguration(
     break;
   case MediaCodec::Vp9:
     expectedKind = MediaCodecConfigurationKind::VpcC;
+    break;
+  case MediaCodec::Mpeg4Visual:
+    // The stored record is the esds the demuxer synthesized, not the raw
+    // CodecPrivate it was built from -- exactly as VP8 and VP9 store a
+    // synthesized vpcC. MediaCodecConfigurationKind has no Esds enumerator and
+    // gaining one is not authorised, so CodecPrivate names it: an opaque,
+    // codec-private configuration record, which is what an esds is.
+    expectedKind = MediaCodecConfigurationKind::CodecPrivate;
     break;
   default:
     return rejected(Error::UnsupportedCodec);
@@ -2434,6 +2948,13 @@ VideoCodecConfigurationInspection inspectVideoCodecConfiguration(
     return inspectHvcC(bytes, limits);
   case MediaCodec::Av1:
     return inspectAv1C(bytes, limits);
+  case MediaCodec::Mpeg4Visual: {
+    std::span<const std::uint8_t> decoderSpecificInfo;
+    if (!mpeg4VisualEsdsDecoderSpecificInfo(bytes, decoderSpecificInfo)) {
+      return rejected(Error::MalformedRecord);
+    }
+    return inspectMpeg4Visual(decoderSpecificInfo, limits);
+  }
   default:
     return inspectVpcC(bytes, limits);
   }

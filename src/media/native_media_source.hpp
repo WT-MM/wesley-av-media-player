@@ -117,6 +117,19 @@ enum class MediaCodec : std::uint8_t {
   // header is in-band and CMVideoFormatDescriptionCreate takes a null
   // extensions dictionary.
   Mpeg2Video,
+  // Appended 2026-08-20 under the same APPEND-ONLY amendment, for MPEG-4
+  // Part 2 video (ISO/IEC 14496-2, CoreMedia 'mp4v') in Matroska. Every value
+  // above keeps its existing ordinal. The name is the codec family's ISO name
+  // deliberately: only SIMPLE PROFILE is admitted, because Apple's
+  // VideoToolbox decoder refuses Advanced Simple Profile -- the Xvid/DivX
+  // profile -- at VTDecompressionSessionCreate with codecBadDataErr (-8969),
+  // measured 2026-08-20, with AVFoundation reproducing the identical failure
+  // on a plain mp4v MP4. Naming this enumerator Mpeg4Asp would name the one
+  // profile it cannot carry. Like Mpeg2Video and Vp8 it is not a hardware
+  // codec (VTIsHardwareDecodeSupported is 0); unlike Mpeg2Video it DOES need
+  // a configuration record, and the record is the esds the Matroska demuxer
+  // synthesizes around the CodecPrivate headers.
+  Mpeg4Visual,
 };
 
 enum class MediaCodecConfigurationKind : std::uint8_t {

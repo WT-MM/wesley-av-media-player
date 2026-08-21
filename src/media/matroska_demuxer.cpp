@@ -479,6 +479,19 @@ inline constexpr std::size_t kOpusTailProbeClusters{8};
 [[nodiscard]] bool isVideoCodec(std::string_view id) noexcept {
   return id == "V_MPEG4/ISO/AVC" || id == "V_MPEGH/ISO/HEVC" ||
          id == "V_AV1" || id == "V_VP9"
+         // MPEG-4 Part 2. Both CodecIDs are named because the CodecID is not a
+         // profile signal: ffmpeg writes V_MPEG4/ISO/ASP for every mpeg4 track
+         // it muxes, Simple Profile included (measured across the whole
+         // fixture set), so a track selected here is profile-gated later, on
+         // the CodecPrivate headers, by inspectMpeg4VisualHeaders(). Advanced
+         // Simple Profile is refused there, cleanly, and falls back.
+         //
+         // V_MS/VFW/FOURCC -- the old AVI-remux carriage that wraps DIVX/XVID/
+         // DX50 in a BITMAPINFOHEADER -- is deliberately NOT named: its
+         // CodecPrivate is a Windows structure rather than a
+         // VisualObjectSequence, and the payload it wraps is Advanced Simple
+         // or MS-MPEG-4 v3 in every case this project has seen.
+         || id == "V_MPEG4/ISO/ASP" || id == "V_MPEG4/ISO/SP"
 #if defined(WAM_ENABLE_SOFTWARE_VP8)
          // VP8 has no hardware decoder on any Apple platform, so it is a
          // selectable CodecID exactly when this build linked the libvpx
@@ -716,6 +729,13 @@ struct VideoCodecIdentity {
   if (codecId == "V_VP9") {
     return {MediaCodec::Vp9, MediaCodecConfigurationKind::VpcC};
   }
+  if (codecId == "V_MPEG4/ISO/ASP" || codecId == "V_MPEG4/ISO/SP") {
+    // CodecPrivate names the esds makeVideoDescriptor synthesizes below from
+    // the VisualObjectSequence/VideoObjectLayer headers this CodecID carries,
+    // the same way VpcC names the record synthesized for VP8 and VP9.
+    return {MediaCodec::Mpeg4Visual,
+            MediaCodecConfigurationKind::CodecPrivate};
+  }
 #if defined(WAM_ENABLE_SOFTWARE_VP8)
   if (codecId == "V_VP8") {
     // A VPCodecConfigurationBox describes vp08 as well as vp09. WebM never
@@ -906,6 +926,29 @@ constexpr std::size_t kVp9KeyframeProbeClusters{4};
         return false;
       }
     }
+  } else if (codec == MediaCodec::Mpeg4Visual) {
+    // CodecPrivate is the raw start-code-delimited VisualObjectSequence, which
+    // is where every fact lives -- including the profile gate that refuses
+    // Advanced Simple Profile, the one thing VideoToolbox will not decode.
+    inspection = inspectMpeg4VisualHeaders(configuration, codecLimits);
+    if (!inspection.admitted()) {
+      return false;
+    }
+    // CoreMedia will not build an 'mp4v' format description from the raw
+    // headers; it needs them inside an ES_Descriptor. Synthesizing the esds
+    // here, once, is the same move VP8 and VP9 make with their vpcC, and it
+    // keeps both CoreMedia attachment sites free of any codec-specific
+    // transform: they hand the stored record to CFDataCreate verbatim, exactly
+    // as they do for avcC and hvcC.
+    std::vector<std::byte> esds(kMpeg4VisualEsdsOverheadBytes +
+                                configuration.size());
+    std::size_t esdsBytes = 0;
+    if (!buildMpeg4VisualEsds(configuration, esds, &esdsBytes, codecLimits) ||
+        esdsBytes != esds.size() ||
+        esds.size() > limits.maximumCodecConfigurationBytes) {
+      return false;
+    }
+    configuration = std::move(esds);
   } else {
     inspection =
         inspectVideoCodecConfiguration(codec, kind, configuration, codecLimits);

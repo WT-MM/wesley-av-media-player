@@ -1963,6 +1963,332 @@ void testVp9() {
          "vpcC synthesis refuses facts that are not admitted VP9 facts");
 }
 
+// ---------------------------------------------------------------------------
+// MPEG-4 Part 2 (ISO/IEC 14496-2)
+// ---------------------------------------------------------------------------
+//
+// Both records below are real ffmpeg output, taken verbatim from the
+// CodecPrivate of a 1920x1080 Matroska file. They differ only in the fields
+// that decide the verdict, which is exactly why they are the right pair:
+//
+//   Simple:  ... 01 ... b5 89 13 ... 20 00 c4 8d 88 ...   VOT 1,  verid 1
+//   Advanced ... f1 ... b5 a9 13 ... 20 08 d4 8d 08 ...   VOT 17, verid 5
+//
+// The second one is what Xvid and DivX produce and what VideoToolbox refuses.
+constexpr std::array<std::uint8_t, 47> kRealMpeg4SimpleProfileHeaders{
+    0x00, 0x00, 0x01, 0xb0, 0x01, 0x00, 0x00, 0x01, 0xb5, 0x89, 0x13, 0x00,
+    0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x20, 0x00, 0xc4, 0x8d, 0x88, 0x00,
+    0xf5, 0x3c, 0x04, 0x87, 0x14, 0x43, 0x00, 0x00, 0x01, 0xb2, 0x4c, 0x61,
+    0x76, 0x63, 0x36, 0x32, 0x2e, 0x32, 0x38, 0x2e, 0x31, 0x30, 0x32};
+
+constexpr std::array<std::uint8_t, 48> kRealMpeg4AdvancedSimpleHeaders{
+    0x00, 0x00, 0x01, 0xb0, 0xf1, 0x00, 0x00, 0x01, 0xb5, 0xa9, 0x13, 0x00,
+    0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x20, 0x08, 0xd4, 0x8d, 0x08, 0x00,
+    0xf5, 0x3c, 0x04, 0x87, 0x14, 0x10, 0x3f, 0x00, 0x00, 0x01, 0xb2, 0x4c,
+    0x61, 0x76, 0x63, 0x36, 0x32, 0x2e, 0x32, 0x38, 0x2e, 0x31, 0x30, 0x32};
+
+// Byte offsets into both records: profile_and_level_indication, and the first
+// byte of the VideoObjectLayer payload.
+constexpr std::size_t kMpeg4ProfileByteOffset{4};
+constexpr std::size_t kMpeg4VolPayloadOffset{19};
+
+[[nodiscard]] std::vector<std::uint8_t>
+mpeg4Headers(const std::array<std::uint8_t, 47> &source) {
+  return {source.begin(), source.end()};
+}
+
+[[nodiscard]] std::vector<std::uint8_t>
+mpeg4Headers(const std::array<std::uint8_t, 48> &source) {
+  return {source.begin(), source.end()};
+}
+
+[[nodiscard]] VideoCodecConfigurationInspection
+inspectMpeg4(const std::vector<std::uint8_t> &bytes,
+             VideoCodecConfigurationLimits limits = {}) noexcept {
+  return inspectMpeg4VisualHeaders(byteView(bytes), limits);
+}
+
+void testMpeg4Visual() {
+  static_assert(kMpeg4VisualEsdsOverheadBytes == 41U);
+  static_assert(noexcept(inspectMpeg4VisualHeaders({})));
+
+  const auto simple = inspectMpeg4(mpeg4Headers(kRealMpeg4SimpleProfileHeaders));
+  expect(simple.admitted(),
+         "real Simple Profile MPEG-4 Part 2 headers are admitted");
+  if (simple.facts) {
+    const auto &facts = *simple.facts;
+    expect(facts.codec == MediaCodec::Mpeg4Visual &&
+               facts.kind == MediaCodecConfigurationKind::CodecPrivate &&
+               facts.sampleFormat == MediaVideoSampleFormat::Yuv420EightBit &&
+               facts.width == 1920U && facts.height == 1080U &&
+               facts.bitDepth == 8U && facts.nalLengthBytes == 0U,
+           "MPEG-4 Simple Profile yields 1920x1080 8-bit 4:2:0");
+    expect(facts.profile == 0x01U,
+           "the reported profile is profile_and_level_indication verbatim");
+    // Simple Profile forbids B-VOPs, so decode order IS presentation order.
+    // Everything downstream -- the Matroska merge lead, the decoder's ordered
+    // drain, the preview lane -- rests on this being zero.
+    expect(facts.maximumReorderFrames == 0U,
+           "MPEG-4 Simple Profile states a zero reorder depth");
+    // ffmpeg writes video_signal_type = 0, so the headers describe no colour
+    // at all and the container's Colour element stays the only source.
+    expect(!facts.color.colorDescriptionPresent &&
+               !facts.color.videoSignalTypePresent && !facts.color.fullRange,
+           "these headers report no colour description");
+  }
+
+  // THE REFUSAL. Advanced Simple Profile is every Xvid/DivX-era file, and
+  // Apple's VideoToolbox decoder rejects it at session creation with
+  // codecBadDataErr (-8969) -- measured 2026-08-20, reproduced by AVFoundation
+  // itself on a plain mp4v MP4. Admitting it would decode to drifting garbage,
+  // so it is refused here, before any decoder exists.
+  expectError(inspectMpeg4(mpeg4Headers(kRealMpeg4AdvancedSimpleHeaders)),
+              VideoCodecConfigurationError::UnsupportedProfile,
+              "Advanced Simple Profile MPEG-4 Part 2 headers are refused");
+
+  // Neither half of the identity is sufficient on its own, and the two must
+  // agree. A stream that patches only profile_and_level_indication still
+  // carries Advanced Simple tools -- and VideoToolbox still refuses it, which
+  // is the measurement that put the gate on the VideoObjectLayer rather than
+  // on the profile byte.
+  {
+    auto lyingProfileByte = mpeg4Headers(kRealMpeg4AdvancedSimpleHeaders);
+    lyingProfileByte[kMpeg4ProfileByteOffset] = 0x01U;
+    expectError(inspectMpeg4(lyingProfileByte),
+                VideoCodecConfigurationError::UnsupportedProfile,
+                "an Advanced Simple layer claiming a Simple profile byte is "
+                "refused");
+  }
+  {
+    // The inverse: a Simple layer under an Advanced Simple profile byte. The
+    // stream contradicts itself, so it is refused rather than guessed at.
+    auto lyingLayer = mpeg4Headers(kRealMpeg4AdvancedSimpleHeaders);
+    lyingLayer[kMpeg4VolPayloadOffset] = 0x00U;
+    lyingLayer[kMpeg4VolPayloadOffset + 1U] = 0xc4U;
+    expectError(inspectMpeg4(lyingLayer),
+                VideoCodecConfigurationError::UnsupportedProfile,
+                "a Simple layer under an Advanced Simple profile byte is "
+                "refused");
+  }
+  {
+    // And the pair that made the real decoder work in the probe: both fields
+    // flipped. This is admitted, which proves the gate is the two fields and
+    // nothing else about these bytes.
+    auto bothFlipped = mpeg4Headers(kRealMpeg4AdvancedSimpleHeaders);
+    bothFlipped[kMpeg4ProfileByteOffset] = 0x01U;
+    bothFlipped[kMpeg4VolPayloadOffset] = 0x00U;
+    bothFlipped[kMpeg4VolPayloadOffset + 1U] = 0xc4U;
+    // The VisualObject's own verid must agree too; it reads 5 here.
+    bothFlipped[9] = 0x89U;
+    const auto flipped = inspectMpeg4(bothFlipped);
+    expect(flipped.admitted() && flipped.facts &&
+               flipped.facts->width == 1920U && flipped.facts->height == 1080U,
+           "flipping exactly the gated fields admits the same bytes");
+  }
+
+  // A configuration record holds headers. Coded frame data hiding inside one
+  // is malformed, not something to skip past -- and a VOP start code is how a
+  // packed-bitstream stream would try to smuggle a B-VOP in.
+  {
+    auto withVop = mpeg4Headers(kRealMpeg4SimpleProfileHeaders);
+    withVop.push_back(0x00U);
+    withVop.push_back(0x00U);
+    withVop.push_back(0x01U);
+    withVop.push_back(0xb6U);
+    withVop.push_back(0x10U);
+    expectError(inspectMpeg4(withVop),
+                VideoCodecConfigurationError::MalformedRecord,
+                "a VOP start code inside the configuration record is refused");
+  }
+
+  // No VisualObjectSequence means no profile_and_level_indication, and this
+  // admission will not invent one.
+  {
+    auto noSequence = mpeg4Headers(kRealMpeg4SimpleProfileHeaders);
+    noSequence.erase(noSequence.begin(), noSequence.begin() + 5);
+    expectError(inspectMpeg4(noSequence),
+                VideoCodecConfigurationError::MalformedRecord,
+                "headers without a VisualObjectSequence are refused");
+  }
+
+  expectError(inspectMpeg4VisualHeaders({}),
+              VideoCodecConfigurationError::EmptyConfiguration,
+              "empty MPEG-4 Part 2 headers are refused");
+  {
+    std::vector<std::uint8_t> notStartCode{0x01U, 0x02U, 0x03U, 0x04U, 0x05U};
+    expectError(inspectMpeg4(notStartCode),
+                VideoCodecConfigurationError::MalformedRecord,
+                "a record that does not begin with a start code is refused");
+  }
+  {
+    VideoCodecConfigurationLimits tiny;
+    tiny.maximumConfigurationBytes = 8U;
+    expectError(inspectMpeg4(mpeg4Headers(kRealMpeg4SimpleProfileHeaders), tiny),
+                VideoCodecConfigurationError::ConfigurationTooLarge,
+                "an over-long MPEG-4 Part 2 record is refused");
+  }
+  {
+    VideoCodecConfigurationLimits narrow;
+    narrow.maximumWidth = 1280U;
+    expectError(
+        inspectMpeg4(mpeg4Headers(kRealMpeg4SimpleProfileHeaders), narrow),
+        VideoCodecConfigurationError::DimensionLimitExceeded,
+        "an MPEG-4 Part 2 layer above the width limit is refused");
+  }
+
+  // Every truncation must be refused OR report the same dimensions as the
+  // whole record; nothing may be read past the end and no truncation may
+  // change a fact. The parser walks a bit string whose field widths depend on
+  // earlier fields, so this sweep is the real bounds proof. Truncations that
+  // only drop the trailing user_data element are legitimately admitted --
+  // user_data carries the encoder name and nothing this admission consults.
+  for (std::size_t truncated = 1U;
+       truncated < kRealMpeg4SimpleProfileHeaders.size(); ++truncated) {
+    auto shortRecord = mpeg4Headers(kRealMpeg4SimpleProfileHeaders);
+    shortRecord.resize(truncated);
+    const auto inspection = inspectMpeg4(shortRecord);
+    expect(!inspection.admitted() || (inspection.facts->width == 1920U &&
+                                      inspection.facts->height == 1080U),
+           "a truncated MPEG-4 Part 2 record is refused or reports the same "
+           "dimensions");
+  }
+  // Every VideoObjectLayer bit this admission reads is load bearing: cut
+  // before the last of them and the record must be refused. The layer's
+  // syntax ends 79 bits (ten bytes) into its payload at offset 19 -- these
+  // headers set fixed_vop_rate to zero, so no fixed_vop_time_increment field
+  // follows vop_time_increment_resolution -- and the eleventh byte is the
+  // element's trailing padding, which carries nothing.
+  constexpr std::size_t kMpeg4VolSyntaxEnd{kMpeg4VolPayloadOffset + 10U};
+  for (std::size_t truncated = 1U; truncated < kMpeg4VolSyntaxEnd;
+       ++truncated) {
+    auto shortRecord = mpeg4Headers(kRealMpeg4SimpleProfileHeaders);
+    shortRecord.resize(truncated);
+    expect(!inspectMpeg4(shortRecord).admitted(),
+           "a record cut inside the VideoObjectLayer is refused");
+  }
+  {
+    // Dropping the optional user_data is not a defect.
+    auto noUserData = mpeg4Headers(kRealMpeg4SimpleProfileHeaders);
+    noUserData.resize(kMpeg4VolSyntaxEnd);
+    expect(inspectMpeg4(noUserData).admitted(),
+           "headers without the trailing user_data element are admitted");
+  }
+  // And every single-byte corruption must either be refused or produce facts
+  // that are still internally consistent; nothing may crash or read out of
+  // bounds. (Run under the strict/ASan aggregates, this is the fuzz floor.)
+  for (std::size_t index = 0; index < kRealMpeg4SimpleProfileHeaders.size();
+       ++index) {
+    for (const std::uint8_t flip : {0x01U, 0x80U, 0xffU}) {
+      auto mutated = mpeg4Headers(kRealMpeg4SimpleProfileHeaders);
+      mutated[index] = static_cast<std::uint8_t>(mutated[index] ^ flip);
+      const auto inspection = inspectMpeg4(mutated);
+      expect(!inspection.admitted() ||
+                 (inspection.facts->width != 0U &&
+                  inspection.facts->height != 0U &&
+                  inspection.facts->maximumReorderFrames == 0U),
+             "a mutated MPEG-4 Part 2 record is refused or stays consistent");
+    }
+  }
+
+  const auto probeInput = mpeg4Headers(kRealMpeg4SimpleProfileHeaders);
+  allocation_probe::calls = 0U;
+  allocation_probe::active = true;
+  const auto allocationFree = inspectMpeg4(probeInput);
+  allocation_probe::active = false;
+  expect(allocationFree.admitted() && allocation_probe::calls == 0U,
+         "MPEG-4 Part 2 header inspection performs no heap allocation");
+
+  // ---- the esds the demuxer stores -------------------------------------
+  const auto headers = mpeg4Headers(kRealMpeg4SimpleProfileHeaders);
+  std::vector<std::byte> esds(kMpeg4VisualEsdsOverheadBytes + headers.size());
+  std::size_t written = 0;
+  expect(buildMpeg4VisualEsds(byteView(headers), esds, &written) &&
+             written == esds.size(),
+         "an esds is built at exactly the documented size");
+  // Shape the measurement fixed: version/flags, then ES_Descr, and the
+  // headers must survive byte for byte as the DecoderSpecificInfo.
+  expect(esds.size() > 9U && esds[0] == std::byte{0} &&
+             esds[1] == std::byte{0} && esds[2] == std::byte{0} &&
+             esds[3] == std::byte{0} && esds[4] == std::byte{0x03},
+         "the esds opens with four zero version/flags bytes and ES_DescrTag");
+  // Every declared descriptor length must be exactly right. A length that is
+  // merely large enough still parses in a permissive reader and still decodes
+  // in VideoToolbox, so only an exact check catches it -- which is how the
+  // DecoderConfigDescriptor's length was found to be four bytes too long.
+  {
+    const auto declaredLength = [&](std::size_t at) {
+      return (static_cast<std::size_t>(esds[at] & std::byte{0x7f}) << 21U) |
+             (static_cast<std::size_t>(esds[at + 1U] & std::byte{0x7f}) << 14U) |
+             (static_cast<std::size_t>(esds[at + 2U] & std::byte{0x7f}) << 7U) |
+             static_cast<std::size_t>(esds[at + 3U] & std::byte{0x7f});
+    };
+    const std::size_t n = headers.size();
+    expect(esds[4] == std::byte{0x03} && declaredLength(5) == n + 32U,
+           "the ES_Descriptor declares its exact payload length");
+    expect(esds[12] == std::byte{0x04} && declaredLength(13) == n + 18U,
+           "the DecoderConfigDescriptor declares its exact payload length");
+    expect(esds[17] == std::byte{0x20} &&
+               esds[18] == std::byte{(0x04U << 2U) | 0x01U},
+           "the DecoderConfigDescriptor names MPEG-4 Visual and streamType "
+           "visual");
+    expect(esds[30] == std::byte{0x05} && declaredLength(31) == n,
+           "the DecSpecificInfo declares the header length exactly");
+    expect(esds[35U + n] == std::byte{0x06} &&
+               esds[esds.size() - 1U] == std::byte{0x02},
+           "the esds closes with an SLConfigDescriptor of predefined 2");
+  }
+  expect(std::equal(headers.begin(), headers.end(),
+                    esds.end() - static_cast<std::ptrdiff_t>(headers.size()) - 6,
+                    esds.end() - 6,
+                    [](std::uint8_t lhs, std::byte rhs) {
+                      return static_cast<std::byte>(lhs) == rhs;
+                    }),
+         "the esds carries the headers byte for byte");
+
+  // Round trip: the stored record inspects back to the same facts, through the
+  // common entry point every other codec uses.
+  const auto roundTrip = inspectVideoCodecConfiguration(
+      MediaCodec::Mpeg4Visual, MediaCodecConfigurationKind::CodecPrivate, esds);
+  expect(roundTrip.admitted() && simple.facts && roundTrip.facts &&
+             *roundTrip.facts == *simple.facts,
+         "the synthesized esds inspects back to identical facts");
+
+  expectError(
+      inspectVideoCodecConfiguration(MediaCodec::Mpeg4Visual,
+                                     MediaCodecConfigurationKind::AvcC, esds),
+      VideoCodecConfigurationError::ConfigurationKindMismatch,
+      "an MPEG-4 Part 2 record must present the CodecPrivate kind");
+
+  // An esds is never built around bytes this player would refuse to decode.
+  {
+    const auto advanced = mpeg4Headers(kRealMpeg4AdvancedSimpleHeaders);
+    std::vector<std::byte> refused(kMpeg4VisualEsdsOverheadBytes +
+                                   advanced.size());
+    std::size_t ignored = 0;
+    expect(!buildMpeg4VisualEsds(byteView(advanced), refused, &ignored),
+           "no esds is built around Advanced Simple Profile headers");
+  }
+  {
+    std::vector<std::byte> tooSmall(headers.size());
+    std::size_t ignored = 0;
+    expect(!buildMpeg4VisualEsds(byteView(headers), tooSmall, &ignored),
+           "an undersized esds buffer is refused");
+    expect(!buildMpeg4VisualEsds(byteView(headers), esds, nullptr),
+           "a null written pointer is refused");
+  }
+  // Every truncation of the stored esds must be refused by the round trip.
+  for (std::size_t truncated = 1U; truncated < esds.size(); ++truncated) {
+    std::vector<std::byte> shortEsds(esds.begin(),
+                                     esds.begin() +
+                                         static_cast<std::ptrdiff_t>(truncated));
+    expect(!inspectVideoCodecConfiguration(
+                MediaCodec::Mpeg4Visual,
+                MediaCodecConfigurationKind::CodecPrivate, shortEsds)
+                .admitted(),
+           "a truncated esds is never admitted");
+  }
+}
+
 } // namespace
 
 int main() {
@@ -1974,10 +2300,12 @@ int main() {
   testAv1();
   testVp9();
   testVp8();
+  testMpeg4Visual();
   if (failures != 0) {
     std::cerr << failures << " video codec configuration test(s) failed\n";
     return EXIT_FAILURE;
   }
-  std::cout << "Framework-neutral AVC/HEVC/AV1/VP9/VP8 configuration tests passed\n";
+  std::cout << "Framework-neutral AVC/HEVC/AV1/VP9/VP8/MPEG-4 Part 2 "
+               "configuration tests passed\n";
   return EXIT_SUCCESS;
 }

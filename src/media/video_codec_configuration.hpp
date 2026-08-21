@@ -179,4 +179,84 @@ inline constexpr std::size_t kVp8KeyframeHeaderMaximumBytes{10};
     const VideoCodecConfigurationFacts &facts,
     std::span<std::byte, kVideoCodecVpcCBytes> configuration) noexcept;
 
+// ---------------------------------------------------------------------------
+// MPEG-4 Part 2 (ISO/IEC 14496-2, "MPEG-4 Visual", CoreMedia 'mp4v')
+// ---------------------------------------------------------------------------
+//
+// Matroska carries this codec's configuration as the raw start-code-delimited
+// header sequence in CodecPrivate:
+//
+//   00 00 01 B0  VisualObjectSequence  (profile_and_level_indication follows)
+//   00 00 01 B5  VisualObject          (verid, and the only colour description
+//                                        this codec has)
+//   00 00 01 0x  VideoObject
+//   00 00 01 2x  VideoObjectLayer      (the coded dimensions live here)
+//   00 00 01 B2  user_data             (optional, e.g. the encoder name)
+//
+// ONLY SIMPLE PROFILE IS ADMITTED. Measured on this platform 2026-08-20
+// (scratchpad/vt_asp_probe2.mm): Apple's VideoToolbox 'mp4v' decoder refuses
+// Advanced Simple Profile outright -- VTDecompressionSessionCreate returns
+// codecBadDataErr (-8969) before a single access unit is submitted, and
+// AVFoundation reproduces the identical failure on a plain mp4v MP4, so this
+// is the platform decoder's own limit and not a carriage defect. The refusal
+// was localized to exactly two VideoObjectLayer bit-fields: flipping
+// video_object_type_indication from 17 (Advanced Simple) to 1 (Simple) and
+// video_object_layer_verid from 5 to 1, changing nothing else, turns the same
+// bytes into a session that decodes. That is why this parser gates on those
+// two fields rather than on profile_and_level_indication -- patching the
+// profile byte alone leaves the decoder refusing.
+//
+// The gate is a CORRECTNESS requirement, not a nicety. A stream whose headers
+// claim Simple Profile while its VOPs use Advanced Simple tools decodes
+// without error and drifts: measured Y-plane mean absolute difference against
+// a reference decode grew 1.76 -> 4.70 over seven frames for quarter-pel
+// content, and an Advanced Simple stream with B-VOPs lost 7 of 12 frames and
+// produced a broken presentation ladder. Everything this parser admits is a
+// stream VideoToolbox decodes bit-accurately.
+//
+// Two consequences follow from Simple Profile and are relied on downstream:
+// B-VOPs are forbidden, so decode order equals presentation order and the
+// reported reorder depth is 0; and the profile is 8-bit 4:2:0 only.
+//
+// Note that the Matroska CodecID is NOT a usable profile signal. ffmpeg writes
+// V_MPEG4/ISO/ASP for every MPEG-4 Part 2 track it muxes, Simple Profile
+// included (measured across the whole fixture set), so the headers are the
+// only honest source and both V_MPEG4/ISO/ASP and V_MPEG4/ISO/SP must be
+// profile-gated on content.
+[[nodiscard]] VideoCodecConfigurationInspection inspectMpeg4VisualHeaders(
+    std::span<const std::byte> headers,
+    VideoCodecConfigurationLimits limits = {}) noexcept;
+
+// CoreMedia will not build an 'mp4v' format description from the raw headers:
+// they must arrive as the ISO/IEC 14496-1 ES_Descriptor an MP4 'esds' box
+// carries, with the headers as its DecoderSpecificInfo. Measured: the raw
+// headers as an in-band prefix, and an ES_Descriptor without the box's four
+// version/flags bytes, both fail VTDecompressionSessionCreate with
+// kVTVideoDecoderBadDataErr (-12909); the shape below succeeds.
+//
+// The demuxer therefore stores what CoreMedia needs, exactly as VP8 and VP9
+// store a synthesized vpcC rather than the record their containers omit. The
+// descriptor lengths are always written in the four-byte expandable form, so
+// the overhead is a constant:
+//
+//   4  esds version+flags
+//   5  ES_DescrTag + length            3  ES_ID(2) + flags(1)
+//   5  DecoderConfigDescrTag + length  13 objectTypeIndication(0x20),
+//                                         streamType(0x11), bufferSizeDB(3),
+//                                         maxBitrate(4), avgBitrate(4)
+//   5  DecSpecificInfoTag + length     n  the headers, byte for byte
+//   6  SLConfigDescrTag + length + predefined(0x02)
+inline constexpr std::size_t kMpeg4VisualEsdsOverheadBytes{41};
+
+// Writes kMpeg4VisualEsdsOverheadBytes + headers.size() bytes into `esds` and
+// reports the count through `written`. Returns false, leaving `esds`
+// untouched, when the span is too small, when `written` is null, or when the
+// headers are not admitted by inspectMpeg4VisualHeaders(): an esds is never
+// built around bytes this player would refuse to decode.
+[[nodiscard]] bool buildMpeg4VisualEsds(std::span<const std::byte> headers,
+                                        std::span<std::byte> esds,
+                                        std::size_t *written,
+                                        VideoCodecConfigurationLimits limits =
+                                            {}) noexcept;
+
 } // namespace wam::media

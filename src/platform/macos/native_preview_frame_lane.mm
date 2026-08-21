@@ -194,7 +194,16 @@ constexpr std::uint64_t kMaximumSequentialAdvanceSeconds = 1;
               : !track->codecConfiguration.empty()) &&
          (track->codec == media::MediaCodec::H264 ||
           track->codec == media::MediaCodec::Hevc ||
-          track->codec == media::MediaCodec::Mpeg2Video);
+          track->codec == media::MediaCodec::Mpeg2Video ||
+          // MPEG-4 Part 2 Simple Profile fits this lane without any new
+          // machinery: the same software VideoToolbox decoder MPEG-2 uses, a
+          // non-empty configuration record (the synthesized esds), and -- the
+          // property that actually matters to a preview lane -- a reorder
+          // depth of zero, because Simple Profile forbids B-VOPs. A scrub
+          // preview decodes from a key frame forward and shows the first
+          // frame it gets, so a codec that never holds a frame back is the
+          // easiest case this lane has.
+          track->codec == media::MediaCodec::Mpeg4Visual);
 }
 
 [[nodiscard]] CMSampleBufferRef nativeSample(
@@ -413,12 +422,16 @@ struct NativePreviewFrameLane::Impl final {
       // hardware here fails VTDecompressionSessionCreate with -12906 on a
       // stream the main playback lane decodes perfectly well. It still
       // PREFERS hardware, exactly as the main video consumer does.
+      // MPEG-4 Part 2's decoder is software for the same reason.
       const bool requireHardwareDecode =
-          track->codec != media::MediaCodec::Mpeg2Video;
+          track->codec != media::MediaCodec::Mpeg2Video &&
+          track->codec != media::MediaCodec::Mpeg4Visual;
       const VideoStreamConfiguration configuration{
           track->codec == media::MediaCodec::H264 ? kCMVideoCodecType_H264
           : track->codec == media::MediaCodec::Mpeg2Video
               ? kCMVideoCodecType_MPEG2Video
+          : track->codec == media::MediaCodec::Mpeg4Visual
+              ? kCMVideoCodecType_MPEG4Video
               : kCMVideoCodecType_HEVC,
           {static_cast<std::int32_t>(video.codedWidth),
            static_cast<std::int32_t>(video.codedHeight)},

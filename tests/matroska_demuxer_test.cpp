@@ -3,6 +3,7 @@
 #include "media/matroska_aac.hpp"
 #include "media/matroska_ebml.hpp"
 #include "media/native_media_source.hpp"
+#include "media/video_codec_configuration.hpp"
 
 #include <algorithm>
 #include <array>
@@ -283,6 +284,24 @@ constexpr std::array<std::uint8_t, 10> kSampleVp8Keyframe{
 
 constexpr std::uint32_t kSampleCodecEnvelopeWidth{1920};
 constexpr std::uint32_t kSampleCodecEnvelopeHeight{1080};
+
+// Real ffmpeg CodecPrivate from a 1920x1080 MPEG-4 Part 2 Matroska file: the
+// start-code-delimited VisualObjectSequence, VisualObject, VideoObject,
+// VideoObjectLayer and user_data. The two records differ only where the
+// verdict is decided -- the first is Simple Profile (video_object_type_
+// indication 1, verid 1), the second Advanced Simple (17 and 5), which is what
+// Xvid and DivX produce and what Apple's VideoToolbox decoder refuses.
+constexpr std::array<std::uint8_t, 47> kSampleMpeg4SimpleProfile{
+    0x00, 0x00, 0x01, 0xb0, 0x01, 0x00, 0x00, 0x01, 0xb5, 0x89, 0x13, 0x00,
+    0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x20, 0x00, 0xc4, 0x8d, 0x88, 0x00,
+    0xf5, 0x3c, 0x04, 0x87, 0x14, 0x43, 0x00, 0x00, 0x01, 0xb2, 0x4c, 0x61,
+    0x76, 0x63, 0x36, 0x32, 0x2e, 0x32, 0x38, 0x2e, 0x31, 0x30, 0x32};
+
+constexpr std::array<std::uint8_t, 48> kSampleMpeg4AdvancedSimple{
+    0x00, 0x00, 0x01, 0xb0, 0xf1, 0x00, 0x00, 0x01, 0xb5, 0xa9, 0x13, 0x00,
+    0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x20, 0x08, 0xd4, 0x8d, 0x08, 0x00,
+    0xf5, 0x3c, 0x04, 0x87, 0x14, 0x10, 0x3f, 0x00, 0x00, 0x01, 0xb2, 0x4c,
+    0x61, 0x76, 0x63, 0x36, 0x32, 0x2e, 0x32, 0x38, 0x2e, 0x31, 0x30, 0x32};
 
 // Canonical two-byte AAC-LC AudioSpecificConfig: 48 kHz, stereo, 1024 samples.
 constexpr std::array<std::uint8_t, 2> kAacStereo48Asc{0x11, 0x90};
@@ -1268,6 +1287,18 @@ FixtureSpec vp8FixtureSpec() {
   return spec;
 }
 
+// An ffmpeg-shaped MPEG-4 Part 2 track: 1920x1080, the raw VisualObjectSequence
+// in CodecPrivate. ffmpeg writes V_MPEG4/ISO/ASP for Simple Profile too, which
+// is exactly why the CodecID cannot be the profile gate.
+FixtureSpec mpeg4VisualFixtureSpec() {
+  FixtureSpec spec;
+  spec.videoCodecId = "V_MPEG4/ISO/ASP";
+  spec.videoCodecPrivate = fromOctets(kSampleMpeg4SimpleProfile);
+  spec.videoPixelWidth = kSampleCodecEnvelopeWidth;
+  spec.videoPixelHeight = kSampleCodecEnvelopeHeight;
+  return spec;
+}
+
 FixtureSpec av1FixtureSpec() {
   FixtureSpec spec;
   spec.videoCodecId = "V_AV1";
@@ -1539,10 +1570,100 @@ void testCodecAdmissionAndSelection() {
                        "a VP9 track whose blocks are not VP9 is not admitted");
   }
   {
-    FixtureSpec spec;
-    spec.videoCodecId = "V_MPEG4/ISO/ASP";
+    // MPEG-4 Part 2 Simple Profile. The Matroska CodecPrivate is the raw
+    // VisualObjectSequence; what the descriptor publishes is the esds
+    // CoreMedia needs, synthesized from it -- the same move VP8 and VP9 make
+    // with their vpcC.
+    const PreparedFixture prepared = prepareFixture(mpeg4VisualFixtureSpec());
+    expect(prepared.outcome.status == MatroskaDemuxStatus::Ready &&
+               prepared.outcome.asset != nullptr,
+           "an MPEG-4 Part 2 Simple Profile track is admitted");
+    if (prepared.outcome.asset != nullptr) {
+      const wam::media::MediaTrackDescriptor& video =
+          prepared.outcome.asset->descriptor()->tracks.front();
+      expect(video.codec == MediaCodec::Mpeg4Visual &&
+                 video.codecConfigurationKind ==
+                     MediaCodecConfigurationKind::CodecPrivate,
+             "MPEG-4 Part 2 admission names the CodecPrivate record kind");
+      expect(video.codecConfiguration.size() ==
+                 wam::media::kMpeg4VisualEsdsOverheadBytes +
+                     kSampleMpeg4SimpleProfile.size(),
+             "MPEG-4 Part 2 admission publishes a synthesized esds");
+      // The headers must survive byte for byte inside the descriptor: they are
+      // the DecoderSpecificInfo VideoToolbox actually parses.
+      expect(video.codecConfiguration.size() >
+                     kSampleMpeg4SimpleProfile.size() + 6U &&
+                 std::equal(kSampleMpeg4SimpleProfile.begin(),
+                            kSampleMpeg4SimpleProfile.end(),
+                            video.codecConfiguration.end() -
+                                static_cast<std::ptrdiff_t>(
+                                    kSampleMpeg4SimpleProfile.size()) -
+                                6,
+                            video.codecConfiguration.end() - 6,
+                            [](std::uint8_t lhs, std::byte rhs) {
+                              return static_cast<std::byte>(lhs) == rhs;
+                            }),
+             "the synthesized esds carries the headers byte for byte");
+      expect(video.video &&
+                 video.video->codedWidth == kSampleCodecEnvelopeWidth &&
+                 video.video->codedHeight == kSampleCodecEnvelopeHeight &&
+                 video.video->bitsPerComponent == 8U &&
+                 video.video->sampleFormat ==
+                     MediaVideoSampleFormat::Yuv420EightBit,
+             "MPEG-4 Part 2 video format comes from the VideoObjectLayer");
+    }
+  }
+  {
+    // V_MPEG4/ISO/SP is the CodecID Matroska defines for Simple Profile. No
+    // ffmpeg build this project has seen writes it, but the spec allows it and
+    // the same headers must be admitted under it.
+    FixtureSpec spec = mpeg4VisualFixtureSpec();
+    spec.videoCodecId = "V_MPEG4/ISO/SP";
+    const PreparedFixture prepared = prepareFixture(spec);
+    expect(prepared.outcome.status == MatroskaDemuxStatus::Ready &&
+               prepared.outcome.asset != nullptr,
+           "the V_MPEG4/ISO/SP CodecID is admitted for the same headers");
+  }
+  {
+    // THE REFUSAL, at the container boundary. Advanced Simple Profile is every
+    // Xvid/DivX-era file. VideoToolbox refuses it at session creation with
+    // codecBadDataErr (-8969) -- measured 2026-08-20, and reproduced by
+    // AVFoundation itself on a plain mp4v MP4 -- so it is refused here as a
+    // codec-configuration verdict, which falls back cleanly rather than
+    // failing an open.
+    FixtureSpec spec = mpeg4VisualFixtureSpec();
+    spec.videoCodecPrivate = fromOctets(kSampleMpeg4AdvancedSimple);
+    expectPrepareError(spec, MatroskaDemuxError::CodecConfiguration,
+                       "an Advanced Simple Profile MPEG-4 Part 2 track is not "
+                       "admitted");
+  }
+  {
+    // The headers are the only fact source, so a track without them cannot be
+    // admitted no matter what the CodecID claims.
+    FixtureSpec spec = mpeg4VisualFixtureSpec();
+    spec.includeVideoCodecPrivate = false;
+    expectPrepareError(spec, MatroskaDemuxError::CodecConfiguration,
+                       "an MPEG-4 Part 2 track without CodecPrivate is not "
+                       "admitted");
+  }
+  {
+    // The VideoObjectLayer's own dimensions must agree with the container's,
+    // exactly as they must for every other codec.
+    FixtureSpec spec = mpeg4VisualFixtureSpec();
+    spec.videoPixelWidth = 1280;
+    expectPrepareError(spec, MatroskaDemuxError::CodecConfiguration,
+                       "an MPEG-4 Part 2 track whose PixelWidth disagrees with "
+                       "its VideoObjectLayer is not admitted");
+  }
+  {
+    // V_MS/VFW/FOURCC is the old AVI-remux carriage for DivX/Xvid. Its
+    // CodecPrivate is a BITMAPINFOHEADER rather than a VisualObjectSequence,
+    // and the payload it wraps is Advanced Simple or MS-MPEG-4 v3, so the
+    // CodecID is deliberately never selected at all.
+    FixtureSpec spec = mpeg4VisualFixtureSpec();
+    spec.videoCodecId = "V_MS/VFW/FOURCC";
     expectPrepareError(spec, MatroskaDemuxError::TrackSelection,
-                       "a near-miss MPEG-4 video CodecID is not admitted");
+                       "the VFW-wrapped DivX/Xvid CodecID is not admitted");
   }
   {
     // A WebM-shaped VP9 track: no CodecPrivate at all, facts proven from the
