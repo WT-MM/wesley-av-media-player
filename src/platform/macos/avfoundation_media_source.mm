@@ -1313,6 +1313,19 @@ class CodecRbspBitReader final {
       return MediaCodec::Mp3;
     case kAudioFormatLinearPCM:
       return MediaCodec::Pcm;
+    // Reachable only now that a video-less asset is admitted: these are the
+    // formats a standalone music file carries, and AVFoundation demuxes all of
+    // them (verified by probe against .flac/.opus/.ac3 assets). Every
+    // enumerator already existed for the Matroska sweep -- nothing is appended
+    // to the frozen MediaCodec enumeration here.
+    case kAudioFormatFLAC:
+      return MediaCodec::Flac;
+    case kAudioFormatOpus:
+      return MediaCodec::Opus;
+    case kAudioFormatAC3:
+      return MediaCodec::Ac3;
+    case kAudioFormatEnhancedAC3:
+      return MediaCodec::Eac3;
     default:
       return MediaCodec::Unknown;
   }
@@ -2031,6 +2044,23 @@ void incrementInventory(media::MediaTrackInventory* inventory,
   return true;
 }
 
+[[nodiscard]] bool audioLayoutSupported(const media::MediaAudioFormat& audio,
+                                        std::string* error) {
+  const bool supportedLayout =
+      (!audio.channelLayoutPresent && audio.channelLayoutTag == 0) ||
+      (audio.channelLayoutPresent &&
+       ((audio.channelLayoutTag == kAudioChannelLayoutTag_Mono &&
+         audio.channels == 1) ||
+        (audio.channelLayoutTag == kAudioChannelLayoutTag_Stereo &&
+         audio.channels == 2)));
+  if (!supportedLayout) {
+    assignError(error,
+                "selected audio layout is outside the native v1 contract");
+    return false;
+  }
+  return true;
+}
+
 [[nodiscard]] bool preservesLegacyNativeAdmission(
     const MediaSourceDescriptor& descriptor, std::string* error) {
   const auto& inventory = descriptor.inventory;
@@ -2040,13 +2070,55 @@ void incrementInventory(media::MediaTrackInventory* inventory,
   // leaves selectedAudio unset. The two must agree in both directions - an
   // inventory with audio that selected none, or a selection with no audio in
   // the inventory, is a descriptor this backend never builds.
-  if (inventory.video != 1 || inventory.subtitle != 0 ||
+  if (inventory.video > 1 || inventory.subtitle != 0 ||
       inventory.text != 0 || inventory.closedCaption != 0 ||
-      !descriptor.selectedVideo ||
-      descriptor.selectedAudio.has_value() != (inventory.audio != 0)) {
+      descriptor.selectedVideo.has_value() != (inventory.video != 0) ||
+      descriptor.selectedAudio.has_value() != (inventory.audio != 0) ||
+      (!descriptor.selectedVideo && !descriptor.selectedAudio)) {
     assignError(error,
                 "track inventory is outside the native video v1 contract");
     return false;
+  }
+  // A video-less asset -- a standalone music file -- has no selected video
+  // track to admit, so the whole video half of the contract is vacuously
+  // satisfied and must not be dereferenced. This is the exact mirror of the
+  // audio-less early return further down.
+  if (!descriptor.selectedVideo) {
+    if (!descriptor.selectedAudio) {
+      assignError(error, "a source with neither lane admits no output");
+      return false;
+    }
+    const MediaTrackDescriptor* onlyAudio =
+        media::findMediaTrack(descriptor, *descriptor.selectedAudio);
+    if (onlyAudio == nullptr || onlyAudio->kind != MediaTrackKind::Audio ||
+        !onlyAudio->audio) {
+      assignError(error,
+                  "selected audio format is outside the native v1 contract");
+      return false;
+    }
+    // MEASURED ENVELOPE, not a guess. With no video lane the audio track is the
+    // whole generation, so a codec whose AVFoundation packetisation the native
+    // converter cannot consume has nothing to hide behind. Against 20 s 48 kHz
+    // stereo fixtures on this platform:
+    //   .m4a  (AAC)  native, 0 underruns, clock 1.000000, exact-duration EOF.
+    //   .mp3         fails MID-PLAYBACK: Decode/Consumer "audio session:
+    //                Converter" -- worse than falling back at open.
+    //   .flac        plays, but the output device republished its format three
+    //                times in 20 s (1629 callbacks against an expected 1001)
+    //                with clock excursions to 1.00024 and one underrun.
+    //   .wav (lpcm), .opus (Ogg), .aiff  refused during admission anyway.
+    // So the video-less AVFoundation route admits exactly AAC today and names
+    // the refusal for everything else, which keeps those files on the mpv
+    // fallback they already had. The Matroska route carries the full codec
+    // sweep (AAC/AC-3/E-AC-3/FLAC/MP3/Opus/Vorbis) and is unaffected by this.
+    if (onlyAudio->codec != MediaCodec::Aac) {
+      assignError(error,
+                  "a video-less AVFoundation source is admitted only for AAC; "
+                  "this audio codec is outside the native v1 contract on this "
+                  "route");
+      return false;
+    }
+    return audioLayoutSupported(*onlyAudio->audio, error);
   }
   const MediaTrackDescriptor* track =
       media::findMediaTrack(descriptor, *descriptor.selectedVideo);
@@ -2121,20 +2193,7 @@ void incrementInventory(media::MediaTrackInventory* inventory,
                 "selected audio format is outside the native v1 contract");
     return false;
   }
-  const media::MediaAudioFormat& audio = *audioTrack->audio;
-  const bool supportedLayout =
-      (!audio.channelLayoutPresent && audio.channelLayoutTag == 0) ||
-      (audio.channelLayoutPresent &&
-       ((audio.channelLayoutTag == kAudioChannelLayoutTag_Mono &&
-         audio.channels == 1) ||
-        (audio.channelLayoutTag == kAudioChannelLayoutTag_Stereo &&
-         audio.channels == 2)));
-  if (!supportedLayout) {
-    assignError(error,
-                "selected audio layout is outside the native v1 contract");
-    return false;
-  }
-  return true;
+  return audioLayoutSupported(*audioTrack->audio, error);
 }
 
 [[nodiscard]] bool exactIdentityVideoTransform(
@@ -2253,14 +2312,21 @@ template <typename NoteReaderCreationAttempt>
   // unchanged, in the original order.
   const bool audioSelected = descriptor.selectedAudio.has_value();
   const std::size_t expectedAudioFormatCount = audioSelected ? 1 : 0;
-  if (videoFormatCount != 1 || audioFormatCount != expectedAudioFormatCount ||
-      expectedVideo == nullptr ||
+  // The exact mirror for a video-less (audio-only) asset: it selected no video
+  // track, owes no video format, and the exactly-one-format proof becomes an
+  // exactly-zero-formats proof on that lane too.
+  const bool videoSelected = descriptor.selectedVideo.has_value();
+  const std::size_t expectedVideoFormatCount = videoSelected ? 1 : 0;
+  if (videoFormatCount != expectedVideoFormatCount ||
+      audioFormatCount != expectedAudioFormatCount ||
+      (videoSelected && expectedVideo == nullptr) ||
       (audioSelected && expectedAudio == nullptr) ||
-      !exactIdentityVideoTransform(videoTransform) ||
-      !expectedVideo->video || !expectedVideo->video->identityTransform ||
-      expectedVideo->video->rotationDegrees != 0 ||
-      !videoFormatMatchesTrack(videoFormat, *expectedVideo,
-                               requestedLimits) ||
+      (videoSelected &&
+       (!exactIdentityVideoTransform(videoTransform) ||
+        !expectedVideo->video || !expectedVideo->video->identityTransform ||
+        expectedVideo->video->rotationDegrees != 0 ||
+        !videoFormatMatchesTrack(videoFormat, *expectedVideo,
+                                 requestedLimits))) ||
       (audioSelected &&
        !audioFormatMatchesTrack(audioFormat, *expectedAudio))) {
     assignError(error,
@@ -2324,7 +2390,8 @@ class ProductionGeneration final : public AVFoundationGeneration {
         // descriptor selected audio, so an audio-less asset legitimately warm
         // starts with a nil audioTrack. Requiring the two to agree keeps a
         // borrow that disagrees with the admitted descriptor a hard failure.
-        if (asset == nil || videoTrack == nil || !duration ||
+        if (asset == nil || !duration ||
+            (videoTrack != nil) != descriptor->selectedVideo.has_value() ||
             (audioTrack != nil) != descriptor->selectedAudio.has_value()) {
           result.error = "AVFoundation asset context is incomplete";
           return result;
@@ -2436,10 +2503,11 @@ class ProductionGeneration final : public AVFoundationGeneration {
         // leaves selectedAudio unset. An enumerated audio track that could not
         // be resolved to a selection - or a resolved track the inventory never
         // counted - stays a rejection, so the two must agree exactly.
-        if (inventory.video != 1 || inventory.subtitle != 0 ||
+        if (inventory.video > 1 || inventory.subtitle != 0 ||
             inventory.text != 0 || inventory.closedCaption != 0 ||
-            videoTrack == nil ||
-            (audioTrack != nil) != (inventory.audio != 0)) {
+            (videoTrack != nil) != (inventory.video != 0) ||
+            (audioTrack != nil) != (inventory.audio != 0) ||
+            (videoTrack == nil && audioTrack == nil)) {
           result.status = AVFoundationGenerationStatus::Unsupported;
           result.error =
               "asset track inventory is outside the native video v1 contract";
@@ -2455,7 +2523,9 @@ class ProductionGeneration final : public AVFoundationGeneration {
         auto mutableDescriptor = std::make_shared<MediaSourceDescriptor>();
         mutableDescriptor->duration = *sourceDuration;
         mutableDescriptor->inventory = inventory;
-        mutableDescriptor->tracks.reserve(audioTrack != nil ? 2 : 1);
+        mutableDescriptor->tracks.reserve(
+            static_cast<std::size_t>(videoTrack != nil ? 1 : 0) +
+            static_cast<std::size_t>(audioTrack != nil ? 1 : 0));
 
         // Both selected tracks have the same immutable metadata key set.
         // Issue both loads before waiting, then validate video first. An
@@ -2467,10 +2537,13 @@ class ProductionGeneration final : public AVFoundationGeneration {
           @"preferredTransform", @"languageCode", @"extendedLanguageTag"
         ];
         const std::array selectedTrackLoadStorage{
-            AsyncLoadRequest{videoTrack, trackKeys},
-            AsyncLoadRequest{audioTrack, trackKeys}};
+            AsyncLoadRequest{videoTrack != nil ? videoTrack : audioTrack,
+                             trackKeys},
+            AsyncLoadRequest{videoTrack != nil ? audioTrack : nil, trackKeys}};
         const std::span<const AsyncLoadRequest> selectedTrackLoadRequests(
-            selectedTrackLoadStorage.data(), audioTrack != nil ? 2u : 1u);
+            selectedTrackLoadStorage.data(),
+            static_cast<std::size_t>(videoTrack != nil ? 1u : 0u) +
+                static_cast<std::size_t>(audioTrack != nil ? 1u : 0u));
         bool trackRejected = false;
         if (!waitForLoadedValues(
                 selectedTrackLoadRequests, metadata_load_signal_,
@@ -2484,18 +2557,24 @@ class ProductionGeneration final : public AVFoundationGeneration {
                               : AVFoundationGenerationStatus::Failed;
           return result;
         }
-        if (!preservesZeroBasedTrackTimeline(videoTrack, &result.error)) {
-          result.status = AVFoundationGenerationStatus::Unsupported;
-          return result;
+        // A video-less asset -- a standalone music file -- contributes no
+        // video track: no track timeline to prove zero-based, no format to
+        // describe. selectedVideo stays unset, exactly mirroring the audio-less
+        // case below.
+        if (videoTrack != nil) {
+          if (!preservesZeroBasedTrackTimeline(videoTrack, &result.error)) {
+            result.status = AVFoundationGenerationStatus::Unsupported;
+            return result;
+          }
+          auto videoDescriptor =
+              describeVideo(videoTrack, limits, &result.error);
+          if (!videoDescriptor) {
+            result.status = AVFoundationGenerationStatus::Unsupported;
+            return result;
+          }
+          mutableDescriptor->selectedVideo = videoDescriptor->id;
+          mutableDescriptor->tracks.push_back(std::move(*videoDescriptor));
         }
-        auto videoDescriptor =
-            describeVideo(videoTrack, limits, &result.error);
-        if (!videoDescriptor) {
-          result.status = AVFoundationGenerationStatus::Unsupported;
-          return result;
-        }
-        mutableDescriptor->selectedVideo = videoDescriptor->id;
-        mutableDescriptor->tracks.push_back(std::move(*videoDescriptor));
 
         // An audio-less asset contributes no audio track: there is no track
         // timeline to prove zero-based, no identifier to disambiguate against
@@ -2507,7 +2586,8 @@ class ProductionGeneration final : public AVFoundationGeneration {
             return result;
           }
           MediaTrackId audioId = stableTrackId(audioTrack, 2);
-          if (audioId == *mutableDescriptor->selectedVideo) {
+          if (mutableDescriptor->selectedVideo &&
+              audioId == *mutableDescriptor->selectedVideo) {
             audioId = *mutableDescriptor->selectedVideo == 1 ? 2 : 1;
           }
           auto audioDescriptor =

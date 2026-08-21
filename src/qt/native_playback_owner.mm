@@ -1383,11 +1383,16 @@ void NativePlaybackOwner::consumeCommitReady(
   lastVideoDrawSequence_ = ready.videoDraw.drawSequence;
   if (telemetry_ != nullptr) {
     telemetry_->commitReady(ready, controller_.engineReady());
-    if (!firstNativeDrawReported_) {
+    // An audio-only generation's commit proof names the ABSENCE of a video
+    // lane; there is no frame and reporting one would put a fabricated
+    // first_frame_drawn at time zero into the evidence stream.
+    if (!firstNativeDrawReported_ && !ready.videoDraw.videoLaneAbsent) {
       telemetry_->firstFrameDrawn(ready.videoDraw, controller_.engineReady());
     }
   }
-  firstNativeDrawReported_ = true;
+  if (!ready.videoDraw.videoLaneAbsent) {
+    firstNativeDrawReported_ = true;
+  }
   // Submit the promoted generation's authoritative run state before any
   // QML-facing signal can synchronously re-enter play/pause and reserve a
   // newer serial. The controller completion callback is safe only after this

@@ -209,8 +209,21 @@ exactFrameTime(CMTime time) noexcept {
     const media::MediaSourceDescriptor& descriptor) noexcept {
   const media::MediaTrackDescriptor* video =
       selectedTrack(descriptor, descriptor.selectedVideo);
-  if (video == nullptr || !video->duration.valid() ||
-      video->duration.value < 0) {
+  if (video == nullptr) {
+    // Video-less (audio-only) source: a music file. There is no video timeline
+    // for the audio clock to cover, and no draw proof to wait for, so the only
+    // thing left to state is that the descriptor does not name a selected
+    // video track it cannot resolve -- which is still a hard protocol fault --
+    // and that a real audio lane exists to be the clock authority.
+    if (descriptor.selectedVideo.has_value()) {
+      return false;
+    }
+    const media::MediaTrackDescriptor* audioOnly =
+        selectedTrack(descriptor, descriptor.selectedAudio);
+    return audioOnly != nullptr && audioOnly->duration.valid() &&
+           audioOnly->duration.value >= 0;
+  }
+  if (!video->duration.valid() || video->duration.value < 0) {
     return false;
   }
   const media::MediaTrackDescriptor* audio =
@@ -285,10 +298,10 @@ class NativeV1AdmissionSource final : public media::MediaSource {
       source_->close();
       result.status = media::MediaSourceOpenStatus::Unsupported;
       result.descriptor.reset();
-      result.error = "native v1 requires a selected video track and, when the "
-                     "source carries audio, an audio duration that covers the "
-                     "video duration apart from a bounded container-artefact "
-                     "shortfall";
+      result.error = "native v1 requires at least one selected lane, and when "
+                     "the source carries both, an audio duration that covers "
+                     "the video duration apart from a bounded "
+                     "container-artefact shortfall";
     }
     return result;
   }
@@ -2095,11 +2108,15 @@ if (!transferred) {
       return;
     }
     media::MediaSourceOpenOptions options;
-    options.selection.requireVideo = true;
-    // Audio is optional. A source with no audio track at all is admitted and
-    // driven by NativeSilentTimebase; a source that carries audio the backend
-    // cannot select still fails its own admission, so relaxing this flag does
-    // not silently drop a real audio track.
+    // Neither lane is individually required; the dispatcher still refuses a
+    // descriptor that selects neither. A source with no audio track at all is
+    // admitted and driven by NativeSilentTimebase; a source with no video
+    // track at all is admitted audio-only and driven by the audio clock, which
+    // is the authority in every other generation anyway. A source that carries
+    // a lane the backend cannot select still fails its own admission (each
+    // demuxer refuses the WHOLE FILE in that case), so relaxing these flags
+    // never silently drops a real track.
+    options.selection.requireVideo = false;
     options.selection.requireAudio = false;
     options.initialPosition = media::MediaSourceInitialPosition{
         initialPosition, media::MediaSeekMode::Accurate};
@@ -2110,10 +2127,18 @@ if (!transferred) {
     const auto opened = dispatcher->openLocalFile(
         binding.localPath, options, reservedGeneration);
     endLiveIssue();
-    dispatcherObservedVideo =
-        dispatcher->stats().videoExposedGeneration != 0;
-    if (dispatcherObservedVideo) {
-      ownership = NativeMediaSessionOwnershipPhase::DispatcherObserved;
+    {
+      const auto stats = dispatcher->stats();
+      dispatcherObservedVideo = stats.videoExposedGeneration != 0;
+      // Ownership tracks the VIDEO surfaces specifically -- an audio-only
+      // generation has none, so it stays direct-retired, which is correct.
+      // The clock refresh below must not ride that flag: it only needs to know
+      // that the dispatcher has exposed this generation on SOME lane.
+      dispatcherExposedGeneration =
+          dispatcherObservedVideo || stats.audioExposedGeneration != 0;
+      if (dispatcherObservedVideo) {
+        ownership = NativeMediaSessionOwnershipPhase::DispatcherObserved;
+      }
     }
     if (stopPublished()) {
       acceptPublishedCommands();
@@ -2206,7 +2231,8 @@ if (descriptor == nullptr || !nativeV1Descriptor(*descriptor)) {
         factMailbox.emplace(protocol::Prepared{
             prepareCommand.stamp, prepareCommand.sourceKey,
             {descriptorDurationSeconds(*descriptor),
-             descriptor->selectedAudio.has_value(), true},
+             descriptor->selectedAudio.has_value(),
+             descriptor->selectedVideo.has_value()},
             prepareCommand.reservedGeneration});
         committed = true;
       }
@@ -2773,9 +2799,32 @@ if (result != NativeAudioSessionProgress::Done) {
     }
   }
 
+  // True for a generation this session admitted with no selected video track:
+  // an audio-only file. Read from the descriptor the session already retained,
+  // so it can never disagree with what the dispatcher configured.
+  [[nodiscard]] bool videoLessGeneration() const noexcept {
+    return descriptorSnapshot != nullptr &&
+           !descriptorSnapshot->selectedVideo.has_value();
+  }
+
   void captureCommitProofs() noexcept {
-    if (!commitCommitted || commitVideoProof.has_value() ||
-        videoControl.takeOutputEvent == nullptr) {
+    if (!commitCommitted || commitVideoProof.has_value()) {
+      return;
+    }
+    if (videoLessGeneration()) {
+      // There is no covering frame to wait for, and none to forge: state the
+      // absence and let the audio clock carry the whole commit proof. See
+      // VideoDrawProof::videoLaneAbsent in native_playback_contract.hpp.
+      protocol::VideoDrawProof absent;
+      absent.stamp = commitCommand.stamp;
+      absent.generation = commitCommand.targetGeneration;
+      absent.videoLaneAbsent = true;
+      if (protocol::valid(absent)) {
+        commitVideoProof = absent;
+      }
+      return;
+    }
+    if (videoControl.takeOutputEvent == nullptr) {
       return;
     }
     if (!beginLiveIssue(nullptr, false, true)) {
@@ -3047,8 +3096,51 @@ if (result != NativeAudioSessionProgress::Done) {
     }
   }
 
+  // The UI playhead for a RUNNING generation is normally the exact presentation
+  // time of the frame that was just drawn (see
+  // NativePlaybackOwner::consumeVideoDraw). An audio-only generation draws no
+  // frames, so that observation never arrives and the scrubber would sit at the
+  // seek target for the whole song. Publish the running audio clock instead --
+  // the same clock the drawn-frame PTS is scheduled against, and the position
+  // authority in every generation. It is coalesced into the capacity-one
+  // audioClock slot exactly like a draw proof, so it costs one latest-value
+  // store per worker pass and no extra wake.
+  void publishRunningPositionForVideoLessGeneration() noexcept {
+    if (!videoLessGeneration() || audioControl.clock == nullptr ||
+        stopLatched || endingLatched || endedPublished || liveFailed ||
+        appliedPaused || commitPending) {
+      return;
+    }
+    protocol::Stamp runStamp{};
+    protocol::Generation runGeneration{activeGeneration};
+    {
+      std::lock_guard lock(mutex);
+      if (publishedStop.has_value() || publicEnding || publicEnded ||
+          requestedRunStamp != appliedRunStamp ||
+          publicRequestedRunStamp != appliedRunStamp) {
+        return;
+      }
+      runStamp = appliedRunStamp;
+    }
+    if (!protocol::validLive(runStamp) || !protocol::validLive(runGeneration)) {
+      return;
+    }
+    const NativeMediaClockSnapshot clock = childLifetime->clock->snapshot;
+    if (!clock.valid || clock.generation != runGeneration.value) {
+      return;
+    }
+    const protocol::AudioClockProof proof{
+        runStamp, runGeneration,
+        protocol::AudioClockAnchorId{clock.publicationSerial},
+        clock.mediaSeconds, false, clock.rate};
+    if (!protocol::valid(proof)) {
+      return;
+    }
+    publishAudioClock(proof);
+  }
+
   void refreshClock() noexcept {
-    if (audioControl.clock != nullptr && dispatcherObservedVideo) {
+    if (audioControl.clock != nullptr && dispatcherExposedGeneration) {
       if (!beginLiveIssue()) {
         return;
       }
@@ -3161,6 +3253,7 @@ if (result != NativeAudioSessionProgress::Done) {
           continue;
         }
         refreshClock();
+        publishRunningPositionForVideoLessGeneration();
         publishMetrics();
         if (preparePending) {
           progressPrepare();
@@ -3464,6 +3557,10 @@ if (result != NativeAudioSessionProgress::Done) {
   bool endedPublished{false};
   bool dispatcherExhausted{false};
   bool dispatcherObservedVideo{false};
+  // True once the dispatcher has exposed this generation on either lane. It is
+  // the clock-publication gate; dispatcherObservedVideo above is the video
+  // SURFACE ownership gate and the two differ exactly for audio-only media.
+  bool dispatcherExposedGeneration{false};
   bool directVideoRetired{false};
   bool directAudioRetired{false};
   // NativeMediaConsumer::retire() is an exact operation: the first accepted

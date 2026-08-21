@@ -364,7 +364,12 @@ struct AssetState {
   std::shared_ptr<const MediaSourceDescriptor> descriptor;
   std::uint64_t timestampScaleNanoseconds{1'000'000};
   std::vector<TrackConstraint> constraints;
-  TrackRuntime video;
+  // Both lanes are optional and exactly symmetric. `video` became optional for
+  // audio-only media (MKA, and an audio-only MKV/WebM): the clock is
+  // audio-authoritative, so a generation with no video lane is the simpler of
+  // the two degenerate cases -- the silent-video one had to manufacture a
+  // timebase, this one already owns the authority.
+  std::optional<TrackRuntime> video;
   std::optional<TrackRuntime> audio;
   std::vector<MatroskaClusterIndexEntry> clusters;
   std::vector<MatroskaCueIndexEntry> cues;
@@ -2183,8 +2188,9 @@ cursorConstraints(const AssetState& state, MediaTrackId selected) {
     constraint.selected = constraint.number == selected;
     if (constraint.selected) {
       constraint.maximumBlockBytes =
-          selected == state.video.id ? state.limits.maximumVideoSampleBytes
-                                     : state.limits.maximumAudioSampleBytes;
+          (state.video && selected == state.video->id)
+              ? state.limits.maximumVideoSampleBytes
+              : state.limits.maximumAudioSampleBytes;
     }
   }
   return result;
@@ -2430,9 +2436,10 @@ MatroskaCursor::readNext(CancellationToken cancellation) noexcept {
                   "invalid BlockDuration"};
             }
             sample.duration = *duration;
-          } else if (state.video.entry.defaultDurationNanoseconds) {
+          } else if (state.video &&
+                     state.video->entry.defaultDurationNanoseconds) {
             const auto duration = timeFromNanosecondsUnsigned(
-                *state.video.entry.defaultDurationNanoseconds);
+                *state.video->entry.defaultDurationNanoseconds);
             if (!duration) {
               return MatroskaCursorFailure{
                   MatroskaDemuxError::InvalidTimeline,
@@ -2664,20 +2671,94 @@ MatroskaPlanOutcome MatroskaPreparedAsset::planGeneration(
     // check already converts every Cue tick through timeFromSignedTick and
     // fails closed on any that is not representable, so a prepared asset has
     // no unconvertible Cue left for this loop to find.
-    std::size_t cueIndex = 0;
-    {
+    MatroskaGenerationPlan plan;
+    plan.requestedTarget = target;
+    plan.mode = mode;
+    // Seed cluster for the Block scans. With a video lane it is the Cue that
+    // covers the target and doubles as the generation's decode start; without
+    // one it is simply the last Cluster that starts at or before the target,
+    // which the Cluster directory answers by the same binary search (Cluster
+    // ticks are proven non-decreasing at preparation).
+    std::size_t seedCluster = 0;
+    if (state.video) {
+      std::size_t cueIndex = 0;
+      {
+        std::size_t low = 0;
+        std::size_t high = state.cues.size();
+        while (low < high) {
+          const std::size_t middle = low + (high - low) / 2U;
+          const auto cueTime = timeFromSignedTick(
+              static_cast<std::int64_t>(state.cues[middle].timestampTick),
+              state.timestampScaleNanoseconds);
+          if (!cueTime) {
+            outcome.error = MatroskaDemuxError::InvalidTimeline;
+            return outcome;
+          }
+          const auto order = compareMediaTime(*cueTime, target);
+          if (!order) {
+            outcome.error = MatroskaDemuxError::InvalidTimeline;
+            return outcome;
+          }
+          if (*order == MediaTimeOrder::Greater) {
+            high = middle;
+          } else {
+            cueIndex = middle;
+            low = middle + 1U;
+          }
+        }
+      }
+      const MatroskaCueIndexEntry& cue = state.cues[cueIndex];
+      plan.videoClusterIndex = cue.clusterIndex;
+      plan.videoBlockOffset =
+          state.clusters[cue.clusterIndex].dataRange().offset +
+          cue.relativeBlockOffset;
+      const auto decodeStart = timeFromSignedTick(
+          static_cast<std::int64_t>(cue.timestampTick),
+          state.timestampScaleNanoseconds);
+      if (!decodeStart) {
+        outcome.error = MatroskaDemuxError::InvalidTimeline;
+        return outcome;
+      }
+      plan.actualDecodeStart = *decodeStart;
+
+      // The seek COMMIT PROOF for a video generation: the Cue must name a real
+      // random access point, or the first submitted sample would reference
+      // frames this generation never decoded.
+      const ScanResult videoProof = scanTrack(
+          state, state.video->id, cue.clusterIndex, 1,
+          [&plan](std::uint32_t, const CapturedBlockVisitor& block) {
+            return block.header.containerEncoded.offset == plan.videoBlockOffset;
+          },
+          cancellation);
+      if (videoProof.error != MatroskaDemuxError::None || !videoProof.block ||
+          !(videoProof.block->header.simpleBlock
+                ? videoProof.block->header.keyFrame
+                : videoProof.block->referenceCount == 0)) {
+        outcome.error = videoProof.error == MatroskaDemuxError::None
+                            ? MatroskaDemuxError::InvalidCue
+                            : videoProof.error;
+        outcome.message = "Cue does not identify a video random access point";
+        return outcome;
+      }
+      seedCluster = cue.clusterIndex;
+    } else {
+      if (!state.audio) {
+        outcome.error = MatroskaDemuxError::TrackSelection;
+        outcome.message = "generation has neither a video nor an audio lane";
+        return outcome;
+      }
       std::size_t low = 0;
-      std::size_t high = state.cues.size();
+      std::size_t high = state.clusters.size();
       while (low < high) {
         const std::size_t middle = low + (high - low) / 2U;
-        const auto cueTime = timeFromSignedTick(
-            static_cast<std::int64_t>(state.cues[middle].timestampTick),
+        const auto clusterTime = timeFromSignedTick(
+            static_cast<std::int64_t>(state.clusters[middle].timestampTick),
             state.timestampScaleNanoseconds);
-        if (!cueTime) {
+        if (!clusterTime) {
           outcome.error = MatroskaDemuxError::InvalidTimeline;
           return outcome;
         }
-        const auto order = compareMediaTime(*cueTime, target);
+        const auto order = compareMediaTime(*clusterTime, target);
         if (!order) {
           outcome.error = MatroskaDemuxError::InvalidTimeline;
           return outcome;
@@ -2685,43 +2766,10 @@ MatroskaPlanOutcome MatroskaPreparedAsset::planGeneration(
         if (*order == MediaTimeOrder::Greater) {
           high = middle;
         } else {
-          cueIndex = middle;
+          seedCluster = middle;
           low = middle + 1U;
         }
       }
-    }
-    const MatroskaCueIndexEntry& cue = state.cues[cueIndex];
-    MatroskaGenerationPlan plan;
-    plan.requestedTarget = target;
-    plan.mode = mode;
-    plan.videoClusterIndex = cue.clusterIndex;
-    plan.videoBlockOffset =
-        state.clusters[cue.clusterIndex].dataRange().offset +
-        cue.relativeBlockOffset;
-    const auto decodeStart = timeFromSignedTick(
-        static_cast<std::int64_t>(cue.timestampTick),
-        state.timestampScaleNanoseconds);
-    if (!decodeStart) {
-      outcome.error = MatroskaDemuxError::InvalidTimeline;
-      return outcome;
-    }
-    plan.actualDecodeStart = *decodeStart;
-
-    const ScanResult videoProof = scanTrack(
-        state, state.video.id, cue.clusterIndex, 1,
-        [&plan](std::uint32_t, const CapturedBlockVisitor& block) {
-          return block.header.containerEncoded.offset == plan.videoBlockOffset;
-        },
-        cancellation);
-    if (videoProof.error != MatroskaDemuxError::None || !videoProof.block ||
-        !(videoProof.block->header.simpleBlock
-              ? videoProof.block->header.keyFrame
-              : videoProof.block->referenceCount == 0)) {
-      outcome.error = videoProof.error == MatroskaDemuxError::None
-                          ? MatroskaDemuxError::InvalidCue
-                          : videoProof.error;
-      outcome.message = "Cue does not identify a video random access point";
-      return outcome;
     }
 
     if (state.audio) {
@@ -2767,8 +2815,14 @@ MatroskaPlanOutcome MatroskaPreparedAsset::planGeneration(
       const std::uint64_t priming = state.audio->audioPrimingAccessUnits;
       const std::uint64_t startOrdinal =
           desiredOrdinal >= priming ? desiredOrdinal - priming : 0;
-      const std::size_t cueCluster = cue.clusterIndex;
-      const std::size_t searchStart = cueCluster == 0 ? 0 : cueCluster - 1;
+      // One Cluster of backoff covers the priming access units, which are tens
+      // of milliseconds against Clusters that are whole seconds long. An
+      // audio-only generation backs off two, because its seed is the Cluster
+      // containing the target rather than a Cue at or before it and it has no
+      // video RAP to anchor the lower bound.
+      const std::size_t backoff = state.video ? 1U : 2U;
+      const std::size_t searchStart =
+          seedCluster > backoff ? seedCluster - backoff : 0;
       const ScanResult audioBlock = scanTrack(
           state, state.audio->id, static_cast<std::uint32_t>(searchStart),
           kMaximumMatroskaSeekClusters,
@@ -2819,6 +2873,22 @@ MatroskaPlanOutcome MatroskaPreparedAsset::planGeneration(
         return outcome;
       }
       plan.audioWindow = {*decode, *presentationStart, startOrdinal == 0};
+      if (!state.video) {
+        // With no video lane the generation's decode start IS the audio
+        // window's, floored at the stream origin. Opus states a negative
+        // presentation origin (the pre-skip), and the downstream timeline
+        // contract requires 0 <= actualDecodeStart <= target; the audio window
+        // keeps the exact signed value, which is where the pre-skip is
+        // actually honoured.
+        constexpr MediaTime kOrigin{0, 1};
+        const auto againstOrigin = compareMediaTime(*decode, kOrigin);
+        if (!againstOrigin) {
+          outcome.error = MatroskaDemuxError::InvalidTimeline;
+          return outcome;
+        }
+        plan.actualDecodeStart =
+            *againstOrigin == MediaTimeOrder::Less ? kOrigin : *decode;
+      }
     }
     outcome.status = MatroskaDemuxStatus::Ready;
     outcome.error = MatroskaDemuxError::None;
@@ -2833,10 +2903,13 @@ MatroskaPlanOutcome MatroskaPreparedAsset::planGeneration(
 
 std::unique_ptr<MatroskaCursor> MatroskaPreparedAsset::makeVideoCursor(
     const MatroskaGenerationPlan& plan) const noexcept {
+  if (!impl_->state->video) {
+    return nullptr;
+  }
   try {
     auto cursor = std::make_unique<MatroskaCursor::Impl>();
     cursor->state = impl_->state;
-    cursor->track = impl_->state->video.id;
+    cursor->track = impl_->state->video->id;
     cursor->video = true;
     cursor->clusterIndex = plan.videoClusterIndex;
     cursor->startBlockOffset = plan.videoBlockOffset;
@@ -3054,8 +3127,23 @@ MatroskaPrepareOutcome prepareMatroska(
         [](const TrackEntry& track) {
           return track.enabled && track.type == 2;
         });
-    if (video == nullptr || (audioTrackPresent && audio == nullptr) ||
+    // The mirror of the rule above, for the audio-only route. A file that
+    // carries video the native path cannot decode must still fall back as a
+    // WHOLE FILE rather than prepare audio-only: playing a VP9+Opus WebM as a
+    // black window with sound is worse than the mpv fallback, which shows the
+    // picture. A file with no video track at all is a different thing entirely
+    // and is admitted audio-only, which is the correct music-file path.
+    const bool videoTrackPresent = std::any_of(
+        document.tracks.begin(), document.tracks.end(),
+        [](const TrackEntry& track) {
+          return track.enabled && track.type == 1;
+        });
+    if ((videoTrackPresent && video == nullptr) ||
+        (audioTrackPresent && audio == nullptr) ||
+        (video == nullptr && audio == nullptr) ||
+        (requested.selection.requireVideo && video == nullptr) ||
         (requested.selection.requireAudio && audio == nullptr) ||
+        (requested.selection.preferredVideo && video == nullptr) ||
         (requested.selection.preferredAudio && audio == nullptr) ||
         requested.selection.preferredSubtitle) {
       // No admissible track for this request is an envelope verdict, not an
@@ -3082,24 +3170,29 @@ MatroskaPrepareOutcome prepareMatroska(
       TrackConstraint constraint;
       constraint.number = track.number;
       constraint.lacingAllowed = track.lacingAllowed;
-      constraint.selected = track.number == video->number ||
-                            (audio != nullptr && track.number == audio->number);
-      constraint.maximumBlockBytes = track.number == video->number
+      const bool isVideo = video != nullptr && track.number == video->number;
+      constraint.selected =
+          isVideo || (audio != nullptr && track.number == audio->number);
+      constraint.maximumBlockBytes = isVideo
                                          ? state->limits.maximumVideoSampleBytes
                                          : state->limits.maximumAudioSampleBytes;
       state->constraints.push_back(constraint);
     }
-    MediaTrackDescriptor videoDescriptor;
-    if (!makeVideoDescriptor(*state->reader, *video, state->limits, *duration,
-                             document.clusters, state->constraints,
-                             cancellation, &videoDescriptor, &state->video)) {
-      result.error = MatroskaDemuxError::CodecConfiguration;
-      result.status = MatroskaDemuxStatus::Unsupported;
-      result.message = "selected AVC/HEVC/AV1/VP9/VP8 track was not admitted";
-      return result;
+    if (video != nullptr) {
+      MediaTrackDescriptor videoDescriptor;
+      TrackRuntime videoRuntime;
+      if (!makeVideoDescriptor(*state->reader, *video, state->limits, *duration,
+                               document.clusters, state->constraints,
+                               cancellation, &videoDescriptor, &videoRuntime)) {
+        result.error = MatroskaDemuxError::CodecConfiguration;
+        result.status = MatroskaDemuxStatus::Unsupported;
+        result.message = "selected AVC/HEVC/AV1/VP9/VP8 track was not admitted";
+        return result;
+      }
+      descriptor->selectedVideo = videoDescriptor.id;
+      descriptor->tracks.push_back(std::move(videoDescriptor));
+      state->video = videoRuntime;
     }
-    descriptor->selectedVideo = videoDescriptor.id;
-    descriptor->tracks.push_back(std::move(videoDescriptor));
     if (audio != nullptr) {
       MediaTrackDescriptor audioDescriptor;
       TrackRuntime audioRuntime;
@@ -3149,8 +3242,16 @@ MatroskaPrepareOutcome prepareMatroska(
       previousTimestamp = cluster.timestampTick;
     }
 
+    // The Cue index is, and stays, selected-VIDEO-only: it exists to answer
+    // "which encoded byte is the random access point covering this target",
+    // and only a video lane has non-random-access samples to skip. An
+    // audio-only generation needs no Cue index at all -- every audio Block is
+    // its own random access point -- so it seeds its Block scan from the
+    // Cluster directory instead (see planGeneration). Harvesting audio Cues
+    // here would build a second index with different admission rules for no
+    // benefit, and would make a Cue-less MKA (which FFmpeg does emit) refuse.
     for (const CueTrackPosition& cue : document.cuePositions) {
-      if (cue.track != state->video.id) {
+      if (!state->video || cue.track != state->video->id) {
         continue;
       }
       if (!cue.relativePosition || !cue.absoluteBlockOffset ||
@@ -3190,7 +3291,7 @@ MatroskaPrepareOutcome prepareMatroska(
     // essentially every real remux. planGeneration already clamps any target
     // at or before the first cue to cue zero, so a non-zero first cue needs no
     // other special case; the strictly-increasing check below still holds.
-    if (state->cues.empty() ||
+    if ((state->video && state->cues.empty()) ||
         state->cues.size() > kMaximumMatroskaCues) {
       result.error = MatroskaDemuxError::MissingCues;
       result.message = "v1 requires a bounded selected-video Cue index";
@@ -3209,9 +3310,12 @@ MatroskaPrepareOutcome prepareMatroska(
     constexpr __int128 kNanosecondsPerSecond{1'000'000'000};
     const auto prerollNanoseconds = static_cast<__int128>(
         state->limits.maximumVideoSeekPrerollSeconds * 1.0e9);
-    auto previous = timeFromSignedTick(
-        static_cast<std::int64_t>(state->cues.front().timestampTick),
-        state->timestampScaleNanoseconds);
+    auto previous =
+        state->cues.empty()
+            ? std::optional<MediaTime>{}
+            : timeFromSignedTick(
+                  static_cast<std::int64_t>(state->cues.front().timestampTick),
+                  state->timestampScaleNanoseconds);
     for (std::size_t index = 1; index < state->cues.size(); ++index) {
       const auto current = timeFromSignedTick(
           static_cast<std::int64_t>(state->cues[index].timestampTick),

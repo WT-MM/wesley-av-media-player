@@ -233,8 +233,17 @@ void testPreparationAndStartupProofs() {
          "a descriptor ending before the initial position is invalid proof");
   wrong = prepared;
   wrong.descriptor.hasVideo = false;
+  expect(preparedMatches(prepare, GenerationHighWater{}, wrong),
+         "a video-less descriptor still proves readiness when it has audio");
+  wrong = prepared;
+  wrong.descriptor.hasAudio = false;
+  expect(preparedMatches(prepare, GenerationHighWater{}, wrong),
+         "an audio-less descriptor still proves readiness when it has video");
+  wrong = prepared;
+  wrong.descriptor.hasVideo = false;
+  wrong.descriptor.hasAudio = false;
   expect(!preparedMatches(prepare, GenerationHighWater{}, wrong),
-         "a video-less descriptor cannot prove native playback readiness");
+         "a descriptor with neither lane cannot prove native readiness");
   wrong = prepared;
   wrong.descriptor.durationSeconds = nan;
   expect(!preparedMatches(prepare, GenerationHighWater{}, wrong),

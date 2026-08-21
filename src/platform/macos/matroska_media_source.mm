@@ -935,15 +935,17 @@ struct MatroskaMediaSource::Impl {
       return started;
     }
 
-    noteMatroskaAssetContextCursorCreationAttempt(*context);
-    videoCursor = asset->makeVideoCursor(plan);
-    if (videoCursor == nullptr) {
-      started.status = media::MediaSourceOpenStatus::Failed;
-      started.error = "matroska video cursor could not be created";
-      withdrawFailedOperation();
-      return started;
+    if (descriptor->selectedVideo) {
+      noteMatroskaAssetContextCursorCreationAttempt(*context);
+      videoCursor = asset->makeVideoCursor(plan);
+      if (videoCursor == nullptr) {
+        started.status = media::MediaSourceOpenStatus::Failed;
+        started.error = "matroska video cursor could not be created";
+        withdrawFailedOperation();
+        return started;
+      }
+      noteMatroskaAssetContextCursorStarted(*context);
     }
-    noteMatroskaAssetContextCursorStarted(*context);
     if (descriptor->selectedAudio) {
       noteMatroskaAssetContextCursorCreationAttempt(*context);
       audioCursor = asset->makeAudioCursor(plan);

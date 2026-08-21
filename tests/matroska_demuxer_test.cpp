@@ -2136,7 +2136,8 @@ void testCodecAdmissionAndSelection() {
     FixtureSpec spec;
     spec.includeVideoTrack = false;
     expectPrepareError(spec, MatroskaDemuxError::TrackSelection,
-                       "an audio-only document has no admissible video track");
+                       "requireVideo, which is the default, still rejects an "
+                       "audio-only document");
   }
   {
     FixtureSpec spec;
@@ -2155,14 +2156,41 @@ void testCodecAdmissionAndSelection() {
                        "a subtitle-only Tracks element admits no A/V output");
   }
   {
+    // Audio-only Matroska (an MKA, or an audio-only MKV/WebM). The clock is
+    // audio-authoritative in every generation, so dropping the video lane is
+    // the simpler of the two degenerate cases: nothing has to stand in for the
+    // missing authority. The Cue index stays selected-video-only and is
+    // therefore empty here; the Block scan seeds off the Cluster directory
+    // instead, which is what lets a Cue-less MKA seek at all.
     FixtureSpec spec;
     spec.includeVideoTrack = false;
     MediaSourceOpenOptions options;
     options.selection.requireVideo = false;
     const PreparedFixture prepared = prepareFixture(spec, options);
-    expect(prepared.outcome.asset == nullptr &&
-               prepared.outcome.error == MatroskaDemuxError::TrackSelection,
-           "requireVideo false never relaxes the v1 video requirement");
+    expect(prepared.outcome.status == MatroskaDemuxStatus::Ready &&
+               prepared.outcome.asset != nullptr &&
+               !prepared.outcome.asset->descriptor()->selectedVideo &&
+               prepared.outcome.asset->descriptor()->selectedAudio.has_value(),
+           "requireVideo false admits an audio-only document with no video "
+           "lane");
+    if (prepared.outcome.asset != nullptr) {
+      expect(prepared.asset().cues().empty(),
+             "an audio-only asset builds no selected-video Cue index");
+      const MatroskaPlanOutcome planned = prepared.asset().planGeneration(
+          MediaTime{0, 1}, MediaSeekMode::Accurate);
+      expect(planned.status == MatroskaDemuxStatus::Ready &&
+                 planned.plan.has_value(),
+             "an audio-only generation plans off the Cluster directory");
+      if (planned.plan) {
+        expect(planned.plan->actualDecodeStart.valid() &&
+                   planned.plan->actualDecodeStart.value >= 0,
+               "an audio-only plan states a nonnegative decode start");
+        expect(prepared.asset().makeVideoCursor(*planned.plan) == nullptr,
+               "a video cursor is unavailable without a selected video track");
+        expect(prepared.asset().makeAudioCursor(*planned.plan) != nullptr,
+               "the audio cursor is the only lane an audio-only asset opens");
+      }
+    }
   }
   {
     MediaSourceOpenOptions options;

@@ -19,11 +19,15 @@ void saturatingIncrement(std::atomic<std::uint64_t>& value) noexcept {
 [[nodiscard]] bool validPreparedDescriptor(
     const std::shared_ptr<const media::MediaSourceDescriptor>& descriptor,
     const media::MediaSourceLimits& limits) noexcept {
-  // A selected video track is mandatory for every native v1 context. A
-  // selected audio track is not: an audio-less Matroska file is admitted with
-  // selectedAudio left unset, and the descriptor validator already rejects a
-  // selection that names a track of the wrong kind or no track at all.
-  return descriptor != nullptr && descriptor->selectedVideo.has_value() &&
+  // Neither selection is individually mandatory, but at least one must exist:
+  // an audio-less Matroska plays on the silent timebase and a video-less one
+  // (MKA, audio-only MKV/WebM) plays on the audio clock. A context that names
+  // no lane at all could not produce a single sample. The descriptor validator
+  // already rejects a selection that names a track of the wrong kind or no
+  // track at all.
+  return descriptor != nullptr &&
+         (descriptor->selectedVideo.has_value() ||
+          descriptor->selectedAudio.has_value()) &&
          media::validateMediaSourceDescriptor(*descriptor, limits, nullptr);
 }
 

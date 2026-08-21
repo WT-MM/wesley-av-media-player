@@ -403,6 +403,14 @@ struct VideoDrawProof {
   std::uint64_t drawSequence{0};
   double frameStartSeconds{0.0};
   double frameDurationSeconds{0.0};
+  // An audio-only generation has no video lane, so there is no covering frame
+  // for a commit to prove. This names that absence explicitly instead of
+  // letting a zeroed proof pass as a real draw: when it is set, every other
+  // field must be exactly zero and the commit's whole progress proof is the
+  // audio clock -- which is the position authority in every generation anyway.
+  // A picture needs a covering frame because it is a sample-and-hold signal;
+  // PCM is not, so nothing has to stand in for the frame here.
+  bool videoLaneAbsent{false};
 };
 
 struct CommitReady {
@@ -463,10 +471,13 @@ enum class PrepareDisposition : std::uint8_t {
 // Local validators ----------------------------------------------------------
 
 [[nodiscard]] constexpr bool valid(const PreparedDescriptor &value) noexcept {
-  // A video-less source cannot produce either of the draw proofs required by
-  // this v1 playback contract, so audio-only media routes to fallback. Audio
-  // remains optional for silent video.
-  return validPosition(value.durationSeconds) && value.hasVideo;
+  // At least one lane must exist; neither is individually required. A
+  // video-less source produces no draw proof, and the contract no longer asks
+  // for one: an audio-only generation's progress proof is the audio clock,
+  // which is the authority in every other generation too. A source with
+  // neither lane could not produce a single sample.
+  return validPosition(value.durationSeconds) &&
+         (value.hasVideo || value.hasAudio);
 }
 
 [[nodiscard]] constexpr bool valid(const Prepare &value) noexcept {
@@ -531,12 +542,25 @@ enum class PrepareDisposition : std::uint8_t {
 }
 
 [[nodiscard]] constexpr bool valid(const AudioClockProof &value) noexcept {
+  // `paused` is NOT required here any more. A running sample is a legitimate
+  // proof shape: it is the UI playhead observation for an audio-only
+  // generation, which draws no frames and therefore has no frame PTS to use
+  // instead. Every consumer that genuinely needs a settled, paused clock --
+  // only the commit handshake does -- states that requirement itself, see
+  // valid(CommitReady) below.
   return validLive(value.stamp) && validLive(value.generation) &&
          valid(value.anchor) && validPosition(value.positionSeconds) &&
-         value.paused && routeForRate(value.rate) == RateRoute::NativeVersion1;
+         routeForRate(value.rate) == RateRoute::NativeVersion1;
 }
 
 [[nodiscard]] constexpr bool valid(const VideoDrawProof &value) noexcept {
+  if (value.videoLaneAbsent) {
+    // Exactly the zero shape and nothing else, so an absent-lane proof can
+    // never be confused with a real draw that merely failed to fill in.
+    return validLive(value.stamp) && validLive(value.generation) &&
+           value.drawSequence == 0 && value.frameStartSeconds == 0.0 &&
+           value.frameDurationSeconds == 0.0;
+  }
   return validLive(value.stamp) && validLive(value.generation) &&
          value.drawSequence != 0 && validPosition(value.frameStartSeconds) &&
          value.frameDurationSeconds > 0.0 &&
@@ -546,6 +570,11 @@ enum class PrepareDisposition : std::uint8_t {
 [[nodiscard]] constexpr bool
 frameCoversPosition(const VideoDrawProof &frame,
                     double positionSeconds) noexcept {
+  if (frame.videoLaneAbsent) {
+    // Nothing to cover: an audio-only generation has no picture that must be
+    // held over the target instant.
+    return true;
+  }
   // Subtraction after the ordered comparison avoids overflowing a
   // frameStart + frameDuration sum. The half-open interval assigns an exact
   // boundary to the following frame.
@@ -558,7 +587,10 @@ frameCoversPosition(const VideoDrawProof &frame,
   return validLive(value.stamp) && validLive(value.generation) &&
          valid(value.gesture) && valid(value.request) &&
          validPosition(value.targetSeconds) && valid(value.audioClock) &&
-         valid(value.videoDraw) &&
+         // A commit lands the transport paused at the target, so its clock
+         // proof must be a settled paused sample -- the requirement that used
+         // to live inside valid(AudioClockProof) and is stated here now.
+         value.audioClock.paused && valid(value.videoDraw) &&
          sameCommand(value.stamp, value.audioClock.stamp) &&
          sameCommand(value.stamp, value.videoDraw.stamp) &&
          value.audioClock.generation == value.generation &&
@@ -821,7 +853,8 @@ commitReadyMatches(const CommitSeek &command, std::uint64_t drawBaseline,
          command.targetGeneration == event.generation &&
          command.gesture == event.gesture && command.request == event.request &&
          command.targetSeconds == event.targetSeconds &&
-         event.videoDraw.drawSequence > drawBaseline;
+         (event.videoDraw.videoLaneAbsent ||
+          event.videoDraw.drawSequence > drawBaseline);
 }
 
 [[nodiscard]] constexpr bool endedMatches(Stamp current,
