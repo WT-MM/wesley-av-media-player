@@ -696,6 +696,27 @@ deriveCodecReorderFrameCount(const VideoStreamConfiguration &configuration) {
     }
     return std::size_t{1};
   }
+  if (configuration.codec == kCMVideoCodecType_MPEG4Video) {
+    // Zero, and it is a property of the admitted PROFILE rather than of the
+    // codec. MPEG-4 Part 2 as a whole reorders exactly like MPEG-2 -- one
+    // future anchor held back across the B-VOPs that reference it -- but
+    // B-VOPs are an Advanced Simple Profile tool, and Advanced Simple Profile
+    // never reaches this decoder: Apple's 'mp4v' decoder refuses it at session
+    // creation, so media::inspectMpeg4VisualHeaders() admits Simple Profile
+    // alone. Simple Profile codes I-VOPs and P-VOPs only, so decode order IS
+    // presentation order and nothing is ever held back.
+    //
+    // That is also why the Matroska route's missing decode timestamps cost
+    // this codec nothing: with no reordering there is no decode-versus-
+    // presentation displacement for the A/V merge lead to reconstruct.
+    //
+    // The record is the esds the demuxer synthesized, which is never empty --
+    // the inverse of the MPEG-2 arm above.
+    if (bytes.empty()) {
+      return std::nullopt;
+    }
+    return std::size_t{0};
+  }
   if (configuration.codec == kCMVideoCodecType_VP9) {
     // VP9 has no output reordering. Alternate-reference ("hidden") frames are
     // decoded but never output at their own decode position; they reach the
@@ -1699,11 +1720,18 @@ CFStringRef codecConfigurationAtomName(CMVideoCodecType codec) noexcept {
   // vpcC/av1C atoms travel through the exact same sample-description-extension
   // dictionary as avcC/hvcC, so naming them here is the only change the
   // format-description path needs.
-  return codec == kCMVideoCodecType_H264   ? CFSTR("avcC")
-         : codec == kCMVideoCodecType_HEVC ? CFSTR("hvcC")
-         : codec == kCMVideoCodecType_VP9  ? CFSTR("vpcC")
-         : codec == kCMVideoCodecType_AV1  ? CFSTR("av1C")
-                                           : nullptr;
+  // MPEG-4 Part 2 is the same story with a different atom: the format
+  // description must carry an 'esds' -- the ISO/IEC 14496-1 ES_Descriptor
+  // wrapping the VisualObjectSequence -- or VTDecompressionSessionCreate
+  // fails. Measured 2026-08-20: the raw headers in band, or an ES_Descriptor
+  // missing the box's four version/flags bytes, both return
+  // kVTVideoDecoderBadDataErr (-12909).
+  return codec == kCMVideoCodecType_H264       ? CFSTR("avcC")
+         : codec == kCMVideoCodecType_HEVC     ? CFSTR("hvcC")
+         : codec == kCMVideoCodecType_VP9      ? CFSTR("vpcC")
+         : codec == kCMVideoCodecType_AV1      ? CFSTR("av1C")
+         : codec == kCMVideoCodecType_MPEG4Video ? CFSTR("esds")
+                                                 : nullptr;
 }
 
 // True for a codec that has NO out-of-band decoder configuration record at
@@ -1722,6 +1750,36 @@ CFStringRef codecConfigurationAtomName(CMVideoCodecType codec) noexcept {
 // admitted.
 bool codecCarriesNoConfigurationRecord(CMVideoCodecType codec) noexcept {
   return codec == kCMVideoCodecType_MPEG2Video;
+}
+
+// True for a codec whose VideoToolbox decoder does NOT natively produce a
+// bi-planar 4:2:0 surface, so the output pixel format must be pinned in the
+// session's destination attributes even on the display-layer route that
+// otherwise leaves the decoder free to pick.
+//
+// This is a property of the DECODER's native output format and nothing else.
+// It was previously expressed as codecCarriesNoConfigurationRecord(), which
+// was true of MPEG-2 for an unrelated reason and happened to select the right
+// codec while MPEG-2 was the only legacy decoder here. MPEG-4 Part 2 broke
+// that coincidence: it carries a configuration record AND decodes to `2vuy`.
+//
+// Both of Apple's legacy software decoders behave the same way, measured
+// 2026-08-20: an unpinned session decodes to `2vuy`
+// (kCVPixelFormatType_422YpCbCr8, packed 4:2:2) and a pinned one decodes the
+// same bytes to `420v`. Nothing downstream accepts a packed 4:2:2 surface --
+// the display layer, the Metal mapper and the OpenGL importer are all
+// bi-planar -- so an unpinned session fails the output-surface contract on its
+// very first frame ("output pixel format 846624121 did not match the bounded
+// native decode contract 875704438"). That is exactly the failure MPEG-4
+// Part 2 hit before it was named here.
+//
+// Pinning costs the same per-frame VTPixelTransferSession the non-display-layer
+// contracts already pay. It is affordable for both codecs for the same reason:
+// MPEG-2-in-TS is SD, and MPEG-4 Part 2 Simple Profile is an SD-era profile
+// whose levels stop at SD resolutions.
+bool codecNeedsPinnedOutputPixelFormat(CMVideoCodecType codec) noexcept {
+  return codec == kCMVideoCodecType_MPEG2Video ||
+         codec == kCMVideoCodecType_MPEG4Video;
 }
 
 struct CodecConfigurationAtomMetadata {
@@ -1985,6 +2043,12 @@ requestedPixelFormat(const VideoStreamConfiguration &configuration) noexcept {
     //              rejected it first.
     tenBit = ((bytes[2] >> 6U) & 0x01U) != 0U;
   }
+  // MPEG-2 and MPEG-4 Part 2 are deliberately absent from the chain above:
+  // both are 8-bit by profile (MPEG-4 Part 2 Simple Profile defines 8-bit
+  // 4:2:0 and nothing else), so the 8-bit answer below is a stated fact rather
+  // than a default they fell through to. They are also the two codecs whose
+  // decoders will not produce this format unless it is requested -- see
+  // codecNeedsPinnedOutputPixelFormat().
   return tenBit ? kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange
                 : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange;
 }
@@ -2330,25 +2394,18 @@ struct VideoToolboxDecoder::Impl {
     // session that also carries OpenGL texture compatibility returns BGRA,
     // which would be a far worse conversion than the one being removed.
     //
-    // MPEG-2 is the one codec that must pin REGARDLESS of the interop. Its
-    // decoder on this platform is software, and its native output is `2vuy`
-    // (kCVPixelFormatType_422YpCbCr8, packed 4:2:2) -- measured in
-    // scratchpad/vt_mpeg2_pixfmt.mm, where an unpinned session decodes to
-    // 2vuy and a pinned one decodes the same bytes to 420v. Nothing
-    // downstream of this decoder accepts a packed 4:2:2 surface: the display
-    // layer, the Metal mapper and the OpenGL importer are all bi-planar, and
-    // an unpinned MPEG-2 session therefore fails the output-surface contract
-    // on its very first frame ("output pixel format 846624121 did not match
-    // the bounded native decode contract 875704438"). Pinning costs the same
-    // per-frame VTPixelTransferSession the non-display-layer contracts already
-    // pay, and MPEG-2-in-TS is SD, which is why that is affordable here.
+    // Apple's legacy software decoders must pin REGARDLESS of the interop,
+    // because their native output is packed 4:2:2 and nothing downstream
+    // accepts it. See codecNeedsPinnedOutputPixelFormat() for the measurement
+    // and for why that predicate is not the same question as "does this codec
+    // carry a configuration record", which is what this condition used to ask.
     const CMVideoCodecType sessionCodec =
         formatDescription != nullptr
             ? CMFormatDescriptionGetMediaSubType(formatDescription)
             : 0;
     const bool pinOutputPixelFormat =
         options.outputInterop != VideoToolboxOutputInterop::DisplayLayer ||
-        codecCarriesNoConfigurationRecord(sessionCodec);
+        codecNeedsPinnedOutputPixelFormat(sessionCodec);
     CFNumberRef pixelFormatNumber = nullptr;
     if (pinOutputPixelFormat) {
       const std::int32_t pixelFormatValue =
@@ -3001,6 +3058,12 @@ bool VideoToolboxDecoder::configure(
       // platform, so it is admitted without a capability query -- the query
       // would answer 0 and refuse a stream that demonstrably decodes.
       configuration.codec == kCMVideoCodecType_MPEG2Video ||
+      // MPEG-4 Part 2 is software on this platform too, and for the same
+      // reason takes no capability query. Its PROFILE gate is upstream: only
+      // Simple Profile survives media::inspectMpeg4VisualHeaders(), because
+      // Apple's decoder refuses Advanced Simple Profile here with
+      // codecBadDataErr (-8969).
+      configuration.codec == kCMVideoCodecType_MPEG4Video ||
       (configuration.codec == kCMVideoCodecType_VP9 &&
        nativeVideoToolboxSupportsVp9()) ||
       (configuration.codec == kCMVideoCodecType_AV1 &&
@@ -3015,9 +3078,10 @@ bool VideoToolboxDecoder::configure(
       configuration.codedSize.height <= 0 || !admittedConfigurationShape) {
     assignError(error,
                 "VideoToolbox requires a decodable "
-                "H.264/HEVC/VP9/AV1/MPEG-2 stream, positive dimensions, and "
-                "the configuration record shape its codec states "
-                "(avcC/hvcC/vpcC/av1C, or none at all for MPEG-2)");
+                "H.264/HEVC/VP9/AV1/MPEG-2/MPEG-4 Part 2 stream, positive "
+                "dimensions, and the configuration record shape its codec "
+                "states (avcC/hvcC/vpcC/av1C/esds, or none at all for "
+                "MPEG-2)");
     return false;
   }
 
