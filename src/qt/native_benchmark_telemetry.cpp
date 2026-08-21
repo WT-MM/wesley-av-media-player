@@ -907,6 +907,14 @@ void NativeBenchmarkTelemetry::commitReady(
   point.hasTargetSeconds = true;
   point.targetSeconds = event.targetSeconds;
   point.libmpvInitialized = libmpvInitialized;
+  if (event.videoDraw.videoLaneAbsent) {
+    // An audio-only generation commits on the audio clock alone. There is no
+    // frame, so the paired commit_frame_drawn is genuinely absent rather than
+    // reported at time zero: the evidence stream must not carry a draw that
+    // never happened.
+    static_cast<void>(recordAt(point, now));
+    return;
+  }
   Point draw{};
   draw.event = Event::CommitFrameDrawn;
   draw.route = Route::Native;

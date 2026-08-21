@@ -26,7 +26,9 @@ void saturatingIncrement(std::atomic<std::uint64_t>& value) noexcept {
   // selected audio track is not: an audio-less asset is admitted with
   // selectedAudio left unset, and the descriptor validator already rejects a
   // selection that names a track of the wrong kind or no track at all.
-  return descriptor != nullptr && descriptor->selectedVideo.has_value() &&
+  return descriptor != nullptr &&
+         (descriptor->selectedVideo.has_value() ||
+          descriptor->selectedAudio.has_value()) &&
          media::validateMediaSourceDescriptor(*descriptor, limits, nullptr);
 }
 
@@ -109,8 +111,13 @@ adoptPreparedAVFoundationAssetContext(
     // caller's admission and its borrows came from different asset views, so
     // fail the adoption closed rather than publish a context that disagrees
     // with its own immutable descriptor.
+    // The same rule now applies to the green_mesa_11 borrow, because complete() no
+    // longer requires a green_mesa_11 track either: a standalone music file is admitted
+    // with selectedVideo unset and must arrive with a null green_mesa_11 handle.
     if (descriptor->selectedAudio.has_value() !=
-        (handles.selectedAudioTrack != nullptr)) {
+            (handles.selectedAudioTrack != nullptr) ||
+        descriptor->selectedVideo.has_value() !=
+            (handles.selectedVideoTrack != nullptr)) {
       return {};
     }
     AVURLAsset* asset = (__bridge AVURLAsset*)(
