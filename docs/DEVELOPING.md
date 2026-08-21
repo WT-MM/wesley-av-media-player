@@ -165,7 +165,8 @@ presentation route, which widened WAM's side of the margin further.
   (`RUN_ID`, …) are never read, and `uuidgen` emits uppercase — either mistake
   silently disables the channel and every `WAM_TEST_*` seam with it.
   `WAM_TEST_REOPEN_SCRIPT` entries are `delayMs@path`, comma-separated,
-  delays cumulative.
+  delays cumulative. See **Quiet launch seams** below for `WAM_TEST_BACKGROUND`,
+  `WAM_TEST_GEOMETRY` and `WAM_TEST_MUTED`.
 - `benchmarks/macos/player_resource_trial.py` — cross-player resource trials
   (CPU/GPU/memory/energy) with parked-window geometry.
 - `benchmarks/macos/stress_load.py` — calibrated CPU/GPU load generators for
@@ -173,11 +174,83 @@ presentation route, which widened WAM's side of the margin further.
 - `benchmarks/matroska_demuxer_bench.cpp` — multi-size regime benchmark for
   the demuxer (built with the `benchmark` label, excluded from default builds).
 
+### Quiet launch seams
+
+Two seams exist so an automated verification round does not take over the
+machine it runs on. Both are gated exactly like the other `WAM_TEST_*` seams —
+parsed only when `WAM_NATIVE_BENCHMARK_TELEMETRY` is enabled *and* the three
+prefixed identity vars validate — so a shipping launch can never observe them.
+Truthy values are the telemetry opt-in's own vocabulary (`1`, `true`, `yes`,
+`on`, and upper-case forms); anything else, junk included, is off.
+
+- `WAM_TEST_BACKGROUND=1` — launches without ever becoming the frontmost
+  application. Two mechanisms, both needed: `main.cpp` sets
+  `QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM` before `QGuiApplication`
+  (that is the Qt cocoa plugin's own guard on the
+  `-[NSApplication activateIgnoringOtherApps:YES]` it performs "to avoid
+  launching behind the terminal"), then drops the process to
+  `NSApplicationActivationPolicyAccessory` and resigns activation from an
+  `NSApplicationDidBecomeActive` observer. The observer is not belt-and-braces:
+  measured, the policy change alone let about one launch in two through. The
+  app also leaves the Dock and menu bar, which for a test instance is a
+  feature.
+
+  **The window stays on screen and composited, deliberately.** An accessory
+  app's `makeKeyAndOrderFront:` orders the window only within its own app, so
+  it lands wherever the active app's windows leave it — measured at z-index 18
+  of 44 on-screen windows, fully covered. That is the occlusion counterfeit
+  this document warns about two paragraphs down, so the seam also calls
+  `-orderFrontRegardless` and parks the window at `NSFloatingWindowLevel`,
+  where no ordinary application window can bury it mid-measurement.
+
+- `WAM_TEST_GEOMETRY="WxH+X+Y"` — parks the window at an exact logical
+  rectangle (minimum 64x64), re-applied on the next event-loop pass and again
+  at 400 ms so QML's own sizing cannot overwrite it. Needed in practice
+  *because* the background seam floats the window above ordinary windows:
+  leaving a full-size always-on-top window on someone's screen is not quiet.
+  Requires no pointer, no System Events, and no accessibility grant.
+
+- `WAM_TEST_MUTED=1` — silent hardware output with measurement untouched.
+  `NativeAudioOutput::render` zeroes the sample buffer *after* the render core
+  has filled it and before returning, so callback cadence, every counter, the
+  stream frame cursor, the audio-authoritative clock, the underrun/refill wake
+  edges and the `OutputIsSilence` flag are all exactly what an unmuted callback
+  produces. The gate is snapshotted into a `const bool` at construction, so the
+  render callback reads a plain bool and an unmuted process pays one
+  never-taken branch. Asserted at the AudioUnit boundary by
+  `tests/native_audio_output_test.mm`
+  (`testMutedOutputZeroesSamplesAndNothingElse`), which checks both halves:
+  samples zero, counters identical to the unmuted control.
+
+  Rejected: the output unit's volume parameter (a device-graph parameter whose
+  per-callback cost this code does not control, so "provably does not alter
+  callback timing" cannot be claimed); `PlayerController::setVolume(0)` (changes
+  the samples the render core produces, and is *persisted* — a muted test run
+  would silently zero the user's saved volume); and flagging every callback
+  `kAudioUnitRenderAction_OutputIsSilence` (a hint the HAL may act on, and
+  `render()` already uses that flag to report a genuinely all-silent slice,
+  which a mute must not counterfeit).
+
+**Frontmost still matters for some arms.** These seams are for correctness
+rounds — "does playback work, does the seek land, did the window draw" — where
+nothing is being claimed about scheduling. Arms that measure compositor health
+under kill-priming, or anything whose claim depends on the window getting the
+scheduling a foreground app gets, still need a real frontmost launch:
+`run_suite.py` asserts frontmost outright for those. Do not reach for
+`WAM_TEST_BACKGROUND` to make such an arm quieter; it would change the thing
+being measured.
+
 Measurement discipline that has actually mattered here: hold launch/priming
 discipline constant across arms; keep the display awake (an occluded or
 sleeping window counterfeits starvation); treat fixture-green as necessary but
 not sufficient (verify against real encoder output); and when a regression
 appears, suspect the instrument first.
+
+One more that cost a session: give each measured run its **own path** to the
+asset. The state store keys saved positions by path and auto-resume replays
+anything past 5 s, so a second run of the same filename starts mid-clip and can
+reach EOF inside the measurement window — which reads as a session that stopped
+for no reason. A hardlink under a fresh name is enough.
 
 ## Contract surfaces
 

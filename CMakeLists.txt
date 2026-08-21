@@ -489,6 +489,14 @@ if(APPLE)
       src/platform/macos/matroska_preview_source.mm
       src/platform/macos/matroska_sample_builder.hpp
       src/platform/macos/matroska_sample_builder.mm
+      src/platform/macos/mpegts_asset_context.hpp
+      src/platform/macos/mpegts_asset_context.cpp
+      src/platform/macos/mpegts_media_source.hpp
+      src/platform/macos/mpegts_media_source.mm
+      src/platform/macos/mpegts_preview_source.hpp
+      src/platform/macos/mpegts_preview_source.mm
+      src/platform/macos/mpegts_sample_builder.hpp
+      src/platform/macos/mpegts_sample_builder.mm
       src/platform/macos/native_preview_source.hpp
       src/platform/macos/native_preview_source.mm
       src/platform/macos/native_audio_converter.hpp
@@ -1318,6 +1326,15 @@ if(BUILD_TESTING)
         src/platform/macos/matroska_preview_source.mm
         src/platform/macos/matroska_sample_builder.hpp
         src/platform/macos/matroska_sample_builder.mm
+        # native_preview_source.mm switches exhaustively on backendKind, so
+        # every backend's preview implementation is part of this test's link
+        # closure whether or not the test exercises it.
+        src/platform/macos/mpegts_asset_context.hpp
+        src/platform/macos/mpegts_asset_context.cpp
+        src/platform/macos/mpegts_preview_source.hpp
+        src/platform/macos/mpegts_preview_source.mm
+        src/platform/macos/mpegts_sample_builder.hpp
+        src/platform/macos/mpegts_sample_builder.mm
         src/platform/macos/avfoundation_asset_context.hpp
         src/platform/macos/avfoundation_asset_context.mm
         src/platform/macos/avfoundation_preview_source.hpp
@@ -1385,6 +1402,12 @@ if(BUILD_TESTING)
         src/platform/macos/matroska_preview_source.mm
         src/platform/macos/matroska_sample_builder.hpp
         src/platform/macos/matroska_sample_builder.mm
+        src/platform/macos/mpegts_asset_context.hpp
+        src/platform/macos/mpegts_asset_context.cpp
+        src/platform/macos/mpegts_preview_source.hpp
+        src/platform/macos/mpegts_preview_source.mm
+        src/platform/macos/mpegts_sample_builder.hpp
+        src/platform/macos/mpegts_sample_builder.mm
         src/platform/macos/native_preview_source.hpp
         src/platform/macos/native_preview_source.mm
         src/platform/macos/native_media_session.hpp

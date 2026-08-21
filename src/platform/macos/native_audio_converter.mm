@@ -196,7 +196,20 @@ void saturatingAdd(std::uint64_t &value, std::uint64_t amount) noexcept {
   case media::MediaCodec::Alac:
     return formatTag == kAudioFormatAppleLossless;
   case media::MediaCodec::Mp3:
-    return formatTag == kAudioFormatMPEGLayer3;
+    // MediaCodec::Mp3 is the MPEG-1/2 audio ROUTING FAMILY, not one layer.
+    // Matroska only ever reaches this arm with Layer III, but a transport
+    // stream's stream types 0x03/0x04 carry Layer I, II or III and broadcast
+    // MPEG-2 is overwhelmingly Layer II. Layer II is admitted here because it
+    // was measured, not assumed: scratchpad/mp2_probe.mm reports '.mp2' among
+    // kAudioFormatProperty_DecodeFormatIDs on this platform, and
+    // scratchpad/mp2_decode.mm decodes a real 115-frame MP2 elementary stream
+    // to exactly 115 x 1152 = 132,480 PCM frames through an AudioConverter
+    // created with mFormatID = kAudioFormatMPEGLayer2 and no magic cookie.
+    // Layer I is deliberately NOT admitted: the format ID is listed but no
+    // fixture of this project exercises it, and an unmeasured admission is
+    // exactly the shape of bug this audio path has been bitten by before.
+    return formatTag == kAudioFormatMPEGLayer3 ||
+           formatTag == kAudioFormatMPEGLayer2;
   case media::MediaCodec::Opus:
     return formatTag == kAudioFormatOpus;
   case media::MediaCodec::Vorbis:
