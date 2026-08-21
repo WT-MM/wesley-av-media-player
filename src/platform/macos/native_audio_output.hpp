@@ -2,6 +2,7 @@
 
 #include "native_audio_render_core.hpp"
 #include "native_audio_stretch_stage.hpp"
+#include "native_audio_test_mute.hpp"
 
 #include <AudioToolbox/AudioToolbox.h>
 
@@ -453,6 +454,10 @@ class NativeAudioOutput final
   NativeAudioRenderCore &render_core_;
   const NativeAudioUnitCallTable calls_;
   const NativeAudioOutputWakeSeam wake_;
+  // Test-only silent output; see native_audio_test_mute.hpp. Snapshotted once
+  // here so the render callback reads a plain bool, never an atomic, and an
+  // unmuted process pays exactly one never-taken branch per callback.
+  const bool test_muted_{nativeAudioOutputTestMuted()};
 
   // Created lazily on the first non-unit rate and destroyed with the output.
   // Its absence is the proof that a unit-rate session paid nothing for rate

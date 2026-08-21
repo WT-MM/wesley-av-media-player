@@ -1,6 +1,7 @@
 #include "mpv_video_item.hpp"
 #if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
 #include "native_benchmark_telemetry.hpp"
+#include "platform/macos/native_audio_test_mute.hpp"
 #include "platform/macos/native_layer_presentation_state.hpp"
 #endif
 #if defined(Q_OS_MACOS)
@@ -24,6 +25,7 @@
 #include <QQmlEngine>
 #include <QQuickStyle>
 #include <QQuickWindow>
+#include <QRegularExpression>
 #include <QSGRendererInterface>
 #include <QStyleHints>
 #include <QSurfaceFormat>
@@ -158,6 +160,77 @@ std::vector<ScriptedOpen> parseOpenScript(const QByteArray &value) {
     script.push_back({path, delay});
   }
   return script;
+}
+
+// ---------------------------------------------------------------------------
+// Quiet launch seams (test/benchmark).
+//
+// WAM_TEST_BACKGROUND=1 launches without ever becoming the frontmost
+// application, and WAM_TEST_MUTED=1 launches with silent hardware output.
+// Automated GUI verification runs on the developer's own machine: without
+// these, every correctness round steals the keyboard mid-sentence and plays
+// the clip's audio out loud. Both are gated on the same
+// WAM_NATIVE_BENCHMARK_TELEMETRY opt-in every other WAM_TEST_* seam is, so a
+// shipping launch can never observe either.
+//
+// Neither seam may change what a measurement sees. WAM_TEST_BACKGROUND leaves
+// the window ON SCREEN and COMPOSITED (accessory activation policy, not a
+// hidden or off-screen window) because an occluded window counterfeits
+// starvation and would make every drawn-frame fact a lie. WAM_TEST_MUTED zeros
+// only the samples copied into the AudioUnit buffer, after the render core has
+// run, so callback cadence, counters, the audio-authoritative clock and every
+// wake edge are bit-for-bit an unmuted run's.
+//
+// Vocabulary matches the telemetry opt-in itself rather than inventing a
+// second one, so "1"/"true"/"yes"/"on" (and their upper-case forms) all read
+// as enabled and anything else -- including junk -- reads as off.
+// ---------------------------------------------------------------------------
+// WAM_TEST_GEOMETRY="WxH+X+Y" parks the window at an exact logical rectangle.
+//
+// It exists so a verification round needs no pointer, no System Events, and no
+// accessibility grant to get the window out of the way: with
+// WAM_TEST_BACKGROUND the window is deliberately floated above ordinary
+// windows so it cannot be occluded, and a full-size floating window is an
+// unacceptable thing to leave on the user's screen. A small parked rectangle
+// keeps the compositing proof and stops the window from being in the way.
+//
+// Telemetry-gated like every other WAM_TEST_* seam. The benchmark harness
+// already suppresses the QuickTime aspect snap under the same opt-in (see
+// MacWindowChrome::benchmarkMode), so a parked rectangle stays put.
+struct ScriptedGeometry {
+  int x{0};
+  int y{0};
+  int width{0};
+  int height{0};
+};
+
+std::optional<ScriptedGeometry> parseGeometry(const QByteArray &value) {
+  const QString text = QString::fromLatin1(value).trimmed();
+  static const QRegularExpression pattern(
+      QStringLiteral("^(\\d+)x(\\d+)\\+(-?\\d+)\\+(-?\\d+)$"));
+  const QRegularExpressionMatch match = pattern.match(text);
+  if (!match.hasMatch())
+    return std::nullopt;
+  ScriptedGeometry geometry;
+  geometry.width = match.captured(1).toInt();
+  geometry.height = match.captured(2).toInt();
+  geometry.x = match.captured(3).toInt();
+  geometry.y = match.captured(4).toInt();
+  if (geometry.width < 64 || geometry.height < 64)
+    return std::nullopt;
+  return geometry;
+}
+
+bool testSeamEnabled(const char *name) {
+  const QByteArray value = qgetenv(name);
+  static constexpr std::array<QByteArrayView, 7> kTruths{
+      QByteArrayView("1"),   QByteArrayView("true"), QByteArrayView("TRUE"),
+      QByteArrayView("yes"), QByteArrayView("YES"),  QByteArrayView("on"),
+      QByteArrayView("ON")};
+  return std::any_of(kTruths.begin(), kTruths.end(),
+                     [&value](QByteArrayView truth) {
+                       return QByteArrayView(value) == truth;
+                     });
 }
 
 std::vector<ScriptedSeek> parseSeekScript(const QByteArray &value) {
@@ -593,7 +666,41 @@ int main(int argc, char *argv[]) {
   format.setSwapInterval(1);
   QSurfaceFormat::setDefaultFormat(format);
 
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+  // Quiet launch seams. See testSeamEnabled above. Both are decided here,
+  // before QGuiApplication exists, because the Cocoa platform integration
+  // performs its launch-time activation inside that constructor: the only
+  // place to suppress it is before it runs.
+  //
+  // QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM is the Qt cocoa plugin's
+  // own guard on that step -- the plugin transforms the process to a
+  // foreground application and calls
+  // -[NSApplication activateIgnoringOtherApps:YES] specifically "to avoid
+  // launching behind the terminal", which is exactly the focus steal this seam
+  // exists to stop. Set only if the environment has not already spoken, on the
+  // same principle as the QSG atlas knobs above.
+  //
+  // The mute gate is armed before any playback session can exist, so every
+  // NativeAudioOutput this process builds snapshots it at construction.
+  const bool test_seams_admitted =
+      wam::qt::NativeBenchmarkTelemetry::instance().enabled();
+  const bool background_launch =
+      test_seams_admitted && testSeamEnabled("WAM_TEST_BACKGROUND");
+  if (background_launch &&
+      !qEnvironmentVariableIsSet("QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM"))
+    qputenv("QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM", "1");
+  if (test_seams_admitted && testSeamEnabled("WAM_TEST_MUTED"))
+    wam::macos::setNativeAudioOutputTestMuted(true);
+#endif
+
   QGuiApplication app(argc, argv);
+
+#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+  // NSApp now exists and no window has been shown yet: the one moment where
+  // dropping to the accessory policy costs no visible activation flicker.
+  if (background_launch)
+    wam::macos_window_chrome::adoptBackgroundLaunchPolicy();
+#endif
 
   // Installed before the event loop ever spins so a cold-start Finder open
   // cannot slip past; attached to the player once the engine has loaded.
@@ -919,6 +1026,38 @@ int main(int argc, char *argv[]) {
       window_chrome = std::make_unique<wam::qt::MacWindowChrome>(root_window);
       engine.rootContext()->setContextProperty(
           QStringLiteral("windowChrome"), window_chrome.get());
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+      // WAM_TEST_BACKGROUND, second half. The accessory policy stops the focus
+      // steal; this is what keeps the window on screen and unoccluded anyway,
+      // which the measurement's drawn-frame validity depends on. Re-asserted on
+      // every show because Qt orders the window front itself each time, and a
+      // non-active app's ordering lands behind the active app's windows.
+      if (background_launch) {
+        QObject::connect(root_window, &QWindow::visibleChanged, root_window,
+                         [root_window](bool visible) {
+                           if (visible)
+                             wam::macos_window_chrome::
+                                 orderFrontWithoutActivating(root_window);
+                         });
+        wam::macos_window_chrome::orderFrontWithoutActivating(root_window);
+      }
+      // WAM_TEST_GEOMETRY. Applied after the window exists and again on the
+      // next event-loop pass, because QML's own sizing (windowHugsVideo, the
+      // first frame's natural size) settles after this point and would
+      // otherwise overwrite the parked rectangle.
+      if (test_seams_admitted) {
+        if (const std::optional<ScriptedGeometry> parked =
+                parseGeometry(qgetenv("WAM_TEST_GEOMETRY"))) {
+          const auto apply = [root_window, parked] {
+            root_window->setGeometry(parked->x, parked->y, parked->width,
+                                     parked->height);
+          };
+          apply();
+          QTimer::singleShot(0, root_window, apply);
+          QTimer::singleShot(400, root_window, apply);
+        }
+      }
+#endif
     }
 #endif
 

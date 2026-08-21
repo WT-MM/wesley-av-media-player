@@ -606,6 +606,49 @@ QSizeF naturalSizeFromAsset(AVURLAsset *asset) {
 
 } // namespace
 
+void adoptBackgroundLaunchPolicy() {
+  NSApplication *application = NSApp;
+  if (application == nil)
+    return;
+  // Accessory, not Prohibited: Prohibited forbids windows outright, which
+  // would take the drawn frames the measurement is made of away with the
+  // focus steal.
+  [application setActivationPolicy:NSApplicationActivationPolicyAccessory];
+
+  // Self-correcting guard, and it is not belt-and-braces: measured, the policy
+  // change alone let roughly one launch in two through. Qt's cocoa plugin
+  // activates the process from more than one place and not all of them run
+  // before this function does, so a launch that wins the race steals exactly
+  // the focus this seam exists to protect. Chasing each call site would leave
+  // the seam hostage to the next Qt release; resigning activation the moment
+  // it is observed cannot be raced. Worst case is one runloop turn of blip
+  // before the user's application is frontmost again.
+  //
+  // Registered once per process (the seam is decided at launch and never
+  // toggles), and deliberately never removed: the guard must outlive every
+  // window, and the process is a test instance whose whole life it covers.
+  static id observer = nil;
+  if (observer != nil)
+    return;
+  observer = [[NSNotificationCenter defaultCenter]
+      addObserverForName:NSApplicationDidBecomeActiveNotification
+                  object:application
+                   queue:[NSOperationQueue mainQueue]
+              usingBlock:^(NSNotification *) {
+                [NSApp setActivationPolicy:
+                           NSApplicationActivationPolicyAccessory];
+                [NSApp deactivate];
+              }];
+}
+
+void orderFrontWithoutActivating(QWindow *window) {
+  NSWindow *nsWindow = nsWindowFor(window);
+  if (nsWindow == nil)
+    return;
+  nsWindow.level = NSFloatingWindowLevel;
+  [nsWindow orderFrontRegardless];
+}
+
 QSizeF videoNaturalSizeForSource(const QUrl &source) {
   if (!source.isLocalFile())
     return {};

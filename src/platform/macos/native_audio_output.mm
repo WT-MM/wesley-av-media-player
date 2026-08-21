@@ -1790,6 +1790,15 @@ OSStatus NativeAudioOutput::render(
       input, std::span<float>(samples,
                               static_cast<std::size_t>(frameCount) *
                                   kChannels));
+  // Test-only silent output (WAM_TEST_MUTED). Deliberately AFTER the render
+  // core has run and BEFORE nothing: no later statement touches `samples`, so
+  // this is the last write on the way to the hardware buffer. Every counter,
+  // the frame cursor, the clock, the underrun/refill/pause/terminal wake edges
+  // and the OutputIsSilence flag below are computed from `result` and are
+  // bit-for-bit what an unmuted callback produces.
+  if (test_muted_) [[unlikely]] {
+    std::memset(samples, 0, static_cast<std::size_t>(requestedBytes));
+  }
   timing_remainder_ = nextRemainder;
   prior_timing_denominator_ = nextDenominator;
   prior_rate_scalar_bits_ = nextRateScalarBits;

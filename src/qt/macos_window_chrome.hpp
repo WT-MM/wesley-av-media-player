@@ -18,6 +18,44 @@ namespace wam::macos_window_chrome {
 // local source, not a per-frame or polling query.
 [[nodiscard]] QSizeF videoNaturalSizeForSource(const QUrl &source);
 
+// Test-only background launch (the WAM_TEST_BACKGROUND launch seam).
+//
+// Drops this process to NSApplicationActivationPolicyAccessory, which is the
+// one AppKit state that means "I own real, composited, on-screen windows but I
+// am not a foreground application": the app leaves the Dock and the menu bar,
+// stops being a candidate for activation, and -- if the launch already made it
+// active -- resigns activation back to whoever held it. Its windows keep being
+// ordered onto the screen and composited by WindowServer exactly as before,
+// which is the property the whole measurement methodology depends on; an
+// off-screen or occluded window would counterfeit starvation.
+//
+// Call once, immediately after QGuiApplication exists (NSApp must be there) and
+// before any window is shown, so nothing ever gets the chance to activate.
+// Pair it with QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM, which is what
+// suppresses the Qt cocoa plugin's own launch-time
+// -[NSApplication activateIgnoringOtherApps:] -- see main.cpp.
+void adoptBackgroundLaunchPolicy();
+
+// Test-only, and the other half of WAM_TEST_BACKGROUND: makes `window` visible
+// and unoccluded WITHOUT activating this process.
+//
+// The accessory policy alone is not enough, and measuring proved it. A
+// non-active app's -[NSWindow makeKeyAndOrderFront:] orders the window to the
+// front of ITS OWN app's windows, not to the front of the screen, so the window
+// lands wherever the active app's windows leave it -- measured at z-index 18 of
+// 44 on-screen windows, fully covered. A fully covered window is exactly the
+// occlusion counterfeit the benchmark discipline forbids: WindowServer stops
+// updating a covered window's backing store, so every drawn-frame fact taken
+// through one is unfalsifiable.
+//
+// Two AppKit facilities fix it and neither one activates:
+//   * -orderFrontRegardless puts the window in front of every other
+//     application's windows without making this app active or the window key.
+//   * NSFloatingWindowLevel parks it in the band above normal windows, so a
+//     later activation of some other app cannot bury it again mid-measurement.
+// Call once per show. A null or not-yet-native window is a no-op.
+void orderFrontWithoutActivating(QWindow *window);
+
 // Configures `window`'s NSWindow for QuickTime-Player-style chrome: a
 // full-size content view with a transparent titlebar and permanently hidden
 // title text, so QML content (the video) paints all the way to the top of

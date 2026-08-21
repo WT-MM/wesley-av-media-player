@@ -2415,8 +2415,91 @@ void testDeviceBufferFramesConfiguration() {
   unsupported.cleanup();
 }
 
+// The WAM_TEST_MUTED seam, asserted where it must hold: the buffer the
+// AudioUnit is handed. The seam's whole claim is that muting is invisible to
+// measurement, so this checks both halves -- the samples are zero, AND every
+// counter, the frame cursor and the returned status are identical to the
+// unmuted run of the same callback.
+void testMutedOutputZeroesSamplesAndNothingElse() {
+  constexpr std::uint32_t kFrames = 4;
+  constexpr float kPublished = 0.5F;
+
+  const auto renderOnce = [](bool muted, std::array<float, 8> &samples,
+                             NativeAudioOutputFacts &facts,
+                             OSStatus &status) {
+    wam::macos::setNativeAudioOutputTestMuted(muted);
+    // Constructed AFTER the gate is set: NativeAudioOutput snapshots it once,
+    // which is what keeps the render callback free of an atomic load.
+    Fixture fixture;
+    expect(fixture.start() &&
+               publishConstant(fixture.ring, kFrames, kPublished),
+           "mute fixture starts with a full slice of non-zero PCM");
+    samples.fill(-1.0F);
+    fixture.host.ticks.store(100, std::memory_order_relaxed);
+    status = invokeTracked(fixture.fake, hostTimestamp(100), kFrames, samples);
+    facts = fixture.output->facts();
+    fixture.cleanup();
+    wam::macos::setNativeAudioOutputTestMuted(false);
+  };
+
+  std::array<float, 8> unmutedSamples{};
+  NativeAudioOutputFacts unmutedFacts{};
+  OSStatus unmutedStatus = kAudio_ParamError;
+  renderOnce(false, unmutedSamples, unmutedFacts, unmutedStatus);
+
+  std::array<float, 8> mutedSamples{};
+  NativeAudioOutputFacts mutedFacts{};
+  OSStatus mutedStatus = kAudio_ParamError;
+  renderOnce(true, mutedSamples, mutedFacts, mutedStatus);
+
+  // Not an equality check against kPublished: the render core opens a stream
+  // with a short fade-in ramp, so the first callback's samples are a rising
+  // fraction of the published constant. What matters is that they are audible
+  // -- every one non-zero and bounded by what was published -- which is what
+  // gives the muted arm something to have silenced.
+  expect(unmutedStatus == noErr &&
+             std::all_of(unmutedSamples.begin(), unmutedSamples.end(),
+                         [](float sample) {
+                           return sample > 0.0F && sample <= kPublished;
+                         }),
+         "the unmuted control renders audible PCM, so the muted arm has "
+         "something to have silenced");
+  expect(mutedStatus == noErr &&
+             std::all_of(mutedSamples.begin(), mutedSamples.end(),
+                         [](float sample) { return sample == 0.0F; }),
+         "WAM_TEST_MUTED zeroes every sample handed to the AudioUnit");
+
+  // The identity claim. A mute that moved any of these would be a mute a
+  // measurement could see, which is exactly what the seam may not be.
+  expect(mutedFacts.callbacks == unmutedFacts.callbacks &&
+             mutedFacts.renderedCallbacks == unmutedFacts.renderedCallbacks &&
+             mutedFacts.rejectedCallbacks == unmutedFacts.rejectedCallbacks &&
+             mutedFacts.requestedFrames == unmutedFacts.requestedFrames &&
+             mutedFacts.frameCursor == unmutedFacts.frameCursor &&
+             mutedFacts.callbackEntries == unmutedFacts.callbackEntries &&
+             mutedFacts.admittedCallbacks == unmutedFacts.admittedCallbacks &&
+             mutedFacts.failure == unmutedFacts.failure &&
+             mutedFacts.osStatus == unmutedFacts.osStatus,
+         "muting moves no counter, no frame cursor, and no failure state");
+  expect(mutedFacts.callbackWakeRequests == unmutedFacts.callbackWakeRequests &&
+             mutedFacts.refillWakeRequests ==
+                 unmutedFacts.refillWakeRequests &&
+             mutedFacts.underrunWakeRequests ==
+                 unmutedFacts.underrunWakeRequests &&
+             mutedFacts.videoDueWakeRequests ==
+                 unmutedFacts.videoDueWakeRequests &&
+             mutedFacts.stateWakeRequests == unmutedFacts.stateWakeRequests,
+         "muting publishes exactly the wake edges an unmuted callback does");
+
+  // And the gate is off by default, so a shipping process cannot be muted by
+  // a stale flag left behind in this test binary.
+  expect(!wam::macos::nativeAudioOutputTestMuted(),
+         "the mute gate is clear once the seam's owner clears it");
+}
+
 int main() {
   @autoreleasepool {
+    testMutedOutputZeroesSamplesAndNothingElse();
     testDeviceBufferFramesConfiguration();
     testConfigurationAndExactDeviceFormat();
     testPartialInitializationAndStartUnwind();
