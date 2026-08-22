@@ -2,6 +2,7 @@
 
 #include "media/native_media_dispatcher.hpp"
 #include "platform/macos/native_audio_session.hpp"
+#include "platform/macos/native_concurrency_limits.hpp"
 
 #import <AudioToolbox/AudioToolbox.h>
 #import <CoreMedia/CoreMedia.h>
@@ -1677,13 +1678,22 @@ void testQuiescingDestructorQuarantineRecovery() {
   expect(NativeAudioSession::quarantineFacts().quarantined,
          "destructor transfers the whole callback graph to quarantine");
 
-  auto rejectedPlatform = std::make_shared<FakePlatform>();
-  auto rejectedBackend = std::make_shared<BackendState>();
-  expect(NativeAudioSession::create(
-             7, dependencies(rejectedPlatform,
-                             std::make_unique<FakeBackend>(rejectedBackend))) ==
-             nullptr,
-         "capacity-one quarantine rejects a second session");
+  // The quarantined graph keeps its own slot in the process envelope, but the
+  // envelope is kMaximumConcurrentPlayerWindows wide, so the other windows are
+  // unaffected: a second session is admitted alongside it and gives its own
+  // slot straight back. testBoundedSessionEnvelope proves the other end of
+  // that arithmetic, where quarantine is what keeps the envelope full.
+  auto neighbourPlatform = std::make_shared<FakePlatform>();
+  auto neighbourBackend = std::make_shared<BackendState>();
+  auto neighbour = NativeAudioSession::create(
+      7,
+      dependencies(neighbourPlatform,
+                   std::make_unique<FakeBackend>(neighbourBackend)));
+  expect(neighbour != nullptr,
+         "a quarantined graph does not close the envelope to other windows");
+  expect(neighbour->close() == NativeMediaConsumerProgress::Done,
+         "the neighbouring window closes cleanly beside a quarantined graph");
+  neighbour.reset();
 
   {
     std::lock_guard<std::mutex> lock(platform->hostMutex);
@@ -1699,9 +1709,81 @@ void testQuiescingDestructorQuarantineRecovery() {
   const NativeAudioSessionQuarantineFacts quarantine =
       NativeAudioSession::quarantineFacts();
   expect(!quarantine.claimed && !quarantine.quarantined &&
-             quarantine.transfers >= 1 && quarantine.recoveries >= 1 &&
-             quarantine.rejectedCreates >= 1,
+             quarantine.transfers >= 1 && quarantine.recoveries >= 1,
          "quarantine release and bounded counters are observable");
+}
+
+// The process admits kMaximumConcurrentPlayerWindows sessions at once, one per
+// open player window, and a session occupies its slot from create() until that
+// same graph proves a Done close. Quarantine does not hand the slot back: a
+// quarantined graph still owns its AudioUnit, converter, ring and callback
+// contexts, so it is charged exactly as a live session is. This walks the
+// boundary: N admitted, N + 1 refused and counted, the envelope still full
+// while one of the N sits in quarantine, and the slot reopening only once that
+// graph is recovered and closed Done.
+void testBoundedSessionEnvelope() {
+  std::vector<std::shared_ptr<FakePlatform>> platforms;
+  std::vector<std::unique_ptr<NativeAudioSession>> sessions;
+  for (int window = 0; window != kMaximumConcurrentPlayerWindows; ++window) {
+    platforms.push_back(std::make_shared<FakePlatform>());
+    sessions.push_back(NativeAudioSession::create(
+        1, dependencies(platforms.back(), std::make_unique<FakeBackend>(
+                                              std::make_shared<BackendState>()))));
+    expect(sessions.back() != nullptr,
+           "every window inside the process envelope is admitted");
+  }
+
+  auto sparePlatform = std::make_shared<FakePlatform>();
+  const std::uint64_t rejectedBefore =
+      NativeAudioSession::quarantineFacts().rejectedCreates;
+  expect(NativeAudioSession::create(
+             1, dependencies(sparePlatform,
+                             std::make_unique<FakeBackend>(
+                                 std::make_shared<BackendState>()))) ==
+                 nullptr &&
+             NativeAudioSession::quarantineFacts().rejectedCreates ==
+                 rejectedBefore + 1,
+         "the session past the last window is refused and counted");
+
+  // A destructor that cannot prove a Done close moves the graph into the
+  // registry without releasing its slot, so the envelope stays exactly full.
+  NativeAudioSessionTestAccess::forceCloseQuiescing(*sessions.back(), true);
+  sessions.pop_back();
+  expect(NativeAudioSession::quarantineFacts().quarantined,
+         "a destructor that cannot prove Done close quarantines the graph");
+  expect(NativeAudioSession::create(
+             1, dependencies(sparePlatform,
+                             std::make_unique<FakeBackend>(
+                                 std::make_shared<BackendState>()))) == nullptr,
+         "a quarantined session keeps consuming its slot in the envelope");
+
+  auto recovered = NativeAudioSession::recoverQuarantined();
+  expect(recovered != nullptr,
+         "the bounded registry hands the quarantined graph back");
+  NativeAudioSessionTestAccess::forceCloseQuiescing(*recovered, false);
+  expect(recovered->close() == NativeMediaConsumerProgress::Done,
+         "the recovered graph reaches Done once its close is unblocked");
+  recovered.reset();
+  expect(!NativeAudioSession::quarantineFacts().quarantined,
+         "a Done close empties the slot the quarantined graph occupied");
+
+  auto replacement = NativeAudioSession::create(
+      1, dependencies(sparePlatform, std::make_unique<FakeBackend>(
+                                         std::make_shared<BackendState>())));
+  expect(replacement != nullptr,
+         "the slot reopens only after the quarantined graph proves Done");
+  expect(replacement->close() == NativeMediaConsumerProgress::Done,
+         "the replacement session closes cleanly");
+  replacement.reset();
+
+  for (std::unique_ptr<NativeAudioSession>& session : sessions) {
+    expect(session->close() == NativeMediaConsumerProgress::Done,
+           "every remaining window closes cleanly");
+  }
+  sessions.clear();
+  expect(!NativeAudioSession::quarantineFacts().claimed &&
+             !NativeAudioSession::quarantineFacts().quarantined,
+         "draining every window empties the whole envelope");
 }
 
 } // namespace
@@ -1718,6 +1800,7 @@ int main() {
   testExactTerminalRetirement();
   testRetirementQuiescingAndExactRetry();
   testQuiescingDestructorQuarantineRecovery();
+  testBoundedSessionEnvelope();
   if (failures != 0) {
     std::cerr << failures << " native audio session checks failed\n";
     return EXIT_FAILURE;

@@ -2,6 +2,7 @@
 
 #include "media/audio_codec_timing.hpp"
 #include "media/matroska_vorbis.hpp"
+#include "native_concurrency_limits.hpp"
 
 #import <AudioToolbox/AudioToolbox.h>
 
@@ -65,9 +66,28 @@ struct TimelinePlan {
   std::uint32_t sampleRate{0};
 };
 
+// Guards the session-envelope registry below: gRetainedSessions and every
+// quarantine slot. Taken only on create(), on the Done-close release, on a
+// destructor's quarantine transfer, on recoverQuarantined() and on
+// quarantineFacts(). No render callback, no trySample(), no clock publication
+// and no owner-thread steady-state path touches it, so it can never appear on
+// the audio hot path.
 std::mutex gSessionMutex;
-bool gSessionClaimed{false};
-std::shared_ptr<NativeAudioSessionControl> gSessionQuarantine;
+// Sessions currently charged against the process envelope: every session
+// create() admitted whose graph has not yet proved a Done close. A quarantined
+// session is still charged -- it still owns its AudioUnit, its converter, its
+// PCM ring and the callback contexts the device may still be inside -- so the
+// count is live plus quarantined and never exceeds
+// kMaximumConcurrentPlayerWindows. This is the old single `bool
+// gSessionClaimed` widened from one window to N.
+int gRetainedSessions{0};
+// One quarantine slot per admissible player window, so every open window's
+// graph can be held at once and none is ever dropped for want of a slot. A
+// fixed array of empty shared_ptrs: the registry allocates nothing itself and
+// cannot grow, whatever a teardown storm does.
+std::array<std::shared_ptr<NativeAudioSessionControl>,
+           kMaximumConcurrentPlayerWindows>
+    gSessionQuarantine;
 std::atomic<std::uint64_t> gRejectedCreates{0};
 std::atomic<std::uint64_t> gQuarantineTransfers{0};
 std::atomic<std::uint64_t> gQuarantineRecoveries{0};
@@ -633,27 +653,49 @@ void NativeAudioSessionTestAccess::forceCloseQuiescing(
 
 namespace {
 
+// Gives one session's slot in the process envelope back, after that session
+// proved a Done close. claimHeld makes this single-shot per graph, which the
+// count now depends on: the envelope used to be a bool, where a second release
+// was a no-op, and is now an integer, where a second release would invent a
+// slot and let N + 1 sessions live at once. A session that closes Done while
+// sitting in quarantine also vacates its slot here -- the registry only holds
+// graphs that still owe a Done close.
 void releaseClaim(NativeAudioSessionControl& control) noexcept {
   std::lock_guard<std::mutex> lock(gSessionMutex);
   if (!control.claimHeld) {
     return;
   }
-  if (gSessionQuarantine.get() == &control) {
-    gSessionQuarantine.reset();
+  for (std::shared_ptr<NativeAudioSessionControl>& slot : gSessionQuarantine) {
+    if (slot.get() == &control) {
+      slot.reset();
+      break;
+    }
   }
   control.claimHeld = false;
-  gSessionClaimed = false;
+  --gRetainedSessions;
 }
 
+// Moves a graph whose owner could not prove a Done close into the registry, so
+// a device callback still inside the bridge keeps a live graph under it. The
+// envelope count is deliberately unchanged: the graph is still charged, it has
+// only swapped a NativeAudioSession owner for the registry until
+// recoverQuarantined() drives it to Done.
 void quarantine(
     const std::shared_ptr<NativeAudioSessionControl>& control) noexcept {
   if (control == nullptr || !control->claimHeld || control->closeDone) {
     return;
   }
   std::lock_guard<std::mutex> lock(gSessionMutex);
-  if (gSessionQuarantine == nullptr) {
-    gSessionQuarantine = control;
-    saturatingIncrement(gQuarantineTransfers);
+  // A free slot always exists here: quarantined graphs are a subset of the
+  // gRetainedSessions charged against the envelope, and this graph still holds
+  // its own claim (claimHeld above) while not yet occupying a slot, so at most
+  // kMaximumConcurrentPlayerWindows - 1 slots can be taken.
+  for (std::shared_ptr<NativeAudioSessionControl>& slot : gSessionQuarantine) {
+    if (slot == nullptr) {
+      slot = control;
+      saturatingIncrement(gQuarantineTransfers);
+      return;
+    }
   }
 }
 
@@ -1118,11 +1160,16 @@ std::unique_ptr<NativeAudioSession> NativeAudioSession::create(
   }
   {
     std::lock_guard<std::mutex> lock(gSessionMutex);
-    if (gSessionClaimed || gSessionQuarantine != nullptr) {
+    // The envelope is full when N sessions are already charged against it,
+    // live or quarantined. Refuse quietly: an N+1'th AudioUnit graph would
+    // overrun the per-process resource accounting that
+    // kMaximumConcurrentPlayerWindows exists to bound, and the owner is meant
+    // to report "no more windows" rather than retry.
+    if (gRetainedSessions >= kMaximumConcurrentPlayerWindows) {
       saturatingIncrement(gRejectedCreates);
       return {};
     }
-    gSessionClaimed = true;
+    ++gRetainedSessions;
   }
 
   try {
@@ -1133,8 +1180,10 @@ std::unique_ptr<NativeAudioSession> NativeAudioSession::create(
     return std::unique_ptr<NativeAudioSession>(
         new NativeAudioSession(std::move(control)));
   } catch (...) {
+    // No control block exists, so nothing is charged: hand the reserved slot
+    // straight back instead of leaving a permanent hole in the envelope.
     std::lock_guard<std::mutex> lock(gSessionMutex);
-    gSessionClaimed = false;
+    --gRetainedSessions;
     saturatingIncrement(gRejectedCreates);
     return {};
   }
@@ -1153,18 +1202,26 @@ NativeAudioSession::~NativeAudioSession() {
 std::unique_ptr<NativeAudioSession>
 NativeAudioSession::recoverQuarantined() noexcept {
   std::lock_guard<std::mutex> lock(gSessionMutex);
-  if (gSessionQuarantine == nullptr) {
-    return {};
+  // First occupied slot wins. The registry is a bag of graphs that still owe a
+  // Done close, not a queue: recovery order carries no meaning, and a caller
+  // draining quarantine simply repeats this until it returns nullptr. The
+  // envelope count is unchanged -- ownership moves back to a
+  // NativeAudioSession, the charge stays until that owner reaches Done.
+  for (std::shared_ptr<NativeAudioSessionControl>& slot : gSessionQuarantine) {
+    if (slot == nullptr) {
+      continue;
+    }
+    try {
+      auto recovered =
+          std::unique_ptr<NativeAudioSession>(new NativeAudioSession(slot));
+      slot.reset();
+      saturatingIncrement(gQuarantineRecoveries);
+      return recovered;
+    } catch (...) {
+      return {};
+    }
   }
-  try {
-    auto recovered = std::unique_ptr<NativeAudioSession>(
-        new NativeAudioSession(gSessionQuarantine));
-    gSessionQuarantine.reset();
-    saturatingIncrement(gQuarantineRecoveries);
-    return recovered;
-  } catch (...) {
-    return {};
-  }
+  return {};
 }
 
 NativeAudioSessionQuarantineFacts
@@ -1176,8 +1233,17 @@ NativeAudioSession::quarantineFacts() noexcept {
   result.recoveries =
       gQuarantineRecoveries.load(std::memory_order_relaxed);
   std::lock_guard<std::mutex> lock(gSessionMutex);
-  result.claimed = gSessionClaimed;
-  result.quarantined = gSessionQuarantine != nullptr;
+  // claimed means "the envelope is holding at least one session", which is
+  // what the single-claim bool meant; quarantined means "at least one slot is
+  // occupied", i.e. there is still a graph the owner must drive to Done.
+  // Neither reports occupancy, because callers act by looping recovery rather
+  // than by counting.
+  result.claimed = gRetainedSessions != 0;
+  result.quarantined =
+      std::any_of(gSessionQuarantine.begin(), gSessionQuarantine.end(),
+                  [](const std::shared_ptr<NativeAudioSessionControl>& slot) {
+                    return slot != nullptr;
+                  });
   return result;
 }
 

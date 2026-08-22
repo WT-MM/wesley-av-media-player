@@ -13,8 +13,11 @@ namespace {
 constexpr std::uint64_t kFreePublication = 0;
 constexpr std::uint64_t kReservingPublication = 1;
 constexpr std::uint64_t kFirstPublishedGeneration = 2;
+// One record per surface the whole PROCESS may hold, which with N player
+// windows is N per-session complements. Still a fixed, statically sized table:
+// nothing here allocates.
 constexpr std::size_t kRecordCapacity =
-    static_cast<std::size_t>(kNativeSurfaceBudgetMaximumSurfaces);
+    static_cast<std::size_t>(kNativeSurfaceBudgetProcessMaximumSurfaces);
 constexpr std::size_t kMaximumAtomicAttempts = 64;
 
 static_assert(std::atomic<std::uint32_t>::is_always_lock_free);
@@ -212,16 +215,16 @@ bool hasBudgetFor(std::uint64_t bytes) noexcept {
       gSurfaceBudget.currentSurfaces.load(std::memory_order_relaxed);
   const std::uint64_t currentBytes =
       gSurfaceBudget.currentBytes.load(std::memory_order_relaxed);
-  return surfaces < kNativeSurfaceBudgetMaximumSurfaces &&
-         currentBytes <= kNativeSurfaceBudgetMaximumBytes &&
-         bytes <= kNativeSurfaceBudgetMaximumBytes - currentBytes;
+  return surfaces < kNativeSurfaceBudgetProcessMaximumSurfaces &&
+         currentBytes <= kNativeSurfaceBudgetProcessMaximumBytes &&
+         bytes <= kNativeSurfaceBudgetProcessMaximumBytes - currentBytes;
 }
 
 RawAcquisition tryAcquireIdentityRaw(std::uint32_t surfaceID,
                                      std::uint64_t bytes) noexcept {
   RawAcquisition acquisition;
   if (surfaceID == 0 || bytes == 0 ||
-      bytes > kNativeSurfaceBudgetMaximumBytes) {
+      bytes > kNativeSurfaceBudgetProcessMaximumBytes) {
     reject();
     return acquisition;
   }

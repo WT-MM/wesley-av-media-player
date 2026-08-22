@@ -105,18 +105,28 @@ bool applied(const playback_router::Transition &transition) noexcept {
   return transition.status == playback_router::Status::Applied;
 }
 
-// The single retained activity token. AppKit reference-counts nested
-// activities; WAM only ever needs the one "media is playing" assertion, so a
-// process-wide GUI-thread-owned slot is the exact ownership this needs.
+// The single retained activity token, and the count of windows currently
+// asking for it.
+//
+// WAM is a multi-window player: two windows can be playing at once, and one of
+// them pausing must NOT end the assertion the other still needs. A bare
+// boolean latch did exactly that -- the display could idle-sleep and App Nap
+// could throttle the process mid-playback in the window that was still
+// running. One assertion, reference counted over the windows holding it, is
+// the correct ownership; every caller edge-triggers (PlayerController tracks
+// its own hold), so the count is a count of windows, not of signals.
+//
+// GUI-thread-owned: every caller is on it, so no synchronisation is implied.
 id gPlaybackActivityToken = nil;
+int gPlaybackActivityHolders = 0;
 
 } // namespace
 
 void setMacosPlaybackActivityHeld(bool held) noexcept {
-  if (held == (gPlaybackActivityToken != nil)) {
-    return;
-  }
   if (held) {
+    if (++gPlaybackActivityHolders != 1) {
+      return;
+    }
     const NSActivityOptions options = static_cast<NSActivityOptions>(
         NSActivityUserInitiated | NSActivityIdleDisplaySleepDisabled);
     id token = [[NSProcessInfo processInfo]
@@ -127,6 +137,9 @@ void setMacosPlaybackActivityHeld(bool held) noexcept {
 #else
     gPlaybackActivityToken = [token retain];
 #endif
+    return;
+  }
+  if (gPlaybackActivityHolders == 0 || --gPlaybackActivityHolders != 0) {
     return;
   }
   id token = gPlaybackActivityToken;

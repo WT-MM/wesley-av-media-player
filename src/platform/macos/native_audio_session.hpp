@@ -69,6 +69,11 @@ struct NativeAudioSessionQuarantineFacts {
   std::uint64_t rejectedCreates{0};
   std::uint64_t transfers{0};
   std::uint64_t recoveries{0};
+  // claimed: at least one session is charged against the process envelope,
+  // live or quarantined. quarantined: at least one quarantine slot is
+  // occupied, so a graph still owes the owner a Done close. Both are
+  // deliberately booleans and not occupancy counts -- the owner drains
+  // quarantine by looping recoverQuarantined() and never needs the number.
   bool claimed{false};
   bool quarantined{false};
 };
@@ -152,8 +157,15 @@ struct NativeAudioSessionTestAccess;
 // preflight, before an AudioConverter or AudioUnit resource is entered. Once
 // resourceEntered is true, every fault fails closed; Router-authorized
 // retire() or emergency close() may then tear the epoch down. A destructor
-// that cannot prove a Done close transfers the complete graph to one
-// process-wide, discoverable quarantine slot.
+// that cannot prove a Done close transfers the complete graph to a
+// process-wide, discoverable quarantine registry of
+// kMaximumConcurrentPlayerWindows slots -- one per admissible player window.
+//
+// A session occupies one slot of that same envelope from create() until it
+// proves a Done close, quarantine included: a quarantined graph still owns its
+// AudioUnit, converter, ring and callback contexts, so it keeps being charged
+// exactly as a live one is. create() number kMaximumConcurrentPlayerWindows + 1
+// is refused, quietly and deterministically, rather than admitted.
 class NativeAudioSession final : public media::NativeAudioConsumer {
  public:
   [[nodiscard]] static std::unique_ptr<NativeAudioSession> create(
@@ -166,7 +178,8 @@ class NativeAudioSession final : public media::NativeAudioConsumer {
   NativeAudioSession(NativeAudioSession&&) = delete;
   NativeAudioSession& operator=(NativeAudioSession&&) = delete;
 
-  // Returns ownership of the sole quarantined graph, if present. The caller
+  // Returns ownership of one quarantined graph, if any slot holds one; call it
+  // again until it returns nullptr to drain the registry. The caller
   // repeatedly invokes close() after each injected wake until Done. Releasing
   // a still-quiescing recovered owner returns the same graph to quarantine.
   [[nodiscard]] static std::unique_ptr<NativeAudioSession>

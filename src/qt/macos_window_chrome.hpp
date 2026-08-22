@@ -4,6 +4,8 @@
 #include <QSizeF>
 #include <QUrl>
 
+#include <functional>
+
 class QWindow;
 
 namespace wam::macos_window_chrome {
@@ -55,6 +57,33 @@ void adoptBackgroundLaunchPolicy();
 //     later activation of some other app cannot bury it again mid-measurement.
 // Call once per show. A null or not-yet-native window is a no-op.
 void orderFrontWithoutActivating(QWindow *window);
+
+// Hides the whole application, the way Cmd-H does: every window goes away at
+// once and comes back exactly as it was when the app is unhidden. WAM pairs
+// this with pausing every window (the "h" macro and the View menu's Hide and
+// Pause All) so a hidden player is a silent player.
+void hideApplication();
+
+// Calls `handler` when macOS asks the application to "reopen" -- a Dock icon
+// click, or opening the app while it is already running -- and reports that no
+// windows are visible.
+//
+// WAM is a document-window app that deliberately stays alive with zero windows
+// (see QGuiApplication::setQuitOnLastWindowClosed(false) in main.cpp), so
+// AppKit's applicationShouldHandleReopen: contract is what turns a Dock click
+// on a window-less WAM back into a usable player instead of a no-op. Qt
+// installs its own NSApplicationDelegate and exposes no hook for this, so the
+// selector is attached to that delegate's class at runtime; if the delegate
+// already implements it, the original implementation is still called after the
+// handler. Installs once; later calls only replace the handler.
+void installApplicationReopenHandler(std::function<void()> handler);
+
+// Calls `handler` whenever macOS hides the application for ANY reason -- WAM's
+// own hideApplication(), Cmd-H, Hide Others, or the Dock menu -- so the
+// pause-everything half of the Hide and Pause All gesture is identical no
+// matter which of them the user reached for. Installs once; later calls only
+// replace the handler.
+void installApplicationHideObserver(std::function<void()> handler);
 
 // Configures `window`'s NSWindow for QuickTime-Player-style chrome: a
 // full-size content view with a transparent titlebar and permanently hidden

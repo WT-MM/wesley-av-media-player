@@ -19,6 +19,8 @@ using wam::macos::NativeSurfaceBudgetTestInterleavePoint;
 using wam::macos::NativeSurfaceBudgetToken;
 using wam::macos::kNativeSurfaceBudgetMaximumBytes;
 using wam::macos::kNativeSurfaceBudgetMaximumSurfaces;
+using wam::macos::kNativeSurfaceBudgetProcessMaximumBytes;
+using wam::macos::kNativeSurfaceBudgetProcessMaximumSurfaces;
 
 void check(bool condition, const char *expression, int line) {
   if (!condition) {
@@ -82,53 +84,60 @@ void testAliasesChargeExactlyOnce() {
 }
 
 void testUniqueSurfaceLimitAndReuse() {
+  // The pool the ledger enforces is the PROCESS pool -- N player windows'
+  // worth of per-session complements -- so filling it takes that many unique
+  // surfaces, not one session's ten. The per-session complement is still what
+  // each session's own lease ledgers bound it to; that is asserted in
+  // native_video_consumer, not here.
   resetBudget();
-  NativeSurfaceBudgetToken tokens[kNativeSurfaceBudgetMaximumSurfaces];
-  for (std::uint64_t index = 0;
-       index < kNativeSurfaceBudgetMaximumSurfaces; ++index) {
+  constexpr std::uint64_t kPool = kNativeSurfaceBudgetProcessMaximumSurfaces;
+  static_assert(kPool >= kNativeSurfaceBudgetMaximumSurfaces,
+                "the process pool must hold at least one session's share");
+  NativeSurfaceBudgetToken tokens[kPool];
+  for (std::uint64_t index = 0; index < kPool; ++index) {
     tokens[index] = NativeSurfaceBudgetTestAccess::tryAcquire(
         static_cast<std::uint32_t>(100 + index), 1024);
     WAM_CHECK(tokens[index]);
   }
-  checkStats(10, 10 * 1024, 10, 10 * 1024, 0);
+  checkStats(kPool, kPool * 1024, kPool, kPool * 1024, 0);
   WAM_CHECK(!NativeSurfaceBudgetTestAccess::tryAcquire(999, 1024));
-  checkStats(10, 10 * 1024, 10, 10 * 1024, 1);
+  checkStats(kPool, kPool * 1024, kPool, kPool * 1024, 1);
 
   tokens[4].reset();
   auto replacement = NativeSurfaceBudgetTestAccess::tryAcquire(1000, 2048);
   WAM_CHECK(replacement);
-  checkStats(10, 11 * 1024, 10, 11 * 1024, 1);
+  checkStats(kPool, (kPool + 1) * 1024, kPool, (kPool + 1) * 1024, 1);
   replacement.reset();
   for (auto &token : tokens) {
     token.reset();
   }
-  checkStats(0, 0, 10, 11 * 1024, 1);
+  checkStats(0, 0, kPool, (kPool + 1) * 1024, 1);
 }
 
 void testExactByteBoundary() {
   resetBudget();
   auto first = NativeSurfaceBudgetTestAccess::tryAcquire(
-      201, kNativeSurfaceBudgetMaximumBytes - 1024);
+      201, kNativeSurfaceBudgetProcessMaximumBytes - 1024);
   auto last = NativeSurfaceBudgetTestAccess::tryAcquire(202, 1024);
   WAM_CHECK(first);
   WAM_CHECK(last);
-  checkStats(2, kNativeSurfaceBudgetMaximumBytes, 2,
-             kNativeSurfaceBudgetMaximumBytes, 0);
+  checkStats(2, kNativeSurfaceBudgetProcessMaximumBytes, 2,
+             kNativeSurfaceBudgetProcessMaximumBytes, 0);
   WAM_CHECK(!NativeSurfaceBudgetTestAccess::tryAcquire(203, 1));
-  checkStats(2, kNativeSurfaceBudgetMaximumBytes, 2,
-             kNativeSurfaceBudgetMaximumBytes, 1);
+  checkStats(2, kNativeSurfaceBudgetProcessMaximumBytes, 2,
+             kNativeSurfaceBudgetProcessMaximumBytes, 1);
   first.reset();
   last.reset();
-  checkStats(0, 0, 2, kNativeSurfaceBudgetMaximumBytes, 1);
+  checkStats(0, 0, 2, kNativeSurfaceBudgetProcessMaximumBytes, 1);
 
   resetBudget();
   auto whole = NativeSurfaceBudgetTestAccess::tryAcquire(
-      204, kNativeSurfaceBudgetMaximumBytes);
+      204, kNativeSurfaceBudgetProcessMaximumBytes);
   WAM_CHECK(whole);
-  checkStats(1, kNativeSurfaceBudgetMaximumBytes, 1,
-             kNativeSurfaceBudgetMaximumBytes, 0);
+  checkStats(1, kNativeSurfaceBudgetProcessMaximumBytes, 1,
+             kNativeSurfaceBudgetProcessMaximumBytes, 0);
   whole.reset();
-  checkStats(0, 0, 1, kNativeSurfaceBudgetMaximumBytes, 0);
+  checkStats(0, 0, 1, kNativeSurfaceBudgetProcessMaximumBytes, 0);
 }
 
 void testCopyMoveAndReferenceOverflow() {

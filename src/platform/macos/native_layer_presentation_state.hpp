@@ -1,5 +1,7 @@
 #pragma once
 
+#include "native_concurrency_limits.hpp"
+
 #include <atomic>
 #include <cassert>
 #include <cstdlib>
@@ -68,10 +70,22 @@ nativeLayerPresentationCounter() noexcept {
   return counter;
 }
 
-// Bounded invariant: one presenting output per route, and at most two across
-// the overlap of a route swap that builds before it drops. Anything above that
-// is a missing release, not a legitimate topology.
-inline constexpr int kMaxConcurrentLayerPresentations = 2;
+// Presenting outputs a single window can own at once: its steady-state one,
+// plus one more across the overlap of a route swap that builds its replacement
+// before it drops the old one.
+inline constexpr int kLayerPresentationsPerWindow = 2;
+
+// Bounded invariant, DERIVED (never independently bumped): every window may be
+// mid-route-swap at the same instant, so the ceiling is the per-window overlap
+// bound times the window cap. Anything above that is a missing release, not a
+// legitimate topology.
+inline constexpr int kMaxConcurrentLayerPresentations =
+    kMaximumConcurrentPlayerWindows * kLayerPresentationsPerWindow;
+static_assert(kMaxConcurrentLayerPresentations == 32,
+              "layer presentation bound must stay the window cap times the "
+              "per-window route-swap overlap");
+static_assert(kMaxConcurrentLayerPresentations >= kLayerPresentationsPerWindow,
+              "the bound must still admit a single window's route swap");
 
 [[nodiscard]] inline bool nativeLayerPresentationActive() noexcept {
   return nativeLayerPresentationCounter().load(std::memory_order_acquire) > 0;
