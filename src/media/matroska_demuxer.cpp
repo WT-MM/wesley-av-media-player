@@ -643,19 +643,45 @@ trackDuration(const Info& info) noexcept {
   // Build the exact nanosecond rational instead and reduce it. Wherever the
   // seconds path already succeeded this yields the identical reduced value,
   // so this is strictly a widening of what is admitted.
+  //
+  // A FRACTIONAL tick count is admitted the same way, because Duration is a
+  // float element and nothing requires a muxer to land on a whole tick.
+  // GStreamer's matroskamux does not: measured on matroskamux 1.20.3 output it
+  // wrote Duration 491295.376732 against TimestampScale 1 ms, i.e. a duration
+  // stated to sub-tick precision. That value has no exact int32-timescale
+  // rational in SECONDS, so the seconds fallback below failed closed and the
+  // whole container was refused with InvalidTimeline -- the exact defect this
+  // integral-tick path was written to remove, still reachable through the one
+  // door it did not cover.
+  //
+  // The fraction is resolved at the timeline's own resolution. MediaTime's
+  // finest representable step here is one nanosecond (denominator 1e9), so a
+  // tick count is converted to nanoseconds and rounded to the nearest whole
+  // nanosecond: nothing representable is lost, and the result is exact in the
+  // only units the timeline can express. The integral part is multiplied in
+  // __int128 so it stays exact for any tick count, and only the sub-tick
+  // remainder -- strictly less than one tick -- goes through double.
   const double ticks = *info.durationTicks;
   double integralTicks = 0.0;
-  if (std::modf(ticks, &integralTicks) == 0.0 &&
-      integralTicks <=
-          static_cast<double>(std::numeric_limits<std::int64_t>::max())) {
+  const double fractionalTicks = std::modf(ticks, &integralTicks);
+  if (integralTicks <=
+      static_cast<double>(std::numeric_limits<std::int64_t>::max())) {
     const auto wholeTicks = static_cast<std::int64_t>(integralTicks);
     const auto scale = static_cast<std::int64_t>(
         info.timestampScaleNanoseconds);
     constexpr std::int64_t kNanosecondsPerSecond{1'000'000'000};
     if (scale > 0) {
+      // `fractionalTicks` is in [0, 1) and `scale` is a nanosecond count, so
+      // the product is in [0, scale) and llround is exact for every scale a
+      // Matroska file can state -- binary64 represents every integer below
+      // 2^53 exactly, and TimestampScale is bounded far below that.
+      const auto fractionalNanoseconds = static_cast<std::int64_t>(
+          std::llround(fractionalTicks * static_cast<double>(scale)));
       const auto nanoseconds =
-          static_cast<__int128>(wholeTicks) * static_cast<__int128>(scale);
-      if (nanoseconds <=
+          static_cast<__int128>(wholeTicks) * static_cast<__int128>(scale) +
+          static_cast<__int128>(fractionalNanoseconds);
+      if (nanoseconds >= 0 &&
+          nanoseconds <=
           static_cast<__int128>(std::numeric_limits<std::int64_t>::max())) {
         auto numerator = static_cast<std::int64_t>(nanoseconds);
         auto denominator = kNanosecondsPerSecond;
@@ -673,8 +699,8 @@ trackDuration(const Info& info) noexcept {
       }
     }
   }
-  // Fractional or out-of-range tick counts keep the original conservative
-  // seconds conversion, which still fails closed when it cannot be exact.
+  // Out-of-range tick counts keep the original conservative seconds
+  // conversion, which still fails closed when it cannot be exact.
   return exactNonnegativeMediaTime(
       ticks * (static_cast<double>(info.timestampScaleNanoseconds) / 1.0e9));
 }

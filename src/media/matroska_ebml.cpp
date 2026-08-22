@@ -1278,7 +1278,28 @@ bool Parser::readAscii(const ElementHeader& header,
           std::span<std::byte>(bytes.data(), header.data.size))) {
     return false;
   }
-  for (std::size_t index = 0; index < header.data.size; ++index) {
+  // RFC 8794 s7.5: a String Element's value MAY be zero-padded at the end, and
+  // the padding is not part of the value. GStreamer's matroskamux writes the
+  // NUL terminator into the element size for every string it muxes -- CodecID
+  // arrives as "V_VP8\0", not "V_VP8" -- so the padding is stripped here rather
+  // than rejected. Stripping it at the one place that decodes an ASCII string
+  // means every consumer downstream keeps comparing against bare literals
+  // ("V_VP8", "A_OPUS", "eng") and no CodecID table needs a padded variant.
+  //
+  // Only TRAILING NULs are padding. An interior control byte is still a
+  // malformed string and is still refused below, so this widens what is read
+  // exactly and widens nothing else.
+  std::size_t size = static_cast<std::size_t>(header.data.size);
+  while (size > 0 && std::to_integer<std::uint8_t>(bytes[size - 1]) == 0U) {
+    --size;
+  }
+  if (size == 0) {
+    // All padding and no value. The unpadded empty string was already refused
+    // above; a padded one is the same absence of a value and is refused the
+    // same way rather than becoming a silent empty CodecID.
+    return access_.fail(ParseError::InvalidValue, header.data.offset);
+  }
+  for (std::size_t index = 0; index < size; ++index) {
     const auto character = std::to_integer<std::uint8_t>(bytes[index]);
     if (character < 0x20U || character > 0x7EU) {
       return access_.fail(ParseError::InvalidValue,
@@ -1286,7 +1307,7 @@ bool Parser::readAscii(const ElementHeader& header,
     }
     value.bytes[index] = static_cast<char>(character);
   }
-  value.size = static_cast<std::uint8_t>(header.data.size);
+  value.size = static_cast<std::uint8_t>(size);
   return true;
 }
 
@@ -1298,30 +1319,63 @@ bool Parser::readDocumentType(const ElementHeader& header,
   // the codec admission downstream already rejects anything it cannot decode.
   // The comparison stays a length-then-bytes match against the two literals so
   // no other DocType (webm2, matroskaX, an empty string) can slip through.
+  //
+  // The match is made against the element's value AFTER trailing NUL padding is
+  // removed. RFC 8794 s7.5 states that a String Element's value MAY be
+  // zero-padded at the end and that the padding is not part of the value, so a
+  // DocType of "webm\0" names WebM exactly as "webm" does. GStreamer's
+  // matroskamux writes that padding on every string it muxes (measured on
+  // matroskamux 1.20.3 output: DocType "webm\0", CodecID "V_VP8\0", Name
+  // "Video\0"), so refusing it refused every GStreamer-muxed file in existence
+  // -- the whole screencast/pipeline class -- at the EBML header, before a
+  // single track was looked at.
   constexpr std::string_view kMatroska{"matroska"};
   constexpr std::string_view kWebm{"webm"};
+  // The bound is arithmetic, not a round number: the longest value this parser
+  // will ever admit is "matroska", and a padded encoding of it is that value
+  // followed by padding. One byte of padding is what a NUL terminator is, and
+  // the allowance is doubled so a muxer that pads a string to a small fixed
+  // field is still read exactly rather than refused. Anything longer cannot be
+  // either literal however it is trimmed, so it is refused on length alone.
+  constexpr std::size_t kDocTypeMaximumBytes{kMatroska.size() + 2};
+  static_assert(kDocTypeMaximumBytes >= kMatroska.size() + 1,
+                "a NUL-terminated \"matroska\" must fit");
+  static_assert(kDocTypeMaximumBytes >= kWebm.size() + 1,
+                "a NUL-terminated \"webm\" must fit");
+  static_assert(kMatroska.size() > kWebm.size(),
+                "the bound is derived from the longer literal");
   const auto size = static_cast<std::size_t>(header.data.size);
-  if (!knownSize(header) ||
-      (size != kMatroska.size() && size != kWebm.size())) {
+  if (!knownSize(header) || size == 0 || size > kDocTypeMaximumBytes) {
     return access_.active()
                ? access_.fail(ParseError::InvalidValue, header.data.offset)
                : false;
   }
-  std::array<std::byte, 8> bytes{};
+  std::array<std::byte, kDocTypeMaximumBytes> bytes{};
   if (!access_.copyExact(header.data.offset,
                          std::span<std::byte>(bytes.data(), size))) {
     return false;
   }
-  const std::string_view expected = size == kWebm.size() ? kWebm : kMatroska;
-  for (std::size_t index = 0; index < size; ++index) {
+  // Trailing padding only. An interior NUL is not padding and leaves a value
+  // that matches neither literal, so it still fails the exact compare below.
+  std::size_t trimmed = size;
+  while (trimmed > 0 &&
+         std::to_integer<unsigned char>(bytes[trimmed - 1]) == 0U) {
+    --trimmed;
+  }
+  if (trimmed != kMatroska.size() && trimmed != kWebm.size()) {
+    return access_.fail(ParseError::InvalidValue, header.data.offset);
+  }
+  const std::string_view expected =
+      trimmed == kWebm.size() ? kWebm : kMatroska;
+  for (std::size_t index = 0; index < trimmed; ++index) {
     if (std::to_integer<unsigned char>(bytes[index]) !=
         static_cast<unsigned char>(expected[index])) {
       return access_.fail(ParseError::InvalidValue,
                           header.data.offset + index);
     }
   }
-  value = size == kWebm.size() ? EbmlDocumentType::Webm
-                               : EbmlDocumentType::Matroska;
+  value = trimmed == kWebm.size() ? EbmlDocumentType::Webm
+                                  : EbmlDocumentType::Matroska;
   return true;
 }
 

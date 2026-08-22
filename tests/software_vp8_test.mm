@@ -360,6 +360,15 @@ void testConversion() {
                   "a width whose chroma row is not a NEON multiple converts");
   checkConversion(makeGradient(17, 9, 7),
                   "odd dimensions convert with a rounded-up chroma plane");
+  // The exact geometry of the wild GStreamer screencast that this stage was
+  // first pointed at: 3418x1843, an ODD height at 6.3 megapixels. The odd row
+  // is the one a chroma-subsampled conversion is most likely to get wrong, and
+  // at this size a half-row error is 1709 bytes rather than a few. Chroma is
+  // ceil(1843/2) = 922 rows; the 922nd row exists in the source and must land
+  // in the destination.
+  checkConversion(makeGradient(3418, 1843, 24),
+                  "the wild screencast's 3418x1843 odd-height geometry "
+                  "converts exactly");
 
   // Contract refusals.
   std::string error;
