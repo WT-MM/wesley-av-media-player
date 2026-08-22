@@ -120,7 +120,11 @@ jobs:
           archive="WAM-${label}-macos-arm64.zip"
           ditto -c -k --sequesterRsrc --keepParent stage/WAM.app "$archive"
           shasum -a 256 "$archive" > "$archive.sha256"
+          dmg="WAM-${label}-macos-arm64.dmg"
+          zsh scripts/make_dmg.zsh stage/WAM.app "$dmg" "WAM"
+          shasum -a 256 "$dmg" > "$dmg.sha256"
           echo "archive=$archive" >> "$GITHUB_OUTPUT"
+          echo "dmg=$dmg" >> "$GITHUB_OUTPUT"
           echo "label=$label" >> "$GITHUB_OUTPUT"
 
       - name: Publish the release
@@ -128,13 +132,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           ARCHIVE: ${{ steps.archive.outputs.archive }}
+          DMG: ${{ steps.archive.outputs.dmg }}
         run: |
           set -euo pipefail
           cat > release-header.md <<'HEADER'
           ## Install
 
-          Apple silicon only. Download the ZIP, unpack it, and move `WAM.app` to
-          `/Applications`.
+          Apple silicon only. Download the DMG, open it, and drag `WAM.app`
+          onto the Applications folder. (The ZIP holds the same app for
+          scripted installs.)
 
           This build carries an **ad-hoc signature**, not a Developer ID one, so
           Gatekeeper will refuse a plain double-click on first launch. Open it
@@ -158,7 +164,7 @@ jobs:
             --notes-file release-header.md \
             --generate-notes \
             --latest \
-            "$ARCHIVE" "$ARCHIVE.sha256"
+            "$DMG" "$DMG.sha256" "$ARCHIVE" "$ARCHIVE.sha256"
 
       - name: Upload the build artifact
         if: github.event_name != 'push'
@@ -168,3 +174,5 @@ jobs:
           path: |
             ${{ steps.archive.outputs.archive }}
             ${{ steps.archive.outputs.archive }}.sha256
+            ${{ steps.archive.outputs.dmg }}
+            ${{ steps.archive.outputs.dmg }}.sha256
