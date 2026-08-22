@@ -1,0 +1,170 @@
+name: Release macOS app
+
+# The ad-hoc release path: a self-contained Apple silicon bundle built from
+# Homebrew dependencies, signed with an ad-hoc signature, and published on the
+# tag. `release-macos.yml` remains the aspirational Developer ID + notarization
+# path and stays dormant until the `macos-release` environment actually holds
+# signing secrets; this workflow is the one that runs today.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: macOS arm64
+    runs-on: macos-14
+    timeout-minutes: 90
+    env:
+      WAM_MACOS_DEPLOYMENT_TARGET: "13.3"
+
+    steps:
+      - name: Check out the release source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Install build and media dependencies
+        run: |
+          set -euo pipefail
+          brew update --quiet
+          brew install --quiet cmake ninja pkg-config qt mpv ffmpeg libvpx
+
+      # The model is a 148 MB download from Hugging Face. Key the cache on the
+      # fetch script, which pins both the repository revision and the SHA-256,
+      # so a cache hit can only ever be the exact same bytes.
+      - name: Restore the caption model
+        id: model-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: build/runtime/models/ggml-base.en.bin
+          key: whisper-model-${{ hashFiles('scripts/fetch_whisper_model.sh') }}
+
+      # whisper.cpp is a checksum-pinned source build; key on the build script
+      # (which carries the version and archive hash) and the runner image.
+      - name: Restore the caption engine
+        id: engine-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: build/runtime/whisper-cli
+          key: whisper-cli-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/build_whisper.sh') }}
+
+      - name: Configure and build
+        run: |
+          set -euo pipefail
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_PREFIX_PATH="$(brew --prefix qt)" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET="$WAM_MACOS_DEPLOYMENT_TARGET" \
+            -DWAM_ENABLE_MACOS_NATIVE_VIDEO=ON \
+            -DWAM_ENABLE_SOFTWARE_VP8=ON \
+            -DBUILD_TESTING=OFF
+          cmake --build build --parallel
+
+      - name: Build the caption runtime
+        run: |
+          set -euo pipefail
+          if [[ ! -x build/runtime/whisper-cli ]]; then
+            scripts/build_whisper.sh build/runtime/whisper-cli
+          fi
+          scripts/fetch_whisper_model.sh build/runtime/models/ggml-base.en.bin
+          [[ "$(/usr/bin/lipo -archs build/runtime/whisper-cli)" == "arm64" ]]
+
+      - name: Stage, repair, and bundle the app
+        run: |
+          set -euo pipefail
+          cmake --install build --prefix "$GITHUB_WORKSPACE/stage"
+          scripts/fix_qt_qml_deploy_macos.zsh stage/WAM.app qml
+          scripts/bundle_macos.zsh \
+            stage/WAM.app \
+            build/runtime/whisper-cli \
+            build/runtime/models/ggml-base.en.bin
+          stage/WAM.app/Contents/MacOS/WAM --verify-runtime
+
+      # The bundle script signs ad-hoc and validates the closure itself. Prove
+      # the two properties a downloader depends on: the signature verifies
+      # deeply, and nothing in the app reaches outside itself for a library.
+      - name: Verify the bundle is self-contained
+        run: |
+          set -euo pipefail
+          codesign --verify --deep --strict --verbose=2 stage/WAM.app
+          # Framework binaries are neither executable nor named *.dylib, so
+          # select by Mach-O magic rather than by permission bits or suffix.
+          external=$(
+            find stage/WAM.app -type f -print0 | xargs -0 file |
+            grep 'Mach-O' | cut -d: -f1 |
+            while IFS= read -r macho; do otool -l "$macho"; done |
+            awk '/LC_LOAD(_WEAK|_UPWARD)?_DYLIB|LC_REEXPORT_DYLIB/ { load = 1 }
+                 load && $1 == "name" { print $2; load = 0 }' |
+            grep -v '^@\|^/System/\|^/usr/lib/' | sort -u || true
+          )
+          if [[ -n "$external" ]]; then
+            echo "Bundle references libraries outside itself:" >&2
+            echo "$external" >&2
+            exit 1
+          fi
+
+      - name: Archive the app
+        id: archive
+        run: |
+          set -euo pipefail
+          label="${GITHUB_REF_NAME}"
+          [[ "$GITHUB_EVENT_NAME" == push ]] || label="manual-${GITHUB_SHA:0:12}"
+          archive="WAM-${label}-macos-arm64.zip"
+          ditto -c -k --sequesterRsrc --keepParent stage/WAM.app "$archive"
+          shasum -a 256 "$archive" > "$archive.sha256"
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+          echo "label=$label" >> "$GITHUB_OUTPUT"
+
+      - name: Publish the release
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARCHIVE: ${{ steps.archive.outputs.archive }}
+        run: |
+          set -euo pipefail
+          cat > release-header.md <<'HEADER'
+          ## Install
+
+          Apple silicon only. Download the ZIP, unpack it, and move `WAM.app` to
+          `/Applications`.
+
+          This build carries an **ad-hoc signature**, not a Developer ID one, so
+          Gatekeeper will refuse a plain double-click on first launch. Open it
+          once with **right-click (or Control-click) → Open → Open**, or clear
+          the quarantine flag yourself:
+
+          ```sh
+          xattr -d com.apple.quarantine /Applications/WAM.app
+          ```
+
+          Every launch after the first is an ordinary double-click. Verify the
+          download against the `.sha256` sidecar published alongside it.
+
+          The app is self-contained: Qt, mpv/FFmpeg, libvpx, and the on-device
+          caption engine and model all ship inside the bundle. Nothing needs
+          Homebrew installed.
+
+          HEADER
+          gh release create "$GITHUB_REF_NAME" \
+            --title "WAM $GITHUB_REF_NAME" \
+            --notes-file release-header.md \
+            --generate-notes \
+            --latest \
+            "$ARCHIVE" "$ARCHIVE.sha256"
+
+      - name: Upload the build artifact
+        if: github.event_name != 'push'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ steps.archive.outputs.archive }}
+          path: |
+            ${{ steps.archive.outputs.archive }}
+            ${{ steps.archive.outputs.archive }}.sha256

@@ -53,11 +53,23 @@ Qt into a staging app, then add WAM's media dependencies:
 scripts/build_whisper.sh build/runtime/whisper-cli
 scripts/fetch_whisper_model.sh build/runtime/models/ggml-base.en.bin
 cmake --install build --prefix stage
+scripts/fix_qt_qml_deploy_macos.zsh stage/WAM.app qml
 scripts/bundle_macos.zsh \
   stage/WAM.app \
   build/runtime/whisper-cli \
   build/runtime/models/ggml-base.en.bin
 ```
+
+The `fix_qt_qml_deploy_macos.zsh` step exists because Qt's CMake deployment
+installs QML plugin binaries and `qmldir` files with `file(INSTALL)`, which
+copies a symlink as a symlink — and Homebrew's `share/qt/qml` is entirely
+symlinks into `../Cellar`. Without the repair, the staged app carries about a
+hundred dangling links and no QML plugin code at all. The script materializes
+them, lets `macdeployqt` finish the deployment those real files then require,
+and normalizes any remaining absolute Homebrew reference onto the copy inside
+the bundle. It is idempotent and a no-op on a Qt installation whose QML tree is
+regular files, which is why `release-macos.yml`'s checksum-pinned Qt SDK never
+needed it.
 
 The two whisper scripts are all `build/WAM.app` needs for captions:
 
@@ -86,12 +98,25 @@ launch goes through LaunchServices and inherits only
 `/usr/bin:/bin:/usr/sbin:/sbin`, so a PATH-only lookup cannot see a Homebrew
 install and fails for every launch that did not come from a shell.
 
-That local command produces an ad-hoc-signed development package. Public macOS
-artifacts are built only by `.github/workflows/release-macos.yml`, which uses a
-protected `macos-release` environment, checksum-pinned dependencies built for
+That local command produces an ad-hoc-signed package — the same kind of
+artifact the shipping release path produces today.
+
+`.github/workflows/release.yml` is that path. It triggers on a `v*` tag, builds
+on a `macos-14` (Apple silicon) runner against Homebrew dependencies, caches
+the checksum-pinned caption engine and model, runs the same
+install/repair/bundle sequence as above, asserts that no Mach-O in the finished
+app references a library outside the bundle, and publishes the ZIP and its
+SHA-256 sidecar to a GitHub Release. The bundle is ad-hoc signed, so the
+release notes carry the first-launch instruction (right-click → Open, or
+`xattr -d com.apple.quarantine`) and `spctl --assess` rejects the app by
+design.
+
+`.github/workflows/release-macos.yml` remains the aspirational path:
+a protected `macos-release` environment, checksum-pinned dependencies built for
 macOS 13.3, Developer ID signing, Apple notarization, ticket stapling, and a
-Gatekeeper assessment. The workflow publishes only the post-staple ZIP and its
-SHA-256 sidecar. It never runs for pull requests.
+Gatekeeper assessment. None of the secrets it needs exist yet, so it is
+dormant. When a Developer ID certificate and notary key are available it
+supersedes `release.yml`; until then it should not be expected to run.
 
 The protected environment supplies checksum-pinned per-architecture Qt SDK and
 media closure archives, the full Developer ID Application authority and team

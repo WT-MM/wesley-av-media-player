@@ -291,7 +291,7 @@ rewrite_dependency_edge() {
   local target="$1"
   local dependency="$2"
   local packaged_dependency="$3"
-  local packaged_relative replacement
+  local packaged_relative replacement target_ascent target_remainder
   if [[ "$packaged_dependency" != "$FRAMEWORKS"/* ]]; then
     print -u2 "Packaged dependency escaped Frameworks: $packaged_dependency"
     return 1
@@ -302,7 +302,18 @@ rewrite_dependency_edge() {
   elif [[ "$target" == "$MPV_FALLBACK_DESTINATION" ]]; then
     replacement="@executable_path/../Frameworks/$packaged_relative"
   elif [[ "$target" == "$FRAMEWORKS"/* ]]; then
-    replacement="@loader_path/$packaged_relative"
+    # `@loader_path` is the directory holding the target, which is Frameworks
+    # itself only for a flat dylib. A framework's binary lives at
+    # `Name.framework/Versions/A/Name`, so the edge has to climb back out
+    # before it can name a packaged leaf; without the ascent the reference
+    # points inside the referring framework and resolves to nothing.
+    target_ascent=""
+    target_remainder="${${target#$FRAMEWORKS/}:h}"
+    while [[ -n "$target_remainder" && "$target_remainder" != "." ]]; do
+      target_ascent+="../"
+      target_remainder="${target_remainder:h}"
+    done
+    replacement="@loader_path/$target_ascent$packaged_relative"
   else
     replacement="@executable_path/../Frameworks/$packaged_relative"
   fi
@@ -888,6 +899,7 @@ fi
 typeset -A EDGE_DESTINATIONS
 typeset -A EDGE_SOURCES
 typeset -A DESTINATION_SOURCES
+typeset -A QT_DEPLOYED_LEAVES
 typeset -A PROCESSED_CONTEXTS
 typeset -A CONTEXT_BINARIES
 typeset -A CONTEXT_SOURCES
@@ -976,6 +988,7 @@ for existing_library in "$FRAMEWORKS"/*.dylib(N); do
   if [[ -z "${DESTINATION_SOURCES[$existing_name]-}" ]]; then
     DESTINATION_SOURCES[$existing_name]="${SOURCE_ORIGINS[$existing_library]}"
   fi
+  QT_DEPLOYED_LEAVES[$existing_name]="${SOURCE_ORIGINS[$existing_library]}"
 done
 
 # libmpv is intentionally absent from WAM's load commands. Seed its copied
@@ -1075,6 +1088,22 @@ while (( index <= ${#QUEUE_CONTEXTS[@]} )); do
     if [[ "$source" != "$destination" ]]; then
       recorded_source="${DESTINATION_SOURCES[$name]-}"
       if [[ -n "$recorded_source" && "$recorded_source" != "$source" ]]; then
+        # Qt's deployment owns Frameworks, and on a package-manager Qt it
+        # stages a good deal of the same third-party stack the media closure
+        # links: lcms2, libpng, freetype, harfbuzz, zstd, xz, OpenSSL. When a
+        # media dependency names one of those by absolute path, the two are
+        # the same library from the same prefix, recorded under different
+        # provenance only because Qt copied its own before the walk began.
+        # Keep Qt's staged leaf -- it already carries Qt's install-name
+        # rewrites, and replacing it would corrupt the edges Qt fixed up --
+        # and resolve this edge onto it. A genuinely different library sharing
+        # a basename still collides, because it has no Qt-deployed leaf.
+        if [[ "$recorded_source" == "${QT_DEPLOYED_LEAVES[$name]-}" ]]; then
+          enqueue_load_context "$destination" "$recorded_source" \
+            "$SOURCE_EXECUTABLE" "${EXECUTABLE_ROOT_RUNPATHS[@]}"
+          EDGE_DESTINATIONS[$WAM_EDGE_KEY]="$destination"
+          continue
+        fi
         print -u2 "Media dependency basename collision for $name"
         print -u2 "  first source: $recorded_source"
         print -u2 "  second source: $source"
