@@ -88,6 +88,19 @@ FocusScope {
         color: sheet.dark ? "#f21d1e22" : "#fbfbfa"
     }
 
+    // The panel is an opaque surface over the video, so a wheel on it must
+    // not reach the window's scroll-gesture handler underneath. The Flickable
+    // below already consumes the wheel over its own content, but only while
+    // it can actually scroll -- when the content fits, and over the header
+    // strip, the event would otherwise fall straight through to the picture.
+    // The sheet is `enabled: shown`, so this is inert whenever it is closed
+    // and video gestures work normally everywhere outside it.
+    MouseArea {
+        anchors.fill: parent
+        acceptedButtons: Qt.NoButton
+        onWheel: wheel => wheel.accepted = true
+    }
+
     Text {
         id: title
         anchors.top: parent.top

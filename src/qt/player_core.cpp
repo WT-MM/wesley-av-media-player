@@ -226,6 +226,11 @@ bool PlayerCore::initialize(
   // opt-in for viewers who prefer cadence correction over power efficiency.
   setOption(api, candidate, "video-sync", "audio");
   setOption(api, candidate, "audio-pitch-correction", "yes");
+  // The compatibility route must reach the same 200% ceiling the native gain
+  // stage does, or a boosted window would play quieter the moment it fell
+  // back. mpv's own default volume-max is 130 and `config no` above means a
+  // user's mpv.conf can never supply it, so this option is the only lever.
+  setOption(api, candidate, "volume-max", "200");
   setOption(api, candidate, "keep-open", "yes");
   setOption(api, candidate, "osc", "no");
   setOption(api, candidate, "osd-level", "0");

@@ -30,7 +30,7 @@ Window {
 
     title: "Preferences"
     width: 360
-    height: 612
+    height: 720
     minimumWidth: width
     minimumHeight: height
     maximumWidth: width
@@ -263,6 +263,57 @@ Window {
                 function onPreservePitchChanged() {
                     if (prefs.player)
                         preservePitchCheck.checked = prefs.player.preservePitch;
+                }
+            }
+        }
+
+        Item {
+            width: 1
+            height: 8
+        }
+
+        Text {
+            text: "SCROLLING"
+            color: prefs.secondary
+            font.pixelSize: 11
+            font.weight: Font.DemiBold
+            font.letterSpacing: 0.8
+        }
+
+        Text {
+            width: parent.width
+            text: "Scroll up and down over the picture to change that window's volume, and sideways to sweep through the timeline. Each window keeps its own level. The controls on the transport bar work the same either way."
+            color: prefs.secondary
+            font.pixelSize: 12
+            wrapMode: Text.WordWrap
+        }
+
+        Item {
+            width: 1
+            height: 2
+        }
+
+        CheckBox {
+            id: scrollGesturesCheck
+            text: "Scroll over video adjusts volume and seeks"
+            Accessible.name: "Scroll over video adjusts volume and seeks"
+            // Same binding hazard, same guard as the boxes above.
+            enabled: prefs.hasPlayer
+            checked: prefs.hasPlayer ? prefs.player.scrollGesturesEnabled : true
+            onToggled: {
+                if (prefs.hasPlayer)
+                    prefs.player.setScrollGesturesEnabled(checked);
+            }
+
+            palette.text: prefs.foreground
+            palette.windowText: prefs.foreground
+
+            Connections {
+                target: prefs.player
+                function onScrollGesturesEnabledChanged() {
+                    if (prefs.player)
+                        scrollGesturesCheck.checked =
+                            prefs.player.scrollGesturesEnabled;
                 }
             }
         }

@@ -37,6 +37,11 @@ struct PersistentState {
   // behavior every route already had. Quick Edit's export-scoped preserve
   // pitch is a separate, per-export choice and is deliberately not this.
   bool preserve_pitch = true;
+  // Pointer-scroll gestures over the video surface: vertical scroll changes
+  // that window's volume, horizontal scroll sweeps its timeline. Default on,
+  // matching VLC and IINA. Off leaves the video surface inert to the wheel;
+  // the transport's own controls are unaffected either way.
+  bool scroll_gestures = true;
   std::unordered_map<std::string, double> positions;
 
   bool operator==(const PersistentState&) const = default;

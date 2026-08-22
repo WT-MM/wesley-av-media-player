@@ -27,12 +27,15 @@
 #include <QQuickStyle>
 #include <QQuickWindow>
 #include <QRect>
+#include <QPointF>
+#include <QWheelEvent>
 #include <QRegularExpression>
 #include <QSGRendererInterface>
 #include <QStyleHints>
 #include <QSurfaceFormat>
 #include <QTimer>
 #include <QUrl>
+#include <QVariant>
 
 #include <algorithm>
 #include <array>
@@ -202,6 +205,20 @@ std::vector<ScriptedOpen> parseOpenScript(const QByteArray &value) {
 //   focus:<index>       raise and focus
 //   pause:<index>       play:<index>       rate:<index>:<value>
 //   seekstep:<value>    set it on window 0, to observe the settings mirror
+//   volume:<index>:<v>  set that window's normalized volume (0..2)
+//   gestures:<0|1>      set scrollGesturesEnabled on window 0 (mirrored)
+//   scroll:<index>:<dx>:<dy>:<count>[:<phase>[:<inverted>[:<fx>:<fy>]]]
+//                       deliver <count> synthetic QWheelEvents to that
+//                       window. dx/dy are PIXEL deltas (angleDelta is derived
+//                       as 2x, exactly as Qt's cocoa plugin does for a
+//                       trackpad); pass dx=dy=0 with a non-zero notch count
+//                       through the `wheel` verb instead for a real wheel.
+//                       phase 0..4 = Qt::ScrollPhase. fx/fy are fractions of
+//                       the window rect and default to (0.5, 0.35), i.e. over
+//                       the picture and clear of the transport bar.
+//   wheel:<index>:<nx>:<ny>:<count>[:<inverted>[:<fx>:<fy>]]
+//                       the same, as a REAL wheel: null pixelDelta and
+//                       angleDelta of nx/ny * 120 per event, no phase.
 //   hide                pause every window and hide the app
 //   prefs               show the single Preferences window
 //   report              write one WAM_TEST_WINDOWS line plus one
@@ -239,6 +256,27 @@ std::vector<ScriptedWindowStep> parseWindowScript(const QByteArray &value) {
   return script;
 }
 
+// Chrome state read straight off the QML root, so a verification round can
+// prove "the scroll gesture revealed the volume UI" rather than infer it.
+int chromeRevealed(const wam::qt::PlayerWindow *window) {
+  const QObject *root = window != nullptr ? window->qmlRoot() : nullptr;
+  if (root == nullptr)
+    return -1;
+  const QVariant value = root->property("controlsRevealed");
+  return value.isValid() ? (value.toBool() ? 1 : 0) : -1;
+}
+
+int volumeFeedbackActive(const wam::qt::PlayerWindow *window) {
+  const QObject *root = window != nullptr ? window->qmlRoot() : nullptr;
+  if (root == nullptr)
+    return -1;
+  QObject *transport = root->findChild<QObject *>(QStringLiteral("transport"));
+  if (transport == nullptr)
+    return -1;
+  const QVariant value = transport->property("volumeFeedback");
+  return value.isValid() ? (value.toBool() ? 1 : 0) : -1;
+}
+
 void reportWindows(const wam::qt::WindowManager &windows) {
   const QList<wam::qt::PlayerWindow *> &open = windows.windows();
   qInfo().noquote() << QStringLiteral("WAM_TEST_WINDOWS count=%1")
@@ -252,7 +290,9 @@ void reportWindows(const wam::qt::WindowManager &windows) {
     qInfo().noquote()
         << QStringLiteral(
                "WAM_TEST_WINDOW idx=%1 media=%2 paused=%3 playing=%4 rate=%5 "
-               "step=%6 hugs=%7 pitch=%8 geom=%10x%11+%12+%13 source=%9")
+               "step=%6 hugs=%7 pitch=%8 geom=%10x%11+%12+%13 "
+               "volume=%14 muted=%15 gestures=%16 pos=%17 dur=%18 "
+               "chrome=%19 vfeedback=%20 source=%9")
                .arg(index)
                .arg(player->hasMedia() ? 1 : 0)
                .arg(player->paused() ? 1 : 0)
@@ -265,7 +305,47 @@ void reportWindows(const wam::qt::WindowManager &windows) {
                .arg(frame.width())
                .arg(frame.height())
                .arg(frame.x())
-               .arg(frame.y());
+               .arg(frame.y())
+               .arg(player->volume(), 0, 'f', 4)
+               .arg(player->muted() ? 1 : 0)
+               .arg(player->scrollGesturesEnabled() ? 1 : 0)
+               .arg(player->position(), 0, 'f', 4)
+               .arg(player->duration(), 0, 'f', 4)
+               .arg(chromeRevealed(open.at(index)))
+               .arg(volumeFeedbackActive(open.at(index)));
+  }
+}
+
+// Delivers one synthetic wheel event to a window, through the ordinary Qt
+// delivery path -- so the QML wheel blockers on the transport, the volume
+// flyout and the Quick Edit panel are exercised exactly as a real trackpad
+// would exercise them.
+//
+// The AppKit -> Qt half of the translation (which NSEvent field becomes
+// pixelDelta, how `inverted` is set) is deliberately NOT re-implemented here:
+// it is Qt's, it is fixed, and it is quoted from Qt's own source in
+// src/qt/scroll_gesture.hpp. What this seam reproduces is the SHAPE Qt
+// delivers -- a trackpad's angleDelta being exactly twice its pixelDelta, a
+// real wheel's null pixelDelta and 120-unit notches -- so everything
+// downstream of QWheelEvent is under test.
+void deliverWheel(QQuickWindow *window, QPointF fraction, QPoint pixelDelta,
+                  QPoint angleDelta, bool inverted, Qt::ScrollPhase phase,
+                  int count) {
+  if (window == nullptr || count <= 0)
+    return;
+  const QPointF local(window->width() * fraction.x(),
+                      window->height() * fraction.y());
+  const QPointF global = window->position() + local;
+  for (int emitted = 0; emitted < count; ++emitted) {
+    // A real gesture carries ScrollBegin exactly once and ScrollUpdate for
+    // the rest; repeating Begin would restart the gesture on every event and
+    // would never exercise the axis lock or the detent's charge.
+    const Qt::ScrollPhase step =
+        (phase == Qt::ScrollBegin && emitted > 0) ? Qt::ScrollUpdate : phase;
+    QWheelEvent event(local, global, pixelDelta, angleDelta, Qt::NoButton,
+                      Qt::NoModifier, step, inverted,
+                      Qt::MouseEventSynthesizedByApplication);
+    QCoreApplication::sendEvent(window, &event);
   }
 }
 
@@ -317,6 +397,41 @@ void runWindowStep(wam::qt::WindowManager &windows, const QString &verb) {
   } else if (head == QStringLiteral("seekstep")) {
     if (wam::qt::PlayerWindow *window = windowAt(0))
       window->controller()->setSeekStepSeconds(fields.value(1).toDouble());
+  } else if (head == QStringLiteral("volume")) {
+    if (wam::qt::PlayerWindow *window = windowAt(index))
+      window->controller()->setVolume(fields.value(2).toDouble());
+  } else if (head == QStringLiteral("gestures")) {
+    if (wam::qt::PlayerWindow *window = windowAt(0))
+      window->controller()->setScrollGesturesEnabled(fields.value(1).toInt() !=
+                                                     0);
+  } else if (head == QStringLiteral("scroll") ||
+             head == QStringLiteral("wheel")) {
+    wam::qt::PlayerWindow *window = windowAt(index);
+    if (window != nullptr) {
+      const bool trackpad = head == QStringLiteral("scroll");
+      const int dx = fields.value(2).toInt();
+      const int dy = fields.value(3).toInt();
+      const int count = std::max(1, fields.value(4).toInt());
+      const int phaseField = trackpad ? fields.value(5).toInt() : 0;
+      const bool inverted =
+          (trackpad ? fields.value(6) : fields.value(5)).toInt() != 0;
+      const QString fxField = trackpad ? fields.value(7) : fields.value(6);
+      const QString fyField = trackpad ? fields.value(8) : fields.value(7);
+      bool fx_ok = false;
+      bool fy_ok = false;
+      const double fx = fxField.toDouble(&fx_ok);
+      const double fy = fyField.toDouble(&fy_ok);
+      const QPointF fraction(fx_ok ? fx : 0.5, fy_ok ? fy : 0.35);
+      const Qt::ScrollPhase phase =
+          phaseField >= 0 && phaseField <= 4
+              ? static_cast<Qt::ScrollPhase>(phaseField)
+              : Qt::NoScrollPhase;
+      const QPoint pixels = trackpad ? QPoint(dx, dy) : QPoint(0, 0);
+      const QPoint angles =
+          trackpad ? QPoint(dx * 2, dy * 2) : QPoint(dx * 120, dy * 120);
+      deliverWheel(window->window(), fraction, pixels, angles, inverted, phase,
+                   count);
+    }
   } else if (head == QStringLiteral("hide")) {
     windows.hideAndPauseAll();
   } else if (head == QStringLiteral("prefs")) {

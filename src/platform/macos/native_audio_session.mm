@@ -452,8 +452,16 @@ void assignError(std::string* error, const char* message) noexcept {
   return lhs == rhs;
 }
 
+// The gain wire admits VLC-style amplification above unity. The ceiling is
+// the render core's own kMaximumGain so the session can never publish a gain
+// the core would silently re-clamp, and the fail-safe for a non-finite value
+// stays silence. See NativeAudioRenderCore::applyGain for the [-1, 1] sample
+// saturation that goes with it.
 [[nodiscard]] float normalizedGain(float gain) noexcept {
-  return std::isfinite(gain) ? std::clamp(gain, 0.0F, 1.0F) : 0.0F;
+  return std::isfinite(gain)
+             ? std::clamp(gain, NativeAudioRenderCore::kMinimumGain,
+                          NativeAudioRenderCore::kMaximumGain)
+             : NativeAudioRenderCore::kMinimumGain;
 }
 
 [[nodiscard]] bool acceptsAudioControls(

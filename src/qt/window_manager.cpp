@@ -437,6 +437,8 @@ void PlayerWindow::wireSettingsMirror() {
           [this] { manager_.mirrorWindowHugsVideo(controller_); });
   connect(controller_, &PlayerController::preservePitchChanged, this,
           [this] { manager_.mirrorPreservePitch(controller_); });
+  connect(controller_, &PlayerController::scrollGesturesEnabledChanged, this,
+          [this] { manager_.mirrorScrollGestures(controller_); });
   connect(controller_, &PlayerController::volumeChanged, this,
           [this] { manager_.noteVolumeChanged(controller_); });
 }
@@ -524,12 +526,16 @@ void WindowManager::seedController(PlayerController *controller) const {
 #endif
   const ::wam::PersistentState &state = store_.state();
   controller->setAppearance(appearanceValue(state.appearance_theme));
+  // Deliberately capped at 100 even though the store records up to 200: a
+  // window opened now must never blast at a boost level chosen in some other
+  // window, or in some earlier session. See noteVolumeChanged.
   controller->setVolume(
       static_cast<double>(std::clamp(state.volume, 0, 100)) / 100.0);
   controller->setSeekStepSeconds(
       static_cast<double>(std::clamp(state.seek_step_seconds, 1, 60)));
   controller->setWindowHugsVideo(state.window_hugs_video);
   controller->setPreservePitch(state.preserve_pitch);
+  controller->setScrollGesturesEnabled(state.scroll_gestures);
 }
 
 PlayerWindow *WindowManager::createWindow() {
@@ -734,16 +740,36 @@ void WindowManager::mirrorPreservePitch(PlayerController *origin) {
   requestCheckpoint();
 }
 
+void WindowManager::mirrorScrollGestures(PlayerController *origin) {
+  if (mirroring_ || origin == nullptr)
+    return;
+  mirroring_ = true;
+  const bool value = origin->scrollGesturesEnabled();
+  store_.state().scroll_gestures = value;
+  for (PlayerWindow *window : windows_) {
+    if (window->controller() != origin)
+      window->controller()->setScrollGesturesEnabled(value);
+  }
+  mirroring_ = false;
+  requestCheckpoint();
+}
+
 void WindowManager::noteVolumeChanged(PlayerController *origin) {
   if (origin == nullptr)
     return;
   // Volume is deliberately NOT mirrored. QuickTime gives each window its own
   // level, and muting one video must not mute the others. What is persisted is
-  // simply whichever window set it last, which is the value the next fresh
-  // window is seeded with.
-  store_.state().volume =
-      std::clamp(static_cast<int>(std::lround(origin->volume() * 100.0)), 0,
-                 100);
+  // simply whichever window set it last.
+  //
+  // The stored value keeps the real level, boost included -- the on-disk
+  // format has always admitted 0..200 -- but seedController() caps what a NEW
+  // window is seeded with at 100. A window the user deliberately pushed to
+  // 180% must stay there across a media replacement; a brand-new window
+  // opened later must not blast at 180% because of a decision made in a
+  // different window. Recording the truth and capping the restore is what
+  // gives both.
+  store_.state().volume = std::clamp(
+      static_cast<int>(std::lround(origin->volume() * 100.0)), 0, 200);
   requestCheckpoint();
 }
 

@@ -189,6 +189,20 @@ ApplicationWindow {
             fadeTimer.restart();
     }
 
+    // revealControls() for a gesture that IS the pointer being on this window.
+    // The ordinary path asks "is the pointer actually here?" and refuses
+    // otherwise, because property changes and background playback must not
+    // flash chrome onto an idle screen. A wheel event answers that question by
+    // existing -- it is delivered to the window under the cursor -- so this
+    // variant skips the gate and still re-arms the idle fade rather than
+    // pinning the chrome up.
+    function revealControlsForPointerGesture() {
+        fadeTimer.stop();
+        controlsRevealed = true;
+        if (controller.hasMedia && !transport.interactionActive)
+            fadeTimer.restart();
+    }
+
     function hideControlsIfIdle() {
         if (!controller.hasMedia)
             return;
@@ -1207,8 +1221,60 @@ ApplicationWindow {
             }
         }
 
+        // Scroll gestures over the video, VLC/IINA style: vertical modulates
+        // this window's volume, horizontal sweeps its timeline.
+        //
+        // A MouseArea rather than a WheelHandler on purpose. WheelHandler is
+        // single-axis (its `orientation` property filters events), so two
+        // handlers would be needed and the dominant-axis lock would have to
+        // be coordinated across them; MouseArea delivers both axes in one
+        // callback with the same QQuickWheelEvent payload, `inverted`
+        // included. acceptedButtons: Qt.NoButton means it takes no press, no
+        // drag and no hover -- stageHover and the TapHandlers above keep
+        // every gesture they already own.
+        //
+        // It is declared BEFORE the transport, the notice toast and the Quick
+        // Edit loader, so all of those sit above it and their own wheel
+        // blockers get first refusal. Only a wheel genuinely over the picture
+        // reaches here.
+        //
+        // Every field is forwarded untouched to PlayerController::
+        // scrollGesture; the normalization lives in C++ (ScrollGestureModel)
+        // where it is unit-tested, not in this file.
+        MouseArea {
+            id: videoScrollArea
+            anchors.fill: parent
+            acceptedButtons: Qt.NoButton
+            enabled: root.controller.hasMedia
+                && root.controller.scrollGesturesEnabled
+            onWheel: wheel => {
+                const outcome = root.controller.scrollGesture(
+                    wheel.pixelDelta.x, wheel.pixelDelta.y,
+                    wheel.angleDelta.x, wheel.angleDelta.y,
+                    wheel.inverted, wheel.phase);
+                if (outcome === 0) {
+                    // Nothing was spent: the gesture is still deciding its
+                    // axis, or gestures are off. Do not accept -- something
+                    // else may still want it.
+                    wheel.accepted = false;
+                    return;
+                }
+                wheel.accepted = true;
+                // Both outcomes are chrome interaction: the volume readout
+                // and the timeline handle are the feedback, and the reveal
+                // has to re-arm the idle fade rather than pin the chrome up.
+                if (outcome === 1)
+                    transport.flashVolume();
+                root.revealControlsForPointerGesture();
+            }
+        }
+
         FloatingControls {
             id: transport
+            // Read by the WAM_TEST_WINDOW_SCRIPT `report` verb so a scripted
+            // round can prove the scroll gesture actually revealed the volume
+            // feedback rather than infer it.
+            objectName: "transport"
             x: root.transportUserPositioned ? root.clampTransportX(root.transportPosition.x) : root.defaultTransportX()
             y: root.transportUserPositioned ? root.clampTransportY(root.transportPosition.y) : root.defaultTransportY()
             width: root.quickEditOpen && !transport.suppressed ? Math.min(540, parent.width - root.quickEditWidth - root.quickEditRightMargin - SafeArea.margins.left - 24) : Math.min(680, parent.width - SafeArea.margins.left - SafeArea.margins.right - 24)

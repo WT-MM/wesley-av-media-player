@@ -582,6 +582,237 @@ void testGainMuteRamp() {
              "mute ramp reaches exact silence on frame 128");
 }
 
+// -- volume boost (gain above unity) ---------------------------------------
+//
+// The gain stage is the whole of the boost feature on the native route. These
+// tests pin the three things that make it safe: the multiply is exact, the
+// saturation is a hard [-1, 1] clamp, and NOTHING about frame accounting or
+// the clock moves when the gain does.
+
+[[nodiscard]] bool publishSine(NativePcmRing &ring, std::uint64_t generation,
+                               std::size_t frameCount, float amplitude,
+                               double hertz, std::uint64_t phaseFrame) {
+  std::array<float, NativePcmRing::kSamplesPerSlab> samples{};
+  for (std::size_t frame = 0; frame < frameCount; ++frame) {
+    const double t = static_cast<double>(phaseFrame + frame) /
+                     static_cast<double>(kSampleRate);
+    const auto value = static_cast<float>(
+        static_cast<double>(amplitude) *
+        std::sin(2.0 * 3.14159265358979323846 * hertz * t));
+    samples[frame * NativePcmRing::kChannels] = value;
+    samples[frame * NativePcmRing::kChannels + 1U] = value;
+  }
+  return ring.publish(generation,
+                      std::span<const float>(samples).first(
+                          frameCount * NativePcmRing::kChannels),
+                      frameCount) == NativePcmRing::PublishResult::Published;
+}
+
+template <std::size_t Samples>
+[[nodiscard]] float maximumAdjacentStep(
+    const std::array<float, Samples> &output, std::size_t frameCount) {
+  float worst = 0.0F;
+  for (std::size_t frame = 1; frame < frameCount; ++frame) {
+    const float step =
+        std::abs(output[frame * NativePcmRing::kChannels] -
+                 output[(frame - 1) * NativePcmRing::kChannels]);
+    worst = std::max(worst, step);
+  }
+  return worst;
+}
+
+void testGainBoostScalesSamplesAndSaturates() {
+  Fixture fixture;
+  fixture.core.setGain(2.0F);
+  // Spend the 128-frame ramp first so the steady-state block below is exact.
+  expect(fixture.ready && publishConstant(fixture.ring, 1, 256, 0.25F),
+         "boost fixture queues its ramp-in span");
+  std::array<float, 512> ramp{};
+  expect(renderTracked(fixture.core, hostInput(0, 256, 0), ramp).committed,
+         "boost fixture commits its ramp-in span");
+  expectNear(ramp[510], 0.5F, 1e-6F, "the ramp settles on twice the sample");
+
+  expect(publishConstant(fixture.ring, 1, 128, 0.25F),
+         "boost fixture queues a steady-state span");
+  fixture.host.ticks.store(256, std::memory_order_relaxed);
+  std::array<float, 256> doubled{};
+  const auto steady =
+      renderTracked(fixture.core, hostInput(256, 128, 256), doubled);
+  expect(steady.committed && steady.pcmFrames == 128,
+         "the steady-state boost span commits whole");
+  expect(allEqual(doubled, 0.5F),
+         "every sample is exactly twice the published value at 200%");
+
+  // 0.75 x 2 is 1.5, which is not representable as a full-scale sample.
+  expect(publishConstant(fixture.ring, 1, 128, 0.75F),
+         "boost fixture queues a clipping span");
+  fixture.host.ticks.store(384, std::memory_order_relaxed);
+  std::array<float, 256> clipped{};
+  expect(renderTracked(fixture.core, hostInput(384, 128, 384), clipped)
+             .committed,
+         "the clipping span commits whole");
+  expect(allEqual(clipped, 1.0F),
+         "boost saturates at positive full scale rather than wrapping");
+
+  expect(publishConstant(fixture.ring, 1, 128, -0.75F),
+         "boost fixture queues a negative clipping span");
+  fixture.host.ticks.store(512, std::memory_order_relaxed);
+  std::array<float, 256> clippedLow{};
+  expect(renderTracked(fixture.core, hostInput(512, 128, 512), clippedLow)
+             .committed,
+         "the negative clipping span commits whole");
+  expect(allEqual(clippedLow, -1.0F),
+         "boost saturates at negative full scale symmetrically");
+}
+
+void testGainCeilingAndFailSafe() {
+  Fixture fixture;
+  fixture.core.setGain(9.0F);
+  expect(fixture.ready && publishConstant(fixture.ring, 1, 256, 0.25F),
+         "ceiling fixture queues its ramp-in span");
+  std::array<float, 512> ramp{};
+  expect(renderTracked(fixture.core, hostInput(0, 256, 0), ramp).committed,
+         "ceiling fixture commits its ramp-in span");
+  expectNear(ramp[510], 0.5F, 1e-6F,
+             "a gain above the ceiling is clamped to 200%, not to unity");
+
+  fixture.core.setGain(std::numeric_limits<float>::quiet_NaN());
+  expect(publishConstant(fixture.ring, 1, 256, 0.25F),
+         "ceiling fixture queues its fail-safe span");
+  fixture.host.ticks.store(256, std::memory_order_relaxed);
+  std::array<float, 512> failSafe{};
+  expect(renderTracked(fixture.core, hostInput(256, 256, 256), failSafe)
+             .committed,
+         "the fail-safe span commits whole");
+  expectNear(failSafe[510], 0.0F, 1e-6F,
+             "a non-finite gain fails safe to silence");
+}
+
+void testGainNeverDisturbsFrameAccounting() {
+  struct Observation {
+    std::uint32_t pcmFrames{0};
+    std::uint32_t silentFrames{0};
+    std::uint32_t advancedSilentFrames{0};
+    std::uint32_t bufferedPcmFramesAfter{0};
+    bool committed{false};
+    bool continuous{false};
+    std::uint64_t callbacks{0};
+    std::uint64_t renderedFrames{0};
+    std::uint64_t statSilentFrames{0};
+    std::uint64_t underrunCallbacks{0};
+    std::uint64_t consumedFrames{0};
+    double mediaSeconds{0.0};
+
+    [[nodiscard]] bool operator==(const Observation &) const = default;
+  };
+
+  const auto observe = [](float gain) {
+    Fixture fixture;
+    fixture.core.setGain(gain);
+    expect(fixture.ready && publishConstant(fixture.ring, 1, 256, 0.25F),
+           "accounting fixture queues its span");
+    std::array<float, 512> output{};
+    const auto result =
+        renderTracked(fixture.core, hostInput(0, 256, 0), output);
+    const auto stats = fixture.core.stats();
+    Observation observation;
+    observation.pcmFrames = result.pcmFrames;
+    observation.silentFrames = result.silentFrames;
+    observation.advancedSilentFrames = result.advancedSilentFrames;
+    observation.bufferedPcmFramesAfter = result.bufferedPcmFramesAfter;
+    observation.committed = result.committed;
+    observation.continuous = result.continuous;
+    observation.callbacks = stats.callbacks;
+    observation.renderedFrames = stats.renderedFrames;
+    observation.statSilentFrames = stats.silentFrames;
+    observation.underrunCallbacks = stats.underrunCallbacks;
+    observation.consumedFrames = fixture.ring.stats().consumedFrames;
+    observation.mediaSeconds = fixture.core.visibleClock().mediaSeconds;
+    return observation;
+  };
+
+  const Observation half = observe(0.5F);
+  const Observation unity = observe(1.0F);
+  const Observation boosted = observe(2.0F);
+  expect(half.pcmFrames == 256 && half.committed,
+         "the accounting fixture actually rendered PCM");
+  expect(half == unity && unity == boosted,
+         "gain moves samples only: every frame count, clock sample and "
+         "statistic is identical at 0.5x, 1.0x and 2.0x");
+}
+
+void testMuteWinsOverBoost() {
+  Fixture fixture;
+  fixture.core.setGain(2.0F);
+  fixture.core.setMuted(true);
+  expect(fixture.ready && publishConstant(fixture.ring, 1, 256, 0.5F),
+         "mute-over-boost fixture queues its span");
+  std::array<float, 512> output{};
+  expect(renderTracked(fixture.core, hostInput(0, 256, 0), output).committed,
+         "the mute-over-boost span commits whole");
+  // The ramp starts from silence and mute holds the target at zero, so the
+  // whole block is exactly silent -- the mute is applied to the gain itself,
+  // ahead of the multiply, and cannot be outvoted by a boost.
+  expect(allEqual(output, 0.0F),
+         "mute zeroes the stage even with the gain at 200%");
+}
+
+void testBoostStepDoesNotClick() {
+  // A step from 100% to 200% under a 1 kHz sine must not produce a
+  // discontinuity: the 128-frame ramp has to spread it. The measurement is a
+  // maximum adjacent-sample step, compared against the same sine's own
+  // natural slope at steady 200%.
+  constexpr double kHertz = 1000.0;
+  constexpr float kAmplitude = 0.4F;
+
+  Fixture stepped;
+  stepped.core.setGain(1.0F);
+  expect(stepped.ready &&
+             publishSine(stepped.ring, 1, 256, kAmplitude, kHertz, 0),
+         "click fixture queues its unity span");
+  std::array<float, 512> settle{};
+  expect(renderTracked(stepped.core, hostInput(0, 256, 0), settle).committed,
+         "click fixture settles at unity");
+
+  stepped.core.setGain(2.0F);
+  expect(publishSine(stepped.ring, 1, 256, kAmplitude, kHertz, 256),
+         "click fixture queues its stepped span");
+  stepped.host.ticks.store(256, std::memory_order_relaxed);
+  std::array<float, 512> stepOutput{};
+  expect(renderTracked(stepped.core, hostInput(256, 256, 256), stepOutput)
+             .committed,
+         "the stepped span commits whole");
+
+  Fixture reference;
+  reference.core.setGain(2.0F);
+  expect(reference.ready &&
+             publishSine(reference.ring, 1, 256, kAmplitude, kHertz, 0),
+         "reference fixture queues its ramp-in span");
+  std::array<float, 512> referenceRamp{};
+  expect(renderTracked(reference.core, hostInput(0, 256, 0), referenceRamp)
+             .committed,
+         "reference fixture settles at 200%");
+  expect(publishSine(reference.ring, 1, 256, kAmplitude, kHertz, 256),
+         "reference fixture queues its steady span");
+  reference.host.ticks.store(256, std::memory_order_relaxed);
+  std::array<float, 512> referenceSteady{};
+  expect(renderTracked(reference.core, hostInput(256, 256, 256),
+                       referenceSteady)
+             .committed,
+         "the reference steady span commits whole");
+
+  const float steppedStep = maximumAdjacentStep(stepOutput, 256);
+  const float naturalStep = maximumAdjacentStep(referenceSteady, 256);
+  // An unramped step would add a whole 0.4-amplitude jump at the boundary;
+  // the ramp caps the extra to roughly amplitude/128 per sample.
+  expect(steppedStep <= naturalStep * 1.10F + 1e-4F,
+         "a 100% -> 200% gain step adds no audible discontinuity");
+  expect(naturalStep > 0.0F, "the sine reference actually has slope");
+  std::cerr << "  boost click test: stepped max adjacent step "
+            << steppedStep << ", steady 200% reference " << naturalStep
+            << '\n';
+}
+
 void testPauseBoundaryAndResume() {
   Fixture fixture;
   expect(fixture.ready && publishConstant(fixture.ring, 1, 32, 1.0F),
@@ -1753,6 +1984,11 @@ int main() {
   testUnderrunAdvancesClockAndRetiresLateFrames();
   testMalformedStaleAndReentrantCallbacks();
   testGainMuteRamp();
+  testGainBoostScalesSamplesAndSaturates();
+  testGainCeilingAndFailSafe();
+  testGainNeverDisturbsFrameAccounting();
+  testMuteWinsOverBoost();
+  testBoostStepDoesNotClick();
   testPauseBoundaryAndResume();
   testQuiescentStopRetainsPcmAndRestartsClock();
   testTerminalFramePublishesEofOnce();

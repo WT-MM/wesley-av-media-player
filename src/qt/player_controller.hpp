@@ -3,6 +3,7 @@
 #include "caption_service.hpp"
 #include "jobs.hpp"
 #include "playback_policy.hpp"
+#include "scroll_gesture.hpp"
 
 #include <QObject>
 #include <QPointer>
@@ -52,6 +53,9 @@ class PlayerController final : public QObject {
   Q_PROPERTY(bool paused READ paused NOTIFY pausedChanged)
   Q_PROPERTY(double position READ position WRITE seekTo NOTIFY positionChanged)
   Q_PROPERTY(double duration READ duration NOTIFY durationChanged)
+  // Normalized level where 1.0 is 100%. The range runs to 2.0: above unity
+  // this is VLC-style amplification, which can clip by design (the native
+  // gain stage saturates each sample to [-1, 1]; mpv is given volume-max 200).
   Q_PROPERTY(double volume READ volume WRITE setVolume NOTIFY volumeChanged)
   Q_PROPERTY(bool muted READ muted WRITE setMuted NOTIFY mutedChanged)
   Q_PROPERTY(double rate READ rate WRITE setRate NOTIFY rateChanged)
@@ -76,6 +80,17 @@ class PlayerController final : public QObject {
   // persists it. Default on. See qml/Main.qml's re-snap machinery.
   Q_PROPERTY(bool windowHugsVideo READ windowHugsVideo WRITE
                  setWindowHugsVideo NOTIFY windowHugsVideoChanged)
+  // Pointer-scroll gestures over the video surface (vertical = volume,
+  // horizontal = timeline sweep). A persisted, app-level Preferences setting
+  // mirrored onto every window, like preservePitch. Default on.
+  Q_PROPERTY(bool scrollGesturesEnabled READ scrollGesturesEnabled WRITE
+                 setScrollGesturesEnabled NOTIFY scrollGesturesEnabledChanged)
+  // True from the first admitted wheel delta until the gesture settles. The
+  // transport's own wheel block stands down while it is true, so a sweep that
+  // started over the picture is not killed by the chrome revealing itself
+  // under the pointer half way through.
+  Q_PROPERTY(bool scrollGestureActive READ scrollGestureActive NOTIFY
+                 scrollGestureActiveChanged)
   Q_PROPERTY(double trimIn READ trimIn WRITE setTrimIn NOTIFY trimInChanged)
   Q_PROPERTY(double trimOut READ trimOut WRITE setTrimOut NOTIFY trimOutChanged)
   // Retiming applied to the *exported* file, deliberately independent of the
@@ -99,6 +114,15 @@ class PlayerController final : public QObject {
   Q_PROPERTY(QString lastNotice READ lastNotice NOTIFY lastNoticeChanged)
 
 public:
+  // What one wheel event over the video surface was spent on. Returned as an
+  // int through scrollGesture() so QML can reveal the matching chrome.
+  enum ScrollGestureOutcome : int {
+    ScrollGestureIgnored = 0,
+    ScrollGestureVolume = 1,
+    ScrollGestureSeek = 2,
+  };
+  Q_ENUM(ScrollGestureOutcome)
+
   explicit PlayerController(QObject *parent = nullptr);
   ~PlayerController() override;
 
@@ -121,8 +145,14 @@ public:
   [[nodiscard]] bool paused() const { return paused_; }
   [[nodiscard]] double position() const { return position_; }
   [[nodiscard]] double duration() const { return duration_; }
-  // Normalized UI volume. mpv's 0..100 range maps to 0..1 here.
+  // Normalized UI volume. mpv's 0..200 range maps to 0..2 here; 1.0 is 100%.
   [[nodiscard]] double volume() const { return volume_; }
+  [[nodiscard]] bool scrollGesturesEnabled() const {
+    return scroll_gestures_enabled_;
+  }
+  [[nodiscard]] bool scrollGestureActive() const {
+    return scroll_gesture_active_;
+  }
   [[nodiscard]] bool muted() const { return muted_; }
   [[nodiscard]] double rate() const { return rate_; }
   [[nodiscard]] bool captionsVisible() const { return captions_visible_; }
@@ -166,6 +196,26 @@ public:
   Q_INVOKABLE void toggleMute();
   Q_INVOKABLE void setMuted(bool muted);
   Q_INVOKABLE void setVolume(double volume);
+  Q_INVOKABLE void setScrollGesturesEnabled(bool enabled);
+
+  // One wheel event over the video surface. The arguments are the QML
+  // WheelEvent's own fields, passed through untouched so the normalization
+  // (trackpad pixelDelta vs wheel angleDelta, the natural-scroll `inverted`
+  // flag, the dominant-axis lock, the momentum tail) lives in one tested
+  // place -- ScrollGestureModel -- rather than in QML.
+  //
+  // Returns what the gesture did, so the QML side knows which chrome to
+  // reveal: 0 nothing, 1 volume, 2 timeline sweep. See ScrollGestureOutcome.
+  Q_INVOKABLE int scrollGesture(double pixelDeltaX, double pixelDeltaY,
+                                double angleDeltaX, double angleDeltaY,
+                                bool inverted, int phase);
+  // Ends any live sweep immediately (window closing, media replaced, the
+  // preference switched off). Safe to call with no gesture in flight.
+  Q_INVOKABLE void settleScrollGesture();
+  // The magnetic 100% detent, exposed for the volume sliders so a drag and a
+  // scroll snap on exactly the same arithmetic.
+  Q_INVOKABLE double snapVolumeToDetent(double volume) const;
+
   Q_INVOKABLE void setRate(double rate);
   Q_INVOKABLE void toggleCaptions();
   Q_INVOKABLE void setCaptionsVisible(bool visible);
@@ -213,6 +263,8 @@ signals:
   void positionChanged();
   void durationChanged();
   void volumeChanged();
+  void scrollGesturesEnabledChanged();
+  void scrollGestureActiveChanged();
   void mutedChanged();
   void rateChanged();
   void captionsVisibleChanged();
@@ -466,6 +518,9 @@ private:
   // target that is both exactly representable as a rational media time and
   // strictly inside the duration. See the definition for the exactness rule.
   [[nodiscard]] double exactNativeSeekTarget(double seconds) const noexcept;
+  // Closes a live timeline sweep with exactly one commit. A no-op when no
+  // sweep is open.
+  void commitScrollSweep();
   [[nodiscard]] bool beginNativeScrubIntent();
   [[nodiscard]] std::optional<NativePreviewIntent>
   makeNativePreviewIntent(double seconds);
@@ -606,6 +661,17 @@ private:
   QPointer<MpvVideoItem> video_item_;
   QTimer *work_timer_ = nullptr;
   QTimer *scrub_timeout_timer_ = nullptr;
+  // Pointer-scroll gestures. The model owns the axis lock and the detent; the
+  // timer owns "the gesture has settled", which is what both releases the
+  // axis lock and commits a timeline sweep. A wheel stream has no release
+  // event a scrub could hang off -- momentum keeps arriving after the fingers
+  // have left and a real wheel has no phases at all -- so settling is the
+  // only honest gesture boundary.
+  QTimer *scroll_settle_timer_ = nullptr;
+  ScrollGestureModel scroll_model_;
+  // Live timeline sweep: the scrub gesture is open and this is the latest
+  // target the user has swept to. Empty when no sweep is in flight.
+  std::optional<double> scroll_sweep_target_;
 
   ::wam::BackgroundJob export_job_;
   ::wam::CaptionService caption_service_;
@@ -633,6 +699,8 @@ private:
   bool idle_ = true;
   bool eof_reached_ = false;
   bool muted_ = false;
+  bool scroll_gestures_enabled_ = true;
+  bool scroll_gesture_active_ = false;
   bool captions_visible_ = true;
   bool preserve_pitch_ = true;
   double position_ = 0.0;

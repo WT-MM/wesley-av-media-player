@@ -15,8 +15,36 @@ FocusScope {
     // like "always reachable" volume, matched to the transport's own fade
     // timing.
     property bool volumePopupOpen: false
+    // True for a moment after a scroll gesture changed the volume. It opens
+    // the compact flyout, shows the percentage readout beside the wide
+    // slider, and counts as transport interaction so the chrome does not fade
+    // out from under the feedback it was asked to show.
+    property bool volumeFeedback: false
     readonly property bool volumePopupWanted: compact
-        && (muteButton.hovered || volumePopupHover.hovered || popupVolumeSlider.pressed)
+        && (muteButton.hovered || volumePopupHover.hovered
+            || popupVolumeSlider.pressed || root.volumeFeedback)
+    // Volume runs to 200%. Unity sits at the middle of the track and gets a
+    // tick plus a magnetic snap, the same shape the speed slider gives 1x.
+    readonly property real maximumVolume: 2
+    readonly property real volumeDetentTravel: 1 / maximumVolume
+    // The readout is deliberately not always on: below unity the track says
+    // everything and the chrome stays as quiet as the rest of it. It appears
+    // when the level is boosted -- where the number is the difference between
+    // "loud" and "clipping" -- and while the level is actively being changed.
+    readonly property bool volumeReadoutVisible: root.player.volume > 1.0001
+        || volumeSlider.pressed || popupVolumeSlider.pressed
+        || root.volumeFeedback
+
+    function formatVolume(volume) {
+        return Math.round(volume * 100) + "%";
+    }
+
+    // Called by the window when a scroll gesture over the video changed this
+    // window's volume.
+    function flashVolume() {
+        volumeFeedback = true;
+        volumeFeedbackTimer.restart();
+    }
     // The speed panel's window, and the exact grid the native engine admits.
     // src/media/native_playback_contract.hpp snaps every requested rate onto
     // a multiple of 1/64 inside [0.25, 4] before it reaches the clock, so the
@@ -33,6 +61,7 @@ FocusScope {
     // to honor (see Main.qml's hideControlsIfIdle/transportInteractionChanged).
     readonly property bool interactionActive: hovered
         || volumePopupOpen
+        || volumeFeedback
         // The speed panel lives in the window overlay, so the pointer can be
         // inside it without ever hovering the transport. Counting it as
         // activity is what stops Main.qml's idle timer fading the chrome out
@@ -148,11 +177,40 @@ FocusScope {
         onTriggered: root.volumePopupOpen = false
     }
 
+    // How long the scroll-gesture feedback stays up after the last delta.
+    // Slightly longer than PlayerController's 200 ms gesture settle so the
+    // readout survives the pause between a swipe and its momentum tail.
+    Timer {
+        id: volumeFeedbackTimer
+        interval: 900
+        onTriggered: root.volumeFeedback = false
+    }
+
     Rectangle {
         id: glass
         anchors.fill: parent
         radius: root.compact ? 14 : 15
         color: "#d51b1b1e"
+    }
+
+    // The transport is not the video surface: a wheel over the bar must never
+    // reach the window's scroll-gesture handler underneath it. QtQuick
+    // Controls' Slider defaults wheelEnabled to false, so without this the
+    // wheel would fall straight through the volume slider onto the video's
+    // handler and the bar would behave like the picture behind it.
+    // acceptedButtons: Qt.NoButton leaves every press, drag and hover to the
+    // real controls stacked above and below this.
+    MouseArea {
+        anchors.fill: parent
+        acceptedButtons: Qt.NoButton
+        // ...but it stands down while a video gesture is already live. The
+        // chrome reveals itself in response to the very first scroll, and
+        // with the transport parked at the bottom it can appear directly
+        // under a cursor that is mid-sweep. Blocking then would kill the
+        // gesture the reveal was feedback for. A gesture that STARTS over the
+        // bar still finds this armed, which is the case that matters.
+        enabled: !root.player.scrollGestureActive
+        onWheel: wheel => wheel.accepted = true
     }
 
     // The blank chrome is a drag surface, like QuickTime's floating palette.
@@ -279,14 +337,21 @@ FocusScope {
             width: 72
             height: 30
             from: 0
-            to: 1
+            to: root.maximumVolume
             visible: !root.compact
             hoverEnabled: true
             focusPolicy: Qt.TabFocus
             Accessible.name: "Volume"
             Accessible.role: Accessible.Slider
             onMoved: {
-                root.player.setVolume(value);
+                // Magnetic 100% detent, on exactly the arithmetic the scroll
+                // gesture uses (PlayerController::snapVolumeToDetent ->
+                // ScrollGestureModel), so a drag and a scroll cannot disagree
+                // about where unity is.
+                const snapped = root.player.snapVolumeToDetent(value);
+                if (snapped !== value)
+                    value = snapped;
+                root.player.setVolume(snapped);
                 root.interaction();
             }
 
@@ -314,6 +379,18 @@ FocusScope {
                     radius: 2
                     color: "#d8ffffff"
                 }
+
+                // The 100% notch. Two pixels of ink at the exact midpoint of
+                // a 0-200% track: enough to find unity by eye, quiet enough
+                // not to read as a second handle.
+                Rectangle {
+                    x: root.volumeDetentTravel * parent.width - width / 2
+                    y: -2
+                    width: 1
+                    height: 6
+                    radius: 0
+                    color: "#8cffffff"
+                }
             }
 
             handle: Rectangle {
@@ -325,6 +402,25 @@ FocusScope {
                 color: "white"
             }
         }
+
+        // Percentage readout. A Row skips invisible children outright, so it
+        // costs no width when hidden and the rest of the bar never moves; it
+        // simply appears off the end of the slider the way the elapsed and
+        // duration labels sit off the timeline. (Do NOT bind its width to
+        // implicitWidth to reserve space -- that is a binding loop.)
+        Text {
+            anchors.verticalCenter: parent.verticalCenter
+            visible: !root.compact && root.volumeReadoutVisible
+            leftPadding: 6
+            text: root.formatVolume(root.player.volume)
+            // Boost is the one state worth flagging: above unity the stage can
+            // clip, so the number goes from quiet grey to the chrome's own
+            // full white.
+            color: root.player.volume > 1.0001 ? "#f7f7f8" : "#c8ffffff"
+            font.pixelSize: 10
+            font.weight: Font.Medium
+            Accessible.ignored: true
+        }
     }
 
     // Collapsed-width flyout: same glass card, radius and ~135ms fade as the
@@ -333,8 +429,8 @@ FocusScope {
         id: volumePopup
         radius: 14
         color: "#d51b1b1e"
-        width: 34
-        height: 104
+        width: 38
+        height: 120
         z: 5
         anchors.horizontalCenter: volumeCluster.horizontalCenter
         anchors.bottom: volumeCluster.top
@@ -354,20 +450,49 @@ FocusScope {
             id: volumePopupHover
         }
 
+        // Same wheel block as the bar: the flyout hangs above the transport,
+        // outside its bounds, so it needs its own.
+        MouseArea {
+            anchors.fill: parent
+            acceptedButtons: Qt.NoButton
+            enabled: !root.player.scrollGestureActive
+            onWheel: wheel => wheel.accepted = true
+        }
+
+        // The flyout is transient by construction -- it only exists while the
+        // user is on the volume control or a scroll gesture is live -- so the
+        // number is always shown here rather than gated the way the wide
+        // bar's readout is.
+        Text {
+            anchors.horizontalCenter: parent.horizontalCenter
+            anchors.top: parent.top
+            anchors.topMargin: 7
+            text: root.formatVolume(root.player.volume)
+            color: root.player.volume > 1.0001 ? "#f7f7f8" : "#c8ffffff"
+            font.pixelSize: 9
+            font.weight: Font.Medium
+            Accessible.ignored: true
+        }
+
         Slider {
             id: popupVolumeSlider
             orientation: Qt.Vertical
-            anchors.centerIn: parent
+            anchors.horizontalCenter: parent.horizontalCenter
+            anchors.bottom: parent.bottom
+            anchors.bottomMargin: 8
             width: 24
             height: 84
             from: 0
-            to: 1
+            to: root.maximumVolume
             hoverEnabled: true
             focusPolicy: Qt.TabFocus
             Accessible.name: "Volume"
             Accessible.role: Accessible.Slider
             onMoved: {
-                root.player.setVolume(value);
+                const snapped = root.player.snapVolumeToDetent(value);
+                if (snapped !== value)
+                    value = snapped;
+                root.player.setVolume(snapped);
                 root.interaction();
             }
 
@@ -395,6 +520,15 @@ FocusScope {
                     height: popupVolumeSlider.visualPosition * parent.height
                     radius: 2
                     color: "#d8ffffff"
+                }
+
+                // The 100% notch, mirrored for the vertical track.
+                Rectangle {
+                    x: -2
+                    y: (1 - root.volumeDetentTravel) * parent.height - height / 2
+                    width: 6
+                    height: 1
+                    color: "#8cffffff"
                 }
             }
 
@@ -527,6 +661,15 @@ FocusScope {
                 background: Rectangle {
                     radius: 14
                     color: "#d51b1b1e"
+
+                    // The speed panel floats in the window overlay, above
+                    // the transport's own wheel block, so it needs its own or
+                    // a wheel over the speed slider would change the volume.
+                    MouseArea {
+                        anchors.fill: parent
+                        acceptedButtons: Qt.NoButton
+                        onWheel: wheel => wheel.accepted = true
+                    }
                 }
 
                 enter: Transition {
