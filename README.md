@@ -1,9 +1,7 @@
 # WAM
 
-**Wesley's Audiovisual Media Player** — a minimal, native-feeling macOS player
-that's as light as QuickTime and plays the files QuickTime can't, with the
-lightweight editing tasks that usually require opening a separate editor built
-in.
+**Wesley's Audiovisual Media Player** — a minimal macOS player that's as
+light as QuickTime and plays the files QuickTime can't.
 
 ![WAM playing a video with its transport visible](docs/media/wam-transport.png)
 
@@ -11,64 +9,58 @@ The chrome fades while you watch — what's left is just your video.
 
 ![WAM with chrome faded away](docs/media/wam-video.png)
 
+## Install
+
+Grab the latest build from
+[**Releases**](https://github.com/WT-MM/wesley-av-media-player/releases) —
+a self-contained `WAM-*.zip` for Apple silicon. Unzip, drag `WAM.app`
+wherever you like, then **right-click → Open** the first time (the build is
+ad-hoc signed, so macOS asks once). Or from a terminal:
+
+```sh
+xattr -d com.apple.quarantine WAM.app
+```
+
+Requires an Apple silicon Mac. To build from source instead, see
+[docs/DEVELOPING.md](docs/DEVELOPING.md).
+
 ## Why WAM
 
-- **QuickTime-class efficiency.** On the measured 1080p baseline WAM matches
-  QuickTime's CPU and energy use with exactly zero GPU work — its own process
-  runs lighter than QuickTime's — so playback stays smooth even while a game
-  or training run is saturating the machine, and WAM doesn't fight them for
-  the GPU. ([Full methodology and tables](docs/DEVELOPING.md#measured-performance).)
-- **Plays what QuickTime won't.** H.264, HEVC (8/10-bit), VP9, AV1, MPEG-2,
-  and MPEG-4 Simple Profile decode natively across MP4, MOV, MKV, WebM, and
-  MPEG-TS (`.ts`/`.m2ts`); AAC, AC-3, E-AC-3, FLAC, MP3, Opus, and Vorbis
-  audio decode natively, VP8 runs through an in-pipeline software stage, and
-  music files (`.mka`, `.m4a`, audio-only MKV/WebM) play native too. Anything
-  else falls back seamlessly to a bundled mpv/FFmpeg engine — no codec-pack
-  hunting.
-- **Stays out of your way.** Edge-to-edge video under a translucent title band
-  and floating transport that fade while watching; aspect-exact window resize;
-  double-click to fit the screen; keeps playing when unfocused, occluded, or
-  backgrounded; stays open at the end so you can scrub back.
-- **Quick edits without an editor.** IN/OUT trim with retimed MP4 export, and
-  cancellable on-device caption generation (whisper.cpp) — captions never
-  leave your machine.
+- **QuickTime-light.** Matches QuickTime's CPU and energy on the measured
+  baseline with exactly zero GPU work, so video stays smooth while a game or
+  training run saturates the machine — and WAM doesn't fight them for it.
+  ([Methodology and tables](docs/DEVELOPING.md#measured-performance).)
+- **Plays nearly everything, natively.** H.264, HEVC, VP9, AV1, MPEG-2,
+  MPEG-4 SP, and VP8 video; AAC, AC-3/E-AC-3, FLAC, MP3, Opus, and Vorbis
+  audio; MP4, MOV, MKV, WebM, and MPEG-TS containers; up to 4K; music files
+  too. Everything else falls back seamlessly to a bundled mpv/FFmpeg engine —
+  no codec packs, ever.
+- **Stays out of your way.** Fading chrome, aspect-exact resize, double-click
+  to fit, keeps playing when unfocused or covered, live scrub previews,
+  0.25–4× speed with pitch preserved.
+- **Quick edits built in.** IN/OUT trim with retimed export, and on-device
+  caption generation that never leaves your machine.
 
-## Everyday use
-
-- Open local files, URLs, or drag-and-drop; hardware decoding with safe
-  software fallback; subtitles; audio-only media
-- Space to play/pause, Left/Right to seek (step is configurable), timeline
-  scrubbing, volume, mute, fullscreen, caption toggle, 0.25–4× playback with
-  pitch preserved
-- Settings live in the native menu bar; optional "window hugs video" mode
-  removes letterboxing entirely
+## Keys
 
 | Action | Control |
 | --- | --- |
-| Open media | Command/Ctrl+O, click the empty player, or drop a file |
+| Open | ⌘O, click the empty player, or drop a file |
 | Play/pause | Space |
-| Seek (configurable step) | Left/Right |
-| Scrub | Timeline |
-| Mute and volume | Transport controls |
-| Cycle common speeds | `1×` transport control |
-| Fit window to screen | Double-click video or title bar |
+| Seek | ←/→ (step configurable in Settings) |
+| Speed | The `1×` control — presets or a continuous slider |
+| Fit window to screen | Double-click the video or title bar |
 | Fullscreen | F |
-| Quick Edit | E or pencil control |
-| Close Quick Edit | Escape or close control |
+| Quick Edit | E |
 
 ## Under the hood
 
-On macOS, playback is fully native: AVFoundation demux (plus a custom Matroska
-demuxer for MKV) feeds VideoToolbox hardware decode, an audio-authoritative
-clock schedules frames, and decoded output is composited by WindowServer
-directly — video never touches the UI toolkit's render loop. That is the same
-architectural property that makes QuickTime cheap, and it's why the numbers
-match. Windows and Linux builds run on the bundled mpv/FFmpeg engine.
-
-## Building and contributing
-
-Build instructions, benchmark harnesses, performance policy, measured
-baselines, and release/signing details are in
-[docs/DEVELOPING.md](docs/DEVELOPING.md). Architecture deep-dives:
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and
-[docs/PRODUCT.md](docs/PRODUCT.md).
+Demux (AVFoundation, plus custom Matroska and MPEG-TS demuxers) feeds
+VideoToolbox hardware decode; an audio-authoritative clock built on exact
+rational arithmetic schedules frames; and decoded output is composited by
+WindowServer directly — video never touches the UI toolkit's render loop.
+That's the same architectural property that makes QuickTime cheap, and it's
+why the numbers match. Details, benchmarks, and build instructions:
+[docs/DEVELOPING.md](docs/DEVELOPING.md) ·
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) ·
+[docs/PRODUCT.md](docs/PRODUCT.md)
