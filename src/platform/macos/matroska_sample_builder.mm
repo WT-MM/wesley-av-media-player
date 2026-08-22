@@ -223,6 +223,8 @@ const char* matroskaDemuxErrorName(MatroskaDemuxError error) noexcept {
     return "Cancelled";
   case MatroskaDemuxError::CodedDimensionLimit:
     return "CodedDimensionLimit";
+  case MatroskaDemuxError::SparseRandomAccess:
+    return "SparseRandomAccess";
   }
   return "Unknown";
 }
