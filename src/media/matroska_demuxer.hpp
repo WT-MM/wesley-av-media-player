@@ -54,6 +54,13 @@ enum class MatroskaDemuxError : std::uint8_t {
   // one thing a dimension refusal must not say: the track IS there, it is the
   // envelope that refuses it, and the verdict has to carry both numbers.
   CodedDimensionLimit,
+  // Appended 2026-08-21. The selected video track's own random access cadence
+  // is wider than the seek preroll the route decodes through -- proven by a
+  // Cluster scan, not inferred from a Cues element. Distinct from InvalidCue
+  // and MissingCues on purpose: both of those blame the index, and this one
+  // says the index is right and the BITSTREAM has no seed to offer. Nothing
+  // this demuxer can build changes it.
+  SparseRandomAccess,
 };
 
 // Exactly 24 bytes and therefore at most 1.5 MiB at the hard cluster cap.
@@ -91,6 +98,51 @@ struct MatroskaCueIndexEntry {
                                    MatroskaCueIndexEntry) = default;
 };
 static_assert(sizeof(MatroskaCueIndexEntry) == 16);
+
+// ---------------------------------------------------------------------------
+// The SCANNED (synthetic) selected-video index.
+//
+// A Matroska Cues element is OPTIONAL and a live mux routinely omits it, writes
+// it for the wrong track, stops writing it when the capture is interrupted, or
+// -- GStreamer's matroskamux -- writes CuePoints without the equally optional
+// CueRelativePosition this index needs to name a Block. In every one of those
+// cases the file itself is conforming and its random access points are still
+// discoverable: Cluster timestamps and Block headers are self-describing, so
+// walking the Cluster directory's element headers rebuilds exactly the index
+// Cues would have carried. The scan reads element headers only -- never a
+// Block payload -- so its cost is one forward pass over the container's
+// skeleton (measured: 34 ms for a 380 MB / 14,451-Block WebM).
+//
+// The scanned index reuses MatroskaCueIndexEntry and the SAME 65,536-entry cap
+// as a file-supplied index, so the 1 MiB index budget is unchanged. What keeps
+// it inside that cap for arbitrarily long media is decimation: an entry is
+// recorded only when it is at least this far past the previous one.
+inline constexpr std::uint64_t kMatroskaScannedCueSpacingNanoseconds{
+    1'000'000'000};
+
+// Bound 1 -- decimation never costs a seek its seed. The gap decimation can
+// introduce is at most one spacing interval, which has to stay inside the seek
+// preroll the envelope already promises to decode and discard.
+static_assert(kMatroskaScannedCueSpacingNanoseconds <=
+              static_cast<std::uint64_t>(
+                  MediaSourceLimits::kHardMaximumVideoSeekPrerollSeconds) *
+                  1'000'000'000ULL);
+
+// Bound 2 -- memory. One entry per spacing interval over the entry cap is the
+// longest medium the scanned index can describe without decimating further;
+// 65,536 s is 18.2 hours, past any real single-file recording, and the index
+// itself is exactly 1 MiB at that cap whether it came from Cues or the scan.
+inline constexpr std::uint64_t kMatroskaScannedCueSpanNanoseconds{
+    static_cast<std::uint64_t>(kMaximumMatroskaCues) *
+    kMatroskaScannedCueSpacingNanoseconds};
+static_assert(kMatroskaScannedCueSpanNanoseconds >=
+              18ULL * 3'600ULL * 1'000'000'000ULL);
+static_assert(sizeof(MatroskaCueIndexEntry) * kMaximumMatroskaCues ==
+              1024U * 1024U);
+
+// Bound 3 -- an entry's Block offset is stored relative to its Cluster's data
+// range in 32 bits, and a Cluster is already capped well inside that.
+static_assert(kMaximumMatroskaClusterBytes <= 0xFFFF'FFFFULL);
 
 struct MatroskaCompressedSample {
   MediaTrackId track{0};

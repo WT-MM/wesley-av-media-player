@@ -1259,6 +1259,10 @@ const char* errorName(MatroskaDemuxError error) {
     return "Io";
   case MatroskaDemuxError::Cancelled:
     return "Cancelled";
+  case MatroskaDemuxError::CodedDimensionLimit:
+    return "CodedDimensionLimit";
+  case MatroskaDemuxError::SparseRandomAccess:
+    return "SparseRandomAccess";
   }
   return "?";
 }
@@ -1316,7 +1320,8 @@ void expectPrepareError(const FixtureSpec& spec, MatroskaDemuxError expected,
                        prepared.outcome.status != MatroskaDemuxStatus::Ready;
   if (!matched) {
     std::cerr << "  (observed " << errorName(prepared.outcome.error)
-              << ", expected " << errorName(expected) << ")\n";
+              << ", expected " << errorName(expected) << ": \""
+              << prepared.outcome.message << "\")\n";
   }
   expect(matched, message);
 }
@@ -1530,9 +1535,13 @@ void testBoundedIndexes() {
     auto reader = std::make_shared<ProbeReader>(
         buildRepeatedCueDocument(kMaximumMatroskaCues));
     const auto outcome = prepareMatroska(reader, kFixturePath, {});
+    // The cap is reached, every Cue is then discarded for its missing relative
+    // position, and the Cluster scan that replaces them finds no Block in this
+    // payload-free document -- so the refusal names the absent index, not the
+    // Cue shape that triggered the rebuild.
     expect(outcome.asset == nullptr &&
-               outcome.error == MatroskaDemuxError::InvalidCue,
-           "65,536 cues parse and then fail on their missing relative position");
+               outcome.error == MatroskaDemuxError::MissingCues,
+           "65,536 cues parse, are discarded, and the scan finds no Block");
   }
   {
     auto reader = std::make_shared<ProbeReader>(
@@ -3121,16 +3130,305 @@ void testMutationAndCancellation() {
 }
 
 // ---------------------------------------------------------------------------
+// 7b. The scanned (synthetic) selected-video random access index.
+//
+// A Cues element is OPTIONAL and so is the CueRelativePosition inside it, so a
+// live mux (GStreamer matroskamux, OBS, an interrupted capture) routinely
+// writes an index this demuxer cannot use. Those files are still seekable:
+// Cluster timestamps and Block headers name the same random access points, and
+// buildScannedVideoCueIndex rebuilds the index from them.
+//
+// Three separable claims, tested separately:
+//   1. the DEGENERACY PREDICATE fires on exactly the unusable shapes and never
+//      on a healthy index;
+//   2. the rebuilt index is BOUNDED and correct -- decimated, strictly
+//      increasing, every entry a real keyframe Block;
+//   3. seeks SEED from it exactly as they would from a file-supplied index.
+// ---------------------------------------------------------------------------
+
+// The decimation interval expressed in this fixture's own ticks. The fixtures
+// use a 1 ms timestamp scale, so one scanned entry per second is one entry per
+// 1,000 ticks; deriving it here rather than writing 1'000 keeps the test
+// honest if either constant moves.
+constexpr std::uint64_t kScannedSpacingTicks{
+    kMatroskaScannedCueSpacingNanoseconds / kTimestampScaleNanoseconds};
+
+// Shape of a scanned index over the default three-Cluster fixture (video
+// keyframes at ticks 0, 500 and 1,000). Decimation keeps 0, drops 500 for
+// being half an interval later, and keeps 1,000.
+const std::vector<std::uint64_t> kScannedDefaultTicks{0, 1'000};
+
+// Every claim an index has to satisfy no matter which source produced it.
+[[nodiscard]] bool indexIsWellFormed(const MatroskaPreparedAsset& asset,
+                                     const Fixture& fixture) {
+  if (asset.cues().empty()) {
+    return false;
+  }
+  for (std::size_t index = 0; index < asset.cues().size(); ++index) {
+    const MatroskaCueIndexEntry& cue = asset.cues()[index];
+    if (cue.clusterIndex >= asset.clusters().size()) {
+      return false;
+    }
+    const BlockFacts* block = fixture.videoBlockAt(
+        asset.clusters()[cue.clusterIndex].dataRange().offset +
+        cue.relativeBlockOffset);
+    if (block == nullptr || !block->keyFrame ||
+        block->tick != static_cast<std::int64_t>(cue.timestampTick)) {
+      return false;
+    }
+    if (index != 0 &&
+        asset.cues()[index - 1].timestampTick >= cue.timestampTick) {
+      return false;
+    }
+  }
+  return true;
+}
+
+[[nodiscard]] std::vector<std::uint64_t> indexTicks(
+    const MatroskaPreparedAsset& asset) {
+  std::vector<std::uint64_t> ticks;
+  ticks.reserve(asset.cues().size());
+  for (const MatroskaCueIndexEntry& cue : asset.cues()) {
+    ticks.push_back(cue.timestampTick);
+  }
+  return ticks;
+}
+
+void testScannedRandomAccessIndex() {
+  // --- 1. The predicate: healthy Cues are used verbatim, never scanned. -----
+  //
+  // The discriminator is decimation. The default fixture's own Cues name all
+  // three keyframes; a scan of the same file would keep only two. So "the
+  // index still has three entries" is positive proof the scan did NOT run,
+  // which a Ready status alone could never show.
+  {
+    const PreparedFixture prepared = prepareFixture({});
+    const bool untouched =
+        prepared.outcome.asset != nullptr &&
+        indexTicks(prepared.asset()) == prepared.fixture.cueTicks &&
+        prepared.fixture.cueTicks.size() == 3U;
+    expect(untouched, "a healthy Cue index is used verbatim and never scanned");
+  }
+
+  // --- 2. The predicate: every unusable Cue shape rebuilds instead of --------
+  //        refusing, and the rebuild lands on the same scanned shape.
+  struct DegenerateCase {
+    CueVariant variant;
+    const char* message;
+  };
+  const std::array<DegenerateCase, 6> degenerate{
+      DegenerateCase{CueVariant::Absent,
+                     "a document with no Cues at all is admitted on a scan"},
+      DegenerateCase{CueVariant::NoRelativePosition,
+                     "Cues without CueRelativePosition are admitted on a scan"},
+      DegenerateCase{CueVariant::AudioTrackOnly,
+                     "Cues for an unselected track are admitted on a scan"},
+      DegenerateCase{CueVariant::Unsorted,
+                     "unsorted selected-video Cues are admitted on a scan"},
+      DegenerateCase{CueVariant::DuplicateTime,
+                     "duplicate selected-video Cue times are admitted on a scan"},
+      DegenerateCase{CueVariant::BlockNumberTwo,
+                     "a CueBlockNumber other than 1 is admitted on a scan"}};
+  for (const DegenerateCase& item : degenerate) {
+    FixtureSpec spec;
+    spec.cues = item.variant;
+    const PreparedFixture prepared = prepareFixture(spec);
+    const bool rebuilt =
+        prepared.outcome.status == MatroskaDemuxStatus::Ready &&
+        prepared.outcome.asset != nullptr &&
+        indexIsWellFormed(prepared.asset(), prepared.fixture) &&
+        indexTicks(prepared.asset()) == kScannedDefaultTicks;
+    if (!rebuilt) {
+      std::cerr << "  (status " << static_cast<int>(prepared.outcome.status)
+                << " error " << errorName(prepared.outcome.error) << ": \""
+                << prepared.outcome.message << "\")\n";
+    }
+    expect(rebuilt, item.message);
+  }
+
+  // --- 3. Bounds: decimation holds the interval it promises. ---------------
+  //
+  // Sixty Clusters a tenth of a second apart carry sixty keyframes across six
+  // seconds. A scan that recorded all of them would be correct but wasteful,
+  // and at real durations it would breach the 65,536-entry budget; decimation
+  // is what keeps the budget derivable from duration alone.
+  {
+    FixtureSpec spec;
+    spec.cues = CueVariant::Absent;
+    spec.includeAudioTrack = false;
+    spec.includeSubtitleTrack = false;
+    spec.clusterTimestamps.clear();
+    for (std::uint64_t tick = 0; tick < 6'000; tick += 100) {
+      spec.clusterTimestamps.push_back(tick);
+    }
+    spec.durationTicks = 6'100.0;
+    const PreparedFixture prepared = prepareFixture(spec);
+    bool spaced = prepared.outcome.asset != nullptr &&
+                  indexIsWellFormed(prepared.asset(), prepared.fixture);
+    const std::vector<std::uint64_t> ticks =
+        prepared.outcome.asset != nullptr ? indexTicks(prepared.asset())
+                                          : std::vector<std::uint64_t>{};
+    for (std::size_t index = 1; spaced && index < ticks.size(); ++index) {
+      spaced = ticks[index] - ticks[index - 1] >= kScannedSpacingTicks;
+    }
+    // 60 keyframes, one interval apart, over 6 s of media.
+    expect(spaced && ticks.size() == 6U && ticks.front() == 0U,
+           "the scanned index decimates to one entry per spacing interval");
+  }
+
+  // --- 4. Bounds: the entry cap and the span it buys are arithmetic. --------
+  //
+  // These are the derivation the header states, restated where a reader of the
+  // tests can see it. The scanned index reuses the file-supplied index's cap
+  // and therefore its 1 MiB budget exactly.
+  static_assert(kMatroskaScannedCueSpacingNanoseconds <=
+                static_cast<std::uint64_t>(
+                    MediaSourceLimits::kHardMaximumVideoSeekPrerollSeconds) *
+                    1'000'000'000ULL,
+                "decimation must never cost a seek its seed");
+  static_assert(kMatroskaScannedCueSpanNanoseconds ==
+                65'536ULL * 1'000'000'000ULL);
+  static_assert(kMatroskaScannedCueSpanNanoseconds / 3'600'000'000'000ULL ==
+                18ULL);
+  static_assert(kMaximumMatroskaCues * sizeof(MatroskaCueIndexEntry) ==
+                1024U * 1024U);
+  expect(kScannedSpacingTicks == 1'000U,
+         "one scanned entry per second is one per 1,000 ticks at 1 ms scale");
+
+  // --- 5. Seeds: a scanned index answers a seek exactly like a real one. ----
+  //
+  // Targets chosen around the decimated-away keyframe at tick 500: a seek to
+  // 0.7 s must seed at tick 0 (the entry that survives), and a seek at or past
+  // 1.0 s must seed at tick 1,000. Both must name a Block the fixture agrees
+  // is a keyframe -- the plan carries a byte offset, and a wrong one would
+  // start a generation on an undecodable frame.
+  {
+    FixtureSpec spec;
+    spec.cues = CueVariant::Absent;
+    spec.includeAudioTrack = false;
+    spec.includeSubtitleTrack = false;
+    const PreparedFixture prepared = prepareFixture(spec);
+    if (prepared.outcome.asset == nullptr) {
+      expect(false, "the scanned-seek fixture prepares");
+    } else {
+      const MatroskaPreparedAsset& asset = prepared.asset();
+      struct SeedCase {
+        MediaTime target;
+        std::uint64_t seedTick;
+        const char* message;
+      };
+      const std::array<SeedCase, 4> cases{
+          SeedCase{MediaTime{0, 1}, 0,
+                   "a scanned seek at the origin seeds at the origin RAP"},
+          SeedCase{MediaTime{7, 10}, 0,
+                   "a scanned seek past a decimated RAP seeds at the kept one"},
+          SeedCase{MediaTime{1, 1}, 1'000,
+                   "a scanned seek exactly on an entry seeds at that entry"},
+          SeedCase{MediaTime{5, 4}, 1'000,
+                   "a scanned seek past the last entry seeds at the last RAP"}};
+      for (const SeedCase& item : cases) {
+        const MatroskaPlanOutcome outcome =
+            asset.planGeneration(item.target, MediaSeekMode::KeyFrame);
+        bool seeded = outcome.status == MatroskaDemuxStatus::Ready &&
+                      outcome.plan.has_value();
+        if (seeded) {
+          const MatroskaGenerationPlan& plan = *outcome.plan;
+          const BlockFacts* block =
+              prepared.fixture.videoBlockAt(plan.videoBlockOffset);
+          seeded = plan.actualDecodeStart ==
+                       tickTime(static_cast<std::int64_t>(item.seedTick)) &&
+                   block != nullptr && block->keyFrame &&
+                   block->tick == static_cast<std::int64_t>(item.seedTick);
+        }
+        expect(seeded, item.message);
+      }
+    }
+  }
+
+  // --- 6. The one refusal left, and it is about the BITSTREAM. -------------
+  //
+  // Two Clusters 13 s apart: the file's Cues describe the medium accurately,
+  // the scan confirms them, and there is still no seed inside the 12 s
+  // preroll. No index can invent one, so the verdict says so -- and says it as
+  // Unsupported, because the file plays perfectly from its origin.
+  {
+    FixtureSpec spec;
+    spec.clusterTimestamps = {0, 13'000};
+    spec.durationTicks = 14'000.0;
+    spec.includeAudioTrack = false;
+    spec.includeSubtitleTrack = false;
+    const PreparedFixture prepared = prepareFixture(spec);
+    const bool named =
+        prepared.outcome.asset == nullptr &&
+        prepared.outcome.status == MatroskaDemuxStatus::Unsupported &&
+        prepared.outcome.error == MatroskaDemuxError::SparseRandomAccess &&
+        prepared.outcome.message.find("2 random access points") !=
+            std::string::npos &&
+        prepared.outcome.message.find("13.000 s span") != std::string::npos &&
+        prepared.outcome.message.find("12.000 s") != std::string::npos;
+    if (!named) {
+      std::cerr << "  (observed " << errorName(prepared.outcome.error) << ": \""
+                << prepared.outcome.message << "\")\n";
+    }
+    expect(named,
+           "a bitstream with no RAP inside the preroll is named, not blamed "
+           "on its Cues");
+  }
+
+  // --- 7. The single-entry hole, closed. -----------------------------------
+  //
+  // One Cluster, one keyframe, and a duration far past it: exactly the shape a
+  // live screen capture writes. The gap loop runs from entry 1 and so never
+  // examined this file at all -- it was admitted with an index that seeded
+  // every seek at tick zero however far away the target was. Measuring the
+  // tail against the duration is what closes it.
+  {
+    FixtureSpec spec;
+    spec.clusterTimestamps = {0};
+    spec.durationTicks = 20'000.0;
+    spec.includeAudioTrack = false;
+    spec.includeSubtitleTrack = false;
+    const PreparedFixture prepared = prepareFixture(spec);
+    const bool closed =
+        prepared.outcome.asset == nullptr &&
+        prepared.outcome.status == MatroskaDemuxStatus::Unsupported &&
+        prepared.outcome.error == MatroskaDemuxError::SparseRandomAccess &&
+        prepared.outcome.message.find("1 random access point,") !=
+            std::string::npos;
+    if (!closed) {
+      std::cerr << "  (observed " << errorName(prepared.outcome.error) << ": \""
+                << prepared.outcome.message << "\")\n";
+    }
+    expect(closed, "a one-entry index is measured against the duration");
+  }
+
+  // --- 8. A duration inside the preroll keeps a one-entry index legal. ------
+  //
+  // The tail bound is a bound, not a ban on short files: a 1.5 s medium whose
+  // only RAP is at zero needs no second seed, and refusing it would have been
+  // the obvious over-correction.
+  {
+    FixtureSpec spec;
+    spec.clusterTimestamps = {0};
+    spec.durationTicks = 1'500.0;
+    spec.includeAudioTrack = false;
+    spec.includeSubtitleTrack = false;
+    const PreparedFixture prepared = prepareFixture(spec);
+    expect(prepared.outcome.status == MatroskaDemuxStatus::Ready &&
+               prepared.outcome.asset != nullptr &&
+               prepared.asset().cues().size() == 1U,
+           "a one-entry index inside the preroll stays admitted");
+  }
+}
+
+// ---------------------------------------------------------------------------
 // 8. Malformed input hardening.
 // ---------------------------------------------------------------------------
 
 void testMalformedDocuments() {
-  {
-    FixtureSpec spec;
-    spec.cues = CueVariant::Absent;
-    expectPrepareError(spec, MatroskaDemuxError::MissingCues,
-                       "a document without Cues is refused");
-  }
+  // Every Cue shape this index cannot use now routes to the Cluster scan
+  // instead of a refusal; testScannedRandomAccessIndex below owns those cases.
+  // What stays here are the shapes that fail before any index is built.
   {
     // A stream-copied Matroska routinely places its first video keyframe a few
     // milliseconds after zero (FFmpeg emits a first CueTime of 21 ms for a
@@ -3146,48 +3444,9 @@ void testMalformedDocuments() {
   }
   {
     FixtureSpec spec;
-    spec.cues = CueVariant::AudioTrackOnly;
-    expectPrepareError(spec, MatroskaDemuxError::MissingCues,
-                       "Cues for an unselected track leave the video unindexed");
-  }
-  {
-    FixtureSpec spec;
-    spec.cues = CueVariant::Unsorted;
-    expectPrepareError(spec, MatroskaDemuxError::InvalidCue,
-                       "unsorted selected-video Cues are rejected");
-  }
-  {
-    FixtureSpec spec;
-    spec.cues = CueVariant::DuplicateTime;
-    expectPrepareError(spec, MatroskaDemuxError::InvalidCue,
-                       "duplicate selected-video Cue times are rejected");
-  }
-  {
-    FixtureSpec spec;
-    spec.cues = CueVariant::NoRelativePosition;
-    expectPrepareError(spec, MatroskaDemuxError::InvalidCue,
-                       "a Cue without CueRelativePosition is rejected");
-  }
-  {
-    FixtureSpec spec;
-    spec.cues = CueVariant::BlockNumberTwo;
-    expectPrepareError(spec, MatroskaDemuxError::InvalidCue,
-                       "a Cue naming a second block in its group is rejected");
-  }
-  {
-    FixtureSpec spec;
     spec.cues = CueVariant::OutsideCluster;
     expectPrepareError(spec, MatroskaDemuxError::InvalidContainer,
                        "a Cue pointing outside any Cluster is rejected");
-  }
-  {
-    FixtureSpec spec;
-    spec.clusterTimestamps = {0, 13'000};
-    spec.durationTicks = 14'000.0;
-    spec.includeAudioTrack = false;
-    spec.includeSubtitleTrack = false;
-    expectPrepareError(spec, MatroskaDemuxError::InvalidCue,
-                       "a Cue gap beyond the bounded seek preroll is rejected");
   }
   {
     FixtureSpec spec;
@@ -3644,6 +3903,7 @@ int main() {
   testCursorOwnershipAndMoves();
   testCopyRanges();
   testMutationAndCancellation();
+  testScannedRandomAccessIndex();
   testMalformedDocuments();
   testStructuralByteCeilings();
   testFractionalDuration();

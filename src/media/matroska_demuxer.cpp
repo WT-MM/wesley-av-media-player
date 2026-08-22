@@ -13,6 +13,7 @@
 #include <array>
 #include <cerrno>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <fcntl.h>
 #include <limits>
@@ -2326,6 +2327,201 @@ template <typename Predicate>
   return result;
 }
 
+// ---------------------------------------------------------------------------
+// Random access index coverage, and the scanned index that repairs it.
+// ---------------------------------------------------------------------------
+
+// Three decimals: the resolution a 1 ms timestamp scale can actually state,
+// and never the exponent form, because these numbers end up in a verdict a
+// person reads.
+[[nodiscard]] std::string formatSeconds(double value) {
+  std::array<char, 32> buffer{};
+  const int written =
+      std::snprintf(buffer.data(), buffer.size(), "%.3f", value);
+  if (written <= 0 || static_cast<std::size_t>(written) >= buffer.size()) {
+    return std::string("?");
+  }
+  return std::string(buffer.data(), static_cast<std::size_t>(written));
+}
+
+// The widest span a seek can be asked to decode through, given an index:
+// every gap between consecutive entries, PLUS the tail from the last entry to
+// the end of the medium. Returns false when some span is wider than the seek
+// preroll this route promises to decode and discard, and reports the widest
+// span it measured either way (for the verdict text only -- the decision is
+// exact 128-bit integer arithmetic, the report is a double).
+//
+// The tail term is not decoration. The gap loop it joins starts at entry 1, so
+// a ONE-entry index -- what a live mux writes, and what the GStreamer
+// screencast carries -- used to satisfy a bound that never examined it, and
+// every seek on such a file seeded at that single entry however far away the
+// target was. A one-entry index is now measured against the duration like any
+// other.
+[[nodiscard]] bool indexSeedsWithinPreroll(
+    const AssetState& state, double* widestSpanSeconds) noexcept {
+  *widestSpanSeconds = 0.0;
+  if (state.cues.empty()) {
+    return false;
+  }
+  // The preroll bound is a policy ceiling expressed in seconds, so it enters as
+  // a whole nanosecond count once; every per-entry term below is exact 128-bit
+  // integer arithmetic. Cross-multiplying through `long double` would be plain
+  // binary64 on arm64, where a timescale near the int32 ceiling pushes both
+  // sides past a 53-bit mantissa and the bound gets decided by rounding.
+  constexpr __int128 kNanosecondsPerSecond{1'000'000'000};
+  const auto prerollNanoseconds = static_cast<__int128>(
+      state.limits.maximumVideoSeekPrerollSeconds * 1.0e9);
+  bool within = true;
+  const auto measure = [&](const MediaTime& earlier, const MediaTime& later) {
+    // (later - earlier) > preroll, cross-multiplied by both timescales and by
+    // 1e9 so the seconds bound stays an integer nanosecond count. Magnitudes:
+    // |value| < 2^63 and timescale < 2^31 bound the left side by 2^124 and the
+    // right by 2^96, both inside __int128.
+    const __int128 span =
+        (static_cast<__int128>(later.value) * earlier.timescale -
+         static_cast<__int128>(earlier.value) * later.timescale) *
+        kNanosecondsPerSecond;
+    const __int128 bound = prerollNanoseconds *
+                           static_cast<__int128>(later.timescale) *
+                           static_cast<__int128>(earlier.timescale);
+    const double seconds =
+        static_cast<double>(later.value) / static_cast<double>(later.timescale) -
+        static_cast<double>(earlier.value) / static_cast<double>(earlier.timescale);
+    if (seconds > *widestSpanSeconds) {
+      *widestSpanSeconds = seconds;
+    }
+    if (span > bound) {
+      within = false;
+    }
+  };
+  // The conversion of entry n-1 is carried forward instead of recomputed. Each
+  // conversion is a gcd reduction, and doing both ends of every gap did exactly
+  // twice the work this check needs, at open time, O(entries).
+  auto previous = timeFromSignedTick(
+      static_cast<std::int64_t>(state.cues.front().timestampTick),
+      state.timestampScaleNanoseconds);
+  if (!previous) {
+    return false;
+  }
+  for (std::size_t index = 1; index < state.cues.size(); ++index) {
+    const auto current = timeFromSignedTick(
+        static_cast<std::int64_t>(state.cues[index].timestampTick),
+        state.timestampScaleNanoseconds);
+    if (!current) {
+      return false;
+    }
+    measure(*previous, *current);
+    previous = current;
+  }
+  if (state.descriptor) {
+    measure(*previous, state.descriptor->duration);
+  }
+  return within;
+}
+
+struct ScannedCueIndexOutcome {
+  MatroskaDemuxStatus status{MatroskaDemuxStatus::Ready};
+  MatroskaDemuxError error{MatroskaDemuxError::None};
+  const char* message{""};
+};
+
+// Rebuilds the selected-video index from the container's own skeleton when the
+// file's Cues cannot serve as one.
+//
+// A Cues element is OPTIONAL, and so is the CueRelativePosition inside it. Live
+// muxes exercise both freedoms: GStreamer's matroskamux writes CuePoints with
+// no CueRelativePosition, an interrupted capture writes none at all, and OBS
+// writes them for one track. In every such case the random access points still
+// exist and are still discoverable, because a Cluster states its timestamp and
+// every Block header states its track, its offset from that timestamp, and
+// whether it is a keyframe. Walking those headers rebuilds exactly the index
+// Cues would have carried -- from the bytes rather than from a muxer's promise.
+//
+// This reads ELEMENT HEADERS only. Frame payloads are described by FrameRange
+// offsets the visitor never dereferences, so the pass touches the container's
+// skeleton and not its 380 MB of VP8. Blocks of unselected tracks are skipped
+// by offset arithmetic without a read at all.
+//
+// Bounded three ways, all derived in matroska_demuxer.hpp: entries are capped
+// at kMaximumMatroskaCues (the same 1 MiB budget a file-supplied index gets),
+// decimated to one per kMatroskaScannedCueSpacingNanoseconds so that cap spans
+// 18.2 hours, and each entry's Block offset is relative to a Cluster already
+// capped inside 32 bits.
+[[nodiscard]] ScannedCueIndexOutcome buildScannedVideoCueIndex(
+    const AssetState& state, MediaTrackId track,
+    std::vector<MatroskaCueIndexEntry>* out, CancellationToken cancellation) {
+  out->clear();
+  // Decimation in the container's own tick units. A timescale coarser than the
+  // spacing floors to zero ticks, which would decimate nothing; one tick is
+  // then the finest spacing that still keeps the index strictly increasing.
+  const std::uint64_t spacingTicks = std::max<std::uint64_t>(
+      1U, kMatroskaScannedCueSpacingNanoseconds /
+              std::max<std::uint64_t>(1U, state.timestampScaleNanoseconds));
+  std::vector<TrackConstraint> constraints = cursorConstraints(state, track);
+  ParseOptions options = parserOptions(state.limits, constraints);
+  CapturedBlockVisitor visitor;
+  bool seeded = false;
+  std::uint64_t lastTick = 0;
+  for (std::size_t clusterIndex = 0; clusterIndex < state.clusters.size();
+       ++clusterIndex) {
+    if (cancellation.cancelled()) {
+      return {MatroskaDemuxStatus::Cancelled, MatroskaDemuxError::Cancelled,
+              "the Cluster scan was cancelled"};
+    }
+    const ByteRange data = state.clusters[clusterIndex].dataRange();
+    auto cursor = beginClusterChildCursor(*state.reader, data, options);
+    if (!cursor) {
+      return {MatroskaDemuxStatus::Failed, MatroskaDemuxError::InvalidContainer,
+              "a Cluster data range could not be walked"};
+    }
+    while (!cursor->done()) {
+      visitor.reset();
+      const ParseOutcome outcome = parseClusterChildAt(
+          *state.reader, *cursor, visitor, options, cancellation);
+      if (!outcome.ok()) {
+        const MatroskaDemuxError error = parseError(outcome);
+        return {error == MatroskaDemuxError::Cancelled
+                    ? MatroskaDemuxStatus::Cancelled
+                    : MatroskaDemuxStatus::Failed,
+                error, "a Cluster Block header could not be parsed"};
+      }
+      if (!visitor.emitted || visitor.header.trackNumber != track) {
+        continue;
+      }
+      // The same codec-agnostic random access rule the cursor and the Cue
+      // commit proof already apply, so a scanned entry is admissible exactly
+      // where a Cue-derived one is.
+      if (!(visitor.header.simpleBlock ? visitor.header.keyFrame
+                                       : visitor.referenceCount == 0)) {
+        continue;
+      }
+      const auto tick = signedBlockTick(state.clusters[clusterIndex].timestampTick,
+                                        visitor.header.relativeTimestamp);
+      if (!tick || *tick < 0) {
+        continue;
+      }
+      const auto ticks = static_cast<std::uint64_t>(*tick);
+      if (seeded && ticks < lastTick + spacingTicks) {
+        continue;
+      }
+      const std::uint64_t offset = visitor.header.containerEncoded.offset;
+      if (offset < data.offset ||
+          offset - data.offset > std::numeric_limits<std::uint32_t>::max()) {
+        continue;
+      }
+      if (out->size() >= kMaximumMatroskaCues) {
+        return {MatroskaDemuxStatus::Unsupported, MatroskaDemuxError::IndexLimit,
+                "the scanned random access index is over its bounded budget"};
+      }
+      out->push_back({ticks, static_cast<std::uint32_t>(clusterIndex),
+                      static_cast<std::uint32_t>(offset - data.offset)});
+      lastTick = ticks;
+      seeded = true;
+    }
+  }
+  return {};
+}
+
 }  // namespace
 
 struct MatroskaPreparedAsset::Impl {
@@ -3319,47 +3515,50 @@ MatroskaPrepareOutcome prepareMatroska(
     // Cluster directory instead (see planGeneration). Harvesting audio Cues
     // here would build a second index with different admission rules for no
     // benefit, and would make a Cue-less MKA (which FFmpeg does emit) refuse.
+    //
+    // An unusable Cues element is no longer fatal. Every refusal below became a
+    // REASON TO REBUILD: buildScannedVideoCueIndex derives the same index from
+    // Cluster timestamps and Block headers, which are facts about the bytes
+    // rather than a muxer's optional promise, so a file whose Cues this v1
+    // index cannot represent still gets a correct index. `degenerate` records
+    // WHY the file's own Cues were discarded, so a verdict can still name it if
+    // the rebuild fails too.
+    const char* degenerate = nullptr;
     for (const CueTrackPosition& cue : document.cuePositions) {
       if (!state->video || cue.track != state->video->id) {
         continue;
       }
       // Name WHICH feature. "an unsupported feature" is a typed verdict with
       // an untyped subject: it does not distinguish a legal file this v1
-      // index cannot use from a malformed one, and the two want opposite
-      // outcomes. A missing CueRelativePosition is the first kind --
-      // the element is OPTIONAL in Matroska and GStreamer's matroskamux
-      // simply does not write it, so the file is conforming and the honest
-      // answer is a clean Unsupported fallback rather than the hard protocol
-      // fault a Failed status renders as ("Native playback rejected an
-      // internal command and was stopped"). Everything else in this gate is a
-      // Cue shape the index genuinely cannot represent.
+      // index cannot use from a malformed one. A missing CueRelativePosition
+      // is the first kind -- the element is OPTIONAL in Matroska and
+      // GStreamer's matroskamux simply does not write it, so the file is
+      // conforming. Everything else in this gate is a Cue shape the index
+      // cannot represent. Both now route to the scan.
       if (!cue.relativePosition) {
-        result.status = MatroskaDemuxStatus::Unsupported;
-        result.error = MatroskaDemuxError::InvalidCue;
-        result.message =
-            "selected video Cue has no CueRelativePosition, which this v1 "
-            "index requires to locate the random access Block";
-        return result;
+        degenerate =
+            "the selected video Cues carry no CueRelativePosition, which this "
+            "index needs to locate the random access Block";
+        break;
       }
       if (!cue.absoluteBlockOffset ||
           (cue.blockNumber && *cue.blockNumber != 1) ||
           cue.codecStatePosition != 0 || cue.absoluteCodecStateOffset ||
           cue.cueReferencePresent ||
           *cue.relativePosition > std::numeric_limits<std::uint32_t>::max()) {
-        result.error = MatroskaDemuxError::InvalidCue;
-        result.message =
+        degenerate =
             cue.cueReferencePresent
-                ? "selected video Cue carries CueReference, which only a "
+                ? "a selected video Cue carries CueReference, which only a "
                   "non-random-access Cue needs"
                 : ((cue.blockNumber && *cue.blockNumber != 1)
-                       ? "selected video Cue names a CueBlockNumber other "
+                       ? "a selected video Cue names a CueBlockNumber other "
                          "than 1"
                        : (cue.codecStatePosition != 0 ||
                           cue.absoluteCodecStateOffset)
-                             ? "selected video Cue carries CueCodecState"
-                             : "selected video Cue position is outside the "
+                             ? "a selected video Cue carries CueCodecState"
+                             : "a selected video Cue position is outside the "
                                "indexable range");
-        return result;
+        break;
       }
       const auto cluster = findCluster(state->clusters,
                                        cue.absoluteClusterOffset);
@@ -3367,15 +3566,14 @@ MatroskaPrepareOutcome prepareMatroska(
           state->clusters[*cluster].dataRange().offset +
                   *cue.relativePosition !=
               *cue.absoluteBlockOffset) {
-        result.error = MatroskaDemuxError::InvalidCue;
-        result.message = "Cue target does not match the Cluster directory";
-        return result;
+        degenerate = "a selected video Cue target does not match the Cluster "
+                     "directory";
+        break;
       }
       if (!state->cues.empty() &&
           cue.cueTime <= state->cues.back().timestampTick) {
-        result.error = MatroskaDemuxError::InvalidCue;
-        result.message = "selected video Cues are not strictly increasing";
-        return result;
+        degenerate = "the selected video Cues are not strictly increasing";
+        break;
       }
       state->cues.push_back(
           {cue.cueTime, *cluster,
@@ -3387,59 +3585,82 @@ MatroskaPrepareOutcome prepareMatroska(
     // why such a file reports 72.021 s rather than 72.000 s), and that cue is
     // the true origin of the video timeline. Requiring literal zero rejected
     // essentially every real remux. planGeneration already clamps any target
-    // at or before the first cue to cue zero, so a non-zero first cue needs no
-    // other special case; the strictly-increasing check below still holds.
-    if ((state->video && state->cues.empty()) ||
-        state->cues.size() > kMaximumMatroskaCues) {
-      result.error = MatroskaDemuxError::MissingCues;
-      result.message = "v1 requires a bounded selected-video Cue index";
-      return result;
-    }
-    // The preroll bound is a policy ceiling expressed in seconds, so it enters
-    // as a whole nanosecond count once; every per-Cue term below is exact
-    // 128-bit integer arithmetic. The previous form cross-multiplied through
-    // `long double`, which is plain binary64 on arm64: a timescale near the
-    // int32 ceiling makes both sides exceed a 53-bit mantissa, so the bound was
-    // decided by rounding rather than by the values.
+    // at or before the first entry to entry zero, so a non-zero first entry
+    // needs no special case, and the strictly-increasing check in the harvest
+    // above still holds. The same is true of a scanned index, whose first
+    // entry is simply the earliest random access Block the Clusters carry.
+
+    // ---- Is the file's own index usable, and if not, rebuild it -----------
     //
-    // The conversion of Cue n-1 is also carried forward instead of recomputed.
-    // Each conversion is a gcd reduction, and doing both ends of every gap did
-    // exactly twice the work this check needs, at open time, O(Cues).
-    constexpr __int128 kNanosecondsPerSecond{1'000'000'000};
-    const auto prerollNanoseconds = static_cast<__int128>(
-        state->limits.maximumVideoSeekPrerollSeconds * 1.0e9);
-    auto previous =
-        state->cues.empty()
-            ? std::optional<MediaTime>{}
-            : timeFromSignedTick(
-                  static_cast<std::int64_t>(state->cues.front().timestampTick),
-                  state->timestampScaleNanoseconds);
-    for (std::size_t index = 1; index < state->cues.size(); ++index) {
-      const auto current = timeFromSignedTick(
-          static_cast<std::int64_t>(state->cues[index].timestampTick),
-          state->timestampScaleNanoseconds);
-      if (!previous || !current) {
-        result.error = MatroskaDemuxError::InvalidCue;
-        result.message = "Cue gap exceeds the bounded seek preroll";
-        return result;
+    // Two separate questions, deliberately kept apart, because they have
+    // opposite answers for the same symptom.
+    //
+    //   1. Can the FILE'S Cues serve as this index? A no here says nothing
+    //      about the medium -- Cues are optional metadata and a live mux
+    //      routinely writes them badly or not at all -- so the answer is to
+    //      rebuild the index from the Clusters, never to refuse the file.
+    //   2. Can the REBUILT index seed a seek anywhere in the medium? A no here
+    //      is a fact about the bitstream: the encoder wrote no random access
+    //      point inside the seek preroll, and no index can invent one. That is
+    //      the only cue-shaped refusal left, and it is named for what it is.
+    //
+    // Coverage is measured by the same predicate in both places, so a scanned
+    // index is held to exactly the bound a file-supplied one is.
+    double widestSpanSeconds = 0.0;
+    if (state->video) {
+      if (degenerate == nullptr && state->cues.empty()) {
+        degenerate = "the file carries no Cues for the selected video track";
       }
-      // (current - previous) > preroll, cross-multiplied by both timescales
-      // and by 1e9 so the seconds bound stays an integer nanosecond count.
-      // Magnitudes: |value| < 2^63 and timescale < 2^31 bound the left side by
-      // 2^124 and the right by 2^96, both inside __int128.
-      const __int128 gap =
-          (static_cast<__int128>(current->value) * previous->timescale -
-           static_cast<__int128>(previous->value) * current->timescale) *
-          kNanosecondsPerSecond;
-      const __int128 bound = prerollNanoseconds *
-                             static_cast<__int128>(current->timescale) *
-                             static_cast<__int128>(previous->timescale);
-      if (gap > bound) {
-        result.error = MatroskaDemuxError::InvalidCue;
-        result.message = "Cue gap exceeds the bounded seek preroll";
-        return result;
+      if (degenerate == nullptr && state->cues.size() > kMaximumMatroskaCues) {
+        degenerate = "the selected video Cue index is over its bound";
       }
-      previous = current;
+      if (degenerate == nullptr &&
+          !indexSeedsWithinPreroll(*state, &widestSpanSeconds)) {
+        degenerate =
+            "the selected video Cues leave a span wider than the seek preroll";
+      }
+      if (degenerate != nullptr) {
+        const ScannedCueIndexOutcome scanned = buildScannedVideoCueIndex(
+            *state, state->video->id, &state->cues, cancellation);
+        if (scanned.error != MatroskaDemuxError::None) {
+          result.status = scanned.status;
+          result.error = scanned.error;
+          result.message = std::string(scanned.message) + " while rebuilding "
+                           "the seek index because " + degenerate;
+          return result;
+        }
+        if (state->cues.empty()) {
+          // Not the same refusal as a sparse one. A selected video track with
+          // no random access Block anywhere has nothing to start decoding
+          // from, at any target, so this is the index genuinely being absent
+          // rather than the medium being coarse.
+          result.status = MatroskaDemuxStatus::Unsupported;
+          result.error = MatroskaDemuxError::MissingCues;
+          result.message =
+              std::string("no random access Block for the selected video "
+                          "track exists in any Cluster, and ") +
+              degenerate;
+          return result;
+        }
+        if (!indexSeedsWithinPreroll(*state, &widestSpanSeconds)) {
+          // Unsupported, not Failed: the file is conforming and plays from its
+          // origin perfectly well. What it cannot do is seed a seek, and the
+          // route that can (compatibility playback) should take it without the
+          // hard protocol fault a Failed status renders as.
+          result.status = MatroskaDemuxStatus::Unsupported;
+          result.error = MatroskaDemuxError::SparseRandomAccess;
+          result.message =
+              "the selected video track offers " +
+              std::to_string(state->cues.size()) +
+              (state->cues.size() == 1 ? " random access point"
+                                       : " random access points") +
+              ", leaving a " + formatSeconds(widestSpanSeconds) +
+              " s span with no seek seed against a bounded preroll of " +
+              formatSeconds(state->limits.maximumVideoSeekPrerollSeconds) +
+              " s";
+          return result;
+        }
+      }
     }
 
     auto asset = std::shared_ptr<MatroskaPreparedAsset>(
