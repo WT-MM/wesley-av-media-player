@@ -240,8 +240,8 @@ bool NativeAudioRenderCore::settlePausedAfterStop(
 
 void NativeAudioRenderCore::setGain(float gain) noexcept {
   const float bounded = std::isfinite(gain)
-                            ? std::clamp(gain, 0.0F, 1.0F)
-                            : 0.0F;
+                            ? std::clamp(gain, kMinimumGain, kMaximumGain)
+                            : kMinimumGain;
   target_gain_bits_.store(floatBits(bounded), std::memory_order_release);
 }
 
@@ -454,8 +454,21 @@ void NativeAudioRenderCore::applyGain(
     } else {
       applied_gain_ = ramp_target_;
     }
-    output[frame * NativePcmRing::kChannels] *= applied_gain_;
-    output[frame * NativePcmRing::kChannels + 1U] *= applied_gain_;
+    // Multiply, then saturate. Above unity the product can leave the
+    // representable full-scale range; a hard clamp is what VLC-style
+    // amplification does and it is branch-predictable, allocation-free and
+    // constant-time -- everything this callback is required to be. Below
+    // unity the clamp can never fire, so the ordinary path is unchanged.
+    //
+    // Sample values only. No frame count, cursor, clock segment or statistic
+    // is touched here: result.pcmFrames is already fixed and the clock
+    // segment is already committed by the time this runs.
+    const std::size_t leftIndex = frame * NativePcmRing::kChannels;
+    const std::size_t rightIndex = leftIndex + 1U;
+    const float left = output[leftIndex] * applied_gain_;
+    const float right = output[rightIndex] * applied_gain_;
+    output[leftIndex] = std::clamp(left, -kSampleCeiling, kSampleCeiling);
+    output[rightIndex] = std::clamp(right, -kSampleCeiling, kSampleCeiling);
   }
 }
 

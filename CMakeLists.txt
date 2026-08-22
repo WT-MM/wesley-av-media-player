@@ -147,6 +147,8 @@ qt_add_executable(wam MACOSX_BUNDLE WIN32
   src/qt/main.cpp
   src/qt/player_controller.cpp
   src/qt/player_controller.hpp
+  src/qt/scroll_gesture.cpp
+  src/qt/scroll_gesture.hpp
   src/qt/player_core.cpp
   src/qt/player_core_p.hpp
   src/qt/mpv_hwdec_interop_policy.hpp
@@ -905,6 +907,19 @@ if(BUILD_TESTING)
   target_include_directories(wam_state_test PRIVATE src)
   add_test(NAME state_store COMMAND wam_state_test)
 
+  # The pointer-scroll gesture model links no Qt at all, which is exactly why
+  # it is its own translation unit: normalization, axis lock and the 100%
+  # detent are decided there and proved here without a GUI.
+  add_executable(wam_scroll_gesture_test
+    tests/scroll_gesture_test.cpp
+    src/qt/scroll_gesture.cpp
+    src/qt/scroll_gesture.hpp)
+  target_include_directories(wam_scroll_gesture_test PRIVATE src)
+  target_compile_features(wam_scroll_gesture_test PRIVATE cxx_std_20)
+  target_compile_options(wam_scroll_gesture_test PRIVATE
+    -Wall -Wextra -Wpedantic)
+  add_test(NAME scroll_gesture COMMAND wam_scroll_gesture_test)
+
   add_executable(wam_caption_test
     tests/caption_service_test.cpp
     src/caption_service.cpp
@@ -920,6 +935,8 @@ if(BUILD_TESTING)
     src/playback/mpv/mpv_runtime_common.cpp
     src/qt/player_controller.cpp
     src/qt/player_controller.hpp
+    src/qt/scroll_gesture.cpp
+    src/qt/scroll_gesture.hpp
     src/qt/player_core.cpp
     src/qt/player_core_p.hpp
     src/jobs.cpp
@@ -944,6 +961,8 @@ if(BUILD_TESTING)
     src/playback/mpv/mpv_runtime_common.cpp
     src/qt/player_controller.cpp
     src/qt/player_controller.hpp
+    src/qt/scroll_gesture.cpp
+    src/qt/scroll_gesture.hpp
     src/qt/player_core.cpp
     src/qt/player_core_p.hpp
     src/qt/render_lifecycle.hpp
@@ -1033,6 +1052,8 @@ if(BUILD_TESTING)
       src/qt/mpv_video_item.hpp
       src/qt/player_controller.cpp
       src/qt/player_controller.hpp
+      src/qt/scroll_gesture.cpp
+      src/qt/scroll_gesture.hpp
       src/qt/player_core.cpp
       src/qt/player_core_p.hpp
       src/jobs.cpp

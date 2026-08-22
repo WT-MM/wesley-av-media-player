@@ -173,6 +173,16 @@ class NativeAudioRenderCore final {
 public:
   static constexpr std::uint32_t kGainRampFrames = 128;
 
+  // Volume boost. Unity is 1.0; the ceiling is VLC-style amplification, and
+  // above unity the stage can and will clip -- that is the deal the user
+  // makes by asking for more than the mix contains. The clipping is an exact
+  // per-sample saturation to [-1, 1] applied in applyGain(), never a
+  // renormalization, so the loudness of quiet material rises linearly and
+  // only material that was already near full scale is affected.
+  static constexpr float kMinimumGain = 0.0F;
+  static constexpr float kMaximumGain = 2.0F;
+  static constexpr float kSampleCeiling = 1.0F;
+
   NativeAudioRenderCore(NativePcmRing &ring,
                         NativeMediaClock &clock,
                         std::uint64_t hostTicksPerSecond) noexcept;

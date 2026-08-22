@@ -53,6 +53,18 @@ constexpr double kMinimumRate = 0.0625;
 constexpr double kMaximumRate = 16.0;
 constexpr double kScrubConvergenceToleranceSeconds = 0.050;
 constexpr int kScrubSeekTimeoutMs = 750;
+
+// Volume runs past unity into VLC-style amplification. 2.0 is the ceiling on
+// every route: the native gain stage clamps there (and saturates each sample
+// to [-1, 1]), and mpv is started with volume-max=200.
+constexpr double kMinimumVolume = 0.0;
+constexpr double kMaximumVolume = 2.0;
+
+// How long after the last wheel delta a pointer-scroll gesture counts as
+// settled. It ends the axis lock and commits a timeline sweep. 200 ms is long
+// enough to ride out a trackpad momentum tail's own gaps and short enough that
+// a deliberate flick commits before the user reaches for anything else.
+constexpr int kScrollSettleMs = 200;
 constexpr std::uint64_t kCommandReplyNamespaceMask = 3ULL << 62;
 constexpr std::uint64_t kOpenCommandReplyNamespace = 1ULL << 63;
 constexpr std::uint64_t kRenderRecoveryCommandReplyNamespace = 1ULL << 62;
@@ -562,10 +574,22 @@ PlayerController::PlayerController(QObject *parent)
     cancelScrubTimeout();
     handleScrubTimeout(gesture, request_serial, command);
   });
+
+  // One reused single-shot timer for the whole scroll-gesture lifetime, for
+  // the same reason as the scrub timeout above: a momentum tail can restart
+  // it a hundred times a second.
+  scroll_settle_timer_ = new QTimer(this);
+  scroll_settle_timer_->setSingleShot(true);
+  scroll_settle_timer_->setTimerType(Qt::PreciseTimer);
+  connect(scroll_settle_timer_, &QTimer::timeout, this,
+          &PlayerController::settleScrollGesture);
 }
 
 PlayerController::~PlayerController() {
   cancelScrubTimeout();
+  if (scroll_settle_timer_)
+    scroll_settle_timer_->stop();
+  scroll_sweep_target_.reset();
   if (work_timer_)
     work_timer_->stop();
   export_job_.cancel();
@@ -1003,6 +1027,16 @@ void PlayerController::pause() {
 void PlayerController::togglePlayPause() { playing() ? pause() : play(); }
 
 void PlayerController::stop() {
+  // A live scroll sweep owns an open scrub gesture; drop it before the
+  // transport goes away rather than committing a seek into a dead session.
+  if (scroll_settle_timer_)
+    scroll_settle_timer_->stop();
+  scroll_model_.reset();
+  scroll_sweep_target_.reset();
+  if (scroll_gesture_active_) {
+    scroll_gesture_active_ = false;
+    emit scrollGestureActiveChanged();
+  }
   invalidateScrubGesture();
   invalidateNativeSeekIntents();
 #if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
@@ -2000,7 +2034,7 @@ void PlayerController::setMuted(bool muted) {
 void PlayerController::setVolume(double volume) {
   if (!std::isfinite(volume))
     return;
-  const double normalized = std::clamp(volume, 0.0, 1.0);
+  const double normalized = std::clamp(volume, kMinimumVolume, kMaximumVolume);
 #if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   const bool native_owned =
       native_playback_ &&
@@ -2017,6 +2051,102 @@ void PlayerController::setVolume(double volume) {
     return;
   volume_ = normalized;
   emit volumeChanged();
+}
+
+void PlayerController::setScrollGesturesEnabled(bool enabled) {
+  if (scroll_gestures_enabled_ == enabled)
+    return;
+  scroll_gestures_enabled_ = enabled;
+  if (!enabled) {
+    // Switching the preference off mid-sweep must not leave a scrub gesture
+    // open on the native route -- that would hold the window paused with the
+    // surface-budget handoff still armed.
+    settleScrollGesture();
+  }
+  emit scrollGesturesEnabledChanged();
+}
+
+double PlayerController::snapVolumeToDetent(double volume) const {
+  return ScrollGestureModel::snapVolumeToDetent(volume);
+}
+
+int PlayerController::scrollGesture(double pixelDeltaX, double pixelDeltaY,
+                                    double angleDeltaX, double angleDeltaY,
+                                    bool inverted, int phase) {
+  if (!scroll_gestures_enabled_ || !hasMedia())
+    return ScrollGestureIgnored;
+
+  ScrollSample sample;
+  sample.pixelX = pixelDeltaX;
+  sample.pixelY = pixelDeltaY;
+  sample.angleX = angleDeltaX;
+  sample.angleY = angleDeltaY;
+  sample.inverted = inverted;
+  sample.phase = phase >= static_cast<int>(ScrollPhase::NoPhase) &&
+                         phase <= static_cast<int>(ScrollPhase::Momentum)
+                     ? static_cast<ScrollPhase>(phase)
+                     : ScrollPhase::NoPhase;
+
+  const ScrollStep step = scroll_model_.accumulate(sample);
+  if (step.axis == ScrollAxis::None)
+    return ScrollGestureIgnored;
+
+  // Any admitted travel re-arms the settle timer: the gesture is over only
+  // once the deltas actually stop arriving.
+  if (scroll_settle_timer_)
+    scroll_settle_timer_->start(kScrollSettleMs);
+  if (!scroll_gesture_active_) {
+    scroll_gesture_active_ = true;
+    emit scrollGestureActiveChanged();
+  }
+
+  if (step.axis == ScrollAxis::Vertical) {
+    // A vertical gesture cancels any sweep the previous gesture left open,
+    // rather than interleaving a volume change into a live scrub.
+    if (scroll_sweep_target_)
+      commitScrollSweep();
+    if (step.volumeDelta == 0.0)
+      return ScrollGestureVolume;
+    setVolume(scroll_model_.volumeWithDetent(volume_, step.volumeDelta));
+    return ScrollGestureVolume;
+  }
+
+  if (step.seekSeconds == 0.0)
+    return ScrollGestureSeek;
+
+  if (!scroll_sweep_target_) {
+    // Open exactly one scrub gesture for the whole sweep. beginScrub is the
+    // same entry point the timeline's pointer drag uses, so the sweep gets
+    // the native preview handoff, the captured logical pause intent and the
+    // depth-1 latest-wins preview coalescing for free -- and previews are
+    // never queued behind one another.
+    beginScrub();
+    scroll_sweep_target_ = position_;
+  }
+  const double maximum = duration_ > 0.0 ? duration_ : *scroll_sweep_target_;
+  scroll_sweep_target_ = std::clamp(*scroll_sweep_target_ + step.seekSeconds,
+                                    0.0, std::max(0.0, maximum));
+  previewSeekTo(*scroll_sweep_target_);
+  return ScrollGestureSeek;
+}
+
+void PlayerController::commitScrollSweep() {
+  if (!scroll_sweep_target_)
+    return;
+  const double target = *scroll_sweep_target_;
+  scroll_sweep_target_.reset();
+  endScrub(target);
+}
+
+void PlayerController::settleScrollGesture() {
+  if (scroll_settle_timer_)
+    scroll_settle_timer_->stop();
+  scroll_model_.reset();
+  commitScrollSweep();
+  if (scroll_gesture_active_) {
+    scroll_gesture_active_ = false;
+    emit scrollGestureActiveChanged();
+  }
 }
 
 void PlayerController::setRate(double rate) {
@@ -2680,7 +2810,8 @@ void PlayerController::drainMpvEvents() {
       }
       case ObservedProperty::Volume: {
         const double value =
-            std::clamp(readDouble(property, 100.0) / 100.0, 0.0, 1.0);
+            std::clamp(readDouble(property, 100.0) / 100.0, kMinimumVolume,
+                       kMaximumVolume);
         if (!nearlyEqual(volume_, value)) {
           volume_ = value;
           emit volumeChanged();

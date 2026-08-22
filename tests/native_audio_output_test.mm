@@ -2670,9 +2670,44 @@ void testMutedOutputZeroesSamplesAndNothingElse() {
          "the mute gate is clear once the seam's owner clears it");
 }
 
+// Boost is a per-sample multiply inside the render core; WAM_TEST_MUTED is a
+// memset the ADAPTER performs after render() returns. The ordering claim is
+// therefore that no gain, however large, can survive the test mute -- which is
+// what keeps every quiet-seam measurement honest once the boost ships.
+void testTestMuteOutranksBoostGain() {
+  constexpr std::uint32_t kFrames = 4;
+  constexpr float kPublished = 0.5F;
+
+  wam::macos::setNativeAudioOutputTestMuted(true);
+  Fixture fixture;
+  fixture.core.setGain(2.0F);
+  expect(fixture.start() && publishConstant(fixture.ring, kFrames, kPublished),
+         "boost-mute fixture starts with a full slice of non-zero PCM");
+  std::array<float, 8> samples{};
+  samples.fill(-1.0F);
+  fixture.host.ticks.store(100, std::memory_order_relaxed);
+  const OSStatus status =
+      invokeTracked(fixture.fake, hostTimestamp(100), kFrames, samples);
+  const NativeAudioOutputFacts facts = fixture.output->facts();
+  fixture.cleanup();
+  wam::macos::setNativeAudioOutputTestMuted(false);
+
+  expect(status == noErr &&
+             std::all_of(samples.begin(), samples.end(),
+                         [](float sample) { return sample == 0.0F; }),
+         "WAM_TEST_MUTED zeroes the buffer after a 200% gain stage, not "
+         "before it");
+  expect(facts.renderedCallbacks == 1 && facts.frameCursor == kFrames,
+         "the boosted-and-muted callback still accounts exactly one frame "
+         "slice");
+  expect(!wam::macos::nativeAudioOutputTestMuted(),
+         "the mute gate is clear once this seam's owner clears it");
+}
+
 int main() {
   @autoreleasepool {
     testMutedOutputZeroesSamplesAndNothingElse();
+    testTestMuteOutranksBoostGain();
     testDeviceBufferFramesConfiguration();
     testConfigurationAndExactDeviceFormat();
     testPartialInitializationAndStartUnwind();
