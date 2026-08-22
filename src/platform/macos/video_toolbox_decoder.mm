@@ -1156,10 +1156,15 @@ OSType losslessCounterpartFormat(OSType pixelFormat) noexcept {
   // bits between pixels, so they are not layout-compatible with the padded
   // 'x420'/'xf20' surfaces an in-process sampler expects. That costs nothing
   // here, because a display layer never inspects the layout.
+  //
+  // The FullRange enumerator is spelled as its four-character code '&xf0'
+  // (0x26786630) because SDKs older than the one on the development machine
+  // (e.g. the Xcode 15.4 SDK on CI runners) declare only the VideoRange
+  // form; the values are ABI, not SDK policy, so the literal is stable.
   case kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange:
     return kCVPixelFormatType_Lossless_420YpCbCr10PackedBiPlanarVideoRange;
   case kCVPixelFormatType_420YpCbCr10BiPlanarFullRange:
-    return kCVPixelFormatType_Lossless_420YpCbCr10PackedBiPlanarFullRange;
+    return 0x26786630;  // kCVPixelFormatType_Lossless_420YpCbCr10PackedBiPlanarFullRange
   default:
     return 0;
   }
