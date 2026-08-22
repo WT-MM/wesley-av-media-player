@@ -236,6 +236,26 @@ class NativeVideoConsumer final : public media::NativeVideoConsumer {
           static_cast<std::size_t>(kNativeSurfaceBudgetMaximumSurfaces),
       "decoded-surface ownership must fit the process-wide surface budget");
 
+  // The assert above counts SURFACES, and a count is resolution-blind: 9 <= 10
+  // stays true at any coded ceiling while the bytes behind those nine surfaces
+  // scale with it. The 4K-class ceiling is where that gap became load-bearing
+  // -- nine worst-case surfaces are 264,854,952 B, four times what they were
+  // at 1920x1080 -- so the byte side is now stated as its own proof rather
+  // than left implicit in the budget's sizing.
+  //
+  //   9 leases * (9,502,720 px * 3 B/px + 920,168 B alignment)
+  //     = 9 * 29,428,328 = 264,854,952 B <= 301,989,888 B (288 MiB)
+  //
+  // Both sides are symbolic, so raising either the coded ceiling or a lease
+  // count re-evaluates this instead of quietly invalidating it.
+  static_assert(
+      (kMaximumDecodedSurfaceOwnership + kDecodedQueueCapacity + 1U +
+       kMaximumTrackedOutputSurfaceOwnership) *
+              kNativeSurfaceBudgetWorstCaseSurfaceBytes <=
+          kNativeSurfaceBudgetMaximumBytes,
+      "decoded-surface ownership must fit the process-wide BYTE budget at the "
+      "v1 coded ceiling, not merely the surface count");
+
   // The software VP8 stage owns its surfaces differently: libvpx decodes
   // synchronously, so there is no in-flight submission window and the only
   // decoder-held surface is the one frame waiting for drainPresentation().
@@ -257,6 +277,22 @@ class NativeVideoConsumer final : public media::NativeVideoConsumer {
                     static_cast<std::size_t>(kNativeSurfaceBudgetMaximumSurfaces),
                 "software VP8 pool depth must fit the process-wide surface "
                 "budget");
+  // And the same byte-side proof for VP8. VP8 is 8-bit only (RFC 6386 defines
+  // no high-bit-depth profile), so its surfaces are NV12 at 1.5 B/px rather
+  // than the 3 B/px worst case the process-wide budget is sized for:
+  //
+  //   6 * (9,502,720 px * 3/2 B/px + 920,168 B alignment)
+  //     = 6 * 15,174,248 = 91,045,488 B <= 301,989,888 B (288 MiB)
+  //
+  // software_vp8_decoder.hpp restates this footprint in prose next to the
+  // depth it belongs to; this is the machine-checked half.
+  static_assert(kSoftwareVp8PoolDepth *
+                        (media::MediaSourceLimits::kHardMaximumCodedPixels *
+                             3ULL / 2ULL +
+                         kNativeSurfaceBudgetSurfaceAlignmentSlackBytes) <=
+                    kNativeSurfaceBudgetMaximumBytes,
+                "a full software VP8 pool at the v1 coded ceiling must fit the "
+                "process-wide byte budget");
 
   [[nodiscard]] static std::unique_ptr<NativeVideoConsumer> create(
       std::shared_ptr<void> externalLifetime,

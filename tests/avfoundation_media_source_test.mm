@@ -2118,7 +2118,14 @@ void testDescriptorExtractionAndBounds() {
              !exactReaderTimeRange(CMTimeMake(60, 1), CMTimeMake(61, 1)),
          "reader range preserves exact subtraction and rejects rounded or past-end starts");
 
-  auto oversized = makeVideoFormat(kCMVideoCodecType_H264, 1921, 1080);
+  auto uhd = makeVideoFormat(kCMVideoCodecType_H264, 3840, 2160);
+  expect(inspectVideoFormat(
+             static_cast<CMVideoFormatDescriptionRef>(uhd.get()), 10, {60, 1},
+             MediaSourceLimits{}, &error)
+             .has_value(),
+         "descriptor extraction admits UHD inside the 4096x2320 v1 envelope");
+
+  auto oversized = makeVideoFormat(kCMVideoCodecType_H264, 7680, 4320);
   expect(!inspectVideoFormat(
               static_cast<CMVideoFormatDescriptionRef>(oversized.get()), 11,
               {60, 1}, MediaSourceLimits{}, &error),

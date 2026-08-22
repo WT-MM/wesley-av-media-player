@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <limits>
+#include <string>
 
 namespace wam::media {
 namespace {
@@ -3262,6 +3263,50 @@ bool buildVp9CodecConfiguration(
     configuration[index] = static_cast<std::byte>(record[index]);
   }
   return true;
+}
+
+namespace {
+
+// Grouped thousands, so a nine-digit pixel count is readable in a one-line
+// stderr verdict. No locale is involved: a diagnostic must read the same way
+// on every machine it is captured on.
+[[nodiscard]] std::string groupedDecimal(std::uint64_t value) {
+  std::string digits = std::to_string(value);
+  std::string grouped;
+  grouped.reserve(digits.size() + digits.size() / 3);
+  const std::size_t leading = digits.size() % 3 == 0 ? 3 : digits.size() % 3;
+  for (std::size_t index = 0; index < digits.size(); ++index) {
+    if (index >= leading && (index - leading) % 3 == 0) {
+      grouped.push_back(',');
+    }
+    grouped.push_back(digits[index]);
+  }
+  return grouped;
+}
+
+} // namespace
+
+bool codedDimensionsWithinV1Ceiling(std::uint64_t width,
+                                    std::uint64_t height) noexcept {
+  return width != 0 && height != 0 &&
+         width <= MediaSourceLimits::kHardMaximumCodedWidth &&
+         height <= MediaSourceLimits::kHardMaximumCodedHeight &&
+         width * height <= MediaSourceLimits::kHardMaximumCodedPixels;
+}
+
+std::string codedDimensionRefusalMessage(std::uint64_t width,
+                                         std::uint64_t height) noexcept {
+  try {
+    return "coded dimensions " + std::to_string(width) + "x" +
+           std::to_string(height) + " (" + groupedDecimal(width * height) +
+           " px) exceed the native v1 ceiling of " +
+           std::to_string(MediaSourceLimits::kHardMaximumCodedWidth) + "x" +
+           std::to_string(MediaSourceLimits::kHardMaximumCodedHeight) + " (" +
+           groupedDecimal(MediaSourceLimits::kHardMaximumCodedPixels) + " px)";
+  } catch (...) {
+    // A diagnostic must never be the thing that fails an admission path.
+    return "coded dimensions exceed the native v1 ceiling";
+  }
 }
 
 } // namespace wam::media

@@ -66,16 +66,32 @@ static_assert(kSoftwareVp8PoolDepth <=
                   static_cast<std::size_t>(
                       wam::macos::kNativeSurfaceBudgetMaximumSurfaces),
               "the pool depth must fit the process-wide surface budget");
-// NV12 is 1.5 bytes per pixel. A full pool at the renderer's 1080p working
-// point must fit the process-wide byte budget with real headroom, because it
-// is charged to the application, not to a decoder service.
-static_assert(kSoftwareVp8PoolDepth * (1920ULL * 1080ULL * 3ULL / 2ULL) <
-                  wam::macos::kNativeSurfaceBudgetMaximumBytes,
-              "a full 1080p VP8 pool must fit the process-wide byte budget");
+// NV12 is 1.5 bytes per pixel. A full pool at the WORST CASE THE ENVELOPE
+// ADMITS -- not at a working point that happens to be smaller than it -- must
+// fit the process-wide byte budget, because it is charged to the application,
+// not to a decoder service. Stated against the live ceiling: the previous form
+// hard-coded 1920x1080 and would have kept passing, while proving nothing,
+// the moment the ceiling moved.
+static_assert(
+    kSoftwareVp8PoolDepth *
+            (wam::media::MediaSourceLimits::kHardMaximumCodedPixels * 3ULL /
+                 2ULL +
+             wam::macos::kNativeSurfaceBudgetSurfaceAlignmentSlackBytes) <
+        wam::macos::kNativeSurfaceBudgetMaximumBytes,
+    "a full VP8 pool at the v1 coded ceiling must fit the process-wide byte "
+    "budget");
+// 6 * (9,502,720 * 1.5) = 85,524,480 B of payload at the ceiling; the two
+// resolutions that actually matter are restated so a depth change or a ceiling
+// change has to restate them too.
+static_assert(kSoftwareVp8PoolDepth *
+                      (wam::media::MediaSourceLimits::kHardMaximumCodedPixels *
+                       3ULL / 2ULL) ==
+                  85'524'480ULL,
+              "state the pool's ceiling footprint in bytes so a depth or "
+              "ceiling change has to restate it");
 static_assert(kSoftwareVp8PoolDepth * (1920ULL * 1080ULL * 3ULL / 2ULL) ==
-                  18662400ULL,
-              "state the pool's 1080p footprint in bytes so a depth change "
-              "has to restate it");
+                  18'662'400ULL,
+              "and its 1080p footprint, which is what most content costs");
 static_assert(kWamVideoCodecTypeVp8 == static_cast<CMVideoCodecType>('vp08'),
               "the VP8 carriage fourcc is the ISO binding's vp08");
 

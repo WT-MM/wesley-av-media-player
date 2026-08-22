@@ -501,10 +501,21 @@ struct MediaSourceLimits {
   static constexpr std::size_t kHardMaximumDecodedAudioBytes{
       4096U * 8U * sizeof(float)};
   static constexpr std::size_t kHardMaximumTrackTextBytes{1024};
-  static constexpr std::uint32_t kHardMaximumCodedWidth{1920};
-  static constexpr std::uint32_t kHardMaximumCodedHeight{1080};
+  // Revised 2026-08-21 from 1920x1080 / 2,073,600 px under SESSION_HANDOFF
+  // amendment 3. This is the only value revision the freeze has taken; every
+  // prior amendment was append-only. 4096x2320 is the 4K-class envelope: it
+  // covers DCI 4K (4096x2160), UHD (3840x2160), and the taller-than-UHD
+  // desktop capture geometries screen recorders produce (the motivating file
+  // is 3418x1843), while 9,502,720 px is exactly 4096*2320 rather than an
+  // independently chosen number. Every byte budget derived from this ceiling
+  // restates its own arithmetic where it lives:
+  //   native_surface_budget.hpp   process-wide decoded-surface byte budget
+  //   native_video_consumer.hpp   the route's worst-case lease bytes
+  //   software_vp8_decoder.hpp    the VP8 pool's footprint
+  static constexpr std::uint32_t kHardMaximumCodedWidth{4096};
+  static constexpr std::uint32_t kHardMaximumCodedHeight{2320};
   static constexpr std::uint64_t kHardMaximumCodedPixels{
-      1920ULL * 1080ULL};
+      4096ULL * 2320ULL};
   static constexpr std::uint32_t kHardMaximumAudioChannels{8};
   static constexpr double kHardMaximumAudioSampleRate{384'000.0};
   static constexpr double kHardMaximumVideoSeekPrerollSeconds{12.0};
@@ -521,7 +532,7 @@ struct MediaSourceLimits {
   std::size_t maximumDecodedAudioBytes{kHardMaximumDecodedAudioBytes};
   std::size_t maximumTrackTextBytes{kHardMaximumTrackTextBytes};
   // Callers may tighten these backend admission limits, but validation never
-  // expands the current v1 hard ceilings of 1920x1080, eight channels, and
+  // expands the current v1 hard ceilings of 4096x2320, eight channels, and
   // 384 kHz.
   std::uint32_t maximumCodedWidth{kHardMaximumCodedWidth};
   std::uint32_t maximumCodedHeight{kHardMaximumCodedHeight};

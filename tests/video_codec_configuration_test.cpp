@@ -159,6 +159,10 @@ struct H264SpsSpec {
   std::uint32_t height{16};
   std::uint32_t reorderFrames{2};
   std::uint8_t profile{66};
+  // AVCLevelIndication, restated in both the SPS and the avcC (the parser
+  // cross-checks them). Level 4.0 caps MaxDpbMbs at 32,768, which is under one
+  // frame at UHD, so a case above 1080p has to state a level that admits it.
+  std::uint8_t level{40};
   std::uint32_t chromaFormat{1};
   std::uint32_t lumaDepthMinusEight{0};
   std::uint32_t chromaDepthMinusEight{0};
@@ -174,7 +178,7 @@ struct H264SpsSpec {
   BitWriter bits;
   bits.bits(spec.profile, 8U);
   bits.bits(0U, 8U);  // constraint flags
-  bits.bits(40U, 8U); // level 4.0
+  bits.bits(spec.level, 8U);
   bits.unsignedExpGolomb(spec.id);
   if (spec.profile == 100U) {
     bits.unsignedExpGolomb(spec.chromaFormat);
@@ -249,7 +253,7 @@ struct H264SpsSpec {
 makeAvcC(std::span<const H264SpsSpec> specifications, bool includePps = true) {
   std::vector<std::uint8_t> result{
       1U,    specifications.front().profile,
-      0U,    40U,
+      0U,    specifications.front().level,
       0xFFU, static_cast<std::uint8_t>(0xE0U | specifications.size())};
   for (const H264SpsSpec &spec : specifications) {
     const auto sps = makeH264Sps(spec);
@@ -623,9 +627,11 @@ void removeLastByteFromAvcPps(std::vector<std::uint8_t> &record) {
 
 void testApiAndHardBounds() {
   static_assert(kMaximumVideoCodecConfigurationBytes == 256U * 1024U);
-  static_assert(kMaximumVideoCodecWidth == 1920U);
-  static_assert(kMaximumVideoCodecHeight == 1080U);
-  static_assert(kMaximumVideoCodecPixels == 1920ULL * 1080ULL);
+  // The 4K-class v1 envelope (revised 2026-08-21 from 1920x1080/2,073,600).
+  static_assert(kMaximumVideoCodecWidth == 4096U);
+  static_assert(kMaximumVideoCodecHeight == 2320U);
+  static_assert(kMaximumVideoCodecPixels == 4096ULL * 2320ULL);
+  static_assert(kMaximumVideoCodecPixels == 9'502'720ULL);
   static_assert(kMaximumVideoCodecReorderFrames == 16U);
   static_assert(noexcept(inspectVideoCodecConfiguration(
       MediaCodec::H264, MediaCodecConfigurationKind::AvcC, {})));
@@ -815,10 +821,16 @@ void testH264Rejections() {
               VideoCodecConfigurationError::UnsupportedBitDepth,
               "H.264 remains restricted to its current 8-bit contract");
 
-  const std::array oversized{H264SpsSpec{.width = 1936U, .height = 1080U}};
+  const std::array uhd{
+      H264SpsSpec{.width = 3840U, .height = 2160U, .level = 51U}};
+  expect(inspectAvc(makeAvcC(uhd)).admitted(),
+         "H.264 UHD is inside the 4096x2320 v1 envelope");
+
+  const std::array oversized{
+      H264SpsSpec{.width = 7680U, .height = 4320U, .level = 62U}};
   expectError(inspectAvc(makeAvcC(oversized)),
               VideoCodecConfigurationError::DimensionLimitExceeded,
-              "H.264 dimensions remain capped at 1920x1080");
+              "H.264 dimensions remain capped at 4096x2320");
 }
 
 void testCompactHevcMainAndMain10() {
@@ -1018,10 +1030,14 @@ void testHevcRejections() {
               VideoCodecConfigurationError::UnsupportedColorDescription,
               "explicit HEVC BT.2020/PQ color description is rejected");
 
-  const std::array oversized{HevcSpsSpec{.width = 1921U, .height = 1080U}};
+  const std::array uhdHevc{HevcSpsSpec{.width = 3840U, .height = 2160U}};
+  expect(inspectHevc(makeHvcC(uhdHevc)).admitted(),
+         "HEVC UHD is inside the 4096x2320 v1 envelope");
+
+  const std::array oversized{HevcSpsSpec{.width = 4097U, .height = 2160U}};
   expectError(inspectHevc(makeHvcC(oversized)),
               VideoCodecConfigurationError::DimensionLimitExceeded,
-              "HEVC dimensions remain capped at 1920x1080");
+              "HEVC dimensions remain capped at 4096x2320");
 
   const std::array wrongChroma{HevcSpsSpec{.chromaFormat = 2U}};
   expectError(inspectHevc(makeHvcC(wrongChroma)),
@@ -1397,12 +1413,18 @@ void testAv1() {
               VideoCodecConfigurationError::MissingParameterSet,
               "av1C without a sequence header OBU proves nothing");
 
+  Av1cSpec uhdAv1;
+  uhdAv1.sequence.width = 3840U;
+  uhdAv1.sequence.height = 2160U;
+  expect(inspectAv1(makeAv1C(uhdAv1)).admitted(),
+         "AV1 UHD is inside the 4096x2320 v1 envelope");
+
   Av1cSpec oversized;
-  oversized.sequence.width = 3840U;
-  oversized.sequence.height = 2160U;
+  oversized.sequence.width = 7680U;
+  oversized.sequence.height = 4320U;
   expectError(inspectAv1(makeAv1C(oversized)),
               VideoCodecConfigurationError::DimensionLimitExceeded,
-              "AV1 dimensions remain capped at 1920x1080");
+              "AV1 dimensions remain capped at 4096x2320");
 
   auto truncatedObu = makeAv1C({});
   truncatedObu.pop_back();
@@ -1889,12 +1911,18 @@ void testVp9() {
               VideoCodecConfigurationError::UnsupportedChromaFormat,
               "sRGB VP9 is 4:4:4 and is not admitted");
 
+  Vp9KeyframeSpec uhdVp9;
+  uhdVp9.width = 3840U;
+  uhdVp9.height = 2160U;
+  expect(inspectVp9Keyframe(makeVp9Keyframe(uhdVp9)).admitted(),
+         "VP9 UHD is inside the 4096x2320 v1 envelope");
+
   Vp9KeyframeSpec oversized;
-  oversized.width = 3840U;
-  oversized.height = 2160U;
+  oversized.width = 7680U;
+  oversized.height = 4320U;
   expectError(inspectVp9Keyframe(makeVp9Keyframe(oversized)),
               VideoCodecConfigurationError::DimensionLimitExceeded,
-              "VP9 dimensions remain capped at 1920x1080");
+              "VP9 dimensions remain capped at 4096x2320");
 
   auto truncated = makeVp9Keyframe(bt709Spec);
   truncated.resize(6U);

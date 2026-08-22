@@ -221,6 +221,8 @@ const char* matroskaDemuxErrorName(MatroskaDemuxError error) noexcept {
     return "Io";
   case MatroskaDemuxError::Cancelled:
     return "Cancelled";
+  case MatroskaDemuxError::CodedDimensionLimit:
+    return "CodedDimensionLimit";
   }
   return "Unknown";
 }
