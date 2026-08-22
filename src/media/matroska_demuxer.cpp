@@ -3178,8 +3178,35 @@ MatroskaPrepareOutcome prepareMatroska(
       // which the session reports as a hard protocol fault on a blocking
       // surface.
       result.status = MatroskaDemuxStatus::Unsupported;
-      result.error = MatroskaDemuxError::TrackSelection;
-      result.message = "requested Matroska tracks are unavailable";
+      // Name the dimension refusal specifically. Everything else that lands
+      // here is genuinely "the track you asked for is not available", but an
+      // over-ceiling video track IS available and readable -- it is the v1
+      // envelope that declines it -- and saying so with both numbers is the
+      // difference between a one-line diagnosis and a rebuild cycle. The scan
+      // is over the raw TrackEntry list rather than over anything the admission
+      // path produced, because the admission path is exactly what dropped it.
+      const TrackEntry* overCeiling = nullptr;
+      if (videoTrackPresent && video == nullptr) {
+        for (const TrackEntry& track : document.tracks) {
+          if (!track.enabled || track.type != 1 || !track.video ||
+              !track.video->pixelWidth || !track.video->pixelHeight) {
+            continue;
+          }
+          if (!codedDimensionsWithinV1Ceiling(*track.video->pixelWidth,
+                                              *track.video->pixelHeight)) {
+            overCeiling = &track;
+            break;
+          }
+        }
+      }
+      if (overCeiling != nullptr) {
+        result.error = MatroskaDemuxError::CodedDimensionLimit;
+        result.message = codedDimensionRefusalMessage(
+            *overCeiling->video->pixelWidth, *overCeiling->video->pixelHeight);
+      } else {
+        result.error = MatroskaDemuxError::TrackSelection;
+        result.message = "requested Matroska tracks are unavailable";
+      }
       return result;
     }
 
@@ -3210,9 +3237,25 @@ MatroskaPrepareOutcome prepareMatroska(
       if (!makeVideoDescriptor(*state->reader, *video, state->limits, *duration,
                                document.clusters, state->constraints,
                                cancellation, &videoDescriptor, &videoRuntime)) {
-        result.error = MatroskaDemuxError::CodecConfiguration;
         result.status = MatroskaDemuxStatus::Unsupported;
-        result.message = "selected AVC/HEVC/AV1/VP9/VP8 track was not admitted";
+        // makeVideoDescriptor folds every unadmitted trait into one bool, and
+        // "not admitted" is exactly the verdict that cost a rebuild cycle to
+        // attribute. The coded-dimension case is separable without guessing --
+        // the container states PixelWidth/PixelHeight in the track header,
+        // independently of whatever the bitstream inspection concluded -- so
+        // when that is the reason, say so with both numbers.
+        if (video->video && video->video->pixelWidth &&
+            video->video->pixelHeight &&
+            !codedDimensionsWithinV1Ceiling(*video->video->pixelWidth,
+                                            *video->video->pixelHeight)) {
+          result.error = MatroskaDemuxError::CodedDimensionLimit;
+          result.message = codedDimensionRefusalMessage(
+              *video->video->pixelWidth, *video->video->pixelHeight);
+        } else {
+          result.error = MatroskaDemuxError::CodecConfiguration;
+          result.message =
+              "selected AVC/HEVC/AV1/VP9/VP8 track was not admitted";
+        }
         return result;
       }
       descriptor->selectedVideo = videoDescriptor.id;
@@ -3280,13 +3323,42 @@ MatroskaPrepareOutcome prepareMatroska(
       if (!state->video || cue.track != state->video->id) {
         continue;
       }
-      if (!cue.relativePosition || !cue.absoluteBlockOffset ||
+      // Name WHICH feature. "an unsupported feature" is a typed verdict with
+      // an untyped subject: it does not distinguish a legal file this v1
+      // index cannot use from a malformed one, and the two want opposite
+      // outcomes. A missing CueRelativePosition is the first kind --
+      // the element is OPTIONAL in Matroska and GStreamer's matroskamux
+      // simply does not write it, so the file is conforming and the honest
+      // answer is a clean Unsupported fallback rather than the hard protocol
+      // fault a Failed status renders as ("Native playback rejected an
+      // internal command and was stopped"). Everything else in this gate is a
+      // Cue shape the index genuinely cannot represent.
+      if (!cue.relativePosition) {
+        result.status = MatroskaDemuxStatus::Unsupported;
+        result.error = MatroskaDemuxError::InvalidCue;
+        result.message =
+            "selected video Cue has no CueRelativePosition, which this v1 "
+            "index requires to locate the random access Block";
+        return result;
+      }
+      if (!cue.absoluteBlockOffset ||
           (cue.blockNumber && *cue.blockNumber != 1) ||
           cue.codecStatePosition != 0 || cue.absoluteCodecStateOffset ||
           cue.cueReferencePresent ||
           *cue.relativePosition > std::numeric_limits<std::uint32_t>::max()) {
         result.error = MatroskaDemuxError::InvalidCue;
-        result.message = "selected video Cue uses an unsupported feature";
+        result.message =
+            cue.cueReferencePresent
+                ? "selected video Cue carries CueReference, which only a "
+                  "non-random-access Cue needs"
+                : ((cue.blockNumber && *cue.blockNumber != 1)
+                       ? "selected video Cue names a CueBlockNumber other "
+                         "than 1"
+                       : (cue.codecStatePosition != 0 ||
+                          cue.absoluteCodecStateOffset)
+                             ? "selected video Cue carries CueCodecState"
+                             : "selected video Cue position is outside the "
+                               "indexable range");
         return result;
       }
       const auto cluster = findCluster(state->clusters,

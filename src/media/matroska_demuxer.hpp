@@ -48,6 +48,12 @@ enum class MatroskaDemuxError : std::uint8_t {
   FileChanged,
   Io,
   Cancelled,
+  // Appended 2026-08-21. A video track whose coded dimensions are outside the
+  // v1 admission envelope. It is split out of TrackSelection because that
+  // bucket says only "the tracks you asked for are unavailable", which is the
+  // one thing a dimension refusal must not say: the track IS there, it is the
+  // envelope that refuses it, and the verdict has to carry both numbers.
+  CodedDimensionLimit,
 };
 
 // Exactly 24 bytes and therefore at most 1.5 MiB at the hard cluster cap.

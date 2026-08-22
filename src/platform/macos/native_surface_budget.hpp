@@ -1,5 +1,7 @@
 #pragma once
 
+#include "media/native_media_source.hpp"
+
 #include <CoreVideo/CoreVideo.h>
 
 #include <cstddef>
@@ -7,9 +9,86 @@
 
 namespace wam::macos {
 
+// A COUNT, not a size: how many distinct decoded IOSurfaces this process may
+// hold at one instant. Nothing about it moves with the coded ceiling -- the
+// lease ledgers in native_video_consumer.hpp are the same ledgers at any
+// resolution -- so this value is unchanged by the 4K-class revision.
 inline constexpr std::uint64_t kNativeSurfaceBudgetMaximumSurfaces = 10;
+
+// ---------------------------------------------------------------------------
+// The byte budget IS derived from the coded ceiling, and is re-derived here
+// rather than carried forward, because a surface's size is the ceiling's area
+// times the widest admitted pixel format.
+//
+// 1. Widest admitted decoded surface.
+//    NativeVideoConsumer admits Yuv420EightBit and Yuv420TenBit. Eight-bit
+//    lands as NV12 (1 byte of luma + 0.5 bytes of chroma per pixel = 1.5);
+//    ten-bit lands as P010, which doubles both planes = 3.0. Three bytes per
+//    pixel is therefore the worst case a single admitted surface can cost.
+//
+// 2. IOSurface is charged by IOSurfaceGetAllocSize, not by the naive product.
+//    Each plane's row stride is rounded up (256 B on Apple Silicon) and each
+//    plane is rounded up to a page. The worst case over the whole admitted
+//    envelope is 255 B of stride slack on every luma row and every chroma row
+//    (chroma is half height), plus one 16 KiB page rounding per plane. That
+//    bound depends only on the ceiling's HEIGHT, so it is derived from it.
+//
+// 3. The budget must cover kNativeSurfaceBudgetMaximumSurfaces of those.
+//
+// At the 4096x2320 / 9,502,720 px ceiling:
+//    payload   9,502,720 * 3                        =  28,508,160 B
+//    slack     (2320 + 1160) * 255 + 2 * 16,384     =     920,168 B
+//    surface                                        =  29,428,328 B
+//    budget    10 * 29,428,328                      = 294,283,280 B
+//    chosen    288 MiB                              = 301,989,888 B
+//
+// The same arithmetic reproduces the previous 64 MiB value at the previous
+// 1920x1080 ceiling -- 10 * (6,220,800 + 445,868) = 66,666,680 B, and 64 MiB
+// is the smallest power-of-two MiB figure that covers it -- which is the proof
+// that this is the original derivation re-evaluated and not a new rule. 288
+// MiB is likewise the smallest 32 MiB step that covers the new figure.
+//
+// This is a CEILING on concurrently charged surfaces, not an allocation and
+// not a steady-state expectation: real playback charges the leases the route
+// actually holds (see native_video_consumer.hpp), which at 8-bit 4K is nine
+// NV12 surfaces of ~13.6 MiB, about 128 MB, and typically fewer.
+// ---------------------------------------------------------------------------
+inline constexpr std::uint64_t kNativeSurfaceBudgetWorstCaseSurfacePayloadBytes =
+    media::MediaSourceLimits::kHardMaximumCodedPixels * 3ULL;
+
+inline constexpr std::uint64_t kNativeSurfaceBudgetSurfaceAlignmentSlackBytes =
+    (static_cast<std::uint64_t>(
+         media::MediaSourceLimits::kHardMaximumCodedHeight) +
+     static_cast<std::uint64_t>(
+         media::MediaSourceLimits::kHardMaximumCodedHeight) /
+         2ULL) *
+        255ULL +
+    2ULL * 16ULL * 1024ULL;
+
+inline constexpr std::uint64_t kNativeSurfaceBudgetWorstCaseSurfaceBytes =
+    kNativeSurfaceBudgetWorstCaseSurfacePayloadBytes +
+    kNativeSurfaceBudgetSurfaceAlignmentSlackBytes;
+
 inline constexpr std::uint64_t kNativeSurfaceBudgetMaximumBytes =
-    64ULL * 1024ULL * 1024ULL;
+    288ULL * 1024ULL * 1024ULL;
+
+// The budget must be able to hold a full complement of worst-case surfaces.
+// Without this the surface COUNT stays the binding constraint on paper while
+// bytes silently become the binding constraint in fact, and the route starts
+// refusing surfaces mid-playback instead of at admission.
+static_assert(kNativeSurfaceBudgetMaximumBytes >=
+                  kNativeSurfaceBudgetMaximumSurfaces *
+                      kNativeSurfaceBudgetWorstCaseSurfaceBytes,
+              "the process-wide byte budget must cover a full complement of "
+              "surfaces at the v1 coded ceiling, or the surface count stops "
+              "being the binding constraint");
+// Not grossly oversized either: a ceiling nobody can reach stops being a
+// budget. One extra worst-case surface of headroom is the whole allowance.
+static_assert(kNativeSurfaceBudgetMaximumBytes <
+                  (kNativeSurfaceBudgetMaximumSurfaces + 1ULL) *
+                      kNativeSurfaceBudgetWorstCaseSurfaceBytes,
+              "the process-wide byte budget must stay within one worst-case "
+              "surface of the complement it exists to bound");
 
 struct NativeSurfaceBudgetStats {
   std::uint64_t currentSurfaces{0};

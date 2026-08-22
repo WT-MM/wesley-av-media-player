@@ -224,6 +224,21 @@ enum class NativeMediaDispatcherFailure : std::uint8_t {
   Consumer,
   Seek,
   Flush,
+  // Appended 2026-08-21, APPEND-ONLY: every ordinal above is preserved.
+  //
+  // This is the one value that does NOT accompany
+  // NativeMediaDispatcherState::Failed. A source that declines a file -- an
+  // unsupported codec, a track outside the admission envelope -- is an
+  // envelope verdict, and turning it into a Failed state would replace a clean
+  // "using compatibility playback" fallback with a hard protocol fault on a
+  // blocking surface. But the verdict still has to have a NAME: before this
+  // existed, every such refusal reached a stderr capture as
+  //   class=None error="the session failed while the dispatcher reported no
+  //   failure"
+  // which cost two rebuild-and-rerun cycles to attribute once already
+  // (scratchpad/wild_webm_report.md section 5). The state stays Unsupported;
+  // only the diagnostic channel is populated.
+  UnsupportedSource,
 };
 
 // Stable diagnostic name for a terminal dispatcher failure. Every terminal

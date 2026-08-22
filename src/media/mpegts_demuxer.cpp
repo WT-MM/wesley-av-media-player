@@ -2154,7 +2154,10 @@ MpegTsPrepareOutcome prepareMpegTs(std::shared_ptr<SeekableByteReader> reader,
           pixels > state->limits.maximumCodedPixels) {
         result.status = MpegTsDemuxStatus::Unsupported;
         result.error = MpegTsDemuxError::CodecConfiguration;
-        result.message = "mpeg-2 geometry exceeds the native admission ceiling";
+        // Both numbers, not just the word "exceeds": the cap is a constant the
+        // reader of a stderr capture does not have in front of them.
+        result.message = codedDimensionRefusalMessage(sequence->width,
+                                                      sequence->height);
         return result;
       }
       MediaTrackDescriptor track{};

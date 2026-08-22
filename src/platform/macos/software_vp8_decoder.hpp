@@ -83,13 +83,31 @@ inline constexpr std::size_t kSoftwareVp8RendererRetainedSurfaces = 1;
 inline constexpr std::size_t kSoftwareVp8PoolDepth = 6;
 
 // MEMORY, stated because these buffers are app-attributable and the surface
-// budget is a contract rather than a knob. NV12 is 1.5 bytes per pixel, so one
-// 1920x1080 surface is 3,110,400 B and a full pool is 18.7 MB. That is the
-// entire decoded-surface cost of a VP8 generation -- VideoToolbox holds
-// nothing at all while VP8 plays, so this route's share of the process-wide
-// budget is not shared with anything. Against
-// kNativeSurfaceBudgetMaximumBytes (64 MiB) it leaves 45 MB, and against
-// kNativeSurfaceBudgetMaximumSurfaces (10) the depth leaves four surfaces.
+// budget is a contract rather than a knob. The DEPTH above is a count and does
+// not move with the coded ceiling; the BYTES behind it do, so they are
+// re-derived here whenever the ceiling changes rather than carried forward.
+//
+// NV12 is 1.5 bytes per pixel (VP8 is 8-bit only: RFC 6386 defines no
+// high-bit-depth profile, so this route never allocates P010). Sizes are
+// stated at the v1 coded ceiling AND at the resolutions that actually occur,
+// because the pool allocates for the stream it is configured with, not for the
+// ceiling:
+//
+//   1920x1080  (2,073,600 px)   surface  3,110,400 B   pool (x6)   18.7 MB
+//   3418x1843  (6,299,374 px)   surface  9,449,061 B   pool (x6)   56.7 MB
+//   3840x2160  (8,294,400 px)   surface 12,441,600 B   pool (x6)   74.6 MB
+//   4096x2320  (9,502,720 px)   surface 14,254,080 B   pool (x6)   85.5 MB
+//
+// The ceiling row plus IOSurface stride/page alignment is what
+// native_video_consumer.hpp asserts against kNativeSurfaceBudgetMaximumBytes:
+// 6 * (14,254,080 + 920,168) = 91,045,488 B against 288 MiB, leaving 210.9 MB.
+// Against kNativeSurfaceBudgetMaximumSurfaces (10) the depth still leaves four
+// surfaces -- that half of the accounting is a count and did not move.
+//
+// That is the entire decoded-surface cost of a VP8 generation -- VideoToolbox
+// holds nothing at all while VP8 plays, so this route's share of the
+// process-wide budget is not shared with anything.
+//
 // Only the five WAM-held leases ever take a NativeSurfaceBudget token; the
 // renderer's one is a CoreVideo reference this process no longer leases, which
 // is exactly why it has to be provisioned here instead of accounted there.

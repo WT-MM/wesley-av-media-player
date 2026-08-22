@@ -44,6 +44,8 @@ const char* nativeMediaDispatcherFailureName(
     return "Seek";
   case NativeMediaDispatcherFailure::Flush:
     return "Flush";
+  case NativeMediaDispatcherFailure::UnsupportedSource:
+    return "UnsupportedSource";
   }
   return "Unknown";
 }
@@ -313,6 +315,15 @@ NativeMediaDispatcherOpenOutcome NativeMediaDispatcher::openLocalFile(
   switch (opened.status) {
   case MediaSourceOpenStatus::Unsupported:
     operation_generation_.store(0, std::memory_order_release);
+    // The source's own text is the ONLY description of why the file was
+    // declined, and it used to be dropped on the floor here: the session's
+    // stderr line reads failureMessage(), found it empty, and printed "the
+    // session failed while the dispatcher reported no failure" -- an
+    // anonymous verdict for a refusal that the source had already named.
+    // Carry the text, and name the class, without moving the state: an
+    // envelope verdict must still fall back cleanly (see UnsupportedSource).
+    failure_message_ = opened.error;
+    stats_.failure = NativeMediaDispatcherFailure::UnsupportedSource;
     stats_.state = NativeMediaDispatcherState::Unsupported;
     stats_.lastWait = NativeMediaDispatcherWait::Terminal;
     result.status = NativeMediaDispatcherOpenStatus::Unsupported;

@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <string>
 
 namespace wam::media {
 
@@ -258,5 +259,31 @@ inline constexpr std::size_t kMpeg4VisualEsdsOverheadBytes{41};
                                         std::size_t *written,
                                         VideoCodecConfigurationLimits limits =
                                             {}) noexcept;
+
+// ---------------------------------------------------------------------------
+// Named refusal for content outside the v1 coded-dimension envelope
+// ---------------------------------------------------------------------------
+//
+// Every backend drops an over-ceiling video track the same silent way: the
+// admission predicate returns false, the track never reaches the descriptor,
+// and the file surfaces as "did not select every required track" or, worse,
+// as an empty error field. That refusal cost two rebuild-and-rerun cycles to
+// identify once already (scratchpad/wild_webm_report.md section 5), because
+// nothing in the verdict named the dimension, the cap, or even the subject.
+//
+// This is the one place the refusal text is built, so every backend says the
+// same sentence and the cap in it is always the live constant:
+//
+//   coded dimensions 7680x4320 (33,177,600 px) exceed the native v1 ceiling of
+//   4096x2320 (9,502,720 px)
+//
+// Callers append their own typed token -- the Matroska path gets
+// " (CodedDimensionLimit)" from matroskaDemuxErrorMessage, and the backends
+// with no such wrapper append the same token literally -- so a grep for
+// CodedDimensionLimit finds every backend's refusal.
+[[nodiscard]] bool codedDimensionsWithinV1Ceiling(
+    std::uint64_t width, std::uint64_t height) noexcept;
+[[nodiscard]] std::string codedDimensionRefusalMessage(
+    std::uint64_t width, std::uint64_t height) noexcept;
 
 } // namespace wam::media

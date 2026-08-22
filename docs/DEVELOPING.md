@@ -133,6 +133,17 @@ late frames, clock rate 1.0000) for each arm.
 | Energy impact (`top` POWER) | 10.3 | 13.4 | 9.8 |
 | Memory, app-attributable | 140.6 MB | 138.5 MB | 111.2 MB |
 
+Every number above is a **1080p** measurement, and stays one. The native
+admission envelope was raised to 4096x2320 on 2026-08-21, so 4K content now
+takes the native route and carries proportionally larger decoded surfaces —
+every player pays this. Measured on the same machine with the same quiet seams,
+`footprint` on the default CALayer route, 3840x2160 HEVC against a matched
+1920x1080 HEVC encode of the same source: app footprint 65 MB vs 56 MB, and the
+IOSurface reservation 123.4 MB vs 36.5 MB virtual (9.9 MB vs 8.1 MB resident —
+the CPU never touches decoded pixels on this route). The AGX render-target pool
+is unchanged at 2.4 MB, because the layer route still issues zero render passes
+at 4K; the scene-graph route pays 226 MB of it at the same window size.
+
 On the default route the video layer is composited by WindowServer directly
 from decoder output, so WAM issues zero GPU render passes during chrome-hidden
 playback — the same property that makes QuickTime cheap — while WAM's own

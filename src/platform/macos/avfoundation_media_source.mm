@@ -1,5 +1,6 @@
 #include "avfoundation_media_source.hpp"
 
+#include "media/video_codec_configuration.hpp"
 #include "native_video_codec_capability.hpp"
 
 #import <AVFoundation/AVFoundation.h>
@@ -2870,6 +2871,26 @@ class ProductionGeneration final : public AVFoundationGeneration {
     }
     auto format =
         (__bridge CMVideoFormatDescriptionRef)formats.firstObject;
+    // Name the coded-dimension refusal before the general inspection runs.
+    // inspectVideoFormatFacts folds every unadmitted trait into one nullopt,
+    // so a 4320p file and a Dolby Vision file arrive here indistinguishable;
+    // the dimension case is the one that a user can act on and the one that a
+    // field report has to be able to state, so it is checked first and said
+    // out loud with both numbers.
+    const CMVideoDimensions coded =
+        CMVideoFormatDescriptionGetDimensions(format);
+    if (coded.width > 0 && coded.height > 0 &&
+        !media::codedDimensionsWithinV1Ceiling(
+            static_cast<std::uint64_t>(coded.width),
+            static_cast<std::uint64_t>(coded.height))) {
+      const std::string refusal =
+          media::codedDimensionRefusalMessage(
+              static_cast<std::uint64_t>(coded.width),
+              static_cast<std::uint64_t>(coded.height)) +
+          " (CodedDimensionLimit)";
+      assignError(error, refusal.c_str());
+      return std::nullopt;
+    }
     auto result = inspectVideoFormatImpl(
         format, stableTrackId(track, 1), *duration, limits, error);
     if (result && naturalTimeScale > 0) {

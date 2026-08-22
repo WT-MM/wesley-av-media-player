@@ -943,22 +943,45 @@ void checkDescriptorValidation() {
   expect(!validateMediaSourceDescriptor(exactAperture, {}, &error),
          "pixel aspect ratios must be reduced exact integers");
 
+  // Stated symbolically against the hard ceiling, not against the literal it
+  // happens to hold, so a future revision of the ceiling re-proves the rule
+  // instead of silently testing a resolution the envelope already admits.
   MediaSourceLimits looseVideoLimits;
-  looseVideoLimits.maximumCodedWidth = 4096;
-  looseVideoLimits.maximumCodedHeight = 4096;
-  looseVideoLimits.maximumCodedPixels = 4096ULL * 4096ULL;
+  looseVideoLimits.maximumCodedWidth = 16384;
+  looseVideoLimits.maximumCodedHeight = 16384;
+  looseVideoLimits.maximumCodedPixels = 16384ULL * 16384ULL;
   MediaSourceDescriptor oversizedVideo = descriptor();
-  oversizedVideo.tracks[0].video->codedWidth = 1921;
-  oversizedVideo.tracks[0].video->displayWidth = 1921;
+  oversizedVideo.tracks[0].video->codedWidth =
+      MediaSourceLimits::kHardMaximumCodedWidth + 1;
+  oversizedVideo.tracks[0].video->displayWidth =
+      MediaSourceLimits::kHardMaximumCodedWidth + 1;
   expect(!validateMediaSourceDescriptor(oversizedVideo, looseVideoLimits,
                                         &error),
-         "v1 coded width remains capped at 1920 even if options are loosened");
+         "v1 coded width remains capped at the hard ceiling even if options "
+         "are loosened");
   oversizedVideo = descriptor();
-  oversizedVideo.tracks[0].video->codedHeight = 1081;
-  oversizedVideo.tracks[0].video->displayHeight = 1081;
+  oversizedVideo.tracks[0].video->codedHeight =
+      MediaSourceLimits::kHardMaximumCodedHeight + 1;
+  oversizedVideo.tracks[0].video->displayHeight =
+      MediaSourceLimits::kHardMaximumCodedHeight + 1;
   expect(!validateMediaSourceDescriptor(oversizedVideo, looseVideoLimits,
                                         &error),
-         "v1 coded height and pixel count remain capped at 1080p");
+         "v1 coded height and pixel count remain capped at the hard ceiling");
+  // The pixel cap is not implied by the two dimension caps: 4096x2320 admits
+  // 4096 wide and 2320 tall, but not both at once with any other pair whose
+  // product is larger. Prove it separately.
+  oversizedVideo = descriptor();
+  oversizedVideo.tracks[0].video->codedWidth =
+      MediaSourceLimits::kHardMaximumCodedWidth;
+  oversizedVideo.tracks[0].video->displayWidth =
+      MediaSourceLimits::kHardMaximumCodedWidth;
+  oversizedVideo.tracks[0].video->codedHeight =
+      MediaSourceLimits::kHardMaximumCodedHeight;
+  oversizedVideo.tracks[0].video->displayHeight =
+      MediaSourceLimits::kHardMaximumCodedHeight;
+  expect(validateMediaSourceDescriptor(oversizedVideo, looseVideoLimits,
+                                       &error),
+         "the exact ceiling geometry is admitted");
 
   MediaSourceDescriptor preciseAudioRate = descriptor();
   preciseAudioRate.tracks[1].audio->sampleRate = 48'000.25;
