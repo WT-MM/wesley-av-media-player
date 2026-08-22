@@ -2280,6 +2280,24 @@ void testDocumentTypeAdmission() {
       // Neither length.
       {"web", false, EbmlDocumentType::Matroska},
       {"", false, EbmlDocumentType::Matroska},
+      // RFC 8794 s7.5 zero padding. GStreamer's matroskamux writes the NUL
+      // terminator inside the element size, so "webm\0" is what every
+      // GStreamer-muxed WebM states. The padding is not part of the value.
+      {std::string_view{"webm\0", 5}, true, EbmlDocumentType::Webm},
+      {std::string_view{"matroska\0", 9}, true, EbmlDocumentType::Matroska},
+      // Padding is only padding at the END. An interior NUL leaves a value
+      // that is not either literal and stays rejected.
+      {std::string_view{"web\0m", 5}, false, EbmlDocumentType::Matroska},
+      {std::string_view{"\0webm", 5}, false, EbmlDocumentType::Matroska},
+      // Trimming must not rescue a name that is wrong before the padding.
+      {std::string_view{"webn\0", 5}, false, EbmlDocumentType::Matroska},
+      {std::string_view{"webmx\0", 6}, false, EbmlDocumentType::Matroska},
+      // All padding is not a value.
+      {std::string_view{"\0", 1}, false, EbmlDocumentType::Matroska},
+      {std::string_view{"\0\0\0\0", 4}, false, EbmlDocumentType::Matroska},
+      // Longer than the longest literal plus its allowance, refused on length.
+      {std::string_view{"matroska\0\0\0", 11}, false,
+       EbmlDocumentType::Matroska},
   };
   for (const Case& testCase : cases) {
     Bytes bytes = ebmlHeader(1, 1, 8, 4, 4, testCase.docType);
@@ -2320,6 +2338,65 @@ void testDocumentTypeAdmission() {
   }
 }
 
+// RFC 8794 s7.5 lets a String Element be zero-padded at the end, and the
+// padding is not part of the value. GStreamer's matroskamux writes the NUL
+// terminator inside every string element's size, so a CodecID arrives as
+// "V_VP8\0". Before this was handled, readAscii refused the NUL as a control
+// byte and every GStreamer-muxed Matroska/WebM failed at its Tracks element.
+//
+// The padding is stripped at the one ASCII decode site, so the value the
+// visitor sees is the bare literal and no CodecID comparison downstream needs
+// a padded variant.
+void testAsciiNulPadding() {
+  const auto codecIdOf = [](std::string_view raw) -> std::optional<std::string> {
+    Bytes trackPayload;
+    append(trackPayload, uintElement(0xD7, 1));
+    append(trackPayload, uintElement(0x73C5, 99));
+    append(trackPayload, uintElement(0x83, 1));
+    append(trackPayload, asciiElement(0x86, raw));
+    Bytes videoPayload;
+    append(videoPayload, uintElement(0xB0, 64));
+    append(videoPayload, uintElement(0xBA, 36));
+    append(videoPayload, uintElement(0x9A, 2));
+    append(trackPayload, element(0xE0, videoPayload));
+
+    Bytes segmentPayload;
+    append(segmentPayload, info());
+    append(segmentPayload,
+           element(0x1654AE6B, element(0xAE, trackPayload)));
+    Bytes bytes = ebmlHeader(1, 1, 8, 4, 4, "webm");
+    append(bytes, element(0x18538067, segmentPayload));
+
+    MemoryReader reader(std::move(bytes));
+    RecordingVisitor visitor;
+    if (parseDocument(reader, visitor).error != ParseError::None) {
+      return std::nullopt;
+    }
+    return std::string(visitor.track.codecId.view().begin(),
+                       visitor.track.codecId.view().end());
+  };
+
+  expect(codecIdOf("V_VP8") == std::optional<std::string>{"V_VP8"},
+         "an unpadded CodecID still reads as itself");
+  expect(codecIdOf(std::string_view{"V_VP8\0", 6}) ==
+             std::optional<std::string>{"V_VP8"},
+         "a NUL-terminated CodecID reads as the bare literal");
+  expect(codecIdOf(std::string_view{"V_VP8\0\0\0", 8}) ==
+             std::optional<std::string>{"V_VP8"},
+         "several NUL pad bytes are all stripped");
+  expect(codecIdOf(std::string_view{"A_OPUS\0", 7}) ==
+             std::optional<std::string>{"A_OPUS"},
+         "the stripping is not specific to one CodecID");
+  // Only trailing NULs are padding: an interior control byte is still a
+  // malformed string, and a value made entirely of padding is still no value.
+  expect(codecIdOf(std::string_view{"V_\0VP8", 6}) == std::nullopt,
+         "an interior NUL is still refused");
+  expect(codecIdOf(std::string_view{"\0", 1}) == std::nullopt,
+         "a CodecID that is only padding is refused");
+  expect(codecIdOf(std::string_view{"V_VP8\x01", 6}) == std::nullopt,
+         "a non-NUL control byte is still refused");
+}
+
 }  // namespace
 
 int main() {
@@ -2340,6 +2417,7 @@ int main() {
   testCancellationAndVisitorControl();
   testChapterAdmissionFacts();
   testDocumentTypeAdmission();
+  testAsciiNulPadding();
   testParseFile();
   if (failures != 0) {
     std::cerr << failures << " Matroska EBML test(s) failed\n";

@@ -3471,6 +3471,91 @@ void testCursorOwnershipAndMoves() {
 }
 
 // ---------------------------------------------------------------------------
+// Duration is a FLOAT element and a muxer may state a fractional tick count.
+// ---------------------------------------------------------------------------
+
+// GStreamer's matroskamux does exactly this: the wild screencast that exposed
+// it carried Duration 491295.376732 against TimestampScale 1 ms. A fractional
+// tick count used to fall out of the exact integral-tick path into the seconds
+// conversion, which fails closed -- 491.295376732 s has no exact
+// int32-timescale rational -- so the whole container was refused with
+// InvalidTimeline and the file fell back to mpv.
+//
+// The fraction is resolved at the timeline's own resolution: one nanosecond.
+void testFractionalDuration() {
+  struct Case {
+    double ticks;
+    MediaTime expected;
+    const char* what;
+  };
+  static const Case cases[] = {
+      // The exact fraction the wild GStreamer file carried, scaled to the
+      // fixture's own duration so the Cues stay inside the timeline.
+      {1500.376732, MediaTime{375'094'183, 250'000'000},
+       "a fractional tick count becomes an exact nanosecond rational"},
+      // A half tick is 500 microseconds at this scale and stays exact.
+      {1500.5, MediaTime{3'001, 2'000},
+       "a half-tick Duration reduces to its exact rational"},
+      // One nanosecond past a whole tick: the finest step the timeline has.
+      {1500.000001, MediaTime{1'500'000'001, 1'000'000'000},
+       "a one-nanosecond fraction survives the conversion"},
+      // Whole tick counts must keep producing byte-identical results.
+      {1500.0, MediaTime{3, 2},
+       "a whole tick count is unchanged by the fractional path"},
+  };
+  for (const Case& testCase : cases) {
+    FixtureSpec spec;
+    spec.durationTicks = testCase.ticks;
+    const Fixture fixture = buildFixture(spec);
+    auto reader = std::make_shared<ProbeReader>(fixture.bytes);
+    const auto outcome = prepareMatroska(reader, kFixturePath, {});
+    if (outcome.asset == nullptr) {
+      expect(false, testCase.what);
+      std::cerr << "  (" << outcome.message << ")\n";
+      continue;
+    }
+    const auto descriptor = outcome.asset->descriptor();
+    expect(descriptor != nullptr && descriptor->duration == testCase.expected,
+           testCase.what);
+  }
+
+  // Sub-nanosecond precision is below what MediaTime can represent, so it
+  // rounds to the nearest nanosecond rather than failing the container. The
+  // rounding is stated, not accidental: a duration is admitted to the exact
+  // limit of the timeline's resolution and no further.
+  {
+    FixtureSpec spec;
+    spec.durationTicks = 1500.0000000004;  // 0.4 ns past a whole tick.
+    const Fixture fixture = buildFixture(spec);
+    auto reader = std::make_shared<ProbeReader>(fixture.bytes);
+    const auto outcome = prepareMatroska(reader, kFixturePath, {});
+    const auto descriptor =
+        outcome.asset == nullptr ? nullptr : outcome.asset->descriptor();
+    expect(descriptor != nullptr && descriptor->duration == MediaTime{3, 2},
+           "a sub-nanosecond fraction rounds to the timeline's resolution");
+  }
+
+  // A negative Duration is still no Duration at all: widening the exact path
+  // to fractions must not widen the sign gate with it.
+  //
+  // NaN and infinity are deliberately NOT driven through buildFixture: the
+  // fixture's own block-emission loop terminates on
+  // `tick >= spec.durationTicks`, which is never true for either, so the
+  // builder -- not the parser -- would spin. `trackDuration`'s isfinite gate
+  // is ahead of everything this test reaches and is unchanged by this work.
+  for (const double negative : {-1.0, -0.5}) {
+    FixtureSpec spec;
+    spec.durationTicks = negative;
+    const Fixture fixture = buildFixture(spec);
+    auto reader = std::make_shared<ProbeReader>(fixture.bytes);
+    const auto outcome = prepareMatroska(reader, kFixturePath, {});
+    expect(outcome.asset == nullptr &&
+               outcome.status != MatroskaDemuxStatus::Ready,
+           "a negative Duration is still refused");
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Local-file preparation retains one descriptor for its whole lifetime.
 // ---------------------------------------------------------------------------
 
@@ -3561,6 +3646,7 @@ int main() {
   testMutationAndCancellation();
   testMalformedDocuments();
   testStructuralByteCeilings();
+  testFractionalDuration();
   testLocalFilePreparation();
   if (failures != 0) {
     std::cerr << failures << " Matroska demuxer test(s) failed\n";
