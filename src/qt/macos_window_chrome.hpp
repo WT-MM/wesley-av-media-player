@@ -91,9 +91,15 @@ void installFullSizeContentView(QWindow *window);
 [[nodiscard]] bool canRevealInFinder(const QUrl &source);
 
 // Opens a Finder window on `source`'s parent folder with `source` itself
-// selected, the way "Show in Finder" does everywhere else on macOS. Activates
-// Finder -- that is inherent to the gesture, not incidental. Returns false,
-// having done nothing at all, for anything canRevealInFinder rejects.
+// selected AND scrolled into view, the way "Show in Finder" does everywhere
+// else on macOS. Activates Finder -- that is inherent to the gesture, not
+// incidental. Returns false, having done nothing at all, for anything
+// canRevealInFinder rejects.
+//
+// Asynchronous in its tail: the call returns as soon as the reveal has been
+// handed to Finder, but a second, guarded pass runs ~250ms later on the main
+// queue. That pass is not belt-and-braces, it is the fix for a real defect --
+// see the comment on the implementation.
 bool revealInFinder(const QUrl &source);
 
 // Fades the three traffic-light window buttons in (revealed) or out, mirror-

@@ -423,6 +423,24 @@ bool canRevealInFinder(const QUrl &source) {
   return QFileInfo::exists(path);
 }
 
+namespace {
+
+// How long to let Finder finish activating and finish ordering the window
+// forward before the reveal is re-asserted. Long enough that the window is
+// settled (measured: the activation and window-ordering round trip is well
+// under 150ms on this machine), short enough that it is still the same
+// gesture from the user's point of view and that they cannot realistically
+// have moved on to a third app in between.
+constexpr double kRevealSettleSeconds = 0.25;
+
+NSRunningApplication *finderApplication() {
+  NSArray<NSRunningApplication *> *finders = [NSRunningApplication
+      runningApplicationsWithBundleIdentifier:@"com.apple.finder"];
+  return finders.count > 0 ? finders.firstObject : nil;
+}
+
+} // namespace
+
 bool revealInFinder(const QUrl &source) {
   if (!canRevealInFinder(source))
     return false;
@@ -434,7 +452,47 @@ bool revealInFinder(const QUrl &source) {
   // is exactly the system "Show in Finder" behavior and is why this is not
   // done with -openURL: on the parent folder -- that would open the folder
   // without selecting anything.
-  [NSWorkspace.sharedWorkspace activateFileViewerSelectingURLs:@[ url ]];
+  NSArray<NSURL *> *const urls = @[ url ];
+  [NSWorkspace.sharedWorkspace activateFileViewerSelectingURLs:urls];
+
+  // Second pass, and the whole point of it.
+  //
+  // When this call is what *activates* Finder and Finder answers it by
+  // REUSING a window it already had on that folder, the selection lands but
+  // the scroll-to-visible does not. Observed on the real case this feature
+  // exists for: ~/Downloads, five windows already open on it, grouped icon
+  // view. Finder came frontmost, `selection` read back as the right file, and
+  // the file was not drawn anywhere in the window -- it sat past the end of a
+  // truncated group row that never scrolled. Selected, and invisible, which
+  // is indistinguishable from not selected at all.
+  //
+  // Issuing the identical reveal a second time, once Finder is up and the
+  // window is already forward, is what performs the scroll. So do exactly
+  // that. It is idempotent in every other case: for a window Finder had to
+  // open, and for one that was already showing the item, the second pass
+  // re-selects the same file in the same window and changes nothing.
+  //
+  // Guarded, because 250ms is not zero: if the user has already moved on to
+  // some third application, taking activation back off them would be worse
+  // than the defect. Frontmost being Finder is the expected case; frontmost
+  // still being us means the first pass has not landed yet, and the second
+  // pass (which activates Finder itself) is then the one that completes the
+  // gesture.
+  dispatch_after(
+      dispatch_time(DISPATCH_TIME_NOW,
+                    static_cast<int64_t>(kRevealSettleSeconds * NSEC_PER_SEC)),
+      dispatch_get_main_queue(), ^{
+        NSRunningApplication *const finder = finderApplication();
+        NSRunningApplication *const front =
+            NSWorkspace.sharedWorkspace.frontmostApplication;
+        const bool ours =
+            [front isEqual:NSRunningApplication.currentApplication];
+        if (!ours && (finder == nil || ![front isEqual:finder]))
+          return;
+        if (finder != nil && !finder.active)
+          [finder activateWithOptions:0];
+        [NSWorkspace.sharedWorkspace activateFileViewerSelectingURLs:urls];
+      });
   return true;
 }
 
