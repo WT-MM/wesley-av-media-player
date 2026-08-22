@@ -185,6 +185,19 @@ public:
   Q_INVOKABLE void generateCaptionsTo(const QUrl &destination);
   Q_INVOKABLE void cancelCaptioning();
 
+  // Announces that this controller's window is being torn down, so nothing
+  // that happens from here on is worth telling a user about.
+  //
+  // Closing a window destroys its QML scene, and destroying the scene destroys
+  // the video item, which NativePlaybackOwner correctly treats as an emergency
+  // surface loss and reports as "the native video surface was destroyed during
+  // playback". That report is right in every other circumstance and useless in
+  // this one: it names, as a failure, the deliberate act the user just
+  // performed, on a window that is about to stop existing. After this call
+  // setLastError is a no-op -- the teardown itself is unchanged, only the
+  // announcement of it stops.
+  void beginTeardown() noexcept { tearing_down_ = true; }
+
   // Job/caption adapters can drive these while remaining independent of QML.
   void setExporting(bool exporting);
   void setCaptioning(bool captioning);
@@ -636,6 +649,16 @@ private:
   bool export_completion_pending_ = false;
   bool caption_completion_pending_ = false;
   bool observed_current_path_ = false;
+  // See beginTeardown(): silences user-facing errors once this controller's
+  // window is on its way out.
+  bool tearing_down_ = false;
+#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+  // Whether THIS controller currently contributes a hold to the process-wide
+  // macOS playback activity assertion. The assertion is reference counted over
+  // every window's hold, so each window has to know whether it is already
+  // holding before it adds or drops one.
+  bool macos_activity_held_ = false;
+#endif
   std::uint64_t request_serial_ = 0;
   std::uint64_t pending_request_serial_ = 0;
   std::uint64_t next_open_attempt_id_ = 0;

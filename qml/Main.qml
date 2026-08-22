@@ -13,8 +13,11 @@ ApplicationWindow {
     property int appearance: 0 // Light by default; 1 Dark; 2 Follow system.
     readonly property bool darkAppearance: appearance === 1 || (appearance === 2 && systemPalette.window.hslLightness < 0.5)
     property bool quickEditOpen: false
+    // How the next media dialog result is delivered: into this window, or
+    // through the app-level opener that may create a new one. See openMedia()
+    // and openMediaInNewWindow() below.
+    property bool mediaDialogOpensNewWindow: false
     property bool quickEditInstantiated: false
-    property bool preferencesInstantiated: false
     readonly property real quickEditWidth: Math.min(340, root.width - 24)
     readonly property real quickEditRightMargin: Math.max(16, SafeArea.margins.right + 16)
     property bool controlsRevealed: true
@@ -240,7 +243,22 @@ ApplicationWindow {
         }
     }
 
+    // The empty player's own click, and the drag-and-drop-equivalent gesture:
+    // whatever is chosen loads into THIS window.
     function openMedia() {
+        mediaDialogOpensNewWindow = false;
+        if (controller.openFileDialog)
+            controller.openFileDialog();
+    }
+
+    // File > Open and Cmd-O, routed here by WindowManager::openMedia(): the
+    // chosen file goes back through appHost.openUrl(), which claims an empty
+    // window if there is one and otherwise creates a new one. The dialog is
+    // hosted by this (already existing) window on purpose -- opening a window
+    // up front to receive the result would leave a blank player behind every
+    // time the dialog was cancelled.
+    function openMediaInNewWindow() {
+        mediaDialogOpensNewWindow = true;
         if (controller.openFileDialog)
             controller.openFileDialog();
     }
@@ -330,21 +348,37 @@ ApplicationWindow {
             openQuickEdit();
     }
 
-    // Cmd+, (StandardKey.Preferences below), the same convention every other
-    // macOS app uses. First call instantiates the window (its own
-    // Component.onCompleted calls back in to actually show it, mirroring
-    // openQuickEdit's lazy-load handshake above); later calls just raise it.
+    // Preferences is app-level -- ONE window for the whole application, whose
+    // changes are mirrored live onto every open player (see
+    // WindowManager::showPreferences and qml/AppPreferences.qml). A per-window
+    // panel would mean N panels disagreeing about one persisted setting.
     function showPreferences() {
-        if (!preferencesInstantiated) {
-            preferencesInstantiated = true;
+        appHost.showPreferences();
+    }
+
+    // The app-level "h" macro: pause every window, then hide the whole
+    // application. Unhiding restores the windows exactly as they were, still
+    // paused -- nothing resumes on its own.
+    function hideAndPauseAll() {
+        appHost.hideAndPauseAll();
+    }
+
+    // Called by WindowManager the moment this window's chrome bridge exists.
+    //
+    // The bridge cannot be constructed before the QQuickWindow it wraps, so it
+    // is necessarily published into this window's QML context AFTER
+    // Component.onCompleted has already run with the name undefined -- and
+    // `typeof windowChrome` is deliberately not a binding dependency, so
+    // nothing re-evaluates on its own. This is the hook that lets the window
+    // adopt the bridge at the first instant it exists: read the real AppKit
+    // titlebar height instead of falling back to Qt's safe-area inset, and arm
+    // the interactive aspect lock.
+    function adoptWindowChrome() {
+        if (typeof windowChrome === "undefined" || !windowChrome)
             return;
-        }
-        const window = preferencesLoader.item;
-        if (!window)
-            return;
-        window.show();
-        window.raise();
-        window.requestActivate();
+        nativeTitlebarHeight = windowChrome.titlebarHeight();
+        applyWindowAspectLock();
+        revealControls();
     }
 
     function toggleMaximized() {
@@ -511,9 +545,15 @@ ApplicationWindow {
         }
     }
 
+    // Window-scoped, NOT application-scoped. With N player windows open an
+    // application-scoped Shortcut is registered N times over, and Qt refuses
+    // the whole ambiguous set ("Ambiguous shortcut overload") rather than
+    // picking one -- Space would stop working the moment a second window
+    // opened. Window scope is also the correct semantics: the transport keys
+    // act on the window you are looking at.
     Shortcut {
         sequence: "Space"
-        context: Qt.ApplicationShortcut
+        context: Qt.WindowShortcut
         autoRepeat: false
         enabled: root.controller.hasMedia && !root.nativeDialogVisible
         onActivated: {
@@ -524,7 +564,7 @@ ApplicationWindow {
 
     Shortcut {
         sequence: "Left"
-        context: Qt.ApplicationShortcut
+        context: Qt.WindowShortcut
         enabled: root.controller.hasMedia && !root.nativeDialogVisible
         onActivated: {
             root.controller.skipBackward();
@@ -534,18 +574,12 @@ ApplicationWindow {
 
     Shortcut {
         sequence: "Right"
-        context: Qt.ApplicationShortcut
+        context: Qt.WindowShortcut
         enabled: root.controller.hasMedia && !root.nativeDialogVisible
         onActivated: {
             root.controller.skipForward();
             root.revealControls();
         }
-    }
-
-    Shortcut {
-        sequence: StandardKey.Preferences
-        context: Qt.ApplicationShortcut
-        onActivated: root.showPreferences()
     }
 
     Component {
@@ -556,7 +590,10 @@ ApplicationWindow {
             fileMode: FileDialog.OpenFile
             nameFilters: ["Media files (*.mp4 *.mkv *.mov *.avi *.webm *.m4v *.mk3d *.mka *.mpg *.mpeg *.3gp *.3g2 *.vob *.ogv *.qt *.mp3 *.m4a *.m4b *.wav *.aiff *.aif *.flac *.ogg *.oga *.opus *.aac *.ac3 *.eac3 *.dts *.caf *.amr *.w64 *.wma *.ts *.m2ts *.mts *.wmv *.asf *.flv *.m3u *.m3u8 *.pls *.cue)", "All files (*)"]
             onAccepted: {
-                root.controller.open(selectedFile);
+                if (root.mediaDialogOpensNewWindow)
+                    appHost.openUrl(selectedFile);
+                else
+                    root.controller.open(selectedFile);
                 root.revealControls();
                 root.restoreDialogFocusAfterClose();
             }
@@ -714,55 +751,10 @@ ApplicationWindow {
         }
     }
 
-    Component {
-        id: preferencesComponent
-
-        PreferencesWindow {
-            player: root.controller
-            dark: root.darkAppearance
-            Component.onCompleted: root.showPreferences()
-        }
-    }
-
-    Loader {
-        id: preferencesLoader
-        active: root.preferencesInstantiated
-        sourceComponent: preferencesComponent
-        // The first showPreferences() call only flips the activation flag;
-        // the window it asked for must appear once loading finishes, or the
-        // very first Preferences invocation does nothing visible.
-        onLoaded: {
-            item.show();
-            item.raise();
-            item.requestActivate();
-        }
-    }
-
-    // The real macOS desktop menu bar (Qt.labs.platform, not an in-window
-    // QtQuick Controls one) -- see qml/AppMenuBar.qml.
-    AppMenuBar {
-        id: appMenuBar
-        controller: root.controller
-        appRoot: root
-    }
-
-    // Keeps the View menu's "Window Hugs Video" checkbox following the
-    // controller's actual value, both for external changes (Preferences)
-    // and to undo Qt.labs.platform's own direct write to `checked` on every
-    // click -- which, per ordinary QML property semantics, detaches any
-    // plain Binding on that property for good the first time the item is
-    // clicked. Connections sidesteps that: it does not establish a binding
-    // at all, just an imperative re-write triggered by the real signal, so
-    // it keeps working after any number of clicks. Declared here, not inside
-    // qml/AppMenuBar.qml, because Qt.labs.platform's MenuItem has no default
-    // property to hold a Connections block as its own child -- see
-    // hugsVideoMenuItem's alias there.
-    Connections {
-        target: root.controller
-        function onWindowHugsVideoChanged() {
-            appMenuBar.hugsVideoMenuItem.checked = root.controller.windowHugsVideo;
-        }
-    }
+    // The desktop menu bar is NOT instantiated here. It is app-level and
+    // created once by WindowManager (qml/AppMenu.qml), because it has to
+    // survive the last window closing and must not be installed N times over.
+    // It follows the focused window through appHost.focusedController.
 
     // ApplicationWindow automatically extends `background` to cover the whole
     // window -- including the transparent titlebar strip -- while ordinary
@@ -1287,12 +1279,27 @@ ApplicationWindow {
 
         Keys.onPressed: event => {
             if (event.matches(StandardKey.Open)) {
-                root.openMedia();
+                // Cmd-O is one of the three gestures that must produce a NEW
+                // window (with Finder-open and argv), unless an empty window
+                // is already there to claim it. Loading into the window you
+                // are looking at is drag-and-drop, and the empty player's own
+                // click -- both of which call root.openMedia() instead.
+                appHost.openMedia();
                 event.accepted = true;
                 return;
             }
 
-            if (event.key === Qt.Key_E) {
+            if (event.key === Qt.Key_H) {
+                // Pause every window and hide the app. A bare key, bound here
+                // rather than as a native menu key equivalent, for the same
+                // reason F and E are: an NSMenu key equivalent for an
+                // unmodified key intercepts that keystroke application-wide,
+                // text fields included. Keys.onPressed on the video stage only
+                // ever fires when no text field holds focus, so typing "h"
+                // into Quick Edit or Preferences is unaffected.
+                root.hideAndPauseAll();
+                event.accepted = true;
+            } else if (event.key === Qt.Key_E) {
                 root.toggleQuickEdit();
                 event.accepted = true;
             } else if (event.key === Qt.Key_F) {

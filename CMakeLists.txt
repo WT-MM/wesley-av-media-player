@@ -154,6 +154,8 @@ qt_add_executable(wam MACOSX_BUNDLE WIN32
   src/qt/playback_policy.hpp
   src/qt/mpv_video_item.cpp
   src/qt/mpv_video_item.hpp
+  src/qt/window_manager.cpp
+  src/qt/window_manager.hpp
   src/jobs.cpp
   src/jobs.hpp
   src/caption_service.cpp
@@ -173,8 +175,10 @@ qt_add_qml_module(wam
     qml/ChromeToolTip.qml
     qml/QuickEditSheet.qml
     qml/PreferencesWindow.qml
+    qml/AppPreferences.qml
     qml/Scrubber.qml
-    qml/AppMenuBar.qml)
+    qml/AppMenuBar.qml
+    qml/AppMenu.qml)
 
 target_include_directories(wam PRIVATE src src/qt)
 target_compile_definitions(wam PRIVATE WAM_VERSION="${PROJECT_VERSION}")
@@ -1195,6 +1199,24 @@ if(BUILD_TESTING)
       add_test(NAME macos_native_surface_budget
         COMMAND wam_native_surface_budget_test)
       set_tests_properties(macos_native_surface_budget PROPERTIES TIMEOUT 20)
+
+      # The multi-window resource envelope: one cap, every derived bound.
+      # Deliberately a separate target from the budget suite above so the
+      # derived constants are checked from a translation unit that does not
+      # derive them.
+      add_executable(wam_native_concurrency_limits_test
+        tests/native_concurrency_limits_test.cpp
+        src/platform/macos/native_concurrency_limits.hpp
+        src/platform/macos/native_layer_presentation_state.hpp
+        src/platform/macos/native_surface_budget.hpp)
+      target_include_directories(wam_native_concurrency_limits_test
+        PRIVATE src)
+      target_link_libraries(wam_native_concurrency_limits_test PRIVATE
+        "${WAM_COREVIDEO_FRAMEWORK}")
+      add_test(NAME macos_native_concurrency_limits
+        COMMAND wam_native_concurrency_limits_test)
+      set_tests_properties(macos_native_concurrency_limits
+        PROPERTIES TIMEOUT 20)
 
       # The libvpx VP8 decode stage: bounded pool, I420 -> NV12 conversion,
       # stage lifecycle, and the once-per-open lane selection. Fixture-free --

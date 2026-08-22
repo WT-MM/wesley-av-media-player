@@ -1010,37 +1010,78 @@ void testQuiescingDestructionRetainsCallbackLifetime() {
          "Done close releases the external callback lifetime");
 }
 
-void testSingleProcessGraphClaim() {
+// The process admits kMaximumConcurrentPlayerWindows graphs at once, one per
+// open player window, and a graph occupies its slot from create() until that
+// same graph proves a Done close -- quarantine included, because a quarantined
+// graph still owns its decoder, surfaces and callback contexts. This walks the
+// whole boundary: N admitted, N + 1 refused with the documented text, the
+// envelope still full while one of the N sits in quarantine, and the slot
+// reopening only once that graph is recovered and closed Done.
+void testBoundedProcessGraphEnvelope() {
   FakeClock clock;
   std::atomic<std::uint64_t> wakes{0};
-  auto firstOutput = std::make_shared<FakeOutput>(
-      NativeTrackedVideoOutputWakeSeam{&wake, &wakes});
-  auto first = NativeVideoConsumer::create(
-      std::make_shared<int>(1), clock.seam(), firstOutput,
-      NativeVideoConsumerWakeSeam{&wake, &wakes});
-  expect(first != nullptr, "the first process video graph is admitted");
+  const NativeVideoConsumerWakeSeam consumerWake{&wake, &wakes};
 
+  std::vector<std::shared_ptr<FakeOutput>> outputs;
+  std::vector<std::unique_ptr<NativeVideoConsumer>> graphs;
+  for (int window = 0; window != kMaximumConcurrentPlayerWindows; ++window) {
+    outputs.push_back(std::make_shared<FakeOutput>(
+        NativeTrackedVideoOutputWakeSeam{&wake, &wakes}));
+    graphs.push_back(NativeVideoConsumer::create(
+        std::make_shared<int>(window), clock.seam(), outputs.back(),
+        consumerWake));
+    expect(graphs.back() != nullptr,
+           "every window inside the process envelope is admitted");
+  }
+
+  auto spareOutput = std::make_shared<FakeOutput>(
+      NativeTrackedVideoOutputWakeSeam{&wake, &wakes});
   std::string error;
-  auto rejectedOutput = std::make_shared<FakeOutput>(
-      NativeTrackedVideoOutputWakeSeam{&wake, &wakes});
-  auto rejected = NativeVideoConsumer::create(
-      std::make_shared<int>(2), clock.seam(), rejectedOutput,
-      NativeVideoConsumerWakeSeam{&wake, &wakes}, &error);
-  expect(rejected == nullptr && !error.empty(),
-         "a second live process video graph is rejected deterministically");
+  auto overflow = NativeVideoConsumer::create(
+      std::make_shared<int>(0), clock.seam(), spareOutput, consumerWake,
+      &error);
+  expect(overflow == nullptr &&
+             error == "a native video graph is already retained",
+         "the graph past the last window is refused with the documented text");
 
-  expect(first->close() == media::NativeMediaConsumerProgress::Done,
-         "the first graph closes with exact output invalidation proof");
-  first.reset();
-  auto replacementOutput = std::make_shared<FakeOutput>(
-      NativeTrackedVideoOutputWakeSeam{&wake, &wakes});
+  // A destructor that cannot prove Done close moves the graph to the registry
+  // without giving its slot back, so the envelope stays exactly full.
+  outputs.back()->setCloseBlocked(true);
+  graphs.back().reset();
+  graphs.pop_back();
+  expect(NativeVideoConsumer::quarantineFacts().quarantined,
+         "a graph that cannot close Done enters the quarantine registry");
+  error.clear();
+  auto refusedByQuarantine = NativeVideoConsumer::create(
+      std::make_shared<int>(0), clock.seam(), spareOutput, consumerWake,
+      &error);
+  expect(refusedByQuarantine == nullptr &&
+             error == "a native video graph is already retained",
+         "a quarantined graph keeps consuming its slot in the envelope");
+
+  auto recovered = NativeVideoConsumer::recoverQuarantined();
+  expect(recovered != nullptr,
+         "the bounded registry hands the quarantined graph back");
+  outputs.back()->setCloseBlocked(false);
+  expect(recovered->close() == media::NativeMediaConsumerProgress::Done,
+         "the recovered graph reaches Done once its output unblocks");
+  recovered.reset();
+  expect(!NativeVideoConsumer::quarantineFacts().quarantined,
+         "a Done close empties the slot the quarantined graph occupied");
+
   auto replacement = NativeVideoConsumer::create(
-      std::make_shared<int>(3), clock.seam(), replacementOutput,
-      NativeVideoConsumerWakeSeam{&wake, &wakes});
+      std::make_shared<int>(0), clock.seam(), spareOutput, consumerWake);
   expect(replacement != nullptr,
-         "a replacement graph is admitted only after close Done");
+         "the slot reopens only after the quarantined graph proves Done");
   expect(replacement->close() == media::NativeMediaConsumerProgress::Done,
          "the replacement graph closes cleanly");
+  replacement.reset();
+
+  for (std::unique_ptr<NativeVideoConsumer>& graph : graphs) {
+    expect(graph->close() == media::NativeMediaConsumerProgress::Done,
+           "every remaining window closes with exact invalidation proof");
+  }
+  graphs.clear();
 }
 
 }  // namespace
@@ -1065,7 +1106,7 @@ int main() {
   testPreviewQuiesceWaitsForRealTrackedDraw();
   testPreviewQuiesceIsSupersededByCommitFlush();
   testQuiescingDestructionRetainsCallbackLifetime();
-  testSingleProcessGraphClaim();
+  testBoundedProcessGraphEnvelope();
   testMalformedFailureCannotAuthorizeClose();
   std::cout << "native video consumer fixture-free checks passed\n";
   return EXIT_SUCCESS;

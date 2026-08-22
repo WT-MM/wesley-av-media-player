@@ -20,12 +20,25 @@ import Qt.labs.platform as Platform
 Platform.MenuBar {
     id: root
 
+    // The FOCUSED window's player controller, or null when no window is open.
+    // This bar is app-level (see qml/AppMenu.qml), so both of these change as
+    // the user moves between windows and both go null when the last window
+    // closes -- every item below guards on that rather than assuming a
+    // controller exists.
     required property var controller
-    // The ApplicationWindow (qml/Main.qml's `root`), for the handful of
-    // window-level actions (openMedia, showPreferences, resizeToActualSize,
-    // resizeToFitScreen, visibility) that live there rather than on the
-    // player controller.
+    // The focused window's ApplicationWindow (qml/Main.qml's `root`), for the
+    // handful of window-level actions (resizeToActualSize, resizeToFitScreen,
+    // visibility) that live there rather than on the player controller. Null
+    // with no window open.
     required property var appRoot
+    // The app-level WindowManager (context property `appHost`). Preferences,
+    // About, Quit and Hide and Pause All are application actions, not
+    // window actions, so they address this and keep working with no window
+    // open at all.
+    required property var host
+    readonly property bool hasController: root.controller !== null && root.controller !== undefined
+    readonly property bool hasWindow: root.appRoot !== null && root.appRoot !== undefined
+    readonly property bool mediaLoaded: root.hasController && root.controller.hasMedia
     // Exposed so qml/Main.qml can keep this item's `checked` state in sync
     // with the controller: Qt.labs.platform's MenuItem is not a QQuickItem,
     // so it has no default property and cannot hold a declarative Binding as
@@ -34,6 +47,8 @@ Platform.MenuBar {
     readonly property alias hugsVideoMenuItem: hugsVideoMenuItem
 
     function stepLabel(action) {
+        if (!root.hasController)
+            return action;
         const step = Number(root.controller.seekStepSeconds);
         const formatted = step.toFixed(step % 1 === 0 ? 0 : 1);
         return action + " " + formatted + " Seconds";
@@ -49,7 +64,7 @@ Platform.MenuBar {
             text: "Preferences…"
             shortcut: StandardKey.Preferences
             role: Platform.MenuItem.PreferencesRole
-            onTriggered: root.appRoot.showPreferences()
+            onTriggered: root.host.showPreferences()
         }
         Platform.MenuItem {
             text: "About WAM"
@@ -70,7 +85,13 @@ Platform.MenuBar {
         Platform.MenuItem {
             text: "Open…"
             shortcut: StandardKey.Open
-            onTriggered: root.appRoot.openMedia()
+            // Deliberately the app-level open, not the focused window's:
+            // File > Open is one of the three gestures (with Finder-open and
+            // argv) that must produce a NEW window unless an empty one is
+            // already sitting there to claim it. Loading into the window you
+            // are looking at is the drag-and-drop gesture, and the empty
+            // player's own click.
+            onTriggered: root.host.openMedia()
         }
     }
 
@@ -81,24 +102,24 @@ Platform.MenuBar {
         // remains reachable by click; Space keeps working exactly as before
         // via Main.qml's own global Shortcut.
         Platform.MenuItem {
-            text: root.controller.playing ? "Pause" : "Play"
-            enabled: root.controller.hasMedia
+            text: root.hasController && root.controller.playing ? "Pause" : "Play"
+            enabled: root.mediaLoaded
             onTriggered: root.controller.togglePlayPause()
         }
         Platform.MenuItem {
             text: root.stepLabel("Skip Forward")
-            enabled: root.controller.hasMedia
+            enabled: root.mediaLoaded
             onTriggered: root.controller.skipForward()
         }
         Platform.MenuItem {
             text: root.stepLabel("Skip Back")
-            enabled: root.controller.hasMedia
+            enabled: root.mediaLoaded
             onTriggered: root.controller.skipBackward()
         }
         Platform.MenuSeparator {}
         Platform.MenuItem {
             text: "Seek to Start"
-            enabled: root.controller.hasMedia
+            enabled: root.mediaLoaded
             onTriggered: root.controller.seekTo(0)
         }
     }
@@ -108,12 +129,12 @@ Platform.MenuBar {
 
         Platform.MenuItem {
             text: "Actual Size"
-            enabled: root.controller.hasMedia
+            enabled: root.mediaLoaded && root.hasWindow
             onTriggered: root.appRoot.resizeToActualSize()
         }
         Platform.MenuItem {
             text: "Fit to Screen"
-            enabled: root.controller.hasMedia
+            enabled: root.mediaLoaded && root.hasWindow
             onTriggered: root.appRoot.resizeToFitScreen()
         }
         Platform.MenuSeparator {}
@@ -121,8 +142,8 @@ Platform.MenuBar {
         // F key handling in Main.qml is untouched, this just adds a
         // clickable, discoverable path to the same action.
         Platform.MenuItem {
-            text: root.appRoot.visibility === Window.FullScreen ? "Exit Full Screen" : "Enter Full Screen"
-            enabled: root.controller.hasMedia
+            text: root.hasWindow && root.appRoot.visibility === Window.FullScreen ? "Exit Full Screen" : "Enter Full Screen"
+            enabled: root.mediaLoaded && root.hasWindow
             onTriggered: root.controller.toggleFullscreen()
         }
         Platform.MenuSeparator {}
@@ -139,9 +160,52 @@ Platform.MenuBar {
             id: hugsVideoMenuItem
             text: "Window Hugs Video"
             checkable: true
-            checked: root.controller.windowHugsVideo
+            checked: root.hasController ? root.controller.windowHugsVideo : true
+            enabled: root.hasController
             onTriggered: root.controller.setWindowHugsVideo(checked)
         }
+        Platform.MenuSeparator {}
+        // The "h" macro, made discoverable. Deliberately WITHOUT a `shortcut:`
+        // -- see the file header: a native NSMenu key equivalent for a bare,
+        // unmodified key intercepts that keystroke application-wide, text
+        // fields included, which would eat every "h" typed into Quick Edit or
+        // the Preferences panel. The bare-key gesture itself is bound where
+        // every other bare key in this app is bound, in qml/Main.qml's
+        // Keys.onPressed filter on the video stage, which only ever sees a
+        // keystroke when no text field has focus.
+        Platform.MenuItem {
+            text: "Hide and Pause All"
+            enabled: root.host.windowCount > 0
+            onTriggered: root.host.hideAndPauseAll()
+        }
+    }
+
+    // Keeps the View menu's "Window Hugs Video" checkbox following the focused
+    // controller's actual value -- both for external changes (Preferences,
+    // another window) and to undo Qt.labs.platform's own direct write to
+    // `checked` on every click, which per ordinary QML property semantics
+    // detaches any plain Binding on that property for good the first time the
+    // item is clicked. Connections sidesteps that: it establishes no binding,
+    // just an imperative re-write triggered by the real signal, so it keeps
+    // working after any number of clicks. It re-targets as focus moves between
+    // windows, which is what makes one app-level menu bar honest about N
+    // windows' state.
+    Connections {
+        target: root.controller
+        function onWindowHugsVideoChanged() {
+            if (root.controller)
+                hugsVideoMenuItem.checked = root.controller.windowHugsVideo;
+        }
+    }
+
+    onControllerChanged: {
+        // Reads `root.controller` directly rather than the `hasController`
+        // convenience: on the way out the controller reference and the derived
+        // binding are cleared in an unspecified order, and this handler runs
+        // on the reference's change. Testing the thing actually about to be
+        // dereferenced is the only ordering-independent guard.
+        if (root.controller)
+            hugsVideoMenuItem.checked = root.controller.windowHugsVideo;
     }
 
     Platform.MessageDialog {

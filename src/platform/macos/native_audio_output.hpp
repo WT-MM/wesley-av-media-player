@@ -230,11 +230,26 @@ struct NativeAudioOutputFacts {
 // sealing makes every later OS entry fail closed without dereferencing the
 // owner; uninitialize therefore cannot overlap any adapter or listener entry.
 // The owner must retain this object, its call-table context, and wake storage
-// until close() returns Done. While either callback
-// context is attached, a single bounded process registry retains the object
-// and create() rejects a second output. Thus premature owner release
-// quarantines at most one AudioUnit rather than freeing its callback context;
-// recoverQuarantined() can finish teardown.
+// until close() returns Done. While either callback context is attached, the
+// output's slot in a bounded process registry retains the object.
+//
+// That registry is a statically allocated table of exactly
+// kMaximumConcurrentPlayerWindows slots (native_concurrency_limits.hpp), one
+// per simultaneously open player window; create() takes the first free slot
+// and returns null once every slot is claimed. The table has process lifetime
+// and is address-stable by construction -- never reallocated, never destroyed
+// -- because CoreAudio holds the addresses of a slot's two bridges as the
+// render callback's and the device property listener's void* contexts. A
+// callback already in flight when its owner is released must land in a
+// still-valid object and read a gate that tells it nobody is home; freeing or
+// moving a slot would turn that landing into a use-after-free. Each slot's
+// pair of bridges is private to the output that claimed it, so N windows
+// neither share a gate nor observe each other's quiescence.
+//
+// Thus premature owner release quarantines that window's AudioUnit rather than
+// freeing its callback context, the process holds at most
+// kMaximumConcurrentPlayerWindows such quarantines, and recoverQuarantined()
+// can finish teardown one at a time.
 class NativeAudioOutput final
     : public std::enable_shared_from_this<NativeAudioOutput> {
  public:
@@ -363,10 +378,16 @@ class NativeAudioOutput final
 
   [[nodiscard]] NativeAudioOutputFacts facts() const noexcept;
 
-  // Test/lifecycle recovery seam for the single bounded process retention.
-  // Production code normally never calls this: retaining the returned owner
-  // until close() is Done prevents quarantine. A non-null result gives the
-  // caller an owner with which it can finish close().
+  // Test/lifecycle recovery seam for the bounded process retention. Production
+  // code normally never calls this: retaining the returned owner until close()
+  // is Done prevents quarantine. A non-null result gives the caller an owner
+  // with which it can finish close().
+  //
+  // At most one output per call, so a caller draining the registry repeats
+  // until it returns null. An output no reference but its slot's retention
+  // still keeps alive -- the true quarantine, which nothing else can ever
+  // close -- is returned ahead of a still-retained one, so a healthy playing
+  // window is never handed to a caller that would close it.
   [[nodiscard]] static std::shared_ptr<NativeAudioOutput>
   recoverQuarantined() noexcept;
 
@@ -487,7 +508,19 @@ class NativeAudioOutput final
   bool stop_required_{false};
   bool stop_succeeded_{true};
   bool activated_{false};
+  // Whether this output still holds the claim on gSlots[slot_index_]. Taken
+  // once by create() and released exactly once, on the first of the three
+  // paths that can end the claim: the already-detached close() short circuit,
+  // the completed close(), or the destructor of an output that never closed.
   bool claim_held_{false};
+  // Index of this output's slot in the .mm's process-lifetime registry, fixed
+  // by create() before the object is ever published and never changed again --
+  // not even by close(), because facts() must still be able to see that the
+  // slot's bridges have moved on to a replacement output. -1 is unreachable
+  // for any object a caller can hold: create() is the only way to obtain one
+  // and it assigns a real index or destroys the object. int rather than the
+  // slot type so this header stays free of the registry's layout.
+  int slot_index_{-1};
   std::shared_ptr<NativeAudioOutput> callback_self_owner_;
 
   using TestHook = void (*)(void *context) noexcept;

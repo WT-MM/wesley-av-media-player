@@ -1,4 +1,5 @@
 #include "platform/macos/native_audio_output.hpp"
+#include "platform/macos/native_concurrency_limits.hpp"
 
 #include <Foundation/Foundation.h>
 
@@ -1541,9 +1542,16 @@ void testStopRaceAndQuarantineLifetime() {
   NativeAudioRenderCore secondCore(secondRing, secondClock,
                                    kHostTicksPerSecond);
   WakeCounter secondWake;
-  expect(!NativeAudioOutput::create(secondCore, fixture.fake.table(),
-                                    secondWake.seam()),
-         "single quarantine cap rejects a second output");
+  // A quarantine holds ONE slot of the bounded registry, not the registry. The
+  // next player window is admitted into a slot of its own -- what used to be a
+  // process-wide refusal is now a refusal only when all of them are held.
+  std::shared_ptr<NativeAudioOutput> second = NativeAudioOutput::create(
+      secondCore, fixture.fake.table(), secondWake.seam());
+  expect(second && second.get() != recovered.get(),
+         "a quarantined output costs one slot, not the whole registry");
+  expect(NativeAudioOutput::recoverQuarantined().get() == recovered.get(),
+         "recovery still names the quarantined output beside a live slot");
+  second.reset();
 
   // Quiescing deliberately wakes the lifecycle owner while the callback is
   // still live. Rearm here so the counters below describe only the final
@@ -1567,6 +1575,171 @@ void testStopRaceAndQuarantineLifetime() {
   recovered.reset();
   expect(lifetime.expired(),
          "successful detach and dispose release quarantined self-owner");
+}
+
+// One simulated player window's audio graph: its own ring, clock, render core,
+// AudioUnit and wake seam, exactly as N open windows each have. Callers below
+// hold these behind unique_ptr because one ring alone is half a megabyte of
+// PCM payload and a cap's worth of them does not fit on the main-thread stack.
+struct WindowHarness {
+  FakeHostClock host;
+  std::unique_ptr<NativePcmRing> ringStorage{
+      std::make_unique<NativePcmRing>(1)};
+  NativeMediaClock clock{host.seam(kHostTicksPerSecond)};
+  NativeAudioRenderCore core{*ringStorage, clock, kHostTicksPerSecond};
+  bool anchored{clock.anchorAtHostTicks(1, 0, 0.0, 1.0, false)};
+  FakeAudioUnit fake;
+  WakeCounter wake;
+  std::shared_ptr<NativeAudioOutput> output;
+
+  [[nodiscard]] bool create() noexcept {
+    output = NativeAudioOutput::create(core, fake.table(), wake.seam());
+    return static_cast<bool>(output);
+  }
+
+  [[nodiscard]] NativeAudioOutputConfiguration configuration() const noexcept {
+    return {1, 0, {0, 1}, kHostTicksPerSecond, kSampleRate, {0, 1}};
+  }
+
+  [[nodiscard]] bool configure() noexcept {
+    return anchored && output &&
+           output->configure(configuration()) ==
+               NativeAudioOutputProgress::Done;
+  }
+};
+
+constexpr std::size_t kWindowSlots =
+    static_cast<std::size_t>(wam::macos::kMaximumConcurrentPlayerWindows);
+
+// The registry is bounded and complete: every one of the cap's slots is
+// reachable, the slot past it is refused rather than admitted into an overrun
+// envelope, and a released output returns exactly the one slot it held. The
+// arithmetic matters as much as the cap -- a registry that leaked a slot per
+// window would refuse the fifth or sixth window on a long session, and one
+// that handed the same slot to two windows would give them one shared render
+// bridge.
+void testBoundedSlotRegistryAdmitsExactlyTheWindowCap() {
+  // One spare beyond the cap, which is the window that must be refused.
+  std::array<std::unique_ptr<WindowHarness>, kWindowSlots + 1> windows{};
+  for (auto &window : windows) {
+    window = std::make_unique<WindowHarness>();
+  }
+
+  bool allAdmitted = true;
+  for (std::size_t index = 0; index != kWindowSlots; ++index) {
+    allAdmitted = windows[index]->create() && allAdmitted;
+  }
+  expect(allAdmitted,
+         "every player window up to the concurrency cap gets an output");
+
+  bool allDistinct = true;
+  for (std::size_t index = 1; index != kWindowSlots; ++index) {
+    for (std::size_t earlier = 0; earlier != index; ++earlier) {
+      allDistinct = allDistinct && windows[index]->output.get() !=
+                                       windows[earlier]->output.get();
+    }
+  }
+  expect(allDistinct,
+         "no two admitted windows are handed the same output object");
+
+  expect(!windows[kWindowSlots]->create(),
+         "the window past the cap is refused rather than overrunning");
+
+  // A released output returns its slot, and only its slot.
+  windows[3]->output.reset();
+  expect(windows[kWindowSlots]->create(),
+         "releasing one output frees a slot for the refused window");
+  expect(!windows[3]->create(),
+         "one release frees exactly one slot, never two");
+
+  for (auto &window : windows) {
+    window->output.reset();
+  }
+  expect(!NativeAudioOutput::recoverQuarantined(),
+         "outputs released before configure leave no quarantine behind");
+
+  // Everything comes back: the registry has no slow leak across a session's
+  // worth of window open/close cycles.
+  std::size_t readmitted = 0;
+  for (auto &window : windows) {
+    readmitted += window->create() ? 1U : 0U;
+  }
+  expect(readmitted == kWindowSlots,
+         "the whole registry is reusable once every output is released");
+  for (auto &window : windows) {
+    window->output.reset();
+  }
+}
+
+// A quarantined output keeps its slot, which is exactly what the bounded
+// envelope is for: the AudioUnit it could not dispose is still charged against
+// the cap, so nothing is leaked and nothing is reused underneath a live
+// callback context. Live neighbours in other slots are unaffected and, in
+// particular, are never handed to a caller asking to drain a quarantine.
+void testQuarantinedSlotIsRetainedBesideLiveWindows() {
+  auto first = std::make_unique<WindowHarness>();
+  auto second = std::make_unique<WindowHarness>();
+  auto stuck = std::make_unique<WindowHarness>();
+  expect(first->create() && first->configure() && second->create() &&
+             second->configure(),
+         "two healthy windows configure into slots of their own");
+  expect(stuck->create() && stuck->configure(),
+         "the window that will quarantine configures in a third slot");
+
+  // An instance that cannot be disposed: close() cannot finish, so the output
+  // is retained by its slot rather than freed under callback contexts
+  // CoreAudio may still hold.
+  stuck->fake.failAt = Call::Dispose;
+  expect(stuck->output->close() == NativeAudioOutputProgress::Failed &&
+             stuck->output->facts().failure ==
+                 NativeAudioOutputFailure::InstanceDisposalFailed &&
+             stuck->output->facts().state ==
+                 NativeAudioOutputState::Detaching,
+         "an undisposable instance quarantines the third window");
+
+  NativeAudioOutput *const quarantined = stuck->output.get();
+  std::weak_ptr<NativeAudioOutput> lifetime = stuck->output;
+  stuck->output.reset();
+  expect(!lifetime.expired(),
+         "the slot retains the quarantined output after owner release");
+  std::shared_ptr<NativeAudioOutput> recovered =
+      NativeAudioOutput::recoverQuarantined();
+  expect(recovered.get() == quarantined,
+         "recovery returns the abandoned quarantine, never a live neighbour");
+
+  // Still charged against the envelope: filling every remaining slot leaves
+  // the quarantined one untouched, so exactly cap-minus-three windows fit.
+  std::array<std::unique_ptr<WindowHarness>, kWindowSlots> filler{};
+  std::size_t admitted = 0;
+  for (auto &window : filler) {
+    window = std::make_unique<WindowHarness>();
+    admitted += window->create() ? 1U : 0U;
+  }
+  expect(admitted == kWindowSlots - 3,
+         "a quarantined slot is never handed out again while it is held");
+
+  stuck->fake.failAt = Call::None;
+  expect(recovered->close() == NativeAudioOutputProgress::Done,
+         "the quarantined output finishes teardown once dispose succeeds");
+  recovered.reset();
+  expect(lifetime.expired(),
+         "a completed teardown releases the quarantined self-owner");
+
+  auto replacement = std::make_unique<WindowHarness>();
+  expect(replacement->create(),
+         "a completed teardown returns the slot to the registry");
+  replacement->output.reset();
+
+  expect(first->output->close() == NativeAudioOutputProgress::Done &&
+             second->output->close() == NativeAudioOutputProgress::Done,
+         "the live neighbours close cleanly beside the quarantine");
+  first->output.reset();
+  second->output.reset();
+  for (auto &window : filler) {
+    window->output.reset();
+  }
+  expect(!NativeAudioOutput::recoverQuarantined(),
+         "the registry is empty again once every window has closed");
 }
 
 void testStoppedCallbackCannotCrossRestartEpoch() {
@@ -2509,6 +2682,8 @@ int main() {
     testFrameAndTimestampOverflow();
     testDeviceChangeWinsStartCommit();
     testStopRaceAndQuarantineLifetime();
+    testBoundedSlotRegistryAdmitsExactlyTheWindowCap();
+    testQuarantinedSlotIsRetainedBesideLiveWindows();
     testStoppedCallbackCannotCrossRestartEpoch();
     testPauseSuspendKeepsStreamPositionAcrossRestart();
     testWakeGatesResetAcrossGenerationActivation();

@@ -8,11 +8,16 @@
 #include <QWindow>
 
 #import <AppKit/AppKit.h>
+#import <objc/runtime.h>
 #import <AVFoundation/AVFoundation.h>
 #import <QuartzCore/QuartzCore.h>
 
+#include "platform/macos/native_concurrency_limits.hpp"
+
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <functional>
 #include <optional>
 
 namespace wam::macos_window_chrome {
@@ -115,6 +120,70 @@ InteractiveAspectLock &aspectLock() {
   return lock;
 }
 
+// The ratio each window wants its drag-resizes locked to.
+//
+// The LOCK above is legitimately singular -- macOS has one pointer, so at most
+// one drag-resize is ever in flight -- but the RATIO is a per-window fact, and
+// WAM is a multi-window player. With a single stored (window, ratio) pair the
+// last window to open a video overwrote every other window's ratio, so
+// dragging any other window's corner either used the wrong aspect or was not
+// locked at all. A fixed-size table (never grown, never allocated) keyed by
+// window keeps the lock singular and the ratios per window.
+struct AspectRatioEntry {
+  // Weak for the same reason the lock's reference is: this table outlives
+  // nothing and owns nothing, and a closed window must nil itself out rather
+  // than dangle into the next mouse-down.
+  __weak NSWindow *window = nil;
+  NSSize ratio = NSZeroSize;
+};
+
+std::array<AspectRatioEntry, wam::macos::kMaximumConcurrentPlayerWindows> &
+aspectRatios() {
+  static std::array<AspectRatioEntry,
+                    wam::macos::kMaximumConcurrentPlayerWindows>
+      ratios;
+  return ratios;
+}
+
+// The stored ratio for `nsWindow`, or NSZeroSize when it has none.
+NSSize aspectRatioFor(NSWindow *nsWindow) {
+  if (nsWindow == nil)
+    return NSZeroSize;
+  for (const AspectRatioEntry &entry : aspectRatios()) {
+    if (entry.window == nsWindow)
+      return entry.ratio;
+  }
+  return NSZeroSize;
+}
+
+// Records (or, with a non-positive ratio, forgets) `nsWindow`'s lock ratio.
+// Reuses the window's existing row, else the first row whose window has been
+// released, else -- only past the window cap, which cannot happen while the
+// table is sized from it -- drops the request rather than evicting a live one.
+void setAspectRatioFor(NSWindow *nsWindow, NSSize ratio) {
+  if (nsWindow == nil)
+    return;
+  const bool clearing = ratio.width <= 0 || ratio.height <= 0;
+  AspectRatioEntry *free_row = nullptr;
+  for (AspectRatioEntry &entry : aspectRatios()) {
+    if (entry.window == nsWindow) {
+      if (clearing) {
+        entry.window = nil;
+        entry.ratio = NSZeroSize;
+      } else {
+        entry.ratio = ratio;
+      }
+      return;
+    }
+    if (free_row == nullptr && entry.window == nil)
+      free_row = &entry;
+  }
+  if (clearing || free_row == nullptr)
+    return;
+  free_row->window = nsWindow;
+  free_row->ratio = ratio;
+}
+
 void disarmAspectLock() {
   InteractiveAspectLock &lock = aspectLock();
   [lock.release_guard invalidate];
@@ -133,11 +202,12 @@ void disarmAspectLock() {
   lock.window.contentResizeIncrements = NSMakeSize(1.0, 1.0);
 }
 
-void armAspectLock() {
+void armAspectLock(NSWindow *nsWindow, NSSize ratio) {
   InteractiveAspectLock &lock = aspectLock();
-  if (lock.armed || !lock.window || lock.ratio.width <= 0 ||
-      lock.ratio.height <= 0)
+  if (lock.armed || nsWindow == nil || ratio.width <= 0 || ratio.height <= 0)
     return;
+  lock.window = nsWindow;
+  lock.ratio = ratio;
   lock.window.contentAspectRatio = lock.ratio;
   lock.armed = true;
   // AppKit runs its live-resize tracking in a nested event loop, so the
@@ -179,14 +249,20 @@ void ensureAspectLockMonitor() {
       addLocalMonitorForEventsMatchingMask:(NSEventMaskLeftMouseDown |
                                             NSEventMaskLeftMouseUp)
                                    handler:^NSEvent *(NSEvent *event) {
-                                     InteractiveAspectLock &state = aspectLock();
                                      if (event.type == NSEventTypeLeftMouseDown) {
-                                       if (state.window &&
-                                           event.window == state.window &&
+                                       // Which window was pressed decides the
+                                       // ratio: with N player windows open the
+                                       // one under the pointer is the one whose
+                                       // aspect the drag must hold.
+                                       NSWindow *pressed = event.window;
+                                       const NSSize ratio =
+                                           aspectRatioFor(pressed);
+                                       if (ratio.width > 0 &&
+                                           ratio.height > 0 &&
                                            pointStartsResize(
-                                               state.window,
+                                               pressed,
                                                event.locationInWindow))
-                                         armAspectLock();
+                                         armAspectLock(pressed, ratio);
                                      } else {
                                        disarmAspectLock();
                                      }
@@ -205,9 +281,33 @@ struct FitToScreenState {
   bool valid = false;
 };
 
-FitToScreenState &fitState() {
-  static FitToScreenState state;
-  return state;
+// One row per window, for the same reason the aspect ratios are a table: the
+// zoom toggle's "put it back where it was" memory belongs to the window that
+// was zoomed. A single shared row meant fitting a second window silently threw
+// away the first window's restore frame.
+std::array<FitToScreenState, wam::macos::kMaximumConcurrentPlayerWindows> &
+fitStates() {
+  static std::array<FitToScreenState,
+                    wam::macos::kMaximumConcurrentPlayerWindows>
+      states;
+  return states;
+}
+
+// The row for `nsWindow`, reusing its existing row, else the first row that is
+// free (unused, released, or invalidated). Never null: past the cap -- which
+// the table is sized to make unreachable -- the last row is reused.
+FitToScreenState &fitState(NSWindow *nsWindow) {
+  auto &states = fitStates();
+  FitToScreenState *free_row = nullptr;
+  for (FitToScreenState &state : states) {
+    if (state.window == nsWindow)
+      return state;
+    if (free_row == nullptr && (state.window == nil || !state.valid))
+      free_row = &state;
+  }
+  FitToScreenState &row = free_row != nullptr ? *free_row : states.back();
+  row = FitToScreenState{};
+  return row;
 }
 
 bool framesMatch(NSRect lhs, NSRect rhs) {
@@ -501,18 +601,14 @@ void setContentAspectRatio(QWindow *window, qreal width, qreal height) {
   if (!nsWindow)
     return;
 
-  InteractiveAspectLock &lock = aspectLock();
-  // A pending arm from a previous media file must not outlive it.
-  disarmAspectLock();
-  if (width <= 0 || height <= 0) {
-    lock.window = nil;
-    lock.ratio = NSZeroSize;
-    return;
-  }
-  lock.window = nsWindow;
-  lock.ratio =
-      NSMakeSize(static_cast<CGFloat>(width), static_cast<CGFloat>(height));
-  ensureAspectLockMonitor();
+  // A pending arm from a previous media file must not outlive it -- but only
+  // this window's: another window's live drag is none of this call's business.
+  if (aspectLock().window == nsWindow)
+    disarmAspectLock();
+  setAspectRatioFor(nsWindow, NSMakeSize(static_cast<CGFloat>(width),
+                                         static_cast<CGFloat>(height)));
+  if (width > 0 && height > 0)
+    ensureAspectLockMonitor();
 }
 
 bool interactiveResizeActive(QWindow *window) {
@@ -555,7 +651,7 @@ void resizeToActualSize(QWindow *window, qreal videoPixelWidth,
   target.origin.y = NSMidY(visible) - target_height / 2.0;
 
   if (applyWindowFrameAnimated(nsWindow, target, kZoomAnimationDuration, nil))
-    fitState().valid = false;
+    fitState(nsWindow).valid = false;
 }
 
 void resizeToFitScreen(QWindow *window, qreal videoWidth, qreal videoHeight) {
@@ -573,7 +669,7 @@ void resizeToFitScreen(QWindow *window, qreal videoWidth, qreal videoHeight) {
   if (NSWidth(visible) <= 0 || NSHeight(visible) <= 0)
     return;
 
-  FitToScreenState &state = fitState();
+  FitToScreenState &state = fitState(nsWindow);
   const NSRect current = nsWindow.frame;
   // Second double-click on an already-fitted window: AppKit's zoom toggle,
   // back to whatever the window was before the fit.
@@ -664,7 +760,7 @@ void snapToVideoAspectRatio(QWindow *window, qreal videoWidth,
       visible.origin.y, std::min(target.origin.y, NSMaxY(visible) - target_height));
 
   if (applyWindowFrame(nsWindow, target))
-    fitState().valid = false;
+    fitState(nsWindow).valid = false;
 }
 
 namespace {
@@ -725,6 +821,96 @@ void adoptBackgroundLaunchPolicy() {
                 [NSApp setActivationPolicy:
                            NSApplicationActivationPolicyAccessory];
                 [NSApp deactivate];
+              }];
+}
+
+void hideApplication() { [NSApp hide:nil]; }
+
+namespace {
+
+// Retained for the process's lifetime, like every other app-level hook here.
+std::function<void()> &applicationReopenHandler() {
+  static std::function<void()> handler;
+  return handler;
+}
+
+std::function<void()> &applicationHideHandler() {
+  static std::function<void()> handler;
+  return handler;
+}
+
+// The delegate implementation this hook displaced, if there was one. Called
+// after the handler so Qt (or any future delegate) keeps whatever behaviour it
+// had; a null value means the selector was genuinely unimplemented and YES --
+// AppKit's documented default, "perform the usual reopen behaviour" -- is the
+// honest answer.
+using ReopenImp = BOOL (*)(id, SEL, NSApplication *, BOOL);
+ReopenImp &displacedReopenImp() {
+  static ReopenImp imp = nullptr;
+  return imp;
+}
+
+} // namespace
+
+void installApplicationReopenHandler(std::function<void()> handler) {
+  applicationReopenHandler() = std::move(handler);
+
+  static bool installed = false;
+  if (installed)
+    return;
+  id delegate = NSApp.delegate;
+  if (delegate == nil)
+    return;
+  installed = true;
+
+  Class delegate_class = object_getClass(delegate);
+  const SEL selector = @selector(applicationShouldHandleReopen:
+                                     hasVisibleWindows:);
+  IMP replacement = imp_implementationWithBlock(
+      ^BOOL(id self_object, NSApplication *sender, BOOL has_visible_windows) {
+        if (!has_visible_windows) {
+          if (const std::function<void()> &reopen = applicationReopenHandler())
+            reopen();
+        }
+        if (ReopenImp displaced = displacedReopenImp()) {
+          return displaced(self_object, selector, sender,
+                           has_visible_windows);
+        }
+        return YES;
+      });
+
+  // class_addMethod only succeeds when the class itself does not already
+  // implement the selector, which is exactly the discrimination needed: add it
+  // outright when nobody owns it, and otherwise displace the existing
+  // implementation while keeping a pointer to it to chain through.
+  if (!class_addMethod(delegate_class, selector, replacement, "c@:@c")) {
+    Method existing = class_getInstanceMethod(delegate_class, selector);
+    if (existing == nullptr) {
+      installed = false;
+      return;
+    }
+    displacedReopenImp() =
+        reinterpret_cast<ReopenImp>(method_getImplementation(existing));
+    method_setImplementation(existing, replacement);
+  }
+}
+
+void installApplicationHideObserver(std::function<void()> handler) {
+  applicationHideHandler() = std::move(handler);
+
+  // Registered once and deliberately never removed: the observer must outlive
+  // every window, and it lives exactly as long as the application does.
+  static id observer = nil;
+  if (observer != nil)
+    return;
+  observer = [[NSNotificationCenter defaultCenter]
+      addObserverForName:NSApplicationDidHideNotification
+                  object:NSApp
+                   queue:[NSOperationQueue mainQueue]
+              usingBlock:^(NSNotification *) {
+                if (const std::function<void()> &hidden =
+                        applicationHideHandler())
+                  hidden();
               }];
 }
 

@@ -6,6 +6,7 @@
 #include <CoreFoundation/CoreFoundation.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <bit>
 #include <cmath>
@@ -44,8 +45,20 @@ static_assert(kMaximumPresentationReorderFrames + 1 <=
               "the codec reorder cap must fit the documented decoded-surface "
               "ownership share, because decodedSurfaceOwnershipBound() will "
               "raise the route's ceiling to codecReorderFrames + 1");
+// Guards the whole graph-envelope registry below: gRetainedGraphs and every
+// quarantine slot. It is taken only on create(), on the destructor's
+// quarantine transfer, on the Done-close release, on recoverQuarantined() and
+// on quarantineFacts() -- never on a decode, submit, draw or callback path, so
+// no hot path can ever block on it.
 std::mutex gQuarantineMutex;
-bool gConsumerClaimed{false};
+// Graphs currently charged against the process envelope: every graph that
+// create() admitted and that has not yet proved a Done close. A quarantined
+// graph is still charged, because it still owns its decoder, its IOSurface
+// share and its callback contexts -- quarantine changes who holds the graph,
+// not whether the process is paying for it. The invariant is
+// 0 <= gRetainedGraphs <= kMaximumConcurrentPlayerWindows, and the count is
+// exactly the old single `bool gConsumerClaimed` widened from one window to N.
+int gRetainedGraphs{0};
 std::atomic<std::uint64_t> gRejectedCreates{0};
 std::atomic<std::uint64_t> gQuarantineTransfers{0};
 std::atomic<std::uint64_t> gQuarantineRecoveries{0};
@@ -1091,16 +1104,32 @@ struct NativeVideoConsumer::Impl {
 #endif
   bool cancelled{false};
   bool closed{false};
+  // True from create() until this graph's own Done close gives its envelope
+  // slot back. The envelope used to be a single bool, so releasing it twice
+  // was harmless; it is now a count, where a double release would silently
+  // manufacture a slot and let N + 1 graphs live at once. The terminal paths
+  // are already single-shot by their own latches, so this flag is a belt on
+  // top of braces -- but it is the belt that makes the count's arithmetic true
+  // by construction rather than by an audit of every terminal path.
+  bool claimHeld{true};
 };
 
 NativeVideoConsumer::NativeVideoConsumer(
     std::unique_ptr<Impl> impl) noexcept
     : impl_(std::move(impl)) {}
 
-std::unique_ptr<NativeVideoConsumer::Impl>&
-NativeVideoConsumer::quarantineSlot() noexcept {
-  static std::unique_ptr<Impl> slot;
-  return slot;
+std::array<std::unique_ptr<NativeVideoConsumer::Impl>,
+           kMaximumConcurrentPlayerWindows>&
+NativeVideoConsumer::quarantineSlots() noexcept {
+  // A function-local static rather than a namespace-scope object because Impl
+  // is only complete inside this translation unit and the destructor of a
+  // unique_ptr<Impl> array must see it. The array itself is a fixed block of
+  // kMaximumConcurrentPlayerWindows pointers: the registry never allocates and
+  // never grows, so a pathological teardown storm costs the same memory as an
+  // idle process.
+  static std::array<std::unique_ptr<Impl>, kMaximumConcurrentPlayerWindows>
+      slots;
+  return slots;
 }
 
 std::unique_ptr<NativeVideoConsumer> NativeVideoConsumer::create(
@@ -1124,7 +1153,13 @@ std::unique_ptr<NativeVideoConsumer> NativeVideoConsumer::create(
   }
   {
     std::lock_guard lock(gQuarantineMutex);
-    if (gConsumerClaimed || quarantineSlot() != nullptr) {
+    // The envelope is full when N graphs are already charged against it,
+    // whether they are live routes or quarantined ones. Refuse quietly and
+    // deterministically: admitting an N+1'th graph would overrun the surface,
+    // memory and VideoToolbox-client accounting that
+    // kMaximumConcurrentPlayerWindows exists to bound, and the owner is
+    // expected to surface this as "no more windows", not to retry.
+    if (gRetainedGraphs >= kMaximumConcurrentPlayerWindows) {
       gRejectedCreates.fetch_add(1, std::memory_order_relaxed);
       try {
         assignError(error, "a native video graph is already retained");
@@ -1132,7 +1167,7 @@ std::unique_ptr<NativeVideoConsumer> NativeVideoConsumer::create(
       }
       return {};
     }
-    gConsumerClaimed = true;
+    ++gRetainedGraphs;
   }
   try {
     auto impl = std::make_unique<Impl>(
@@ -1141,8 +1176,10 @@ std::unique_ptr<NativeVideoConsumer> NativeVideoConsumer::create(
         new NativeVideoConsumer(std::move(impl)));
   } catch (...) {
     {
+      // No Impl exists, so no graph was ever charged: hand the reserved slot
+      // straight back rather than leaking a permanent hole in the envelope.
       std::lock_guard lock(gQuarantineMutex);
-      gConsumerClaimed = false;
+      --gRetainedGraphs;
     }
     gRejectedCreates.fetch_add(1, std::memory_order_relaxed);
     try {
@@ -1161,34 +1198,54 @@ NativeVideoConsumer::~NativeVideoConsumer() {
     return;
   }
   std::lock_guard lock(gQuarantineMutex);
-  if (quarantineSlot() == nullptr) {
-    quarantineSlot() = std::move(impl_);
-    gQuarantineTransfers.fetch_add(1, std::memory_order_relaxed);
-  } else {
-    // create() holds the process claim until this exact graph closes Done, so
-    // two retiring graphs cannot reach the one-slot quarantine through the
-    // public API. Do not turn an invariant violation into an unbounded graph
-    // leak: callback safety and the fixed resource envelope are both strict.
-    std::terminate();
+  // This graph is still charged against the envelope -- close() did not reach
+  // Done, so releaseConsumerClaim() has not run for it -- and quarantine does
+  // not change that. gRetainedGraphs is therefore deliberately left alone:
+  // the graph merely stops being owned by a NativeVideoConsumer and starts
+  // being owned by the registry, still holding its decoder, surfaces and
+  // callback contexts until recoverQuarantined() drives it to Done.
+  for (std::unique_ptr<Impl>& slot : quarantineSlots()) {
+    if (slot == nullptr) {
+      slot = std::move(impl_);
+      gQuarantineTransfers.fetch_add(1, std::memory_order_relaxed);
+      return;
+    }
   }
+  // Unreachable by construction. Quarantined graphs are a subset of the
+  // gRetainedGraphs charged against the envelope, and this graph is itself one
+  // of them and is not yet in a slot, so at most
+  // kMaximumConcurrentPlayerWindows - 1 slots can be occupied here and the
+  // loop above must have found a free one. Should that arithmetic ever be
+  // broken, do not turn the invariant violation into a destroyed-under-a-live-
+  // callback graph or an unbounded leak: callback safety and the fixed
+  // resource envelope are both strict, so crash where the bug is.
+  std::terminate();
 }
 
 std::unique_ptr<NativeVideoConsumer>
 NativeVideoConsumer::recoverQuarantined() noexcept {
   std::lock_guard lock(gQuarantineMutex);
-  if (quarantineSlot() == nullptr) {
-    return {};
+  // First occupied slot wins. The registry is a bag of graphs awaiting a Done
+  // close, not a queue: recovery order carries no meaning, and the caller
+  // simply repeats recoverQuarantined() until it returns nullptr.
+  for (std::unique_ptr<Impl>& slot : quarantineSlots()) {
+    if (slot == nullptr) {
+      continue;
+    }
+    std::unique_ptr<Impl> recovered = std::move(slot);
+    try {
+      auto result = std::unique_ptr<NativeVideoConsumer>(
+          new NativeVideoConsumer(std::move(recovered)));
+      gQuarantineRecoveries.fetch_add(1, std::memory_order_relaxed);
+      // gRetainedGraphs is unchanged: the graph moves from registry ownership
+      // back to owner ownership and stays charged until it closes Done.
+      return result;
+    } catch (...) {
+      slot = std::move(recovered);
+      return {};
+    }
   }
-  std::unique_ptr<Impl> recovered = std::move(quarantineSlot());
-  try {
-    auto result = std::unique_ptr<NativeVideoConsumer>(
-        new NativeVideoConsumer(std::move(recovered)));
-    gQuarantineRecoveries.fetch_add(1, std::memory_order_relaxed);
-    return result;
-  } catch (...) {
-    quarantineSlot() = std::move(recovered);
-    return {};
-  }
+  return {};
 }
 
 NativeVideoConsumerQuarantineFacts
@@ -1201,7 +1258,12 @@ NativeVideoConsumer::quarantineFacts() noexcept {
   result.recoveries =
       gQuarantineRecoveries.load(std::memory_order_relaxed);
   std::lock_guard lock(gQuarantineMutex);
-  result.quarantined = quarantineSlot() != nullptr;
+  // "Any slot occupied", which is the same question the single-slot form
+  // answered: is there a graph the owner still has to drive to Done? Callers
+  // recover in a loop, so the exact occupancy is not reported here.
+  result.quarantined = std::any_of(
+      quarantineSlots().begin(), quarantineSlots().end(),
+      [](const std::unique_ptr<Impl>& slot) { return slot != nullptr; });
   return result;
 }
 
@@ -2008,9 +2070,18 @@ media::NativeMediaConsumerProgress NativeVideoConsumer::flush(
 
 namespace {
 
-void releaseConsumerClaim() noexcept {
+// Gives one graph's slot in the process envelope back. Called only from the
+// terminal paths that have just proved a Done close, so the graph is finished
+// with its decoder, surfaces and callback contexts and another window may take
+// its place.
+template <typename ImplType>
+void releaseConsumerClaim(ImplType& impl) noexcept {
   std::lock_guard lock(gQuarantineMutex);
-  gConsumerClaimed = false;
+  if (!impl.claimHeld) {
+    return;
+  }
+  impl.claimHeld = false;
+  --gRetainedGraphs;
 }
 
 template <typename ImplType>
@@ -2161,7 +2232,7 @@ template <typename ImplType>
     impl.cancelled = lifecycle == Lifecycle::Cancel;
     impl.closed = true;
     impl.lifecycle = Lifecycle::None;
-    releaseConsumerClaim();
+    releaseConsumerClaim(impl);
     return media::NativeMediaConsumerProgress::Done;
   }
   const NativeTrackedVideoOutputProgress output =
@@ -2197,7 +2268,7 @@ template <typename ImplType>
   impl.cancelled = lifecycle == Lifecycle::Cancel;
   impl.closed = true;
   impl.lifecycle = Lifecycle::None;
-  releaseConsumerClaim();
+  releaseConsumerClaim(impl);
   return media::NativeMediaConsumerProgress::Done;
 }
 
@@ -2340,7 +2411,7 @@ media::NativeMediaConsumerProgress NativeVideoConsumer::retire(
   impl.endOfStreamDone = false;
   impl.closed = true;
   impl.retirementDone = true;
-  releaseConsumerClaim();
+  releaseConsumerClaim(impl);
   return media::NativeMediaConsumerProgress::Done;
 }
 

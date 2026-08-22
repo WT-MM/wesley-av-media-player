@@ -10,6 +10,7 @@
 #include "playback/mpv/mpv_runtime.hpp"
 #include "player_controller.hpp"
 #include "state_store.hpp"
+#include "window_manager.hpp"
 
 #include <QByteArrayView>
 #include <QCoreApplication>
@@ -25,6 +26,7 @@
 #include <QQmlEngine>
 #include <QQuickStyle>
 #include <QQuickWindow>
+#include <QRect>
 #include <QRegularExpression>
 #include <QSGRendererInterface>
 #include <QStyleHints>
@@ -67,6 +69,18 @@ struct ScriptedSeek {
 };
 
 constexpr double kSeekScriptGrid = 64.0;
+
+// Live state of the scripted seek driver. A struct rather than eight separate
+// locals so the driver lambda can name it once; it lives for the whole run.
+struct ScriptedSeekState {
+  std::size_t index = 0;
+  int attempts = 0;
+  bool busy = false;
+  bool awaiting = false;
+  double target = 0.0;
+  QElapsedTimer clock;
+  qint64 issued_ms = 0;
+};
 
 double onSeekScriptGrid(double seconds) {
   if (!std::isfinite(seconds) || seconds <= 0.0)
@@ -160,6 +174,156 @@ std::vector<ScriptedOpen> parseOpenScript(const QByteArray &value) {
     script.push_back({path, delay});
   }
   return script;
+}
+
+// ---------------------------------------------------------------------------
+// Scripted window driver (test seam).
+//
+// WAM_TEST_WINDOW_SCRIPT="verb@delayMs[,verb@delayMs...]" drives the
+// multi-window lifecycle -- create, open, close, focus, transport, hide,
+// report -- from inside the process, on cumulative delays from launch, exactly
+// the way WAM_TEST_REOPEN_SCRIPT drives warm opens.
+//
+// It exists because the alternative is worse. Verifying "close window A
+// mid-playback and prove B is unaffected", "close the last window and prove
+// the app survives", or "a settings change reaches every window" from outside
+// the process means System Events and an accessibility grant, which steals
+// focus, defeats WAM_TEST_BACKGROUND, and resets HIDIdleTime -- all three of
+// which corrupt the very measurements running alongside. Driving the public
+// WindowManager boundary instead exercises the same code paths the menu bar
+// and the traffic lights do.
+//
+// Verbs (index is a position in creation order):
+//   new                 create an empty window
+//   open:<path>         WindowManager::openUrl -- empty-claim or new window
+//   load:<index>:<path> load into THAT window, the drag-and-drop gesture
+//   close:<index>       QQuickWindow::close() on that window, i.e. the real
+//                       user close path, including its playback teardown
+//   focus:<index>       raise and focus
+//   pause:<index>       play:<index>       rate:<index>:<value>
+//   seekstep:<value>    set it on window 0, to observe the settings mirror
+//   hide                pause every window and hide the app
+//   prefs               show the single Preferences window
+//   report              write one WAM_TEST_WINDOWS line plus one
+//                       WAM_TEST_WINDOW line per window to stderr
+//
+// Telemetry-gated like every other WAM_TEST_* seam, so a shipping launch can
+// never observe it.
+// ---------------------------------------------------------------------------
+// Defined below, next to the argv parsing it also serves.
+QUrl mediaUrlFromArgument(const QString &argument);
+
+struct ScriptedWindowStep {
+  QString verb;
+  int delayMilliseconds{0};
+};
+
+std::vector<ScriptedWindowStep> parseWindowScript(const QByteArray &value) {
+  std::vector<ScriptedWindowStep> script;
+  for (const QByteArray &entry : value.split(',')) {
+    const QByteArray trimmed = entry.trimmed();
+    if (trimmed.isEmpty())
+      continue;
+    const qsizetype separator = trimmed.lastIndexOf('@');
+    if (separator <= 0)
+      continue;
+    bool delay_ok = false;
+    const int delay =
+        QString::fromLatin1(trimmed.sliced(separator + 1)).toInt(&delay_ok);
+    const QString verb =
+        QString::fromUtf8(trimmed.left(separator)).trimmed();
+    if (!delay_ok || delay < 0 || verb.isEmpty())
+      continue;
+    script.push_back({verb, delay});
+  }
+  return script;
+}
+
+void reportWindows(const wam::qt::WindowManager &windows) {
+  const QList<wam::qt::PlayerWindow *> &open = windows.windows();
+  qInfo().noquote() << QStringLiteral("WAM_TEST_WINDOWS count=%1")
+                           .arg(open.size());
+  for (qsizetype index = 0; index < open.size(); ++index) {
+    const wam::qt::PlayerController *player = open.at(index)->controller();
+    if (player == nullptr)
+      continue;
+    const QQuickWindow *quick = open.at(index)->window();
+    const QRect frame = quick != nullptr ? quick->geometry() : QRect();
+    qInfo().noquote()
+        << QStringLiteral(
+               "WAM_TEST_WINDOW idx=%1 media=%2 paused=%3 playing=%4 rate=%5 "
+               "step=%6 hugs=%7 pitch=%8 geom=%10x%11+%12+%13 source=%9")
+               .arg(index)
+               .arg(player->hasMedia() ? 1 : 0)
+               .arg(player->paused() ? 1 : 0)
+               .arg(player->playing() ? 1 : 0)
+               .arg(player->rate())
+               .arg(player->seekStepSeconds())
+               .arg(player->windowHugsVideo() ? 1 : 0)
+               .arg(player->preservePitch() ? 1 : 0)
+               .arg(QFileInfo(player->source().toLocalFile()).fileName())
+               .arg(frame.width())
+               .arg(frame.height())
+               .arg(frame.x())
+               .arg(frame.y());
+  }
+}
+
+void runWindowStep(wam::qt::WindowManager &windows, const QString &verb) {
+  const QStringList fields = verb.split(QLatin1Char(':'));
+  const QString head = fields.value(0);
+  const auto windowAt = [&windows](int index) -> wam::qt::PlayerWindow * {
+    const QList<wam::qt::PlayerWindow *> &open = windows.windows();
+    if (index < 0 || index >= open.size())
+      return nullptr;
+    return open.at(index);
+  };
+  const int index = fields.size() > 1 ? fields.at(1).toInt() : 0;
+
+  if (head == QStringLiteral("new")) {
+    static_cast<void>(windows.createWindow());
+  } else if (head == QStringLiteral("open")) {
+    // Rejoin on ':' so a Windows-style or scheme-bearing path survives.
+    const QString path = fields.mid(1).join(QLatin1Char(':'));
+    const QUrl target = mediaUrlFromArgument(path);
+    if (target.isValid())
+      static_cast<void>(windows.openUrl(target));
+  } else if (head == QStringLiteral("load")) {
+    // The drag-and-drop gesture: qml/Main.qml's DropArea calls exactly this
+    // on exactly this window's controller, so a warm replacement lands in the
+    // window that was dropped on and nowhere else.
+    if (wam::qt::PlayerWindow *window = windowAt(index)) {
+      const QUrl target = mediaUrlFromArgument(fields.mid(2).join(QLatin1Char(':')));
+      if (target.isValid())
+        static_cast<void>(window->controller()->open(target));
+    }
+  } else if (head == QStringLiteral("close")) {
+    if (wam::qt::PlayerWindow *window = windowAt(index)) {
+      if (QQuickWindow *quick = window->window())
+        quick->close();
+    }
+  } else if (head == QStringLiteral("focus")) {
+    if (wam::qt::PlayerWindow *window = windowAt(index))
+      window->raiseWindow();
+  } else if (head == QStringLiteral("pause")) {
+    if (wam::qt::PlayerWindow *window = windowAt(index))
+      window->controller()->pause();
+  } else if (head == QStringLiteral("play")) {
+    if (wam::qt::PlayerWindow *window = windowAt(index))
+      window->controller()->play();
+  } else if (head == QStringLiteral("rate")) {
+    if (wam::qt::PlayerWindow *window = windowAt(index))
+      window->controller()->setRate(fields.value(2).toDouble());
+  } else if (head == QStringLiteral("seekstep")) {
+    if (wam::qt::PlayerWindow *window = windowAt(0))
+      window->controller()->setSeekStepSeconds(fields.value(1).toDouble());
+  } else if (head == QStringLiteral("hide")) {
+    windows.hideAndPauseAll();
+  } else if (head == QStringLiteral("prefs")) {
+    windows.showPreferences();
+  } else if (head == QStringLiteral("report")) {
+    reportWindows(windows);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -341,8 +505,8 @@ QUrl mediaUrlFromArgument(const QString &argument) {
 // how the argv open is staged below.
 class FileOpenRelay final : public QObject {
  public:
-  void attach(wam::qt::PlayerController *player) {
-    player_ = player;
+  void attach(wam::qt::WindowManager *windows) {
+    windows_ = windows;
     for (const QUrl &url : pending_)
       dispatch(url);
     pending_.clear();
@@ -359,7 +523,7 @@ class FileOpenRelay final : public QObject {
       url = QUrl::fromLocalFile(open_event->file());
     if (url.isEmpty())
       return true;
-    if (player_ != nullptr)
+    if (windows_ != nullptr)
       dispatch(url);
     else
       pending_.append(url);
@@ -368,15 +532,23 @@ class FileOpenRelay final : public QObject {
 
  private:
   void dispatch(const QUrl &url) {
-    wam::qt::PlayerController *player = player_;
-    QTimer::singleShot(0, player, [player, url] { player->open(url); });
+    // Every Finder / LaunchServices open goes through the manager, which is
+    // what decides between claiming an empty window and creating a new one.
+    // Selecting three files in Finder therefore delivers three events and
+    // produces three windows, exactly as QuickTime does.
+    wam::qt::WindowManager *windows = windows_;
+    QTimer::singleShot(0, windows, [windows, url] { windows->openUrl(url); });
   }
 
-  wam::qt::PlayerController *player_ = nullptr;
+  wam::qt::WindowManager *windows_ = nullptr;
   QList<QUrl> pending_;
 };
 
-QUrl initialMediaUrl(const QCoreApplication &app) {
+// Every media argument on the command line, in order. WAM opens a window per
+// file the way `open -a WAM a.mp4 b.mp4` and Finder's multi-select do; before
+// multi-window it could only honour the first one.
+QList<QUrl> initialMediaUrls(const QCoreApplication &app) {
+  QList<QUrl> media;
   const QStringList arguments = app.arguments();
   for (qsizetype index = 1; index < arguments.size(); ++index) {
     const QString &argument = arguments.at(index);
@@ -385,9 +557,9 @@ QUrl initialMediaUrl(const QCoreApplication &app) {
 
     const QUrl candidate = mediaUrlFromArgument(argument);
     if (candidate.isValid())
-      return candidate;
+      media.append(candidate);
   }
-  return {};
+  return media;
 }
 
 std::optional<double> initialPlaybackRate(const QCoreApplication &app) {
@@ -403,138 +575,6 @@ std::optional<double> initialPlaybackRate(const QCoreApplication &app) {
       return value;
   }
   return std::nullopt;
-}
-
-int appearanceValue(wam::AppearanceTheme theme) {
-  return static_cast<int>(theme);
-}
-
-wam::AppearanceTheme appearanceTheme(int appearance) {
-  switch (appearance) {
-  case 1:
-    return wam::AppearanceTheme::Dark;
-  case 2:
-    return wam::AppearanceTheme::System;
-  case 0:
-  default:
-    return wam::AppearanceTheme::Light;
-  }
-}
-
-void applyColorScheme(QStyleHints *style_hints, int appearance) {
-  if (!style_hints)
-    return;
-  switch (appearanceTheme(appearance)) {
-  case wam::AppearanceTheme::Dark:
-    style_hints->setColorScheme(Qt::ColorScheme::Dark);
-    break;
-  case wam::AppearanceTheme::System:
-    style_hints->setColorScheme(Qt::ColorScheme::Unknown);
-    break;
-  case wam::AppearanceTheme::Light:
-  default:
-    style_hints->setColorScheme(Qt::ColorScheme::Light);
-    break;
-  }
-}
-
-QString localStateKey(const QUrl &source) {
-  if (!source.isLocalFile())
-    return {};
-  return QFileInfo(source.toLocalFile()).absoluteFilePath();
-}
-
-std::string persistentKey(const QString &local_path) {
-  return local_path.toUtf8().toStdString();
-}
-
-struct ResumeSnapshot {
-  QString local_source;
-  double position = 0.0;
-  double duration = 0.0;
-  bool position_observed = false;
-};
-
-class ResumeTracker {
-public:
-  const ResumeSnapshot &snapshot() const { return snapshot_; }
-  quint64 generation() const { return generation_; }
-
-  void observePosition(double position) {
-    if (std::isfinite(position) && position > 0.0) {
-      snapshot_.position = position;
-      snapshot_.position_observed = true;
-    }
-  }
-
-  void observeDuration(double duration) {
-    if (std::isfinite(duration) && duration > 0.0)
-      snapshot_.duration = duration;
-  }
-
-  void commitZeroPosition(quint64 generation) {
-    if (generation == generation_) {
-      snapshot_.position = 0.0;
-      snapshot_.position_observed = true;
-    }
-  }
-
-  ResumeSnapshot transitionTo(const QString &local_source) {
-    ResumeSnapshot previous = snapshot_;
-    snapshot_ = ResumeSnapshot{local_source, 0.0, 0.0};
-    ++generation_;
-    return previous;
-  }
-
-private:
-  ResumeSnapshot snapshot_;
-  quint64 generation_ = 0;
-};
-
-bool verifyResumeTracker() {
-  ResumeTracker tracker;
-
-  // Merely opening a source is not evidence that playback reached zero. A
-  // second open (or quit/load failure) before mpv reports time-pos must leave
-  // any previously persisted resume point untouched.
-  tracker.transitionTo(QStringLiteral("/media/unobserved.mp4"));
-  const ResumeSnapshot unobserved_snapshot =
-      tracker.transitionTo(QStringLiteral("/media/first.mp4"));
-  if (unobserved_snapshot.position_observed)
-    return false;
-
-  tracker.observeDuration(120.0);
-  tracker.observePosition(42.0);
-
-  // PlayerController::open resets the old timeline before sourceChanged.
-  tracker.observePosition(0.0);
-  tracker.observeDuration(0.0);
-  const ResumeSnapshot open_snapshot =
-      tracker.transitionTo(QStringLiteral("/media/second.mp4"));
-  if (open_snapshot.local_source != QStringLiteral("/media/first.mp4") ||
-      open_snapshot.position != 42.0 || open_snapshot.duration != 120.0 ||
-      !open_snapshot.position_observed)
-    return false;
-
-  tracker.observeDuration(90.0);
-  tracker.observePosition(27.0);
-
-  // PlayerController::stop changes source before resetting the timeline.
-  const ResumeSnapshot stop_snapshot = tracker.transitionTo({});
-  tracker.observePosition(0.0);
-  tracker.observeDuration(0.0);
-  if (stop_snapshot.local_source != QStringLiteral("/media/second.mp4") ||
-      stop_snapshot.position != 27.0 || stop_snapshot.duration != 90.0 ||
-      !stop_snapshot.position_observed ||
-      !tracker.snapshot().local_source.isEmpty())
-    return false;
-
-  // A deliberate seek to the beginning still clears the stable position.
-  tracker.transitionTo(QStringLiteral("/media/third.mp4"));
-  tracker.observePosition(18.0);
-  tracker.commitZeroPosition(tracker.generation());
-  return tracker.snapshot().position == 0.0 &&
-         tracker.snapshot().position_observed;
 }
 
 int runtimeVerificationFailure(int exit_code, const QString &message) {
@@ -579,7 +619,7 @@ int verifyRuntime() {
                           "resolution is invalid."));
   }
 
-  if (!verifyResumeTracker()) {
+  if (!wam::qt::verifyResumeTracker()) {
     return runtimeVerificationFailure(
         5, QStringLiteral(
                "WAM runtime verification failed: resume tracking is invalid."));
@@ -734,271 +774,27 @@ int main(int argc, char *argv[]) {
   wam::StateStore state_store;
   (void)state_store.load();
 
-  wam::qt::PlayerController player;
-#ifndef Q_OS_MACOS
-  const auto linked_runtime =
-      wam::playback::mpv::MpvLinkedRuntimeFactory::create();
-  if (!linked_runtime ||
-      !player.provisionMpvFallbackRuntime(linked_runtime.runtime)) {
-    const QString detail =
-        linked_runtime.detail.isEmpty()
-            ? QStringLiteral("cannot retain the linked libmpv runtime")
-            : linked_runtime.detail;
-    return runtimeVerificationFailure(
-        3, QStringLiteral("WAM could not initialize its media engine: %1.")
-               .arg(detail));
-  }
-#endif
-  if (const auto rate = initialPlaybackRate(app))
-    player.setRate(*rate);
-  const int saved_appearance =
-      appearanceValue(state_store.state().appearance_theme);
-  player.setAppearance(saved_appearance);
-  player.setVolume(
-      static_cast<double>(std::clamp(state_store.state().volume, 0, 100)) /
-      100.0);
-  player.setSeekStepSeconds(
-      static_cast<double>(std::clamp(state_store.state().seek_step_seconds,
-                                     1, 60)));
-  player.setWindowHugsVideo(state_store.state().window_hugs_video);
-  player.setPreservePitch(state_store.state().preserve_pitch);
-  applyColorScheme(app.styleHints(), saved_appearance);
-
-  QTimer persistence_timer;
-  persistence_timer.setInterval(static_cast<int>(
-      std::chrono::duration_cast<std::chrono::milliseconds>(
-          wam::StateCheckpointGate::kInterval)
-          .count()));
-  persistence_timer.setSingleShot(true);
-  // A precise one-shot is never delivered early, preserving the ten-second
-  // minimum between writes without any cost while the timer is inactive.
-  persistence_timer.setTimerType(Qt::PreciseTimer);
-  wam::StateCheckpointGate persistence_checkpoint;
-  const auto request_checkpoint = [&] {
-    if (persistence_checkpoint.request()) persistence_timer.start();
-  };
-
-  QObject::connect(
-      &player, &wam::qt::PlayerController::appearanceChanged, &app, [&] {
-        applyColorScheme(app.styleHints(), player.appearance());
-        request_checkpoint();
-      });
-  QObject::connect(&player, &wam::qt::PlayerController::volumeChanged, &app,
-                   request_checkpoint);
-  QObject::connect(&player, &wam::qt::PlayerController::seekStepSecondsChanged,
-                   &app, request_checkpoint);
-  QObject::connect(&player,
-                   &wam::qt::PlayerController::windowHugsVideoChanged, &app,
-                   request_checkpoint);
-  QObject::connect(&player, &wam::qt::PlayerController::preservePitchChanged,
-                   &app, request_checkpoint);
-
-  ResumeTracker resume_tracker;
-  double resume_position = 0.0;
-  bool resume_pending = false;
-
-  const auto remember_position = [&](const ResumeSnapshot &snapshot) {
-    if (snapshot.local_source.isEmpty() || !snapshot.position_observed)
-      return;
-    const std::string key = persistentKey(snapshot.local_source);
-    if (snapshot.position < 5.0 ||
-        (snapshot.duration > 0.0 &&
-         snapshot.position >= snapshot.duration - 5.0)) {
-      state_store.forget(key);
-      return;
-    }
-    state_store.remember(key, snapshot.position);
-  };
-
-  const auto remember_tracked_position = [&] {
-    remember_position(resume_tracker.snapshot());
-  };
-
-  const auto apply_pending_resume = [&] {
-    const QString &tracked_local_source =
-        resume_tracker.snapshot().local_source;
-    if (!resume_pending || tracked_local_source.isEmpty() ||
-        player.duration() <= 0.0)
-      return;
-    // Wait for the transport to actually be running. Duration and source both
-    // arrive while the engine is still starting, and a seek issued into that
-    // window replaces the pending start instead of following it, which left a
-    // resumed open parked on its first frame. The request stays pending until
-    // a start it can follow, so a paused open simply keeps its position.
-    if (!player.playing() || player.position() <= 0.0)
-      return;
-
-    resume_pending = false;
-    if (resume_position < 5.0 || resume_position >= player.duration() - 5.0) {
-      state_store.forget(persistentKey(tracked_local_source));
-      if (state_store.dirty()) request_checkpoint();
-      return;
-    }
-    // Native seeking admits only an exactly representable target, and a
-    // remembered position is a decimal that has been through text. Floor it
-    // onto a binary grid, which every such value converts to exactly, so the
-    // restore seek is never rejected for its last fractional digits. A 1/64 s
-    // grid is finer than one video frame at any admitted rate.
-    constexpr double kResumeGrid = 64.0;
-    const double bounded = std::min(resume_position, player.duration());
-    player.seekTo(std::max(0.0, std::floor(bounded * kResumeGrid) / kResumeGrid));
-  };
-
-  QObject::connect(
-      &player, &wam::qt::PlayerController::positionChanged, &app, [&] {
-        const double position = player.position();
-        if (position > 0.0) {
-          apply_pending_resume();
-          resume_tracker.observePosition(position);
-          if (!resume_tracker.snapshot().local_source.isEmpty())
-            request_checkpoint();
-          return;
-        }
-
-        // open() resets position and duration before sourceChanged,
-        // while stop() emits sourceChanged first. Delay a zero so
-        // either ordering can preserve the source being left. A
-        // real seek to zero keeps its source and positive duration.
-        const quint64 generation = resume_tracker.generation();
-        QTimer::singleShot(0, &app, [&, generation] {
-          const ResumeSnapshot &snapshot = resume_tracker.snapshot();
-          if (generation != resume_tracker.generation() ||
-              snapshot.local_source.isEmpty() ||
-              localStateKey(player.source()) != snapshot.local_source ||
-              player.position() > 0.0 || player.duration() <= 0.0)
-            return;
-          resume_tracker.commitZeroPosition(generation);
-          request_checkpoint();
-        });
-      });
-  QObject::connect(&player, &wam::qt::PlayerController::durationChanged, &app,
-                   [&] {
-                     resume_tracker.observeDuration(player.duration());
-                     apply_pending_resume();
-                   });
-  QObject::connect(&player, &wam::qt::PlayerController::playingChanged, &app,
-                   [&] { apply_pending_resume(); });
-  QObject::connect(
-      &player, &wam::qt::PlayerController::sourceChanged, &app, [&] {
-        const ResumeSnapshot previous =
-            resume_tracker.transitionTo(localStateKey(player.source()));
-        remember_position(previous);
-        if (state_store.dirty()) request_checkpoint();
-        const QString &tracked_local_source =
-            resume_tracker.snapshot().local_source;
-        resume_position =
-            tracked_local_source.isEmpty()
-                ? 0.0
-                : state_store.positionFor(persistentKey(tracked_local_source));
-        // Native accurate seek now serves AAC, so the restore seek keeps the
-        // native session instead of retiring it and a resumed open plays.
-        constexpr bool kAutoResumeEnabled = true;
-        resume_pending = kAutoResumeEnabled && resume_position >= 5.0;
-        if (resume_pending)
-          apply_pending_resume();
-      });
-
-  // Scripted seek driver. See ScriptedSeek above: telemetry-gated, replays the
-  // public scrubber gesture so a parked window needs no pointer.
-  std::vector<ScriptedSeek> seek_script;
-  std::size_t seek_script_index = 0;
-  int seek_script_attempts = 0;
-  bool seek_script_busy = false;
-  bool seek_script_awaiting = false;
-  double seek_script_target = 0.0;
-  QElapsedTimer seek_script_clock;
-  seek_script_clock.start();
-  qint64 seek_script_issued_ms = 0;
-#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
-  if (wam::qt::NativeBenchmarkTelemetry::instance().enabled()) {
-    seek_script = parseSeekScript(qgetenv("WAM_TEST_SEEK_SCRIPT"));
-  }
-#endif
-  const auto advance_seek_script = [&] {
-    if (seek_script_index >= seek_script.size())
-      return;
-    // A commit target is admitted only while the session is prepared and has
-    // no commit already in flight, so a gesture can be refused for reasons
-    // that clear on their own. Confirm each scripted seek by arrival and
-    // retry a bounded number of times rather than silently skipping it.
-    if (seek_script_awaiting) {
-      if (std::abs(player.position() - seek_script_target) <= 1.0) {
-        seek_script_awaiting = false;
-        seek_script_attempts = 0;
-        ++seek_script_index;
-      } else if (seek_script_clock.elapsed() - seek_script_issued_ms > 2500) {
-        seek_script_awaiting = false;
-        if (++seek_script_attempts >= 5) {
-          seek_script_attempts = 0;
-          ++seek_script_index;
-        }
-      }
-      return;
-    }
-    if (seek_script_busy)
-      return;
-    const double position = player.position();
-    const double duration = player.duration();
-    const ScriptedSeek &next = seek_script[seek_script_index];
-    if (duration <= 0.0 || !player.playing() || position < next.when)
-      return;
-    const double target = onSeekScriptGrid(std::min(next.target, duration));
-    seek_script_busy = true;
-    // One pointer gesture: press, three motion previews, release-commit. The
-    // delays are the pacing a real drag has, which is what lets the preview
-    // lane actually decode before the exact commit lands.
-    player.beginScrub();
-    player.previewSeekTo(onSeekScriptGrid(std::max(0.0, target - 0.5)));
-    QTimer::singleShot(120, &app, [&, target] {
-      player.previewSeekTo(onSeekScriptGrid(std::max(0.0, target - 0.25)));
-    });
-    QTimer::singleShot(240, &app, [&, target] {
-      player.previewSeekTo(target);
-    });
-    QTimer::singleShot(360, &app, [&, target] {
-      player.endScrub(target);
-      seek_script_target = target;
-      seek_script_issued_ms = seek_script_clock.elapsed();
-      seek_script_awaiting = true;
-      seek_script_busy = false;
-    });
-  };
-  if (!seek_script.empty()) {
-    QObject::connect(&player, &wam::qt::PlayerController::positionChanged, &app,
-                     [&] { advance_seek_script(); });
-  }
-
-  const auto save_if_dirty = [&] {
-    remember_tracked_position();
-    state_store.state().volume = std::clamp(
-        static_cast<int>(std::lround(player.volume() * 100.0)), 0, 100);
-    state_store.state().appearance_theme = appearanceTheme(player.appearance());
-    state_store.state().seek_step_seconds = std::clamp(
-        static_cast<int>(std::lround(player.seekStepSeconds())), 1, 60);
-    state_store.state().window_hugs_video = player.windowHugsVideo();
-    state_store.state().preserve_pitch = player.preservePitch();
-    return !state_store.dirty() || state_store.save();
-  };
-
-  QObject::connect(&persistence_timer, &QTimer::timeout, &app, [&] {
-    if (persistence_checkpoint.checkpoint(save_if_dirty))
-      persistence_timer.start();
-  });
-  QObject::connect(&app, &QCoreApplication::aboutToQuit, &app, [&] {
-    persistence_timer.stop();
-    (void)persistence_checkpoint.flushNow(save_if_dirty);
-  });
+  // A player window is a document window: closing the last one leaves the app
+  // running with its menu bar, the way every document-based macOS app behaves,
+  // and Cmd-O / a Finder open / a Dock click then makes a fresh one. Qt's
+  // default is the opposite -- quitOnLastWindowClosed is true -- so without
+  // this line closing one video would silently terminate the process. Quit
+  // stays on Cmd-Q, the app menu, and the orderly-quit seam
+  // (WAM_TEST_QUIT_AFTER_MS); all three call QCoreApplication::quit() and are
+  // unaffected by this.
+  app.setQuitOnLastWindowClosed(false);
 
   int exit_code = 0;
   {
     QQmlApplicationEngine engine;
-    engine.rootContext()->setContextProperty(QStringLiteral("player"), &player);
 #if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
     // On the CALayer presentation route the video is an
     // AVSampleBufferDisplayLayer sitting *below* Qt's view, so the QML
     // background must stop painting opaque black over it. The route decision
-    // is shared with the session factory (native_layer_presentation_state.hpp)
-    // so the two cannot disagree.
+    // is process-wide and shared with the session factory
+    // (native_layer_presentation_state.hpp) so the two cannot disagree; it is
+    // therefore an app-level context property, inherited by every window's
+    // own child context.
     engine.rootContext()->setContextProperty(
         QStringLiteral("layerPresentation"),
         wam::macos::layerPresentationRouteSelected());
@@ -1006,13 +802,11 @@ int main(int argc, char *argv[]) {
     engine.rootContext()->setContextProperty(
         QStringLiteral("layerPresentation"), false);
 #endif
-    // Whether the title band may offer its reveal-in-Finder caret. Set here,
-    // before the engine loads, rather than read off the "windowChrome" bridge
-    // in QML: that bridge only exists once the root window has been created
-    // (below), which is after every binding in Main.qml has first evaluated,
-    // and a `typeof windowChrome` test is not a dependency any binding would
-    // ever be re-run for. Same shape, and the same reason, as
-    // `layerPresentation` above.
+    // Whether the title band may offer its reveal-in-Finder caret: a platform
+    // fact, so app-level like the route above. Set before anything is created,
+    // rather than read off a per-window bridge in QML, because that bridge
+    // only exists after the window does and a `typeof` test is not a
+    // dependency any binding would be re-run for.
 #if defined(Q_OS_MACOS)
     engine.rootContext()->setContextProperty(
         QStringLiteral("revealInFinderSupported"), true);
@@ -1020,76 +814,161 @@ int main(int argc, char *argv[]) {
     engine.rootContext()->setContextProperty(
         QStringLiteral("revealInFinderSupported"), false);
 #endif
+
+    // The window factory. Everything app-level -- the state store and its
+    // persistence checkpoint, the single desktop menu bar, the single
+    // Preferences window, focus routing, and the settings mirror that makes
+    // one Preferences change apply live to every window -- lives here; the
+    // controller, chrome bridge, resume tracker and native playback session
+    // are per window.
+    wam::qt::WindowManager windows(engine, state_store);
+    engine.rootContext()->setContextProperty(QStringLiteral("appHost"),
+                                             &windows);
+    windows.setBackgroundLaunch(background_launch);
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+    // WAM_TEST_GEOMETRY parks the FIRST window at an exact rectangle. Later
+    // windows cascade off it exactly as real ones do, so a multi-window
+    // measurement still gets N findable, non-overlapping windows.
+    if (test_seams_admitted) {
+      if (const std::optional<ScriptedGeometry> parked =
+              parseGeometry(qgetenv("WAM_TEST_GEOMETRY"))) {
+        windows.setParkedGeometry(parked->x, parked->y, parked->width,
+                                  parked->height);
+      }
+    }
+#endif
+
     QObject::connect(
         &engine, &QQmlApplicationEngine::objectCreationFailed, &app,
         [] { QCoreApplication::exit(2); }, Qt::QueuedConnection);
-    engine.loadFromModule(QStringLiteral("Wam"), QStringLiteral("Main"));
 
-    if (engine.rootObjects().isEmpty())
+    // The menu bar is installed before any window exists and outlives every
+    // one of them, which is what lets the app keep its menus with zero windows
+    // open.
+    if (!windows.createMenuBar())
       return 2;
-    if (!player.available())
-      return 3;
 
 #if defined(Q_OS_MACOS)
-    // The bridge installs the transparent full-size-content titlebar on
-    // construction and stays alive for the QML root window's lifetime so
-    // Main.qml can drive its fade/aspect-ratio/actual-size calls afterward.
-    std::unique_ptr<wam::qt::MacWindowChrome> window_chrome;
-    if (auto *root_window =
-            qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst())) {
-      window_chrome = std::make_unique<wam::qt::MacWindowChrome>(root_window);
-      engine.rootContext()->setContextProperty(
-          QStringLiteral("windowChrome"), window_chrome.get());
-#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
-      // WAM_TEST_BACKGROUND, second half. The accessory policy stops the focus
-      // steal; this is what keeps the window on screen and unoccluded anyway,
-      // which the measurement's drawn-frame validity depends on. Re-asserted on
-      // every show because Qt orders the window front itself each time, and a
-      // non-active app's ordering lands behind the active app's windows.
-      if (background_launch) {
-        QObject::connect(root_window, &QWindow::visibleChanged, root_window,
-                         [root_window](bool visible) {
-                           if (visible)
-                             wam::macos_window_chrome::
-                                 orderFrontWithoutActivating(root_window);
-                         });
-        wam::macos_window_chrome::orderFrontWithoutActivating(root_window);
-      }
-      // WAM_TEST_GEOMETRY. Applied after the window exists and again on the
-      // next event-loop pass, because QML's own sizing (windowHugsVideo, the
-      // first frame's natural size) settles after this point and would
-      // otherwise overwrite the parked rectangle.
-      if (test_seams_admitted) {
-        if (const std::optional<ScriptedGeometry> parked =
-                parseGeometry(qgetenv("WAM_TEST_GEOMETRY"))) {
-          const auto apply = [root_window, parked] {
-            root_window->setGeometry(parked->x, parked->y, parked->width,
-                                     parked->height);
-          };
-          apply();
-          QTimer::singleShot(0, root_window, apply);
-          QTimer::singleShot(400, root_window, apply);
-        }
-      }
-#endif
-    }
+    // Clicking the Dock icon with no windows open must present a window --
+    // AppKit's applicationShouldHandleReopen: contract, and the behaviour a
+    // macOS user expects from an app that stays alive without windows.
+    wam::macos_window_chrome::installApplicationReopenHandler([&windows] {
+      if (windows.windowCount() == 0)
+        static_cast<void>(windows.createWindow());
+    });
+    // macOS hiding the app for ANY reason -- Cmd-H, Hide Others, the Dock
+    // menu -- pauses every window, so the system gesture and WAM's own "h"
+    // macro are indistinguishable. Pausing an already-paused player is a
+    // no-op, so the two paths cannot double-pause.
+    wam::macos_window_chrome::installApplicationHideObserver(
+        [&windows] { windows.pauseAll(); });
 #endif
 
     // A malformed on-disk state is dirty so it can be rewritten canonically.
     // A missing/default state stays completely idle: no timer and no save.
-    if (state_store.dirty()) request_checkpoint();
+    if (state_store.dirty())
+      windows.requestCheckpoint();
 
-    const QUrl media = initialMediaUrl(app);
-    if (!media.isEmpty()) {
-      QTimer::singleShot(0, &player, [&player, media] { player.open(media); });
+    QObject::connect(&app, &QCoreApplication::aboutToQuit, &app, [&windows] {
+      // Cmd-Q with N playing windows must retire N native sessions, not
+      // abandon them at process exit: aboutToQuit is the last moment the event
+      // loop is alive, so the teardown runs here and synchronously.
+      windows.closeAllWindows();
+      windows.flushPersistence();
+    });
+
+    wam::qt::PlayerWindow *first = windows.createWindow();
+    if (first == nullptr)
+      return 2;
+    if (!first->controller()->available())
+      return 3;
+    wam::qt::PlayerController *first_player = first->controller();
+
+    if (const auto rate = initialPlaybackRate(app))
+      first_player->setRate(*rate);
+
+    // Scripted seek driver. See ScriptedSeek above: telemetry-gated, replays
+    // the public scrubber gesture so a parked window needs no pointer. Bound
+    // to the FIRST window only -- the scripted seams are single-session
+    // measurement tools and a second window is not part of any trial they
+    // describe.
+    std::vector<ScriptedSeek> seek_script;
+    ScriptedSeekState seek_state;
+#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+    if (wam::qt::NativeBenchmarkTelemetry::instance().enabled())
+      seek_script = parseSeekScript(qgetenv("WAM_TEST_SEEK_SCRIPT"));
+#endif
+    seek_state.clock.start();
+    const auto advance_seek_script = [first_player, &seek_script, &seek_state] {
+      if (seek_state.index >= seek_script.size())
+        return;
+      // A commit target is admitted only while the session is prepared and has
+      // no commit already in flight, so a gesture can be refused for reasons
+      // that clear on their own. Confirm each scripted seek by arrival and
+      // retry a bounded number of times rather than silently skipping it.
+      if (seek_state.awaiting) {
+        if (std::abs(first_player->position() - seek_state.target) <= 1.0) {
+          seek_state.awaiting = false;
+          seek_state.attempts = 0;
+          ++seek_state.index;
+        } else if (seek_state.clock.elapsed() - seek_state.issued_ms > 2500) {
+          seek_state.awaiting = false;
+          if (++seek_state.attempts >= 5) {
+            seek_state.attempts = 0;
+            ++seek_state.index;
+          }
+        }
+        return;
+      }
+      if (seek_state.busy)
+        return;
+      const double position = first_player->position();
+      const double duration = first_player->duration();
+      const ScriptedSeek &next = seek_script[seek_state.index];
+      if (duration <= 0.0 || !first_player->playing() || position < next.when)
+        return;
+      const double target = onSeekScriptGrid(std::min(next.target, duration));
+      seek_state.busy = true;
+      // One pointer gesture: press, three motion previews, release-commit. The
+      // delays are the pacing a real drag has, which is what lets the preview
+      // lane actually decode before the exact commit lands.
+      first_player->beginScrub();
+      first_player->previewSeekTo(onSeekScriptGrid(std::max(0.0, target - 0.5)));
+      QTimer::singleShot(120, first_player, [first_player, target] {
+        first_player->previewSeekTo(onSeekScriptGrid(std::max(0.0, target - 0.25)));
+      });
+      QTimer::singleShot(240, first_player,
+                         [first_player, target] { first_player->previewSeekTo(target); });
+      QTimer::singleShot(360, first_player, [first_player, &seek_state, target] {
+        first_player->endScrub(target);
+        seek_state.target = target;
+        seek_state.issued_ms = seek_state.clock.elapsed();
+        seek_state.awaiting = true;
+        seek_state.busy = false;
+      });
+    };
+    if (!seek_script.empty()) {
+      QObject::connect(first_player, &wam::qt::PlayerController::positionChanged,
+                       first_player, advance_seek_script);
     }
-    file_open_relay.attach(&player);
+
+    const QList<QUrl> media = initialMediaUrls(app);
+    if (!media.isEmpty()) {
+      QTimer::singleShot(0, &windows, [&windows, media] {
+        // The first window is empty, so it claims the first file; every
+        // further argument creates its own window.
+        for (const QUrl &url : media)
+          static_cast<void>(windows.openUrl(url));
+      });
+    }
+    file_open_relay.attach(&windows);
 
 #if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
     // Warm-open measurement, on the scripted-seek opt-in. Each entry reopens
-    // in the already-running process, so its telemetry lineage is a warm open
-    // with no launch work in the span. Delays are cumulative from the initial
-    // open, which keeps each reopen clear of the previous one's first draw.
+    // in the already-running FIRST window, so its telemetry lineage is a warm
+    // open with no launch work in the span -- and deliberately a replacement
+    // rather than a new window, because a new window would pay window and
+    // scene-graph startup and stop being a warm open at all.
     if (wam::qt::NativeBenchmarkTelemetry::instance().enabled()) {
       const std::vector<ScriptedOpen> open_script =
           parseOpenScript(qgetenv("WAM_TEST_REOPEN_SCRIPT"));
@@ -1097,10 +976,10 @@ int main(int argc, char *argv[]) {
       for (const ScriptedOpen &entry : open_script) {
         cumulative += entry.delayMilliseconds;
         const QString path = entry.path;
-        QTimer::singleShot(cumulative, &player, [&player, path] {
+        QTimer::singleShot(cumulative, first_player, [first_player, path] {
           const QUrl target = mediaUrlFromArgument(path);
           if (target.isValid())
-            player.open(target);
+            first_player->open(target);
         });
       }
 
@@ -1110,21 +989,35 @@ int main(int argc, char *argv[]) {
       for (const ScriptedRate &entry : rate_script) {
         rateCumulative += entry.delayMilliseconds;
         const ScriptedRate scheduled = entry;
-        QTimer::singleShot(rateCumulative, &player, [&player, scheduled] {
-          if (scheduled.pause) {
-            player.pause();
-          } else if (scheduled.resume) {
-            player.play();
-          } else {
-            player.setRate(scheduled.rate);
-          }
-        });
+        QTimer::singleShot(rateCumulative, first_player,
+                           [first_player, scheduled] {
+                             if (scheduled.pause) {
+                               first_player->pause();
+                             } else if (scheduled.resume) {
+                               first_player->play();
+                             } else {
+                               first_player->setRate(scheduled.rate);
+                             }
+                           });
+      }
+
+      // Scripted multi-window lifecycle. See ScriptedWindowStep above.
+      const std::vector<ScriptedWindowStep> window_script =
+          parseWindowScript(qgetenv("WAM_TEST_WINDOW_SCRIPT"));
+      int windowCumulative = 0;
+      for (const ScriptedWindowStep &step : window_script) {
+        windowCumulative += step.delayMilliseconds;
+        const QString verb = step.verb;
+        QTimer::singleShot(windowCumulative, &windows,
+                           [&windows, verb] { runWindowStep(windows, verb); });
       }
 
       // Orderly quit for the benchmark harness. Telemetry buffers facts in
       // memory and commits them at a checkpoint or at the terminal drain, so
       // a signal-killed process loses every fact recorded after the last
-      // first draw. Quitting through the event loop lets that drain run.
+      // first draw. Quitting through the event loop lets that drain run --
+      // and still works with quitOnLastWindowClosed off, because it is
+      // QCoreApplication::quit(), not a window close.
       bool quit_after_ok = false;
       const int quit_after =
           QString::fromLatin1(qgetenv("WAM_TEST_QUIT_AFTER_MS"))

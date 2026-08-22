@@ -1,5 +1,7 @@
 #include "native_audio_output.hpp"
 
+#include "native_concurrency_limits.hpp"
+
 #include <CoreAudio/HostTime.h>
 
 #include <algorithm>
@@ -36,10 +38,80 @@ struct CallbackBridge {
   std::atomic<std::uint32_t> exitPins{0};
 };
 
-std::atomic<bool> gOutputClaimed{false};
-std::atomic<NativeAudioOutput *> gCallbackOwner{nullptr};
-CallbackBridge gCallbackBridge;
-CallbackBridge gDeviceListenerBridge;
+// One player window's worth of callback plumbing. claimed is the admission
+// token create() competes for; callbackOwner is the bounded retention that
+// keeps a prematurely released output alive while either callback context is
+// still attached, and is what recoverQuarantined() scans for.
+struct OutputSlot {
+  std::atomic<bool> claimed{false};
+  std::atomic<NativeAudioOutput *> callbackOwner{nullptr};
+  CallbackBridge render;
+  CallbackBridge deviceListener;
+};
+
+// The bounded output registry: exactly one slot per admissible player window.
+//
+// Statically allocated with process lifetime, never destroyed, never
+// reallocated, never dynamically allocated. That is not a style preference,
+// it is the safety property the whole gate/exitPins protocol rests on:
+// CoreAudio holds &gSlots[i].render as the AURenderCallbackStruct context and
+// &gSlots[i].deviceListener as the AudioUnitAddPropertyListener context, and a
+// callback that was already in flight when its owner was released must land in
+// a still-valid object rather than freed memory. Fixed storage at a fixed
+// address is what guarantees that; the gate then tells the landed callback
+// that nobody is home. A vector, a lazily created slot, or any destruction at
+// exit would each reintroduce exactly the use-after-free this design removes.
+//
+// Before WAM became a multi-window player this was a single claim flag and one
+// pair of singleton bridges, because one process could only ever want one
+// output. Widening it to kMaximumConcurrentPlayerWindows slots keeps every
+// property that design had -- a fixed resource envelope, no unbounded leak on
+// a quarantined teardown, a hard refusal rather than an overrun when full --
+// and admits N simultaneous windows. Nothing here grows with load.
+OutputSlot gSlots[kMaximumConcurrentPlayerWindows];
+
+// Recovers the slot a CoreAudio callback context belongs to, or nullptr.
+//
+// This is the successor to the old `context != &gCallbackBridge` identity test
+// and must be exactly as strict: the context is UNTRUSTED (a stale context
+// from an already-detached unit, or a foreign one from any other AudioUnit
+// client in the process, can reach these entry points). So the pointer is
+// never dereferenced, never cast, and never turned into an index by
+// arithmetic. It is only COMPARED, by pointer equality, against the addresses
+// of the bridges the registry actually owns. A context that is not the exact
+// address of one of the kMaximumConcurrentPlayerWindows bridges of the
+// requested kind is rejected, which is the same set-of-one-widened-to-N
+// decision the singleton test made. The scan is a fixed
+// kMaximumConcurrentPlayerWindows equality comparisons against addresses the
+// compiler knows statically -- no load from the untrusted pointer, no branch
+// on its contents, no allocation, no lock -- which the real-time render
+// callback affords easily at its device-period wake rate.
+[[nodiscard]] CallbackBridge *renderBridgeForContext(
+    const void *context) noexcept {
+  for (OutputSlot &slot : gSlots) {
+    if (context == &slot.render) {
+      return &slot.render;
+    }
+  }
+  return nullptr;
+}
+
+[[nodiscard]] CallbackBridge *deviceListenerBridgeForContext(
+    const void *context) noexcept {
+  for (OutputSlot &slot : gSlots) {
+    if (context == &slot.deviceListener) {
+      return &slot.deviceListener;
+    }
+  }
+  return nullptr;
+}
+
+// A slot index is carried in NativeAudioOutput::slot_index_, which is an int
+// so the header need not see OutputSlot. The cap has to fit that type for the
+// index to be representable at all.
+static_assert(kMaximumConcurrentPlayerWindows > 0 &&
+              kMaximumConcurrentPlayerWindows <=
+                  std::numeric_limits<int>::max());
 
 static_assert(std::atomic<std::uint32_t>::is_always_lock_free);
 static_assert(std::atomic<std::uint64_t>::is_always_lock_free);
@@ -310,20 +382,36 @@ std::shared_ptr<NativeAudioOutput> NativeAudioOutput::create(
        !wake.videoDueHostTicks->is_lock_free())) {
     return {};
   }
-  bool expected = false;
-  if (!gOutputClaimed.compare_exchange_strong(
-          expected, true, std::memory_order_acq_rel,
-          std::memory_order_acquire)) {
+  // First slot whose claim can be taken. Refusing when every slot is claimed
+  // is the deliberate behaviour: the registry is the process's whole native
+  // audio envelope, and the caller falls back rather than overrunning it.
+  int index = -1;
+  for (int candidate = 0; candidate != kMaximumConcurrentPlayerWindows;
+       ++candidate) {
+    bool expected = false;
+    if (gSlots[candidate].claimed.compare_exchange_strong(
+            expected, true, std::memory_order_acq_rel,
+            std::memory_order_acquire)) {
+      index = candidate;
+      break;
+    }
+  }
+  if (index < 0) {
     return {};
   }
 
   try {
     auto output = std::shared_ptr<NativeAudioOutput>(
         new NativeAudioOutput(renderCore, calls, wake));
+    // Set before the object is visible to anyone else, and never changed
+    // afterwards: every later member reference to gSlots[slot_index_] relies
+    // on create() being the only way a NativeAudioOutput comes into existence.
+    // The claim on that slot is released and retaken; the index is not.
+    output->slot_index_ = index;
     output->claim_held_ = true;
     return output;
   } catch (...) {
-    gOutputClaimed.store(false, std::memory_order_release);
+    gSlots[index].claimed.store(false, std::memory_order_release);
     return {};
   }
 }
@@ -335,8 +423,8 @@ NativeAudioOutput::NativeAudioOutput(
     : render_core_(renderCore), calls_(calls), wake_(wake) {}
 
 NativeAudioOutput::~NativeAudioOutput() {
-  // An attached callback always has the process-bounded owner in
-  // gCallbackOwner, so this branch is reachable only for an unattached partial
+  // An attached callback always has its slot's bounded owner in
+  // callbackOwner, so this branch is reachable only for an unattached partial
   // initialization. Best-effort cleanup is safe because no callback can enter.
   if (unit_ != nullptr && !callback_attached_ && !listener_attached_ &&
       callback_entries_.load(std::memory_order_acquire) == 0) {
@@ -347,22 +435,50 @@ NativeAudioOutput::~NativeAudioOutput() {
     unit_ = nullptr;
   }
   if (claim_held_) {
-    gOutputClaimed.store(false, std::memory_order_release);
+    claim_held_ = false;
+    gSlots[slot_index_].claimed.store(false, std::memory_order_release);
   }
 }
 
 std::shared_ptr<NativeAudioOutput>
 NativeAudioOutput::recoverQuarantined() noexcept {
-  NativeAudioOutput *const output =
-      gCallbackOwner.load(std::memory_order_acquire);
-  if (output == nullptr) {
-    return {};
+  // At most one recovery per call, exactly as when there was one retention
+  // cell; the caller repeats until this returns null.
+  //
+  // A slot's callbackOwner is published the moment a callback context is
+  // attached and cleared only by a teardown that reached Done, so "retained"
+  // covers both a genuinely abandoned output and a healthy one that is simply
+  // still running. With one slot those were indistinguishable and it did not
+  // matter -- there was nothing else to hand back. With N slots it matters a
+  // great deal: handing a caller a neighbouring window's LIVE output, which it
+  // would then close, would silence a window that was playing perfectly well.
+  //
+  // So the abandoned ones are found first. An output whose only remaining
+  // strong reference is its own callback_self_owner_ is by definition one no
+  // owner can ever close again -- that is precisely the quarantine this seam
+  // exists to drain. Only if no slot is in that state does the scan fall back
+  // to the first retained slot, which is the pre-multi-window behaviour and is
+  // what a caller still holding its own owner is asking about.
+  for (const bool abandonedOnly : {true, false}) {
+    for (OutputSlot &slot : gSlots) {
+      NativeAudioOutput *const output =
+          slot.callbackOwner.load(std::memory_order_acquire);
+      if (output == nullptr) {
+        continue;
+      }
+      // The self-owner is one reference; anything above it is an owner that
+      // can still drive close() itself.
+      if (abandonedOnly && output->weak_from_this().use_count() != 1) {
+        continue;
+      }
+      try {
+        return output->shared_from_this();
+      } catch (...) {
+        return {};
+      }
+    }
   }
-  try {
-    return output->shared_from_this();
-  } catch (...) {
-    return {};
-  }
+  return {};
 }
 
 bool NativeAudioOutput::validCallTable() const noexcept {
@@ -588,7 +704,7 @@ OSStatus NativeAudioOutput::addDeviceListener() noexcept {
       return calls_.addPropertyListener(
           calls_.context, unit_, kAudioUnitProperty_StreamFormat,
           &NativeAudioOutput::devicePropertyChanged,
-          &gDeviceListenerBridge);
+          &gSlots[slot_index_].deviceListener);
     } @catch (...) {
     }
   } catch (...) {
@@ -604,7 +720,7 @@ OSStatus NativeAudioOutput::removeDeviceListener() noexcept {
       return calls_.removePropertyListener(
           calls_.context, unit_, kAudioUnitProperty_StreamFormat,
           &NativeAudioOutput::devicePropertyChanged,
-          &gDeviceListenerBridge);
+          &gSlots[slot_index_].deviceListener);
     } @catch (...) {
     }
   } catch (...) {
@@ -826,8 +942,9 @@ NativeAudioOutputProgress NativeAudioOutput::configure(
   activated_ = true;
   published_activated_.store(true, std::memory_order_release);
 
+  OutputSlot &slot = gSlots[slot_index_];
   AURenderCallbackStruct callback{&NativeAudioOutput::renderCallback,
-                                  &gCallbackBridge};
+                                  &slot.render};
   status = setProperty(kAudioUnitProperty_SetRenderCallback,
                        kAudioUnitScope_Input, 0, &callback,
                        sizeof(callback));
@@ -839,11 +956,11 @@ NativeAudioOutputProgress NativeAudioOutput::configure(
   }
   callback_attached_ = true;
   callback_self_owner_ = shared_from_this();
-  gCallbackOwner.store(this, std::memory_order_release);
-  gCallbackBridge.owner.store(this, std::memory_order_release);
-  gCallbackBridge.gate.store(kBridgePaused, std::memory_order_release);
-  gDeviceListenerBridge.owner.store(this, std::memory_order_release);
-  gDeviceListenerBridge.gate.store(0, std::memory_order_release);
+  slot.callbackOwner.store(this, std::memory_order_release);
+  slot.render.owner.store(this, std::memory_order_release);
+  slot.render.gate.store(kBridgePaused, std::memory_order_release);
+  slot.deviceListener.owner.store(this, std::memory_order_release);
+  slot.deviceListener.gate.store(0, std::memory_order_release);
 
   status = addDeviceListener();
   if (status != noErr) {
@@ -961,10 +1078,11 @@ NativeAudioOutputProgress NativeAudioOutput::activate(
           static_cast<std::uint8_t>(NativeAudioOutputFailure::None)) {
     return NativeAudioOutputProgress::Invalid;
   }
-  const std::uint64_t bridge = gCallbackBridge.gate.fetch_or(
+  CallbackBridge &renderBridge = gSlots[slot_index_].render;
+  const std::uint64_t bridge = renderBridge.gate.fetch_or(
       kBridgePaused, std::memory_order_acq_rel);
   if ((bridge & kBridgeCountMask) != 0 ||
-      gCallbackBridge.exitPins.load(std::memory_order_acquire) != 0 ||
+      renderBridge.exitPins.load(std::memory_order_acquire) != 0 ||
       callback_entries_.load(std::memory_order_acquire) != 0 ||
       (admission_gate_.load(std::memory_order_acquire) &
        kAdmissionCountMask) != 0) {
@@ -1003,10 +1121,11 @@ NativeAudioOutputProgress NativeAudioOutput::start() noexcept {
           static_cast<std::uint8_t>(NativeAudioOutputFailure::None)) {
     return NativeAudioOutputProgress::Invalid;
   }
-  const std::uint64_t bridge = gCallbackBridge.gate.fetch_or(
+  CallbackBridge &renderBridge = gSlots[slot_index_].render;
+  const std::uint64_t bridge = renderBridge.gate.fetch_or(
       kBridgePaused, std::memory_order_acq_rel);
   if ((bridge & kBridgeCountMask) != 0 ||
-      gCallbackBridge.exitPins.load(std::memory_order_acquire) != 0 ||
+      renderBridge.exitPins.load(std::memory_order_acquire) != 0 ||
       callback_entries_.load(std::memory_order_acquire) != 0 ||
       (admission_gate_.load(std::memory_order_acquire) &
        kAdmissionCountMask) != 0) {
@@ -1113,8 +1232,7 @@ NativeAudioOutputProgress NativeAudioOutput::start() noexcept {
         kAudio_ParamError);
     return NativeAudioOutputProgress::Failed;
   }
-  gCallbackBridge.gate.fetch_and(~kBridgePaused,
-                                 std::memory_order_acq_rel);
+  renderBridge.gate.fetch_and(~kBridgePaused, std::memory_order_acq_rel);
   if ((admission_gate_.load(std::memory_order_acquire) &
        kAdmissionDeviceInvalid) != 0 ||
       device_change_serial_.load(std::memory_order_acquire) != deviceSerial ||
@@ -1156,13 +1274,14 @@ NativeAudioOutputProgress NativeAudioOutput::stop() noexcept {
     stop_required_ = false;
   }
 
-  const std::uint64_t bridge = gCallbackBridge.gate.fetch_or(
+  CallbackBridge &renderBridge = gSlots[slot_index_].render;
+  const std::uint64_t bridge = renderBridge.gate.fetch_or(
       kBridgePaused, std::memory_order_acq_rel);
 
   if ((admission_gate_.load(std::memory_order_acquire) &
       kAdmissionCountMask) != 0 ||
       (bridge & kBridgeCountMask) != 0 ||
-      gCallbackBridge.exitPins.load(std::memory_order_acquire) != 0 ||
+      renderBridge.exitPins.load(std::memory_order_acquire) != 0 ||
       callback_entries_.load(std::memory_order_acquire) != 0) {
     return quiescing();
   }
@@ -1252,7 +1371,7 @@ NativeAudioOutputProgress NativeAudioOutput::closeStep() noexcept {
     setState(NativeAudioOutputState::Closed);
     if (claim_held_) {
       claim_held_ = false;
-      gOutputClaimed.store(false, std::memory_order_release);
+      gSlots[slot_index_].claimed.store(false, std::memory_order_release);
     }
     return NativeAudioOutputProgress::Done;
   }
@@ -1272,14 +1391,15 @@ NativeAudioOutputProgress NativeAudioOutput::closeStep() noexcept {
   }
 
   setState(NativeAudioOutputState::Detaching);
-  const std::uint64_t renderBridge = gCallbackBridge.gate.fetch_or(
+  OutputSlot &slot = gSlots[slot_index_];
+  const std::uint64_t renderBridge = slot.render.gate.fetch_or(
       kBridgeDetached | kBridgePaused, std::memory_order_acq_rel);
-  const std::uint64_t listenerBridge = gDeviceListenerBridge.gate.fetch_or(
+  const std::uint64_t listenerBridge = slot.deviceListener.gate.fetch_or(
       kBridgeDetached | kBridgePaused, std::memory_order_acq_rel);
   if ((renderBridge & kBridgeCountMask) != 0 ||
       (listenerBridge & kBridgeCountMask) != 0 ||
-      gCallbackBridge.exitPins.load(std::memory_order_acquire) != 0 ||
-      gDeviceListenerBridge.exitPins.load(std::memory_order_acquire) != 0 ||
+      slot.render.exitPins.load(std::memory_order_acquire) != 0 ||
+      slot.deviceListener.exitPins.load(std::memory_order_acquire) != 0 ||
       callback_entries_.load(std::memory_order_acquire) != 0) {
     setState(NativeAudioOutputState::Stopping);
     return quiescing();
@@ -1318,7 +1438,7 @@ NativeAudioOutputProgress NativeAudioOutput::closeStep() noexcept {
     }
     listener_attached_ = false;
   }
-  gDeviceListenerBridge.gate.fetch_or(
+  slot.deviceListener.gate.fetch_or(
       kBridgeDetached | kBridgePaused, std::memory_order_acq_rel);
 
   if (unit_ != nullptr) {
@@ -1327,7 +1447,7 @@ NativeAudioOutputProgress NativeAudioOutput::closeStep() noexcept {
       if (!callback_self_owner_) {
         callback_self_owner_ = weak_from_this().lock();
         if (callback_self_owner_) {
-          gCallbackOwner.store(this, std::memory_order_release);
+          slot.callbackOwner.store(this, std::memory_order_release);
         }
       }
       latchFailure(NativeAudioOutputFailure::InstanceDisposalFailed,
@@ -1345,24 +1465,28 @@ NativeAudioOutputProgress NativeAudioOutput::closeStep() noexcept {
   stopped_.store(true, std::memory_order_release);
   setState(NativeAudioOutputState::Closed);
 
+  // Compare-exchange, never a plain store: this slot's claim is released a few
+  // lines below and a replacement output may already have published itself
+  // into the very same slot. Only an owner cell that still names THIS output
+  // may be cleared.
   if (callback_self_owner_) {
     NativeAudioOutput *bridgeOwner = this;
-    static_cast<void>(gCallbackBridge.owner.compare_exchange_strong(
+    static_cast<void>(slot.render.owner.compare_exchange_strong(
         bridgeOwner, nullptr, std::memory_order_acq_rel,
         std::memory_order_acquire));
     NativeAudioOutput *listenerOwner = this;
-    static_cast<void>(gDeviceListenerBridge.owner.compare_exchange_strong(
+    static_cast<void>(slot.deviceListener.owner.compare_exchange_strong(
         listenerOwner, nullptr, std::memory_order_acq_rel,
         std::memory_order_acquire));
     NativeAudioOutput *expected = this;
-    static_cast<void>(gCallbackOwner.compare_exchange_strong(
+    static_cast<void>(slot.callbackOwner.compare_exchange_strong(
         expected, nullptr, std::memory_order_acq_rel,
         std::memory_order_acquire));
     callback_self_owner_.reset();
   }
   if (claim_held_) {
     claim_held_ = false;
-    gOutputClaimed.store(false, std::memory_order_release);
+    slot.claimed.store(false, std::memory_order_release);
   }
   return NativeAudioOutputProgress::Done;
 }
@@ -1548,11 +1672,15 @@ OSStatus NativeAudioOutput::renderCallback(
     void *context, AudioUnitRenderActionFlags *actionFlags,
     const AudioTimeStamp *timestamp, UInt32 busNumber,
     UInt32 frameCount, AudioBufferList *data) noexcept {
-  if (context != &gCallbackBridge) {
+  // The context is only ever one of the registry's render bridges. Anything
+  // else -- a stale context from a detached unit, a foreign AudioUnit client's
+  // context -- is rejected without being dereferenced.
+  CallbackBridge *const validated = renderBridgeForContext(context);
+  if (validated == nullptr) {
     zeroValidBuffer(actionFlags, frameCount, data);
     return kAudio_ParamError;
   }
-  auto &bridge = *static_cast<CallbackBridge *>(context);
+  CallbackBridge &bridge = *validated;
   BridgeEntryGuard bridgeEntry(bridge);
   bool bridgePaused = true;
   if (!bridgeEntry.enter(&bridgePaused)) {
@@ -1641,10 +1769,14 @@ OSStatus NativeAudioOutput::renderCallback(
 void NativeAudioOutput::devicePropertyChanged(
     void *context, AudioUnit, AudioUnitPropertyID,
     AudioUnitScope, AudioUnitElement) noexcept {
-  if (context != &gDeviceListenerBridge) {
+  // Same strict address identity as the render callback, against the listener
+  // bridges only: a render bridge's address is not admitted here, so the two
+  // entry points cannot be crossed by a context that survived a detach.
+  CallbackBridge *const validated = deviceListenerBridgeForContext(context);
+  if (validated == nullptr) {
     return;
   }
-  auto &bridge = *static_cast<CallbackBridge *>(context);
+  CallbackBridge &bridge = *validated;
   BridgeEntryGuard bridgeEntry(bridge);
   if (!bridgeEntry.enter()) {
     return;
@@ -1941,18 +2073,25 @@ NativeAudioOutputFacts NativeAudioOutput::facts() const noexcept {
   result.fatal = result.failure != NativeAudioOutputFailure::None;
   result.firstCallbackObserved =
       first_callback_observed_.load(std::memory_order_acquire);
+  // This output's own slot, and only it: a neighbouring window's busy render
+  // bridge says nothing about whether this one is quiescent. The two owner
+  // reads bracket the gate/exitPins reads because the slot is reusable -- if a
+  // replacement output claimed the slot mid-snapshot, the bridge facts below
+  // describe the replacement, not this output, and ownsCallbackBridge goes
+  // false so they are discarded rather than reported.
+  const CallbackBridge &renderBridge = gSlots[slot_index_].render;
   NativeAudioOutput *const bridgeOwnerBefore =
-      gCallbackBridge.owner.load(std::memory_order_acquire);
+      renderBridge.owner.load(std::memory_order_acquire);
   if (after_facts_bridge_owner_hook_ != nullptr) {
     after_facts_bridge_owner_hook_(
         after_facts_bridge_owner_context_);
   }
   const std::uint64_t callbackBridgeGate =
-      gCallbackBridge.gate.load(std::memory_order_acquire);
+      renderBridge.gate.load(std::memory_order_acquire);
   const std::uint32_t callbackBridgeExitPins =
-      gCallbackBridge.exitPins.load(std::memory_order_acquire);
+      renderBridge.exitPins.load(std::memory_order_acquire);
   NativeAudioOutput *const bridgeOwnerAfter =
-      gCallbackBridge.owner.load(std::memory_order_acquire);
+      renderBridge.owner.load(std::memory_order_acquire);
   const bool ownsCallbackBridge =
       bridgeOwnerBefore == this && bridgeOwnerAfter == this;
   const bool callbackBridgeQuiescent =

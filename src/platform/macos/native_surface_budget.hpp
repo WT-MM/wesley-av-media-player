@@ -1,6 +1,7 @@
 #pragma once
 
 #include "media/native_media_source.hpp"
+#include "native_concurrency_limits.hpp"
 
 #include <CoreVideo/CoreVideo.h>
 
@@ -9,10 +10,20 @@
 
 namespace wam::macos {
 
-// A COUNT, not a size: how many distinct decoded IOSurfaces this process may
-// hold at one instant. Nothing about it moves with the coded ceiling -- the
-// lease ledgers in native_video_consumer.hpp are the same ledgers at any
-// resolution -- so this value is unchanged by the 4K-class revision.
+// A COUNT, not a size: how many distinct decoded IOSurfaces ONE native
+// playback session may hold at one instant. Nothing about it moves with the
+// coded ceiling -- the lease ledgers in native_video_consumer.hpp are the same
+// ledgers at any resolution -- so this value is unchanged by the 4K-class
+// revision.
+//
+// This was the whole process's allowance until WAM became a multi-window
+// player. It could not stay that: a second window's session legitimately wants
+// its own complement, and sharing one ten-surface pool between two sessions
+// starved the second one -- measured, a second 1080p window drew 4.6 fps
+// against the first window's 30 while both reported healthy clocks, because
+// the pool ran out and the route simply could not lease a surface to decode
+// into. The per-session complement is unchanged; what changed is that the
+// PROCESS pool is now N of them. See the process constants below.
 inline constexpr std::uint64_t kNativeSurfaceBudgetMaximumSurfaces = 10;
 
 // ---------------------------------------------------------------------------
@@ -72,14 +83,14 @@ inline constexpr std::uint64_t kNativeSurfaceBudgetWorstCaseSurfaceBytes =
 inline constexpr std::uint64_t kNativeSurfaceBudgetMaximumBytes =
     288ULL * 1024ULL * 1024ULL;
 
-// The budget must be able to hold a full complement of worst-case surfaces.
-// Without this the surface COUNT stays the binding constraint on paper while
-// bytes silently become the binding constraint in fact, and the route starts
-// refusing surfaces mid-playback instead of at admission.
+// The per-session budget must be able to hold a full complement of worst-case
+// surfaces. Without this the surface COUNT stays the binding constraint on
+// paper while bytes silently become the binding constraint in fact, and the
+// route starts refusing surfaces mid-playback instead of at admission.
 static_assert(kNativeSurfaceBudgetMaximumBytes >=
                   kNativeSurfaceBudgetMaximumSurfaces *
                       kNativeSurfaceBudgetWorstCaseSurfaceBytes,
-              "the process-wide byte budget must cover a full complement of "
+              "the per-session byte budget must cover a full complement of "
               "surfaces at the v1 coded ceiling, or the surface count stops "
               "being the binding constraint");
 // Not grossly oversized either: a ceiling nobody can reach stops being a
@@ -87,8 +98,52 @@ static_assert(kNativeSurfaceBudgetMaximumBytes >=
 static_assert(kNativeSurfaceBudgetMaximumBytes <
                   (kNativeSurfaceBudgetMaximumSurfaces + 1ULL) *
                       kNativeSurfaceBudgetWorstCaseSurfaceBytes,
-              "the process-wide byte budget must stay within one worst-case "
+              "the per-session byte budget must stay within one worst-case "
               "surface of the complement it exists to bound");
+
+// ---------------------------------------------------------------------------
+// The PROCESS pool: N windows cost N budgets, and that is stated rather than
+// discovered.
+//
+// The ledger in native_surface_budget.mm is one shared, lock-free account for
+// the whole process, and it stays that way -- it is the thing that makes the
+// total honest. What multiplies is its size, DERIVED from the per-session
+// complement and the window cap, never bumped independently. Each session's
+// own lease ledgers (native_video_consumer.hpp) still bound it to the
+// per-session complement above, so the shared pool cannot be monopolised by
+// one window; the pool exists to bound the sum.
+//
+// The byte figure is a CEILING, not an allocation: 16 windows only reach
+// 4.5 GiB if all sixteen are simultaneously holding a full complement of
+// 4K ten-bit surfaces. Real playback charges the leases the route actually
+// holds -- about 128 MB per 4K session, far less at 1080p -- so the honest
+// statement of the cost is "each open video costs its own budget", which is
+// exactly what a user opening sixteen videos is asking for.
+// ---------------------------------------------------------------------------
+inline constexpr std::uint64_t kNativeSurfaceBudgetProcessMaximumSurfaces =
+    kNativeSurfaceBudgetMaximumSurfaces *
+    static_cast<std::uint64_t>(kMaximumConcurrentPlayerWindows);
+
+inline constexpr std::uint64_t kNativeSurfaceBudgetProcessMaximumBytes =
+    kNativeSurfaceBudgetMaximumBytes *
+    static_cast<std::uint64_t>(kMaximumConcurrentPlayerWindows);
+
+static_assert(kNativeSurfaceBudgetProcessMaximumSurfaces ==
+                  kNativeSurfaceBudgetMaximumSurfaces * 16ULL,
+              "the process surface pool must be exactly the window cap's "
+              "worth of per-session complements");
+static_assert(kNativeSurfaceBudgetProcessMaximumBytes >=
+                  kNativeSurfaceBudgetProcessMaximumSurfaces *
+                      kNativeSurfaceBudgetWorstCaseSurfaceBytes,
+              "the process byte pool must cover every window's full "
+              "complement at the v1 coded ceiling");
+static_assert(kNativeSurfaceBudgetProcessMaximumBytes <
+                  (kNativeSurfaceBudgetProcessMaximumSurfaces +
+                   static_cast<std::uint64_t>(
+                       kMaximumConcurrentPlayerWindows)) *
+                      kNativeSurfaceBudgetWorstCaseSurfaceBytes,
+              "the process byte pool must stay within one window's headroom "
+              "of the complement it exists to bound");
 
 struct NativeSurfaceBudgetStats {
   std::uint64_t currentSurfaces{0};

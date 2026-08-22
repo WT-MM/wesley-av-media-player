@@ -530,8 +530,18 @@ PlayerController::PlayerController(QObject *parent)
   // so App Nap never throttles an occluded or background playback session. The
   // signal is the single choke point for every transport source: native route,
   // compatibility route, end of file and idle.
-  connect(this, &PlayerController::playingChanged, this,
-          [this] { setMacosPlaybackActivityHeld(playing()); });
+  connect(this, &PlayerController::playingChanged, this, [this] {
+    // One hold per controller, and the process-wide assertion is a reference
+    // count over those holds (see native_playback_owner.mm). Edge-triggering
+    // here is what makes each window contribute at most one: with N windows
+    // playing, a pause in one must not end the assertion the other N-1 still
+    // need, and a bare boolean latch did exactly that.
+    const bool holding = playing();
+    if (holding == macos_activity_held_)
+      return;
+    macos_activity_held_ = holding;
+    setMacosPlaybackActivityHeld(holding);
+  });
 #endif
   work_timer_ = new QTimer(this);
   work_timer_->setInterval(100);
@@ -565,7 +575,10 @@ PlayerController::~PlayerController() {
   caption_service_.wait();
 #if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   native_playback_.reset();
-  setMacosPlaybackActivityHeld(false);
+  if (macos_activity_held_) {
+    macos_activity_held_ = false;
+    setMacosPlaybackActivityHeld(false);
+  }
 #endif
   if (core_)
     core_->detachOwner(this);
@@ -2770,7 +2783,16 @@ void PlayerController::requestVideoUpdate() {
   // render+swap per frame for no pixels -- measured at ~30 render passes per
   // second, against zero when the item stops updating and the chrome is hidden.
   // That is the pivot's headline cost, so it is not spent.
-  if (wam::macos::nativeLayerPresentationActive())
+  //
+  // The route flag is process-wide, but the suppression is NOT: it is only
+  // correct for a window whose own playback the native route owns. WAM is a
+  // multi-window player, so one window can be playing natively on the layer
+  // route while another has fallen back to the compatibility engine and is
+  // painting through the scene graph -- and suppressing that window's updates
+  // because some OTHER window is on the layer route would freeze its video on
+  // its first frame. Both halves of the test are therefore required.
+  if (wam::macos::nativeLayerPresentationActive() && native_playback_ &&
+      native_playback_->nativeOwnsTransport())
     return;
 #endif
   if (video_item_)
@@ -4455,6 +4477,9 @@ void PlayerController::cancelCaptionsForMediaChange() {
 }
 
 void PlayerController::setLastError(const QString &error) {
+  // A window on its way out has no user left to tell. See beginTeardown().
+  if (tearing_down_)
+    return;
   if (!error.isEmpty())
     qWarning().noquote() << "WAM:" << error;
   if (last_error_ == error) {

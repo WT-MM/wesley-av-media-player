@@ -1,6 +1,7 @@
 #pragma once
 
 #include "media/native_media_dispatcher.hpp"
+#include "native_concurrency_limits.hpp"
 #include "native_media_clock.hpp"
 #include "native_surface_budget.hpp"
 #include "native_tracked_video_output.hpp"
@@ -8,6 +9,7 @@
 #include "video_decode_lane.hpp"
 #include "video_toolbox_decoder.hpp"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -157,9 +159,12 @@ struct NativeVideoConsumerQuarantineFacts {
 //
 // The consumer never wraps or invokes the legacy NativeVideoPipeline. The shared output reference is a scene-graph
 // lifetime requirement, not a fan-out seam: exactly one consumer may submit
-// through a tracked output instance. Native v1 admits one process-wide graph,
-// matching WAM's single playback route and NativeAudioSession; a second create
-// is rejected until the first graph closes Done or its quarantine is recovered.
+// through a tracked output instance. The process admits at most
+// kMaximumConcurrentPlayerWindows graphs at once -- one per open player window
+// -- and a graph occupies its slot from create() until that same graph proves
+// a Done close, including the whole interval it spends in quarantine. create()
+// number kMaximumConcurrentPlayerWindows + 1 is rejected, quietly and
+// deterministically, rather than admitted over the envelope.
 // The future NativeMediaSession/playback owner must reject/fallback before
 // resource activation unless the selected audio and video durations are exact
 // and the audio duration covers the video duration apart from the bounded
@@ -395,7 +400,14 @@ class NativeVideoConsumer final : public media::NativeVideoConsumer {
   struct Impl;
 
   explicit NativeVideoConsumer(std::unique_ptr<Impl> impl) noexcept;
-  [[nodiscard]] static std::unique_ptr<Impl>& quarantineSlot() noexcept;
+  // The process-wide quarantine registry: one slot per admissible player
+  // window, so a quiescing graph from every open window can be held at once
+  // and none of them can be dropped for want of a slot. Impl is incomplete
+  // here, which is fine -- std::unique_ptr<Impl> is itself a complete type, so
+  // the array's size and layout are known without Impl's definition.
+  [[nodiscard]] static std::array<std::unique_ptr<Impl>,
+                                  kMaximumConcurrentPlayerWindows>&
+  quarantineSlots() noexcept;
   std::unique_ptr<Impl> impl_;
 
 #if defined(WAM_NATIVE_VIDEO_CONSUMER_TESTING)
