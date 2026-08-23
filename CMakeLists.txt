@@ -285,6 +285,8 @@ if(APPLE)
     src/media/matroska_aac.hpp
     src/media/matroska_aac.cpp
     src/media/audio_codec_timing.hpp
+    src/media/audio_downmix.hpp
+    src/media/audio_downmix.cpp
     src/media/matroska_opus.hpp
     src/media/matroska_opus.cpp
     src/media/matroska_vorbis.hpp
@@ -693,6 +695,161 @@ if(WIN32)
   target_compile_definitions(wam PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
 endif()
 
+if(APPLE)
+  # ---------------------------------------------------------------------------
+  # QuickLook thumbnail extension (WAMThumbnail.appex)
+  # ---------------------------------------------------------------------------
+  #
+  # macOS ships no Matroska demuxer, so Finder shows a generic document icon
+  # for .mkv. WAM already owns a complete, Qt-free read path, so it can supply
+  # the frame the system cannot produce. (Measured on macOS 26.3: this OS
+  # already thumbnails .webm and .ts itself. Those types stay claimed because
+  # the same code serves them for free and the 13.3 deployment floor does not
+  # have that support; where the system answers, the system wins.) See
+  # packaging/quicklook/README.md for the evidence behind every choice here.
+  #
+  # SELF-CONTAINMENT IS THE DESIGN CONSTRAINT. scripts/bundle_macos_lib.zsh
+  # audits every Mach-O under Contents/ -- including a nested appex -- but its
+  # install-name repair walk is seeded only from the four top-level payload
+  # binaries, so an appex it had to rewrite would hard-fail the release. This
+  # target therefore links NOTHING but static archives and system frameworks:
+  #
+  #   * wam_native_core          -- Qt-free, and declares no link dependencies
+  #                                 of its own, so it contributes no dylib edge.
+  #   * the two sample builders  -- compiled directly, exactly as
+  #     + the codec capability      wam_matroska_preview_source_test does.
+  #
+  # It deliberately does NOT link wam_macos_native_video_core: that archive
+  # carries software_vp8_decoder and therefore a Homebrew PkgConfig::WAM_LIBVPX
+  # edge whenever WAM_ENABLE_SOFTWARE_VP8 is ON (which release.yml sets), and
+  # that edge is the one thing nothing would rewrite for a nested appex.
+  #
+  # matroska_sample_builder.mm gates its VP8 branch on a RUNTIME
+  # SoftwareVp8Decoder::available() call rather than on the preprocessor, so
+  # the symbol is referenced whatever the flags say; wam_thumbnail_frame.mm
+  # defines that one function to return false, which is exactly what the
+  # production source does when WAM_ENABLE_SOFTWARE_VP8 is undefined. VP8 WebM
+  # therefore gets no thumbnail and falls back to Finder's generic icon, like
+  # every other unsupported input.
+  option(WAM_BUILD_QUICKLOOK_APPEX
+    "Build and embed the QuickLook thumbnail extension in WAM.app" ON)
+
+  if(WAM_BUILD_QUICKLOOK_APPEX)
+    find_library(WAM_COREGRAPHICS_FRAMEWORK CoreGraphics REQUIRED)
+    find_library(WAM_QUICKLOOKTHUMBNAILING_FRAMEWORK QuickLookThumbnailing
+      REQUIRED)
+
+    set(WAM_QUICKLOOK_BUNDLE_IDENTIFIER
+      "com.wesleymaa.wam.quicklook.thumbnail")
+    set(WAM_QUICKLOOK_INFO_PLIST
+      "${CMAKE_CURRENT_BINARY_DIR}/WAMThumbnail-Info.plist")
+    configure_file(packaging/quicklook/Info.plist
+      "${WAM_QUICKLOOK_INFO_PLIST}" @ONLY)
+
+    # The decode pipeline, split out of the Objective-C shim so ctest can
+    # drive it. A QuickLook extension is close to untestable in place: it runs
+    # in a system-launched sandboxed process whose stderr no test can read.
+    set(WAM_QUICKLOOK_FRAME_SOURCES
+      packaging/quicklook/wam_thumbnail_frame.hpp
+      packaging/quicklook/wam_thumbnail_frame.mm
+      src/platform/macos/matroska_sample_builder.hpp
+      src/platform/macos/matroska_sample_builder.mm
+      src/platform/macos/mpegts_sample_builder.hpp
+      src/platform/macos/mpegts_sample_builder.mm
+      src/platform/macos/native_video_codec_capability.hpp
+      src/platform/macos/native_video_codec_capability.mm)
+
+    add_executable(wam_quicklook_thumbnail MACOSX_BUNDLE
+      packaging/quicklook/WAMThumbnailProvider.mm
+      ${WAM_QUICKLOOK_FRAME_SOURCES})
+    set_target_properties(wam_quicklook_thumbnail PROPERTIES
+      OUTPUT_NAME "WAMThumbnail"
+      BUNDLE TRUE
+      BUNDLE_EXTENSION "appex"
+      LINKER_LANGUAGE OBJCXX
+      MACOSX_BUNDLE_INFO_PLIST "${WAM_QUICKLOOK_INFO_PLIST}"
+      # Nothing here is a QObject and nothing may reach Qt tooling; the global
+      # AUTOMOC would otherwise add a moc dependency to a target whose whole
+      # point is that it does not know Qt exists.
+      AUTOMOC OFF
+      AUTOUIC OFF
+      AUTORCC OFF
+      # No BUILD_RPATH/INSTALL_RPATH on purpose. This binary resolves nothing
+      # outside /usr/lib and /System, so it needs no rpath at all; adding the
+      # (correct) four-level @loader_path/../../../../Frameworks would only
+      # invite a future dylib edge that the repair walk still would not fix.
+      XCODE_ATTRIBUTE_CLANG_ENABLE_OBJC_ARC YES)
+    target_include_directories(wam_quicklook_thumbnail PRIVATE src)
+    target_compile_features(wam_quicklook_thumbnail PRIVATE cxx_std_20)
+    target_compile_options(wam_quicklook_thumbnail PRIVATE
+      "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>"
+      -Wall -Wextra -Wpedantic)
+    target_link_libraries(wam_quicklook_thumbnail PRIVATE
+      wam_native_core
+      "${WAM_COREFOUNDATION_FRAMEWORK}"
+      "${WAM_COREGRAPHICS_FRAMEWORK}"
+      "${WAM_COREMEDIA_FRAMEWORK}"
+      "${WAM_COREVIDEO_FRAMEWORK}"
+      "${WAM_FOUNDATION_FRAMEWORK}"
+      "${WAM_QUICKLOOKTHUMBNAILING_FRAMEWORK}"
+      "${WAM_VIDEOTOOLBOX_FRAMEWORK}")
+    # An app extension's entry point is NSExtensionMain, not main().
+    target_link_options(wam_quicklook_thumbnail PRIVATE
+      "LINKER:-e,_NSExtensionMain")
+
+    # Dev convenience: keep the appex inside the just-built WAM.app so a local
+    # `lsregister -f build/WAM.app` picks it up without running the installer.
+    # The staged/release copy comes from the install() rule below.
+    #
+    # The copy hangs off `wam`, not off the appex, so the ordering edge points
+    # appex -> wam and the appex stays buildable on its own when the Qt half of
+    # the tree is mid-edit.
+    add_dependencies(wam wam_quicklook_thumbnail)
+    add_custom_command(TARGET wam POST_BUILD
+      COMMAND "${CMAKE_COMMAND}" -E make_directory
+        "$<TARGET_BUNDLE_DIR:wam>/Contents/PlugIns"
+      COMMAND "${CMAKE_COMMAND}" -E rm -rf
+        "$<TARGET_BUNDLE_DIR:wam>/Contents/PlugIns/WAMThumbnail.appex"
+      COMMAND "${CMAKE_COMMAND}" -E copy_directory
+        "$<TARGET_BUNDLE_DIR:wam_quicklook_thumbnail>"
+        "$<TARGET_BUNDLE_DIR:wam>/Contents/PlugIns/WAMThumbnail.appex"
+      VERBATIM)
+
+    if(BUILD_TESTING)
+      find_library(WAM_IMAGEIO_FRAMEWORK ImageIO REQUIRED)
+      add_executable(wam_quicklook_thumbnail_frame_test
+        tests/quicklook_thumbnail_frame_test.mm
+        ${WAM_QUICKLOOK_FRAME_SOURCES})
+      set_target_properties(wam_quicklook_thumbnail_frame_test PROPERTIES
+        LINKER_LANGUAGE OBJCXX
+        AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
+      target_include_directories(wam_quicklook_thumbnail_frame_test PRIVATE
+        src "${CMAKE_CURRENT_SOURCE_DIR}")
+      target_compile_features(wam_quicklook_thumbnail_frame_test PRIVATE
+        cxx_std_20)
+      target_compile_options(wam_quicklook_thumbnail_frame_test PRIVATE
+        "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>"
+        -Wall -Wextra -Wpedantic)
+      target_link_libraries(wam_quicklook_thumbnail_frame_test PRIVATE
+        wam_native_core
+        "${WAM_COREFOUNDATION_FRAMEWORK}"
+        "${WAM_COREGRAPHICS_FRAMEWORK}"
+        "${WAM_COREMEDIA_FRAMEWORK}"
+        "${WAM_COREVIDEO_FRAMEWORK}"
+        "${WAM_FOUNDATION_FRAMEWORK}"
+        "${WAM_IMAGEIO_FRAMEWORK}"
+        "${WAM_VIDEOTOOLBOX_FRAMEWORK}")
+      # No media fixture in the tree is a Matroska or transport stream, so the
+      # argument-free run is a contract check: a missing file must fail closed
+      # with a reason rather than crashing, hanging, or handing back a frame.
+      add_test(NAME macos_quicklook_thumbnail_frame
+        COMMAND wam_quicklook_thumbnail_frame_test)
+      set_tests_properties(macos_quicklook_thumbnail_frame PROPERTIES
+        TIMEOUT 30)
+    endif()
+  endif()
+endif()
+
 install(TARGETS wam
   BUNDLE DESTINATION .
   RUNTIME DESTINATION bin)
@@ -705,6 +862,15 @@ qt_generate_deploy_qml_app_script(
   OUTPUT_SCRIPT wam_qml_deploy_script
   NO_TRANSLATIONS)
 install(SCRIPT ${wam_qml_deploy_script})
+
+# Deliberately AFTER the Qt deploy script: macdeployqt walks Contents/PlugIns
+# looking for Qt plugins to repair, and the appex is not one. Installing it
+# afterwards keeps it out of that pass entirely. It needs no repair anyway --
+# it links only static archives and system frameworks.
+if(APPLE AND WAM_BUILD_QUICKLOOK_APPEX)
+  install(TARGETS wam_quicklook_thumbnail
+    BUNDLE DESTINATION "WAM.app/Contents/PlugIns")
+endif()
 
 install(FILES README.md THIRD_PARTY_NOTICES.md DESTINATION share/doc/wam)
 
@@ -772,6 +938,11 @@ if(BUILD_TESTING)
       tests/matroska_ac3_test.cpp)
     target_link_libraries(wam_matroska_ac3_test PRIVATE wam_native_core)
     add_test(NAME matroska_ac3 COMMAND wam_matroska_ac3_test)
+
+    add_executable(wam_audio_downmix_test
+      tests/audio_downmix_test.cpp)
+    target_link_libraries(wam_audio_downmix_test PRIVATE wam_native_core)
+    add_test(NAME audio_downmix COMMAND wam_audio_downmix_test)
 
     add_executable(wam_matroska_flac_test
       tests/matroska_flac_test.cpp)
@@ -865,6 +1036,7 @@ if(BUILD_TESTING)
         wam_matroska_opus_test
         wam_matroska_vorbis_test
         wam_matroska_ac3_test
+        wam_audio_downmix_test
         wam_matroska_flac_test
         wam_matroska_mpeg_audio_test
         wam_matroska_demuxer_test
@@ -891,6 +1063,7 @@ if(BUILD_TESTING)
       matroska_opus
       matroska_vorbis
       matroska_ac3
+      audio_downmix
       matroska_flac
       matroska_mpeg_audio
       matroska_demuxer
@@ -1205,6 +1378,22 @@ if(BUILD_TESTING)
       add_test(NAME macos_native_audio_converter_opus
         COMMAND wam_native_audio_converter_opus_test)
       set_tests_properties(macos_native_audio_converter_opus PROPERTIES
+        TIMEOUT 20)
+
+      add_executable(wam_native_audio_channel_map_test
+        tests/native_audio_channel_map_test.mm
+        src/platform/macos/native_audio_channel_map.hpp)
+      target_include_directories(wam_native_audio_channel_map_test
+        PRIVATE src)
+      target_link_libraries(wam_native_audio_channel_map_test PRIVATE
+        wam_native_core
+        "${WAM_COREFOUNDATION_FRAMEWORK}"
+        "${WAM_FOUNDATION_FRAMEWORK}"
+        "${WAM_AUDIOTOOLBOX_FRAMEWORK}"
+        "${WAM_COREAUDIO_FRAMEWORK}")
+      add_test(NAME macos_native_audio_channel_map
+        COMMAND wam_native_audio_channel_map_test)
+      set_tests_properties(macos_native_audio_channel_map PROPERTIES
         TIMEOUT 20)
 
       add_executable(wam_native_audio_stretch_stage_test

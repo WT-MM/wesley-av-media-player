@@ -60,6 +60,15 @@
 	      document icon, so it is deliberately omitted; Finder/QuickLook keep
 	      generating real frame thumbnails based on the file's UTI, regardless
 	      of which app is the default handler.
+
+	  That last point is about not SUPPRESSING a thumbnail the system can
+	  already make. It is not a stance against supplying one the system
+	  cannot: WAM.app/Contents/PlugIns/WAMThumbnail.appex is a QuickLook
+	  thumbnail extension that decodes a real frame for the containers macOS
+	  has no demuxer for -- Matroska above all. Same goal, opposite
+	  direction. It claims only types Apple does not already thumbnail
+	  (never public.mpeg-4 or com.apple.quicktime-movie) and no audio type.
+	  See packaging/quicklook/README.md.
 	-->
 	<key>CFBundleDocumentTypes</key>
 	<array>

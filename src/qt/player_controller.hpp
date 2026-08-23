@@ -7,6 +7,7 @@
 
 #include <QObject>
 #include <QPointer>
+#include <QSize>
 #include <QString>
 #include <QUrl>
 #include <QVariantList>
@@ -55,6 +56,20 @@ class PlayerController final : public QObject {
   Q_PROPERTY(bool paused READ paused NOTIFY pausedChanged)
   Q_PROPERTY(double position READ position WRITE seekTo NOTIFY positionChanged)
   Q_PROPERTY(double duration READ duration NOTIFY durationChanged)
+  // The current video's on-screen rectangle in square pixels, as stated by
+  // whichever engine actually demuxed the container: the native route's
+  // Prepared event (AVFoundation, Matroska/WebM, MPEG-TS) or mpv's
+  // dwidth/dheight on the compatibility route. Both already carry pixel aspect
+  // ratio, clean aperture and rotation, so this is a display size and not a
+  // coded size.
+  //
+  // An empty QSize means "not known" -- audio-only media, no media, or an open
+  // that has not reached Prepared yet. It exists because MacWindowChrome's
+  // AVURLAsset probe, which is what qml/Main.qml asked first and still asks
+  // first, cannot demux Matroska/WebM/MPEG-TS and answers (0, 0) for every one
+  // of them; Main.qml falls back to this when it does.
+  Q_PROPERTY(QSize videoDisplaySize READ videoDisplaySize NOTIFY
+                 videoDisplaySizeChanged)
   // Normalized level where 1.0 is 100%. The range runs to 2.0: above unity
   // this is VLC-style amplification, which can clip by design (the native
   // gain stage saturates each sample to [-1, 1]; mpv is given volume-max 200).
@@ -162,6 +177,7 @@ public:
   [[nodiscard]] bool paused() const { return paused_; }
   [[nodiscard]] double position() const { return position_; }
   [[nodiscard]] double duration() const { return duration_; }
+  [[nodiscard]] QSize videoDisplaySize() const { return video_display_size_; }
   // Normalized UI volume. mpv's 0..200 range maps to 0..2 here; 1.0 is 100%.
   [[nodiscard]] double volume() const { return volume_; }
   [[nodiscard]] bool scrollGesturesEnabled() const {
@@ -287,6 +303,7 @@ signals:
   void pausedChanged();
   void positionChanged();
   void durationChanged();
+  void videoDisplaySizeChanged();
   void volumeChanged();
   void scrollGesturesEnabledChanged();
   void scrollGestureActiveChanged();
@@ -527,6 +544,19 @@ private:
     // `track-list` itself would mean MPV_FORMAT_NODE and a matching
     // mpv_free_node_contents, which is not in the resolved symbol table.
     TrackListCount,
+    // The video's display width and height, which is what the compatibility
+    // route has to state for window geometry -- MacWindowChrome's AVURLAsset
+    // probe cannot demux the very containers (Matroska/WebM/MPEG-TS) that end
+    // up on this route. mpv's dwidth/dheight already apply the container's
+    // aspect ratio and rotation, so they are display sizes, not coded sizes.
+    //
+    // Two observations, one fact: the pair arrives as two independent events
+    // and either one alone would publish half a new aspect over half an old
+    // one. Both handlers therefore read BOTH properties back synchronously
+    // (mpv_get_property, an in-process struct read) and publish the pair
+    // atomically; the observation only decides WHEN to look.
+    DisplayWidth,
+    DisplayHeight,
   };
 
   void drainMpvEvents();
@@ -650,6 +680,10 @@ private:
   bool attachSubtitleSource(const std::filesystem::path &path, int origin,
                             const QString &label);
   void applyObservedDuration(double duration);
+  // Reads mpv's dwidth/dheight pair back and publishes it. Takes no argument
+  // on purpose: the observation that triggered it carries only one half, and
+  // half a size is not a fact this controller is willing to publish.
+  void applyObservedDisplaySize();
   void applyObservedIdle(bool idle);
   void applyObservedEof(bool eof_reached);
   void applyObservedVideoTrack(std::int64_t video_track_id);
@@ -690,6 +724,12 @@ private:
   void updateIdle(bool idle);
   void updateEof(bool eof_reached);
   void updateDuration(double duration);
+  // Publishes a display size from whichever engine demuxed the container. Both
+  // callers -- NativePlaybackOwner's Prepared arm and the mpv dwidth/dheight
+  // observation -- go through here so the dedupe and the "an empty size never
+  // overwrites a known one" rule are stated once. Pass (0, 0) only through
+  // resetTimeline(), which is the one place a size is deliberately forgotten.
+  void updateVideoDisplaySize(int width, int height);
   void updateSource(const QUrl &source);
   void updateMediaTitle(const QString &title);
   void resetTimeline();
@@ -768,6 +808,7 @@ private:
   bool preserve_pitch_ = true;
   double position_ = 0.0;
   double duration_ = 0.0;
+  QSize video_display_size_;
   double volume_ = 1.0;
   double rate_ = 1.0;
   double trim_in_ = 0.0;

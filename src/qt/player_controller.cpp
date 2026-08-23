@@ -517,6 +517,33 @@ std::int64_t currentTrackSelection(PlayerCore *core, const char *name) {
   return valid && numeric > 0 ? static_cast<std::int64_t>(numeric) : -1;
 }
 
+// mpv's display rectangle, read as one pair. dwidth/dheight are the picture
+// size after the container's aspect ratio and any rotation have been applied,
+// which is the size a window should be shaped to -- not the coded size, which
+// is wrong for anamorphic video and wrong for a portrait phone clip. An empty
+// QSize means mpv has no picture yet (no file, audio-only, or the video chain
+// has not been reconfigured), which is exactly the "unknown" the caller wants.
+QSize currentVideoDisplaySize(PlayerCore *core) {
+  const ReadyMpvClient client = readyMpvClient(core);
+  if (!client)
+    return {};
+  std::int64_t width = 0;
+  std::int64_t height = 0;
+  if (client.api->mpv_get_property(client.handle, "dwidth", MPV_FORMAT_INT64,
+                                   &width) < 0 ||
+      client.api->mpv_get_property(client.handle, "dheight", MPV_FORMAT_INT64,
+                                   &height) < 0) {
+    return {};
+  }
+  // Bounded on the way in rather than trusted: these become a window size.
+  constexpr std::int64_t kMaximumDisplayEdge = 65535;
+  if (width <= 0 || height <= 0 || width > kMaximumDisplayEdge ||
+      height > kMaximumDisplayEdge) {
+    return {};
+  }
+  return QSize(static_cast<int>(width), static_cast<int>(height));
+}
+
 std::optional<bool> currentFileHasTrackType(PlayerCore *core,
                                             const char *type) {
   const ReadyMpvClient client = readyMpvClient(core);
@@ -777,6 +804,12 @@ bool PlayerController::initializePlaybackEngine() {
   observe(ObservedProperty::SubtitleText, "sub-text", MPV_FORMAT_STRING);
   observe(ObservedProperty::TrackListCount, "track-list/count",
           MPV_FORMAT_INT64);
+  // Display, not coded: mpv's dwidth/dheight are the picture's on-screen
+  // rectangle with the container's aspect ratio and rotation already applied,
+  // which is exactly what window geometry needs and exactly what
+  // MacWindowChrome's AVURLAsset probe cannot supply for Matroska/WebM/MPEG-TS.
+  observe(ObservedProperty::DisplayWidth, "dwidth", MPV_FORMAT_INT64);
+  observe(ObservedProperty::DisplayHeight, "dheight", MPV_FORMAT_INT64);
   return true;
 }
 
@@ -3320,6 +3353,14 @@ void PlayerController::drainMpvEvents() {
         // the menu.
         refreshSubtitleSources();
         break;
+      case ObservedProperty::DisplayWidth:
+      case ObservedProperty::DisplayHeight:
+        // Either event means "the picture rectangle may have changed"; both
+        // read the whole pair back. See the enum comment: publishing one half
+        // of a new size against the surviving half of the old one would hand
+        // window geometry an aspect ratio no video ever had.
+        applyObservedDisplaySize();
+        break;
       }
       continue;
     }
@@ -4043,8 +4084,17 @@ void PlayerController::handlePlaybackReady(bool file_loaded) {
   // FILE_LOADED is the moment mpv's track-list is complete, and it is the one
   // hook that fires on both a first open and every fallback the router takes,
   // so it is where the Subtitles menu learns what this file offers.
-  if (file_loaded)
+  if (file_loaded) {
     refreshSubtitleSources();
+    // And the moment the picture's size is knowable, for the same reason: it
+    // is the one hook that fires on a first open and on every fallback the
+    // router takes. The dwidth/dheight observations usually land just before
+    // this, but they land inside the open and can be dropped by the path
+    // check above while mpv still has the outgoing file; this is the reliable
+    // second look, and updateVideoDisplaySize dedupes so the common case
+    // where both agree costs one comparison.
+    applyObservedDisplaySize();
+  }
   restoreRenderRecovery();
 }
 
@@ -4098,6 +4148,54 @@ void PlayerController::updateDuration(double duration) {
   }
   if (trim_out_ <= 0.0 || nearlyEqual(trim_out_, old_duration))
     setTrimOut(value);
+}
+
+void PlayerController::applyObservedDisplaySize() {
+  if (!core_ || !engineReady())
+    return;
+  // Deliberately NOT gated on acceptsPlaybackObservation(), which every other
+  // observation here does use. Measured: mpv announces dwidth/dheight exactly
+  // once per file, during the open, while that gate is still closed -- and it
+  // never announces them again, because the value has not changed since. So
+  // gating here did not defer the size, it discarded the only announcement
+  // there was, and the fallback route stayed at (0, 0) for the whole session,
+  // which is the very defect this feeder exists to fix.
+  //
+  // The hazard the gate guards against -- a previous file's value landing on
+  // the current one -- is checked directly instead, and more precisely: the
+  // size and the path it belongs to are read from the same mpv instance in
+  // the same breath, and the pair is published only if that path is the media
+  // this controller has already committed to. A size read while mpv still has
+  // the outgoing file loaded therefore cannot be attributed to the incoming
+  // one.
+  const QSize size = currentVideoDisplaySize(core_.get());
+  if (size.isEmpty())
+    return;
+  char *path = core_->api().mpv_get_property_string(core_->handle(), "path");
+  if (!path)
+    return;
+  const QUrl playing = urlFromMpvPath(QString::fromUtf8(path));
+  core_->api().mpv_free(path);
+  if (playing.isEmpty() || playing != source_)
+    return;
+  updateVideoDisplaySize(size.width(), size.height());
+}
+
+void PlayerController::updateVideoDisplaySize(int width, int height) {
+  // A backend that cannot state a size must not erase one another backend
+  // already stated. The single place a size is deliberately forgotten is
+  // resetTimeline(), which assigns the member directly for exactly that
+  // reason; every other caller is announcing a fact, and "I don't know" is
+  // not one. This is what keeps the native route's Prepared answer alive
+  // when the compatibility engine is initialized alongside it and reports
+  // nothing, and vice versa.
+  if (width <= 0 || height <= 0)
+    return;
+  const QSize value(width, height);
+  if (video_display_size_ == value)
+    return;
+  video_display_size_ = value;
+  emit videoDisplaySizeChanged();
 }
 
 void PlayerController::applyObservedIdle(bool idle) {
@@ -5011,6 +5109,14 @@ void PlayerController::resetTimeline() {
   if (!nearlyEqual(duration_, 0.0)) {
     duration_ = 0.0;
     emit durationChanged();
+  }
+  // The one place a display size is deliberately forgotten (see
+  // updateVideoDisplaySize, which refuses to publish an empty one). Every
+  // media transition routes through here, so the previous file's aspect
+  // cannot outlive it into the next open's window geometry.
+  if (!video_display_size_.isEmpty()) {
+    video_display_size_ = QSize();
+    emit videoDisplaySizeChanged();
   }
   if (!nearlyEqual(trim_in_, 0.0)) {
     trim_in_ = 0.0;

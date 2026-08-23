@@ -1670,6 +1670,41 @@ verify_release_signature_facts() {
   done
 }
 
+# Publishes, in WAM_APPEX_ENTITLEMENTS, the entitlements file a given signing
+# target needs -- empty for everything that needs none.
+#
+# The QuickLook thumbnail extension is the only entitled code in the bundle.
+# com.apple.security.app-sandbox is not optional for it: without the sandbox
+# entitlement pluginkit refuses to register the extension at all, so it never
+# runs and Finder keeps the generic icon. That is a registration failure, not a
+# runtime one, and nothing in the app would report it.
+#
+# The file is read from the source tree rather than from the staged app on
+# purpose: entitlements are an input to signing, not a payload, and must not
+# ship inside WAM.app.
+wam_appex_entitlements_for() {
+  local target="$1"
+  WAM_APPEX_ENTITLEMENTS=""
+  case "$target" in
+    *.appex|*.appex/Contents/MacOS/*) ;;
+    *) return 0 ;;
+  esac
+  local entitlements
+  entitlements="${WAM_BUNDLE_MACOS_LIBRARY_DIRECTORY:h}/packaging/quicklook/WAMThumbnail.entitlements"
+  if [[ ! -f "$entitlements" ]]; then
+    print -u2 "Missing appex entitlements: $entitlements"
+    return 1
+  fi
+  # codesign's AMFI parser rejects XML comments outright ("Failed to parse
+  # entitlements: AMFIUnserializeXML: syntax error"), and it does so with a
+  # message that does not name the file. Fail here, where it is nameable.
+  if ! /usr/bin/plutil -lint "$entitlements" >/dev/null; then
+    print -u2 "Appex entitlements are not a valid plist: $entitlements"
+    return 1
+  fi
+  WAM_APPEX_ENTITLEMENTS="$entitlements"
+}
+
 # Sign every Mach-O leaf explicitly. `codesign --deep` only discovers nested
 # code in conventional bundle locations such as Frameworks and PlugIns; Qt's
 # QML plugins live under Resources/qml and are otherwise sealed as data. Since
@@ -1693,6 +1728,10 @@ for target in "${BUNDLE_MACHOS[@]}"; do
   else
     signing_arguments=(--force --sign -)
   fi
+  wam_appex_entitlements_for "$target" || return 1
+  if [[ -n "$WAM_APPEX_ENTITLEMENTS" ]]; then
+    signing_arguments+=(--entitlements "$WAM_APPEX_ENTITLEMENTS")
+  fi
   if ! codesign "${signing_arguments[@]}" "$target"; then
     print -u2 "Could not sign packaged Mach-O: $target"
     return 1
@@ -1711,28 +1750,48 @@ for code_container in "${bundle_directories[@]}"; do
   esac
 done
 NESTED_CODE_CONTAINERS=("${(@Oa)NESTED_CODE_CONTAINERS}")
+# Both modes now seal nested containers explicitly, inner-to-outer, and the
+# outer app WITHOUT --deep.
+#
+# The ad-hoc path used to lean on one `codesign --force --deep` over the whole
+# app. That is wrong once any nested code carries entitlements: --deep re-signs
+# nested bundles with the OUTER invocation's arguments, so it would strip the
+# appex's app-sandbox entitlement moments after the leaf loop applied it, and
+# the extension would silently stop registering. Apple warns against --deep for
+# exactly this reason. Every Mach-O leaf is already signed individually by the
+# loop above, so --deep was only ever a catch-all; sealing the containers in
+# reverse-path order is strictly more correct and costs one pass.
+for code_container in "${NESTED_CODE_CONTAINERS[@]}"; do
+  validate_bundle_tree "$APP_PATH" || return 1
+  if [[ ! -d "$code_container" || -L "$code_container" ||
+        "${code_container:A}" != "$code_container" ||
+        "$code_container" != "$APP_PATH"/* ]]; then
+    print -u2 "Nested signing target changed identity or escaped the app: $code_container"
+    return 1
+  fi
+  if [[ "$RELEASE_SIGNING" == true ]]; then
+    signing_arguments=(--force --sign "$CODESIGN_IDENTITY" \
+      --options runtime --timestamp)
+  else
+    signing_arguments=(--force --sign -)
+  fi
+  wam_appex_entitlements_for "$code_container" || return 1
+  if [[ -n "$WAM_APPEX_ENTITLEMENTS" ]]; then
+    signing_arguments+=(--entitlements "$WAM_APPEX_ENTITLEMENTS")
+  fi
+  if ! codesign "${signing_arguments[@]}" "$code_container"; then
+    print -u2 "Could not sign packaged code container: $code_container"
+    return 1
+  fi
+done
 if [[ "$RELEASE_SIGNING" == true ]]; then
-  for code_container in "${NESTED_CODE_CONTAINERS[@]}"; do
-    validate_bundle_tree "$APP_PATH" || return 1
-    if [[ ! -d "$code_container" || -L "$code_container" ||
-          "${code_container:A}" != "$code_container" ||
-          "$code_container" != "$APP_PATH"/* ]]; then
-      print -u2 "Nested signing target changed identity or escaped the app: $code_container"
-      return 1
-    fi
-    if ! codesign --force --sign "$CODESIGN_IDENTITY" \
-        --options runtime --timestamp "$code_container"; then
-      print -u2 "Could not sign packaged code container: $code_container"
-      return 1
-    fi
-  done
   if ! codesign --force --sign "$CODESIGN_IDENTITY" \
       --options runtime --timestamp "$APP_PATH"; then
     print -u2 "Could not Developer ID sign packaged app: $APP_PATH"
     return 1
   fi
 else
-  if ! codesign --force --deep --sign - "$APP_PATH"; then
+  if ! codesign --force --sign - "$APP_PATH"; then
     print -u2 "Could not sign packaged app: $APP_PATH"
     return 1
   fi
@@ -1750,14 +1809,27 @@ for target in "${BUNDLE_MACHOS[@]}"; do
     verify_release_signature_facts "$target" || return 1
   fi
 done
-if [[ "$RELEASE_SIGNING" == true ]]; then
-  for code_container in "${NESTED_CODE_CONTAINERS[@]}"; do
-    if ! codesign --verify --strict "$code_container"; then
-      print -u2 "Invalid signature on packaged code container: $code_container"
-      return 1
-    fi
-  done
-fi
+for code_container in "${NESTED_CODE_CONTAINERS[@]}"; do
+  if ! codesign --verify --strict "$code_container"; then
+    print -u2 "Invalid signature on packaged code container: $code_container"
+    return 1
+  fi
+  # The app extension is useless without its sandbox entitlement -- pluginkit
+  # refuses to register it, so Finder silently keeps the generic icon and
+  # nothing else in the build would notice. Assert the entitlement survived
+  # every later signing pass, in BOTH signing modes. This is the gate that
+  # would have caught the outer `--deep` re-sign stripping it.
+  case "$code_container" in
+    *.appex)
+      if ! LC_ALL=C codesign -d --entitlements - --xml "$code_container" \
+          2>/dev/null | /usr/bin/plutil -extract \
+          'com\.apple\.security\.app-sandbox' raw -o - - >/dev/null 2>&1; then
+        print -u2 "Packaged app extension lost its sandbox entitlement: $code_container"
+        return 1
+      fi
+      ;;
+  esac
+done
 if ! codesign --verify --deep --strict "$APP_PATH"; then
   print -u2 "Packaged app failed strict code-signature verification"
   return 1

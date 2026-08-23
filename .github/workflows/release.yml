@@ -158,6 +158,10 @@ jobs:
           caption engine and model all ship inside the bundle. Nothing needs
           Homebrew installed.
 
+          WAM also installs a QuickLook thumbnail extension, so Finder shows a
+          real frame for Matroska files instead of a generic document icon.
+          Types macOS already thumbnails are left alone.
+
           HEADER
           gh release create "$GITHUB_REF_NAME" \
             --title "WAM $GITHUB_REF_NAME" \

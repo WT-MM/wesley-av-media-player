@@ -296,6 +296,28 @@ int volumeFeedbackActive(const wam::qt::PlayerWindow *window) {
   return value.isValid() ? (value.toBool() ? 1 : 0) : -1;
 }
 
+// The video size window geometry is actually working from, read off the QML
+// root rather than recomputed, so a scripted round can prove the number
+// reached the aspect lock. It is reported next to the frame because the two
+// answer different questions and a run needs both: the frame is what the
+// window did, and this is what it was told. That separation matters most under
+// the benchmark telemetry every WAM_TEST_* seam is gated behind, which
+// suppresses the aspect snap outright (MacWindowChrome::benchmarkMode_) -- the
+// frame there proves nothing about geometry, while this still proves the
+// container was measured.
+QString videoNaturalSizeSummary(const wam::qt::PlayerWindow *window) {
+  const QObject *root = window != nullptr ? window->qmlRoot() : nullptr;
+  if (root == nullptr)
+    return QStringLiteral("?");
+  const QVariant value = root->property("videoNaturalSize");
+  if (!value.isValid())
+    return QStringLiteral("?");
+  const QSizeF size = value.toSizeF();
+  return QStringLiteral("%1x%2")
+      .arg(size.width(), 0, 'f', 0)
+      .arg(size.height(), 0, 'f', 0);
+}
+
 // Walks the live Qt.labs.platform MenuBar and prints what the user would see.
 //
 // Qt.labs.platform exposes `menus` and `items` only as QQmlListProperty -- no
@@ -361,7 +383,7 @@ void reportWindows(const wam::qt::WindowManager &windows) {
                "WAM_TEST_WINDOW idx=%1 media=%2 paused=%3 playing=%4 rate=%5 "
                "step=%6 hugs=%7 pitch=%8 geom=%10x%11+%12+%13 "
                "volume=%14 muted=%15 gestures=%16 pos=%17 dur=%18 "
-               "chrome=%19 vfeedback=%20 source=%9")
+               "chrome=%19 vfeedback=%20 vnat=%21 source=%9")
                .arg(index)
                .arg(player->hasMedia() ? 1 : 0)
                .arg(player->paused() ? 1 : 0)
@@ -381,7 +403,8 @@ void reportWindows(const wam::qt::WindowManager &windows) {
                .arg(player->position(), 0, 'f', 4)
                .arg(player->duration(), 0, 'f', 4)
                .arg(chromeRevealed(open.at(index)))
-               .arg(volumeFeedbackActive(open.at(index)));
+               .arg(volumeFeedbackActive(open.at(index)))
+               .arg(videoNaturalSizeSummary(open.at(index)));
 
     // Subtitles get their own line rather than more fields on the one above:
     // the track labels are free text and would break any parser that splits

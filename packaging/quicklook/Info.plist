@@ -1,13 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  INERT TEMPLATE. Not referenced by CMakeLists.txt or any workflow. See README.md.
-
-  Info.plist for WAMThumbnail.appex, to be embedded at
+  Info.plist template for WAMThumbnail.appex, embedded at
   WAM.app/Contents/PlugIns/WAMThumbnail.appex/Contents/Info.plist.
 
-  Every key below was exercised by the 2026-08-23 de-risking experiment except
-  the ${...} substitutions, which follow the same CMake configure_file() pattern
-  packaging/Info.plist.in already uses.
+  CMakeLists.txt runs configure_file(... @ONLY) over this file, so only
+  @NAME@ placeholders are substituted; literal ${...} in plist text is left
+  alone. The generated file is set as the target's MACOSX_BUNDLE_INFO_PLIST.
 -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -17,7 +15,7 @@
 	<key>CFBundleExecutable</key>
 	<string>WAMThumbnail</string>
 	<key>CFBundleIdentifier</key>
-	<string>${MACOSX_BUNDLE_GUI_IDENTIFIER}.quicklook.thumbnail</string>
+	<string>@WAM_QUICKLOOK_BUNDLE_IDENTIFIER@</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
@@ -26,20 +24,55 @@
 	<string>WAM Thumbnails</string>
 
 	<!--
-	  XPC! is the package type for an app extension. The experiment used this
-	  value; APPL is wrong here and PKG is not accepted.
+	  XPC! is the package type for an app extension. The 2026-08-23 experiment
+	  used this value; APPL is wrong here and PKG is not accepted.
 	-->
 	<key>CFBundlePackageType</key>
 	<string>XPC!</string>
 
 	<key>CFBundleShortVersionString</key>
-	<string>${MACOSX_BUNDLE_SHORT_VERSION_STRING}</string>
+	<string>@PROJECT_VERSION@</string>
 	<key>CFBundleVersion</key>
-	<string>${MACOSX_BUNDLE_BUNDLE_VERSION}</string>
+	<string>@PROJECT_VERSION@</string>
 	<key>LSMinimumSystemVersion</key>
-	<string>${CMAKE_OSX_DEPLOYMENT_TARGET}</string>
-	<key>NSHumanReadableCopyright</key>
-	<string>${MACOSX_BUNDLE_COPYRIGHT}</string>
+	<string>@CMAKE_OSX_DEPLOYMENT_TARGET@</string>
+
+	<!--
+	  org.webmproject.webm and public.mpeg-2-transport-stream are types macOS
+	  itself declares, so naming them in QLSupportedContentTypes is enough.
+	  org.matroska.mkv is NOT: no Apple bundle declares it, and a type that
+	  reaches LaunchServices only through some *other* app's imported
+	  declaration does not route to this extension -- measured 2026-08-23, the
+	  appex was never even launched for a .mkv until this block existed, while
+	  .webm launched it immediately.
+
+	  The host app's own UTImportedTypeDeclarations does not carry over either
+	  (also measured). The extension has to import the type itself.
+
+	  This mirrors packaging/Info.plist.in exactly -- imported, never exported,
+	  so WAM still does not claim ownership of the identifier and merges with
+	  VLC's identical declaration instead of conflicting.
+	-->
+	<key>UTImportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>org.matroska.mkv</string>
+			<key>UTTypeDescription</key>
+			<string>Matroska Video</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.movie</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>mkv</string>
+				</array>
+			</dict>
+		</dict>
+	</array>
 
 	<key>NSExtension</key>
 	<dict>
@@ -49,8 +82,9 @@
 		<!--
 		  Objective-C class name, not a Swift mangled name. Must match the
 		  @interface in WAMThumbnailProvider.mm exactly, and the class must be
-		  present in the appex binary's Objective-C metadata (do not let the
-		  linker dead-strip it).
+		  present in the appex binary's Objective-C metadata. That source is
+		  compiled directly into this executable rather than pulled from an
+		  archive, so there is no dead-strip hazard.
 		-->
 		<key>NSExtensionPrincipalClass</key>
 		<string>WAMThumbnailProvider</string>
@@ -58,27 +92,35 @@
 		<key>NSExtensionAttributes</key>
 		<dict>
 			<!--
-			  UTIs this provider claims. org.matroska.mkv and
-			  org.webmproject.webm are already imported by the host app at
-			  packaging/Info.plist.in:401-436, but LaunchServices reads this
-			  appex plist independently -- the host's import does not carry over.
+			  Exactly the VIDEO containers macOS itself cannot demux, and
+			  exactly the identifiers the host app already imports
+			  (packaging/Info.plist.in). LaunchServices reads this appex plist
+			  independently -- the host's import does not carry over -- but
+			  keeping the two lists aligned is what stops the extension
+			  claiming a type the app does not admit.
 
-			  Both were confirmed to route to this extension in the experiment.
-			  public.mpeg-2-transport-stream is a system UTI and is listed here
-			  as intent; it needs its own demuxer branch (mpegts_demuxer) and it
-			  has NOT been confirmed that macOS actually fails to thumbnail .ts.
+			  DELIBERATELY ABSENT:
+			    * public.mpeg-4 / com.apple.quicktime-movie and every other
+			      type Apple already thumbnails. Claiming those would replace
+			      a working system thumbnail with ours for no gain, and would
+			      make WAM's install visibly change files it has no business
+			      changing.
+			    * org.matroska.mka and every audio type. An audio file has no
+			      frame to show; the system's audio icon is the right answer.
 			-->
 			<key>QLSupportedContentTypes</key>
 			<array>
 				<string>org.matroska.mkv</string>
 				<string>org.webmproject.webm</string>
 				<string>public.mpeg-2-transport-stream</string>
+				<string>public.avchd-mpeg-2-transport-stream</string>
 			</array>
 
 			<!--
-			  0 means "no minimum" -- accept every requested size, including the
-			  small icon sizes Finder asks for in list and column views. Raise
-			  this only if small renders prove not worth the decode cost.
+			  0 means "no minimum" -- accept every requested size, including
+			  the small icon sizes Finder asks for in list and column views.
+			  The decode cost is the same at any size, and refusing the small
+			  ones would leave list view showing the generic icon.
 			-->
 			<key>QLThumbnailMinimumDimension</key>
 			<integer>0</integer>

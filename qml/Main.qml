@@ -49,11 +49,60 @@ ApplicationWindow {
     readonly property real titlebarInteractionHeight: visibility === Window.FullScreen
         ? 0
         : (nativeTitlebarHeight > 0 ? nativeTitlebarHeight : SafeArea.margins.top)
-    // The current video's native pixel size, read directly from the file via
-    // MacWindowChrome::videoNaturalSizeForSource when the source changes, or
-    // (0, 0) for audio-only media or before "windowChrome" exists. Drives the
-    // native window's aspect-ratio lock and its double-click "Actual Size".
-    property size videoNaturalSize: Qt.size(0, 0)
+    // The current video's displayed size, read from the file when the source
+    // changes, or (0, 0) for audio-only media or before "windowChrome" exists.
+    // Drives the native window's aspect-ratio lock, its aspect snap, its
+    // double-click "Actual Size" and its fit-to-screen zoom.
+    //
+    // Two answers feed it, and the order matters.
+    //
+    // `assetNaturalSize` is MacWindowChrome's asynchronous AVURLAsset probe --
+    // the original and, for MP4/MOV, still the authoritative one: it is what
+    // shipped, it applies the track's preferredTransform, and letting anything
+    // else win for those containers would change behaviour that is correct.
+    //
+    // `controller.videoDisplaySize` is the engine that ACTUALLY demuxed the
+    // container speaking for itself -- the native backends' Prepared event and
+    // mpv's dwidth/dheight. It exists because AVFoundation cannot demux
+    // Matroska, WebM or MPEG-TS at all, so the probe above answers (0, 0) for
+    // every one of them and every behaviour listed above silently died. Both
+    // routes (native and the mpv compatibility fallback) publish it, so a
+    // container is fixed wherever it ends up playing.
+    //
+    // Precedence, not merge: a probe answer for THIS source wins outright, so
+    // no MP4 changes its geometry by a single pixel; the backend answer is the
+    // fallback that makes the other three containers work; and the last clause
+    // -- a probe answer left over from the previous source -- is there only to
+    // reproduce the pre-existing behaviour exactly. Before this property
+    // existed the old size simply stayed put between a source change and the
+    // new probe answer, and it has to keep doing so: dropping to (0, 0) for
+    // those few milliseconds would take effectiveMinimumHeight back to 360 and
+    // visibly grow a short cinemascope window before the new size snapped it
+    // back.
+    readonly property size videoNaturalSize:
+        (root.assetNaturalSizeCurrent && root.assetNaturalSize.width > 0
+            && root.assetNaturalSize.height > 0) ? root.assetNaturalSize
+        : (root.backendNaturalSize.width > 0 && root.backendNaturalSize.height > 0)
+            ? root.backendNaturalSize
+        : root.assetNaturalSize
+    // The most recent AVURLAsset answer, and the source it was an answer to.
+    // (0, 0) is a real answer and is recorded as one -- it is precisely what
+    // AVFoundation says about a Matroska, WebM or MPEG-TS file.
+    property size assetNaturalSize: Qt.size(0, 0)
+    property url assetNaturalSizeSource: ""
+    // Whether the probe has spoken about the media now open. The probe always
+    // answers -- MacWindowChrome::requestVideoNaturalSize emits on every path,
+    // including the failure ones -- so this always becomes true shortly after
+    // a source change, and the aspect snap below can safely wait for it.
+    readonly property bool assetNaturalSizeCurrent: root.controller
+        && root.controller.hasMedia
+        && root.assetNaturalSizeSource.toString() === root.controller.source.toString()
+    // PlayerController's answer, mirrored so the binding above re-evaluates on
+    // videoDisplaySizeChanged. Guarded for the window before `controller`
+    // exists, which QML does reach during component construction.
+    readonly property size backendNaturalSize: root.controller
+        ? Qt.size(root.controller.videoDisplaySize.width, root.controller.videoDisplaySize.height)
+        : Qt.size(0, 0)
     // Whether the title band shows its reveal-in-Finder caret: only for media
     // Finder could actually show, which means a local file. `controller.source`
     // is always a fully-formed URL by the time QML sees it (PlayerController's
@@ -1544,10 +1593,25 @@ ApplicationWindow {
             // outright against the session's own in-flight load of the same
             // asset. The asynchronous request delivers identical numbers off
             // the GUI thread and is now the only path.
-            if (typeof windowChrome === "undefined" || !windowChrome || !root.controller.hasMedia) {
-                root.videoNaturalSize = Qt.size(0, 0);
+            // Only the probe's bookkeeping is touched here. The backend half
+            // is the controller's own property, cleared by
+            // PlayerController::resetTimeline on every media transition, and
+            // clearing it from here would race the Prepared event that has
+            // very likely already filled it -- on the native route the source
+            // change and the display size come out of the same event, in that
+            // order.
+            //
+            // Neither the recorded answer nor the source it belongs to is
+            // touched. The recorded source is now, by definition, the previous
+            // file's, so assetNaturalSizeCurrent is already false and the
+            // recorded size falls through to videoNaturalSize's last-resort
+            // clause -- which is precisely the "the old size stays put until
+            // the new answer arrives" behaviour this property had before it
+            // gained a second feeder, and the reason a file-to-file
+            // replacement does not flash the window through a size no video
+            // ever had.
+            if (typeof windowChrome === "undefined" || !windowChrome || !root.controller.hasMedia)
                 return;
-            }
             windowChrome.requestVideoNaturalSize(root.controller.source);
         }
     }
@@ -1555,12 +1619,21 @@ ApplicationWindow {
     Connections {
         target: (typeof windowChrome !== "undefined" && windowChrome) ? windowChrome : null
 
+        // A (0, 0) answer is now recorded rather than dropped. It used to be
+        // dropped because it was the only answer there was and dropping it at
+        // least preserved the previous file's size; it is now the load-bearing
+        // fact that AVFoundation cannot describe this container -- every
+        // Matroska, WebM and MPEG-TS file produces exactly it -- and recording
+        // it is what hands the question over to the backend that can.
         function onVideoNaturalSizeReady(source, width, height) {
-            if (!root.controller.hasMedia || width <= 0 || height <= 0)
+            if (!root.controller.hasMedia)
                 return;
             if (source.toString() !== root.controller.source.toString())
                 return;
-            root.videoNaturalSize = Qt.size(width, height);
+            root.assetNaturalSize = (width > 0 && height > 0)
+                ? Qt.size(width, height)
+                : Qt.size(0, 0);
+            root.assetNaturalSizeSource = source;
         }
 
         // Real titlebar double-clicks arrive here, not through the band's
@@ -1578,18 +1651,37 @@ ApplicationWindow {
         }
     }
 
-    onVideoNaturalSizeChanged: {
+    // QuickTime snaps its window to a newly opened video's aspect ratio so
+    // playback fills it edge to edge with no letterbox bars. Do the same here,
+    // but strictly once per source: playback can re-open the same file
+    // underneath us (the native decoder falling back to compatibility playback
+    // does exactly that), and a second snap would yank the window out from
+    // under a size the user -- or the benchmark harness -- had just chosen.
+    // (0, 0) means no video track, so the window is left alone instead of
+    // being resized.
+    //
+    // A function rather than the body of onVideoNaturalSizeChanged because it
+    // now has two triggers. The size itself is one. The other is the AVURLAsset
+    // probe finishing: the snap deliberately waits for it (see the
+    // assetNaturalSizeCurrent gate below), and when the probe confirms a size
+    // the backend had already published, the value does not change and no
+    // size-changed signal is emitted -- so waiting on that signal alone would
+    // wait forever.
+    function snapToSourceAspectOnce() {
         if (typeof windowChrome === "undefined" || !windowChrome)
             return;
         root.applyWindowAspectLock();
-        // QuickTime snaps its window to a newly opened video's aspect ratio
-        // so playback fills it edge to edge with no letterbox bars. Do the
-        // same here, but strictly once per source: playback can re-open the
-        // same file underneath us (the native decoder falling back to
-        // compatibility playback does exactly that), and a second snap would
-        // yank the window out from under a size the user -- or the benchmark
-        // harness -- had just chosen. (0, 0) means no video track, so the
-        // window is left alone instead of being resized.
+        // Let the probe speak first, always. For MP4 and MOV its answer is the
+        // authoritative one and it is what shipped; the backend's answer is
+        // separately derived and, for a container with a pixel-aspect or
+        // clean-aperture atom, need not agree to the pixel. Since the snap
+        // happens exactly once per source, whichever answer is in hand at that
+        // instant is the one the window keeps -- so the instant is chosen to be
+        // after the probe has committed, not before. The wait is bounded: the
+        // probe answers unconditionally, including for the containers it cannot
+        // read at all, which is precisely how those hand off to the backend.
+        if (!root.assetNaturalSizeCurrent)
+            return;
         if (root.videoNaturalSize.width <= 0 || root.videoNaturalSize.height <= 0)
             return;
         if (root.snappedSource.toString() === root.controller.source.toString())
@@ -1601,6 +1693,9 @@ ApplicationWindow {
         root.snappedSource = root.controller.source;
         windowChrome.snapToVideoAspectRatio(root.videoNaturalSize.width, root.videoNaturalSize.height);
     }
+
+    onVideoNaturalSizeChanged: root.snapToSourceAspectOnce()
+    onAssetNaturalSizeCurrentChanged: root.snapToSourceAspectOnce()
 
     // Continuous "window hugs the video" upkeep. Every one of these can leave
     // the frame off-aspect while hugging is active: a resize (drag, AX/
