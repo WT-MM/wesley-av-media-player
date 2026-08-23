@@ -166,22 +166,35 @@ void testMalformedInputs() {
 }
 
 void testChannelGate() {
-  // acmod 7 is 3/2 -- five full-bandwidth channels, the 5.1 case.
+  // acmod 7 is 3/2 -- five full-bandwidth channels -- and the trailing bit
+  // here sets lfeon, so this is the 5.1 case. It is now ADMITTED: the player
+  // decodes all six channels and folds them to stereo itself with exact
+  // BS.775 coefficients, because Apple's own AC-3 downmix was measured to be
+  // a normalised Lt/Rt matrix at -10.70 dB with both surrounds folded into
+  // both outputs.
   auto frame = frameOf(kRealAc3Header, kRealAc3FrameBytes);
   frame[6] = std::byte{0xE1};
-  expect(parseAc3Syncframe(frame, false).error ==
-             Ac3AdmissionError::UnsupportedChannelConfiguration,
-         "5.1 AC-3 is refused at admission, not downmixed");
-  // acmod 0 is 1+1: two independent programs, not a stereo pair.
+  {
+    const Ac3Admission admission = parseAc3Syncframe(frame, false);
+    expect(admission.admitted(), "5.1 AC-3 is admitted");
+    expect(admission.admitted() && admission.configuration->channelCount == 6U,
+           "5.1 AC-3 states six channels");
+  }
+  // acmod 0 is 1+1: two independent programs, not a stereo pair, and the one
+  // arrangement with no defined stereo fold.
   frame[6] = std::byte{0x03};
   expect(parseAc3Syncframe(frame, false).error ==
              Ac3AdmissionError::UnsupportedChannelConfiguration,
          "AC-3 dual mono (acmod 0) is refused");
-  // Stereo with the LFE flag set.
+  // Stereo with the LFE flag set: three channels, the LFE excluded by the
+  // downmix policy rather than by admission.
   frame[6] = std::byte{0x47};
-  expect(parseAc3Syncframe(frame, false).error ==
-             Ac3AdmissionError::UnsupportedChannelConfiguration,
-         "an LFE channel is refused");
+  {
+    const Ac3Admission admission = parseAc3Syncframe(frame, false);
+    expect(admission.admitted(), "stereo plus LFE is admitted");
+    expect(admission.admitted() && admission.configuration->channelCount == 3U,
+           "stereo plus LFE states three channels");
+  }
 }
 
 void testEnhancedGates() {

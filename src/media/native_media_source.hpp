@@ -738,6 +738,46 @@ static_assert(std::is_trivially_copyable_v<MediaSourceStats>);
 [[nodiscard]] bool mediaVideoHasSquarePixels(
     const MediaVideoFormat& video) noexcept;
 
+// The rectangle the picture occupies on screen, in square pixels. Zero on both
+// axes is the sole empty encoding and means "not stated"; see the free
+// functions below for who produces it and when.
+struct MediaDisplaySize {
+  std::uint32_t width{0};
+  std::uint32_t height{0};
+
+  [[nodiscard]] constexpr bool empty() const noexcept {
+    return width == 0 || height == 0;
+  }
+
+  friend constexpr bool operator==(const MediaDisplaySize&,
+                                   const MediaDisplaySize&) = default;
+};
+
+// One track's display size, which is what window geometry -- aspect lock,
+// aspect snap, Actual Size, fit-to-screen -- has to be shaped from.
+//
+// displayWidth/displayHeight are preferred over the coded size and the coded
+// size is only a fallback for a backend that left them unset, never an
+// alternative: an anamorphic track's coded size is a different aspect ratio
+// from the picture, and shaping a window with it letterboxes the very video
+// the window was supposed to hug. AVFoundation fills the display pair from
+// CMVideoFormatDescriptionGetPresentationDimensions with pixel aspect ratio
+// and clean aperture already applied; the Matroska and MPEG-TS demuxers fill
+// it with their admitted (square-pixel, uncropped) geometry.
+//
+// Rotation is applied last because a quarter turn swaps the rectangle. It is
+// applied here, once, rather than by each caller: this is the only function
+// through which a display size reaches anything that sizes a window.
+[[nodiscard]] MediaDisplaySize mediaVideoDisplaySize(
+    const MediaVideoFormat& video) noexcept;
+
+// The same, for whichever video track a descriptor has selected. Empty when no
+// video track is selected (an audio-only source), when the selection does not
+// resolve to a track in the descriptor, or when that track states no usable
+// dimensions at all.
+[[nodiscard]] MediaDisplaySize mediaSourceDisplaySize(
+    const MediaSourceDescriptor& descriptor) noexcept;
+
 // Single-owner pull boundary. openLocalFile(), seek(), readNext(), and close()
 // are confined to one source worker/retirement owner and may block there;
 // requestCancel() is prompt, noexcept, and callable from any thread. A source

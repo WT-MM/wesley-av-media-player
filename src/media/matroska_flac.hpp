@@ -40,6 +40,11 @@ inline constexpr std::size_t kFlacMagicCookieBytes{
     8U + 4U + kFlacMetadataBlockHeaderBytes + kFlacStreamInfoBytes};
 
 // FLAC block sizes are 16..65535 frames; the format reserves 0.
+// STREAMINFO encodes the channel count as a 3-bit field plus one, so eight is
+// the format's own ceiling -- and it coincides with
+// MediaSourceLimits::kHardMaximumAudioChannels.
+inline constexpr std::uint8_t kFlacMaximumChannels{8};
+
 inline constexpr std::uint32_t kMinimumFlacBlockSize{16};
 inline constexpr std::uint32_t kMaximumFlacBlockSize{65'535};
 

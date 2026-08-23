@@ -285,6 +285,22 @@ struct PreparedDescriptor {
   double durationSeconds{0.0};
   bool hasAudio{false};
   bool hasVideo{false};
+  // The selected video track's DISPLAY size in square pixels, already carrying
+  // the container's pixel aspect ratio, clean aperture and rotation -- i.e.
+  // exactly the rectangle the picture occupies on screen, which is what window
+  // geometry (aspect lock, hugs-video snap, Actual Size, fit-to-screen) wants.
+  // It is deliberately not the coded size: an anamorphic track's coded size is
+  // the wrong aspect to shape a window with.
+  //
+  // Zero means "this backend could not state a display size" and is the only
+  // empty encoding; it is therefore also the value carried by an audio-only
+  // source. Consumers must treat zero as "unknown" and leave geometry alone,
+  // never as a real size -- which is why validity below does not require a
+  // nonzero pair even when hasVideo is true. The Qt layer republishes this as
+  // PlayerController::videoDisplayWidth/Height; see
+  // src/qt/native_playback_owner.mm's Prepared arm.
+  std::uint32_t displayWidth{0};
+  std::uint32_t displayHeight{0};
 
   friend constexpr bool operator==(const PreparedDescriptor &,
                                    const PreparedDescriptor &) = default;

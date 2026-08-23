@@ -1,5 +1,6 @@
 #pragma once
 
+#include "media/audio_downmix.hpp"
 #include "media/native_media_source.hpp"
 #include "native_pcm_ring.hpp"
 
@@ -59,6 +60,27 @@ public:
           std::span<float> interleavedOutput) = 0;
   [[nodiscard]] virtual bool reset(std::string *error) = 0;
   virtual void close() noexcept = 0;
+
+  // Reports the exact ordered channel roles the backend's decoded output
+  // carries, so a multichannel generation can be folded to stereo by LABEL
+  // rather than by an assumed index order. Writes at most roles.size() entries
+  // and stores the count.
+  //
+  // Deliberately NOT pure: the default answers "this backend states no channel
+  // layout", which is the truthful answer for every stereo-or-narrower test
+  // double and keeps the existing frozen backends compiling unchanged. The
+  // converter only ASKS when the source is wider than stereo, and a source
+  // wider than stereo whose backend cannot state its layout is refused rather
+  // than guessed.
+  [[nodiscard]] virtual bool
+  outputChannelRoles(std::span<media::AudioChannelRole> roles,
+                     std::size_t *roleCount) noexcept {
+    static_cast<void>(roles);
+    if (roleCount != nullptr) {
+      *roleCount = 0;
+    }
+    return false;
+  }
 };
 
 enum class NativeAudioSubmitResult : std::uint8_t {
@@ -203,6 +225,14 @@ struct NativeAudioConverterStats {
   std::uint64_t publishedSlabs{0};
   std::uint64_t ringBackpressure{0};
   std::uint64_t failures{0};
+  // Multichannel folding. downmixApplied is false for every mono and stereo
+  // generation -- those bypass the stage entirely -- so a test can ASSERT the
+  // bypass rather than infer it. downmixedFrames counts decoded frames that
+  // passed through the matrix, which is exactly decodedPcmFrames when the
+  // stage is active and zero when it is not; the downmix changes sample WIDTH
+  // only and can never change a frame count.
+  bool downmixApplied{false};
+  std::uint64_t downmixedFrames{0};
 };
 
 // Serialized, off-real-time AudioConverter owner. The AudioUnit callback only
@@ -211,11 +241,19 @@ struct NativeAudioConverterStats {
 // packet descriptions, 256 KiB magic cookie, and one 4096-frame Float32 slab.
 // Their bounded payload/PCM paths allocate nothing after configuration.
 //
-// v1 admits exact AAC/HE-AAC/ALAC/MP3 ASBDs with mono/stereo channels and only
-// integral 44.1/48/96/192 kHz rates. Channel-layout metadata may be absent; if
-// present it must be the exact canonical Mono or Stereo tag matching the ASBD.
-// It preserves the source rate and expands mono to stereo immediately before
-// publishing. CoreMedia buffer attachments
+// v1 admits exact AAC/HE-AAC/ALAC/MP3 ASBDs and only integral 44.1/48/96/192
+// kHz rates. Channel-layout metadata may be absent; if present it must be the
+// exact canonical Mono or Stereo tag matching the ASBD, or -- for a
+// multichannel source -- a tag whose expansion is an admissible stereo
+// downmix. It preserves the source rate.
+//
+// WIDTH is normalised immediately before publishing, never earlier and never
+// on the render callback: mono is duplicated to stereo, and a source wider
+// than stereo is decoded at its FULL native layout and folded to stereo by
+// media::applyStereoDownmix using the decoder's own reported channel labels.
+// Everything below the ring therefore stays exactly two channels. The fold is
+// a width reduction only: frame counts, timestamps and every budget identity
+// are untouched by it. CoreMedia buffer attachments
 // TrimDurationAtStart/End accept only exact zero, SpeedMultiplier only exactly
 // 1, and Reverse/FillDiscontinuitiesWithSilence/EmptyMedia only false. Missing
 // keys carry their documented defaults. Input and output CoreMedia timing must

@@ -244,6 +244,32 @@ void testPreparationAndStartupProofs() {
   wrong.descriptor.hasAudio = false;
   expect(!preparedMatches(prepare, GenerationHighWater{}, wrong),
          "a descriptor with neither lane cannot prove native readiness");
+  // The display size the Qt layer shapes a window from. It is carried, never
+  // demanded: a Prepared with no display size is a perfectly good Prepared --
+  // audio-only sources have none, and making it a readiness condition would
+  // turn a future backend's silence into a failed open instead of a window
+  // that simply keeps the size it had.
+  wrong = prepared;
+  wrong.descriptor.displayWidth = 1920;
+  wrong.descriptor.displayHeight = 800;
+  expect(preparedMatches(prepare, GenerationHighWater{}, wrong),
+         "a stated display size does not disturb preparation proof");
+  expect(wrong.descriptor != prepared.descriptor,
+         "display size participates in descriptor equality");
+  wrong.descriptor.displayHeight = 801;
+  expect(preparedMatches(prepare, GenerationHighWater{}, wrong),
+         "any display size at all is accepted; geometry is not the "
+         "protocol's business");
+  wrong = prepared;
+  wrong.descriptor.hasVideo = true;
+  wrong.descriptor.displayWidth = 0;
+  wrong.descriptor.displayHeight = 0;
+  expect(preparedMatches(prepare, GenerationHighWater{}, wrong),
+         "a video lane that states no display size is still ready");
+  expect(PreparedDescriptor{}.displayWidth == 0 &&
+             PreparedDescriptor{}.displayHeight == 0,
+         "an unstated display size defaults to the empty encoding");
+
   wrong = prepared;
   wrong.descriptor.durationSeconds = nan;
   expect(!preparedMatches(prepare, GenerationHighWater{}, wrong),

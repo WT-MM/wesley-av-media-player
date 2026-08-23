@@ -251,6 +251,7 @@ exactFrameTime(CMTime time) noexcept {
   return media::mediaTimeSeconds(descriptor.duration).value_or(0.0);
 }
 
+
 // Intercepts AVFoundation's immutable Ready descriptor before Dispatcher can
 // configure either port. Native v1's exact selected A/V and duration relation
 // are therefore a pure admission decision: a rejected source never reaches a
@@ -2228,11 +2229,21 @@ if (descriptor == nullptr || !nativeV1Descriptor(*descriptor)) {
         publicDurationSeconds = descriptorDurationSeconds(*descriptor);
         publicOwnership = ownership;
         publicDispatcherObservedVideo = dispatcherObservedVideo;
+        // The selected video track's on-screen rectangle, carried on Prepared
+        // so window geometry can be shaped from the container that was
+        // actually demuxed. It is the only route by which a Matroska, WebM or
+        // MPEG-TS natural size can reach the window: the Qt layer's other
+        // source is an AVURLAsset, and AVFoundation cannot demux any of the
+        // three. Empty for an audio-only source, which the contract reads as
+        // "unknown" and geometry leaves alone.
+        const media::MediaDisplaySize displaySize =
+            media::mediaSourceDisplaySize(*descriptor);
         factMailbox.emplace(protocol::Prepared{
             prepareCommand.stamp, prepareCommand.sourceKey,
             {descriptorDurationSeconds(*descriptor),
              descriptor->selectedAudio.has_value(),
-             descriptor->selectedVideo.has_value()},
+             descriptor->selectedVideo.has_value(), displaySize.width,
+             displaySize.height},
             prepareCommand.reservedGeneration});
         committed = true;
       }

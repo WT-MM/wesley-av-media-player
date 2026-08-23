@@ -96,6 +96,9 @@ constexpr std::uint32_t kVideoId{0xE0};
 constexpr std::uint32_t kFlagInterlacedId{0x9A};
 constexpr std::uint32_t kPixelWidthId{0xB0};
 constexpr std::uint32_t kPixelHeightId{0xBA};
+constexpr std::uint32_t kDisplayWidthId{0x54B0};
+constexpr std::uint32_t kDisplayHeightId{0x54BA};
+constexpr std::uint32_t kDisplayUnitId{0x54B2};
 constexpr std::uint32_t kColourId{0x55B0};
 constexpr std::uint32_t kMatrixCoefficientsId{0x55B1};
 constexpr std::uint32_t kTransferCharacteristicsId{0x55BA};
@@ -310,6 +313,11 @@ constexpr std::array<std::uint8_t, 2> kAacStereo48Asc{0x11, 0x90};
 // 0010. This is the trait a real WEB-DL movie carries, and the one the whole
 // stereo output chain refuses at admission.
 constexpr std::array<std::uint8_t, 2> kAac51_48Asc{0x11, 0xB0};
+// channelConfiguration 7: the eight-channel FRONT-WIDE 3/4.1 arrangement,
+// whose front-left/right-of-centre channels have no measured downmix
+// coefficient. It is the AAC trait the cheap header-only pre-admission pass
+// still refuses, now that 5.1 is admitted.
+constexpr std::array<std::uint8_t, 2> kAac71FrontWide_48Asc{0x11, 0xB8};
 
 // The canonical 19-byte OpusHead every ffmpeg mux writes: version 1, stereo,
 // pre-skip 312, 48 kHz encoder input, unity gain, channel mapping family 0.
@@ -623,6 +631,13 @@ struct FixtureSpec {
   std::optional<std::uint64_t> videoCodecDelayNanoseconds;
   std::uint64_t videoPixelWidth{kSampleAvcWidth};
   std::uint64_t videoPixelHeight{kSampleAvcHeight};
+  // Video > DisplayWidth / DisplayHeight / DisplayUnit, each written only when
+  // set so the "element absent entirely" shape stays reachable -- it is the
+  // common one, and it is a different case from "present and equal to the
+  // pixel size" for the admission rule these exercise.
+  std::optional<std::uint64_t> videoDisplayWidth;
+  std::optional<std::uint64_t> videoDisplayHeight;
+  std::optional<std::uint64_t> videoDisplayUnit;
   double audioSamplingFrequency{static_cast<double>(kAudioSampleRate)};
   std::uint64_t audioChannels{2};
   std::optional<std::uint64_t> audioBitDepth;
@@ -665,6 +680,16 @@ Bytes videoTrackEntry(const FixtureSpec& spec) {
   }
   append(videoPayload, uintElement(kPixelWidthId, spec.videoPixelWidth));
   append(videoPayload, uintElement(kPixelHeightId, spec.videoPixelHeight));
+  if (spec.videoDisplayWidth) {
+    append(videoPayload, uintElement(kDisplayWidthId, *spec.videoDisplayWidth));
+  }
+  if (spec.videoDisplayHeight) {
+    append(videoPayload,
+           uintElement(kDisplayHeightId, *spec.videoDisplayHeight));
+  }
+  if (spec.videoDisplayUnit) {
+    append(videoPayload, uintElement(kDisplayUnitId, *spec.videoDisplayUnit));
+  }
   Bytes colourPayload;
   append(colourPayload, uintElement(kMatrixCoefficientsId, 1));
   append(colourPayload, uintElement(kTransferCharacteristicsId, 1));
@@ -1505,6 +1530,135 @@ void testPreparationRequestValidation() {
   expect(rejected.asset == nullptr &&
              rejected.error == MatroskaDemuxError::InvalidTimeline,
          "an initial position at the duration fails preparation closed");
+}
+
+// The display geometry the Qt layer shapes a window from now comes out of this
+// descriptor -- AVFoundation cannot demux Matroska and answers (0, 0) for every
+// one of these files, so what is published here is the only answer the aspect
+// lock and the aspect snap ever see. These pin both halves of that: which
+// DisplayUnit shapes are admitted at all, and what display size an admitted one
+// reports.
+//
+// DisplayUnit is Matroska's units-of-DisplayWidth/DisplayHeight selector:
+// 0 = pixels, 1 = centimetres, 2 = inches, 3 = display aspect ratio,
+// 4 = unspecified. This square-pixel v1 renderer models none of the non-pixel
+// geometries, so admission refuses 1, 2 and 3 outright and refuses a
+// DisplayUnit-0 track whose display size differs from its pixel size. Those
+// files are not broken -- they take the mpv compatibility route, which derives
+// its own display size from dwidth/dheight. Widening admission is a renderer
+// change, not a metadata change, and is deliberately not made here.
+void testVideoDisplayGeometry() {
+  const auto displaySizeOf = [](const FixtureSpec& spec)
+      -> std::optional<std::pair<std::uint32_t, std::uint32_t>> {
+    const PreparedFixture prepared = prepareFixture(spec);
+    if (prepared.outcome.asset == nullptr) {
+      return std::nullopt;
+    }
+    const auto descriptor = prepared.outcome.asset->descriptor();
+    if (descriptor == nullptr) {
+      return std::nullopt;
+    }
+    const auto* video = wam::media::findMediaTrack(*descriptor, 1);
+    if (video == nullptr || !video->video) {
+      return std::nullopt;
+    }
+    return std::pair{video->video->displayWidth, video->video->displayHeight};
+  };
+
+  // The overwhelmingly common shape: no display elements at all. The picture
+  // is its pixel size, and that is what geometry must be handed.
+  const auto absent = displaySizeOf({});
+  expect(absent.has_value() &&
+             absent->first == kSampleAvcWidth &&
+             absent->second == kSampleAvcHeight,
+         "a track with no Display elements reports its pixel size as the "
+         "display size");
+
+  // DisplayUnit 0 stating the pixel size explicitly is the same picture.
+  FixtureSpec explicitPixels;
+  explicitPixels.videoDisplayUnit = 0;
+  explicitPixels.videoDisplayWidth = kSampleAvcWidth;
+  explicitPixels.videoDisplayHeight = kSampleAvcHeight;
+  const auto stated = displaySizeOf(explicitPixels);
+  expect(stated.has_value() && stated->first == kSampleAvcWidth &&
+             stated->second == kSampleAvcHeight,
+         "DisplayUnit 0 restating the pixel size is admitted and agrees");
+
+  // DisplayUnit 4 with no dimensions is what OBS records. It carries no
+  // display information at all, so the pixel size stands.
+  FixtureSpec unspecified;
+  unspecified.videoDisplayUnit = 4;
+  const auto obs = displaySizeOf(unspecified);
+  expect(obs.has_value() && obs->first == kSampleAvcWidth &&
+             obs->second == kSampleAvcHeight,
+         "DisplayUnit 4 with no dimensions is admitted and reports the pixel "
+         "size");
+
+  // The refusals below all surface as CodecConfiguration rather than a
+  // geometry-specific error: display geometry is checked inside the same
+  // shared video-track admission helper that judges the avcC, and it reports
+  // one verdict for the track. Pinned as observed -- the behaviour that
+  // matters is the refusal (and the mpv route it hands the file to), not the
+  // taxonomy.
+  //
+  // DisplayUnit 3 is what ffmpeg writes for anamorphic video: DisplayWidth and
+  // DisplayHeight are a RATIO (16:9), not a size. Nothing here may read them
+  // as pixels.
+  FixtureSpec aspectRatio;
+  aspectRatio.videoDisplayUnit = 3;
+  aspectRatio.videoDisplayWidth = 16;
+  aspectRatio.videoDisplayHeight = 9;
+  expectPrepareError(aspectRatio, MatroskaDemuxError::CodecConfiguration,
+                     "DisplayUnit 3 (display aspect ratio) is refused rather "
+                     "than read as a pixel size");
+
+  FixtureSpec centimetres;
+  centimetres.videoDisplayUnit = 1;
+  centimetres.videoDisplayWidth = 16;
+  centimetres.videoDisplayHeight = 9;
+  expectPrepareError(centimetres, MatroskaDemuxError::CodecConfiguration,
+                     "DisplayUnit 1 (centimetres) is refused");
+
+  FixtureSpec inches;
+  inches.videoDisplayUnit = 2;
+  inches.videoDisplayWidth = 16;
+  inches.videoDisplayHeight = 9;
+  expectPrepareError(inches, MatroskaDemuxError::CodecConfiguration,
+                     "DisplayUnit 2 (inches) is refused");
+
+  // Anamorphic stated in pixels: a 1920-wide picture from a narrower coded
+  // frame. Also refused, for the same renderer reason.
+  FixtureSpec anamorphic;
+  anamorphic.videoDisplayUnit = 0;
+  anamorphic.videoDisplayWidth = kSampleAvcWidth * 2;
+  anamorphic.videoDisplayHeight = kSampleAvcHeight;
+  expectPrepareError(anamorphic, MatroskaDemuxError::CodecConfiguration,
+                     "DisplayUnit 0 anamorphic geometry is refused, not "
+                     "silently squashed to the coded size");
+
+  // DisplayUnit 4 is "unspecified", so stating dimensions alongside it is a
+  // contradiction the parser itself rejects.
+  FixtureSpec contradictory;
+  contradictory.videoDisplayUnit = 4;
+  contradictory.videoDisplayWidth = kSampleAvcWidth;
+  contradictory.videoDisplayHeight = kSampleAvcHeight;
+  expect(prepareFixture(contradictory).outcome.asset == nullptr,
+         "DisplayUnit 4 carrying dimensions is refused as contradictory");
+
+  // And the whole point of the exercise: whatever survives admission reaches
+  // geometry through one shared rule, with the display pair -- never the coded
+  // pair -- as the preferred source.
+  const PreparedFixture prepared = prepareFixture({});
+  if (prepared.outcome.asset != nullptr) {
+    const auto descriptor = prepared.outcome.asset->descriptor();
+    if (descriptor != nullptr) {
+      const wam::media::MediaDisplaySize size =
+          wam::media::mediaSourceDisplaySize(*descriptor);
+      expect(size.width == kSampleAvcWidth && size.height == kSampleAvcHeight,
+             "mediaSourceDisplaySize reads the selected Matroska video "
+             "track's display size");
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -3893,34 +4047,65 @@ void testLocalFilePreparation() {
 
 }  // namespace
 
-// A 5.1 AAC-LC track is refused at admission -- the whole output chain is
-// stereo (NativePcmRing::kChannels == 2) -- and the file must reach the caller
-// as Unsupported so the player falls back for the WHOLE file rather than
-// reporting a hard protocol fault or preparing a silent video-only session.
-//
-// The second half is the one that decides how the refusal FEELS. Preparation
-// used to complete a full-file cluster-metadata walk before it ever read the
-// track header, and that walk issues four unbuffered pread(2) calls per
-// element: on the 1.9 GiB movie that produced this defect, 3,030,956 reads and
-// seconds of dead window before the fallback engaged, growing with file size.
-// Every fact behind the refusal is stated in Tracks, at the head of the file.
-// Pinning "not one byte at or after the first Cluster was read" says that in a
-// way no fixture size can dilute, and fails loudly if the cheap pre-admission
-// pass in prepareMatroska is ever removed or reordered behind the scan.
-void testMultichannelAacRefusedBeforeClusterScan() {
+// 5.1 AAC-LC is now ADMITTED. It used to be refused because the whole output
+// chain is stereo (NativePcmRing::kChannels == 2) and AudioConverter's own
+// downmix was measured wrong for the codecs in this sweep; the player now
+// decodes the full native layout and folds it to stereo itself with exact
+// BS.775 coefficients. The descriptor must state six channels and, crucially,
+// NO channel layout tag -- this demuxer knows a channel count but not
+// AudioToolbox's per-codec channel ORDER, and the platform layer reads the
+// authoritative order back from the decoder.
+void testMultichannelAacAdmitted() {
   FixtureSpec spec;
   spec.audioCodecPrivate = fromOctets(kAac51_48Asc);
   spec.audioChannels = 6;
+  const PreparedFixture prepared = prepareFixture(spec);
+  expect(prepared.outcome.status == MatroskaDemuxStatus::Ready &&
+             prepared.outcome.asset != nullptr,
+         "5.1 AAC-LC in Matroska is admitted natively");
+  if (prepared.outcome.asset == nullptr) {
+    return;
+  }
+  const auto descriptor = prepared.outcome.asset->descriptor();
+  expect(descriptor != nullptr, "the 5.1 fixture publishes a descriptor");
+  if (descriptor == nullptr) {
+    return;
+  }
+  const auto* audio = wam::media::findMediaTrack(*descriptor, 2);
+  expect(audio != nullptr && audio->audio, "the 5.1 audio track is present");
+  if (audio == nullptr || !audio->audio) {
+    return;
+  }
+  expect(audio->codec == MediaCodec::Aac && audio->audio->channels == 6U,
+         "the admitted descriptor states six AAC channels");
+  expect(!audio->audio->channelLayoutPresent &&
+             audio->audio->channelLayoutTag == 0U,
+         "a multichannel descriptor states no channel layout tag at all");
+}
+
+// How the remaining refusal FEELS. Preparation used to complete a full-file
+// cluster-metadata walk before it ever read the track header, and that walk
+// issues four unbuffered pread(2) calls per element: on the 1.9 GiB movie that
+// produced this defect, 3,030,956 reads and seconds of dead window before the
+// fallback engaged, growing with file size. Every fact behind the refusal is
+// stated in Tracks, at the head of the file. Pinning "not one byte at or after
+// the first Cluster was read" says that in a way no fixture size can dilute,
+// and fails loudly if the cheap pre-admission pass in prepareMatroska is ever
+// removed or reordered behind the scan.
+void testInadmissibleAacRefusedBeforeClusterScan() {
+  FixtureSpec spec;
+  spec.audioCodecPrivate = fromOctets(kAac71FrontWide_48Asc);
+  spec.audioChannels = 8;
   const PreparedFixture prepared = prepareFixture(spec);
 
   expect(prepared.outcome.status == MatroskaDemuxStatus::Unsupported &&
              prepared.outcome.error ==
                  MatroskaDemuxError::CodecConfiguration &&
              prepared.outcome.asset == nullptr,
-         "5.1 AAC-LC in Matroska is a clean whole-file fallback verdict");
+         "front-wide 7.1 AAC-LC is a clean whole-file fallback verdict");
 
   expect(!prepared.fixture.clusterEncodedOffsets.empty(),
-         "the multichannel fixture really does carry clusters to scan");
+         "the refused fixture really does carry clusters to scan");
   if (prepared.fixture.clusterEncodedOffsets.empty()) {
     return;
   }
@@ -3936,7 +4121,7 @@ void testMultichannelAacRefusedBeforeClusterScan() {
     furthest = std::max(furthest, offset);
   }
   expect(furthest < firstClusterData,
-         "the multichannel refusal reads no byte inside any Cluster");
+         "the header-only refusal reads no byte inside any Cluster");
 
   // The control: the identical fixture with a stereo ASC is still admitted, so
   // the pre-pass refuses the trait and not the shape of the file.
@@ -3947,7 +4132,9 @@ void testMultichannelAacRefusedBeforeClusterScan() {
 
 int main() {
   testCompleteDocumentPreparation();
-  testMultichannelAacRefusedBeforeClusterScan();
+  testVideoDisplayGeometry();
+  testMultichannelAacAdmitted();
+  testInadmissibleAacRefusedBeforeClusterScan();
   testPreparationRequestValidation();
   testBoundedIndexes();
   testCodecAdmissionAndSelection();

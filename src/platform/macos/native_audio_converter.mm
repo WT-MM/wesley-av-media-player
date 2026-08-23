@@ -1,9 +1,11 @@
 #include "native_audio_converter.hpp"
 
+#include "media/audio_downmix.hpp"
 #include "media/matroska_ac3.hpp"
 #include "media/matroska_mpeg_audio.hpp"
 #include "media/matroska_opus.hpp"
 #include "media/matroska_vorbis.hpp"
+#include "native_audio_channel_map.hpp"
 
 #include <vector>
 
@@ -310,10 +312,17 @@ supportedChannelLayout(const media::MediaAudioFormat &audio) noexcept {
   if (!audio.channelLayoutPresent) {
     return audio.channelLayoutTag == 0;
   }
-  return (audio.channels == 1 &&
-          audio.channelLayoutTag == kAudioChannelLayoutTag_Mono) ||
-         (audio.channels == 2 &&
-          audio.channelLayoutTag == kAudioChannelLayoutTag_Stereo);
+  if (audio.channels == 1) {
+    return audio.channelLayoutTag == kAudioChannelLayoutTag_Mono;
+  }
+  if (audio.channels == 2) {
+    return audio.channelLayoutTag == kAudioChannelLayoutTag_Stereo;
+  }
+  // A multichannel source may state a layout tag, but only one whose expansion
+  // is a downmix this player can perform exactly. An unrecognised label makes
+  // the whole track inadmissible -- a clean fallback -- rather than a channel
+  // this path would silently drop.
+  return multichannelLayoutTagAdmitted(audio.channelLayoutTag, audio.channels);
 }
 
 [[nodiscard]] bool readSupportedChannelLayout(
@@ -540,6 +549,46 @@ public:
     layout_tag_ = 0;
     input_storage_outstanding_ = false;
     outstanding_storage_was_final_ = false;
+  }
+
+  // Asks the LIVE converter what it will actually write, not what the
+  // container claimed. AudioToolbox normalises the layout it was handed (a
+  // FLAC track stating tag 0x00BB0006 is reported back as 0x00790006) and
+  // gives a different order per codec family, so this query is the only
+  // trustworthy source for the label order the downmix indexes.
+  [[nodiscard]] bool
+  outputChannelRoles(std::span<media::AudioChannelRole> roles,
+                     std::size_t *roleCount) noexcept override {
+    if (roleCount != nullptr) {
+      *roleCount = 0;
+    }
+    if (converter_ == nullptr || roleCount == nullptr) {
+      return false;
+    }
+    UInt32 layoutBytes = 0;
+    Boolean writable = false;
+    if (AudioConverterGetPropertyInfo(converter_,
+                                      kAudioConverterOutputChannelLayout,
+                                      &layoutBytes, &writable) != noErr ||
+        layoutBytes == 0) {
+      return false;
+    }
+    alignas(AudioChannelLayout) std::array<
+        std::byte, sizeof(AudioChannelLayout) +
+                       (kMaximumChannelLayoutDescriptions - 1) *
+                           sizeof(AudioChannelDescription)>
+        storage{};
+    if (layoutBytes > storage.size()) {
+      return false;
+    }
+    if (AudioConverterGetProperty(converter_,
+                                  kAudioConverterOutputChannelLayout,
+                                  &layoutBytes, storage.data()) != noErr) {
+      return false;
+    }
+    return channelRolesForLayout(
+        reinterpret_cast<const AudioChannelLayout *>(storage.data()),
+        layoutBytes, output_asbd_.mChannelsPerFrame, roles, roleCount);
   }
 
 private:
@@ -1214,9 +1263,18 @@ struct NativeAudioConverter::Impl {
   std::array<std::byte,
              media::MediaSourceLimits::kHardMaximumCodecConfigurationBytes>
       cookie_storage{};
-  std::array<float,
-             NativeAudioConverter::kFramesPerPump * NativePcmRing::kChannels>
+  // One fixed slab, at the widest source layout the player admits. The
+  // backend decodes the FULL native layout into it and the downmix folds it
+  // to stereo in place before publication, so the same storage serves both
+  // ends and nothing allocates after configuration. Widening this from
+  // NativePcmRing::kChannels to kHardMaximumAudioChannels costs 96 KiB per
+  // converter (32,768 floats instead of 8,192).
+  std::array<float, NativeAudioConverter::kFramesPerPump *
+                        media::kMaximumDownmixSourceChannels>
       pcm{};
+  // Empty and inert for every mono and stereo generation: those never enter
+  // the fold at all.
+  media::StereoDownmixMatrix downmix{};
   media::MediaPayloadLease lease;
   const std::byte *encoded_data{nullptr};
   media::MediaAudioFormat audio{};
@@ -1319,7 +1377,8 @@ bool NativeAudioConverter::configure(const media::MediaTrackDescriptor &track,
   if (generation == 0 || state.ring.generation() != generation ||
       track.id == 0 || track.kind != media::MediaTrackKind::Audio ||
       !track.audio || !supportedCodec(track.codec, track.audio->formatTag) ||
-      (track.audio->channels != 1 && track.audio->channels != 2) ||
+      track.audio->channels == 0 ||
+      track.audio->channels > media::kMaximumDownmixSourceChannels ||
       !track.audio->interleaved || track.audio->framesPerPacket == 0 ||
       !supportedChannelLayout(*track.audio) ||
       !supportedRate(track.audio->sampleRate, &candidateSampleRate) ||
@@ -1341,6 +1400,11 @@ bool NativeAudioConverter::configure(const media::MediaTrackDescriptor &track,
   state.configured = false;
   state.cancelled = false;
   state.failed = false;
+  state.downmix = {};
+  // The backend is asked for the source's OWN width. Asking it for stereo
+  // instead is what produced Apple's normalised Lt/Rt matrix for AC-3 and the
+  // silently dropped centre/LFE/surrounds for FLAC; the fold happens here,
+  // after a complete decode, or not at all.
   NativeAudioBackendConfiguration configuration{
       *track.audio, track.codecConfiguration, track.audio->channels,
       candidateSampleRate};
@@ -1363,6 +1427,38 @@ bool NativeAudioConverter::configure(const media::MediaTrackDescriptor &track,
     state.statistics.configured = false;
     return state.fail(error, "native audio backend configuration threw");
   }
+  if (track.audio->channels > NativePcmRing::kChannels) {
+    // Build the fold from the labels the backend itself reports, never from
+    // an index convention: the four codecs measured here emit three different
+    // 5.1 orders (AAC C L R Ls Rs LFE, AC-3/E-AC-3 L C R Ls Rs LFE, FLAC
+    // L R C LFE Ls Rs), so index 1 is the centre for one family and the left
+    // channel for another.
+    std::array<media::AudioChannelRole, media::kMaximumDownmixSourceChannels>
+        roles{};
+    std::size_t roleCount = 0;
+    bool reported = false;
+    try {
+      reported = state.backend->outputChannelRoles(roles, &roleCount);
+    } catch (...) {
+      reported = false;
+    }
+    if (reported) {
+      state.downmix =
+          media::buildStereoDownmixMatrix({roles.data(), roleCount});
+    }
+    if (!reported || !state.downmix.admitted() ||
+        state.downmix.sourceChannels != track.audio->channels) {
+      state.downmix = {};
+      state.backend->close();
+      state.audio = {};
+      state.track = 0;
+      state.cookie_size = 0;
+      state.sample_rate = 0;
+      state.statistics.configured = false;
+      return state.fail(
+          error, "multichannel audio layout is outside native converter v1");
+    }
+  }
   state.audio = *track.audio;
   state.track = track.id;
   state.cookie_size = track.codecConfiguration.size();
@@ -1377,6 +1473,7 @@ bool NativeAudioConverter::configure(const media::MediaTrackDescriptor &track,
   state.statistics.generation = generation;
   state.statistics.sampleRate = state.sample_rate;
   state.statistics.sourceChannels = state.audio.channels;
+  state.statistics.downmixApplied = state.downmix.admitted();
   state.lead_in_frames =
       decoderLeadInFrames(track.codec, state.audio.framesPerPacket);
   state.frame_deficit_frames =
@@ -1767,12 +1864,23 @@ NativeAudioPumpResult NativeAudioConverter::pump(std::string *error) {
     state.statistics.decodedPcmFrames = decodedAfter;
     state.statistics.discardedTrimFrames = discardedAfter;
     state.decoded_cursor_frame = cursorAfter;
+    // Width normalisation, and the ONLY place the decoded PCM changes shape.
+    // It happens after the frame accounting above is already final and before
+    // the ring sees a single sample, so the ring, clock, stretch, gain and
+    // render callback all stay exactly two channels and completely unaware
+    // that a 5.1 track was ever involved. Neither branch can change a frame
+    // count: mono widens each frame, multichannel narrows each frame.
     if (state.audio.channels == 1) {
       for (std::size_t frame = converted.producedFrames; frame != 0; --frame) {
         const float value = state.pcm[frame - 1];
         state.pcm[(frame - 1) * 2] = value;
         state.pcm[(frame - 1) * 2 + 1] = value;
       }
+    } else if (state.downmix.admitted()) {
+      media::applyStereoDownmix(state.downmix, state.pcm,
+                                converted.producedFrames);
+      saturatingAdd(state.statistics.downmixedFrames,
+                    converted.producedFrames);
     }
     if (publishFrames == 0) {
       if (converted.drained) {
@@ -1946,6 +2054,38 @@ bool NativeAudioConverter::flush(
     state.statistics.failed = true;
     return false;
   }
+  // A backend reset may REBUILD the converter rather than reset it (the Opus
+  // arm does exactly that), and a rebuilt converter is entitled to state its
+  // layout afresh. Re-derive the fold and require it to be identical; a
+  // generation that silently changed channel order mid-stream would put
+  // dialogue in the wrong place with no other symptom.
+  if (state.downmix.admitted()) {
+    std::array<media::AudioChannelRole, media::kMaximumDownmixSourceChannels>
+        roles{};
+    std::size_t roleCount = 0;
+    bool reported = false;
+    try {
+      reported = state.backend->outputChannelRoles(roles, &roleCount);
+    } catch (...) {
+      reported = false;
+    }
+    const media::StereoDownmixMatrix rebuilt =
+        reported ? media::buildStereoDownmixMatrix({roles.data(), roleCount})
+                 : media::StereoDownmixMatrix{};
+    if (!reported || rebuilt != state.downmix) {
+      saturatingAdd(state.statistics.failures, 1);
+      try {
+        state.backend->close();
+      } catch (...) {
+      }
+      state.clearFlow();
+      state.configured = false;
+      state.failed = true;
+      state.statistics.configured = false;
+      state.statistics.failed = true;
+      return false;
+    }
+  }
   state.clearFlow();
   state.cancelled = false;
   state.failed = false;
@@ -1972,7 +2112,9 @@ void NativeAudioConverter::close() noexcept {
   state.clearFlow();
   state.configured = false;
   state.failed = false;
+  state.downmix = {};
   state.statistics.configured = false;
+  state.statistics.downmixApplied = false;
 }
 
 std::uint32_t NativeAudioConverter::outputSampleRate() const noexcept {

@@ -212,14 +212,27 @@ void testBlockSizeGate() {
 }
 
 void testChannelGate() {
-  auto bytes = realCodecPrivate();
-  // channels - 1 lives in bits 20..22 of the packed field at offset 8 + 10.
-  // 0x43 -> 0x45 raises it from 1 (stereo) to 2 (three channels).
-  bytes[8U + 12U] = std::byte{0x45};
-  expect(parseFlacCodecPrivate(bytes).error ==
-             FlacAdmissionError::UnsupportedChannelCount,
-         "multichannel FLAC is refused at admission -- the converter drops "
-         "centre, LFE and both surrounds rather than downmixing them");
+  // channels - 1 lives in bits 20..22 of the packed field at offset 8 + 10;
+  // the byte at 8 + 12 holds it as (channels - 1) << 1 within 0x0E, with the
+  // stereo fixture's 0x43 meaning one, i.e. two channels.
+  //
+  // Multichannel FLAC is now ADMITTED. It used to be refused because asking
+  // AudioConverter for a stereo output ASBD made its FLAC path SILENTLY DROP
+  // centre, LFE and both surrounds -- re-measured and still true. The player
+  // no longer asks: it decodes the full layout and folds it itself.
+  for (std::uint8_t channels = 1U; channels <= 8U; ++channels) {
+    auto bytes = realCodecPrivate();
+    bytes[8U + 12U] = static_cast<std::byte>(
+        0x41U | static_cast<std::uint8_t>((channels - 1U) << 1U));
+    const FlacAdmission admission = parseFlacCodecPrivate(bytes);
+    expect(admission.admitted(),
+           "every FLAC channel count the format can state is admitted");
+    expect(admission.admitted() &&
+               admission.configuration->channelCount == channels,
+           "the admitted channel count is the one STREAMINFO states");
+  }
+  static_assert(kFlacMaximumChannels == 8U,
+                "STREAMINFO's three-bit channel field cannot exceed eight");
 }
 
 } // namespace

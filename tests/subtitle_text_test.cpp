@@ -216,6 +216,34 @@ void testSubRipTolerance() {
          "trailing SRT position coordinates do not break the timing line");
 }
 
+// The overlay is Text.PlainText, so SubRip's inline HTML subset has to be
+// removed here or the viewer reads the literal characters "<i>". This is what
+// mpv did before publishing sub-text, and the user's own 5.1 movie -- whose
+// every cue is wrapped in <i>...</i> -- is the file that surfaced it the
+// moment multichannel audio let it play natively.
+void testSubRipInlineMarkup() {
+  const ParsedFile parsed = parseSubRip(
+      "1\n00:00:01,000 --> 00:00:02,000\n"
+      "<i> Well, think again,</i>\n<i> ladies and gentlemen,</i>\n"
+      "\n"
+      "2\n00:00:03,000 --> 00:00:04,000\n"
+      "<font color=\"#FFFF00\"><b>loud</b></font> and <U>clear</U>\n"
+      "\n"
+      "3\n00:00:05,000 --> 00:00:06,000\n"
+      "if x < y then <notatag> stays\n");
+  expect(parsed.cues.size() == 3, "the marked-up SRT yields all three cues");
+  if (parsed.cues.size() != 3) {
+    return;
+  }
+  expectText(parsed.cues[0].text,
+             "Well, think again,\n ladies and gentlemen,",
+             "SubRip italics are stripped, not shown to the viewer");
+  expectText(parsed.cues[1].text, "loud and clear",
+             "font, bold and mixed-case underline tags are stripped");
+  expectText(parsed.cues[2].text, "if x < y then <notatag> stays",
+             "a bare '<' and an unrecognised tag survive untouched");
+}
+
 void testMalformedInput() {
   expect(parseSubRip("").cues.empty(), "an empty file yields no cues");
   expect(!parseSubRip("").error.empty(), "an empty file reports a reason");
@@ -402,6 +430,7 @@ int main() {
   testNormalization();
   testSubRipParsing();
   testSubRipTolerance();
+  testSubRipInlineMarkup();
   testMalformedInput();
   testAssFileParsing();
   testWebVttFileParsing();

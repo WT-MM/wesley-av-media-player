@@ -2279,10 +2279,19 @@ MpegTsPrepareOutcome prepareMpegTs(std::shared_ptr<SeekableByteReader> reader,
               format.channels = admission.configuration->channelCount;
               format.formatTag = kAacFormatTag;
               format.framesPerPacket = kAacLcSamplesPerAccessUnit;
+              // Mono and stereo keep their canonical tags. A wider AAC layout
+              // states none: this demuxer knows a channel count, not
+              // AudioToolbox's per-codec channel ORDER, and the platform layer
+              // reads the authoritative order back from the decoder before
+              // folding to stereo. Stating the stereo tag on a six-channel
+              // track -- which is what the old expression did the moment the
+              // AAC parser widened -- would be an outright false statement.
               format.channelLayoutTag =
-                  admission.configuration->channelCount == 1 ? kMonoLayoutTag
-                                                             : kStereoLayoutTag;
-              format.channelLayoutPresent = true;
+                  admission.configuration->channelCount == 1   ? kMonoLayoutTag
+                  : admission.configuration->channelCount == 2 ? kStereoLayoutTag
+                                                               : 0U;
+              format.channelLayoutPresent =
+                  admission.configuration->channelCount <= 2;
               state->audio.sampleRate = admission.configuration->sampleRate;
               state->audio.channels = admission.configuration->channelCount;
               state->audio.samplesPerFrame = kAacLcSamplesPerAccessUnit;

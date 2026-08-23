@@ -1415,6 +1415,35 @@ struct AudioDescriptorFields {
   std::int64_t tailDiscardPaddingNanoseconds{0};
 };
 
+// Mono and stereo keep their exact canonical tags. A WIDER layout states no
+// tag at all, deliberately.
+//
+// This demuxer knows a channel COUNT; it does not know AudioToolbox's
+// per-codec channel-order convention, and the four decoders measured for the
+// downmix work emit three different 5.1 orders (AAC C L R Ls Rs LFE, AC-3 and
+// E-AC-3 L C R Ls Rs LFE, FLAC L R C LFE Ls Rs). Inventing a CoreAudio tag
+// here would be guessing at that convention, and a wrong guess puts dialogue
+// in the surround channel with no other symptom. Measured on the same
+// fixtures: AudioConverter reports the identical output channel layout
+// whether or not an input layout is supplied, so supplying none costs nothing
+// and the platform layer reads the authoritative order back from the decoder
+// itself.
+void applyChannelLayoutTag(MediaAudioFormat* format,
+                           std::uint32_t channelCount) noexcept {
+  if (channelCount == 1) {
+    format->channelLayoutTag = kMonoLayoutTag;
+    format->channelLayoutPresent = true;
+    return;
+  }
+  if (channelCount == 2) {
+    format->channelLayoutTag = kStereoLayoutTag;
+    format->channelLayoutPresent = true;
+    return;
+  }
+  format->channelLayoutTag = 0;
+  format->channelLayoutPresent = false;
+}
+
 void fillAudioDescriptor(const TrackEntry& entry, MediaTrackId id,
                          const AudioDescriptorFields& fields,
                          MediaTrackDescriptor* result, TrackRuntime* runtime) {
@@ -1436,9 +1465,7 @@ void fillAudioDescriptor(const TrackEntry& entry, MediaTrackId id,
   format.channels = fields.channelCount;
   format.formatTag = fields.formatTag;
   format.framesPerPacket = fields.samplesPerAccessUnit;
-  format.channelLayoutTag =
-      fields.channelCount == 1 ? kMonoLayoutTag : kStereoLayoutTag;
-  format.channelLayoutPresent = true;
+  applyChannelLayoutTag(&format, fields.channelCount);
   result->audio = format;
   runtime->entry = entry;
   runtime->id = id;
@@ -1476,14 +1503,21 @@ void fillAudioDescriptor(const TrackEntry& entry, MediaTrackId id,
                                      const MediaSourceLimits& limits,
                                      std::uint32_t sampleRate,
                                      std::uint8_t channelCount) noexcept {
-  // Multichannel is refused at admission rather than downstream. The whole
-  // output chain is stereo (NativePcmRing::kChannels == 2), and the
-  // AudioConverter's own 5.1 downmix was measured unacceptable for both
-  // families in this sweep: AC-3 gets a normalised Lt/Rt at -10.7 dB against
-  // ffmpeg's Lo/Ro, and FLAC has centre, LFE and both surrounds silently
-  // dropped. Falling back to mpv plays those files correctly; admitting them
-  // would play them wrongly.
-  return channelCount >= 1U && channelCount <= 2U &&
+  // Multichannel USED to be refused here, because the whole output chain is
+  // stereo (NativePcmRing::kChannels == 2) and AudioConverter's own 5.1
+  // downmix is unacceptable for both families in this sweep: AC-3 gets a
+  // normalised Lt/Rt at -10.70 dB against ffmpeg's Lo/Ro, and FLAC has
+  // centre, LFE and both surrounds silently dropped. Both were re-measured
+  // and still hold.
+  //
+  // The player no longer asks AudioConverter to downmix. It decodes the full
+  // native layout and folds it to stereo itself with exact BS.775 coefficients
+  // (media::applyStereoDownmix), verified against ffmpeg's and mpv's own
+  // output channel by channel. So the count bound here is simply the neutral
+  // source limit; a layout the fold cannot state exactly is still refused, but
+  // it is refused by the platform layer that can actually see the decoder's
+  // channel labels.
+  return channelCount >= 1U &&
          sampleRate <= limits.maximumAudioSampleRate &&
          channelCount <= limits.maximumAudioChannels &&
          entry.audio->samplingFrequency == static_cast<double>(sampleRate) &&
@@ -1893,9 +1927,7 @@ void fillAudioDescriptor(const TrackEntry& entry, MediaTrackId id,
   format.channels = configuration.channelCount;
   format.formatTag = kVorbisFormatTag;
   format.framesPerPacket = samplesPerAccessUnit;
-  format.channelLayoutTag =
-      configuration.channelCount == 1 ? kMonoLayoutTag : kStereoLayoutTag;
-  format.channelLayoutPresent = true;
+  applyChannelLayoutTag(&format, configuration.channelCount);
   result->audio = format;
   runtime->entry = entry;
   runtime->id = *id;
@@ -2056,9 +2088,7 @@ void fillAudioDescriptor(const TrackEntry& entry, MediaTrackId id,
   format.channels = configuration.channelCount;
   format.formatTag = kOpusFormatTag;
   format.framesPerPacket = probe.samplesPerAccessUnit;
-  format.channelLayoutTag =
-      configuration.channelCount == 1 ? kMonoLayoutTag : kStereoLayoutTag;
-  format.channelLayoutPresent = true;
+  applyChannelLayoutTag(&format, configuration.channelCount);
   result->audio = format;
   runtime->entry = entry;
   runtime->id = *id;

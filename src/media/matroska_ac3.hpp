@@ -70,7 +70,9 @@ enum class Ac3AdmissionError : std::uint8_t {
   // fscod == 3 -- reserved in AC-3, and the half-sample-rate signal in E-AC-3.
   ReservedSampleRate,
   UnsupportedBitRateCode,
-  // acmod values other than 1 (mono) and 2 (stereo), or any LFE channel.
+  // acmod 0, the "1+1" dual-mono mode: two independent programmes rather than
+  // a speaker arrangement, so it has no defined stereo fold. Every other
+  // acmod is admitted, with or without its LFE channel.
   UnsupportedChannelConfiguration,
   // E-AC-3 with 1, 2 or 3 blocks per syncframe.
   UnsupportedBlockCount,

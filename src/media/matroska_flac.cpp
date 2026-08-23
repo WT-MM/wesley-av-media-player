@@ -151,7 +151,13 @@ parseFlacCodecPrivate(std::span<const std::byte> bytes) noexcept {
       static_cast<std::uint8_t>(((packed >> 36U) & 0x1FU) + 1U);
   configuration.totalSamples = packed & ((UINT64_C(1) << 36U) - 1U);
 
-  if (configuration.channelCount != 1U && configuration.channelCount != 2U) {
+  // STREAMINFO states channels as a 3-bit field plus one, so the value is
+  // already bounded to 1..8 -- exactly the neutral source limit. The old
+  // 1..2 bound existed only because the pipeline had no downmix and
+  // AudioConverter's own FLAC fold silently discarded centre, LFE and both
+  // surrounds; the player now decodes the full layout and folds it itself.
+  if (configuration.channelCount == 0U ||
+      configuration.channelCount > kFlacMaximumChannels) {
     return failure(FlacAdmissionError::UnsupportedChannelCount);
   }
   if (configuration.sampleRate == 0U ||

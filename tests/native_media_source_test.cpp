@@ -840,6 +840,113 @@ void checkExactAudioFrameGrid() {
          "invalid and out-of-int64 audio-grid projections fail closed");
 }
 
+// mediaVideoDisplaySize / mediaSourceDisplaySize are the single rule every
+// window-geometry behaviour is shaped from -- aspect lock, the once-per-source
+// aspect snap, Actual Size and fit-to-screen all read one number, and it comes
+// from here. What is pinned below is the ORDER of its decisions: display size
+// beats coded size, coded size is only a fallback, rotation is applied after
+// both, and an unusable answer is empty rather than half-right.
+void checkVideoDisplaySize() {
+  MediaVideoFormat square;
+  square.codedWidth = 1920;
+  square.codedHeight = 800;
+  square.displayWidth = 1920;
+  square.displayHeight = 800;
+  expect(mediaVideoDisplaySize(square) == MediaDisplaySize{1920, 800},
+         "square-pixel 2.40:1 video reports its own size");
+
+  // The case the whole rule exists for. A 1440x1080 track with 4:3 pixels is a
+  // 1920x1080 picture; shaping a window from 1440x1080 would letterbox it.
+  MediaVideoFormat anamorphic;
+  anamorphic.codedWidth = 1440;
+  anamorphic.codedHeight = 1080;
+  anamorphic.displayWidth = 1920;
+  anamorphic.displayHeight = 1080;
+  anamorphic.pixelAspectNumerator = 4;
+  anamorphic.pixelAspectDenominator = 3;
+  expect(mediaVideoDisplaySize(anamorphic) == MediaDisplaySize{1920, 1080},
+         "anamorphic video reports its DISPLAY size, not its coded size");
+  expect(mediaVideoDisplaySize(anamorphic).width != anamorphic.codedWidth,
+         "anamorphic display size is distinguishable from the coded size");
+
+  // A backend that states no display size at all still has to be usable; the
+  // coded size stands in, and only then.
+  MediaVideoFormat codedOnly;
+  codedOnly.codedWidth = 1280;
+  codedOnly.codedHeight = 720;
+  expect(mediaVideoDisplaySize(codedOnly) == MediaDisplaySize{1280, 720},
+         "coded size stands in when no display size is stated");
+  MediaVideoFormat halfStated = codedOnly;
+  halfStated.displayWidth = 1920;
+  expect(mediaVideoDisplaySize(halfStated) == MediaDisplaySize{1920, 720},
+         "each axis falls back to its own coded value independently");
+
+  // A quarter turn swaps the rectangle the window has to be.
+  MediaVideoFormat rotated;
+  rotated.codedWidth = 1920;
+  rotated.codedHeight = 1080;
+  rotated.displayWidth = 1920;
+  rotated.displayHeight = 1080;
+  rotated.rotationDegrees = 90;
+  expect(mediaVideoDisplaySize(rotated) == MediaDisplaySize{1080, 1920},
+         "90 degrees of rotation swaps the display rectangle");
+  rotated.rotationDegrees = 270;
+  expect(mediaVideoDisplaySize(rotated) == MediaDisplaySize{1080, 1920},
+         "270 degrees of rotation swaps the display rectangle");
+  rotated.rotationDegrees = -90;
+  expect(mediaVideoDisplaySize(rotated) == MediaDisplaySize{1080, 1920},
+         "a negative quarter turn normalizes before it decides to swap");
+  rotated.rotationDegrees = 180;
+  expect(mediaVideoDisplaySize(rotated) == MediaDisplaySize{1920, 1080},
+         "180 degrees of rotation leaves the rectangle alone");
+  rotated.rotationDegrees = 0;
+  expect(mediaVideoDisplaySize(rotated) == MediaDisplaySize{1920, 1080},
+         "an unrotated track is unchanged");
+
+  // Empty is the one thing a consumer may act on as "leave geometry alone",
+  // so nothing may produce a partly-zero pair.
+  expect(mediaVideoDisplaySize({}).empty(),
+         "a format with no dimensions at all reports empty");
+  MediaVideoFormat zeroHeight;
+  zeroHeight.codedWidth = 1920;
+  expect(mediaVideoDisplaySize(zeroHeight).empty(),
+         "a format with only one usable axis reports empty, not half a size");
+
+  MediaSourceDescriptor selected = descriptor();
+  expect(mediaSourceDisplaySize(selected) == MediaDisplaySize{1920, 1080},
+         "a descriptor reports its SELECTED video track's display size");
+
+  // Two video tracks, and the selection -- not the track order -- decides.
+  MediaSourceDescriptor twoVideo = descriptor();
+  MediaTrackDescriptor second = videoTrack();
+  second.id = 7;
+  second.video->codedWidth = 640;
+  second.video->codedHeight = 480;
+  second.video->displayWidth = 640;
+  second.video->displayHeight = 480;
+  twoVideo.tracks.push_back(second);
+  twoVideo.inventory.video = 2;
+  twoVideo.inventory.total = 3;
+  twoVideo.selectedVideo = 7;
+  expect(mediaSourceDisplaySize(twoVideo) == MediaDisplaySize{640, 480},
+         "the selected video track decides, not the first one listed");
+
+  MediaSourceDescriptor audioOnly = descriptor();
+  audioOnly.selectedVideo.reset();
+  expect(mediaSourceDisplaySize(audioOnly).empty(),
+         "an audio-only source reports empty rather than a stale rectangle");
+
+  MediaSourceDescriptor danglingSelection = descriptor();
+  danglingSelection.selectedVideo = 99;
+  expect(mediaSourceDisplaySize(danglingSelection).empty(),
+         "a selection that resolves to no track reports empty");
+
+  MediaSourceDescriptor videoless = descriptor();
+  videoless.tracks.front().video.reset();
+  expect(mediaSourceDisplaySize(videoless).empty(),
+         "a selected track carrying no video format reports empty");
+}
+
 void checkDescriptorValidation() {
   std::string error;
   MediaSourceDescriptor valid = descriptor();
@@ -1872,6 +1979,7 @@ int main() {
   checkExactAudioFrameGrid();
   checkPreparedContextIdentity();
   checkDescriptorValidation();
+  checkVideoDisplaySize();
   checkExactMediaTimeOrdering();
   checkExactNonnegativeMediaTimeRepresentation();
   checkCanonicalMediaFrameConversion();

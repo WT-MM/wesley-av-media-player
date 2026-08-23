@@ -1,7 +1,9 @@
 #include "native_audio_session.hpp"
 
 #include "media/audio_codec_timing.hpp"
+#include "media/audio_downmix.hpp"
 #include "media/matroska_vorbis.hpp"
+#include "native_audio_channel_map.hpp"
 #include "native_concurrency_limits.hpp"
 
 #import <AudioToolbox/AudioToolbox.h>
@@ -249,15 +251,23 @@ void assignError(std::string* error, const char* message) noexcept {
          ceilingFrame > 0;
 }
 
+// Mirrors NativeAudioConverter's own rule exactly: mono and stereo must state
+// their canonical tag or none at all, and a multichannel track may state a tag
+// only when that tag expands to a stereo fold this player can perform. The
+// session refuses first so an inadmissible layout produces a clean fallback
+// instead of a converter failure part-way through graph construction.
 [[nodiscard]] bool supportedLayout(const media::MediaAudioFormat& audio)
     noexcept {
   if (!audio.channelLayoutPresent) {
     return audio.channelLayoutTag == 0;
   }
-  return (audio.channels == 1 &&
-          audio.channelLayoutTag == kAudioChannelLayoutTag_Mono) ||
-         (audio.channels == 2 &&
-          audio.channelLayoutTag == kAudioChannelLayoutTag_Stereo);
+  if (audio.channels == 1) {
+    return audio.channelLayoutTag == kAudioChannelLayoutTag_Mono;
+  }
+  if (audio.channels == 2) {
+    return audio.channelLayoutTag == kAudioChannelLayoutTag_Stereo;
+  }
+  return multichannelLayoutTagAdmitted(audio.channelLayoutTag, audio.channels);
 }
 
 [[nodiscard]] bool validCallTable(
@@ -426,7 +436,8 @@ void assignError(std::string* error, const char* message) noexcept {
   if (generation == 0 || timeline.generation != generation ||
       track.id == 0 || track.kind != media::MediaTrackKind::Audio ||
       !track.audio || !supportedCodec(track) ||
-      (track.audio->channels != 1 && track.audio->channels != 2) ||
+      track.audio->channels == 0 ||
+      track.audio->channels > media::kMaximumDownmixSourceChannels ||
       !track.audio->interleaved || track.audio->framesPerPacket == 0 ||
       !supportedLayout(*track.audio) ||
       !supportedRate(track.audio->sampleRate, &sampleRate) ||

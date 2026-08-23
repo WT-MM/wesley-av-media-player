@@ -206,7 +206,16 @@ parseAacLcAudioSpecificConfig(std::span<const std::byte> bytes) noexcept {
   if (value == 0U) {
     return rejected(AacLcAdmissionError::ProgramConfigElement);
   }
-  if (value != 1U && value != 2U) {
+  // ISO/IEC 14496-3 Table 1.19: channelConfiguration 1..6 name 1, 2, 3, 4, 5
+  // and 6 channels respectively, so the index IS the count over that range.
+  // Configuration 7 is the only other defined value and it means EIGHT
+  // channels in the front-wide 3/4.1 arrangement whose two extra channels are
+  // front-left-of-centre and front-right-of-centre. Those two labels have no
+  // measured downmix coefficient in this player, so 7 is a named deferral
+  // rather than an admission with a guessed matrix -- and it is not the
+  // arrangement movie 7.1 uses in any case (that needs a program config
+  // element, which is refused above).
+  if (value > 6U) {
     return rejected(AacLcAdmissionError::UnsupportedChannelConfiguration);
   }
   const auto channelCount = static_cast<std::uint8_t>(value);
