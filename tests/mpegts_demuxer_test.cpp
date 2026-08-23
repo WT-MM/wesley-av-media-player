@@ -1628,6 +1628,25 @@ void testMpeg2AndAc3Admission() {
     expect(units > 0, "the green_mesa_11 cursor produces access units");
     expect(everyUnitHasPositiveDuration,
            "every green_mesa_11 access unit states a positive frame extent");
+    // The display size window geometry is shaped from. AVFoundation cannot
+    // demux MPEG-TS and answers (0, 0) for these files, so what this
+    // descriptor states is the only answer the aspect lock ever sees. Neither
+    // TS path derives a display size from the stream's aspect signalling --
+    // MPEG-2's aspect_ratio_information is parsed and unused, and H.264's
+    // aspect_ratio_idc is skipped in the SPS VUI -- so display is coded, and
+    // pinning that keeps the day it stops being true honest.
+    if (green_mesa_11 != nullptr && green_mesa_11->green_mesa_11) {
+      expect(green_mesa_11->green_mesa_11->displayWidth == green_mesa_11->green_mesa_11->codedWidth &&
+                 green_mesa_11->green_mesa_11->displayHeight == green_mesa_11->green_mesa_11->codedHeight,
+             "MPEG-TS states a square-pixel display size equal to its coded "
+             "size");
+      const wam::media::MediaDisplaySize display =
+          wam::media::mediaSourceDisplaySize(descriptor);
+      expect(display.width == green_mesa_11->green_mesa_11->codedWidth &&
+                 display.height == green_mesa_11->green_mesa_11->codedHeight,
+             "mediaSourceDisplaySize reads the selected MPEG-TS green_mesa_11 track's "
+             "display size");
+    }
     std::cerr << "  " << entry.label << " -> green_mesa_11 "
               << (green_mesa_11 != nullptr ? green_mesa_11->green_mesa_11->codedWidth : 0) << "x"
               << (green_mesa_11 != nullptr ? green_mesa_11->green_mesa_11->codedHeight : 0)

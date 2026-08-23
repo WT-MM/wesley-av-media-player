@@ -239,8 +239,9 @@ void appendCue(ParsedFile* out, std::int64_t start, std::int64_t end,
       // previous cue's payload ended; put it back by handling it next round.
       payload.push_back(line);
     }
-    std::string text = webVtt ? renderWebVttPayload(joinLines(payload))
-                              : normalizeCueText(joinLines(payload));
+    std::string text =
+        webVtt ? renderWebVttPayload(joinLines(payload))
+               : normalizeCueText(stripSubRipInlineTags(joinLines(payload)));
     totalText += text.size();
     if (totalText > kMaximumTotalTextBytes) {
       out.truncated = true;
@@ -356,6 +357,67 @@ std::string renderAssDialoguePayload(std::string_view payload) {
   return normalizeCueText(stripAssOverrideTags(text));
 }
 
+// SubRip's inline markup subset: <b>, <i>, <u>, <s> and <font ...>, with
+// their closing forms. The overlay is Text.PlainText -- deliberately, so a
+// subtitle file can never inject markup into the UI -- so an unstripped tag is
+// displayed to the viewer as the literal characters "<i>". mpv resolved these
+// before publishing sub-text, so files that used to take the fallback route
+// looked right; a file that now plays natively has to get the same treatment
+// here.
+//
+// Unlike the WebVTT stripper this does NOT delete every angle-bracket run: a
+// SubRip cue may legitimately contain "<" in dialogue, and only the recognised
+// tag names are removed.
+std::string stripSubRipInlineTags(std::string_view text) {
+  constexpr std::string_view kTagNames[] = {"b", "i", "u", "s", "font"};
+  std::string out;
+  out.reserve(text.size());
+  for (std::size_t i = 0; i < text.size(); ++i) {
+    if (text[i] != '<') {
+      out.push_back(text[i]);
+      continue;
+    }
+    const std::size_t close = text.find('>', i + 1);
+    if (close == std::string_view::npos) {
+      out.push_back(text[i]);
+      continue;
+    }
+    std::string_view inner = text.substr(i + 1, close - i - 1);
+    if (!inner.empty() && inner.front() == '/')
+      inner.remove_prefix(1);
+    // The tag name is everything up to the first space; attributes (font's
+    // color=, face=, size=) follow it.
+    const std::size_t space = inner.find(' ');
+    std::string_view name =
+        space == std::string_view::npos ? inner : inner.substr(0, space);
+    bool recognized = false;
+    for (const std::string_view candidate : kTagNames) {
+      if (name.size() != candidate.size()) {
+        continue;
+      }
+      bool equal = true;
+      for (std::size_t k = 0; k < name.size(); ++k) {
+        const char lhs = static_cast<char>(
+            std::tolower(static_cast<unsigned char>(name[k])));
+        if (lhs != candidate[k]) {
+          equal = false;
+          break;
+        }
+      }
+      if (equal) {
+        recognized = true;
+        break;
+      }
+    }
+    if (!recognized) {
+      out.push_back(text[i]);
+      continue;
+    }
+    i = close;
+  }
+  return out;
+}
+
 std::string renderWebVttPayload(std::string_view payload) {
   std::string out;
   out.reserve(payload.size());
@@ -383,7 +445,7 @@ std::string renderBlockPayload(TextCodec codec, std::string_view payload) {
     case TextCodec::WebVtt:
       return renderWebVttPayload(payload);
     case TextCodec::SubRip:
-      return normalizeCueText(payload);
+      return normalizeCueText(stripSubRipInlineTags(payload));
     case TextCodec::Unknown:
       break;
   }

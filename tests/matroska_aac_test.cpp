@@ -135,9 +135,16 @@ void testMalformedAdmissionCorpus() {
                  "unsupported indexed sampling frequency is rejected");
   expectRejected(twoByteAsc(2, 3, 0), AacLcAdmissionError::ProgramConfigElement,
                  "PCE channel configuration is rejected");
-  expectRejected(twoByteAsc(2, 3, 3),
+  // channelConfiguration 3..6 (3.0, 4.0, 5.0 and 5.1) are now ADMITTED: the
+  // player decodes the full layout and folds it to stereo itself with exact
+  // BS.775 coefficients. Configuration 7 is the only remaining refusal -- it
+  // is the eight-channel front-wide 3/4.1 arrangement whose front-of-centre
+  // channels have no measured downmix coefficient.
+  expect(parseAacLcAudioSpecificConfig(twoByteAsc(2, 3, 6)).admitted(),
+         "5.1 channel configuration is admitted");
+  expectRejected(twoByteAsc(2, 3, 7),
                  AacLcAdmissionError::UnsupportedChannelConfiguration,
-                 "more than stereo is rejected");
+                 "the front-wide eight-channel configuration is rejected");
   expectRejected(twoByteAsc(2, 3, 2, 0b100),
                  AacLcAdmissionError::UnsupportedFrameLength,
                  "960-sample frameLengthFlag is rejected");
@@ -175,12 +182,19 @@ void testMalformedAdmissionCorpus() {
       continue;
     }
     ++admittedTwoByteForms;
-    expect(packed == 0x1188U || packed == 0x1190U || packed == 0x1208U ||
-               packed == 0x1210U,
+    // AOT 2, sampling index 3 (48 kHz) or 4 (44.1 kHz), channel
+    // configuration 1..6, and all three trailing GASpecificConfig flags zero:
+    // 0x1000 | (index << 7) | (configuration << 3).
+    const std::uint32_t samplingIndex = (packed >> 7U) & 0x0FU;
+    const std::uint32_t channelConfiguration = (packed >> 3U) & 0x0FU;
+    expect((packed >> 11U) == 2U && (packed & 0x07U) == 0U &&
+               (samplingIndex == 3U || samplingIndex == 4U) &&
+               channelConfiguration >= 1U && channelConfiguration <= 6U,
            "exhaustive two-byte corpus admits no form outside the contract");
   }
-  expect(admittedTwoByteForms == 4U,
-         "exhaustive two-byte corpus admits exactly 44.1/48 kHz mono/stereo");
+  expect(admittedTwoByteForms == 12U,
+         "exhaustive two-byte corpus admits exactly 44.1/48 kHz, one to six "
+         "channels");
 }
 
 void testEsDescriptorGoldenAndRevalidation() {

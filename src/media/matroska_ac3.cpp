@@ -19,8 +19,24 @@ constexpr std::array<std::uint16_t, 19> kBitRateByCode{
 constexpr std::array<std::uint8_t, 8> kChannelsByAcmod{2U, 1U, 2U, 3U,
                                                        3U, 4U, 4U, 5U};
 
-constexpr std::uint8_t kMonoAcmod{1};
-constexpr std::uint8_t kStereoAcmod{2};
+// A/52 table 5.8 acmod 0 is the "1+1" dual-mono mode: two INDEPENDENT
+// programmes, labelled Ch1 and Ch2, which are not a left/right pair and have
+// no defined stereo fold. Every other acmod (1..7, with or without LFE) names
+// a real speaker arrangement, and each one was measured through
+// AudioConverter to confirm the labels it decodes to are ones this player has
+// an exact coefficient for:
+//   acmod 2 + lfe  ->  L R LFE            (tag 0x00850003)
+//   acmod 3 (3/0)  ->  L C R              (tag 0x00960003)
+//   acmod 5 (3/1)  ->  L C R Cs           (tag 0x00970004)
+//   acmod 6 (2/2)  ->  L R Ls Rs          (tag 0x00840004)
+//   acmod 7 (3/2)  ->  L C R Ls Rs        (tag 0x00770005)
+//   acmod 7 + lfe  ->  L C R Ls Rs LFE    (tag 0x007B0006)
+// An arrangement whose labels turn out to be unmapped is still refused, but
+// by the platform layer that can read the decoder's actual channel labels.
+[[nodiscard]] constexpr bool
+admissibleChannelConfiguration(std::uint32_t acmod) noexcept {
+  return acmod >= 1U && acmod <= 7U;
+}
 
 // E-AC-3 numblkscod -> blocks per syncframe.
 constexpr std::array<std::uint8_t, 4> kBlocksByNumblkscod{1U, 2U, 3U, 6U};
@@ -182,10 +198,11 @@ parseHeader(std::span<const std::byte> frame, bool wantEnhanced,
     if (!reader.read(1U, &lfeon)) {
       return Ac3AdmissionError::TruncatedSyncframe;
     }
-    if ((acmod != kMonoAcmod && acmod != kStereoAcmod) || lfeon != 0U) {
+    if (!admissibleChannelConfiguration(acmod)) {
       return Ac3AdmissionError::UnsupportedChannelConfiguration;
     }
-    parsed->channelCount = kChannelsByAcmod[acmod];
+    parsed->channelCount = static_cast<std::uint8_t>(
+        kChannelsByAcmod[acmod] + static_cast<std::uint8_t>(lfeon));
     return Ac3AdmissionError::None;
   }
 
@@ -230,10 +247,11 @@ parseHeader(std::span<const std::byte> frame, bool wantEnhanced,
   if (!reader.read(3U, &acmod) || !reader.read(1U, &lfeon)) {
     return Ac3AdmissionError::TruncatedSyncframe;
   }
-  if ((acmod != kMonoAcmod && acmod != kStereoAcmod) || lfeon != 0U) {
+  if (!admissibleChannelConfiguration(acmod)) {
     return Ac3AdmissionError::UnsupportedChannelConfiguration;
   }
-  parsed->channelCount = kChannelsByAcmod[acmod];
+  parsed->channelCount = static_cast<std::uint8_t>(
+      kChannelsByAcmod[acmod] + static_cast<std::uint8_t>(lfeon));
   return Ac3AdmissionError::None;
 }
 

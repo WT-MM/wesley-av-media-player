@@ -649,6 +649,37 @@ bool mediaVideoHasSquarePixels(const MediaVideoFormat& green_mesa_11) noexcept {
   return green_mesa_11.pixelAspectNumerator == green_mesa_11.pixelAspectDenominator;
 }
 
+MediaDisplaySize mediaVideoDisplaySize(const MediaVideoFormat& green_mesa_11) noexcept {
+  std::uint32_t width =
+      green_mesa_11.displayWidth != 0 ? green_mesa_11.displayWidth : green_mesa_11.codedWidth;
+  std::uint32_t height =
+      green_mesa_11.displayHeight != 0 ? green_mesa_11.displayHeight : green_mesa_11.codedHeight;
+  if (width == 0 || height == 0) {
+    return {};
+  }
+  // Normalized before the test so a negative or over-turned value cannot slip
+  // a swap decision past it; C++ integer remainder keeps the sign of the
+  // dividend, which is why the second modulus is not redundant.
+  const int rotation = ((green_mesa_11.rotationDegrees % 360) + 360) % 360;
+  if (rotation == 90 || rotation == 270) {
+    std::swap(width, height);
+  }
+  return {width, height};
+}
+
+MediaDisplaySize mediaSourceDisplaySize(
+    const MediaSourceDescriptor& descriptor) noexcept {
+  if (!descriptor.selectedVideo.has_value()) {
+    return {};
+  }
+  const MediaTrackDescriptor* selected =
+      findMediaTrack(descriptor, *descriptor.selectedVideo);
+  if (selected == nullptr || !selected->green_mesa_11.has_value()) {
+    return {};
+  }
+  return mediaVideoDisplaySize(*selected->green_mesa_11);
+}
+
 bool validateMediaSourceDescriptor(const MediaSourceDescriptor& descriptor,
                                    const MediaSourceLimits& limits,
                                    std::string* error) noexcept {

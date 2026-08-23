@@ -16,6 +16,9 @@ clang++ $common_flags $include_flags -c \
   "$repo_dir/src/media/native_media_dispatcher.cpp" \
   -o "$build_dir/native_media_dispatcher.o"
 clang++ $common_flags $include_flags -c \
+  "$repo_dir/src/media/audio_downmix.cpp" \
+  -o "$build_dir/audio_downmix.o"
+clang++ $common_flags $include_flags -c \
   "$repo_dir/src/platform/macos/native_pcm_ring.cpp" \
   -o "$build_dir/native_pcm_ring.o"
 clang++ $common_flags $include_flags -c \
@@ -27,6 +30,9 @@ clang++ $common_flags $include_flags -c \
 clang++ $common_flags $include_flags -x objective-c++ -fobjc-arc -c \
   "$repo_dir/src/platform/macos/native_audio_converter.mm" \
   -o "$build_dir/native_audio_converter.o"
+clang++ $common_flags $include_flags -x objective-c++ -fobjc-arc -c \
+  "$repo_dir/src/platform/macos/native_audio_stretch_stage.mm" \
+  -o "$build_dir/native_audio_stretch_stage.o"
 clang++ $common_flags $include_flags -x objective-c++ -fobjc-arc -c \
   "$repo_dir/src/platform/macos/native_audio_output.mm" \
   -o "$build_dir/native_audio_output.o"

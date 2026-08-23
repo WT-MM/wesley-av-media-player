@@ -74,13 +74,21 @@ enum class TextCodec : std::uint8_t {
 // Removes "<...>" inline tags (WebVTT), keeps line breaks and text.
 [[nodiscard]] std::string renderWebVttPayload(std::string_view payload);
 
-// Dispatches on codec; SubRip is passed through with only normalization.
+// Dispatches on codec; SubRip has its inline HTML subset stripped and is
+// otherwise passed through with only normalization.
 [[nodiscard]] std::string renderBlockPayload(TextCodec codec,
                                              std::string_view payload);
 
 // Removes ASS/SSA "{...}" override blocks and unescapes the "\N", "\n", "\h"
 // sequences. Exposed for testing; renderAssDialoguePayload applies it.
 [[nodiscard]] std::string stripAssOverrideTags(std::string_view text);
+
+// Removes SubRip's inline HTML subset -- <b>, <i>, <u>, <s>, <font ...> and
+// their closing forms, case-insensitively -- and NOTHING else: a bare '<' in
+// dialogue and any unrecognised tag survive verbatim. The subtitle overlay is
+// Text.PlainText by design, so an unstripped tag would be shown to the viewer
+// as the literal characters "<i>".
+[[nodiscard]] std::string stripSubRipInlineTags(std::string_view text);
 
 // Normalizes line endings to '\n', strips a UTF-8 BOM and trailing blank
 // space, and truncates on a UTF-8 boundary at kMaximumCueTextBytes. Every
