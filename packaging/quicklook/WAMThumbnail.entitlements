@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  INERT TEMPLATE. Not referenced by CMakeLists.txt or any workflow. See README.md.
+
+  Entitlements for WAMThumbnail.appex. This file contains exactly the one
+  entitlement the 2026-08-23 experiment proved is REQUIRED, and nothing else.
+
+  PROVEN REQUIRED
+    com.apple.security.app-sandbox
+      Without it, pluginkit refuses to register the appex at all -- the
+      extension never appears and Finder keeps the generic icon. This is not a
+      runtime failure you can debug from the provider; registration simply
+      never happens.
+
+  PROVEN *NOT* REQUIRED -- deliberately absent
+    com.apple.security.files.user-selected.read-only
+      QuickLook hands the extension a read-only sandbox extension for the
+      specific QLFileThumbnailRequest.fileURL. Verified: open(O_RDONLY) plus
+      pread at offset 0 AND at (size - 1024) on a 90 MB .mkv all succeeded with
+      app-sandbox alone. Whole-file random access -- including the Cues at EOF
+      that the demuxer needs -- works without any file-access entitlement.
+
+  NOT NEEDED
+    No network, no camera/microphone, no user-selected read-write, no
+    security-scoped bookmarks. The provider reads one file it is handed and
+    returns pixels.
+
+  MUST NOT APPEAR
+    com.apple.security.get-task-allow -- scripts/bundle_macos_lib.zsh:1658-1663
+    and scripts/release_macos_notarize.zsh:309-329 both hard-fail the release
+    if any packaged binary carries it.
+
+  UNVERIFIED
+    The experiment signed ad-hoc WITHOUT hardened runtime. Release mode adds
+    --options runtime (scripts/bundle_macos_lib.zsh:1692). Sandbox + hardened
+    runtime + Developer ID is an untested combination -- re-verify before
+    shipping. Note also that the signing loop currently applies one flat
+    argument array to every leaf (:1690-1695) and has no per-target
+    entitlements hook, so wiring this file up requires a branch there.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>com.apple.security.app-sandbox</key>
+	<true/>
+</dict>
+</plist>
