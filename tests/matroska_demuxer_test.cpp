@@ -305,6 +305,11 @@ constexpr std::array<std::uint8_t, 48> kSampleMpeg4AdvancedSimple{
 
 // Canonical two-byte AAC-LC AudioSpecificConfig: 48 kHz, stereo, 1024 samples.
 constexpr std::array<std::uint8_t, 2> kAacStereo48Asc{0x11, 0x90};
+// The same AudioSpecificConfig with channelConfiguration 6 (5.1) instead of 2:
+// audioObjectType 2, samplingFrequencyIndex 3 (48 kHz), then 0110 rather than
+// 0010. This is the trait a real WEB-DL movie carries, and the one the whole
+// stereo output chain refuses at admission.
+constexpr std::array<std::uint8_t, 2> kAac51_48Asc{0x11, 0xB0};
 
 // The canonical 19-byte OpusHead every ffmpeg mux writes: version 1, stereo,
 // pre-skip 312, 48 kHz encoder input, unity gain, channel mapping family 0.
@@ -3888,8 +3893,61 @@ void testLocalFilePreparation() {
 
 }  // namespace
 
+// A 5.1 AAC-LC track is refused at admission -- the whole output chain is
+// stereo (NativePcmRing::kChannels == 2) -- and the file must reach the caller
+// as Unsupported so the player falls back for the WHOLE file rather than
+// reporting a hard protocol fault or preparing a silent video-only session.
+//
+// The second half is the one that decides how the refusal FEELS. Preparation
+// used to complete a full-file cluster-metadata walk before it ever read the
+// track header, and that walk issues four unbuffered pread(2) calls per
+// element: on the 1.9 GiB movie that produced this defect, 3,030,956 reads and
+// seconds of dead window before the fallback engaged, growing with file size.
+// Every fact behind the refusal is stated in Tracks, at the head of the file.
+// Pinning "not one byte at or after the first Cluster was read" says that in a
+// way no fixture size can dilute, and fails loudly if the cheap pre-admission
+// pass in prepareMatroska is ever removed or reordered behind the scan.
+void testMultichannelAacRefusedBeforeClusterScan() {
+  FixtureSpec spec;
+  spec.audioCodecPrivate = fromOctets(kAac51_48Asc);
+  spec.audioChannels = 6;
+  const PreparedFixture prepared = prepareFixture(spec);
+
+  expect(prepared.outcome.status == MatroskaDemuxStatus::Unsupported &&
+             prepared.outcome.error ==
+                 MatroskaDemuxError::CodecConfiguration &&
+             prepared.outcome.asset == nullptr,
+         "5.1 AAC-LC in Matroska is a clean whole-file fallback verdict");
+
+  expect(!prepared.fixture.clusterEncodedOffsets.empty(),
+         "the multichannel fixture really does carry clusters to scan");
+  if (prepared.fixture.clusterEncodedOffsets.empty()) {
+    return;
+  }
+  // The first Cluster's own element header is read -- that read is how the
+  // parser learns a Cluster is what it reached, and it is what stops the
+  // pre-pass. Nothing INSIDE any Cluster may be touched, which is where all
+  // the cost lives, so the boundary pinned here is the first Cluster's data
+  // offset rather than its encoded offset.
+  const std::uint64_t firstClusterData =
+      prepared.fixture.clusterDataOffsets.front();
+  std::uint64_t furthest = 0;
+  for (const std::uint64_t offset : prepared.reader->readOffsets) {
+    furthest = std::max(furthest, offset);
+  }
+  expect(furthest < firstClusterData,
+         "the multichannel refusal reads no byte inside any Cluster");
+
+  // The control: the identical fixture with a stereo ASC is still admitted, so
+  // the pre-pass refuses the trait and not the shape of the file.
+  const PreparedFixture stereo = prepareFixture({});
+  expect(stereo.outcome.status == MatroskaDemuxStatus::Ready,
+         "the same fixture with a stereo ASC is still admitted natively");
+}
+
 int main() {
   testCompleteDocumentPreparation();
+  testMultichannelAacRefusedBeforeClusterScan();
   testPreparationRequestValidation();
   testBoundedIndexes();
   testCodecAdmissionAndSelection();

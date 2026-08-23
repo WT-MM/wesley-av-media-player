@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  INERT TEMPLATE. Not referenced by CMakeLists.txt or any workflow. See README.md.
+
+  Info.plist for WAMThumbnail.appex, to be embedded at
+  WAM.app/Contents/PlugIns/WAMThumbnail.appex/Contents/Info.plist.
+
+  Every key below was exercised by the 2026-08-23 de-risking experiment except
+  the ${...} substitutions, which follow the same CMake configure_file() pattern
+  packaging/Info.plist.in already uses.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleExecutable</key>
+	<string>WAMThumbnail</string>
+	<key>CFBundleIdentifier</key>
+	<string>${MACOSX_BUNDLE_GUI_IDENTIFIER}.quicklook.thumbnail</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>WAM Thumbnails</string>
+	<key>CFBundleDisplayName</key>
+	<string>WAM Thumbnails</string>
+
+	<!--
+	  XPC! is the package type for an app extension. The experiment used this
+	  value; APPL is wrong here and PKG is not accepted.
+	-->
+	<key>CFBundlePackageType</key>
+	<string>XPC!</string>
+
+	<key>CFBundleShortVersionString</key>
+	<string>${MACOSX_BUNDLE_SHORT_VERSION_STRING}</string>
+	<key>CFBundleVersion</key>
+	<string>${MACOSX_BUNDLE_BUNDLE_VERSION}</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>${CMAKE_OSX_DEPLOYMENT_TARGET}</string>
+	<key>NSHumanReadableCopyright</key>
+	<string>${MACOSX_BUNDLE_COPYRIGHT}</string>
+
+	<key>NSExtension</key>
+	<dict>
+		<key>NSExtensionPointIdentifier</key>
+		<string>com.apple.quicklook.thumbnail</string>
+
+		<!--
+		  Objective-C class name, not a Swift mangled name. Must match the
+		  @interface in WAMThumbnailProvider.mm exactly, and the class must be
+		  present in the appex binary's Objective-C metadata (do not let the
+		  linker dead-strip it).
+		-->
+		<key>NSExtensionPrincipalClass</key>
+		<string>WAMThumbnailProvider</string>
+
+		<key>NSExtensionAttributes</key>
+		<dict>
+			<!--
+			  UTIs this provider claims. org.matroska.mkv and
+			  org.webmproject.webm are already imported by the host app at
+			  packaging/Info.plist.in:401-436, but LaunchServices reads this
+			  appex plist independently -- the host's import does not carry over.
+
+			  Both were confirmed to route to this extension in the experiment.
+			  public.mpeg-2-transport-stream is a system UTI and is listed here
+			  as intent; it needs its own demuxer branch (mpegts_demuxer) and it
+			  has NOT been confirmed that macOS actually fails to thumbnail .ts.
+			-->
+			<key>QLSupportedContentTypes</key>
+			<array>
+				<string>org.matroska.mkv</string>
+				<string>org.webmproject.webm</string>
+				<string>public.mpeg-2-transport-stream</string>
+			</array>
+
+			<!--
+			  0 means "no minimum" -- accept every requested size, including the
+			  small icon sizes Finder asks for in list and column views. Raise
+			  this only if small renders prove not worth the decode cost.
+			-->
+			<key>QLThumbnailMinimumDimension</key>
+			<integer>0</integer>
+		</dict>
+	</dict>
+</dict>
+</plist>

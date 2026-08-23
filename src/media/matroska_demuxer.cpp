@@ -279,6 +279,16 @@ struct CollectedDocument final : Visitor {
     }
   }
   VisitorAction onCluster(const Cluster& value) noexcept override {
+    // Header-probe mode: prepareMatroska's cheap pre-admission pass wants only
+    // the EBML header, Info and Tracks, all of which precede the first Cluster
+    // in a non-streaming mux -- and a master element is never delivered
+    // piecewise, so Tracks is complete by the time this fires. Stopping here
+    // is what keeps that pass cheap: it never reaches the Cues, which on the
+    // file that motivated it hold the parser's 65,536-cue maximum and cost
+    // about 1.08 million reads on their own.
+    if (stopAtFirstCluster) {
+      return VisitorAction::Stop;
+    }
     try {
       if (clusters.empty() ||
           clusters.back().encoded.offset != value.encoded.offset) {
@@ -321,6 +331,9 @@ struct CollectedDocument final : Visitor {
   std::size_t segmentCount{0};
   std::size_t infoCount{0};
   bool allocationFailure{false};
+  // Opt-in for the header-probe pass only; see onCluster above. Off for every
+  // authoritative parse, which needs the whole cluster list.
+  bool stopAtFirstCluster{false};
 };
 
 struct TrackRuntime {
@@ -2064,6 +2077,38 @@ void fillAudioDescriptor(const TrackEntry& entry, MediaTrackId id,
   return true;
 }
 
+// The half of AAC-LC admission that is decided entirely by the track header:
+// the CodecPrivate AudioSpecificConfig, and the Audio element that must agree
+// with it. Nothing here reads a Cluster, which is what lets the cheap
+// pre-admission pass in prepareMatroska ask exactly this question before the
+// expensive cluster scan runs (see matroskaHeaderRefusal).
+//
+// Extracted rather than duplicated on purpose: this predicate and the caller
+// below are the SAME rule, and a second copy of it drifting would mean the
+// pre-pass refusing a file the authoritative pass admits, or the reverse.
+//
+// OutputSamplingFrequency must stay absent: a differing output rate signals
+// SBR/HE-AAC, which is outside the AAC-LC envelope this source decodes.
+//
+// BitDepth is deliberately NOT a rejection. Matroska defines it for PCM; for
+// a compressed AAC track it is informational and has no effect on the
+// bitstream, the ASC, or the ES_Descriptor cookie. FFmpeg writes BitDepth=32
+// on every AAC track it muxes (reflecting float decoder output), so rejecting
+// its presence rejected essentially all real AAC-in-Matroska while the
+// identical stream was admitted from MP4.
+[[nodiscard]] bool aacLcHeaderAdmitted(const AacLcAdmission& admission,
+                                       const TrackEntry& entry,
+                                       const MediaSourceLimits& limits) {
+  return entry.audio && admission.admitted() &&
+         admission.configuration->sampleRate <= limits.maximumAudioSampleRate &&
+         admission.configuration->channelCount <=
+             limits.maximumAudioChannels &&
+         entry.audio->samplingFrequency ==
+             static_cast<double>(admission.configuration->sampleRate) &&
+         entry.audio->channels == admission.configuration->channelCount &&
+         !entry.audio->outputSamplingFrequency;
+}
+
 [[nodiscard]] bool makeAudioDescriptor(
     SeekableByteReader& reader, const TrackEntry& entry,
     const MediaSourceLimits& limits, MediaTime duration,
@@ -2123,22 +2168,9 @@ void fillAudioDescriptor(const TrackEntry& entry, MediaTrackId id,
   }
   const AacLcAdmission admission =
       parseAacLcAudioSpecificConfig(configuration);
-  // OutputSamplingFrequency must stay absent: a differing output rate signals
-  // SBR/HE-AAC, which is outside the AAC-LC envelope this source decodes.
-  //
-  // BitDepth is deliberately NOT a rejection. Matroska defines it for PCM; for
-  // a compressed AAC track it is informational and has no effect on the
-  // bitstream, the ASC, or the ES_Descriptor cookie built below. FFmpeg writes
-  // BitDepth=32 on every AAC track it muxes (reflecting float decoder output),
-  // so rejecting its presence rejected essentially all real AAC-in-Matroska
-  // while the identical stream was admitted from MP4.
-  if (!admission.admitted() ||
-      admission.configuration->sampleRate > limits.maximumAudioSampleRate ||
-      admission.configuration->channelCount > limits.maximumAudioChannels ||
-      entry.audio->samplingFrequency !=
-          static_cast<double>(admission.configuration->sampleRate) ||
-      entry.audio->channels != admission.configuration->channelCount ||
-      entry.audio->outputSamplingFrequency) {
+  // See aacLcHeaderAdmitted above: this exact rule is also asked, ahead of the
+  // cluster scan, by prepareMatroska's cheap pre-admission pass.
+  if (!aacLcHeaderAdmitted(admission, entry, limits)) {
     return false;
   }
   const auto cookie = buildAacLcEsDescriptorCookie(*admission.configuration);
@@ -3252,6 +3284,152 @@ bool MatroskaPreparedAsset::copyRanges(
   return true;
 }
 
+namespace {
+
+// The track-selection envelope verdict, decided entirely from the Tracks
+// header. std::nullopt means "nothing here refuses the file"; it never admits
+// one on its own.
+[[nodiscard]] std::optional<MatroskaPrepareOutcome> trackSelectionRefusal(
+    std::span<const TrackEntry> tracks, const TrackEntry* video,
+    const TrackEntry* audio, const MediaSourceOpenOptions& requested) {
+  // A file that carries audio the native path cannot decode must fall back
+  // as a WHOLE FILE, not prepare video-only. Preparing video-only here would
+  // play a VP9+Opus WebM natively and completely silently, which is worse
+  // than the mpv fallback in every way; mpv plays the same file with sound.
+  // A file with no audio track at all is a different thing entirely and
+  // stays admitted video-only, which is the correct silent-video path.
+  const bool audioTrackPresent =
+      std::any_of(tracks.begin(), tracks.end(), [](const TrackEntry& track) {
+        return track.enabled && track.type == 2;
+      });
+  // The mirror of the rule above, for the audio-only route. A file that
+  // carries video the native path cannot decode must still fall back as a
+  // WHOLE FILE rather than prepare audio-only: playing a VP9+Opus WebM as a
+  // black window with sound is worse than the mpv fallback, which shows the
+  // picture. A file with no video track at all is a different thing entirely
+  // and is admitted audio-only, which is the correct music-file path.
+  const bool videoTrackPresent =
+      std::any_of(tracks.begin(), tracks.end(), [](const TrackEntry& track) {
+        return track.enabled && track.type == 1;
+      });
+  if (!((videoTrackPresent && video == nullptr) ||
+        (audioTrackPresent && audio == nullptr) ||
+        (video == nullptr && audio == nullptr) ||
+        (requested.selection.requireVideo && video == nullptr) ||
+        (requested.selection.requireAudio && audio == nullptr) ||
+        (requested.selection.preferredVideo && video == nullptr) ||
+        (requested.selection.preferredAudio && audio == nullptr) ||
+        requested.selection.preferredSubtitle)) {
+    return std::nullopt;
+  }
+  MatroskaPrepareOutcome result;
+  // No admissible track for this request is an envelope verdict, not an
+  // error: an unsupported-codec or subtitle-only Matroska must reach the
+  // caller as Unsupported so it falls back cleanly, rather than as Failed,
+  // which the session reports as a hard protocol fault on a blocking
+  // surface.
+  result.status = MatroskaDemuxStatus::Unsupported;
+  // Name the dimension refusal specifically. Everything else that lands
+  // here is genuinely "the track you asked for is not available", but an
+  // over-ceiling video track IS available and readable -- it is the v1
+  // envelope that declines it -- and saying so with both numbers is the
+  // difference between a one-line diagnosis and a rebuild cycle. The scan
+  // is over the raw TrackEntry list rather than over anything the admission
+  // path produced, because the admission path is exactly what dropped it.
+  const TrackEntry* overCeiling = nullptr;
+  if (videoTrackPresent && video == nullptr) {
+    for (const TrackEntry& track : tracks) {
+      if (!track.enabled || track.type != 1 || !track.video ||
+          !track.video->pixelWidth || !track.video->pixelHeight) {
+        continue;
+      }
+      if (!codedDimensionsWithinV1Ceiling(*track.video->pixelWidth,
+                                          *track.video->pixelHeight)) {
+        overCeiling = &track;
+        break;
+      }
+    }
+  }
+  if (overCeiling != nullptr) {
+    result.error = MatroskaDemuxError::CodedDimensionLimit;
+    result.message = codedDimensionRefusalMessage(
+        *overCeiling->video->pixelWidth, *overCeiling->video->pixelHeight);
+  } else {
+    result.error = MatroskaDemuxError::TrackSelection;
+    result.message = "requested Matroska tracks are unavailable";
+  }
+  return result;
+}
+
+// Cheap pre-admission verdict, asked BEFORE the cluster scan.
+//
+// Preparation's authoritative parse sets ParseOptions::scanClusterMetadata so
+// the parser descends into every Block of every Cluster, purely to collect the
+// ClusterTimestamp that the cluster index and the cue index -- both built at
+// the very END of preparation -- need. Every header read at that trust
+// boundary is deliberately unbuffered, so the walk costs four pread(2) calls
+// per element. Measured on the file that produced this defect (a 1.9 GiB
+// HEVC + 5.1-AAC MKV): 3,030,956 readAt calls fetching 3.9 MB scattered across
+// the whole file, 1.18 s warm on an M3 Max -- and cold, page faults spread
+// over all 1.9 GiB. The window sits dead for that entire time.
+//
+// Every byte of that is wasted when the verdict is "this file cannot play
+// natively", because the facts that produce that verdict are stated in the
+// Tracks header at the HEAD of the file. So preparation now runs a cheap pass
+// first, with scanClusterMetadata off, which skips each Cluster in O(1) by its
+// declared size, and asks exactly the header-only questions here.
+//
+// This gate can only ever REFUSE. Anything it does not refuse falls through to
+// the authoritative pass completely unchanged, so a file it cannot judge --
+// including one where the cheap parse itself failed -- is judged exactly as it
+// was before. Both refusals it can reach are byte-identical to the ones the
+// authoritative pass would have produced from the same header, because both
+// call the same predicate (trackSelectionRefusal, aacLcHeaderAdmitted).
+[[nodiscard]] std::optional<MatroskaPrepareOutcome> matroskaHeaderRefusal(
+    SeekableByteReader& reader, const std::vector<TrackEntry>& tracks,
+    EbmlDocumentType documentType, const MediaSourceOpenOptions& requested,
+    const MediaSourceLimits& limits, CancellationToken cancellation) {
+  // No Tracks element was reached, so there is nothing to judge. This is the
+  // late-Tracks mux (Tracks written after the Clusters): the probe stops at
+  // the first Cluster and legitimately sees no tracks, and refusing on that
+  // would deny a file the authoritative pass admits.
+  if (tracks.empty()) {
+    return std::nullopt;
+  }
+  const TrackEntry* video =
+      chooseTrack(tracks, 1, requested.selection.preferredVideo, documentType);
+  const TrackEntry* audio =
+      chooseTrack(tracks, 2, requested.selection.preferredAudio, documentType);
+  if (auto refusal =
+          trackSelectionRefusal(tracks, video, audio, requested)) {
+    return refusal;
+  }
+  // The multichannel refusal that motivated this pass. Only AAC-LC is judged
+  // here: it is the one codec whose whole admissible-or-not answer is in
+  // CodecPrivate, and the only one whose refusal therefore needs no Cluster.
+  // AC-3, MP3, FLAC, Opus and Vorbis all probe a Block, so they keep waiting
+  // for the authoritative pass rather than being second-guessed here.
+  if (audio == nullptr || inlineString(audio->codecId) != "A_AAC" ||
+      !audio->audio || !audio->codecPrivate) {
+    return std::nullopt;
+  }
+  std::vector<std::byte> configuration;
+  if (!readRange(reader, *audio->codecPrivate, &configuration, cancellation)) {
+    return std::nullopt;
+  }
+  if (aacLcHeaderAdmitted(parseAacLcAudioSpecificConfig(configuration), *audio,
+                          limits)) {
+    return std::nullopt;
+  }
+  MatroskaPrepareOutcome result;
+  result.status = MatroskaDemuxStatus::Unsupported;
+  result.error = MatroskaDemuxError::CodecConfiguration;
+  result.message = "selected AAC-LC or Opus track was not admitted";
+  return result;
+}
+
+}  // namespace
+
 MatroskaPrepareOutcome prepareMatroska(
     std::shared_ptr<SeekableByteReader> reader, std::filesystem::path path,
     const MediaSourceOpenOptions& requested,
@@ -3291,8 +3469,31 @@ MatroskaPrepareOutcome prepareMatroska(
     options.maximumEncodedBlockBytes = kMaximumMatroskaEncodedBlockBytes;
     options.maximumTrackTextBytes = state->limits.maximumTrackTextBytes;
     options.maximumCues = kMaximumMatroskaCues;
-    options.scanClusterMetadata = true;
     options.visitClusterBlocks = false;
+
+    // Cheap pre-admission pass -- see matroskaHeaderRefusal. Refusing here
+    // turns a multi-second dead window on a large unplayable file into a
+    // near-instant fallback. It can only refuse; anything else falls through
+    // to the authoritative pass below, unchanged.
+    {
+      options.scanClusterMetadata = false;
+      CollectedDocument probe(state->limits.maximumTracks,
+                              kMaximumMatroskaCues);
+      probe.stopAtFirstCluster = true;
+      const ParseOutcome probed =
+          parseDocument(*state->reader, probe, options, cancellation);
+      if (probed.ok() && !probe.allocationFailure) {
+        if (auto refusal = matroskaHeaderRefusal(
+                *state->reader, probe.tracks,
+                probe.header ? probe.header->documentType
+                             : EbmlDocumentType::Matroska,
+                requested, state->limits, cancellation)) {
+          return *refusal;
+        }
+      }
+    }
+
+    options.scanClusterMetadata = true;
     const ParseOutcome parsed =
         parseDocument(*state->reader, document, options, cancellation);
     if (!parsed.ok() || document.allocationFailure) {
@@ -3338,72 +3539,9 @@ MatroskaPrepareOutcome prepareMatroska(
         document.tracks, 1, requested.selection.preferredVideo, documentType);
     const TrackEntry* audio = chooseTrack(
         document.tracks, 2, requested.selection.preferredAudio, documentType);
-    // A file that carries audio the native path cannot decode must fall back
-    // as a WHOLE FILE, not prepare video-only. Preparing video-only here would
-    // play a VP9+Opus WebM natively and completely silently, which is worse
-    // than the mpv fallback in every way; mpv plays the same file with sound.
-    // A file with no audio track at all is a different thing entirely and
-    // stays admitted video-only, which is the correct silent-video path.
-    const bool audioTrackPresent = std::any_of(
-        document.tracks.begin(), document.tracks.end(),
-        [](const TrackEntry& track) {
-          return track.enabled && track.type == 2;
-        });
-    // The mirror of the rule above, for the audio-only route. A file that
-    // carries video the native path cannot decode must still fall back as a
-    // WHOLE FILE rather than prepare audio-only: playing a VP9+Opus WebM as a
-    // black window with sound is worse than the mpv fallback, which shows the
-    // picture. A file with no video track at all is a different thing entirely
-    // and is admitted audio-only, which is the correct music-file path.
-    const bool videoTrackPresent = std::any_of(
-        document.tracks.begin(), document.tracks.end(),
-        [](const TrackEntry& track) {
-          return track.enabled && track.type == 1;
-        });
-    if ((videoTrackPresent && video == nullptr) ||
-        (audioTrackPresent && audio == nullptr) ||
-        (video == nullptr && audio == nullptr) ||
-        (requested.selection.requireVideo && video == nullptr) ||
-        (requested.selection.requireAudio && audio == nullptr) ||
-        (requested.selection.preferredVideo && video == nullptr) ||
-        (requested.selection.preferredAudio && audio == nullptr) ||
-        requested.selection.preferredSubtitle) {
-      // No admissible track for this request is an envelope verdict, not an
-      // error: an unsupported-codec or subtitle-only Matroska must reach the
-      // caller as Unsupported so it falls back cleanly, rather than as Failed,
-      // which the session reports as a hard protocol fault on a blocking
-      // surface.
-      result.status = MatroskaDemuxStatus::Unsupported;
-      // Name the dimension refusal specifically. Everything else that lands
-      // here is genuinely "the track you asked for is not available", but an
-      // over-ceiling video track IS available and readable -- it is the v1
-      // envelope that declines it -- and saying so with both numbers is the
-      // difference between a one-line diagnosis and a rebuild cycle. The scan
-      // is over the raw TrackEntry list rather than over anything the admission
-      // path produced, because the admission path is exactly what dropped it.
-      const TrackEntry* overCeiling = nullptr;
-      if (videoTrackPresent && video == nullptr) {
-        for (const TrackEntry& track : document.tracks) {
-          if (!track.enabled || track.type != 1 || !track.video ||
-              !track.video->pixelWidth || !track.video->pixelHeight) {
-            continue;
-          }
-          if (!codedDimensionsWithinV1Ceiling(*track.video->pixelWidth,
-                                              *track.video->pixelHeight)) {
-            overCeiling = &track;
-            break;
-          }
-        }
-      }
-      if (overCeiling != nullptr) {
-        result.error = MatroskaDemuxError::CodedDimensionLimit;
-        result.message = codedDimensionRefusalMessage(
-            *overCeiling->video->pixelWidth, *overCeiling->video->pixelHeight);
-      } else {
-        result.error = MatroskaDemuxError::TrackSelection;
-        result.message = "requested Matroska tracks are unavailable";
-      }
-      return result;
+    if (auto refusal = trackSelectionRefusal(document.tracks, video, audio,
+                                             requested)) {
+      return *refusal;
     }
 
     auto descriptor = std::make_shared<MediaSourceDescriptor>();
