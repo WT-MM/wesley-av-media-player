@@ -105,6 +105,7 @@ ApplicationWindow {
         (mediaDialogLoader.item && mediaDialogLoader.item.visible)
         || (exportDialogLoader.item && exportDialogLoader.item.visible)
         || (captionDialogLoader.item && captionDialogLoader.item.visible)
+        || (subtitleDialogLoader.item && subtitleDialogLoader.item.visible)
         || (errorDialogLoader.item && errorDialogLoader.item.visible)
 
     visible: true
@@ -295,6 +296,13 @@ ApplicationWindow {
         } else {
             exportDialogLoader.active = true;
         }
+    }
+
+    function showSubtitleDialog() {
+        if (subtitleDialogLoader.item)
+            subtitleDialogLoader.item.open();
+        else
+            subtitleDialogLoader.active = true;
     }
 
     function showCaptionDialog() {
@@ -554,6 +562,7 @@ ApplicationWindow {
                 mediaDialogLoader.active = false;
                 exportDialogLoader.active = false;
                 captionDialogLoader.active = false;
+                subtitleDialogLoader.active = false;
                 errorDialogLoader.active = false;
             }
         }
@@ -688,6 +697,38 @@ ApplicationWindow {
                 item.currentFile = suggestedFile;
             item.open();
         }
+    }
+
+    Component {
+        id: subtitleDialogComponent
+
+        FileDialog {
+            title: "Load Subtitle File"
+            fileMode: FileDialog.OpenFile
+            nameFilters: [
+                "Subtitle files (*.srt *.vtt *.ass *.ssa)",
+                "SubRip (*.srt)",
+                "WebVTT (*.vtt)",
+                "SubStation Alpha (*.ass *.ssa)",
+                "All files (*)"
+            ]
+            onAccepted: {
+                root.controller.loadSubtitleFile(selectedFile);
+                root.restoreDialogFocusAfterClose();
+            }
+            onRejected: root.restoreDialogFocusAfterClose()
+            onVisibleChanged: {
+                if (!visible)
+                    root.restoreDialogFocusAfterClose();
+            }
+        }
+    }
+
+    Loader {
+        id: subtitleDialogLoader
+        active: false
+        sourceComponent: subtitleDialogComponent
+        onLoaded: item.open()
     }
 
     Component {
@@ -1269,6 +1310,70 @@ ApplicationWindow {
             }
         }
 
+        // ------------------------------------------------------------------
+        // Subtitles.
+        //
+        // ONE surface for every source: an embedded text track read by the
+        // native route, a track mpv is timing on the compatibility route, the
+        // captions whisper generated, or a file the user loaded. The
+        // controller decides which of those is speaking; this only draws it,
+        // so a line looks identical whichever engine is playing.
+        //
+        // Deliberately NOT chrome. It does not appear in interactionActive, it
+        // never re-arms the idle fade, and it does not move when the transport
+        // fades in or out -- subtitles belong to the picture, not to the
+        // controls, and a caption that pinned the toolbar up would be a bug.
+        // It sits low enough to clear the transport's default slot so the two
+        // never fight for the same pixels.
+        Item {
+            id: subtitleLayer
+            objectName: "subtitleLayer"
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            anchors.leftMargin: 24 + SafeArea.margins.left
+            anchors.rightMargin: 24 + SafeArea.margins.right
+            anchors.bottomMargin: Math.round(Math.max(16, SafeArea.margins.bottom + 10) + transport.height + 10)
+            height: subtitleText.implicitHeight
+            // No animation and no opacity binding on chrome state: the item is
+            // simply present exactly while there is a line to show, so between
+            // cue boundaries nothing in this subtree changes and the scene
+            // graph is never dirtied by the overlay.
+            visible: root.controller.hasMedia && subtitleText.text.length > 0
+            z: 1
+
+            Text {
+                id: subtitleText
+                objectName: "subtitleText"
+                anchors.horizontalCenter: parent.horizontalCenter
+                width: Math.min(implicitWidth, parent.width)
+                horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.WordWrap
+                // Line breaks inside a cue are the author's, so they are kept;
+                // everything else about the payload is plain text by the time
+                // it reaches here (ASS override tags stripped, WebVTT inline
+                // tags stripped), which is why this is Text.PlainText and not
+                // a rich-text surface that a subtitle file could inject into.
+                textFormat: Text.PlainText
+                text: root.controller.subtitleText
+                color: "#ffffff"
+                font.pixelSize: Math.max(16, Math.round(Math.min(stage.width, stage.height * 1.6) * 0.032))
+                font.weight: Font.DemiBold
+                font.family: subtitleFontMetrics.font.family
+                // A soft dark shadow rather than a box: readable over both a
+                // bright and a dark frame without covering the picture.
+                style: Text.Outline
+                styleColor: "#c0000000"
+                lineHeight: 1.15
+                Accessible.role: Accessible.StaticText
+                Accessible.name: "Subtitles"
+            }
+
+            FontMetrics {
+                id: subtitleFontMetrics
+            }
+        }
+
         FloatingControls {
             id: transport
             // Read by the WAM_TEST_WINDOW_SCRIPT `report` verb so a scripted
@@ -1401,6 +1506,10 @@ ApplicationWindow {
 
         function onGenerateCaptionsRequested() {
             root.showCaptionDialog();
+        }
+
+        function onOpenSubtitleFileDialogRequested() {
+            root.showSubtitleDialog();
         }
 
         function onLastErrorChanged() {

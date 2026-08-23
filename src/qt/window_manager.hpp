@@ -258,6 +258,15 @@ private:
   QTimer *checkpoint_timer_ = nullptr;
   ::wam::StateCheckpointGate checkpoint_;
   QObject *menu_bar_ = nullptr;
+
+public:
+  // The app-level menu bar object, for the WAM_TEST_WINDOW_SCRIPT `menu` verb.
+  // Reading the real menu's item titles and check marks is how a scripted
+  // round proves the native menu was actually built -- the alternative, a
+  // screenshot, cannot see a menu bar that is set to auto-hide.
+  [[nodiscard]] QObject *menuBarObject() const noexcept { return menu_bar_; }
+
+private:
   QObject *preferences_ = nullptr;
   QQmlComponent *preferences_component_ = nullptr;
   QList<PlayerWindow *> windows_;

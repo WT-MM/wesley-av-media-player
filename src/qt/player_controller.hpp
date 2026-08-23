@@ -9,6 +9,7 @@
 #include <QPointer>
 #include <QString>
 #include <QUrl>
+#include <QVariantList>
 
 #include <cstdint>
 #include <memory>
@@ -24,6 +25,7 @@ class MpvVideoItem;
 class NativePlaybackOwner;
 class PlayerCore;
 class PlayerControllerTestAccess;
+class SubtitleSources;
 
 } // namespace wam::qt
 
@@ -61,6 +63,21 @@ class PlayerController final : public QObject {
   Q_PROPERTY(double rate READ rate WRITE setRate NOTIFY rateChanged)
   Q_PROPERTY(bool captionsVisible READ captionsVisible WRITE setCaptionsVisible
                  NOTIFY captionsVisibleChanged)
+  // The one line of subtitle text that should be on screen right now, or an
+  // empty string. Both engines feed this: the native route from cues this
+  // process read out of the container, the compatibility route from mpv's
+  // `sub-text` property (mpv keeps decoding and timing subtitles with its own
+  // rendering switched off, which is what lets one overlay serve both).
+  Q_PROPERTY(QString subtitleText READ subtitleText NOTIFY subtitleTextChanged)
+  // Every selectable subtitle SOURCE for the current media, in menu order:
+  // embedded text tracks, then generated captions, then loaded files. Each
+  // entry is {id, label, language, origin, isDefault, isForced}; `id` is what
+  // selectSubtitleTrack() takes and what activeSubtitleTrack reports.
+  Q_PROPERTY(QVariantList subtitleTracks READ subtitleTracks NOTIFY
+                 subtitleTracksChanged)
+  // The selected source's id, or -1 for Off.
+  Q_PROPERTY(int activeSubtitleTrack READ activeSubtitleTrack NOTIFY
+                 activeSubtitleTrackChanged)
   // LIVE PLAYBACK ONLY: at speeds other than 1x, true keeps the original
   // pitch (time stretching) and false is classic varispeed, where pitch
   // rises and falls with the speed. Both routes serve both modes and apply
@@ -156,6 +173,9 @@ public:
   [[nodiscard]] bool muted() const { return muted_; }
   [[nodiscard]] double rate() const { return rate_; }
   [[nodiscard]] bool captionsVisible() const { return captions_visible_; }
+  [[nodiscard]] QString subtitleText() const { return subtitle_text_; }
+  [[nodiscard]] QVariantList subtitleTracks() const;
+  [[nodiscard]] int activeSubtitleTrack() const;
   [[nodiscard]] bool preservePitch() const { return preserve_pitch_; }
   // 0 = light (default), 1 = dark, 2 = follow the operating system.
   [[nodiscard]] int appearance() const { return appearance_; }
@@ -219,6 +239,11 @@ public:
   Q_INVOKABLE void setRate(double rate);
   Q_INVOKABLE void toggleCaptions();
   Q_INVOKABLE void setCaptionsVisible(bool visible);
+  // Selects a subtitle source by id, or -1 for Off. Idempotent.
+  Q_INVOKABLE void selectSubtitleTrack(int id);
+  // Adds a subtitle file as a source and selects it.
+  Q_INVOKABLE bool loadSubtitleFile(const QUrl &file);
+  Q_INVOKABLE void openSubtitleFileDialog();
   Q_INVOKABLE void toggleFullscreen();
   Q_INVOKABLE void setPreservePitch(bool preserve);
   Q_INVOKABLE void setAppearance(int appearance);
@@ -268,6 +293,9 @@ signals:
   void mutedChanged();
   void rateChanged();
   void captionsVisibleChanged();
+  void subtitleTextChanged();
+  void subtitleTracksChanged();
+  void activeSubtitleTrackChanged();
   void preservePitchChanged();
   void appearanceChanged();
   void seekStepSecondsChanged();
@@ -290,6 +318,7 @@ signals:
   void exportSelectionRequested(double trim_in, double trim_out);
   void generateCaptionsRequested();
   void cancelCaptioningRequested();
+  void openSubtitleFileDialogRequested();
 
 private:
   friend class PlayerCore;
@@ -489,6 +518,15 @@ private:
     VideoTrack,
     AudioTrack,
     SubtitleTrack,
+    // The current subtitle line, as mpv times it. Observed rather than polled
+    // because mpv is the only thing that knows when a cue turns over, and it
+    // keeps publishing this with its own rendering switched off.
+    SubtitleText,
+    // A cheap scalar that changes whenever the track set does -- which is how
+    // a `sub-add` becomes a new entry in the Subtitles menu. Observing
+    // `track-list` itself would mean MPV_FORMAT_NODE and a matching
+    // mpv_free_node_contents, which is not in the resolved symbol table.
+    TrackListCount,
   };
 
   void drainMpvEvents();
@@ -594,6 +632,23 @@ private:
   void degradeRenderRecovery(const QString &error);
   void applyObservedPause(bool paused);
   void applyObservedPosition(double position);
+  // --- subtitles -------------------------------------------------------
+  // Rebuilds the source list for the current media from whichever engine owns
+  // it. Idempotent and cheap to call again; it does nothing when the route and
+  // the media have not changed since the last successful build.
+  void refreshSubtitleSources();
+  void buildMpvSubtitleSources();
+  void buildNativeSubtitleSources();
+  void applySubtitleDefaultPolicy();
+  void publishSubtitleText(const QString &text);
+  // Re-evaluates the on-screen line for the current position. Only the native
+  // route needs this; on the compatibility route mpv pushes the text instead.
+  void updateSubtitleForPosition();
+  void resetSubtitlesForMediaChange();
+  [[nodiscard]] bool nativeSubtitleRouteActive() const;
+  // Adds a sidecar subtitle file on whichever route is live and selects it.
+  bool attachSubtitleSource(const std::filesystem::path &path, int origin,
+                            const QString &label);
   void applyObservedDuration(double duration);
   void applyObservedIdle(bool idle);
   void applyObservedEof(bool eof_reached);
@@ -675,6 +730,14 @@ private:
 
   ::wam::BackgroundJob export_job_;
   ::wam::CaptionService caption_service_;
+  std::unique_ptr<SubtitleSources> subtitles_;
+  QString subtitle_text_;
+  // The source the subtitle list was last built for, and under which engine.
+  // A route flip (native admission refused mid-open) must rebuild the list
+  // from the engine that actually ended up playing.
+  QUrl subtitle_sources_source_;
+  bool subtitle_sources_native_ = false;
+  bool subtitle_sources_built_ = false;
 
   QUrl source_;
   // requested_source_ is the authoritative GUI intent. source_ mirrors mpv's
@@ -750,6 +813,9 @@ private:
   std::int64_t selected_tracks_playlist_entry_id_ = -1;
   std::optional<bool> current_file_has_audio_track_;
   std::vector<std::filesystem::path> attached_subtitle_files_;
+  // The subset of the above this player GENERATED, so the Subtitles menu can
+  // name them honestly. A file the user loaded is not a generated caption.
+  std::vector<std::filesystem::path> generated_caption_files_;
   std::vector<PlaylistEntryRange> redirect_ranges_;
   std::optional<OpenAttempt> open_attempt_;
   std::optional<OpenAttempt> committed_open_;

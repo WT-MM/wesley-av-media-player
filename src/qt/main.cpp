@@ -35,7 +35,10 @@
 #include <QSurfaceFormat>
 #include <QTimer>
 #include <QUrl>
+#include <QStringList>
+#include <QQmlListReference>
 #include <QVariant>
+#include <QVariantMap>
 
 #include <algorithm>
 #include <array>
@@ -221,8 +224,24 @@ std::vector<ScriptedOpen> parseOpenScript(const QByteArray &value) {
 //                       angleDelta of nx/ny * 120 per event, no phase.
 //   hide                pause every window and hide the app
 //   prefs               show the single Preferences window
+//   subs:<index>:<id>   select that window's subtitle source by id, or -1 for
+//                       Off -- the same call the Subtitles menu makes
+//   subsload:<index>:<path>
+//                       load a subtitle file into that window, the
+//                       Subtitles > Load Subtitle File gesture without the
+//                       native open panel (which would steal focus and defeat
+//                       WAM_TEST_BACKGROUND, exactly as the header explains
+//                       for the window verbs)
+//   substoggle:<index>  the transport captions button
+//   captions:<index>:<path>
+//                       generate captions for that window into <path>, the
+//                       Quick Edit gesture without its Save panel
+//   menu                write one WAM_TEST_MENU line per top-level menu,
+//                       with each item's title and check mark, read off the
+//                       real Qt.labs.platform menu bar
 //   report              write one WAM_TEST_WINDOWS line plus one
-//                       WAM_TEST_WINDOW line per window to stderr
+//                       WAM_TEST_WINDOW line and one WAM_TEST_SUBTITLES line
+//                       per window to stderr
 //
 // Telemetry-gated like every other WAM_TEST_* seam, so a shipping launch can
 // never observe it.
@@ -277,6 +296,56 @@ int volumeFeedbackActive(const wam::qt::PlayerWindow *window) {
   return value.isValid() ? (value.toBool() ? 1 : 0) : -1;
 }
 
+// Walks the live Qt.labs.platform MenuBar and prints what the user would see.
+//
+// Qt.labs.platform exposes `menus` and `items` only as QQmlListProperty -- no
+// count/at invokables and nothing a QVariant can convert -- so the walk goes
+// through QQmlListReference, which is the supported way to read one from C++.
+void reportMenus(const wam::qt::WindowManager &windows) {
+  QObject *bar = windows.menuBarObject();
+  if (bar == nullptr) {
+    qInfo().noquote() << QStringLiteral("WAM_TEST_MENU none");
+    return;
+  }
+  const QQmlListReference menus(bar, "menus");
+  if (!menus.isValid()) {
+    qInfo().noquote() << QStringLiteral("WAM_TEST_MENU unreadable");
+    return;
+  }
+  for (qsizetype menuIndex = 0; menuIndex < menus.count(); ++menuIndex) {
+    QObject *menu = menus.at(menuIndex);
+    if (menu == nullptr)
+      continue;
+    QStringList items;
+    const QQmlListReference entries(menu, "items");
+    for (qsizetype itemIndex = 0; entries.isValid() && itemIndex < entries.count();
+         ++itemIndex) {
+      QObject *item = entries.at(itemIndex);
+      if (item == nullptr)
+        continue;
+      const QVariant text = item->property("text");
+      if (!text.isValid())
+        continue;
+      if (!item->property("visible").toBool())
+        continue;
+      QString label = text.toString();
+      if (label.isEmpty())
+        label = QStringLiteral("-");
+      if (item->property("checkable").toBool()) {
+        label = (item->property("checked").toBool() ? QStringLiteral("[x] ")
+                                                    : QStringLiteral("[ ] ")) +
+                label;
+      }
+      if (!item->property("enabled").toBool())
+        label += QStringLiteral(" (disabled)");
+      items.append(label);
+    }
+    qInfo().noquote() << QStringLiteral("WAM_TEST_MENU title=%1 items=[%2]")
+                             .arg(menu->property("title").toString(),
+                                  items.join(QStringLiteral(" | ")));
+  }
+}
+
 void reportWindows(const wam::qt::WindowManager &windows) {
   const QList<wam::qt::PlayerWindow *> &open = windows.windows();
   qInfo().noquote() << QStringLiteral("WAM_TEST_WINDOWS count=%1")
@@ -313,6 +382,34 @@ void reportWindows(const wam::qt::WindowManager &windows) {
                .arg(player->duration(), 0, 'f', 4)
                .arg(chromeRevealed(open.at(index)))
                .arg(volumeFeedbackActive(open.at(index)));
+
+    // Subtitles get their own line rather than more fields on the one above:
+    // the track labels are free text and would break any parser that splits
+    // the WINDOW line on spaces. `text` is the line actually on screen, read
+    // from the controller property the overlay binds, so a scripted round can
+    // prove a cue is showing without a screenshot.
+    QStringList track_summary;
+    const QVariantList tracks = player->subtitleTracks();
+    track_summary.reserve(tracks.size());
+    for (const QVariant &entry : tracks) {
+      const QVariantMap track = entry.toMap();
+      track_summary.append(
+          QStringLiteral("%1:%2:%3")
+              .arg(track.value(QStringLiteral("id")).toInt())
+              .arg(track.value(QStringLiteral("origin")).toString(),
+                   track.value(QStringLiteral("label")).toString()));
+    }
+    QString line = player->subtitleText();
+    line.replace(QLatin1Char('\n'), QStringLiteral("\\n"));
+    qInfo().noquote()
+        << QStringLiteral(
+               "WAM_TEST_SUBTITLES idx=%1 active=%2 visible=%3 count=%4 "
+               "text=[%5] tracks=[%6]")
+               .arg(index)
+               .arg(player->activeSubtitleTrack())
+               .arg(player->captionsVisible() ? 1 : 0)
+               .arg(tracks.size())
+               .arg(line, track_summary.join(QLatin1Char('|')));
   }
 }
 
@@ -432,10 +529,30 @@ void runWindowStep(wam::qt::WindowManager &windows, const QString &verb) {
       deliverWheel(window->window(), fraction, pixels, angles, inverted, phase,
                    count);
     }
+  } else if (head == QStringLiteral("subs")) {
+    if (wam::qt::PlayerWindow *window = windowAt(index))
+      window->controller()->selectSubtitleTrack(fields.value(2).toInt());
+  } else if (head == QStringLiteral("subsload")) {
+    if (wam::qt::PlayerWindow *window = windowAt(index)) {
+      const QUrl target = mediaUrlFromArgument(fields.mid(2).join(QLatin1Char(':')));
+      if (target.isValid())
+        static_cast<void>(window->controller()->loadSubtitleFile(target));
+    }
+  } else if (head == QStringLiteral("captions")) {
+    if (wam::qt::PlayerWindow *window = windowAt(index)) {
+      const QString path = fields.mid(2).join(QLatin1Char(':'));
+      if (!path.isEmpty())
+        window->controller()->generateCaptionsTo(QUrl::fromLocalFile(path));
+    }
+  } else if (head == QStringLiteral("substoggle")) {
+    if (wam::qt::PlayerWindow *window = windowAt(index))
+      window->controller()->toggleCaptions();
   } else if (head == QStringLiteral("hide")) {
     windows.hideAndPauseAll();
   } else if (head == QStringLiteral("prefs")) {
     windows.showPreferences();
+  } else if (head == QStringLiteral("menu")) {
+    reportMenus(windows);
   } else if (head == QStringLiteral("report")) {
     reportWindows(windows);
   }

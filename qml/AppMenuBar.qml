@@ -124,6 +124,159 @@ Platform.MenuBar {
         }
     }
 
+    // ---------------------------------------------------------------------
+    // Subtitles.
+    //
+    // VLC-shaped: Off, then one radio item per subtitle SOURCE the focused
+    // window has for the file it is playing -- embedded text tracks first,
+    // then generated captions, then anything the user loaded -- then a way to
+    // add a file. The list is rebuilt from the engine that is actually
+    // playing (the container on the native route, mpv's track-list on the
+    // compatibility route), so the same menu works either way.
+    //
+    // A FIXED POOL of items rather than an Instantiator. Qt.labs.platform
+    // mutates the real NSMenu, and this file already documents (see
+    // hugsVideoMenuItem below) that its checkable items imperatively overwrite
+    // `checked` and detach any binding on it. A static pool keeps every item's
+    // identity stable across focus changes and file changes, so the one
+    // imperative re-sync at the bottom of this file is the whole story;
+    // creating and destroying native menu items on every open would add a
+    // second, harder failure mode for no user-visible gain.
+    Platform.Menu {
+        id: subtitlesMenu
+        title: "Subtitles"
+
+        // Number of track slots. Files carry a handful; Matroska's own track
+        // budget is 64. Sources past this are not listed -- see the label on
+        // the overflow item, which says so rather than silently hiding them.
+        readonly property int slotCount: 16
+        // Bindings, used only for `visible` on the overflow row. Everything
+        // that has to be CORRECT at the instant it is written -- the item
+        // labels and the radio marks -- reads the controller directly instead;
+        // see rebuildSubtitleItems below for why.
+        readonly property var tracks: root.hasController ? root.controller.subtitleTracks : []
+
+        // Re-writes every item's `checked` from the controller's real
+        // selection. Called on any change and after every click, because
+        // Qt.labs.platform writes `checked` itself on a click and a plain
+        // binding would not survive it.
+        function syncChecks() {
+            const active = root.controller ? root.controller.activeSubtitleTrack : -1;
+            const list = root.controller ? root.controller.subtitleTracks : [];
+            offMenuItem.checked = active === -1;
+            for (let i = 0; i < subtitleSlots.length; ++i) {
+                const entry = i < list.length ? list[i] : null;
+                subtitleSlots[i].checked = entry !== null && entry.id === active;
+            }
+        }
+
+        readonly property var subtitleSlots: [
+            slot0, slot1, slot2, slot3, slot4, slot5, slot6, slot7,
+            slot8, slot9, slot10, slot11, slot12, slot13, slot14, slot15
+        ]
+
+        Platform.MenuItem {
+            id: offMenuItem
+            text: "Off"
+            checkable: true
+            checked: true
+            enabled: root.mediaLoaded
+            onTriggered: {
+                root.controller.selectSubtitleTrack(-1);
+                subtitlesMenu.syncChecks();
+            }
+        }
+
+        Platform.MenuItem { id: slot0; checkable: true }
+        Platform.MenuItem { id: slot1; checkable: true }
+        Platform.MenuItem { id: slot2; checkable: true }
+        Platform.MenuItem { id: slot3; checkable: true }
+        Platform.MenuItem { id: slot4; checkable: true }
+        Platform.MenuItem { id: slot5; checkable: true }
+        Platform.MenuItem { id: slot6; checkable: true }
+        Platform.MenuItem { id: slot7; checkable: true }
+        Platform.MenuItem { id: slot8; checkable: true }
+        Platform.MenuItem { id: slot9; checkable: true }
+        Platform.MenuItem { id: slot10; checkable: true }
+        Platform.MenuItem { id: slot11; checkable: true }
+        Platform.MenuItem { id: slot12; checkable: true }
+        Platform.MenuItem { id: slot13; checkable: true }
+        Platform.MenuItem { id: slot14; checkable: true }
+        Platform.MenuItem { id: slot15; checkable: true }
+
+        Platform.MenuItem {
+            id: subtitleOverflowItem
+            enabled: false
+            visible: subtitlesMenu.tracks.length > subtitlesMenu.slotCount
+            text: visible
+                ? (subtitlesMenu.tracks.length - subtitlesMenu.slotCount) + " more tracks are not listed"
+                : ""
+        }
+
+        Platform.MenuSeparator {}
+
+        Platform.MenuItem {
+            text: "Load Subtitle File…"
+            enabled: root.mediaLoaded
+            onTriggered: root.controller.openSubtitleFileDialog()
+        }
+    }
+
+    // Keeps the Subtitles menu's items following the focused controller: their
+    // labels when a new file is opened or the route flips, their radio marks
+    // when the selection changes from anywhere (the menu, the transport
+    // button, a generated caption selecting itself). Imperative for exactly
+    // the reason the View menu's checkbox is -- see the note there.
+    function rebuildSubtitleItems() {
+        // Reads root.controller DIRECTLY rather than the derived `tracks` and
+        // `hasController` bindings. This runs from onControllerChanged, and a
+        // handler on a property fires without any guarantee that the bindings
+        // depending on that same property have been re-evaluated yet -- which
+        // showed up as the menu being exactly one update stale after focus
+        // moved between windows: it listed the previous window's tracks with
+        // the previous window's check mark. Reading the thing that actually
+        // changed is the only ordering-independent fix, and it is the same
+        // rule the View menu's checkbox handler follows below.
+        const controller = root.controller;
+        const list = controller ? controller.subtitleTracks : [];
+        const active = controller ? controller.activeSubtitleTrack : -1;
+        const loaded = controller ? controller.hasMedia : false;
+        for (let i = 0; i < subtitlesMenu.subtitleSlots.length; ++i) {
+            const item = subtitlesMenu.subtitleSlots[i];
+            const entry = i < list.length ? list[i] : null;
+            if (entry === null) {
+                item.visible = false;
+                item.text = "";
+                item.enabled = false;
+                item.checked = false;
+                continue;
+            }
+            item.visible = true;
+            item.enabled = loaded;
+            item.text = entry.label;
+            item.checked = entry.id === active;
+        }
+        offMenuItem.checked = active === -1;
+    }
+
+    Connections {
+        target: root.controller
+
+        function onSubtitleTracksChanged() {
+            root.rebuildSubtitleItems();
+        }
+
+        function onActiveSubtitleTrackChanged() {
+            root.rebuildSubtitleItems();
+        }
+
+        function onHasMediaChanged() {
+            root.rebuildSubtitleItems();
+        }
+    }
+
+    Component.onCompleted: root.rebuildSubtitleItems()
+
     Platform.Menu {
         title: "View"
 
@@ -199,6 +352,9 @@ Platform.MenuBar {
     }
 
     onControllerChanged: {
+        // The Subtitles menu is per focused window: moving focus between two
+        // windows must show each one's own tracks and its own selection.
+        root.rebuildSubtitleItems();
         // Reads `root.controller` directly rather than the `hasController`
         // convenience: on the way out the controller reference and the derived
         // binding are cleared in an unspecified order, and this handler runs

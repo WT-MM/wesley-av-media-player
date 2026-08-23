@@ -3,6 +3,7 @@
 #include "mpv_video_item.hpp"
 #include "playback_policy.hpp"
 #include "player_core_p.hpp"
+#include "subtitle_sources.hpp"
 
 #if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
 #include "native_benchmark_telemetry.hpp"
@@ -318,6 +319,48 @@ bool setCoreProperty(PlayerCore *core, const char *name, mpv_format format,
   return false;
 }
 
+// The name one entry of the Subtitles menu carries. VLC-shaped: what the
+// container says the track IS, not what index it happens to occupy.
+QString subtitleLanguageName(const QString &code) {
+  if (code.isEmpty() || code == QStringLiteral("und"))
+    return {};
+  // QLocale understands both ISO 639-1 and 639-2 codes, which is every form a
+  // Matroska Language or an mpv `lang` field arrives in.
+  const QLocale locale(code);
+  if (locale.language() != QLocale::C &&
+      locale.language() != QLocale::AnyLanguage) {
+    return QLocale::languageToString(locale.language());
+  }
+  return code.toUpper();
+}
+
+QString subtitleSourceLabel(SubtitleSources::Origin origin,
+                            const QString &title, const QString &language,
+                            const std::filesystem::path &path,
+                            std::int64_t ordinal) {
+  switch (origin) {
+    case SubtitleSources::Origin::Generated:
+      return QStringLiteral("Generated Captions");
+    case SubtitleSources::Origin::External: {
+      const QString name =
+          path.empty() ? QString()
+                       : QString::fromStdString(path.filename().string());
+      return name.isEmpty() ? QStringLiteral("Loaded Subtitles") : name;
+    }
+    case SubtitleSources::Origin::Embedded:
+      break;
+  }
+  // A track Name is the only field an author writes for a human to read
+  // ("English (SDH)", "Forced Narrative"), so it wins outright when present.
+  const QString trimmed = title.trimmed();
+  if (!trimmed.isEmpty())
+    return trimmed;
+  const QString languageName = subtitleLanguageName(language);
+  if (!languageName.isEmpty())
+    return languageName;
+  return QStringLiteral("Track %1").arg(ordinal);
+}
+
 bool setTrackSelection(PlayerCore *core, const char *name,
                        std::int64_t selection) {
   if (selection < 0)
@@ -583,6 +626,22 @@ PlayerController::PlayerController(QObject *parent)
   scroll_settle_timer_->setTimerType(Qt::PreciseTimer);
   connect(scroll_settle_timer_, &QTimer::timeout, this,
           &PlayerController::settleScrollGesture);
+
+  // The subtitle lane. Parented to this controller, so it is per window like
+  // everything else the user can change, and destroyed with it (its destructor
+  // cancels and joins any load in flight before anything it captures dies).
+  subtitles_ = std::make_unique<SubtitleSources>(this);
+  connect(subtitles_.get(), &SubtitleSources::cuesChanged, this,
+          [this] { updateSubtitleForPosition(); });
+  connect(subtitles_.get(), &SubtitleSources::loadFailed, this,
+          [this](const QString &reason) { setLastNotice(reason); });
+  // One connection instead of a call at each of the eight sites that move the
+  // playhead: every route, every seek and every rate publishes through
+  // positionChanged, so this cannot be forgotten by a later change. It costs
+  // two comparisons per position update and emits only when the line changes,
+  // so it never dirties the scene graph between cue boundaries.
+  connect(this, &PlayerController::positionChanged, this,
+          [this] { updateSubtitleForPosition(); });
 }
 
 PlayerController::~PlayerController() {
@@ -676,13 +735,20 @@ bool PlayerController::initializePlaybackEngine() {
   double engine_volume = volume_ * 100.0;
   double engine_rate = rate_;
   int engine_muted = muted_ ? 1 : 0;
-  int engine_captions = captions_visible_ ? 1 : 0;
   int engine_preserve_pitch = preserve_pitch_ ? 1 : 0;
   setCoreProperty(core_.get(), "volume", MPV_FORMAT_DOUBLE, &engine_volume);
   setCoreProperty(core_.get(), "speed", MPV_FORMAT_DOUBLE, &engine_rate);
   setCoreProperty(core_.get(), "mute", MPV_FORMAT_FLAG, &engine_muted);
+  // WAM draws subtitles itself, in one overlay, so that a line looks the same
+  // whichever engine is playing -- and so that the native route, which has no
+  // mpv at all, is not a second-class surface. mpv's own renderer is therefore
+  // pinned off for the life of the handle. It keeps selecting, decoding and
+  // TIMING subtitles with this off (verified: `sub-text` updates normally at
+  // sub-visibility=no), which is exactly the division of labour wanted: mpv
+  // owns the timeline it already understands, WAM owns the pixels.
+  int engine_subtitles_hidden = 0;
   setCoreProperty(core_.get(), "sub-visibility", MPV_FORMAT_FLAG,
-                  &engine_captions);
+                  &engine_subtitles_hidden);
   setCoreProperty(core_.get(), "audio-pitch-correction", MPV_FORMAT_FLAG,
                   &engine_preserve_pitch);
 
@@ -697,7 +763,9 @@ bool PlayerController::initializePlaybackEngine() {
   observe(ObservedProperty::Volume, "volume", MPV_FORMAT_DOUBLE);
   observe(ObservedProperty::Mute, "mute", MPV_FORMAT_FLAG);
   observe(ObservedProperty::Rate, "speed", MPV_FORMAT_DOUBLE);
-  observe(ObservedProperty::CaptionsVisible, "sub-visibility", MPV_FORMAT_FLAG);
+  // sub-visibility is deliberately NOT observed: it is pinned off above and is
+  // no longer the user's caption switch. captionsVisible now means "a subtitle
+  // source is selected", which is app state on both routes.
   observe(ObservedProperty::Path, "path", MPV_FORMAT_STRING);
   observe(ObservedProperty::MediaTitle, "media-title", MPV_FORMAT_STRING);
   observe(ObservedProperty::PreservePitch, "audio-pitch-correction",
@@ -706,6 +774,9 @@ bool PlayerController::initializePlaybackEngine() {
   observe(ObservedProperty::VideoTrack, "vid", MPV_FORMAT_STRING);
   observe(ObservedProperty::AudioTrack, "aid", MPV_FORMAT_STRING);
   observe(ObservedProperty::SubtitleTrack, "sid", MPV_FORMAT_STRING);
+  observe(ObservedProperty::SubtitleText, "sub-text", MPV_FORMAT_STRING);
+  observe(ObservedProperty::TrackListCount, "track-list/count",
+          MPV_FORMAT_INT64);
   return true;
 }
 
@@ -1546,6 +1617,16 @@ void PlayerController::invalidateNativeSeekIntents() noexcept {
 }
 
 void PlayerController::publishNativeMainPosition(double position) {
+  // The native route has no FILE_LOADED. Its first published media time is the
+  // earliest honest proof that native -- not the compatibility engine -- ended
+  // up owning this file, which is exactly when the Subtitles menu can be built
+  // from the container instead of from mpv. Guarded so this is one boolean
+  // test per drawn frame after the first.
+  if (subtitles_ && (!subtitle_sources_built_ ||
+                     subtitle_sources_source_ != source_ ||
+                     !subtitle_sources_native_)) {
+    refreshSubtitleSources();
+  }
   // During a pointer gesture the optimistic target and its exact preview
   // presentation own the visible playhead. Main audio/draw proofs still
   // advance their owner-side high-water marks, but cannot repaint an older
@@ -2194,24 +2275,351 @@ void PlayerController::toggleCaptions() {
 }
 
 void PlayerController::setCaptionsVisible(bool visible) {
+  // The transport's captions button. It is a switch, not a picker: turning
+  // subtitles on restores the last source this window showed, and failing
+  // that takes the container's own preference, and failing that the first
+  // source there is. Turning them off remembers what was showing, so the next
+  // press brings back the same track rather than an arbitrary one.
+  //
+  // captionsVisible is therefore derived state -- "something is selected" --
+  // on both routes. It is no longer mpv's sub-visibility flag, which is pinned
+  // off because WAM draws the text itself.
+  if (!subtitles_)
+    return;
+  if (!visible) {
+    selectSubtitleTrack(SubtitleSources::kOffId);
+    return;
+  }
+  int target = subtitles_->lastSelectedId();
+  if (subtitles_->find(target) == nullptr)
+    target = subtitles_->containerPreferredId();
+  if (target == SubtitleSources::kOffId && !subtitles_->sources().empty())
+    target = subtitles_->sources().front().id;
+  if (target == SubtitleSources::kOffId) {
+    setLastNotice(
+        QStringLiteral("This file has no subtitles. Use Subtitles > Load "
+                       "Subtitle File to add one."));
+    return;
+  }
+  selectSubtitleTrack(target);
+}
+
+// ---------------------------------------------------------------------------
+// Subtitles.
+//
+// One overlay, two feeders. Everything below decides WHICH source is showing
+// and WHERE its text comes from; the drawing is qml/Main.qml's single Text
+// item bound to subtitleText, so a line looks identical on either route.
+// ---------------------------------------------------------------------------
+
+QVariantList PlayerController::subtitleTracks() const {
+  return subtitles_ ? subtitles_->toVariantList() : QVariantList{};
+}
+
+int PlayerController::activeSubtitleTrack() const {
+  return subtitles_ ? subtitles_->activeId() : SubtitleSources::kOffId;
+}
+
+bool PlayerController::nativeSubtitleRouteActive() const {
 #if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
-  if (native_playback_ && native_playback_->nativeOwnsTransport()) {
-    if (visible != captions_visible_) {
-      setLastError(QStringLiteral(
-          "Caption track changes are not available in native playback yet."));
+  return native_playback_ != nullptr && native_playback_->nativeOwnsTransport();
+#else
+  return false;
+#endif
+}
+
+void PlayerController::publishSubtitleText(const QString &text) {
+  // Emitting only on a real change is what keeps the overlay off the
+  // per-frame path: between cue boundaries this is a string compare and
+  // nothing else, so the scene graph is never dirtied by a subtitle that has
+  // not changed.
+  if (subtitle_text_ == text)
+    return;
+  subtitle_text_ = text;
+  emit subtitleTextChanged();
+}
+
+void PlayerController::updateSubtitleForPosition() {
+  if (!subtitles_)
+    return;
+  // On the compatibility route mpv pushes the line through `sub-text`; asking
+  // an empty local cue list for it here would immediately blank it again.
+  if (!subtitles_->hasCues())
+    return;
+  if (subtitles_->activeId() == SubtitleSources::kOffId) {
+    publishSubtitleText({});
+    return;
+  }
+  publishSubtitleText(subtitles_->textAt(position_));
+}
+
+void PlayerController::resetSubtitlesForMediaChange() {
+  if (!subtitles_)
+    return;
+  subtitles_->clear();
+  subtitle_sources_built_ = false;
+  subtitle_sources_source_.clear();
+  publishSubtitleText({});
+  emit subtitleTracksChanged();
+  emit activeSubtitleTrackChanged();
+  if (captions_visible_) {
+    captions_visible_ = false;
+    emit captionsVisibleChanged();
+  }
+}
+
+void PlayerController::buildMpvSubtitleSources() {
+  std::vector<SubtitleSources::Source> tracks;
+  const ReadyMpvClient client = readyMpvClient(core_.get());
+  if (!client) {
+    subtitles_->setEmbeddedTracks(std::move(tracks));
+    return;
+  }
+  std::int64_t count = 0;
+  if (client.api->mpv_get_property(client.handle, "track-list/count",
+                                   MPV_FORMAT_INT64, &count) < 0 ||
+      count <= 0) {
+    subtitles_->setEmbeddedTracks(std::move(tracks));
+    return;
+  }
+  // The flat sub-property idiom, not MPV_FORMAT_NODE: a node read would need
+  // mpv_free_node_contents, which is not in the resolved symbol table, and
+  // leaking the whole track list on every file open to avoid one loop is not
+  // a trade worth making.
+  const auto readString = [&client, &count](std::int64_t index,
+                                            const char *field) -> QString {
+    static_cast<void>(count);
+    const QByteArray name = QByteArrayLiteral("track-list/") +
+                            QByteArray::number(index) + '/' + field;
+    char *value = client.api->mpv_get_property_string(client.handle,
+                                                      name.constData());
+    if (value == nullptr)
+      return {};
+    const QString result = QString::fromUtf8(value);
+    client.api->mpv_free(value);
+    return result;
+  };
+
+  for (std::int64_t index = 0; index < count; ++index) {
+    if (readString(index, "type") != QStringLiteral("sub"))
+      continue;
+    bool ok = false;
+    const std::int64_t sid = readString(index, "id").toLongLong(&ok);
+    if (!ok || sid <= 0)
+      continue;
+    SubtitleSources::Source source;
+    source.mpvSid = sid;
+    source.language = readString(index, "lang");
+    source.defaultFlag = readString(index, "default") == QStringLiteral("yes");
+    source.forcedFlag = readString(index, "forced") == QStringLiteral("yes");
+    const bool external =
+        readString(index, "external") == QStringLiteral("yes");
+    const QString title = readString(index, "title");
+    const QString filename = readString(index, "external-filename");
+    source.origin = external ? SubtitleSources::Origin::External
+                             : SubtitleSources::Origin::Embedded;
+    if (external && !filename.isEmpty()) {
+      const std::filesystem::path path = std::filesystem::path(
+          filename.toStdString());
+      source.filePath = path;
+      // Recognize this player's own caption output, so the menu says what the
+      // user actually did rather than showing them a temp file name. Keyed on
+      // the caption outputs specifically, NOT on attached_subtitle_files_:
+      // that list holds every `sub-add`ed path including files the user chose,
+      // and calling one of those "Generated Captions" is simply false.
+      if (std::find(generated_caption_files_.begin(),
+                    generated_caption_files_.end(),
+                    path) != generated_caption_files_.end()) {
+        source.origin = SubtitleSources::Origin::Generated;
+      }
+    }
+    source.label = subtitleSourceLabel(source.origin, title, source.language,
+                                       source.filePath, sid);
+    tracks.push_back(std::move(source));
+  }
+  subtitles_->setEmbeddedTracks(std::move(tracks));
+}
+
+void PlayerController::buildNativeSubtitleSources() {
+  std::vector<SubtitleSources::Source> tracks;
+  const auto local = localPath(source_);
+  if (local) {
+    // Header-only: EBML header, Info and Tracks, stopping at the first
+    // Cluster. This runs on every native open and must never become the
+    // whole-file walk the demuxer's pre-admission pass was written to avoid;
+    // that boundary is pinned by matroska_subtitles_test.
+    const auto inventory =
+        media::matroska::inspectMatroskaSubtitleTracks(*local);
+    std::size_t ordinal = 0;
+    for (const auto &track : inventory.tracks) {
+      ++ordinal;
+      SubtitleSources::Source source;
+      source.matroskaTrack = track.number;
+      source.codec = track.codec;
+      source.filePath = *local;
+      source.language = QString::fromStdString(track.language);
+      source.defaultFlag = track.defaultFlag;
+      source.forcedFlag = track.forcedFlag;
+      source.label = subtitleSourceLabel(
+          SubtitleSources::Origin::Embedded,
+          QString::fromStdString(track.name), source.language, {},
+          static_cast<std::int64_t>(ordinal));
+      tracks.push_back(std::move(source));
+    }
+  }
+  subtitles_->setEmbeddedTracks(std::move(tracks));
+}
+
+void PlayerController::applySubtitleDefaultPolicy() {
+  // VLC's rule, and the container's own: show a subtitle track only when the
+  // file asserts one should be shown. Anything else would put burned-in-
+  // looking text over every foreign film the moment it opens.
+  const int preferred = subtitles_->containerPreferredId();
+  if (preferred == SubtitleSources::kOffId) {
+    subtitles_->setActiveId(SubtitleSources::kOffId);
+    return;
+  }
+  selectSubtitleTrack(preferred);
+}
+
+void PlayerController::refreshSubtitleSources() {
+  if (!subtitles_ || source_.isEmpty())
+    return;
+  const bool native = nativeSubtitleRouteActive();
+  const bool same_media = subtitle_sources_source_ == source_;
+  const bool rebuild_only =
+      subtitle_sources_built_ && same_media && subtitle_sources_native_ == native;
+
+  // Capture the SELECTION by identity, not by id: a rebuild renumbers the
+  // list, so an id held across it names a different track or none at all.
+  const SubtitleSources::Source *previous =
+      subtitles_->find(subtitles_->activeId());
+  const bool had_selection = previous != nullptr;
+  const SubtitleSources::Source previous_source =
+      had_selection ? *previous : SubtitleSources::Source{};
+
+  if (native)
+    buildNativeSubtitleSources();
+  else
+    buildMpvSubtitleSources();
+
+  subtitle_sources_source_ = source_;
+  subtitle_sources_native_ = native;
+  subtitle_sources_built_ = true;
+  emit subtitleTracksChanged();
+
+  if (rebuild_only) {
+    // A `sub-add` added an entry; the selection the user already made stands
+    // unless the source it named is gone.
+    const int remapped =
+        had_selection ? subtitles_->remap(previous_source)
+                      : SubtitleSources::kOffId;
+    if (remapped != subtitles_->activeId()) {
+      subtitles_->setActiveId(remapped);
+      subtitles_->noteSelected(remapped);
+      emit activeSubtitleTrackChanged();
     }
     return;
   }
-#endif
-  if (engineReady()) {
-    int value = visible ? 1 : 0;
-    core_->api().mpv_set_property_async(core_->handle(), 0, "sub-visibility",
-                                        MPV_FORMAT_FLAG, &value);
-  }
-  if (captions_visible_ == visible)
+  applySubtitleDefaultPolicy();
+  emit activeSubtitleTrackChanged();
+}
+
+void PlayerController::selectSubtitleTrack(int id) {
+  if (!subtitles_)
     return;
-  captions_visible_ = visible;
-  emit captionsVisibleChanged();
+  const SubtitleSources::Source *source = subtitles_->find(id);
+  if (source == nullptr)
+    id = SubtitleSources::kOffId;
+
+  subtitles_->setActiveId(id);
+  subtitles_->noteSelected(id);
+  subtitles_->resetLookupHint();
+
+  if (id == SubtitleSources::kOffId) {
+    subtitles_->cancelNativeLoad();
+    publishSubtitleText({});
+  } else if (source->mpvSid > 0) {
+    // Compatibility route: mpv owns selection and timing; the overlay is fed
+    // by the sub-text observation.
+    static_cast<void>(setTrackSelection(core_.get(), "sid", source->mpvSid));
+    selected_subtitle_track_id_ = source->mpvSid;
+    publishSubtitleText({});
+  } else {
+    // Native route: this process reads the cues, off the playback graph.
+    publishSubtitleText({});
+    subtitles_->beginNativeLoad(id);
+  }
+
+  if (id == SubtitleSources::kOffId && engineReady()) {
+    static_cast<void>(setTrackSelection(core_.get(), "sid", 0));
+    selected_subtitle_track_id_ = 0;
+  }
+
+  const bool visible = id != SubtitleSources::kOffId;
+  if (captions_visible_ != visible) {
+    captions_visible_ = visible;
+    emit captionsVisibleChanged();
+  }
+  emit activeSubtitleTrackChanged();
+  updateSubtitleForPosition();
+}
+
+void PlayerController::openSubtitleFileDialog() {
+  emit openSubtitleFileDialogRequested();
+}
+
+bool PlayerController::loadSubtitleFile(const QUrl &file) {
+  const auto path = localPath(file);
+  if (!path) {
+    setLastError(QStringLiteral("Only local subtitle files can be loaded."));
+    return false;
+  }
+  return attachSubtitleSource(*path, static_cast<int>(
+                                         SubtitleSources::Origin::External),
+                              {});
+}
+
+bool PlayerController::attachSubtitleSource(const std::filesystem::path &path,
+                                            int origin, const QString &label) {
+  if (!subtitles_ || path.empty())
+    return false;
+  const auto kind = static_cast<SubtitleSources::Origin>(origin);
+  if (kind == SubtitleSources::Origin::Generated &&
+      std::find(generated_caption_files_.begin(),
+                generated_caption_files_.end(),
+                path) == generated_caption_files_.end()) {
+    generated_caption_files_.push_back(path);
+  }
+  if (!nativeSubtitleRouteActive()) {
+    // Compatibility route: hand it to mpv, which then reports it in
+    // track-list and times it for us. The TrackListCount observation turns
+    // that into a menu entry.
+    if (!attachSubtitleFile(path))
+      return false;
+    refreshSubtitleSources();
+    const int id = subtitles_->idForMpvSid(
+        currentTrackSelection(core_.get(), "sid"));
+    if (id != SubtitleSources::kOffId)
+      selectSubtitleTrack(id);
+    return true;
+  }
+
+  // Native route: there is no mpv, so the file is parsed here and becomes a
+  // source alongside the embedded tracks.
+  const int id = subtitles_->addFileSource(path, kind, label, 0);
+  if (id == SubtitleSources::kOffId) {
+    setLastError(QStringLiteral("That subtitle file could not be added."));
+    return false;
+  }
+  emit subtitleTracksChanged();
+  QString error;
+  if (!subtitles_->loadFileCues(path, &error)) {
+    setLastError(error);
+    return false;
+  }
+  selectSubtitleTrack(id);
+  return true;
 }
 
 void PlayerController::toggleFullscreen() { emit fullscreenToggleRequested(); }
@@ -2631,7 +3039,10 @@ void PlayerController::pollBackgroundWork() {
             !pathsReferToSameFile(caption_input_, *current_input)) {
           setCaptionStatus(QStringLiteral(
               "Captions saved, but not attached because the media changed."));
-        } else if (attachSubtitleFile(status.output_srt)) {
+        } else if (attachSubtitleSource(
+                       status.output_srt,
+                       static_cast<int>(SubtitleSources::Origin::Generated),
+                       QStringLiteral("Generated Captions"))) {
           setCaptionStatus(QStringLiteral("Captions generated and enabled."));
           setLastError({});
         } else {
@@ -2678,7 +3089,9 @@ bool PlayerController::attachSubtitleFile(
                 subtitle) == attached_subtitle_files_.end()) {
     attached_subtitle_files_.push_back(subtitle);
   }
-  setCaptionsVisible(true);
+  // Deliberately NOT setCaptionsVisible(true) any more: selecting the source
+  // is what turns subtitles on, and doing both would fight over which track
+  // the switch restores.
   return true;
 }
 
@@ -2834,14 +3247,12 @@ void PlayerController::drainMpvEvents() {
         }
         break;
       }
-      case ObservedProperty::CaptionsVisible: {
-        const bool value = readFlag(property, true);
-        if (captions_visible_ != value) {
-          captions_visible_ = value;
-          emit captionsVisibleChanged();
-        }
+      case ObservedProperty::CaptionsVisible:
+        // Retained so the enumerator stays exhaustively handled. mpv's
+        // sub-visibility is pinned off (WAM draws subtitles itself) and is no
+        // longer observed, so this can only be reached by an mpv-side change
+        // WAM did not ask for, which must not move the user's selection.
         break;
-      }
       case ObservedProperty::Path: {
         const QUrl observed_source = urlFromMpvPath(readString(property));
         // requested_source_ is authoritative across asynchronous replacement.
@@ -2892,6 +3303,22 @@ void PlayerController::drainMpvEvents() {
         break;
       case ObservedProperty::SubtitleTrack:
         applyObservedSubtitleTrack(readTrackSelection(property));
+        break;
+      case ObservedProperty::SubtitleText:
+        // The compatibility route's feed into the shared overlay. mpv reports
+        // the line with its own markup already resolved, so nothing here has
+        // to re-parse ASS or SRT: that work only exists on the native route,
+        // where there is no mpv to do it.
+        if (subtitles_ && subtitles_->activeId() != SubtitleSources::kOffId)
+          publishSubtitleText(readString(property));
+        else
+          publishSubtitleText({});
+        break;
+      case ObservedProperty::TrackListCount:
+        // A `sub-add` (generated captions, a loaded file) changes the track
+        // set without any other signal, so this is how a new source reaches
+        // the menu.
+        refreshSubtitleSources();
         break;
       }
       continue;
@@ -3613,6 +4040,11 @@ void PlayerController::handlePlaybackReady(bool file_loaded) {
   } else if (file_loaded && acceptsPlaybackObservation()) {
     cacheCurrentTrackSelection();
   }
+  // FILE_LOADED is the moment mpv's track-list is complete, and it is the one
+  // hook that fires on both a first open and every fallback the router takes,
+  // so it is where the Subtitles menu learns what this file offers.
+  if (file_loaded)
+    refreshSubtitleSources();
   restoreRenderRecovery();
 }
 
@@ -3785,7 +4217,9 @@ void PlayerController::restoreRenderRecovery() {
           return;
         }
       }
-      int visible = captions_visible_ ? 1 : 0;
+      // Pinned off: WAM draws subtitles itself on both routes, so a recovered
+      // render context must not start compositing mpv's own text under ours.
+      int visible = 0;
       if (!setCoreProperty(core_.get(), "sub-visibility", MPV_FORMAT_FLAG,
                            &visible)) {
         scheduleRenderRecoveryRetry(
@@ -4554,6 +4988,7 @@ void PlayerController::updateSource(const QUrl &source) {
   if (source_ == source)
     return;
   source_ = source;
+  resetSubtitlesForMediaChange();
   emit sourceChanged();
   if (had_media != hasMedia()) {
     emit hasMediaChanged();
