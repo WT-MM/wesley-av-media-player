@@ -147,6 +147,8 @@ qt_add_executable(wam MACOSX_BUNDLE WIN32
   src/qt/main.cpp
   src/qt/player_controller.cpp
   src/qt/player_controller.hpp
+  src/qt/subtitle_sources.cpp
+  src/qt/subtitle_sources.hpp
   src/qt/scroll_gesture.cpp
   src/qt/scroll_gesture.hpp
   src/qt/player_core.cpp
@@ -297,6 +299,10 @@ if(APPLE)
     src/media/matroska_ebml.cpp
     src/media/matroska_demuxer.hpp
     src/media/matroska_demuxer.cpp
+    src/media/subtitle_text.hpp
+    src/media/subtitle_text.cpp
+    src/media/matroska_subtitles.hpp
+    src/media/matroska_subtitles.cpp
     src/media/mpegts_packet.hpp
     src/media/mpegts_packet.cpp
     src/media/mpegts_demuxer.hpp
@@ -737,6 +743,16 @@ if(BUILD_TESTING)
     target_link_libraries(wam_matroska_ebml_test PRIVATE wam_native_core)
     add_test(NAME matroska_ebml COMMAND wam_matroska_ebml_test)
 
+    add_executable(wam_subtitle_text_test
+      tests/subtitle_text_test.cpp)
+    target_link_libraries(wam_subtitle_text_test PRIVATE wam_native_core)
+    add_test(NAME subtitle_text COMMAND wam_subtitle_text_test)
+
+    add_executable(wam_matroska_subtitles_test
+      tests/matroska_subtitles_test.cpp)
+    target_link_libraries(wam_matroska_subtitles_test PRIVATE wam_native_core)
+    add_test(NAME matroska_subtitles COMMAND wam_matroska_subtitles_test)
+
     add_executable(wam_matroska_aac_test
       tests/matroska_aac_test.cpp)
     target_link_libraries(wam_matroska_aac_test PRIVATE wam_native_core)
@@ -844,6 +860,8 @@ if(BUILD_TESTING)
     foreach(WAM_NATIVE_CORE_TEST_TARGET IN ITEMS
         wam_matroska_aac_test
         wam_matroska_ebml_test
+        wam_subtitle_text_test
+        wam_matroska_subtitles_test
         wam_matroska_opus_test
         wam_matroska_vorbis_test
         wam_matroska_ac3_test
@@ -868,6 +886,8 @@ if(BUILD_TESTING)
     set_tests_properties(
       matroska_aac
       matroska_ebml
+      subtitle_text
+      matroska_subtitles
       matroska_opus
       matroska_vorbis
       matroska_ac3
@@ -935,6 +955,11 @@ if(BUILD_TESTING)
     src/playback/mpv/mpv_runtime_common.cpp
     src/qt/player_controller.cpp
     src/qt/player_controller.hpp
+    src/qt/subtitle_sources.cpp
+    src/qt/subtitle_sources.hpp
+    src/media/subtitle_text.cpp
+    src/media/matroska_subtitles.cpp
+    src/media/matroska_ebml.cpp
     src/qt/scroll_gesture.cpp
     src/qt/scroll_gesture.hpp
     src/qt/player_core.cpp
@@ -961,6 +986,11 @@ if(BUILD_TESTING)
     src/playback/mpv/mpv_runtime_common.cpp
     src/qt/player_controller.cpp
     src/qt/player_controller.hpp
+    src/qt/subtitle_sources.cpp
+    src/qt/subtitle_sources.hpp
+    src/media/subtitle_text.cpp
+    src/media/matroska_subtitles.cpp
+    src/media/matroska_ebml.cpp
     src/qt/scroll_gesture.cpp
     src/qt/scroll_gesture.hpp
     src/qt/player_core.cpp
@@ -1052,6 +1082,11 @@ if(BUILD_TESTING)
       src/qt/mpv_video_item.hpp
       src/qt/player_controller.cpp
       src/qt/player_controller.hpp
+      src/qt/subtitle_sources.cpp
+      src/qt/subtitle_sources.hpp
+      src/media/subtitle_text.cpp
+      src/media/matroska_subtitles.cpp
+      src/media/matroska_ebml.cpp
       src/qt/scroll_gesture.cpp
       src/qt/scroll_gesture.hpp
       src/qt/player_core.cpp
