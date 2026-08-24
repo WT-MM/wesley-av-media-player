@@ -27,10 +27,22 @@ Window {
     readonly property color quietSurface: dark ? "#20ffffff" : "#0c000000"
     readonly property color accentColor: dark ? "#f3f3f4" : "#232428"
     readonly property var stepPresets: [5, 10, 15, 30]
+    // The maximum-volume choices, in percent. 100 is "no amplification at
+    // all"; 400 is the native gain stage's own ceiling (kMaximumGain, +12 dB,
+    // src/platform/macos/native_audio_render_core.hpp) and nothing above it
+    // can be offered. The default is 200.
+    readonly property var maxVolumePresets: [100, 125, 150, 200, 300, 400]
 
     title: "Preferences"
     width: 360
-    height: 720
+    // Sized to its content: the column is a fixed list of sections with no
+    // wrapping surprises, so the window is exactly as tall as they are rather
+    // than a number that has to be re-guessed every time a section is
+    // appended (which is the whole point of the one-column shape).
+    // The Math.max floor covers the one frame before the column's children
+    // have been laid out, where implicitHeight is still 0 and a zero-height
+    // window would be shown.
+    height: Math.max(480, Math.round(settingsColumn.implicitHeight + 48))
     minimumWidth: width
     minimumHeight: height
     maximumWidth: width
@@ -51,6 +63,7 @@ Window {
     }
 
     Column {
+        id: settingsColumn
         anchors.fill: parent
         anchors.margins: 24
         spacing: 14
@@ -263,6 +276,73 @@ Window {
                 function onPreservePitchChanged() {
                     if (prefs.player)
                         preservePitchCheck.checked = prefs.player.preservePitch;
+                }
+            }
+        }
+
+        Item {
+            width: 1
+            height: 8
+        }
+
+        Text {
+            text: "MAXIMUM VOLUME"
+            color: prefs.secondary
+            font.pixelSize: 11
+            font.weight: Font.DemiBold
+            font.letterSpacing: 0.8
+        }
+
+        Text {
+            width: parent.width
+            text: "How far above 100% any window's volume can be pushed. Above 100% this is amplification and loud material can distort. The volume sliders re-scale to match, so the track always spans the whole range with 100% marked on it."
+            color: prefs.secondary
+            font.pixelSize: 12
+            wrapMode: Text.WordWrap
+        }
+
+        Item {
+            width: 1
+            height: 2
+        }
+
+        // Two rows of three rather than one row of six: at this panel's fixed
+        // 360pt width, six pill buttons wide enough for "125%" do not fit on
+        // one line and the labels elide. Three per row leaves every one of
+        // them comfortably wider than its text.
+        GridLayout {
+            width: parent.width
+            columns: 3
+            rowSpacing: 6
+            columnSpacing: 6
+
+            Repeater {
+                model: prefs.maxVolumePresets
+
+                QuietButton {
+                    required property int modelData
+                    Layout.fillWidth: true
+                    Layout.preferredWidth: 1
+                    text: modelData + "%"
+                    accessibleName: "Set maximum volume to " + modelData + " percent"
+                    foreground: prefs.foreground
+                    selectedForeground: prefs.dark ? "#17181b" : "#ffffff"
+                    selectedColor: prefs.accentColor
+                    hoverColor: prefs.quietSurface
+                    pressedColor: prefs.dark ? "#38ffffff" : "#18000000"
+                    enabled: prefs.hasPlayer
+                    // The controller stores a normalized multiplier (1.0 =
+                    // 100%); these buttons speak percent. Rounding the
+                    // comparison rather than testing equality on a double
+                    // keeps 1.25 and 1.5 selectable without depending on
+                    // exact binary representations surviving a round trip
+                    // through the state file.
+                    selected: prefs.hasPlayer
+                        && Math.round(prefs.player.maximumVolume * 100) === modelData
+                    onClicked: {
+                        if (prefs.hasPlayer)
+                            prefs.player.setMaximumVolume(modelData / 100);
+                    }
                 }
             }
         }

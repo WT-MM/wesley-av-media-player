@@ -2,6 +2,7 @@ module Wam
 Main 1.0 Main.qml
 FloatingControls 1.0 FloatingControls.qml
 NoticeToast 1.0 NoticeToast.qml
+ValueOsd 1.0 ValueOsd.qml
 IconButton 1.0 IconButton.qml
 QuietButton 1.0 QuietButton.qml
 ChromeToolTip 1.0 ChromeToolTip.qml

@@ -174,6 +174,7 @@ qt_add_qml_module(wam
     qml/Main.qml
     qml/FloatingControls.qml
     qml/NoticeToast.qml
+    qml/ValueOsd.qml
     qml/IconButton.qml
     qml/QuietButton.qml
     qml/ChromeToolTip.qml
