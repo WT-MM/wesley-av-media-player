@@ -1907,6 +1907,14 @@ ApplicationWindow {
         // Same duration and curve as the band's and the transport's own
         // fades, so the traffic lights travel with them.
         windowChrome.setTitlebarRevealed(controlsRevealed, !root.chromeInstantHide);
+        // The cursorShape binding below cannot deliver a blank cursor by
+        // itself on the layer route: nothing repaints while the chrome is
+        // hidden, so Qt only applies the shape on the next pointer event --
+        // and pointer movement is exactly what reveals the chrome again.
+        // NSCursor's until-mouse-moves latch hides it NOW and hands control
+        // back on the same movement that brings the chrome back.
+        if (!controlsRevealed && stageHover.hovered && controller.hasMedia)
+            windowChrome.hideCursorUntilMouseMoves();
     }
 
     onActiveChanged: {
