@@ -741,6 +741,35 @@ ApplicationWindow {
         }
     }
 
+    // Up/Down step this window's volume by a wheel notch (5%), clamped to the
+    // configured maximum, with the same OSD + flash feedback the scroll
+    // gesture gives -- the keys and the wheel are one control at two speeds.
+    Shortcut {
+        sequence: "Up"
+        context: Qt.WindowShortcut
+        enabled: root.controller.hasMedia && !root.nativeDialogVisible
+        onActivated: {
+            root.controller.setVolume(Math.min(root.controller.maximumVolume,
+                                               root.controller.volume + 0.05));
+            transport.flashVolume();
+            root.showVolumeOsd();
+            root.revealControls();
+        }
+    }
+
+    Shortcut {
+        sequence: "Down"
+        context: Qt.WindowShortcut
+        enabled: root.controller.hasMedia && !root.nativeDialogVisible
+        onActivated: {
+            root.controller.setVolume(Math.max(0,
+                                               root.controller.volume - 0.05));
+            transport.flashVolume();
+            root.showVolumeOsd();
+            root.revealControls();
+        }
+    }
+
     Component {
         id: mediaDialogComponent
 
