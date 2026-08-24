@@ -439,6 +439,8 @@ void PlayerWindow::wireSettingsMirror() {
           [this] { manager_.mirrorPreservePitch(controller_); });
   connect(controller_, &PlayerController::scrollGesturesEnabledChanged, this,
           [this] { manager_.mirrorScrollGestures(controller_); });
+  connect(controller_, &PlayerController::maximumVolumeChanged, this,
+          [this] { manager_.mirrorMaximumVolume(controller_); });
   connect(controller_, &PlayerController::volumeChanged, this,
           [this] { manager_.noteVolumeChanged(controller_); });
 }
@@ -526,6 +528,11 @@ void WindowManager::seedController(PlayerController *controller) const {
 #endif
   const ::wam::PersistentState &state = store_.state();
   controller->setAppearance(appearanceValue(state.appearance_theme));
+  // Before the level, always: setVolume clamps against the ceiling in force,
+  // so a window seeded in the other order would have its level cut to the
+  // default 200% before the real (possibly higher) maximum arrived.
+  controller->setMaximumVolume(
+      static_cast<double>(std::clamp(state.maximum_volume, 100, 400)) / 100.0);
   // Deliberately capped at 100 even though the store records up to 200: a
   // window opened now must never blast at a boost level chosen in some other
   // window, or in some earlier session. See noteVolumeChanged.
@@ -754,6 +761,21 @@ void WindowManager::mirrorScrollGestures(PlayerController *origin) {
   requestCheckpoint();
 }
 
+void WindowManager::mirrorMaximumVolume(PlayerController *origin) {
+  if (mirroring_ || origin == nullptr)
+    return;
+  mirroring_ = true;
+  const double value = origin->maximumVolume();
+  store_.state().maximum_volume =
+      std::clamp(static_cast<int>(std::lround(value * 100.0)), 100, 400);
+  for (PlayerWindow *window : windows_) {
+    if (window->controller() != origin)
+      window->controller()->setMaximumVolume(value);
+  }
+  mirroring_ = false;
+  requestCheckpoint();
+}
+
 void WindowManager::noteVolumeChanged(PlayerController *origin) {
   if (origin == nullptr)
     return;
@@ -762,14 +784,14 @@ void WindowManager::noteVolumeChanged(PlayerController *origin) {
   // simply whichever window set it last.
   //
   // The stored value keeps the real level, boost included -- the on-disk
-  // format has always admitted 0..200 -- but seedController() caps what a NEW
-  // window is seeded with at 100. A window the user deliberately pushed to
-  // 180% must stay there across a media replacement; a brand-new window
-  // opened later must not blast at 180% because of a decision made in a
-  // different window. Recording the truth and capping the restore is what
-  // gives both.
+  // format admits 0..400, the whole range the maximum-volume setting can open
+  // up -- but seedController() caps what a NEW window is seeded with at 100.
+  // A window the user deliberately pushed to 180% must stay there across a
+  // media replacement; a brand-new window opened later must not blast at 180%
+  // because of a decision made in a different window. Recording the truth and
+  // capping the restore is what gives both.
   store_.state().volume = std::clamp(
-      static_cast<int>(std::lround(origin->volume() * 100.0)), 0, 200);
+      static_cast<int>(std::lround(origin->volume() * 100.0)), 0, 400);
   requestCheckpoint();
 }
 

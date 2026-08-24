@@ -34,6 +34,21 @@ ApplicationWindow {
     // move on one schedule.
     readonly property bool chromeInstantHide: !root.active
         || (!stageHover.hovered && !root.titlebarPinned)
+    // "Fill Screen (Padded)" (View menu, Cmd-Shift-F): this window has been
+    // blown up to its screen's whole visible frame and the video is
+    // letterboxed/pillarboxed inside it with black bars. Per window, and
+    // deliberately not persisted -- it is a way of looking at THIS window
+    // right now, not a preference.
+    //
+    // The bars themselves are free: on the layer-presentation route the
+    // AVSampleBufferDisplayLayer is already AVLayerVideoGravityResizeAspect
+    // over a black layer background (see
+    // src/platform/macos/native_layer_host_view.mm), and on the other route
+    // videoBackdrop below is already "#000000" whenever media is open. So
+    // nothing is drawn for this mode that was not already being drawn, and a
+    // padded window with its chrome hidden costs exactly what an unpadded one
+    // does.
+    property bool fillScreenPadded: false
     property bool transportUserPositioned: false
     property point transportPosition: Qt.point(0, 0)
     property Item dialogFocusReturnItem: null
@@ -135,6 +150,12 @@ ApplicationWindow {
         && !root.benchmarkModeActive
         && root.controller.hasMedia
         && root.visibility !== Window.FullScreen
+        // Padded fill is the explicit opposite of hugging: the user asked for
+        // a screen-sized window with bars. It therefore overrides the setting
+        // for as long as it is on, for THIS window only, and unticking is not
+        // required (nor is the setting touched -- turning padding off hands
+        // the window straight back to whatever hugging was already doing).
+        && !root.fillScreenPadded
         && root.videoNaturalSize.width > 0
         && root.videoNaturalSize.height > 0
     // The default 360pt minimum height letterboxes a wide (e.g. cinemascope)
@@ -391,6 +412,70 @@ ApplicationWindow {
         noticeHideTimer.stop();
     }
 
+    // ---------------------------------------------------------------------
+    // Volume OSD (qml/ValueOsd.qml).
+    //
+    // Driven IMPERATIVELY from the gestures that change the level -- the
+    // scroll handler below, both of the transport's sliders and its mute
+    // button, and the maximum-volume clamp -- rather than bound to
+    // controller.volume. Two reasons, both real:
+    //
+    //   * A binding would fire for the seed value WindowManager pushes into
+    //     every new controller (seedController), flashing a volume card onto
+    //     a window the instant it opens.
+    //   * A binding would keep re-laying-out the card's Text on every level
+    //     change even while it is invisible, which is exactly the cost the
+    //     component promises not to have once faded.
+    //
+    // Live updating is not lost by doing it this way: every one of those
+    // gestures calls in on EVERY delta, so a continuous scroll or slider drag
+    // updates the number in the card that is already up.
+    function volumeOsdLine() {
+        if (root.controller.muted)
+            return "Muted";
+        return Math.round(root.controller.volume * 100) + "%";
+    }
+
+    function showVolumeOsd() {
+        if (!root.controller.hasMedia)
+            return;
+        volumeOsd.show(root.volumeOsdLine());
+    }
+
+    // ---------------------------------------------------------------------
+    // "Fill Screen (Padded)" -- View menu, Cmd-Shift-F.
+    //
+    // Grows the window to its screen's whole visible frame and lets the video
+    // letterbox inside it; toggling again puts the window back on the exact
+    // frame it left (macos_window_chrome remembers the rectangle, per window).
+    // Returns false when it could not act, so the caller knows the state did
+    // not change.
+    function toggleFillScreenPadded() {
+        if (typeof windowChrome === "undefined" || !windowChrome)
+            return false;
+        // Fullscreen owns the frame outright; padding underneath it would be
+        // invisible now and a frame AppKit would fight on the way out.
+        if (root.visibility === Window.FullScreen)
+            return false;
+        if (!windowChrome.setFillScreenPadded(!root.fillScreenPadded))
+            return false;
+        root.fillScreenPadded = !root.fillScreenPadded;
+        root.revealControls();
+        return true;
+    }
+
+    // The remembered pre-fill frame is stale the moment the user issues a
+    // different, deliberate geometry command (Actual Size, Fit to Screen):
+    // after one of those, "put it back" no longer means anything they asked
+    // for. Drop the memory and the mode together rather than leaving a toggle
+    // armed on a rectangle that is no longer the answer to any question.
+    function forgetFillScreenPadded() {
+        if (typeof windowChrome === "undefined" || !windowChrome)
+            return;
+        windowChrome.clearFillScreenPadded();
+        root.fillScreenPadded = false;
+    }
+
     function showQuickEdit() {
         quickEditOpen = true;
         revealControls();
@@ -469,6 +554,7 @@ ApplicationWindow {
             return false;
         if (root.videoNaturalSize.width <= 0 || root.videoNaturalSize.height <= 0)
             return false;
+        root.forgetFillScreenPadded();
         windowChrome.resizeToActualSize(root.videoNaturalSize.width, root.videoNaturalSize.height);
         return true;
     }
@@ -484,6 +570,7 @@ ApplicationWindow {
             return false;
         if (visibility === Window.FullScreen)
             return false;
+        root.forgetFillScreenPadded();
         windowChrome.resizeToFitScreen(root.videoNaturalSize.width, root.videoNaturalSize.height);
         return true;
     }
@@ -1353,8 +1440,14 @@ ApplicationWindow {
                 // Both outcomes are chrome interaction: the volume readout
                 // and the timeline handle are the feedback, and the reveal
                 // has to re-arm the idle fade rather than pin the chrome up.
-                if (outcome === 1)
+                if (outcome === 1) {
                     transport.flashVolume();
+                    // The reason this exists: the user asked to see the
+                    // number, VLC-style, while scrolling over the picture.
+                    // Called per admitted delta, so the card that is already
+                    // up simply updates.
+                    root.showVolumeOsd();
+                }
                 root.revealControlsForPointerGesture();
             }
         }
@@ -1438,6 +1531,7 @@ ApplicationWindow {
             instantHide: root.chromeInstantHide
             suppressed: (!root.active && root.controller.hasMedia) || (root.quickEditOpen && root.width < 760)
             onInteraction: root.revealControls()
+            onVolumeOsdRequested: root.showVolumeOsd()
             onInteractionActiveChanged: root.transportInteractionChanged()
             onMoveRequested: (targetX, targetY) => root.moveTransportTo(targetX, targetY)
             onEditRequested: root.openQuickEdit()
@@ -1447,6 +1541,32 @@ ApplicationWindow {
             id: noticeHideTimer
             interval: 4000
             onTriggered: root.noticeVisible = false
+        }
+
+        // The volume OSD. Top-centre, one titlebar-band's height clear of the
+        // top edge.
+        //
+        // Position justified against the two things it must not fight. The
+        // transport lives at the bottom centre (defaultTransportY) and Quick
+        // Edit takes the right-hand column (quickEditWidth + its margin), so
+        // the top-centre strip is the one large region neither can occupy at
+        // any window size -- top-RIGHT would sit under the Quick Edit sheet
+        // the moment it opens. Dropping a full band height below the top edge
+        // clears the titlebar band's own filename, so a scroll while the
+        // chrome is up does not stack two pieces of text.
+        //
+        // Not inside the faded chrome and not reported into
+        // transport.interactionActive: showing the volume must not pin the
+        // transport and titlebar on screen. See qml/ValueOsd.qml.
+        ValueOsd {
+            id: volumeOsd
+            objectName: "volumeOsd"
+            anchors.horizontalCenter: stage.horizontalCenter
+            anchors.top: stage.top
+            anchors.topMargin: Math.round(Math.max(20, root.titlebarInteractionHeight + 20))
+            referenceWidth: stage.width
+            referenceHeight: stage.height
+            z: 2
         }
 
         NoticeToast {
@@ -1573,6 +1693,29 @@ ApplicationWindow {
             root.showNotice(root.controller.lastNotice);
         }
 
+        // A boost that vanished because the maximum-volume preference was
+        // lowered under it has a visible cause: the new level appears in the
+        // OSD, in this window, at the instant it is applied.
+        function onVolumeClamped() {
+            root.showVolumeOsd();
+        }
+
+        // Keeps the number honest for the whole time the card is up, without
+        // paying for a binding when it is not. Every gesture that opens the
+        // card already sets the text, so this only catches a level that moved
+        // underneath an open card -- and it early-returns (no property write,
+        // no layout, no frame) whenever the card is down, which is almost
+        // always.
+        function onVolumeChanged() {
+            if (volumeOsd.shown)
+                volumeOsd.text = root.volumeOsdLine();
+        }
+
+        function onMutedChanged() {
+            if (volumeOsd.shown)
+                volumeOsd.text = root.volumeOsdLine();
+        }
+
         function onPlayingChanged() {
             root.revealControls();
         }
@@ -1686,6 +1829,22 @@ ApplicationWindow {
             return;
         if (root.snappedSource.toString() === root.controller.source.toString())
             return;
+        // POLICY: padded fill SURVIVES a media replacement. The window is a
+        // screen-sized frame the user chose to look through, and the next
+        // video simply letterboxes to its own shape inside it -- exactly what
+        // "fill screen, padded" means. So the QuickTime aspect snap is
+        // suppressed here rather than allowed to yank the frame back onto the
+        // new video's ratio.
+        //
+        // The source is still recorded as snapped, on purpose: the snap is a
+        // one-shot that belongs to the moment the media opened, and replaying
+        // it later -- when padding is eventually switched off, whose whole
+        // contract is "put the window back exactly where it was" -- would
+        // resize the window to a video the user opened minutes ago.
+        if (root.fillScreenPadded) {
+            root.snappedSource = root.controller.source;
+            return;
+        }
         // The benchmark harness owns the window geometry for its runs and its
         // validity checks reject any bounds change it did not make itself.
         if (windowChrome.benchmarkMode)
@@ -1727,4 +1886,93 @@ ApplicationWindow {
         else
             hideControlsImmediately();
     }
+
+    // FULLSCREEN TRANSITIONS. Both halves of this are fixes, not upkeep.
+    //
+    // The traffic lights. macOS does not build a second set of window buttons
+    // for fullscreen; it reparents the very NSButton instances the chrome
+    // fade has been writing alphaValue onto into the auto-hiding fullscreen
+    // titlebar accessory. AppKit's hover-reveal then animates that
+    // accessory's POSITION and never touches their alpha -- so a window that
+    // entered fullscreen with the chrome faded out (alpha 0) slid three
+    // invisible buttons down under the menu bar, and there was no way to
+    // click out of fullscreen at all. setTitlebarRevealed now pins them
+    // opaque whenever the window is in fullscreen
+    // (src/qt/macos_window_chrome.mm); re-asserting it here is what clears
+    // the latch left by the last windowed fade on the way IN, and what
+    // restores this window's real revealed state on the way OUT.
+    //
+    // Focus. F and Escape are bare keys handled by stage's Keys.onPressed
+    // filter (see the note there), so they only work while `stage` actually
+    // holds focus -- and a fullscreen transition is precisely the kind of
+    // window-level event that can leave focus on whatever was last clicked.
+    // Taking it back here is what makes "press F again to leave" reliable.
+    onVisibilityChanged: {
+        stage.forceActiveFocus();
+        root.reassertTitlebarControls();
+        // AppKit's own fullscreen transition animation outlives this signal.
+        // One deferred re-assert after it has settled, so the final word on
+        // the buttons' alpha is ours and not a state observed mid-transition.
+        fullscreenSettleTimer.restart();
+    }
+
+    // Always the window's REAL revealed state, never a fullscreen special
+    // case. Whether fullscreen overrides it is AppKit's question, not QML's,
+    // and only the native side can answer it honestly: Qt's `visibility`
+    // flips the instant something asks for fullscreen, while AppKit's own
+    // NSWindowStyleMaskFullScreen flips when the transition actually
+    // completes -- and measured, the two can disagree for a long time (or
+    // forever, if AppKit declines the transition, which it does for a window
+    // whose application is not active). setTitlebarControlsRevealed reads the
+    // style mask and pins the buttons opaque exactly while it is set, so a
+    // window Qt merely *thinks* is fullscreen still fades its chrome
+    // correctly.
+    function reassertTitlebarControls() {
+        if (typeof windowChrome === "undefined" || !windowChrome)
+            return;
+        windowChrome.setTitlebarRevealed(root.controlsRevealed, false);
+    }
+
+    Timer {
+        id: fullscreenSettleTimer
+        // Comfortably past AppKit's ~0.5s fullscreen transition. Single-shot
+        // and armed only by a visibility change, so nothing ticks in steady
+        // state.
+        interval: 700
+        repeat: false
+        onTriggered: root.reassertTitlebarControls()
+    }
+
+    // Escape leaves fullscreen no matter what holds focus.
+    //
+    // The bare-key filter on `stage` (Keys.onPressed) cannot promise that: a
+    // focused transport button, or anything else that took focus during the
+    // transition, swallows the key before the filter ever runs -- and being
+    // unable to leave fullscreen is not a cosmetic failure. A window-scoped
+    // Shortcut is answered by the window itself regardless of the focus item.
+    //
+    // It stands down for the two surfaces that legitimately own Escape while
+    // they are up (Quick Edit closes on it, a native dialog cancels on it),
+    // so this never steals the key from them; the filter on `stage` keeps
+    // handling Escape for Quick Edit exactly as before.
+    Shortcut {
+        sequence: "Escape"
+        context: Qt.WindowShortcut
+        enabled: root.visibility === Window.FullScreen
+            && !root.quickEditOpen
+            && !root.nativeDialogVisible
+        onActivated: {
+            root.visibility = Window.Windowed;
+            root.revealControls();
+        }
+    }
+
+    // Cmd-Shift-F ("Fill Screen (Padded)") is deliberately NOT bound here.
+    // It lives only on the View menu item (qml/AppMenuBar.qml), which is a
+    // real NSMenu key equivalent -- AppKit dispatches those from
+    // -[NSApplication sendEvent:] before the event ever reaches the key
+    // window, so a QML Shortcut on the same sequence would be dead code in
+    // the normal case and a double-toggle (i.e. a visible no-op) in any case
+    // where it was not. One binding, in the place that also makes the gesture
+    // discoverable.
 }

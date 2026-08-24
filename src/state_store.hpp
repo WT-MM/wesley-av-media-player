@@ -42,6 +42,12 @@ struct PersistentState {
   // matching VLC and IINA. Off leaves the video surface inert to the wheel;
   // the transport's own controls are unaffected either way.
   bool scroll_gestures = true;
+  // The ceiling every window's volume may be raised to, in percent. The
+  // Preferences window offers 100/125/150/200/300/400 and the default is 200,
+  // which is the behavior every route already had. Bounded to [100, 400]:
+  // 100 disables amplification entirely and 400 is the native gain stage's
+  // own kMaximumGain (+12 dB), which nothing may exceed.
+  int maximum_volume = 200;
   std::unordered_map<std::string, double> positions;
 
   bool operator==(const PersistentState&) const = default;

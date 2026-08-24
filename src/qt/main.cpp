@@ -25,6 +25,7 @@
 #include <QQmlContext>
 #include <QQmlEngine>
 #include <QQuickStyle>
+#include <QImage>
 #include <QQuickWindow>
 #include <QRect>
 #include <QPointF>
@@ -208,7 +209,17 @@ std::vector<ScriptedOpen> parseOpenScript(const QByteArray &value) {
 //   focus:<index>       raise and focus
 //   pause:<index>       play:<index>       rate:<index>:<value>
 //   seekstep:<value>    set it on window 0, to observe the settings mirror
-//   volume:<index>:<v>  set that window's normalized volume (0..2)
+//   volume:<index>:<v>  set that window's normalized volume (0..maximum)
+//   maxvolume:<v>       set the maximum-volume setting on window 0 (1..4),
+//                       to observe it mirror onto every other window
+//   padded:<index>      toggle that window's "Fill Screen (Padded)" mode --
+//                       the View menu item's own QML entry point
+//   mute:<index>        the transport's mute button (toggle + volume OSD)
+//   fullscreen:<index>  toggle that window's fullscreen, the F key's own path
+//   grab:<index>:<path> write that window's QML SCENE to a PNG (the video
+//                       itself is not in it on the layer route -- see the
+//                       implementation), so an overlay can be proved without
+//                       a screen capture the machine's live user can spoil
 //   gestures:<0|1>      set scrollGesturesEnabled on window 0 (mirrored)
 //   scroll:<index>:<dx>:<dy>:<count>[:<phase>[:<inverted>[:<fx>:<fy>]]]
 //                       deliver <count> synthetic QWheelEvents to that
@@ -282,6 +293,29 @@ int chromeRevealed(const wam::qt::PlayerWindow *window) {
   if (root == nullptr)
     return -1;
   const QVariant value = root->property("controlsRevealed");
+  return value.isValid() ? (value.toBool() ? 1 : 0) : -1;
+}
+
+// The QML root's own per-window "Fill Screen (Padded)" flag, and whether the
+// volume OSD card is currently up. Both are read off the root rather than
+// inferred, for the same reason chromeRevealed is: a verification round has to
+// be able to state what the window IS in, not what it was asked to do.
+int rootFlag(const wam::qt::PlayerWindow *window, const char *name) {
+  const QObject *root = window != nullptr ? window->qmlRoot() : nullptr;
+  if (root == nullptr)
+    return -1;
+  const QVariant value = root->property(name);
+  return value.isValid() ? (value.toBool() ? 1 : 0) : -1;
+}
+
+int volumeOsdShown(const wam::qt::PlayerWindow *window) {
+  const QObject *root = window != nullptr ? window->qmlRoot() : nullptr;
+  if (root == nullptr)
+    return -1;
+  QObject *osd = root->findChild<QObject *>(QStringLiteral("volumeOsd"));
+  if (osd == nullptr)
+    return -1;
+  const QVariant value = osd->property("shown");
   return value.isValid() ? (value.toBool() ? 1 : 0) : -1;
 }
 
@@ -383,7 +417,8 @@ void reportWindows(const wam::qt::WindowManager &windows) {
                "WAM_TEST_WINDOW idx=%1 media=%2 paused=%3 playing=%4 rate=%5 "
                "step=%6 hugs=%7 pitch=%8 geom=%10x%11+%12+%13 "
                "volume=%14 muted=%15 gestures=%16 pos=%17 dur=%18 "
-               "chrome=%19 vfeedback=%20 vnat=%21 source=%9")
+               "chrome=%19 vfeedback=%20 vnat=%21 vmax=%22 padded=%23 "
+               "fullscreen=%24 osd=%25 tlalpha=%26 nsfs=%27 source=%9")
                .arg(index)
                .arg(player->hasMedia() ? 1 : 0)
                .arg(player->paused() ? 1 : 0)
@@ -404,7 +439,24 @@ void reportWindows(const wam::qt::WindowManager &windows) {
                .arg(player->duration(), 0, 'f', 4)
                .arg(chromeRevealed(open.at(index)))
                .arg(volumeFeedbackActive(open.at(index)))
-               .arg(videoNaturalSizeSummary(open.at(index)));
+               .arg(videoNaturalSizeSummary(open.at(index)))
+               .arg(player->maximumVolume(), 0, 'f', 4)
+               .arg(rootFlag(open.at(index), "fillScreenPadded"))
+               .arg(quick != nullptr
+                        ? (quick->visibility() == QWindow::FullScreen ? 1 : 0)
+                        : -1)
+               .arg(volumeOsdShown(open.at(index)))
+               .arg(quick != nullptr
+                        ? wam::macos_window_chrome::titlebarControlsAlpha(
+                              const_cast<QQuickWindow *>(quick))
+                        : -1.0,
+                    0, 'f', 3)
+               .arg(quick != nullptr
+                        ? (wam::macos_window_chrome::nativeFullScreen(
+                               const_cast<QQuickWindow *>(quick))
+                               ? 1
+                               : 0)
+                        : -1);
 
     // Subtitles get their own line rather than more fields on the one above:
     // the track labels are free text and would break any parser that splits
@@ -520,6 +572,60 @@ void runWindowStep(wam::qt::WindowManager &windows, const QString &verb) {
   } else if (head == QStringLiteral("volume")) {
     if (wam::qt::PlayerWindow *window = windowAt(index))
       window->controller()->setVolume(fields.value(2).toDouble());
+  } else if (head == QStringLiteral("grab")) {
+    // Grab that window's QML scene to a PNG.
+    //
+    // A screen capture cannot be trusted on a machine somebody is using: the
+    // window is real and on screen (WAM_TEST_BACKGROUND orders it front
+    // without activating), but anything the live user raises -- Mission
+    // Control, a full-screen app -- lands in the frame instead. This reads the
+    // scene out of the window itself, so what is proved is what WAM drew.
+    //
+    // It captures the QML SCENE only. On the layer-presentation route the
+    // picture is an AVSampleBufferDisplayLayer composited by WindowServer
+    // BELOW Qt's view, so the video is not in this image -- which is exactly
+    // right for proving a QML overlay (the volume OSD, the transport, the
+    // titlebar band) and useless for proving the picture.
+    if (wam::qt::PlayerWindow *window = windowAt(index)) {
+      if (QQuickWindow *quick = window->window()) {
+        const QImage image = quick->grabWindow();
+        const QString path = fields.mid(2).join(QLatin1Char(':'));
+        qInfo().noquote()
+            << QStringLiteral("WAM_TEST_GRAB idx=%1 size=%2x%3 saved=%4 path=%5")
+                   .arg(index)
+                   .arg(image.width())
+                   .arg(image.height())
+                   .arg(!image.isNull() && image.save(path) ? 1 : 0)
+                   .arg(path);
+      }
+    }
+  } else if (head == QStringLiteral("maxvolume")) {
+    // Set on window 0 only, exactly like `seekstep` and `gestures`: it is an
+    // app-level setting and the point of driving it from one window is to
+    // observe the mirror land on the others.
+    if (wam::qt::PlayerWindow *window = windowAt(0))
+      window->controller()->setMaximumVolume(fields.value(1).toDouble());
+  } else if (head == QStringLiteral("mute")) {
+    // The transport's mute button, minus the button: the same
+    // toggleMute() + volume-OSD pair the QML control fires.
+    if (wam::qt::PlayerWindow *window = windowAt(index)) {
+      window->controller()->toggleMute();
+      if (QObject *root = window->qmlRoot())
+        QMetaObject::invokeMethod(root, "showVolumeOsd");
+    }
+  } else if (head == QStringLiteral("fullscreen")) {
+    // The F key / View menu gesture, driven at the controller signal both of
+    // them raise, so the scripted round goes through the same QML handler.
+    if (wam::qt::PlayerWindow *window = windowAt(index))
+      window->controller()->toggleFullscreen();
+  } else if (head == QStringLiteral("padded")) {
+    // The View menu's "Fill Screen (Padded)" toggle, driven at the QML root
+    // the menu item itself calls -- so the scripted round exercises the real
+    // path and not a re-implementation of it.
+    if (wam::qt::PlayerWindow *window = windowAt(index)) {
+      if (QObject *root = window->qmlRoot())
+        QMetaObject::invokeMethod(root, "toggleFillScreenPadded");
+    }
   } else if (head == QStringLiteral("gestures")) {
     if (wam::qt::PlayerWindow *window = windowAt(0))
       window->controller()->setScrollGesturesEnabled(fields.value(1).toInt() !=

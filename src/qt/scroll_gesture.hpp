@@ -96,7 +96,15 @@ public:
   static constexpr double kDetentBreakthrough = 0.08;
 
   static constexpr double kMinimumVolume = 0.0;
+  // The DEFAULT ceiling, i.e. the Preferences panel's default "Maximum
+  // volume" of 200%. Every caller that knows the window's configured maximum
+  // passes it; this is the fallback for one that does not.
   static constexpr double kMaximumVolume = 2.0;
+  // The highest ceiling the setting may ever be raised to: the native gain
+  // stage's kMaximumGain (4.0, +12 dB -- see
+  // src/platform/macos/native_audio_render_core.hpp). Nothing above this is
+  // ever sent to an engine, whatever the UI is configured for.
+  static constexpr double kAbsoluteMaximumVolume = 4.0;
 
   // Folds one wheel event into the gesture. Returns the step to apply; an
   // all-zero step means "nothing to do yet" (still deciding the axis, or an
@@ -110,12 +118,23 @@ public:
   [[nodiscard]] ScrollAxis lockedAxis() const noexcept { return axis_; }
 
   // Applies `delta` to `current` with the 100% detent, clamped to
-  // [kMinimumVolume, kMaximumVolume]. Stateful: the resistance is charged
-  // across successive calls, and a reversal discharges it.
-  [[nodiscard]] double volumeWithDetent(double current, double delta) noexcept;
+  // [kMinimumVolume, `maximum`]. Stateful: the resistance is charged across
+  // successive calls, and a reversal discharges it.
+  //
+  // `maximum` is the window's configured "Maximum volume" (the Preferences
+  // setting, 1.0 .. kAbsoluteMaximumVolume). It is a parameter rather than a
+  // constant because it is a live, per-window, user-changeable bound; a
+  // non-finite or below-unity value falls back to kMaximumVolume, so unity is
+  // always reachable.
+  [[nodiscard]] double volumeWithDetent(
+      double current, double delta,
+      double maximum = kMaximumVolume) noexcept;
 
   // The magnetic half of the same detent, for a slider drag: any value within
-  // one breakthrough of unity snaps to exactly unity. Pure.
+  // one breakthrough of unity snaps to exactly unity. Pure. Clamped only to
+  // the ABSOLUTE ceiling -- the slider's own track already enforces the
+  // window's configured maximum, and re-applying a default one here would
+  // drag a legitimately boosted value back down.
   [[nodiscard]] static double snapVolumeToDetent(double value) noexcept;
 
 private:

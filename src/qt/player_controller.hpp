@@ -70,10 +70,22 @@ class PlayerController final : public QObject {
   // of them; Main.qml falls back to this when it does.
   Q_PROPERTY(QSize videoDisplaySize READ videoDisplaySize NOTIFY
                  videoDisplaySizeChanged)
-  // Normalized level where 1.0 is 100%. The range runs to 2.0: above unity
-  // this is VLC-style amplification, which can clip by design (the native
-  // gain stage saturates each sample to [-1, 1]; mpv is given volume-max 200).
+  // Normalized level where 1.0 is 100%. The range runs to maximumVolume
+  // below: above unity this is VLC-style amplification, which can clip by
+  // design (the native gain stage saturates each sample to [-1, 1]; mpv is
+  // given volume-max 400).
   Q_PROPERTY(double volume READ volume WRITE setVolume NOTIFY volumeChanged)
+  // The ceiling `volume` may be raised to, normalized the same way: 1.0 is
+  // 100% (no amplification at all) and 4.0 is the engine's own gain ceiling
+  // (src/platform/macos/native_audio_render_core.hpp's kMaximumGain). A
+  // persisted, app-level Preferences setting mirrored onto every window, like
+  // preservePitch; the Preferences panel offers 100/125/150/200/300/400% and
+  // the default is 200%.
+  //
+  // Lowering it below a window's current level clamps that level down at once
+  // and emits volumeClamped() so the window can say so on screen.
+  Q_PROPERTY(double maximumVolume READ maximumVolume WRITE setMaximumVolume
+                 NOTIFY maximumVolumeChanged)
   Q_PROPERTY(bool muted READ muted WRITE setMuted NOTIFY mutedChanged)
   Q_PROPERTY(double rate READ rate WRITE setRate NOTIFY rateChanged)
   Q_PROPERTY(bool captionsVisible READ captionsVisible WRITE setCaptionsVisible
@@ -178,8 +190,9 @@ public:
   [[nodiscard]] double position() const { return position_; }
   [[nodiscard]] double duration() const { return duration_; }
   [[nodiscard]] QSize videoDisplaySize() const { return video_display_size_; }
-  // Normalized UI volume. mpv's 0..200 range maps to 0..2 here; 1.0 is 100%.
+  // Normalized UI volume. mpv's 0..400 range maps to 0..4 here; 1.0 is 100%.
   [[nodiscard]] double volume() const { return volume_; }
+  [[nodiscard]] double maximumVolume() const { return maximum_volume_; }
   [[nodiscard]] bool scrollGesturesEnabled() const {
     return scroll_gestures_enabled_;
   }
@@ -232,6 +245,7 @@ public:
   Q_INVOKABLE void toggleMute();
   Q_INVOKABLE void setMuted(bool muted);
   Q_INVOKABLE void setVolume(double volume);
+  Q_INVOKABLE void setMaximumVolume(double maximum);
   Q_INVOKABLE void setScrollGesturesEnabled(bool enabled);
 
   // One wheel event over the video surface. The arguments are the QML
@@ -305,6 +319,12 @@ signals:
   void durationChanged();
   void videoDisplaySizeChanged();
   void volumeChanged();
+  void maximumVolumeChanged();
+  // The level was pulled down because the maximum-volume setting was lowered
+  // under it -- not because anything asked for a new level. qml/Main.qml puts
+  // the resulting value on screen in the volume OSD, so a boost silently
+  // disappearing always has a visible cause.
+  void volumeClamped();
   void scrollGesturesEnabledChanged();
   void scrollGestureActiveChanged();
   void mutedChanged();
@@ -810,6 +830,8 @@ private:
   double duration_ = 0.0;
   QSize video_display_size_;
   double volume_ = 1.0;
+  // Default 200%, the user-confirmed default for the Preferences setting.
+  double maximum_volume_ = 2.0;
   double rate_ = 1.0;
   double trim_in_ = 0.0;
   double trim_out_ = 0.0;

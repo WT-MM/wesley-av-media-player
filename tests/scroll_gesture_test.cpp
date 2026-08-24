@@ -300,8 +300,11 @@ void testMagneticSnapForSliderDrags() {
              "a drag just below unity snaps to unity");
   expectNear(ScrollGestureModel::snapVolumeToDetent(1.20), 1.20, 1e-12,
              "a drag outside the window keeps its value");
-  expectNear(ScrollGestureModel::snapVolumeToDetent(2.40), 2.0, 0.0,
-             "the snap clamps to the ceiling");
+  expectNear(ScrollGestureModel::snapVolumeToDetent(2.40), 2.40, 1e-12,
+             "the snap leaves a boosted value inside the absolute ceiling "
+             "alone -- the slider's own track owns the configured maximum");
+  expectNear(ScrollGestureModel::snapVolumeToDetent(5.0), 4.0, 0.0,
+             "the snap clamps to the absolute (engine gain) ceiling");
   expectNear(ScrollGestureModel::snapVolumeToDetent(-1.0), 0.0, 0.0,
              "the snap clamps to the floor");
 }

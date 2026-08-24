@@ -55,11 +55,17 @@ constexpr double kMaximumRate = 16.0;
 constexpr double kScrubConvergenceToleranceSeconds = 0.050;
 constexpr int kScrubSeekTimeoutMs = 750;
 
-// Volume runs past unity into VLC-style amplification. 2.0 is the ceiling on
-// every route: the native gain stage clamps there (and saturates each sample
-// to [-1, 1]), and mpv is started with volume-max=200.
+// Volume runs past unity into VLC-style amplification. 4.0 is the ABSOLUTE
+// ceiling on every route: the native gain stage clamps there (and saturates
+// each sample to [-1, 1]), and mpv is started with volume-max=400. How much
+// of that ceiling any window may actually reach is the per-installation
+// "Maximum volume" preference (maximum_volume_, default 200%), which is
+// always inside this range and is what setVolume clamps to.
 constexpr double kMinimumVolume = 0.0;
-constexpr double kMaximumVolume = 2.0;
+constexpr double kMaximumVolume = ScrollGestureModel::kAbsoluteMaximumVolume;
+// The lowest the maximum-volume setting may be put: 100%, i.e. no
+// amplification at all. Unity always stays reachable.
+constexpr double kMinimumMaximumVolume = ScrollGestureModel::kDetentValue;
 
 // How long after the last wheel delta a pointer-scroll gesture counts as
 // settled. It ends the axis lock and commits a timeline sweep. 200 ms is long
@@ -2148,7 +2154,11 @@ void PlayerController::setMuted(bool muted) {
 void PlayerController::setVolume(double volume) {
   if (!std::isfinite(volume))
     return;
-  const double normalized = std::clamp(volume, kMinimumVolume, kMaximumVolume);
+  // The configured maximum, never the absolute one: the engine would happily
+  // take 4.0, and the whole point of the setting is that this installation
+  // has decided it should not.
+  const double normalized =
+      std::clamp(volume, kMinimumVolume, maximum_volume_);
 #if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   const bool native_owned =
       native_playback_ &&
@@ -2165,6 +2175,25 @@ void PlayerController::setVolume(double volume) {
     return;
   volume_ = normalized;
   emit volumeChanged();
+}
+
+void PlayerController::setMaximumVolume(double maximum) {
+  if (!std::isfinite(maximum))
+    return;
+  const double normalized =
+      std::clamp(maximum, kMinimumMaximumVolume, kMaximumVolume);
+  if (nearlyEqual(maximum_volume_, normalized))
+    return;
+  maximum_volume_ = normalized;
+  emit maximumVolumeChanged();
+  // A window sitting above the new ceiling comes down at once rather than
+  // staying loud until the next time something touches the level. setVolume
+  // re-clamps against the maximum just installed, so the value it lands on is
+  // exactly the new ceiling.
+  if (volume_ > maximum_volume_) {
+    setVolume(maximum_volume_);
+    emit volumeClamped();
+  }
 }
 
 void PlayerController::setScrollGesturesEnabled(bool enabled) {
@@ -2221,7 +2250,8 @@ int PlayerController::scrollGesture(double pixelDeltaX, double pixelDeltaY,
       commitScrollSweep();
     if (step.volumeDelta == 0.0)
       return ScrollGestureVolume;
-    setVolume(scroll_model_.volumeWithDetent(volume_, step.volumeDelta));
+    setVolume(scroll_model_.volumeWithDetent(volume_, step.volumeDelta,
+                                             maximum_volume_));
     return ScrollGestureVolume;
   }
 
@@ -3257,7 +3287,7 @@ void PlayerController::drainMpvEvents() {
       case ObservedProperty::Volume: {
         const double value =
             std::clamp(readDouble(property, 100.0) / 100.0, kMinimumVolume,
-                       kMaximumVolume);
+                       maximum_volume_);
         if (!nearlyEqual(volume_, value)) {
           volume_ = value;
           emit volumeChanged();

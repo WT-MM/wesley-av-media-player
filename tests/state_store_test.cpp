@@ -207,6 +207,7 @@ int main() {
   first.state().window_hugs_video = false;
   first.state().preserve_pitch = false;
   first.state().scroll_gestures = false;
+  first.state().maximum_volume = 400;
   first.remember("/tmp/a file.mp4", 42.5);
   first.remember("https://example.com/live", 30.0);
   expect(first.dirty(), "state mutation becomes dirty");
@@ -227,6 +228,8 @@ int main() {
          "preserve pitch round trips");
   expect(second.state().scroll_gestures == false,
          "scroll gestures round trips");
+  expect(second.state().maximum_volume == 400,
+         "maximum volume round trips");
   expect(second.positionFor("/tmp/a file.mp4") == 42.5, "position round trips");
   expect(second.positionFor("https://example.com/live") == 0.0,
          "network positions are not persisted");
@@ -247,6 +250,8 @@ int main() {
          "legacy state without preserve_pitch defaults on");
   expect(legacy.state().scroll_gestures == true,
          "legacy state without scroll_gestures defaults on");
+  expect(legacy.state().maximum_volume == 200,
+         "legacy state without max_volume defaults to 200 percent");
 
   {
     std::ofstream out_of_range(path, std::ios::trunc);
@@ -256,6 +261,31 @@ int main() {
   expect(out_of_range.load(), "out-of-range seek step still loads");
   expect(out_of_range.state().seek_step_seconds == 60,
          "seek step above the bound clamps to sixty seconds");
+
+  {
+    std::ofstream max_volume(path, std::ios::trunc);
+    // 500% is above the native gain stage's own ceiling and 50% is below the
+    // "no amplification" floor; both are bounded rather than rejected. The
+    // 350% volume proves the widened volume record: it used to be clamped to
+    // 200 on the way in, which would have silently un-boosted a window the
+    // user had pushed there under a 400% maximum.
+    max_volume << "volume 350\nmax_volume 500\n";
+  }
+  wam::StateStore max_volume_high(path);
+  expect(max_volume_high.load(), "out-of-range max volume still loads");
+  expect(max_volume_high.state().maximum_volume == 400,
+         "max volume above the engine ceiling clamps to 400 percent");
+  expect(max_volume_high.state().volume == 350,
+         "a boosted level inside the widened range survives a round trip");
+
+  {
+    std::ofstream max_volume(path, std::ios::trunc);
+    max_volume << "volume 80\nmax_volume 50\n";
+  }
+  wam::StateStore max_volume_low(path);
+  expect(max_volume_low.load(), "below-range max volume still loads");
+  expect(max_volume_low.state().maximum_volume == 100,
+         "max volume below unity clamps to 100 percent");
 
   {
     std::ofstream below_range(path, std::ios::trunc);

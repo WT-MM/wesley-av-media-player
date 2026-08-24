@@ -10,9 +10,15 @@ namespace {
   return std::isfinite(value);
 }
 
-[[nodiscard]] double clampVolume(double value) noexcept {
-  return std::clamp(value, ScrollGestureModel::kMinimumVolume,
-                    ScrollGestureModel::kMaximumVolume);
+// The caller's ceiling, sanitized. A non-finite or below-unity maximum falls
+// back to the default one rather than trapping the level under 100%: the
+// Preferences setting's own floor IS 100%, so unity always remains reachable.
+[[nodiscard]] double clampVolume(double value, double maximum) noexcept {
+  const double ceiling =
+      std::isfinite(maximum) && maximum >= ScrollGestureModel::kDetentValue
+          ? maximum
+          : ScrollGestureModel::kMaximumVolume;
+  return std::clamp(value, ScrollGestureModel::kMinimumVolume, ceiling);
 }
 
 }  // namespace
@@ -90,11 +96,11 @@ ScrollStep ScrollGestureModel::accumulate(const ScrollSample &sample) noexcept {
   return step;
 }
 
-double ScrollGestureModel::volumeWithDetent(double current,
-                                            double delta) noexcept {
+double ScrollGestureModel::volumeWithDetent(double current, double delta,
+                                            double maximum) noexcept {
   if (!finite(current))
     current = kDetentValue;
-  current = clampVolume(current);
+  current = clampVolume(current, maximum);
   if (!finite(delta) || delta == 0.0)
     return current;
 
@@ -105,7 +111,7 @@ double ScrollGestureModel::volumeWithDetent(double current,
 
   if (!parked && !crosses) {
     detent_charge_ = 0.0;
-    return clampVolume(raw);
+    return clampVolume(raw, maximum);
   }
 
   // A reversal discharges the resistance: pushing back down off the notch
@@ -122,13 +128,19 @@ double ScrollGestureModel::volumeWithDetent(double current,
   const double released =
       detent_charge_ - std::copysign(kDetentBreakthrough, detent_charge_);
   detent_charge_ = 0.0;
-  return clampVolume(kDetentValue + released);
+  return clampVolume(kDetentValue + released, maximum);
 }
 
 double ScrollGestureModel::snapVolumeToDetent(double value) noexcept {
   if (!finite(value))
     return kDetentValue;
-  const double bounded = clampVolume(value);
+  // This is the MAGNETIC half of the detent, asked only about a value a
+  // slider already produced inside its own 0..maximum track -- so the only
+  // ceiling it can honestly apply is the ABSOLUTE one (the engine's gain
+  // ceiling), not the window's currently configured maximum, which it is not
+  // told and which the slider has already enforced. Clamping to the default
+  // 200% here would silently drag a 350% slider back to 200%.
+  const double bounded = clampVolume(value, kAbsoluteMaximumVolume);
   if (std::abs(bounded - kDetentValue) < kDetentBreakthrough)
     return kDetentValue;
   return bounded;

@@ -144,7 +144,17 @@ bool parseRecord(std::string_view line, PersistentState& state,
   if (key == "volume") {
     int value = 0;
     if (!parseNumber(line, value)) return false;
-    state.volume = std::clamp(value, 0, 200);
+    // Admits the whole boost range the maximum-volume setting can now open
+    // up. A window is still only ever SEEDED at 100 (see
+    // WindowManager::seedController), so widening what is recorded cannot
+    // make a fresh window loud.
+    state.volume = std::clamp(value, 0, 400);
+    return true;
+  }
+  if (key == "max_volume") {
+    int value = 0;
+    if (!parseNumber(line, value)) return false;
+    state.maximum_volume = std::clamp(value, 100, 400);
     return true;
   }
   if (key == "profile") {
@@ -320,6 +330,7 @@ bool StateStore::save() const {
     output << "preserve_pitch " << (snapshot.preserve_pitch ? 1 : 0) << '\n';
     output << "scroll_gestures " << (snapshot.scroll_gestures ? 1 : 0)
            << '\n';
+    output << "max_volume " << snapshot.maximum_volume << '\n';
     for (const auto& [source, seconds] : snapshot.positions)
       output << "position " << std::quoted(source) << ' ' << seconds << '\n';
     output.flush();

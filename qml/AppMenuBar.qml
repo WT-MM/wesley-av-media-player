@@ -316,6 +316,42 @@ Platform.MenuBar {
             enabled: root.mediaLoaded && root.hasWindow
             onTriggered: root.appRoot.resizeToFitScreen()
         }
+        // "Fill Screen (Padded)": grow the window to the screen's whole
+        // visible frame and letterbox/pillarbox the video inside it with
+        // black bars, overriding "Window Hugs Video" for this window while it
+        // is on. A second trigger restores the exact frame the window had.
+        //
+        // Cmd-Shift-F, and this one DOES carry a `shortcut:` -- the file
+        // header's prohibition is on BARE keys, which a native NSMenu key
+        // equivalent would intercept application-wide including inside text
+        // fields. A Cmd-modified sequence can never collide with typed text.
+        // Nothing else in the app binds any Cmd-Shift sequence.
+        Platform.MenuItem {
+            id: fillPaddedMenuItem
+            text: "Fill Screen (Padded)"
+            shortcut: "Ctrl+Shift+F"
+            checkable: true
+            // Qt.labs.platform writes `checked` imperatively on every click,
+            // which detaches a plain binding for good -- the same hazard the
+            // hugs-video item documents below. The Connections block at the
+            // end of this file re-syncs it from the focused window's real
+            // state instead, so it survives any number of clicks and follows
+            // focus between windows.
+            checked: root.hasWindow ? root.appRoot.fillScreenPadded : false
+            // Fullscreen owns the window frame outright; padding underneath
+            // it would be invisible and a frame AppKit would fight on the way
+            // out.
+            enabled: root.mediaLoaded && root.hasWindow
+                && root.appRoot.visibility !== Window.FullScreen
+            onTriggered: {
+                // Ask the window, then take its answer: the toggle can
+                // legitimately decline (no native bridge, a frame change
+                // already in flight), and this item must not then claim a
+                // state the window is not in.
+                root.appRoot.toggleFillScreenPadded();
+                checked = root.appRoot.fillScreenPadded;
+            }
+        }
         Platform.MenuSeparator {}
         // No `shortcut:` (F is a bare key -- see file header); the existing
         // F key handling in Main.qml is untouched, this just adds a
@@ -375,6 +411,25 @@ Platform.MenuBar {
             if (root.controller)
                 hugsVideoMenuItem.checked = root.controller.windowHugsVideo;
         }
+    }
+
+    // The same imperative re-sync for the padded-fill item, against the
+    // focused WINDOW rather than its controller -- padded fill is per window
+    // and deliberately not a controller-level (mirrored, persisted) setting.
+    Connections {
+        target: root.appRoot
+        function onFillScreenPaddedChanged() {
+            if (root.appRoot)
+                fillPaddedMenuItem.checked = root.appRoot.fillScreenPadded;
+        }
+    }
+
+    onAppRootChanged: {
+        // Reads root.appRoot directly rather than the `hasWindow` derived
+        // binding, for the same ordering reason onControllerChanged does.
+        fillPaddedMenuItem.checked = root.appRoot
+            ? root.appRoot.fillScreenPadded
+            : false;
     }
 
     onControllerChanged: {

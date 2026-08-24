@@ -218,6 +218,7 @@ public:
   void mirrorWindowHugsVideo(PlayerController *origin);
   void mirrorPreservePitch(PlayerController *origin);
   void mirrorScrollGestures(PlayerController *origin);
+  void mirrorMaximumVolume(PlayerController *origin);
   void noteVolumeChanged(PlayerController *origin);
 
   // Seeds a freshly created controller from the persisted state.

@@ -23,10 +23,25 @@ FocusScope {
     readonly property bool volumePopupWanted: compact
         && (muteButton.hovered || volumePopupHover.hovered
             || popupVolumeSlider.pressed || root.volumeFeedback)
-    // Volume runs to 200%. Unity sits at the middle of the track and gets a
-    // tick plus a magnetic snap, the same shape the speed slider gives 1x.
-    readonly property real maximumVolume: 2
+    // Volume runs to the window's configured "Maximum volume" (Preferences;
+    // 100/125/150/200/300/400%, default 200%). Both sliders take this as
+    // their `to`, so the track ALWAYS spans 0..maximum whatever it is set to
+    // -- the range is re-scaled, never clipped.
+    //
+    // Unity therefore moves: it sits at travel 1/maximum along the track and
+    // is marked there with a tick plus the magnetic snap, the same shape the
+    // speed slider gives 1x. 200% puts it at the midpoint (where it has
+    // always been), 400% at the quarter point, and 100% at the very right
+    // edge -- at which point there is no boost region left at all and the
+    // tick is redundant with the end of the track, so it is dropped.
+    //
+    // Guarded for the moment before `player` has published the property (and
+    // for any non-player stand-in): the default matches the setting's own.
+    readonly property real maximumVolume: root.player && root.player.maximumVolume > 0
+        ? root.player.maximumVolume
+        : 2
     readonly property real volumeDetentTravel: 1 / maximumVolume
+    readonly property bool volumeBoostAvailable: maximumVolume > 1.0001
     // The readout is deliberately not always on: below unity the track says
     // everything and the chrome stays as quiet as the rest of it. It appears
     // when the level is boosted -- where the number is the difference between
@@ -83,6 +98,12 @@ FocusScope {
     signal editRequested
     signal interaction
     signal moveRequested(real targetX, real targetY)
+    // A control on this bar changed the level (either slider, or the mute
+    // button). The window puts the value on screen in its volume OSD -- the
+    // same readout a scroll over the picture produces, so a drag and a scroll
+    // give identical feedback. Emitted per move, so a drag updates the card
+    // that is already up rather than flickering a new one.
+    signal volumeOsdRequested
 
     function formatStepSeconds(seconds) {
         // seekStepSeconds is always a whole number in practice (the
@@ -327,6 +348,7 @@ FocusScope {
             toolTip: root.volumePopupOpen ? "" : accessibleName
             onClicked: {
                 root.player.toggleMute();
+                root.volumeOsdRequested();
                 root.interaction();
             }
         }
@@ -352,6 +374,7 @@ FocusScope {
                 if (snapped !== value)
                     value = snapped;
                 root.player.setVolume(snapped);
+                root.volumeOsdRequested();
                 root.interaction();
             }
 
@@ -380,10 +403,14 @@ FocusScope {
                     color: "#d8ffffff"
                 }
 
-                // The 100% notch. Two pixels of ink at the exact midpoint of
-                // a 0-200% track: enough to find unity by eye, quiet enough
-                // not to read as a second handle.
+                // The 100% notch, at 1/maximum along the track: the midpoint
+                // of a 0-200% track, the quarter point of a 0-400% one.
+                // Enough ink to find unity by eye, quiet enough not to read
+                // as a second handle. At a 100% maximum it would land on the
+                // track's own right end and say nothing, so it is dropped
+                // there along with the boost region it marks.
                 Rectangle {
+                    visible: root.volumeBoostAvailable
                     x: root.volumeDetentTravel * parent.width - width / 2
                     y: -2
                     width: 1
@@ -493,6 +520,7 @@ FocusScope {
                 if (snapped !== value)
                     value = snapped;
                 root.player.setVolume(snapped);
+                root.volumeOsdRequested();
                 root.interaction();
             }
 
@@ -524,6 +552,7 @@ FocusScope {
 
                 // The 100% notch, mirrored for the vertical track.
                 Rectangle {
+                    visible: root.volumeBoostAvailable
                     x: -2
                     y: (1 - root.volumeDetentTravel) * parent.height - height / 2
                     width: 6

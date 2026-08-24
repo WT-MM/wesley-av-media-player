@@ -310,6 +310,45 @@ FitToScreenState &fitState(NSWindow *nsWindow) {
   return row;
 }
 
+// "Fill Screen (Padded)" memory: the exact frame the window had before it was
+// blown up to the screen's visible frame, so toggling back puts it there to
+// the point. Deliberately a SEPARATE table from fitStates() above rather than
+// a reuse of it: the double-click zoom toggle and the padded fill are two
+// independent gestures a user can interleave, and sharing one row would let
+// either one silently eat the other's restore frame.
+struct PaddedFillState {
+  // Weak for the same reason every other window reference in this file is:
+  // identity comparison only, never messaged through, and a closed window
+  // must nil itself out rather than dangle.
+  __weak NSWindow *window = nil;
+  NSRect restore = NSZeroRect;
+  bool valid = false;
+};
+
+std::array<PaddedFillState, wam::macos::kMaximumConcurrentPlayerWindows> &
+paddedFillStates() {
+  static std::array<PaddedFillState,
+                    wam::macos::kMaximumConcurrentPlayerWindows>
+      states;
+  return states;
+}
+
+// The row for `nsWindow`, reusing its existing row, else the first free one.
+// Never null; see fitState() above, which this mirrors exactly.
+PaddedFillState &paddedFillState(NSWindow *nsWindow) {
+  auto &states = paddedFillStates();
+  PaddedFillState *free_row = nullptr;
+  for (PaddedFillState &state : states) {
+    if (state.window == nsWindow)
+      return state;
+    if (free_row == nullptr && (state.window == nil || !state.valid))
+      free_row = &state;
+  }
+  PaddedFillState &row = free_row != nullptr ? *free_row : states.back();
+  row = PaddedFillState{};
+  return row;
+}
+
 bool framesMatch(NSRect lhs, NSRect rhs) {
   // AppKit rounds frames to whole points on some paths; a 1pt tolerance
   // keeps the toggle from missing its own fitted frame.
@@ -467,6 +506,31 @@ void setTitlebarControlsRevealed(QWindow *window, bool revealed,
   if (!nsWindow)
     return;
 
+  // FULLSCREEN IS NOT OURS TO FADE, and this is the whole reason exiting
+  // fullscreen was impossible.
+  //
+  // AppKit does not build a second set of window buttons for fullscreen; it
+  // reparents THESE THREE NSButton INSTANCES into the auto-hiding fullscreen
+  // titlebar accessory. Its top-edge-hover reveal then animates the
+  // accessory's position -- it never touches each button's alphaValue. So a
+  // windowed fade that left them at alpha 0 (and the idle fade below always
+  // does, because pointerInTitlebarBand() is false in fullscreen by
+  // construction and hideControlsIfIdle therefore always hides) made AppKit
+  // slide three fully transparent traffic lights down under the menu bar:
+  // the strip appeared, the buttons did not, and there was no way to click
+  // out of fullscreen.
+  //
+  // In fullscreen the buttons are therefore pinned opaque and AppKit's own
+  // auto-hide is left to decide when they are on screen -- which is exactly
+  // the standard macOS behaviour, hover-to-reveal and stay-while-hovered
+  // included. Nothing is lost: qml/Main.qml collapses its own titlebar band
+  // to zero height in fullscreen, so the fade has nothing above the video to
+  // own there anyway.
+  if (nsWindow.styleMask & NSWindowStyleMaskFullScreen) {
+    setTrafficLightAlpha(nsWindow, 1.0);
+    return;
+  }
+
   const CGFloat target_alpha = revealed ? 1.0 : 0.0;
   if (!animated) {
     setTrafficLightAlpha(nsWindow, target_alpha);
@@ -486,6 +550,23 @@ void setTitlebarControlsRevealed(QWindow *window, bool revealed,
         }
       }
       completionHandler:nil];
+}
+
+bool nativeFullScreen(QWindow *window) {
+  NSWindow *nsWindow = nsWindowFor(window);
+  return nsWindow != nil &&
+         (nsWindow.styleMask & NSWindowStyleMaskFullScreen) != 0;
+}
+
+
+qreal titlebarControlsAlpha(QWindow *window) {
+  NSWindow *nsWindow = nsWindowFor(window);
+  if (!nsWindow)
+    return -1;
+  NSButton *close = [nsWindow standardWindowButton:NSWindowCloseButton];
+  if (close == nil)
+    return -1;
+  return static_cast<qreal>(close.alphaValue);
 }
 
 qreal titlebarHeight(QWindow *window) {
@@ -711,6 +792,72 @@ void resizeToFitScreen(QWindow *window, qreal videoWidth, qreal videoHeight) {
   state.restore = current;
   state.fitted = normalizedFrame(target).value_or(target);
   state.valid = true;
+}
+
+bool setFillScreenPadded(QWindow *window, bool filled) {
+  NSWindow *nsWindow = nsWindowFor(window);
+  if (!nsWindow)
+    return false;
+  // Fullscreen owns the frame outright; a padded fill underneath it would be
+  // both invisible and a frame AppKit would fight on the way out.
+  if (nsWindow.styleMask & NSWindowStyleMaskFullScreen)
+    return false;
+
+  PaddedFillState &state = paddedFillState(nsWindow);
+
+  if (!filled) {
+    if (!state.valid || state.window != nsWindow)
+      return false;
+    const NSRect restore = state.restore;
+    state.valid = false;
+    state.window = nil;
+    // The restore frame was captured straight out of nsWindow.frame, which
+    // AppKit keeps on the whole-point grid, so normalizedFrame() inside the
+    // applier is the identity here and the window lands on exactly the
+    // rectangle it left.
+    return applyWindowFrameAnimated(nsWindow, restore, kZoomAnimationDuration,
+                                    nil);
+  }
+
+  NSScreen *screen = screenFor(nsWindow);
+  if (!screen)
+    return false;
+  const NSRect visible = screen.visibleFrame;
+  if (NSWidth(visible) <= 0 || NSHeight(visible) <= 0)
+    return false;
+
+  // A drag may still be holding the interactive aspect lock; this frame is
+  // computed here, not by AppKit, and must land verbatim.
+  disarmAspectLock();
+
+  const NSRect current = nsWindow.frame;
+  if (!applyWindowFrameAnimated(nsWindow, visible, kZoomAnimationDuration,
+                                nil))
+    return false;
+  // Only remember the pre-fill frame the first time: a second fill request
+  // while already filled (a re-fill after the screen changed, say) must not
+  // overwrite the user's real window with the filled one.
+  if (!state.valid || state.window != nsWindow) {
+    state.window = nsWindow;
+    state.restore = current;
+    state.valid = true;
+  }
+  // The padded fill is a deliberate, exact frame; the zoom toggle's memory of
+  // a *different* frame is stale from here on, exactly as it is after any
+  // other explicit geometry command in this file.
+  fitState(nsWindow).valid = false;
+  return true;
+}
+
+void clearFillScreenPadded(QWindow *window) {
+  NSWindow *nsWindow = nsWindowFor(window);
+  if (!nsWindow)
+    return;
+  PaddedFillState &state = paddedFillState(nsWindow);
+  if (state.window != nsWindow)
+    return;
+  state.valid = false;
+  state.window = nil;
 }
 
 void snapToVideoAspectRatio(QWindow *window, qreal videoWidth,
@@ -1057,6 +1204,14 @@ void MacWindowChrome::resizeToActualSize(qreal videoPixelWidth,
 
 void MacWindowChrome::resizeToFitScreen(qreal videoWidth, qreal videoHeight) {
   wam::macos_window_chrome::resizeToFitScreen(window_, videoWidth, videoHeight);
+}
+
+bool MacWindowChrome::setFillScreenPadded(bool filled) {
+  return wam::macos_window_chrome::setFillScreenPadded(window_, filled);
+}
+
+void MacWindowChrome::clearFillScreenPadded() {
+  wam::macos_window_chrome::clearFillScreenPadded(window_);
 }
 
 void MacWindowChrome::snapToVideoAspectRatio(qreal videoWidth,

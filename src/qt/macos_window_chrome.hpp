@@ -139,6 +139,23 @@ bool revealInFinder(const QUrl &source);
 void setTitlebarControlsRevealed(QWindow *window, bool revealed,
                                  bool animated);
 
+// The alpha the three traffic-light buttons are currently drawn at, or -1 for
+// a null / not-yet-native window. This is a MEASUREMENT of exactly the thing
+// the fullscreen defect was: the chrome fade writes alphaValue onto the same
+// NSButton instances AppKit reparents into the fullscreen titlebar accessory,
+// and a fullscreen window whose buttons read 0 here is a fullscreen window
+// nobody can click their way out of. Reported by the WAM_TEST_WINDOW_SCRIPT
+// `report` verb.
+[[nodiscard]] qreal titlebarControlsAlpha(QWindow *window);
+
+// Whether AppKit itself considers `window` to be in native fullscreen
+// (NSWindowStyleMaskFullScreen), which is a different fact from Qt's
+// QWindow::visibility() -- Qt's is set the instant something asks for the
+// change, AppKit's flips when the transition actually completes. Reported
+// next to Qt's answer so a verification round can tell "asked" from "is".
+// False for a null or not-yet-native window.
+[[nodiscard]] bool nativeFullScreen(QWindow *window);
+
 // Locks interactive (mouse-drag) window resizing to `width`:`height`, and
 // *only* interactive resizing. NSWindow.contentAspectRatio is not the
 // user-drag-only constraint it is often assumed to be: an accessibility
@@ -172,6 +189,27 @@ void resizeToActualSize(QWindow *window, qreal videoPixelWidth,
 // `window` still sits at that fitted frame restores the frame it had before
 // the fit, mirroring AppKit's zoom toggle.
 void resizeToFitScreen(QWindow *window, qreal videoWidth, qreal videoHeight);
+
+// "Fill Screen (Padded)": with `filled` true, grows `window` to its screen's
+// entire visible frame and remembers the exact frame it had first; with
+// `filled` false, puts it back on that remembered frame to the point. The
+// video letterboxes/pillarboxes itself inside the oversized window -- the
+// layer route's videoGravity is already AVLayerVideoGravityResizeAspect over a
+// black layer background, and the non-layer route paints the same black
+// backdrop -- so the bars are free and cost nothing to keep on screen.
+//
+// Per window (one row each, like the zoom toggle's memory, and deliberately a
+// separate row from it so the two toggles cannot eat each other's restore
+// frame). Returns whether the frame change was actually issued: false for a
+// window in fullscreen (which owns its frame outright), for an un-fill with
+// nothing remembered, and for a frame change refused because another one is
+// already in flight.
+bool setFillScreenPadded(QWindow *window, bool filled);
+
+// Forgets `window`'s remembered pre-fill frame without moving it. For the
+// deliberate geometry commands (Actual Size, Fit to Screen) that make the
+// remembered frame stale: after one of those, "put it back" means nothing.
+void clearFillScreenPadded(QWindow *window);
 
 // Snaps `window` to a `videoWidth`:`videoHeight` aspect ratio so freshly
 // opened media fills the window edge to edge with no letterbox bars, the way
@@ -215,6 +253,10 @@ public:
   Q_INVOKABLE void resizeToActualSize(qreal videoPixelWidth,
                                       qreal videoPixelHeight);
   Q_INVOKABLE void resizeToFitScreen(qreal videoWidth, qreal videoHeight);
+  // Returns whether the frame change was issued, so qml/Main.qml only flips
+  // its own per-window `fillScreenPadded` flag when the window really moved.
+  Q_INVOKABLE bool setFillScreenPadded(bool filled);
+  Q_INVOKABLE void clearFillScreenPadded();
   Q_INVOKABLE void snapToVideoAspectRatio(qreal videoWidth, qreal videoHeight);
   Q_INVOKABLE QSizeF videoNaturalSizeForSource(const QUrl &source) const;
   // Asynchronous variant of videoNaturalSizeForSource: the synchronous read
