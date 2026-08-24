@@ -178,9 +178,12 @@ public:
   // makes by asking for more than the mix contains. The clipping is an exact
   // per-sample saturation to [-1, 1] applied in applyGain(), never a
   // renormalization, so the loudness of quiet material rises linearly and
-  // only material that was already near full scale is affected.
+  // only material that was already near full scale is affected. 4.0 is
+  // +12 dB -- the practical top of the "this movie is mastered quiet" range
+  // (mpv precedent); the UI's own maximum-volume setting decides how much of
+  // this ceiling any window may actually reach.
   static constexpr float kMinimumGain = 0.0F;
-  static constexpr float kMaximumGain = 2.0F;
+  static constexpr float kMaximumGain = 4.0F;
   static constexpr float kSampleCeiling = 1.0F;
 
   NativeAudioRenderCore(NativePcmRing &ring,

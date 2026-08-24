@@ -836,13 +836,13 @@ void testCachedGainMuteControls() {
   const float clampedLow = audio->facts().requestedGain;
   rapidAccepted = rapidAccepted &&
                   audio->setGain(0.2F) == NativeAudioSessionProgress::Done;
-  // 2.0 is now inside the admitted range (VLC-style amplification), so the
-  // ceiling is proved with a value above it instead.
+  // 4.0 is now the top of the admitted range (VLC-style amplification, +12
+  // dB), so the ceiling is proved with a value above it instead.
   rapidAccepted = rapidAccepted &&
-                  audio->setGain(2.0F) == NativeAudioSessionProgress::Done;
+                  audio->setGain(4.0F) == NativeAudioSessionProgress::Done;
   const float boosted = audio->facts().requestedGain;
   rapidAccepted = rapidAccepted &&
-                  audio->setGain(3.0F) == NativeAudioSessionProgress::Done;
+                  audio->setGain(5.0F) == NativeAudioSessionProgress::Done;
   const float clampedHigh = audio->facts().requestedGain;
   rapidAccepted =
       rapidAccepted &&
@@ -858,7 +858,7 @@ void testCachedGainMuteControls() {
   trackAllocations.store(false, std::memory_order_release);
   const NativeAudioSessionFacts rapid = audio->facts();
   expect(rapidAccepted && allocations.load(std::memory_order_relaxed) == 0 &&
-             clampedLow == 0.0F && boosted == 2.0F && clampedHigh == 2.0F &&
+             clampedLow == 0.0F && boosted == 4.0F && clampedHigh == 4.0F &&
              failSafeNonFinite == 0.0F &&
              rapid.requestedGain == 0.75F &&
              rapid.appliedGain == 0.75F && !rapid.requestedMuted &&
