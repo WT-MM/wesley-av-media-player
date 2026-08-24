@@ -175,6 +175,32 @@ Platform.MenuBar {
             slot8, slot9, slot10, slot11, slot12, slot13, slot14, slot15
         ]
 
+        // What a click on track slot `index` does.
+        //
+        // Every slot MUST have this. A checkable Qt.labs.platform item flips
+        // its own `checked` when it is activated, so a slot with no handler
+        // does not merely fail to select the track -- it puts a check mark
+        // next to it and leaves the real selection alone. Nothing then fires
+        // activeSubtitleTrackChanged, so the imperative re-sync that carries
+        // the radio semantics never runs, `Off` stays checked, and a second
+        // click on the other track adds a third check mark. That was the
+        // reported defect: Off and both "English" rows checked at once, with
+        // no subtitles actually playing.
+        //
+        // syncChecks() runs on EVERY path out of here, including the ones
+        // that change nothing (a click on the already-selected row, a slot
+        // whose track vanished in a rebuild between the menu opening and the
+        // click). Those paths emit no signal, so without this call the item's
+        // self-toggled `checked` would survive as a phantom mark.
+        function selectSlot(index) {
+            const controller = root.controller;
+            const list = controller ? controller.subtitleTracks : [];
+            if (controller && index >= 0 && index < list.length) {
+                controller.selectSubtitleTrack(list[index].id);
+            }
+            subtitlesMenu.syncChecks();
+        }
+
         Platform.MenuItem {
             id: offMenuItem
             text: "Off"
@@ -187,22 +213,22 @@ Platform.MenuBar {
             }
         }
 
-        Platform.MenuItem { id: slot0; checkable: true }
-        Platform.MenuItem { id: slot1; checkable: true }
-        Platform.MenuItem { id: slot2; checkable: true }
-        Platform.MenuItem { id: slot3; checkable: true }
-        Platform.MenuItem { id: slot4; checkable: true }
-        Platform.MenuItem { id: slot5; checkable: true }
-        Platform.MenuItem { id: slot6; checkable: true }
-        Platform.MenuItem { id: slot7; checkable: true }
-        Platform.MenuItem { id: slot8; checkable: true }
-        Platform.MenuItem { id: slot9; checkable: true }
-        Platform.MenuItem { id: slot10; checkable: true }
-        Platform.MenuItem { id: slot11; checkable: true }
-        Platform.MenuItem { id: slot12; checkable: true }
-        Platform.MenuItem { id: slot13; checkable: true }
-        Platform.MenuItem { id: slot14; checkable: true }
-        Platform.MenuItem { id: slot15; checkable: true }
+        Platform.MenuItem { id: slot0; checkable: true; visible: false; onTriggered: subtitlesMenu.selectSlot(0) }
+        Platform.MenuItem { id: slot1; checkable: true; visible: false; onTriggered: subtitlesMenu.selectSlot(1) }
+        Platform.MenuItem { id: slot2; checkable: true; visible: false; onTriggered: subtitlesMenu.selectSlot(2) }
+        Platform.MenuItem { id: slot3; checkable: true; visible: false; onTriggered: subtitlesMenu.selectSlot(3) }
+        Platform.MenuItem { id: slot4; checkable: true; visible: false; onTriggered: subtitlesMenu.selectSlot(4) }
+        Platform.MenuItem { id: slot5; checkable: true; visible: false; onTriggered: subtitlesMenu.selectSlot(5) }
+        Platform.MenuItem { id: slot6; checkable: true; visible: false; onTriggered: subtitlesMenu.selectSlot(6) }
+        Platform.MenuItem { id: slot7; checkable: true; visible: false; onTriggered: subtitlesMenu.selectSlot(7) }
+        Platform.MenuItem { id: slot8; checkable: true; visible: false; onTriggered: subtitlesMenu.selectSlot(8) }
+        Platform.MenuItem { id: slot9; checkable: true; visible: false; onTriggered: subtitlesMenu.selectSlot(9) }
+        Platform.MenuItem { id: slot10; checkable: true; visible: false; onTriggered: subtitlesMenu.selectSlot(10) }
+        Platform.MenuItem { id: slot11; checkable: true; visible: false; onTriggered: subtitlesMenu.selectSlot(11) }
+        Platform.MenuItem { id: slot12; checkable: true; visible: false; onTriggered: subtitlesMenu.selectSlot(12) }
+        Platform.MenuItem { id: slot13; checkable: true; visible: false; onTriggered: subtitlesMenu.selectSlot(13) }
+        Platform.MenuItem { id: slot14; checkable: true; visible: false; onTriggered: subtitlesMenu.selectSlot(14) }
+        Platform.MenuItem { id: slot15; checkable: true; visible: false; onTriggered: subtitlesMenu.selectSlot(15) }
 
         Platform.MenuItem {
             id: subtitleOverflowItem
