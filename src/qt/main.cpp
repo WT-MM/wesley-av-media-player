@@ -1230,6 +1230,18 @@ int main(int argc, char *argv[]) {
     if (state_store.dirty())
       windows.requestCheckpoint();
 
+    // The menu bar's Quit item calls Qt.quit(), which emits QQmlEngine::quit
+    // -- a signal with NO default receiver on this construction (the runtime
+    // warned "emitted, but no receivers connected" and Cmd-Q silently did
+    // nothing). Wire it, and its exit() sibling, explicitly. Queued, so the
+    // quit unwinds from the event loop rather than from inside the menu
+    // item's activation.
+    QObject::connect(&engine, &QQmlEngine::quit, &app,
+                     &QCoreApplication::quit, Qt::QueuedConnection);
+    QObject::connect(
+        &engine, &QQmlEngine::exit, &app,
+        [](int code) { QCoreApplication::exit(code); }, Qt::QueuedConnection);
+
     QObject::connect(&app, &QCoreApplication::aboutToQuit, &app, [&windows] {
       // Cmd-Q with N playing windows must retire N native sessions, not
       // abandon them at process exit: aboutToQuit is the last moment the event
