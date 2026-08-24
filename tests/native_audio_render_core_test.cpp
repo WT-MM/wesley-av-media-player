@@ -673,8 +673,8 @@ void testGainCeilingAndFailSafe() {
   std::array<float, 512> ramp{};
   expect(renderTracked(fixture.core, hostInput(0, 256, 0), ramp).committed,
          "ceiling fixture commits its ramp-in span");
-  expectNear(ramp[510], 0.5F, 1e-6F,
-             "a gain above the ceiling is clamped to 200%, not to unity");
+  expectNear(ramp[510], 1.0F, 1e-6F,
+             "a gain above the ceiling is clamped to 400%, not to unity");
 
   fixture.core.setGain(std::numeric_limits<float>::quiet_NaN());
   expect(publishConstant(fixture.ring, 1, 256, 0.25F),
