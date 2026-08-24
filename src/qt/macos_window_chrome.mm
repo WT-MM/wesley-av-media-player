@@ -1183,6 +1183,10 @@ void MacWindowChrome::requestVideoNaturalSize(const QUrl &source) {
                        }];
 }
 
+void MacWindowChrome::hideCursorUntilMouseMoves() {
+  [NSCursor setHiddenUntilMouseMoves:YES];
+}
+
 void MacWindowChrome::setTitlebarRevealed(bool revealed, bool animated) {
   wam::macos_window_chrome::setTitlebarControlsRevealed(window_, revealed,
                                                         animated);

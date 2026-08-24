@@ -248,6 +248,13 @@ public:
   [[nodiscard]] bool benchmarkMode() const { return benchmarkMode_; }
 
   Q_INVOKABLE void setTitlebarRevealed(bool revealed, bool animated = true);
+  // Hides the cursor until the next physical mouse move. Exists because on
+  // the layer route nothing repaints while the chrome is hidden, so a QML
+  // cursorShape binding flip is never delivered until the pointer moves --
+  // and moving is exactly what reveals the chrome and un-blanks it again.
+  // NSCursor's own until-mouse-moves latch keeps cursor and chrome in sync
+  // by construction: the movement that brings one back brings both.
+  Q_INVOKABLE void hideCursorUntilMouseMoves();
   Q_INVOKABLE void setContentAspectRatio(qreal width, qreal height);
   Q_INVOKABLE bool interactiveResizeActive() const;
   Q_INVOKABLE void resizeToActualSize(qreal videoPixelWidth,
