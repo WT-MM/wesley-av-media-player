@@ -3072,17 +3072,22 @@ bool Parser::collectCuePoint(const ElementHeader& header,
 bool Parser::validateCuePositions(
     std::vector<CueTrackPosition>& positions,
     std::uint64_t segmentDataOffset, std::uint64_t segmentEnd) noexcept {
+  const TrackConstraint* const constraintsBegin = track_constraints_.data();
+  const TrackConstraint* const constraintsEnd =
+      constraintsBegin + track_constraint_count_;
+  // Only a caller that supplied its own table has said which tracks it will
+  // read; a table the parser discovered from Tracks marks nothing unselected.
+  const bool honourSelection =
+      !access_.options().proveUnselectedTrackCues &&
+      !access_.options().trackConstraints.empty();
   for (std::size_t index = 0; index < positions.size(); ++index) {
     auto& cue = positions[index];
-    if (track_table_complete_ &&
-        std::find_if(track_constraints_.begin(),
-                     track_constraints_.begin() + static_cast<std::ptrdiff_t>(
-                                                        track_constraint_count_),
+    const auto* declared =
+        std::find_if(constraintsBegin, constraintsEnd,
                      [&cue](const TrackConstraint& constraint) {
                        return constraint.number == cue.track;
-                     }) ==
-            track_constraints_.begin() +
-                static_cast<std::ptrdiff_t>(track_constraint_count_)) {
+                     });
+    if (track_table_complete_ && declared == constraintsEnd) {
       return access_.fail(ParseError::InvalidValue, segmentDataOffset);
     }
     if (!checkedAdd(segmentDataOffset, cue.clusterPosition,
@@ -3103,7 +3108,13 @@ bool Parser::validateCuePositions(
       return access_.fail(ParseError::InvalidVint,
                           cue.absoluteClusterOffset);
     }
-    if (cue.relativePosition) {
+    // A cue for a track the caller will never read has no consumer, and
+    // proving it is the single most expensive thing preparation does. Its
+    // Cluster is still proven above; only the in-Cluster child walk is
+    // skipped, and absoluteBlockOffset stays unset to say so.
+    const bool proveTarget =
+        !honourSelection || declared == constraintsEnd || declared->selected;
+    if (cue.relativePosition && proveTarget) {
       std::uint64_t absolute = 0;
       if (!checkedAdd(clusterHeader.data.offset, *cue.relativePosition,
                       absolute) ||
