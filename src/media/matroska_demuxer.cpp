@@ -3580,6 +3580,207 @@ namespace {
   return result;
 }
 
+// The per-track table the parser and every cursor are driven by. It is built
+// twice from the same inputs -- once provisionally, to tell the targeted Cues
+// parse which tracks will actually be read, and once authoritatively into
+// AssetState -- so it lives here rather than being spelled out at both sites.
+[[nodiscard]] std::vector<TrackConstraint> trackConstraintsFor(
+    const std::vector<TrackEntry>& tracks, const TrackEntry* video,
+    const TrackEntry* audio, const MediaSourceLimits& limits) {
+  std::vector<TrackConstraint> constraints;
+  constraints.reserve(tracks.size());
+  for (const TrackEntry& track : tracks) {
+    TrackConstraint constraint;
+    constraint.number = track.number;
+    constraint.lacingAllowed = track.lacingAllowed;
+    const bool isVideo = video != nullptr && track.number == video->number;
+    constraint.selected =
+        isVideo || (audio != nullptr && track.number == audio->number);
+    constraint.maximumBlockBytes = isVideo ? limits.maximumVideoSampleBytes
+                                           : limits.maximumAudioSampleBytes;
+    constraints.push_back(constraint);
+  }
+  return constraints;
+}
+
+// ---- The authoritative pass stops before EOF ---------------------------
+//
+// Fix A made the admitted path skip every Cluster payload. What it could not
+// touch is that preparation still ran parseDocument() to EOF, and on the file
+// that motivated this work 1,079,956 of the remaining 1,137,251 reads (95 %)
+// are that document's own Cues: 3,847 CueTrackPositions of which 3,087 belong
+// to two SUBTITLE tracks. Every one of them is proven by walking its Cluster's
+// Block chain to a deep in-Cluster offset, and every one of them is then
+// discarded -- the seek index is selected-VIDEO-only and always has been.
+//
+// parseDocument() cannot be asked to stop: it parses the Cues unconditionally,
+// and the three anti-polyglot facts preparation requires
+// (documentCount == 1, segmentCount == 1, !trailingDocumentsPresent) are only
+// emitted once it reaches EOF.
+//
+// So this builds the same CollectedDocument WITHOUT a whole-document parse:
+//
+//   * the Cluster directory comes from the parser's own Segment child cursor,
+//     which skips every known-size Cluster in O(1) by its declared size;
+//   * each Cluster's Timestamp comes from harvestClusterTimestamps (Fix A);
+//   * SeekHead, Chapters and Cues are parsed as PROVEN Segment children
+//     through parseSegmentChild(), so each keeps the validation parseDocument
+//     gave it, charged against one cumulative element budget;
+//   * the Cues parse is the only one that changes: it is handed the track
+//     table with proveUnselectedTrackCues = false, so a subtitle cue costs its
+//     bounds check and its Cluster lookup and nothing else.
+//
+// THE ANTI-POLYGLOT PROOF IS NOT RE-DERIVED -- IT IS GATED ON.
+//
+// Re-computing the summary here would move a security decision into the
+// demuxer and, worse, would change the TYPED verdict for shapes the parser
+// refuses outright (garbage after the Segment is a ParseStatus::Invalid today,
+// not an UnsupportedContainer). Instead this runs only when the document is
+// positively proven to be
+//
+//     [EBML header at offset 0][one known-size Segment ending at reader.size()]
+//
+// which IS documentCount == 1, segmentCount == 1, no trailing document and no
+// trailing byte: the header begins at zero, the Segment begins where the
+// header ends, the Segment ends at EOF, so nothing else fits in the file.
+// Every other shape -- a second document, trailing garbage, an unknown-size
+// Segment, a duplicated top-level master, a late-Tracks mux -- returns false
+// here and is prepared by the unmodified parseDocument() chain, with the
+// verdict it has always produced.
+//
+// Returns false on any doubt whatsoever. False is never a refusal; it is a
+// request for the historical path.
+[[nodiscard]] bool prepareFromSegmentDirectory(
+    SeekableByteReader& reader, const CollectedDocument& probe,
+    const std::vector<TrackConstraint>& constraints, ParseOptions options,
+    CollectedDocument* document, CancellationToken cancellation) {
+  if (document == nullptr || !probe.header || !probe.segment || !probe.info ||
+      probe.headerCount != 1 || probe.segmentCount != 1 ||
+      probe.infoCount != 1 || probe.tracks.empty() ||
+      probe.segment->unknownSize || probe.allocationFailure) {
+    return false;
+  }
+  // The relocated anti-polyglot proof, stated once.
+  const std::uint64_t fileSize = reader.size();
+  const ByteRange segmentEncoded = probe.segment->encoded;
+  if (segmentEncoded.offset == 0 || segmentEncoded.offset >= fileSize ||
+      segmentEncoded.size != fileSize - segmentEncoded.offset) {
+    return false;
+  }
+  if (probe.segment->documentIndex != 1 || probe.segment->segmentIndex != 1) {
+    return false;
+  }
+  // Targeted callers state the size width the already parsed EBML Header
+  // declared; parseDocument does the same at each document boundary.
+  options.maximumElementSizeWidth = static_cast<std::uint8_t>(
+      std::clamp<std::uint64_t>(probe.header->maximumSizeLength, 1, 8));
+  options.scanClusterMetadata = false;
+  options.visitClusterBlocks = false;
+
+  auto cursor = beginSegmentChildCursor(reader, probe.segment->data, options);
+  if (!cursor) {
+    return false;
+  }
+  std::optional<SegmentChild> cues;
+  std::optional<SegmentChild> chapters;
+  std::vector<SegmentChild> seekHeads;
+  std::size_t infoCount = 0;
+  std::size_t tracksCount = 0;
+  std::size_t cuesCount = 0;
+  std::size_t chaptersCount = 0;
+  while (!cursor->done()) {
+    if (cancellation.cancelled()) {
+      return false;
+    }
+    const SegmentChildOutcome step =
+        readNextSegmentChild(reader, *cursor, options, cancellation);
+    if (!step.outcome.ok() || !step.child) {
+      return false;
+    }
+    const SegmentChild& child = *step.child;
+    if (!child.kind()) {
+      continue;  // Void, CRC-32 and other global children carry nothing here.
+    }
+    switch (*child.kind()) {
+      case MasterKind::Info:
+        ++infoCount;
+        break;
+      case MasterKind::Tracks:
+        ++tracksCount;
+        break;
+      case MasterKind::Chapters:
+        ++chaptersCount;
+        chapters.emplace(child);
+        break;
+      case MasterKind::Cues:
+        ++cuesCount;
+        cues.emplace(child);
+        break;
+      case MasterKind::SeekHead:
+        if (seekHeads.size() >= ParseOptions::kHardMaximumSeekEntries) {
+          return false;
+        }
+        seekHeads.push_back(child);
+        break;
+      case MasterKind::Cluster:
+        if (document->clusters.size() >= kMaximumMatroskaClusters) {
+          return false;
+        }
+        document->clusters.push_back(Cluster{child.encoded(), child.data(),
+                                             std::nullopt,
+                                             child.unknownSize()});
+        break;
+    }
+  }
+  // parseSegment refuses a duplicate top-level master and a Segment with no
+  // Info; both stay refusals, by declining the fast path and letting the
+  // historical parse issue the DuplicateElement/MissingElement verdict.
+  if (infoCount != 1 || tracksCount != 1 || cuesCount > 1 ||
+      chaptersCount > 1 || !cursor->done()) {
+    return false;
+  }
+  for (const SegmentChild& head : seekHeads) {
+    if (!parseSegmentChild(reader, *cursor, head, MasterKind::SeekHead,
+                           *document, options, cancellation)
+             .ok()) {
+      return false;
+    }
+  }
+  if (chapters &&
+      !parseSegmentChild(reader, *cursor, *chapters, MasterKind::Chapters,
+                         *document, options, cancellation)
+           .ok()) {
+    return false;
+  }
+  if (!harvestClusterTimestamps(reader, document->clusters, cancellation)) {
+    return false;
+  }
+  if (cues) {
+    ParseOptions cueOptions = options;
+    cueOptions.trackConstraints = constraints;
+    // The whole point of this pass.
+    cueOptions.proveUnselectedTrackCues = false;
+    if (!parseSegmentChild(reader, *cursor, *cues, MasterKind::Cues,
+                           *document, cueOptions, cancellation)
+             .ok()) {
+      return false;
+    }
+  }
+  if (document->allocationFailure) {
+    return false;
+  }
+  document->header = probe.header;
+  document->segment = probe.segment;
+  document->info = probe.info;
+  document->tracks = probe.tracks;
+  document->headerCount = 1;
+  document->segmentCount = 1;
+  document->infoCount = 1;
+  // Not a guess and not a re-derivation: the gate above proved exactly this.
+  document->summary = DocumentSummary{1, 1, false};
+  return true;
+}
+
 }  // namespace
 
 MatroskaPrepareOutcome prepareMatroska(
@@ -3627,14 +3828,15 @@ MatroskaPrepareOutcome prepareMatroska(
     // turns a multi-second dead window on a large unplayable file into a
     // near-instant fallback. It can only refuse; anything else falls through
     // to the authoritative pass below, unchanged.
+    CollectedDocument probe(state->limits.maximumTracks, kMaximumMatroskaCues);
+    bool probeUsable = false;
     {
       options.scanClusterMetadata = false;
-      CollectedDocument probe(state->limits.maximumTracks,
-                              kMaximumMatroskaCues);
       probe.stopAtFirstCluster = true;
       const ParseOutcome probed =
           parseDocument(*state->reader, probe, options, cancellation);
-      if (probed.ok() && !probe.allocationFailure) {
+      probeUsable = probed.ok() && !probe.allocationFailure;
+      if (probeUsable) {
         if (auto refusal = matroskaHeaderRefusal(
                 *state->reader, probe.tracks,
                 probe.header ? probe.header->documentType
@@ -3664,20 +3866,56 @@ MatroskaPrepareOutcome prepareMatroska(
     // downstream can tell the two apart: the values are identical, so the
     // cluster directory, the cue harvest, planGeneration, the cursors and the
     // scanned-index rebuild all see exactly what they saw before.
-    options.scanClusterMetadata = false;
-    ParseOutcome parsed =
-        parseDocument(*state->reader, document, options, cancellation);
-    if (parsed.ok() && !document.allocationFailure &&
-        !harvestClusterTimestamps(*state->reader, document.clusters,
-                                  cancellation)) {
+    // Fix B goes one step further: the parse no longer runs to EOF at all when
+    // the document is provably a single Segment that ends there. See
+    // prepareFromSegmentDirectory -- including why the anti-polyglot proof is
+    // gated on rather than relocated, and what a `false` from it means.
+    ParseOutcome parsed;
+    bool directoryDriven = false;
+    if (probeUsable) {
+      const EbmlDocumentType probeType =
+          probe.header ? probe.header->documentType
+                       : EbmlDocumentType::Matroska;
+      const std::vector<TrackConstraint> provisional = trackConstraintsFor(
+          probe.tracks,
+          chooseTrack(probe.tracks, 1, requested.selection.preferredVideo,
+                      probeType),
+          chooseTrack(probe.tracks, 2, requested.selection.preferredAudio,
+                      probeType),
+          state->limits);
+      directoryDriven =
+          prepareFromSegmentDirectory(*state->reader, probe, provisional,
+                                      options, &document, cancellation);
+      if (directoryDriven) {
+        parsed.status = ParseStatus::Complete;
+        parsed.error = ParseError::None;
+        parsed.documents = 1;
+        parsed.segments = 1;
+      } else {
+        document.reset();
+      }
+    }
+    if (!directoryDriven) {
       if (cancellation.cancelled()) {
         result.status = MatroskaDemuxStatus::Cancelled;
         result.error = MatroskaDemuxError::Cancelled;
         return result;
       }
-      document.reset();
-      options.scanClusterMetadata = true;
+      options.scanClusterMetadata = false;
       parsed = parseDocument(*state->reader, document, options, cancellation);
+      if (parsed.ok() && !document.allocationFailure &&
+          !harvestClusterTimestamps(*state->reader, document.clusters,
+                                    cancellation)) {
+        if (cancellation.cancelled()) {
+          result.status = MatroskaDemuxStatus::Cancelled;
+          result.error = MatroskaDemuxError::Cancelled;
+          return result;
+        }
+        document.reset();
+        options.scanClusterMetadata = true;
+        parsed = parseDocument(*state->reader, document, options,
+                               cancellation);
+      }
     }
     if (!parsed.ok() || document.allocationFailure) {
       result.error = parseError(parsed);
@@ -3737,17 +3975,11 @@ MatroskaPrepareOutcome prepareMatroska(
         result.message = "track number does not fit MediaTrackId";
         return result;
       }
-      TrackConstraint constraint;
-      constraint.number = track.number;
-      constraint.lacingAllowed = track.lacingAllowed;
-      const bool isVideo = video != nullptr && track.number == video->number;
-      constraint.selected =
-          isVideo || (audio != nullptr && track.number == audio->number);
-      constraint.maximumBlockBytes = isVideo
-                                         ? state->limits.maximumVideoSampleBytes
-                                         : state->limits.maximumAudioSampleBytes;
-      state->constraints.push_back(constraint);
     }
+    // Same table, same order, same rule as the provisional one the targeted
+    // Cues parse was driven by -- built by the one helper so they cannot drift.
+    state->constraints =
+        trackConstraintsFor(document.tracks, video, audio, state->limits);
     if (video != nullptr) {
       MediaTrackDescriptor videoDescriptor;
       TrackRuntime videoRuntime;

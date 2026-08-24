@@ -186,6 +186,23 @@ struct ParseOptions {
   // Internal/public targeted behavior: inspect mandatory Cluster metadata and
   // direct-child boundaries while skipping every block payload/layout.
   bool scanClusterMetadata{false};
+  // A CueTrackPositions entry names a random access point for exactly ONE
+  // track. Proving one costs a walk from its Cluster's data start to the
+  // CueRelativePosition it names, which for a subtitle cue is typically deep
+  // in the Block chain -- measured on a 2.2 GB HEVC movie, 3,087 of its 3,847
+  // cues belong to subtitle tracks and their proofs alone are 95% of
+  // preparation's reads, for an index the demuxer never builds.
+  //
+  // Setting this false, WITH trackConstraints supplied, keeps every cheap
+  // check (the cue's track must be a declared track, its CueClusterPosition
+  // must name a real Cluster, its bounds must hold) and skips only the
+  // in-Cluster child proof and the target Block parse for a cue whose
+  // TrackConstraint says selected == false. Such a cue is emitted with no
+  // absoluteBlockOffset, which already means "not checked".
+  //
+  // Default true: a caller that has not said which tracks it will read gets
+  // every cue proven, exactly as before.
+  bool proveUnselectedTrackCues{true};
 };
 
 [[nodiscard]] ParseOptions

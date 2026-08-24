@@ -474,6 +474,7 @@ struct BuiltBlock {
   std::uint16_t frameCount{0};
   bool keyFrame{false};
   bool video{true};
+  bool subtitle{false};
   bool invisible{false};
   bool discardable{false};
   std::optional<std::uint64_t> durationTicks;
@@ -651,7 +652,18 @@ struct FixtureSpec {
   std::size_t voidPaddingBytes{0};
   CueVariant cues{CueVariant::Canonical};
   bool videoDefaultDuration{true};
+  // The subtitle-cue-heavy shape, which is what a real subtitled movie is:
+  // N SimpleBlocks for the subtitle track placed at the TAIL of every Cluster,
+  // and (with subtitleCues) one CuePoint naming each of them. Their
+  // CueRelativePosition therefore points at the far end of the Block chain,
+  // which is exactly what made proving them the dominant cost of preparation
+  // on the 2.2 GB file this was measured against.
+  std::size_t subtitleBlocksPerCluster{0};
+  bool subtitleCues{false};
 };
+
+// subtitleTrackEntry() writes this number; the cue shape above has to agree.
+constexpr std::uint64_t kSubtitleTrackNumber{3};
 
 struct Fixture {
   Bytes bytes;
@@ -748,7 +760,7 @@ Bytes audioTrackEntry(const FixtureSpec& spec) {
 
 Bytes subtitleTrackEntry() {
   Bytes payload;
-  append(payload, uintElement(kTrackNumberId, 3));
+  append(payload, uintElement(kTrackNumberId, kSubtitleTrackNumber));
   append(payload, uintElement(kTrackUidId, 0xAB33));
   append(payload, uintElement(kTrackTypeId, 0x11));
   append(payload, asciiElement(kCodecIdId, "S_TEXT/UTF8"));
@@ -919,6 +931,30 @@ Fixture buildFixture(const FixtureSpec& spec) {
       ++patternIndex;
     }
   }
+  if (spec.includeSubtitleTrack && spec.subtitleBlocksPerCluster != 0) {
+    for (std::size_t index = 0; index < spec.clusterTimestamps.size();
+         ++index) {
+      const auto base = static_cast<std::int64_t>(
+          spec.clusterTimestamps[index]);
+      std::int64_t last = base;
+      for (const BuiltBlock& block : clusterBlocks[index]) {
+        last = std::max(last, block.tick);
+      }
+      for (std::size_t count = 0; count < spec.subtitleBlocksPerCluster;
+           ++count) {
+        const std::int64_t tick =
+            last + 1 + static_cast<std::int64_t>(count);
+        const std::array<std::size_t, 1> sizes{5};
+        BuiltBlock block = buildSimpleBlock(
+            kSubtitleTrackNumber, tick,
+            static_cast<std::int16_t>(tick - base), true, false, false,
+            Lacing::None, sizes, fill);
+        block.video = false;
+        block.subtitle = true;
+        clusterBlocks[index].push_back(std::move(block));
+      }
+    }
+  }
 
   std::vector<BuiltCluster> clusters;
   clusters.reserve(spec.clusterTimestamps.size());
@@ -999,6 +1035,24 @@ Fixture buildFixture(const FixtureSpec& spec) {
         point.clusterPosition = clusterRelativeOffsets[index] + 1U;
       }
       cuePoints.push_back(point);
+      if (!spec.subtitleCues) {
+        continue;
+      }
+      // One cue per subtitle Block, naming the tail of this Cluster's chain.
+      // CueBlockNumber is deliberately absent: it is optional, and a real
+      // muxer's subtitle cues routinely omit it.
+      for (const BuiltBlock& block : cluster.blocks) {
+        if (!block.subtitle) {
+          continue;
+        }
+        CuePointSpec subtitlePoint;
+        subtitlePoint.time = static_cast<std::uint64_t>(block.tick);
+        subtitlePoint.track = kSubtitleTrackNumber;
+        subtitlePoint.clusterPosition = clusterRelativeOffsets[index];
+        subtitlePoint.relativePosition =
+            block.containerOffset - cluster.dataOffset;
+        cuePoints.push_back(subtitlePoint);
+      }
     }
     if (spec.cues == CueVariant::NonZeroFirst && !cuePoints.empty()) {
       cuePoints.erase(cuePoints.begin());
@@ -3652,6 +3706,32 @@ void testMalformedDocuments() {
            "a trailing second document is explicitly unsupported");
   }
   {
+    // The anti-polyglot gate, stated directly.
+    //
+    // Preparation no longer parses to EOF on an admitted file, and the three
+    // facts it used to take from the parser's end-of-file DocumentSummary
+    // (one document, one Segment, nothing trailing) are now the PRECONDITION
+    // for taking that path: it runs only when one known-size Segment ends
+    // exactly at reader.size(). Everything else -- including every byte of
+    // trailing content, whether or not it parses as a document -- takes the
+    // unmodified whole-document path and keeps its historical verdict.
+    //
+    // One appended byte is the smallest witness of that, and it is the shape a
+    // relocated-and-simplified proof would most plausibly have let through.
+    for (const std::byte trailing :
+         {std::byte{0x00}, std::byte{0x1A}, std::byte{0xFF}}) {
+      const Fixture fixture = buildFixture({});
+      Bytes padded = fixture.bytes;
+      padded.push_back(trailing);
+      auto reader = std::make_shared<ProbeReader>(std::move(padded));
+      const auto outcome = prepareMatroska(reader, kFixturePath, {});
+      expect(outcome.asset == nullptr &&
+                 outcome.status == MatroskaDemuxStatus::Failed &&
+                 outcome.error == MatroskaDemuxError::InvalidContainer,
+             "one byte after the Segment still refuses the whole document");
+    }
+  }
+  {
     FixtureSpec spec;
     spec.durationTicks = 0.0;
     const Fixture fixture = buildFixture(spec);
@@ -4206,9 +4286,83 @@ void testAdmittedPreparationDoesNotWalkClusterTails() {
          "every harvested ClusterTimestamp equals the one the file states");
 }
 
+// The last, and largest, share of an admitted open: the file's OWN Cues.
+//
+// After the Cluster walk was removed, 1,079,956 of preparation's remaining
+// 1,137,251 reads on the 2.2 GB movie -- 95 % -- were its Cues. Not parsing
+// them: PROVING them. 3,847 CueTrackPositions, of which 3,087 belong to two
+// SUBTITLE tracks, and every one was proven by walking its Cluster's Block
+// chain from the data start to the CueRelativePosition it names. The demuxer
+// then discarded all 3,087: the seek index is selected-video-only and always
+// has been (see the harvest loop's `continue`).
+//
+// Preparation now hands the targeted Cues parse the track table with
+// ParseOptions::proveUnselectedTrackCues = false, so a cue for a track no
+// cursor will ever read keeps its cheap checks -- its track must be declared,
+// its CueClusterPosition must name a real Cluster -- and skips the in-Cluster
+// walk and the target Block parse.
+//
+// The fixture is built for exactly that shape: every Cluster carries six
+// subtitle SimpleBlocks at the TAIL of its Block chain and a CuePoint for each
+// one, so a pass that still proved them would walk each chain to its far end.
+// Mutation-measured on this exact fixture:
+//
+//   4,059 reads  proveUnselectedTrackCues = false          (this pass)
+//   4,771 reads  proveUnselectedTrackCues = true            (the mutation)
+//   5,224 reads  the whole directory-driven pass disabled,
+//                i.e. parseDocument() to EOF as before      (the pass it replaced)
+//
+// The ceiling sits between the first two. The margin is 712 reads because
+// these Clusters hold about twenty Blocks each, so a chain walk has almost
+// nothing to walk -- the fixture cannot express a cost that is 1,079,956 of
+// 1,137,251 reads on a real 2.2 GB file with 3,847 cues. It is still the
+// assertion that fails loudly if the proof comes back, and the number is meant
+// to be re-derived by re-running the mutation rather than nudged.
+constexpr std::size_t kSubtitleCueProofReadCeiling = 4'400;
+
+void testSubtitleCuesAreNotProvenAtOpen() {
+  FixtureSpec spec;
+  spec.clusterTimestamps = {0, 500, 1'000, 1'500, 2'000, 2'500, 3'000, 3'500};
+  spec.durationTicks = 4'000.0;
+  spec.subtitleBlocksPerCluster = 6;
+  spec.subtitleCues = true;
+  const PreparedFixture prepared = prepareFixture(spec);
+  expect(prepared.outcome.status == MatroskaDemuxStatus::Ready &&
+             prepared.outcome.asset != nullptr,
+         "a subtitle-cue-heavy document is admitted natively");
+  if (prepared.outcome.asset == nullptr) {
+    return;
+  }
+  const std::size_t reads = prepared.reader->readOffsets.size();
+  if (reads > kSubtitleCueProofReadCeiling) {
+    std::cerr << "  (preparation issued " << reads << " reads, ceiling "
+              << kSubtitleCueProofReadCeiling << ")\n";
+  }
+  expect(reads <= kSubtitleCueProofReadCeiling,
+         "an admitted open does not prove unselected-track Cues");
+
+  // Correctness, which the saving must not have bought: the seek index is
+  // exactly the file's selected-video Cues, one per Cluster, in order.
+  const auto& cues = prepared.outcome.asset->cues();
+  bool indexMatches =
+      cues.size() == prepared.fixture.clusterTimestamps.size();
+  for (std::size_t index = 0; indexMatches && index < cues.size(); ++index) {
+    indexMatches = cues[index].timestampTick ==
+                   prepared.fixture.clusterTimestamps[index];
+  }
+  expect(indexMatches,
+         "the seek index still holds one selected-video Cue per Cluster");
+
+  // And the subtitle track is still there to be read lazily by its own lane.
+  const auto descriptor = prepared.outcome.asset->descriptor();
+  expect(descriptor != nullptr && descriptor->inventory.subtitle == 1,
+         "the unproven subtitle track is still inventoried");
+}
+
 int main() {
   testCompleteDocumentPreparation();
   testAdmittedPreparationDoesNotWalkClusterTails();
+  testSubtitleCuesAreNotProvenAtOpen();
   testVideoDisplayGeometry();
   testMultichannelAacAdmitted();
   testInadmissibleAacRefusedBeforeClusterScan();
