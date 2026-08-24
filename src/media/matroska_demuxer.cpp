@@ -319,6 +319,26 @@ struct CollectedDocument final : Visitor {
     return VisitorAction::Continue;
   }
 
+  // Returns the collector to its just-constructed state while KEEPING the
+  // reserved capacity. prepareMatroska reuses one collector for its second,
+  // fallback parse rather than constructing a second one, so the 65,536-cue
+  // and 65,536-cluster reservations are paid once per open however many passes
+  // run.
+  void reset() noexcept {
+    header.reset();
+    segment.reset();
+    info.reset();
+    chapters.reset();
+    summary.reset();
+    tracks.clear();
+    clusters.clear();
+    cuePositions.clear();
+    headerCount = 0;
+    segmentCount = 0;
+    infoCount = 0;
+    allocationFailure = false;
+  }
+
   std::optional<EbmlHeader> header;
   std::optional<SegmentInfo> segment;
   std::optional<Info> info;
@@ -2306,6 +2326,108 @@ cursorConstraints(const AssetState& state, MediaTrackId selected) {
              audio->audioTailDiscardPaddingNanoseconds;
 }
 
+// Element id of Cluster>Timestamp (Matroska calls it ClusterTimestamp; older
+// specs called it Timecode). One byte, because the id's VINT marker makes 0xE7
+// its whole encoding.
+constexpr std::uint32_t kClusterTimestampElementId{0xE7};
+
+// How far into a Cluster the harvest below will look for that Timestamp before
+// it gives up and asks for the historical whole-Cluster scan. Matroska requires
+// the Timestamp to be present and every muxer in the corpus writes it as the
+// first or second child (measured: mean 2.00 children on the 2.2 GB HEVC file
+// that motivated this, 2157/2157 recovered), so 16 is generous by an order of
+// magnitude while still keeping the pass O(1) per Cluster.
+constexpr std::size_t kMaximumClusterHeadElements{16};
+
+// Fills in each known-size Cluster's Timestamp WITHOUT the whole-file walk.
+//
+// ParseOptions::scanClusterMetadata exists to collect exactly one fact per
+// Cluster -- its Timestamp -- and it pays for that fact by abandoning the
+// parser's O(1) skip-by-declared-size and reading an element header for EVERY
+// SimpleBlock and BlockGroup in EVERY Cluster in the file. Each of those
+// headers is four unbuffered pread(2) calls, because a header is a trust
+// boundary. Measured on the 2.2 GB HEVC/5.1-AAC file this was written for:
+// 2,152,353 reads scattered across the whole 2.2 GB, about 1.1 s warm and much
+// worse cold, to recover 2,157 integers that sit in the first 100 bytes of
+// their Clusters.
+//
+// So the authoritative pass now runs with scanClusterMetadata OFF -- every
+// known-size Cluster skipped in O(1), exactly as the cheap pre-admission probe
+// already did -- and this walks the bounded HEAD of each Cluster afterwards to
+// read the one element that was skipped. 19,413 reads instead of 2,152,353,
+// for byte-identical values.
+//
+// It reads through readElementHeader(), the parser's own trust boundary, so no
+// structure is trusted that the parser would not have trusted; the difference
+// is only how many elements are visited. What the full walk additionally did
+// -- charge every in-Cluster child against the element budget and prove its
+// size at OPEN time -- is deliberately given up: those same headers are parsed
+// and proven by the same parser when a cursor actually reads them, and nothing
+// downstream trusts a Block header it has not itself parsed.
+//
+// Returns false if any Cluster's Timestamp is not in its bounded head. The
+// caller then falls back to the historical scan, so a file this cannot serve
+// is prepared exactly as it was before rather than refused.
+[[nodiscard]] bool harvestClusterTimestamps(
+    SeekableByteReader& reader, std::vector<Cluster>& clusters,
+    CancellationToken cancellation) noexcept {
+  for (Cluster& cluster : clusters) {
+    // An unknown-size Cluster is walked by the parser whatever this option
+    // says (it has to find the terminator), so it already carries its
+    // Timestamp and must not be re-read.
+    if (cluster.timestamp) {
+      continue;
+    }
+    if (cancellation.cancelled()) {
+      return false;
+    }
+    const std::uint64_t end = cluster.data.offset + cluster.data.size;
+    if (end < cluster.data.offset) {
+      return false;
+    }
+    std::uint64_t position = cluster.data.offset;
+    bool found = false;
+    for (std::size_t step = 0;
+         step < kMaximumClusterHeadElements && position < end; ++step) {
+      const ElementHeaderOutcome child =
+          readElementHeader(reader, position, end, cancellation);
+      if (!child.outcome.ok() || !child.header) {
+        return false;
+      }
+      if (child.header->id == kClusterTimestampElementId) {
+        if (child.header->data.size > 8) {
+          return false;
+        }
+        const auto width = static_cast<std::size_t>(child.header->data.size);
+        std::byte encoded[8]{};
+        if (width != 0 &&
+            !reader.readAt(child.header->data.offset,
+                           std::span<std::byte>(encoded, width))) {
+          return false;
+        }
+        // EBML unsigned integer: big endian, zero width means zero.
+        std::uint64_t value = 0;
+        for (std::size_t index = 0; index < width; ++index) {
+          value = (value << 8) | std::to_integer<std::uint64_t>(encoded[index]);
+        }
+        cluster.timestamp = value;
+        found = true;
+        break;
+      }
+      const std::uint64_t next =
+          child.header->data.offset + child.header->data.size;
+      if (next <= position) {
+        return false;
+      }
+      position = next;
+    }
+    if (!found) {
+      return false;
+    }
+  }
+  return true;
+}
+
 [[nodiscard]] bool clusterRangeValid(
     const Cluster& cluster, MatroskaClusterIndexEntry* output) noexcept {
   if (!cluster.timestamp || cluster.encoded.size > kMaximumMatroskaClusterBytes ||
@@ -3523,9 +3645,40 @@ MatroskaPrepareOutcome prepareMatroska(
       }
     }
 
-    options.scanClusterMetadata = true;
-    const ParseOutcome parsed =
+    // ---- Authoritative pass: directory-driven, not scan-driven ------------
+    //
+    // The pre-admission probe above made a REFUSAL cheap. This makes an
+    // ADMISSION cheap, which is the other half of the same defect: a file that
+    // plays natively used to pay a whole-file cluster-metadata walk (measured
+    // 2,152,353 of the 3,270,191 reads on the 2.2 GB file that motivated this)
+    // before its first frame could be drawn.
+    //
+    // scanClusterMetadata stays OFF, so every known-size Cluster is skipped in
+    // O(1) by its declared size and the Cluster directory -- offsets and sizes
+    // -- is built from the Segment's own child chain. The single fact the scan
+    // existed to collect, each Cluster's Timestamp, is then read directly out
+    // of each Cluster's bounded head. See harvestClusterTimestamps.
+    //
+    // The historical scan remains the fallback, and is entered only when a
+    // Cluster does not state its Timestamp within that bounded head. Nothing
+    // downstream can tell the two apart: the values are identical, so the
+    // cluster directory, the cue harvest, planGeneration, the cursors and the
+    // scanned-index rebuild all see exactly what they saw before.
+    options.scanClusterMetadata = false;
+    ParseOutcome parsed =
         parseDocument(*state->reader, document, options, cancellation);
+    if (parsed.ok() && !document.allocationFailure &&
+        !harvestClusterTimestamps(*state->reader, document.clusters,
+                                  cancellation)) {
+      if (cancellation.cancelled()) {
+        result.status = MatroskaDemuxStatus::Cancelled;
+        result.error = MatroskaDemuxError::Cancelled;
+        return result;
+      }
+      document.reset();
+      options.scanClusterMetadata = true;
+      parsed = parseDocument(*state->reader, document, options, cancellation);
+    }
     if (!parsed.ok() || document.allocationFailure) {
       result.error = parseError(parsed);
       result.status = result.error == MatroskaDemuxError::Cancelled

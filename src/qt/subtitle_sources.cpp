@@ -30,6 +30,63 @@ QString originName(SubtitleSources::Origin origin) {
   return QStringLiteral("embedded");
 }
 
+// Makes every source's menu label unique within one media's list.
+//
+// A label is built from the track's own Name, then its language, then its
+// ordinal (subtitleSourceLabel in player_controller.cpp). Two same-language
+// tracks with no Name -- an extremely common shape; the file that produced
+// this defect carries two English SRT tracks, neither named -- therefore both
+// render as exactly "English", and the menu offers the user two identical rows
+// with nothing to choose between and no way to tell which one the container
+// prefers.
+//
+// The rule, applied only to labels that actually collide so a lone "English"
+// stays "English":
+//
+//   1. the container's own opinion first, because it is both the most useful
+//      distinction and the one the user is being asked about: a forced track
+//      becomes "… (Forced)", a default-flagged one "… (Default)";
+//   2. anything still ambiguous after that -- neither flagged, both flagged,
+//      or an author who literally named a track "English (Default)" -- gets a
+//      position, which always separates them.
+//
+// Both passes decide from a snapshot taken BEFORE they mutate anything, so the
+// outcome does not depend on the order labels happen to be rewritten in.
+void disambiguateSourceLabels(std::vector<SubtitleSources::Source> &sources) {
+  const auto collides = [&sources](std::size_t index) {
+    for (std::size_t other = 0; other < sources.size(); ++other) {
+      if (other != index && sources[other].label == sources[index].label)
+        return true;
+    }
+    return false;
+  };
+  std::vector<bool> ambiguous(sources.size(), false);
+  for (std::size_t index = 0; index < sources.size(); ++index)
+    ambiguous[index] = collides(index);
+  for (std::size_t index = 0; index < sources.size(); ++index) {
+    // Forced/default are container facts about an embedded track; they mean
+    // nothing for a generated caption file or one the user loaded.
+    if (!ambiguous[index] ||
+        sources[index].origin != SubtitleSources::Origin::Embedded)
+      continue;
+    if (sources[index].forcedFlag)
+      sources[index].label += QStringLiteral(" (Forced)");
+    else if (sources[index].defaultFlag)
+      sources[index].label += QStringLiteral(" (Default)");
+  }
+  for (std::size_t index = 0; index < sources.size(); ++index)
+    ambiguous[index] = collides(index);
+  for (std::size_t index = 0; index < sources.size(); ++index) {
+    if (!ambiguous[index])
+      continue;
+    const int position = static_cast<int>(index) + 1;
+    sources[index].label +=
+        sources[index].origin == SubtitleSources::Origin::Embedded
+            ? QStringLiteral(" (Track %1)").arg(position)
+            : QStringLiteral(" (%1)").arg(position);
+  }
+}
+
 }  // namespace
 
 SubtitleSources::SubtitleSources(QObject *parent) : QObject(parent) {}
@@ -80,6 +137,10 @@ void SubtitleSources::setEmbeddedTracks(std::vector<Source> tracks) {
   // id held across that (a scripted selection, a menu item mid-rebuild) named
   // the wrong track or nothing. The caller re-resolves its selection through
   // matches() after this, which is what makes renumbering safe.
+  // Before the ids, because Source::matches() compares the label: a selection
+  // held across a rebuild must be re-resolved against the same label it was
+  // stored with, and the disambiguation is deterministic for a given list.
+  disambiguateSourceLabels(sources_);
   next_id_ = 1;
   for (Source &source : sources_)
     source.id = next_id_++;
@@ -119,8 +180,13 @@ int SubtitleSources::addFileSource(const std::filesystem::path &path,
   source.origin = origin;
   source.mpvSid = mpvSid;
   source.filePath = path;
+  const int assigned = source.id;
   sources_.push_back(std::move(source));
-  return sources_.back().id;
+  // A loaded file can collide with an embedded track's label too (a sidecar
+  // literally named "English.srt" next to an unnamed English track). Ids are
+  // untouched here, so a live selection keeps naming the same source.
+  disambiguateSourceLabels(sources_);
+  return assigned;
 }
 
 QVariantList SubtitleSources::toVariantList() const {

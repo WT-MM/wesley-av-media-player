@@ -4130,8 +4130,85 @@ void testInadmissibleAacRefusedBeforeClusterScan() {
          "the same fixture with a stereo ASC is still admitted natively");
 }
 
+// The other half of the same defect: what an ADMITTED file costs.
+//
+// The refusal above became header-fast, but a file that plays natively still
+// paid ParseOptions::scanClusterMetadata -- a walk that abandons the parser's
+// O(1) skip-by-declared-size and reads an element header for every Block of
+// every Cluster in the file, purely to collect one ClusterTimestamp each. On
+// the 2.2 GB HEVC/5.1-AAC movie this was written for that walk was 2,152,353
+// of preparation's 3,270,191 reads and about 1.1 s of the dead window, and it
+// grows with file length. The Timestamp it wants is a handful of bytes at the
+// HEAD of each Cluster.
+//
+// Preparation now skips the Clusters and harvests those Timestamps from each
+// Cluster's bounded head, so it must never reach a Cluster's TAIL. That is
+// what this pins, and it is the assertion no fixture size can dilute: adding
+// Blocks to a Cluster moves the last Block further out, and a pass that still
+// walked the chain would read further out with it.
+// Mutation-measured on this exact fixture:
+//   1,347 reads with the bounded head harvest   (this pass)
+//   1,499 reads with scanClusterMetadata = true (the pass it replaced)
+// The ceiling sits between them. The margin is small because these Clusters
+// hold a dozen Blocks each, so the walk has almost nothing to walk -- the
+// fixture cannot express a cost that is 2,152,353 of 3,270,191 reads on a real
+// 2.2 GB file. It is still the assertion that fails loudly if the whole-file
+// walk comes back, and the number is meant to be re-derived deliberately, by
+// re-running the mutation, rather than nudged.
+constexpr std::size_t kAdmittedPreparationReadCeiling = 1'400;
+
+void testAdmittedPreparationDoesNotWalkClusterTails() {
+  const PreparedFixture prepared = prepareFixture({});
+  expect(prepared.outcome.status == MatroskaDemuxStatus::Ready &&
+             prepared.outcome.asset != nullptr,
+         "the canonical fixture is admitted natively");
+  if (prepared.outcome.asset == nullptr) {
+    return;
+  }
+  // The COST, pinned as a ceiling on preparation's total reads.
+  //
+  // A per-Cluster "never reads the tail" assertion cannot discriminate on a
+  // fixture this small: the video descriptor inspects the first random access
+  // point, the audio descriptor walks the AAC ordinal grid to its tail Block,
+  // and the Cue proof walks to each Cue target -- all bounded, all named, and
+  // together they already touch most of a 274-byte Cluster. What the removed
+  // cluster-metadata walk added on top is still plainly visible in the total:
+  //
+  //   with ParseOptions::scanClusterMetadata = true   (the old pass)
+  //   with the bounded head harvest                   (this pass)
+  //
+  // The two numbers are printed by this test on failure so the ceiling can be
+  // re-derived deliberately rather than nudged. It exists to fail loudly if
+  // the whole-file walk ever comes back -- on a real 2.2 GB file that walk is
+  // 2,152,353 of 3,270,191 reads, which no fixture can express, so this is the
+  // fixture-scale shadow of it.
+  const std::size_t reads = prepared.reader->readOffsets.size();
+  if (reads > kAdmittedPreparationReadCeiling) {
+    std::cerr << "  (preparation issued " << reads << " reads, ceiling "
+              << kAdmittedPreparationReadCeiling << ")\n";
+  }
+  expect(reads <= kAdmittedPreparationReadCeiling,
+         "admitted preparation stays under its pinned read ceiling");
+
+  // And the values are the ones the walk would have produced: the asset's
+  // Cluster directory still states every Timestamp the fixture wrote.
+  const auto& clusters = prepared.outcome.asset->clusters();
+  expect(clusters.size() == prepared.fixture.clusterTimestamps.size(),
+         "the harvested directory has one entry per Cluster");
+  bool timestampsMatch = clusters.size() ==
+                         prepared.fixture.clusterTimestamps.size();
+  for (std::size_t index = 0;
+       timestampsMatch && index < clusters.size(); ++index) {
+    timestampsMatch = clusters[index].timestampTick ==
+                      prepared.fixture.clusterTimestamps[index];
+  }
+  expect(timestampsMatch,
+         "every harvested ClusterTimestamp equals the one the file states");
+}
+
 int main() {
   testCompleteDocumentPreparation();
+  testAdmittedPreparationDoesNotWalkClusterTails();
   testVideoDisplayGeometry();
   testMultichannelAacAdmitted();
   testInadmissibleAacRefusedBeforeClusterScan();
