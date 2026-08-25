@@ -145,6 +145,23 @@ class PlayerController final : public QObject {
                  exportSpeedChanged)
   Q_PROPERTY(bool exportPreservePitch READ exportPreservePitch WRITE
                  setExportPreservePitch NOTIFY exportPreservePitchChanged)
+  // ::wam::ExportFormat as an int, because that is the whole of what a QML
+  // enum round-trip can carry without registering the C++ type.
+  Q_PROPERTY(int exportFormat READ exportFormat WRITE setExportFormat NOTIFY
+                 exportFormatChanged)
+  // True only when the CHOSEN format can be produced without re-encoding,
+  // i.e. MKV at 1x with no crop. Drives the sheet's "fast copy" note.
+  Q_PROPERTY(bool exportStreamCopies READ exportStreamCopies NOTIFY
+                 exportStreamCopiesChanged)
+  // The crop rectangle in normalized source coordinates. Four scalars rather
+  // than one QRectF: QML binds them individually anyway, and this keeps the
+  // change notifications as coarse as the edit actually is (one signal for
+  // the whole rectangle).
+  Q_PROPERTY(double cropX READ cropX NOTIFY cropChanged)
+  Q_PROPERTY(double cropY READ cropY NOTIFY cropChanged)
+  Q_PROPERTY(double cropWidth READ cropWidth NOTIFY cropChanged)
+  Q_PROPERTY(double cropHeight READ cropHeight NOTIFY cropChanged)
+  Q_PROPERTY(bool cropActive READ cropActive NOTIFY cropChanged)
   Q_PROPERTY(bool exporting READ exporting NOTIFY exportingChanged)
   Q_PROPERTY(QString exportStatus READ exportStatus NOTIFY exportStatusChanged)
   Q_PROPERTY(bool captioning READ captioning NOTIFY captioningChanged)
@@ -217,6 +234,13 @@ public:
   [[nodiscard]] double trimIn() const { return trim_in_; }
   [[nodiscard]] double trimOut() const { return trim_out_; }
   [[nodiscard]] double exportSpeed() const { return export_speed_; }
+  [[nodiscard]] int exportFormat() const;
+  [[nodiscard]] bool exportStreamCopies() const;
+  [[nodiscard]] double cropX() const { return crop_.x; }
+  [[nodiscard]] double cropY() const { return crop_.y; }
+  [[nodiscard]] double cropWidth() const { return crop_.width; }
+  [[nodiscard]] double cropHeight() const { return crop_.height; }
+  [[nodiscard]] bool cropActive() const { return crop_.active(); }
   [[nodiscard]] bool exportPreservePitch() const {
     return export_preserve_pitch_;
   }
@@ -242,6 +266,10 @@ public:
   Q_INVOKABLE void seekRelative(double seconds);
   Q_INVOKABLE void skipBackward();
   Q_INVOKABLE void skipForward();
+  // One video frame later (direction > 0) or earlier (direction < 0). Pauses
+  // first if the transport is running, which is the editor convention for
+  // "." / ",". Exactness rules live in stepFrame's definition.
+  Q_INVOKABLE void stepFrame(int direction);
   Q_INVOKABLE void toggleMute();
   Q_INVOKABLE void setMuted(bool muted);
   Q_INVOKABLE void setVolume(double volume);
@@ -283,6 +311,16 @@ public:
   Q_INVOKABLE void setTrimOut(double seconds);
   Q_INVOKABLE void setExportSpeed(double speed);
   Q_INVOKABLE void setExportPreservePitch(bool preserve);
+  Q_INVOKABLE void setExportFormat(int format);
+  // The filename extension the current preset will actually produce, dot
+  // included (".mp4", ".webm", ...). The Save dialog needs it for its default
+  // suffix, its filter and its suggested name, and getting it from here means
+  // QML never keeps a second copy of the preset-to-container mapping.
+  Q_INVOKABLE QString exportFileSuffix() const;
+  // Normalized source coordinates; the rectangle is clamped into the frame
+  // and to a workable minimum size on the way in.
+  Q_INVOKABLE void setCrop(double x, double y, double width, double height);
+  Q_INVOKABLE void resetCrop();
   Q_INVOKABLE void exportSelection();
   Q_INVOKABLE void exportSelectionTo(const QUrl &destination);
   Q_INVOKABLE void cancelExport();
@@ -341,6 +379,9 @@ signals:
   void trimOutChanged();
   void exportSpeedChanged();
   void exportPreservePitchChanged();
+  void exportFormatChanged();
+  void exportStreamCopiesChanged();
+  void cropChanged();
   void exportingChanged();
   void exportStatusChanged();
   void captioningChanged();
@@ -606,6 +647,23 @@ private:
   // target that is both exactly representable as a rational media time and
   // strictly inside the duration. See the definition for the exactness rule.
   [[nodiscard]] double exactNativeSeekTarget(double seconds) const noexcept;
+  // Frame stepping needs a FINER dyadic rung than exactNativeSeekTarget's
+  // 1/64 s scrubber grid: one 1/64 step is 15.6 ms, which is coarser than a
+  // frame above 64 fps and -- fatally for a forward step -- flooring
+  // `frameStart + frameDuration` back onto that grid lands inside the frame
+  // you were already on, so the step would do nothing. The preflight rule is
+  // not the 1/64 grid; media::exactNonnegativeMediaTime admits any k/2^n with
+  // n <= 30, so a 2^-12 s (0.244 ms) grid is equally representable and is
+  // exact for anything up to 4096 fps. `round_up` picks the ceiling (forward
+  // step, which must reach the NEXT frame's interval) or the floor (backward
+  // step, which must fall strictly short of the current frame's start).
+  [[nodiscard]] double frameStepSeekTarget(double seconds,
+                                           bool round_up) const noexcept;
+  // makeNativeSeekIntent restated for a target the caller has already snapped
+  // onto its own admissible grid. Reusing makeNativeSeekIntent would re-floor
+  // a frame-step target onto the coarse 1/64 scrubber grid and undo it.
+  [[nodiscard]] std::optional<NativeSeekIntent>
+  makeNativeExactSeekIntent(double exact_target);
   // Closes a live timeline sweep with exactly one commit. A no-op when no
   // sweep is open.
   void commitScrollSweep();
@@ -652,6 +710,14 @@ private:
   void invalidateNativeScrubIntent() noexcept;
   void invalidateNativeSeekIntents() noexcept;
   void publishNativeMainPosition(double position);
+  // The exact geometry of the frame currently on screen, as proved by the
+  // native route's VideoDrawProof (every drawn frame, and every commit's
+  // embedded draw proof). This is the ONLY per-sample timing the GUI layer
+  // ever sees -- no frame rate exists anywhere in the contract -- and it is
+  // what makes frame stepping exact under VFR: the next frame's PTS is this
+  // frame's start plus this frame's own duration, never a nominal interval.
+  void publishNativeFrameGeometry(double start_seconds,
+                                  double duration_seconds);
   void publishSeekTarget(double target);
   void handleStartFile(std::int64_t playlist_entry_id);
   void handleEndFile(const mpv_event_end_file &end);
@@ -837,6 +903,10 @@ private:
   double trim_out_ = 0.0;
   double export_speed_ = 1.0;
   bool export_preserve_pitch_ = true;
+  ::wam::ExportFormat export_format_ = ::wam::ExportFormat::Mp4H264;
+  // Per window, and reset on every media change: a rectangle drawn over one
+  // shot means nothing over the next file's framing.
+  ::wam::CropRect crop_{};
   bool exporting_ = false;
   bool captioning_ = false;
   bool export_cancel_requested_ = false;
@@ -890,6 +960,15 @@ private:
   std::optional<NativeSeekIntent> native_seek_intent_;
   NativeSeekSubmissionState *native_seek_submission_ = nullptr;
   std::uint64_t latest_native_seek_submission_request_ = 0;
+  // Last proved on-screen frame geometry (native route). Negative start means
+  // "nothing proved yet"; a zero duration means the proof named an audio-only
+  // generation, which has no frame to step.
+  double native_frame_start_ = -1.0;
+  double native_frame_duration_ = 0.0;
+  // A step pressed before any frame geometry was proved converts into one
+  // settling commit at the current position; this remembers the direction to
+  // apply once that commit's own draw proof arrives.
+  int pending_frame_step_ = 0;
 #if defined(WAM_MPV_RUNTIME_TESTING)
   // The controller-only test target deliberately excludes the platform owner.
   // This seam lets it exercise the public previewSeekTo boundary while keeping

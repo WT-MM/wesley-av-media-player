@@ -1257,6 +1257,47 @@ double PlayerController::exactNativeSeekTarget(double seconds) const noexcept {
   return target;
 }
 
+double PlayerController::frameStepSeekTarget(double seconds,
+                                             bool round_up) const noexcept {
+  // 2^-12 s = 244 us. Dyadic, so media::exactNonnegativeMediaTime reduces it
+  // to k/4096 and the commit preflight admits it exactly as it admits the
+  // scrubber's k/64; the only thing that changes is the rung. The rounded
+  // result sits strictly inside the neighbouring frame's half-open
+  // presentation interval whenever that frame lasts longer than one grid
+  // step, i.e. for anything below 4096 fps.
+  constexpr double kFrameStepGrid = 4096.0;
+  const double bounded = boundedSeekTarget(seconds);
+  if (!std::isfinite(bounded) || bounded <= 0.0)
+    return 0.0;
+  // Forward: the smallest grid point at or after the target, which is the
+  // next frame's own start when that start is representable and a hair into
+  // its interval otherwise. Equality is correct here -- the interval is
+  // half-open at the start, so landing exactly on it selects that frame.
+  //
+  // Backward: the largest grid point STRICTLY BELOW the target. Plain
+  // flooring is wrong, and wrong in a way that is easy to miss: whenever a
+  // frame's PTS is itself dyadic, floor returns that same instant, accurate
+  // seek lands on the frame the user is already looking at, and the step
+  // silently does nothing. At 30 fps that is every fifteenth frame (15/30 =
+  // 0.5); at 120 fps every fifteenth too. `(ceil(x) - 1)` is the uniform
+  // answer: for an integral x it steps one grid point back, and for a
+  // non-integral x it is exactly floor(x).
+  double target =
+      round_up
+          ? std::ceil(bounded * kFrameStepGrid) / kFrameStepGrid
+          : (std::ceil(bounded * kFrameStepGrid) - 1.0) / kFrameStepGrid;
+  // Same strictly-inside-the-duration rule exactNativeSeekTarget applies, on
+  // this grid: the last admissible target is the last grid point below the
+  // duration, never the duration itself.
+  if (duration_ > 0.0 && target >= duration_) {
+    target = std::floor((duration_ - 1.0 / kFrameStepGrid) * kFrameStepGrid) /
+             kFrameStepGrid;
+  }
+  if (!(target > 0.0))
+    return 0.0;
+  return target;
+}
+
 bool PlayerController::beginNativeScrubIntent() {
   if (native_scrub_intent_)
     return true;
@@ -1394,6 +1435,22 @@ PlayerController::makeNativeSeekIntent(double seconds) {
       native_seek_intent_ ? native_seek_intent_->intended_paused : paused_;
   return NativeSeekIntent{*gesture, *request, exactNativeSeekTarget(seconds),
                           position_, intended_paused};
+}
+
+std::optional<PlayerController::NativeSeekIntent>
+PlayerController::makeNativeExactSeekIntent(double exact_target) {
+  if (!std::isfinite(exact_target) || exact_target < 0.0)
+    return std::nullopt;
+  const auto gesture = reserveNativeSeekIdentity(next_native_seek_gesture_id_);
+  if (!gesture)
+    return std::nullopt;
+  const auto request = reserveNativeSeekIdentity(next_native_seek_request_id_);
+  if (!request)
+    return std::nullopt;
+  // A frame step always lands paused: that is the whole point of the gesture,
+  // and it keeps the intent from restoring a running transport underneath the
+  // frame the user just asked to look at.
+  return NativeSeekIntent{*gesture, *request, exact_target, position_, true};
 }
 
 PlayerController::NativeSeekDispatch
@@ -1539,6 +1596,15 @@ void PlayerController::nativeCommitReady(
                                ready.targetSeconds)) {
     return;
   }
+  // Every commit lands paused on a proved covering frame, so its embedded
+  // draw proof is the authoritative frame geometry for the picture now on
+  // screen -- and the one that chains one frame step to the next.
+  if (!ready.videoDraw.videoLaneAbsent) {
+    publishNativeFrameGeometry(ready.videoDraw.frameStartSeconds,
+                               ready.videoDraw.frameDurationSeconds);
+  } else {
+    publishNativeFrameGeometry(0.0, 0.0);
+  }
   updateEof(false);
   updateIdle(false);
 }
@@ -1649,6 +1715,12 @@ void PlayerController::invalidateNativeScrubIntent() noexcept {
 void PlayerController::invalidateNativeSeekIntents() noexcept {
   native_scrub_intent_.reset();
   native_seek_intent_.reset();
+  // Frame geometry belongs to one generation's picture. Carrying it across a
+  // stop or a new open would let the first "." step relative to the previous
+  // file's last frame.
+  native_frame_start_ = -1.0;
+  native_frame_duration_ = 0.0;
+  pending_frame_step_ = 0;
   for (NativeSeekSubmissionState *submission = native_seek_submission_;
        submission != nullptr; submission = submission->previous) {
     submission->terminal = NativeSeekTerminal::Failed;
@@ -2130,6 +2202,107 @@ void PlayerController::seekRelative(double seconds) {
 
 void PlayerController::skipBackward() { seekRelative(-seek_step_seconds_); }
 void PlayerController::skipForward() { seekRelative(seek_step_seconds_); }
+
+void PlayerController::stepFrame(int direction) {
+  if (direction == 0 || !hasMedia())
+    return;
+  const bool forward = direction > 0;
+
+  // Stepping is a paused-transport gesture. Pressing "." while playing pauses
+  // first and spends the press on the pause, exactly like every NLE: the
+  // alternative -- pause and step in one press -- makes the first frame you
+  // land on depend on scheduling latency, which is the one thing frame
+  // stepping exists to remove.
+  if (playing()) {
+    pause();
+    return;
+  }
+
+#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+  if (native_playback_ && native_playback_->nativeOwnsTransport()) {
+    // An audio-only generation proves no frame geometry and has nothing to
+    // step; say so rather than seeking by a made-up interval.
+    if (native_frame_start_ >= 0.0 && native_frame_duration_ <= 0.0)
+      return;
+
+    const bool geometry_covers_position =
+        native_frame_start_ >= 0.0 && native_frame_duration_ > 0.0 &&
+        position_ >= native_frame_start_ &&
+        position_ - native_frame_start_ < native_frame_duration_;
+
+    if (!geometry_covers_position) {
+      // No proof yet for the frame actually on screen (nothing has been drawn
+      // since the last open, or the position moved by a route the draw proof
+      // did not narrate). Spend this press on one settling commit at the
+      // current position -- which by definition lands on, and proves, the
+      // covering frame -- and remember the direction for the proof's arrival.
+      pending_frame_step_ = forward ? 1 : -1;
+      const double settle = frameStepSeekTarget(position_, false);
+      if (auto intent = makeNativeExactSeekIntent(settle)) {
+        if (dispatchNativeSeekIntent(*intent) == NativeSeekDispatch::Consumed)
+          return;
+      }
+      pending_frame_step_ = 0;
+      return;
+    }
+
+    // The exact neighbour, from this frame's own duration -- never a nominal
+    // frame interval, so a variable-frame-rate source steps onto its real
+    // sample times.
+    double raw = 0.0;
+    if (forward) {
+      raw = native_frame_start_ + native_frame_duration_;
+      if (duration_ > 0.0 && raw >= duration_)
+        return; // Already on the last frame.
+    } else {
+      if (native_frame_start_ <= 0.0)
+        return; // Already on the first frame.
+      raw = native_frame_start_;
+    }
+    // Forward rounds UP so the target reaches the next frame's interval;
+    // backward rounds DOWN so it falls strictly short of this frame's start
+    // and therefore inside the previous frame's interval.
+    const double target = frameStepSeekTarget(raw, forward);
+    if (!forward && !(target < native_frame_start_))
+      return;
+    pending_frame_step_ = 0;
+    if (auto intent = makeNativeExactSeekIntent(target))
+      static_cast<void>(dispatchNativeSeekIntent(*intent));
+    return;
+  }
+#endif
+
+  if (!engineReady())
+    return;
+  // The compatibility route has the operation natively and exactly: mpv's own
+  // frame-step / frame-back-step decode by one presented picture, so no PTS
+  // arithmetic happens here at all. frame-back-step is the expensive one (mpv
+  // re-seeks and re-decodes from the preceding keyframe).
+  sendCommand(core_.get(), {forward ? QByteArrayLiteral("frame-step")
+                                    : QByteArrayLiteral("frame-back-step")});
+}
+
+void PlayerController::publishNativeFrameGeometry(double start_seconds,
+                                                  double duration_seconds) {
+  if (!std::isfinite(start_seconds) || !std::isfinite(duration_seconds))
+    return;
+  native_frame_start_ = std::max(0.0, start_seconds);
+  native_frame_duration_ = std::max(0.0, duration_seconds);
+  if (pending_frame_step_ == 0)
+    return;
+  // The settling commit above has landed and proved the covering frame; spend
+  // the remembered direction now. Clearing first keeps a refused or clamped
+  // step from re-arming itself on the proof its own commit publishes.
+  const int direction = pending_frame_step_;
+  pending_frame_step_ = 0;
+  if (native_frame_duration_ <= 0.0)
+    return;
+  // Deferred, not immediate: this runs inside the owner's observation drain,
+  // and dispatching the next commit from underneath it would re-enter the
+  // session command path mid-drain. Zero-delay queued is the same idiom the
+  // rest of this class uses for exactly that reason.
+  QTimer::singleShot(0, this, [this, direction] { stepFrame(direction); });
+}
 
 void PlayerController::toggleMute() { setMuted(!muted_); }
 
@@ -2773,8 +2946,13 @@ void PlayerController::setExportSpeed(double speed) {
   const double bounded = std::clamp(speed, 0.0625, 16.0);
   if (nearlyEqual(export_speed_, bounded))
     return;
+  // Leaving 1x is what makes an MKV "fast copy" illegal, so the copy promise
+  // is re-evaluated on every speed change, not only on format changes.
+  const bool copied = exportStreamCopies();
   export_speed_ = bounded;
   emit exportSpeedChanged();
+  if (copied != exportStreamCopies())
+    emit exportStreamCopiesChanged();
 }
 
 void PlayerController::setExportPreservePitch(bool preserve) {
@@ -2783,6 +2961,68 @@ void PlayerController::setExportPreservePitch(bool preserve) {
   export_preserve_pitch_ = preserve;
   emit exportPreservePitchChanged();
 }
+
+int PlayerController::exportFormat() const {
+  return static_cast<int>(export_format_);
+}
+
+bool PlayerController::exportStreamCopies() const {
+  // Asked of the same predicate the export itself will use, with the same
+  // inputs, so the sheet can never promise a copy the encoder then declines.
+  ::wam::EditOptions probe;
+  probe.format = export_format_;
+  probe.speed = export_speed_;
+  probe.crop = crop_;
+  return ::wam::exportUsesStreamCopy(probe);
+}
+
+void PlayerController::setExportFormat(int format) {
+  if (format < static_cast<int>(::wam::ExportFormat::Mp4H264) ||
+      format > static_cast<int>(::wam::ExportFormat::Gif)) {
+    return;
+  }
+  const auto chosen = static_cast<::wam::ExportFormat>(format);
+  if (export_format_ == chosen)
+    return;
+  const bool copied = exportStreamCopies();
+  export_format_ = chosen;
+  emit exportFormatChanged();
+  if (copied != exportStreamCopies())
+    emit exportStreamCopiesChanged();
+}
+
+QString PlayerController::exportFileSuffix() const {
+  return QString::fromLatin1(::wam::exportFormatExtension(export_format_));
+}
+
+void PlayerController::setCrop(double x, double y, double width,
+                               double height) {
+  if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(width) ||
+      !std::isfinite(height)) {
+    return;
+  }
+  // The same clamp cropFilter applies, applied here too so the value the UI
+  // reads back is the value the export will use -- a rectangle that silently
+  // differs between the overlay and the encoder is the one bug this feature
+  // must not have.
+  ::wam::CropRect bounded;
+  bounded.width = std::clamp(width, 0.02, 1.0);
+  bounded.height = std::clamp(height, 0.02, 1.0);
+  bounded.x = std::clamp(x, 0.0, 1.0 - bounded.width);
+  bounded.y = std::clamp(y, 0.0, 1.0 - bounded.height);
+  if (nearlyEqual(bounded.x, crop_.x) && nearlyEqual(bounded.y, crop_.y) &&
+      nearlyEqual(bounded.width, crop_.width) &&
+      nearlyEqual(bounded.height, crop_.height)) {
+    return;
+  }
+  const bool copied = exportStreamCopies();
+  crop_ = bounded;
+  emit cropChanged();
+  if (copied != exportStreamCopies())
+    emit exportStreamCopiesChanged();
+}
+
+void PlayerController::resetCrop() { setCrop(0.0, 0.0, 1.0, 1.0); }
 
 void PlayerController::exportSelection() {
   if (!hasMedia()) {
@@ -2825,8 +3065,11 @@ void PlayerController::exportSelectionTo(const QUrl &destination) {
     setLastError(QStringLiteral("Choose a local file for the video export."));
     return;
   }
+  // The preset decides the container, so it decides the extension -- both for
+  // an extensionless choice and for one the dialog's own default suffix
+  // already supplied.
   if (output->extension().empty())
-    *output += ".mp4";
+    *output += ::wam::exportFormatExtension(export_format_);
 
   std::error_code path_error;
   if (!std::filesystem::is_regular_file(*input, path_error)) {
@@ -2856,6 +3099,8 @@ void PlayerController::exportSelectionTo(const QUrl &destination) {
   options.speed = export_speed_;
   options.preserve_pitch = export_preserve_pitch_;
   options.prefer_hardware_encoder = true;
+  options.format = export_format_;
+  options.crop = crop_;
 
 #ifdef _WIN32
   const auto ffmpeg_search =
@@ -5162,6 +5407,16 @@ void PlayerController::resetTimeline() {
   if (!nearlyEqual(export_speed_, 1.0)) {
     export_speed_ = 1.0;
     emit exportSpeedChanged();
+  }
+  // Same rule for the crop rectangle, and for the same reason with more
+  // force: a rectangle is drawn against one shot's framing and is meaningless
+  // -- not merely stale -- over the next file's. The FORMAT deliberately does
+  // NOT reset here: "I export WebM" is a standing preference about where the
+  // file is going, not a statement about this particular clip.
+  if (crop_.active()) {
+    crop_ = ::wam::CropRect{};
+    emit cropChanged();
+    emit exportStreamCopiesChanged();
   }
   if (!export_preserve_pitch_) {
     export_preserve_pitch_ = true;

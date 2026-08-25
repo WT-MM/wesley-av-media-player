@@ -12,6 +12,39 @@
 
 namespace wam {
 
+// Export presets, not a codec zoo. Each one names a container AND the codec
+// pair that container is actually good at, because the interesting choice a
+// user makes here is "what do I need this file to do" -- play on a phone, go
+// in a web page, stay lossless, become a reaction image -- and never "which
+// entropy coder".
+//
+// The enumerator VALUES are persisted through the QML surface and the
+// controller property, so they are append-only.
+enum class ExportFormat : int {
+  Mp4H264 = 0,  // Default. Hardware h264_videotoolbox, exactly as before.
+  Mp4Hevc = 1,  // hevc_videotoolbox; half the size, narrower playback support.
+  WebmVp9 = 2,  // libvpx-vp9 + Opus. SOFTWARE, and therefore slow.
+  MkvCopy = 3,  // Stream copy when that is legal; see exportUsesStreamCopy.
+  Gif = 4,      // Palette-optimized, capped in both fps and duration.
+};
+
+// A crop rectangle in NORMALIZED source coordinates: the fraction of the
+// source frame, not pixels. Storing it this way is what lets the same
+// rectangle be drawn over a video item of any on-screen size and still map to
+// exact source pixels at export time -- the ffmpeg `crop` filter is given the
+// fractions and multiplies by `iw`/`ih` itself, so no dimension probe, no
+// display-scale arithmetic, and no rounding happens on this side at all.
+struct CropRect {
+  double x = 0.0;
+  double y = 0.0;
+  double width = 1.0;
+  double height = 1.0;
+
+  // A rectangle that selects the whole frame is not a crop. Compared with a
+  // tolerance because the value arrives from a pointer drag through a double.
+  [[nodiscard]] bool active() const;
+};
+
 struct EditOptions {
   std::filesystem::path input;
   std::filesystem::path output;
@@ -20,7 +53,40 @@ struct EditOptions {
   double speed = 1.0;
   bool preserve_pitch = true;
   bool prefer_hardware_encoder = true;
+  ExportFormat format = ExportFormat::Mp4H264;
+  CropRect crop{};
 };
+
+// The filename extension the muxer for `format` is selected by. FFmpeg picks
+// its muxer from the OUTPUT PATH, and the path it is actually handed is the
+// staging file, so this governs the staging suffix too.
+[[nodiscard]] const char* exportFormatExtension(ExportFormat format);
+
+// True when the request can be satisfied without re-encoding a single frame.
+// Stream copy cannot retime and cannot crop, because it never decodes; those
+// two conditions are the whole rule.
+//
+// CAVEAT that must reach the user, not just this header: a copied trim starts
+// at the nearest keyframe at or before the in point, because the first packet
+// of a copied stream has to be a keyframe. The out point is exact.
+[[nodiscard]] bool exportUsesStreamCopy(const EditOptions& options);
+
+// The `crop` filter expression for a normalized rectangle, or an empty string
+// when the rectangle selects everything.
+//
+// EVEN-DIMENSION RULE: every one of width, height, x and y is rounded DOWN to
+// an even number of source pixels (`floor(iw*f/2)*2`). H.264, HEVC and VP9 in
+// 4:2:0 all subsample chroma by two, so an odd width or an odd offset either
+// fails outright or silently shifts the chroma planes by half a pixel. Down,
+// not nearest, so the result can never exceed the rectangle the user drew or
+// run past the frame edge.
+[[nodiscard]] std::string cropFilter(const CropRect& crop);
+
+// GIF is capped on both axes, and the caps are stated here so the UI can name
+// the same numbers it will actually get.
+inline constexpr double kGifMaximumOutputSeconds = 15.0;
+inline constexpr int kGifFramesPerSecond = 15;
+inline constexpr int kGifMaximumWidth = 640;
 
 // A shell-free child process description. Arguments are UTF-8 on every
 // platform; the executable remains a filesystem path so Windows can launch it

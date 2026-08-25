@@ -14,6 +14,8 @@
 #include <chrono>
 #include <clocale>
 #include <cmath>
+#include <utility>
+#include <vector>
 #include <cstdlib>
 #include <iostream>
 #include <limits>
@@ -917,6 +919,14 @@ class PlayerControllerTestAccess final {
     return controller.native_seek_intent_
                ? controller.native_seek_intent_->target
                : -1.0;
+  }
+
+  // Frame stepping's whole exactness argument lives in this one function, so
+  // it is exercised directly against real sample timing rather than inferred
+  // from a live transport.
+  static double frameStepTarget(const PlayerController &controller,
+                                double seconds, bool round_up) {
+    return controller.frameStepSeekTarget(seconds, round_up);
   }
 
   static bool nativeIntendsPause(const PlayerController &controller) {
@@ -3107,6 +3117,118 @@ int main(int argc, char **argv) {
            "a reentrant accepted seek supersedes the outer refusal without "
            "rollback or compatibility fallthrough");
     Access::failNativeSeek(controller, nested.gesture, nested.request);
+  }
+
+  {
+    // ------------------------------------------------------------------
+    // Frame stepping: the exactness property, against real sample timing.
+    //
+    // The claim the feature rests on is precisely this: given the frame
+    // covering the playhead, the target computed for a step lands inside the
+    // NEIGHBOURING frame's half-open presentation interval -- the same
+    // interval rule native accurate seek uses (frameCoversPosition in
+    // native_playback_contract.hpp). Proving that over real PTS tables proves
+    // the step, without needing a live transport.
+    //
+    // The rounding direction is the load-bearing part. Forward must round UP
+    // (rounding a frame boundary DOWN lands back inside the frame you are
+    // already on, and the step silently does nothing); backward must round
+    // DOWN (so it falls strictly short of this frame's start).
+    using Access = wam::qt::PlayerControllerTestAccess;
+    wam::qt::PlayerController controller;
+
+    const auto covers = [](double target, double start, double next) {
+      return target >= start && target < next;
+    };
+
+    // Walks a PTS table and asserts the property at every interior frame.
+    const auto walk = [&](const std::vector<double> &pts, const char *label) {
+      Access::setDuration(controller, pts.back() + 1.0);
+      bool forward_ok = true;
+      bool backward_ok = true;
+      for (std::size_t i = 1; i + 2 < pts.size(); ++i) {
+        // Forward from frame i: raw target is frame i's start plus frame i's
+        // OWN duration, which is exactly frame i+1's PTS.
+        const double forward =
+            Access::frameStepTarget(controller, pts[i + 1], true);
+        if (!covers(forward, pts[i + 1], pts[i + 2]))
+          forward_ok = false;
+        // Backward from frame i: raw target is frame i's start; the result
+        // must land inside frame i-1.
+        const double backward =
+            Access::frameStepTarget(controller, pts[i], false);
+        if (!covers(backward, pts[i - 1], pts[i]))
+          backward_ok = false;
+      }
+      expect(forward_ok, label);
+      expect(backward_ok, label);
+    };
+
+    // Constant frame rates, including both NTSC 1001-denominator rates, whose
+    // frame boundaries are irrational on any binary grid and are exactly the
+    // case a coarse 1/64 grid could not represent.
+    for (const auto &rate : std::vector<std::pair<double, const char *>>{
+             {30.0, "frame step is exact at 30 fps"},
+             {30000.0 / 1001.0, "frame step is exact at 29.97 fps"},
+             {24000.0 / 1001.0, "frame step is exact at 23.976 fps"},
+             {60000.0 / 1001.0, "frame step is exact at 59.94 fps"},
+             {120.0, "frame step is exact at 120 fps"}}) {
+      std::vector<double> pts;
+      pts.reserve(200);
+      for (int frame = 0; frame < 200; ++frame)
+        pts.push_back(static_cast<double>(frame) / rate.first);
+      walk(pts, rate.second);
+    }
+
+    {
+      // Variable frame rate: durations deliberately jump between 1/24, 1/30
+      // and 1/60 of a second, so any implementation that multiplied by a
+      // nominal interval instead of using each frame's own duration would
+      // drift off the sample grid within a few steps.
+      std::vector<double> pts;
+      double t = 0.0;
+      const double steps[] = {1.0 / 24.0, 1.0 / 60.0, 1.0 / 30.0, 1.0 / 24.0,
+                              1.0 / 60.0, 1.0 / 60.0, 1.0 / 30.0};
+      for (int frame = 0; frame < 200; ++frame) {
+        pts.push_back(t);
+        t += steps[static_cast<std::size_t>(frame) % 7];
+      }
+      walk(pts, "frame step is exact on a variable-frame-rate sample table");
+    }
+
+    // The grid is dyadic, which is what the native commit preflight
+    // (media::exactNonnegativeMediaTime) actually requires -- k/2^n with
+    // n <= 30. Every target must therefore be an exact multiple of 2^-12.
+    Access::setDuration(controller, 600.0);
+    bool dyadic = true;
+    for (int frame = 1; frame < 500; ++frame) {
+      const double source = static_cast<double>(frame) * 1001.0 / 30000.0;
+      for (const bool up : {true, false}) {
+        const double target = Access::frameStepTarget(controller, source, up);
+        if (target * 4096.0 != std::floor(target * 4096.0))
+          dyadic = false;
+      }
+    }
+    expect(dyadic,
+           "every frame-step target is an exact multiple of 2^-12 seconds");
+
+    // Rounding direction, stated as its own fact rather than inferred.
+    Access::setDuration(controller, 600.0);
+    const double boundary = 1.0 / 30.0;  // 0.0333..., not on any binary grid
+    expect(Access::frameStepTarget(controller, boundary, true) >= boundary,
+           "a forward frame-step target never rounds back before the frame it "
+           "is trying to reach");
+    expect(Access::frameStepTarget(controller, boundary, false) < boundary,
+           "a backward frame-step target always falls strictly short of the "
+           "current frame's start");
+
+    // Near the duration the target must stay strictly inside, exactly as the
+    // scrubber's own grid rule does -- the preflight refuses a target at or
+    // past the duration.
+    Access::setDuration(controller, 10.0);
+    expect(Access::frameStepTarget(controller, 10.0, true) < 10.0,
+           "a frame-step target past the end is clamped strictly inside the "
+           "duration");
   }
 
   // Any wakeup posted during initialization is context-bound to the destroyed

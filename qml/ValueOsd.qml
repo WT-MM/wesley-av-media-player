@@ -1,7 +1,7 @@
 import QtQuick
 
-// A transient, VLC-style on-video readout: one short line of text on the
-// chrome's own glass, shown for a moment after a value changed and then gone.
+// A transient, VLC-style on-video readout: one short line of bare white
+// text, shown for a moment after a value changed and then gone.
 //
 // Deliberately generic in what it displays (`text` is whatever the caller
 // wants to say) and deliberately NOT generic in anything else -- it is one
@@ -56,8 +56,8 @@ Item {
         hideTimer.restart();
     }
 
-    implicitWidth: card.width
-    implicitHeight: card.height
+    implicitWidth: label.implicitWidth
+    implicitHeight: label.implicitHeight
     opacity: osd.shown ? 1 : 0
     // Gone from the scene graph entirely once faded -- see the note above.
     visible: opacity > 0
@@ -81,39 +81,24 @@ Item {
         onTriggered: osd.shown = false
     }
 
-    Rectangle {
-        id: card
-        // The chrome's glass token, exactly as FloatingControls and the
-        // titlebar band use it: near-black at ~83%. A lighter scrim lets
-        // bright content (colour bars, a white shot) wash the number out,
-        // which is the one thing a legibility affordance may not do.
-        color: "#d51b1b1e"
-        radius: 12
-        width: label.implicitWidth + 2 * horizontalPadding
-        height: label.implicitHeight + 2 * verticalPadding
-
-        readonly property real horizontalPadding: Math.round(label.font.pixelSize * 0.62)
-        readonly property real verticalPadding: Math.round(label.font.pixelSize * 0.30)
-
-        Text {
-            id: label
-            anchors.centerIn: parent
-            text: osd.text
-            // The chrome's soft white, at the full-strength end of it: this
-            // is the one number the user asked to be able to read at a
-            // glance, so it gets the same ink the boosted volume readout on
-            // the transport already gets rather than the quieter grey.
-            color: "#f7f7f8"
-            font.family: ".AppleSystemUIFont"
-            font.pixelSize: Math.max(
-                28,
-                Math.round(Math.min(osd.referenceWidth,
-                                    osd.referenceHeight * 1.6) * 0.042))
-            font.weight: Font.DemiBold
-            // The card is a sighted-only restatement of a value the volume
-            // slider already exposes to accessibility clients with its own
-            // Accessible.name and role; announcing it twice would be noise.
-            Accessible.ignored: true
-        }
+    // Bare white text, VLC-style, per the user's explicit request -- no card,
+    // no scrim. A hairline of dark text shadow is the whole legibility budget:
+    // it keeps the number readable over a white shot without reading as a
+    // background.
+    Text {
+        id: label
+        text: osd.text
+        color: "#ffffff"
+        style: Text.Outline
+        styleColor: "#40000000"
+        font.family: ".AppleSystemUIFont"
+        font.pixelSize: Math.max(
+            22,
+            Math.round(Math.min(osd.referenceWidth,
+                                osd.referenceHeight * 1.6) * 0.030))
+        font.weight: Font.DemiBold
+        // A sighted-only restatement of a value the volume slider already
+        // exposes to accessibility clients; announcing it twice is noise.
+        Accessible.ignored: true
     }
 }

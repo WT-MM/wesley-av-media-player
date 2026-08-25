@@ -488,9 +488,72 @@ std::string varispeedFilter(double speed) {
          ",aresample=" + base;
 }
 
+bool CropRect::active() const {
+  // One part in a thousand of the frame. Below that the rectangle is a
+  // rounding artefact of a pointer drag, not an edit, and running the crop
+  // filter for it would only cost an even-rounding shift.
+  constexpr double kTolerance = 0.001;
+  return std::isfinite(x) && std::isfinite(y) && std::isfinite(width) &&
+         std::isfinite(height) &&
+         (x > kTolerance || y > kTolerance || width < 1.0 - kTolerance ||
+          height < 1.0 - kTolerance);
+}
+
+const char* exportFormatExtension(ExportFormat format) {
+  switch (format) {
+    case ExportFormat::Mp4H264:
+    case ExportFormat::Mp4Hevc:
+      return ".mp4";
+    case ExportFormat::WebmVp9:
+      return ".webm";
+    case ExportFormat::MkvCopy:
+      return ".mkv";
+    case ExportFormat::Gif:
+      return ".gif";
+  }
+  return ".mp4";
+}
+
+bool exportUsesStreamCopy(const EditOptions& options) {
+  if (options.format != ExportFormat::MkvCopy) return false;
+  // Copying never decodes, so it can neither retime nor crop. There is no
+  // partial version of this: either both are absent and the export is a pure
+  // remux, or the request needs pixels and a re-encode is the honest answer.
+  if (std::abs(options.speed - 1.0) > 1e-9) return false;
+  return !options.crop.active();
+}
+
+std::string cropFilter(const CropRect& crop) {
+  if (!crop.active()) return {};
+  // The rectangle is clamped into the frame here rather than trusted from the
+  // UI: a drag can leave a fraction a hair outside [0,1], and `crop` answers
+  // an out-of-frame rectangle with a hard failure rather than a clamp.
+  const double w = std::clamp(crop.width, 0.02, 1.0);
+  const double h = std::clamp(crop.height, 0.02, 1.0);
+  const double x = std::clamp(crop.x, 0.0, 1.0 - w);
+  const double y = std::clamp(crop.y, 0.0, 1.0 - h);
+  // `iw`/`ih` are the crop filter's own source-dimension variables, so the
+  // normalized rectangle is multiplied out by FFmpeg against the real coded
+  // size. Nothing on this side needs to know the source dimensions, which is
+  // exactly why the rectangle is stored normalized.
+  //
+  // floor(.../2)*2 on all four terms is the even-dimension rule from the
+  // header: 4:2:0 chroma is subsampled by two in both axes, so an odd size or
+  // an odd offset is either refused by the encoder or silently shifts chroma.
+  std::ostringstream filter;
+  filter << "crop=w=floor(iw*" << formatNumber(w) << "/2)*2"
+         << ":h=floor(ih*" << formatNumber(h) << "/2)*2"
+         << ":x=floor(iw*" << formatNumber(x) << "/2)*2"
+         << ":y=floor(ih*" << formatNumber(y) << "/2)*2";
+  return filter.str();
+}
+
 ProcessCommand buildExportProcess(const std::filesystem::path& ffmpeg,
                                   const EditOptions& o) {
   const double speed = std::clamp(o.speed, 0.0625, 16.0);
+  const bool copy = exportUsesStreamCopy(o);
+  const bool gif = o.format == ExportFormat::Gif;
+  const std::string crop = cropFilter(o.crop);
   ProcessCommand command;
   command.executable = ffmpeg;
   auto& args = command.arguments;
@@ -503,32 +566,119 @@ ProcessCommand buildExportProcess(const std::filesystem::path& ffmpeg,
   // limits the already-retimed output and a 2x export reads twice as much of
   // the source as the selected trim range.
   if (o.out_seconds > o.in_seconds + 0.001) {
+    double window = o.out_seconds - o.in_seconds;
+    if (gif) {
+      // The cap is on the GIF's own playing time, so the amount of SOURCE it
+      // may consume scales with the retime: a 2x export fits twice as much
+      // source into the same capped output.
+      window = std::min(window, kGifMaximumOutputSeconds * speed);
+    }
     args.emplace_back("-t");
-    args.push_back(formatNumber(o.out_seconds - o.in_seconds));
+    args.push_back(formatNumber(window));
+  } else if (gif) {
+    args.emplace_back("-t");
+    args.push_back(formatNumber(kGifMaximumOutputSeconds * speed));
   }
   args.emplace_back("-i");
   args.push_back(pathArgument(o.input));
+
+  if (gif) {
+    // GIF has no audio and a 256-colour palette per frame. A default export
+    // quantizes to a fixed web palette and bands badly, so the palette is
+    // generated from these exact frames and applied in one pass:
+    // split the stream, build a palette from one branch, map the other
+    // through it. `-filter_complex` and `-filter:v` are mutually exclusive,
+    // which is why this branch builds the whole chain itself.
+    std::ostringstream chain;
+    chain << "[0:v]";
+    if (!crop.empty()) chain << crop << ',';
+    chain << "setpts=(PTS-STARTPTS)/" << formatNumber(speed) << ','
+          << "fps=" << kGifFramesPerSecond << ','
+          // Scale AFTER the crop, never before: cropping a scaled frame would
+          // map the rectangle to the wrong source pixels. -2 keeps the aspect
+          // and lands on an even height. `min(iw,cap)` never upscales.
+          << "scale=w=min(iw\\," << kGifMaximumWidth << "):h=-2:flags=lanczos,"
+          << "split[s0][s1];[s0]palettegen=stats_mode=diff[p];"
+          << "[s1][p]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle";
+    args.emplace_back("-filter_complex");
+    args.push_back(chain.str());
+    args.insert(args.end(), {"-an", "-loop", "0"});
+    args.push_back(pathArgument(o.output));
+    return command;
+  }
+
   args.insert(args.end(), {"-map", "0:v:0?", "-map", "0:a:0?"});
+
+  if (copy) {
+    // A pure remux: no filters (they would require decoding), no pixel format,
+    // no encoder settings. The trim's IN point snaps back to the nearest
+    // keyframe because a copied stream must begin on one -- surfaced in the
+    // Quick Edit sheet, not swallowed here.
+    args.insert(args.end(), {"-c", "copy"});
+    args.push_back(pathArgument(o.output));
+    return command;
+  }
+
   args.emplace_back("-filter:v");
-  args.push_back("setpts=(PTS-STARTPTS)/" + formatNumber(speed));
+  // Crop BEFORE anything that changes geometry. Nothing here scales, but the
+  // ordering is the rule the GIF branch also follows and the one a future
+  // scale step must not break.
+  args.push_back(crop.empty()
+                     ? "setpts=(PTS-STARTPTS)/" + formatNumber(speed)
+                     : crop + ",setpts=(PTS-STARTPTS)/" + formatNumber(speed));
   args.emplace_back("-filter:a");
   args.push_back(o.preserve_pitch ? atempoFilter(speed)
                                   : varispeedFilter(speed));
-  if (o.prefer_hardware_encoder) {
+
+  switch (o.format) {
+    case ExportFormat::Mp4Hevc:
+      args.insert(args.end(), {"-c:v", "hevc_videotoolbox", "-allow_sw", "1",
+                               "-realtime", "1", "-q:v", "65", "-pix_fmt",
+                               "yuv420p",
+                               // Apple's players refuse the `hev1` sample
+                               // entry FFmpeg writes by default; `hvc1` is the
+                               // tag QuickTime, Safari and Photos accept.
+                               "-tag:v", "hvc1"});
+      args.insert(args.end(), {"-c:a", "aac", "-b:a", "192k", "-movflags",
+                               "+faststart"});
+      break;
+    case ExportFormat::WebmVp9:
+      // Software only -- there is no VP9 hardware encoder on this platform.
+      // `-b:v 0` is what puts libvpx in constant-quality mode; without it the
+      // CRF is ignored and the result is a very low default bitrate.
+      args.insert(args.end(), {"-c:v", "libvpx-vp9", "-b:v", "0", "-crf", "32",
+                               "-row-mt", "1", "-pix_fmt", "yuv420p"});
+      args.insert(args.end(), {"-c:a", "libopus", "-b:a", "128k"});
+      break;
+    case ExportFormat::MkvCopy:
+      // MkvCopy that reached here needs pixels (a retime or a crop), so it is
+      // an MKV RE-ENCODE. Same video settings as the default preset; Matroska
+      // takes AAC happily and has no faststart concept.
+      args.insert(args.end(), {"-c:v", "h264_videotoolbox", "-allow_sw", "1",
+                               "-realtime", "1", "-q:v", "65", "-pix_fmt",
+                               "yuv420p"});
+      args.insert(args.end(), {"-c:a", "aac", "-b:a", "192k"});
+      break;
+    case ExportFormat::Gif:
+    case ExportFormat::Mp4H264:
+    default:
+      if (o.prefer_hardware_encoder) {
 #ifdef __APPLE__
-    args.insert(args.end(), {"-c:v", "h264_videotoolbox", "-allow_sw", "1",
-                             "-realtime", "1", "-q:v", "65", "-pix_fmt",
-                             "yuv420p"});
+        args.insert(args.end(), {"-c:v", "h264_videotoolbox", "-allow_sw", "1",
+                                 "-realtime", "1", "-q:v", "65", "-pix_fmt",
+                                 "yuv420p"});
 #else
-    args.insert(args.end(), {"-c:v", "libx264", "-preset", "veryfast", "-crf",
-                             "18", "-pix_fmt", "yuv420p"});
+        args.insert(args.end(), {"-c:v", "libx264", "-preset", "veryfast",
+                                 "-crf", "18", "-pix_fmt", "yuv420p"});
 #endif
-  } else {
-    args.insert(args.end(), {"-c:v", "libx264", "-preset", "veryfast", "-crf",
-                             "18", "-pix_fmt", "yuv420p"});
+      } else {
+        args.insert(args.end(), {"-c:v", "libx264", "-preset", "veryfast",
+                                 "-crf", "18", "-pix_fmt", "yuv420p"});
+      }
+      args.insert(args.end(), {"-c:a", "aac", "-b:a", "192k", "-movflags",
+                               "+faststart"});
+      break;
   }
-  args.insert(args.end(), {"-c:a", "aac", "-b:a", "192k", "-movflags",
-                           "+faststart"});
   args.push_back(pathArgument(o.output));
   return command;
 }
@@ -578,8 +728,17 @@ std::filesystem::path reserveExportStagingFile(
             std::chrono::steady_clock::now().time_since_epoch().count()) ^
         (process_id << 32U) ^
         counter.fetch_add(1, std::memory_order_relaxed);
+    // The staging file carries the DESTINATION's extension, not a fixed
+    // ".mp4". FFmpeg selects its muxer from the output path it is handed, and
+    // the path it is handed is this staging file -- so a WebM or GIF export
+    // whose staging file ended in ".mp4" would be muxed as MP4 and then
+    // renamed into place, producing a file that lies about itself. An
+    // extensionless destination keeps the historical ".mp4".
+    const auto destination_extension = absolute_destination.extension().string();
     std::ostringstream name;
-    name << ".wam-export-" << std::hex << token << '-' << attempt << ".mp4";
+    name << ".wam-export-" << std::hex << token << '-' << attempt
+         << (destination_extension.empty() ? std::string(".mp4")
+                                           : destination_extension);
     const auto candidate = directory / name.str();
     std::string reserve_error;
     if (reserveFileExclusively(candidate, &reserve_error)) return candidate;

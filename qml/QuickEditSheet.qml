@@ -9,6 +9,10 @@ FocusScope {
 
     required property var player
     property bool shown: false
+    property bool cropMode: false
+    property real cropAspect: 0
+    signal cropModeRequested(bool enabled)
+    signal cropAspectRequested(real aspect)
     property bool dark: false
     property int appearance: 0 // 0 Light, 1 Dark, 2 System
     property color accentColor: dark ? "#f3f3f4" : "#232428"
@@ -42,6 +46,35 @@ FocusScope {
     // rule the transport's rate labels use.
     function formatSpeed(speed) {
         return Number(speed).toFixed(speed % 1 === 0 ? 0 : 2) + "×";
+    }
+
+    // Restated from src/jobs.hpp (kGifMaximumOutputSeconds, kGifFramesPerSecond,
+    // kGifMaximumWidth) so the sheet names the caps the encoder will actually
+    // apply. If those constants move, these move with them.
+    readonly property int gifSecondsCap: 15
+    readonly property int gifFpsCap: 15
+    readonly property int gifWidthCap: 640
+
+    // One live sentence about the selected preset. The MKV case is the reason
+    // this is a function and not a string in the model: whether that preset is
+    // a copy or a re-encode depends on the retime and the crop, and saying
+    // "near-instant, loses nothing" while silently re-encoding would be the
+    // one genuinely misleading thing this section could do.
+    function formatNote() {
+        switch (sheet.player.exportFormat) {
+        case 1:
+            return "About half the size of H.264 at the same quality. Plays on Apple devices and current browsers.";
+        case 2:
+            return "Open and web-native. VP9 has no hardware encoder here, so expect this to take several times longer than the MP4 presets.";
+        case 3:
+            if (sheet.player.exportStreamCopies)
+                return "Copied, not re-encoded: near-instant and lossless. The trim start snaps back to the nearest keyframe before your In point; the Out point is exact.";
+            return "A copy is not possible with a retime or a crop, because neither can be done without new pixels — this will re-encode to H.264 in an MKV. Set speed to 1× and clear the crop for the instant lossless copy.";
+        case 4:
+            return "Palette-optimised for far better colour than a default GIF. Capped at " + sheet.gifSecondsCap + " s, " + sheet.gifFpsCap + " fps and " + sheet.gifWidthCap + " px wide, and silent — GIF carries no audio.";
+        default:
+            return "The safe default: hardware-encoded H.264 that plays essentially everywhere.";
+        }
     }
 
     function formatTime(seconds) {
@@ -394,6 +427,94 @@ FocusScope {
 
             Item {
                 width: 1
+                height: 12
+            }
+
+            // Format presets. Deliberately five named destinations, not a
+            // codec picker: the choice a user is actually making here is
+            // "where is this file going" -- a phone, a web page, an archive,
+            // a chat window -- and each row already implies its own codec
+            // pair. Two columns of wide chips rather than the five-across
+            // band the speed row uses, because these labels are words.
+            Text {
+                text: "Format"
+                color: sheet.foreground
+                font.pixelSize: 15
+            }
+
+            Item {
+                width: 1
+                height: 8
+            }
+
+            Grid {
+                width: parent.width
+                columns: 2
+                spacing: 3
+
+                Repeater {
+                    // Labels and values only; every note is produced live by
+                    // formatNote() below, because the MKV one has to change
+                    // as soon as a retime or a crop makes a copy illegal.
+                    model: [
+                        {
+                            label: "MP4 · H.264",
+                            value: 0
+                        },
+                        {
+                            label: "MP4 · HEVC",
+                            value: 1
+                        },
+                        {
+                            label: "WebM · VP9",
+                            value: 2
+                        },
+                        {
+                            label: "MKV · Copy",
+                            value: 3
+                        },
+                        {
+                            label: "GIF",
+                            value: 4
+                        }
+                    ]
+
+                    QuietButton {
+                        required property var modelData
+
+                        width: (parent.width - 3) / 2
+                        text: modelData.label
+                        accessibleName: "Export as " + modelData.label
+                        compact: true
+                        foreground: sheet.foreground
+                        selectedForeground: sheet.foreground
+                        selectedColor: sheet.quietSurface
+                        hoverColor: sheet.quietSurface
+                        pressedColor: sheet.dark ? "#38ffffff" : "#18000000"
+                        selected: sheet.player.exportFormat === modelData.value
+                        onClicked: sheet.player.setExportFormat(modelData.value)
+                    }
+                }
+            }
+
+            Item {
+                width: 1
+                height: 8
+            }
+
+            // The note for the SELECTED preset only. Showing five notes at
+            // once would turn the section into a manual; showing the one that
+            // applies turns it into an answer.
+            Text {
+                width: parent.width
+                text: sheet.formatNote()
+                color: sheet.secondary
+                font.pixelSize: 12
+                wrapMode: Text.WordWrap
+            }
+
+            Item {
+                width: 1
                 height: 9
             }
 
@@ -431,6 +552,134 @@ FocusScope {
                 height: visible ? implicitHeight : 0
                 color: sheet.secondary
                 font.pixelSize: 13
+                wrapMode: Text.WordWrap
+            }
+
+            Item {
+                width: 1
+                height: 22
+            }
+            Rectangle {
+                width: parent.width
+                height: 1
+                color: sheet.separator
+            }
+            Item {
+                width: 1
+                height: 22
+            }
+
+            Text {
+                text: "CROP"
+                color: sheet.secondary
+                font.pixelSize: 11
+                font.weight: Font.DemiBold
+                font.letterSpacing: 0.8
+            }
+
+            Item {
+                width: 1
+                height: 13
+            }
+
+            RowLayout {
+                width: parent.width
+                spacing: 8
+
+                QuietButton {
+                    text: sheet.cropMode ? "Done" : "Adjust Crop"
+                    accessibleName: sheet.cropMode ? "Finish adjusting the crop rectangle" : "Draw a crop rectangle over the video"
+                    foreground: sheet.cropMode ? (sheet.dark ? "#17181b" : "#ffffff") : sheet.foreground
+                    selectedForeground: foreground
+                    selectedColor: sheet.cropMode ? sheet.accentColor : sheet.quietSurface
+                    hoverColor: sheet.cropMode ? sheet.accentColor : sheet.quietSurface
+                    pressedColor: sheet.dark ? "#38ffffff" : "#18000000"
+                    selected: sheet.cropMode
+                    Layout.fillWidth: true
+                    enabled: sheet.player.hasMedia
+                    onClicked: sheet.cropModeRequested(!sheet.cropMode)
+                }
+
+                QuietButton {
+                    text: "Reset"
+                    accessibleName: "Reset the crop to the whole frame"
+                    foreground: sheet.foreground
+                    selectedColor: sheet.quietSurface
+                    hoverColor: sheet.quietSurface
+                    pressedColor: sheet.dark ? "#38ffffff" : "#18000000"
+                    Layout.fillWidth: true
+                    enabled: sheet.player.cropActive
+                    onClicked: {
+                        sheet.cropAspectRequested(0);
+                        sheet.player.resetCrop();
+                    }
+                }
+            }
+
+            Item {
+                width: 1
+                height: 8
+            }
+
+            // Aspect presets constrain the rectangle as the viewer SEES it,
+            // which is why they are ratios of displayed pixels rather than of
+            // coded ones -- on an anamorphic source those differ, and the one
+            // the user means is the one on screen.
+            RowLayout {
+                width: parent.width
+                spacing: 3
+
+                Repeater {
+                    model: [
+                        {
+                            label: "Free",
+                            value: 0
+                        },
+                        {
+                            label: "16:9",
+                            value: 16 / 9
+                        },
+                        {
+                            label: "1:1",
+                            value: 1
+                        },
+                        {
+                            label: "9:16",
+                            value: 9 / 16
+                        }
+                    ]
+
+                    QuietButton {
+                        required property var modelData
+
+                        Layout.fillWidth: true
+                        text: modelData.label
+                        accessibleName: modelData.value === 0 ? "Crop freely" : "Constrain the crop to " + modelData.label
+                        compact: true
+                        foreground: sheet.foreground
+                        selectedForeground: sheet.foreground
+                        selectedColor: sheet.quietSurface
+                        hoverColor: sheet.quietSurface
+                        pressedColor: sheet.dark ? "#38ffffff" : "#18000000"
+                        selected: Math.abs(sheet.cropAspect - modelData.value) < 1e-6
+                        onClicked: sheet.cropAspectRequested(modelData.value)
+                    }
+                }
+            }
+
+            Item {
+                width: 1
+                height: 10
+            }
+
+            Text {
+                width: parent.width
+                // States the one thing about this feature a user could
+                // otherwise get wrong: the picture keeps playing uncropped,
+                // and the rectangle is what the exported file will contain.
+                text: sheet.player.cropActive ? "The bright region is what the export will contain. Playback stays uncropped — the rectangle is the preview." : "Crop the exported file without re-framing playback. Drag the edges or corners of the rectangle over the video."
+                color: sheet.secondary
+                font.pixelSize: 12
                 wrapMode: Text.WordWrap
             }
 

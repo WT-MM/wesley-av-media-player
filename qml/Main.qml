@@ -13,6 +13,26 @@ ApplicationWindow {
     property int appearance: 0 // Light by default; 1 Dark; 2 Follow system.
     readonly property bool darkAppearance: appearance === 1 || (appearance === 2 && systemPalette.window.hslLightness < 0.5)
     property bool quickEditOpen: false
+    // Crop mode is per WINDOW, like the sheet that turns it on. The rectangle
+    // itself lives on the controller (also per window) and is reset there on
+    // every media change.
+    property bool cropMode: false
+    // 0 = free; otherwise the locked width/height ratio in displayed pixels.
+    property real cropAspect: 0
+
+    function setCropMode(enabled) {
+        if (root.cropMode === enabled)
+            return;
+        root.cropMode = enabled;
+        // Entering crop mode on an untouched frame would show a rectangle
+        // exactly on the frame edge, with every handle half outside the
+        // window and nothing to grab. Open at an inset instead, so the
+        // gesture is immediately available -- and inset only, never a
+        // different shape, so the starting rectangle still says "the whole
+        // picture, roughly".
+        if (enabled && !root.controller.cropActive)
+            root.controller.setCrop(0.1, 0.1, 0.8, 0.8);
+    }
     // How the next media dialog result is delivered: into this window, or
     // through the app-level opener that may create a new one. See openMedia()
     // and openMediaInNewWindow() below.
@@ -356,8 +376,21 @@ ApplicationWindow {
             mediaDialogLoader.active = true;
     }
 
+    // ".mp4" / ".webm" / ".mkv" / ".gif" for the current preset. Defensive
+    // fallback because a controller seeded but not yet bound would otherwise
+    // hand `undefined` to the dialog's suffix arithmetic.
+    function exportSuffix() {
+        const suffix = root.controller.exportFileSuffix ? root.controller.exportFileSuffix() : ".mp4";
+        return suffix && suffix.length > 1 ? suffix : ".mp4";
+    }
+
+    function exportFilterLabel() {
+        const suffix = root.exportSuffix();
+        return suffix.substring(1).toUpperCase() + " (*" + suffix + ")";
+    }
+
     function showExportDialog() {
-        exportDialogLoader.suggestedFile = suggestedOutputUrl("-wam.mp4");
+        exportDialogLoader.suggestedFile = suggestedOutputUrl("-wam" + root.exportSuffix());
         rememberDialogFocus();
         if (exportDialogLoader.item) {
             if (exportDialogLoader.suggestedFile.toString().length > 0)
@@ -439,7 +472,40 @@ ApplicationWindow {
     function showVolumeOsd() {
         if (!root.controller.hasMedia)
             return;
+        root.osdOwner = "volume";
         volumeOsd.show(root.volumeOsdLine());
+    }
+
+    // One transient card, two clients. `osdOwner` names which one last raised
+    // it so the volume's live-rewrite handlers below cannot stamp a level over
+    // a timecode that is still on screen (press "." and nudge the volume, and
+    // without this the frame readout silently becomes "45%").
+    property string osdOwner: ""
+
+    // Millisecond resolution, not the transport's seconds: a frame step moves
+    // the playhead by ~17-42 ms, and a seconds-only readout would sit
+    // unchanged through a dozen presses and read as a broken control. No frame
+    // NUMBER is shown, deliberately -- the app carries no frame rate anywhere
+    // (see PlayerController::publishNativeFrameGeometry), and a frame index
+    // derived from a nominal rate would be a lie on any VFR source.
+    function positionOsdLine() {
+        var seconds = root.controller.position;
+        if (!isFinite(seconds) || seconds < 0)
+            seconds = 0;
+        const total = Math.floor(seconds);
+        const millis = Math.floor((seconds - total) * 1000);
+        const hours = Math.floor(total / 3600);
+        const minutes = Math.floor((total % 3600) / 60);
+        const secs = total % 60;
+        const body = (hours > 0 ? hours + ":" + String(minutes).padStart(2, "0") : String(minutes)) + ":" + String(secs).padStart(2, "0");
+        return body + "." + String(millis).padStart(3, "0");
+    }
+
+    function showPositionOsd() {
+        if (!root.controller.hasMedia)
+            return;
+        root.osdOwner = "position";
+        volumeOsd.show(root.positionOsdLine());
     }
 
     // ---------------------------------------------------------------------
@@ -493,6 +559,12 @@ ApplicationWindow {
 
     function closeQuickEdit() {
         quickEditOpen = false;
+        // Crop mode is only reachable from this sheet, so it must not outlive
+        // it: leaving the overlay up with its own controls gone would be a
+        // dead-end the user has no way out of. The rectangle itself survives
+        // -- closing the sheet is not "discard my crop", and reopening shows
+        // the same selection.
+        setCropMode(false);
         stage.forceActiveFocus();
         revealControls();
     }
@@ -741,6 +813,33 @@ ApplicationWindow {
         }
     }
 
+    // "." / "," -- one frame later / earlier, the editor convention (Premiere,
+    // Resolve, Final Cut and mpv all use this pair). Window-scoped for exactly
+    // the reason stated above Space; autoRepeat stays ON, because holding a
+    // step key to crawl through a passage is the whole point of the gesture.
+    // The controller pauses first if the transport is running.
+    Shortcut {
+        sequence: "."
+        context: Qt.WindowShortcut
+        enabled: root.controller.hasMedia && !root.nativeDialogVisible
+        onActivated: {
+            root.controller.stepFrame(1);
+            root.showPositionOsd();
+            root.revealControls();
+        }
+    }
+
+    Shortcut {
+        sequence: ","
+        context: Qt.WindowShortcut
+        enabled: root.controller.hasMedia && !root.nativeDialogVisible
+        onActivated: {
+            root.controller.stepFrame(-1);
+            root.showPositionOsd();
+            root.revealControls();
+        }
+    }
+
     // Up/Down step this window's volume by a wheel notch (5%), clamped to the
     // configured maximum, with the same OSD + flash feedback the scroll
     // gesture gives -- the keys and the wheel are one control at two speeds.
@@ -806,8 +905,11 @@ ApplicationWindow {
         FileDialog {
             title: "Export Selection"
             fileMode: FileDialog.SaveFile
-            defaultSuffix: "mp4"
-            nameFilters: ["MP4 video (*.mp4)"]
+            // Follows the chosen preset rather than being pinned to MP4: the
+            // controller owns the preset-to-container mapping and hands it
+            // over as a dotted suffix, so there is exactly one copy of it.
+            defaultSuffix: root.exportSuffix().substring(1)
+            nameFilters: [root.exportFilterLabel()]
             onAccepted: {
                 root.controller.exportSelectionTo(selectedFile);
                 root.restoreDialogFocusAfterClose();
@@ -1590,9 +1692,12 @@ ApplicationWindow {
         ValueOsd {
             id: volumeOsd
             objectName: "volumeOsd"
-            anchors.horizontalCenter: stage.horizontalCenter
+            // Upper-right, VLC's spot, clear of the traffic lights on the
+            // left and below the titlebar band's interaction zone.
+            anchors.right: stage.right
+            anchors.rightMargin: 24
             anchors.top: stage.top
-            anchors.topMargin: Math.round(Math.max(20, root.titlebarInteractionHeight + 20))
+            anchors.topMargin: Math.round(Math.max(20, root.titlebarInteractionHeight + 16))
             referenceWidth: stage.width
             referenceHeight: stage.height
             z: 2
@@ -1610,6 +1715,33 @@ ApplicationWindow {
             onDismissed: root.dismissNotice()
         }
 
+        // The crop surface. It lives in `stage`, not in `background` beside
+        // the video item, because `background` is BELOW the content item in
+        // Qt Quick Controls -- an overlay down there would align with the
+        // picture perfectly and never receive a single click. `stage` is
+        // anchors.fill of the same window, so the alignment is identical and
+        // the events arrive.
+        //
+        // z: 1 puts it over the picture and under the transport (z: 1 sibling
+        // declared later), the OSD (z: 2) and the Quick Edit sheet, so the
+        // chrome a user needs in order to LEAVE crop mode is never underneath
+        // the thing they are dragging.
+        //
+        // Loaded only once crop mode has been entered, and unloaded with it:
+        // a window that never crops pays nothing for this.
+        Loader {
+            id: cropLoader
+            anchors.fill: parent
+            active: root.cropMode && root.controller.hasMedia
+            visible: active
+            z: 1
+            sourceComponent: CropOverlay {
+                player: root.controller
+                sourceSize: root.controller.videoDisplaySize
+                lockedAspect: root.cropAspect
+            }
+        }
+
         Component {
             id: quickEditComponent
 
@@ -1623,6 +1755,10 @@ ApplicationWindow {
                     if (shown)
                         forceActiveFocus();
                 }
+                cropMode: root.cropMode
+                cropAspect: root.cropAspect
+                onCropModeRequested: enabled => root.setCropMode(enabled)
+                onCropAspectRequested: aspect => root.cropAspect = aspect
                 onCloseRequested: root.closeQuickEdit()
                 onAppearanceRequested: nextAppearance => {
                     root.appearance = nextAppearance;
@@ -1674,6 +1810,11 @@ ApplicationWindow {
             } else if (event.key === Qt.Key_F) {
                 root.controller.toggleFullscreen();
                 root.revealControls();
+                event.accepted = true;
+            } else if (event.key === Qt.Key_Escape && root.cropMode) {
+                // Escape unwinds one level at a time: out of crop adjustment
+                // first, and only then out of the sheet.
+                root.setCropMode(false);
                 event.accepted = true;
             } else if (event.key === Qt.Key_Escape && root.quickEditOpen) {
                 root.closeQuickEdit();
@@ -1736,13 +1877,24 @@ ApplicationWindow {
         // no layout, no frame) whenever the card is down, which is almost
         // always.
         function onVolumeChanged() {
-            if (volumeOsd.shown)
+            if (volumeOsd.shown && root.osdOwner === "volume")
                 volumeOsd.text = root.volumeOsdLine();
         }
 
         function onMutedChanged() {
-            if (volumeOsd.shown)
+            if (volumeOsd.shown && root.osdOwner === "volume")
                 volumeOsd.text = root.volumeOsdLine();
+        }
+
+        // The same "keep the open card honest" rule, for the frame-step
+        // readout. A step is a commit on the native route and a decode on the
+        // compatibility route, so the new position arrives a few milliseconds
+        // AFTER the keypress that opened the card -- this is what makes the
+        // number land on the frame you actually stepped to rather than the one
+        // you left. Same early-out: nothing happens while the card is down.
+        function onPositionChanged() {
+            if (volumeOsd.shown && root.osdOwner === "position")
+                volumeOsd.text = root.positionOsdLine();
         }
 
         function onPlayingChanged() {

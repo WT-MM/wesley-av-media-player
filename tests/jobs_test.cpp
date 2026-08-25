@@ -1,6 +1,7 @@
 #include "jobs.hpp"
 
 #include <algorithm>
+#include <iterator>
 #include <atomic>
 #include <chrono>
 #include <filesystem>
@@ -149,6 +150,138 @@ int main(int argc, char** argv) {
                    "libx264") != process.arguments.end(),
          "non-Apple platforms default to libx264 export");
 #endif
+
+  {
+    // ------------------------------------------------------------------
+    // Export presets. Pure argv assertions -- no encoder runs here; the
+    // container/codec matrix is proved by running the real commands
+    // separately. What this pins is the part that must never drift: which
+    // container each preset selects, when a stream copy is legal, the crop
+    // filter's exact shape, and that the DEFAULT preset's command is
+    // unchanged by any of it.
+    using wam::ExportFormat;
+
+    const auto contains = [](const wam::ProcessCommand& command,
+                             const std::string& value) {
+      return std::find(command.arguments.begin(), command.arguments.end(),
+                       value) != command.arguments.end();
+    };
+
+    expect(std::string(wam::exportFormatExtension(ExportFormat::Mp4H264)) ==
+               ".mp4" &&
+           std::string(wam::exportFormatExtension(ExportFormat::Mp4Hevc)) ==
+               ".mp4" &&
+           std::string(wam::exportFormatExtension(ExportFormat::WebmVp9)) ==
+               ".webm" &&
+           std::string(wam::exportFormatExtension(ExportFormat::MkvCopy)) ==
+               ".mkv" &&
+           std::string(wam::exportFormatExtension(ExportFormat::Gif)) == ".gif",
+           "each preset names the container extension FFmpeg selects by");
+
+    // The default preset, with no crop, must produce exactly the command it
+    // produced before presets existed. This is the regression that matters
+    // most: every existing export is this one.
+    wam::EditOptions baseline;
+    baseline.input = "/tmp/a file.mov";
+    baseline.output = "/tmp/out.mp4";
+    baseline.in_seconds = 2.0;
+    baseline.out_seconds = 8.0;
+    baseline.speed = 2.0;
+    const std::vector<std::string> expected_default = {
+        "-hide_banner", "-loglevel", "warning", "-nostdin", "-y",
+        "-ss", "2", "-t", "6", "-i", "/tmp/a file.mov",
+        "-map", "0:v:0?", "-map", "0:a:0?",
+        "-filter:v", "setpts=(PTS-STARTPTS)/2",
+        "-filter:a", "atempo=2",
+#ifdef __APPLE__
+        "-c:v", "h264_videotoolbox", "-allow_sw", "1", "-realtime", "1",
+        "-q:v", "65", "-pix_fmt", "yuv420p",
+#else
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+        "-pix_fmt", "yuv420p",
+#endif
+        "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart",
+        "/tmp/out.mp4"};
+    expect(wam::buildExportProcess("ffmpeg", baseline).arguments ==
+               expected_default,
+           "the default preset's argv is unchanged, element for element");
+
+    // Stream copy is legal only at 1x with no crop, and the predicate is the
+    // one the UI asks too -- so the sheet can never promise a copy the
+    // encoder declines.
+    wam::EditOptions copy_options = baseline;
+    copy_options.format = ExportFormat::MkvCopy;
+    copy_options.speed = 1.0;
+    copy_options.output = "/tmp/out.mkv";
+    expect(wam::exportUsesStreamCopy(copy_options),
+           "MKV at 1x with no crop is a stream copy");
+    const auto copy_command = wam::buildExportProcess("ffmpeg", copy_options);
+    expect(contains(copy_command, "copy") && !contains(copy_command, "-filter:v"),
+           "a stream copy carries no filters, because it never decodes");
+
+    wam::EditOptions retimed_copy = copy_options;
+    retimed_copy.speed = 2.0;
+    expect(!wam::exportUsesStreamCopy(retimed_copy),
+           "a retime makes a stream copy illegal");
+    wam::EditOptions cropped_copy = copy_options;
+    cropped_copy.crop = wam::CropRect{0.1, 0.1, 0.5, 0.5};
+    expect(!wam::exportUsesStreamCopy(cropped_copy),
+           "a crop makes a stream copy illegal");
+    expect(contains(wam::buildExportProcess("ffmpeg", cropped_copy),
+                    "-filter:v"),
+           "an MKV that cannot copy re-encodes instead of silently dropping "
+           "the crop");
+
+    // HEVC needs the hvc1 sample entry or Apple's own players refuse the file.
+    wam::EditOptions hevc = baseline;
+    hevc.format = ExportFormat::Mp4Hevc;
+    const auto hevc_command = wam::buildExportProcess("ffmpeg", hevc);
+    expect(contains(hevc_command, "hevc_videotoolbox") &&
+               contains(hevc_command, "hvc1"),
+           "HEVC exports are tagged hvc1, not FFmpeg's default hev1");
+
+    // VP9 needs -b:v 0 or the CRF is ignored and libvpx uses a very low
+    // default bitrate instead.
+    wam::EditOptions vp9 = baseline;
+    vp9.format = ExportFormat::WebmVp9;
+    const auto vp9_command = wam::buildExportProcess("ffmpeg", vp9);
+    expect(contains(vp9_command, "libvpx-vp9") && contains(vp9_command, "-b:v") &&
+               contains(vp9_command, "0") && contains(vp9_command, "libopus"),
+           "WebM pairs VP9 in constant-quality mode with Opus");
+
+    // GIF owns the whole filter graph (filter_complex and filter:v are
+    // mutually exclusive) and carries no audio.
+    wam::EditOptions gif = baseline;
+    gif.format = ExportFormat::Gif;
+    const auto gif_command = wam::buildExportProcess("ffmpeg", gif);
+    expect(contains(gif_command, "-filter_complex") &&
+               !contains(gif_command, "-filter:v") &&
+               contains(gif_command, "-an"),
+           "GIF builds one filter_complex chain and mutes the export");
+
+    // Crop: normalized fractions multiplied out by FFmpeg against iw/ih, with
+    // every term floored to an even number of pixels for 4:2:0 chroma.
+    expect(wam::cropFilter(wam::CropRect{}).empty(),
+           "a whole-frame rectangle produces no crop filter at all");
+    expect(!wam::CropRect{}.active(),
+           "a whole-frame rectangle is not an active crop");
+    expect(wam::cropFilter(wam::CropRect{0.25, 0.5, 0.5, 0.25}) ==
+               "crop=w=floor(iw*0.5/2)*2:h=floor(ih*0.25/2)*2:"
+               "x=floor(iw*0.25/2)*2:y=floor(ih*0.5/2)*2",
+           "the crop filter rounds width, height AND both offsets down to even");
+
+    wam::EditOptions cropped = baseline;
+    cropped.crop = wam::CropRect{0.25, 0.5, 0.5, 0.25};
+    const auto cropped_command = wam::buildExportProcess("ffmpeg", cropped);
+    const auto filter = std::find(cropped_command.arguments.begin(),
+                                  cropped_command.arguments.end(),
+                                  "-filter:v");
+    expect(filter != cropped_command.arguments.end() &&
+               std::next(filter) != cropped_command.arguments.end() &&
+               std::next(filter)->rfind("crop=", 0) == 0 &&
+               std::next(filter)->find(",setpts=") != std::string::npos,
+           "crop is composed BEFORE the retime in the video filter chain");
+  }
 
   {
     wam::EditOptions unicode_options;
