@@ -852,7 +852,7 @@ VideoToolboxDecoderStats SoftwareVp8Decoder::stats() const noexcept {
       impl.configured && !impl.endOfStreamBegun && !impl.pending;
   // VP8 has no B-frames and never displays an alternate-reference frame, so
   // decode order is presentation order and the reorder floor is zero -- the
-  // same value deriveCodecReorderFrameCount() returns for VP9.
+  // same value deriveCodecReorderDepth() returns for VP9.
   result.codecReorderFrames = 0;
   result.generation = impl.generation;
   result.submittedFrames = impl.submittedFrames;
