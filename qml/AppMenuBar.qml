@@ -117,6 +117,21 @@ Platform.MenuBar {
             onTriggered: root.controller.skipBackward()
         }
         Platform.MenuSeparator {}
+        // Same no-`shortcut:` rule as the rest of this menu; "." and "," are
+        // window-scoped Shortcuts in Main.qml. The labels name the keys anyway
+        // so the pair is discoverable from the menu, which is the only place a
+        // user would go looking for them.
+        Platform.MenuItem {
+            text: "Next Frame  ."
+            enabled: root.mediaLoaded
+            onTriggered: root.controller.stepFrame(1)
+        }
+        Platform.MenuItem {
+            text: "Previous Frame  ,"
+            enabled: root.mediaLoaded
+            onTriggered: root.controller.stepFrame(-1)
+        }
+        Platform.MenuSeparator {}
         Platform.MenuItem {
             text: "Seek to Start"
             enabled: root.mediaLoaded

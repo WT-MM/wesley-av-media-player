@@ -1597,6 +1597,12 @@ void NativePlaybackOwner::consumeVideoDraw(
   // therefore the bounded, event-driven UI playhead observation.
   const double position = std::max(0.0, proof.frameStartSeconds);
   controller_.publishNativeMainPosition(position);
+  // The same proof also carries this frame's own duration, which is the only
+  // per-sample timing the GUI layer ever sees. Frame stepping reads it to
+  // find the neighbouring sample's exact PTS under VFR; publishing it here
+  // means the first "." after a pause already has a proved covering frame and
+  // costs no settling commit.
+  controller_.publishNativeFrameGeometry(position, proof.frameDurationSeconds);
 }
 
 void NativePlaybackOwner::fallbackOpenSucceeded(std::uint64_t attempt,

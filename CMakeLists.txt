@@ -179,6 +179,7 @@ qt_add_qml_module(wam
     qml/QuietButton.qml
     qml/ChromeToolTip.qml
     qml/QuickEditSheet.qml
+    qml/CropOverlay.qml
     qml/PreferencesWindow.qml
     qml/AppPreferences.qml
     qml/Scrubber.qml
