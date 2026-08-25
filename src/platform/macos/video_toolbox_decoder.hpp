@@ -107,6 +107,44 @@ struct VideoToolboxDecoderProgressHandler {
   void *context{nullptr};
 };
 
+// Where a stream's presentation-reorder depth came from. The two origins carry
+// different authority, and configure()'s admission policy differs accordingly.
+enum class CodecReorderDepthOrigin : std::uint8_t {
+  // The stream states the depth outright, or the codec's reorder model is
+  // fixed and needs no statement: H.264's VUI bitstream_restriction
+  // max_num_reorder_frames, HEVC's sps_max_num_reorder_pics, av1C's initial
+  // presentation delay, and the constant models of MPEG-2, MPEG-4 Part 2,
+  // and VP9. A stream is entitled to every frame of a declared depth, so a
+  // declared depth above the route's bound is a genuine refusal: honouring it
+  // would overrun the decoded-surface budget, and clamping it would reorder
+  // that stream's output.
+  Declared,
+  // Nothing in the stream states a depth, so the value is the ceiling the
+  // specification infers in its place. For H.264 without bitstream_restriction
+  // that is ISO/IEC 14496-10 E.2.1's inference, MaxDpbFrames for the level and
+  // picture size -- what the stream COULD require, not what it does require.
+  // The inference is blind to content: a screen recording with no B pictures
+  // at all and max_num_ref_frames = 1 still infers the full DPB, and the
+  // inference GROWS as the picture shrinks (MaxDpbMbs / PicSizeInMbs), so at
+  // level 5.0 every stream under ~7 MP infers 5 or more. Refusing on that
+  // inference sent whole classes of ordinary recordings to compatibility
+  // playback, so configure() clamps an inferred depth to the route's bound
+  // instead. Truth is still enforced exactly, one layer down: the ordered
+  // drain's out-of-order check fails a stream closed the moment it actually
+  // delivers a frame older than one already presented, so a clamp that was
+  // too small can never present frames in the wrong order.
+  Inferred,
+};
+
+// A stream's presentation-reorder depth together with the authority behind it.
+struct CodecReorderDepth {
+  std::size_t frames{0};
+  CodecReorderDepthOrigin origin{CodecReorderDepthOrigin::Declared};
+
+  friend constexpr bool operator==(const CodecReorderDepth &,
+                                   const CodecReorderDepth &) = default;
+};
+
 struct VideoToolboxDecoderOptions {
   // Counts frames accepted by VideoToolbox whose output has not yet been
   // retired in submission order. This deliberately includes callbacks that
@@ -115,8 +153,9 @@ struct VideoToolboxDecoderOptions {
   // packet storage when this bound is reached.
   std::size_t maxInFlightFrames{3};
   // Hard ceiling for the codec-derived presentation reorder depth. configure()
-  // rejects a stream whose SPS requires more retained IOSurfaces, allowing the
-  // caller to fall back without silently corrupting presentation order.
+  // rejects a stream whose SPS DECLARES a depth above this, allowing the caller
+  // to fall back without silently corrupting presentation order; an INFERRED
+  // depth above it is clamped to it instead. See CodecReorderDepthOrigin.
   std::size_t maxPendingPresentationFrames{8};
   // Metal is the established decoder output contract. The dormant OpenGL mode
   // additionally guarantees CGLTexImageIOSurface2D-compatible IOSurfaces and
@@ -314,6 +353,11 @@ struct VideoToolboxDecoderTestAccess {
   decodeFlags(const VideoToolboxDecoder &decoder) noexcept;
   [[nodiscard]] static std::optional<std::size_t>
   codecReorderFrames(const VideoStreamConfiguration &configuration);
+  // The same derivation with its authority intact. codecReorderFrames() above
+  // is this value's `frames` half and stays for the callers that only need the
+  // depth.
+  [[nodiscard]] static std::optional<CodecReorderDepth>
+  codecReorderDepth(const VideoStreamConfiguration &configuration);
   [[nodiscard]] static bool setPresentationReorderDepth(
       VideoToolboxDecoder &decoder, std::size_t reorderFrames,
       std::string *error);

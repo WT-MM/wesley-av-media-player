@@ -186,6 +186,217 @@ wam::macos::VideoStreamConfiguration fixtureFreeStreamConfiguration(
   return configuration;
 }
 
+// ---------------------------------------------------------------------------
+// Presentation-reorder depth: declared vs inferred.
+//
+// Every record below is the avcC a real muxer wrote, copied byte for byte out
+// of a real MP4, so these assertions are about what encoders actually emit
+// rather than about a synthesized bitstream.
+//
+// The two Apple-encoder records carry a VUI with NO bitstream_restriction
+// section, so they state no max_num_reorder_frames at all and ISO/IEC 14496-10
+// E.2.1 infers MaxDpbFrames in its place. That inference is a ceiling derived
+// from the level and the picture size -- and it GROWS as the picture shrinks,
+// which is why the 640x360 record infers MORE than the 2804x1658 one. Refusing
+// on it sent ordinary screen recordings to compatibility playback.
+// ---------------------------------------------------------------------------
+
+// From a real macOS screen recording, 2804x1658 (176x104 MBs), High profile,
+// level 5.0, max_num_ref_frames = 1, no B pictures, and no ctts box at all --
+// its true presentation-reorder depth is zero. bitstream_restriction_flag = 0,
+// so E.2.1 infers MaxDpbFrames = min(16, 110400 / 18304) = 6.
+// A remux of this same track alongside an AAC audio track produces a
+// byte-identical avcC, which is what makes audio presence provably irrelevant
+// to this derivation.
+constexpr std::uint8_t kScreenRecordingAvcC[] = {
+    0x01, 0x64, 0x00, 0x32, 0xff, 0xe1, 0x00, 0x11, 0x27, 0x64, 0x00, 0x32,
+    0xac, 0x56, 0x80, 0x2c, 0x00, 0xd1, 0xe7, 0x92, 0x6a, 0x02, 0x02, 0x02,
+    0x04, 0x01, 0x00, 0x04, 0x28, 0xee, 0x3c, 0xb0, 0xfd, 0xf8, 0xf8, 0x00};
+
+// h264_videotoolbox at the same 2804x1658 and level 5.0 but CONSTANT frame
+// rate. Same inference, 6, which is what makes variable frame rate provably
+// irrelevant to this derivation.
+constexpr std::uint8_t kScreenRecordingConstantRateAvcC[] = {
+    0x01, 0x64, 0x00, 0x32, 0xff, 0xe1, 0x00, 0x0d, 0x27, 0x64, 0x00, 0x32,
+    0xac, 0x56, 0x70, 0x0b, 0x00, 0x34, 0x79, 0xe4, 0x40, 0x01, 0x00, 0x04,
+    0x28, 0xee, 0x3c, 0xb0, 0xfd, 0xf8, 0xf8, 0x00};
+
+// h264_videotoolbox at 640x360 (40x23 MBs), level 3.0. MaxDpbFrames =
+// min(16, 8100 / 920) = 8: an ordinary small picture infers MORE reorder
+// capacity than the large one above, which is the clearest proof that the
+// inference describes the level's DPB and not the stream's content.
+constexpr std::uint8_t kSmallPictureAvcC[] = {
+    0x01, 0x64, 0x00, 0x1e, 0xff, 0xe1, 0x00, 0x0b, 0x27, 0x64, 0x00, 0x1e,
+    0xac, 0x56, 0x24, 0x0a, 0x02, 0xff, 0x95, 0x01, 0x00, 0x04, 0x28, 0xee,
+    0x3c, 0xb0, 0xfd, 0xf8, 0xf8, 0x00};
+
+// x264 re-encode of the same 2804x1658 source. x264 always writes the
+// bitstream-restriction section, so this record DECLARES max_num_reorder_frames
+// = 2 at the identical geometry and level. It is the control that isolates the
+// trait to the missing declaration rather than to the geometry.
+constexpr std::uint8_t kDeclaredSameGeometryAvcC[] = {
+    0x01, 0x64, 0x00, 0x32, 0xff, 0xe1, 0x00, 0x1d, 0x67, 0x64, 0x00, 0x32,
+    0xac, 0xd9, 0x40, 0x2c, 0x00, 0xd1, 0xe7, 0x92, 0x6a, 0x02, 0x02, 0x02,
+    0x80, 0x00, 0x00, 0x03, 0x00, 0x80, 0x00, 0x00, 0x1e, 0x07, 0x8c, 0x18,
+    0xcb, 0x01, 0x00, 0x04, 0x68, 0xef, 0x8f, 0xcb, 0xfd, 0xf8, 0xf8, 0x00};
+
+// test-media/sample-h264.mp4, the corpus fixture: x264, level 3.1, declares 2.
+// Every clip in this project's corpus is x264 output shaped exactly like this,
+// which is why no fixture ever exercised the inference arm.
+constexpr std::uint8_t kCorpusFixtureAvcC[] = {
+    0x01, 0x64, 0x00, 0x1f, 0xff, 0xe1, 0x00, 0x1a, 0x67, 0x64, 0x00, 0x1f,
+    0xac, 0xd9, 0x40, 0x50, 0x05, 0xbb, 0x01, 0x10, 0x00, 0x00, 0x03, 0x00,
+    0x10, 0x00, 0x00, 0x03, 0x03, 0xc0, 0xf1, 0x83, 0x19, 0x60, 0x01, 0x00,
+    0x04, 0x68, 0xef, 0x8f, 0xcb, 0xfd, 0xf8, 0xf8, 0x00};
+
+wam::macos::VideoStreamConfiguration h264RecordConfiguration(
+    std::span<const std::uint8_t> record, std::int32_t width,
+    std::int32_t height, std::uint64_t generation) {
+  wam::macos::VideoStreamConfiguration configuration;
+  configuration.codec = kCMVideoCodecType_H264;
+  configuration.codedSize = {width, height};
+  configuration.codecConfiguration = std::span<const std::byte>(
+      reinterpret_cast<const std::byte *>(record.data()), record.size());
+  configuration.preferHardwareDecode = true;
+  configuration.requireHardwareDecode = false;
+  configuration.generation = generation;
+  return configuration;
+}
+
+void testCodecReorderDepthCarriesItsAuthority() {
+  using wam::macos::CodecReorderDepth;
+  using wam::macos::CodecReorderDepthOrigin;
+  using wam::macos::VideoToolboxDecoderTestAccess;
+  constexpr std::uint64_t generation = 77;
+
+  struct RecordExpectation {
+    std::span<const std::uint8_t> record;
+    std::int32_t width;
+    std::int32_t height;
+    std::size_t frames;
+    CodecReorderDepthOrigin origin;
+  };
+  const RecordExpectation expectations[] = {
+      {kScreenRecordingAvcC, 2804, 1658, 6, CodecReorderDepthOrigin::Inferred},
+      {kScreenRecordingConstantRateAvcC, 2804, 1658, 6,
+       CodecReorderDepthOrigin::Inferred},
+      {kSmallPictureAvcC, 640, 360, 8, CodecReorderDepthOrigin::Inferred},
+      {kDeclaredSameGeometryAvcC, 2804, 1658, 2,
+       CodecReorderDepthOrigin::Declared},
+      {kCorpusFixtureAvcC, 1280, 720, 2, CodecReorderDepthOrigin::Declared},
+  };
+  for (const RecordExpectation &expectation : expectations) {
+    const auto depth = VideoToolboxDecoderTestAccess::codecReorderDepth(
+        h264RecordConfiguration(expectation.record, expectation.width,
+                                expectation.height, generation));
+    WAM_CHECK(depth.has_value());
+    WAM_CHECK(depth->frames == expectation.frames);
+    WAM_CHECK(depth->origin == expectation.origin);
+    // The depth-only accessor must keep reporting the same number.
+    const auto frames = VideoToolboxDecoderTestAccess::codecReorderFrames(
+        h264RecordConfiguration(expectation.record, expectation.width,
+                                expectation.height, generation));
+    WAM_CHECK(frames.has_value() && *frames == expectation.frames);
+  }
+}
+
+void testInferredReorderDepthIsClampedAndDeclaredIsRefused() {
+  using wam::macos::CodecReorderDepthOrigin;
+  constexpr std::uint64_t generation = 78;
+
+  // An inferred depth above the bound is admitted at the bound. This is the
+  // exact case the real screen recording hits on the playback route, whose
+  // kMaximumPresentationReorderFrames is 4.
+  {
+    wam::macos::VideoToolboxDecoderOptions options;
+    options.maxInFlightFrames = 2;
+    options.maxPendingPresentationFrames = 4;
+    wam::macos::VideoToolboxDecoder decoder(options);
+    wam::macos::BoundedFrameQueue queue(2, generation);
+    std::string error;
+    WAM_CHECK_DETAIL(
+        decoder.configure(h264RecordConfiguration(kScreenRecordingAvcC, 2804,
+                                                  1658, generation),
+                          queue, &error),
+        error);
+    WAM_CHECK(decoder.stats().codecReorderFrames == 4);
+    decoder.close();
+  }
+
+  // The clamp is to the bound, not to any particular number: a record whose
+  // inference is 8 lands on the same 4.
+  {
+    wam::macos::VideoToolboxDecoderOptions options;
+    options.maxInFlightFrames = 2;
+    options.maxPendingPresentationFrames = 4;
+    wam::macos::VideoToolboxDecoder decoder(options);
+    wam::macos::BoundedFrameQueue queue(2, generation);
+    std::string error;
+    WAM_CHECK_DETAIL(
+        decoder.configure(
+            h264RecordConfiguration(kSmallPictureAvcC, 640, 360, generation),
+            queue, &error),
+        error);
+    WAM_CHECK(decoder.stats().codecReorderFrames == 4);
+    decoder.close();
+  }
+
+  // The clamp only ever lowers. A bound wide enough for the whole inference
+  // keeps the inferred depth intact rather than snapping it to the bound.
+  {
+    wam::macos::VideoToolboxDecoderOptions options;
+    options.maxInFlightFrames = 2;
+    options.maxPendingPresentationFrames = 8;
+    wam::macos::VideoToolboxDecoder decoder(options);
+    wam::macos::BoundedFrameQueue queue(2, generation);
+    std::string error;
+    WAM_CHECK_DETAIL(
+        decoder.configure(h264RecordConfiguration(kScreenRecordingAvcC, 2804,
+                                                  1658, generation),
+                          queue, &error),
+        error);
+    WAM_CHECK(decoder.stats().codecReorderFrames == 6);
+    decoder.close();
+  }
+
+  // A declared depth is never clamped, in either direction: it is honoured
+  // exactly when it fits.
+  {
+    wam::macos::VideoToolboxDecoderOptions options;
+    options.maxInFlightFrames = 2;
+    options.maxPendingPresentationFrames = 4;
+    wam::macos::VideoToolboxDecoder decoder(options);
+    wam::macos::BoundedFrameQueue queue(2, generation);
+    std::string error;
+    WAM_CHECK_DETAIL(
+        decoder.configure(h264RecordConfiguration(kDeclaredSameGeometryAvcC,
+                                                  2804, 1658, generation),
+                          queue, &error),
+        error);
+    WAM_CHECK(decoder.stats().codecReorderFrames == 2);
+    decoder.close();
+  }
+
+  // ...and a declared depth ABOVE the bound is still refused at configure(),
+  // with the message unchanged. Identical geometry and level to the clamped
+  // record above, so only the declaration separates the two outcomes.
+  {
+    wam::macos::VideoToolboxDecoderOptions options;
+    options.maxInFlightFrames = 2;
+    options.maxPendingPresentationFrames = 1;
+    wam::macos::VideoToolboxDecoder decoder(options);
+    wam::macos::BoundedFrameQueue queue(2, generation);
+    std::string error;
+    WAM_CHECK(!decoder.configure(
+        h264RecordConfiguration(kDeclaredSameGeometryAvcC, 2804, 1658,
+                                generation),
+        queue, &error));
+    WAM_CHECK(error.find("exceeding the configured bound") !=
+              std::string::npos);
+    WAM_CHECK(!decoder.stats().configured);
+  }
+}
+
 void testFixtureFreeProductionLimitAdmission() {
   using wam::macos::VideoToolboxDecoderTestAccess;
   using namespace wam::macos::native_video_limits;
@@ -3302,6 +3513,8 @@ int main(int argc, char **argv) {
   testDecodedDimensionMismatchFailsBeforeSurfaceAdmission();
   testDecodedSdrColorAttachmentMatrix();
   testDecodedColorCallbackRejectsHdrBeforeLease();
+  testCodecReorderDepthCarriesItsAuthority();
+  testInferredReorderDepthIsClampedAndDeclaredIsRefused();
   if (argc == 2 && std::string_view(argv[1]) == "--progress-wake-only") {
     testEventDrivenDecoderProgressWake();
     testExactDecoderRetirement();

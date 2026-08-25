@@ -364,7 +364,7 @@ std::optional<std::size_t> h264MaxDpbMacroblocks(std::uint32_t level,
   }
 }
 
-std::optional<std::size_t>
+std::optional<CodecReorderDepth>
 parseH264SpsReorderFrames(std::span<const std::uint8_t> nal) {
   if (nal.empty() || (nal.front() & 0x1fU) != 7U) {
     return std::nullopt;
@@ -486,18 +486,25 @@ parseH264SpsReorderFrames(std::span<const std::uint8_t> nal) {
   if (maxDpbFrames == 0 || maxReferenceFrames > maxDpbFrames) {
     return std::nullopt;
   }
+  // vui.present is bitstream_restriction_flag: the stream states
+  // max_num_reorder_frames itself, and that statement is authoritative.
   if (vui.present) {
     if (vui.reorderFrames > vui.decodedFrameBuffering ||
         vui.decodedFrameBuffering > maxDpbFrames ||
         vui.decodedFrameBuffering < maxReferenceFrames) {
       return std::nullopt;
     }
-    return static_cast<std::size_t>(vui.reorderFrames);
+    return CodecReorderDepth{static_cast<std::size_t>(vui.reorderFrames),
+                             CodecReorderDepthOrigin::Declared};
   }
-  return constraintSet3 && h264ConstraintSet3ImpliesZeroReorder(
-                               profileIdc)
-             ? 0
-             : maxDpbFrames;
+  // Nothing was stated. E.2.1's two inference arms both apply here. The
+  // constraint_set3 arm infers an exact zero from a profile constraint the
+  // stream really does carry, so it is as good as a declaration; the general
+  // arm infers MaxDpbFrames, which is only a ceiling.
+  if (constraintSet3 && h264ConstraintSet3ImpliesZeroReorder(profileIdc)) {
+    return CodecReorderDepth{0, CodecReorderDepthOrigin::Declared};
+  }
+  return CodecReorderDepth{maxDpbFrames, CodecReorderDepthOrigin::Inferred};
 }
 
 bool skipHevcProfileTierLevel(BitReader &bits,
@@ -600,8 +607,8 @@ parseHevcSpsReorderFrames(std::span<const std::uint8_t> nal) {
   return maximumReorder;
 }
 
-std::optional<std::size_t>
-deriveCodecReorderFrameCount(const VideoStreamConfiguration &configuration) {
+std::optional<CodecReorderDepth>
+deriveCodecReorderDepth(const VideoStreamConfiguration &configuration) {
   const auto bytes = std::span<const std::uint8_t>(
       reinterpret_cast<const std::uint8_t *>(
           configuration.codecConfiguration.data()),
@@ -612,7 +619,7 @@ deriveCodecReorderFrameCount(const VideoStreamConfiguration &configuration) {
     }
     std::size_t offset = 6;
     const std::size_t spsCount = bytes[5] & 0x1fU;
-    std::optional<std::size_t> maximum;
+    std::optional<CodecReorderDepth> maximum;
     for (std::size_t index = 0; index < spsCount; ++index) {
       if (offset + 2 > bytes.size()) {
         return std::nullopt;
@@ -627,7 +634,15 @@ deriveCodecReorderFrameCount(const VideoStreamConfiguration &configuration) {
       if (!reorder) {
         return std::nullopt;
       }
-      maximum = std::max(maximum.value_or(0), *reorder);
+      // The parameter set that demands the most decides the depth, and a tie
+      // keeps the stronger authority: one set's declaration must not be
+      // downgraded to an inference just because a second set merely inferred
+      // the same number.
+      if (!maximum || reorder->frames > maximum->frames ||
+          (reorder->frames == maximum->frames &&
+           reorder->origin == CodecReorderDepthOrigin::Declared)) {
+        maximum = *reorder;
+      }
       offset += length;
     }
     return maximum;
@@ -638,6 +653,9 @@ deriveCodecReorderFrameCount(const VideoStreamConfiguration &configuration) {
     }
     std::size_t offset = 23;
     const std::size_t arrayCount = bytes[22];
+    // HEVC always states sps_max_num_reorder_pics -- it is a mandatory element
+    // of the SPS, not an optional restriction section -- so every HEVC depth
+    // this returns is declared and there is no inference arm to mark.
     std::optional<std::size_t> maximum;
     for (std::size_t array = 0; array < arrayCount; ++array) {
       if (offset + 3 > bytes.size()) {
@@ -670,7 +688,10 @@ deriveCodecReorderFrameCount(const VideoStreamConfiguration &configuration) {
         offset += length;
       }
     }
-    return maximum;
+    if (!maximum) {
+      return std::nullopt;
+    }
+    return CodecReorderDepth{*maximum, CodecReorderDepthOrigin::Declared};
   }
   if (configuration.codec == kCMVideoCodecType_MPEG2Video) {
     // One, and it is a property of the codec rather than of the stream.
@@ -694,7 +715,7 @@ deriveCodecReorderFrameCount(const VideoStreamConfiguration &configuration) {
     if (!bytes.empty()) {
       return std::nullopt;
     }
-    return std::size_t{1};
+    return CodecReorderDepth{1, CodecReorderDepthOrigin::Declared};
   }
   if (configuration.codec == kCMVideoCodecType_MPEG4Video) {
     // Zero, and it is a property of the admitted PROFILE rather than of the
@@ -715,7 +736,7 @@ deriveCodecReorderFrameCount(const VideoStreamConfiguration &configuration) {
     if (bytes.empty()) {
       return std::nullopt;
     }
-    return std::size_t{0};
+    return CodecReorderDepth{0, CodecReorderDepthOrigin::Declared};
   }
   if (configuration.codec == kCMVideoCodecType_VP9) {
     // VP9 has no output reordering. Alternate-reference ("hidden") frames are
@@ -729,7 +750,7 @@ deriveCodecReorderFrameCount(const VideoStreamConfiguration &configuration) {
     if (bytes.size() < 12 || bytes[0] != 1) {
       return std::nullopt;
     }
-    return std::size_t{0};
+    return CodecReorderDepth{0, CodecReorderDepthOrigin::Declared};
   }
   if (configuration.codec == kCMVideoCodecType_AV1) {
     // AV1 shares VP9's output model (show_existing_frame, no composition
@@ -754,9 +775,10 @@ deriveCodecReorderFrameCount(const VideoStreamConfiguration &configuration) {
       return std::nullopt;
     }
     if ((bytes[3] & 0x10U) == 0U) {
-      return std::size_t{0};
+      return CodecReorderDepth{0, CodecReorderDepthOrigin::Declared};
     }
-    return static_cast<std::size_t>(bytes[3] & 0x0fU) + 1U;
+    return CodecReorderDepth{static_cast<std::size_t>(bytes[3] & 0x0fU) + 1U,
+                             CodecReorderDepthOrigin::Declared};
   }
   return std::nullopt;
 }
@@ -1012,7 +1034,7 @@ void collectCompletedDecodesLocked(AsyncDecodeState &state) {
       ++state.outOfOrderDrops;
       assignAsyncErrorLocked(
           state,
-          "decoded stream exceeded its SPS presentation-reorder bound");
+          "decoded stream exceeded its admitted presentation-reorder depth");
       continue;
     }
     if (state.pendingPresentationFrames.size() >= state.maxRetainedFrames) {
@@ -2035,7 +2057,7 @@ requestedPixelFormat(const VideoStreamConfiguration &configuration) noexcept {
     // and validateOutputSurfaceContract cannot catch it. The record must
     // therefore be well-formed here, and it is: configure() already rejected
     // any vpcC shorter than 12 bytes or with a version other than 1 through
-    // deriveCodecReorderFrameCount, which runs before this call.
+    // deriveCodecReorderDepth, which runs before this call.
     tenBit = (bytes[6] >> 4U) >= 10U;
   } else if (configuration.codec == kCMVideoCodecType_AV1 &&
              configuration.codecConfiguration.size() >= 4 &&
@@ -3134,9 +3156,9 @@ bool VideoToolboxDecoder::configure(
     return false;
   }
 
-  const std::optional<std::size_t> codecReorderFrames =
-      deriveCodecReorderFrameCount(configuration);
-  if (!codecReorderFrames) {
+  const std::optional<CodecReorderDepth> codecReorderDepth =
+      deriveCodecReorderDepth(configuration);
+  if (!codecReorderDepth) {
     CFRelease(impl_->formatDescription);
     impl_->formatDescription = nullptr;
     assignError(error,
@@ -3144,19 +3166,34 @@ bool VideoToolboxDecoder::configure(
                 "the codec SPS");
     return false;
   }
-  if (*codecReorderFrames > impl_->options.maxPendingPresentationFrames) {
-    CFRelease(impl_->formatDescription);
-    impl_->formatDescription = nullptr;
-    assignError(error,
-                "codec SPS requires " +
-                    std::to_string(*codecReorderFrames) +
-                    " presentation-reorder frames, exceeding the configured "
-                    "bound of " +
-                    std::to_string(
-                        impl_->options.maxPendingPresentationFrames));
-    return false;
+  // A DECLARED depth above the bound is a refusal: the stream is entitled to
+  // every frame it asked for, honouring it would overrun the route's
+  // decoded-surface budget, and clamping it would reorder that stream's
+  // output. An INFERRED depth above the bound is not a demand at all, only the
+  // ceiling the specification substitutes for a statement the stream never
+  // made, so it is clamped to the bound instead of refused. Understating a
+  // stream that really did need more cannot present frames out of order:
+  // collectCompletedDecodes() compares every completed frame against the last
+  // one delivered and fails the decoder closed before publishing an older one.
+  // See CodecReorderDepthOrigin for why the inference is unusable as a refusal
+  // criterion in the first place.
+  std::size_t admittedReorderFrames = codecReorderDepth->frames;
+  if (admittedReorderFrames > impl_->options.maxPendingPresentationFrames) {
+    if (codecReorderDepth->origin == CodecReorderDepthOrigin::Declared) {
+      CFRelease(impl_->formatDescription);
+      impl_->formatDescription = nullptr;
+      assignError(error,
+                  "codec SPS requires " +
+                      std::to_string(codecReorderDepth->frames) +
+                      " presentation-reorder frames, exceeding the configured "
+                      "bound of " +
+                      std::to_string(
+                          impl_->options.maxPendingPresentationFrames));
+      return false;
+    }
+    admittedReorderFrames = impl_->options.maxPendingPresentationFrames;
   }
-  if (*codecReorderFrames >
+  if (admittedReorderFrames >
       std::numeric_limits<std::size_t>::max() -
           impl_->options.maxInFlightFrames) {
     CFRelease(impl_->formatDescription);
@@ -3175,7 +3212,7 @@ bool VideoToolboxDecoder::configure(
   impl_->preferHardware = configuration.preferHardwareDecode;
   impl_->requireHardware = configuration.requireHardwareDecode;
   impl_->outputPixelFormat = requestedPixelFormat(configuration);
-  impl_->codecReorderFrames = *codecReorderFrames;
+  impl_->codecReorderFrames = admittedReorderFrames;
   impl_->resetEndOfStreamLocked();
   impl_->awaitingKeyFrame = true;
   {
@@ -3793,7 +3830,17 @@ std::uint32_t VideoToolboxDecoderTestAccess::decodeFlags(
 
 std::optional<std::size_t> VideoToolboxDecoderTestAccess::codecReorderFrames(
     const VideoStreamConfiguration &configuration) {
-  return deriveCodecReorderFrameCount(configuration);
+  const auto depth = deriveCodecReorderDepth(configuration);
+  if (!depth) {
+    return std::nullopt;
+  }
+  return depth->frames;
+}
+
+std::optional<CodecReorderDepth>
+VideoToolboxDecoderTestAccess::codecReorderDepth(
+    const VideoStreamConfiguration &configuration) {
+  return deriveCodecReorderDepth(configuration);
 }
 
 bool VideoToolboxDecoderTestAccess::setPresentationReorderDepth(
