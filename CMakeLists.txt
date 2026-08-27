@@ -7,7 +7,7 @@ if(APPLE AND NOT DEFINED CMAKE_OSX_DEPLOYMENT_TARGET)
       "Minimum supported macOS version")
 endif()
 
-project(WAM VERSION 0.4.10 LANGUAGES CXX)
+project(WAM VERSION 0.4.11 LANGUAGES CXX)
 
 if(APPLE)
   # Apple-native targets below use Objective-C++ even when the dormant legacy
