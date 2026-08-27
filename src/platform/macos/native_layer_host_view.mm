@@ -7,6 +7,7 @@
 #import <objc/runtime.h>
 
 #include <cmath>
+#include <dlfcn.h>
 #include <utility>
 
 namespace wam::macos {
@@ -29,6 +30,39 @@ void assignError(std::string* error, const char* message) noexcept {
 // compositing path, which is exactly the cost the mode is supposed to give
 // back when it is switched off.
 constexpr double kVividBoostOffThreshold = 1.001;
+
+// CALayer.preferredDynamicRange and the CADynamicRange* constants are macOS 26
+// SDK declarations; the release builders compile against an older SDK, so both
+// are reached dynamically -- dlsym for the exported NSString constants, key-value
+// coding for the property -- and simply resolve to nil below macOS 26.
+NSString* dynamicRangeConstant(const char* name) noexcept {
+  void* symbol = dlsym(RTLD_DEFAULT, name);
+  if (symbol == nullptr) {
+    return nil;
+  }
+  return (__bridge NSString*)*static_cast<void**>(symbol);
+}
+
+void setLayerPreferredDynamicRange(CALayer* layer,
+                                   const char* constantName) noexcept {
+  NSString* value = dynamicRangeConstant(constantName);
+  if (layer == nil || value == nil ||
+      ![layer respondsToSelector:NSSelectorFromString(
+                                     @"setPreferredDynamicRange:")]) {
+    return;
+  }
+  [layer setValue:value forKey:@"preferredDynamicRange"];
+}
+
+NSString* layerPreferredDynamicRange(CALayer* layer) noexcept {
+  if (layer == nil ||
+      ![layer
+          respondsToSelector:NSSelectorFromString(@"preferredDynamicRange")]) {
+    return nil;
+  }
+  id value = [layer valueForKey:@"preferredDynamicRange"];
+  return [value isKindOfClass:[NSString class]] ? (NSString*)value : nil;
+}
 
 // Where the per-window desired boost lives. An associated object on the
 // NSWindow rather than a table keyed by it: the boost belongs to the window,
@@ -64,9 +98,7 @@ void applyVividBoostToLayer(CALayer* layer, double boost) noexcept {
   [CATransaction setDisableActions:YES];
   if (!(std::isfinite(boost)) || boost < kVividBoostOffThreshold) {
     layer.filters = nil;
-    if (@available(macOS 26.0, *)) {
-      layer.preferredDynamicRange = CADynamicRangeStandard;
-    }
+    setLayerPreferredDynamicRange(layer, "CADynamicRangeStandard");
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
     if (@available(macOS 14.0, *)) {
@@ -94,9 +126,7 @@ void applyVividBoostToLayer(CALayer* layer, double boost) noexcept {
     layer.wantsExtendedDynamicRangeContent = YES;
   }
 #pragma clang diagnostic pop
-  if (@available(macOS 26.0, *)) {
-    layer.preferredDynamicRange = CADynamicRangeHigh;
-  }
+  setLayerPreferredDynamicRange(layer, "CADynamicRangeHigh");
   [CATransaction commit];
 }
 
@@ -166,10 +196,10 @@ double nativeLayerAppliedVividBoost(void* nsWindow) noexcept {
     // compositor clamping them back to SDR white. Measured -- with the opt-in
     // off, an extended-range surface reads back clamped at exactly 1.000.
     bool edrRequested = false;
-    if (@available(macOS 26.0, *)) {
-      edrRequested = layer.preferredDynamicRange != nil &&
-                     ![layer.preferredDynamicRange
-                         isEqualToString:CADynamicRangeStandard];
+    NSString* preferredRange = layerPreferredDynamicRange(layer);
+    NSString* standardRange = dynamicRangeConstant("CADynamicRangeStandard");
+    if (preferredRange != nil && standardRange != nil) {
+      edrRequested = ![preferredRange isEqualToString:standardRange];
     }
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
