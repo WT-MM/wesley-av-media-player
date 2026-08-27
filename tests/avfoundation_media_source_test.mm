@@ -2161,10 +2161,15 @@ void testDescriptorExtractionAndBounds() {
   auto pqTrack = inspectVideoFormat(
       static_cast<CMVideoFormatDescriptionRef>(pqFormat.get()), 14, {60, 1},
       MediaSourceLimits{}, &error);
+  // AMENDMENT 6 (2026-08-27). PQ is a MODELLED fact now, not an opaque
+  // "unsupported metadata" bit: the presentation path carries BT.2020/PQ/HLG
+  // correctly end to end, so the transfer must still be reported exactly, but
+  // it must no longer set the fail-closed bit. mediaVideoColorAdmitted() owns
+  // the admission decision, and it admits this.
   expect(pqTrack && pqTrack->video &&
              pqTrack->video->transferFunction == MediaTransferFunction::Pq &&
-             pqTrack->video->unsupportedColorMetadataPresent,
-         "PQ transfer must remain explicit and fail closed for SDR v1");
+             !pqTrack->video->unsupportedColorMetadataPresent,
+         "PQ transfer must remain explicit and must no longer fail closed");
 
   auto dolbyFormat = makeVideoFormat(
       kCMVideoCodecType_H264, 16, 16,
@@ -2194,9 +2199,16 @@ void testDescriptorExtractionAndBounds() {
     auto ambientTrack = inspectVideoFormat(
         static_cast<CMVideoFormatDescriptionRef>(ambientFormat.get()), 17,
         {60, 1}, MediaSourceLimits{}, &error);
+    // AMENDMENT 6 moved ambient-viewing metadata out of the opaque bit into
+    // its own typed presence fact, so that a later session can admit it
+    // without re-deriving the whole bit. It is still REFUSED -- no fixture in
+    // the corpus carries it and its presentation effect was never verified --
+    // but the refusal now comes from mediaVideoColorAdmitted() reading the
+    // named field rather than from the catch-all.
     expect(ambientTrack && ambientTrack->video &&
-               ambientTrack->video->unsupportedColorMetadataPresent,
-           "ambient-viewing HDR metadata must fail closed for SDR v1");
+               ambientTrack->video->ambientViewingEnvironmentPresent &&
+               !mediaVideoColorAdmitted(*ambientTrack->video),
+           "ambient-viewing HDR metadata must still fail closed, by name");
   }
 
   MediaSourceDescriptor admitted = *descriptor();
@@ -2361,13 +2373,23 @@ void testHevcDescriptorHardening() {
     injected.tracks[0].video->transferFunction = MediaTransferFunction::Unknown;
     expect(preservesLegacyNativeAdmission(injected, &error),
            "an injected untagged Main10 descriptor is admitted as SDR");
+    // AMENDMENT 6: BT.2020/PQ/HLG are admitted at both depths.
     injected.tracks[0].video->transferFunction = MediaTransferFunction::Pq;
-    expect(!preservesLegacyNativeAdmission(injected, &error),
-           "an injected Main10 descriptor with a PQ transfer stays non-native");
+    expect(preservesLegacyNativeAdmission(injected, &error),
+           "an injected Main10 descriptor with a PQ transfer is admitted");
+    injected.tracks[0].video->transferFunction = MediaTransferFunction::Hlg;
+    expect(preservesLegacyNativeAdmission(injected, &error),
+           "an injected Main10 descriptor with an HLG transfer is admitted");
     injected.tracks[0].video->transferFunction = MediaTransferFunction::Bt709;
     injected.tracks[0].video->colorPrimaries = MediaColorPrimaries::Bt2020;
+    expect(preservesLegacyNativeAdmission(injected, &error),
+           "an injected Main10 descriptor with BT.2020 primaries is admitted");
+    // Still refused by name, so the widening is bounded rather than open.
+    injected.tracks[0].video->transferFunction =
+        MediaTransferFunction::OtherExplicit;
     expect(!preservesLegacyNativeAdmission(injected, &error),
-           "an injected Main10 descriptor with BT.2020 primaries stays non-native");
+           "an unrecognized explicit transfer still stays non-native");
+    injected.tracks[0].video->transferFunction = MediaTransferFunction::Bt709;
     injected.tracks[0].video->colorPrimaries = MediaColorPrimaries::Bt709;
     injected.tracks[0].video->bitsPerComponent = 8;
     expect(!preservesLegacyNativeAdmission(injected, &error),
@@ -2408,17 +2430,26 @@ void testHevcDescriptorHardening() {
                      main10WithoutTransfer.get()),
                  33, {60, 1}, MediaSourceLimits{}, &error),
          "Main10 with unspecified primaries or transfer is admitted as SDR");
-  expect(!inspectVideoFormat(
+  // AMENDMENT 6 separates the two questions this expectation used to conflate.
+  // A Main 10 stream with a PQ transfer is now ADMITTED -- that is the whole
+  // point of the amendment, and the 10-bit-only colour gate that used to
+  // refuse it here has been deleted rather than widened, because there is no
+  // colour question that depends on the depth. A descriptor that CONTRADICTS
+  // its hvcC depth is still refused, and that is the only thing this depth
+  // check now asks.
+  expect(inspectVideoFormat(
              static_cast<CMVideoFormatDescriptionRef>(main10PqTransfer.get()),
-             38, {60, 1}, MediaSourceLimits{}, &error) &&
-             !inspectVideoFormat(
-                 static_cast<CMVideoFormatDescriptionRef>(
-                     main10WrongBits.get()),
-                 34, {60, 1}, MediaSourceLimits{}, &error) &&
+             38, {60, 1}, MediaSourceLimits{}, &error)
+             .has_value(),
+         "Main10 with a PQ transfer is admitted under amendment 6");
+  expect(!inspectVideoFormat(
+             static_cast<CMVideoFormatDescriptionRef>(
+                 main10WrongBits.get()),
+             34, {60, 1}, MediaSourceLimits{}, &error) &&
              !inspectVideoFormat(
                  static_cast<CMVideoFormatDescriptionRef>(mainWrongBits.get()),
                  35, {60, 1}, MediaSourceLimits{}, &error),
-         "Main10 HDR transfer or contradictory hvcC depth fails closed");
+         "a descriptor contradicting its hvcC depth still fails closed");
 
   const auto rejectsConfiguration = [&error](
                                         const std::vector<std::uint8_t>& bytes) {
@@ -2819,30 +2850,39 @@ void testInjectedBackendCannotBypassLegacyAdmission() {
   expectRejected(std::move(invalidInventory),
                  "common owner gate must reject injected inventory before heads");
 
-  auto inconsistentPq = std::make_shared<MediaSourceDescriptor>(*descriptor());
-  inconsistentPq->tracks[0].video->transferFunction =
-      MediaTransferFunction::Pq;
-  inconsistentPq->tracks[0].video->unsupportedColorMetadataPresent = false;
-  expectRejected(std::move(inconsistentPq),
-                 "common owner gate must independently reject injected PQ");
-
-  auto inconsistentBt2020 =
+  // AMENDMENT 6 (2026-08-27) admits BT.2020 primaries, the PQ/HLG transfers
+  // and the BT.2020 NCL matrix, so those three cases are no longer rejections
+  // to assert. What this owner gate must still prove is that it INDEPENDENTLY
+  // refuses colour outside the widened envelope -- otherwise the widening
+  // would have quietly turned the gate into a pass-through. Two values that
+  // stayed outside it stand in for the three that moved.
+  auto inconsistentSrgb =
       std::make_shared<MediaSourceDescriptor>(*descriptor());
-  inconsistentBt2020->tracks[0].video->colorPrimaries =
-      MediaColorPrimaries::Bt2020;
-  inconsistentBt2020->tracks[0].video->unsupportedColorMetadataPresent = false;
+  inconsistentSrgb->tracks[0].video->transferFunction =
+      MediaTransferFunction::Srgb;
+  inconsistentSrgb->tracks[0].video->unsupportedColorMetadataPresent = false;
   expectRejected(
-      std::move(inconsistentBt2020),
-      "common owner gate must independently reject injected BT.2020");
+      std::move(inconsistentSrgb),
+      "common owner gate must independently reject an injected sRGB transfer");
+
+  auto inconsistentPrimaries =
+      std::make_shared<MediaSourceDescriptor>(*descriptor());
+  inconsistentPrimaries->tracks[0].video->colorPrimaries =
+      MediaColorPrimaries::OtherExplicit;
+  inconsistentPrimaries->tracks[0].video->unsupportedColorMetadataPresent =
+      false;
+  expectRejected(std::move(inconsistentPrimaries),
+                 "common owner gate must independently reject injected "
+                 "unrecognized primaries");
 
   auto inconsistentMatrix =
       std::make_shared<MediaSourceDescriptor>(*descriptor());
   inconsistentMatrix->tracks[0].video->matrixCoefficients =
-      MediaMatrixCoefficients::Bt2020Ncl;
+      MediaMatrixCoefficients::OtherExplicit;
   inconsistentMatrix->tracks[0].video->unsupportedColorMetadataPresent = false;
   expectRejected(
       std::move(inconsistentMatrix),
-      "common owner gate must independently reject an injected BT.2020 matrix");
+      "common owner gate must independently reject an unrecognized matrix");
 
   auto inconsistentChroma =
       std::make_shared<MediaSourceDescriptor>(*descriptor());

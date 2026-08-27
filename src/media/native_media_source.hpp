@@ -231,13 +231,40 @@ struct MediaVideoFormat {
   MediaChromaLocation bottomFieldChromaLocation{
       MediaChromaLocation::Unspecified};
   // This single fail-closed fact covers malformed/unrecognized explicit
-  // color/chroma metadata and HDR/ICC/gamma/alpha metadata that the current
-  // SDR renderer does not implement. Known values remain available above.
+  // color/chroma metadata and ICC/gamma/alpha metadata that the current
+  // renderer does not implement. Known values remain available above.
+  //
+  // AMENDED 2026-08-27 (amendment 6): this no longer covers HDR mastering
+  // metadata. BT.2020 primaries, the PQ and HLG transfers, the BT.2020 NCL
+  // matrix, and the two HDR volume/light descriptions are now MODELLED facts
+  // rather than an opaque "unsupported" bit, because the presentation path
+  // carries them correctly end to end -- see the three bools appended below.
   bool unsupportedColorMetadataPresent{false};
   bool dolbyVisionConfigurationPresent{false};
   // Exact result of parsing avcC/hvcC and its SPS. Native v1 admits only the
   // two YUV 4:2:0 values; Unsupported is an immutable fallback proof.
   MediaVideoSampleFormat sampleFormat{MediaVideoSampleFormat::Unknown};
+
+  // APPENDED 2026-08-27 under amendment 6. Every field above keeps its
+  // existing position and default, so aggregate initialization and the
+  // defaulted operator== are unchanged for callers that do not set these.
+  //
+  // These are PRESENCE facts, deliberately not payloads. Measured on this
+  // platform (scratchpad/color_probe.mm): VideoToolbox copies the container's
+  // MasteringDisplayColorVolume and ContentLightLevelInfo verbatim onto the
+  // decoded CVPixelBuffer, and CMVideoFormatDescriptionCreateForImageBuffer --
+  // which is how native_layer_video_output builds the layer's format
+  // description -- reproduces them byte for byte. Re-carrying the 24 and 4
+  // bytes through this descriptor would create a second copy that could only
+  // ever disagree with the decoder's. What admission needs from the container
+  // is only whether the metadata exists, so that is all this records.
+  bool masteringDisplayColorVolumePresent{false};
+  bool contentLightLevelInfoPresent{false};
+  // Not admitted today: no fixture in the corpus carries it and its
+  // presentation effect could not be verified, so it keeps a named refusal.
+  // Modelled separately from unsupportedColorMetadataPresent so that a later
+  // session can admit it without re-deriving the whole opaque bit.
+  bool ambientViewingEnvironmentPresent{false};
 
   friend bool operator==(const MediaVideoFormat&, const MediaVideoFormat&) =
       default;
@@ -736,6 +763,39 @@ static_assert(std::is_trivially_copyable_v<MediaSourceStats>);
 [[nodiscard]] bool mediaVideoHasFullCodedAperture(
     const MediaVideoFormat& video) noexcept;
 [[nodiscard]] bool mediaVideoHasSquarePixels(
+    const MediaVideoFormat& video) noexcept;
+
+// THE colour-admission rule for the native presentation contract. Added
+// 2026-08-27 under amendment 6, which admits BT.2020/PQ/HLG once the
+// presentation path carries colour correctly end to end.
+//
+// It exists as ONE function because the rule had been restated independently
+// in avfoundation_media_source.mm (`supportedModeledColor`) and in
+// native_video_consumer.mm (`supportedVideoTrack`), and the two drifting apart
+// turns a clean Unsupported verdict into a mid-startup Failed one: the source
+// admits a descriptor the consumer then refuses. Both now call this.
+//
+// WHAT IS ADMITTED, and why it is safe rather than optimistic. VideoToolbox
+// attaches the stream's own colorimetry to every decoded surface -- primaries,
+// transfer, matrix, and the HDR mastering/content-light descriptions when the
+// container carries them -- and it resolves a full CGColorSpace alongside them
+// (measured: "Rec. ITU-R BT.2100 PQ" / "Rec. ITU-R BT.2100 HLG").
+// CMVideoFormatDescriptionCreateForImageBuffer reproduces all of it, so the
+// AVSampleBufferDisplayLayer this player enqueues into receives a fully
+// described surface and WindowServer performs the tone mapping. Nothing here
+// is a promise about a renderer this player would have to write.
+//
+//   primaries : Unknown (untagged), BT.709, BT.2020
+//   transfer  : Unknown (untagged), BT.709, PQ (ST 2084), HLG (BT.2100)
+//   matrix    : Unknown (untagged), BT.601, BT.709, BT.2020 NCL
+//   depth     : untagged, 8, or 10
+//
+// STILL REFUSED, by name: explicitly tagged BT.601 *primaries* (SMPTE C /
+// EBU 3213), sRGB and every other explicit transfer, any OtherExplicit value,
+// Dolby Vision configurations, ambient-viewing-environment metadata, and the
+// opaque unsupportedColorMetadataPresent bit (gamma, ICC, alpha, alternative
+// and log transfer characteristics, out-of-envelope bit depths).
+[[nodiscard]] bool mediaVideoColorAdmitted(
     const MediaVideoFormat& video) noexcept;
 
 // The rectangle the picture occupies on screen, in square pixels. Zero on both

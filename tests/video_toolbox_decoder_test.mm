@@ -2488,9 +2488,24 @@ void testDecodedSdrColorAttachmentMatrix() {
                         kCFBooleanTrue,
                         kCVAttachmentMode_ShouldNotPropagate);
   validates(false);
+  // AMENDMENT 6 (2026-08-27): BT.2020 primaries and the PQ/HLG transfers are
+  // admitted on a decoded surface, because they are what the presentation path
+  // now delivers rather than metadata it cannot honour.
   resetAttachments();
   CVBufferSetAttachment(pixelBuffer, kCVImageBufferColorPrimariesKey,
                         kCVImageBufferColorPrimaries_ITU_R_2020,
+                        kCVAttachmentMode_ShouldNotPropagate);
+  validates(true);
+  resetAttachments();
+  CVBufferSetAttachment(pixelBuffer, kCVImageBufferYCbCrMatrixKey,
+                        kCVImageBufferYCbCrMatrix_ITU_R_2020,
+                        kCVAttachmentMode_ShouldNotPropagate);
+  validates(true);
+  // The matrix is checked at all now, which it was not before, so an
+  // unrecognized one must still fail closed.
+  resetAttachments();
+  CVBufferSetAttachment(pixelBuffer, kCVImageBufferYCbCrMatrixKey,
+                        kCVImageBufferYCbCrMatrix_SMPTE_240M_1995,
                         kCVAttachmentMode_ShouldNotPropagate);
   validates(false);
   resetAttachments();
@@ -2501,6 +2516,17 @@ void testDecodedSdrColorAttachmentMatrix() {
   resetAttachments();
   CVBufferSetAttachment(pixelBuffer, kCVImageBufferTransferFunctionKey,
                         kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ,
+                        kCVAttachmentMode_ShouldNotPropagate);
+  validates(true);
+  resetAttachments();
+  CVBufferSetAttachment(pixelBuffer, kCVImageBufferTransferFunctionKey,
+                        kCVImageBufferTransferFunction_ITU_R_2100_HLG,
+                        kCVAttachmentMode_ShouldNotPropagate);
+  validates(true);
+  // sRGB stays outside the envelope, so the widening is bounded.
+  resetAttachments();
+  CVBufferSetAttachment(pixelBuffer, kCVImageBufferTransferFunctionKey,
+                        kCVImageBufferTransferFunction_sRGB,
                         kCVAttachmentMode_ShouldNotPropagate);
   validates(false);
 
@@ -2523,8 +2549,19 @@ void testDecodedSdrColorAttachmentMatrix() {
   };
   rejectsPresence(kCVImageBufferGammaLevelKey, number);
   rejectsPresence(kCVImageBufferICCProfileKey, metadata);
-  rejectsPresence(kCVImageBufferMasteringDisplayColorVolumeKey, metadata);
-  rejectsPresence(kCVImageBufferContentLightLevelInfoKey, metadata);
+  // AMENDMENT 6: the two HDR volume/light attachments are ACCEPTED. They are
+  // the payload the presentation path delivers -- VideoToolbox copies them
+  // verbatim onto the surface and the display layer's derived format
+  // description reproduces them byte for byte -- so refusing them here was
+  // discarding exactly the information WindowServer tone-maps from.
+  const auto acceptsPresence = [&](CFStringRef key, CFTypeRef value) {
+    resetAttachments();
+    CVBufferSetAttachment(pixelBuffer, key, value,
+                          kCVAttachmentMode_ShouldNotPropagate);
+    validates(true);
+  };
+  acceptsPresence(kCVImageBufferMasteringDisplayColorVolumeKey, metadata);
+  acceptsPresence(kCVImageBufferContentLightLevelInfoKey, metadata);
   rejectsPresence(
       kCMFormatDescriptionExtension_AlternativeTransferCharacteristics,
       kCVImageBufferTransferFunction_ITU_R_2100_HLG);
@@ -2607,12 +2644,19 @@ void testDecodedColorCallbackRejectsHdrBeforeLease() {
                        decoder, hdrTiming, &sequence, &error) ==
                        VideoDecodeSubmitResult::Accepted,
                    error);
-  CVPixelBufferRef pq = createColorBuffer(
-      kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ);
+  // AMENDMENT 6 (2026-08-27): a PQ frame is ADMITTED now, so it can no longer
+  // stand for "a frame the colour gate refuses". The property this test
+  // actually proves -- that a refused frame is dropped BEFORE any surface is
+  // leased, leaving the surface budget exactly where it was -- is unchanged
+  // and still worth proving, so it is restated with a transfer that stays
+  // outside the widened envelope. sRGB is refused for the same reason it
+  // always was: nothing in the presentation path implements it.
+  CVPixelBufferRef refusedTransfer =
+      createColorBuffer(kCVImageBufferTransferFunction_sRGB);
   WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::injectDecodedFrame(
-                       decoder, sequence, pq, hdrTiming, &error),
+                       decoder, sequence, refusedTransfer, hdrTiming, &error),
                    error);
-  CVPixelBufferRelease(pq);
+  CVPixelBufferRelease(refusedTransfer);
   const auto rejected = decoder.stats();
   WAM_CHECK(rejected.inFlightFrames == 0);
   WAM_CHECK(rejected.deliveredFrames == 0);

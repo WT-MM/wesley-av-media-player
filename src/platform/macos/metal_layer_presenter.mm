@@ -1,4 +1,5 @@
 #include "metal_layer_presenter.hpp"
+#include "native_video_color.hpp"
 
 #import <AppKit/AppKit.h>
 #import <Metal/Metal.h>
@@ -182,42 +183,23 @@ ColorParameters colorParameters(CVPixelBufferRef pixelBuffer) {
                                        CVPixelBufferGetWidth(pixelBuffer)),
                             0.0F, 0.0F, 0.0F};
 
-  CFTypeRef matrix = CVBufferCopyAttachment(
-      pixelBuffer, kCVImageBufferYCbCrMatrixKey, nullptr);
-  const bool is601 = matrix != nullptr &&
-                     CFEqual(matrix, kCVImageBufferYCbCrMatrix_ITU_R_601_4);
-  const bool is709 = matrix != nullptr &&
-                     CFEqual(matrix, kCVImageBufferYCbCrMatrix_ITU_R_709_2);
-  const bool is2020 = matrix != nullptr &&
-                      CFEqual(matrix, kCVImageBufferYCbCrMatrix_ITU_R_2020);
-  if (matrix != nullptr) {
-    CFRelease(matrix);
+  // One shared definition with qt_gl_video_item.mm and qt_metal_video_item.mm
+  // -- see native_video_color.hpp. This presenter is the one that already had
+  // a BT.2020 branch while the two Qt items rejected BT.2020 outright; that
+  // divergence is what the shared header exists to end. An unrecognized
+  // explicit matrix keeps this path's historical behaviour of falling back to
+  // the SD/HD inference rather than failing the frame.
+  YCbCrMatrixKind matrixKind = YCbCrMatrixKind::Bt709;
+  if (!ycbcrMatrixForPixelBuffer(pixelBuffer, &matrixKind)) {
+    matrixKind = (CVPixelBufferGetWidth(pixelBuffer) <= 1024 &&
+                  CVPixelBufferGetHeight(pixelBuffer) <= 576)
+                     ? YCbCrMatrixKind::Bt601
+                     : YCbCrMatrixKind::Bt709;
   }
-  if (is601) {
-    result.red = {1.0F, 0.0F, 1.4020F, 0.0F};
-    result.green = {1.0F, -0.344136F, -0.714136F, 0.0F};
-    result.blue = {1.0F, 1.7720F, 0.0F, 0.0F};
-  } else if (is709) {
-    result.red = {1.0F, 0.0F, 1.5748F, 0.0F};
-    result.green = {1.0F, -0.187324F, -0.468124F, 0.0F};
-    result.blue = {1.0F, 1.8556F, 0.0F, 0.0F};
-  } else if (is2020) {
-    result.red = {1.0F, 0.0F, 1.4746F, 0.0F};
-    result.green = {1.0F, -0.164553F, -0.571353F, 0.0F};
-    result.blue = {1.0F, 1.8814F, 0.0F, 0.0F};
-  } else if (CVPixelBufferGetWidth(pixelBuffer) <= 1024 &&
-             CVPixelBufferGetHeight(pixelBuffer) <= 576) {
-    // SD material commonly omits the matrix attachment but conventionally
-    // uses BT.601.
-    result.red = {1.0F, 0.0F, 1.4020F, 0.0F};
-    result.green = {1.0F, -0.344136F, -0.714136F, 0.0F};
-    result.blue = {1.0F, 1.7720F, 0.0F, 0.0F};
-  } else {
-    // HD sources without explicit metadata conventionally use BT.709.
-    result.red = {1.0F, 0.0F, 1.5748F, 0.0F};
-    result.green = {1.0F, -0.187324F, -0.468124F, 0.0F};
-    result.blue = {1.0F, 1.8556F, 0.0F, 0.0F};
-  }
+  const YCbCrMatrixRows rows = ycbcrMatrixRows(matrixKind);
+  result.red = {rows.red[0], rows.red[1], rows.red[2], 0.0F};
+  result.green = {rows.green[0], rows.green[1], rows.green[2], 0.0F};
+  result.blue = {rows.blue[0], rows.blue[1], rows.blue[2], 0.0F};
   return result;
 }
 

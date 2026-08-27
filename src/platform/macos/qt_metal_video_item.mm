@@ -1,4 +1,5 @@
 #include "qt_metal_video_item.hpp"
+#include "native_video_color.hpp"
 
 #import <Metal/Metal.h>
 
@@ -110,43 +111,22 @@ std::optional<ColorParameters> colorParameters(CVPixelBufferRef pixelBuffer,
                                        CVPixelBufferGetWidth(pixelBuffer)),
                             0.0F, 0.0F, 0.0F};
 
-  CFTypeRef matrix = CVBufferCopyAttachment(
-      pixelBuffer, kCVImageBufferYCbCrMatrixKey, nullptr);
-  const bool is601 = matrix != nullptr &&
-                     CFEqual(matrix, kCVImageBufferYCbCrMatrix_ITU_R_601_4);
-  const bool is709 = matrix != nullptr &&
-                     CFEqual(matrix, kCVImageBufferYCbCrMatrix_ITU_R_709_2);
-  const bool inferMatrix = matrix == nullptr;
-  if (matrix != nullptr) {
-    CFRelease(matrix);
-  }
-  if (!inferMatrix && !is601 && !is709) {
+  // One shared definition with metal_layer_presenter.mm and
+  // qt_gl_video_item.mm -- see native_video_color.hpp. The fourth lane is
+  // padding for the uniform buffer's float4 alignment and is always zero.
+  YCbCrMatrixKind matrixKind = YCbCrMatrixKind::Bt709;
+  if (!ycbcrMatrixForPixelBuffer(pixelBuffer, &matrixKind)) {
     if (error != nullptr) {
       *error = QStringLiteral(
-          "Qt Metal item supports only absent, BT.601, or BT.709 YCbCr "
-          "matrix metadata");
+          "Qt Metal item supports only absent, BT.601, BT.709, or BT.2020 "
+          "YCbCr matrix metadata");
     }
     return std::nullopt;
   }
-  if (is601) {
-    result.red = {1.0F, 0.0F, 1.4020F, 0.0F};
-    result.green = {1.0F, -0.344136F, -0.714136F, 0.0F};
-    result.blue = {1.0F, 1.7720F, 0.0F, 0.0F};
-  } else if (is709) {
-    // Explicit metadata always wins over the SD/HD missing-metadata heuristic.
-    result.red = {1.0F, 0.0F, 1.5748F, 0.0F};
-    result.green = {1.0F, -0.187324F, -0.468124F, 0.0F};
-    result.blue = {1.0F, 1.8556F, 0.0F, 0.0F};
-  } else if (CVPixelBufferGetWidth(pixelBuffer) <= 1024 &&
-             CVPixelBufferGetHeight(pixelBuffer) <= 576) {
-    result.red = {1.0F, 0.0F, 1.4020F, 0.0F};
-    result.green = {1.0F, -0.344136F, -0.714136F, 0.0F};
-    result.blue = {1.0F, 1.7720F, 0.0F, 0.0F};
-  } else {
-    result.red = {1.0F, 0.0F, 1.5748F, 0.0F};
-    result.green = {1.0F, -0.187324F, -0.468124F, 0.0F};
-    result.blue = {1.0F, 1.8556F, 0.0F, 0.0F};
-  }
+  const YCbCrMatrixRows rows = ycbcrMatrixRows(matrixKind);
+  result.red = {rows.red[0], rows.red[1], rows.red[2], 0.0F};
+  result.green = {rows.green[0], rows.green[1], rows.green[2], 0.0F};
+  result.blue = {rows.blue[0], rows.blue[1], rows.blue[2], 0.0F};
   return result;
 }
 

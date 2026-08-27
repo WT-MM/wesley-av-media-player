@@ -678,6 +678,37 @@ bool mediaVideoHasSquarePixels(const MediaVideoFormat& video) noexcept {
   return video.pixelAspectNumerator == video.pixelAspectDenominator;
 }
 
+bool mediaVideoColorAdmitted(const MediaVideoFormat& video) noexcept {
+  const bool primaries =
+      video.colorPrimaries == MediaColorPrimaries::Unknown ||
+      video.colorPrimaries == MediaColorPrimaries::Bt709 ||
+      video.colorPrimaries == MediaColorPrimaries::Bt2020;
+  const bool transfer =
+      video.transferFunction == MediaTransferFunction::Unknown ||
+      video.transferFunction == MediaTransferFunction::Bt709 ||
+      video.transferFunction == MediaTransferFunction::Pq ||
+      video.transferFunction == MediaTransferFunction::Hlg;
+  const bool matrix =
+      video.matrixCoefficients == MediaMatrixCoefficients::Unknown ||
+      video.matrixCoefficients == MediaMatrixCoefficients::Bt601 ||
+      video.matrixCoefficients == MediaMatrixCoefficients::Bt709 ||
+      video.matrixCoefficients == MediaMatrixCoefficients::Bt2020Ncl;
+  const bool chroma =
+      (video.topFieldChromaLocation == MediaChromaLocation::Unspecified ||
+       video.topFieldChromaLocation == MediaChromaLocation::Left ||
+       video.topFieldChromaLocation == MediaChromaLocation::Center) &&
+      (video.bottomFieldChromaLocation == MediaChromaLocation::Unspecified ||
+       video.bottomFieldChromaLocation == MediaChromaLocation::Left ||
+       video.bottomFieldChromaLocation == MediaChromaLocation::Center);
+  const bool depth = video.bitsPerComponent == 0 ||
+                     video.bitsPerComponent == 8 ||
+                     video.bitsPerComponent == 10;
+  return primaries && transfer && matrix && chroma && depth &&
+         !video.unsupportedColorMetadataPresent &&
+         !video.dolbyVisionConfigurationPresent &&
+         !video.ambientViewingEnvironmentPresent;
+}
+
 MediaDisplaySize mediaVideoDisplaySize(const MediaVideoFormat& video) noexcept {
   std::uint32_t width =
       video.displayWidth != 0 ? video.displayWidth : video.codedWidth;

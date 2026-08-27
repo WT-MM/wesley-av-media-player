@@ -408,26 +408,13 @@ void assignError(std::string* error, const char* message) {
   const media::MediaVideoFormat& video = *track.video;
   const std::uint64_t pixels =
       static_cast<std::uint64_t>(video.codedWidth) * video.codedHeight;
-  const bool supportedColor =
-      (video.colorPrimaries == media::MediaColorPrimaries::Unknown ||
-       video.colorPrimaries == media::MediaColorPrimaries::Bt709) &&
-      (video.transferFunction == media::MediaTransferFunction::Unknown ||
-       video.transferFunction == media::MediaTransferFunction::Bt709) &&
-      (video.matrixCoefficients ==
-           media::MediaMatrixCoefficients::Unknown ||
-       video.matrixCoefficients == media::MediaMatrixCoefficients::Bt601 ||
-       video.matrixCoefficients == media::MediaMatrixCoefficients::Bt709) &&
-      (video.topFieldChromaLocation ==
-           media::MediaChromaLocation::Unspecified ||
-       video.topFieldChromaLocation == media::MediaChromaLocation::Left ||
-       video.topFieldChromaLocation == media::MediaChromaLocation::Center) &&
-      (video.bottomFieldChromaLocation ==
-           media::MediaChromaLocation::Unspecified ||
-       video.bottomFieldChromaLocation == media::MediaChromaLocation::Left ||
-       video.bottomFieldChromaLocation ==
-           media::MediaChromaLocation::Center) &&
-      (video.bitsPerComponent == 0 || video.bitsPerComponent == 8 ||
-       video.bitsPerComponent == 10);
+  // ONE colour rule, shared with avfoundation_media_source.mm's
+  // preservesLegacyNativeAdmission. This used to be an independent restatement
+  // of the same predicate; the two drifting apart is what turns a clean
+  // Unsupported verdict into a mid-startup Failed one, because the source
+  // would admit a descriptor this function then refuses. Amendment 6 widened
+  // it to BT.2020/PQ/HLG in exactly one place.
+  const bool supportedColor = media::mediaVideoColorAdmitted(video);
   return video.codedWidth != 0 && video.codedHeight != 0 &&
          video.codedWidth <=
              media::MediaSourceLimits::kHardMaximumCodedWidth &&
@@ -436,8 +423,6 @@ void assignError(std::string* error, const char* message) {
          pixels <= media::MediaSourceLimits::kHardMaximumCodedPixels &&
          video.displayWidth != 0 && video.displayHeight != 0 &&
          video.identityTransform && video.progressive && supportedColor &&
-         !video.unsupportedColorMetadataPresent &&
-         !video.dolbyVisionConfigurationPresent &&
          (video.sampleFormat ==
               media::MediaVideoSampleFormat::Yuv420EightBit ||
           video.sampleFormat ==
@@ -1587,7 +1572,13 @@ media::NativeMediaConsumeResult NativeVideoConsumer::configure(
       track.codecConfiguration,
       true,
       requireHardwareDecode,
-      generation};
+      generation,
+      // See VideoStreamConfiguration::highDynamicRangeTransfer: the HDR
+      // presentation path is engaged by the decode surface's DEPTH, not by
+      // the colour tag, so an HDR transfer forces a 10-bit output surface
+      // even when the coded stream is 8-bit.
+      video.transferFunction == media::MediaTransferFunction::Pq ||
+          video.transferFunction == media::MediaTransferFunction::Hlg};
   if (!impl.decoder.configure(configuration, impl.sink, error)) {
     impl.latch(NativeVideoConsumerFailure::DecoderConfiguration,
                "native video decoder configuration was refused", error);

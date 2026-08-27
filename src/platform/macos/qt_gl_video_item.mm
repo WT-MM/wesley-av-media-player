@@ -1,4 +1,5 @@
 #include "qt_gl_video_item.hpp"
+#include "native_video_color.hpp"
 
 #import <OpenGL/CGLIOSurface.h>
 #import <OpenGL/OpenGL.h>
@@ -522,34 +523,20 @@ std::optional<ColorParameters> colorParameters(CVPixelBufferRef pixelBuffer,
   // chroma, left siting shifts the sample by one quarter chroma texel.
   result.chromaOffsetX = left ? 0.25F : 0.0F;
 
-  CFTypeRef matrix = CVBufferCopyAttachment(
-      pixelBuffer, kCVImageBufferYCbCrMatrixKey, nullptr);
-  const bool is601 = matrix != nullptr &&
-                     CFEqual(matrix, kCVImageBufferYCbCrMatrix_ITU_R_601_4);
-  const bool is709 = matrix != nullptr &&
-                     CFEqual(matrix, kCVImageBufferYCbCrMatrix_ITU_R_709_2);
-  const bool inferMatrix = matrix == nullptr;
-  if (matrix != nullptr) {
-    CFRelease(matrix);
-  }
-  if (!inferMatrix && !is601 && !is709) {
+  // One shared definition with metal_layer_presenter.mm and
+  // qt_metal_video_item.mm -- see native_video_color.hpp for why these three
+  // must not each carry their own copy.
+  YCbCrMatrixKind matrixKind = YCbCrMatrixKind::Bt709;
+  if (!ycbcrMatrixForPixelBuffer(pixelBuffer, &matrixKind)) {
     *error = QStringLiteral(
-        "Qt OpenGL item supports only absent, BT.601, or BT.709 YCbCr "
-        "matrix metadata");
+        "Qt OpenGL item supports only absent, BT.601, BT.709, or BT.2020 "
+        "YCbCr matrix metadata");
     return std::nullopt;
   }
-  const bool use601 = is601 ||
-                      (inferMatrix && CVPixelBufferGetWidth(pixelBuffer) <= 1024 &&
-                       CVPixelBufferGetHeight(pixelBuffer) <= 576);
-  if (use601) {
-    result.red = {1.0F, 0.0F, 1.4020F};
-    result.green = {1.0F, -0.344136F, -0.714136F};
-    result.blue = {1.0F, 1.7720F, 0.0F};
-  } else {
-    result.red = {1.0F, 0.0F, 1.5748F};
-    result.green = {1.0F, -0.187324F, -0.468124F};
-    result.blue = {1.0F, 1.8556F, 0.0F};
-  }
+  const YCbCrMatrixRows rows = ycbcrMatrixRows(matrixKind);
+  result.red = rows.red;
+  result.green = rows.green;
+  result.blue = rows.blue;
   return result;
 }
 

@@ -152,6 +152,26 @@ struct VideoStreamConfiguration {
   bool preferHardwareDecode{true};
   bool requireHardwareDecode{false};
   std::uint64_t generation{0};
+  // APPENDED 2026-08-27 under amendment 6. True when the stream's transfer
+  // function is PQ (ST 2084) or HLG, i.e. when the decoded surface must be
+  // presented through the system's HDR path rather than as SDR.
+  //
+  // It exists because the decode OUTPUT DEPTH is what switches that path on,
+  // and the coded depth is not the same question. MEASURED on this platform
+  // 2026-08-27: an 8-bit BT.2020/PQ H.264 stream decodes to an 8-bit `420v`
+  // surface that carries every correct colour attachment -- primaries,
+  // transfer, and a resolved "Rec. ITU-R BT.2100 PQ" CGColorSpace -- and
+  // AVSampleBufferDisplayLayer presents it as if it were SDR anyway. Screen-
+  // captured against QuickTime Player on the identical file, that render was
+  // off by 98/255 on the colour-bar means with a ramp histogram L1 of 0.65,
+  // while the SAME pattern encoded as 10-bit PQ HEVC matched QuickTime to
+  // 3.3/255 and 0.050. The tag is not what engages the HDR path; a >=10-bit
+  // surface is. So an HDR-tagged 8-bit stream asks VideoToolbox for a 10-bit
+  // output surface and is presented correctly.
+  //
+  // This is the shape of the user's own movie -- 8-bit yuv420p tagged
+  // bt2020nc/bt2020/smpte2084 -- so it is the load-bearing case, not an edge.
+  bool highDynamicRangeTransfer{false};
 };
 
 struct CompressedVideoPacket {

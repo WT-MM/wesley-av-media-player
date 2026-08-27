@@ -728,10 +728,12 @@ void assignError(std::string* error, const char* message) {
   if (stringEquals(value, kCMFormatDescriptionColorPrimaries_ITU_R_709_2)) {
     return media::MediaColorPrimaries::Bt709;
   }
-  *unsupported = true;
+  // Amendment 6: BT.2020 primaries are a MODELLED fact now, not an opaque
+  // "unsupported metadata" bit. mediaVideoColorAdmitted() owns the decision.
   if (stringEquals(value, kCMFormatDescriptionColorPrimaries_ITU_R_2020)) {
     return media::MediaColorPrimaries::Bt2020;
   }
+  *unsupported = true;
   if (stringEquals(value, kCMFormatDescriptionColorPrimaries_EBU_3213) ||
       stringEquals(value, kCMFormatDescriptionColorPrimaries_SMPTE_C)) {
     return media::MediaColorPrimaries::Bt601;
@@ -749,7 +751,9 @@ void assignError(std::string* error, const char* message) {
   if (stringEquals(value, kCMFormatDescriptionTransferFunction_ITU_R_709_2)) {
     return media::MediaTransferFunction::Bt709;
   }
-  *unsupported = true;
+  // Amendment 6: PQ and HLG are modelled facts. VideoToolbox resolves each to
+  // a real CGColorSpace on the decoded surface ("Rec. ITU-R BT.2100 PQ" /
+  // "... HLG", measured), which is what the display layer presents from.
   if (stringEquals(value,
                    kCMFormatDescriptionTransferFunction_SMPTE_ST_2084_PQ)) {
     return media::MediaTransferFunction::Pq;
@@ -758,6 +762,7 @@ void assignError(std::string* error, const char* message) {
                    kCMFormatDescriptionTransferFunction_ITU_R_2100_HLG)) {
     return media::MediaTransferFunction::Hlg;
   }
+  *unsupported = true;
   if (stringEquals(value, kCMFormatDescriptionTransferFunction_sRGB)) {
     return media::MediaTransferFunction::Srgb;
   }
@@ -777,10 +782,11 @@ void assignError(std::string* error, const char* message) {
   if (stringEquals(value, kCMFormatDescriptionYCbCrMatrix_ITU_R_601_4)) {
     return media::MediaMatrixCoefficients::Bt601;
   }
-  *unsupported = true;
+  // Amendment 6: the BT.2020 non-constant-luminance matrix is a modelled fact.
   if (stringEquals(value, kCMFormatDescriptionYCbCrMatrix_ITU_R_2020)) {
     return media::MediaMatrixCoefficients::Bt2020Ncl;
   }
+  *unsupported = true;
   return media::MediaMatrixCoefficients::OtherExplicit;
 }
 
@@ -1452,15 +1458,26 @@ inspectVideoFormatFacts(
       format, kCMFormatDescriptionExtension_ChromaLocationBottomField,
       &unsupportedColorMetadata);
 
+  // Amendment 6 splits this list. The two HDR volume/light descriptions leave
+  // the opaque "unsupported" bit and become modelled PRESENCE facts, because
+  // VideoToolbox copies them verbatim onto the decoded surface and the layer's
+  // derived format description reproduces them byte for byte -- so they are
+  // metadata this route now delivers rather than metadata it cannot honour.
+  // Everything else on the list stays refused exactly as before.
+  const bool masteringDisplayPresent = extensionPresent(
+      format, kCMFormatDescriptionExtension_MasteringDisplayColorVolume);
+  const bool contentLightPresent = extensionPresent(
+      format, kCMFormatDescriptionExtension_ContentLightLevelInfo);
+  bool ambientViewingPresent = false;
+  if (@available(macOS 12.0, *)) {
+    ambientViewingPresent = extensionPresent(
+        format, kCMFormatDescriptionExtension_AmbientViewingEnvironment);
+  }
+
   unsupportedColorMetadata =
       unsupportedColorMetadata ||
       extensionPresent(format, kCMFormatDescriptionExtension_GammaLevel) ||
       extensionPresent(format, kCMFormatDescriptionExtension_ICCProfile) ||
-      extensionPresent(
-          format,
-          kCMFormatDescriptionExtension_MasteringDisplayColorVolume) ||
-      extensionPresent(format,
-                       kCMFormatDescriptionExtension_ContentLightLevelInfo) ||
       extensionPresent(
           format,
           kCMFormatDescriptionExtension_AlternativeTransferCharacteristics) ||
@@ -1473,13 +1490,6 @@ inspectVideoFormatFacts(
         unsupportedColorMetadata ||
         extensionPresent(format,
                          kCMFormatDescriptionExtension_ContentColorVolume);
-  }
-  if (@available(macOS 12.0, *)) {
-    unsupportedColorMetadata =
-        unsupportedColorMetadata ||
-        extensionPresent(
-            format,
-            kCMFormatDescriptionExtension_AmbientViewingEnvironment);
   }
   if (@available(macOS 14.2, *)) {
     unsupportedColorMetadata =
@@ -1504,22 +1514,14 @@ inspectVideoFormatFacts(
     }
     const std::uint8_t parsedBits =
         sampleFormat == media::MediaVideoSampleFormat::Yuv420TenBit ? 10 : 8;
-    // Main 10 carries the same SDR colour contract as Main. An unspecified
-    // primaries/transfer VUI is the ordinary "untagged BT.709 SDR" case that
-    // the 8-bit path already admits, and demanding an explicit tag here sent
-    // every untagged Main 10 SDR stream to the compatibility path. HDR is
-    // still excluded: BT.2020 primaries and the PQ/HLG transfers are refused
-    // by the modelled-colour gate in preservesLegacyNativeAdmission, and
-    // VideoToolbox's decoded-frame attachments are validated again before any
-    // frame is leased.
-    const bool tenBitColorOutsideSdr =
-        sampleFormat == media::MediaVideoSampleFormat::Yuv420TenBit &&
-        ((colorPrimaries != media::MediaColorPrimaries::Bt709 &&
-          colorPrimaries != media::MediaColorPrimaries::Unknown) ||
-         (transferFunction != media::MediaTransferFunction::Bt709 &&
-          transferFunction != media::MediaTransferFunction::Unknown));
-    if ((bitsPerComponent != 0 && bitsPerComponent != parsedBits) ||
-        tenBitColorOutsideSdr) {
+    // Main 10 carries the same colour contract as Main -- and under amendment
+    // 6 that contract now includes BT.2020/PQ/HLG. This gate used to hold a
+    // SECOND, 10-bit-only copy of the colour rule, which is exactly the kind
+    // of drift the single mediaVideoColorAdmitted() predicate exists to end:
+    // there is no colour question that depends on the depth, so the depth
+    // check keeps only the depth question. VideoToolbox's decoded-frame
+    // attachments are still validated again before any frame is leased.
+    if (bitsPerComponent != 0 && bitsPerComponent != parsedBits) {
       return std::nullopt;
     }
   }
@@ -1545,6 +1547,9 @@ inspectVideoFormatFacts(
   video.topFieldChromaLocation = topFieldChroma;
   video.bottomFieldChromaLocation = bottomFieldChroma;
   video.unsupportedColorMetadataPresent = unsupportedColorMetadata;
+  video.masteringDisplayColorVolumePresent = masteringDisplayPresent;
+  video.contentLightLevelInfoPresent = contentLightPresent;
+  video.ambientViewingEnvironmentPresent = ambientViewingPresent;
   video.dolbyVisionConfigurationPresent =
       hasDolbyVisionConfiguration(format);
   video.sampleFormat = sampleFormat;
@@ -2165,44 +2170,31 @@ void incrementInventory(media::MediaTrackInventory* inventory,
     return false;
   }
   const media::MediaVideoFormat& video = *track->video;
-  const bool supportedModeledColor =
-      (video.colorPrimaries == media::MediaColorPrimaries::Unknown ||
-       video.colorPrimaries == media::MediaColorPrimaries::Bt709) &&
-      (video.transferFunction == media::MediaTransferFunction::Unknown ||
-       video.transferFunction == media::MediaTransferFunction::Bt709) &&
-      (video.matrixCoefficients == media::MediaMatrixCoefficients::Unknown ||
-       video.matrixCoefficients == media::MediaMatrixCoefficients::Bt601 ||
-       video.matrixCoefficients == media::MediaMatrixCoefficients::Bt709) &&
-      (video.topFieldChromaLocation ==
-           media::MediaChromaLocation::Unspecified ||
-       video.topFieldChromaLocation == media::MediaChromaLocation::Left ||
-       video.topFieldChromaLocation == media::MediaChromaLocation::Center) &&
-      (video.bottomFieldChromaLocation ==
-           media::MediaChromaLocation::Unspecified ||
-       video.bottomFieldChromaLocation == media::MediaChromaLocation::Left ||
-       video.bottomFieldChromaLocation == media::MediaChromaLocation::Center) &&
-      (video.bitsPerComponent == 0 || video.bitsPerComponent == 8 ||
-       video.bitsPerComponent == 10);
+  // ONE colour rule, shared with native_video_consumer.mm. See
+  // mediaVideoColorAdmitted() in native_media_source.hpp for what it admits
+  // and what keeps a named refusal.
+  const bool supportedModeledColor = media::mediaVideoColorAdmitted(video);
   const bool hevcDepthMatches =
       track->codec != MediaCodec::Hevc || video.bitsPerComponent == 0 ||
       (video.sampleFormat == media::MediaVideoSampleFormat::Yuv420EightBit &&
        video.bitsPerComponent == 8) ||
       (video.sampleFormat == media::MediaVideoSampleFormat::Yuv420TenBit &&
        video.bitsPerComponent == 10);
-  // Main 10 shares the 8-bit SDR colour contract: supportedModeledColor above
-  // already confines primaries and transfer to {unspecified, BT.709}, so an
-  // untagged Main 10 stream is admitted as SDR exactly like an untagged Main
-  // one, while BT.2020/PQ/HLG remain rejected for both depths.
+  // Main 10 shares the 8-bit colour contract: supportedModeledColor above is
+  // the one rule for both depths, so an untagged Main 10 stream is admitted
+  // exactly like an untagged Main one, and a BT.2020/PQ/HLG stream is admitted
+  // at either depth. The opaque-metadata, Dolby Vision and ambient-viewing
+  // refusals now live inside that predicate rather than being restated here,
+  // so there is exactly one place a colour refusal can come from.
   if (!video.identityTransform || !video.progressive ||
       !supportedModeledColor || !hevcDepthMatches ||
-      video.unsupportedColorMetadataPresent ||
-      video.dolbyVisionConfigurationPresent ||
       (video.sampleFormat != media::MediaVideoSampleFormat::Yuv420EightBit &&
        video.sampleFormat != media::MediaVideoSampleFormat::Yuv420TenBit) ||
       !media::mediaVideoHasFullCodedAperture(video) ||
       !media::mediaVideoHasSquarePixels(video)) {
     assignError(error,
-                "selected video geometry/color is outside native SDR v1");
+                "selected video geometry/color is outside the native v1 "
+                "presentation contract");
     return false;
   }
   // An audio-less asset has no selected audio track to admit, so the audio

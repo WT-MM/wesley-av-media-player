@@ -531,13 +531,31 @@ Item {
   checkColorNear(sampleLogicalPixel(leftImage, window, 60, 100),
                  QColor(128, 128, 128), 6, "left-sited chroma");
 
+  // AMENDMENT 6 (2026-08-27). The BT.2020 non-constant-luminance matrix is
+  // ACCEPTED now. This item used to reject it while metal_layer_presenter.mm
+  // carried a BT.2020 branch -- exactly the drift that
+  // native_video_color.hpp's single definition exists to end, and a divergence
+  // that would have made WAM_PRESENTATION=scenegraph refuse every file the
+  // default layer path had just started playing. An unrecognized explicit
+  // matrix is still refused, so the acceptance is bounded; that case is
+  // covered by the SMPTE-240M submission below.
   PixelBufferCreation bt2020 = tryCreateIOSurfacePixelBuffer(
       kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, 320, 180);
   WAM_CHECK(bt2020.status == kCVReturnSuccess && bt2020.buffer != nullptr);
   WAM_CHECK(fillSolid(bt2020.buffer, {80, 112, 216}));
   attachColorMetadata(bt2020.buffer, kCVImageBufferYCbCrMatrix_ITU_R_2020,
                       kCVImageBufferChromaLocation_Center);
-  submitOwnedBufferExpectRejected(video, &window, bt2020.buffer,
+  static_cast<void>(submitOwnedBufferAndGrab(video, &window, bt2020.buffer));
+
+  PixelBufferCreation unknownMatrix = tryCreateIOSurfacePixelBuffer(
+      kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, 320, 180);
+  WAM_CHECK(unknownMatrix.status == kCVReturnSuccess &&
+            unknownMatrix.buffer != nullptr);
+  WAM_CHECK(fillSolid(unknownMatrix.buffer, {80, 112, 216}));
+  attachColorMetadata(unknownMatrix.buffer,
+                      kCVImageBufferYCbCrMatrix_SMPTE_240M_1995,
+                      kCVImageBufferChromaLocation_Center);
+  submitOwnedBufferExpectRejected(video, &window, unknownMatrix.buffer,
                                   QStringLiteral("YCbCr matrix"));
 
   PixelBufferCreation topLeft = tryCreateIOSurfacePixelBuffer(

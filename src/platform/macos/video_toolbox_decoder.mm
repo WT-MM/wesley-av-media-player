@@ -1342,23 +1342,9 @@ bool validateDecodedDimensions(CVPixelBufferRef pixelBuffer,
   return true;
 }
 
-bool attachmentIsAbsentOrExactString(CVBufferRef buffer, CFStringRef key,
-                                     CFStringRef expected,
-                                     const char *diagnostic,
-                                     std::string *error) {
-  CFTypeRef value = CVBufferCopyAttachment(buffer, key, nullptr);
-  if (value == nullptr) {
-    return true;
-  }
-  const bool matches = expected != nullptr &&
-                       CFGetTypeID(value) == CFStringGetTypeID() &&
-                       CFEqual(value, expected);
-  CFRelease(value);
-  if (!matches) {
-    assignError(error, diagnostic);
-  }
-  return matches;
-}
+// (The single-expected-value variant was removed 2026-08-27: after amendment 6
+// every colour attachment this file validates admits a SET of values, so the
+// one-value form had no caller left.)
 
 bool attachmentIsAbsentOrOneOfStrings(
     CVBufferRef buffer, CFStringRef key,
@@ -1410,28 +1396,45 @@ bool validateDecodedSdrColorAttachments(CVPixelBufferRef pixelBuffer,
   // rejecting them here would fail every untagged SD clip while accepting the
   // identical untagged HD one. An explicitly tagged BT.601 stream never gets
   // this far: the media source marks that unsupported at admission.
+  // AMENDMENT 6. BT.2020 primaries and the PQ/HLG transfers are admitted, and
+  // the two HDR volume/light attachments are no longer refused -- they are the
+  // payload the presentation path DELIVERS. Measured on this platform
+  // (scratchpad/color_probe.mm): VideoToolbox attaches the stream's own
+  // primaries/transfer/matrix to every decoded surface, copies
+  // MasteringDisplayColorVolume and ContentLightLevelInfo across verbatim, and
+  // resolves a matching CGColorSpace ("Rec. ITU-R BT.2100 PQ"/"... HLG"), all
+  // of which CMVideoFormatDescriptionCreateForImageBuffer reproduces into the
+  // format description native_layer_video_output enqueues with. Refusing them
+  // here discarded exactly the information WindowServer tone-maps from.
+  //
+  // Everything genuinely unrepresentable keeps its named refusal below:
+  // gamma, ICC, alternative and log transfer characteristics, ambient viewing
+  // environment, content colour volume, and the macOS 15 post-decode classes.
   if (!attachmentIsAbsentOrOneOfStrings(
           pixelBuffer, kCVImageBufferColorPrimariesKey,
           {kCVImageBufferColorPrimaries_ITU_R_709_2,
            kCVImageBufferColorPrimaries_SMPTE_C,
-           kCVImageBufferColorPrimaries_EBU_3213},
-          "decoded color primaries are not BT.709 or BT.601 SDR", error) ||
-      !attachmentIsAbsentOrExactString(
+           kCVImageBufferColorPrimaries_EBU_3213,
+           kCVImageBufferColorPrimaries_ITU_R_2020},
+          "decoded color primaries are not BT.709, BT.601 or BT.2020", error) ||
+      !attachmentIsAbsentOrOneOfStrings(
           pixelBuffer, kCVImageBufferTransferFunctionKey,
-          kCVImageBufferTransferFunction_ITU_R_709_2,
-          "decoded transfer function is not BT.709 SDR", error) ||
+          {kCVImageBufferTransferFunction_ITU_R_709_2,
+           kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ,
+           kCVImageBufferTransferFunction_ITU_R_2100_HLG},
+          "decoded transfer function is not BT.709, PQ or HLG", error) ||
+      !attachmentIsAbsentOrOneOfStrings(
+          pixelBuffer, kCVImageBufferYCbCrMatrixKey,
+          {kCVImageBufferYCbCrMatrix_ITU_R_709_2,
+           kCVImageBufferYCbCrMatrix_ITU_R_601_4,
+           kCVImageBufferYCbCrMatrix_ITU_R_2020},
+          "decoded YCbCr matrix is not BT.709, BT.601 or BT.2020", error) ||
       !rejectPresentAttachment(
           pixelBuffer, kCVImageBufferGammaLevelKey,
           "decoded frame carries an unsupported gamma attachment", error) ||
       !rejectPresentAttachment(
           pixelBuffer, kCVImageBufferICCProfileKey,
           "decoded frame carries an unsupported ICC profile", error) ||
-      !rejectPresentAttachment(
-          pixelBuffer, kCVImageBufferMasteringDisplayColorVolumeKey,
-          "decoded frame carries HDR mastering metadata", error) ||
-      !rejectPresentAttachment(
-          pixelBuffer, kCVImageBufferContentLightLevelInfoKey,
-          "decoded frame carries HDR content-light metadata", error) ||
       !rejectPresentAttachment(
           pixelBuffer,
           kCMFormatDescriptionExtension_AlternativeTransferCharacteristics,
@@ -2033,8 +2036,13 @@ OSStatus createFormatDescription(const VideoStreamConfiguration &configuration,
   return status;
 }
 
-OSType
-requestedPixelFormat(const VideoStreamConfiguration &configuration) noexcept {
+// The stream's OWN coded depth, read from its configuration record. Split out
+// from requestedPixelFormat() 2026-08-27 because the two questions came apart:
+// the requested OUTPUT depth can now exceed the coded depth for an HDR stream,
+// and only the difference between them justifies pinning the format on the
+// display-layer interop.
+bool codedDepthIsTenBit(
+    const VideoStreamConfiguration &configuration) noexcept {
   // hvcC stores bit_depth_luma_minus8 in the low three bits of byte 17.
   // The common H.264 High 10 profile uses profile_idc 110. Both map directly
   // to the presenter's supported 10-bit bi-planar GPU import path.
@@ -2076,8 +2084,29 @@ requestedPixelFormat(const VideoStreamConfiguration &configuration) noexcept {
   // than a default they fell through to. They are also the two codecs whose
   // decoders will not produce this format unless it is requested -- see
   // codecNeedsPinnedOutputPixelFormat().
-  return tenBit ? kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange
-                : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange;
+  return tenBit;
+}
+
+// The output surface this decode should produce.
+//
+// It is the coded depth, EXCEPT that a PQ or HLG stream always asks for a
+// 10-bit surface. That is a presentation requirement, not a decode one:
+// measured 2026-08-27 on this platform, AVSampleBufferDisplayLayer presents an
+// 8-bit PQ-tagged surface as if it were SDR even though the surface carries
+// correct primaries, a correct transfer and a resolved "Rec. ITU-R BT.2100 PQ"
+// CGColorSpace, while the identical picture on a 10-bit surface is presented
+// correctly. Screen-captured against QuickTime Player on the same 8-bit PQ
+// H.264 file, the 8-bit surface was off by 98/255 on the colour-bar means
+// (ramp histogram L1 0.65) and the 10-bit surface by 4.6/255 (L1 0.12).
+//
+// VideoToolbox honours the widened request on an 8-bit stream -- measured,
+// `x420` delivered from 8-bit PQ H.264 -- so nothing here is speculative.
+OSType
+requestedPixelFormat(const VideoStreamConfiguration &configuration) noexcept {
+  return (codedDepthIsTenBit(configuration) ||
+          configuration.highDynamicRangeTransfer)
+             ? kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange
+             : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange;
 }
 
 OSStatus
@@ -2265,6 +2294,12 @@ struct VideoToolboxDecoder::Impl {
   bool preferHardware{true};
   bool requireHardware{false};
   OSType outputPixelFormat{0};
+  // True when outputPixelFormat was widened to 10 bits because the stream
+  // carries a PQ or HLG transfer. It is tracked separately from the format
+  // itself because it is the reason the format must be PINNED on the display
+  // -layer interop, which otherwise deliberately leaves it unpinned -- see
+  // createSessionLocked().
+  bool hdrOutputSurfaceRequired{false};
   std::size_t codecReorderFrames{0};
   std::uint64_t retirementRetiredGeneration{0};
   std::uint64_t retirementInvalidationGeneration{0};
@@ -2430,9 +2465,21 @@ struct VideoToolboxDecoder::Impl {
         formatDescription != nullptr
             ? CMFormatDescriptionGetMediaSubType(formatDescription)
             : 0;
+    // An HDR stream pins too, on every interop. The display layer normally
+    // takes whatever the decoder produced because it never samples the
+    // surface -- but for a PQ/HLG stream the surface's DEPTH is exactly what
+    // decides whether the system presents it through the HDR path at all
+    // (measured 2026-08-27; see VideoStreamConfiguration::
+    // highDynamicRangeTransfer). An unpinned session hands back the coded
+    // depth, which for an 8-bit PQ stream is an 8-bit surface presented as
+    // SDR, and the request in outputPixelFormat then disagrees with what
+    // arrives and fails the output-surface contract instead. Pinning makes
+    // the 10-bit request real; VideoToolbox honours it on an 8-bit stream
+    // (measured: `x420` delivered from 8-bit PQ H.264).
     const bool pinOutputPixelFormat =
         options.outputInterop != VideoToolboxOutputInterop::DisplayLayer ||
-        codecNeedsPinnedOutputPixelFormat(sessionCodec);
+        codecNeedsPinnedOutputPixelFormat(sessionCodec) ||
+        hdrOutputSurfaceRequired;
     CFNumberRef pixelFormatNumber = nullptr;
     if (pinOutputPixelFormat) {
       const std::int32_t pixelFormatValue =
@@ -3212,6 +3259,12 @@ bool VideoToolboxDecoder::configure(
   impl_->preferHardware = configuration.preferHardwareDecode;
   impl_->requireHardware = configuration.requireHardwareDecode;
   impl_->outputPixelFormat = requestedPixelFormat(configuration);
+  // Only a WIDENED request needs the pin. A stream that is already 10-bit
+  // gets a 10-bit surface from an unpinned session anyway, and pinning it
+  // would cost that session the lossless-compressed surface forms the
+  // display-layer interop is deliberately left free to use.
+  impl_->hdrOutputSurfaceRequired = configuration.highDynamicRangeTransfer &&
+                                    !codedDepthIsTenBit(configuration);
   impl_->codecReorderFrames = admittedReorderFrames;
   impl_->resetEndOfStreamLocked();
   impl_->awaitingKeyFrame = true;
