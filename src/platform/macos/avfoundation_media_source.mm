@@ -1,5 +1,6 @@
 #include "avfoundation_media_source.hpp"
 
+#include "media/audio_codec_timing.hpp"
 #include "media/video_codec_configuration.hpp"
 #include "native_audio_channel_map.hpp"
 #include "native_video_codec_capability.hpp"
@@ -570,6 +571,83 @@ void assignError(std::string* error, const char* message) {
     return std::nullopt;
   }
   return range;
+}
+
+// The exact movie-timeline restatement facts of a selected audio track.
+//
+// AVFoundation states every audio access unit on the track's own MEDIA
+// timeline, while the container's edit list says where that media belongs on
+// the MOVIE timeline -- which is the timeline the video lane already presents
+// on (VideoToolbox propagates each sample's OutputPresentationTimeStamp to the
+// decoded frame), and the one the seek targets, the reader time range and the
+// descriptor duration are all stated in. The difference is a constant per
+// track: `shift = target.start - source.start` of the single media edit.
+//
+// `mediaStart` is the movie time at which audio media begins. It is nonzero
+// exactly when the track carries a leading EMPTY EDIT (elst media_time == -1),
+// i.e. a span of container-declared silence before any audio media exists.
+//
+// Admissible shape for native v1: at most one empty edit, at the head,
+// followed by exactly one media edit at rate 1.0. Anything else fails closed.
+struct AudioMovieTimelineFacts {
+  CMTime shift{kCMTimeZero};
+  CMTime mediaStart{kCMTimeZero};
+};
+
+[[nodiscard]] bool exactEditTime(CMTime time) noexcept {
+  return CMTIME_IS_NUMERIC(time) &&
+         (time.flags & kCMTimeFlags_HasBeenRounded) == 0 && time.epoch == 0 &&
+         time.timescale > 0;
+}
+
+[[nodiscard]] std::optional<AudioMovieTimelineFacts>
+audioMovieTimelineFactsFor(NSArray* segments) noexcept {
+  AudioMovieTimelineFacts facts;
+  AVAssetTrackSegment* media = nil;
+  NSUInteger index = 0;
+  for (AVAssetTrackSegment* segment in segments) {
+    if (segment.empty) {
+      // At most one empty edit, and only at the head. An empty edit anywhere
+      // else is a mid-stream silence hole, which is not a constant shift.
+      if (index != 0 || media != nil) {
+        return std::nullopt;
+      }
+    } else {
+      if (media != nil) {
+        return std::nullopt;
+      }
+      media = segment;
+    }
+    ++index;
+  }
+  if (media == nil) {
+    // A track with no media edit at all cannot be restated; a track with no
+    // edit list reports one identity segment and is handled above.
+    return std::nullopt;
+  }
+  const CMTimeMapping mapping = media.timeMapping;
+  if (!exactEditTime(mapping.target.start) ||
+      !exactEditTime(mapping.source.start) ||
+      !exactEditTime(mapping.target.duration) ||
+      !exactEditTime(mapping.source.duration) ||
+      CMTimeCompare(mapping.target.start, kCMTimeZero) < 0 ||
+      CMTimeCompare(mapping.source.start, kCMTimeZero) < 0) {
+    return std::nullopt;
+  }
+  // Rate 1.0 only. A stretched edit would make the shift a function of time.
+  if (CMTimeCompare(mapping.target.duration, mapping.source.duration) != 0) {
+    return std::nullopt;
+  }
+  const CMTime shift =
+      CMTimeSubtract(mapping.target.start, mapping.source.start);
+  if (!CMTIME_IS_NUMERIC(shift) ||
+      (shift.flags & kCMTimeFlags_HasBeenRounded) != 0 || shift.epoch != 0 ||
+      shift.timescale <= 0) {
+    return std::nullopt;
+  }
+  facts.shift = shift;
+  facts.mediaStart = mapping.target.start;
+  return facts;
 }
 
 [[nodiscard]] bool preservesZeroBasedTrackTimeline(
@@ -2725,6 +2803,46 @@ class ProductionGeneration final : public AVFoundationGeneration {
         return result;
       }
 
+      // Establish this generation's audio movie-timeline restatement before
+      // any access unit is read. The video lane already presents on the movie
+      // timeline; restating audio onto it is what makes the two agree, and
+      // what makes the audio window's decode start directly comparable to the
+      // presentation start the dispatcher derives from the seek target.
+      audio_movie_shift_ = kCMTimeZero;
+      audio_media_start_ = kCMTimeZero;
+      if (audioTrack != nil) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+        NSArray* audioSegments = audioTrack.segments;
+#pragma clang diagnostic pop
+        const auto editFacts = audioMovieTimelineFactsFor(audioSegments);
+        if (!editFacts) {
+          result.status = AVFoundationGenerationStatus::Unsupported;
+          result.error = "selected audio edit list is outside native v1";
+          return result;
+        }
+        audio_movie_shift_ = editFacts->shift;
+        audio_media_start_ = editFacts->mediaStart;
+        // A leading empty edit declares silence on the movie timeline before
+        // any audio media exists. Restating the timestamps places the media
+        // correctly, but nothing in native v1 can PRODUCE that silence: the
+        // converter's ingress is structurally gapless, and the clock's media
+        // origin is the converter's presentation floor. A generation whose
+        // presentation floor falls inside [0, mediaStart) therefore has no
+        // audio to render for that span and is refused here, at open, with a
+        // named reason -- rather than being allowed to derive an invalid
+        // timeline further down. Generations that start at or after
+        // mediaStart are unaffected and play natively.
+        if (CMTimeCompare(audio_media_start_, kCMTimeZero) > 0 &&
+            CMTimeCompare(decodeStart, audio_media_start_) < 0) {
+          result.status = AVFoundationGenerationStatus::Unsupported;
+          result.error =
+              "leading empty edit declares audio silence that native v1 "
+              "cannot produce";
+          return result;
+        }
+      }
+
       // Re-read the already-loaded selected formats on every cold/seek
       // generation immediately before creating its reader. The context owns
       // tracks, not a promise that their mutable AVFoundation view is still
@@ -3078,12 +3196,31 @@ class ProductionGeneration final : public AVFoundationGeneration {
       // timeline, so republish it there instead of rejecting it.
       timing.presentationTimeStamp.epoch = 0;
       timing.duration.epoch = 0;
+      // Restate the unit on the MOVIE timeline. The shift is the container's
+      // own exact rational; a unit that cannot carry it exactly is refused
+      // rather than rounded, which is what keeps the frame grid exact.
+      const CMTime moved =
+          CMTimeAdd(timing.presentationTimeStamp, audio_movie_shift_);
+      if (!CMTIME_IS_NUMERIC(moved) ||
+          (moved.flags & kCMTimeFlags_HasBeenRounded) != 0 ||
+          moved.timescale <= 0) {
+        return nullptr;
+      }
+      timing.presentationTimeStamp = moved;
+      timing.presentationTimeStamp.epoch = 0;
     }
     CMRemoveAttachment(sample,
                        kCMSampleBufferAttachmentKey_TrimDurationAtStart);
     CMRemoveAttachment(sample, kCMSampleBufferAttachmentKey_TrimDurationAtEnd);
     CMRemoveAttachment(sample,
                        kCMSampleBufferAttachmentKey_GradualDecoderRefresh);
+    // Now redundant rather than merely ignored: the offset this attachment
+    // annotated has been applied to the timestamps above, so the silence it
+    // asked the consumer to fill is already accounted for on the movie
+    // timeline. Stripping it before that shift existed would have been a ~1 s
+    // desync; stripping it after is the restatement completing.
+    CMRemoveAttachment(
+        sample, kCMSampleBufferAttachmentKey_FillDiscontinuitiesWithSilence);
     CMSampleBufferRef restated = nullptr;
     if (CMSampleBufferCreateCopyWithNewTiming(
             kCFAllocatorDefault, sample, entries, audio_timing_.data(),
@@ -3168,6 +3305,10 @@ class ProductionGeneration final : public AVFoundationGeneration {
   // latest first-access-unit timestamp that still leaves the full priming
   // distance ahead of the generation's first audible frame.
   std::optional<MediaTime> audio_playout_proof_ceiling_;
+  // This generation's exact audio media-to-movie timeline shift, and the movie
+  // time at which audio media begins (nonzero only for a leading empty edit).
+  CMTime audio_movie_shift_{kCMTimeZero};
+  CMTime audio_media_start_{kCMTimeZero};
   bool audio_first_unit_restated_{false};
   std::atomic<bool> cancelled_{false};
   const std::shared_ptr<AsyncLoadSignal> metadata_load_signal_{
@@ -3695,7 +3836,14 @@ struct AVFoundationMediaSource::Impl {
     const MediaTime decodeStart = head->presentationTime;
     const auto decodeFrame =
         media::exactAudioFrameIndex(decodeStart, sampleRate);
-    if (!decodeFrame || *decodeFrame < 0) {
+    // On the movie timeline the codec's own priming access unit legitimately
+    // sits BEFORE media time zero -- an edit list that trims AAC-LC encoder
+    // priming says exactly that. This is the case the neutral timeline already
+    // models as audioCodecPrecedesStreamOrigin/trimBeforeFloor; it only became
+    // reachable on this route once audio moved onto the movie timeline.
+    if (!decodeFrame ||
+        (*decodeFrame < 0 &&
+         !media::audioCodecPrecedesStreamOrigin(track->codec))) {
       return std::nullopt;
     }
     std::optional<MediaTime> presentationStart;
@@ -3720,8 +3868,11 @@ struct AVFoundationMediaSource::Impl {
          *presentationFrame != *decodeFrame)) {
       return std::nullopt;
     }
+    // "Starts at the stream origin" is defined by both enforcement points as
+    // decodeStart <= 0: a window that begins before media time zero can only
+    // be the origin, because there is nothing earlier for it to be.
     return media::MediaAudioGenerationWindow{decodeStart, *presentationStart,
-                                             *decodeFrame == 0};
+                                             *decodeFrame <= 0};
   }
 
   [[nodiscard]] bool refillPendingHeads(std::string* error) {
