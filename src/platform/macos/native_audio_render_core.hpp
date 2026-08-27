@@ -114,6 +114,11 @@ struct NativeAudioRenderResult {
   // next callback still describes the exact media position the clock has
   // already published.
   std::uint32_t advancedSilentFrames{0};
+  // The subset of advancedSilentFrames the CONTAINER declared: frames the
+  // source states carry no audio media at all. Distinct from the rest of
+  // advancedSilentFrames, which is a steady-state underrun the producer still
+  // owes and whose wake edge is deliberately coalesced.
+  std::uint32_t declaredSilenceFrames{0};
   // Exact consumer-side lower bound captured from the same ring preflight as
   // this render. A concurrent producer may only make the real value larger.
   // This is an observation of remaining playable audio, not a producer
@@ -130,6 +135,30 @@ struct NativeAudioRenderResult {
   bool bufferedPcmFramesKnown{false};
 };
 
+// Container-declared silence for one generation, in generation-local frames
+// measured from the activation cursor. The container states that no audio
+// media exists for these spans, so the renderer owes nothing for them: they
+// are neither underruns nor faults, and the clock advances across them at the
+// generation's rate exactly as it does across real audio.
+struct NativeAudioDeclaredSilence {
+  // Frames of declared silence at the HEAD, before any real PCM: an ISO-BMFF
+  // leading empty edit. The first real PCM frame lands at cursor
+  // streamFrameCursor + leadInFrames, whose media time is the audio
+  // presentation floor exactly.
+  std::uint64_t leadInFrames{0};
+  // Cursor frame at which the container says its audio media ENDS, and the
+  // cursor frame at which presentation must end. The span between them is
+  // declared TRAILING silence -- a video tail past the end of the selected
+  // audio. Both zero means the generation ends at its own audio end.
+  //
+  // pcmEndFrame exists to separate declared silence from a merely late
+  // producer: an exhausted ring proves nothing on its own until the source
+  // signals end-of-stream, and on a real file that signal arrives when reads
+  // reach the end of the FILE, not the end of the audio track.
+  std::uint64_t pcmEndFrame{0};
+  std::uint64_t presentationEndFrame{0};
+};
+
 struct NativeAudioRenderStats {
   std::uint64_t callbacks{0};
   std::uint64_t renderedFrames{0};
@@ -140,6 +169,13 @@ struct NativeAudioRenderStats {
   // instead of freezing the clock, and the frames later retired unplayed.
   std::uint64_t clockAdvancedUnderruns{0};
   std::uint64_t retiredLateFrames{0};
+  // Container-DECLARED silence: device intervals rendered as zeros because the
+  // source states there is no audio media for them (a leading empty edit, or a
+  // video tail past the end of the selected audio). These are neither
+  // underruns nor faults -- the producer owes nothing for these frames -- so
+  // they are counted apart from both silentFrames and underrunCallbacks.
+  std::uint64_t declaredSilenceCallbacks{0};
+  std::uint64_t declaredSilenceFrames{0};
   std::uint64_t metadataCorrections{0};
   std::uint64_t pauseBoundaries{0};
   std::uint64_t endOfStreamFacts{0};
@@ -214,11 +250,16 @@ public:
   // This quiescent transition happens before accepting callbacks and before
   // any observer may call visibleClock(); cached snapshot publication is not
   // designed to race activate().
-  [[nodiscard]] bool activate(std::uint64_t generation,
-                              std::uint64_t streamFrameCursor,
-                              media::MediaTime mediaOrigin,
-                              media::MediaTime pausedClockPosition,
-                              std::uint32_t sampleRate) noexcept;
+  // `declared` states CONTAINER-DECLARED silence for this generation. Those
+  // frames are rendered as zeros, publish media time exactly like rendered
+  // ones, and consume nothing from the ring. A default-constructed value --
+  // what every source that declares no silence passes -- reduces every
+  // expression that reads it to the prior arithmetic verbatim.
+  [[nodiscard]] bool activate(
+      std::uint64_t generation, std::uint64_t streamFrameCursor,
+      media::MediaTime mediaOrigin, media::MediaTime pausedClockPosition,
+      std::uint32_t sampleRate,
+      NativeAudioDeclaredSilence declared = {}) noexcept;
   void setAccepting(bool accepting) noexcept;
   void setPaused(bool paused) noexcept;
   // Quiescent owner transition after the platform output has returned an
@@ -352,6 +393,14 @@ private:
   // ring. They are retired without playback at the next opportunity: playing
   // them would put audio behind the clock that already passed them.
   std::uint64_t pending_late_frames_{0};
+  // Generation-local cursor frame at which real PCM begins. Equal to
+  // activation_cursor_frame_ (no declared lead-in silence) for every source
+  // that does not declare silence before its audio.
+  std::uint64_t lead_in_end_frame_{0};
+  // Cursor frames at which the container says real audio ends and presentation
+  // ends. Both zero unless the source declares trailing silence.
+  std::uint64_t declared_pcm_end_frame_{0};
+  std::uint64_t declared_end_frame_{0};
   std::uint64_t prior_end_host_ticks_{0};
   std::uint64_t prior_end_frame_{0};
   std::int64_t prior_end_sample_time_{0};
@@ -374,6 +423,14 @@ private:
   // Hard pull budget for the current callback, and what the stage took.
   std::uint32_t pull_budget_frames_{0};
   std::uint32_t pull_taken_frames_{0};
+  // Declared-silence media frames the stage must be served, in media order,
+  // before (prefix) and after (suffix) the real PCM this callback covers. The
+  // stage sees one continuous media stream across the boundary, so a rate
+  // change inside declared silence stretches across it exactly as it does
+  // across any other media, and the ring is never over-pulled.
+  std::uint32_t pull_silence_prefix_{0};
+  std::uint32_t pull_silence_suffix_{0};
+  std::uint32_t pull_ring_taken_{0};
   bool pull_ring_failed_{false};
   std::atomic<bool> first_segment_committed_{false};
   NativeMediaClockSnapshot cached_paused_clock_{};
@@ -386,6 +443,8 @@ private:
   std::atomic<std::uint64_t> underrun_callbacks_{0};
   std::atomic<std::uint64_t> clock_advanced_underruns_{0};
   std::atomic<std::uint64_t> retired_late_frames_{0};
+  std::atomic<std::uint64_t> declared_silence_callbacks_{0};
+  std::atomic<std::uint64_t> declared_silence_frames_{0};
   std::atomic<std::uint64_t> metadata_corrections_{0};
   std::atomic<std::uint64_t> pause_boundaries_{0};
   std::atomic<std::uint64_t> eof_facts_{0};

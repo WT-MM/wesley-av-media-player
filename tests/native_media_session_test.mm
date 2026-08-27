@@ -1996,7 +1996,13 @@ void testObservedUsesDispatcherRetireOnly() {
 
 void testAdmissionGateBeforeConfigure() {
   auto state = std::make_shared<GraphState>();
-  state->descriptor = descriptor({5, 1});
+  // 2026-08-27: the shortfall bound widened from 250 ms to 5 s now that the
+  // clock advances across container-declared trailing silence, so a 5 s audio
+  // track under a 10 s video sits exactly AT the bound and is admitted. This
+  // fixture must state a shortfall the widened bound still refuses, or it stops
+  // exercising the duration gate at all. 3 s of audio under 10 s of video is a
+  // 7 s shortfall: content that genuinely does not cover its video.
+  state->descriptor = descriptor({3, 1});
   auto session = sessionFor(&state);
   expect(prepare(*session, prepareCommand()) ==
              NativeMediaSessionCommandStatus::Accepted,

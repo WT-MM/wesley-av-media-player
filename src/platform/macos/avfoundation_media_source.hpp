@@ -47,6 +47,17 @@ struct AVFoundationGenerationStart {
   // backend generation. Empty exactly when no audio track is selected or the
   // window is not exactly representable on the declared audio frame grid.
   media::MediaAudioGenerationWindow audioWindow{};
+  // Container-declared silence for this generation, read from the selected
+  // tracks' edit lists and movie-timeline ranges before any sample is read.
+  // declaredAudioMediaStart is the movie time at which audio media begins
+  // (the origin unless a leading empty edit says otherwise);
+  // declaredPresentationEnd is where presentation must end when the selected
+  // video runs past the end of the selected audio, and is invalid otherwise.
+  media::MediaTime declaredAudioMediaStart{0, 1};
+  media::MediaTime declaredPresentationEnd{};
+  // Movie time at which the selected audio media ends. Stated only alongside
+  // declaredPresentationEnd.
+  media::MediaTime declaredAudioEnd{};
 };
 
 enum class AVFoundationSampleReadStatus : std::uint8_t {

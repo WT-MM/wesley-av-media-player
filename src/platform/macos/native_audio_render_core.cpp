@@ -122,11 +122,20 @@ float NativeAudioRenderCore::bitsFloat(std::uint32_t value) noexcept {
 bool NativeAudioRenderCore::activate(
     std::uint64_t generation, std::uint64_t streamFrameCursor,
     media::MediaTime mediaOrigin, media::MediaTime pausedClockPosition,
-    std::uint32_t sampleRate) noexcept {
+    std::uint32_t sampleRate,
+    NativeAudioDeclaredSilence declared) noexcept {
   if (accepting_.load(std::memory_order_acquire) || generation == 0 ||
       sampleRate == 0 ||
       !compatibleHostTicksPerSecond(host_ticks_per_second_) ||
       streamFrameCursor > kMaximumExactDoubleInteger ||
+      declared.leadInFrames >
+          kMaximumExactDoubleInteger - streamFrameCursor ||
+      declared.pcmEndFrame > kMaximumExactDoubleInteger ||
+      declared.presentationEndFrame > kMaximumExactDoubleInteger ||
+      declared.pcmEndFrame > declared.presentationEndFrame ||
+      (declared.presentationEndFrame != 0 &&
+       declared.presentationEndFrame <
+           streamFrameCursor + declared.leadInFrames) ||
       !mediaOrigin.valid() ||
       !pausedClockPosition.valid() || pausedClockPosition.value < 0 ||
       ring_.generation() != generation) {
@@ -170,6 +179,9 @@ bool NativeAudioRenderCore::activate(
 
   activation_cursor_frame_ = streamFrameCursor;
   cursor_frame_ = streamFrameCursor;
+  lead_in_end_frame_ = streamFrameCursor + declared.leadInFrames;
+  declared_pcm_end_frame_ = declared.pcmEndFrame;
+  declared_end_frame_ = declared.presentationEndFrame;
   segment_serial_ = 0;
   pending_late_frames_ = 0;
   prior_end_host_ticks_ = 0;
@@ -189,6 +201,9 @@ bool NativeAudioRenderCore::activate(
   // seek just left. The rate itself is a session preference and survives.
   pull_budget_frames_ = 0;
   pull_taken_frames_ = 0;
+  pull_silence_prefix_ = 0;
+  pull_silence_suffix_ = 0;
+  pull_ring_taken_ = 0;
   pull_ring_failed_ = false;
   active_rate_ = NativePlaybackRate{};
   stretch_latency_output_frames_ = 0;
@@ -310,30 +325,75 @@ std::uint32_t NativeAudioRenderCore::stretchPull(
   const std::uint32_t remaining =
       core->pull_budget_frames_ - core->pull_taken_frames_;
   const std::uint32_t wanted = std::min(frames, remaining);
+  // Media order inside the budget: declared-silence prefix, then real PCM,
+  // then declared-silence suffix. Each is served from its own counter, so the
+  // stage sees one continuous media stream and the ring is drained by exactly
+  // the real-PCM share of the reservation.
+  std::uint32_t served = 0;
+  if (core->pull_silence_prefix_ != 0 && served < wanted) {
+    const std::uint32_t take =
+        std::min(core->pull_silence_prefix_, wanted - served);
+    std::fill_n(interleaved + static_cast<std::size_t>(served) *
+                                  NativePcmRing::kChannels,
+                static_cast<std::size_t>(take) * NativePcmRing::kChannels,
+                0.0F);
+    core->pull_silence_prefix_ -= take;
+    served += take;
+  }
+  // The suffix is reserved out of the WHOLE remaining budget, not out of this
+  // call's request: a stage that pulls the reservation in several chunks must
+  // still see PCM before the trailing silence.
+  const std::uint32_t budgetLeft = remaining - served;
+  const std::uint32_t pcmRemaining =
+      budgetLeft > core->pull_silence_suffix_
+          ? budgetLeft - core->pull_silence_suffix_
+          : 0U;
+  const std::uint32_t pcmWanted =
+      core->pull_silence_prefix_ != 0
+          ? 0U
+          : std::min(wanted - served, pcmRemaining);
   const std::size_t samples =
-      static_cast<std::size_t>(wanted) * NativePcmRing::kChannels;
-  if (wanted != 0) {
+      static_cast<std::size_t>(pcmWanted) * NativePcmRing::kChannels;
+  if (pcmWanted != 0) {
     const std::uint64_t generation =
         core->control_generation_.load(std::memory_order_relaxed);
     const NativePcmRing::ConsumeResult consumed = core->ring_.consume(
-        generation, std::span<float>(interleaved, samples));
+        generation, std::span<float>(interleaved + static_cast<std::size_t>(
+                                                       served) *
+                                                       NativePcmRing::kChannels,
+                                     samples));
     if (consumed.invalidInput || consumed.staleConsumer ||
-        consumed.pcmFrames != wanted || consumed.silentFrames != 0) {
+        consumed.pcmFrames != pcmWanted || consumed.silentFrames != 0) {
       core->pull_ring_failed_ = true;
       std::fill_n(interleaved,
                   static_cast<std::size_t>(frames) * NativePcmRing::kChannels,
                   0.0F);
       return 0;
     }
-    core->pull_taken_frames_ += wanted;
+    core->pull_ring_taken_ += pcmWanted;
+    served += pcmWanted;
   }
-  if (wanted < frames) {
-    std::fill_n(interleaved + samples,
-                (static_cast<std::size_t>(frames) - wanted) *
+  if (core->pull_silence_suffix_ != 0 && served < wanted) {
+    const std::uint32_t take =
+        std::min(core->pull_silence_suffix_, wanted - served);
+    std::fill_n(interleaved + static_cast<std::size_t>(served) *
+                                  NativePcmRing::kChannels,
+                static_cast<std::size_t>(take) * NativePcmRing::kChannels,
+                0.0F);
+    core->pull_silence_suffix_ -= take;
+    served += take;
+  }
+  if (served != 0) {
+    core->pull_taken_frames_ += served;
+  }
+  if (served < frames) {
+    std::fill_n(interleaved + static_cast<std::size_t>(served) *
+                                  NativePcmRing::kChannels,
+                (static_cast<std::size_t>(frames) - served) *
                     NativePcmRing::kChannels,
                 0.0F);
   }
-  return wanted;
+  return served;
 }
 
 bool NativeAudioRenderCore::hostTicksForOutputFrames(
@@ -833,8 +893,48 @@ NativeAudioRenderResult NativeAudioRenderCore::render(
             mediaFrames % rateNumerator * rateDenominator / rateNumerator;
         return candidate - candidate % rateDenominator;
       };
+  // Container-DECLARED silence available at this cursor, in media frames.
+  //
+  // Head: the leading empty edit's span. The container states that no audio
+  // media exists on [0, mediaStart); the session sizes it in frames and hands
+  // it to activate(), so real PCM begins at lead_in_end_frame_ exactly.
+  //
+  // Tail: whatever lies between the exhausted ring and a PUBLISHED terminal.
+  // A terminal is published only after the converter reports drained, so the
+  // ring already holds every remaining real PCM frame of the generation and
+  // the difference is silence the source declared -- a video tail past the end
+  // of the selected audio -- not audio the producer still owes. That is what
+  // makes it safe to advance the clock here where a genuine underrun (no
+  // terminal yet) still must not.
+  //
+  // Both are zero for every source that declares no silence, and every
+  // expression below then reduces to the prior arithmetic verbatim.
+  const std::uint64_t leadInSilence =
+      lead_in_end_frame_ > input.streamFrameStart
+          ? lead_in_end_frame_ - input.streamFrameStart
+          : 0;
+  const std::uint64_t leadInAndRing =
+      leadInSilence + static_cast<std::uint64_t>(readable.frames);
+  //
+  // The tail is admitted ONLY by the container's own statement -- never by an
+  // exhausted ring, and deliberately never by a published terminal alone. An
+  // exhausted ring at a preterminal cursor still means a late producer, and
+  // the underrun path still owns it, `pending_late_frames_` and all. Past the
+  // stated audio end the source itself says there is no more audio, which is
+  // the earlier and the stronger fact: end-of-stream is signalled when READS
+  // reach the end of the FILE, which on a two-hour movie is most of a second
+  // after the audio track's last sample.
+  const std::uint64_t tailCeiling =
+      (declared_end_frame_ != 0 &&
+       input.streamFrameStart + leadInAndRing >= declared_pcm_end_frame_)
+          ? declared_end_frame_
+          : 0;
+  const std::uint64_t tailSilence =
+      tailCeiling > input.streamFrameStart + leadInAndRing
+          ? tailCeiling - input.streamFrameStart - leadInAndRing
+          : 0;
   std::uint64_t outputFrames = std::min<std::uint64_t>(
-      full_output_frames, mediaLimitedOutput(readable.frames));
+      full_output_frames, mediaLimitedOutput(leadInAndRing + tailSilence));
   if (terminalCurrent && terminalFrame > input.streamFrameStart) {
     outputFrames = std::min<std::uint64_t>(
         outputFrames,
@@ -842,6 +942,22 @@ NativeAudioRenderResult NativeAudioRenderCore::render(
   }
   const std::size_t prefixFrames = static_cast<std::size_t>(
       outputFrames * rateNumerator / rateDenominator);
+  // The media frames this callback covers, split in MEDIA ORDER into the
+  // declared-silence head, the real PCM, and the declared-silence tail. At the
+  // unit rate output frames and media frames are the same quantity, so this
+  // split is also the output split and the first real sample therefore lands
+  // on exactly the frame the container's edit list names -- sample-exact, with
+  // no boundary callback and no relabelling.
+  const std::uint64_t silencePrefixFrames =
+      std::min<std::uint64_t>(prefixFrames, leadInSilence);
+  const std::uint64_t pcmShareFrames =
+      std::min<std::uint64_t>(prefixFrames - silencePrefixFrames,
+                              static_cast<std::uint64_t>(readable.frames));
+  const std::uint64_t silenceSuffixFrames =
+      static_cast<std::uint64_t>(prefixFrames) - silencePrefixFrames -
+      pcmShareFrames;
+  const std::uint64_t declaredSilenceFrames =
+      silencePrefixFrames + silenceSuffixFrames;
 
   if (outputFrames == 0 || prefixFrames == 0) {
     silenceAll();
@@ -1033,10 +1149,31 @@ NativeAudioRenderResult NativeAudioRenderCore::render(
   const std::size_t outputSamples =
       static_cast<std::size_t>(outputFrames) * NativePcmRing::kChannels;
   if (rate.unity()) {
-    const NativePcmRing::ConsumeResult consumed = ring_.consume(
-        generation, interleavedStereoOutput.first(outputSamples));
+    if (silencePrefixFrames != 0) {
+      zero(interleavedStereoOutput.first(
+          static_cast<std::size_t>(silencePrefixFrames) *
+          NativePcmRing::kChannels));
+    }
+    if (silenceSuffixFrames != 0) {
+      zero(interleavedStereoOutput.subspan(
+          static_cast<std::size_t>(silencePrefixFrames + pcmShareFrames) *
+              NativePcmRing::kChannels,
+          static_cast<std::size_t>(silenceSuffixFrames) *
+              NativePcmRing::kChannels));
+    }
+    NativePcmRing::ConsumeResult consumed{};
+    consumed.pcmFrames = static_cast<std::size_t>(pcmShareFrames);
+    if (pcmShareFrames != 0) {
+      consumed = ring_.consume(
+          generation,
+          interleavedStereoOutput.subspan(
+              static_cast<std::size_t>(silencePrefixFrames) *
+                  NativePcmRing::kChannels,
+              static_cast<std::size_t>(pcmShareFrames) *
+                  NativePcmRing::kChannels));
+    }
     if (consumed.invalidInput || consumed.staleConsumer || consumed.underrun ||
-        consumed.pcmFrames != prefixFrames || consumed.silentFrames != 0) {
+        consumed.pcmFrames != pcmShareFrames || consumed.silentFrames != 0) {
       static_cast<void>(clock_.cancelSegment(reservation));
       zero(interleavedStereoOutput);
       result.silentFrames = input.frameCount;
@@ -1054,15 +1191,22 @@ NativeAudioRenderResult NativeAudioRenderCore::render(
     // asks for, the ring can therefore drain by at most that much, so the
     // frame cursor stays exactly where the committed interval says it is.
     pull_budget_frames_ = static_cast<std::uint32_t>(prefixFrames);
+    pull_silence_prefix_ = static_cast<std::uint32_t>(silencePrefixFrames);
+    pull_silence_suffix_ = static_cast<std::uint32_t>(silenceSuffixFrames);
     pull_taken_frames_ = 0;
+    pull_ring_taken_ = 0;
     pull_ring_failed_ = false;
     const bool rendered = stretch_.render(
         stretch_.context, static_cast<std::uint32_t>(outputFrames),
         interleavedStereoOutput.data());
     const std::uint32_t taken = pull_taken_frames_;
+    const std::uint32_t ringTaken = pull_ring_taken_;
     const bool ringFailed = pull_ring_failed_;
     pull_budget_frames_ = 0;
     pull_taken_frames_ = 0;
+    pull_silence_prefix_ = 0;
+    pull_silence_suffix_ = 0;
+    pull_ring_taken_ = 0;
     if (!rendered || ringFailed) {
       static_cast<void>(clock_.cancelSegment(reservation));
       zero(interleavedStereoOutput);
@@ -1085,7 +1229,11 @@ NativeAudioRenderResult NativeAudioRenderCore::render(
       // branch, so it is counted rather than tolerated silently.
       const std::size_t shortfall =
           static_cast<std::size_t>(prefixFrames) - taken;
-      static_cast<void>(ring_.discard(generation, shortfall));
+      // Only the REAL PCM share of the reservation exists in the ring;
+      // declared silence was never queued, so it can never be discarded.
+      const std::size_t ringShortfall = std::min<std::size_t>(
+          shortfall, static_cast<std::size_t>(pcmShareFrames) - ringTaken);
+      static_cast<void>(ring_.discard(generation, ringShortfall));
       saturatingAdd(stretch_shortfall_frames_, shortfall);
     }
     saturatingAdd(stretched_callbacks_, 1);
@@ -1123,8 +1271,22 @@ NativeAudioRenderResult NativeAudioRenderCore::render(
   // pcmFrames is what the platform adapter advances its cursor by, and that
   // cursor is the MEDIA cursor -- so it is the media frames retired, not the
   // device frames emitted. The two differ by exactly the rate.
-  result.pcmFrames = static_cast<std::uint32_t>(prefixFrames);
+  //
+  // Declared silence is media the clock has passed exactly like rendered
+  // audio, but it never existed in the ring: it is reported through
+  // advancedSilentFrames, which the platform adapter already adds to
+  // pcmFrames when it advances its stream cursor. The two therefore sum to
+  // prefixFrames and the cursor stays exact, while bufferedPcmFramesAfter is
+  // debited only by the frames that really left the ring.
+  result.pcmFrames = static_cast<std::uint32_t>(pcmShareFrames);
+  result.advancedSilentFrames =
+      static_cast<std::uint32_t>(declaredSilenceFrames);
+  result.declaredSilenceFrames = result.advancedSilentFrames;
   result.bufferedPcmFramesAfter -= result.pcmFrames;
+  if (declaredSilenceFrames != 0) {
+    saturatingAdd(declared_silence_callbacks_, 1);
+    saturatingAdd(declared_silence_frames_, declaredSilenceFrames);
+  }
   applyGain(interleavedStereoOutput.first(outputSamples),
             static_cast<std::size_t>(outputFrames));
   const std::size_t tailFrames =
@@ -1139,7 +1301,10 @@ NativeAudioRenderResult NativeAudioRenderCore::render(
   } else {
     next_discontinuous_ = false;
   }
-  saturatingAdd(rendered_frames_, prefixFrames);
+  // Rendered frames are REAL audio: declared silence is counted apart, so
+  // "audio rendered frames" stays the honest count of samples that came from
+  // the source.
+  saturatingAdd(rendered_frames_, pcmShareFrames);
   return result;
 }
 
@@ -1162,6 +1327,10 @@ NativeAudioRenderStats NativeAudioRenderCore::stats() const noexcept {
       underrun_callbacks_.load(std::memory_order_relaxed);
   result.clockAdvancedUnderruns =
       clock_advanced_underruns_.load(std::memory_order_relaxed);
+  result.declaredSilenceCallbacks =
+      declared_silence_callbacks_.load(std::memory_order_relaxed);
+  result.declaredSilenceFrames =
+      declared_silence_frames_.load(std::memory_order_relaxed);
   result.retiredLateFrames =
       retired_late_frames_.load(std::memory_order_relaxed);
   result.metadataCorrections =

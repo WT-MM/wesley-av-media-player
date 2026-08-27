@@ -657,9 +657,21 @@ void testSelectedDurationAdmission() {
              {10001, 1000}, {10, 1}),
          "an exact longer audio clock covers the video tail");
   expect(!NativeVideoConsumer::selectedTrackDurationsSupported(
-             {9000, 1000}, {10, 1}),
+             {3000, 1000}, {10, 1}),
          "audio meaningfully shorter than video must fall back before "
          "activation");
+  // 2026-08-27. A one-second shortfall was a refusal while the bound sized the
+  // tail the clock could not present. The clock now advances across
+  // container-declared trailing silence and the video tail draws to the end
+  // (see native_video_limits.hpp), so a shortfall of this size is admitted
+  // rather than refused. The refusal above moved to a shortfall the widened
+  // bound still rejects; it did not go away.
+  expect(NativeVideoConsumer::selectedTrackDurationsSupported(
+             {9000, 1000}, {10, 1}),
+         "a one-second declared trailing silence is now admitted natively");
+  expect(NativeVideoConsumer::selectedTrackDurationsSupported(
+             {9108, 1000}, {10, 1}),
+         "the measured 892 ms movie shortfall is admitted natively");
   expect(!NativeVideoConsumer::selectedTrackDurationsSupported(
              {}, {10, 1}),
          "an inexact selected duration fails native admission");

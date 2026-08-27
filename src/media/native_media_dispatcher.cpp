@@ -132,7 +132,9 @@ enum class OpenConfigureVerdict : std::uint8_t {
   if (selectedAudio == nullptr) {
     if (audioWindow.decodeStart.valid() ||
         audioWindow.presentationStart.valid() ||
-        audioWindow.startsAtStreamOrigin) {
+        audioWindow.startsAtStreamOrigin ||
+        audioWindow.presentationEnd.valid() ||
+        audioWindow.audioEnd.valid()) {
       return std::nullopt;
     }
     return timeline;
@@ -158,6 +160,46 @@ enum class OpenConfigureVerdict : std::uint8_t {
       exactAudioFrameIndex(audioWindow.decodeStart, sampleRate);
   const auto presentationFrame =
       exactAudioFrameIndex(audioWindow.presentationStart, sampleRate);
+  // Container-declared silence facts. mediaStart is the movie time at which
+  // audio media begins (the origin unless a leading empty edit says otherwise)
+  // and can never be after the window's presentation start. presentationEnd,
+  // when stated, is where the generation's presentation must end and can never
+  // be before that presentation start nor after the source duration.
+  const auto presentationAgainstMediaStart =
+      compareMediaTime(audioWindow.presentationStart, audioWindow.mediaStart);
+  const auto decodeAgainstMediaStart =
+      compareMediaTime(audioWindow.decodeStart, audioWindow.mediaStart);
+  if (!decodeAgainstMediaStart) {
+    return std::nullopt;
+  }
+  if (!audioWindow.mediaStart.valid() || audioWindow.mediaStart.value < 0 ||
+      !presentationAgainstMediaStart ||
+      *presentationAgainstMediaStart == MediaTimeOrder::Less) {
+    return std::nullopt;
+  }
+  if (audioWindow.presentationEnd.valid() != audioWindow.audioEnd.valid()) {
+    return std::nullopt;
+  }
+  if (audioWindow.presentationEnd.valid()) {
+    const auto endAgainstPresentation = compareMediaTime(
+        audioWindow.presentationEnd, audioWindow.presentationStart);
+    const auto endAgainstDuration =
+        compareMediaTime(audioWindow.presentationEnd, duration);
+    // The audio media ends at or before the presentation does: the span
+    // between them is exactly the declared trailing silence.
+    const auto audioEndAgainstEnd =
+        compareMediaTime(audioWindow.audioEnd, audioWindow.presentationEnd);
+    if (!exactAudioFrameIndex(audioWindow.presentationEnd, sampleRate) ||
+        !exactAudioFrameIndex(audioWindow.audioEnd, sampleRate) ||
+        !endAgainstPresentation ||
+        *endAgainstPresentation == MediaTimeOrder::Less ||
+        !endAgainstDuration ||
+        *endAgainstDuration == MediaTimeOrder::Greater ||
+        !audioEndAgainstEnd ||
+        *audioEndAgainstEnd == MediaTimeOrder::Greater) {
+      return std::nullopt;
+    }
+  }
   const auto decodeAgainstOrigin =
       compareMediaTime(audioWindow.decodeStart, kStreamOrigin);
   const auto presentationAgainstDuration =
@@ -174,10 +216,12 @@ enum class OpenConfigureVerdict : std::uint8_t {
       *presentationAgainstDuration == MediaTimeOrder::Greater ||
       !presentationAgainstAudioDuration ||
       *presentationAgainstAudioDuration == MediaTimeOrder::Greater ||
-      // A window that begins before media time zero can only be the stream
-      // origin; there is nothing earlier for it to be.
+      // A window that begins at or before the movie time the audio media
+      // begins can only be the stream origin; there is nothing earlier for it
+      // to be. mediaStart is the origin for every source that declares no
+      // silence before its audio, so this is the prior rule verbatim there.
       audioWindow.startsAtStreamOrigin !=
-          (*decodeAgainstOrigin != MediaTimeOrder::Greater)) {
+          (*decodeAgainstMediaStart != MediaTimeOrder::Greater)) {
     return std::nullopt;
   }
   const std::uint64_t prerollFrames = static_cast<std::uint64_t>(
@@ -191,7 +235,22 @@ enum class OpenConfigureVerdict : std::uint8_t {
 
   switch (mode) {
   case MediaSeekMode::Accurate: {
-    const auto expected = audioFrameAtOrAfter(requestedTarget, sampleRate);
+    // Audio presentation begins at the requested target, or at the movie time
+    // the container states its audio media begins -- whichever is later. They
+    // differ exactly when the source declares silence the target falls inside
+    // (an ISO-BMFF leading empty edit). mediaStart defaults to the origin, so
+    // for every source that declares none this is audioFrameAtOrAfter(target)
+    // verbatim.
+    const auto mediaStartAgainstTarget =
+        compareMediaTime(audioWindow.mediaStart, requestedTarget);
+    if (!mediaStartAgainstTarget) {
+      return std::nullopt;
+    }
+    const auto expected = audioFrameAtOrAfter(
+        *mediaStartAgainstTarget == MediaTimeOrder::Greater
+            ? audioWindow.mediaStart
+            : requestedTarget,
+        sampleRate);
     const auto presentationAgainstExpected =
         expected ? compareMediaTime(audioWindow.presentationStart, *expected)
                  : std::optional<MediaTimeOrder>{};

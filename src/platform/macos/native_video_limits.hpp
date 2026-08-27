@@ -88,12 +88,27 @@ static_assert(kMaximumTransientVideoCodecConfigurationBytes ==
 // The policy is therefore a bounded shortfall rather than an exact relation:
 // admit audio that falls short of video by at most kMaximumSelectedAudio-
 // ShortfallMilliseconds, and keep routing a genuinely short audio track (a
-// music bed under a long video, a truncated download) to fallback. The bound
-// is the largest tail the audio clock may leave unpresented; at the tail of a
-// file that is a hold on the final frames at the moment playback ends, which
-// is why it is set well under half a second rather than at the exact sum of
-// the observed container artefacts.
-inline constexpr std::int64_t kMaximumSelectedAudioShortfallMilliseconds = 250;
+// music bed under a long video, a truncated download) to fallback.
+//
+// 2026-08-27. The paragraph above described a tail the clock could not
+// present, so the bound was the largest tail native v1 could leave UNPRESENTED
+// -- 250 ms, a hold on four to six final frames at the moment playback ends.
+// That is no longer what the bound means. The audio-authoritative clock now
+// advances across container-declared silence: past the end of the selected
+// audio the render callback emits zeros, publishes the elapsed interval as
+// media time exactly as a rendered one, and the video tail draws on schedule
+// until end-of-stream at the video end. See MediaAudioGenerationWindow::
+// presentationEnd and NativeAudioRenderCore::activate().
+//
+// So the bound no longer sizes a defect; it sizes a POLICY -- how much
+// declared trailing silence is a container artefact worth playing through
+// rather than a genuinely mismatched pair of tracks. The measured artefacts
+// above (a priming edit plus a trimmed final frame, ~70 ms) sit far inside it;
+// real muxes of feature-length video reach the high hundreds of milliseconds.
+// Five seconds admits those and still routes a music bed under a long video,
+// or a truncated download, to compatibility playback rather than presenting
+// minutes of silence as if it were the film's soundtrack.
+inline constexpr std::int64_t kMaximumSelectedAudioShortfallMilliseconds = 5000;
 
 // Exact rational test for
 //     audioDuration + kMaximumSelectedAudioShortfallMilliseconds/1000

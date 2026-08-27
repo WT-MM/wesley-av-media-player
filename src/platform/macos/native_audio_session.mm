@@ -66,6 +66,22 @@ struct TimelinePlan {
   media::MediaTime clockPosition{};     // exact visual generation floor T
   std::int64_t floorFrame{0};
   std::uint32_t sampleRate{0};
+  // Generation-local frame index of mediaOrigin: the frame the clock's cursor
+  // zero names. Equal to floorFrame unless the container declares silence
+  // before its audio, in which case the clock starts at the VISUAL floor and
+  // the audio floor sits leadInSilenceFrames later.
+  std::int64_t originFrame{0};
+  std::uint64_t leadInSilenceFrames{0};
+  // The same facts in generation-local cursor frames, as the render core takes
+  // them. Derived once here so the arithmetic exists in exactly one place.
+  NativeAudioDeclaredSilence declaredSilence{};
+  // Absolute audio frame at which this generation's PRESENTATION must end when
+  // the container declares trailing silence (a video tail past the end of the
+  // selected audio). Zero means "the audio's own end".
+  std::int64_t presentationEndFrame{0};
+  // Absolute audio frame at which the container states its audio media ends.
+  // Zero unless presentationEndFrame is stated too.
+  std::int64_t audioEndFrame{0};
 };
 
 // Guards the session-envelope registry below: gRetainedSessions and every
@@ -329,6 +345,8 @@ void assignError(std::string* error, const char* message) noexcept {
       timeline.audioWindow.presentationStart);
   const auto audioDecodeAgainstOrigin = media::compareMediaTime(
       timeline.audioWindow.decodeStart, origin);
+  const auto audioDecodeAgainstMediaStart = media::compareMediaTime(
+      timeline.audioWindow.decodeStart, timeline.audioWindow.mediaStart);
   if (!actualAgainstFloor ||
       *actualAgainstFloor == media::MediaTimeOrder::Greater ||
       !actualAgainstOrigin ||
@@ -344,10 +362,14 @@ void assignError(std::string* error, const char* message) noexcept {
       !audioDecodeAgainstOrigin ||
       (*audioDecodeAgainstOrigin == media::MediaTimeOrder::Less &&
        !audioMayPrecedeStreamOrigin) ||
-      // An audio window that begins before media time zero can only be the
-      // stream origin: there is nothing earlier for it to be.
+      // An audio window that begins at or before the movie time the audio
+      // media begins can only be the stream origin: there is nothing earlier
+      // for it to be. mediaStart is the origin for every source that declares
+      // no silence before its audio, so this is the prior rule verbatim there.
+      !audioDecodeAgainstMediaStart ||
       timeline.audioWindow.startsAtStreamOrigin !=
-          (*audioDecodeAgainstOrigin != media::MediaTimeOrder::Greater)) {
+          (*audioDecodeAgainstMediaStart !=
+           media::MediaTimeOrder::Greater)) {
     return std::nullopt;
   }
 
@@ -357,12 +379,25 @@ void assignError(std::string* error, const char* message) noexcept {
     if (*targetAgainstFloor != media::MediaTimeOrder::Equal) {
       return std::nullopt;
     }
-    if (const auto expected =
-            media::audioFrameAtOrAfter(timeline.requestedTarget, sampleRate);
-        !expected ||
-        media::compareMediaTime(timeline.audioWindow.presentationStart,
-                                *expected) !=
-            media::MediaTimeOrder::Equal) {
+    // Audio presentation begins at the requested target, or at the movie time
+    // the container says its audio media begins -- whichever is later. The two
+    // differ exactly when a leading empty edit declares silence the target
+    // falls inside; the span between them is what the render core renders as
+    // declared silence, and the equality below still pins the boundary to an
+    // exact frame with no rounding.
+    if (const auto mediaStartAgainstTarget = media::compareMediaTime(
+            timeline.audioWindow.mediaStart, timeline.requestedTarget);
+        !mediaStartAgainstTarget) {
+      return std::nullopt;
+    } else if (const auto expected = media::audioFrameAtOrAfter(
+                   *mediaStartAgainstTarget == media::MediaTimeOrder::Greater
+                       ? timeline.audioWindow.mediaStart
+                       : timeline.requestedTarget,
+                   sampleRate);
+               !expected ||
+               media::compareMediaTime(
+                   timeline.audioWindow.presentationStart, *expected) !=
+                   media::MediaTimeOrder::Equal) {
       return std::nullopt;
     }
     trimBeforeFloor =
@@ -384,6 +419,23 @@ void assignError(std::string* error, const char* message) noexcept {
     return std::nullopt;
   }
 
+  // The clock's origin is the first audio frame boundary at or after the
+  // VISUAL floor -- which is exactly what NativeAudioRenderCore::activate()
+  // already requires of mediaOrigin at cursor zero, and which equals the
+  // converter's presentation floor for every source that declares no silence
+  // before its audio. Decoupling the two is the whole of leading-silence
+  // support: the clock starts where the picture starts, the converter still
+  // publishes its first PCM frame at the audio floor, and the frames between
+  // them are the container's declared silence.
+  std::int64_t originFrame = 0;
+  const auto originBoundary = media::audioFrameAtOrAfter(
+      timeline.presentationFloor, sampleRate);
+  if (!originBoundary ||
+      !exactFrame(*originBoundary, sampleRate, &originFrame) ||
+      originFrame < 0 || originFrame > floorFrame) {
+    return std::nullopt;
+  }
+
   TimelinePlan result;
   result.converter.presentationFloor = {
       floorFrame, static_cast<std::int32_t>(sampleRate)};
@@ -391,9 +443,13 @@ void assignError(std::string* error, const char* message) noexcept {
   result.converter.startsAtStreamOrigin =
       timeline.audioWindow.startsAtStreamOrigin;
   result.decodeStart = timeline.audioWindow.decodeStart;
-  result.mediaOrigin = result.converter.presentationFloor;
+  result.mediaOrigin = {originFrame, static_cast<std::int32_t>(sampleRate)};
   result.clockPosition = timeline.presentationFloor;
   result.floorFrame = floorFrame;
+  result.originFrame = originFrame;
+  result.leadInSilenceFrames =
+      static_cast<std::uint64_t>(floorFrame - originFrame);
+  result.declaredSilence.leadInFrames = result.leadInSilenceFrames;
   result.sampleRate = sampleRate;
   return result;
 }
@@ -424,6 +480,36 @@ void assignError(std::string* error, const char* message) noexcept {
     }
     plan->converter.presentationCeiling = presentationCeiling;
     plan->converter.trimAfterCeiling = true;
+  }
+  // Container-declared TRAILING silence. presentationEnd is the movie time the
+  // generation's presentation must reach when the selected audio stops short
+  // of the selected video; the frames between the last real PCM frame and it
+  // are declared silence, exactly like the leading span. Absent (the default)
+  // it stays zero and the generation ends at its own audio end, as before.
+  if (timeline.audioWindow.presentationEnd.valid()) {
+    std::int64_t endFrame = 0;
+    std::int64_t audioEndFrame = 0;
+    if (!timeline.audioWindow.audioEnd.valid() ||
+        !exactFrame(timeline.audioWindow.presentationEnd, sampleRate,
+                    &endFrame) ||
+        !exactFrame(timeline.audioWindow.audioEnd, sampleRate,
+                    &audioEndFrame) ||
+        endFrame < plan->floorFrame || audioEndFrame > endFrame) {
+      return std::nullopt;
+    }
+    plan->presentationEndFrame = endFrame;
+    plan->audioEndFrame = audioEndFrame;
+    // Cursor space: frame zero of the generation is the clock's media origin.
+    // A declared end at or before the origin states no trailing silence for
+    // THIS generation (a seek past the audio's end), and is left inert.
+    if (endFrame > plan->originFrame) {
+      plan->declaredSilence.presentationEndFrame =
+          static_cast<std::uint64_t>(endFrame - plan->originFrame);
+      plan->declaredSilence.pcmEndFrame =
+          audioEndFrame > plan->originFrame
+              ? static_cast<std::uint64_t>(audioEndFrame - plan->originFrame)
+              : 0;
+    }
   }
   return plan;
 }
@@ -567,6 +653,12 @@ struct NativeAudioSessionControl final {
   bool trimAfterCeiling{false};
   media::MediaTime presentationCeiling{};
   std::int64_t presentationFloorFrame{0};
+  // Container-declared silence facts for the active generation. Both are zero
+  // for every source that declares none, and every expression that reads them
+  // then reduces to the prior arithmetic verbatim.
+  std::int64_t mediaOriginFrame{0};
+  std::uint64_t leadInSilenceFrames{0};
+  std::int64_t presentationEndFrame{0};
   media::MediaTime mediaOrigin{};
   media::MediaTime audioDecodeStart{};
   media::NativeMediaGenerationTimeline timeline{};
@@ -903,8 +995,24 @@ void clearOutputWake(NativeAudioSessionControl& control) noexcept {
     return false;
   }
   if (!control.terminalPublished) {
-    if (!control.renderCore.publishTerminalFrame(
-            control.generation, stats.publishedPcmFrames)) {
+    // The generation's terminal is the frame after its last PRESENTED frame.
+    // Real PCM occupies [leadInSilenceFrames, leadInSilenceFrames +
+    // publishedPcmFrames); container-declared silence may precede it, and may
+    // follow it when the source states a presentation end past the audio's own
+    // end. Both spans are cursor frames the clock passes, so both belong in
+    // the terminal. With no declared silence this is publishedPcmFrames
+    // verbatim.
+    std::uint64_t terminalFrame =
+        control.leadInSilenceFrames + stats.publishedPcmFrames;
+    if (control.presentationEndFrame > control.mediaOriginFrame) {
+      const auto declaredEnd = static_cast<std::uint64_t>(
+          control.presentationEndFrame - control.mediaOriginFrame);
+      if (declaredEnd > terminalFrame) {
+        terminalFrame = declaredEnd;
+      }
+    }
+    if (!control.renderCore.publishTerminalFrame(control.generation,
+                                                 terminalFrame)) {
       control.latch(NativeAudioSessionFailure::TerminalPublication);
       return false;
     }
@@ -1335,7 +1443,8 @@ media::NativeMediaConsumeResult NativeAudioSession::configure(
       control.output->configure({generation, 0, plan->mediaOrigin,
                                  control.hostClock.ticksPerSecond,
                                  plan->sampleRate,
-                                 plan->clockPosition});
+                                 plan->clockPosition,
+                                 plan->declaredSilence});
   // The stream rate is known only from here on, so a cached non-unit rate can
   // only now be turned into a real stretch stage. A refusal drops back to the
   // unit rate rather than failing the whole configure: playing at 1x is a
@@ -1361,6 +1470,9 @@ media::NativeMediaConsumeResult NativeAudioSession::configure(
   control.trimAfterCeiling = plan->converter.trimAfterCeiling;
   control.presentationCeiling = plan->converter.presentationCeiling;
   control.presentationFloorFrame = plan->floorFrame;
+  control.mediaOriginFrame = plan->originFrame;
+  control.leadInSilenceFrames = plan->leadInSilenceFrames;
+  control.presentationEndFrame = plan->presentationEndFrame;
   control.mediaOrigin = plan->mediaOrigin;
   control.audioDecodeStart = plan->decodeStart;
   control.firstAudioSampleAccepted = false;
@@ -1968,7 +2080,8 @@ media::NativeMediaConsumerProgress NativeAudioSession::flush(
       control,
       control.output->activate(control.lifecycleTarget, 0,
                                control.lifecyclePlan.mediaOrigin,
-                               control.lifecyclePlan.clockPosition),
+                               control.lifecyclePlan.clockPosition,
+                               control.lifecyclePlan.declaredSilence),
       NativeAudioSessionFailure::OutputActivation);
   if (activated != NativeAudioSessionProgress::Done) {
     return mapLifecycleProgress(activated);
@@ -1983,6 +2096,9 @@ media::NativeMediaConsumerProgress NativeAudioSession::flush(
   control.audioDecodeStart = control.lifecyclePlan.decodeStart;
   control.firstAudioSampleAccepted = false;
   control.presentationFloorFrame = control.lifecyclePlan.floorFrame;
+  control.mediaOriginFrame = control.lifecyclePlan.originFrame;
+  control.leadInSilenceFrames = control.lifecyclePlan.leadInSilenceFrames;
+  control.presentationEndFrame = control.lifecyclePlan.presentationEndFrame;
   control.endOfStreamRequested = false;
   control.terminalPublished = false;
   control.lifecycle = SessionLifecycle::None;

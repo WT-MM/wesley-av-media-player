@@ -29,6 +29,15 @@ constexpr std::uint32_t kWakeVideoDue = 1U << 2U;
 constexpr std::uint32_t kWakePause = 1U << 3U;
 constexpr std::uint32_t kWakeTerminal = 1U << 4U;
 constexpr std::uint32_t kWakeFailure = 1U << 5U;
+// A device interval that published media time without retiring a ring slab,
+// because the source DECLARED there is no audio media for it. The worker has
+// no other edge to learn this from: declared silence produces no refill (no
+// slab moved), no underrun (nothing is owed) and no video-due hint before the
+// video lane has ever been pumped -- so without this wake the worker would
+// sleep through the whole silent span and the video lane would arrive to find
+// its frames already late. Real audio never needs it: retiring the slabs it
+// plays is itself the edge.
+constexpr std::uint32_t kWakeSilence = 1U << 6U;
 constexpr std::uint32_t kWakeStateMask =
     kWakePause | kWakeTerminal | kWakeFailure;
 
@@ -933,7 +942,8 @@ NativeAudioOutputProgress NativeAudioOutput::configure(
                              configuration.streamFrameCursor,
                              configuration.mediaOrigin,
                              configuration.pausedClockPosition,
-                             configuration.sampleRate)) {
+                             configuration.sampleRate,
+                             configuration.declaredSilence)) {
     latchFailure(NativeAudioOutputFailure::RenderCoreActivationFailed,
                  kAudio_ParamError);
     static_cast<void>(close());
@@ -1064,7 +1074,8 @@ bool NativeAudioOutput::preservePitch() const noexcept {
 NativeAudioOutputProgress NativeAudioOutput::activate(
     std::uint64_t generation, std::uint64_t streamFrameCursor,
     media::MediaTime mediaOrigin,
-    media::MediaTime pausedClockPosition) noexcept {
+    media::MediaTime pausedClockPosition,
+    NativeAudioDeclaredSilence declaredSilence) noexcept {
   if (!configured_.load(std::memory_order_acquire) ||
       state_.load(std::memory_order_acquire) !=
           static_cast<std::uint8_t>(NativeAudioOutputState::Stopped) ||
@@ -1090,7 +1101,7 @@ NativeAudioOutputProgress NativeAudioOutput::activate(
   }
   if (!render_core_.activate(generation, streamFrameCursor,
                              mediaOrigin, pausedClockPosition,
-                             sample_rate_)) {
+                             sample_rate_, declaredSilence)) {
     latchFailure(NativeAudioOutputFailure::RenderCoreActivationFailed,
                  kAudio_ParamError);
     return NativeAudioOutputProgress::Failed;
@@ -1994,6 +2005,13 @@ OSStatus NativeAudioOutput::render(
         queuedSlabs < previousSlabs && wakeReasons != nullptr) {
       *wakeReasons |= kWakeRefill;
     }
+  }
+  // Declared silence: the clock moved, the ring did not. Wake the worker at
+  // the device period so the video lane is pumped on the same schedule it
+  // would have been if real audio had played this interval.
+  if (result.declaredSilenceFrames != 0 && result.pcmFrames == 0 &&
+      result.committed && wakeReasons != nullptr) {
+    *wakeReasons |= kWakeSilence;
   }
   if (result.pauseBoundary && wakeReasons != nullptr) {
     *wakeReasons |= kWakePause;

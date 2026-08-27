@@ -2810,6 +2810,7 @@ class ProductionGeneration final : public AVFoundationGeneration {
       // presentation start the dispatcher derives from the seek target.
       audio_movie_shift_ = kCMTimeZero;
       audio_media_start_ = kCMTimeZero;
+      audio_presentation_end_ = kCMTimeInvalid;
       if (audioTrack != nil) {
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
@@ -2824,22 +2825,50 @@ class ProductionGeneration final : public AVFoundationGeneration {
         audio_movie_shift_ = editFacts->shift;
         audio_media_start_ = editFacts->mediaStart;
         // A leading empty edit declares silence on the movie timeline before
-        // any audio media exists. Restating the timestamps places the media
-        // correctly, but nothing in native v1 can PRODUCE that silence: the
-        // converter's ingress is structurally gapless, and the clock's media
-        // origin is the converter's presentation floor. A generation whose
-        // presentation floor falls inside [0, mediaStart) therefore has no
-        // audio to render for that span and is refused here, at open, with a
-        // named reason -- rather than being allowed to derive an invalid
-        // timeline further down. Generations that start at or after
-        // mediaStart are unaffected and play natively.
-        if (CMTimeCompare(audio_media_start_, kCMTimeZero) > 0 &&
-            CMTimeCompare(decodeStart, audio_media_start_) < 0) {
-          result.status = AVFoundationGenerationStatus::Unsupported;
-          result.error =
-              "leading empty edit declares audio silence that native v1 "
-              "cannot produce";
-          return result;
+        // any audio media exists; a selected video that runs past the end of
+        // the selected audio declares it at the other end. Both are stated to
+        // the neutral contract as facts of the audio window -- mediaStart and
+        // presentationEnd -- and the audio-authoritative clock advances across
+        // them at rate 1.0 with the renderer emitting zeros. Neither is a
+        // refusal any more, and neither is an underrun: the source says the
+        // audio is absent, so nothing is owed for those frames.
+        audio_presentation_end_ = kCMTimeInvalid;
+        if (videoTrack != nil) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+          const CMTimeRange videoRange = videoTrack.timeRange;
+          const CMTimeRange audioRange = audioTrack.timeRange;
+#pragma clang diagnostic pop
+          const CMTime videoEnd = CMTimeRangeGetEnd(videoRange);
+          const CMTime audioEnd = CMTimeRangeGetEnd(audioRange);
+          // Exactness is mandatory: an end that had to be rounded onto either
+          // grid could not name a sample-exact boundary, so the generation
+          // simply keeps today's behaviour rather than guessing one.
+          if ((videoEnd.flags & kCMTimeFlags_Valid) != 0 &&
+              (videoEnd.flags & kCMTimeFlags_HasBeenRounded) == 0 &&
+              (audioEnd.flags & kCMTimeFlags_Valid) != 0 &&
+              (audioEnd.flags & kCMTimeFlags_HasBeenRounded) == 0 &&
+              CMTimeCompare(videoEnd, audioEnd) > 0) {
+            audio_presentation_end_ = videoEnd;
+            audio_media_end_ = audioEnd;
+          }
+        }
+        if (CMTimeCompare(audio_media_start_, kCMTimeZero) > 0) {
+          const auto exactMediaStart = exactMediaTime(audio_media_start_);
+          if (!exactMediaStart) {
+            result.status = AVFoundationGenerationStatus::Unsupported;
+            result.error = "selected audio edit list is outside native v1";
+            return result;
+          }
+          result.declaredAudioMediaStart = *exactMediaStart;
+        }
+        if ((audio_presentation_end_.flags & kCMTimeFlags_Valid) != 0) {
+          const auto exactEnd = exactMediaTime(audio_presentation_end_);
+          const auto exactAudioEnd = exactMediaTime(audio_media_end_);
+          if (exactEnd && exactAudioEnd) {
+            result.declaredPresentationEnd = *exactEnd;
+            result.declaredAudioEnd = *exactAudioEnd;
+          }
         }
       }
 
@@ -3309,6 +3338,12 @@ class ProductionGeneration final : public AVFoundationGeneration {
   // time at which audio media begins (nonzero only for a leading empty edit).
   CMTime audio_movie_shift_{kCMTimeZero};
   CMTime audio_media_start_{kCMTimeZero};
+  // Movie time at which this generation's presentation must end when the
+  // selected video runs past the end of the selected audio. Invalid means the
+  // generation ends at its own audio end, which is every ordinary source.
+  CMTime audio_presentation_end_{kCMTimeInvalid};
+  // Movie time at which the selected audio media ends, beside the above.
+  CMTime audio_media_end_{kCMTimeInvalid};
   bool audio_first_unit_restated_{false};
   std::atomic<bool> cancelled_{false};
   const std::shared_ptr<AsyncLoadSignal> metadata_load_signal_{
@@ -3813,7 +3848,10 @@ struct AVFoundationMediaSource::Impl {
   // A window that is not exactly representable on the declared frame grid is
   // left empty, which the dispatcher rejects before any consumer is exposed.
   [[nodiscard]] std::optional<media::MediaAudioGenerationWindow>
-  audioGenerationWindow(MediaTime actualDecodeStart) const noexcept {
+  audioGenerationWindow(MediaTime actualDecodeStart,
+                        MediaTime declaredMediaStart,
+                        MediaTime declaredPresentationEnd,
+                        MediaTime declaredAudioEnd) const noexcept {
     if (descriptor == nullptr || !descriptor->selectedAudio || !audioHead) {
       return std::nullopt;
     }
@@ -3846,12 +3884,47 @@ struct AVFoundationMediaSource::Impl {
          !media::audioCodecPrecedesStreamOrigin(track->codec))) {
       return std::nullopt;
     }
+    // Container-declared silence, as exact movie times. mediaStart is where
+    // the audio media begins (later than the origin exactly for a leading
+    // empty edit); presentationEnd is where the presentation must end when the
+    // selected video runs past the audio. Both are inert defaults for an
+    // ordinary source.
+    MediaTime mediaStart{0, 1};
+    if (declaredMediaStart.valid() && declaredMediaStart.value > 0) {
+      mediaStart = declaredMediaStart;
+    }
+    MediaTime presentationEnd{};
+    MediaTime audioEnd{};
+    if (declaredPresentationEnd.valid() && declaredAudioEnd.valid()) {
+      // A declared end that is not exactly representable on this track's frame
+      // grid cannot name a sample-exact boundary, so the generation keeps
+      // today's behaviour (it ends at its own audio end) rather than guessing.
+      if (media::exactAudioFrameIndex(declaredPresentationEnd, sampleRate) &&
+          media::exactAudioFrameIndex(declaredAudioEnd, sampleRate)) {
+        presentationEnd = declaredPresentationEnd;
+        audioEnd = declaredAudioEnd;
+      }
+    }
     std::optional<MediaTime> presentationStart;
     switch (seekMode) {
-    case media::MediaSeekMode::Accurate:
+    case media::MediaSeekMode::Accurate: {
+      // Audio presentation begins at the requested target, or at the movie
+      // time the audio media begins -- whichever is later. A target inside the
+      // declared silence is not moved: the clock still starts there, and the
+      // frames between it and this floor are rendered as silence.
+      const MediaTime target = requestedTarget.value_or(MediaTime{0, 1});
+      const auto mediaStartAgainstTarget =
+          media::compareMediaTime(mediaStart, target);
+      if (!mediaStartAgainstTarget) {
+        return std::nullopt;
+      }
       presentationStart = media::audioFrameAtOrAfter(
-          requestedTarget.value_or(MediaTime{0, 1}), sampleRate);
+          *mediaStartAgainstTarget == media::MediaTimeOrder::Greater
+              ? mediaStart
+              : target,
+          sampleRate);
       break;
+    }
     case media::MediaSeekMode::KeyFrame:
       presentationStart = actualDecodeStart;
       break;
@@ -3868,11 +3941,22 @@ struct AVFoundationMediaSource::Impl {
          *presentationFrame != *decodeFrame)) {
       return std::nullopt;
     }
-    // "Starts at the stream origin" is defined by both enforcement points as
-    // decodeStart <= 0: a window that begins before media time zero can only
-    // be the origin, because there is nothing earlier for it to be.
-    return media::MediaAudioGenerationWindow{decodeStart, *presentationStart,
-                                             *decodeFrame <= 0};
+    // "Starts at the stream origin" means there is nothing earlier in the
+    // AUDIO STREAM for the window to be -- which is decodeStart <= 0 for an
+    // ordinary source, and decodeStart <= mediaStart when the container
+    // declares silence before its audio: the stream genuinely begins at
+    // mediaStart on the movie timeline, and the first access unit there is the
+    // first access unit there is. Reading it as movie zero would demand a
+    // decoder-refresh proof of a sample that needs none.
+    const auto decodeAgainstMediaStart =
+        media::compareMediaTime(decodeStart, mediaStart);
+    if (!decodeAgainstMediaStart) {
+      return std::nullopt;
+    }
+    return media::MediaAudioGenerationWindow{
+        decodeStart, *presentationStart,
+        *decodeAgainstMediaStart != media::MediaTimeOrder::Greater, mediaStart,
+        presentationEnd, audioEnd};
   }
 
   [[nodiscard]] bool refillPendingHeads(std::string* error) {
@@ -4018,7 +4102,10 @@ struct AVFoundationMediaSource::Impl {
       return started;
     }
     started.audioWindow =
-        audioGenerationWindow(started.actualDecodeStart)
+        audioGenerationWindow(started.actualDecodeStart,
+                              started.declaredAudioMediaStart,
+                              started.declaredPresentationEnd,
+                              started.declaredAudioEnd)
             .value_or(media::MediaAudioGenerationWindow{});
     open = true;
     openSnapshot.store(true, std::memory_order_release);

@@ -672,6 +672,25 @@ struct MediaAudioGenerationWindow {
   MediaTime decodeStart{};
   MediaTime presentationStart{};
   bool startsAtStreamOrigin{false};
+  // Movie time at which the selected audio MEDIA begins. Nonzero exactly for a
+  // container that declares silence before its audio -- an ISO-BMFF leading
+  // empty edit (elst media_time = -1) states [0, mediaStart) as silence on the
+  // movie timeline. The default {0,1} is "audio media begins at the origin",
+  // which is every source that declares no such silence.
+  MediaTime mediaStart{0, 1};
+  // Movie time at which this generation's PRESENTATION ends, when the selected
+  // audio stops short of the selected video and the container therefore
+  // declares trailing silence. Invalid (the default) means "the selected
+  // audio's own end", i.e. no declared trailing silence.
+  MediaTime presentationEnd{};
+  // Movie time at which the selected audio MEDIA ends, as the container states
+  // it. Stated only beside presentationEnd, and only so that the renderer can
+  // tell container-declared trailing silence from a producer that is merely
+  // late: past this time the source itself says there is no more audio, which
+  // an exhausted ring alone cannot prove until the source signals end-of-
+  // stream -- and on a real file that signal arrives when reads reach the end
+  // of the FILE, long after the audio track's own last sample.
+  MediaTime audioEnd{};
 
   friend constexpr bool operator==(const MediaAudioGenerationWindow&,
                                    const MediaAudioGenerationWindow&) =

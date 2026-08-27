@@ -60,6 +60,10 @@ struct NativeAudioOutputConfiguration {
   // Exact paused generation/Commit position. mediaOrigin is independently
   // the source timestamp of generation-local PCM frame zero.
   media::MediaTime pausedClockPosition{};
+  // Container-declared silence for this generation, in generation-local
+  // frames. See NativeAudioRenderCore::activate(). Default-constructed for
+  // every source that declares none.
+  NativeAudioDeclaredSilence declaredSilence{};
 };
 
 using NativeAudioOutputWake = void (*)(void *context) noexcept;
@@ -337,7 +341,8 @@ class NativeAudioOutput final
   [[nodiscard]] NativeAudioOutputProgress
   activate(std::uint64_t generation, std::uint64_t streamFrameCursor,
            media::MediaTime mediaOrigin,
-           media::MediaTime pausedClockPosition) noexcept;
+           media::MediaTime pausedClockPosition,
+           NativeAudioDeclaredSilence declaredSilence = {}) noexcept;
 
   // Publishes an exact rational playback rate. Owner-thread only, and safe
   // while the render callback runs: the pitch-preserving stage is created
