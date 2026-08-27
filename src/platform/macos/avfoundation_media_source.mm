@@ -1,6 +1,7 @@
 #include "avfoundation_media_source.hpp"
 
 #include "media/video_codec_configuration.hpp"
+#include "native_audio_channel_map.hpp"
 #include "native_video_codec_capability.hpp"
 
 #import <AVFoundation/AVFoundation.h>
@@ -352,12 +353,28 @@ std::atomic<std::size_t> g_inspectedAudioChannelLayoutSize{
 
   // Native audio v1 carries only the scalar tag, so layouts whose identity
   // depends on a bitmap or description payload cannot be compared exactly on
-  // later samples. Admit only the two fixed layouts the converter supports;
-  // aliases, custom, reserved, and variable-count layouts fail closed.
-  const bool accepted = tag == kAudioChannelLayoutTag_Mono
-                            ? channels == 1
-                            : tag == kAudioChannelLayoutTag_Stereo &&
-                                  channels == 2;
+  // later samples. Mono and stereo are the two fixed layouts the output chain
+  // consumes directly; aliases, custom, reserved, and variable-count layouts
+  // still fail closed above.
+  //
+  // MULTICHANNEL (2026-08-27). Wider layouts are admitted exactly when the
+  // shared downmix stage can state the fold for them. This is the same
+  // predicate the converter already applies (native_audio_converter.mm
+  // supportedChannelLayout) and the same one the Matroska route has used since
+  // v0.4.4, so both container routes now agree by construction instead of by
+  // coincidence. The decision is made on the TAG'S EXPANSION -- label by
+  // label, never by channel index -- because AudioToolbox emits a different
+  // channel ORDER per codec family for the identical 5.1 content (see the
+  // table in native_audio_channel_map.hpp). Nothing here folds anything: the
+  // backend still decodes the FULL native width and the converter applies
+  // media::applyStereoDownmix using the decoder's OWN reported output layout,
+  // which is the only description of the bytes it actually writes. A tag whose
+  // expansion contains any unmapped label is refused whole, which is a clean
+  // mpv fallback rather than a silently dropped channel.
+  const bool accepted =
+      channels == 1   ? tag == kAudioChannelLayoutTag_Mono
+      : channels == 2 ? tag == kAudioChannelLayoutTag_Stereo
+                      : multichannelLayoutTagAdmitted(tag, channels);
   if (accepted && acceptedTag != nullptr) {
     *acceptedTag = tag;
   }
@@ -2047,13 +2064,20 @@ void incrementInventory(media::MediaTrackInventory* inventory,
 
 [[nodiscard]] bool audioLayoutSupported(const media::MediaAudioFormat& audio,
                                         std::string* error) {
+  // Kept deliberately identical to native_audio_converter.mm's
+  // supportedChannelLayout: this is the descriptor-level restatement of the
+  // same rule, and the two disagreeing would admit a descriptor the converter
+  // then refuses at configure time -- a Startup failure instead of a clean
+  // Unsupported verdict.
   const bool supportedLayout =
-      (!audio.channelLayoutPresent && audio.channelLayoutTag == 0) ||
-      (audio.channelLayoutPresent &&
-       ((audio.channelLayoutTag == kAudioChannelLayoutTag_Mono &&
-         audio.channels == 1) ||
-        (audio.channelLayoutTag == kAudioChannelLayoutTag_Stereo &&
-         audio.channels == 2)));
+      !audio.channelLayoutPresent
+          ? audio.channelLayoutTag == 0
+      : audio.channels == 1
+          ? audio.channelLayoutTag == kAudioChannelLayoutTag_Mono
+      : audio.channels == 2
+          ? audio.channelLayoutTag == kAudioChannelLayoutTag_Stereo
+          : multichannelLayoutTagAdmitted(audio.channelLayoutTag,
+                                          audio.channels);
   if (!supportedLayout) {
     assignError(error,
                 "selected audio layout is outside the native v1 contract");

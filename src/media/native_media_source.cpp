@@ -193,14 +193,43 @@ bool validAudioFormat(const MediaAudioFormat& audio,
   }
 
   // Native audio v1 preserves only a scalar CoreAudio-compatible layout tag,
-  // not bitmap/description payloads.  Fail closed to the two fixed layouts
-  // whose complete identity is carried by that scalar.
+  // not bitmap/description payloads.
+  //
+  // MONO AND STEREO stay exactly as strict as they have always been: one
+  // enumerated canonical tag each, so a reserved family (0xffff0002) or a
+  // different two-channel layout (0x00660002 Headphones) is refused even
+  // though its low bits do say two.  Both are pinned in
+  // native_media_source_test.cpp and neither behaviour changes here.
   constexpr std::uint32_t kCanonicalMonoLayout = 0x00640001U;
   constexpr std::uint32_t kCanonicalStereoLayout = 0x00650002U;
-  return (audio.channelLayoutTag == kCanonicalMonoLayout &&
-          audio.channels == 1) ||
-         (audio.channelLayoutTag == kCanonicalStereoLayout &&
-          audio.channels == 2);
+  if (audio.channels == 1) {
+    return audio.channelLayoutTag == kCanonicalMonoLayout;
+  }
+  if (audio.channels == 2) {
+    return audio.channelLayoutTag == kCanonicalStereoLayout;
+  }
+  // MULTICHANNEL (2026-08-27).  Wider layouts have no single canonical tag to
+  // enumerate -- 5.1 alone has four in common use (MPEG_5_1_A..D), one per
+  // codec family -- so this layer checks the strongest property it can state
+  // WITHOUT seeing channel labels, which a backend-neutral file deliberately
+  // cannot: a predefined tag carries its channel count in its low sixteen bits
+  // and a nonzero layout family in its high sixteen, so a tag whose count
+  // agrees with the ASBD is a complete scalar identity, comparable exactly on
+  // every later sample without retaining a payload.  That still fails closed
+  // for tag 0x00000000 (UseChannelDescriptions, high half zero), tag
+  // 0x00010000 (UseChannelBitmap, low half zero) and variable-count families
+  // such as 0x00930000 (low half zero).
+  //
+  // This is NOT a claim that the layout can be rendered.  Whether a given wide
+  // layout is one this player can fold to stereo -- including whether its
+  // family is recognised by CoreAudio at all -- is a question about LABELS,
+  // and it is answered one layer up by macos::multichannelLayoutTagAdmitted
+  // (which expands the tag and maps it label by label) at both AVFoundation
+  // admission sites, and again by NativeAudioConverter against the decoder's
+  // own reported output layout.  An unrecognised or unfoldable wide layout is
+  // refused there, as a clean fallback rather than a dropped channel.
+  return (audio.channelLayoutTag >> 16U) != 0U &&
+         (audio.channelLayoutTag & 0xFFFFU) == audio.channels;
 }
 
 bool validSelectedTrack(const MediaSourceDescriptor& descriptor,
