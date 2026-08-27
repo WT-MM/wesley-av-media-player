@@ -76,11 +76,26 @@ inline constexpr std::size_t kMpegTsSeekScanBytes{32U * 1024U * 1024U};
 // keyframe predicate. Transport Stream has no per-sample keyframe flag, so the
 // verdict comes from the bitstream: MPEG-2 sequence/GOP/picture headers and
 // H.264/HEVC parameter sets and IRAP NALs all appear at the START of an access
-// unit. 4 KiB comfortably covers an SPS+PPS+SEI prefix (typically under 200
-// bytes) and an MPEG-2 sequence header + extensions + GOP header (under 100),
-// with two orders of magnitude of margin, and it is the ONLY payload the
-// cursor ever touches: the emitted sample itself remains payload-free.
-inline constexpr std::size_t kMpegTsAccessUnitProbeBytes{4'096};
+// unit. This is the ONLY payload the cursor ever touches; the emitted sample
+// itself remains payload-free.
+//
+// RAISED FROM 4 KiB TO 16 KiB ON MEASUREMENT, 2026-08-27. The old comment said
+// 4 KiB left "two orders of magnitude of margin" over a 200-byte SPS+PPS+SEI
+// prefix. That premise was true of SDR and false of HDR: an x265 HDR keyframe
+// access unit carries a registered user-data SEI plus mastering-display and
+// content-light SEIs AHEAD of the slice, and in the measured PQ fixture
+// (scratchpad/fixtures/ts_cs_pq_full_hevc10.ts) the IRAP NAL begins at byte
+// 4,977 -- past the old bound. The scan then saw VPS/SPS/PPS but no IRAP,
+// reported keyFrame = false for the file's ONLY random access point, and every
+// seek including the open-time one was refused as ScanLimit. Not an HEVC bug
+// and not new: the same prologue in H.264 would have done the same thing.
+//
+// 16 KiB is 3.3x the measured worst case. It is not a proof of sufficiency --
+// SEI length is not bounded by anything -- which is why AccessUnitScan now
+// reports `sliceInProbe` so a prologue that outgrows even this bound is
+// refused BY NAME instead of being reported as an absent keyframe. Cost is
+// 16 KiB per StreamWalk; the walk already sits beside a 64 KiB ReadWindow.
+inline constexpr std::size_t kMpegTsAccessUnitProbeBytes{16U * 1024U};
 
 // Largest access unit admitted, matching the frozen source limit so a sample
 // that would be rejected downstream is refused by verdict here instead.

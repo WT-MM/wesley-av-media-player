@@ -84,7 +84,18 @@ public:
   // the lane without a second main-consumer quiesce. Refusal is deliberately
   // quiet; the final CommitSeek remains authoritative even when visual
   // preview preparation is unavailable.
-  [[nodiscard]] bool preparePreviewHandoff();
+  // Deferred and Unsupported are both quiet refusals, but they mean opposite
+  // things to a caller: Deferred is "not right now" (wrong router state, a
+  // handoff already in flight) and the next gesture may well succeed, while
+  // Unsupported is "not for this source at all" -- an audio-only binding has
+  // no frame to preview and never will, so the caller should stop demanding
+  // one for the whole gesture instead of collecting a failure per sample.
+  enum class PreviewHandoffDisposition : std::uint8_t {
+    Prepared,
+    Deferred,
+    Unsupported,
+  };
+  [[nodiscard]] PreviewHandoffDisposition preparePreviewHandoff();
   [[nodiscard]] PreviewDisposition previewFrame(double targetSeconds,
                                                 std::uint64_t gesture,
                                                 std::uint64_t request);

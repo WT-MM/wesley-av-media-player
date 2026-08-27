@@ -1764,7 +1764,15 @@ void PlayerController::beginScrub() {
       // Pointer-down starts the surface-budget handoff before the MouseArea's
       // first immediate motion preview. Refusal stays silent; release still
       // commits one exact seek and restores the captured logical pause intent.
-      static_cast<void>(native_playback_->preparePreviewHandoff());
+      // A refusal that means "this source has no frame to preview" (audio
+      // only) is remembered for the whole gesture, so motion samples publish
+      // the time readout without demanding a thumbnail that cannot exist.
+      const auto handoff = native_playback_->preparePreviewHandoff();
+      if (native_scrub_intent_) {
+        native_scrub_intent_->preview_available =
+            handoff !=
+            NativePlaybackOwner::PreviewHandoffDisposition::Unsupported;
+      }
       return;
     }
     invalidateNativeScrubIntent();
@@ -1867,6 +1875,20 @@ void PlayerController::previewSeekTo(double seconds) {
 #endif
 #if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   if (native_playback_ && native_playback_->nativeOwnsTransport()) {
+    // Audio-only binding: the session refused the preview handoff for this
+    // whole gesture at pointer-down. Track the drag in the time readout --
+    // that is the entire visible scrub experience for a source with no
+    // picture -- and demand nothing. No preview identity is reserved, no
+    // demand is published, and no PreviewFailed can follow, so an audio scrub
+    // leaves the telemetry stream and the log exactly as clean as no scrub.
+    if (native_scrub_intent_ && !native_scrub_intent_->preview_available) {
+      if (!std::isfinite(seconds))
+        return;
+      const double target = exactNativeSeekTarget(seconds);
+      native_scrub_intent_->target = target;
+      publishSeekTarget(target);
+      return;
+    }
     const auto observeDemand = [](void *context,
                                   const NativePreviewIntent &intent) noexcept {
       auto &controller = *static_cast<PlayerController *>(context);

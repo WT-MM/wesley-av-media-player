@@ -1,6 +1,8 @@
 #include "avfoundation_media_source.hpp"
 
 #include "media/audio_codec_timing.hpp"
+#include "media/matroska_ac3.hpp"
+#include "media/matroska_mpeg_audio.hpp"
 #include "media/video_codec_configuration.hpp"
 #include "native_audio_channel_map.hpp"
 #include "native_video_codec_capability.hpp"
@@ -11,6 +13,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cctype>
 #include <cmath>
 #include <condition_variable>
 #include <cstring>
@@ -47,6 +50,17 @@ constexpr std::size_t kMaximumAdmissionPrefixBuffers{64};
 // payload-free buffers per lane. The bound only keeps a hypothetical marker
 // storm from turning one read into an unbounded loop.
 constexpr std::size_t kMaximumMediaFreeMarkers{64};
+
+// Frames one access unit of a codec whose ASBD declares no fixed packet size
+// may decode to. AVFoundation states mFramesPerPacket = 0 for a variable-frame
+// codec and carries the real count per packet instead
+// (mVariableFramesInPacket), which the converter already reads. The priming
+// arithmetic below runs BEFORE any packet is read, so it needs a bound rather
+// than the count: Opus's largest legal packet is 120 ms, which is 5760 frames
+// at its fixed 48 kHz internal rate and the largest such packet at any admitted
+// rate. Using the bound only ever places the reader earlier and the proof
+// ceiling stricter, both of which fail closed.
+constexpr std::int64_t kMaximumVariableAccessUnitFrames{5'760};
 
 // Decoder preroll this backend guarantees ahead of the first audible frame of
 // an accurate-seek generation, stated in whole compressed access units.
@@ -87,8 +101,13 @@ struct AudioPrimingPlan {
     return std::nullopt;
   }
   const auto sampleRate = static_cast<std::uint32_t>(audio.audio->sampleRate);
+  // A codec whose packets carry no fixed frame count declares zero here and
+  // states the count per packet instead. Bound it rather than refusing the
+  // generation; see kMaximumVariableAccessUnitFrames.
   const auto framesPerPacket =
-      static_cast<std::int64_t>(audio.audio->framesPerPacket);
+      audio.audio->framesPerPacket == 0
+          ? kMaximumVariableAccessUnitFrames
+          : static_cast<std::int64_t>(audio.audio->framesPerPacket);
   if (static_cast<double>(sampleRate) != audio.audio->sampleRate ||
       sampleRate == 0 || framesPerPacket <= 0 ||
       framesPerPacket > kMaximumAudioFramesPerPacket) {
@@ -274,6 +293,87 @@ struct AudioPrimingPlan {
   return restated;
 }
 
+// How many access units of an audio batch this backend may publish as one
+// staged sample, starting at cursor.
+//
+// AVFoundation batches a track output into CMSampleBuffers of whatever size its
+// reader chose, and the size is a property of the container rather than of the
+// codec: 84 MPEG frames (48 KiB), 21 FLAC blocks (27 KiB), 140 AAC units
+// (70 KiB) -- and, for standalone LPCM, 96001 whole frames in ONE buffer of
+// 384004 bytes. Native v1 states its own bound on both counts
+// (MediaSourceLimits::maximumAudioSampleCount / maximumAudioSampleBytes)
+// because a staged sample is one unit of backpressure and one converter fill,
+// so the reader's batch is re-cut to fit before anything else touches it. That
+// bound is what refused .wav and .aiff at admission with "compressed sample
+// exceeds native memory bounds"; nothing about LPCM was ever the problem.
+//
+// This states a LENGTH only. Nothing here computes a timestamp: the actual cut
+// is CMSampleBufferCopySampleBufferForRange, which re-bases the packet
+// descriptions and the timing itself (measured: an LPCM asset re-cut at 1024
+// reproduces 960000 units and 3840000 bytes exactly, and an MP3 asset re-cut at
+// 32 reproduces every packet offset and per-unit duration).
+//
+// Returns zero when the batch cannot be cut exactly -- a variable-size codec
+// whose packet descriptions are missing, or a single access unit already over
+// the byte bound -- and the caller then fails the generation closed rather than
+// publishing a sample the staging bounds would reject anyway.
+[[nodiscard]] CMItemCount audioBatchChunkLength(
+    CMSampleBufferRef sample, CMItemCount cursor, CMItemCount units,
+    const MediaSourceLimits& limits) noexcept {
+  if (sample == nullptr || cursor < 0 || units <= 0 || cursor >= units) {
+    return 0;
+  }
+  const auto maximumUnits =
+      static_cast<CMItemCount>(limits.maximumAudioSampleCount);
+  if (maximumUnits <= 0) {
+    return 0;
+  }
+  const CMItemCount remaining = units - cursor;
+  CMItemCount length = remaining < maximumUnits ? remaining : maximumUnits;
+
+  const AudioStreamPacketDescription* packets = nullptr;
+  std::size_t packetBytes = 0;
+  const bool described =
+      CMSampleBufferGetAudioStreamPacketDescriptionsPtr(
+          sample, &packets, &packetBytes) == noErr &&
+      packets != nullptr &&
+      packetBytes / sizeof(AudioStreamPacketDescription) ==
+          static_cast<std::size_t>(units);
+  if (!described) {
+    // No per-packet description means a fixed packet size, which the format
+    // must then declare. LPCM is this case and states four bytes a frame.
+    CMFormatDescriptionRef format = CMSampleBufferGetFormatDescription(sample);
+    const AudioStreamBasicDescription* asbd =
+        format != nullptr &&
+                CMFormatDescriptionGetMediaType(format) == kCMMediaType_Audio
+            ? CMAudioFormatDescriptionGetStreamBasicDescription(
+                  static_cast<CMAudioFormatDescriptionRef>(format))
+            : nullptr;
+    if (asbd == nullptr || asbd->mBytesPerPacket == 0) {
+      return 0;
+    }
+    const auto fitting = static_cast<CMItemCount>(
+        limits.maximumAudioSampleBytes / asbd->mBytesPerPacket);
+    if (fitting <= 0) {
+      return 0;
+    }
+    return length < fitting ? length : fitting;
+  }
+
+  std::size_t bytes = 0;
+  CMItemCount fitting = 0;
+  for (CMItemCount index = 0; index < length; ++index) {
+    const auto& packet = packets[static_cast<std::size_t>(cursor + index)];
+    if (packet.mDataByteSize == 0 ||
+        packet.mDataByteSize > limits.maximumAudioSampleBytes - bytes) {
+      break;
+    }
+    bytes += packet.mDataByteSize;
+    ++fitting;
+  }
+  return fitting;
+}
+
 [[nodiscard]] bool mediaFreeMarker(CMSampleBufferRef sample) noexcept {
   if (sample == nullptr) {
     return false;
@@ -399,6 +499,14 @@ class ScopedSampleBuffer final {
   [[nodiscard]] CMSampleBufferRef get() const noexcept { return sample_; }
   [[nodiscard]] CMSampleBufferRef release() noexcept {
     return std::exchange(sample_, nullptr);
+  }
+  // Adopts a +1 reference, releasing whatever was held. Assignment stays
+  // deleted: a retained batch is only ever replaced deliberately.
+  void reset(CMSampleBufferRef sample = nullptr) noexcept {
+    CMSampleBufferRef prior = std::exchange(sample_, sample);
+    if (prior != nullptr && prior != sample) {
+      CFRelease(prior);
+    }
   }
 
  private:
@@ -648,6 +756,106 @@ audioMovieTimelineFactsFor(NSArray* segments) noexcept {
   facts.shift = shift;
   facts.mediaStart = mapping.target.start;
   return facts;
+}
+
+// Frames Apple's decoder swallows at the head of a track before it emits its
+// first PCM frame. This MUST stay identical to native_audio_converter.mm's
+// decoderLeadInFrames() and to mpegts_media_source.mm's own copy of this
+// function, because the session proves a generation by checking that the
+// converter's first published frame lands exactly on the presentation floor:
+// the source states the decode start, the converter adds its lead-in, and the
+// two have to meet. The shared constants are named rather than copied so a
+// future measurement moves every side of the proof together.
+[[nodiscard]] std::int64_t audioDecoderLeadInFrames(MediaCodec codec) noexcept {
+  switch (codec) {
+    case MediaCodec::Ac3:
+    case MediaCodec::Eac3:
+      return media::matroska::kAc3DecoderDelayFrames;
+    case MediaCodec::Mp3:
+      return media::matroska::kMpegLayer3DecoderDelayFrames;
+    // AAC, FLAC, ALAC and LPCM swallow nothing; Opus and Vorbis do, but neither
+    // is admitted on this route (see preservesLegacyNativeAdmission).
+    default:
+      return 0;
+  }
+}
+
+// True for a path that is the codec's OWN bare elementary stream rather than a
+// container. See audioDecoderLeadInShift for what turns on it. Kept to the
+// three codecs that state a nonzero decoder lead-in, because it is only their
+// arithmetic this decides; every other extension is a container and answers
+// false. This is the same extension-only discrimination the route selection in
+// native_media_session.mm already makes.
+[[nodiscard]] bool bareAudioElementaryStream(
+    const std::filesystem::path& path) noexcept {
+  std::string extension = path.extension().string();
+  for (char& character : extension) {
+    character = static_cast<char>(
+        std::tolower(static_cast<unsigned char>(character)));
+  }
+  return extension == ".mp3" || extension == ".ac3" || extension == ".eac3" ||
+         extension == ".ec3";
+}
+
+// The EXTRA movie-timeline shift a selected audio track needs, on top of the
+// one its container's edit list already states, so that the DECODER's output
+// lands where the container says the content is.
+//
+// Every route that reaches this converter has to place access unit 0 exactly
+// `leadIn` frames BEFORE the presentation origin, because the converter labels
+// the decoder's first output frame `packet0 + leadIn` and the session then
+// proves the first published frame against the presentation floor. Matroska
+// gets it for free from CodecDelay; MPEG-TS applies it itself in
+// mpegts_media_source.mm. AVFoundation is the third case, and it is the only
+// one where the answer depends on what the file IS.
+//
+// MEASURED, by reading the media edit AVFoundation reports for the same 20 s
+// content in four carriers (scratchpad/aprobe.mm):
+//
+//   beep.mp3      raw MPEG stream   src.start =  576  -- LAME encoder delay
+//   mp3in.mov     QuickTime movie   src.start = 1105  -- 576 encoder + 529
+//                                                        DECODER, i.e. exactly
+//                                                        the CodecDelay ffmpeg
+//                                                        writes to Matroska
+//   beep.ac3      raw AC-3 stream   src.start =    0  -- nothing stated
+//   av_ac3.mov    QuickTime movie   src.start =  256  -- the AC-3 decoder delay
+//
+// So a REAL container edit already expresses the whole offset from the packet
+// grid to the presentation timeline, decoder delay included, and must be left
+// exactly alone. A bare elementary stream has no edit list at all: what
+// AVFoundation reports for one is either nothing, or -- for MP3 -- a segment it
+// synthesises from the file's own Xing/LAME tag, which describes the ENCODER
+// and nothing else. That is the case, and the only case, where the decoder
+// lead-in still has to be subtracted here.
+//
+// Proved with scratchpad/syncproof.mm against a fixture whose first 1 kHz beep
+// starts at exactly frame 48000. Before: the beep published at 48529 on a raw
+// stereo MP3 (529 late) and a raw AC-3 was refused outright as "audio session:
+// Converter" because its first published frame landed 256 frames past the
+// floor. After: 48000 on both, and both .mov carriers unchanged at 48000.
+// FLAC, LPCM and AAC state a zero lead-in and are untouched by construction.
+//
+// Empty means the arithmetic is not exactly representable, which fails closed.
+[[nodiscard]] std::optional<CMTime> audioDecoderLeadInShift(
+    const MediaTrackDescriptor& audio,
+    const std::filesystem::path& path) noexcept {
+  const std::int64_t leadIn = audioDecoderLeadInFrames(audio.codec);
+  if (leadIn == 0 || !bareAudioElementaryStream(path)) {
+    return kCMTimeZero;
+  }
+  if (!audio.audio) {
+    return std::nullopt;
+  }
+  const double rate = audio.audio->sampleRate;
+  if (!std::isfinite(rate) || rate <= 0.0 ||
+      rate > static_cast<double>(std::numeric_limits<std::int32_t>::max())) {
+    return std::nullopt;
+  }
+  const auto scale = static_cast<std::int32_t>(rate);
+  if (static_cast<double>(scale) != rate) {
+    return std::nullopt;
+  }
+  return CMTimeMake(leadIn, scale);
 }
 
 [[nodiscard]] bool preservesZeroBasedTrackTimeline(
@@ -2206,25 +2414,50 @@ void incrementInventory(media::MediaTrackInventory* inventory,
     }
     // MEASURED ENVELOPE, not a guess. With no video lane the audio track is the
     // whole generation, so a codec whose AVFoundation packetisation the native
-    // converter cannot consume has nothing to hide behind. Against 20 s 48 kHz
-    // stereo fixtures on this platform:
-    //   .m4a  (AAC)  native, 0 underruns, clock 1.000000, exact-duration EOF.
-    //   .mp3         fails MID-PLAYBACK: Decode/Consumer "audio session:
-    //                Converter" -- worse than falling back at open.
-    //   .flac        plays, but the output device republished its format three
-    //                times in 20 s (1629 callbacks against an expected 1001)
-    //                with clock excursions to 1.00024 and one underrun.
-    //   .wav (lpcm), .opus (Ogg), .aiff  refused during admission anyway.
-    // So the video-less AVFoundation route admits exactly AAC today and names
-    // the refusal for everything else, which keeps those files on the mpv
-    // fallback they already had. The Matroska route carries the full codec
-    // sweep (AAC/AC-3/E-AC-3/FLAC/MP3/Opus/Vorbis) and is unaffected by this.
-    if (onlyAudio->codec != MediaCodec::Aac) {
-      assignError(error,
-                  "a video-less AVFoundation source is admitted only for AAC; "
-                  "this audio codec is outside the native v1 contract on this "
-                  "route");
-      return false;
+    // converter cannot consume has nothing to hide behind. Every codec below
+    // was played end to end from a standalone 20.000 s file at both 44.1 and
+    // 48 kHz, and its rendered frame count read off the metrics stream:
+    //
+    //   .m4a  (AAC)   959488 frames, clock 1.000000. Unchanged; it was the
+    //                 only admission before this sweep.
+    //   .mp3          960000 frames -- exact -- CBR and VBR, stereo and mono.
+    //   .flac         960000 frames -- exact -- 16-bit.
+    //   .wav / .aiff  960000 frames -- exact -- 16- and 24-bit, 0 underruns,
+    //                 clock exactly 1.000000.
+    //   .ac3 / .eac3  959712 frames: the codec's own 256-frame decoder lead-in
+    //                 and 32-frame withheld MDCT ring-down, the same envelope
+    //                 the Matroska route publishes for them.
+    //
+    // Two codecs AVAsset does demux are deliberately NOT here, and both keep
+    // the mpv fallback they already had:
+    //
+    //   Opus (.opus/.ogg)  AVFoundation states mFramesPerPacket = 0 and carries
+    //                 the count per packet instead. The audio session's
+    //                 preflight and the converter's whole frame-grid
+    //                 arithmetic key on a nonzero declared framesPerPacket, so
+    //                 admitting it would mean reworking the frozen converter
+    //                 for a codec that already plays natively from Matroska.
+    //   ALAC          Admitted by the converter, but a standalone ALAC .m4a
+    //                 drained 1.9 s before its declared timeline ended
+    //                 ("audio backend drained before its exact timeline
+    //                 ended"). Its stated duration is not the decoded sample
+    //                 count and its final packet is short; that is a duration
+    //                 fact this route does not yet state exactly.
+    //
+    // The Matroska route carries its own codec sweep and is unaffected by this.
+    switch (onlyAudio->codec) {
+      case MediaCodec::Aac:
+      case MediaCodec::Mp3:
+      case MediaCodec::Flac:
+      case MediaCodec::Pcm:
+      case MediaCodec::Ac3:
+      case MediaCodec::Eac3:
+        break;
+      default:
+        assignError(error,
+                    "this audio codec is outside the measured video-less "
+                    "AVFoundation envelope of native v1");
+        return false;
     }
     return audioLayoutSupported(*onlyAudio->audio, error);
   }
@@ -2450,6 +2683,8 @@ class ProductionGeneration final : public AVFoundationGeneration {
       }
       const MediaSourceLimits limits =
           media::clampMediaSourceLimits(request_.options.limits);
+      audio_limits_ = limits;
+      releaseAudioBatch();
       std::shared_ptr<const AVFoundationAssetContext> assetContext =
           request_.assetContext;
       std::shared_ptr<const MediaSourceDescriptor> descriptor;
@@ -2824,6 +3059,35 @@ class ProductionGeneration final : public AVFoundationGeneration {
         }
         audio_movie_shift_ = editFacts->shift;
         audio_media_start_ = editFacts->mediaStart;
+        // Place access unit 0 the decoder's own lead-in before the origin, the
+        // way every other route already does. See audioDecoderLeadInShift:
+        // zero for AAC, FLAC, ALAC and LPCM, and zero for every real container,
+        // so this is inert for every track this route admitted before the
+        // standalone-audio sweep.
+        {
+          const MediaTrackDescriptor* selectedAudio =
+              descriptor->selectedAudio
+                  ? media::findMediaTrack(*descriptor,
+                                          *descriptor->selectedAudio)
+                  : nullptr;
+          const std::optional<CMTime> deficit =
+              selectedAudio == nullptr
+                  ? std::optional<CMTime>{kCMTimeZero}
+                  : audioDecoderLeadInShift(*selectedAudio, request_.path);
+          const CMTime shifted =
+              deficit ? CMTimeSubtract(audio_movie_shift_, *deficit)
+                      : kCMTimeInvalid;
+          if (!deficit || !CMTIME_IS_NUMERIC(shifted) ||
+              (shifted.flags & kCMTimeFlags_HasBeenRounded) != 0 ||
+              shifted.epoch != 0 || shifted.timescale <= 0) {
+            result.status = AVFoundationGenerationStatus::Unsupported;
+            result.error =
+                "selected audio decoder lead-in is not exactly representable "
+                "on the movie timeline";
+            return result;
+          }
+          audio_movie_shift_ = shifted;
+        }
         // A leading empty edit declares silence on the movie timeline before
         // any audio media exists; a selected video that runs past the end of
         // the selected audio declares it at the other end. Both are stated to
@@ -2969,7 +3233,7 @@ class ProductionGeneration final : public AVFoundationGeneration {
   }
   [[nodiscard]] AVFoundationCopiedSample
   copyNextAudioSample() override {
-    AVFoundationCopiedSample copied = copyNext(audio_output_);
+    AVFoundationCopiedSample copied = nextAudioAccessUnits();
     if (copied.status != AVFoundationSampleReadStatus::Sample ||
         copied.sample == nullptr) {
       return copied;
@@ -3269,6 +3533,76 @@ class ProductionGeneration final : public AVFoundationGeneration {
     return restated;
   }
 
+  // One staged sample's worth of audio access units, drawn from the reader's
+  // own batch and re-cut to the native bound when the batch is larger than it.
+  // The steady state is a pass-through: every compressed batch this backend has
+  // been measured against (84 MP3 / 21 FLAC / 140 AAC / 101 Opus units) already
+  // fits, so nothing is copied and nothing is retained. Only LPCM, whose batch
+  // is the reader's whole 2 s read, ever enters the re-cut path.
+  [[nodiscard]] AVFoundationCopiedSample nextAudioAccessUnits() {
+    if (audio_batch_.get() != nullptr) {
+      return takeAudioBatchChunk();
+    }
+    AVFoundationCopiedSample copied = copyNext(audio_output_);
+    if (copied.status != AVFoundationSampleReadStatus::Sample ||
+        copied.sample == nullptr) {
+      return copied;
+    }
+    const CMItemCount units = CMSampleBufferGetNumSamples(copied.sample);
+    CMBlockBufferRef block = CMSampleBufferGetDataBuffer(copied.sample);
+    const std::size_t bytes =
+        block == nullptr ? 0 : CMBlockBufferGetDataLength(block);
+    if (units <= static_cast<CMItemCount>(
+                     audio_limits_.maximumAudioSampleCount) &&
+        bytes <= audio_limits_.maximumAudioSampleBytes) {
+      return copied;
+    }
+    audio_batch_.reset(copied.sample);
+    audio_batch_units_ = units;
+    audio_batch_cursor_ = 0;
+    copied.sample = nullptr;
+    return takeAudioBatchChunk();
+  }
+
+  // The next chunk of the retained batch, releasing the batch on its last one.
+  [[nodiscard]] AVFoundationCopiedSample takeAudioBatchChunk() {
+    AVFoundationCopiedSample result;
+    const CMItemCount length =
+        audioBatchChunkLength(audio_batch_.get(), audio_batch_cursor_,
+                              audio_batch_units_, audio_limits_);
+    CMSampleBufferRef chunk = nullptr;
+    if (length <= 0 ||
+        CMSampleBufferCopySampleBufferForRange(
+            kCFAllocatorDefault, audio_batch_.get(),
+            CFRangeMake(static_cast<CFIndex>(audio_batch_cursor_),
+                        static_cast<CFIndex>(length)),
+            &chunk) != noErr ||
+        chunk == nullptr) {
+      if (chunk != nullptr) {
+        CFRelease(chunk);
+      }
+      releaseAudioBatch();
+      result.status = AVFoundationSampleReadStatus::Failed;
+      result.error =
+          "AVFoundation audio batch is not exactly re-cuttable to the native "
+          "access unit bound";
+      return result;
+    }
+    audio_batch_cursor_ += length;
+    if (audio_batch_cursor_ >= audio_batch_units_) {
+      releaseAudioBatch();
+    }
+    result.sample = chunk;
+    result.status = AVFoundationSampleReadStatus::Sample;
+    return result;
+  }
+
+  void releaseAudioBatch() noexcept {
+    audio_batch_.reset();
+    audio_batch_units_ = 0;
+    audio_batch_cursor_ = 0;
+  }
+
   [[nodiscard]] AVFoundationCopiedSample copyNext(
       AVAssetReaderTrackOutput* output) {
     AVFoundationCopiedSample result;
@@ -3345,6 +3679,12 @@ class ProductionGeneration final : public AVFoundationGeneration {
   // Movie time at which the selected audio media ends, beside the above.
   CMTime audio_media_end_{kCMTimeInvalid};
   bool audio_first_unit_restated_{false};
+  // This generation's clamped staging bounds, and the reader batch currently
+  // being re-cut against them. The batch is null in the steady state.
+  MediaSourceLimits audio_limits_{};
+  ScopedSampleBuffer audio_batch_;
+  CMItemCount audio_batch_units_{0};
+  CMItemCount audio_batch_cursor_{0};
   std::atomic<bool> cancelled_{false};
   const std::shared_ptr<AsyncLoadSignal> metadata_load_signal_{
       std::make_shared<AsyncLoadSignal>()};

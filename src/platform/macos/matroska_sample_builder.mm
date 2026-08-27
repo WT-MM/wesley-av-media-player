@@ -1,6 +1,7 @@
 #include "platform/macos/matroska_sample_builder.hpp"
 
 #include "platform/macos/native_video_codec_capability.hpp"
+#include "platform/macos/native_video_color.hpp"
 #include "platform/macos/software_vp8_decoder.hpp"
 
 #import <CoreMedia/CoreMedia.h>
@@ -323,12 +324,29 @@ CMVideoFormatDescriptionRef createMatroskaVideoFormatDescription(
       &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
   CFDictionaryRef extensions = nullptr;
   if (atoms != nullptr) {
-    const void* extensionKeys[] = {
-        kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms};
-    const void* extensionValues[] = {atoms};
-    extensions = CFDictionaryCreate(
-        kCFAllocatorDefault, extensionKeys, extensionValues, 1,
-        &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+    CFMutableDictionaryRef mutableExtensions = CFDictionaryCreateMutable(
+        kCFAllocatorDefault, 4, &kCFTypeDictionaryKeyCallBacks,
+        &kCFTypeDictionaryValueCallBacks);
+    if (mutableExtensions != nullptr) {
+      CFDictionarySetValue(
+          mutableExtensions,
+          kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms, atoms);
+      // The colour description. Without these three keys VideoToolbox has
+      // nothing to attach to the decoded surface, and a PQ stream renders as
+      // if it were SDR -- washed out -- which is the failure the MP4 HDR work
+      // measured at 98/255 on the colour bars and is why Matroska HDR was
+      // deferred rather than admitted with the atom alone.
+      //
+      // Each key is set only when the fact is MODELLED and not Unknown.
+      // Omitting a key is how "untagged" is spelled to CoreMedia, and an
+      // untagged surface is what the SDR corpus has always presented from --
+      // so an SDR Matroska file gets a byte-identical description to the one
+      // it got before this change.
+      applyColorExtensions(mutableExtensions, track.video->colorPrimaries,
+                           track.video->transferFunction,
+                           track.video->matrixCoefficients);
+      extensions = mutableExtensions;
+    }
   }
   CMVideoFormatDescriptionRef description = nullptr;
   if (extensions != nullptr) {

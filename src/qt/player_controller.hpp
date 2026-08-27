@@ -525,6 +525,11 @@ private:
     std::uint64_t latest_preview_request = 0;
     std::uint64_t dispatched_preview_request = 0;
     bool intended_paused = true;
+    // False when the native session refused the pointer-down preview handoff
+    // for the whole binding -- an audio-only source has no thumbnail to show.
+    // The gesture still tracks the drag in the time readout and still commits
+    // one exact seek on release; it simply never demands a frame.
+    bool preview_available = true;
   };
 
   struct NativePreviewIntent {

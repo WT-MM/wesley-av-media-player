@@ -395,6 +395,39 @@ Platform.MenuBar {
             onTriggered: root.controller.setWindowHugsVideo(checked)
         }
         Platform.MenuSeparator {}
+        // Vivid boost and Theater dim: two independent viewing modes, kept as
+        // two items rather than one combined "Theater Mode" because they are
+        // useful apart -- one is about the picture, the other about
+        // everything that is not the picture. Both are per window, both carry
+        // their bare key in the label rather than a `shortcut:` (see the file
+        // header), and both re-sync their check mark through the Connections
+        // block at the end of this file for the reason documented there.
+        Platform.MenuItem {
+            id: vividMenuItem
+            text: "Vivid Boost  V"
+            checkable: true
+            checked: root.hasWindow ? root.appRoot.vividActive : false
+            // Disabled, not merely unchecked, for an HDR source: that content
+            // already occupies the display's extended range and a boost on
+            // top of it would only clip its highlights.
+            enabled: root.mediaLoaded && root.hasWindow && root.appRoot.vividAvailable
+            onTriggered: {
+                root.appRoot.toggleVividBoost();
+                checked = root.appRoot.vividActive;
+            }
+        }
+        Platform.MenuItem {
+            id: theaterMenuItem
+            text: "Theater Dim  T"
+            checkable: true
+            checked: root.hasWindow ? root.appRoot.theaterDimEnabled : false
+            enabled: root.mediaLoaded && root.hasWindow
+            onTriggered: {
+                root.appRoot.toggleTheaterDim();
+                checked = root.appRoot.theaterDimEnabled;
+            }
+        }
+        Platform.MenuSeparator {}
         // The "h" macro, made discoverable. Deliberately WITHOUT a `shortcut:`
         // -- see the file header: a native NSMenu key equivalent for a bare,
         // unmodified key intercepts that keystroke application-wide, text
@@ -437,6 +470,19 @@ Platform.MenuBar {
             if (root.appRoot)
                 fillPaddedMenuItem.checked = root.appRoot.fillScreenPadded;
         }
+        // Both directions, which is the whole point: these two modes have a
+        // chrome toggle, a bare key and a menu item, and the check mark has to
+        // follow whichever one the user reached for. `vividActive` rather than
+        // `vividEnabled` so opening an HDR file clears the mark instead of
+        // leaving it standing over a boost that is no longer applied.
+        function onVividActiveChanged() {
+            if (root.appRoot)
+                vividMenuItem.checked = root.appRoot.vividActive;
+        }
+        function onTheaterDimEnabledChanged() {
+            if (root.appRoot)
+                theaterMenuItem.checked = root.appRoot.theaterDimEnabled;
+        }
     }
 
     onAppRootChanged: {
@@ -444,6 +490,10 @@ Platform.MenuBar {
         // binding, for the same ordering reason onControllerChanged does.
         fillPaddedMenuItem.checked = root.appRoot
             ? root.appRoot.fillScreenPadded
+            : false;
+        vividMenuItem.checked = root.appRoot ? root.appRoot.vividActive : false;
+        theaterMenuItem.checked = root.appRoot
+            ? root.appRoot.theaterDimEnabled
             : false;
     }
 

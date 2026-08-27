@@ -28,6 +28,67 @@ void assignError(std::string* error, const char* message) {
   }
 }
 
+// Modelled colour facts -> the CoreMedia extension values. nullptr means "do
+// not write the key": absence is how an untagged stream is spelled, and it is
+// what every SDR transport stream has presented from since the TS route
+// landed, so omitting the key keeps those descriptions byte-identical.
+//
+// OtherExplicit and Srgb return nullptr rather than an approximation. They
+// cannot reach here -- mediaVideoColorAdmitted() refuses them upstream -- but
+// if that rule is ever widened, an untagged surface is a safe degradation and
+// a wrong tag is not.
+//
+// This table is the twin of the one in matroska_sample_builder.mm. Both
+// landed in the same session in two lanes; a third copy must not appear, and
+// the standing move is to collapse them into native_video_color.hpp once both
+// are on the branch.
+[[nodiscard]] CFStringRef
+colorPrimariesName(media::MediaColorPrimaries value) noexcept {
+  switch (value) {
+    case media::MediaColorPrimaries::Bt709:
+      return kCMFormatDescriptionColorPrimaries_ITU_R_709_2;
+    case media::MediaColorPrimaries::Bt2020:
+      return kCMFormatDescriptionColorPrimaries_ITU_R_2020;
+    default:
+      return nullptr;
+  }
+}
+
+[[nodiscard]] CFStringRef
+transferFunctionName(media::MediaTransferFunction value) noexcept {
+  switch (value) {
+    case media::MediaTransferFunction::Bt709:
+      return kCMFormatDescriptionTransferFunction_ITU_R_709_2;
+    case media::MediaTransferFunction::Pq:
+      return kCMFormatDescriptionTransferFunction_SMPTE_ST_2084_PQ;
+    case media::MediaTransferFunction::Hlg:
+      return kCMFormatDescriptionTransferFunction_ITU_R_2100_HLG;
+    default:
+      return nullptr;
+  }
+}
+
+[[nodiscard]] CFStringRef
+matrixCoefficientsName(media::MediaMatrixCoefficients value) noexcept {
+  switch (value) {
+    case media::MediaMatrixCoefficients::Bt709:
+      return kCMFormatDescriptionYCbCrMatrix_ITU_R_709_2;
+    case media::MediaMatrixCoefficients::Bt601:
+      return kCMFormatDescriptionYCbCrMatrix_ITU_R_601_4;
+    case media::MediaMatrixCoefficients::Bt2020Ncl:
+      return kCMFormatDescriptionYCbCrMatrix_ITU_R_2020;
+    default:
+      return nullptr;
+  }
+}
+
+void appendColorExtension(CFMutableDictionaryRef extensions, CFStringRef key,
+                          CFStringRef value) noexcept {
+  if (value != nullptr) {
+    CFDictionarySetValue(extensions, key, value);
+  }
+}
+
 }  // namespace
 
 MpegTsCoreMediaSampleStorage::MpegTsCoreMediaSampleStorage(
@@ -197,8 +258,12 @@ CMVideoFormatDescriptionRef createMpegTsVideoFormatDescription(
     return status == noErr ? description : nullptr;
   }
 
-  if (track.codec != MediaCodec::H264 ||
-      track.codecConfigurationKind != MediaCodecConfigurationKind::AvcC ||
+  const bool hevc = track.codec == MediaCodec::Hevc;
+  const MediaCodecConfigurationKind expectedKind =
+      hevc ? MediaCodecConfigurationKind::HvcC
+           : MediaCodecConfigurationKind::AvcC;
+  if ((track.codec != MediaCodec::H264 && !hevc) ||
+      track.codecConfigurationKind != expectedKind ||
       track.codecConfiguration.empty() ||
       track.codecConfiguration.size() >
           static_cast<std::size_t>(std::numeric_limits<CFIndex>::max())) {
@@ -215,24 +280,51 @@ CMVideoFormatDescriptionRef createMpegTsVideoFormatDescription(
   if (atomData == nullptr) {
     return nullptr;
   }
-  const void* atomKeys[] = {CFSTR("avcC")};
+  const void* atomKeys[] = {hevc ? CFSTR("hvcC") : CFSTR("avcC")};
   const void* atomValues[] = {atomData};
   CFDictionaryRef atoms = CFDictionaryCreate(
       kCFAllocatorDefault, atomKeys, atomValues, 1,
       &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
   CFDictionaryRef extensions = nullptr;
   if (atoms != nullptr) {
-    const void* extensionKeys[] = {
-        kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms};
-    const void* extensionValues[] = {atoms};
-    extensions = CFDictionaryCreate(
-        kCFAllocatorDefault, extensionKeys, extensionValues, 1,
-        &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+    CFMutableDictionaryRef mutableExtensions = CFDictionaryCreateMutable(
+        kCFAllocatorDefault, 4, &kCFTypeDictionaryKeyCallBacks,
+        &kCFTypeDictionaryValueCallBacks);
+    if (mutableExtensions != nullptr) {
+      CFDictionarySetValue(
+          mutableExtensions,
+          kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms, atoms);
+      // THE COLOUR DESCRIPTION, AND THE REASON THIS ROUTE MAY ADMIT HDR AT
+      // ALL. A transport stream carries no colour box -- no `colr`, no
+      // Matroska Colour element -- so the SPS VUI is the only statement there
+      // is, and it reaches CoreMedia only through these three keys. Without
+      // them VideoToolbox has nothing to attach to the decoded surface and a
+      // PQ stream renders as if it were SDR: the washout the MP4 HDR work
+      // measured at 98/255 on the colour bars. That is exactly the failure
+      // `VideoCodecConfigurationLimits::admitHighDynamicRangeColor` guards,
+      // and mpegts_demuxer.cpp turns that flag on BECAUSE of this block.
+      //
+      // Each key is written only when the fact is MODELLED and not Unknown.
+      // Omitting a key is how "untagged" is spelled, which is what every SDR
+      // transport stream presented from before this change -- so an untagged
+      // MPEG-2 or H.264 TS still gets a byte-identical description.
+      appendColorExtension(mutableExtensions,
+                           kCMFormatDescriptionExtension_ColorPrimaries,
+                           colorPrimariesName(track.video->colorPrimaries));
+      appendColorExtension(mutableExtensions,
+                           kCMFormatDescriptionExtension_TransferFunction,
+                           transferFunctionName(track.video->transferFunction));
+      appendColorExtension(
+          mutableExtensions, kCMFormatDescriptionExtension_YCbCrMatrix,
+          matrixCoefficientsName(track.video->matrixCoefficients));
+      extensions = mutableExtensions;
+    }
   }
   CMVideoFormatDescriptionRef description = nullptr;
   if (extensions != nullptr) {
     const OSStatus status = CMVideoFormatDescriptionCreate(
-        kCFAllocatorDefault, kCMVideoCodecType_H264,
+        kCFAllocatorDefault,
+        hevc ? kCMVideoCodecType_HEVC : kCMVideoCodecType_H264,
         static_cast<std::int32_t>(width), static_cast<std::int32_t>(height),
         extensions, &description);
     if (status != noErr && description != nullptr) {
@@ -399,7 +491,8 @@ MpegTsSampleBuildStatus buildMpegTsCompressedSampleBuffer(
   std::array<std::size_t, 1> videoSizes{};
   const std::size_t* sizePointer = nullptr;
 
-  if (inputs.video && inputs.codec == MediaCodec::H264) {
+  if (inputs.video && (inputs.codec == MediaCodec::H264 ||
+                       inputs.codec == MediaCodec::Hevc)) {
     // The one seam that costs an extra copy, recorded honestly. Annex-B to
     // AVCC cannot know its output size until the input is assembled -- a
     // three-byte start code grows by one byte and a four-byte one does not --
@@ -432,7 +525,7 @@ MpegTsSampleBuildStatus buildMpegTsCompressedSampleBuffer(
       return MpegTsSampleBuildStatus::Failed;
     }
     const std::size_t repacked =
-        media::mpegts::annexBToAvccSize(gathered, MediaCodec::H264);
+        media::mpegts::annexBToAvccSize(gathered, inputs.codec);
     if (repacked == 0) {
       assignError(error, "mpeg-ts access unit holds no complete NAL unit");
       return MpegTsSampleBuildStatus::Failed;
@@ -440,7 +533,7 @@ MpegTsSampleBuildStatus buildMpegTsCompressedSampleBuffer(
     if (!allocateBlock(repacked, &block, &destination, error)) {
       return MpegTsSampleBuildStatus::Failed;
     }
-    if (media::mpegts::annexBToAvcc(gathered, destination, MediaCodec::H264) !=
+    if (media::mpegts::annexBToAvcc(gathered, destination, inputs.codec) !=
         repacked) {
       CFRelease(block);
       assignError(error, "mpeg-ts Annex-B to AVCC repack refused the unit");

@@ -72,6 +72,14 @@ audioCodecStatesExactDecodedDuration(MediaCodec codec) noexcept {
   case MediaCodec::Eac3:
   case MediaCodec::Mp3:
   case MediaCodec::Flac:
+  // Uncompressed audio states its length as a frame count in its own header --
+  // a WAVE data chunk's byte count over its block align, an AIFF SSND frame
+  // count -- so the container's duration IS the decoded sample count, exactly.
+  // Nothing decodes it, so there is no shortfall for it to be approximate by.
+  // The caller still requires the stated duration to land on a whole frame
+  // before it takes the ceiling, so a container that states something else is
+  // simply left with today's behaviour.
+  case MediaCodec::Pcm:
     return true;
   default:
     return false;

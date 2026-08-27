@@ -14,6 +14,7 @@
 #include <cerrno>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
 #include <limits>
@@ -69,6 +70,45 @@ timeFromNanosecondsUnsigned(std::uint64_t nanoseconds) noexcept {
   }
   return MediaTime{static_cast<std::int64_t>(numerator),
                    static_cast<std::int32_t>(denominator)};
+}
+
+// Exact difference of two container rationals, in 128-bit so a
+// nanosecond-timescale delta -- already above 2^53 for adjacent frames --
+// cannot round the way a conversion through double would. This is the
+// subtraction counterpart of matroskaCheckedExactTimeSum() in
+// matroska_sample_builder.mm, which does the addition for the same reason.
+[[nodiscard]] std::optional<MediaTime>
+exactTimeDifference(MediaTime lhs, MediaTime rhs) noexcept {
+  if (!lhs.valid() || !rhs.valid()) {
+    return std::nullopt;
+  }
+  using Wide = __int128;
+  const Wide numerator =
+      static_cast<Wide>(lhs.value) * static_cast<Wide>(rhs.timescale) -
+      static_cast<Wide>(rhs.value) * static_cast<Wide>(lhs.timescale);
+  const std::uint64_t denominator =
+      static_cast<std::uint64_t>(static_cast<std::uint32_t>(lhs.timescale)) *
+      static_cast<std::uint64_t>(static_cast<std::uint32_t>(rhs.timescale));
+  if (denominator == 0) {
+    return std::nullopt;
+  }
+  const unsigned __int128 magnitude =
+      numerator < 0 ? static_cast<unsigned __int128>(-numerator)
+                    : static_cast<unsigned __int128>(numerator);
+  const std::uint64_t common = std::gcd(
+      denominator, static_cast<std::uint64_t>(magnitude % denominator));
+  const Wide reducedNumerator = numerator / static_cast<Wide>(common);
+  const std::uint64_t reducedDenominator = denominator / common;
+  if (reducedNumerator <
+          static_cast<Wide>(std::numeric_limits<std::int64_t>::min()) ||
+      reducedNumerator >
+          static_cast<Wide>(std::numeric_limits<std::int64_t>::max()) ||
+      reducedDenominator > static_cast<std::uint64_t>(
+                               std::numeric_limits<std::int32_t>::max())) {
+    return std::nullopt;
+  }
+  return MediaTime{static_cast<std::int64_t>(reducedNumerator),
+                   static_cast<std::int32_t>(reducedDenominator)};
 }
 
 [[nodiscard]] std::optional<MediaTime>
@@ -872,6 +912,78 @@ constexpr std::size_t kVp9KeyframeProbeClusters{4};
   return false;
 }
 
+// ISO/IEC 23091-2 code points -> the modelled colour facts.
+//
+// Two sources speak these same numbers -- the SPS/VUI (via
+// VideoCodecColorFacts) and the Matroska Colour element -- so the mapping is
+// stated once and applied to both. Value 2 is "unspecified", which carries
+// exactly as much information as an absent description and is therefore
+// Unknown, NOT OtherExplicit: OtherExplicit means "an explicit value this
+// renderer does not support" and is a fallback proof, and mapping unspecified
+// onto it made every stream with a partial VUI fail consumer configuration.
+//
+// Anything not named here stays OtherExplicit and is refused by name. The set
+// named here is EXACTLY the set the AVFoundation route models in
+// copyColorPrimaries / copyTransferFunction / copyMatrixCoefficients, so the
+// same stream gets the same verdict in .mkv and in .mp4. Deliberately NOT
+// widened past it: SMPTE 170M (transfer 6) and the two BT.2020 transfers
+// (14, 15) are arguably the BT.709 curve, but the MP4 route does not model
+// them and this session has no fixture proving how they present, so inventing
+// a mapping here would make Matroska MORE permissive than MP4 -- the same
+// asymmetry these mappings exist to prevent, pointed the other way.
+[[nodiscard]] constexpr MediaColorPrimaries
+mediaColorPrimariesFromIso(std::uint64_t value) noexcept {
+  switch (value) {
+  case 1:
+    return MediaColorPrimaries::Bt709;
+  case 2:
+    return MediaColorPrimaries::Unknown;
+  case 5:
+  case 6:
+    // BT.470BG and SMPTE 170M -- the two spellings of BT.601 primaries.
+    return MediaColorPrimaries::Bt601;
+  case 9:
+    return MediaColorPrimaries::Bt2020;
+  default:
+    return MediaColorPrimaries::OtherExplicit;
+  }
+}
+
+[[nodiscard]] constexpr MediaTransferFunction
+mediaTransferFunctionFromIso(std::uint64_t value) noexcept {
+  switch (value) {
+  case 1:
+    return MediaTransferFunction::Bt709;
+  case 2:
+    return MediaTransferFunction::Unknown;
+  case 13:
+    return MediaTransferFunction::Srgb;
+  case 16:
+    return MediaTransferFunction::Pq;
+  case 18:
+    return MediaTransferFunction::Hlg;
+  default:
+    return MediaTransferFunction::OtherExplicit;
+  }
+}
+
+[[nodiscard]] constexpr MediaMatrixCoefficients
+mediaMatrixCoefficientsFromIso(std::uint64_t value) noexcept {
+  switch (value) {
+  case 1:
+    return MediaMatrixCoefficients::Bt709;
+  case 2:
+    return MediaMatrixCoefficients::Unknown;
+  case 5:
+  case 6:
+    return MediaMatrixCoefficients::Bt601;
+  case 9:
+    return MediaMatrixCoefficients::Bt2020Ncl;
+  default:
+    return MediaMatrixCoefficients::OtherExplicit;
+  }
+}
+
 [[nodiscard]] bool makeVideoDescriptor(
     SeekableByteReader& reader, const TrackEntry& entry,
     const MediaSourceLimits& limits, MediaTime duration,
@@ -903,12 +1015,17 @@ constexpr std::size_t kVp9KeyframeProbeClusters{4};
   }
   // FlagInterlaced 0 (undetermined) and 2 (progressive) are the only values a
   // progressive-only v1 renderer can admit; 1 is interlaced content.
+  //
+  // MasteringMetadata / MaxCLL / MaxFALL used to be refused here on presence
+  // alone. They are now MODELLED facts on MediaVideoFormat instead (below),
+  // matching what the MP4 route already does: VideoToolbox copies the real
+  // 24-byte MDCV and 4-byte CLLI onto the decoded surface from the in-band
+  // SEI, so the container's copy is a presence signal and never a payload we
+  // re-carry. Re-carrying it would create a second copy that could only ever
+  // disagree with the decoder's.
   if ((entry.video->interlaced != 0 && entry.video->interlaced != 2) ||
       entry.video->stereoMode != 0 || entry.video->alphaMode != 0 ||
-      entry.video->projectionPresent ||
-      entry.video->colour.masteringMetadataPresent ||
-      entry.video->colour.maximumContentLightLevel ||
-      entry.video->colour.maximumFrameAverageLightLevel) {
+      entry.video->projectionPresent) {
     return false;
   }
   std::vector<std::byte> configuration;
@@ -921,6 +1038,14 @@ constexpr std::size_t kVp9KeyframeProbeClusters{4};
   codecLimits.maximumWidth = limits.maximumCodedWidth;
   codecLimits.maximumHeight = limits.maximumCodedHeight;
   codecLimits.maximumPixels = limits.maximumCodedPixels;
+  // Matroska may carry BT.2020/PQ/HLG. This route earns the flag because
+  // matroska_sample_builder.mm puts the matching colour extensions on the
+  // CMVideoFormatDescription it synthesizes; see the field's comment in
+  // video_codec_configuration.hpp for why that is a precondition and not a
+  // detail. Whether the colour is ADMITTED is still decided once, below, by
+  // media::mediaVideoColorAdmitted() -- this flag only stops the codec
+  // inspector from refusing the stream before the modelled rule is consulted.
+  codecLimits.admitHighDynamicRangeColor = true;
 
   VideoCodecConfigurationInspection inspection;
   if (codec == MediaCodec::Vp8) {
@@ -1061,40 +1186,47 @@ constexpr std::size_t kVp9KeyframeProbeClusters{4};
     // with a partial VUI (an explicit matrix but unspecified primaries and
     // transfer, which is what encoders commonly emit) fail consumer
     // configuration even though it carries no unsupported metadata.
-    format.colorPrimaries =
-        facts.color.colorPrimaries == 1   ? MediaColorPrimaries::Bt709
-        : facts.color.colorPrimaries == 2 ? MediaColorPrimaries::Unknown
-                                          : MediaColorPrimaries::OtherExplicit;
+    format.colorPrimaries = mediaColorPrimariesFromIso(facts.color.colorPrimaries);
     format.transferFunction =
-        facts.color.transferCharacteristics == 1
-            ? MediaTransferFunction::Bt709
-        : facts.color.transferCharacteristics == 2
-            ? MediaTransferFunction::Unknown
-            : MediaTransferFunction::OtherExplicit;
+        mediaTransferFunctionFromIso(facts.color.transferCharacteristics);
     format.matrixCoefficients =
-        facts.color.matrixCoefficients == 1   ? MediaMatrixCoefficients::Bt709
-        : facts.color.matrixCoefficients == 2 ? MediaMatrixCoefficients::Unknown
-                                              : MediaMatrixCoefficients::
-                                                    OtherExplicit;
+        mediaMatrixCoefficientsFromIso(facts.color.matrixCoefficients);
   }
+  // The container's Colour element overrides the bitstream VUI where present.
+  // It no longer REFUSES a value it does not recognise: an unrecognised value
+  // maps to OtherExplicit and the single modelled rule below decides, exactly
+  // as the MP4 route does. Refusing here as well would be a second colour
+  // rule, and the drift between four such restatements is what the HDR
+  // session's mediaVideoColorAdmitted() consolidation exists to end.
+  //
+  // Measured, and the reason the two sources must both be mapped rather than
+  // one preferred: an ffmpeg `-c copy` remux of PQ H.264 into Matroska writes
+  // a Colour element carrying MatrixCoefficients ONLY, leaving the PQ transfer
+  // and BT.2020 primaries readable solely from the SPS VUI. Dropping the VUI
+  // in favour of the container would lose the very facts that make it HDR.
   const VideoColour& colour = entry.video->colour;
   if (colour.primaries) {
-    if (*colour.primaries != 1) {
-      return false;
-    }
-    format.colorPrimaries = MediaColorPrimaries::Bt709;
+    format.colorPrimaries = mediaColorPrimariesFromIso(*colour.primaries);
   }
   if (colour.transferCharacteristics) {
-    if (*colour.transferCharacteristics != 1) {
-      return false;
-    }
-    format.transferFunction = MediaTransferFunction::Bt709;
+    format.transferFunction =
+        mediaTransferFunctionFromIso(*colour.transferCharacteristics);
   }
   if (colour.matrixCoefficients) {
-    if (*colour.matrixCoefficients != 1) {
-      return false;
-    }
-    format.matrixCoefficients = MediaMatrixCoefficients::Bt709;
+    format.matrixCoefficients =
+        mediaMatrixCoefficientsFromIso(*colour.matrixCoefficients);
+  }
+  // Presence facts, never payloads -- see the note at the interlaced gate.
+  format.masteringDisplayColorVolumePresent = colour.masteringMetadataPresent;
+  format.contentLightLevelInfoPresent =
+      colour.maximumContentLightLevel.has_value() ||
+      colour.maximumFrameAverageLightLevel.has_value();
+  // ONE colour rule, shared with the AVFoundation route and the consumer.
+  // Asking it here rather than letting the consumer refuse later is
+  // deliberate: a source that admits a descriptor the consumer then refuses
+  // turns a clean `Unsupported` verdict into a mid-startup `Failed` one.
+  if (!mediaVideoColorAdmitted(format)) {
+    return false;
   }
 
   result->id = *id;
@@ -2726,6 +2858,24 @@ struct MatroskaCursor::Impl {
   std::vector<TrackConstraint> constraints;
   ParseOptions options;
   std::optional<ClusterChildCursor> clusterCursor;
+  // THE ONE-BLOCK LOOKAHEAD (2026-08-27).
+  //
+  // A video Block carries no duration of its own unless its BlockGroup holds a
+  // BlockDuration, and a track carries none unless its TrackEntry holds a
+  // DefaultDuration. GStreamer's matroskamux writes NEITHER for a
+  // variable-frame-rate capture, and such a file plays from its origin fine
+  // but cannot serve an Accurate seek: matroskaAccurateVideoDecodeOnly()
+  // refuses a sample whose interval is not exact and positive.
+  //
+  // The next Block's timestamp is the missing bound, so one sample is held
+  // back and released once its successor has been parsed. This DEFERS work,
+  // it never repeats it: `pending` owns the already-parsed successor, so every
+  // Block is still parsed exactly once and the cursor's structural read
+  // budget is unchanged.
+  std::optional<MatroskaCompressedSample> pending;
+  // The last duration this cursor derived, used for the final frame of a
+  // durationless track -- see readNext().
+  MediaTime lastVideoDuration{};
   // One workspace per cursor, so the 4 KiB frame array is zero-filled once per
   // generation instead of once per sample. Dropping the member initialiser
   // instead measured neutral and would have put indeterminate values in a
@@ -2739,8 +2889,11 @@ MatroskaCursor::~MatroskaCursor() = default;
 MatroskaCursor::MatroskaCursor(MatroskaCursor&&) noexcept = default;
 MatroskaCursor& MatroskaCursor::operator=(MatroskaCursor&&) noexcept = default;
 
+// One Block in, one sample out -- the loop this cursor has always been. It is
+// now the STEP, and readNext() below is the policy that may hold one step back
+// in order to bound a durationless video frame by its successor.
 MatroskaCursorReadResult
-MatroskaCursor::readNext(CancellationToken cancellation) noexcept {
+MatroskaCursor::readNextRaw(CancellationToken cancellation) noexcept {
   try {
     if (impl_ == nullptr || impl_->state == nullptr) {
       return MatroskaCursorFailure{MatroskaDemuxError::InvalidRequest,
@@ -3011,6 +3164,82 @@ MatroskaCursor::readNext(CancellationToken cancellation) noexcept {
     return MatroskaCursorFailure{MatroskaDemuxError::Io,
                                  "cursor allocation failed"};
   }
+}
+
+MatroskaCursorReadResult
+MatroskaCursor::readNext(CancellationToken cancellation) noexcept {
+  if (impl_ == nullptr) {
+    return MatroskaCursorFailure{MatroskaDemuxError::InvalidRequest,
+                                 "cursor is not initialized"};
+  }
+  MatroskaCursorReadResult current;
+  if (impl_->pending) {
+    current = std::move(*impl_->pending);
+    impl_->pending.reset();
+  } else {
+    current = readNextRaw(cancellation);
+  }
+  auto* sample = std::get_if<MatroskaCompressedSample>(&current);
+  // Audio is untouched: its duration comes from the exact access-unit grid and
+  // never from a container element, so it must never pay for a lookahead.
+  if (sample == nullptr || sample->kind != MediaSampleKind::EncodedVideo) {
+    return current;
+  }
+  if (sample->duration.valid()) {
+    impl_->lastVideoDuration = sample->duration;
+    return current;
+  }
+
+  // No BlockDuration and no DefaultDuration. Bound this frame by the next one.
+  MatroskaCursorReadResult next = readNextRaw(cancellation);
+  if (auto* nextSample = std::get_if<MatroskaCompressedSample>(&next)) {
+    // Exact rational difference; the same checked arithmetic the rest of this
+    // demuxer uses, so a nanosecond-timescale delta cannot round.
+    const auto delta =
+        exactTimeDifference(nextSample->presentationTime,
+                            sample->presentationTime);
+    // A non-positive delta is a non-monotonic or duplicated timestamp, and
+    // this cursor may not invent a duration for it. The frame keeps its absent
+    // duration and the Accurate-seek path names its own refusal, which is
+    // exactly the behaviour that existed before this lookahead.
+    //
+    // THE LIMIT OF THIS TECHNIQUE, stated so it is not mistaken for general:
+    // Blocks are emitted in STORAGE order, which equals presentation order
+    // only when the stream carries no reordered frames. On a B-frame stream
+    // the successor's timestamp routinely precedes this one's -- measured on
+    // an ffmpeg-encoded VFR file, whose packet deltas alternate sign -- so
+    // this branch declines and such a stream gains nothing. That is the right
+    // outcome rather than a gap: a correct duration for reordered material
+    // needs the reorder window, not the next Block. The target case, a
+    // screencast/VFR capture from matroskamux, is IPPP with no reordering,
+    // and that is where this pays.
+    if (delta && delta->value > 0) {
+      sample->duration = *delta;
+      impl_->lastVideoDuration = *delta;
+    }
+    impl_->pending = std::move(*nextSample);
+    return current;
+  }
+  if (std::holds_alternative<MatroskaCursorEnd>(next)) {
+    // THE LAST-FRAME RULE. There is no successor to measure against, so the
+    // final frame of a durationless track is given the last duration this
+    // cursor actually derived from this file -- for VFR material that is the
+    // preceding inter-frame delta, which is bounded by construction because it
+    // came from two real timestamps in this same file.
+    //
+    // When there is no such duration (a single-frame track), the frame keeps
+    // NO duration rather than a fabricated one. Inventing a number for a file
+    // that has told us nothing is worse than the honest refusal downstream.
+    if (impl_->lastVideoDuration.valid()) {
+      sample->duration = impl_->lastVideoDuration;
+    }
+    return current;
+  }
+  // A failure or cancellation while looking ahead is returned as-is. The held
+  // sample is dropped: the generation is failing either way, and surfacing the
+  // fault one sample early is better than emitting a frame from a stream that
+  // has already proven broken.
+  return next;
 }
 
 MatroskaPreparedAsset::MatroskaPreparedAsset(std::unique_ptr<Impl> impl) noexcept

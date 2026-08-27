@@ -100,6 +100,9 @@ constexpr std::uint32_t kDisplayWidthId{0x54B0};
 constexpr std::uint32_t kDisplayHeightId{0x54BA};
 constexpr std::uint32_t kDisplayUnitId{0x54B2};
 constexpr std::uint32_t kColourId{0x55B0};
+constexpr std::uint32_t kMaxCllId{0x55BC};
+constexpr std::uint32_t kMaxFallId{0x55BD};
+constexpr std::uint32_t kMasteringMetadataId{0x55D0};
 constexpr std::uint32_t kMatrixCoefficientsId{0x55B1};
 constexpr std::uint32_t kTransferCharacteristicsId{0x55BA};
 constexpr std::uint32_t kPrimariesId{0x55BB};
@@ -639,6 +642,15 @@ struct FixtureSpec {
   std::optional<std::uint64_t> videoDisplayWidth;
   std::optional<std::uint64_t> videoDisplayHeight;
   std::optional<std::uint64_t> videoDisplayUnit;
+  // Video > Colour. The triple is (MatrixCoefficients, TransferCharacteristics,
+  // Primaries) as ISO/IEC 23091-2 code points; the default is the BT.709
+  // triple every prior fixture wrote inline. std::nullopt omits the Colour
+  // element entirely, which is the shape a muxer that writes no colour uses.
+  std::optional<std::array<std::uint64_t, 3>> videoColour{
+      std::array<std::uint64_t, 3>{1, 1, 1}};
+  bool videoMasteringMetadata{false};
+  std::optional<std::uint64_t> videoMaxCll;
+  std::optional<std::uint64_t> videoMaxFall;
   double audioSamplingFrequency{static_cast<double>(kAudioSampleRate)};
   std::uint64_t audioChannels{2};
   std::optional<std::uint64_t> audioBitDepth;
@@ -652,6 +664,11 @@ struct FixtureSpec {
   std::size_t voidPaddingBytes{0};
   CueVariant cues{CueVariant::Canonical};
   bool videoDefaultDuration{true};
+  // The GStreamer VFR shape: bare SimpleBlocks with no BlockDuration, at
+  // NON-UNIFORM spacing, on a track with no DefaultDuration. matroskamux
+  // writes exactly this for a variable-frame-rate capture. Set this together
+  // with videoDefaultDuration=false to reach the both-absent path.
+  bool videoVariableFrameRate{false};
   // The subtitle-cue-heavy shape, which is what a real subtitled movie is:
   // N SimpleBlocks for the subtitle track placed at the TAIL of every Cluster,
   // and (with subtitleCues) one CuePoint naming each of them. Their
@@ -702,11 +719,31 @@ Bytes videoTrackEntry(const FixtureSpec& spec) {
   if (spec.videoDisplayUnit) {
     append(videoPayload, uintElement(kDisplayUnitId, *spec.videoDisplayUnit));
   }
-  Bytes colourPayload;
-  append(colourPayload, uintElement(kMatrixCoefficientsId, 1));
-  append(colourPayload, uintElement(kTransferCharacteristicsId, 1));
-  append(colourPayload, uintElement(kPrimariesId, 1));
-  append(videoPayload, element(kColourId, colourPayload));
+  if (spec.videoColour || spec.videoMasteringMetadata || spec.videoMaxCll ||
+      spec.videoMaxFall) {
+    Bytes colourPayload;
+    if (spec.videoColour) {
+      append(colourPayload,
+             uintElement(kMatrixCoefficientsId, (*spec.videoColour)[0]));
+      append(colourPayload,
+             uintElement(kTransferCharacteristicsId, (*spec.videoColour)[1]));
+      append(colourPayload, uintElement(kPrimariesId, (*spec.videoColour)[2]));
+    }
+    if (spec.videoMaxCll) {
+      append(colourPayload, uintElement(kMaxCllId, *spec.videoMaxCll));
+    }
+    if (spec.videoMaxFall) {
+      append(colourPayload, uintElement(kMaxFallId, *spec.videoMaxFall));
+    }
+    if (spec.videoMasteringMetadata) {
+      // Presence is the whole fact the demuxer models, so an EMPTY
+      // MasteringMetadata master is the exact shape under test. ffmpeg does
+      // not write this element at all on a `-c copy` remux (measured), so a
+      // synthetic fixture is the only way to reach this path.
+      append(colourPayload, element(kMasteringMetadataId, Bytes{}));
+    }
+    append(videoPayload, element(kColourId, colourPayload));
+  }
 
   Bytes payload;
   append(payload, uintElement(kTrackNumberId, spec.videoTrackNumber));
@@ -814,6 +851,17 @@ struct VideoBlockPlan {
 
 std::vector<VideoBlockPlan> videoBlockPlans(const FixtureSpec& spec) {
   std::vector<VideoBlockPlan> plans;
+  if (spec.videoVariableFrameRate) {
+    // Deliberately non-uniform gaps -- 33, 67, 33, 67 ticks -- so a lookahead
+    // that silently used a single fixed stride would produce visibly wrong
+    // durations rather than accidentally-right ones.
+    plans.push_back({0, true, true, false, false, 6, {}, std::nullopt});
+    plans.push_back({33, true, false, false, false, 7, {}, std::nullopt});
+    plans.push_back({100, true, false, false, false, 8, {}, std::nullopt});
+    plans.push_back({133, true, false, false, false, 5, {}, std::nullopt});
+    plans.push_back({200, true, false, false, false, 4, {}, std::nullopt});
+    return plans;
+  }
   plans.push_back({0, true, true, false, false, 6, {}, std::nullopt});
   plans.push_back({40, false, false, false, false, 7, {-40}, std::nullopt});
   plans.push_back({80, false, false, false, false, 8, {-40, 40}, 60});
@@ -4359,8 +4407,234 @@ void testSubtitleCuesAreNotProvenAtOpen() {
          "the unproven subtitle track is still inventoried");
 }
 
+// Matroska-carried HDR.
+//
+// Before this, makeVideoDescriptor hard-returned false for ANY container
+// Colour primaries/transfer/matrix value other than 1, and refused outright on
+// the mere PRESENCE of MasteringMetadata/MaxCLL/MaxFALL. Both are now mapped
+// onto the modelled facts and decided by the ONE rule the MP4 route uses,
+// media::mediaVideoColorAdmitted().
+//
+// Note what each case pins. The admissions prove the mapping; the refusals
+// prove the rule still refuses BY NAME rather than by accident, which is the
+// property that would silently rot if the mapping ever grew a default branch
+// that guessed.
+void testContainerColourMapping() {
+  struct Case {
+    const char *name;
+    std::array<std::uint64_t, 3> colour;  // matrix, transfer, primaries
+    bool admitted;
+    MediaColorPrimaries primaries;
+    MediaTransferFunction transfer;
+    MediaMatrixCoefficients matrix;
+  };
+  // ISO/IEC 23091-2: primaries 9 = BT.2020, transfer 16 = PQ, 18 = HLG,
+  // matrix 9 = BT.2020 non-constant luminance, 5/6 = the BT.601 spellings,
+  // transfer 13 = sRGB, primaries 5 = BT.470BG.
+  const Case cases[] = {
+      {"BT.709 triple", {1, 1, 1}, true, MediaColorPrimaries::Bt709,
+       MediaTransferFunction::Bt709, MediaMatrixCoefficients::Bt709},
+      {"BT.2020 PQ", {9, 16, 9}, true, MediaColorPrimaries::Bt2020,
+       MediaTransferFunction::Pq, MediaMatrixCoefficients::Bt2020Ncl},
+      {"BT.2020 HLG", {9, 18, 9}, true, MediaColorPrimaries::Bt2020,
+       MediaTransferFunction::Hlg, MediaMatrixCoefficients::Bt2020Ncl},
+      // The SDR case this work incidentally fixed: a plain BT.601-matrix WebM
+      // (test-media/sample-vp9.webm carries exactly MatrixCoefficients=5) was
+      // refused outright and fell back to mpv, even though the identical
+      // stream in MP4 has always been admitted.
+      {"BT.601 matrix", {5, 1, 1}, true, MediaColorPrimaries::Bt709,
+       MediaTransferFunction::Bt709, MediaMatrixCoefficients::Bt601},
+      {"unspecified triple", {2, 2, 2}, true, MediaColorPrimaries::Unknown,
+       MediaTransferFunction::Unknown, MediaMatrixCoefficients::Unknown},
+      // Refusals, each for its own reason.
+      {"sRGB transfer", {1, 13, 1}, false, {}, {}, {}},
+      {"BT.601 primaries", {1, 1, 5}, false, {}, {}, {}},
+      {"unknown transfer 14", {9, 14, 9}, false, {}, {}, {}},
+  };
+  for (const Case &c : cases) {
+    FixtureSpec spec;
+    spec.videoColour = c.colour;
+    const PreparedFixture prepared = prepareFixture(spec);
+    const bool ready = prepared.outcome.status == MatroskaDemuxStatus::Ready &&
+                       prepared.outcome.asset != nullptr;
+    const std::string decidedMessage =
+        std::string("container Colour case is decided as expected: ") + c.name;
+    expect(ready == c.admitted, decidedMessage.c_str());
+    if (!ready || !c.admitted) {
+      continue;
+    }
+    const auto descriptor = prepared.outcome.asset->descriptor();
+    const auto *video = descriptor != nullptr
+                            ? wam::media::findMediaTrack(*descriptor, 1)
+                            : nullptr;
+    const std::string mappedMessage =
+        std::string("container Colour maps onto the modelled facts: ") + c.name;
+    expect(video != nullptr && video->video &&
+               video->video->colorPrimaries == c.primaries &&
+               video->video->transferFunction == c.transfer &&
+               video->video->matrixCoefficients == c.matrix,
+           mappedMessage.c_str());
+  }
+}
+
+// MasteringMetadata / MaxCLL / MaxFALL are PRESENCE facts, not payloads:
+// VideoToolbox copies the real MDCV and CLLI onto the decoded surface from the
+// in-band SEI, so re-carrying the container's copy would create a second copy
+// that could only ever disagree with the decoder's.
+//
+// This is fixture-only coverage on purpose, and the reason is recorded rather
+// than hidden: ffmpeg's matroska muxer writes NO MasteringMetadata, MaxCLL or
+// MaxFALL on a `-c copy` remux of an MP4 that demonstrably carries all three
+// (measured 2026-08-27 with an EBML dump). No tool available to this session
+// produces a real .mkv with these elements, so the synthetic fixture is the
+// only thing that reaches this path.
+void testHdrMetadataPresenceIsModelledNotRefused() {
+  {
+    FixtureSpec spec;
+    spec.videoColour = std::array<std::uint64_t, 3>{9, 16, 9};
+    spec.videoMasteringMetadata = true;
+    spec.videoMaxCll = 1000;
+    spec.videoMaxFall = 400;
+    const PreparedFixture prepared = prepareFixture(spec);
+    expect(prepared.outcome.status == MatroskaDemuxStatus::Ready &&
+               prepared.outcome.asset != nullptr,
+           "HDR mastering/light metadata no longer refuses the track");
+    if (prepared.outcome.asset == nullptr) {
+      return;
+    }
+    const auto descriptor = prepared.outcome.asset->descriptor();
+    const auto *video = descriptor != nullptr
+                            ? wam::media::findMediaTrack(*descriptor, 1)
+                            : nullptr;
+    expect(video != nullptr && video->video &&
+               video->video->masteringDisplayColorVolumePresent &&
+               video->video->contentLightLevelInfoPresent,
+           "mastering-display and content-light presence reach the descriptor");
+  }
+  {
+    // MaxCLL = 0 is a PRESENT element carrying zero, not an absent one. The
+    // old refusal tested the optional's engaged-ness and so refused this too;
+    // the presence fact must still report it.
+    FixtureSpec spec;
+    spec.videoMaxCll = 0;
+    const PreparedFixture prepared = prepareFixture(spec);
+    const auto descriptor = prepared.outcome.asset != nullptr
+                                ? prepared.outcome.asset->descriptor()
+                                : nullptr;
+    const auto *video = descriptor != nullptr
+                            ? wam::media::findMediaTrack(*descriptor, 1)
+                            : nullptr;
+    expect(video != nullptr && video->video &&
+               video->video->contentLightLevelInfoPresent &&
+               !video->video->masteringDisplayColorVolumePresent,
+           "a present MaxCLL of zero is still a content-light presence fact");
+  }
+  {
+    FixtureSpec spec;
+    spec.videoColour = std::nullopt;
+    const PreparedFixture prepared = prepareFixture(spec);
+    const auto descriptor = prepared.outcome.asset != nullptr
+                                ? prepared.outcome.asset->descriptor()
+                                : nullptr;
+    const auto *video = descriptor != nullptr
+                            ? wam::media::findMediaTrack(*descriptor, 1)
+                            : nullptr;
+    expect(video != nullptr && video->video &&
+               !video->video->masteringDisplayColorVolumePresent &&
+               !video->video->contentLightLevelInfoPresent,
+           "a file with no Colour element states no HDR presence facts");
+  }
+}
+
+// THE GSTREAMER VFR CASE.
+//
+// matroskamux writes neither BlockDuration nor DefaultDuration for a
+// variable-frame-rate capture. Before the one-Block lookahead, such a file
+// PLAYED -- the cursor's two-arm duration chain has no trailing else, so the
+// sample simply came out with a default-constructed, invalid MediaTime -- but
+// it could not serve an Accurate seek, because matroskaAccurateVideoDecodeOnly
+// refuses a sample whose interval is not exact and positive.
+//
+// The fixture's gaps are deliberately non-uniform (33, 67, 33, 67 ticks), so a
+// lookahead that assumed a fixed stride would be caught rather than flattered.
+void testVariableFrameRateDurationLookahead() {
+  FixtureSpec spec;
+  spec.videoVariableFrameRate = true;
+  spec.videoDefaultDuration = false;
+  spec.includeAudioTrack = false;
+  spec.includeSubtitleTrack = false;
+  const PreparedFixture prepared = prepareFixture(spec);
+  expect(prepared.outcome.status == MatroskaDemuxStatus::Ready &&
+             prepared.outcome.asset != nullptr,
+         "a VFR file with no BlockDuration and no DefaultDuration prepares");
+  if (prepared.outcome.asset == nullptr) {
+    return;
+  }
+  const MatroskaPreparedAsset& asset = prepared.asset();
+  const MatroskaPlanOutcome plan =
+      asset.planGeneration(MediaTime{0, 1}, MediaSeekMode::KeyFrame);
+  expect(plan.plan.has_value(), "the VFR fixture plans from its origin");
+  if (!plan.plan) {
+    return;
+  }
+  auto cursor = asset.makeVideoCursor(*plan.plan);
+  expect(cursor != nullptr, "the VFR fixture makes a video cursor");
+  if (cursor == nullptr) {
+    return;
+  }
+
+  // Ticks are 0,33,100,133,200 within each Cluster, and the Clusters start at
+  // 0, 500 and 1000. So the expected durations are the successor deltas --
+  // including ACROSS a Cluster boundary, where the gap is 300 -- and the final
+  // frame falls to the last-frame rule.
+  const std::int64_t ticks[] = {0,   33,  100,  133,  200,
+                                500, 533, 600,  633,  700,
+                                1000, 1033, 1100, 1133, 1200};
+  constexpr std::size_t kBlocks = 15;
+  const auto readsBefore = prepared.reader->totalRead;
+  bool allValid = true;
+  bool allExact = true;
+  std::size_t seen = 0;
+  for (std::size_t index = 0; index < kBlocks; ++index) {
+    const MatroskaCursorReadResult result = cursor->readNext();
+    const MatroskaCompressedSample* sample = sampleOf(result);
+    if (sample == nullptr) {
+      break;
+    }
+    ++seen;
+    allValid = allValid && sample->duration.valid() &&
+               sample->duration.value > 0;
+    // The last frame has no successor and takes the previous delta (67).
+    const std::int64_t expectedTicks =
+        index + 1 < kBlocks ? ticks[index + 1] - ticks[index] : 67;
+    allExact = allExact && sample->presentationTime == tickTime(ticks[index]) &&
+               sample->duration == tickTime(expectedTicks);
+  }
+  expect(seen == kBlocks, "the VFR cursor emits every Block exactly once");
+  expect(allValid,
+         "every VFR video sample carries a valid positive duration");
+  expect(allExact,
+         "each VFR duration is its successor's timestamp delta, and the final "
+         "frame takes the last derived duration");
+  expect(std::holds_alternative<MatroskaCursorEnd>(cursor->readNext()),
+         "the VFR cursor ends after its last Block");
+  expect(std::holds_alternative<MatroskaCursorEnd>(cursor->readNext()),
+         "the VFR cursor's end is idempotent");
+
+  // THE READ-COUNT GUARANTEE. The lookahead DEFERS a parse, it never repeats
+  // one: `pending` owns the already-parsed successor, so a full walk still
+  // parses every Block exactly once and still copies no frame payload. This is
+  // the same ceiling the non-VFR cursor walk is held to.
+  expect(prepared.reader->totalRead - readsBefore <
+             spec.largeVideoFrameBytes / 4U + 4096U,
+         "the VFR lookahead keeps cursor reads structural");
+}
+
 int main() {
   testCompleteDocumentPreparation();
+  testVariableFrameRateDurationLookahead();
+  testContainerColourMapping();
+  testHdrMetadataPresenceIsModelledNotRefused();
   testAdmittedPreparationDoesNotWalkClusterTails();
   testSubtitleCuesAreNotProvenAtOpen();
   testVideoDisplayGeometry();

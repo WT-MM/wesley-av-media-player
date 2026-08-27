@@ -204,6 +204,17 @@ void assignError(std::string* error, const char* message) noexcept {
            track.audio->formatTag == kAudioFormatMPEG4AAC_HE_V2;
   case media::MediaCodec::Alac:
     return track.audio->formatTag == kAudioFormatAppleLossless;
+  // Uncompressed audio, which reaches this pipeline only from AVFoundation:
+  // a standalone .wav or .aiff, or an lpcm track in a QuickTime movie. There
+  // is no bitstream to parse and no decoder to prime, so the converter's whole
+  // per-codec table stays at its zero defaults; what the AudioConverter does
+  // for it is the interleaved-int-to-float restatement it would otherwise do
+  // as the last step of every decode. The format's own flags carry the sample
+  // depth, signedness and endianness, and exactAsbd already restates them
+  // verbatim, which is what lets one arm cover .wav (0xc) and .aiff (0xe)
+  // alike.
+  case media::MediaCodec::Pcm:
+    return track.audio->formatTag == kAudioFormatLinearPCM;
   case media::MediaCodec::Mp3:
     // The routing family, not one layer. Layer II reaches this arm from
     // MPEG-TS stream types 0x03/0x04, and it is admitted here for exactly the

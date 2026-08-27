@@ -525,7 +525,8 @@ NativePlaybackOwner::setPaused(bool paused) {
   return PauseDisposition::FallbackHandled;
 }
 
-bool NativePlaybackOwner::preparePreviewHandoff() {
+NativePlaybackOwner::PreviewHandoffDisposition
+NativePlaybackOwner::preparePreviewHandoff() {
   Q_ASSERT(QThread::currentThread() == controller_.thread());
   const playback_router::State state = router_.snapshot().state;
   // A fully published Ended session has already drained the main decoder and
@@ -536,12 +537,17 @@ bool NativePlaybackOwner::preparePreviewHandoff() {
       (state != playback_router::State::NativeStarting &&
        state != playback_router::State::NativeActive &&
        state != playback_router::State::NativeEnded)) {
-    return false;
+    return PreviewHandoffDisposition::Deferred;
   }
   const macos::NativeMediaSessionCommandStatus status =
       nativeSession_->preparePreviewHandoff();
-  return status == macos::NativeMediaSessionCommandStatus::Accepted ||
-         status == macos::NativeMediaSessionCommandStatus::Ignored;
+  if (status == macos::NativeMediaSessionCommandStatus::Unsupported) {
+    return PreviewHandoffDisposition::Unsupported;
+  }
+  return (status == macos::NativeMediaSessionCommandStatus::Accepted ||
+          status == macos::NativeMediaSessionCommandStatus::Ignored)
+             ? PreviewHandoffDisposition::Prepared
+             : PreviewHandoffDisposition::Deferred;
 }
 
 NativePlaybackOwner::PreviewDisposition

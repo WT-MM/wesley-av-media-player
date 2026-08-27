@@ -419,6 +419,17 @@ struct AccessUnitScan {
   bool decodableFromCold{false};
   bool hasSequenceHeader{false};
   bool hasParameterSets{false};
+  // True when the scanned span actually contained the picture the access unit
+  // codes -- a VCL NAL for H.264/HEVC, a picture_header for MPEG-2.
+  //
+  // This exists to separate ABSENCE OF EVIDENCE from EVIDENCE OF ABSENCE. The
+  // cursor scans only a bounded prefix of each access unit, so a keyFrame of
+  // false can mean either "this picture is not a random access point" or "the
+  // prefix ended before the picture started". Those are opposite facts and
+  // conflating them is what turned a 4,977-byte HDR SEI prologue into "this
+  // file has no random access point" -- see kMpegTsAccessUnitProbeBytes.
+  // A caller that sees `!sliceInProbe` must not treat `keyFrame` as a verdict.
+  bool sliceInProbe{false};
 
   friend constexpr bool operator==(const AccessUnitScan&,
                                    const AccessUnitScan&) = default;
@@ -494,6 +505,53 @@ struct AnnexBNal {
 [[nodiscard]] std::size_t annexBToAvcc(std::span<const std::byte> unit,
                                        std::span<std::byte> destination,
                                        MediaCodec codec) noexcept;
+
+// --- HEVC parameter-set facts ---------------------------------------------
+//
+// Everything an hvcC configuration record must state that is NOT a verbatim
+// copy of a parameter-set NAL unit.
+//
+// THE PROFILE-TIER-LEVEL BYTES ARE A VERBATIM COPY, AND THAT IS A CONTRACT,
+// NOT AN OPTIMIZATION. ISO/IEC 14496-15 defines the record's bytes 1..12 as
+// the SPS's own profile_tier_level() syntax re-emitted unchanged -- one
+// packed byte of general_profile_space/general_tier_flag/general_profile_idc,
+// four bytes of general_profile_compatibility_flag[32], six bytes of
+// general_constraint_indicator_flags (the progressive/interlaced/non-packed/
+// frame-only quartet plus 43 reserved bits plus the inbld flag) and one byte
+// of general_level_idc. Every one of those 96 bits is byte-aligned inside the
+// SPS RBSP, because exactly eight bits (sps_video_parameter_set_id,
+// sps_max_sub_layers_minus1, sps_temporal_id_nesting_flag) precede it. A
+// consumer -- ours included, in inspectHvcC -- re-parses the SPS and compares
+// the two field for field, so rebuilding the record's copy from decoded
+// fields would risk disagreeing with the source on any bit this code chose to
+// normalize. It is lifted out of the RBSP as twelve bytes instead.
+//
+// The RBSP, not the NAL: emulation-prevention bytes must be removed first,
+// and a real HEVC SPS carries several inside its PTL (the reserved-zero runs
+// produce 00 00 00 sequences, which every encoder escapes as 00 00 03 00).
+// The hvcC's parameter-set ARRAYS keep the escaped NAL bytes, exactly as the
+// elementary stream carries them; only this copy is unescaped.
+struct HevcSpsFacts {
+  // SPS RBSP bytes [1, 13) counted from the first byte after the two-byte NAL
+  // header: general_profile_space through general_level_idc.
+  std::array<std::uint8_t, 12> profileTierLevel{};
+  std::uint8_t chromaFormatIdc{0};
+  std::uint8_t bitDepthLumaMinusEight{0};
+  std::uint8_t bitDepthChromaMinusEight{0};
+  std::uint8_t maxSubLayersMinusOne{0};
+  bool temporalIdNested{false};
+
+  friend constexpr bool operator==(const HevcSpsFacts&,
+                                   const HevcSpsFacts&) = default;
+};
+
+// Reads one HEVC SPS NAL unit -- WITH its two-byte NAL header and WITH its
+// emulation-prevention bytes, i.e. exactly the bytes the Annex-B stream
+// carries -- far enough to state every fact the record above needs. Stops at
+// bit_depth_chroma_minus8; nothing past that belongs in an hvcC header, and
+// the shared codec inspector parses the rest of the SPS anyway.
+[[nodiscard]] bool parseHevcSpsFacts(std::span<const std::byte> nal,
+                                     HevcSpsFacts& facts) noexcept;
 
 // ADTS: the AAC framing used by stream type 0x0F. A demuxer must split a PES
 // payload into whole ADTS frames because the audio path is packet-oriented.

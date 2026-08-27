@@ -214,6 +214,13 @@ std::vector<ScriptedOpen> parseOpenScript(const QByteArray &value) {
 //                       to observe it mirror onto every other window
 //   padded:<index>      toggle that window's "Fill Screen (Padded)" mode --
 //                       the View menu item's own QML entry point
+//   vivid:<index>       toggle that window's Vivid EDR boost -- the same QML
+//                       entry point the chrome toggle, the View menu item and
+//                       the V key all call. A no-op for an HDR source, which
+//                       is a real answer and not a failure: see `vboost` in
+//                       the report line for what the display layer actually
+//                       took
+//   theater:<index>     toggle that window's Theater dim, likewise
 //   mute:<index>        the transport's mute button (toggle + volume OSD)
 //   fullscreen:<index>  toggle that window's fullscreen, the F key's own path
 //   grab:<index>:<path> write that window's QML SCENE to a PNG (the video
@@ -418,7 +425,9 @@ void reportWindows(const wam::qt::WindowManager &windows) {
                "step=%6 hugs=%7 pitch=%8 geom=%10x%11+%12+%13 "
                "volume=%14 muted=%15 gestures=%16 pos=%17 dur=%18 "
                "chrome=%19 vfeedback=%20 vnat=%21 vmax=%22 padded=%23 "
-               "fullscreen=%24 osd=%25 tlalpha=%26 nsfs=%27 source=%9")
+               "fullscreen=%24 osd=%25 tlalpha=%26 nsfs=%27 "
+               "vivid=%28 vboost=%29 hdr=%30 edr=%31 theater=%32 dims=%33 "
+               "source=%9")
                .arg(index)
                .arg(player->hasMedia() ? 1 : 0)
                .arg(player->paused() ? 1 : 0)
@@ -456,7 +465,28 @@ void reportWindows(const wam::qt::WindowManager &windows) {
                                const_cast<QQuickWindow *>(quick))
                                ? 1
                                : 0)
-                        : -1);
+                        : -1)
+               // vivid/theater are what QML believes; vboost and dims are what
+               // AppKit and CoreAnimation actually hold. Both are reported
+               // because a disagreement between them is exactly the defect
+               // shape a verification round has to be able to see: vboost
+               // reads the display layer's own attached filter (0 = no display
+               // layer at all, i.e. the libmpv route), dims counts the overlay
+               // windows genuinely on screen.
+               .arg(rootFlag(open.at(index), "vividActive"))
+               .arg(quick != nullptr
+                        ? wam::macos_window_chrome::appliedVividBoost(
+                              const_cast<QQuickWindow *>(quick))
+                        : -1.0,
+                    0, 'f', 3)
+               .arg(rootFlag(open.at(index), "sourceIsHdr"))
+               .arg(quick != nullptr
+                        ? wam::macos_window_chrome::screenEdrHeadroom(
+                              const_cast<QQuickWindow *>(quick))
+                        : -1.0,
+                    0, 'f', 3)
+               .arg(rootFlag(open.at(index), "theaterDimEnabled"))
+               .arg(wam::macos_window_chrome::theaterDimOverlayCount());
 
     // Subtitles get their own line rather than more fields on the one above:
     // the track labels are free text and would break any parser that splits
@@ -625,6 +655,19 @@ void runWindowStep(wam::qt::WindowManager &windows, const QString &verb) {
     if (wam::qt::PlayerWindow *window = windowAt(index)) {
       if (QObject *root = window->qmlRoot())
         QMetaObject::invokeMethod(root, "toggleFillScreenPadded");
+    }
+  } else if (head == QStringLiteral("vivid")) {
+    // The Vivid boost toggle, driven at the QML root the chrome button and the
+    // View menu item both call -- so a scripted round exercises the real path
+    // rather than a re-implementation of it. Same for `theater` below.
+    if (wam::qt::PlayerWindow *window = windowAt(index)) {
+      if (QObject *root = window->qmlRoot())
+        QMetaObject::invokeMethod(root, "toggleVividBoost");
+    }
+  } else if (head == QStringLiteral("theater")) {
+    if (wam::qt::PlayerWindow *window = windowAt(index)) {
+      if (QObject *root = window->qmlRoot())
+        QMetaObject::invokeMethod(root, "toggleTheaterDim");
     }
   } else if (head == QStringLiteral("gestures")) {
     if (wam::qt::PlayerWindow *window = windowAt(0))

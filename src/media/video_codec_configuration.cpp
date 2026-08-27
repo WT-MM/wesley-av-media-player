@@ -331,6 +331,36 @@ supportedSdrColor(const VideoCodecColorFacts &color) noexcept {
           color.matrixCoefficients == 5U || color.matrixCoefficients == 6U);
 }
 
+// The HDR widening, stated on the ISO/IEC 23091-2 numbers because this layer
+// sees numbers rather than the modelled enums. The admitted set is exactly
+// media::mediaVideoColorAdmitted()'s -- BT.2020 primaries (9), the PQ (16) and
+// HLG (18) transfers, and the BT.2020 non-constant-luminance matrix (9) --
+// restated here rather than shared, because native_media_source.hpp is a
+// frozen contract this file must not depend on and the two vocabularies are
+// genuinely different. The pairing is checked by a test that walks both.
+//
+// Note this is a SUPERSET of supportedSdrColor: an HDR-admitting route must
+// still admit everything the SDR route did, so the SDR predicate is asked
+// first and this only ever widens.
+[[nodiscard]] bool supportedColor(const VideoCodecColorFacts &color,
+                                  bool admitHdr) noexcept {
+  if (supportedSdrColor(color)) {
+    return true;
+  }
+  if (!admitHdr) {
+    return false;
+  }
+  return (color.colorPrimaries == 1U || color.colorPrimaries == 2U ||
+          color.colorPrimaries == 9U) &&
+         (color.transferCharacteristics == 1U ||
+          color.transferCharacteristics == 2U ||
+          color.transferCharacteristics == 16U ||
+          color.transferCharacteristics == 18U) &&
+         (color.matrixCoefficients == 1U || color.matrixCoefficients == 2U ||
+          color.matrixCoefficients == 5U || color.matrixCoefficients == 6U ||
+          color.matrixCoefficients == 9U);
+}
+
 [[nodiscard]] bool parseVuiColorPrefix(RbspBitReader &bits,
                                        VideoCodecColorFacts &color) noexcept {
   bool present = false;
@@ -641,7 +671,7 @@ struct ParsedSpsFacts {
     if (!parseVuiColorPrefix(bits, facts.color)) {
       return Error::MalformedRecord;
     }
-    if (!supportedSdrColor(facts.color)) {
+    if (!supportedColor(facts.color, limits.admitHighDynamicRangeColor)) {
       return Error::UnsupportedColorDescription;
     }
     bool present = false;
@@ -1475,7 +1505,7 @@ skipHevcShortTermReferencePictureSets(RbspBitReader &bits,
       (vuiPresent && !parseHevcVui(bits, subLayers, facts.color))) {
     return Error::MalformedRecord;
   }
-  if (!supportedSdrColor(facts.color)) {
+  if (!supportedColor(facts.color, limits.admitHighDynamicRangeColor)) {
     return Error::UnsupportedColorDescription;
   }
   bool extensionPresent = false;
@@ -2211,7 +2241,7 @@ inspectAv1C(std::span<const std::uint8_t> bytes,
       sequence.bitDepth != (highBitdepth ? 10U : 8U)) {
     return rejected(Error::ParameterSetMismatch);
   }
-  if (!supportedSdrColor(sequence.color)) {
+  if (!supportedColor(sequence.color, limits.admitHighDynamicRangeColor)) {
     return rejected(Error::UnsupportedColorDescription);
   }
 
@@ -2372,7 +2402,7 @@ inspectVpcC(std::span<const std::uint8_t> bytes,
   color.colorDescriptionPresent =
       color.colorPrimaries != 2U || color.transferCharacteristics != 2U ||
       color.matrixCoefficients != 2U;
-  if (!supportedSdrColor(color)) {
+  if (!supportedColor(color, limits.admitHighDynamicRangeColor)) {
     return rejected(Error::UnsupportedColorDescription);
   }
 
@@ -2735,7 +2765,7 @@ inspectMpeg4Visual(std::span<const std::uint8_t> bytes,
       layer.width > limits.maximumPixels / layer.height) {
     return rejected(Error::DimensionLimitExceeded);
   }
-  if (!supportedSdrColor(color)) {
+  if (!supportedColor(color, limits.admitHighDynamicRangeColor)) {
     return rejected(Error::UnsupportedColorDescription);
   }
 
@@ -3066,7 +3096,7 @@ VideoCodecConfigurationInspection inspectVp9BitstreamKeyframe(
   if (!vp9ColorFromColorSpace(colorSpace, color)) {
     return rejected(Error::MalformedRecord);
   }
-  if (!supportedSdrColor(color)) {
+  if (!supportedColor(color, limits.admitHighDynamicRangeColor)) {
     return rejected(Error::UnsupportedColorDescription);
   }
 

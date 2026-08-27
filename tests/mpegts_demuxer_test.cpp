@@ -683,6 +683,25 @@ void testAccessUnitScanning() {
   expect(scan.keyFrame, "an HEVC IRAP NAL is a keyframe");
   expect(scan.hasParameterSets, "VPS, SPS and PPS are all required for HEVC");
   expect(scan.decodableFromCold, "a full HEVC parameter set makes it cold-safe");
+  expect(scan.sliceInProbe, "the IRAP slice itself was inside the scanned span");
+
+  // ABSENCE OF EVIDENCE, NOT EVIDENCE OF ABSENCE. The cursor scans only a
+  // bounded prefix of each access unit, and an HDR HEVC keyframe carries
+  // kilobytes of SEI ahead of its slice. When the prefix ends before the
+  // slice, keyFrame is false but says nothing about the picture -- this is
+  // exactly the shape that made every seek in a real PQ fixture refuse with
+  // ScanLimit until kMpegTsAccessUnitProbeBytes was raised.
+  Bytes prologueOnly;
+  append(prologueOnly, {0x00, 0x00, 0x00, 0x01, 0x40, 0x01, 0x0C});  // VPS
+  append(prologueOnly, {0x00, 0x00, 0x00, 0x01, 0x42, 0x01, 0x01});  // SPS
+  append(prologueOnly, {0x00, 0x00, 0x00, 0x01, 0x44, 0x01, 0xC0});  // PPS
+  append(prologueOnly, {0x00, 0x00, 0x00, 0x01, 0x4E, 0x01, 0xAF});  // SEI (39)
+  scan = scanAnnexBAccessUnit(prologueOnly, MediaCodec::Hevc);
+  expect(!scan.sliceInProbe,
+         "a span that ends inside the prologue reports that it never reached "
+         "a slice");
+  expect(!scan.keyFrame && scan.hasParameterSets,
+         "and its keyFrame verdict is therefore not a verdict at all");
 
   // --- MPEG-2 ------------------------------------------------------------
   Bytes mpeg2;
@@ -716,6 +735,129 @@ void testAccessUnitScanning() {
   scan = scanMpeg2AccessUnit(intraOnly);
   expect(scan.keyFrame && !scan.decodableFromCold,
          "an MPEG-2 I-picture without a sequence header cannot start playback");
+}
+
+// The hvcC record is byte-for-byte re-derived by the shared codec inspector
+// from the very parameter sets it carries, so the ONE place synthesis can go
+// wrong silently is the profile_tier_level copy. These are real x265 SPS NALs
+// lifted out of the real transport-stream fixtures, emulation-prevention
+// bytes and all -- a synthetic SPS would not have any, and the escaping is
+// exactly what the copy has to survive.
+void testHevcParameterSetFacts() {
+  // Main, 8-bit, level 4.0. Note the three 0x03 emulation-prevention bytes
+  // inside the PTL: escaped `01 60 00 00 03 00 90 00 00 03 00 00 03 00 78`
+  // unescapes to `01 60 00 00 00 90 00 00 00 00 00 78`, which is what the
+  // record must state.
+  const std::array<std::uint8_t, 45> mainSps{
+      0x42, 0x01, 0x01, 0x01, 0x60, 0x00, 0x00, 0x03, 0x00, 0x90, 0x00, 0x00,
+      0x03, 0x00, 0x00, 0x03, 0x00, 0x78, 0xA0, 0x03, 0xC0, 0x80, 0x10, 0xE5,
+      0x96, 0x56, 0x69, 0x24, 0xCA, 0xF0, 0x16, 0xA0, 0x40, 0x40, 0x20, 0x80,
+      0x00, 0x00, 0x03, 0x00, 0x80, 0x00, 0x00, 0x0F, 0x04};
+  Bytes main;
+  for (const std::uint8_t byte : mainSps) {
+    main.push_back(static_cast<std::byte>(byte));
+  }
+
+  HevcSpsFacts facts{};
+  expect(parseHevcSpsFacts(main, facts), "a real x265 Main SPS parses");
+  const std::array<std::uint8_t, 12> expectedMainPtl{
+      0x01, 0x60, 0x00, 0x00, 0x00, 0x90, 0x00, 0x00, 0x00, 0x00, 0x00, 0x78};
+  expect(facts.profileTierLevel == expectedMainPtl,
+         "the profile_tier_level is copied verbatim out of the UNESCAPED "
+         "RBSP, with all three emulation-prevention bytes removed");
+  expect((facts.profileTierLevel[0] & 0x1FU) == 1U,
+         "general_profile_idc 1 is Main");
+  expect(facts.profileTierLevel[11] == 0x78U,
+         "general_level_idc 0x78 is level 4.0");
+  expect(facts.chromaFormatIdc == 1, "the fixture is 4:2:0");
+  expect(facts.bitDepthLumaMinusEight == 0 &&
+             facts.bitDepthChromaMinusEight == 0,
+         "Main is 8-bit in both luma and chroma");
+  expect(facts.maxSubLayersMinusOne == 0,
+         "the fixture codes one temporal layer");
+  expect(facts.temporalIdNested,
+         "sps_temporal_id_nesting_flag is read, and the record's byte 21 "
+         "must restate it or the inspector rejects the VPS/SPS pair");
+
+  // Main10. The ONLY differences that matter to the record are the profile
+  // byte, the compatibility flags and the two depths -- everything else is
+  // identical, which is the point: a field-by-field rebuild would have to get
+  // the untouched bytes right too.
+  const std::array<std::uint8_t, 47> main10Sps{
+      0x42, 0x01, 0x01, 0x02, 0x20, 0x00, 0x00, 0x03, 0x00, 0x90, 0x00, 0x00,
+      0x03, 0x00, 0x00, 0x03, 0x00, 0x78, 0xA0, 0x03, 0xC0, 0x80, 0x10, 0xE4,
+      0xD9, 0x65, 0x66, 0x92, 0x4C, 0xAF, 0x01, 0x6A, 0x04, 0x04, 0x02, 0x08,
+      0x00, 0x00, 0x03, 0x00, 0x08, 0x00, 0x00, 0x03, 0x00, 0xF0, 0x40};
+  Bytes main10;
+  for (const std::uint8_t byte : main10Sps) {
+    main10.push_back(static_cast<std::byte>(byte));
+  }
+  HevcSpsFacts tenBit{};
+  expect(parseHevcSpsFacts(main10, tenBit), "a real x265 Main10 SPS parses");
+  const std::array<std::uint8_t, 12> expectedMain10Ptl{
+      0x02, 0x20, 0x00, 0x00, 0x00, 0x90, 0x00, 0x00, 0x00, 0x00, 0x00, 0x78};
+  expect(tenBit.profileTierLevel == expectedMain10Ptl,
+         "Main10's profile_tier_level copies verbatim too");
+  expect((tenBit.profileTierLevel[0] & 0x1FU) == 2U,
+         "general_profile_idc 2 is Main10, which is the value inspectHvcC "
+         "demands for a 10-bit record");
+  expect(tenBit.bitDepthLumaMinusEight == 2 &&
+             tenBit.bitDepthChromaMinusEight == 2,
+         "Main10 is 10-bit in both luma and chroma");
+  expect(tenBit.chromaFormatIdc == 1, "Main10 here is still 4:2:0");
+
+  // The PQ fixture is the same encode with a different VUI. The record header
+  // must be IDENTICAL: colour lives in the SPS the record carries, never in
+  // the record's own bytes.
+  const std::array<std::uint8_t, 47> pqSps{
+      0x42, 0x01, 0x01, 0x02, 0x20, 0x00, 0x00, 0x03, 0x00, 0x90, 0x00, 0x00,
+      0x03, 0x00, 0x00, 0x03, 0x00, 0x78, 0xA0, 0x03, 0xC0, 0x80, 0x10, 0xE4,
+      0xD9, 0x65, 0x66, 0x92, 0x4C, 0xAF, 0x01, 0x6A, 0x12, 0x20, 0x12, 0x08,
+      0x00, 0x00, 0x03, 0x00, 0x08, 0x00, 0x00, 0x03, 0x00, 0xF0, 0x40};
+  Bytes pq;
+  for (const std::uint8_t byte : pqSps) {
+    pq.push_back(static_cast<std::byte>(byte));
+  }
+  HevcSpsFacts pqFacts{};
+  expect(parseHevcSpsFacts(pq, pqFacts), "the PQ Main10 SPS parses");
+  expect(pqFacts.profileTierLevel == tenBit.profileTierLevel &&
+             pqFacts.bitDepthLumaMinusEight ==
+                 tenBit.bitDepthLumaMinusEight &&
+             pqFacts.maxSubLayersMinusOne == tenBit.maxSubLayersMinusOne &&
+             pqFacts.temporalIdNested == tenBit.temporalIdNested,
+         "a PQ VUI changes nothing in the hvcC header: the same encode "
+         "yields the same record bytes whether it is SDR or HDR");
+
+  // --- refusals ----------------------------------------------------------
+  HevcSpsFacts ignored{};
+  expect(!parseHevcSpsFacts(std::span<const std::byte>(main).first(2),
+                            ignored),
+         "an SPS with nothing past the NAL header is refused");
+  expect(!parseHevcSpsFacts(std::span<const std::byte>(main).first(10),
+                            ignored),
+         "an SPS truncated inside its profile_tier_level is refused rather "
+         "than completed with zeros");
+
+  Bytes notSps = main;
+  notSps[0] = std::byte{0x40};  // nal_unit_type 32, a VPS
+  expect(!parseHevcSpsFacts(notSps, ignored),
+         "a VPS handed in where an SPS was expected is refused by NAL type");
+
+  Bytes layered = main;
+  layered[1] = std::byte{0x09};  // nuh_layer_id 1
+  expect(!parseHevcSpsFacts(layered, ignored),
+         "a parameter set on a non-base layer is refused, matching the "
+         "shared inspector's own validHevcNalHeader rule");
+
+  Bytes temporal = main;
+  temporal[1] = std::byte{0x02};  // nuh_temporal_id_plus1 2
+  expect(!parseHevcSpsFacts(temporal, ignored),
+         "a parameter set at a non-zero temporal id is refused");
+
+  Bytes forbidden = main;
+  forbidden[0] = std::byte{0xC2};  // forbidden_zero_bit set
+  expect(!parseHevcSpsFacts(forbidden, ignored),
+         "the forbidden_zero_bit is checked");
 }
 
 void testAnnexBToAvccRepack() {
@@ -1384,18 +1526,15 @@ void testCorruptionResync() {
             << broken.resynchronizations << " resynchronizations\n";
 }
 
-void testSeekAccuracy() {
-  const std::filesystem::path root = fixtureRoot();
-  // A 20 s clip at -g 25: one random access point per second, which is what
-  // makes a landed-position measurement meaningful. `video.ts` deliberately is
-  // NOT used here — it carries exactly one keyframe in 5 s, so every seek past
-  // 1.5 s legitimately has no random access point after it, and measuring
-  // "accuracy" against it would measure the fixture, not the demuxer.
-  const std::filesystem::path path = root / "seek.ts";
-  if (root.empty() || !std::filesystem::exists(path)) {
-    skip("seek accuracy (seek.ts)");
-    return;
-  }
+// One fixture's worth of seek-accuracy measurement.
+//
+// `maximumUndershoot` is the fixture's own contract, not the demuxer's: a
+// 1 s-GOP mux can be held to a tight number while an 8.33 s-GOP one cannot,
+// and conflating the two would measure the fixture. What is NOT negotiable in
+// either is `allLandedAtOrBefore`: an accurate seek must never land after its
+// target, because the frame the user asked for would then never be decoded.
+void measureSeekAccuracy(const std::filesystem::path& path, const char* label,
+                         double maximumUndershoot) {
   const MpegTsPrepareOutcome outcome = prepareMpegTsLocalFile(path, {});
   if (outcome.status != MpegTsDemuxStatus::Ready) {
     skip("seek accuracy (fixture did not prepare)");
@@ -1414,13 +1553,23 @@ void testSeekAccuracy() {
   bool allCursorsStartCold = true;
   double worstUndershoot = 0.0;
   // Deliberately off-grid targets (tenths of a second) so a seek cannot be
-  // right by landing on a keyframe it happened to be asked for.
-  const std::array<std::int64_t, 8> targetTenths{15, 33, 57, 74, 92, 111,
-                                                 138, 165};
+  // right by landing on a keyframe it happened to be asked for. Spread across
+  // the whole clip so a long-GOP fixture exercises the deepest backoff round
+  // rather than only the shallow ones near the origin.
+  std::array<std::int64_t, 8> targetTenths{15, 33, 57, 74, 92, 111, 138, 165};
+  if (*durationSeconds > 20.0) {
+    const double span = *durationSeconds - 1.0;
+    for (std::size_t i = 0; i < targetTenths.size(); ++i) {
+      targetTenths[i] = static_cast<std::int64_t>(
+          (span * static_cast<double>(i + 1) / 9.0) * 10.0 + 5.0);
+    }
+  }
+  std::size_t measured = 0;
   for (const std::int64_t tenths : targetTenths) {
     if (static_cast<double>(tenths) / 10.0 >= *durationSeconds) {
       continue;
     }
+    ++measured;
     const MediaTime target{tenths, 10};
     const MpegTsPlanOutcome plan =
         asset.planGeneration(target, MediaSeekMode::Accurate);
@@ -1458,12 +1607,47 @@ void testSeekAccuracy() {
          "frame is skipped");
   expect(allCursorsStartCold,
          "every seek cursor's first sample is decodable from a cold decoder");
-  std::cerr << "  seek: worst undershoot " << worstUndershoot
-            << " s across " << targetTenths.size() << " off-grid targets in a "
+  std::cerr << "  seek " << label << ": worst undershoot " << worstUndershoot
+            << " s across " << measured << " off-grid targets in a "
             << *durationSeconds << " s clip\n";
-  expect(worstUndershoot < 12.0,
-         "the undershoot stays within the source contract's 12 s video "
-         "preroll ceiling");
+  expect(worstUndershoot < maximumUndershoot,
+         "the undershoot stays inside this fixture's own GOP-derived ceiling");
+}
+
+void testSeekAccuracy() {
+  const std::filesystem::path root = fixtureRoot();
+  if (root.empty()) {
+    skip("seek accuracy (no fixture root)");
+    return;
+  }
+  struct Case {
+    const char* file;
+    const char* label;
+    double maximumUndershoot;
+  };
+  // seek.ts is a 20 s clip at -g 25: one random access point per second, which
+  // is what makes a tight landed-position measurement meaningful. `video.ts`
+  // deliberately is NOT used -- it carries exactly one keyframe in 5 s, so
+  // every seek past 1.5 s legitimately has no random access point after it.
+  //
+  // The HEVC fixtures are the opposite shape and are here on purpose: an
+  // 8.33 s GOP at a higher bitrate than its H.264 twin is exactly what broke
+  // the old fixed-16-entry backoff, and only a target deep into the clip
+  // reaches the rounds that fix it.
+  const std::array<Case, 4> cases{{
+      {"seek.ts", "seek.ts (1 s GOP)", 12.0},
+      {"hevc-aac.ts", "hevc-aac.ts (8.33 s GOP)", 12.0},
+      {"hevc-main10.ts", "hevc-main10.ts", 12.0},
+      {"hevc-ac3.m2ts", "hevc-ac3.m2ts", 12.0},
+  }};
+  for (const Case& entry : cases) {
+    const std::filesystem::path path = root / entry.file;
+    if (!std::filesystem::exists(path)) {
+      skip(entry.label);
+      continue;
+    }
+    measureSeekAccuracy(path, entry.label, entry.maximumUndershoot);
+  }
 }
 
 void testFileIdentityAndCancellation() {
@@ -1550,6 +1734,127 @@ void testUnsupportedStreamTypeVerdicts() {
 // This is the other half of the verdict test: what used to be refused by name
 // must now be admitted with an exact descriptor, a positive frame extent, and
 // -- where the audio codec is routable -- a selected audio track.
+// End-to-end admission of HEVC transport streams: the synthesized hvcC must
+// survive the SHARED codec inspector, which re-parses the VPS/SPS/PPS the
+// record carries and compares every header field it re-derives. A record that
+// merely "looks right" does not reach here.
+void testHevcAdmission() {
+  const std::filesystem::path root = fixtureRoot();
+  struct Case {
+    const char* file;
+    const char* label;
+    std::uint8_t expectedDepth;
+    std::uint8_t expectedProfileIdc;
+    MediaCodec audio;
+  };
+  const std::array<Case, 4> cases{{
+      {"hevc-aac.ts", "hevc-aac.ts (Main 8-bit)", 8, 1, MediaCodec::Aac},
+      {"hevc-main10.ts", "hevc-main10.ts", 10, 2, MediaCodec::Aac},
+      {"hevc-main10-pq.ts", "hevc-main10-pq.ts (BT.2020 PQ)", 10, 2,
+       MediaCodec::Aac},
+      {"hevc-ac3.m2ts", "hevc-ac3.m2ts", 8, 1, MediaCodec::Ac3},
+  }};
+  for (const Case& entry : cases) {
+    const std::filesystem::path path = root / entry.file;
+    if (root.empty() || !std::filesystem::exists(path)) {
+      skip(entry.label);
+      continue;
+    }
+    const MpegTsPrepareOutcome outcome = prepareMpegTsLocalFile(path, {});
+    if (outcome.status != MpegTsDemuxStatus::Ready) {
+      std::cerr << "  " << entry.label << " -> "
+                << mpegTsDemuxErrorName(outcome.error) << ": "
+                << outcome.message << '\n';
+      expect(false, "an HEVC transport stream is admitted");
+      continue;
+    }
+    const MediaSourceDescriptor& descriptor = *outcome.asset->descriptor();
+    const MediaTrackDescriptor* video =
+        descriptor.selectedVideo
+            ? findMediaTrack(descriptor, *descriptor.selectedVideo)
+            : nullptr;
+    expect(video != nullptr && video->codec == MediaCodec::Hevc,
+           "stream type 0x24 routes to HEVC");
+    if (video == nullptr) {
+      continue;
+    }
+    expect(video->codecConfigurationKind ==
+               MediaCodecConfigurationKind::HvcC,
+           "the synthesized record is declared as an hvcC");
+    const std::vector<std::byte>& record = video->codecConfiguration;
+    // 23 header bytes, then three arrays each costing at least 3 + 2 + 1.
+    expect(record.size() > 23 + 3 * 6,
+           "the record carries a header and three parameter-set arrays");
+    if (record.size() <= 23) {
+      continue;
+    }
+    const auto at = [&](std::size_t index) {
+      return static_cast<std::uint8_t>(record[index]);
+    };
+    expect(at(0) == 0x01, "configurationVersion is 1");
+    expect((at(1) & 0xC0U) == 0U && (at(1) & 0x1FU) == entry.expectedProfileIdc,
+           "general_profile_space is zero and general_profile_idc is the "
+           "SPS's own");
+    expect(at(13) == 0xF0 && at(14) == 0x00,
+           "min_spatial_segmentation_idc is stated as zero behind its four "
+           "reserved ones");
+    expect(at(15) == 0xFC, "parallelismType is stated as unknown");
+    expect(at(16) == 0xFD, "chroma_format_idc is 1 (4:2:0)");
+    const std::uint8_t depth =
+        static_cast<std::uint8_t>(8U + (at(17) & 0x07U));
+    expect(depth == entry.expectedDepth &&
+               (at(17) & 0xF8U) == 0xF8U && at(18) == at(17),
+           "luma and chroma bit depths agree and match the fixture");
+    expect((at(21) & 0x03U) == 0x03U,
+           "lengthSizeMinusOne is 3, matching the four-byte lengths the "
+           "sample repack writes");
+    expect(((at(21) >> 3U) & 0x07U) >= 1U,
+           "numTemporalLayers is at least one");
+    expect(at(22) == 0x03, "exactly three parameter-set arrays");
+    expect(at(23) == 0x20, "the first array is the VPS array");
+    expect(video->video.has_value() &&
+               video->video->bitsPerComponent == entry.expectedDepth,
+           "the descriptor states the coded depth the record does");
+    const MediaTrackDescriptor* audio =
+        descriptor.selectedAudio
+            ? findMediaTrack(descriptor, *descriptor.selectedAudio)
+            : nullptr;
+    expect(audio != nullptr && audio->codec == entry.audio,
+           "the paired audio track is admitted unchanged");
+
+    // Walk far enough to prove the keyframe predicate fires on IRAP NALs and
+    // that a cold-decodable unit exists, which is what every seek depends on.
+    const MpegTsPlanOutcome planned =
+        outcome.asset->planGeneration(MediaTime{0, 1}, MediaSeekMode::Accurate);
+    expect(planned.status == MpegTsDemuxStatus::Ready,
+           "an HEVC generation plans from the origin");
+    if (!planned.plan) {
+      continue;
+    }
+    std::unique_ptr<MpegTsCursor> cursor =
+        outcome.asset->makeVideoCursor(*planned.plan);
+    std::size_t units = 0;
+    std::size_t cold = 0;
+    while (cursor != nullptr && units < 120) {
+      const MpegTsCursorReadResult read = cursor->readNext();
+      const auto* sample = std::get_if<MpegTsCompressedSample>(&read);
+      if (sample == nullptr) {
+        break;
+      }
+      cold += sample->decodableFromCold ? 1 : 0;
+      ++units;
+    }
+    expect(units > 0, "the HEVC cursor produces access units");
+    expect(cold > 0,
+           "at least one HEVC access unit is proved cold-decodable from the "
+           "bitstream, not from random_access_indicator");
+    std::cerr << "  " << entry.label << " -> " << video->video->codedWidth
+              << "x" << video->video->codedHeight << ", " << int{depth}
+              << "-bit, hvcC " << record.size() << " bytes, " << units
+              << " units, " << cold << " cold\n";
+  }
+}
+
 void testMpeg2AndAc3Admission() {
   const std::filesystem::path root = fixtureRoot();
   struct Case {
@@ -1727,6 +2032,7 @@ int main() {
   testProgramMapParsing();
   testPesHeaderDecoding();
   testAccessUnitScanning();
+  testHevcParameterSetFacts();
   testAnnexBToAvccRepack();
   testElementaryAudioFraming();
   testFramingDetection();
@@ -1740,6 +2046,7 @@ int main() {
   testFileIdentityAndCancellation();
   testUnsupportedStreamTypeVerdicts();
   testMpeg2AndAc3Admission();
+  testHevcAdmission();
   testDurationAgainstGroundTruth();
 
   if (skipped != 0) {

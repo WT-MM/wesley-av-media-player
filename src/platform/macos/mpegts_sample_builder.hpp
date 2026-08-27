@@ -119,10 +119,14 @@ class MpegTsCoreMediaSampleStorage final : public media::MediaPayloadStorage {
 
 // Two video shapes, and exactly two.
 //
-//  * H.264 arrives as Annex-B with in-band SPS/PPS. The demuxer synthesized an
-//    avcC from those parameter sets and the shared codec inspector already
-//    admitted it, so the record travels to CoreMedia verbatim as an `avcC`
-//    sample-description extension atom, exactly as the Matroska path does.
+//  * H.264 and HEVC arrive as Annex-B with in-band parameter sets (SPS/PPS,
+//    and VPS/SPS/PPS respectively). The demuxer synthesized an avcC or hvcC
+//    from those parameter sets and the shared codec inspector already
+//    admitted it, so the record travels to CoreMedia verbatim as an `avcC` or
+//    `hvcC` sample-description extension atom, exactly as the Matroska path
+//    does. The two differ ONLY in the atom name and the CMVideoCodecType;
+//    every other byte of the seam is shared, which is deliberate -- a
+//    divergence here would be a divergence the decoder sees.
 //  * MPEG-2 needs NO extensions dictionary at all. Its sequence header is
 //    in-band and `CMVideoFormatDescriptionCreate` accepts a null extensions
 //    argument -- measured in scratchpad/vt_mpeg2_probe.mm, where a session

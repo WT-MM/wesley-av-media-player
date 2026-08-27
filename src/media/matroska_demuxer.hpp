@@ -193,6 +193,15 @@ class MatroskaCursor final {
   [[nodiscard]] MatroskaCursorReadResult
   readNext(CancellationToken cancellation = {}) noexcept;
 
+private:
+  // One Block in, one sample out. readNext() wraps this with the one-Block
+  // lookahead that bounds a video frame carrying neither BlockDuration nor
+  // DefaultDuration by its successor's timestamp.
+  [[nodiscard]] MatroskaCursorReadResult
+  readNextRaw(CancellationToken cancellation) noexcept;
+
+public:
+
  private:
   struct Impl;
   explicit MatroskaCursor(std::unique_ptr<Impl> impl) noexcept;

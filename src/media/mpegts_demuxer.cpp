@@ -238,6 +238,12 @@ struct StreamWalk {
   bool randomAccess{false};
   bool discontinuity{false};
   bool continuityGap{false};
+  // Sticky across units, deliberately: it is a property of the STREAM's
+  // prologue size, not of any one access unit, and the only consumer is a
+  // refusal message that wants to know whether the scan ever ran out of probe
+  // before reaching a picture. Cleared by beginUnit's caller? No -- see
+  // finishUnit, which only ever sets it.
+  bool probeEndedBeforeSlice{false};
 
   void beginUnit(std::uint64_t offset) noexcept {
     firstPacketOffset = offset;
@@ -465,6 +471,251 @@ struct AssetState {
                   unit.begin() + entry.offset + entry.size);
   }
   return true;
+}
+
+// ---------------------------------------------------------------------------
+// hvcC synthesis from in-band Annex-B parameter sets
+// ---------------------------------------------------------------------------
+//
+// The HEVC counterpart of buildAvcCFromAnnexB, and a fussier record. avcC
+// takes three bytes off the front of the SPS and is done; hvcC states
+// twenty-three header bytes before its first array, and the shared inspector
+// re-derives every one of them from the parameter sets and compares.
+//
+//   [0]      configurationVersion = 1.
+//   [1..12]  profile_tier_level, COPIED VERBATIM out of the SPS RBSP. See
+//            HevcSpsFacts in mpegts_packet.hpp for why this is a copy: the
+//            general_constraint_indicator_flags alone are 48 bits of which 43
+//            are reserved, and a field-by-field rebuild would have to invent
+//            a normalization the source stream never agreed to.
+//   [13..14] '1111' + min_spatial_segmentation_idc. Stated as zero, which is
+//            the syntax's own "no information" value -- a transport stream
+//            carries no such declaration, and guessing one would be a claim
+//            about tile geometry this demuxer cannot prove.
+//   [15]     '111111' + parallelismType, zero for the same reason.
+//   [16]     '111111' + chroma_format_idc, from the SPS.
+//   [17..18] '11111' + luma / chroma bit_depth_minus8, from the SPS.
+//   [19..20] avgFrameRate, zero = unspecified. The demuxer DOES know a frame
+//            extent by this point, but this field is a 16.16-style average in
+//            frames per 256 seconds and stating a rounded one would put an
+//            approximation into a record that is otherwise exact.
+//   [21]     constantFrameRate (0 = unknown) + numTemporalLayers +
+//            temporalIdNested + lengthSizeMinusOne = 3.
+//   [22]     numOfArrays = 3.
+//
+// lengthSizeMinusOne is 3 for the same reason as avcC's: four-byte lengths
+// are the only width inspectHvcC admits, and the per-sample repack in the
+// platform builder writes exactly that.
+//
+// array_completeness is left ZERO on every array. Zero is the honest value
+// here -- the elementary stream really does keep carrying its parameter sets
+// in band, and it is the value the inspector was taught to accept when the
+// Matroska form of a stream-copied file differed from the MP4 form by exactly
+// this bit.
+[[nodiscard]] bool buildHvcCFromAnnexB(std::span<const std::byte> unit,
+                                       std::vector<std::byte>& record) {
+  std::array<AnnexBNal, 8> videoSets{};
+  std::array<AnnexBNal, 8> sequenceSets{};
+  std::array<AnnexBNal, 8> pictureSets{};
+  std::size_t videoCount = 0;
+  std::size_t sequenceCount = 0;
+  std::size_t pictureCount = 0;
+
+  AnnexBNal nal{};
+  std::uint32_t cursor = 0;
+  while (nextAnnexBNal(unit, cursor, MediaCodec::Hevc, nal)) {
+    if (nal.size == 0) {
+      break;
+    }
+    if (nal.type == 32 && videoCount < videoSets.size()) {
+      videoSets[videoCount++] = nal;
+    } else if (nal.type == 33 && sequenceCount < sequenceSets.size()) {
+      sequenceSets[sequenceCount++] = nal;
+    } else if (nal.type == 34 && pictureCount < pictureSets.size()) {
+      pictureSets[pictureCount++] = nal;
+    }
+    const std::uint32_t advance = nal.offset + nal.size;
+    if (advance <= cursor || advance >= unit.size()) {
+      break;
+    }
+    cursor = advance;
+  }
+  if (videoCount == 0 || sequenceCount == 0 || pictureCount == 0) {
+    return false;
+  }
+
+  HevcSpsFacts facts{};
+  if (!parseHevcSpsFacts(unit.subspan(sequenceSets[0].offset,
+                                      sequenceSets[0].size),
+                         facts)) {
+    return false;
+  }
+  // 4:2:0 is the only chroma format the native envelope carries, and the two
+  // admitted depths are 8 and 10. Refusing here names the fact; letting a
+  // 4:2:2 record through would only move the refusal into the inspector with
+  // a less specific message.
+  if (facts.chromaFormatIdc != 1 ||
+      facts.bitDepthLumaMinusEight != facts.bitDepthChromaMinusEight ||
+      (facts.bitDepthLumaMinusEight != 0 &&
+       facts.bitDepthLumaMinusEight != 2)) {
+    return false;
+  }
+
+  record.clear();
+  record.push_back(std::byte{0x01});
+  for (const std::uint8_t byte : facts.profileTierLevel) {
+    record.push_back(static_cast<std::byte>(byte));
+  }
+  record.push_back(std::byte{0xF0});
+  record.push_back(std::byte{0x00});
+  record.push_back(std::byte{0xFC});
+  record.push_back(static_cast<std::byte>(0xFCU | facts.chromaFormatIdc));
+  record.push_back(
+      static_cast<std::byte>(0xF8U | facts.bitDepthLumaMinusEight));
+  record.push_back(
+      static_cast<std::byte>(0xF8U | facts.bitDepthChromaMinusEight));
+  record.push_back(std::byte{0x00});
+  record.push_back(std::byte{0x00});
+  const std::uint8_t temporalLayers =
+      static_cast<std::uint8_t>(facts.maxSubLayersMinusOne + 1U);
+  record.push_back(static_cast<std::byte>(
+      static_cast<std::uint8_t>(temporalLayers << 3U) |
+      static_cast<std::uint8_t>(facts.temporalIdNested ? 0x04U : 0x00U) |
+      0x03U));
+  record.push_back(std::byte{0x03});
+
+  const auto appendArray = [&](std::uint8_t nalType,
+                               const std::array<AnnexBNal, 8>& entries,
+                               std::size_t count) -> bool {
+    record.push_back(static_cast<std::byte>(nalType));
+    record.push_back(static_cast<std::byte>((count >> 8) & 0xFFU));
+    record.push_back(static_cast<std::byte>(count & 0xFFU));
+    for (std::size_t i = 0; i < count; ++i) {
+      const AnnexBNal& entry = entries[i];
+      if (entry.size == 0 || entry.size > 0xFFFFU) {
+        return false;
+      }
+      record.push_back(static_cast<std::byte>((entry.size >> 8) & 0xFFU));
+      record.push_back(static_cast<std::byte>(entry.size & 0xFFU));
+      record.insert(record.end(), unit.begin() + entry.offset,
+                    unit.begin() + entry.offset + entry.size);
+    }
+    return true;
+  };
+  return appendArray(32, videoSets, videoCount) &&
+         appendArray(33, sequenceSets, sequenceCount) &&
+         appendArray(34, pictureSets, pictureCount);
+}
+
+// ISO/IEC 23091-2 code points -> the modelled colour facts.
+//
+// The transport stream's ONLY colour statement is the SPS VUI, so unlike
+// Matroska (Colour element) or MP4 (`colr` box) there is no container source
+// to cross-check against and no second vocabulary to reconcile -- these three
+// functions are the whole colour path for this container.
+//
+// Value 2 is "unspecified", which carries exactly as much information as an
+// absent description and is therefore Unknown, NOT OtherExplicit:
+// OtherExplicit means "an explicit value this renderer does not support" and
+// is a fallback proof. Anything not named here stays OtherExplicit and is
+// refused by name downstream, in mediaVideoColorAdmitted().
+//
+// The named set is EXACTLY the set the AVFoundation route models, so one
+// stream gets one verdict whether it arrives as .ts, .mkv or .mp4. This is
+// character-for-character the same table the Matroska demuxer states for the
+// same reason; the two are separate today because they are landing in two
+// lanes at once, and the honest next move is to collapse them into one
+// definition rather than let a third copy appear.
+[[nodiscard]] constexpr MediaColorPrimaries
+mediaColorPrimariesFromIso(std::uint32_t value) noexcept {
+  switch (value) {
+    case 1:
+      return MediaColorPrimaries::Bt709;
+    case 2:
+      return MediaColorPrimaries::Unknown;
+    case 5:
+    case 6:
+      // BT.470BG and SMPTE 170M -- the two spellings of BT.601 primaries.
+      return MediaColorPrimaries::Bt601;
+    case 9:
+      return MediaColorPrimaries::Bt2020;
+    default:
+      return MediaColorPrimaries::OtherExplicit;
+  }
+}
+
+[[nodiscard]] constexpr MediaTransferFunction
+mediaTransferFunctionFromIso(std::uint32_t value) noexcept {
+  switch (value) {
+    case 1:
+      return MediaTransferFunction::Bt709;
+    case 2:
+      return MediaTransferFunction::Unknown;
+    case 13:
+      return MediaTransferFunction::Srgb;
+    case 16:
+      return MediaTransferFunction::Pq;
+    case 18:
+      return MediaTransferFunction::Hlg;
+    default:
+      return MediaTransferFunction::OtherExplicit;
+  }
+}
+
+[[nodiscard]] constexpr MediaMatrixCoefficients
+mediaMatrixCoefficientsFromIso(std::uint32_t value) noexcept {
+  switch (value) {
+    case 1:
+      return MediaMatrixCoefficients::Bt709;
+    case 2:
+      return MediaMatrixCoefficients::Unknown;
+    case 5:
+    case 6:
+      return MediaMatrixCoefficients::Bt601;
+    case 9:
+      return MediaMatrixCoefficients::Bt2020Ncl;
+    default:
+      return MediaMatrixCoefficients::OtherExplicit;
+  }
+}
+
+// The shared inspector's verdict, by name, for a refusal message. Local
+// rather than published from video_codec_configuration.hpp so this lane adds
+// no surface to a header three other containers include; if a second caller
+// ever wants it, that is the moment to move it.
+[[nodiscard]] const char* videoCodecConfigurationErrorName(
+    VideoCodecConfigurationError error) noexcept {
+  switch (error) {
+    case VideoCodecConfigurationError::None:
+      return "None";
+    case VideoCodecConfigurationError::UnsupportedCodec:
+      return "UnsupportedCodec";
+    case VideoCodecConfigurationError::ConfigurationKindMismatch:
+      return "ConfigurationKindMismatch";
+    case VideoCodecConfigurationError::EmptyConfiguration:
+      return "EmptyConfiguration";
+    case VideoCodecConfigurationError::ConfigurationTooLarge:
+      return "ConfigurationTooLarge";
+    case VideoCodecConfigurationError::MalformedRecord:
+      return "MalformedRecord";
+    case VideoCodecConfigurationError::MissingParameterSet:
+      return "MissingParameterSet";
+    case VideoCodecConfigurationError::ParameterSetMismatch:
+      return "ParameterSetMismatch";
+    case VideoCodecConfigurationError::UnsupportedProfile:
+      return "UnsupportedProfile";
+    case VideoCodecConfigurationError::UnsupportedChromaFormat:
+      return "UnsupportedChromaFormat";
+    case VideoCodecConfigurationError::UnsupportedBitDepth:
+      return "UnsupportedBitDepth";
+    case VideoCodecConfigurationError::UnsupportedColorDescription:
+      return "UnsupportedColorDescription";
+    case VideoCodecConfigurationError::DimensionLimitExceeded:
+      return "DimensionLimitExceeded";
+    case VideoCodecConfigurationError::ReorderLimitExceeded:
+      return "ReorderLimitExceeded";
+  }
+  return "Unknown";
 }
 
 // A two-byte AudioSpecificConfig recovered from an ADTS header, which is the
@@ -815,6 +1066,12 @@ finishUnit(const AssetState& state, StreamWalk& walk, MediaTrackId track,
     // bitstream can say it is decodable from a cold decoder.
     sample.keyFrame = scan.keyFrame || walk.randomAccess;
     sample.decodableFromCold = scan.decodableFromCold;
+    // Record, do not act. The predicate stays bitstream-only; this only lets
+    // a caller that finds NO random access point say whether it was looking
+    // at whole pictures or at truncated prologues.
+    if (!scan.sliceInProbe) {
+      walk.probeEndedBeforeSlice = true;
+    }
   } else {
     sample.keyFrame = true;
     sample.decodableFromCold = true;
@@ -1167,21 +1424,60 @@ MpegTsPreparedAsset::planGeneration(MediaTime target, MediaSeekMode mode,
       //
       // So the scan tracks the two candidates separately — the last cold
       // random access point at or before the target, and the first one after
-      // it — and steps back one index entry at a time until it has the former.
-      // Cost is bounded by the backoff count times the index spacing; reaching
-      // entry zero means the stream genuinely has no random access point at or
-      // before the target, and the first-after candidate is then used so the
-      // seek still lands rather than being refused.
-      constexpr std::size_t kMaximumIndexBackoff{16};
+      // it — and steps back until it has the former.
+      //
+      // THE BACKOFF IS MEASURED IN TIME, NOT IN INDEX ENTRIES. It used to step
+      // back a fixed sixteen entries, and that was a byte measure wearing a
+      // time costume: index entries are spaced by BYTES, so how far sixteen of
+      // them reach depends on the bitrate. Measured 2026-08-27 on two muxes of
+      // the SAME 72 s clip with the SAME 8.33 s GOP: the 72 MB H.264 one has
+      // ~0.5 s of media per entry and sixteen entries just reached the
+      // preceding keyframe, while the 93 MB HEVC one has ~0.4 s per entry and
+      // sixteen entries fell 0.8 s short. The seek then took the first-after
+      // candidate, the plan started AFTER its own accurate target, and the
+      // preview lane refused it by name -- a bitrate-dependent seek failure
+      // with nothing to do with the codec.
+      //
+      // Now each round doubles how far back in MEDIA TIME it starts: the
+      // landed entry, then 1 s, 2 s, 4 s before the target, and so on. Each
+      // round's forward scan stops as soon as it passes the target, so a
+      // round's cost is proportional to its own reach and the whole sequence
+      // costs at most twice the final one. Reaching entry zero means the
+      // stream genuinely has no random access point at or before the target,
+      // and the first-after candidate is then used so the seek still lands
+      // rather than being refused.
+      constexpr std::size_t kMaximumBackoffRounds{24};
       std::optional<MpegTsCompressedSample> atOrBefore;
       std::optional<MpegTsCompressedSample> firstAfter;
       std::int64_t atOrBeforeTick = 0;
       std::int64_t firstAfterTick = 0;
+      bool probeEndedBeforeSlice = false;
+      std::int64_t backoffTicks = 0;
+      std::size_t previousStartIndex = landedIndex + 1;
 
-      for (std::size_t backoff = 0;
-           backoff <= kMaximumIndexBackoff && !atOrBefore; ++backoff) {
-        const std::size_t startIndex =
-            landedIndex >= backoff ? landedIndex - backoff : 0;
+      for (std::size_t round = 0;
+           round < kMaximumBackoffRounds && !atOrBefore; ++round) {
+        std::size_t startIndex = landedIndex;
+        if (round != 0) {
+          backoffTicks = backoffTicks == 0
+                             ? kTimestampHz
+                             : std::min<std::int64_t>(
+                                   backoffTicks * 2,
+                                   std::numeric_limits<std::int64_t>::max() / 4);
+          const std::int64_t floorTick = targetTick - backoffTicks;
+          while (startIndex > 0 && entries[startIndex].tick > floorTick) {
+            --startIndex;
+          }
+        }
+        // A round that would rescan exactly what the previous one already did
+        // buys nothing; skip straight to the next, wider reach.
+        if (startIndex == previousStartIndex) {
+          if (startIndex == 0) {
+            break;
+          }
+          continue;
+        }
+        previousStartIndex = startIndex;
         ReadWindow window(*state.reader);
         PacketWalker walker(window, state.framing);
         StreamWalk walk{};
@@ -1265,6 +1561,8 @@ MpegTsPreparedAsset::planGeneration(MediaTime target, MediaSeekMode mode,
             break;
           }
         }
+        probeEndedBeforeSlice =
+            probeEndedBeforeSlice || walk.probeEndedBeforeSlice;
         if (startIndex == 0) {
           break;  // nothing earlier to back off to
         }
@@ -1289,8 +1587,18 @@ MpegTsPreparedAsset::planGeneration(MediaTime target, MediaSeekMode mode,
       }
       if (chosen == nullptr) {
         result.error = MpegTsDemuxError::ScanLimit;
+        // Two different facts wear the same refusal, and telling them apart
+        // from a stderr capture is the difference between "this stream has a
+        // long GOP" and "this stream's per-picture prologue is larger than the
+        // probe, so the scan never saw a picture at all". The second was a
+        // real, measured failure on HDR HEVC and cost a whole diagnosis pass.
         result.message =
-            "no decodable random access point within the bounded seek scan";
+            probeEndedBeforeSlice
+                ? "no decodable random access point within the bounded seek "
+                  "scan; the access-unit probe ended before any slice NAL, so "
+                  "the picture prologue exceeds the probe"
+                : "no decodable random access point within the bounded seek "
+                  "scan";
         return result;
       }
       videoStart = chosen->firstPacketOffset;
@@ -1930,13 +2238,17 @@ MpegTsPrepareOutcome prepareMpegTs(std::shared_ptr<SeekableByteReader> reader,
               : std::string("selected mpeg-ts program has no video stream");
       return result;
     }
+    // Defensive rather than load-bearing: codecForStreamType already yields
+    // only these three for a video-kind stream type, and anything else has
+    // been refused by name above. It stays so that a future routing append
+    // cannot reach the descriptor code below without a matching branch there.
     if (videoStream->codec != MediaCodec::H264 &&
+        videoStream->codec != MediaCodec::Hevc &&
         videoStream->codec != MediaCodec::Mpeg2Video) {
       result.status = MpegTsDemuxStatus::Unsupported;
       result.error = MpegTsDemuxError::UnsupportedStreamType;
       result.message =
-          "mpeg-ts video admission is H.264 and MPEG-2 only; HEVC needs hvcC "
-          "synthesis from in-band VPS/SPS/PPS";
+          "mpeg-ts video admission is H.264, HEVC and MPEG-2 only";
       return result;
     }
 
@@ -1984,6 +2296,8 @@ MpegTsPrepareOutcome prepareMpegTs(std::shared_ptr<SeekableByteReader> reader,
       result.message =
           state->video.codec == MediaCodec::Mpeg2Video
               ? "no in-band MPEG-2 sequence header in the bounded scan"
+          : state->video.codec == MediaCodec::Hevc
+              ? "no in-band HEVC VPS/SPS/PPS in the bounded scan"
               : "no in-band H.264 parameter sets in the bounded scan";
       return result;
     }
@@ -2182,26 +2496,59 @@ MpegTsPrepareOutcome prepareMpegTs(std::shared_ptr<SeekableByteReader> reader,
       descriptor->selectedVideo = track.id;
       descriptor->tracks.push_back(std::move(track));
     } else {
+      // H.264 and HEVC share every step from here: both arrive as Annex-B
+      // with in-band parameter sets, both have their out-of-band record
+      // synthesized from exactly those sets, and both hand that record to the
+      // one shared inspector rather than trusting the synthesis.
+      const bool hevc = state->video.codec == MediaCodec::Hevc;
+      const MediaCodecConfigurationKind configurationKind =
+          hevc ? MediaCodecConfigurationKind::HvcC
+               : MediaCodecConfigurationKind::AvcC;
       std::vector<std::byte> avcc;
-      if (!buildAvcCFromAnnexB(facts.parameterSets, avcc)) {
+      const bool built = hevc ? buildHvcCFromAnnexB(facts.parameterSets, avcc)
+                              : buildAvcCFromAnnexB(facts.parameterSets, avcc);
+      if (!built) {
         result.status = MpegTsDemuxStatus::Unsupported;
         result.error = MpegTsDemuxError::CodecConfiguration;
-        result.message = "could not synthesize an avcC from in-band SPS/PPS";
+        result.message =
+            hevc ? "could not synthesize an hvcC from in-band VPS/SPS/PPS"
+                 : "could not synthesize an avcC from in-band SPS/PPS";
         return result;
       }
       VideoCodecConfigurationLimits codecLimits{};
       codecLimits.maximumWidth = state->limits.maximumCodedWidth;
       codecLimits.maximumHeight = state->limits.maximumCodedHeight;
       codecLimits.maximumPixels = state->limits.maximumCodedPixels;
+      // The transport stream has no colour box at all -- no `colr`, no
+      // Matroska Colour element -- so the SPS VUI is the ONLY colour
+      // statement, and this flag is what lets the shared SPS parser carry a
+      // BT.2020/PQ or HLG one through instead of refusing it.
+      //
+      // The flag's own contract (video_codec_configuration.hpp) is that a
+      // route may turn it on only if it also carries the colour description
+      // onto the CMVideoFormatDescription it synthesizes. This route now
+      // does: createMpegTsVideoFormatDescription writes ColorPrimaries,
+      // TransferFunction and YCbCrMatrix extensions from exactly the facts
+      // mapped below. Turning this on WITHOUT that would hand VideoToolbox a
+      // PQ stream with nothing to attach to the surface, which renders as
+      // washed-out SDR -- worse than the named refusal it replaced.
+      codecLimits.admitHighDynamicRangeColor = true;
       const VideoCodecConfigurationInspection inspection =
-          inspectVideoCodecConfiguration(MediaCodec::H264,
-                                         MediaCodecConfigurationKind::AvcC,
-                                         avcc, codecLimits);
+          inspectVideoCodecConfiguration(state->video.codec,
+                                         configurationKind, avcc, codecLimits);
       if (!inspection.admitted()) {
         result.status = MpegTsDemuxStatus::Unsupported;
         result.error = MpegTsDemuxError::CodecConfiguration;
+        // Name the inspector's own verdict. "Refused" alone cost a whole
+        // debugging pass on the HEVC lane, where the record was byte-correct
+        // and the refusal was a color-description envelope the synthesis had
+        // no say in.
         result.message =
-            "synthesized avcC was refused by the shared codec inspector";
+            std::string(hevc ? "synthesized hvcC was refused by the shared "
+                               "codec inspector: "
+                             : "synthesized avcC was refused by the shared "
+                               "codec inspector: ") +
+            videoCodecConfigurationErrorName(inspection.error);
         return result;
       }
       const VideoCodecConfigurationFacts& codec = *inspection.facts;
@@ -2209,10 +2556,10 @@ MpegTsPrepareOutcome prepareMpegTs(std::shared_ptr<SeekableByteReader> reader,
       MediaTrackDescriptor track{};
       track.id = state->video.id;
       track.kind = MediaTrackKind::Video;
-      track.codec = MediaCodec::H264;
+      track.codec = state->video.codec;
       track.timeBase = MediaTime{1, kTimestampHz};
       track.duration = duration;
-      track.codecConfigurationKind = MediaCodecConfigurationKind::AvcC;
+      track.codecConfigurationKind = configurationKind;
       track.codecConfiguration = std::move(avcc);
       MediaVideoFormat format{};
       format.codedWidth = codec.width;
@@ -2223,22 +2570,12 @@ MpegTsPrepareOutcome prepareMpegTs(std::shared_ptr<SeekableByteReader> reader,
       format.progressive = true;
       format.sampleFormat = codec.sampleFormat;
       if (codec.color.colorDescriptionPresent) {
-        // ISO/IEC 23091-2 value 2 is "unspecified" and carries no information,
-        // so it is Unknown rather than OtherExplicit.
         format.colorPrimaries =
-            codec.color.colorPrimaries == 1   ? MediaColorPrimaries::Bt709
-            : codec.color.colorPrimaries == 2 ? MediaColorPrimaries::Unknown
-                                              : MediaColorPrimaries::OtherExplicit;
+            mediaColorPrimariesFromIso(codec.color.colorPrimaries);
         format.transferFunction =
-            codec.color.transferCharacteristics == 1
-                ? MediaTransferFunction::Bt709
-            : codec.color.transferCharacteristics == 2
-                ? MediaTransferFunction::Unknown
-                : MediaTransferFunction::OtherExplicit;
+            mediaTransferFunctionFromIso(codec.color.transferCharacteristics);
         format.matrixCoefficients =
-            codec.color.matrixCoefficients == 1   ? MediaMatrixCoefficients::Bt709
-            : codec.color.matrixCoefficients == 2 ? MediaMatrixCoefficients::Unknown
-                                                  : MediaMatrixCoefficients::OtherExplicit;
+            mediaMatrixCoefficientsFromIso(codec.color.matrixCoefficients);
       }
       track.video = format;
       descriptor->selectedVideo = track.id;

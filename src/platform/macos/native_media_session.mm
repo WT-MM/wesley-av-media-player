@@ -2227,6 +2227,13 @@ if (descriptor == nullptr || !nativeV1Descriptor(*descriptor)) {
         preparedPublished = true;
         publicPrepared = true;
         publicDurationSeconds = descriptorDurationSeconds(*descriptor);
+        // A generation with no selected video track has no frame to preview
+        // and never will: there is no thumbnail to decode, so every scrub
+        // gesture would arm the lane, fail construction, and publish one
+        // PreviewFailed per motion sample. State the absence ONCE, here, where
+        // the descriptor is first known, and let preparePreviewHandoff() give
+        // the quiet refusal its contract already promises.
+        publicPreviewUnavailable = !descriptor->selectedVideo.has_value();
         publicOwnership = ownership;
         publicDispatcherObservedVideo = dispatcherObservedVideo;
         // The selected video track's on-screen rectangle, carried on Prepared
@@ -3425,6 +3432,11 @@ if (result != NativeAudioSessionProgress::Done) {
   MediaGeneration generationHighWater{0};
   std::uint64_t publicLastOutputEventSequence{0};
   double publicDurationSeconds{0.0};
+  // True once Prepared has published a generation with no selected video
+  // track. Guarded by `mutex` like every other public fact; read by
+  // preparePreviewHandoff() and previewFrame() to refuse the scrub lane
+  // quietly instead of failing it once per pointer sample.
+  bool publicPreviewUnavailable{false};
   media::NativeMediaDispatcher* dispatcherObserver{nullptr};
   NativeMediaSessionOwnershipPhase publicOwnership{
       NativeMediaSessionOwnershipPhase::Empty};
@@ -3906,6 +3918,15 @@ NativeMediaSession::preparePreviewHandoff() noexcept {
         impl_->publicPreviewHandoffFailed) {
       return NativeMediaSessionCommandStatus::Invalid;
     }
+    // Audio-only: there is no frame to preview. Refuse the whole gesture's
+    // preview here, at bind time, rather than admitting motion samples the
+    // lane can only fail. Unsupported is distinct from Ignored on purpose --
+    // Ignored means "not right now", this means "not for this source" -- and
+    // the owner maps it to a quiet false, which the controller reads as
+    // "this gesture has no preview" for its whole lifetime.
+    if (impl_->publicPreviewUnavailable) {
+      return NativeMediaSessionCommandStatus::Unsupported;
+    }
     if (impl_->publicPreviewHandoffPending ||
         impl_->publicPreviewHandoffReady || impl_->publicPreviewPending) {
       return NativeMediaSessionCommandStatus::Ignored;
@@ -4007,6 +4028,14 @@ NativePreviewFrameRequestStatus NativeMediaSession::previewFrame(
     }
     if (impl_->publicPreviewHandoffFailed) {
       return NativePreviewFrameRequestStatus::Failed;
+    }
+    // An audio-only source refuses the whole gesture at preparePreviewHandoff.
+    // A request that still reaches here (a caller that ignored that refusal,
+    // or a race against Prepared) is refused the same way, so the lane can
+    // never be armed for a generation that has no frame to give -- and, being
+    // a refusal rather than an admission, it publishes no PreviewFailed.
+    if (impl_->publicPreviewUnavailable) {
+      return NativePreviewFrameRequestStatus::Invalid;
     }
     if (!impl_->publicPrepared ||
         command.generation.value != impl_->publicActiveGeneration ||

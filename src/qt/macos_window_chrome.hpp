@@ -6,6 +6,7 @@
 
 #include <functional>
 
+class QTimer;
 class QWindow;
 
 namespace wam::macos_window_chrome {
@@ -211,6 +212,46 @@ bool setFillScreenPadded(QWindow *window, bool filled);
 // remembered frame stale: after one of those, "put it back" means nothing.
 void clearFillScreenPadded(QWindow *window);
 
+// The EDR headroom of `window`'s screen right now: how far above SDR white the
+// display can currently go, as a multiple (1.0 means no headroom at all, i.e.
+// an SDR display or one already driven to its limit). Read from NSScreen's
+// maximumExtendedDynamicRangeColorComponentValue.
+//
+// This MOVES. Measured on one built-in XDR display with nothing reconfigured,
+// it read 16.0 on one sample and 6.04 minutes later: the headroom follows SDR
+// brightness and ambient light. So it is read at every apply and re-read on a
+// slow timer while the Vivid boost is on, never cached at startup.
+[[nodiscard]] qreal screenEdrHeadroom(QWindow *window);
+
+// Applies the Vivid EDR luminance boost to `window`'s video, as a multiple of
+// SDR white; 1.0 (or less) turns it off. Returns the boost ACTUALLY applied,
+// which is `boost` clamped to the screen's live headroom -- asking for more
+// than the display can show would not be brighter, it would only crush the
+// highlights above the ceiling into a flat white.
+//
+// A no-op with no video layer installed (the libmpv fallback route, or a window
+// with nothing open); the value is still remembered, so it takes effect when
+// one appears. See src/platform/macos/native_layer_host_view.hpp for the
+// mechanism and what it costs.
+qreal setVividBoost(QWindow *window, qreal boost);
+
+// The boost currently applied to `window`, or 1.0.
+[[nodiscard]] qreal vividBoost(QWindow *window);
+
+// Verification seams, reported by the WAM_TEST_WINDOW_SCRIPT `report` verb.
+//
+// Both read the real AppKit/CoreAnimation state rather than whatever QML
+// believes, which is the whole reason they exist: a scripted round has to be
+// able to state that the compositor was handed a boosted layer and that an
+// overlay window is genuinely on screen, not that a property was set.
+//
+// appliedVividBoost recovers the boost from the display layer's own attached
+// filter; 0 means there is no display layer (the libmpv fallback route, or
+// nothing open). theaterDimOverlayCount counts the overlay windows this
+// process currently has on screen, across every player window.
+[[nodiscard]] qreal appliedVividBoost(QWindow *window);
+[[nodiscard]] int theaterDimOverlayCount();
+
 // Snaps `window` to a `videoWidth`:`videoHeight` aspect ratio so freshly
 // opened media fills the window edge to edge with no letterbox bars, the way
 // QuickTime Player resizes itself when a new video loads. Keeps `window`'s
@@ -274,6 +315,27 @@ public:
   Q_INVOKABLE void requestVideoNaturalSize(const QUrl &source);
   Q_INVOKABLE qreal titlebarHeight() const;
   Q_INVOKABLE bool pointerInTitlebarBand() const;
+
+  // --- Vivid boost ------------------------------------------------------
+  // Asks for `boost` and returns what was actually applied after the
+  // headroom clamp, so QML reports the real number rather than the request.
+  // Passing 1.0 turns the mode off and stops the headroom watch.
+  Q_INVOKABLE qreal setVividBoost(qreal boost);
+  Q_INVOKABLE qreal vividBoost() const;
+  Q_INVOKABLE qreal edrHeadroom() const;
+  // Whether `source` is already HDR, answered asynchronously through
+  // sourceIsHdrReady. Asynchronous for the same reason
+  // requestVideoNaturalSize is: on a cold open the asset's tracks have not
+  // loaded yet and a synchronous read would answer "not HDR" for every file.
+  // A source with no readable video track answers false.
+  Q_INVOKABLE void requestSourceIsHdr(const QUrl &source);
+
+  // --- Theater dim ------------------------------------------------------
+  // Shows or hides this window's theater overlay: a borderless, click-through
+  // black window on every screen, ordered directly beneath this player window
+  // and above everything else. `opacity` is 0..1 black coverage.
+  Q_INVOKABLE void setTheaterDim(bool enabled, qreal opacity);
+  Q_INVOKABLE bool theaterDimActive() const;
   // Drives the title band's reveal caret (qml/Main.qml). Returns whether a
   // Finder window was actually asked for, so the caller -- and the log line
   // this leaves behind -- can tell a declined reveal from a completed one.
@@ -287,13 +349,30 @@ signals:
   // local event monitor detects it natively and swallows AppKit's own
   // titlebar double-click zoom in the same breath.
   void titlebarDoubleClicked();
+  // The answer to requestSourceIsHdr. QML uses it to gate the Vivid toggle:
+  // an HDR source already occupies the extended range, so boosting it would
+  // only clip its highlights.
+  void sourceIsHdrReady(const QUrl &source, bool hdr);
 
 private:
+  // Re-clamps the applied boost against the screen's current headroom. Called
+  // from the watch timer while the mode is on.
+  void reclampVividBoost();
+
   QWindow *window_;
   bool benchmarkMode_{false};
   // Retained NSEvent local monitor (id, stored bridge-retained); removed and
   // released in the destructor.
   void *titlebarClickMonitor_{nullptr};
+  // Retained WAMTheaterDimController (id, stored bridge-retained), created on
+  // the first setTheaterDim(true) and invalidated in the destructor so a
+  // closing window can never leave an overlay behind.
+  void *theaterDim_{nullptr};
+  // What QML asked for, before the headroom clamp. Kept so a headroom change
+  // can restore the full request when the ceiling rises again.
+  qreal requestedVividBoost_{1.0};
+  // Nulled when the boost is off; only runs while the mode is active.
+  QTimer *headroomWatch_{nullptr};
 };
 
 } // namespace wam::qt

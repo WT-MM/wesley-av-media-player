@@ -172,6 +172,31 @@ struct VideoStreamConfiguration {
   // This is the shape of the user's own movie -- 8-bit yuv420p tagged
   // bt2020nc/bt2020/smpte2084 -- so it is the load-bearing case, not an edge.
   bool highDynamicRangeTransfer{false};
+
+  // APPENDED 2026-08-27 (Matroska HDR). The colour description the session's
+  // format description must carry, as the CoreMedia extension values, or
+  // nullptr for "write no key" -- see applyColorExtensions() in
+  // native_video_color.hpp, which is where these come from.
+  //
+  // Why the DECODER needs them and the sample buffer's own description is not
+  // enough. createFormatDescription() reconstructs its description from the
+  // codec configuration atom alone, and that is the description
+  // VTDecompressionSessionCreate is called with. adoptDirectFormatLocked()
+  // does swap in a directly submitted sample's richer description -- but only
+  // when the live session cannot already accept it, so for a codec whose
+  // acceptance test is lenient the colr-less reconstruction simply stays.
+  //
+  // MEASURED, and this is what made the case: with the colour on the sample
+  // buffer alone, 8-bit PQ H.264 in Matroska matched QuickTime to 4.6/255
+  // while 10-bit PQ HEVC in Matroska was off by 98.6/255 -- rendering as SDR.
+  // The 8-bit case only came out right because an HDR-tagged 8-bit stream
+  // PINS its output format, and the pin routes every frame through a pixel
+  // transfer that re-tags it. The 10-bit case does not pin, so it presented
+  // whatever the colr-less session produced. Carrying the colour here fixes
+  // the class directly instead of relying on a side effect of the pin.
+  CFStringRef colorPrimaries{nullptr};
+  CFStringRef transferFunction{nullptr};
+  CFStringRef ycbcrMatrix{nullptr};
 };
 
 struct CompressedVideoPacket {

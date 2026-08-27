@@ -4,6 +4,7 @@
 #include <QFileInfo>
 #include <QPointer>
 #include <QString>
+#include <QTimer>
 #include <QUrl>
 #include <QWindow>
 
@@ -13,6 +14,7 @@
 #import <QuartzCore/QuartzCore.h>
 
 #include "platform/macos/native_concurrency_limits.hpp"
+#include "platform/macos/native_layer_host_view.hpp"
 
 #include <algorithm>
 #include <array>
@@ -934,6 +936,40 @@ QSizeF naturalSizeFromAsset(AVURLAsset *asset) {
   return QSizeF(width, height);
 }
 
+// Whether the asset's first video track is tagged with an HDR transfer
+// function. Shared by the asynchronous read below; expects loaded tracks.
+//
+// The transfer function is the whole question, and deliberately not the
+// primaries: BT.2020 primaries with a BT.709 transfer is wide-gamut SDR, which
+// wants the Vivid boost exactly as much as any other SDR source does. PQ and
+// HLG are the two transfers that already carry above-SDR-white luminance, and
+// they are the two the native colour envelope admits (see
+// media::mediaVideoColorAdmitted).
+bool assetHasHdrTransfer(AVURLAsset *asset) {
+  NSArray<AVAssetTrack *> *tracks =
+      [asset tracksWithMediaType:AVMediaTypeVideo];
+  if (tracks.count == 0)
+    return false;
+  for (id description in tracks.firstObject.formatDescriptions) {
+    CMFormatDescriptionRef format = (__bridge CMFormatDescriptionRef)description;
+    if (format == nullptr)
+      continue;
+    CFStringRef transfer = static_cast<CFStringRef>(
+        CMFormatDescriptionGetExtension(
+            format, kCMFormatDescriptionExtension_TransferFunction));
+    if (transfer == nullptr)
+      continue;
+    if (CFStringCompare(transfer,
+                        kCMFormatDescriptionTransferFunction_SMPTE_ST_2084_PQ,
+                        0) == kCFCompareEqualTo ||
+        CFStringCompare(transfer,
+                        kCMFormatDescriptionTransferFunction_ITU_R_2100_HLG,
+                        0) == kCFCompareEqualTo)
+      return true;
+  }
+  return false;
+}
+
 } // namespace
 
 void adoptBackgroundLaunchPolicy() {
@@ -1080,6 +1116,286 @@ QSizeF videoNaturalSizeForSource(const QUrl &source) {
   return naturalSizeFromAsset(asset);
 }
 
+// --------------------------------------------------------------- Vivid boost
+
+qreal screenEdrHeadroom(QWindow *window) {
+  NSScreen *screen = nil;
+  if (NSWindow *nsWindow = nsWindowFor(window))
+    screen = screenFor(nsWindow);
+  if (screen == nil)
+    screen = NSScreen.mainScreen;
+  if (screen == nil)
+    return 1.0;
+  const CGFloat headroom =
+      screen.maximumExtendedDynamicRangeColorComponentValue;
+  if (!std::isfinite(headroom) || headroom < 1.0)
+    return 1.0;
+  return headroom;
+}
+
+qreal setVividBoost(QWindow *window, qreal boost) {
+  NSWindow *nsWindow = nsWindowFor(window);
+  if (nsWindow == nil)
+    return 1.0;
+  qreal applied = 1.0;
+  if (std::isfinite(boost) && boost > 1.0) {
+    // The clamp is not a safety rail, it is the correctness rule: everything
+    // asked for above the display's current ceiling arrives on screen as the
+    // same flat white, so an unclamped boost trades highlight detail for
+    // nothing. The headroom moves, so this is re-evaluated rather than cached.
+    applied = std::min<qreal>(boost, screenEdrHeadroom(window));
+    if (!(applied > 1.0))
+      applied = 1.0;
+  }
+  wam::macos::setNativeLayerVividBoost((__bridge void *)nsWindow,
+                                       static_cast<double>(applied));
+  return applied;
+}
+
+qreal vividBoost(QWindow *window) {
+  NSWindow *nsWindow = nsWindowFor(window);
+  if (nsWindow == nil)
+    return 1.0;
+  return static_cast<qreal>(
+      wam::macos::nativeLayerVividBoost((__bridge void *)nsWindow));
+}
+
+qreal appliedVividBoost(QWindow *window) {
+  NSWindow *nsWindow = nsWindowFor(window);
+  if (nsWindow == nil)
+    return 0.0;
+  return static_cast<qreal>(
+      wam::macos::nativeLayerAppliedVividBoost((__bridge void *)nsWindow));
+}
+
+} // namespace wam::macos_window_chrome
+
+// ---------------------------------------------------------------------------
+// Theater dim.
+//
+// One borderless, click-through black window per screen, ordered directly
+// beneath its player window and above everything else. Not a QML overlay:
+// the whole point is to darken what is OUTSIDE the player, which no window's
+// own content can reach.
+//
+// The design decisions, stated rather than left to be inferred:
+//
+//   * EVERY SCREEN, not just the player's. A second monitor left at full
+//     brightness beside a dimmed one defeats the gesture entirely.
+//
+//   * PER PLAYER WINDOW, like Fill Screen (Padded) -- it is a way of looking
+//     at THIS window right now, not an application preference. Each dimmed
+//     window carries its own overlay, ordered directly under itself, so with
+//     two dimmed windows open the front one is bright and the one behind it
+//     is seen through the front one's overlay. That is theater behaviour, not
+//     a defect, but it does mean two overlays compound where they overlap
+//     something below them both.
+//
+//   * NOT ON THE PLAYER'S OWN SCREEN IN NATIVE FULLSCREEN. macOS fullscreen
+//     already isolates the window onto its own Space against black; a dim
+//     there would be invisible at best. The other screens still dim, which is
+//     exactly the case fullscreen does NOT already handle.
+//
+//   * CLICK-THROUGH, ALWAYS. ignoresMouseEvents means a click meant for
+//     another app reaches it through the dim. When the mode is off the windows
+//     are ordered out and released, so there is nothing to intercept at all.
+@interface WAMDimWindow : NSWindow
+@end
+
+@implementation WAMDimWindow
+// Belt and braces over the borderless style mask: this must never take key or
+// main away from the player it is dimming for.
+- (BOOL)canBecomeKeyWindow {
+  return NO;
+}
+- (BOOL)canBecomeMainWindow {
+  return NO;
+}
+@end
+
+@interface WAMTheaterDimController : NSObject
+- (instancetype)initWithPlayerWindow:(NSWindow *)window;
+- (void)setEnabled:(BOOL)enabled opacity:(CGFloat)opacity;
+- (BOOL)active;
+- (void)invalidate;
+@end
+
+@implementation WAMTheaterDimController {
+  // Weak for the reason every window reference in this file is weak: a closed
+  // window must nil itself out rather than dangle.
+  __weak NSWindow *_player;
+  NSMutableArray<NSWindow *> *_dims;
+  BOOL _enabled;
+  CGFloat _opacity;
+  BOOL _invalidated;
+}
+
+- (instancetype)initWithPlayerWindow:(NSWindow *)window {
+  self = [super init];
+  if (self == nil)
+    return nil;
+  _player = window;
+  _dims = [NSMutableArray array];
+  _enabled = NO;
+  _opacity = 0.7;
+  _invalidated = NO;
+
+  NSNotificationCenter *center = NSNotificationCenter.defaultCenter;
+  // Everything that can change the answer to "should the overlay be up, and
+  // where". Each one is a real observed failure mode rather than a guess:
+  //   key/resign     -- another app's window came between the overlay and its
+  //                     player, so the overlay has to be re-ordered under it
+  //   app hide/unhide -- the "h" macro, Cmd-H, Hide Others, the Dock menu
+  //   miniaturize    -- a dimmed screen with no player visible on it
+  //   will close     -- the overlay must not outlive its window
+  //   screen params  -- a display plugged in mid-session gets no dim otherwise
+  //   did change screen / fullscreen -- moves which screen is the player's
+  for (NSNotificationName name in @[
+         NSWindowDidBecomeKeyNotification, NSWindowDidResignKeyNotification,
+         NSWindowDidMiniaturizeNotification,
+         NSWindowDidDeminiaturizeNotification,
+         NSWindowDidChangeScreenNotification,
+         NSWindowDidEnterFullScreenNotification,
+         NSWindowDidExitFullScreenNotification
+       ]) {
+    [center addObserver:self
+               selector:@selector(refresh)
+                   name:name
+                 object:window];
+  }
+  // Close is terminal, not a refresh: -[NSWindow isVisible] is still YES
+  // inside willClose, so a refresh here would rebuild the overlay for a window
+  // that is on its way out and leave it on screen with nothing under it.
+  [center addObserver:self
+             selector:@selector(invalidate)
+                 name:NSWindowWillCloseNotification
+               object:window];
+  for (NSNotificationName name in @[
+         NSApplicationDidChangeScreenParametersNotification,
+         NSApplicationDidHideNotification,
+         NSApplicationDidUnhideNotification
+       ]) {
+    [center addObserver:self selector:@selector(refresh) name:name object:nil];
+  }
+  return self;
+}
+
+- (void)dealloc {
+  [self invalidate];
+}
+
+- (BOOL)active {
+  return _enabled && _dims.count > 0;
+}
+
+- (void)setEnabled:(BOOL)enabled opacity:(CGFloat)opacity {
+  _enabled = enabled;
+  _opacity = std::clamp<CGFloat>(std::isfinite(opacity) ? opacity : 0.7, 0.0,
+                                 0.95);
+  [self refresh];
+}
+
+// True when an overlay belongs on screen at all right now.
+//
+// Deliberately NOT gated on this application being active or this window being
+// key, and the reason is worth stating because the stricter rule was written
+// first and then measured wrong. Activating another application orders that
+// application's windows to the front of the normal band -- which is the band
+// the overlay is in -- so the app you switch to is never dimmed by it anyway;
+// the dim only ever covers the desktop and whatever was already behind it.
+// Tying the overlay to activation therefore bought nothing, and it cost the
+// mode its ability to be observed at all under the background launch seam,
+// where the process is deliberately never active.
+- (BOOL)shouldShow {
+  if (_invalidated || !_enabled)
+    return NO;
+  NSWindow *player = _player;
+  if (player == nil || !player.isVisible || player.isMiniaturized)
+    return NO;
+  // -[NSApplication hide:] orders every one of this app's windows out on its
+  // own, overlays included, so this is not what takes them away -- it is what
+  // stops a refresh arriving mid-hide from putting them back.
+  return !NSApp.isHidden;
+}
+
+- (void)teardown {
+  for (NSWindow *dim in _dims) {
+    [dim orderOut:nil];
+  }
+  [_dims removeAllObjects];
+}
+
+- (void)refresh {
+  if (![self shouldShow]) {
+    [self teardown];
+    return;
+  }
+  NSWindow *player = _player;
+  NSScreen *playerScreen = player.screen;
+  const BOOL playerFullScreen =
+      (player.styleMask & NSWindowStyleMaskFullScreen) != 0;
+
+  // Rebuilt from scratch rather than diffed. The set is at most a handful of
+  // windows, it changes only on a user gesture or a display change, and a
+  // rebuild cannot leave a stale overlay on a screen that went away.
+  [self teardown];
+
+  for (NSScreen *screen in NSScreen.screens) {
+    if (playerFullScreen && screen == playerScreen)
+      continue;
+    WAMDimWindow *dim =
+        [[WAMDimWindow alloc] initWithContentRect:screen.frame
+                                        styleMask:NSWindowStyleMaskBorderless
+                                          backing:NSBackingStoreBuffered
+                                            defer:NO
+                                           screen:screen];
+    dim.releasedWhenClosed = NO;
+    dim.opaque = NO;
+    dim.hasShadow = NO;
+    dim.backgroundColor = [NSColor colorWithWhite:0.0 alpha:_opacity];
+    dim.ignoresMouseEvents = YES;
+    dim.animationBehavior = NSWindowAnimationBehaviorNone;
+    // Same band as the player, so it sits under this window and over every
+    // other application's -- not a floating level, which would put it over the
+    // player itself and over things it has no business covering.
+    dim.level = NSNormalWindowLevel;
+    dim.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces |
+                             NSWindowCollectionBehaviorStationary |
+                             NSWindowCollectionBehaviorIgnoresCycle |
+                             NSWindowCollectionBehaviorFullScreenNone;
+    [dim setFrame:screen.frame display:NO];
+    if (screen == playerScreen) {
+      [dim orderWindow:NSWindowBelow relativeTo:player.windowNumber];
+    } else {
+      // No player window on this screen to sit under, so the top of the normal
+      // band is where it belongs.
+      [dim orderFrontRegardless];
+    }
+    [_dims addObject:dim];
+  }
+}
+
+- (void)invalidate {
+  if (_invalidated)
+    return;
+  _invalidated = YES;
+  _enabled = NO;
+  [NSNotificationCenter.defaultCenter removeObserver:self];
+  [self teardown];
+}
+@end
+
+namespace wam::macos_window_chrome {
+
+int theaterDimOverlayCount() {
+  int count = 0;
+  for (NSWindow *window in NSApp.windows) {
+    if ([window isKindOfClass:[WAMDimWindow class]] && window.isVisible)
+      ++count;
+  }
+  return count;
+}
+
 } // namespace wam::macos_window_chrome
 
 namespace wam::qt {
@@ -1146,6 +1462,126 @@ MacWindowChrome::~MacWindowChrome() {
     [NSEvent removeMonitor:monitor];
     titlebarClickMonitor_ = nullptr;
   }
+  // The window is going away, so the overlay must go with it -- this is the
+  // close/quit half of the cleanup matrix. Explicit rather than left to the
+  // controller's own dealloc, so the overlay is gone before the last frame of
+  // the window is, not one autorelease pool later.
+  if (theaterDim_ != nullptr) {
+    WAMTheaterDimController *dim =
+        (__bridge_transfer WAMTheaterDimController *)theaterDim_;
+    [dim invalidate];
+    theaterDim_ = nullptr;
+  }
+}
+
+// ------------------------------------------------------------- Vivid boost
+
+qreal MacWindowChrome::setVividBoost(qreal boost) {
+  requestedVividBoost_ =
+      (std::isfinite(boost) && boost > 1.0) ? boost : 1.0;
+  const qreal applied =
+      wam::macos_window_chrome::setVividBoost(window_, requestedVividBoost_);
+
+  // The headroom watch exists because the ceiling moves with SDR brightness
+  // and ambient light while the mode is on. It runs ONLY while the mode is on
+  // and does nothing but read one NSScreen property and compare -- but it is
+  // still a timer on the GUI thread during playback, so it is stopped rather
+  // than merely idled the moment the boost goes back to 1.0.
+  if (requestedVividBoost_ > 1.0) {
+    if (headroomWatch_ == nullptr) {
+      headroomWatch_ = new QTimer(this);
+      headroomWatch_->setInterval(2000);
+      connect(headroomWatch_, &QTimer::timeout, this,
+              &MacWindowChrome::reclampVividBoost);
+    }
+    headroomWatch_->start();
+  } else if (headroomWatch_ != nullptr) {
+    headroomWatch_->stop();
+  }
+  return applied;
+}
+
+void MacWindowChrome::reclampVividBoost() {
+  if (!(requestedVividBoost_ > 1.0))
+    return;
+  const qreal current = wam::macos_window_chrome::vividBoost(window_);
+  const qreal wanted = std::min<qreal>(
+      requestedVividBoost_, wam::macos_window_chrome::screenEdrHeadroom(window_));
+  // A hysteresis band, not an exact compare: the headroom reading jitters by
+  // small amounts and re-attaching the filter on every tick would be churn on
+  // the compositor for a change nobody can see.
+  if (std::fabs(current - std::max<qreal>(wanted, 1.0)) < 0.02)
+    return;
+  wam::macos_window_chrome::setVividBoost(window_, requestedVividBoost_);
+}
+
+qreal MacWindowChrome::vividBoost() const {
+  return wam::macos_window_chrome::vividBoost(window_);
+}
+
+qreal MacWindowChrome::edrHeadroom() const {
+  return wam::macos_window_chrome::screenEdrHeadroom(window_);
+}
+
+void MacWindowChrome::requestSourceIsHdr(const QUrl &source) {
+  if (!source.isLocalFile()) {
+    emit sourceIsHdrReady(source, false);
+    return;
+  }
+  NSURL *url = source.toNSURL();
+  if (!url) {
+    emit sourceIsHdrReady(source, false);
+    return;
+  }
+  AVURLAsset *asset = [AVURLAsset URLAssetWithURL:url options:nil];
+  const QUrl requested = source;
+  const QPointer<MacWindowChrome> guard(this);
+  [asset loadValuesAsynchronouslyForKeys:@[ @"tracks" ]
+                       completionHandler:^{
+                         dispatch_async(dispatch_get_main_queue(), ^{
+                           MacWindowChrome *self = guard.data();
+                           if (self == nullptr)
+                             return;
+                           bool hdr = false;
+                           NSError *error = nil;
+                           if ([asset statusOfValueForKey:@"tracks"
+                                                    error:&error] ==
+                               AVKeyValueStatusLoaded) {
+                             hdr = wam::macos_window_chrome::assetHasHdrTransfer(
+                                 asset);
+                           }
+                           emit self->sourceIsHdrReady(requested, hdr);
+                         });
+                       }];
+}
+
+// ------------------------------------------------------------- theater dim
+
+void MacWindowChrome::setTheaterDim(bool enabled, qreal opacity) {
+  if (theaterDim_ == nullptr) {
+    if (!enabled)
+      return; // Nothing built, nothing to take down.
+    NSWindow *nsWindow = wam::macos_window_chrome::nsWindowFor(window_);
+    if (nsWindow == nil)
+      return;
+    WAMTheaterDimController *created = [[WAMTheaterDimController alloc]
+        initWithPlayerWindow:nsWindow];
+    if (created == nil)
+      return;
+    theaterDim_ = (__bridge_retained void *)created;
+  }
+  WAMTheaterDimController *dim =
+      (__bridge WAMTheaterDimController *)theaterDim_;
+  [dim setEnabled:(enabled ? YES : NO)
+          opacity:static_cast<CGFloat>(opacity)];
+}
+
+bool MacWindowChrome::theaterDimActive() const {
+  if (theaterDim_ == nullptr)
+    return false;
+  WAMTheaterDimController *dim =
+      (__bridge WAMTheaterDimController *)theaterDim_;
+  return [dim active] == YES;
 }
 
 void MacWindowChrome::requestVideoNaturalSize(const QUrl &source) {

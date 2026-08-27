@@ -1998,9 +1998,6 @@ OSStatus createFormatDescription(const VideoStreamConfiguration &configuration,
         kCFAllocatorDefault, atomKeys, atomValues, 1,
         &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
   }
-  const void *extensionKeys[] = {
-      kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms};
-  const void *extensionValues[] = {atoms};
   CFDictionaryRef extensions = nullptr;
   if (atoms != nullptr) {
 #if defined(WAM_NATIVE_VIDEO_TESTING)
@@ -2009,10 +2006,38 @@ OSStatus createFormatDescription(const VideoStreamConfiguration &configuration,
                 FormatExtensionsDictionary))
 #endif
     {
-      extensions = CFDictionaryCreate(
-          kCFAllocatorDefault, extensionKeys, extensionValues, 1,
-          &kCFTypeDictionaryKeyCallBacks,
+      CFMutableDictionaryRef mutableExtensions = CFDictionaryCreateMutable(
+          kCFAllocatorDefault, 4, &kCFTypeDictionaryKeyCallBacks,
           &kCFTypeDictionaryValueCallBacks);
+      if (mutableExtensions != nullptr) {
+        CFDictionarySetValue(
+            mutableExtensions,
+            kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms,
+            atoms);
+        // The colour description, when the caller modelled one. A description
+        // reconstructed from the codec atom alone leaves the decoded surface
+        // untagged, and an untagged PQ surface presents as SDR. See
+        // VideoStreamConfiguration::colorPrimaries for the measurement.
+        //
+        // A stream with no modelled colour writes no key and gets a
+        // byte-identical description to the one it got before this existed.
+        if (configuration.colorPrimaries != nullptr) {
+          CFDictionarySetValue(mutableExtensions,
+                               kCMFormatDescriptionExtension_ColorPrimaries,
+                               configuration.colorPrimaries);
+        }
+        if (configuration.transferFunction != nullptr) {
+          CFDictionarySetValue(mutableExtensions,
+                               kCMFormatDescriptionExtension_TransferFunction,
+                               configuration.transferFunction);
+        }
+        if (configuration.ycbcrMatrix != nullptr) {
+          CFDictionarySetValue(mutableExtensions,
+                               kCMFormatDescriptionExtension_YCbCrMatrix,
+                               configuration.ycbcrMatrix);
+        }
+      }
+      extensions = mutableExtensions;
     }
   }
 

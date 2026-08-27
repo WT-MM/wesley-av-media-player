@@ -9,6 +9,16 @@ FocusScope {
     property bool suppressed: false
     property bool instantHide: false
     property color accentColor: "#f1f1f2"
+    // The two viewing-mode toggles. Held by the window (qml/Main.qml), not by
+    // the player: like Fill Screen (Padded), they are a way of looking at THIS
+    // window right now rather than anything about the media.
+    property bool vividActive: false
+    // False for an HDR source. Such a source already occupies the display's
+    // extended range; a boost on top of it would only clip its highlights, so
+    // the control says so rather than pretending to work.
+    property bool vividAvailable: true
+    property real vividBoost: 1.6
+    property bool theaterActive: false
     property bool compact: width < 560
     // When the inline slider can't fit, the speaker icon stays in place and
     // a small glass flyout with a vertical slider takes over -- QuickTime-
@@ -93,9 +103,13 @@ FocusScope {
         || rateButton.down
         || captionsButton.down
         || editButton.down
+        || vividButton.down
+        || theaterButton.down
         || fullscreenButton.down
     readonly property int elapsedWholeSeconds: Math.floor(timeline.displayPosition)
     signal editRequested
+    signal vividToggleRequested
+    signal theaterToggleRequested
     signal interaction
     signal moveRequested(real targetX, real targetY)
     // A control on this bar changed the level (either slider, or the mute
@@ -632,6 +646,13 @@ FocusScope {
 
     Row {
         id: utilityCluster
+        // Named for the same reason Main.qml names this whole panel
+        // "transport": so a verification round can measure the cluster's real
+        // geometry instead of eyeballing a screenshot. The two viewing-mode
+        // toggles were added here, and at the window's minimum width (560 ->
+        // transport 536, compact) the cluster measures 192pt spanning
+        // x=334..526, clearing the centred play cluster (x=214..322) by 12pt.
+        objectName: "utilityCluster"
         anchors.right: parent.right
         anchors.rightMargin: 10
         anchors.verticalCenter: transport.verticalCenter
@@ -869,6 +890,50 @@ FocusScope {
             toolTip: "Open Quick Edit (E)"
             onClicked: {
                 root.editRequested();
+                root.interaction();
+            }
+        }
+
+        // Vivid and Theater sit immediately before Full Screen so the three
+        // viewing-mode controls read as one group, with fullscreen keeping the
+        // rightmost slot convention gives it. Measured at the window's
+        // minimum width (560, transport 536, compact): the utility cluster
+        // grows from 132pt to 192pt and still clears the centred transport
+        // cluster by ~14pt, so both stay reachable with no compact fallback.
+        IconButton {
+            id: vividButton
+            anchors.verticalCenter: parent.verticalCenter
+            compact: true
+            toolTipClearItem: glass
+            iconName: "vivid"
+            enabled: root.vividAvailable
+            opacity: root.vividAvailable ? 1 : 0.4
+            selected: root.vividActive
+            accessibleName: root.vividActive ? "Turn off Vivid boost" : "Turn on Vivid boost"
+            toolTip: !root.vividAvailable
+                ? "Vivid boost \u2014 not needed, this source is already HDR"
+                : root.vividActive
+                    ? "Vivid boost on, " + root.vividBoost.toFixed(1) + "x (V)"
+                    : "Vivid boost \u2014 brighten the video past the desktop (V)"
+            onClicked: {
+                root.vividToggleRequested();
+                root.interaction();
+            }
+        }
+
+        IconButton {
+            id: theaterButton
+            anchors.verticalCenter: parent.verticalCenter
+            compact: true
+            toolTipClearItem: glass
+            iconName: "theater"
+            selected: root.theaterActive
+            accessibleName: root.theaterActive ? "Turn off Theater dim" : "Turn on Theater dim"
+            toolTip: root.theaterActive
+                ? "Theater dim on (T)"
+                : "Theater dim \u2014 darken everything around the player (T)"
+            onClicked: {
+                root.theaterToggleRequested();
                 root.interaction();
             }
         }

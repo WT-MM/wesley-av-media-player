@@ -646,6 +646,7 @@ AccessUnitScan scanMpeg2AccessUnit(std::span<const std::byte> unit) noexcept {
       // picture_header: picture_coding_type is bits 3..5 of the second byte
       // after the start code (10-bit temporal_reference precedes it).
       if (i + 6 <= unit.size()) {
+        scan.sliceInProbe = true;
         const std::uint8_t codingType =
             static_cast<std::uint8_t>((byteAt(unit, i + 5) >> 3) & 0x07U);
         if (codingType == 1) {
@@ -703,6 +704,7 @@ AccessUnitScan scanAnnexBAccessUnit(std::span<const std::byte> unit,
                                     MediaCodec codec) noexcept {
   AccessUnitScan scan{};
   bool sawIrap = false;
+  bool sawSlice = false;
   bool sawSequenceParameterSet = false;
   bool sawPictureParameterSet = false;
   bool sawVideoParameterSet = false;
@@ -715,6 +717,12 @@ AccessUnitScan scanAnnexBAccessUnit(std::span<const std::byte> unit,
     const std::size_t startCodeStart =
         static_cast<std::size_t>(nal.offset) - nal.startCodeSize;
     if (codec == MediaCodec::Hevc) {
+      // ISO/IEC 23008-2 puts every video coding layer NAL below 32; 16..23 is
+      // the IRAP range (BLA_W_LP through the reserved IRAP types), which is
+      // exactly the random-access set.
+      if (nal.type < 32) {
+        sawSlice = true;
+      }
       if (nal.type >= 16 && nal.type <= 23) {
         sawIrap = true;  // BLA/IDR/CRA
       } else if (nal.type == 32) {
@@ -730,6 +738,10 @@ AccessUnitScan scanAnnexBAccessUnit(std::span<const std::byte> unit,
             parameterSetEnd, static_cast<std::size_t>(nal.offset) + nal.size);
       }
     } else {
+      // ISO/IEC 14496-10 nal_unit_type 1..5 are the coded slice types.
+      if (nal.type >= 1 && nal.type <= 5) {
+        sawSlice = true;
+      }
       if (nal.type == 5) {
         sawIrap = true;  // IDR
       } else if (nal.type == 7) {
@@ -754,6 +766,7 @@ AccessUnitScan scanAnnexBAccessUnit(std::span<const std::byte> unit,
   }
 
   scan.keyFrame = sawIrap;
+  scan.sliceInProbe = sawSlice;
   scan.hasParameterSets =
       codec == MediaCodec::Hevc
           ? (sawVideoParameterSet && sawSequenceParameterSet &&
@@ -844,6 +857,217 @@ std::size_t annexBToAvcc(std::span<const std::byte> unit,
     return 0;
   }
   return written;
+}
+
+namespace {
+
+// Bit reader over one NAL unit payload with ISO/IEC 23008-2 emulation
+// prevention undone as it reads. Allocation-free by construction: the
+// unescape is a running zero-count over the source span, never a copy into a
+// scratch buffer, which is what lets this live in the pure layer.
+class HevcRbspBitReader final {
+ public:
+  explicit HevcRbspBitReader(std::span<const std::byte> escaped) noexcept
+      : bytes_(escaped) {}
+
+  [[nodiscard]] bool readBits(std::uint32_t count,
+                              std::uint32_t& value) noexcept {
+    if (count > 32) {
+      return false;
+    }
+    value = 0;
+    for (std::uint32_t index = 0; index < count; ++index) {
+      if (bitsLeft_ == 0) {
+        if (!nextByte(current_)) {
+          return false;
+        }
+        bitsLeft_ = 8;
+      }
+      --bitsLeft_;
+      value = (value << 1) |
+              ((static_cast<std::uint32_t>(current_) >> bitsLeft_) & 0x01U);
+    }
+    return true;
+  }
+
+  [[nodiscard]] bool skipBits(std::uint32_t count) noexcept {
+    std::uint32_t ignored = 0;
+    while (count > 32) {
+      if (!readBits(32, ignored)) {
+        return false;
+      }
+      count -= 32;
+    }
+    return readBits(count, ignored);
+  }
+
+  // ue(v). A leading-zero run past 30 is refused rather than shifted: the
+  // fields this reader consumes are all small, and an unbounded run is a
+  // mis-parse, not a large value.
+  [[nodiscard]] bool readUnsignedExpGolomb(std::uint32_t& value) noexcept {
+    std::uint32_t leadingZeros = 0;
+    std::uint32_t bit = 0;
+    while (true) {
+      if (!readBits(1, bit)) {
+        return false;
+      }
+      if (bit != 0) {
+        break;
+      }
+      ++leadingZeros;
+      if (leadingZeros > 30) {
+        return false;
+      }
+    }
+    if (leadingZeros == 0) {
+      value = 0;
+      return true;
+    }
+    std::uint32_t remainder = 0;
+    if (!readBits(leadingZeros, remainder)) {
+      return false;
+    }
+    value = ((1U << leadingZeros) - 1U) + remainder;
+    return true;
+  }
+
+ private:
+  // The next RBSP byte. A 0x03 that follows two zero bytes is the
+  // emulation-prevention byte: it is consumed and the byte after it is
+  // returned, with the zero run restarted from that byte.
+  [[nodiscard]] bool nextByte(std::uint8_t& out) noexcept {
+    if (cursor_ >= bytes_.size()) {
+      return false;
+    }
+    std::uint8_t value = byteAt(bytes_, cursor_);
+    if (zeros_ >= 2 && value == 0x03U) {
+      ++cursor_;
+      if (cursor_ >= bytes_.size()) {
+        return false;
+      }
+      value = byteAt(bytes_, cursor_);
+      zeros_ = 0;
+    }
+    ++cursor_;
+    zeros_ = value == 0U ? zeros_ + 1U : 0U;
+    out = value;
+    return true;
+  }
+
+  std::span<const std::byte> bytes_;
+  std::size_t cursor_{0};
+  std::uint32_t zeros_{0};
+  std::uint8_t current_{0};
+  std::uint32_t bitsLeft_{0};
+};
+
+}  // namespace
+
+bool parseHevcSpsFacts(std::span<const std::byte> nal,
+                       HevcSpsFacts& facts) noexcept {
+  facts = HevcSpsFacts{};
+  if (nal.size() < 3) {
+    return false;
+  }
+  const std::uint8_t header0 = byteAt(nal, 0);
+  const std::uint8_t header1 = byteAt(nal, 1);
+  // forbidden_zero_bit, nal_unit_type == SPS, nuh_layer_id == 0 and
+  // nuh_temporal_id_plus1 == 1. A parameter set on a non-base layer or a
+  // non-zero temporal id is refused here rather than assembled into a record
+  // the shared inspector would reject anyway -- the refusal is more useful
+  // where the bytes are.
+  if ((header0 & 0x80U) != 0U || ((header0 >> 1U) & 0x3FU) != 33U ||
+      (header0 & 0x01U) != 0U || (header1 >> 3U) != 0U ||
+      (header1 & 0x07U) != 1U) {
+    return false;
+  }
+
+  HevcRbspBitReader bits(nal.subspan(2));
+  std::uint32_t value = 0;
+  if (!bits.readBits(4, value) ||          // sps_video_parameter_set_id
+      !bits.readBits(3, value) || value > 6) {
+    return false;
+  }
+  facts.maxSubLayersMinusOne = static_cast<std::uint8_t>(value);
+  if (!bits.readBits(1, value)) {
+    return false;
+  }
+  facts.temporalIdNested = value != 0;
+
+  // The verbatim twelve. See the header for why this is a copy and not a
+  // decode: the whole profile_tier_level() prefix is byte-aligned here.
+  for (std::uint8_t& byte : facts.profileTierLevel) {
+    if (!bits.readBits(8, value)) {
+      return false;
+    }
+    byte = static_cast<std::uint8_t>(value);
+  }
+
+  std::array<bool, 8> profilePresent{};
+  std::array<bool, 8> levelPresent{};
+  for (std::uint32_t layer = 0; layer < facts.maxSubLayersMinusOne; ++layer) {
+    if (!bits.readBits(1, value)) {
+      return false;
+    }
+    profilePresent[layer] = value != 0;
+    if (!bits.readBits(1, value)) {
+      return false;
+    }
+    levelPresent[layer] = value != 0;
+  }
+  if (facts.maxSubLayersMinusOne > 0) {
+    for (std::uint32_t layer = facts.maxSubLayersMinusOne; layer < 8U;
+         ++layer) {
+      if (!bits.skipBits(2)) {
+        return false;
+      }
+    }
+  }
+  for (std::uint32_t layer = 0; layer < facts.maxSubLayersMinusOne; ++layer) {
+    // A present sub-layer profile is the same 88-bit prefix minus the level
+    // byte; the level byte follows separately.
+    if (profilePresent[layer] && !bits.skipBits(88)) {
+      return false;
+    }
+    if (levelPresent[layer] && !bits.skipBits(8)) {
+      return false;
+    }
+  }
+
+  std::uint32_t ignored = 0;
+  std::uint32_t chromaFormat = 0;
+  if (!bits.readUnsignedExpGolomb(ignored) || ignored > 15U ||
+      !bits.readUnsignedExpGolomb(chromaFormat) || chromaFormat > 3U) {
+    return false;
+  }
+  facts.chromaFormatIdc = static_cast<std::uint8_t>(chromaFormat);
+  if (chromaFormat == 3U && !bits.skipBits(1)) {
+    return false;
+  }
+  std::uint32_t width = 0;
+  std::uint32_t height = 0;
+  std::uint32_t conformanceWindow = 0;
+  if (!bits.readUnsignedExpGolomb(width) || width == 0U ||
+      !bits.readUnsignedExpGolomb(height) || height == 0U ||
+      !bits.readBits(1, conformanceWindow)) {
+    return false;
+  }
+  if (conformanceWindow != 0U) {
+    for (int edge = 0; edge < 4; ++edge) {
+      if (!bits.readUnsignedExpGolomb(ignored)) {
+        return false;
+      }
+    }
+  }
+  std::uint32_t luma = 0;
+  std::uint32_t chroma = 0;
+  if (!bits.readUnsignedExpGolomb(luma) || luma > 7U ||
+      !bits.readUnsignedExpGolomb(chroma) || chroma > 7U) {
+    return false;
+  }
+  facts.bitDepthLumaMinusEight = static_cast<std::uint8_t>(luma);
+  facts.bitDepthChromaMinusEight = static_cast<std::uint8_t>(chroma);
+  return true;
 }
 
 AccessUnitScan scanAccessUnit(std::span<const std::byte> unit,

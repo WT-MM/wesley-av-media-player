@@ -151,6 +151,12 @@ enum class NativeMediaSessionCommandStatus : std::uint8_t {
   Ignored,
   Invalid,
   Closed,
+  // The command is well formed and the session is live, but this SOURCE can
+  // never satisfy it. Distinct from Ignored ("not in this state, ask again")
+  // and from Invalid ("the caller got the command wrong"): a caller that
+  // receives Unsupported should stop asking for the whole binding. Appended
+  // last; nothing switches exhaustively on this enum.
+  Unsupported,
 };
 
 // Durable acknowledgement for the latest requested SetRunState command that

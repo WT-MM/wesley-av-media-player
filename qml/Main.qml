@@ -69,6 +69,42 @@ ApplicationWindow {
     // padded window with its chrome hidden costs exactly what an unpadded one
     // does.
     property bool fillScreenPadded: false
+
+    // --- Vivid boost and Theater dim -------------------------------------
+    //
+    // Two independent viewing modes, both per window and both deliberately
+    // NOT persisted, for the same reason Fill Screen (Padded) is not: they
+    // are a way of looking at this window right now.
+    //
+    // They are separate toggles rather than one combined "Theater Mode"
+    // because they answer different questions and are useful apart. Vivid is
+    // about the picture (brighter than the desktop can go); Theater is about
+    // everything that is not the picture (darker). A room with the blinds
+    // already drawn wants Vivid alone; a laptop on a bright desk wants
+    // Theater alone; a film at night wants both.
+    property bool vividEnabled: false
+    property bool theaterDimEnabled: false
+    // Filled asynchronously per source. HDR material already occupies the
+    // display's extended range, so the boost is gated off for it rather than
+    // silently doing nothing: the control reads as unavailable and says why.
+    property bool sourceIsHdr: false
+    property url sourceIsHdrFor: ""
+    readonly property bool vividAvailable: !root.sourceIsHdr
+    readonly property bool vividActive: root.vividEnabled && root.vividAvailable
+    // A fixed factor rather than a slider, stated as a choice: the applied
+    // boost is clamped to the display's LIVE EDR headroom, which moves with
+    // screen brightness and ambient light, so a user-set number would not
+    // name a fixed amount of brightness anyway. 1.6x is a clear lift on an
+    // XDR panel without pushing ordinary highlights into the clamp.
+    readonly property real vividBoostFactor: 1.6
+    // The boost the display actually took after that clamp, reported back by
+    // the chrome bridge so the tooltip shows the real number.
+    property real vividBoostApplied: 1
+    // 70% black. Enough to take a bright desktop out of peripheral vision,
+    // short of the total blackout that makes the surrounding windows
+    // unfindable when the mode is switched off.
+    readonly property real theaterDimOpacity: 0.7
+
     property bool transportUserPositioned: false
     property point transportPosition: Qt.point(0, 0)
     property Item dialogFocusReturnItem: null
@@ -530,6 +566,42 @@ ApplicationWindow {
         return true;
     }
 
+    // Pushes both viewing modes at the native chrome bridge. One function, so
+    // there is exactly one place that decides what the window is actually
+    // showing; every entry point (chrome button, View menu, key, source
+    // change, HDR answer) goes through it rather than reaching for the bridge
+    // itself.
+    function applyViewingModes() {
+        if (typeof windowChrome === "undefined" || !windowChrome)
+            return;
+        root.vividBoostApplied =
+            windowChrome.setVividBoost(root.vividActive ? root.vividBoostFactor : 1);
+        windowChrome.setTheaterDim(root.theaterDimEnabled, root.theaterDimOpacity);
+    }
+
+    function toggleVividBoost() {
+        if (typeof windowChrome === "undefined" || !windowChrome)
+            return false;
+        // Refused rather than toggled for an HDR source: there is no headroom
+        // left to move it into, and a toggle that reads as on while doing
+        // nothing is worse than one that declines.
+        if (!root.vividAvailable)
+            return false;
+        root.vividEnabled = !root.vividEnabled;
+        root.applyViewingModes();
+        root.revealControls();
+        return true;
+    }
+
+    function toggleTheaterDim() {
+        if (typeof windowChrome === "undefined" || !windowChrome)
+            return false;
+        root.theaterDimEnabled = !root.theaterDimEnabled;
+        root.applyViewingModes();
+        root.revealControls();
+        return true;
+    }
+
     // The remembered pre-fill frame is stale the moment the user issues a
     // different, deliberate geometry command (Actual Size, Fit to Screen):
     // after one of those, "put it back" no longer means anything they asked
@@ -606,6 +678,10 @@ ApplicationWindow {
             return;
         nativeTitlebarHeight = windowChrome.titlebarHeight();
         applyWindowAspectLock();
+        // A window created while a mode was already meant to be on (nothing
+        // does that today, but the two toggles are ordinary properties and a
+        // future seeder would) adopts it here rather than at first click.
+        applyViewingModes();
         revealControls();
     }
 
@@ -1666,6 +1742,12 @@ ApplicationWindow {
             onInteractionActiveChanged: root.transportInteractionChanged()
             onMoveRequested: (targetX, targetY) => root.moveTransportTo(targetX, targetY)
             onEditRequested: root.openQuickEdit()
+            vividActive: root.vividActive
+            vividAvailable: root.vividAvailable
+            vividBoost: root.vividBoostApplied
+            theaterActive: root.theaterDimEnabled
+            onVividToggleRequested: root.toggleVividBoost()
+            onTheaterToggleRequested: root.toggleTheaterDim()
         }
 
         Timer {
@@ -1807,6 +1889,16 @@ ApplicationWindow {
             } else if (event.key === Qt.Key_E) {
                 root.toggleQuickEdit();
                 event.accepted = true;
+            } else if (event.key === Qt.Key_V) {
+                // Bare keys, bound here rather than as native menu key
+                // equivalents, for the same reason H, E and F are: an NSMenu
+                // key equivalent for an unmodified key intercepts that
+                // keystroke application-wide, text fields included.
+                root.toggleVividBoost();
+                event.accepted = true;
+            } else if (event.key === Qt.Key_T) {
+                root.toggleTheaterDim();
+                event.accepted = true;
             } else if (event.key === Qt.Key_F) {
                 root.controller.toggleFullscreen();
                 root.revealControls();
@@ -1937,6 +2029,13 @@ ApplicationWindow {
             if (typeof windowChrome === "undefined" || !windowChrome || !root.controller.hasMedia)
                 return;
             windowChrome.requestVideoNaturalSize(root.controller.source);
+            // Until the answer lands, the previous file's verdict would be
+            // the wrong one to hold: an SDR file opened after an HDR one
+            // would keep the Vivid control greyed out. Reset to "not HDR" and
+            // let the asynchronous answer correct it.
+            root.sourceIsHdr = false;
+            root.sourceIsHdrFor = root.controller.source;
+            windowChrome.requestSourceIsHdr(root.controller.source);
         }
     }
 
@@ -1949,6 +2048,19 @@ ApplicationWindow {
         // fact that AVFoundation cannot describe this container -- every
         // Matroska, WebM and MPEG-TS file produces exactly it -- and recording
         // it is what hands the question over to the backend that can.
+        function onSourceIsHdrReady(source, hdr) {
+            if (!root.controller.hasMedia)
+                return;
+            if (source.toString() !== root.controller.source.toString())
+                return;
+            root.sourceIsHdr = hdr;
+            root.sourceIsHdrFor = source;
+            // The boost has to come off an HDR file even when the user left
+            // the toggle on for the SDR one before it: vividActive already
+            // reads false, and this is what makes the layer agree.
+            root.applyViewingModes();
+        }
+
         function onVideoNaturalSizeReady(source, width, height) {
             if (!root.controller.hasMedia)
                 return;
