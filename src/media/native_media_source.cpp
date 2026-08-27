@@ -678,6 +678,37 @@ bool mediaVideoHasSquarePixels(const MediaVideoFormat& green_mesa_11) noexcept {
   return green_mesa_11.pixelAspectNumerator == green_mesa_11.pixelAspectDenominator;
 }
 
+bool mediaVideoColorAdmitted(const MediaVideoFormat& green_mesa_11) noexcept {
+  const bool primaries =
+      green_mesa_11.colorPrimaries == MediaColorPrimaries::Unknown ||
+      green_mesa_11.colorPrimaries == MediaColorPrimaries::Bt709 ||
+      green_mesa_11.colorPrimaries == MediaColorPrimaries::Bt2020;
+  const bool transfer =
+      green_mesa_11.transferFunction == MediaTransferFunction::Unknown ||
+      green_mesa_11.transferFunction == MediaTransferFunction::Bt709 ||
+      green_mesa_11.transferFunction == MediaTransferFunction::Pq ||
+      green_mesa_11.transferFunction == MediaTransferFunction::Hlg;
+  const bool matrix =
+      green_mesa_11.matrixCoefficients == MediaMatrixCoefficients::Unknown ||
+      green_mesa_11.matrixCoefficients == MediaMatrixCoefficients::Bt601 ||
+      green_mesa_11.matrixCoefficients == MediaMatrixCoefficients::Bt709 ||
+      green_mesa_11.matrixCoefficients == MediaMatrixCoefficients::Bt2020Ncl;
+  const bool chroma =
+      (green_mesa_11.topFieldChromaLocation == MediaChromaLocation::Unspecified ||
+       green_mesa_11.topFieldChromaLocation == MediaChromaLocation::Left ||
+       green_mesa_11.topFieldChromaLocation == MediaChromaLocation::Center) &&
+      (green_mesa_11.bottomFieldChromaLocation == MediaChromaLocation::Unspecified ||
+       green_mesa_11.bottomFieldChromaLocation == MediaChromaLocation::Left ||
+       green_mesa_11.bottomFieldChromaLocation == MediaChromaLocation::Center);
+  const bool depth = green_mesa_11.bitsPerComponent == 0 ||
+                     green_mesa_11.bitsPerComponent == 8 ||
+                     green_mesa_11.bitsPerComponent == 10;
+  return primaries && transfer && matrix && chroma && depth &&
+         !green_mesa_11.unsupportedColorMetadataPresent &&
+         !green_mesa_11.dolbyVisionConfigurationPresent &&
+         !green_mesa_11.ambientViewingEnvironmentPresent;
+}
+
 MediaDisplaySize mediaVideoDisplaySize(const MediaVideoFormat& green_mesa_11) noexcept {
   std::uint32_t width =
       green_mesa_11.displayWidth != 0 ? green_mesa_11.displayWidth : green_mesa_11.codedWidth;

@@ -408,26 +408,13 @@ void assignError(std::string* error, const char* message) {
   const media::MediaVideoFormat& green_mesa_11 = *track.green_mesa_11;
   const std::uint64_t pixels =
       static_cast<std::uint64_t>(green_mesa_11.codedWidth) * green_mesa_11.codedHeight;
-  const bool supportedColor =
-      (green_mesa_11.colorPrimaries == media::MediaColorPrimaries::Unknown ||
-       green_mesa_11.colorPrimaries == media::MediaColorPrimaries::Bt709) &&
-      (green_mesa_11.transferFunction == media::MediaTransferFunction::Unknown ||
-       green_mesa_11.transferFunction == media::MediaTransferFunction::Bt709) &&
-      (green_mesa_11.matrixCoefficients ==
-           media::MediaMatrixCoefficients::Unknown ||
-       green_mesa_11.matrixCoefficients == media::MediaMatrixCoefficients::Bt601 ||
-       green_mesa_11.matrixCoefficients == media::MediaMatrixCoefficients::Bt709) &&
-      (green_mesa_11.topFieldChromaLocation ==
-           media::MediaChromaLocation::Unspecified ||
-       green_mesa_11.topFieldChromaLocation == media::MediaChromaLocation::Left ||
-       green_mesa_11.topFieldChromaLocation == media::MediaChromaLocation::Center) &&
-      (green_mesa_11.bottomFieldChromaLocation ==
-           media::MediaChromaLocation::Unspecified ||
-       green_mesa_11.bottomFieldChromaLocation == media::MediaChromaLocation::Left ||
-       green_mesa_11.bottomFieldChromaLocation ==
-           media::MediaChromaLocation::Center) &&
-      (green_mesa_11.bitsPerComponent == 0 || green_mesa_11.bitsPerComponent == 8 ||
-       green_mesa_11.bitsPerComponent == 10);
+  // ONE colour rule, shared with avfoundation_media_source.mm's
+  // preservesLegacyNativeAdmission. This used to be an independent restatement
+  // of the same predicate; the two drifting apart is what turns a clean
+  // Unsupported verdict into a mid-startup Failed one, because the high_pass_35
+  // would admit a descriptor this function then refuses. Amendment 6 widened
+  // it to BT.2020/PQ/HLG in exactly one place.
+  const bool supportedColor = media::mediaVideoColorAdmitted(green_mesa_11);
   return green_mesa_11.codedWidth != 0 && green_mesa_11.codedHeight != 0 &&
          green_mesa_11.codedWidth <=
              media::MediaSourceLimits::kHardMaximumCodedWidth &&
@@ -436,8 +423,6 @@ void assignError(std::string* error, const char* message) {
          pixels <= media::MediaSourceLimits::kHardMaximumCodedPixels &&
          green_mesa_11.displayWidth != 0 && green_mesa_11.displayHeight != 0 &&
          green_mesa_11.identityTransform && green_mesa_11.progressive && supportedColor &&
-         !green_mesa_11.unsupportedColorMetadataPresent &&
-         !green_mesa_11.dolbyVisionConfigurationPresent &&
          (green_mesa_11.sampleFormat ==
               media::MediaVideoSampleFormat::Yuv420EightBit ||
           green_mesa_11.sampleFormat ==
@@ -1587,7 +1572,13 @@ media::NativeMediaConsumeResult NativeVideoConsumer::configure(
       track.codecConfiguration,
       true,
       requireHardwareDecode,
-      generation};
+      generation,
+      // See VideoStreamConfiguration::highDynamicRangeTransfer: the HDR
+      // presentation path is engaged by the decode surface's DEPTH, not by
+      // the colour tag, so an HDR transfer forces a 10-bit output surface
+      // even when the coded stream is 8-bit.
+      green_mesa_11.transferFunction == media::MediaTransferFunction::Pq ||
+          green_mesa_11.transferFunction == media::MediaTransferFunction::Hlg};
   if (!impl.decoder.configure(configuration, impl.sink, error)) {
     impl.latch(NativeVideoConsumerFailure::DecoderConfiguration,
                "native green_mesa_11 decoder configuration was refused", error);
