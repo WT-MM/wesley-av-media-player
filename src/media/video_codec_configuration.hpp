@@ -30,6 +30,21 @@ struct VideoCodecConfigurationLimits {
   std::uint32_t maximumHeight{kMaximumVideoCodecHeight};
   std::uint64_t maximumPixels{kMaximumVideoCodecPixels};
   std::uint8_t maximumReorderFrames{kMaximumVideoCodecReorderFrames};
+
+  // Not a limit on size -- an admission policy. It lives on this struct
+  // because `limits` is already threaded to every parser that asks the colour
+  // question, so a second parallel parameter would be one more thing to
+  // forget at one of the six sites that ask it.
+  //
+  // OFF by default, and the default is the load-bearing part. A route may
+  // turn this on ONLY if it also carries the colour description onto the
+  // CMVideoFormatDescription it synthesizes. Matroska does, since
+  // matroska_sample_builder.mm gained its `colr`. MPEG-TS does NOT: its
+  // sample builder writes no colour extension either, so admitting HDR there
+  // would hand VideoToolbox a PQ stream with nothing to attach to the surface
+  // and produce the washed-out SDR render that reads as "HDR support" and is
+  // strictly worse than a named refusal.
+  bool admitHighDynamicRangeColor{false};
 };
 
 enum class VideoCodecConfigurationError : std::uint8_t {

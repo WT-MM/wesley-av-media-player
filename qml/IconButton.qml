@@ -7,10 +7,18 @@ AbstractButton {
     property string iconName: "play"
     property string accessibleName: ""
     property string toolTip: accessibleName
-    property color iconColor: emphasized ? "#17191e" : "#f7f7f8"
+    property color iconColor: emphasized ? "#17191e" : selected ? selectedForeground : "#f7f7f8"
     property color hoverColor: emphasized ? "#ffffff" : "#2dffffff"
     property color pressedColor: emphasized ? "#dddddf" : "#44ffffff"
     property bool emphasized: false
+    // A sticky ON state for the buttons that are toggles rather than actions
+    // (Vivid, Theater). The treatment is the speed panel's selected preset
+    // chip, inverted from the row around it -- a light pill with a dark glyph
+    // -- because a mode that is on has to be readable at a glance from across
+    // the room, which the ~2% background tint a hover uses is not.
+    property bool selected: false
+    property color selectedColor: "#f2f2f4"
+    property color selectedForeground: "#17191e"
     property bool compact: false
     // The panel the tooltip has to stay clear of -- see ChromeToolTip.qml.
     property Item toolTipClearItem: null
@@ -33,7 +41,7 @@ AbstractButton {
 
     background: Rectangle {
         radius: width / 2
-        color: control.down ? control.pressedColor : control.emphasized ? "#f5f5f6" : (control.hovered || control.activeFocus) ? control.hoverColor : "transparent"
+        color: control.down ? control.pressedColor : control.emphasized ? "#f5f5f6" : control.selected ? control.selectedColor : (control.hovered || control.activeFocus) ? control.hoverColor : "transparent"
         scale: control.down ? 0.94 : 1
 
         Behavior on color {
@@ -205,6 +213,50 @@ AbstractButton {
                 ctx.moveTo(width * 0.73, height * 0.27);
                 ctx.lineTo(width * 0.27, height * 0.73);
                 ctx.stroke();
+            } else if (control.iconName === "vivid") {
+                // A luminance burst: a solid core with eight rays. The whole
+                // ink box is centred on (0.5, 0.5) in the normalised
+                // coordinates every glyph here is authored in -- Control's
+                // resizeContent() lays the Canvas out over the entire button
+                // box, so anything sized here would be overwritten.
+                ctx.beginPath();
+                ctx.arc(width * 0.5, height * 0.5, width * 0.155, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.lineWidth = 1.45;
+                const inner = 0.245;
+                const outer = 0.37;
+                ctx.beginPath();
+                for (let i = 0; i < 8; ++i) {
+                    const a = i * Math.PI / 4;
+                    const cx = Math.cos(a);
+                    const cy = Math.sin(a);
+                    ctx.moveTo(width * (0.5 + cx * inner), height * (0.5 + cy * inner));
+                    ctx.lineTo(width * (0.5 + cx * outer), height * (0.5 + cy * outer));
+                }
+                ctx.stroke();
+            } else if (control.iconName === "theater") {
+                // A lit screen inside a dimmed surround: stroked outer frame,
+                // filled inner panel. Same 0.13/0.87 horizontal ink box the
+                // captions glyph uses, so the two sit on one optical grid.
+                const left = width * 0.13;
+                const right = width * 0.87;
+                const top = height * 0.235;
+                const bottom = height * 0.765;
+                const radius = width * 0.075;
+                ctx.lineWidth = 1.3;
+                ctx.beginPath();
+                ctx.moveTo(left + radius, top);
+                ctx.lineTo(right - radius, top);
+                ctx.quadraticCurveTo(right, top, right, top + radius);
+                ctx.lineTo(right, bottom - radius);
+                ctx.quadraticCurveTo(right, bottom, right - radius, bottom);
+                ctx.lineTo(left + radius, bottom);
+                ctx.quadraticCurveTo(left, bottom, left, bottom - radius);
+                ctx.lineTo(left, top + radius);
+                ctx.quadraticCurveTo(left, top, left + radius, top);
+                ctx.stroke();
+                ctx.fillRect(width * 0.28, height * 0.36, width * 0.44,
+                             height * 0.28);
             } else if (control.iconName === "open") {
                 ctx.beginPath();
                 ctx.moveTo(width * 0.13, height * 0.37);
@@ -224,6 +276,9 @@ AbstractButton {
                 glyph.requestPaint();
             }
             function onIconColorChanged() {
+                glyph.requestPaint();
+            }
+            function onSelectedChanged() {
                 glyph.requestPaint();
             }
         }

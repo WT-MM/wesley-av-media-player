@@ -197,6 +197,11 @@ void saturatingAdd(std::uint64_t &value, std::uint64_t amount) noexcept {
            formatTag == kAudioFormatMPEG4AAC_HE_V2;
   case media::MediaCodec::Alac:
     return formatTag == kAudioFormatAppleLossless;
+  // Uncompressed audio from AVFoundation. See the matching arm in
+  // native_audio_session.mm's supportedCodec for why one arm covers both .wav
+  // and .aiff, and why every per-codec value below stays at its default.
+  case media::MediaCodec::Pcm:
+    return formatTag == kAudioFormatLinearPCM;
   case media::MediaCodec::Mp3:
     // MediaCodec::Mp3 is the MPEG-1/2 audio ROUTING FAMILY, not one layer.
     // Matroska only ever reaches this arm with Layer III, but a transport
@@ -627,6 +632,61 @@ private:
     ioData->mBuffers[0].mDataByteSize = 0;
     const std::size_t remaining =
         context.input.packets.size() - context.packetIndex;
+    // A CONSTANT-bit-rate input carries no packet descriptions at all:
+    // CoreAudio derives the packet count from mDataByteSize / mBytesPerPacket
+    // and IGNORES any description array handed to it. Every compressed codec
+    // this converter admits is variable-rate and states mBytesPerPacket = 0,
+    // so until LPCM arrived from AVFoundation the branch below was the only
+    // one that ran. Handing LPCM the whole payload's mDataByteSize while
+    // declaring kMaximumPacketsPerFill packets made CoreAudio consume the
+    // whole payload -- measured as producedFrames = 1024 against
+    // consumedPackets = 16 -- and the next pump then decoded the same frames
+    // again and ran the generation past its accepted budget. So a CBR input
+    // gets a BYTE-EXACT window of exactly the packets it is told about.
+    //
+    // It also needs no callback_packets_ storage, which is why it is not
+    // bounded by kMaximumPacketsPerFill: at one frame per packet that bound
+    // would mean 256 input-proc calls for a single 4096-frame pump.
+    const std::uint32_t bytesPerPacket =
+        context.owner->input_asbd_.mBytesPerPacket;
+    if (bytesPerPacket != 0) {
+      if (remaining == 0) {
+        *ioNumberDataPackets = 0;
+        if (context.input.endOfStream) {
+          context.sawEndOfStream = true;
+          return noErr;
+        }
+        context.needsInput = true;
+        return kInputTemporarilyUnavailable;
+      }
+      const std::size_t supplied =
+          std::min(remaining, static_cast<std::size_t>(*ioNumberDataPackets));
+      if (supplied == 0) {
+        return kInputTemporarilyUnavailable;
+      }
+      const auto &first = context.input.packets[context.packetIndex];
+      if (first.startOffset < 0) {
+        return kAudioConverterErr_UnspecifiedError;
+      }
+      const auto start = static_cast<std::size_t>(first.startOffset);
+      const std::size_t windowBytes = supplied * bytesPerPacket;
+      if (start > context.input.bytes.size() ||
+          windowBytes > context.input.bytes.size() - start) {
+        return kAudioConverterErr_UnspecifiedError;
+      }
+      ioData->mBuffers[0].mData =
+          const_cast<std::byte *>(context.input.bytes.data() + start);
+      ioData->mBuffers[0].mDataByteSize = static_cast<UInt32>(windowBytes);
+      if (outDataPacketDescription != nullptr) {
+        *outDataPacketDescription = nullptr;
+      }
+      context.packetIndex += supplied;
+      context.owner->input_storage_outstanding_ = true;
+      context.owner->outstanding_storage_was_final_ =
+          context.packetIndex == context.input.packets.size();
+      *ioNumberDataPackets = static_cast<UInt32>(supplied);
+      return noErr;
+    }
     const std::size_t fillBudget =
         kMaximumPacketsPerFill -
         std::min(context.packetIndex, kMaximumPacketsPerFill);

@@ -1,6 +1,7 @@
 #include "native_video_consumer.hpp"
 
 #include "native_video_codec_capability.hpp"
+#include "native_video_color.hpp"
 #include "native_video_limits.hpp"
 
 #include <CoreFoundation/CoreFoundation.h>
@@ -1578,7 +1579,14 @@ media::NativeMediaConsumeResult NativeVideoConsumer::configure(
       // the colour tag, so an HDR transfer forces a 10-bit output surface
       // even when the coded stream is 8-bit.
       green_mesa_11.transferFunction == media::MediaTransferFunction::Pq ||
-          green_mesa_11.transferFunction == media::MediaTransferFunction::Hlg};
+          green_mesa_11.transferFunction == media::MediaTransferFunction::Hlg,
+      // The colour the decoder's synthesized description must carry. Routes
+      // that hand over their own description (AVFoundation) are unaffected in
+      // practice -- their description already agrees -- but stating it here
+      // keeps ONE high_pass_35 for the decision instead of one per container.
+      colorPrimariesExtension(green_mesa_11.colorPrimaries),
+      transferFunctionExtension(green_mesa_11.transferFunction),
+      ycbcrMatrixExtension(green_mesa_11.matrixCoefficients)};
   if (!impl.decoder.configure(configuration, impl.sink, error)) {
     impl.latch(NativeVideoConsumerFailure::DecoderConfiguration,
                "native green_mesa_11 decoder configuration was refused", error);

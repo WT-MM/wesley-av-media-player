@@ -2,8 +2,11 @@
 
 #import <AVFoundation/AVFoundation.h>
 #import <AppKit/AppKit.h>
+#import <CoreImage/CoreImage.h>
 #import <QuartzCore/QuartzCore.h>
+#import <objc/runtime.h>
 
+#include <cmath>
 #include <utility>
 
 namespace wam::macos {
@@ -19,7 +22,193 @@ void assignError(std::string* error, const char* message) noexcept {
   }
 }
 
+// ------------------------------------------------------------- vivid boost
+
+// Below this the boost is off outright rather than a filter with a near-zero
+// exposure: an identity filter still forces the layer down the filtered
+// compositing path, which is exactly the cost the mode is supposed to give
+// back when it is switched off.
+constexpr double kVividBoostOffThreshold = 1.001;
+
+// Where the per-window desired boost lives. An associated object on the
+// NSWindow rather than a table keyed by it: the boost belongs to the window,
+// has to outlive any number of display layers built and torn down inside it as
+// files are opened, and has to disappear with the window without anyone
+// remembering to clear a row.
+const void* vividBoostAssociationKey() {
+  static const char key = 0;
+  return &key;
+}
+
+double vividBoostForWindow(NSWindow* window) noexcept {
+  if (window == nil) {
+    return 1.0;
+  }
+  id value = objc_getAssociatedObject(window, vividBoostAssociationKey());
+  if (![value isKindOfClass:[NSNumber class]]) {
+    return 1.0;
+  }
+  const double boost = [(NSNumber*)value doubleValue];
+  return std::isfinite(boost) && boost > 1.0 ? boost : 1.0;
+}
+
+// The whole mechanism, in one place.
+void applyVividBoostToLayer(CALayer* layer, double boost) noexcept {
+  if (layer == nil) {
+    return;
+  }
+  // Deterministic rather than animated. CoreAnimation would otherwise pick an
+  // implicit action for the filter change, and the host view's own `actions`
+  // dictionary only silences bounds/position/contents/sublayers.
+  [CATransaction begin];
+  [CATransaction setDisableActions:YES];
+  if (!(std::isfinite(boost)) || boost < kVividBoostOffThreshold) {
+    layer.filters = nil;
+    if (@available(macOS 26.0, *)) {
+      layer.preferredDynamicRange = CADynamicRangeStandard;
+    }
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    if (@available(macOS 14.0, *)) {
+      layer.wantsExtendedDynamicRangeContent = NO;
+    }
+#pragma clang diagnostic pop
+    [CATransaction commit];
+    return;
+  }
+  CIFilter* exposure = [CIFilter filterWithName:@"CIExposureAdjust"];
+  if (exposure != nil) {
+    // CIExposureAdjust is a multiply in LINEAR light -- inputEV is a power of
+    // two of the luminance -- which is why this is a transfer-function-correct
+    // brightness change and not a gamma shift.
+    [exposure setValue:@(std::log2(boost)) forKey:@"inputEV"];
+    layer.filters = @[ exposure ];
+  }
+  // Both opt-ins, each behind its own availability check. The macOS 14 one is
+  // deprecated as of macOS 26 and the macOS 26 one does not exist below it;
+  // measured on macOS 26.3, either alone produces identical output, so setting
+  // both is redundancy rather than a dependency on the deprecated property.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+  if (@available(macOS 14.0, *)) {
+    layer.wantsExtendedDynamicRangeContent = YES;
+  }
+#pragma clang diagnostic pop
+  if (@available(macOS 26.0, *)) {
+    layer.preferredDynamicRange = CADynamicRangeHigh;
+  }
+  [CATransaction commit];
+}
+
+// The display layer installed in this window, wherever it landed. Searched for
+// rather than handed over, so this stays independent of who owns the
+// NativeLayerHostView and works the same whether the layer was installed
+// before or after the boost was asked for.
+AVSampleBufferDisplayLayer* findDisplayLayer(NSView* view) {
+  if (view == nil) {
+    return nil;
+  }
+  if ([view.layer isKindOfClass:[AVSampleBufferDisplayLayer class]]) {
+    return static_cast<AVSampleBufferDisplayLayer*>(view.layer);
+  }
+  for (NSView* child in view.subviews) {
+    if (AVSampleBufferDisplayLayer* found = findDisplayLayer(child)) {
+      return found;
+    }
+  }
+  return nil;
+}
+
 }  // namespace
+
+void setNativeLayerVividBoost(void* nsWindow, double boost) noexcept {
+  if (nsWindow == nullptr || ![NSThread isMainThread]) {
+    return;
+  }
+  @autoreleasepool {
+    id candidate = (__bridge id)nsWindow;
+    if (![candidate isKindOfClass:[NSWindow class]]) {
+      return;
+    }
+    NSWindow* window = static_cast<NSWindow*>(candidate);
+    const double clean =
+        (std::isfinite(boost) && boost > 1.0) ? boost : 1.0;
+    objc_setAssociatedObject(window, vividBoostAssociationKey(), @(clean),
+                             OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    // The host view is Qt's SIBLING under the frame view, so the search starts
+    // one level above the content view where it can see both.
+    NSView* contentView = window.contentView;
+    NSView* root = contentView.superview != nil ? contentView.superview
+                                                : contentView;
+    applyVividBoostToLayer(findDisplayLayer(root), clean);
+  }
+}
+
+double nativeLayerAppliedVividBoost(void* nsWindow) noexcept {
+  if (nsWindow == nullptr || ![NSThread isMainThread]) {
+    return 0.0;
+  }
+  @autoreleasepool {
+    id candidate = (__bridge id)nsWindow;
+    if (![candidate isKindOfClass:[NSWindow class]]) {
+      return 0.0;
+    }
+    NSWindow* window = static_cast<NSWindow*>(candidate);
+    NSView* contentView = window.contentView;
+    NSView* root =
+        contentView.superview != nil ? contentView.superview : contentView;
+    CALayer* layer = findDisplayLayer(root);
+    if (layer == nil) {
+      return 0.0;
+    }
+    // Both halves have to be true for the mechanism to be engaged: the filter
+    // supplies the above-white values and the opt-in is what stops the
+    // compositor clamping them back to SDR white. Measured -- with the opt-in
+    // off, an extended-range surface reads back clamped at exactly 1.000.
+    bool edrRequested = false;
+    if (@available(macOS 26.0, *)) {
+      edrRequested = layer.preferredDynamicRange != nil &&
+                     ![layer.preferredDynamicRange
+                         isEqualToString:CADynamicRangeStandard];
+    }
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    if (!edrRequested) {
+      if (@available(macOS 14.0, *)) {
+        edrRequested = layer.wantsExtendedDynamicRangeContent == YES;
+      }
+    }
+#pragma clang diagnostic pop
+    if (!edrRequested) {
+      return 1.0;
+    }
+    for (id filter in layer.filters) {
+      if (![filter isKindOfClass:[CIFilter class]]) {
+        continue;
+      }
+      id ev = [(CIFilter*)filter valueForKey:@"inputEV"];
+      if (![ev isKindOfClass:[NSNumber class]]) {
+        continue;
+      }
+      const double boost = std::pow(2.0, [(NSNumber*)ev doubleValue]);
+      return std::isfinite(boost) && boost > 0.0 ? boost : 1.0;
+    }
+    return 1.0;
+  }
+}
+
+double nativeLayerVividBoost(void* nsWindow) noexcept {
+  if (nsWindow == nullptr) {
+    return 1.0;
+  }
+  @autoreleasepool {
+    id candidate = (__bridge id)nsWindow;
+    if (![candidate isKindOfClass:[NSWindow class]]) {
+      return 1.0;
+    }
+    return vividBoostForWindow(static_cast<NSWindow*>(candidate));
+  }
+}
 
 struct NativeLayerHostView::Impl {
   NSView* hostView{nil};
@@ -141,6 +330,11 @@ std::shared_ptr<NativeLayerHostView> NativeLayerHostView::create(
                   "layer host view could not be ordered beneath Qt's view");
       return {};
     }
+
+    // A new file rebuilds this layer from scratch, so the window's Vivid boost
+    // has to be re-applied here or the mode would silently switch itself off
+    // on every open while its toggle still read as on.
+    applyVividBoostToLayer(layer, vividBoostForWindow(window));
 
     auto impl = std::make_unique<Impl>();
     impl->hostView = hostView;

@@ -1,5 +1,8 @@
 #pragma once
 
+#include "media/native_media_source.hpp"
+
+#include <CoreMedia/CoreMedia.h>
 #include <CoreVideo/CoreVideo.h>
 
 #include <array>
@@ -101,6 +104,87 @@ struct YCbCrMatrixRows {
   }
   CFRelease(matrix);
   return recognized;
+}
+
+// THE modelled-colour -> CoreMedia-extension mapping, for the routes that
+// SYNTHESIZE a CMVideoFormatDescription instead of receiving one.
+//
+// AVFoundation hands its own description over with the colour already on it;
+// Matroska and MPEG-TS build theirs from a codec configuration record, and a
+// description built from the atom alone carries no colour at all. Handing
+// VideoToolbox such a description makes the decoded surface untagged, and an
+// untagged PQ surface is presented as SDR -- the washed-out render measured at
+// 98/255 on the colour bars, which is the failure this mapping prevents.
+//
+// This is the exact inverse of avfoundation_media_source.mm's copy* readers,
+// stated once so the two directions cannot drift apart.
+//
+// nullptr means "write no key". Absence is how an untagged stream is spelled
+// to CoreMedia, and it is what the SDR corpus has always presented from, so an
+// untagged track keeps a byte-identical description. OtherExplicit and Srgb
+// return nullptr rather than an approximation: they are refused upstream by
+// media::mediaVideoColorAdmitted(), and if that rule is ever widened an
+// untagged surface is a safe degradation where a WRONG tag is not.
+[[nodiscard]] inline CFStringRef
+colorPrimariesExtension(media::MediaColorPrimaries value) noexcept {
+  switch (value) {
+  case media::MediaColorPrimaries::Bt709:
+    return kCMFormatDescriptionColorPrimaries_ITU_R_709_2;
+  case media::MediaColorPrimaries::Bt2020:
+    return kCMFormatDescriptionColorPrimaries_ITU_R_2020;
+  default:
+    return nullptr;
+  }
+}
+
+[[nodiscard]] inline CFStringRef
+transferFunctionExtension(media::MediaTransferFunction value) noexcept {
+  switch (value) {
+  case media::MediaTransferFunction::Bt709:
+    return kCMFormatDescriptionTransferFunction_ITU_R_709_2;
+  case media::MediaTransferFunction::Pq:
+    return kCMFormatDescriptionTransferFunction_SMPTE_ST_2084_PQ;
+  case media::MediaTransferFunction::Hlg:
+    return kCMFormatDescriptionTransferFunction_ITU_R_2100_HLG;
+  default:
+    return nullptr;
+  }
+}
+
+[[nodiscard]] inline CFStringRef
+ycbcrMatrixExtension(media::MediaMatrixCoefficients value) noexcept {
+  switch (value) {
+  case media::MediaMatrixCoefficients::Bt709:
+    return kCMFormatDescriptionYCbCrMatrix_ITU_R_709_2;
+  case media::MediaMatrixCoefficients::Bt601:
+    return kCMFormatDescriptionYCbCrMatrix_ITU_R_601_4;
+  case media::MediaMatrixCoefficients::Bt2020Ncl:
+    return kCMFormatDescriptionYCbCrMatrix_ITU_R_2020;
+  default:
+    return nullptr;
+  }
+}
+
+// Writes whichever of the three keys are modelled onto `extensions`.
+inline void applyColorExtensions(CFMutableDictionaryRef extensions,
+                                 media::MediaColorPrimaries primaries,
+                                 media::MediaTransferFunction transfer,
+                                 media::MediaMatrixCoefficients matrix) noexcept {
+  if (extensions == nullptr) {
+    return;
+  }
+  if (CFStringRef value = colorPrimariesExtension(primaries)) {
+    CFDictionarySetValue(
+        extensions, kCMFormatDescriptionExtension_ColorPrimaries, value);
+  }
+  if (CFStringRef value = transferFunctionExtension(transfer)) {
+    CFDictionarySetValue(
+        extensions, kCMFormatDescriptionExtension_TransferFunction, value);
+  }
+  if (CFStringRef value = ycbcrMatrixExtension(matrix)) {
+    CFDictionarySetValue(extensions, kCMFormatDescriptionExtension_YCbCrMatrix,
+                         value);
+  }
 }
 
 } // namespace wam::macos

@@ -684,8 +684,33 @@ class ProductionPreviewGeneration final
         result.error = "preview target or cached asset is invalid";
         return result;
       }
+      // Sample cursors are positioned and report timestamps in the track's own
+      // MEDIA timeline, while the preview target, the asset duration and the
+      // reader time range are all stated in the ASSET (movie) timeline. Every
+      // composition-delayed H.264/HEVC track separates the two by an edit list
+      // whose shift is exactly the reorder offset the encoder introduced --
+      // 1024/12288 s (two frames) on the fixtures, 1024/15360 s on the 30 fps
+      // corpus -- so the media timeline's earliest presentation is NOT zero.
+      // Walking the cursor against an unmapped asset-time target therefore
+      // finds nothing at all for any target below that shift (the whole reason
+      // a scrub near t=0 failed), and for every other target it returned a
+      // MEDIA time that the reader range then consumed as an ASSET time, so
+      // each preview read started two frames late. Map in, walk, map back --
+      // the exact discipline `AVFoundationGeneration::syncStart()` already
+      // applies on the main route.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+      const CMTime mediaTarget =
+          [track samplePresentationTimeForTrackTime:*target];
+#pragma clang diagnostic pop
+      if (!CMTIME_IS_NUMERIC(mediaTarget)) {
+        result.status = NativePreviewStatus::Unsupported;
+        result.error = "preview target has no exact media-timeline image";
+        return result;
+      }
+      const CMTime mediaOffset = CMTimeSubtract(mediaTarget, *target);
       AVSampleCursor* cursor =
-          [track makeSampleCursorWithPresentationTimeStamp:*target];
+          [track makeSampleCursorWithPresentationTimeStamp:mediaTarget];
       if (cursor == nil) {
         cursor = [track makeSampleCursorAtLastSampleInDecodeOrder];
       }
@@ -702,8 +727,9 @@ class ProductionPreviewGeneration final
         // as unsupported; keep walking instead, so an HEVC preview target that
         // happens to fall in a CRA's leading window still renders.
         if (cursor.currentSampleSyncInfo.sampleIsFullSync &&
-            CMTimeCompare(cursor.presentationTimeStamp, *target) <= 0) {
-          decodeStart = cursor.presentationTimeStamp;
+            CMTimeCompare(cursor.presentationTimeStamp, mediaTarget) <= 0) {
+          decodeStart =
+              CMTimeSubtract(cursor.presentationTimeStamp, mediaOffset);
           break;
         }
         if ([cursor stepInDecodeOrderByCount:-1] == 0) {

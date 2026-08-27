@@ -436,7 +436,12 @@ if(APPLE)
     PRIVATE
       "${WAM_OPENGL_FRAMEWORK}"
       "-framework AVFoundation"
-      "-framework QuartzCore")
+      "-framework QuartzCore"
+      # CIFilter, for the Vivid boost's exposure filter on the display layer
+      # (src/platform/macos/native_layer_host_view.mm). CoreAnimation applies
+      # it during compositing, so this buys the EDR brightness change without
+      # a per-frame pass in this process.
+      "-framework CoreImage")
   set_target_properties(wam_macos_native_qt_tracked PROPERTIES
     AUTOMOC ON
     LINKER_LANGUAGE OBJCXX)
