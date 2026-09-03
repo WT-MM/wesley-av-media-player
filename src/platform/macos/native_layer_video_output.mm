@@ -353,9 +353,30 @@ struct NativeLayerVideoOutput::State
     if (!ensureFormatDescriptionLocked(pixelBuffer, error)) {
       return nullptr;
     }
+    // A frame that straddles the movie origin is presented FROM the origin with
+    // its end preserved exactly, so the moment the next frame replaces it does
+    // not move. Only the buffer handed to the renderer is restated; the tracked
+    // FrameTiming the draw proof is matched against is untouched, so the
+    // consumer's sequence/timing accounting sees exactly what it submitted.
+    // Both stamps sit on the same movie timeline, so this subtraction is exact;
+    // a rounded result is refused rather than presented.
+    CMTime presentation = timing.presentationTime;
+    CMTime duration = timing.duration;
+    if (CMTimeCompare(presentation, kCMTimeZero) < 0) {
+      const CMTime end = CMTimeAdd(presentation, duration);
+      if (!CMTIME_IS_NUMERIC(end) ||
+          (end.flags & kCMTimeFlags_HasBeenRounded) != 0 ||
+          CMTimeCompare(end, kCMTimeZero) <= 0) {
+        assignErrorNoexcept(
+            error, "layer video output could not stage the decoded frame");
+        return nullptr;
+      }
+      presentation = kCMTimeZero;
+      duration = end;
+    }
     CMSampleTimingInfo sampleTiming{};
-    sampleTiming.duration = timing.duration;
-    sampleTiming.presentationTimeStamp = timing.presentationTime;
+    sampleTiming.duration = duration;
+    sampleTiming.presentationTimeStamp = presentation;
     sampleTiming.decodeTimeStamp = kCMTimeInvalid;
     CMSampleBufferRef sampleBuffer = nullptr;
     const OSStatus status = CMSampleBufferCreateReadyWithImageBuffer(
@@ -595,10 +616,31 @@ NativeTrackedVideoSubmitStatus NativeLayerVideoOutput::submit(
     return NativeTrackedVideoSubmitStatus::Failed;
   }
   const FrameTiming& timing = frame.timing();
+  // A decoded frame may legitimately BEGIN before the movie origin and still be
+  // the frame that is visible at it. An ISO-BMFF head trim (elst media_time > 0)
+  // makes the reader walk back to a RAP, so the picture covering movie time zero
+  // is stated at a negative movie time whenever the trim does not land exactly
+  // on a frame boundary. The consumer already models this: it retires by the
+  // PRESENTATION FLOOR, not by sign, and deliberately submits the frame that
+  // straddles the floor (native_video_consumer.mm -- "the floor is the real
+  // gate ... it does not care which side of zero the frame is on").
+  //
+  // Rejecting that frame on sign here made the whole file die on this route
+  // while the scene-graph route, which has no such check, played it. So the
+  // rule is the consumer's rule: the frame must END after the origin. Where it
+  // begins is not this output's business; makeSampleBufferLocked presents a
+  // straddling frame from the origin and keeps its end exactly.
+  const CMTime frameEnd =
+      CMTIME_IS_NUMERIC(timing.presentationTime) &&
+              CMTIME_IS_NUMERIC(timing.duration)
+          ? CMTimeAdd(timing.presentationTime, timing.duration)
+          : kCMTimeInvalid;
   if (timing.generation == 0 || !CMTIME_IS_NUMERIC(timing.presentationTime) ||
       !CMTIME_IS_NUMERIC(timing.duration) ||
-      CMTimeCompare(timing.presentationTime, kCMTimeZero) < 0 ||
-      CMTimeCompare(timing.duration, kCMTimeZero) <= 0) {
+      CMTimeCompare(timing.duration, kCMTimeZero) <= 0 ||
+      !CMTIME_IS_NUMERIC(frameEnd) ||
+      (frameEnd.flags & kCMTimeFlags_HasBeenRounded) != 0 ||
+      CMTimeCompare(frameEnd, kCMTimeZero) <= 0) {
     assignErrorNoexcept(error, "tracked layer video timing is invalid");
     return NativeTrackedVideoSubmitStatus::Failed;
   }

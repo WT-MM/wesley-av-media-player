@@ -76,22 +76,35 @@ enum class OpenConfigureVerdict : std::uint8_t {
   Threw,
 };
 
+// `reason`, when non-null, receives a static string naming the exact invariant
+// that refused. Fifteen distinct refusals used to fold into the single message
+// "generation timeline could not be derived", which named the verdict and not
+// its cause; bisecting one cost a rebuild per candidate. Same precedent as the
+// geometry/colour verdicts: a refusal must say what it refused.
 [[nodiscard]] std::optional<NativeMediaGenerationTimeline> deriveTimeline(
     MediaGeneration generation, MediaSeekMode mode, MediaTime requestedTarget,
     MediaTime actualDecodeStart, MediaTime duration,
     const MediaTrackDescriptor* selectedAudio,
     MediaAudioGenerationWindow audioWindow,
-    std::uint32_t maximumAudioSeekPrerollSeconds) noexcept {
+    std::uint32_t maximumAudioSeekPrerollSeconds,
+    const char** reason = nullptr) noexcept {
+  const auto refuse =
+      [&](const char* why) -> std::optional<NativeMediaGenerationTimeline> {
+    if (reason != nullptr) {
+      *reason = why;
+    }
+    return std::nullopt;
+  };
   if (generation == 0 || !requestedTarget.valid() ||
       !actualDecodeStart.valid() || !duration.valid()) {
-    return std::nullopt;
+    return refuse("generation, target, decode start or duration is invalid");
   }
   switch (mode) {
   case MediaSeekMode::Accurate:
   case MediaSeekMode::KeyFrame:
     break;
   default:
-    return std::nullopt;
+    return refuse("seek mode is neither Accurate nor KeyFrame");
   }
 
   constexpr MediaTime kStreamOrigin{0, 1};
@@ -115,7 +128,7 @@ enum class OpenConfigureVerdict : std::uint8_t {
       *decodeStartAgainstOrigin == MediaTimeOrder::Less ||
       !decodeStartAgainstDuration ||
       *decodeStartAgainstDuration == MediaTimeOrder::Greater) {
-    return std::nullopt;
+    return refuse("target/decode-start ordering against origin and duration");
   }
 
   NativeMediaGenerationTimeline timeline;
@@ -135,7 +148,7 @@ enum class OpenConfigureVerdict : std::uint8_t {
         audioWindow.startsAtStreamOrigin ||
         audioWindow.presentationEnd.valid() ||
         audioWindow.audioEnd.valid()) {
-      return std::nullopt;
+      return refuse("no audio track selected but an audio window was stated");
     }
     return timeline;
   }
@@ -145,7 +158,7 @@ enum class OpenConfigureVerdict : std::uint8_t {
       selectedAudio->audio->sampleRate <= 0.0 ||
       selectedAudio->audio->sampleRate >
           static_cast<double>(std::numeric_limits<std::uint32_t>::max())) {
-    return std::nullopt;
+    return refuse("selected audio track kind or sample rate is unusable");
   }
   const auto sampleRate =
       static_cast<std::uint32_t>(selectedAudio->audio->sampleRate);
@@ -154,7 +167,8 @@ enum class OpenConfigureVerdict : std::uint8_t {
   if (selectedAudio->audio->sampleRate != static_cast<double>(sampleRate) ||
       !audioWindow.decodeStart.valid() ||
       !audioWindow.presentationStart.valid()) {
-    return std::nullopt;
+    return refuse("audio sample rate is not integral, or the window's "
+                  "decode/presentation start is invalid");
   }
   const auto decodeFrame =
       exactAudioFrameIndex(audioWindow.decodeStart, sampleRate);
@@ -170,15 +184,15 @@ enum class OpenConfigureVerdict : std::uint8_t {
   const auto decodeAgainstMediaStart =
       compareMediaTime(audioWindow.decodeStart, audioWindow.mediaStart);
   if (!decodeAgainstMediaStart) {
-    return std::nullopt;
+    return refuse("audio decode start is not comparable to media start");
   }
   if (!audioWindow.mediaStart.valid() || audioWindow.mediaStart.value < 0 ||
       !presentationAgainstMediaStart ||
       *presentationAgainstMediaStart == MediaTimeOrder::Less) {
-    return std::nullopt;
+    return refuse("audio media start is invalid or after presentation start");
   }
   if (audioWindow.presentationEnd.valid() != audioWindow.audioEnd.valid()) {
-    return std::nullopt;
+    return refuse("audio presentation end and audio end disagree on presence");
   }
   if (audioWindow.presentationEnd.valid()) {
     const auto endAgainstPresentation = compareMediaTime(
@@ -197,7 +211,7 @@ enum class OpenConfigureVerdict : std::uint8_t {
         *endAgainstDuration == MediaTimeOrder::Greater ||
         !audioEndAgainstEnd ||
         *audioEndAgainstEnd == MediaTimeOrder::Greater) {
-      return std::nullopt;
+      return refuse("audio end window is not frame-exact or is out of order");
     }
   }
   const auto decodeAgainstOrigin =
@@ -207,22 +221,46 @@ enum class OpenConfigureVerdict : std::uint8_t {
   const auto presentationAgainstAudioDuration =
       compareMediaTime(audioWindow.presentationStart,
                        selectedAudio->duration);
-  if (!decodeFrame || !presentationFrame ||
-      (*decodeFrame < 0 && !audioMayPrecedeOrigin) ||
-      *presentationFrame < *decodeFrame || !decodeAgainstOrigin ||
+  // Split one predicate per line so the refusal names the fact that failed.
+  // The two frame-index checks are first because they are the ones a container
+  // can violate with an otherwise well-formed edit list: an audio window
+  // endpoint that does not land on an exact sample-rate frame boundary.
+  if (!decodeFrame) {
+    return refuse("audio decode start is not an exact audio frame boundary");
+  }
+  if (!presentationFrame) {
+    return refuse(
+        "audio presentation start is not an exact audio frame boundary");
+  }
+  if (*decodeFrame < 0 && !audioMayPrecedeOrigin) {
+    return refuse("audio decode start precedes the origin for a codec that "
+                  "may not precede it");
+  }
+  if (*presentationFrame < *decodeFrame) {
+    return refuse("audio presentation start precedes its decode start");
+  }
+  if (!decodeAgainstOrigin ||
       (*decodeAgainstOrigin == MediaTimeOrder::Less &&
-       !audioMayPrecedeOrigin) ||
-      !presentationAgainstDuration ||
-      *presentationAgainstDuration == MediaTimeOrder::Greater ||
-      !presentationAgainstAudioDuration ||
-      *presentationAgainstAudioDuration == MediaTimeOrder::Greater ||
-      // A window that begins at or before the movie time the audio media
-      // begins can only be the stream origin; there is nothing earlier for it
-      // to be. mediaStart is the origin for every source that declares no
-      // silence before its audio, so this is the prior rule verbatim there.
-      audioWindow.startsAtStreamOrigin !=
-          (*decodeAgainstMediaStart != MediaTimeOrder::Greater)) {
-    return std::nullopt;
+       !audioMayPrecedeOrigin)) {
+    return refuse("audio decode start is not comparable to, or precedes, the "
+                  "stream origin");
+  }
+  if (!presentationAgainstDuration ||
+      *presentationAgainstDuration == MediaTimeOrder::Greater) {
+    return refuse("audio presentation start is after the source duration");
+  }
+  if (!presentationAgainstAudioDuration ||
+      *presentationAgainstAudioDuration == MediaTimeOrder::Greater) {
+    return refuse("audio presentation start is after the audio track duration");
+  }
+  // A window that begins at or before the movie time the audio media
+  // begins can only be the stream origin; there is nothing earlier for it
+  // to be. mediaStart is the origin for every source that declares no
+  // silence before its audio, so this is the prior rule verbatim there.
+  if (audioWindow.startsAtStreamOrigin !=
+      (*decodeAgainstMediaStart != MediaTimeOrder::Greater)) {
+    return refuse("audio window's stream-origin flag disagrees with its "
+                  "decode start against media start");
   }
   const std::uint64_t prerollFrames = static_cast<std::uint64_t>(
       *presentationFrame - *decodeFrame);
@@ -230,7 +268,7 @@ enum class OpenConfigureVerdict : std::uint8_t {
       static_cast<std::uint64_t>(maximumAudioSeekPrerollSeconds) *
       static_cast<std::uint64_t>(sampleRate);
   if (prerollFrames > maximumPrerollFrames) {
-    return std::nullopt;
+    return refuse("audio preroll exceeds the maximum seek preroll");
   }
 
   switch (mode) {
@@ -244,7 +282,7 @@ enum class OpenConfigureVerdict : std::uint8_t {
     const auto mediaStartAgainstTarget =
         compareMediaTime(audioWindow.mediaStart, requestedTarget);
     if (!mediaStartAgainstTarget) {
-      return std::nullopt;
+      return refuse("audio media start is not comparable to the target");
     }
     const auto expected = audioFrameAtOrAfter(
         *mediaStartAgainstTarget == MediaTimeOrder::Greater
@@ -256,7 +294,8 @@ enum class OpenConfigureVerdict : std::uint8_t {
                  : std::optional<MediaTimeOrder>{};
     if (!presentationAgainstExpected ||
         *presentationAgainstExpected != MediaTimeOrder::Equal) {
-      return std::nullopt;
+      return refuse("audio presentation start is not the first audio frame "
+                    "at or after the target (or the declared media start)");
     }
     break;
   }
@@ -267,7 +306,8 @@ enum class OpenConfigureVerdict : std::uint8_t {
         compareMediaTime(audioWindow.presentationStart,
                          timeline.presentationFloor) !=
             MediaTimeOrder::Equal) {
-      return std::nullopt;
+      return refuse("keyframe audio window is not aligned to the common "
+                    "RAP/decode floor");
     }
     break;
   }
@@ -437,6 +477,7 @@ NativeMediaDispatcherOpenOutcome NativeMediaDispatcher::openLocalFile(
   const MediaTime requestedTarget =
       options.initialPosition ? options.initialPosition->target
                               : kStreamOrigin;
+  const char* timelineRefusal = nullptr;
   const auto timeline =
       deriveTimeline(
           generation, requestedMode, requestedTarget,
@@ -445,9 +486,15 @@ NativeMediaDispatcherOpenOutcome NativeMediaDispatcher::openLocalFile(
               ? findMediaTrack(*opened.descriptor,
                                *opened.descriptor->selectedAudio)
               : nullptr,
-          opened.audioWindow, limits_.maximumAudioSeekPrerollSeconds);
+          opened.audioWindow, limits_.maximumAudioSeekPrerollSeconds,
+          &timelineRefusal);
   if (!timeline) {
-    failure_message_ = "generation timeline could not be derived";
+    failure_message_ = timelineRefusal == nullptr
+                           ? std::string("generation timeline could not be "
+                                         "derived")
+                           : std::string("generation timeline could not be "
+                                         "derived: ") +
+                                 timelineRefusal;
     fail(NativeMediaDispatcherFailure::InvalidTimeline, generation);
     result.status = NativeMediaDispatcherOpenStatus::Failed;
     return result;
@@ -828,6 +875,7 @@ NativeMediaDispatcherSeekOutcome NativeMediaDispatcher::seek(
     return result;
   }
 
+  const char* seekRefusal = nullptr;
   const auto nextTimeline =
       descriptor_ == nullptr
           ? std::optional<NativeMediaGenerationTimeline>{}
@@ -838,8 +886,13 @@ NativeMediaDispatcherSeekOutcome NativeMediaDispatcher::seek(
                     ? findMediaTrack(*descriptor_, *descriptor_->selectedAudio)
                     : nullptr,
                 sought.audioWindow,
-                limits_.maximumAudioSeekPrerollSeconds);
+                limits_.maximumAudioSeekPrerollSeconds, &seekRefusal);
   if (!nextTimeline) {
+    failure_message_ = seekRefusal == nullptr
+                           ? std::string("seek timeline could not be derived")
+                           : std::string("seek timeline could not be "
+                                         "derived: ") +
+                                 seekRefusal;
     // The source installed a generation but returned facts that cannot define
     // an exact consumer timeline. Keep old consumer ownership intact for an
     // exact close and fail the diverged source route closed.
