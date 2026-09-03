@@ -835,6 +835,83 @@ void verifyRetainedLeaseCeilingAndRelease() {
                 NativeLayerVideoOutput::kRetainedFrameLeaseCeiling);
 }
 
+
+// A frame that BEGINS before the movie origin but ENDS after it is the frame
+// visible at time zero, and this route must present it.
+//
+// An ISO-BMFF head trim (elst media_time > 0) makes the reader walk back to a
+// RAP, so when the trim does not land exactly on a frame boundary the picture
+// covering movie time zero carries a NEGATIVE movie stamp. The consumer models
+// this deliberately -- it retires by the presentation floor, not by sign, and
+// submits the straddling frame. This output used to reject any negative
+// presentation time outright, so such a file died on the default route with
+// "tracked video output refused the frame submission" while the scene-graph
+// route, which has no sign check, played it. Specimen:
+// slide_assets/trimmed_autorollout.mp4 (elst media_time=475417 @ 90000).
+//
+// The contract proved here: a straddling frame is ACCEPTED, a frame that ends
+// at or before the origin is still REFUSED (it is genuinely never visible), and
+// the echoed terminal timing is the frame's own unmodified timing -- the clamp
+// applies only to the buffer handed to the renderer, never to the accounting
+// the draw proof is matched against.
+void verifyStraddlingFrameIsPresentedAndEchoedExactly() {
+  const auto baseline = NativeSurfaceBudget::stats();
+  std::atomic<std::uint64_t> wakes{0};
+  auto output = createDetached(&wakes);
+  std::string error;
+  WAM_CHECK_DETAIL(output->startGeneration(1, &error), error);
+  WAM_CHECK(output->capacity(1) == NativeTrackedVideoCapacity::Available);
+
+  // Ends exactly at the origin: never visible, still refused.
+  {
+    FrameTiming timing;
+    timing.presentationTime = CMTimeMake(-1001, 30000);
+    timing.duration = CMTimeMake(1001, 30000);
+    timing.generation = 1;
+    timing.keyFrame = true;
+    CVPixelBufferRef buffer = createSolidNv12(90);
+    WAM_CHECK(buffer != nullptr);
+    FrameLease before(buffer, timing);
+    CVPixelBufferRelease(buffer);
+    error.clear();
+    WAM_CHECK(output->submit(before, NativeTrackedFrameSequence{1}, &error) ==
+              NativeTrackedVideoSubmitStatus::Failed);
+    WAM_CHECK(!error.empty());
+  }
+
+  // Straddles the origin: accepted, and echoed with its own exact timing.
+  FrameTiming straddling;
+  straddling.presentationTime = CMTimeMake(-500, 30000);
+  straddling.duration = CMTimeMake(1001, 30000);
+  straddling.generation = 1;
+  straddling.keyFrame = true;
+  {
+    CVPixelBufferRef buffer = createSolidNv12(120);
+    WAM_CHECK(buffer != nullptr);
+    FrameLease frame(buffer, straddling);
+    CVPixelBufferRelease(buffer);
+    WAM_CHECK(static_cast<bool>(frame));
+    error.clear();
+    WAM_CHECK_DETAIL(
+        output->submit(frame, NativeTrackedFrameSequence{2}, &error) ==
+            NativeTrackedVideoSubmitStatus::Accepted,
+        error);
+  }
+  const auto event = output->takeEvent();
+  WAM_CHECK(event.has_value());
+  if (event) {
+    WAM_CHECK(event->kind == NativeTrackedVideoEventKind::FrameDrawn);
+    // The negative stamp survives into the accounting unmodified.
+    WAM_CHECK(CMTimeCompare(event->timing.presentationTime,
+                            straddling.presentationTime) == 0);
+    WAM_CHECK(CMTimeCompare(event->timing.duration, straddling.duration) == 0);
+  }
+
+  closeAndDrop(std::move(output), 2);
+  WAM_CHECK(NativeSurfaceBudget::stats().currentSurfaces ==
+            baseline.currentSurfaces);
+}
+
 }  // namespace
 
 int main() {
@@ -855,6 +932,7 @@ int main() {
     verifyCloseProgressIsTerminal();
     verifyCloseSupersedesPendingFlush();
     verifyRetainedLeaseCeilingAndRelease();
+    verifyStraddlingFrameIsPresentedAndEchoedExactly();
   }
 
   std::cout << "native layer video output contract tests passed\n";

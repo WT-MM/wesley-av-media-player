@@ -830,6 +830,48 @@ audioMovieTimelineFactsFor(NSArray* segments) noexcept {
   return facts;
 }
 
+// The first whole audio frame at or after `time`, as an exact rational whose
+// timescale IS the sample rate. std::nullopt when the input is not an exact
+// edit time or the count does not fit.
+//
+// WHY THIS EXISTS. Every audio access unit's movie stamp is its media stamp
+// plus one constant shift, and the entire audio path -- window, converter,
+// clock, IPF proof -- is stated in exact whole frames at the track's sample
+// rate. A container may legitimately declare an edit whose start is not a whole
+// number of audio frames, because its movie timescale need not divide the
+// sample rate: Android writes a movie timescale of 10000, so a leading empty
+// edit of 192 units is 19.2 ms, and 19.2 ms * 48000 Hz = 921.6 frames. Left
+// alone that puts EVERY audio stamp of the track six tenths of a sample off the
+// grid, exactAudioFrameIndex refuses the window, audioGenerationWindow returns
+// no window at all, and the generation timeline cannot be derived -- which is
+// the whole file falling back for a fifth of a millisecond of arithmetic.
+//
+// The restatement is the first whole frame AT OR AFTER the declared time. That
+// is the same boundary audioFrameAtOrAfter already picks for the window's
+// presentation start, so decode start, presentation start and media start
+// agree by construction instead of by luck. The motion is bounded by one
+// sample (20.8 us at 48 kHz), it is applied only when the declared time is not
+// already on the grid, and it is exact -- an integer frame count over the
+// sample rate, with no floating point and nothing else rounded.
+// The arithmetic itself is the neutral contract's audioFrameAtOrAfter, reused
+// rather than restated: it is the function whose answer this has to match, and
+// duplicating a rounding rule is how two of them drift apart.
+[[nodiscard]] std::optional<CMTime> audioFrameAlignedEditTime(
+    CMTime time, std::uint32_t sampleRate) noexcept {
+  if (!exactEditTime(time) || sampleRate == 0) {
+    return std::nullopt;
+  }
+  const auto exact = exactMediaTime(time);
+  if (!exact) {
+    return std::nullopt;
+  }
+  const auto aligned = media::audioFrameAtOrAfter(*exact, sampleRate);
+  if (!aligned) {
+    return std::nullopt;
+  }
+  return exactCMTime(*aligned);
+}
+
 // The movie time at which a track's MEDIA begins, or the origin when it begins
 // there. Nonzero exactly when the track carries a leading EMPTY EDIT.
 //
@@ -3591,6 +3633,59 @@ class ProductionGeneration final : public AVFoundationGeneration {
           }
           audio_movie_shift_ = shifted;
         }
+        // Restate the shift, and the media start it carries, on the track's own
+        // audio frame grid. See audioFrameAlignedEditTime: a movie timescale
+        // that does not divide the sample rate can otherwise put every audio
+        // stamp a fraction of a sample off the grid, which refuses the whole
+        // generation. Both move by the same whole-frame ceiling, so the first
+        // access unit's movie stamp still lands exactly on the media start and
+        // the window keeps reporting that it starts at the stream origin.
+        //
+        // Applied ONLY when the declared time is not already frame-exact, so
+        // every file that plays today is arithmetically untouched.
+        {
+          const MediaTrackDescriptor* selectedAudio =
+              descriptor->selectedAudio
+                  ? media::findMediaTrack(*descriptor,
+                                          *descriptor->selectedAudio)
+                  : nullptr;
+          const double rate = selectedAudio && selectedAudio->audio
+                                  ? selectedAudio->audio->sampleRate
+                                  : 0.0;
+          const auto sampleRate =
+              std::isfinite(rate) && rate > 0.0 &&
+                      rate <= static_cast<double>(
+                                  std::numeric_limits<std::int32_t>::max()) &&
+                      static_cast<double>(static_cast<std::uint32_t>(rate)) ==
+                          rate
+                  ? static_cast<std::uint32_t>(rate)
+                  : 0u;
+          if (sampleRate != 0) {
+            const auto exactShift = exactMediaTime(audio_movie_shift_);
+            const bool shiftOnGrid =
+                exactShift &&
+                media::exactAudioFrameIndex(*exactShift, sampleRate)
+                    .has_value();
+            if (!shiftOnGrid) {
+              const auto alignedShift =
+                  audioFrameAlignedEditTime(audio_movie_shift_, sampleRate);
+              const auto alignedMediaStart =
+                  CMTimeCompare(audio_media_start_, kCMTimeZero) > 0
+                      ? audioFrameAlignedEditTime(audio_media_start_,
+                                                  sampleRate)
+                      : std::optional<CMTime>{audio_media_start_};
+              if (!alignedShift || !alignedMediaStart) {
+                result.status = AVFoundationGenerationStatus::Unsupported;
+                result.error =
+                    "selected audio edit list is not representable on the "
+                    "track's audio frame grid";
+                return result;
+              }
+              audio_movie_shift_ = *alignedShift;
+              audio_media_start_ = *alignedMediaStart;
+            }
+          }
+        }
         // A leading empty edit declares silence on the movie timeline before
         // any audio media exists; a selected video that runs past the end of
         // the selected audio declares it at the other end. Both are stated to
@@ -5333,6 +5428,11 @@ std::int64_t audioUnitsWithinStagedDurationForTest(
     std::int64_t perUnitValue, std::int32_t perUnitTimescale) noexcept {
   return static_cast<std::int64_t>(audioUnitsWithinStagedDuration(
       CMTimeMake(perUnitValue, perUnitTimescale)));
+}
+
+std::optional<CMTime> audioFrameAlignedEditTimeForTesting(
+    CMTime time, std::uint32_t sampleRate) noexcept {
+  return audioFrameAlignedEditTime(time, sampleRate);
 }
 
 struct ConcurrentMetadataLoadCancellation::Impl {

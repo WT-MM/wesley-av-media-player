@@ -33,6 +33,8 @@ bool exactIdentityVideoTransformForTesting(
     CGAffineTransform transform) noexcept;
 std::optional<CMTime> syncSearchTargetWithinLeadingEmptyEditForTesting(
     CMTime target, CMTime mediaStart) noexcept;
+std::optional<CMTime> audioFrameAlignedEditTimeForTesting(
+    CMTime time, std::uint32_t sampleRate) noexcept;
 CMTime clampedSyncStartWithinTimelineContractForTesting(
     CMTime decodeStart, CMTime target) noexcept;
 bool selectedFormatsRebindBeforeReaderForTesting(
@@ -3453,6 +3455,71 @@ void testStagedAudioIsBoundedInMediaTime() {
          "one over-long access unit still publishes as exactly one unit");
 }
 
+
+// An audio edit whose start is not a whole number of audio frames must be
+// RESTATED onto the track's frame grid, not refused.
+//
+// The specimen is the real one: Android writes a movie timescale of 10000, so
+// PXL_20250729_045448421.mp4's leading empty edit of 192 units is 19.2 ms, and
+// 19.2 ms * 48000 Hz = 921.6 frames. Before this restatement every audio stamp
+// of that track sat six tenths of a sample off the grid, exactAudioFrameIndex
+// refused the window, audioGenerationWindow published none, and the file died
+// at open with "generation timeline could not be derived".
+//
+// The contract proved here: the result is the first whole frame AT OR AFTER the
+// declared time (never before it -- that would invent audio ahead of where the
+// container says it begins), it is exactly representable on the frame grid, it
+// moves by strictly less than one sample, and a time already on the grid is
+// returned unmoved.
+void testAudioEditTimesAreRestatedOnTheAudioFrameGrid() {
+  using wam::macos::avfoundation_media_source_testing::
+      audioFrameAlignedEditTimeForTesting;
+
+  // The real specimen: 192/10000 s at 48 kHz is 921.6 frames -> 922.
+  const auto pixel = audioFrameAlignedEditTimeForTesting(CMTimeMake(192, 10000),
+                                                         48000);
+  expect(pixel.has_value(),
+         "a 19.2 ms empty edit must be restatable at 48 kHz");
+  if (pixel) {
+    expect(CMTimeCompare(*pixel, CMTimeMake(922, 48000)) == 0,
+           "19.2 ms at 48 kHz must restate to frame 922");
+    // At or after the declared time, and by less than one whole sample.
+    expect(CMTimeCompare(*pixel, CMTimeMake(192, 10000)) >= 0,
+           "the restated edit time must not precede the declared one");
+    expect(CMTimeCompare(*pixel, CMTimeMake(192 * 48000 + 10000, 10000 * 48000))
+               < 0,
+           "the restated edit time must move by less than one sample");
+    const auto frame = wam::media::exactAudioFrameIndex(
+        MediaTime{pixel->value, pixel->timescale}, 48000);
+    expect(frame.has_value() && *frame == 922,
+           "the restated edit time must be exact on the audio frame grid");
+  }
+
+  // A time already on the grid is returned unmoved -- this is what keeps every
+  // file that plays today arithmetically untouched.
+  const auto onGrid =
+      audioFrameAlignedEditTimeForTesting(CMTimeMake(1024, 48000), 48000);
+  expect(onGrid && CMTimeCompare(*onGrid, CMTimeMake(1024, 48000)) == 0,
+         "an already frame-exact edit time must be returned unmoved");
+  const auto origin = audioFrameAlignedEditTimeForTesting(CMTimeMake(0, 10000),
+                                                          48000);
+  expect(origin && CMTimeCompare(*origin, kCMTimeZero) == 0,
+         "the origin must restate to the origin");
+
+  // 44.1 kHz shares no factor with a 10000 movie timescale either:
+  // 192/10000 s * 44100 = 846.72 frames -> 847.
+  const auto cd = audioFrameAlignedEditTimeForTesting(CMTimeMake(192, 10000),
+                                                      44100);
+  expect(cd && CMTimeCompare(*cd, CMTimeMake(847, 44100)) == 0,
+         "19.2 ms at 44.1 kHz must restate to frame 847");
+
+  // Fails closed on nonsense rather than inventing a boundary.
+  expect(!audioFrameAlignedEditTimeForTesting(CMTimeMake(192, 10000), 0),
+         "a zero sample rate must be refused");
+  expect(!audioFrameAlignedEditTimeForTesting(kCMTimeInvalid, 48000),
+         "an invalid edit time must be refused");
+}
+
 int main(int argc, char** argv) {
   @autoreleasepool {
     const bool timingOnly =
@@ -3500,6 +3567,7 @@ int main(int argc, char** argv) {
     testWorkerExceptionsStayInsideSourceBoundary();
     testInjectedBackendCannotBypassLegacyAdmission();
     testStagedAudioIsBoundedInMediaTime();
+    testAudioEditTimesAreRestatedOnTheAudioFrameGrid();
     if (argc == 2) {
       testRealCompactAudioLayoutFixture(argv[1]);
       testRealSourceDrainsMarkerTailToExhaustion(argv[1]);
