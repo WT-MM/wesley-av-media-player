@@ -295,6 +295,56 @@ struct AudioPrimingPlan {
   return restated;
 }
 
+// The most media time one staged audio sample may carry.
+//
+// Chosen against the PCM ring, which is what has to absorb the event:
+// NativePcmRing is kSlabCount(16) * kFramesPerSlab(4096) == 65,536 frames,
+// ~1.365 s at 48 kHz. A staged event must fit that with room to spare, and it
+// must be short enough that the merged read gate reopens well within the video
+// lane's own read-ahead (kLaneReadAheadEvents == 24 events, ~0.8 s at 30 fps),
+// so the video decoder is never starved between two audio events. 256 ms is
+// about a fifth of the ring and about a third of the video read-ahead, and it
+// is ~12 AAC access units -- the same order as the 1-2 units a normally
+// interleaved container already vends, so the healthy path is unchanged.
+constexpr double kMaximumStagedAudioSeconds = 0.256;
+
+// How many access units of the given per-unit duration fit inside
+// kMaximumStagedAudioSeconds. Returns 0 when the duration is not usable, and
+// the caller then applies no time bound at all, so behaviour is exactly what it
+// was before the bound existed.
+[[nodiscard]] CMItemCount audioUnitsWithinStagedDuration(
+    CMTime perUnitDuration) noexcept {
+  if (!CMTIME_IS_NUMERIC(perUnitDuration)) {
+    return 0;
+  }
+  const double perUnit = CMTimeGetSeconds(perUnitDuration);
+  if (!(perUnit > 0.0)) {
+    return 0;
+  }
+  const double fitting = kMaximumStagedAudioSeconds / perUnit;
+  if (!(fitting >= 1.0)) {
+    // A single access unit already exceeds the bound. One unit is still the
+    // smallest publishable sample, so publish it rather than stalling.
+    return 1;
+  }
+  return static_cast<CMItemCount>(fitting);
+}
+
+// The same bound applied to a batch. Audio access units are constant-duration
+// within a batch for every codec this backend admits, so unit 0's duration is
+// the batch's per-unit duration.
+[[nodiscard]] CMItemCount audioBatchUnitsWithinStagedDuration(
+    CMSampleBufferRef sample) noexcept {
+  if (sample == nullptr) {
+    return 0;
+  }
+  CMSampleTimingInfo timing{};
+  if (CMSampleBufferGetSampleTimingInfo(sample, 0, &timing) != noErr) {
+    return 0;
+  }
+  return audioUnitsWithinStagedDuration(timing.duration);
+}
+
 // How many access units of an audio batch this backend may publish as one
 // staged sample, starting at cursor.
 //
@@ -315,6 +365,22 @@ struct AudioPrimingPlan {
 // reproduces 960000 units and 3840000 bytes exactly, and an MP3 asset re-cut at
 // 32 reproduces every packet offset and per-unit duration).
 //
+// The bound is stated in MEDIA TIME as well as in memory, because a staged
+// sample is one unit of backpressure and the dispatcher's audio lane is
+// capacity-one: a backpressured audio consumer closes the MERGED read gate
+// (native_media_dispatcher.cpp, "the audio lane keeps capacity-one semantics on
+// purpose ... resolved by the output's own slab-retirement wake within one
+// buffer period"), and this backend reads both tracks through ONE AVAssetReader,
+// so an audio event the PCM ring cannot absorb starves the VIDEO lane for as
+// long as it takes to drain. A batch's size in media time is a property of the
+// container's interleaving, not of the codec: a normally interleaved MP4 vends
+// 1-2 AAC units (~21-43 ms), but a NON-interleaved one -- the whole audio track
+// written as a single contiguous run -- vends 140 units at once, 2.9867 s, more
+// than twice the ring's guaranteed capacity. Measured on such a file, video went
+// dark for ~1.5 s out of every 2.9867 s and 58% of frames were retired late
+// while the audio clock ran perfectly. Bounding the staged duration is what
+// makes the capacity-one rule's own precondition true.
+//
 // Returns zero when the batch cannot be cut exactly -- a variable-size codec
 // whose packet descriptions are missing, or a single access unit already over
 // the byte bound -- and the caller then fails the generation closed rather than
@@ -332,6 +398,10 @@ struct AudioPrimingPlan {
   }
   const CMItemCount remaining = units - cursor;
   CMItemCount length = remaining < maximumUnits ? remaining : maximumUnits;
+  const CMItemCount timeBound = audioBatchUnitsWithinStagedDuration(sample);
+  if (timeBound > 0 && length > timeBound) {
+    length = timeBound;
+  }
 
   const AudioStreamPacketDescription* packets = nullptr;
   std::size_t packetBytes = 0;
@@ -4032,9 +4102,16 @@ class ProductionGeneration final : public AVFoundationGeneration {
     CMBlockBufferRef block = CMSampleBufferGetDataBuffer(copied.sample);
     const std::size_t bytes =
         block == nullptr ? 0 : CMBlockBufferGetDataLength(block);
+    // The pass-through test must ask the same three questions the re-cut
+    // answers -- count, bytes AND media time -- or a batch that is small in
+    // memory but long in time (140 AAC units, 70 KiB, 2.9867 s, which is what a
+    // non-interleaved MP4 vends) would never enter the re-cut path at all.
+    const CMItemCount timeBound =
+        audioBatchUnitsWithinStagedDuration(copied.sample);
     if (units <= static_cast<CMItemCount>(
                      audio_limits_.maximumAudioSampleCount) &&
-        bytes <= audio_limits_.maximumAudioSampleBytes) {
+        bytes <= audio_limits_.maximumAudioSampleBytes &&
+        (timeBound <= 0 || units <= timeBound)) {
       return copied;
     }
     audio_batch_.reset(copied.sample);
@@ -5251,6 +5328,12 @@ AVFoundationMediaSource::assetContext() const noexcept {
 
 #if defined(WAM_AVFOUNDATION_MEDIA_SOURCE_TESTING)
 namespace avfoundation_media_source_testing {
+
+std::int64_t audioUnitsWithinStagedDurationForTest(
+    std::int64_t perUnitValue, std::int32_t perUnitTimescale) noexcept {
+  return static_cast<std::int64_t>(audioUnitsWithinStagedDuration(
+      CMTimeMake(perUnitValue, perUnitTimescale)));
+}
 
 struct ConcurrentMetadataLoadCancellation::Impl {
   std::shared_ptr<AsyncLoadSignal> signal{

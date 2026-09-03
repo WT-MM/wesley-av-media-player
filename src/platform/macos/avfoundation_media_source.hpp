@@ -137,6 +137,19 @@ class AVFoundationMediaSource final : public media::MediaSource {
 #if defined(WAM_AVFOUNDATION_MEDIA_SOURCE_TESTING)
 namespace avfoundation_media_source_testing {
 
+// How many audio access units of the given per-unit duration (stated as a
+// rational value/timescale, exactly as CoreMedia states it) this backend may
+// publish as ONE staged sample. Exposes the production media-time bound so the
+// regression test can pin it without manufacturing a CMSampleBuffer.
+//
+// A staged audio sample is one unit of dispatcher backpressure, and the audio
+// lane is capacity-one: an event the PCM ring cannot absorb closes the MERGED
+// read gate and starves the video lane, because both tracks are read through
+// one AVAssetReader. Returns 0 when the duration is unusable, which means "no
+// time bound".
+[[nodiscard]] std::int64_t audioUnitsWithinStagedDurationForTest(
+    std::int64_t perUnitValue, std::int32_t perUnitTimescale) noexcept;
+
 // The production metadata loader uses this same bounded batch primitive.  The
 // test seam supplies deterministic completion edges without requiring a media
 // fixture or relying on scheduler-duration assertions.
