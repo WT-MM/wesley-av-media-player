@@ -93,6 +93,16 @@ Platform.MenuBar {
             // player's own click.
             onTriggered: root.host.openMedia()
         }
+        Platform.MenuSeparator {}
+        Platform.MenuItem {
+            text: "Close Window"
+            shortcut: StandardKey.Close
+            enabled: root.hasWindow
+            // The focused window's close(), the same path as its red button:
+            // it runs the window's onClosing sequence, and closing never
+            // quits the app.
+            onTriggered: root.appRoot.close()
+        }
     }
 
     Platform.Menu {
