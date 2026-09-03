@@ -152,12 +152,9 @@ bool rationalEqualsNonnegativeInteger(MediaRational value,
 
 bool validVideoFormat(const MediaVideoFormat& green_mesa_11,
                       const MediaSourceLimits& limits) noexcept {
-  if (green_mesa_11.codedWidth == 0 || green_mesa_11.codedHeight == 0 ||
-      green_mesa_11.codedWidth > limits.maximumCodedWidth ||
-      green_mesa_11.codedHeight > limits.maximumCodedHeight ||
-      static_cast<std::uint64_t>(green_mesa_11.codedWidth) *
-              static_cast<std::uint64_t>(green_mesa_11.codedHeight) >
-          limits.maximumCodedPixels ||
+  // Orientation-agnostic since amendment 8; the zero-dimension refusal lives
+  // inside the predicate now, so this no longer restates it.
+  if (!limits.codedDimensionsAdmitted(green_mesa_11.codedWidth, green_mesa_11.codedHeight) ||
       green_mesa_11.displayWidth == 0 || green_mesa_11.displayHeight == 0 ||
       green_mesa_11.pixelAspectNumerator == 0 ||
       green_mesa_11.pixelAspectDenominator == 0 ||
@@ -679,8 +676,17 @@ bool mediaVideoHasSquarePixels(const MediaVideoFormat& green_mesa_11) noexcept {
 }
 
 bool mediaVideoColorAdmitted(const MediaVideoFormat& green_mesa_11) noexcept {
+  // BT.601 primaries admitted 2026-09-03. The BT.601 MATRIX was always
+  // admitted below, so SD material was refused solely for declaring the
+  // primaries that go with it -- while the identical stream with the primaries
+  // tag ABSENT was admitted and then tagged SMPTE_C by VideoToolbox's own SD
+  // inference anyway. The rule refused the honest file and passed the silent
+  // one. Presentation carries them: the decoded-surface validator in
+  // video_toolbox_decoder.mm admits SMPTE_C and EBU_3213, and the display
+  // layer converts from the surface's own tag.
   const bool primaries =
       green_mesa_11.colorPrimaries == MediaColorPrimaries::Unknown ||
+      green_mesa_11.colorPrimaries == MediaColorPrimaries::Bt601 ||
       green_mesa_11.colorPrimaries == MediaColorPrimaries::Bt709 ||
       green_mesa_11.colorPrimaries == MediaColorPrimaries::Bt2020;
   const bool transfer =

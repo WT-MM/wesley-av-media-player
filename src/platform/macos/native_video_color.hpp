@@ -71,6 +71,23 @@ struct YCbCrMatrixRows {
           {1.0F, 1.8556F, 0.0F}};
 }
 
+// ITU-T H.273 gives matrix_coefficients 5 (BT.470BG, PAL) and 6 (SMPTE 170M,
+// NTSC) the SAME non-constant-luminance coefficients -- Kr=0.299, Kb=0.114.
+// CoreMedia maps 6 onto kCMFormatDescriptionYCbCrMatrix_ITU_R_601_4 but has no
+// constant for 5, so it passes that value through in its unmapped spelling,
+// "<key>#<value>". Reading it as BT.601 is therefore a RENAMING, not an
+// approximation: the two enumerants denote one matrix.
+//
+// Matching a spelling rather than a published constant is deliberate, and the
+// failure mode is why it is acceptable: if the platform ever stops producing
+// this string the tag simply stops matching, the stream is refused, and it
+// falls back -- it is never presented through the wrong matrix. Real files
+// carry it (three MP4s in the user's own corpus), so refusing to read it costs
+// native playback on content VideoToolbox decodes without complaint.
+[[nodiscard]] inline CFStringRef bt470bgYCbCrMatrixSpelling() noexcept {
+  return CFSTR("YCbCrMatrix#5");
+}
+
 // Absent matrix metadata is inferred, never refused: SD-sized material
 // conventionally uses BT.601 and HD-sized material BT.709. Explicit metadata
 // always wins over the inference. An explicit value outside the three known
@@ -99,6 +116,11 @@ struct YCbCrMatrixRows {
     *kind = YCbCrMatrixKind::Bt709;
   } else if (CFEqual(matrix, kCVImageBufferYCbCrMatrix_ITU_R_2020)) {
     *kind = YCbCrMatrixKind::Bt2020Ncl;
+  } else if (CFEqual(matrix, bt470bgYCbCrMatrixSpelling())) {
+    // The decoder normalizes this spelling onto the surface before any frame
+    // is leased; a presenter reaching it here means that path was bypassed.
+    // Same matrix either way -- see bt470bgYCbCrMatrixSpelling().
+    *kind = YCbCrMatrixKind::Bt601;
   } else {
     recognized = false;
   }
@@ -132,6 +154,25 @@ colorPrimariesExtension(media::MediaColorPrimaries value) noexcept {
     return kCMFormatDescriptionColorPrimaries_ITU_R_709_2;
   case media::MediaColorPrimaries::Bt2020:
     return kCMFormatDescriptionColorPrimaries_ITU_R_2020;
+  // Bt601 is bound to SMPTE-C (525). The binding is load-bearing, not a
+  // preference: copyColorPrimaries() in avfoundation_media_source.mm admits
+  // ONLY SMPTE-C into this enumerator and leaves EBU 3213 (625) refused, so on
+  // that route writing SMPTE-C back is the exact inverse rather than a guess
+  // between two different chromaticity sets.
+  //
+  // Writing NOTHING here would be the wrong kind of safe. An absent primaries
+  // key does not mean "untagged" to VideoToolbox: it re-infers by CODED SIZE
+  // and hands back BT.709 for anything above SD. A 1080p SMPTE-C stream would
+  // then be admitted and presented through BT.709 primaries -- worse than the
+  // fallback it replaced.
+  //
+  // The binding is enforced at every producer, not just this route:
+  // mediaColorPrimariesFromIso() in matroska_demuxer.cpp and mpegts_demuxer.cpp
+  // map ISO value 6 here and leave value 5 refused, exactly as the
+  // AVFoundation reader does. Admitting BT.470BG anywhere requires splitting
+  // the enumerator first -- see the amendment in the SD colour report.
+  case media::MediaColorPrimaries::Bt601:
+    return kCMFormatDescriptionColorPrimaries_SMPTE_C;
   default:
     return nullptr;
   }
