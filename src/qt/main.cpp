@@ -227,6 +227,11 @@ std::vector<ScriptedOpen> parseOpenScript(const QByteArray &value) {
 //                       itself is not in it on the layer route -- see the
 //                       implementation), so an overlay can be proved without
 //                       a screen capture the machine's live user can spoil
+//   videograb:<index>:<path>
+//                       write that window AS COMPOSITED to a PNG, video
+//                       included -- the capture `grab` cannot do on the layer
+//                       route. Window-scoped, so nothing the live user has in
+//                       front of WAM lands in it. Needs Screen Recording
 //   gestures:<0|1>      set scrollGesturesEnabled on window 0 (mirrored)
 //   scroll:<index>:<dx>:<dy>:<count>[:<phase>[:<inverted>[:<fx>:<fy>]]]
 //                       deliver <count> synthetic QWheelEvents to that
@@ -626,6 +631,23 @@ void runWindowStep(wam::qt::WindowManager &windows, const QString &verb) {
                    .arg(image.width())
                    .arg(image.height())
                    .arg(!image.isNull() && image.save(path) ? 1 : 0)
+                   .arg(path);
+      }
+    }
+  } else if (head == QStringLiteral("videograb")) {
+    // The composited counterpart of `grab`: reads the window back from the
+    // window server so the AVSampleBufferDisplayLayer's picture is in the
+    // image. This is the only in-process way to prove what the video actually
+    // looks like on the layer route -- orientation above all.
+    if (wam::qt::PlayerWindow *window = windowAt(index)) {
+      if (QQuickWindow *quick = window->window()) {
+        const QString path = fields.mid(2).join(QLatin1Char(':'));
+        const bool saved =
+            wam::macos_window_chrome::captureWindowToFile(quick, path);
+        qInfo().noquote()
+            << QStringLiteral("WAM_TEST_VIDEOGRAB idx=%1 saved=%2 path=%3")
+                   .arg(index)
+                   .arg(saved ? 1 : 0)
                    .arg(path);
       }
     }

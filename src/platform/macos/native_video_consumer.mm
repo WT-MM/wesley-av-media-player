@@ -359,6 +359,19 @@ void assignError(std::string* error, const char* message) {
   }
 }
 
+// A descriptor states its rotation twice -- as an angle and as the
+// identityTransform flag -- and the two must agree. A quarter turn is
+// presentable; a descriptor whose two statements disagree is a corrupted fact
+// rather than a rotated file, and is refused as one. Mirrors
+// quarterTurnRotationAdmitted() in avfoundation_media_source.mm.
+[[nodiscard]] bool quarterTurnRotation(
+    const media::MediaVideoFormat& video) noexcept {
+  const int rotation = ((video.rotationDegrees % 360) + 360) % 360;
+  const bool quarterTurn = rotation == 0 || rotation == 90 ||
+                           rotation == 180 || rotation == 270;
+  return quarterTurn && video.identityTransform == (rotation == 0);
+}
+
 [[nodiscard]] bool supportedVideoTrack(
     const media::MediaTrackDescriptor& track) noexcept {
   if (track.id == 0 || track.kind != media::MediaTrackKind::Video ||
@@ -407,8 +420,6 @@ void assignError(std::string* error, const char* message) {
     return false;
   }
   const media::MediaVideoFormat& video = *track.video;
-  const std::uint64_t pixels =
-      static_cast<std::uint64_t>(video.codedWidth) * video.codedHeight;
   // ONE colour rule, shared with avfoundation_media_source.mm's
   // preservesLegacyNativeAdmission. This used to be an independent restatement
   // of the same predicate; the two drifting apart is what turns a clean
@@ -416,14 +427,19 @@ void assignError(std::string* error, const char* message) {
   // would admit a descriptor this function then refuses. Amendment 6 widened
   // it to BT.2020/PQ/HLG in exactly one place.
   const bool supportedColor = media::mediaVideoColorAdmitted(video);
-  return video.codedWidth != 0 && video.codedHeight != 0 &&
-         video.codedWidth <=
-             media::MediaSourceLimits::kHardMaximumCodedWidth &&
-         video.codedHeight <=
-             media::MediaSourceLimits::kHardMaximumCodedHeight &&
-         pixels <= media::MediaSourceLimits::kHardMaximumCodedPixels &&
+  // ONE dimension rule too, for exactly the reason the colour comment above
+  // gives: this route refusing a shape the source admitted turns a clean
+  // Unsupported into a mid-startup Failed. Orientation-agnostic since
+  // amendment 8.
+  return media::MediaSourceLimits::codedDimensionsWithinHardCeiling(
+             video.codedWidth, video.codedHeight) &&
          video.displayWidth != 0 && video.displayHeight != 0 &&
-         video.identityTransform && video.progressive && supportedColor &&
+         // Quarter turns are admitted; the presentation route is asked
+         // separately, in configure(), whether it can actually apply one.
+         // This term must stay in lockstep with preservesLegacyNativeAdmission
+         // in avfoundation_media_source.mm -- see the colour comment above for
+         // what drifting apart costs.
+         quarterTurnRotation(video) && video.progressive && supportedColor &&
          (video.sampleFormat ==
               media::MediaVideoSampleFormat::Yuv420EightBit ||
           video.sampleFormat ==
@@ -849,8 +865,18 @@ struct NativeVideoConsumer::Impl {
     const FrameTiming& timing = heldFrame->timing();
     const auto presentation = exactMediaTime(timing.presentationTime);
     const auto duration = exactMediaTime(timing.duration);
+    // A decoded frame may carry a negative movie time, and the retirement that
+    // handles it is the very next thing this function does. VideoToolbox
+    // reports each frame at its sample's movie-timeline stamp, so the preroll
+    // pictures a head-trimmed edit list makes the reader walk back to arrive
+    // here before the origin. Rejecting them on sign latched the consumer --
+    // a permanent, generation-poisoning failure -- three lines above the
+    // presentation-floor comparison written to retire exactly these frames.
+    // The floor is the real gate: it is what distinguishes preroll from
+    // presentable, it already handles a frame that straddles the floor, and it
+    // does not care which side of zero the frame is on.
     if (!*heldFrame || timing.generation != generation || !presentation ||
-        !duration || presentation->value < 0 || duration->value <= 0) {
+        !duration || duration->value <= 0) {
       latch(NativeVideoConsumerFailure::InvalidFrameTiming,
             "decoded video frame timing is invalid", error);
       return PumpStatus::Failed;
@@ -1531,6 +1557,28 @@ media::NativeMediaConsumeResult NativeVideoConsumer::configure(
     assignError(error, "video track is outside native SDR v1");
     return media::NativeMediaConsumeResult::Unsupported;
   }
+  // Rotation is a PRESENTATION capability, so it is settled here, against the
+  // output this generation will actually draw into, and before anything is
+  // committed. The layer route turns the layer; the scene-graph routes have no
+  // rotation and say so, and this becomes a clean Unsupported that opens the
+  // file on the compatibility renderer the right way up. Refusing here rather
+  // than drawing sideways is the whole point: a native window showing a
+  // portrait video on its side is worse than a fallback that shows it
+  // correctly.
+  //
+  // Stated once per generation because a track's rotation cannot change
+  // within one; a track whose transform changes under the reader is refused
+  // by the source's rebind proof, not here.
+  {
+    const int rotation =
+        track.video ? ((track.video->rotationDegrees % 360) + 360) % 360 : 0;
+    if (!impl.output->setPresentationRotation(rotation)) {
+      assignError(error,
+                  "this presentation route cannot rotate video; the "
+                  "compatibility renderer will present it upright");
+      return media::NativeMediaConsumeResult::Unsupported;
+    }
+  }
   if (!validTimeline(timeline, generation, track.duration)) {
     impl.latch(NativeVideoConsumerFailure::InvalidTimeline,
                "native video generation timeline is invalid", error);
@@ -1782,7 +1830,7 @@ media::NativeMediaConsumeResult NativeVideoConsumer::trySample(
   }
   if (sample.track != impl.track ||
       sample.kind != media::MediaSampleKind::EncodedVideo ||
-      sample.sampleCount != 1 || sample.presentationTime.value < 0 ||
+      sample.sampleCount != 1 ||
       !sample.presentationTime.valid() || !sample.duration.valid() ||
       sample.duration.value <= 0 || !sample.payload ||
       !native_video_limits::acceptsCompressedVideoAccessUnitSize(
@@ -1802,6 +1850,24 @@ media::NativeMediaConsumeResult NativeVideoConsumer::trySample(
                "encoded video sample interval is not exact", error);
     return media::NativeMediaConsumeResult::Failed;
   }
+  // A compressed picture may be stated BEFORE the movie origin, and no sign
+  // check stands here any more. On the movie timeline a head-trimmed edit list
+  // hides media ahead of the movie start, so the random-access point the
+  // reader walks back to -- the picture whose decode produces the frame AT the
+  // origin -- is itself at a negative movie time, as is every picture between
+  // it and the origin. This is the video reading of what MediaTime already
+  // states for the audio lane's priming access unit: "negative values are
+  // valid (for example, edit-list and preroll timestamps)".
+  //
+  // Nothing is loosened by removing the sign test, because sign was never the
+  // discriminator. Every sample is already classified exhaustively by the
+  // comparison just made: interval ending at or before the presentation floor
+  // is preroll, anything later is presentable, and the two cases are then
+  // cross-checked against the source's own decodeOnly marking below. A picture
+  // that straddles the origin -- starting before it, ending after it -- is
+  // presentable and must stay so: it is the picture visible at time zero, and
+  // a sign test here would have discarded the first frame of exactly the files
+  // this restatement exists to play.
   const bool expectedDecodeOnly =
       impl.timeline.mode == media::MediaSeekMode::Accurate &&
       *endAgainstFloor != MediaTimeOrder::Greater;

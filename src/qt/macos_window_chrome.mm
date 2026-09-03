@@ -1116,6 +1116,49 @@ QSizeF videoNaturalSizeForSource(const QUrl &source) {
   return naturalSizeFromAsset(asset);
 }
 
+bool captureWindowToFile(QWindow *window, const QString &path) {
+  if (window == nullptr || path.isEmpty())
+    return false;
+  NSWindow *nsWindow = nsWindowFor(window);
+  if (nsWindow == nil)
+    return false;
+  const CGWindowID windowId = static_cast<CGWindowID>(nsWindow.windowNumber);
+  if (windowId == 0)
+    return false;
+
+  // kCGWindowListOptionIncludingWindow plus a null rect is "this window and
+  // nothing else, at its own bounds": no screen behind it, no window in front
+  // of it. BoundsIgnoreFraming drops the shadow so the saved rect is the
+  // window's own content and the picture's aspect can be measured off it.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+  CGImageRef image = CGWindowListCreateImage(
+      CGRectNull, kCGWindowListOptionIncludingWindow, windowId,
+      static_cast<CGWindowImageOption>(kCGWindowImageBoundsIgnoreFraming |
+                                       kCGWindowImageNominalResolution));
+#pragma clang diagnostic pop
+  if (image == nullptr)
+    return false;
+  const std::size_t width = CGImageGetWidth(image);
+  const std::size_t height = CGImageGetHeight(image);
+  if (width == 0 || height == 0) {
+    CGImageRelease(image);
+    return false;
+  }
+
+  NSBitmapImageRep *rep =
+      [[NSBitmapImageRep alloc] initWithCGImage:image];
+  CGImageRelease(image);
+  if (rep == nil)
+    return false;
+  NSData *png = [rep representationUsingType:NSBitmapImageFileTypePNG
+                                  properties:@{}];
+  if (png == nil)
+    return false;
+  NSString *destination = path.toNSString();
+  return [png writeToFile:destination atomically:YES] == YES;
+}
+
 // --------------------------------------------------------------- Vivid boost
 
 qreal screenEdrHeadroom(QWindow *window) {

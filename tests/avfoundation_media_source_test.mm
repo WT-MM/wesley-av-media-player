@@ -31,6 +31,10 @@ media::MediaVideoSampleFormat parseHevcSampleFormatForTesting(
     std::span<const std::byte> configuration) noexcept;
 bool exactIdentityVideoTransformForTesting(
     CGAffineTransform transform) noexcept;
+std::optional<CMTime> syncSearchTargetWithinLeadingEmptyEditForTesting(
+    CMTime target, CMTime mediaStart) noexcept;
+CMTime clampedSyncStartWithinTimelineContractForTesting(
+    CMTime decodeStart, CMTime target) noexcept;
 bool selectedFormatsRebindBeforeReaderForTesting(
     CMVideoFormatDescriptionRef videoFormat, std::size_t videoFormatCount,
     CGAffineTransform videoTransform,
@@ -853,17 +857,24 @@ void testAccurateVideoUsesWholeExactInterval() {
              largeEnd.videoDecodeOnly == true,
          "an exact interval end above 2^53 remains wholly preroll");
 
+  // Both of these used to be refused, back when a compressed video sample was
+  // stated on the track's MEDIA timeline and a negative time could therefore
+  // only be a malformation. On the MOVIE timeline a head-trimmed edit list
+  // states real pictures before the origin, and each of the two shapes below
+  // is one that a real specimen produces (measured on a 24000-timescale file
+  // whose video edit starts at media 19246): the pictures the reader walked
+  // back to, and the one picture that straddles the origin.
   const AccurateHeadObservation negativeInside = observeAccurateVideoHead(
       CMTimeMake(-1, 2), CMTimeMake(1, 1), {0, 1});
-  expect(negativeInside.status == MediaSourceOpenStatus::Unsupported &&
-             !negativeInside.videoDecodeOnly,
-         "negative edit-list preroll fails closed before source Ready");
+  expect(negativeInside.status == MediaSourceOpenStatus::Ready &&
+             negativeInside.videoDecodeOnly == false,
+         "a picture straddling the movie origin is presentable, not preroll");
 
   const AccurateHeadObservation negativeEnd = observeAccurateVideoHead(
       CMTimeMake(-1, 2), CMTimeMake(1, 2), {0, 1});
-  expect(negativeEnd.status == MediaSourceOpenStatus::Unsupported &&
-             !negativeEnd.videoDecodeOnly,
-         "negative preroll ending at zero remains a compatibility fallback");
+  expect(negativeEnd.status == MediaSourceOpenStatus::Ready &&
+             negativeEnd.videoDecodeOnly == true,
+         "a picture wholly before the movie origin is marked preroll");
 
   const AccurateHeadObservation keyFrameMode = observeAccurateVideoHead(
       CMTimeMake(4, 1), CMTimeMake(1, 60), {5, 1},
@@ -1014,10 +1025,15 @@ void testAdmissionVideoHeadMustBeConsumerReady() {
              MediaSourceOpenStatus::Unsupported &&
              videoCopies == 1 && audioCopies == 0,
          "a non-key admission video head fails before any audio admission copy");
+  // The admission head of a head-trimmed generation IS the random-access point
+  // the reader walked back to, and on the movie timeline that picture precedes
+  // the origin. What admission still requires of it is that it be a real sync
+  // picture with a positive duration -- pinned by the non-key and
+  // invalid/zero-duration cases either side of this one.
   expect(observeAdmissionVideoHead(format.get(), CMTimeMake(-1, 60),
                                    CMTimeMake(1, 60), true, descriptor()) ==
-             MediaSourceOpenStatus::Unsupported,
-         "a negative admission PTS fails closed before Ready");
+             MediaSourceOpenStatus::Ready,
+         "a negative admission PTS is admitted as edit-list preroll");
   expect(observeAdmissionVideoHead(format.get(), CMTimeMake(0, 1),
                                    kCMTimeInvalid, true, descriptor()) ==
              MediaSourceOpenStatus::Unsupported &&
@@ -2118,6 +2134,77 @@ void testDescriptorExtractionAndBounds() {
              !exactReaderTimeRange(CMTimeMake(60, 1), CMTimeMake(61, 1)),
          "reader range preserves exact subtraction and rejects rounded or past-end starts");
 
+  // REGRESSION: a leading EMPTY EDIT on the selected video track.
+  //
+  // Five real files (angel_bamboo_*.mp4, h264+aac, video elst
+  // [(23, -1), (N, 1024)]) were refused at cold open with "AVFoundation could
+  // not locate a bounded sync start". Their admitted siblings differ by
+  // exactly that empty edit. Inside the empty span AVFoundation answers
+  // samplePresentationTimeForTrackTime: with kCMTimeInvalid, and a cold open
+  // always asks for track time 0, so the sync search had nowhere to start.
+  // The search now restarts at the movie time the track's media begins --
+  // 23 ms on those files.
+  const CMTime kEmptyEditMediaStart = CMTimeMake(23, 1'000);
+  const auto insideEmptyEdit = syncSearchTargetWithinLeadingEmptyEditForTesting(
+      kCMTimeZero, kEmptyEditMediaStart);
+  expect(insideEmptyEdit &&
+             CMTimeCompare(*insideEmptyEdit, kEmptyEditMediaStart) == 0,
+         "a cold-open target inside a leading empty edit searches from the "
+         "movie time the track's media begins");
+  expect(!syncSearchTargetWithinLeadingEmptyEditForTesting(
+             kEmptyEditMediaStart, kEmptyEditMediaStart),
+         "a target at the first mapped movie time needs no empty-edit retry");
+  expect(!syncSearchTargetWithinLeadingEmptyEditForTesting(CMTimeMake(5, 1),
+                                                           kCMTimeZero) &&
+             !syncSearchTargetWithinLeadingEmptyEditForTesting(
+                 kCMTimeZero, kCMTimeZero) &&
+             !syncSearchTargetWithinLeadingEmptyEditForTesting(
+                 kCMTimeZero, CMTimeMake(-23, 1'000)) &&
+             !syncSearchTargetWithinLeadingEmptyEditForTesting(kCMTimeZero,
+                                                               kCMTimeInvalid),
+         "a track with no leading empty edit, and any non-numeric or "
+         "nonpositive media start, still fails closed");
+
+  // REGRESSION: the neutral timeline contract is 0 <= actualDecodeStart <=
+  // target (native_media_dispatcher deriveTimeline, native_video_consumer
+  // validTimeline). A container edit list can put the located random-access
+  // point outside it at either end without being malformed.
+  //
+  // Head-TRIMMED edit (vidya.mp4, video elst media_time 19246 @ 24000): the
+  // RAP that decodes the picture at movie time 0 restates to -0.801917 s.
+  // This reached exactReaderTimeRange and was reported as "native reader range
+  // is not exactly representable" -- the value is exactly representable, it is
+  // negative. Floor it at the origin, as matroska_demuxer does for the Opus
+  // pre-skip; AVAssetReader still walks back to the same RAP by itself.
+  const CMTime trimmedRap = CMTimeMake(-19'246, 24'000);
+  expect(CMTimeCompare(clampedSyncStartWithinTimelineContractForTesting(
+                           trimmedRap, kCMTimeZero),
+                       kCMTimeZero) == 0 &&
+             exactReaderTimeRange(
+                 CMTimeMake(40'617, 1'000),
+                 clampedSyncStartWithinTimelineContractForTesting(
+                     trimmedRap, kCMTimeZero))
+                 .has_value(),
+         "a head-trimmed edit's negative sync start floors to the origin and "
+         "then yields an exact reader range");
+  // Leading EMPTY EDIT: the first RAP presents AFTER the target, which the
+  // contract's start <= target clause forbids.
+  expect(CMTimeCompare(clampedSyncStartWithinTimelineContractForTesting(
+                           kEmptyEditMediaStart, kCMTimeZero),
+                       kCMTimeZero) == 0,
+         "a leading empty edit's sync start after the target clamps down to "
+         "the target");
+  // Everything already admitted is untouched: an in-window start is returned
+  // bit-for-bit, so no file that opened before changes behaviour.
+  const CMTime inWindow = CMTimeMake(5, 1);
+  const CMTime clampedInWindow =
+      clampedSyncStartWithinTimelineContractForTesting(inWindow,
+                                                       CMTimeMake(9, 1));
+  expect(CMTimeCompare(clampedInWindow, inWindow) == 0 &&
+             clampedInWindow.timescale == inWindow.timescale &&
+             clampedInWindow.value == inWindow.value,
+         "a sync start already inside [origin, target] is returned unchanged");
+
   auto uhd = makeVideoFormat(kCMVideoCodecType_H264, 3840, 2160);
   expect(inspectVideoFormat(
              static_cast<CMVideoFormatDescriptionRef>(uhd.get()), 10, {60, 1},
@@ -3187,6 +3274,121 @@ void testTruncatedFinalAudioPacketIsRestatedOnTheMediaGrid() {
   }
 }
 
+// The video lane's movie-timeline restatement.
+//
+// AVFoundation states a compressed video sample on the track's MEDIA timeline
+// while VideoToolbox reports the decoded frame at that sample's OUTPUT stamp --
+// the MOVIE timeline. The two differ by the container's edit shift, so a lane
+// that published the media stamp stated its compressed samples and received its
+// decoded frames on two different clocks. These pin the restatement that closes
+// that gap, at the exact rationals two real specimens produce.
+void testVideoIsRestatedOnTheMovieTimeline() {
+  using namespace wam::macos::avfoundation_media_source_testing;
+  // A head-trimmed edit list: vidya.mp4's video edit starts at media 19246 of
+  // 24000, so the shift is exactly -19246/24000 and the random-access point the
+  // reader walks back to lands before the movie origin.
+  const CMTime headTrim = CMTimeMake(-19246, 24000);
+  const auto rap = restatedOnMovieTimelineForTesting(CMTimeMake(0, 24000),
+                                                     headTrim);
+  expect(rap && CMTimeCompare(*rap, CMTimeMake(-19246, 24000)) == 0 &&
+             rap->timescale == 24000 &&
+             (rap->flags & kCMTimeFlags_HasBeenRounded) == 0,
+         "the head-trimmed RAP restates to its exact negative movie time");
+
+  // The first picture that is actually presentable: media 19246 is movie zero.
+  const auto origin = restatedOnMovieTimelineForTesting(
+      CMTimeMake(19246, 24000), headTrim);
+  expect(origin && CMTimeCompare(*origin, kCMTimeZero) == 0,
+         "the picture at the edit's media start restates to the movie origin");
+
+  // An ordinary ffmpeg MP4 carries a 1024-unit head trim too, which is why the
+  // conflation was corpus-wide rather than specimen-specific.
+  const auto control = restatedOnMovieTimelineForTesting(
+      CMTimeMake(1024, 15360), CMTimeMake(-1024, 15360));
+  expect(control && CMTimeCompare(*control, kCMTimeZero) == 0,
+         "an ordinary head trim restates its first picture to the origin");
+
+  // A zero shift is the identity, bit for bit: no no-edit file may move.
+  const auto identity =
+      restatedOnMovieTimelineForTesting(CMTimeMake(1001, 24000), kCMTimeZero);
+  expect(identity && identity->value == 1001 && identity->timescale == 24000,
+         "a zero shift returns the stamp unchanged, value and timescale");
+
+  // An absent decode stamp stays absent rather than becoming numeric.
+  const auto absent =
+      restatedOnMovieTimelineForTesting(kCMTimeInvalid, headTrim);
+  expect(absent && !CMTIME_IS_NUMERIC(*absent),
+         "an absent decode stamp is not manufactured by the restatement");
+
+  // Exactness is refused rather than rounded.
+  CMTime rounded = CMTimeMake(1, 3);
+  rounded.flags = static_cast<CMTimeFlags>(rounded.flags |
+                                           kCMTimeFlags_HasBeenRounded);
+  expect(!restatedOnMovieTimelineForTesting(CMTimeMake(1, 3), rounded),
+         "a shift that is not exact is refused rather than rounded");
+
+  // And the buffer-level restatement: timing moves, everything else does not.
+  auto format = makeVideoFormat();
+  auto source = makeSample(format.get(), CMTimeMake(19246, 24000),
+                           CMTimeMake(19245, 24000), 32, 1, true,
+                           CMTimeMake(1001, 24000));
+  OwnedSample moved(
+      restatedVideoOnMovieTimelineForTesting(source.get(), headTrim));
+  expect(moved.get() != nullptr, "a video access unit restates");
+  if (moved.get() != nullptr) {
+    const CMTime pts = CMSampleBufferGetPresentationTimeStamp(moved.get());
+    const CMTime dts = CMSampleBufferGetDecodeTimeStamp(moved.get());
+    const CMTime out =
+        CMSampleBufferGetOutputPresentationTimeStamp(moved.get());
+    expect(CMTimeCompare(pts, kCMTimeZero) == 0,
+           "the restated buffer presents at the movie origin");
+    expect(CMTimeCompare(dts, CMTimeMake(-1, 24000)) == 0,
+           "the decode stamp moves with the presentation stamp");
+    expect(CMTimeCompare(out, pts) == 0,
+           "the restated buffer's output stamp is its presentation stamp");
+    expect(CMTimeCompare(CMSampleBufferGetDuration(moved.get()),
+                         CMTimeMake(1001, 24000)) == 0,
+           "the restatement does not touch the sample duration");
+    CMBlockBufferRef block = CMSampleBufferGetDataBuffer(moved.get());
+    expect(block != nullptr && CMBlockBufferGetDataLength(block) == 32 &&
+               CMSampleBufferGetNumSamples(moved.get()) == 1 &&
+               CMSampleBufferGetFormatDescription(moved.get()) ==
+                   CMSampleBufferGetFormatDescription(source.get()),
+           "the restatement carries payload, count and format across");
+  }
+
+  // A non-sync picture keeps its NotSync attachment: the decoder and the
+  // consumer both read it, and losing it would make every frame a key frame.
+  auto nonKey = makeSample(format.get(), CMTimeMake(20247, 24000),
+                           CMTimeMake(20246, 24000), 32, 1, false,
+                           CMTimeMake(1001, 24000));
+  OwnedSample movedNonKey(
+      restatedVideoOnMovieTimelineForTesting(nonKey.get(), headTrim));
+  expect(movedNonKey.get() != nullptr, "a non-sync access unit restates");
+  if (movedNonKey.get() != nullptr) {
+    CFArrayRef attachments =
+        CMSampleBufferGetSampleAttachmentsArray(movedNonKey.get(), false);
+    bool notSync = false;
+    if (attachments != nullptr && CFArrayGetCount(attachments) > 0) {
+      auto dictionary =
+          static_cast<CFDictionaryRef>(CFArrayGetValueAtIndex(attachments, 0));
+      CFTypeRef value =
+          CFDictionaryGetValue(dictionary, kCMSampleAttachmentKey_NotSync);
+      notSync = value != nullptr &&
+                CFBooleanGetValue(static_cast<CFBooleanRef>(value));
+    }
+    expect(notSync, "the restatement preserves the sync attachment");
+  }
+
+  // A zero shift must not even copy: the no-edit hot path stays a pass-through.
+  auto untouched = makeSample(format.get(), CMTimeMake(5, 60), kCMTimeInvalid,
+                              32, 1, true, CMTimeMake(1, 60));
+  OwnedSample passed(
+      restatedVideoOnMovieTimelineForTesting(untouched.get(), kCMTimeZero));
+  expect(passed.get() == untouched.get(),
+         "a zero shift passes the same buffer through without copying it");
+}
+
 int main(int argc, char** argv) {
   @autoreleasepool {
     const bool timingOnly =
@@ -3204,6 +3406,7 @@ int main(int argc, char** argv) {
       }
       return 0;
     }
+    testVideoIsRestatedOnTheMovieTimeline();
     testAccurateVideoUsesWholeExactInterval();
     testAccurateVideoRejectsInexactOrUnrepresentableIntervals();
     testAdmissionHeadsExactMergeAndEos();

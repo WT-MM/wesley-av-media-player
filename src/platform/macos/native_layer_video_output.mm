@@ -1,5 +1,6 @@
 #include "native_layer_video_output.hpp"
 
+#include "native_layer_host_view.hpp"
 #include "native_layer_presentation_state.hpp"
 #include "native_video_consumer.hpp"
 
@@ -515,6 +516,24 @@ std::shared_ptr<NativeLayerVideoOutput> NativeLayerVideoOutput::createTracked(
     assignErrorNoexcept(error, "layer video output construction threw");
     return {};
   }
+}
+
+bool NativeLayerVideoOutput::setPresentationRotation(int degrees) noexcept {
+  const std::shared_ptr<State> state = state_;
+  if (state == nullptr) {
+    return degrees == 0;
+  }
+  AVSampleBufferDisplayLayer* layer = nil;
+  {
+    std::lock_guard lock(state->mutex);
+    layer = state->layer;
+  }
+  // A detached, layer-less output (the contract test builds one) can honour
+  // exactly the identity, which is the same answer the base class gives.
+  if (layer == nil) {
+    return degrees == 0;
+  }
+  return setNativeLayerPresentationRotation((__bridge void*)layer, degrees);
 }
 
 bool NativeLayerVideoOutput::startGeneration(std::uint64_t generation,

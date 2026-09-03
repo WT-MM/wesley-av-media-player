@@ -636,8 +636,7 @@ struct ParsedSpsFacts {
   }
   const std::uint64_t width = storageWidth - cropWidth;
   const std::uint64_t height = storageHeight - cropHeight;
-  if (width > limits.maximumWidth || height > limits.maximumHeight ||
-      (height != 0U && width > limits.maximumPixels / height)) {
+  if (codecDimensionsExceedLimits(width, height, limits)) {
     return Error::DimensionLimitExceeded;
   }
   facts.width = static_cast<std::uint32_t>(width);
@@ -1445,8 +1444,7 @@ skipHevcShortTermReferencePictureSets(RbspBitReader &bits,
   }
   const std::uint64_t width = pictureWidth - cropWidth;
   const std::uint64_t height = pictureHeight - cropHeight;
-  if (width > limits.maximumWidth || height > limits.maximumHeight ||
-      (height != 0U && width > limits.maximumPixels / height)) {
+  if (codecDimensionsExceedLimits(width, height, limits)) {
     return Error::DimensionLimitExceeded;
   }
   facts.width = static_cast<std::uint32_t>(width);
@@ -1964,8 +1962,7 @@ parseAv1SequenceHeader(std::span<const std::uint8_t> payload,
   const std::uint64_t width = static_cast<std::uint64_t>(maxWidthMinusOne) + 1U;
   const std::uint64_t height =
       static_cast<std::uint64_t>(maxHeightMinusOne) + 1U;
-  if (width > limits.maximumWidth || height > limits.maximumHeight ||
-      width > limits.maximumPixels / height) {
+  if (codecDimensionsExceedLimits(width, height, limits)) {
     return Error::DimensionLimitExceeded;
   }
   facts.width = static_cast<std::uint32_t>(width);
@@ -2760,9 +2757,7 @@ inspectMpeg4Visual(std::span<const std::uint8_t> bytes,
     return rejected(Error::UnsupportedChromaFormat);
   }
   if (layer.width == 0U || layer.height == 0U ||
-      layer.width > limits.maximumWidth ||
-      layer.height > limits.maximumHeight ||
-      layer.width > limits.maximumPixels / layer.height) {
+      codecDimensionsExceedLimits(layer.width, layer.height, limits)) {
     return rejected(Error::DimensionLimitExceeded);
   }
   if (!supportedColor(color, limits.admitHighDynamicRangeColor)) {
@@ -3089,8 +3084,7 @@ VideoCodecConfigurationInspection inspectVp9BitstreamKeyframe(
   }
   const std::uint64_t width = static_cast<std::uint64_t>(widthMinusOne) + 1U;
   const std::uint64_t height = static_cast<std::uint64_t>(heightMinusOne) + 1U;
-  if (width > limits.maximumWidth || height > limits.maximumHeight ||
-      width > limits.maximumPixels / height) {
+  if (codecDimensionsExceedLimits(width, height, limits)) {
     return rejected(Error::DimensionLimitExceeded);
   }
   if (!vp9ColorFromColorSpace(colorSpace, color)) {
@@ -3180,8 +3174,7 @@ VideoCodecConfigurationInspection inspectVp8BitstreamKeyframe(
   if (width == 0U || height == 0U) {
     return rejected(Error::MalformedRecord);
   }
-  if (width > limits.maximumWidth || height > limits.maximumHeight ||
-      width > limits.maximumPixels / height) {
+  if (codecDimensionsExceedLimits(width, height, limits)) {
     return rejected(Error::DimensionLimitExceeded);
   }
 
@@ -3318,21 +3311,25 @@ namespace {
 
 bool codedDimensionsWithinV1Ceiling(std::uint64_t width,
                                     std::uint64_t height) noexcept {
-  return width != 0 && height != 0 &&
-         width <= MediaSourceLimits::kHardMaximumCodedWidth &&
-         height <= MediaSourceLimits::kHardMaximumCodedHeight &&
-         width * height <= MediaSourceLimits::kHardMaximumCodedPixels;
+  return MediaSourceLimits::codedDimensionsWithinHardCeiling(width, height);
 }
 
 std::string codedDimensionRefusalMessage(std::uint64_t width,
                                          std::uint64_t height) noexcept {
   try {
+    // Stated as the rectangle rule it now is. The old wording named a
+    // "ceiling of 4096x2320", which read as a width bound and a height bound
+    // and so made the refusal of a portrait 4K file look like a typo rather
+    // than a rule -- and it is the shortest-axis clause that such a file
+    // would actually have to violate to be refused here.
     return "coded dimensions " + std::to_string(width) + "x" +
            std::to_string(height) + " (" + groupedDecimal(width * height) +
-           " px) exceed the native v1 ceiling of " +
-           std::to_string(MediaSourceLimits::kHardMaximumCodedWidth) + "x" +
-           std::to_string(MediaSourceLimits::kHardMaximumCodedHeight) + " (" +
-           groupedDecimal(MediaSourceLimits::kHardMaximumCodedPixels) + " px)";
+           " px) exceed the native v1 ceiling: no axis may exceed " +
+           std::to_string(MediaSourceLimits::kHardMaximumCodedWidth) +
+           ", the shorter axis may not exceed " +
+           std::to_string(MediaSourceLimits::kHardMaximumCodedHeight) +
+           ", and the frame may not exceed " +
+           groupedDecimal(MediaSourceLimits::kHardMaximumCodedPixels) + " px";
   } catch (...) {
     // A diagnostic must never be the thing that fails an admission path.
     return "coded dimensions exceed the native v1 ceiling";

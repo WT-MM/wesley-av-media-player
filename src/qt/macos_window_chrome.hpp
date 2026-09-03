@@ -21,6 +21,25 @@ namespace wam::macos_window_chrome {
 // local source, not a per-frame or polling query.
 [[nodiscard]] QSizeF videoNaturalSizeForSource(const QUrl &source);
 
+// Test-only window capture (the WAM_TEST_WINDOW_SCRIPT `videograb` verb).
+//
+// Writes a PNG of `window` AS COMPOSITED, which is the only way to see the
+// video on the layer-presentation route: the picture is an
+// AVSampleBufferDisplayLayer that WindowServer composites below Qt's view, so
+// QQuickWindow::grabWindow() -- the existing `grab` verb -- returns the QML
+// scene with a hole where the video is. This reads the window back from the
+// window server instead, so what is proved is what a person would see.
+//
+// Scoped to this one window by window number, not to the screen, so anything
+// the machine's live user has in front of WAM cannot land in the frame and a
+// capture cannot leak the rest of their desktop. Requires the Screen Recording
+// permission; without it macOS returns a windowless image and this returns
+// false rather than saving a misleading blank.
+//
+// Main/GUI thread only. Returns false if the window is not realized, the
+// capture came back empty, or the file could not be written.
+[[nodiscard]] bool captureWindowToFile(QWindow *window, const QString &path);
+
 // Test-only background launch (the WAM_TEST_BACKGROUND launch seam).
 //
 // Drops this process to NSApplicationActivationPolicyAccessory, which is the

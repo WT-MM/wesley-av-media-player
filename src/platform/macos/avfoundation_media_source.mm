@@ -1,4 +1,5 @@
 #include "avfoundation_media_source.hpp"
+#include "native_layer_presentation_state.hpp"
 
 #include "media/audio_codec_timing.hpp"
 #include "media/matroska_ac3.hpp"
@@ -6,6 +7,7 @@
 #include "media/video_codec_configuration.hpp"
 #include "native_audio_channel_map.hpp"
 #include "native_video_codec_capability.hpp"
+#include "native_video_color.hpp"
 
 #import <AVFoundation/AVFoundation.h>
 #import <AudioToolbox/AudioToolbox.h>
@@ -758,6 +760,212 @@ audioMovieTimelineFactsFor(NSArray* segments) noexcept {
   return facts;
 }
 
+// The movie time at which a track's MEDIA begins, or the origin when it begins
+// there. Nonzero exactly when the track carries a leading EMPTY EDIT.
+//
+// audioMovieTimelineFactsFor above analyses the SHAPE of a segment list and
+// nothing audio-specific, so it answers this for a video track too. It is
+// spelled out separately because the video lane wants only this one fact: the
+// first movie time at which a picture exists. Fails safe to the origin, which
+// makes every caller behave exactly as it did before this existed.
+[[nodiscard]] CMTime trackMediaStartOnMovieTimeline(NSArray* segments) noexcept {
+  const auto facts = audioMovieTimelineFactsFor(segments);
+  if (!facts || !exactEditTime(facts->mediaStart) ||
+      CMTimeCompare(facts->mediaStart, kCMTimeZero) <= 0) {
+    return kCMTimeZero;
+  }
+  return facts->mediaStart;
+}
+
+// The exact constant that carries a track's MEDIA-timeline stamps onto the
+// MOVIE timeline: the `target.start - source.start` of its one media edit.
+//
+// Same shape analysis and the same reason as trackMediaStartOnMovieTimeline
+// above. Fails SAFE to the zero shift: a multi-segment or rate-stretched edit
+// list is not a constant displacement, and for those shapes this backend keeps
+// stating exactly what it stated before this existed rather than refusing a
+// file that plays today. Zero is also the honest answer for a container with
+// no edit list at all, where the two timelines are the same timeline.
+[[nodiscard]] CMTime trackMovieTimelineShift(NSArray* segments) noexcept {
+  const auto facts = audioMovieTimelineFactsFor(segments);
+  if (!facts || !exactEditTime(facts->shift)) {
+    return kCMTimeZero;
+  }
+  return facts->shift;
+}
+
+// Carries one MEDIA-timeline stamp onto the MOVIE timeline.
+//
+// AVFoundation states every compressed sample twice: the track's own MEDIA
+// timeline as its input timing, and the asset's edited MOVIE timeline as its
+// OUTPUT timing. VideoToolbox decodes whichever buffer it is handed but reports
+// each decoded frame at that buffer's OUTPUT stamp, so a video lane that
+// publishes the input stamp states its compressed samples on one timeline and
+// receives its decoded frames on another. The two differ by exactly this shift,
+// and the shift is zero only when the container carries no edit list -- which
+// is why an ordinary no-edit file never showed the defect, and why a
+// head-trimmed edit list (measured: -0.801917 s on a 24000-timescale file)
+// lands decoded frames at negative movie times the consumer then refuses.
+//
+// Every other quantity a compressed sample is measured against is already the
+// MOVIE timeline -- the seek target, the presentation floor, the reader's time
+// range, the descriptor duration -- so the input stamp was the one statement in
+// this route on the wrong clock.
+//
+// The shift is the container's own exact rational, so a stamp that cannot carry
+// it exactly is refused rather than rounded: that is what keeps the frame grid
+// exact. A non-numeric stamp (a compressed access unit legitimately carries no
+// decode stamp) and a stamp in a later epoch are both returned unchanged, so
+// the exactness gates downstream still see precisely what they saw before.
+[[nodiscard]] std::optional<CMTime> restatedOnMovieTimeline(
+    CMTime stamp, CMTime shift) noexcept {
+  if (!CMTIME_IS_NUMERIC(stamp) || stamp.epoch != 0) {
+    return stamp;
+  }
+  if (!CMTIME_IS_NUMERIC(shift) || shift.epoch != 0) {
+    return std::nullopt;
+  }
+  const CMTime moved = CMTimeAdd(stamp, shift);
+  if (!CMTIME_IS_NUMERIC(moved) ||
+      (moved.flags & kCMTimeFlags_HasBeenRounded) != 0 || moved.epoch != 0 ||
+      moved.timescale <= 0) {
+    return std::nullopt;
+  }
+  return moved;
+}
+
+// Republishes one compressed video access unit on the MOVIE timeline, so that
+// the statement this backend makes about a picture is on the same clock as the
+// decoded frame VideoToolbox will hand back for it. Returns a +1 reference, or
+// null when the unit cannot be restated exactly.
+//
+// The retimed copy is a TIMING copy only: the block buffer, the format
+// description and the sample attachments are carried across by CoreMedia, so
+// the sync attachment that both the decoder and native_video_consumer read is
+// still the container's own. Measured across 59 access units of four files
+// (two head-trimmed specimens and two ordinary ffmpeg controls): attachment
+// presence, sync flag, payload length, format identity, duration and sample
+// count all identical to the source buffer, with PTS == OutputPTS on every
+// restated buffer.
+[[nodiscard]] CMSampleBufferRef restatedVideoOnMovieTimeline(
+    CMSampleBufferRef sample, CMTime shift) noexcept {
+  if (sample == nullptr) {
+    return nullptr;
+  }
+  // The zero shift is every container whose media and movie timelines are the
+  // same timeline. Nothing to restate, and the hot path keeps its pass-through:
+  // no copy, no allocation, no retiming.
+  //
+  // A buffer that is not exactly one access unit is a timed discontinuity
+  // marker that survived the marker tail. It carries no picture and no timing
+  // array, so it is passed through as it always was rather than manufactured.
+  if (CMTimeCompare(shift, kCMTimeZero) == 0 ||
+      CMSampleBufferGetNumSamples(sample) != 1) {
+    CFRetain(sample);
+    return sample;
+  }
+  CMSampleTimingInfo timing{};
+  CMItemCount entries = 0;
+  if (CMSampleBufferGetSampleTimingInfoArray(sample, 1, &timing, &entries) !=
+          noErr ||
+      entries != 1) {
+    return nullptr;
+  }
+  const auto presentation =
+      restatedOnMovieTimeline(timing.presentationTimeStamp, shift);
+  // The decode stamp moves with the presentation stamp or not at all: their
+  // displacement is the codec's reorder distance, which the edit list does not
+  // touch and which VideoToolbox reads to order its output.
+  const auto decode = restatedOnMovieTimeline(timing.decodeTimeStamp, shift);
+  if (!presentation || !decode) {
+    return nullptr;
+  }
+  timing.presentationTimeStamp = *presentation;
+  timing.decodeTimeStamp = *decode;
+  CMSampleBufferRef restated = nullptr;
+  if (CMSampleBufferCreateCopyWithNewTiming(kCFAllocatorDefault, sample, 1,
+                                            &timing, &restated) != noErr ||
+      restated == nullptr) {
+    if (restated != nullptr) {
+      CFRelease(restated);
+    }
+    return nullptr;
+  }
+  // The decoded frame's timestamp is the OUTPUT stamp VideoToolbox reports
+  // back, so state it explicitly as the restated presentation stamp instead of
+  // inheriting whatever the copy carried forward. After this the buffer states
+  // one timeline in both of its voices, which is the whole point.
+  if (CMSampleBufferSetOutputPresentationTimeStamp(
+          restated, CMSampleBufferGetPresentationTimeStamp(restated)) !=
+      noErr) {
+    CFRelease(restated);
+    return nullptr;
+  }
+  return restated;
+}
+
+// Clamps a located sync start into the neutral timeline contract's window.
+//
+// That contract is `0 <= actualDecodeStart <= requestedTarget` -- stated by
+// native_media_dispatcher.cpp deriveTimeline and re-proved independently by
+// native_video_consumer.mm validTimeline and native_audio_session.mm. A
+// container edit list can legitimately put the located random-access point
+// outside the window at EITHER end, and neither shape is a malformation:
+//
+//   * a head-TRIMMED edit (elst media_time > 0) hides media before the movie
+//     origin, so the RAP that decodes the picture at movie time 0 restates to
+//     a NEGATIVE movie time (measured: -0.801917 s on a 24000-timescale file
+//     whose video edit starts at media 19246);
+//   * a leading EMPTY EDIT (elst media_time == -1) declares blank movie time
+//     before any picture exists, so the first RAP presents AFTER the target
+//     (measured: +0.023 s on an ffmpeg-muxed file whose video edit is
+//     [(23, -1), (N, 1024)]).
+//
+// Nothing is lost by clamping. AVAssetReader walks back to the random-access
+// point at or before its own range start by itself -- measured: given range
+// start 0 on the head-trimmed file it still delivers the RAP at media 0, with
+// outputPresentationTimeStamp -0.801917 -- and pictures presenting before the
+// generation start are already retired as compressed preroll by the consumer.
+//
+// This is the same floor matroska_demuxer.cpp applies to the Opus pre-skip
+// ("the downstream timeline contract requires 0 <= actualDecodeStart <=
+// target"), and the origin floor matroska_media_source, mpegts_media_source
+// and both preview sources already carry. This route was the only one of the
+// four without it.
+// The movie time a sync search must run from when the requested target lands
+// inside a track's leading EMPTY EDIT, or empty to fail closed.
+//
+// Engaged for exactly one shape: a track whose media begins strictly after the
+// movie origin (mediaStart > 0, i.e. it carries a leading empty edit) and a
+// target that falls strictly inside that span. Every other invalid answer from
+// samplePresentationTimeForTrackTime: -- a mid-stream hole, an unreadable or
+// rate-stretched edit list, a track with no media edit -- still fails closed,
+// which is why this takes the already-validated mediaStart rather than
+// re-deciding admissibility.
+[[nodiscard]] std::optional<CMTime> syncSearchTargetWithinLeadingEmptyEdit(
+    CMTime target, CMTime mediaStart) noexcept {
+  if (!CMTIME_IS_NUMERIC(target) || !CMTIME_IS_NUMERIC(mediaStart) ||
+      CMTimeCompare(mediaStart, kCMTimeZero) <= 0 ||
+      CMTimeCompare(target, mediaStart) >= 0) {
+    return std::nullopt;
+  }
+  return mediaStart;
+}
+
+[[nodiscard]] CMTime clampedSyncStartWithinTimelineContract(
+    CMTime decodeStart, CMTime target) noexcept {
+  if (!CMTIME_IS_NUMERIC(decodeStart) || !CMTIME_IS_NUMERIC(target)) {
+    return decodeStart;
+  }
+  if (CMTimeCompare(decodeStart, kCMTimeZero) < 0) {
+    return kCMTimeZero;
+  }
+  if (CMTimeCompare(decodeStart, target) > 0) {
+    return target;
+  }
+  return decodeStart;
+}
+
 // Frames Apple's decoder swallows at the head of a track before it emits its
 // first PCM frame. This MUST stay identical to native_audio_converter.mm's
 // decoderLeadInFrames() and to mpegts_media_source.mm's own copy of this
@@ -1019,9 +1227,32 @@ audioMovieTimelineFactsFor(NSArray* segments) noexcept {
   if (stringEquals(value, kCMFormatDescriptionColorPrimaries_ITU_R_2020)) {
     return media::MediaColorPrimaries::Bt2020;
   }
+  // SD-era primaries are a modelled fact on THIS route, not an opaque bit.
+  // VideoToolbox attaches SMPTE_C / EBU_3213 verbatim to the decoded surface
+  // (measured on the user's corpus), the decoded-surface validator already
+  // admits both, and the display layer converts from the surface's own tag --
+  // so the primaries the container declares are the primaries WindowServer
+  // presents. Setting the fail-closed bit here was the whole reason legacy
+  // 4:2:0 SD content fell back to mpv.
+  //
+  // SMPTE-C only, and the asymmetry is deliberate. The frozen contract has ONE
+  // BT.601 primaries enumerator, but SMPTE-C (525) and EBU 3213 (625) are
+  // different chromaticities. Every route that reaches VideoToolbox rebuilds
+  // its format description from this model -- createFormatDescription() in
+  // video_toolbox_decoder.mm, not CoreMedia's original -- so whatever this
+  // returns must be spellable EXACTLY on the way back out, or the decoded
+  // surface carries primaries the container never declared.
+  //
+  // Binding the one enumerator to SMPTE-C keeps colorPrimariesExtension() an
+  // exact inverse. EBU 3213 therefore keeps its named refusal and falls back:
+  // admitting it would mean emitting SMPTE-C for a stream that said 625, which
+  // is the wrong-colour failure this widening exists to avoid. Distinguishing
+  // them needs an appended enumerator -- see scratchpad/sd_color_report.md.
+  if (stringEquals(value, kCMFormatDescriptionColorPrimaries_SMPTE_C)) {
+    return media::MediaColorPrimaries::Bt601;
+  }
   *unsupported = true;
-  if (stringEquals(value, kCMFormatDescriptionColorPrimaries_EBU_3213) ||
-      stringEquals(value, kCMFormatDescriptionColorPrimaries_SMPTE_C)) {
+  if (stringEquals(value, kCMFormatDescriptionColorPrimaries_EBU_3213)) {
     return media::MediaColorPrimaries::Bt601;
   }
   return media::MediaColorPrimaries::OtherExplicit;
@@ -1071,6 +1302,11 @@ audioMovieTimelineFactsFor(NSArray* segments) noexcept {
   // Amendment 6: the BT.2020 non-constant-luminance matrix is a modelled fact.
   if (stringEquals(value, kCMFormatDescriptionYCbCrMatrix_ITU_R_2020)) {
     return media::MediaMatrixCoefficients::Bt2020Ncl;
+  }
+  // matrix_coefficients 5 is the same matrix as 6, spelled the way CoreMedia
+  // spells a value it has no constant for. See bt470bgYCbCrMatrixSpelling().
+  if (stringEquals(value, wam::macos::bt470bgYCbCrMatrixSpelling())) {
+    return media::MediaMatrixCoefficients::Bt601;
   }
   *unsupported = true;
   return media::MediaMatrixCoefficients::OtherExplicit;
@@ -1659,9 +1895,7 @@ inspectVideoFormatFacts(
   }
   const std::uint64_t width = static_cast<std::uint64_t>(dimensions.width);
   const std::uint64_t height = static_cast<std::uint64_t>(dimensions.height);
-  if (width > limits.maximumCodedWidth ||
-      height > limits.maximumCodedHeight ||
-      width * height > limits.maximumCodedPixels) {
+  if (!limits.codedDimensionsAdmitted(width, height)) {
     return std::nullopt;
   }
 
@@ -2377,6 +2611,87 @@ void incrementInventory(media::MediaTrackInventory* inventory,
   return true;
 }
 
+// Classify a track's preferredTransform as one of the four quarter turns, or
+// refuse it.
+//
+// Every portrait video a phone has ever produced arrives here. The transform
+// is not decoration -- the frames really are stored landscape and really must
+// be turned to be looked at -- but it is also not arbitrary: a container's
+// rotation matrix is a quarter turn or it is something this player has no
+// honest way to present. So the four exact matrices are admitted by name and
+// everything else is still refused, out loud.
+//
+// Only the LINEAR part (a, b, c, d) classifies. tx/ty are the translation
+// that keeps the rotated rectangle in positive coordinates -- for a portrait
+// 1920x1080 track, tx is 1080 -- so demanding zero translation is exactly the
+// bug that refused these files in the first place. The translation is implied
+// by the rotation and the coded size, and the presentation layer recomputes
+// it from the rectangle it is drawing into rather than trusting it.
+//
+// Degrees are CLOCKWISE in screen terms (y down), which is the convention
+// mediaVideoDisplaySize already reads when it swaps the rectangle for 90/270,
+// and the convention the presentation layer's CATransform3D matches. The
+// matrices are stated in Core Graphics' y-up algebra, where (x,y) maps to
+// (a*x + c*y, b*x + d*y):
+//
+//     0 deg    a= 1 b= 0 c= 0 d= 1     identity
+//    90 deg    a= 0 b= 1 c=-1 d= 0     +x -> +y   (clockwise on screen)
+//   180 deg    a=-1 b= 0 c= 0 d=-1
+//   270 deg    a= 0 b=-1 c= 1 d= 0
+//
+// Exact comparison, not a tolerance: these values are written as exact small
+// integers by every muxer, and a matrix that is merely NEAR a quarter turn is
+// a shear this player would silently render wrong. A near-miss is refused and
+// says so, which is the honest outcome.
+[[nodiscard]] bool quarterTurnVideoTransform(CGAffineTransform transform,
+                                             int* degrees) noexcept {
+  if (!std::isfinite(transform.a) || !std::isfinite(transform.b) ||
+      !std::isfinite(transform.c) || !std::isfinite(transform.d) ||
+      !std::isfinite(transform.tx) || !std::isfinite(transform.ty)) {
+    return false;
+  }
+  const auto classify = [&](double a, double b, double c, double d,
+                            int turn) noexcept -> bool {
+    if (transform.a != a || transform.b != b || transform.c != c ||
+        transform.d != d) {
+      return false;
+    }
+    if (degrees != nullptr) {
+      *degrees = turn;
+    }
+    return true;
+  };
+  return classify(1.0, 0.0, 0.0, 1.0, 0) ||
+         classify(0.0, 1.0, -1.0, 0.0, 90) ||
+         classify(-1.0, 0.0, 0.0, -1.0, 180) ||
+         classify(0.0, -1.0, 1.0, 0.0, 270);
+}
+
+// The rebind proof's question: does this live transform still say exactly the
+// angle the immutable descriptor recorded? A track whose transform changed
+// under the reader is refused exactly as it always was.
+[[nodiscard]] bool videoTransformMatchesRotation(
+    CGAffineTransform transform, std::int16_t expectedDegrees) noexcept {
+  int degrees = 0;
+  if (!quarterTurnVideoTransform(transform, &degrees)) {
+    return false;
+  }
+  return degrees == static_cast<int>(expectedDegrees);
+}
+
+// The descriptor's own statement of the same fact, so the admission gates and
+// the rebind proof ask one question rather than three similar ones.
+[[nodiscard]] bool quarterTurnRotationAdmitted(
+    const media::MediaVideoFormat& video) noexcept {
+  const int rotation = ((video.rotationDegrees % 360) + 360) % 360;
+  const bool quarterTurn = rotation == 0 || rotation == 90 ||
+                           rotation == 180 || rotation == 270;
+  // identityTransform and rotationDegrees must agree. A descriptor claiming
+  // an identity transform with a nonzero rotation (or the reverse) is not a
+  // rotated file, it is a corrupted fact, and it is refused as one.
+  return quarterTurn && video.identityTransform == (rotation == 0);
+}
+
 [[nodiscard]] bool preservesLegacyNativeAdmission(
     const MediaSourceDescriptor& descriptor, std::string* error) {
   const auto& inventory = descriptor.inventory;
@@ -2497,15 +2812,56 @@ void incrementInventory(media::MediaTrackInventory* inventory,
   // at either depth. The opaque-metadata, Dolby Vision and ambient-viewing
   // refusals now live inside that predicate rather than being restated here,
   // so there is exactly one place a colour refusal can come from.
-  if (!video.identityTransform || !video.progressive ||
-      !supportedModeledColor || !hevcDepthMatches ||
-      (video.sampleFormat != media::MediaVideoSampleFormat::Yuv420EightBit &&
-       video.sampleFormat != media::MediaVideoSampleFormat::Yuv420TenBit) ||
-      !media::mediaVideoHasFullCodedAperture(video) ||
-      !media::mediaVideoHasSquarePixels(video)) {
-    assignError(error,
-                "selected video geometry/color is outside the native v1 "
-                "presentation contract");
+  // Quarter turns are presentable (the presentation layer rotates); anything
+  // else was already refused at describeVideo and cannot reach here. This term
+  // must stay in lockstep with supportedVideoTrack() in
+  // native_video_consumer.mm -- if one admits a rotation the other refuses,
+  // a clean Unsupported becomes a mid-startup Failed.
+  // Named individually rather than folded into one verdict. This predicate has
+  // seven independent reasons to refuse and they are not equally likely; a
+  // single message meant a field report (and an agent bisecting a real file)
+  // could not tell a rotation refusal from a chroma-siting one without a
+  // rebuild. The terms and their order are unchanged -- only the diagnostic
+  // is.
+  const char* geometryRefusal = nullptr;
+  if (!quarterTurnRotationAdmitted(video)) {
+    geometryRefusal =
+        "selected video rotation is outside the native v1 presentation "
+        "contract";
+  } else if (video.rotationDegrees != 0 &&
+             !layerPresentationRouteSelected()) {
+    // The scene-graph route has no rotation stage, so a rotated file must be
+    // refused -- but it has to be refused HERE, at source admission, where a
+    // refusal is a clean UnsupportedSource that opens the file on the
+    // compatibility renderer with the friendly notice. NativeVideoConsumer
+    // asks its output the same question and would also refuse, but that late
+    // refusal surfaces as "native playback rejected an internal command",
+    // which reads like a defect rather than a supported format falling back.
+    // The consumer's check stays as the backstop that keeps the two honest.
+    geometryRefusal =
+        "rotated video needs the layer presentation route; the compatibility "
+        "renderer will present it upright";
+  } else if (!video.progressive) {
+    geometryRefusal = "interlaced video is outside native v1";
+  } else if (!supportedModeledColor) {
+    geometryRefusal =
+        "selected video color is outside the native v1 presentation contract";
+  } else if (!hevcDepthMatches) {
+    geometryRefusal =
+        "HEVC bit depth disagrees with the decoded sample format";
+  } else if (video.sampleFormat !=
+                 media::MediaVideoSampleFormat::Yuv420EightBit &&
+             video.sampleFormat !=
+                 media::MediaVideoSampleFormat::Yuv420TenBit) {
+    geometryRefusal = "selected video sample format is outside native v1";
+  } else if (!media::mediaVideoHasFullCodedAperture(video)) {
+    geometryRefusal =
+        "selected video has a clean aperture smaller than its coded frame";
+  } else if (!media::mediaVideoHasSquarePixels(video)) {
+    geometryRefusal = "selected video has non-square pixels (anamorphic)";
+  }
+  if (geometryRefusal != nullptr) {
+    assignError(error, geometryRefusal);
     return false;
   }
   // An audio-less asset has no selected audio track to admit, so the audio
@@ -2532,6 +2888,7 @@ void incrementInventory(media::MediaTrackInventory* inventory,
          transform.a == 1.0 && transform.b == 0.0 && transform.c == 0.0 &&
          transform.d == 1.0 && transform.tx == 0.0 && transform.ty == 0.0;
 }
+
 
 [[nodiscard]] bool videoFormatMatchesTrack(
     CMVideoFormatDescriptionRef format, const MediaTrackDescriptor& track,
@@ -2570,7 +2927,26 @@ void incrementInventory(media::MediaTrackInventory* inventory,
       media::clampMediaSourceLimits(requestedLimits);
   const auto video = inspectVideoFormatFacts(format, track.codec,
                                              configuration, limits);
-  return video && *video == *track.video;
+  if (!video) {
+    return false;
+  }
+  // Rotation is a TRACK fact, not a format fact. inspectVideoFormatFacts reads
+  // only the CMVideoFormatDescription, which carries no container transform,
+  // so it always reports the unrotated defaults; comparing those against a
+  // rotated descriptor would fail every rotated file here and report it as
+  // "the format changed", which is untrue -- the format did not change, and
+  // this function never saw the rotation in the first place.
+  //
+  // So the two rotation fields are excluded from THIS comparison and proven
+  // where they actually live: selectedFormatsRebindBeforeReader re-reads the
+  // track's preferredTransform and requires it to still state exactly the
+  // angle the descriptor recorded. Between the two, every field is still
+  // checked exactly once, and the equality below stays total over everything
+  // the format description does describe.
+  media::MediaVideoFormat expected = *track.video;
+  expected.rotationDegrees = video->rotationDegrees;
+  expected.identityTransform = video->identityTransform;
+  return *video == expected;
 }
 
 [[nodiscard]] bool audioFormatMatchesTrack(
@@ -2649,16 +3025,50 @@ template <typename NoteReaderCreationAttempt>
       audioFormatCount != expectedAudioFormatCount ||
       (videoSelected && expectedVideo == nullptr) ||
       (audioSelected && expectedAudio == nullptr) ||
+      // The rebind proof is unchanged in strength: the track's transform must
+      // still be exactly what the immutable descriptor recorded. What changed
+      // is that the admitted value is a quarter turn rather than only
+      // identity, so the proof compares the classified angle against the
+      // descriptor's instead of demanding zero from both.
       (videoSelected &&
-       (!exactIdentityVideoTransform(videoTransform) ||
-        !expectedVideo->video || !expectedVideo->video->identityTransform ||
-        expectedVideo->video->rotationDegrees != 0 ||
+       (!expectedVideo->video ||
+        !quarterTurnRotationAdmitted(*expectedVideo->video) ||
+        !videoTransformMatchesRotation(
+            videoTransform, expectedVideo->video->rotationDegrees) ||
         !videoFormatMatchesTrack(videoFormat, *expectedVideo,
                                  requestedLimits))) ||
       (audioSelected &&
        !audioFormatMatchesTrack(audioFormat, *expectedAudio))) {
-    assignError(error,
-                "selected track formats changed before reader creation");
+    // Say WHICH thing changed. This proof has six independent ways to fail and
+    // reported all of them as one sentence; when the admitted transform set
+    // widened, that sentence could no longer distinguish "the file really did
+    // change under us" from "this proof does not yet understand the file",
+    // which are opposite conclusions.
+    const char* rebindRefusal =
+        "selected track formats changed before reader creation";
+    if (videoFormatCount != expectedVideoFormatCount) {
+      rebindRefusal = "selected video format count changed before reader "
+                      "creation";
+    } else if (audioFormatCount != expectedAudioFormatCount) {
+      rebindRefusal = "selected audio format count changed before reader "
+                      "creation";
+    } else if (videoSelected && expectedVideo != nullptr &&
+               expectedVideo->video &&
+               !videoTransformMatchesRotation(
+                   videoTransform, expectedVideo->video->rotationDegrees)) {
+      rebindRefusal = "selected video transform changed before reader "
+                      "creation";
+    } else if (videoSelected && expectedVideo != nullptr &&
+               !videoFormatMatchesTrack(videoFormat, *expectedVideo,
+                                        requestedLimits)) {
+      rebindRefusal =
+          "selected video format changed before reader creation";
+    } else if (audioSelected && expectedAudio != nullptr &&
+               !audioFormatMatchesTrack(audioFormat, *expectedAudio)) {
+      rebindRefusal =
+          "selected audio format changed before reader creation";
+    }
+    assignError(error, rebindRefusal);
     return false;
   }
   std::forward<NoteReaderCreationAttempt>(noteReaderCreationAttempt)();
@@ -3022,6 +3432,12 @@ class ProductionGeneration final : public AVFoundationGeneration {
           result.error = "AVFoundation could not locate a bounded sync start";
           return result;
         }
+        // See clampedSyncStartWithinTimelineContract: an edit list can put the
+        // located random-access point outside `0 <= start <= target` at either
+        // end without being malformed, and this route was the only one of the
+        // four sources with no origin floor at all.
+        decodeStart = clampedSyncStartWithinTimelineContract(decodeStart,
+                                                             *target);
         const CMTime preroll = CMTimeSubtract(*target, decodeStart);
         const CMTime maximumPreroll = CMTimeMakeWithSeconds(
             limits.maximumVideoSeekPrerollSeconds, 60'000);
@@ -3038,11 +3454,28 @@ class ProductionGeneration final : public AVFoundationGeneration {
         return result;
       }
 
-      // Establish this generation's audio movie-timeline restatement before
-      // any access unit is read. The video lane already presents on the movie
-      // timeline; restating audio onto it is what makes the two agree, and
-      // what makes the audio window's decode start directly comparable to the
-      // presentation start the dispatcher derives from the seek target.
+      // Establish this generation's movie-timeline restatements before any
+      // access unit is read. Both lanes need one, for the same reason: the
+      // reader hands out MEDIA-timeline stamps while every quantity they are
+      // measured against -- the seek target, the presentation floor, the reader
+      // range, the descriptor duration -- is the MOVIE timeline.
+      //
+      // The video lane's restatement was long believed unnecessary because the
+      // decoded frame already arrives on the movie timeline (VideoToolbox
+      // reports each frame at its sample's OUTPUT stamp). That is true, and it
+      // is exactly the defect: only the DECODED half had moved. The compressed
+      // half stayed on the media timeline, so the two halves of one lane were
+      // stated on two different clocks, and they diverge by precisely the edit
+      // shift -- invisible on a no-edit file, and a refused negative decoded
+      // frame on a head-trimmed one.
+      video_movie_shift_ = kCMTimeZero;
+      if (videoTrack != nil) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+        NSArray* videoSegments = videoTrack.segments;
+#pragma clang diagnostic pop
+        video_movie_shift_ = trackMovieTimelineShift(videoSegments);
+      }
       audio_movie_shift_ = kCMTimeZero;
       audio_media_start_ = kCMTimeZero;
       audio_presentation_end_ = kCMTimeInvalid;
@@ -3229,7 +3662,21 @@ class ProductionGeneration final : public AVFoundationGeneration {
 
   [[nodiscard]] AVFoundationCopiedSample
   copyNextVideoSample() override {
-    return copyNext(video_output_);
+    AVFoundationCopiedSample copied = copyNext(video_output_);
+    if (copied.status != AVFoundationSampleReadStatus::Sample ||
+        copied.sample == nullptr) {
+      return copied;
+    }
+    ScopedSampleBuffer read(copied.sample);
+    copied.sample =
+        restatedVideoOnMovieTimeline(read.get(), video_movie_shift_);
+    if (copied.sample == nullptr) {
+      copied.status = AVFoundationSampleReadStatus::Failed;
+      copied.error =
+          "AVFoundation video access unit is not exactly restatable on the "
+          "movie timeline";
+    }
+    return copied;
   }
   [[nodiscard]] AVFoundationCopiedSample
   copyNextAudioSample() override {
@@ -3291,9 +3738,14 @@ class ProductionGeneration final : public AVFoundationGeneration {
       assignError(error, "video track lacks one immutable exact format");
       return std::nullopt;
     }
-    if (!exactIdentityVideoTransform(transform)) {
+    int rotationDegrees = 0;
+    if (!quarterTurnVideoTransform(transform, &rotationDegrees)) {
+      // Still refused, and still by name -- but now only for the transforms
+      // this player genuinely cannot present: shears, flips, and arbitrary
+      // angles. A quarter turn is admitted and carried on the descriptor.
       assignError(error,
-                  "transformed video is outside the native v1 descriptor");
+                  "video transform is not a quarter turn and is outside the "
+                  "native v1 descriptor");
       return std::nullopt;
     }
     auto format =
@@ -3324,9 +3776,15 @@ class ProductionGeneration final : public AVFoundationGeneration {
       result->timeBase = {1, naturalTimeScale};
     }
     if (result) {
-      result->video->identityTransform =
-          exactIdentityVideoTransform(transform);
-      result->video->rotationDegrees = 0;
+      result->video->identityTransform = rotationDegrees == 0;
+      result->video->rotationDegrees =
+          static_cast<std::int16_t>(rotationDegrees);
+      // displayWidth/displayHeight stay in CODED orientation on purpose.
+      // mediaVideoDisplaySize() is the one place the quarter turn is applied
+      // to the rectangle, and it transposes these itself; transposing them
+      // here as well would turn the portrait window back into a landscape
+      // one, and would break mediaVideoHasSquarePixels/HasFullCodedAperture,
+      // which compare the display rectangle against the coded one.
     }
     if (result && !copyBoundedString(language, limits.maximumTrackTextBytes,
                                      &result->language)) {
@@ -3375,15 +3833,37 @@ class ProductionGeneration final : public AVFoundationGeneration {
   // are exact or the caller fails closed on a non-numeric decode start.
   [[nodiscard]] CMTime syncStart(AVAssetTrack* track,
                                  CMTime target) noexcept {
+    // A leading EMPTY EDIT declares a span of movie time before any of this
+    // track's media exists, and AVFoundation answers
+    // samplePresentationTimeForTrackTime: with kCMTimeInvalid inside it --
+    // correctly, because no sample is mapped there. Every cold open asks for
+    // exactly track time 0 (native_media_session.mm states an initial position
+    // unconditionally), so a file carrying one was refused outright with "could
+    // not locate a bounded sync start" even though it is spec-legal, plays in
+    // QuickTime, and differs from its admitted siblings only by that edit.
+    // The span is not a seek failure: it is the container saying the first
+    // picture arrives a little after the origin. Search from the first movie
+    // time this track actually has media at; the caller then clamps the result
+    // back into the timeline contract's window.
+    CMTime searchTarget = target;
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
-    const CMTime mediaTarget =
-        [track samplePresentationTimeForTrackTime:target];
+    CMTime mediaTarget =
+        [track samplePresentationTimeForTrackTime:searchTarget];
+    if (!CMTIME_IS_NUMERIC(mediaTarget)) {
+      const auto retry = syncSearchTargetWithinLeadingEmptyEdit(
+          target, trackMediaStartOnMovieTimeline(track.segments));
+      if (!retry) {
+        return kCMTimeInvalid;
+      }
+      searchTarget = *retry;
+      mediaTarget = [track samplePresentationTimeForTrackTime:searchTarget];
+    }
 #pragma clang diagnostic pop
     if (!CMTIME_IS_NUMERIC(mediaTarget)) {
       return kCMTimeInvalid;
     }
-    const CMTime mediaOffset = CMTimeSubtract(mediaTarget, target);
+    const CMTime mediaOffset = CMTimeSubtract(mediaTarget, searchTarget);
     AVSampleCursor* cursor =
         [track makeSampleCursorWithPresentationTimeStamp:mediaTarget];
     if (cursor == nil) {
@@ -3672,6 +4152,11 @@ class ProductionGeneration final : public AVFoundationGeneration {
   // time at which audio media begins (nonzero only for a leading empty edit).
   CMTime audio_movie_shift_{kCMTimeZero};
   CMTime audio_media_start_{kCMTimeZero};
+  // This generation's exact video media-to-movie timeline shift. Zero for a
+  // container with no edit list, and for any edit shape that is not a single
+  // constant displacement -- both of which leave the video statement exactly
+  // where it was before the restatement existed.
+  CMTime video_movie_shift_{kCMTimeZero};
   // Movie time at which this generation's presentation must end when the
   // selected video runs past the end of the selected audio. Invalid means the
   // generation ends at its own audio end, which is every ordinary source.
@@ -4148,13 +4633,23 @@ struct AVFoundationMediaSource::Impl {
       }
       if (admission && video) {
         const auto* sample = std::get_if<MediaSample>(&head->value);
+        // Nonnegativity is deliberately NOT required of this sample. On the
+        // movie timeline the random-access point a head-trimmed edit list
+        // makes the reader walk back to legitimately precedes the origin --
+        // it is the sample that decodes the picture AT the origin, and it is
+        // preroll, marked decodeOnly and retired against the presentation
+        // floor rather than presented. This is the video reading of the same
+        // fact MediaTime already states for the audio lane's priming access
+        // unit: "negative values are valid (for example, edit-list and preroll
+        // timestamps)". What this generation must still begin on is a real,
+        // positive-duration SYNC picture, and that is what is checked.
         if (sample == nullptr || !sample->keyFrame ||
-            sample->presentationTime.value < 0 ||
+            !sample->presentationTime.valid() ||
             !sample->duration.valid() || sample->duration.value <= 0) {
           assignError(
               error,
-              "first video sample is not a nonnegative positive-duration "
-              "sync access unit");
+              "first video sample is not a positive-duration sync access "
+              "unit");
           return false;
         }
       }
@@ -4871,10 +5366,30 @@ bool mediaFreeMarkerForTesting(CMSampleBufferRef sample) noexcept {
   return mediaFreeMarker(sample);
 }
 
+std::optional<CMTime> syncSearchTargetWithinLeadingEmptyEditForTesting(
+    CMTime target, CMTime mediaStart) noexcept {
+  return syncSearchTargetWithinLeadingEmptyEdit(target, mediaStart);
+}
+
+CMTime clampedSyncStartWithinTimelineContractForTesting(
+    CMTime decodeStart, CMTime target) noexcept {
+  return clampedSyncStartWithinTimelineContract(decodeStart, target);
+}
+
 std::size_t restateCompressedAudioPacketDurationsForTesting(
     CMSampleBufferRef sample, CMSampleTimingInfo* timing,
     std::size_t entries) noexcept {
   return restateCompressedAudioPacketDurations(sample, timing, entries);
+}
+
+std::optional<CMTime> restatedOnMovieTimelineForTesting(
+    CMTime stamp, CMTime shift) noexcept {
+  return restatedOnMovieTimeline(stamp, shift);
+}
+
+CMSampleBufferRef restatedVideoOnMovieTimelineForTesting(
+    CMSampleBufferRef sample, CMTime shift) noexcept {
+  return restatedVideoOnMovieTimeline(sample, shift);
 }
 
 std::optional<MediaTrackDescriptor> inspectVideoFormat(

@@ -3549,8 +3549,92 @@ void testHevcConfiguration(bool requireHardware) {
 
 } // namespace
 
+// A DISPLAY-LAYER session leaves its output pixel format UNPINNED -- see
+// pinOutputPixelFormat in createSessionLocked -- so VideoToolbox returns the
+// surface family the STREAM asks for rather than the one requestedPixelFormat()
+// names. requestedPixelFormat() always names the VIDEO-RANGE fourcc, so a
+// full-range stream (H.264 with video_full_range_flag = 1, i.e. ffmpeg's
+// yuvj420p) returns a format the expectation never mentions.
+//
+// MEASURED on this platform (scratchpad/drain/surfprobe.mm) against two real
+// 1080x720 High-profile files: an unpinned session carrying the player's own
+// IOSurface + Metal image attributes returns '&8f0'
+// (Lossless_420YpCbCr8BiPlanarFullRange) for a full-range stream and '&8v0'
+// (Lossless_420YpCbCr8BiPlanarVideoRange) for an otherwise identical
+// video-range one. Admitting only the VideoRange family therefore dropped
+// EVERY decoded frame of a full-range file in the output callback, latched an
+// async error, and failed the presentation drain closed part-way into
+// playback -- with zero frames ever submitted, while audio kept running.
+//
+// The range is not a property this route needs to predict: the display layer
+// never samples the surface, it presents the buffer with the buffer's own
+// attachments. Depth still is predicted, and stays exact below.
+void testUnpinnedDisplayLayerAdmitsFullRangeDecodedSurfaces() {
+  using wam::macos::VideoToolboxDecoderTestAccess;
+  using wam::macos::VideoToolboxOutputInterop;
+  const auto admits = [](OSType actual, OSType expected,
+                         VideoToolboxOutputInterop interop) {
+    return VideoToolboxDecoderTestAccess::admitsDecodedOutputPixelFormat(
+        actual, expected, interop);
+  };
+
+  constexpr OSType videoRange8 =
+      kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange;
+  constexpr OSType fullRange8 =
+      kCVPixelFormatType_420YpCbCr8BiPlanarFullRange;
+  constexpr OSType losslessVideoRange8 =
+      kCVPixelFormatType_Lossless_420YpCbCr8BiPlanarVideoRange;
+  constexpr OSType losslessFullRange8 =
+      kCVPixelFormatType_Lossless_420YpCbCr8BiPlanarFullRange;
+  constexpr OSType videoRange10 =
+      kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange;
+  constexpr OSType fullRange10 =
+      kCVPixelFormatType_420YpCbCr10BiPlanarFullRange;
+
+  // The whole 8-bit family an unpinned display-layer session can return.
+  WAM_CHECK(admits(videoRange8, videoRange8,
+                   VideoToolboxOutputInterop::DisplayLayer));
+  WAM_CHECK(admits(losslessVideoRange8, videoRange8,
+                   VideoToolboxOutputInterop::DisplayLayer));
+  WAM_CHECK(admits(fullRange8, videoRange8,
+                   VideoToolboxOutputInterop::DisplayLayer));
+  // The exact format measured on both specimen files.
+  WAM_CHECK(admits(losslessFullRange8, videoRange8,
+                   VideoToolboxOutputInterop::DisplayLayer));
+
+  // Same rule at 10 bits: a 10-bit SDR stream also leaves the format unpinned.
+  WAM_CHECK(admits(fullRange10, videoRange10,
+                   VideoToolboxOutputInterop::DisplayLayer));
+
+  // DEPTH stays exact. Widening the range must not widen the bit depth: the
+  // surface budget and every sampler are sized from it.
+  WAM_CHECK(!admits(videoRange10, videoRange8,
+                    VideoToolboxOutputInterop::DisplayLayer));
+  WAM_CHECK(!admits(fullRange10, videoRange8,
+                    VideoToolboxOutputInterop::DisplayLayer));
+  WAM_CHECK(!admits(videoRange8, videoRange10,
+                    VideoToolboxOutputInterop::DisplayLayer));
+  // And an unrelated format is still refused.
+  WAM_CHECK(!admits(kCVPixelFormatType_32BGRA, videoRange8,
+                    VideoToolboxOutputInterop::DisplayLayer));
+
+  // Every other interop PINS the output format (pinOutputPixelFormat is true
+  // whenever the interop is not DisplayLayer), so for those routes a format
+  // that is not the requested one is a genuine contract violation and stays
+  // refused -- including the range sibling.
+  WAM_CHECK(admits(videoRange8, videoRange8,
+                   VideoToolboxOutputInterop::OpenGL));
+  WAM_CHECK(!admits(fullRange8, videoRange8,
+                    VideoToolboxOutputInterop::OpenGL));
+  WAM_CHECK(!admits(losslessFullRange8, videoRange8,
+                    VideoToolboxOutputInterop::OpenGL));
+  WAM_CHECK(!admits(losslessVideoRange8, videoRange8,
+                    VideoToolboxOutputInterop::Metal));
+}
+
 int main(int argc, char **argv) {
   testSharedLimitBoundaries();
+  testUnpinnedDisplayLayerAdmitsFullRangeDecodedSurfaces();
   testPersistentFrameRefConSlotLifecycle();
   testPersistentCallbackTailBlocksClose();
   testCoreFoundationAllocationFailuresFailClosed();

@@ -47,6 +47,26 @@ struct VideoCodecConfigurationLimits {
   bool admitHighDynamicRangeColor{false};
 };
 
+// The single dimension question every parser in this file asks, so the six
+// bitstream parsers cannot drift from each other or from the media contract.
+// Orientation-agnostic since amendment 8: it delegates to the contract's own
+// predicate rather than restating a per-axis comparison a seventh time.
+//
+// Zero is deliberately NOT a size verdict here. Two callers reach this with a
+// dimension that can legitimately be zero and answer it as MalformedRecord a
+// few lines later; folding zero into DimensionLimitExceeded would relabel
+// those refusals. Callers that owe a zero rule state it themselves.
+[[nodiscard]] constexpr bool codecDimensionsExceedLimits(
+    std::uint64_t width, std::uint64_t height,
+    const VideoCodecConfigurationLimits &limits) noexcept {
+  if (width == 0U || height == 0U) {
+    return false;
+  }
+  return !MediaSourceLimits::codedDimensionsWithin(
+      width, height, limits.maximumWidth, limits.maximumHeight,
+      limits.maximumPixels);
+}
+
 enum class VideoCodecConfigurationError : std::uint8_t {
   None,
   UnsupportedCodec,

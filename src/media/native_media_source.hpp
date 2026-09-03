@@ -543,6 +543,52 @@ struct MediaSourceLimits {
   static constexpr std::uint32_t kHardMaximumCodedHeight{2320};
   static constexpr std::uint64_t kHardMaximumCodedPixels{
       4096ULL * 2320ULL};
+
+  // Amendment 8 (2026-09-03). The envelope is a RECTANGLE, not a width and a
+  // height. Read per-axis, the two constants above refuse 2160x3840 -- an
+  // ordinary portrait 4K phone video -- because its long axis is its height,
+  // even though its 8,294,400 px is comfortably under the 9,502,720 px budget
+  // and its decoded surface costs exactly what its landscape transpose costs.
+  // The rule is therefore stated once, here, against the SORTED pair:
+  //
+  //     max(w,h) <= kHardMaximumCodedWidth   (4096, the longest axis)
+  //     min(w,h) <= kHardMaximumCodedHeight  (2320, the shortest axis)
+  //     w * h    <= kHardMaximumCodedPixels  (9,502,720, unchanged)
+  //
+  // The pixel budget does not move, so every byte budget DERIVED from it is
+  // arithmetically untouched; only transposed shapes become admissible. This
+  // is not a widening to arbitrary shapes -- 4096x4096 still fails on
+  // min(w,h) -- and the constants keep their names and values so no frozen
+  // signature or ordering moves. What changed is that the axis a bound
+  // applies to is now decided by the shape, not by the field's name.
+  //
+  // NOTE the one derivation that is NOT a pure function of the pixel count:
+  // native_surface_budget.hpp's row-alignment slack scales with a surface's
+  // HEIGHT, and the tallest admissible surface is now 4096 rows rather than
+  // 2320. That header re-derives its own arithmetic and re-asserts it.
+  //
+  // Division rather than multiplication for the area test: `w <= P / h` is
+  // exactly equivalent to `w * h <= P` over positive integers, and cannot
+  // overflow on the way to the answer.
+  [[nodiscard]] static constexpr bool codedDimensionsWithin(
+      std::uint64_t width, std::uint64_t height, std::uint64_t longestAxis,
+      std::uint64_t shortestAxis, std::uint64_t pixels) noexcept {
+    if (width == 0 || height == 0) {
+      return false;
+    }
+    const std::uint64_t longer = width > height ? width : height;
+    const std::uint64_t shorter = width > height ? height : width;
+    return longer <= longestAxis && shorter <= shortestAxis &&
+           width <= pixels / height;
+  }
+
+  // The fixed v1 envelope, which no caller can expand.
+  [[nodiscard]] static constexpr bool codedDimensionsWithinHardCeiling(
+      std::uint64_t width, std::uint64_t height) noexcept {
+    return codedDimensionsWithin(width, height, kHardMaximumCodedWidth,
+                                 kHardMaximumCodedHeight,
+                                 kHardMaximumCodedPixels);
+  }
   static constexpr std::uint32_t kHardMaximumAudioChannels{8};
   static constexpr double kHardMaximumAudioSampleRate{384'000.0};
   static constexpr double kHardMaximumVideoSeekPrerollSeconds{12.0};
@@ -564,6 +610,16 @@ struct MediaSourceLimits {
   std::uint32_t maximumCodedWidth{kHardMaximumCodedWidth};
   std::uint32_t maximumCodedHeight{kHardMaximumCodedHeight};
   std::uint64_t maximumCodedPixels{kHardMaximumCodedPixels};
+
+  // The same amendment-8 rule against THIS instance's (possibly tightened)
+  // bounds. A caller that tightens to 1920x1080 is asking for "no axis over
+  // 1920, no second axis over 1080", which admits 1080x1920 -- the tightening
+  // is a smaller rectangle, still orientation-agnostic, never an expansion.
+  [[nodiscard]] constexpr bool codedDimensionsAdmitted(
+      std::uint64_t width, std::uint64_t height) const noexcept {
+    return codedDimensionsWithin(width, height, maximumCodedWidth,
+                                 maximumCodedHeight, maximumCodedPixels);
+  }
   std::uint32_t maximumAudioChannels{kHardMaximumAudioChannels};
   double maximumAudioSampleRate{kHardMaximumAudioSampleRate};
   double maximumVideoSeekPrerollSeconds{

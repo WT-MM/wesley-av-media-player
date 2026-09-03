@@ -633,9 +633,11 @@ mediaColorPrimariesFromIso(std::uint32_t value) noexcept {
       return MediaColorPrimaries::Bt709;
     case 2:
       return MediaColorPrimaries::Unknown;
-    case 5:
     case 6:
-      // BT.470BG and SMPTE 170M -- the two spellings of BT.601 primaries.
+      // SMPTE 170M (525) only; BT.470BG (625, value 5) keeps its named
+      // refusal. Same reason as the Matroska mapping: the single BT.601
+      // primaries enumerator is bound to SMPTE-C so it can be spelled back
+      // exactly, and 625 chromaticities cannot ride on it.
       return MediaColorPrimaries::Bt601;
     case 9:
       return MediaColorPrimaries::Bt2020;

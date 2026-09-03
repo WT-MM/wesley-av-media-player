@@ -212,6 +212,20 @@ inspectedAudioChannelLayoutSizeForTesting() noexcept;
 [[nodiscard]] std::size_t restateCompressedAudioPacketDurationsForTesting(
     CMSampleBufferRef sample, CMSampleTimingInfo* timing,
     std::size_t entries) noexcept;
+// Carries one MEDIA-timeline stamp onto the MOVIE timeline by the container's
+// own exact edit shift. Returns nullopt when a numeric stamp cannot carry the
+// shift exactly; a non-numeric stamp (an absent decode stamp) and a stamp in a
+// later epoch are returned unchanged.
+[[nodiscard]] std::optional<CMTime> restatedOnMovieTimelineForTesting(
+    CMTime stamp, CMTime shift) noexcept;
+// Republishes one compressed video access unit on the MOVIE timeline: a timing
+// copy carrying the shift into the presentation and decode stamps and into the
+// output stamp VideoToolbox reports back, leaving payload, format description
+// and sample attachments as they were. Returns a +1 reference, the same buffer
+// retained when the shift is zero or the buffer is not one access unit, or
+// null when the unit cannot be restated exactly.
+[[nodiscard]] CMSampleBufferRef restatedVideoOnMovieTimelineForTesting(
+    CMSampleBufferRef sample, CMTime shift) noexcept;
 [[nodiscard]] std::optional<media::MediaTrackDescriptor>
 inspectVideoFormat(CMVideoFormatDescriptionRef format,
                    media::MediaTrackId trackId, media::MediaTime duration,
