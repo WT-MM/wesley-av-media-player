@@ -3389,6 +3389,70 @@ void testVideoIsRestatedOnTheMovieTimeline() {
          "a zero shift passes the same buffer through without copying it");
 }
 
+// A staged audio sample is one unit of dispatcher backpressure, and the audio
+// lane is capacity-one, so an event the PCM ring cannot absorb closes the
+// MERGED read gate -- which starves the VIDEO lane, because this backend reads
+// both tracks through one AVAssetReader. The batch size AVFoundation hands back
+// is a property of the container's INTERLEAVING, not of the codec: a normally
+// interleaved MP4 vends 1-2 AAC units, but a non-interleaved one (whole audio
+// track written as a single contiguous run) vends 140 units == 2.9867 s, more
+// than twice the ring's ~1.365 s guaranteed capacity. That measured exactly as
+// a 2.9867 s periodic video stall: 203 of 480 frames drawn, 277 retired late,
+// while the audio clock held 1.0000.
+//
+// So the bound on a staged sample must be stated in MEDIA TIME, not only in
+// count and bytes. These are the real measured per-unit durations.
+void testStagedAudioIsBoundedInMediaTime() {
+  using wam::macos::avfoundation_media_source_testing::
+      audioUnitsWithinStagedDurationForTest;
+
+  // AAC-LC at 48 kHz: 1024 frames per access unit.
+  const std::int64_t aac48k = audioUnitsWithinStagedDurationForTest(1024, 48000);
+  expect(aac48k > 0, "48 kHz AAC states a usable staged-audio unit bound");
+  // The defect: a non-interleaved container's 140-unit batch must NOT pass
+  // through whole. This is the assertion that fails without the bound.
+  expect(aac48k < 140,
+         "a 140-unit AAC batch (2.9867 s) exceeds the staged-audio bound and "
+         "must be re-cut");
+  // ...and the bound must stay under the PCM ring's guaranteed capacity
+  // (kSlabCount 16 * kFramesPerSlab 4096 == 65,536 frames, ~1.365 s at 48 kHz),
+  // or the staged event still could not be absorbed.
+  expect(aac48k * 1024 < 65536,
+         "the staged-audio bound fits inside the PCM ring's guaranteed frames");
+  // The healthy path must be untouched: a normally interleaved container vends
+  // 1-2 units, which must still pass through with nothing copied.
+  expect(aac48k >= 2,
+         "an interleaved container's 1-2 unit AAC batch still passes through");
+
+  // AAC-LC at 44.1 kHz, the other rate this backend is measured against.
+  const std::int64_t aac44k = audioUnitsWithinStagedDurationForTest(1024, 44100);
+  expect(aac44k >= 2 && aac44k < 140,
+         "44.1 kHz AAC is bounded the same way");
+
+  // MPEG-1 Layer III: 1152 frames per unit. The measured batch is 84 units.
+  const std::int64_t mp3 = audioUnitsWithinStagedDurationForTest(1152, 44100);
+  expect(mp3 >= 1 && mp3 < 84, "an 84-unit MP3 batch is re-cut too");
+
+  // LPCM states one frame per unit, so the time bound is enormous and the
+  // existing count bound (maximumAudioSampleCount == 1024) stays the binding
+  // one -- the LPCM re-cut path must not change behaviour.
+  const std::int64_t lpcm = audioUnitsWithinStagedDurationForTest(1, 48000);
+  expect(lpcm > 1024,
+         "LPCM stays bounded by the count limit, not by the time limit");
+
+  // A degenerate or absent duration must mean NO time bound, so the bound can
+  // never turn a readable batch into a stalled one.
+  expect(audioUnitsWithinStagedDurationForTest(0, 48000) == 0,
+         "a zero per-unit duration states no staged-audio time bound");
+  expect(audioUnitsWithinStagedDurationForTest(1024, 0) == 0,
+         "an invalid timescale states no staged-audio time bound");
+
+  // A single unit longer than the whole bound still publishes as one unit;
+  // returning 0 there would be read as "no bound" and returning <1 would stall.
+  expect(audioUnitsWithinStagedDurationForTest(4, 1) == 1,
+         "one over-long access unit still publishes as exactly one unit");
+}
+
 int main(int argc, char** argv) {
   @autoreleasepool {
     const bool timingOnly =
@@ -3435,6 +3499,7 @@ int main(int argc, char** argv) {
     testPreReaderSelectedFormatRebind();
     testWorkerExceptionsStayInsideSourceBoundary();
     testInjectedBackendCannotBypassLegacyAdmission();
+    testStagedAudioIsBoundedInMediaTime();
     if (argc == 2) {
       testRealCompactAudioLayoutFixture(argv[1]);
       testRealSourceDrainsMarkerTailToExhaustion(argv[1]);
