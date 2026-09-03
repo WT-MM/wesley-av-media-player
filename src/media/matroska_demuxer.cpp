@@ -938,9 +938,13 @@ mediaColorPrimariesFromIso(std::uint64_t value) noexcept {
     return MediaColorPrimaries::Bt709;
   case 2:
     return MediaColorPrimaries::Unknown;
-  case 5:
   case 6:
-    // BT.470BG and SMPTE 170M -- the two spellings of BT.601 primaries.
+    // SMPTE 170M (525) only. BT.470BG (625, value 5) is a DIFFERENT set of
+    // chromaticities, and the contract has one BT.601 primaries enumerator --
+    // which is bound to SMPTE-C so colorPrimariesExtension() can spell it back
+    // exactly. Folding 5 in here would let a 625-line stream be admitted and
+    // then presented as 525. It keeps its named refusal until the enumerator
+    // is split; see the amendment proposed in the SD colour report.
     return MediaColorPrimaries::Bt601;
   case 9:
     return MediaColorPrimaries::Bt2020;

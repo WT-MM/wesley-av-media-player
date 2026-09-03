@@ -42,16 +42,34 @@ inline constexpr std::uint64_t kNativeSurfaceBudgetMaximumSurfaces = 10;
 //    plane is rounded up to a page. The worst case over the whole admitted
 //    envelope is 255 B of stride slack on every luma row and every chroma row
 //    (chroma is half height), plus one 16 KiB page rounding per plane. That
-//    bound depends only on the ceiling's HEIGHT, so it is derived from it.
+//    bound depends only on the surface's ROW COUNT, so it is derived from the
+//    tallest surface the envelope admits.
+//
+//    Amendment 8 moved that number. The envelope is orientation-agnostic now,
+//    so the tallest admissible surface is no longer 2320 rows: a portrait
+//    2320x4096 frame is inside the rectangle rule and inside the pixel
+//    budget, and it has 4096 luma rows. The tallest admissible surface is
+//    therefore the LONGEST-axis bound, kHardMaximumCodedWidth. The payload
+//    term does not move -- it is a pure function of the unchanged pixel count
+//    -- so only the slack is re-derived, and it is re-derived here rather
+//    than carried forward.
 //
 // 3. The budget must cover kNativeSurfaceBudgetMaximumSurfaces of those.
 //
-// At the 4096x2320 / 9,502,720 px ceiling:
+// At the amendment-8 rectangle ceiling (longest axis 4096, shortest 2320,
+// 9,502,720 px), whose worst case for slack is the transposed 2320x4096:
 //    payload   9,502,720 * 3                        =  28,508,160 B
-//    slack     (2320 + 1160) * 255 + 2 * 16,384     =     920,168 B
-//    surface                                        =  29,428,328 B
-//    budget    10 * 29,428,328                      = 294,283,280 B
+//    slack     (4096 + 2048) * 255 + 2 * 16,384     =   1,599,488 B
+//    surface                                        =  30,107,648 B
+//    complement 10 * 30,107,648                     = 301,076,480 B
 //    chosen    288 MiB                              = 301,989,888 B
+//
+// 288 MiB still covers the complement, with 913,408 B to spare, and is still
+// within one worst-case surface of it (11 * 30,107,648 = 331,184,128 B), so
+// both bracketing asserts below survive the amendment and the chosen figure
+// did not have to move. For the record, the pre-amendment slack was
+// (2320 + 1160) * 255 + 32,768 = 920,168 B, for a 29,428,328 B surface and a
+// 294,283,280 B complement.
 //
 // The same arithmetic reproduces the previous 64 MiB value at the previous
 // 1920x1080 ceiling -- 10 * (6,220,800 + 445,868) = 66,666,680 B, and 64 MiB
@@ -67,12 +85,20 @@ inline constexpr std::uint64_t kNativeSurfaceBudgetMaximumSurfaces = 10;
 inline constexpr std::uint64_t kNativeSurfaceBudgetWorstCaseSurfacePayloadBytes =
     media::MediaSourceLimits::kHardMaximumCodedPixels * 3ULL;
 
+// The tallest surface the envelope admits. Under the amendment-8 rectangle
+// rule either dimension may carry the longest axis, so this is the
+// LONGEST-axis bound and not the field named "Height" -- a transposed
+// 2320x4096 frame is admissible and has 4096 luma rows. Deriving this from
+// kHardMaximumCodedHeight (as it did when only landscape shapes existed)
+// would now under-derive the slack by 679,320 B per surface and quietly make
+// the byte budget too small for the very shapes the amendment admits.
+inline constexpr std::uint64_t kNativeSurfaceBudgetWorstCaseSurfaceRows =
+    static_cast<std::uint64_t>(
+        media::MediaSourceLimits::kHardMaximumCodedWidth);
+
 inline constexpr std::uint64_t kNativeSurfaceBudgetSurfaceAlignmentSlackBytes =
-    (static_cast<std::uint64_t>(
-         media::MediaSourceLimits::kHardMaximumCodedHeight) +
-     static_cast<std::uint64_t>(
-         media::MediaSourceLimits::kHardMaximumCodedHeight) /
-         2ULL) *
+    (kNativeSurfaceBudgetWorstCaseSurfaceRows +
+     kNativeSurfaceBudgetWorstCaseSurfaceRows / 2ULL) *
         255ULL +
     2ULL * 16ULL * 1024ULL;
 

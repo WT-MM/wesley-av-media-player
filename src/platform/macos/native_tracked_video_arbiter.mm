@@ -382,6 +382,14 @@ class NativeTrackedVideoArbiter::MainOutput final
     return state_->output->presentsDecodedSurfacesDirectly();
   }
 
+  // Forwarded for the same reason and with the same care: the arbiter draws
+  // nothing, so whether a rotation can be presented is the wrapped presenter's
+  // answer. Answering it here would let the wrapper claim a capability the
+  // real presenter does not have.
+  [[nodiscard]] bool setPresentationRotation(int degrees) noexcept override {
+    return state_->output->setPresentationRotation(degrees);
+  }
+
   [[nodiscard]] NativeTrackedVideoOutputFacts facts()
       const noexcept override {
     state_->pumpEvent();

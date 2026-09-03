@@ -1,6 +1,7 @@
 #include "video_toolbox_decoder.hpp"
 
 #include "native_video_codec_capability.hpp"
+#include "native_video_color.hpp"
 #include "native_video_limits.hpp"
 
 #include <CoreFoundation/CoreFoundation.h>
@@ -1198,6 +1199,23 @@ OSType losslessCounterpartFormat(OSType pixelFormat) noexcept {
 // decoder produces natively. Nothing else is ever admitted -- an unpinned
 // session that returned, say, BGRA would be a silent per-frame conversion in
 // the other direction, which is precisely the cost this contract removes.
+// The full-range twin of a bounded native decode format, or 0 for one that has
+// none. requestedPixelFormat() always names a VIDEO-range format, but the
+// display-layer session is deliberately left unpinned (see the pin gate in the
+// session builder), so VideoToolbox delivers whatever the stream's
+// video_full_range_flag implies -- '420f' for full-range material. Before this
+// twin existed, such a stream failed the output contract on its FIRST frame.
+OSType fullRangeCounterpartFormat(OSType pixelFormat) noexcept {
+  switch (pixelFormat) {
+  case kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange:
+    return kCVPixelFormatType_420YpCbCr8BiPlanarFullRange;
+  case kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange:
+    return kCVPixelFormatType_420YpCbCr10BiPlanarFullRange;
+  default:
+    return 0;
+  }
+}
+
 bool admitsOutputPixelFormat(OSType pixelFormat, OSType expectedPixelFormat,
                              VideoToolboxOutputInterop outputInterop) noexcept {
   if (pixelFormat == expectedPixelFormat) {
@@ -1206,8 +1224,23 @@ bool admitsOutputPixelFormat(OSType pixelFormat, OSType expectedPixelFormat,
   if (outputInterop != VideoToolboxOutputInterop::DisplayLayer) {
     return false;
   }
-  const OSType lossless = losslessCounterpartFormat(expectedPixelFormat);
-  return lossless != 0 && pixelFormat == lossless;
+  // Only the display layer widens, and for the same reason in both directions:
+  // it never SAMPLES the surface, so the surface's own pixel format is what
+  // carries depth and range to WindowServer. An in-process sampler must keep
+  // getting exactly the format it was pinned to, because its shaders encode
+  // the range assumption -- for those interops the session IS pinned, and
+  // VideoToolbox converts a full-range stream down to the requested range
+  // itself, so the equality above is already the whole rule.
+  const OSType fullRange = fullRangeCounterpartFormat(expectedPixelFormat);
+  for (const OSType admitted :
+       {expectedPixelFormat, fullRange,
+        losslessCounterpartFormat(expectedPixelFormat),
+        fullRange == 0 ? OSType{0} : losslessCounterpartFormat(fullRange)}) {
+    if (admitted != 0 && pixelFormat == admitted) {
+      return true;
+    }
+  }
+  return false;
 }
 
 bool validateOutputSurfaceContract(CVPixelBufferRef pixelBuffer,
@@ -1377,6 +1410,36 @@ bool rejectPresentAttachment(CVBufferRef buffer, CFStringRef key,
   CFRelease(value);
   assignError(error, diagnostic);
   return false;
+}
+
+// VideoToolbox forwards matrix_coefficients 5 to the decoded surface in the
+// unmapped spelling "YCbCrMatrix#5" rather than resolving it. That tag reaches
+// the display layer through CMVideoFormatDescriptionCreateForImageBuffer and
+// reaches the scenegraph shaders through ycbcrMatrixForPixelBuffer(), and
+// neither can act on a string it does not know. H.273 defines 5 and 6 as one
+// matrix, so restating it in the 601 spelling is exact -- and it must happen
+// BEFORE the SDR validator below, which would otherwise refuse the frame and
+// turn a clean fallback into a mid-playback decode failure.
+//
+// Restating is the narrowest available fix: the alternative is teaching the
+// spelling to every presenter and validator separately, which is the drift
+// native_video_color.hpp exists to prevent.
+void normalizeDecodedColorAttachments(CVPixelBufferRef pixelBuffer) {
+  if (pixelBuffer == nullptr) {
+    return;
+  }
+  CFTypeRef matrix = CVBufferCopyAttachment(
+      pixelBuffer, kCVImageBufferYCbCrMatrixKey, nullptr);
+  if (matrix == nullptr) {
+    return;
+  }
+  if (CFGetTypeID(matrix) == CFStringGetTypeID() &&
+      CFEqual(matrix, wam::macos::bt470bgYCbCrMatrixSpelling())) {
+    CVBufferSetAttachment(pixelBuffer, kCVImageBufferYCbCrMatrixKey,
+                          kCVImageBufferYCbCrMatrix_ITU_R_601_4,
+                          kCVAttachmentMode_ShouldPropagate);
+  }
+  CFRelease(matrix);
 }
 
 bool validateDecodedSdrColorAttachments(CVPixelBufferRef pixelBuffer,
@@ -1591,6 +1654,10 @@ void deliverDecodedFrameImpl(const std::shared_ptr<AsyncDecodeState> &state,
               "coded dimensions");
           ++state->dropped;
         } else {
+          // Runs before both contract checks: the surface's own tag is what
+          // the layer and the shaders read, so it is restated at the port
+          // rather than reinterpreted at each reader.
+          normalizeDecodedColorAttachments(pixelBuffer);
           bool outputSurfaceValid = false;
 #if defined(WAM_NATIVE_VIDEO_TESTING)
           if (state->permitSyntheticOutputSurface) {
@@ -4335,6 +4402,13 @@ bool VideoToolboxDecoderTestAccess::validateOutputSurface(
   }
   return validateOutputSurfaceContract(pixelBuffer, expectedPixelFormat,
                                        outputInterop, error);
+}
+
+bool VideoToolboxDecoderTestAccess::admitsDecodedOutputPixelFormat(
+    OSType pixelFormat, OSType expectedPixelFormat,
+    VideoToolboxOutputInterop outputInterop) noexcept {
+  return admitsOutputPixelFormat(pixelFormat, expectedPixelFormat,
+                                 outputInterop);
 }
 
 #endif

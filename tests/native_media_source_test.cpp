@@ -1066,14 +1066,80 @@ void checkDescriptorValidation() {
                                         &error),
          "v1 coded width remains capped at the hard ceiling even if options "
          "are loosened");
-  oversizedVideo = descriptor();
-  oversizedVideo.tracks[0].video->codedHeight =
+  // Amendment 8: the envelope is a rectangle, so the bound a dimension has to
+  // clear depends on whether it is the LONGER or the shorter axis, not on
+  // whether it is called width or height. The height case therefore has to be
+  // stated as its two genuinely different halves.
+  //
+  // (a) The longest axis still caps at kHardMaximumCodedWidth, whichever
+  //     dimension happens to be carrying it.
+  MediaSourceDescriptor tallVideo = descriptor();
+  tallVideo.tracks[0].video->codedHeight =
+      MediaSourceLimits::kHardMaximumCodedWidth + 1;
+  tallVideo.tracks[0].video->displayHeight =
+      MediaSourceLimits::kHardMaximumCodedWidth + 1;
+  expect(!validateMediaSourceDescriptor(tallVideo, looseVideoLimits, &error),
+         "the longest axis remains capped at the hard ceiling when it is the "
+         "height, even if options are loosened");
+
+  // (b) Both axes over the SHORTER-axis bound is still refused: widening to
+  //     transposed shapes is not widening to square ones.
+  MediaSourceDescriptor squareVideo = descriptor();
+  squareVideo.tracks[0].video->codedWidth =
       MediaSourceLimits::kHardMaximumCodedHeight + 1;
-  oversizedVideo.tracks[0].video->displayHeight =
+  squareVideo.tracks[0].video->codedHeight =
       MediaSourceLimits::kHardMaximumCodedHeight + 1;
-  expect(!validateMediaSourceDescriptor(oversizedVideo, looseVideoLimits,
-                                        &error),
-         "v1 coded height and pixel count remain capped at the hard ceiling");
+  squareVideo.tracks[0].video->displayWidth =
+      MediaSourceLimits::kHardMaximumCodedHeight + 1;
+  squareVideo.tracks[0].video->displayHeight =
+      MediaSourceLimits::kHardMaximumCodedHeight + 1;
+  expect(!validateMediaSourceDescriptor(squareVideo, looseVideoLimits, &error),
+         "a shape whose SHORTER axis exceeds the short-axis bound is refused "
+         "however loose the options are");
+
+  // (c) And the point of the amendment: a transposed admissible shape is
+  //     admitted. 2160x3840 is an ordinary portrait 4K phone video --
+  //     8,294,400 px, well under the 9,502,720 px budget, and refused before
+  //     amendment 8 only because its long axis was its height.
+  MediaSourceDescriptor portraitVideo = descriptor();
+  portraitVideo.tracks[0].video->codedWidth = 2160;
+  portraitVideo.tracks[0].video->codedHeight = 3840;
+  portraitVideo.tracks[0].video->displayWidth = 2160;
+  portraitVideo.tracks[0].video->displayHeight = 3840;
+  expect(validateMediaSourceDescriptor(portraitVideo, {}, &error),
+         "a transposed 4K shape is admitted under the rectangle ceiling");
+  MediaSourceDescriptor landscapeVideo = descriptor();
+  landscapeVideo.tracks[0].video->codedWidth = 3840;
+  landscapeVideo.tracks[0].video->codedHeight = 2160;
+  landscapeVideo.tracks[0].video->displayWidth = 3840;
+  landscapeVideo.tracks[0].video->displayHeight = 2160;
+  expect(validateMediaSourceDescriptor(landscapeVideo, {}, &error),
+         "and so is its landscape transpose, which always was");
+
+  // (d) The exact corners of the rectangle, both ways round.
+  expect(MediaSourceLimits::codedDimensionsWithinHardCeiling(4096, 2320) &&
+             MediaSourceLimits::codedDimensionsWithinHardCeiling(2320, 4096),
+         "the ceiling's own corner is admitted in both orientations");
+  expect(!MediaSourceLimits::codedDimensionsWithinHardCeiling(4097, 2320) &&
+             !MediaSourceLimits::codedDimensionsWithinHardCeiling(2320, 4097),
+         "one pixel past the longest axis is refused in both orientations");
+  expect(!MediaSourceLimits::codedDimensionsWithinHardCeiling(4096, 2321) &&
+             !MediaSourceLimits::codedDimensionsWithinHardCeiling(2321, 4096),
+         "one pixel past the shortest axis is refused in both orientations");
+  expect(!MediaSourceLimits::codedDimensionsWithinHardCeiling(0, 1080) &&
+             !MediaSourceLimits::codedDimensionsWithinHardCeiling(1920, 0),
+         "a zero dimension is refused by the predicate itself");
+  // The area clause cannot bind against the HARD bounds -- 4096 * 2320 is
+  // exactly the pixel budget -- so it is proved where it can still bind: a
+  // caller that tightened the pixel count below its own axis product.
+  MediaSourceLimits tightPixels;
+  // 1,000,000 px: below 1920x1080's 2,073,600 and above 640x480's 307,200.
+  tightPixels.maximumCodedPixels = 1'000'000ULL;
+  expect(!tightPixels.codedDimensionsAdmitted(1920, 1080) &&
+             tightPixels.codedDimensionsAdmitted(640, 480),
+         "a tightened pixel budget still binds independently of the axes");
+  expect(MediaSourceLimits{}.codedDimensionsAdmitted(1080, 1920),
+         "the default limits admit a transposed shape");
   // The pixel cap is not implied by the two dimension caps: 4096x2320 admits
   // 4096 wide and 2320 tall, but not both at once with any other pair whose
   // product is larger. Prove it separately.

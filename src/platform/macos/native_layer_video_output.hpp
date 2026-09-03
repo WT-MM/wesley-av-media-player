@@ -114,6 +114,12 @@ class NativeLayerVideoOutput final : public NativeTrackedVideoOutput {
     return true;
   }
 
+  // This route CAN rotate, and for free: the quarter turn is a CoreAnimation
+  // transform on a layer WindowServer already composites, so a portrait file
+  // costs exactly what a landscape one costs. See
+  // setNativeLayerPresentationRotation in native_layer_host_view.hpp.
+  [[nodiscard]] bool setPresentationRotation(int degrees) noexcept override;
+
   // Activates the first generation. The tracked contract requires an accepted
   // generation before any submit; the GL output reaches this through its
   // scheduler seam, and the layer output exposes it directly because it has no

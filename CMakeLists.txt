@@ -454,6 +454,9 @@ if(APPLE)
   find_library(WAM_APPKIT_FRAMEWORK AppKit REQUIRED)
   find_library(WAM_QUARTZCORE_FRAMEWORK QuartzCore REQUIRED)
   find_library(WAM_AVFOUNDATION_FRAMEWORK AVFoundation REQUIRED)
+  # Named explicitly because the layer contract test links the host view
+  # without the umbrella that otherwise drags CoreImage in for the app.
+  find_library(WAM_COREIMAGE_FRAMEWORK CoreImage REQUIRED)
   target_sources(wam PRIVATE
     src/qt/macos_window_chrome.hpp
     src/qt/macos_window_chrome.mm)
@@ -1550,10 +1553,16 @@ if(BUILD_TESTING)
       # other fixture-free native gates rather than in the Qt window block.
       # Only the presenter itself is compiled in; FrameLease and the surface
       # budget come from the one production video core.
+      # native_layer_host_view.mm comes along because the output's
+      # setPresentationRotation defers the actual CoreAnimation work to it --
+      # the rotation lives with the layer's geometry, not with the enqueue
+      # path. AppKit and CoreImage are its dependencies, not the output's.
       add_executable(wam_native_layer_video_output_test
         tests/native_layer_video_output_test.mm
         src/platform/macos/native_layer_video_output.hpp
-        src/platform/macos/native_layer_video_output.mm)
+        src/platform/macos/native_layer_video_output.mm
+        src/platform/macos/native_layer_host_view.hpp
+        src/platform/macos/native_layer_host_view.mm)
       target_include_directories(
         wam_native_layer_video_output_test PRIVATE src)
       target_link_libraries(wam_native_layer_video_output_test PRIVATE
@@ -1565,6 +1574,8 @@ if(BUILD_TESTING)
         "${WAM_FOUNDATION_FRAMEWORK}"
         "${WAM_IOSURFACE_FRAMEWORK}"
         "${WAM_AVFOUNDATION_FRAMEWORK}"
+        "${WAM_APPKIT_FRAMEWORK}"
+        "${WAM_COREIMAGE_FRAMEWORK}"
         "${WAM_QUARTZCORE_FRAMEWORK}")
       add_test(NAME macos_native_layer_video_output
         COMMAND wam_native_layer_video_output_test)

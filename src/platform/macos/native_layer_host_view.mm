@@ -10,6 +10,17 @@
 #include <dlfcn.h>
 #include <utility>
 
+// The host view exists as a subclass for exactly one reason: something has to
+// re-place the video layer inside its container when the window resizes, and a
+// layer-hosted view gets no layout callback of its own. Everything else about
+// it is a plain NSView.
+//
+// Declared here rather than with its implementation because an Objective-C
+// class cannot be defined inside a C++ namespace; the implementation is at the
+// foot of this file, where the layout helper it calls is already in scope.
+@interface WAMNativeVideoHostView : NSView
+@end
+
 namespace wam::macos {
 namespace {
 
@@ -130,16 +141,113 @@ void applyVividBoostToLayer(CALayer* layer, double boost) noexcept {
   [CATransaction commit];
 }
 
+// Where a window's presentation rotation lives, by the same reasoning as the
+// vivid boost above: it belongs to the video layer, is set once when a track
+// is configured, and has to be readable again on every resize without the
+// resize path knowing who set it.
+const void* videoRotationAssociationKey() {
+  static const char key = 0;
+  return &key;
+}
+
+int videoRotationForLayer(CALayer* layer) noexcept {
+  if (layer == nil) {
+    return 0;
+  }
+  id value = objc_getAssociatedObject(layer, videoRotationAssociationKey());
+  if (![value isKindOfClass:[NSNumber class]]) {
+    return 0;
+  }
+  const int degrees = [(NSNumber*)value intValue];
+  const int normalized = ((degrees % 360) + 360) % 360;
+  return (normalized == 90 || normalized == 180 || normalized == 270)
+             ? normalized
+             : 0;
+}
+
+// Place the video layer inside its container for the current rotation.
+//
+// The rotated case is why the display layer is a SUBLAYER rather than the host
+// view's own hosted layer: AppKit drives a hosted layer's frame from the
+// view's bounds on every resize, and setting a frame on a transformed layer
+// makes CoreAnimation solve for bounds instead -- the transform and the
+// autoresize fight, and the picture creeps. With a container in between,
+// AppKit manages only the container and this function owns the video layer's
+// geometry outright.
+//
+// For a quarter turn the layer's BOUNDS are transposed and then the whole
+// layer is turned about its centre. That order matters: videoGravity does its
+// letterboxing inside the bounds, so the bounds must be the rectangle the
+// video is being fitted into *in the video's own orientation*. Transposing
+// them means a portrait window presents a portrait-shaped fitting rectangle to
+// a landscape-coded frame, which is exactly right once the turn is applied.
+// Rotating a layer whose bounds were left landscape would letterbox first and
+// rotate the letterbox, which is the classic sideways-with-bars result.
+void layoutVideoLayer(CALayer* videoLayer) noexcept {
+  if (videoLayer == nil) {
+    return;
+  }
+  CALayer* container = videoLayer.superlayer;
+  if (container == nil) {
+    return;
+  }
+  const CGRect bounds = container.bounds;
+  if (!std::isfinite(bounds.size.width) ||
+      !std::isfinite(bounds.size.height)) {
+    return;
+  }
+  const int rotation = videoRotationForLayer(videoLayer);
+  const bool quarterTurn = rotation == 90 || rotation == 270;
+  [CATransaction begin];
+  [CATransaction setDisableActions:YES];
+  videoLayer.bounds =
+      quarterTurn
+          ? CGRectMake(0.0, 0.0, bounds.size.height, bounds.size.width)
+          : CGRectMake(0.0, 0.0, bounds.size.width, bounds.size.height);
+  videoLayer.position =
+      CGPointMake(CGRectGetMidX(bounds), CGRectGetMidY(bounds));
+  // CoreAnimation's rotation is counterclockwise in the layer's y-up geometry;
+  // rotationDegrees is clockwise as a viewer sees it, which is the same
+  // convention mediaVideoDisplaySize uses when it transposes the rectangle.
+  // Hence the negation -- and 0 is written as the exact identity rather than a
+  // rotation by zero, so an unrotated layer carries no transform at all.
+  videoLayer.affineTransform =
+      rotation == 0 ? CGAffineTransformIdentity
+                    : CGAffineTransformMakeRotation(
+                          -static_cast<CGFloat>(rotation) * M_PI / 180.0);
+  [CATransaction commit];
+}
+
 // The display layer installed in this window, wherever it landed. Searched for
 // rather than handed over, so this stays independent of who owns the
 // NativeLayerHostView and works the same whether the layer was installed
 // before or after the boost was asked for.
+//
+// It searches SUBLAYERS as well as each view's own layer: since the rotation
+// work the display layer is a sublayer of a plain container, so stopping at
+// view.layer would quietly stop finding it -- and the only symptom would have
+// been Vivid boost silently doing nothing.
+AVSampleBufferDisplayLayer* findDisplayLayerInTree(CALayer* layer) {
+  if (layer == nil) {
+    return nil;
+  }
+  if ([layer isKindOfClass:[AVSampleBufferDisplayLayer class]]) {
+    return static_cast<AVSampleBufferDisplayLayer*>(layer);
+  }
+  for (CALayer* child in layer.sublayers) {
+    if (AVSampleBufferDisplayLayer* found = findDisplayLayerInTree(child)) {
+      return found;
+    }
+  }
+  return nil;
+}
+
 AVSampleBufferDisplayLayer* findDisplayLayer(NSView* view) {
   if (view == nil) {
     return nil;
   }
-  if ([view.layer isKindOfClass:[AVSampleBufferDisplayLayer class]]) {
-    return static_cast<AVSampleBufferDisplayLayer*>(view.layer);
+  if (AVSampleBufferDisplayLayer* found = findDisplayLayerInTree(view.layer)) {
+    return found;
   }
   for (NSView* child in view.subviews) {
     if (AVSampleBufferDisplayLayer* found = findDisplayLayer(child)) {
@@ -150,6 +258,7 @@ AVSampleBufferDisplayLayer* findDisplayLayer(NSView* view) {
 }
 
 }  // namespace
+
 
 void setNativeLayerVividBoost(void* nsWindow, double boost) noexcept {
   if (nsWindow == nullptr || ![NSThread isMainThread]) {
@@ -224,6 +333,60 @@ double nativeLayerAppliedVividBoost(void* nsWindow) noexcept {
       return std::isfinite(boost) && boost > 0.0 ? boost : 1.0;
     }
     return 1.0;
+  }
+}
+
+bool setNativeLayerPresentationRotation(void* displayLayer,
+                                        int degrees) noexcept {
+  if (displayLayer == nullptr) {
+    return false;
+  }
+  const int normalized = ((degrees % 360) + 360) % 360;
+  if (normalized != 0 && normalized != 90 && normalized != 180 &&
+      normalized != 270) {
+    return false;
+  }
+  @autoreleasepool {
+    id candidate = (__bridge id)displayLayer;
+    if (![candidate isKindOfClass:[CALayer class]]) {
+      return false;
+    }
+    CALayer* layer = static_cast<CALayer*>(candidate);
+    objc_setAssociatedObject(layer, videoRotationAssociationKey(),
+                             @(normalized), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    // This is called from the SESSION WORKER thread -- the consumer settles
+    // rotation while configuring a generation, which is nowhere near the GUI
+    // thread -- so the CoreAnimation half hops rather than refusing.
+    //
+    // Refusing off-main was a real defect, not a hypothetical one: it made
+    // this function answer "no" for every file including unrotated ones, and
+    // since the consumer treats that answer as "this route cannot present
+    // this track", every file in the app fell back to the compatibility
+    // renderer. The capability answer must not depend on which thread asks.
+    //
+    // The retained NSNumber above is the source of truth and is already set,
+    // so a resize racing this hop reads the new rotation either way.
+    if ([NSThread isMainThread]) {
+      layoutVideoLayer(layer);
+    } else {
+      dispatch_async(dispatch_get_main_queue(), ^{
+        layoutVideoLayer(layer);
+      });
+    }
+    return true;
+  }
+}
+
+int nativeLayerPresentationRotation(void* displayLayer) noexcept {
+  if (displayLayer == nullptr) {
+    return 0;
+  }
+  @autoreleasepool {
+    id candidate = (__bridge id)displayLayer;
+    if (![candidate isKindOfClass:[CALayer class]]) {
+      return 0;
+    }
+    return videoRotationForLayer(static_cast<CALayer*>(candidate));
   }
 }
 
@@ -323,6 +486,10 @@ std::shared_ptr<NativeLayerHostView> NativeLayerHostView::create(
     // resizeToFitScreen) correct without any of it knowing the layer exists.
     layer.videoGravity = AVLayerVideoGravityResizeAspect;
     layer.backgroundColor = NSColor.blackColor.CGColor;
+    // The video layer is placed by layoutVideoLayer, never by autoresizing,
+    // so it must not also try to follow its container on its own.
+    layer.anchorPoint = CGPointMake(0.5, 0.5);
+    layer.autoresizingMask = kCALayerNotSizable;
     // Geometry must follow a live drag-resize exactly, with no implicit
     // animation lagging the window edge.
     layer.actions = @{
@@ -332,12 +499,30 @@ std::shared_ptr<NativeLayerHostView> NativeLayerHostView::create(
       @"sublayers" : [NSNull null],
     };
 
+    // A plain container between the view and the video, so that a quarter turn
+    // has somewhere to live. AppKit resizes the container (it is the view's
+    // hosted layer); layoutVideoLayer places the video inside it. Without the
+    // container there is no way to both autoresize with the window and carry a
+    // rotation transform -- see layoutVideoLayer.
+    CALayer* container = [CALayer layer];
+    // The container is what shows through wherever the rotated video does not
+    // reach, so it owns the letterbox colour.
+    container.backgroundColor = NSColor.blackColor.CGColor;
+    container.actions = @{
+      @"bounds" : [NSNull null],
+      @"position" : [NSNull null],
+      @"contents" : [NSNull null],
+      @"sublayers" : [NSNull null],
+    };
+    [container addSublayer:layer];
+
     // sibling.frame is already in siblingParent's coordinates, so this covers
     // exactly the area Qt covers whichever level the insertion landed on.
-    NSView* hostView = [[NSView alloc] initWithFrame:sibling.frame];
+    NSView* hostView =
+        [[WAMNativeVideoHostView alloc] initWithFrame:sibling.frame];
     // Layer-HOSTED, not layer-backed: the layer must be assigned before
     // wantsLayer, or AppKit creates its own backing layer and ignores this one.
-    hostView.layer = layer;
+    hostView.layer = container;
     hostView.wantsLayer = YES;
     hostView.layerContentsRedrawPolicy = NSViewLayerContentsRedrawNever;
     hostView.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
@@ -365,6 +550,12 @@ std::shared_ptr<NativeLayerHostView> NativeLayerHostView::create(
     // has to be re-applied here or the mode would silently switch itself off
     // on every open while its toggle still read as on.
     applyVividBoostToLayer(layer, vividBoostForWindow(window));
+
+    // Unrotated until a track says otherwise, but placed now: the container
+    // has just been sized and the video layer is still at its default zero
+    // bounds, so without this first call nothing would be drawn until the
+    // first resize.
+    layoutVideoLayer(layer);
 
     auto impl = std::make_unique<Impl>();
     impl->hostView = hostView;
@@ -402,3 +593,20 @@ void NativeLayerHostView::detach() noexcept {
 }
 
 }  // namespace wam::macos
+
+@implementation WAMNativeVideoHostView
+
+- (void)setFrameSize:(NSSize)newSize {
+  [super setFrameSize:newSize];
+  wam::macos::layoutVideoLayer(self.layer.sublayers.firstObject);
+}
+
+// A live drag-resize and a display/backing-scale change both land here, and a
+// window moved between a Retina and a non-Retina display changes the layer's
+// backing store without changing the view's frame.
+- (void)viewDidChangeBackingProperties {
+  [super viewDidChangeBackingProperties];
+  wam::macos::layoutVideoLayer(self.layer.sublayers.firstObject);
+}
+
+@end

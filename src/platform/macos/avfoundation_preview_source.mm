@@ -298,6 +298,46 @@ class PreviewSampleStorage final : public MediaPayloadStorage {
   return static_cast<CFDataRef>(atom);
 }
 
+// The quarter turn this transform states, or -1 for anything that is not one.
+// A local copy of the source's classifier rather than a shared symbol: this
+// lane re-verifies the track independently, on purpose, and borrowing the
+// source's private helper would make the two proofs one proof.
+[[nodiscard]] int previewQuarterTurnDegrees(
+    CGAffineTransform transform) noexcept {
+  if (!std::isfinite(transform.a) || !std::isfinite(transform.b) ||
+      !std::isfinite(transform.c) || !std::isfinite(transform.d)) {
+    return -1;
+  }
+  if (transform.a == 1.0 && transform.b == 0.0 && transform.c == 0.0 &&
+      transform.d == 1.0) {
+    return 0;
+  }
+  if (transform.a == 0.0 && transform.b == 1.0 && transform.c == -1.0 &&
+      transform.d == 0.0) {
+    return 90;
+  }
+  if (transform.a == -1.0 && transform.b == 0.0 && transform.c == 0.0 &&
+      transform.d == -1.0) {
+    return 180;
+  }
+  if (transform.a == 0.0 && transform.b == -1.0 && transform.c == 1.0 &&
+      transform.d == 0.0) {
+    return 270;
+  }
+  return -1;
+}
+
+[[nodiscard]] bool previewTransformMatchesDescriptor(
+    CGAffineTransform transform,
+    const media::MediaTrackDescriptor& expected) noexcept {
+  if (!expected.video) {
+    return false;
+  }
+  const int recorded =
+      ((expected.video->rotationDegrees % 360) + 360) % 360;
+  return previewQuarterTurnDegrees(transform) == recorded;
+}
+
 [[nodiscard]] bool formatMatchesTrack(
     CMFormatDescriptionRef format,
     const MediaTrackDescriptor& track) noexcept {
@@ -590,7 +630,13 @@ class ProductionAssetContext final {
           media::compareMediaTime(*exactMediaTime(range.duration),
                                   expected->duration) !=
               MediaTimeOrder::Equal ||
-          !CGAffineTransformIsIdentity(transform) ||
+          // Not "is identity" any more, but exactly as strict: the track's
+          // transform must still state the SAME quarter turn the descriptor
+          // recorded at main admission. Demanding identity here would have
+          // failed every rotated file the source now admits, and failed it
+          // with a message about metadata changing, which would have been
+          // untrue -- nothing changed; the check was.
+          !previewTransformMatchesDescriptor(transform, *expected) ||
           !formatMatchesTrack(
               (__bridge CMFormatDescriptionRef)formats.firstObject,
               *expected)) {

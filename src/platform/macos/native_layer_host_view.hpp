@@ -104,4 +104,35 @@ void setNativeLayerVividBoost(void* nsWindow, double boost) noexcept;
 // with no boost on it.
 [[nodiscard]] double nativeLayerAppliedVividBoost(void* nsWindow) noexcept;
 
+// ---------------------------------------------------------------------------
+// Presentation rotation.
+//
+// `displayLayer` is the AVSampleBufferDisplayLayer bridged to void* -- the
+// same pointer NativeLayerHostView::displayLayer() returns and the same one
+// NativeLayerVideoOutput already holds, which is why this is addressed by
+// layer rather than by window: the output that needs to ask has the layer and
+// nothing else.
+//
+// `degrees` is clockwise as a viewer sees it and must be 0, 90, 180 or 270 --
+// the media source refuses every other transform long before a frame exists.
+// Returns whether the rotation was applied; false only for a null or
+// non-layer pointer or an unsupported angle.
+//
+// Applying it costs one CoreAnimation transform on a layer WindowServer is
+// already compositing. There is no per-frame work, no second surface and no
+// render pass in this process -- the route's defining property survives a
+// rotated file, which is the whole reason rotation is done here rather than by
+// turning pixels somewhere upstream.
+//
+// Callable from ANY thread, unlike the vivid-boost calls above: the consumer
+// settles rotation on the session worker while configuring a generation. The
+// value is recorded on the layer synchronously and the CoreAnimation update
+// hops to the main queue when it has to.
+[[nodiscard]] bool setNativeLayerPresentationRotation(void* displayLayer,
+                                                      int degrees) noexcept;
+
+// The rotation the layer is actually carrying, for verification. Returns 0 for
+// an unrotated layer and for anything that is not a display layer.
+[[nodiscard]] int nativeLayerPresentationRotation(void* displayLayer) noexcept;
+
 }  // namespace wam::macos

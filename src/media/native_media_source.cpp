@@ -152,12 +152,9 @@ bool rationalEqualsNonnegativeInteger(MediaRational value,
 
 bool validVideoFormat(const MediaVideoFormat& video,
                       const MediaSourceLimits& limits) noexcept {
-  if (video.codedWidth == 0 || video.codedHeight == 0 ||
-      video.codedWidth > limits.maximumCodedWidth ||
-      video.codedHeight > limits.maximumCodedHeight ||
-      static_cast<std::uint64_t>(video.codedWidth) *
-              static_cast<std::uint64_t>(video.codedHeight) >
-          limits.maximumCodedPixels ||
+  // Orientation-agnostic since amendment 8; the zero-dimension refusal lives
+  // inside the predicate now, so this no longer restates it.
+  if (!limits.codedDimensionsAdmitted(video.codedWidth, video.codedHeight) ||
       video.displayWidth == 0 || video.displayHeight == 0 ||
       video.pixelAspectNumerator == 0 ||
       video.pixelAspectDenominator == 0 ||
@@ -679,8 +676,17 @@ bool mediaVideoHasSquarePixels(const MediaVideoFormat& video) noexcept {
 }
 
 bool mediaVideoColorAdmitted(const MediaVideoFormat& video) noexcept {
+  // BT.601 primaries admitted 2026-09-03. The BT.601 MATRIX was always
+  // admitted below, so SD material was refused solely for declaring the
+  // primaries that go with it -- while the identical stream with the primaries
+  // tag ABSENT was admitted and then tagged SMPTE_C by VideoToolbox's own SD
+  // inference anyway. The rule refused the honest file and passed the silent
+  // one. Presentation carries them: the decoded-surface validator in
+  // video_toolbox_decoder.mm admits SMPTE_C and EBU_3213, and the display
+  // layer converts from the surface's own tag.
   const bool primaries =
       video.colorPrimaries == MediaColorPrimaries::Unknown ||
+      video.colorPrimaries == MediaColorPrimaries::Bt601 ||
       video.colorPrimaries == MediaColorPrimaries::Bt709 ||
       video.colorPrimaries == MediaColorPrimaries::Bt2020;
   const bool transfer =

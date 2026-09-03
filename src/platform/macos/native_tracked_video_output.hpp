@@ -148,6 +148,26 @@ class NativeTrackedVideoOutput {
   [[nodiscard]] virtual bool presentsDecodedSurfacesDirectly() const noexcept {
     return false;
   }
+
+  // Ask this output to present its frames turned by `degrees` clockwise. The
+  // argument is always one of 0, 90, 180, 270 -- the source refuses every
+  // other transform long before a frame exists -- and it is stated once, at
+  // configure time, because a track's rotation cannot change mid-generation.
+  //
+  // Returns whether the output can actually do it. This is a CAPABILITY
+  // question, not a request that may fail later: the consumer asks before it
+  // admits the track, so an output that cannot rotate produces a clean
+  // Unsupported and the file opens on the compatibility renderer, correctly
+  // oriented, instead of drawing sideways in a native window.
+  //
+  // Defaults to "only the identity", which is both the truth for an output
+  // that has no rotation code and the safe answer for a new output that
+  // forgets to override this -- the same rule the flag above follows. The
+  // layer route overrides it; Qt's GL and Metal scene-graph items do not,
+  // which is a documented refusal rather than a wrong picture.
+  [[nodiscard]] virtual bool setPresentationRotation(int degrees) noexcept {
+    return degrees == 0;
+  }
 };
 
 }  // namespace wam::macos
