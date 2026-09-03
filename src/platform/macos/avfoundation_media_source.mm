@@ -1016,34 +1016,10 @@ audioMovieTimelineFactsFor(NSArray* segments) noexcept {
   return restated;
 }
 
-// Clamps a located sync start into the neutral timeline contract's window.
-//
-// That contract is `0 <= actualDecodeStart <= requestedTarget` -- stated by
-// native_media_dispatcher.cpp deriveTimeline and re-proved independently by
-// native_video_consumer.mm validTimeline and native_audio_session.mm. A
-// container edit list can legitimately put the located random-access point
-// outside the window at EITHER end, and neither shape is a malformation:
-//
-//   * a head-TRIMMED edit (elst media_time > 0) hides media before the movie
-//     origin, so the RAP that decodes the picture at movie time 0 restates to
-//     a NEGATIVE movie time (measured: -0.801917 s on a 24000-timescale file
-//     whose video edit starts at media 19246);
-//   * a leading EMPTY EDIT (elst media_time == -1) declares blank movie time
-//     before any picture exists, so the first RAP presents AFTER the target
-//     (measured: +0.023 s on an ffmpeg-muxed file whose video edit is
-//     [(23, -1), (N, 1024)]).
-//
-// Nothing is lost by clamping. AVAssetReader walks back to the random-access
-// point at or before its own range start by itself -- measured: given range
-// start 0 on the head-trimmed file it still delivers the RAP at media 0, with
-// outputPresentationTimeStamp -0.801917 -- and pictures presenting before the
-// generation start are already retired as compressed preroll by the consumer.
-//
-// This is the same floor matroska_demuxer.cpp applies to the Opus pre-skip
-// ("the downstream timeline contract requires 0 <= actualDecodeStart <=
-// target"), and the origin floor matroska_media_source, mpegts_media_source
-// and both preview sources already carry. This route was the only one of the
-// four without it.
+// clampedSyncStartWithinTimelineContract now lives in
+// avfoundation_media_source.hpp, because the preview lane needs the identical
+// answer; see the rationale there.
+
 // The movie time a sync search must run from when the requested target lands
 // inside a track's leading EMPTY EDIT, or empty to fail closed.
 //
@@ -1062,20 +1038,6 @@ audioMovieTimelineFactsFor(NSArray* segments) noexcept {
     return std::nullopt;
   }
   return mediaStart;
-}
-
-[[nodiscard]] CMTime clampedSyncStartWithinTimelineContract(
-    CMTime decodeStart, CMTime target) noexcept {
-  if (!CMTIME_IS_NUMERIC(decodeStart) || !CMTIME_IS_NUMERIC(target)) {
-    return decodeStart;
-  }
-  if (CMTimeCompare(decodeStart, kCMTimeZero) < 0) {
-    return kCMTimeZero;
-  }
-  if (CMTimeCompare(decodeStart, target) > 0) {
-    return target;
-  }
-  return decodeStart;
 }
 
 // Frames Apple's decoder swallows at the head of a track before it emits its
