@@ -948,6 +948,91 @@ void privateEpochExhaustionFailsWithoutWrap() {
          "private epoch exhaustion should fail closed before reader creation");
 }
 
+// A head-TRIMMED MP4 (elst media_time > 0) hides media before the movie
+// origin, so the random-access point that covers the origin restates to a
+// NEGATIVE movie time -- measured -5.50 s on boxing_trimmed.mp4 and -5.23 s on
+// trimmed_autorollout.mp4, each of which carries exactly two sync samples, the
+// second at +4.50 s / +4.77 s. Any preview target below that second sync sample
+// therefore decodes a preroll run that begins before the origin.
+//
+// The lane used to refuse those frames outright ("preview decoder emitted
+// invalid frame timing"), which latched the lane; the session's
+// stopPreviewLaneForTerminal then escalated the dead lane into a REFUSED COMMIT
+// SEEK ("Native seeking is unavailable for this file.") and the transport froze
+// with no fallback. Backward seeks looked like the trigger only because they
+// land at low targets; a FORWARD seek to the same low target stalled
+// identically.
+//
+// The rule that survives is the consumer's own: what matters is where a frame
+// ENDS, not which side of the origin it begins on.
+void preOriginPrerollFramesAreRetiredNotRefused() {
+  Fixture fixture;
+  const auto request = command(2, 40, 300, 5.0);
+  expect(fixture.lane->request(request, target(5.0)) ==
+                 NativePreviewFrameRequestStatus::Accepted &&
+             fixture.lane->pump() ==
+                 NativePreviewFramePumpProgress::Progress,
+         "head-trim preroll fixture should accept its request");
+
+  // The pre-origin preroll frame: presentation -5 s, ending at -4 s, i.e.
+  // entirely before both the movie origin and the requested target.
+  expect(NativePreviewFrameLaneTestAccess::injectDecodedFrame(
+             *fixture.lane, makeFrame(-5, 1)),
+         "a pre-origin preroll frame should reach the lane sink");
+  expect(fixture.lane->pump() == NativePreviewFramePumpProgress::Progress,
+         "a frame ending before the target must be RETIRED as preroll, not "
+         "latched as invalid timing");
+  const NativePreviewFrameLaneFacts afterPreroll = fixture.lane->facts();
+  expect(!afterPreroll.failed && afterPreroll.decodedFramesDiscarded == 1 &&
+             fixture.port->submittedSequences.empty(),
+         "pre-origin preroll must be discarded without failing the lane or "
+         "reaching the tracked output");
+
+  // The lane must still be a WORKING lane afterwards: the picture the target
+  // actually wants arrives next and completes normally. Before the fix the
+  // pre-origin frame above had already latched the lane, so this never ran --
+  // and the session escalated that dead lane into a refused commit seek.
+  expect(NativePreviewFrameLaneTestAccess::injectDecodedFrame(
+             *fixture.lane, makeFrame(5)),
+         "the covering frame should reach the lane sink after preroll");
+  expect(fixture.lane->pump() == NativePreviewFramePumpProgress::Progress &&
+             !fixture.lane->facts().failed &&
+             fixture.lane->facts().decodedFramesDiscarded == 1 &&
+             fixture.port->submittedSequences ==
+                 std::vector<std::uint64_t>({1}),
+         "the covering frame alone should reach the tracked output");
+
+  fixture.port->complete(NativeTrackedVideoPreviewEventKind::FrameDrawn);
+  expect(fixture.lane->pump() == NativePreviewFramePumpProgress::Progress,
+         "the covering frame's real draw should be consumed");
+  const auto presented = fixture.lane->takePresented();
+  expect(presented && protocol::previewPresentedMatches(request, *presented) &&
+             presented->actualPresentationTimeSeconds == 5.0 &&
+             fixture.lane->facts().framesDrawn == 1 &&
+             !fixture.lane->facts().failed,
+         "a preview that began with pre-origin preroll must still complete on "
+         "its exact command");
+}
+
+// The sign of a presentation time is not admissible evidence, but genuinely
+// malformed timing still is. This keeps the widened predicate honest.
+void malformedPreviewFrameTimingStillFailsClosed() {
+  Fixture fixture;
+  const auto request = command(2, 41, 301, 5.0);
+  expect(fixture.lane->request(request, target(5.0)) ==
+                 NativePreviewFrameRequestStatus::Accepted &&
+             fixture.lane->pump() ==
+                 NativePreviewFramePumpProgress::Progress,
+         "malformed-timing fixture should accept its request");
+  // Zero duration is malformed at any sign, negative included.
+  expect(NativePreviewFrameLaneTestAccess::injectDecodedFrame(
+             *fixture.lane, makeFrame(-5, 0)),
+         "a zero-duration frame should still reach the lane sink");
+  expect(fixture.lane->pump() == NativePreviewFramePumpProgress::Failed &&
+             fixture.lane->facts().failed,
+         "a non-positive duration must still fail the lane closed");
+}
+
 void unknownOutputEventsFailClosed() {
   {
     Fixture fixture;
@@ -1126,6 +1211,8 @@ int main() {
   forwardDragReusesReaderDecoderAndExactFrame();
   exactCancelAndStopNeverFabricatePresentation();
   privateEpochExhaustionFailsWithoutWrap();
+  preOriginPrerollFramesAreRetiredNotRefused();
+  malformedPreviewFrameTimingStillFailsClosed();
   unknownOutputEventsFailClosed();
   deterministicLatestWinsStressStaysBounded();
   if (failures != 0) {

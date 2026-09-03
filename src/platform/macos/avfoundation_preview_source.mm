@@ -1,5 +1,9 @@
 #include "avfoundation_preview_source.hpp"
 
+// For clampedSyncStartWithinTimelineContract: the preview lane and the main
+// route must answer the sync-start window question identically.
+#include "platform/macos/avfoundation_media_source.hpp"
+
 #import <AVFoundation/AVFoundation.h>
 
 #include <algorithm>
@@ -782,6 +786,17 @@ class ProductionPreviewGeneration final
           break;
         }
       }
+      // A container edit list can legitimately put the located random-access
+      // point outside the neutral contract's `0 <= decodeStart <= target`
+      // window at either end. Refusing that shape here is what made a scrub
+      // preview -- and, through stopPreviewLaneForTerminal, the COMMIT SEEK
+      // behind it -- fail on every head-trimmed MP4 whose target precedes the
+      // first in-window sync sample: the walk-back lands on the pre-origin IDR
+      // (measured -5.50 s on boxing_trimmed.mp4, -5.23 s on
+      // trimmed_autorollout.mp4) and `exactStart->value < 0` refused it.
+      // The main route has always clamped instead; both AVFoundation lanes now
+      // share the one definition, so they cannot answer differently again.
+      decodeStart = clampedSyncStartWithinTimelineContract(decodeStart, *target);
       const auto exactStart = exactMediaTime(decodeStart);
       if (!exactStart.has_value() || exactStart->value < 0 ||
           media::compareMediaTime(*exactStart, request_.target) ==

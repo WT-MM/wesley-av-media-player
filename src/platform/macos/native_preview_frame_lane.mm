@@ -938,9 +938,27 @@ NativePreviewFramePumpProgress NativePreviewFrameLane::pump() noexcept {
       const auto againstTarget = end ? media::compareMediaTime(
                                            *end, active.request.target)
                                      : std::optional<MediaTimeOrder>{};
-      if (!presentation || !duration || presentation->value < 0 ||
-          duration->value <= 0 || timing->generation !=
-                                      impl_->binding.activePlaybackGeneration.value ||
+      // A NEGATIVE presentation time is not a malformation, and refusing it
+      // here is what stalled every seek into the head of a head-trimmed MP4.
+      // A head-TRIMMED edit (elst media_time > 0) hides media before the movie
+      // origin, so the random-access point that covers the origin restates to a
+      // negative movie time (measured: -5.50 s on boxing_trimmed.mp4, -5.23 s
+      // on trimmed_autorollout.mp4) and the decoder legitimately emits the
+      // whole preroll run from there. Those frames are exactly what the
+      // `againstTarget` test immediately below already disposes of correctly --
+      // a frame ENDING at or before the requested target is dropped as preroll
+      // -- so the sign test only ever converted an ordinary preroll frame into
+      // a hard lane failure, which `stopPreviewLaneForTerminal` then escalated
+      // into a refused COMMIT SEEK and a frozen transport.
+      //
+      // The surviving rule is the consumer's own: what matters is where a frame
+      // ENDS, not which side of the origin it begins on. This is the same
+      // correction 3834462 made one layer down in NativeLayerVideoOutput, which
+      // is what makes the straddling case (presentation < 0 < end) safe to
+      // submit rather than merely safe to drop.
+      if (!presentation || !duration || duration->value <= 0 ||
+          timing->generation !=
+              impl_->binding.activePlaybackGeneration.value ||
           !againstTarget) {
         impl_->latchFailure("preview decoder emitted invalid frame timing");
         return NativePreviewFramePumpProgress::Failed;

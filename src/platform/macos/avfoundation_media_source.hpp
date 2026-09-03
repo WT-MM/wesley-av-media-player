@@ -14,6 +14,58 @@
 
 namespace wam::macos {
 
+// Clamps a located sync start into the neutral timeline contract's window.
+//
+// That contract is `0 <= actualDecodeStart <= requestedTarget` -- stated by
+// native_media_dispatcher.cpp deriveTimeline and re-proved independently by
+// native_video_consumer.mm validTimeline and native_audio_session.mm. A
+// container edit list can legitimately put the located random-access point
+// outside the window at EITHER end, and neither shape is a malformation:
+//
+//   * a head-TRIMMED edit (elst media_time > 0) hides media before the movie
+//     origin, so the RAP that decodes the picture at movie time 0 restates to
+//     a NEGATIVE movie time (measured: -0.801917 s on a 24000-timescale file
+//     whose video edit starts at media 19246);
+//   * a leading EMPTY EDIT (elst media_time == -1) declares blank movie time
+//     before any picture exists, so the first RAP presents AFTER the target
+//     (measured: +0.023 s on an ffmpeg-muxed file whose video edit is
+//     [(23, -1), (N, 1024)]).
+//
+// Nothing is lost by clamping. AVAssetReader walks back to the random-access
+// point at or before its own range start by itself -- measured: given range
+// start 0 on the head-trimmed file it still delivers the RAP at media 0, with
+// outputPresentationTimeStamp -0.801917 -- and pictures presenting before the
+// generation start are already retired as compressed preroll by the consumer.
+//
+// This is the same floor matroska_demuxer.cpp applies to the Opus pre-skip
+// ("the downstream timeline contract requires 0 <= actualDecodeStart <=
+// target"), and the origin floor matroska_media_source and mpegts_media_source
+// already carry.
+//
+// It lives in this header, rather than inside one route's translation unit,
+// because BOTH AVFoundation lanes locate a sync start the same way and must
+// answer this question identically. They did not: the main route clamped while
+// the preview lane REFUSED a negative start outright ("preview could not
+// locate a bounded full-sync start"). On a head-trimmed file every target
+// before the first in-window random-access point walks back to the pre-origin
+// IDR, so the preview lane failed, latched, and then killed the COMMIT seek it
+// has no business vetoing -- the measured "backward seeks stall on
+// head-trimmed MP4s" defect. One definition, two callers, so the two lanes
+// cannot drift apart again.
+[[nodiscard]] inline CMTime clampedSyncStartWithinTimelineContract(
+    CMTime decodeStart, CMTime target) noexcept {
+  if (!CMTIME_IS_NUMERIC(decodeStart) || !CMTIME_IS_NUMERIC(target)) {
+    return decodeStart;
+  }
+  if (CMTimeCompare(decodeStart, kCMTimeZero) < 0) {
+    return kCMTimeZero;
+  }
+  if (CMTimeCompare(decodeStart, target) > 0) {
+    return target;
+  }
+  return decodeStart;
+}
+
 // The AVFoundation bridge is split at the lifetime boundary, rather than at
 // individual Objective-C calls. One session-scoped immutable AssetContext
 // owns the prepared AVURLAsset/tracks; each Generation owns exactly one fresh
