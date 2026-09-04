@@ -608,6 +608,11 @@ parseHevcSpsReorderFrames(std::span<const std::uint8_t> nal) {
   return maximumReorder;
 }
 
+// Defined with the other codec predicates further down, where the measurement
+// that justifies it lives; declared here because the reorder-depth derivation
+// is the first thing in this file that needs to recognise the family.
+bool codecIsProRes422Family(CMVideoCodecType codec) noexcept;
+
 std::optional<CodecReorderDepth>
 deriveCodecReorderDepth(const VideoStreamConfiguration &configuration) {
   const auto bytes = std::span<const std::uint8_t>(
@@ -717,6 +722,24 @@ deriveCodecReorderDepth(const VideoStreamConfiguration &configuration) {
       return std::nullopt;
     }
     return CodecReorderDepth{1, CodecReorderDepthOrigin::Declared};
+  }
+  if (codecIsProRes422Family(configuration.codec) ||
+      configuration.codec == kCMVideoCodecType_JPEG) {
+    // Zero, and for the strongest reason available: both codecs are ALL-INTRA
+    // by construction. Every ProRes frame is independently coded -- the format
+    // has no inter-frame prediction of any kind, which is the entire point of
+    // an editing codec -- and Motion JPEG is a sequence of independent JPEG
+    // images. Neither has a reference frame to hold back, so decode order IS
+    // presentation order and nothing is ever reordered.
+    //
+    // Like MPEG-2, both carry no decoder configuration record, so `bytes` is
+    // empty here by contract and the guard states that rather than assuming
+    // it. Unlike MPEG-2 the depth is honestly 0 rather than a defensive 1:
+    // there is no legal stream in either format that reorders.
+    if (!bytes.empty()) {
+      return std::nullopt;
+    }
+    return CodecReorderDepth{0, CodecReorderDepthOrigin::Declared};
   }
   if (configuration.codec == kCMVideoCodecType_MPEG4Video) {
     // Zero, and it is a property of the admitted PROFILE rather than of the
@@ -1845,8 +1868,35 @@ CFStringRef codecConfigurationAtomName(CMVideoCodecType codec) noexcept {
 // because the two "nullptr" cases mean opposite things: an unknown codec has
 // no atom NAME and must be refused, while MPEG-2 has no atom and must be
 // admitted.
+// The ProRes 422 family, and exactly that family.
+//
+// VideoToolbox decodes these four FourCCs INTERCHANGEABLY: measured 2026-09-04
+// in scratchpad/vtflavor.mm, a session created from a synthesized description
+// of any one of them decodes real samples of any other, on every specimen and
+// at 4K. The 4444 family ('ap4h'/'ap4x') is interchangeable within itself and
+// NOT with this one -- feeding 4444 samples to a 422-family session fails with
+// -12916, and the reverse fails identically -- so the two families are
+// genuinely different decode contracts and only this one is admitted today.
+// VTDecompressionSessionCanAcceptFormatDescription is exact-match regardless,
+// which is why adoptDirectFormatLocked() still swaps in the container's own
+// description; the interchangeability is what makes the SYNTHESIZED one decode
+// in the first place.
+bool codecIsProRes422Family(CMVideoCodecType codec) noexcept {
+  return codec == kCMVideoCodecType_AppleProRes422Proxy ||
+         codec == kCMVideoCodecType_AppleProRes422LT ||
+         codec == kCMVideoCodecType_AppleProRes422 ||
+         codec == kCMVideoCodecType_AppleProRes422HQ;
+}
+
 bool codecCarriesNoConfigurationRecord(CMVideoCodecType codec) noexcept {
-  return codec == kCMVideoCodecType_MPEG2Video;
+  // ProRes and Motion JPEG join MPEG-2 here for the same reason and with the
+  // same evidence: a QuickTime ProRes or JPEG sample description carries no
+  // parameter-set atom at all (measured 2026-09-04, scratchpad/vtprobe.mm --
+  // the extension dictionaries hold only Depth/BitsPerComponent/Vendor and
+  // friends), and a session built from dimensions plus codec type with null
+  // extensions decodes their samples 1:1.
+  return codec == kCMVideoCodecType_MPEG2Video ||
+         codecIsProRes422Family(codec) || codec == kCMVideoCodecType_JPEG;
 }
 
 // True for a codec whose VideoToolbox decoder does NOT natively produce a
@@ -1874,9 +1924,22 @@ bool codecCarriesNoConfigurationRecord(CMVideoCodecType codec) noexcept {
 // contracts already pay. It is affordable for both codecs for the same reason:
 // MPEG-2-in-TS is SD, and MPEG-4 Part 2 Simple Profile is an SD-era profile
 // whose levels stop at SD resolutions.
+// ProRes is the third and fourth case, and it is the same fact one more time.
+// Measured 2026-09-04 (scratchpad/vtprobe.mm): an unpinned ProRes session
+// decodes to 'sv22' for the 422 family and 'sv44'/'y416' for 4444 -- private
+// Apple surface formats that appear in no public CoreVideo header and that
+// nothing downstream accepts. A pinned session decodes the same bytes to
+// exactly the requested format, including 'x420', on every flavor.
+//
+// Motion JPEG is the one codec here that would ALMOST survive unpinned: its
+// natural output is '420f', the full-range 4:2:0 twin amendment 9 already
+// admits. It is pinned anyway so that its output format is a decision this
+// file makes rather than a property of whichever JPEG happens to be playing --
+// the same reason every other legacy decoder is pinned.
 bool codecNeedsPinnedOutputPixelFormat(CMVideoCodecType codec) noexcept {
   return codec == kCMVideoCodecType_MPEG2Video ||
-         codec == kCMVideoCodecType_MPEG4Video;
+         codec == kCMVideoCodecType_MPEG4Video ||
+         codecIsProRes422Family(codec) || codec == kCMVideoCodecType_JPEG;
 }
 
 struct CodecConfigurationAtomMetadata {
@@ -1965,10 +2028,31 @@ bool inspectFormatCodecConfiguration(
       codec, CMFormatDescriptionGetExtensions(format), metadata, error);
 }
 
+// Two codec types that name the same decode contract.
+//
+// Equality, except within the ProRes 422 family. A ProRes track reaches
+// configure() as one MediaCodec enumerator, so the description this decoder
+// synthesizes names the family's canonical FourCC ('apcn') while the
+// container's own description names the file's actual flavor -- 'apch' for HQ,
+// 'apcs' for LT, 'apco' for Proxy. Those are not a mismatch to reconcile: the
+// four flavors are a single decode contract, measured 2026-09-04 in
+// scratchpad/vtflavor.mm, where a session created from any one of them decodes
+// real samples of any other. Treating them as unequal here would refuse the
+// container's description and leave only 'apcn' files playing.
+//
+// This deliberately does NOT span the 4444 family, which is a genuinely
+// different contract (-12916 in both directions across the boundary) and is
+// not admitted at all.
+bool equivalentSessionCodecTypes(CMVideoCodecType configured,
+                                 CMVideoCodecType direct) noexcept {
+  return configured == direct || (codecIsProRes422Family(configured) &&
+                                  codecIsProRes422Family(direct));
+}
+
 bool equivalentCodecConfigurationAtoms(
     const CodecConfigurationAtomMetadata &configured,
     const CodecConfigurationAtomMetadata &direct, std::string *error) {
-  if (configured.codec != direct.codec ||
+  if (!equivalentSessionCodecTypes(configured.codec, direct.codec) ||
       configured.byteLength != direct.byteLength ||
       // Two absences are equal; one absence against one record is not. The
       // null guard is load-bearing: CFEqual on a null operand is undefined,
@@ -2169,11 +2253,27 @@ bool codedDepthIsTenBit(
     //              a malformed av1C never reaches here because configure()
     //              rejected it first.
     tenBit = ((bytes[2] >> 6U) & 0x01U) != 0U;
+  } else if (codecIsProRes422Family(configuration.codec)) {
+    // ProRes is a 10-bit codec by definition -- every 422-family flavor codes
+    // 10 bits per component, and there is no 8-bit ProRes to distinguish. It
+    // therefore states the answer rather than deriving it, exactly as MPEG-2
+    // and MPEG-4 Part 2 state theirs below. There is no record to read here in
+    // any case: ProRes is in codecCarriesNoConfigurationRecord().
+    //
+    // This is the whole reason ProRes lands on 'x420' rather than '420v'. The
+    // decoded surface is 4:2:0 either way -- nothing downstream samples 4:2:2
+    // (see the pixel-format allowlists in this file and in the Metal/GL
+    // items) -- but pinning to the 10-bit form keeps ProRes's actual precision
+    // instead of quantising a mastering codec to 8 bits, and it costs nothing:
+    // 'x420' is 3 bytes/pixel, which is exactly the per-pixel payload
+    // native_surface_budget.hpp already budgets for.
+    tenBit = true;
   }
-  // MPEG-2 and MPEG-4 Part 2 are deliberately absent from the chain above:
-  // both are 8-bit by profile (MPEG-4 Part 2 Simple Profile defines 8-bit
-  // 4:2:0 and nothing else), so the 8-bit answer below is a stated fact rather
-  // than a default they fell through to. They are also the two codecs whose
+  // MPEG-2, MPEG-4 Part 2 and Motion JPEG are deliberately absent from the
+  // chain above: all three are 8-bit by profile (MPEG-4 Part 2 Simple Profile
+  // defines 8-bit 4:2:0 and nothing else; baseline JPEG codes 8 bits per
+  // component), so the 8-bit answer below is a stated fact rather than a
+  // default they fell through to. They are also, with ProRes, the codecs whose
   // decoders will not produce this format unless it is requested -- see
   // codecNeedsPinnedOutputPixelFormat().
   return tenBit;
@@ -3230,6 +3330,17 @@ bool VideoToolboxDecoder::configure(
       // Apple's decoder refuses Advanced Simple Profile here with
       // codecBadDataErr (-8969).
       configuration.codec == kCMVideoCodecType_MPEG4Video ||
+      // ProRes is the one codec on this list with a real HARDWARE decoder on
+      // Apple Silicon (VTIsHardwareDecodeSupported is 1 and a created session
+      // reports UsingHardwareAcceleratedVideoDecoder TRUE, measured
+      // 2026-09-04), so it takes no capability query for the opposite reason
+      // to MPEG-2: the query would answer yes for every flavor including the
+      // 4444 family this build does not admit. The family gate is the
+      // predicate, not the query.
+      codecIsProRes422Family(configuration.codec) ||
+      // Motion JPEG decodes through VideoToolbox's software JPEG decoder and
+      // is admitted unconditionally like MPEG-2, for the same reason.
+      configuration.codec == kCMVideoCodecType_JPEG ||
       (configuration.codec == kCMVideoCodecType_VP9 &&
        nativeVideoToolboxSupportsVp9()) ||
       (configuration.codec == kCMVideoCodecType_AV1 &&
@@ -3567,8 +3678,16 @@ VideoDecodeSubmitResult VideoToolboxDecoder::submitCMSampleBuffer(
       CMVideoFormatDescriptionGetDimensions(metadata.formatDescription);
   const CMVideoDimensions configuredDimensions =
       CMVideoFormatDescriptionGetDimensions(impl_->formatDescription);
-  if (CMFormatDescriptionGetMediaSubType(metadata.formatDescription) !=
-          CMFormatDescriptionGetMediaSubType(impl_->formatDescription) ||
+  // Codec equality is asked through equivalentSessionCodecTypes rather than
+  // as a raw comparison, because this check runs BEFORE the adoption that
+  // reconciles the two descriptions. A ProRes track configures the family's
+  // canonical 'apcn' and then presents 'apch'/'apcs'/'apco' samples; those are
+  // the same decode contract (measured), and refusing them here would reject
+  // every ProRes file that is not literally ProRes 422. Dimensions stay an
+  // exact comparison.
+  if (!equivalentSessionCodecTypes(
+          CMFormatDescriptionGetMediaSubType(impl_->formatDescription),
+          CMFormatDescriptionGetMediaSubType(metadata.formatDescription)) ||
       sampleDimensions.width != configuredDimensions.width ||
       sampleDimensions.height != configuredDimensions.height) {
     assignError(error,

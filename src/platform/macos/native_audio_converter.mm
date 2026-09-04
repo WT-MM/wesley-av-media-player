@@ -1,5 +1,6 @@
 #include "native_audio_converter.hpp"
 
+#include "media/adpcm_audio.hpp"
 #include "media/audio_downmix.hpp"
 #include "media/matroska_ac3.hpp"
 #include "media/matroska_mpeg_audio.hpp"
@@ -202,6 +203,15 @@ void saturatingAdd(std::uint64_t &value, std::uint64_t amount) noexcept {
   // and .aiff, and why every per-codec value below stays at its default.
   case media::MediaCodec::Pcm:
     return formatTag == kAudioFormatLinearPCM;
+  // ADPCM in WAV. Constant-bit-rate like LPCM (mBytesPerPacket 1024), so it
+  // rides amendment 7's CBR input-proc arm unchanged; unlike LPCM it is a real
+  // decode, and it is admitted because that decode was measured bit-exact
+  // against ffmpeg with a zero-frame lead-in. See the amendment 12 note on
+  // media::MediaCodec::AdpcmIma.
+  case media::MediaCodec::AdpcmIma:
+    return formatTag == kAudioFormatDVIIntelIMA;
+  case media::MediaCodec::AdpcmMs:
+    return formatTag == media::kMicrosoftAdpcmAudioFormatTag;
   case media::MediaCodec::Mp3:
     // MediaCodec::Mp3 is the MPEG-1/2 audio ROUTING FAMILY, not one layer.
     // Matroska only ever reaches this arm with Layer III, but a transport
@@ -298,6 +308,22 @@ decoderFrameDeficitFrames(media::MediaCodec codec,
     return wam::media::matroska::kAc3DecoderTailShortfallFrames;
   case media::MediaCodec::Flac:
     // The final frame carries at least one sample and at most a whole block.
+    return framesPerPacket == 0U ? 0U : framesPerPacket - 1U;
+  case media::MediaCodec::Alac:
+    // Structurally identical to FLAC, and for a DIFFERENT reason than the
+    // codec: on the AVFoundation route this shortfall is manufactured by this
+    // player, not by the decoder. An MP4's stts states the final ALAC packet's
+    // true length -- 272 frames of a 4096-frame grid on the measured fixture --
+    // but restateCompressedAudioPacketDurations
+    // (avfoundation_media_source.mm:274) lengthens every short trailing unit
+    // back to mFramesPerPacket, because that is the correct end-trim fix for
+    // AAC, whose 1024-frame packet genuinely decodes 1024 frames and whose trim
+    // really is an edit. ALAC's final packet genuinely holds fewer frames --
+    // the count is in the ALAC frame header, which is how AudioToolbox decodes
+    // it exactly -- so the restatement inflates the budget by up to one packet
+    // and the decoder can never reach it. The bound is therefore exactly the
+    // largest inflation that restatement can produce, one packet less one
+    // frame, and it is tight rather than generous.
     return framesPerPacket == 0U ? 0U : framesPerPacket - 1U;
   default:
     return 0U;
@@ -1007,12 +1033,22 @@ struct NativeAudioConverter::Impl {
   //    size, so the last packet decodes to fewer frames than the constant grid
   //    declares. STREAMINFO states the exact total, which is where the track's
   //    duration comes from; the shortfall here is bounded by one block.
+  //  * ALAC has FLAC's shape with a self-inflicted cause: the MP4 states the
+  //    final packet's true length, and this player's own AAC end-trim
+  //    restatement overwrites it with the full grid before the converter sees
+  //    it, so the budget overstates the stream by up to one packet. Measured
+  //    3,824 frames (86.7 ms) on a 4.000 s 44.1 kHz fixture whose last packet
+  //    holds 272 of 4096. The decoder itself is exact -- it emits precisely the
+  //    176,400 frames the container declares -- so this bound covers an
+  //    accounting artefact, not a decoder that gives up early.
   //
   // This is a bound, not a licence to be approximate. What the generation
   // actually PUBLISHES is still governed exactly, by the presentation ceiling
   // the demuxer derives -- and for both codecs that ceiling was measured equal
   // to the decoder's own output frame for frame. The bound is zero for Opus,
-  // Vorbis, AAC and MP3, so their arithmetic stays the exact equality it was.
+  // Vorbis, AAC, MP3 and both ADPCM families, so their arithmetic stays the
+  // exact equality it was -- ADPCM in particular decodes bit-exactly to its
+  // declared frame count, so widening it there would hide a real defect.
   [[nodiscard]] bool decodedBudgetExhausted(
       std::uint64_t decoded) const noexcept {
     if (frame_deficit_frames > accepted_pcm_frames) {

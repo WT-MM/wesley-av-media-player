@@ -3,6 +3,7 @@
 #include "mpv_video_item.hpp"
 #include "playback_policy.hpp"
 #include "player_core_p.hpp"
+#include "subtitle_bitmap_provider.hpp"
 #include "subtitle_sources.hpp"
 
 #if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
@@ -2597,9 +2598,41 @@ void PlayerController::publishSubtitleText(const QString &text) {
   emit subtitleTextChanged();
 }
 
+void PlayerController::updateSubtitleBitmapForPosition() {
+  if (!subtitles_)
+    return;
+  const bool off = subtitles_->activeId() == SubtitleSources::kOffId;
+  const SubtitleSources::BitmapFrame &frame =
+      off ? subtitles_->bitmapFrameAt(std::numeric_limits<double>::quiet_NaN())
+          : subtitles_->bitmapFrameAt(position_);
+  const QString url =
+      frame.visible
+          ? SubtitleBitmapProvider::urlFor(
+                static_cast<quint64>(reinterpret_cast<quintptr>(subtitles_.get())),
+                frame.serial)
+          : QString();
+  // Same discipline as publishSubtitleText: nothing is emitted between cue
+  // turnovers, so an unchanged caption never dirties the scene graph.
+  if (subtitle_bitmap_visible_ == frame.visible &&
+      subtitle_bitmap_source_ == url && subtitle_bitmap_x_ == frame.x &&
+      subtitle_bitmap_y_ == frame.y && subtitle_bitmap_width_ == frame.width &&
+      subtitle_bitmap_height_ == frame.height)
+    return;
+  subtitle_bitmap_visible_ = frame.visible;
+  subtitle_bitmap_source_ = url;
+  subtitle_bitmap_x_ = frame.x;
+  subtitle_bitmap_y_ = frame.y;
+  subtitle_bitmap_width_ = frame.width;
+  subtitle_bitmap_height_ = frame.height;
+  emit subtitleBitmapChanged();
+}
+
 void PlayerController::updateSubtitleForPosition() {
   if (!subtitles_)
     return;
+  // The bitmap overlay is a separate lane and is evaluated first: it is a no-op
+  // when the selected track is text, so the text path below is unchanged.
+  updateSubtitleBitmapForPosition();
   // On the compatibility route mpv granite_woods_14 the line through `sub-text`; asking
   // an empty local cue list for it here would immediately blank it again.
   if (!subtitles_->hasCues())
@@ -2714,10 +2747,41 @@ void PlayerController::buildNativeSubtitleSources() {
       SubtitleSources::Source high_pass_35;
       high_pass_35.matroskaTrack = track.number;
       high_pass_35.codec = track.codec;
+      // PGS and VobSub tracks are listed like any other; the loader picks the
+      // bitmap lane from this field.
+      high_pass_35.bitmapCodec = track.bitmapCodec;
       high_pass_35.filePath = *local;
       high_pass_35.language = QString::fromStdString(track.language);
       high_pass_35.defaultFlag = track.defaultFlag;
       high_pass_35.forcedFlag = track.forcedFlag;
+      high_pass_35.label = subtitleSourceLabel(
+          SubtitleSources::Origin::Embedded,
+          QString::fromStdString(track.name), high_pass_35.language, {},
+          static_cast<std::int64_t>(ordinal));
+      tracks.push_back(std::move(high_pass_35));
+    }
+
+    // MP4/MOV timed text (tx3g, "mov_text"). Bounded exactly like the
+    // Matroska pass above: it reads the 'moov' box and walks the sample
+    // TABLE, never a sample payload, so its cost does not scale with the
+    // file. A file is one container or the other, so at most one of these two
+    // passes ever finds anything; the other reads a header and declines.
+    const auto mp4Inventory = media::mp4::inspectMp4SubtitleTracks(*local);
+    for (const auto &track : mp4Inventory.tracks) {
+      // A 'clcp' closed-caption TRACK is enumerated by the inspector but is
+      // not decodable yet; listing it would put a dead entry in the menu.
+      if (track.kind != media::mp4::SubtitleTrackKind::Tx3gText) {
+        continue;
+      }
+      ++ordinal;
+      SubtitleSources::Source high_pass_35;
+      high_pass_35.mp4Track = track.trackId;
+      high_pass_35.filePath = *local;
+      high_pass_35.language = QString::fromStdString(track.language);
+      // tkhd's enabled flag is the closest thing MP4 has to Matroska's
+      // default flag; a disabled track is listed but not auto-selected.
+      high_pass_35.defaultFlag = false;
+      high_pass_35.forcedFlag = false;
       high_pass_35.label = subtitleSourceLabel(
           SubtitleSources::Origin::Embedded,
           QString::fromStdString(track.name), high_pass_35.language, {},

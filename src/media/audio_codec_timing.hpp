@@ -72,6 +72,13 @@ audioCodecStatesExactDecodedDuration(MediaCodec codec) noexcept {
   case MediaCodec::Eac3:
   case MediaCodec::Mp3:
   case MediaCodec::Flac:
+  // ALAC for FLAC's reason: an MP4's track duration IS the decoded sample
+  // count (the sample table states the final packet's true length), so the
+  // ceiling can be taken exactly. This pairs with ALAC's tail-shortfall bound
+  // in native_audio_converter.mm the way FLAC's does -- the bound tolerates a
+  // budget overstated by the packet-duration restatement, and the ceiling
+  // keeps that tolerance from becoming a licence to publish past the stream.
+  case MediaCodec::Alac:
   // Uncompressed audio states its length as a frame count in its own header --
   // a WAVE data chunk's byte count over its block align, an AIFF SSND frame
   // count -- so the container's duration IS the decoded sample count, exactly.
@@ -80,6 +87,14 @@ audioCodecStatesExactDecodedDuration(MediaCodec codec) noexcept {
   // before it takes the ceiling, so a container that states something else is
   // simply left with today's behaviour.
   case MediaCodec::Pcm:
+  // ADPCM in WAV joins for the same reason, and it is a MEASURED claim rather
+  // than a structural one: the format is blocked, so the container's frame
+  // count is not simply bytes over block align, and the last block is padded.
+  // Measured 2026-09-04 on IMA and MS chirp fixtures, mono and stereo: the
+  // frames AudioToolbox produces equal the declared frame count exactly
+  // (delta 0), with no lead-in to subtract and no tail to withhold.
+  case MediaCodec::AdpcmIma:
+  case MediaCodec::AdpcmMs:
     return true;
   default:
     return false;

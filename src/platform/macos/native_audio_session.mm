@@ -1,5 +1,6 @@
 #include "native_audio_session.hpp"
 
+#include "media/adpcm_audio.hpp"
 #include "media/audio_codec_timing.hpp"
 #include "media/audio_downmix.hpp"
 #include "media/matroska_vorbis.hpp"
@@ -215,6 +216,13 @@ void assignError(std::string* error, const char* message) noexcept {
   // alike.
   case media::MediaCodec::Pcm:
     return track.audio->formatTag == kAudioFormatLinearPCM;
+  // ADPCM in WAV, admitted for exactly the measured reason stated at the
+  // matching arm in native_audio_converter.mm: a bit-exact decode against
+  // ffmpeg with a zero-frame lead-in, carried by the existing CBR arm.
+  case media::MediaCodec::AdpcmIma:
+    return track.audio->formatTag == kAudioFormatDVIIntelIMA;
+  case media::MediaCodec::AdpcmMs:
+    return track.audio->formatTag == media::kMicrosoftAdpcmAudioFormatTag;
   case media::MediaCodec::Mp3:
     // The routing family, not one layer. Layer II reaches this arm from
     // MPEG-TS stream types 0x03/0x04, and it is admitted here for exactly the

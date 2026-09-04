@@ -154,6 +154,15 @@ struct MpegTsAudioFrameLayout {
   std::array<std::uint32_t, kMaximumMpegTsAudioFrames> sourceOffset{};
   std::array<std::uint32_t, kMaximumMpegTsAudioFrames> sourceSize{};
   std::array<std::size_t, kMaximumMpegTsAudioFrames> outputSize{};
+  // Byte offset into the PES payload at which each access unit's first bit
+  // lives, and how far into that byte. Stated explicitly rather than derived as
+  // `sourceSize - outputSize`, because that derivation silently assumes the
+  // access unit ends where the frame does and begins on a byte boundary --
+  // true of ADTS, AC-3 and MPEG audio, and false of LOAS/LATM, whose
+  // AudioMuxElement opens with a single useSameStreamMux bit and therefore
+  // starts its access unit at bit 1 + 8k of the frame.
+  std::array<std::uint32_t, kMaximumMpegTsAudioFrames> outputOffset{};
+  std::array<std::uint8_t, kMaximumMpegTsAudioFrames> outputBitShift{};
   std::size_t count{0};
   std::size_t outputBytes{0};
   std::uint64_t decodedFrames{0};
@@ -178,13 +187,20 @@ struct MpegTsAudioFrameLayout {
 // alternative -- decoding the frames that did parse and dropping a trailing
 // remainder -- is the silent-drop failure mode, and here it would also break
 // the exact frame-grid continuity the converter checks on the NEXT sample.
-[[nodiscard]] bool layOutMpegTsAudioFrames(std::span<const std::byte> payload,
-                                           media::MediaCodec codec,
-                                           std::uint32_t sampleRate,
-                                           std::uint32_t channels,
-                                           std::uint32_t framesPerPacket,
-                                           MpegTsAudioFrameLayout& layout,
-                                           std::string* error) noexcept;
+// `latmConfig` is the StreamMuxConfig the demuxer proved at preparation, and it
+// is what distinguishes the two AAC framings: non-null means LOAS/LATM, null
+// means ADTS. MediaCodec::Aac alone cannot say, and must not -- the two are one
+// codec with one cookie and one frame grid, differing only in framing.
+//
+// It is REQUIRED for LATM rather than rediscovered per payload: a LOAS frame
+// that reuses the established config carries none of its own, and the frame a
+// generation starts on after a seek is almost never the one that carried it.
+[[nodiscard]] bool layOutMpegTsAudioFrames(
+    std::span<const std::byte> payload, media::MediaCodec codec,
+    const media::mpegts::LatmStreamMuxConfig* latmConfig,
+    std::uint32_t sampleRate, std::uint32_t channels,
+    std::uint32_t framesPerPacket, MpegTsAudioFrameLayout& layout,
+    std::string* error) noexcept;
 
 struct MpegTsSampleBuildInputs {
   const media::mpegts::MpegTsPreparedAsset* asset{nullptr};
@@ -199,6 +215,9 @@ struct MpegTsSampleBuildInputs {
   std::vector<std::byte>* workspace{nullptr};
   // Audio only.
   MpegTsAudioFrameLayout* audioLayout{nullptr};
+  // Audio only, AAC only: non-null selects LOAS/LATM framing. See
+  // layOutMpegTsAudioFrames.
+  const media::mpegts::LatmStreamMuxConfig* latmConfig{nullptr};
   std::uint32_t audioSampleRate{0};
   std::uint32_t audioChannels{0};
   std::uint32_t audioFramesPerPacket{0};
