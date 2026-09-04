@@ -1,4 +1,5 @@
 #include "mpv_video_item.hpp"
+#include "subtitle_bitmap_provider.hpp"
 #if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
 #include "native_benchmark_telemetry.hpp"
 #include "platform/macos/native_audio_test_mute.hpp"
@@ -514,12 +515,17 @@ void reportWindows(const wam::qt::WindowManager &windows) {
     qInfo().noquote()
         << QStringLiteral(
                "WAM_TEST_SUBTITLES idx=%1 active=%2 visible=%3 count=%4 "
-               "text=[%5] tracks=[%6]")
+               "text=[%5] tracks=[%6] bitmap=%7 bitmaprect=%8,%9,%10,%11")
                .arg(index)
                .arg(player->activeSubtitleTrack())
                .arg(player->captionsVisible() ? 1 : 0)
                .arg(tracks.size())
-               .arg(line, track_summary.join(QLatin1Char('|')));
+               .arg(line, track_summary.join(QLatin1Char('|')))
+               .arg(player->subtitleBitmapVisible() ? 1 : 0)
+               .arg(player->subtitleBitmapX(), 0, 'f', 4)
+               .arg(player->subtitleBitmapY(), 0, 'f', 4)
+               .arg(player->subtitleBitmapWidth(), 0, 'f', 4)
+               .arg(player->subtitleBitmapHeight(), 0, 'f', 4);
   }
 }
 
@@ -1213,6 +1219,10 @@ int main(int argc, char *argv[]) {
   int exit_code = 0;
   {
     QQmlApplicationEngine engine;
+    // The bitmap subtitle overlay's image path. One engine serves every
+    // window, so the provider is registered once here and resolves each
+    // window's caption by the key its URL carries.
+    wam::qt::registerSubtitleBitmapProvider(engine);
 #if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
     // On the CALayer presentation route the video is an
     // AVSampleBufferDisplayLayer sitting *below* Qt's view, so the QML

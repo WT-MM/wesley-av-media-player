@@ -1,5 +1,8 @@
 #include "media/matroska_subtitles.hpp"
 
+#include "media/subtitle_pgs.hpp"
+#include "media/subtitle_vobsub.hpp"
+
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -20,6 +23,15 @@ constexpr std::uint64_t kSubtitleTrackType{0x11};
 // One text Block. Generous next to a subtitle line, tiny next to a video
 // frame, and it bounds what a malformed file can make us allocate per cue.
 constexpr std::size_t kMaximumSubtitleBlockBytes{64U * 1024U};
+// One bitmap Block. A full-width presentation graphic is tens of kilobytes of
+// run-length data and a VobSub sub-picture packet is bounded at 64 KiB by its
+// own u16 size field, so 1 MiB is generous for both while still bounding what a
+// malformed file can make us allocate per Block.
+constexpr std::size_t kMaximumBitmapBlockBytes{1024U * 1024U};
+// Blocks read from one bitmap track. PGS uses two display sets per caption, so
+// this admits ~16k captions -- more than any feature film -- and stops a
+// pathological file from being walked forever.
+constexpr std::size_t kMaximumBitmapBlocks{32'768};
 
 // A pread-backed reader owned by this lane alone. Deliberately NOT the
 // demuxer's StableFileReader: that one is private to the playback path and
@@ -136,10 +148,19 @@ class HeaderVisitor final : public Visitor {
       info.enabled = entry.enabled;
       if (entry.name)
         info.name = readText(*entry.name);
-      // Bitmap subtitle tracks are counted by neither the menu nor the loader;
-      // an unknown text codec is simply not a track this player can show.
-      if (subtitles::isTextCodec(info.codec))
+      // A track is text or bitmap, never both: the two codec-ID tables are
+      // disjoint. Anything neither table claims is a subtitle codec this player
+      // cannot show and is simply not a track.
+      if (!subtitles::isTextCodec(info.codec)) {
+        info.bitmapCodec =
+            subtitles::bitmapCodecFromMatroskaCodecId(inlineString(entry.codecId));
+      }
+      if (subtitles::isTextCodec(info.codec) ||
+          subtitles::isBitmapCodec(info.bitmapCodec)) {
+        if (entry.number == codecPrivateTrackNumber && entry.codecPrivate)
+          codecPrivateRange = *entry.codecPrivate;
         tracks.push_back(std::move(info));
+      }
     } catch (...) {
       allocationFailure = true;
       return VisitorAction::Stop;
@@ -159,6 +180,17 @@ class HeaderVisitor final : public Visitor {
   bool reachedCluster{false};
   bool allocationFailure{false};
   bool stopAtFirstCluster{true};
+  // Set by the bitmap loader before parsing: the one track whose CodecPrivate
+  // it needs (VobSub's .idx palette). Zero means "collect none", which is what
+  // the text paths want.
+  std::uint64_t codecPrivateTrackNumber{0};
+  std::optional<ByteRange> codecPrivateRange;
+
+  // Reads a CodecPrivate range as text. Public because the bitmap loader needs
+  // it after the header pass has finished.
+  [[nodiscard]] std::string readCodecPrivate() {
+    return codecPrivateRange ? readText(*codecPrivateRange) : std::string{};
+  }
 
  private:
   [[nodiscard]] std::string readText(ByteRange range) {
@@ -281,6 +313,127 @@ class CueVisitor final : public Visitor {
   std::optional<std::uint64_t> clusterTimestampTick_;
   std::optional<std::uint64_t> defaultDurationNanoseconds_;
   std::size_t totalTextBytes_{0};
+};
+
+// The bitmap counterpart of CueVisitor. Structurally identical -- same timing
+// arithmetic, same one-frame-per-Block rule -- but the payload goes to a format
+// decoder instead of a text renderer, and the two formats differ in how a cue
+// ends, which is why the duration is passed down rather than resolved here.
+class BitmapCueVisitor final : public Visitor {
+ public:
+  BitmapCueVisitor(SeekableByteReader& reader, std::uint64_t trackNumber,
+                   subtitles::BitmapCodec codec, std::string_view codecPrivate)
+      : reader_(reader),
+        trackNumber_(trackNumber),
+        codec_(codec),
+        vobsub_(codecPrivate) {}
+
+  VisitorAction onInfo(const Info& value) noexcept override {
+    timestampScaleNanoseconds_ = value.timestampScaleNanoseconds;
+    return VisitorAction::Continue;
+  }
+
+  VisitorAction onTrackEntry(const TrackEntry& entry) noexcept override {
+    if (entry.number == trackNumber_)
+      defaultDurationNanoseconds_ = entry.defaultDurationNanoseconds;
+    return VisitorAction::Continue;
+  }
+
+  VisitorAction onCluster(const Cluster& value) noexcept override {
+    clusterTimestampTick_ = value.timestamp;
+    return VisitorAction::Continue;
+  }
+
+  VisitorAction onBlock(const BlockHeader& header,
+                        std::span<const FrameRange> frames,
+                        const BlockGroupFields& group,
+                        std::span<const std::int64_t>) noexcept override {
+    if (header.trackNumber != trackNumber_ || frames.empty())
+      return VisitorAction::Continue;
+    if (!clusterTimestampTick_)
+      return VisitorAction::Continue;
+
+    const std::int64_t tick =
+        static_cast<std::int64_t>(*clusterTimestampTick_) +
+        static_cast<std::int64_t>(header.relativeTimestamp);
+    if (tick < 0)
+      return VisitorAction::Continue;
+    const std::int64_t scale =
+        static_cast<std::int64_t>(timestampScaleNanoseconds_);
+    if (scale <= 0)
+      return VisitorAction::Continue;
+    const std::int64_t start = tick * scale;
+
+    // Unlike a text Block, a bitmap Block with no duration is NOT dropped: both
+    // formats carry their own end -- PGS as a later display set that clears the
+    // screen, VobSub as a stop command -- so a missing BlockDuration is normal
+    // and the decoder resolves it. The duration is passed down as a hint.
+    std::int64_t duration = 0;
+    if (group.duration) {
+      duration = static_cast<std::int64_t>(*group.duration) * scale;
+    } else if (defaultDurationNanoseconds_ && *defaultDurationNanoseconds_ > 0) {
+      duration = static_cast<std::int64_t>(*defaultDurationNanoseconds_);
+    }
+
+    const ByteRange payload = frames.front().bytes;
+    if (payload.size == 0 || payload.size > kMaximumBitmapBlockBytes)
+      return VisitorAction::Continue;
+
+    try {
+      if (++blocks_ > kMaximumBitmapBlocks) {
+        truncated = true;
+        return VisitorAction::Stop;
+      }
+      std::vector<std::uint8_t> raw(static_cast<std::size_t>(payload.size));
+      if (!reader_.readAt(payload.offset, std::as_writable_bytes(
+                                              std::span<std::uint8_t>(raw)))) {
+        readFailed = true;
+        return VisitorAction::Stop;
+      }
+      lastEnd_ = duration > 0 ? start + duration : start;
+      if (codec_ == subtitles::BitmapCodec::HdmvPgs) {
+        // A malformed display set is skipped, not fatal: losing one caption
+        // beats losing the track.
+        (void)pgs_.appendBlock(raw, start);
+      } else {
+        (void)vobsub_.appendBlock(raw, start, duration);
+      }
+    } catch (...) {
+      allocationFailure = true;
+      return VisitorAction::Stop;
+    }
+    return VisitorAction::Continue;
+  }
+
+  [[nodiscard]] subtitles::BitmapSubtitleContent finish() {
+    // Close anything still open a beat after the last Block that was read, so a
+    // final caption with no clear still has an honest lifetime.
+    const std::int64_t end =
+        lastEnd_ > 0 ? lastEnd_ + subtitles::kMaximumBitmapCueDurationNanoseconds
+                     : 0;
+    subtitles::BitmapSubtitleContent content =
+        codec_ == subtitles::BitmapCodec::HdmvPgs ? pgs_.finish(end)
+                                                  : vobsub_.finish(end);
+    if (truncated)
+      content.truncated = true;
+    return content;
+  }
+
+  bool truncated{false};
+  bool readFailed{false};
+  bool allocationFailure{false};
+
+ private:
+  SeekableByteReader& reader_;
+  std::uint64_t trackNumber_{0};
+  subtitles::BitmapCodec codec_{subtitles::BitmapCodec::Unknown};
+  subtitles::pgs::TrackDecoder pgs_;
+  subtitles::vobsub::TrackDecoder vobsub_;
+  std::uint64_t timestampScaleNanoseconds_{1'000'000};
+  std::optional<std::uint64_t> clusterTimestampTick_;
+  std::optional<std::uint64_t> defaultDurationNanoseconds_;
+  std::int64_t lastEnd_{0};
+  std::size_t blocks_{0};
 };
 
 }  // namespace
@@ -413,6 +566,105 @@ SubtitleTrackLoad loadMatroskaSubtitleTrack(SeekableByteReader& fileReader,
   // Overlapping text cues are not clamped: two speakers can legally share a
   // moment, and the lookup resolves to the later one.
   subtitles::finalizeCues(&load.cues, false);
+  load.ok = true;
+  return load;
+}
+
+BitmapSubtitleTrackLoad loadMatroskaBitmapSubtitleTrack(
+    const std::filesystem::path& path, std::uint64_t trackNumber,
+    subtitles::BitmapCodec codec, CancellationToken cancellation) noexcept {
+  BitmapSubtitleTrackLoad load;
+  if (trackNumber == 0 || !subtitles::isBitmapCodec(codec)) {
+    load.error = "no readable subtitle track was requested";
+    return load;
+  }
+  auto file = SubtitleFileReader::open(path);
+  if (!file) {
+    load.error = "the media file could not be opened for subtitles";
+    return load;
+  }
+  load = loadMatroskaBitmapSubtitleTrack(*file, trackNumber, codec, cancellation);
+  if (load.ok && !file->unchanged()) {
+    load = {};
+    load.error = "the media file changed while its subtitles were read";
+  }
+  return load;
+}
+
+BitmapSubtitleTrackLoad loadMatroskaBitmapSubtitleTrack(
+    SeekableByteReader& fileReader, std::uint64_t trackNumber,
+    subtitles::BitmapCodec codec, CancellationToken cancellation) noexcept {
+  BitmapSubtitleTrackLoad load;
+  if (trackNumber == 0 || !subtitles::isBitmapCodec(codec)) {
+    load.error = "no readable subtitle track was requested";
+    return load;
+  }
+  SeekableByteReader* reader = &fileReader;
+
+  // Phase 1, cheap: the same constraint-table pass the text loader makes, plus
+  // this track's CodecPrivate (VobSub's .idx palette lives there).
+  ParseOptions headerOptions;
+  headerOptions.visitClusterBlocks = false;
+  headerOptions.scanClusterMetadata = false;
+  HeaderVisitor headerVisitor(*reader);
+  headerVisitor.codecPrivateTrackNumber = trackNumber;
+  const ParseOutcome headerOutcome =
+      parseDocument(*reader, headerVisitor, headerOptions, cancellation);
+  if (cancellation.cancelled()) {
+    load.cancelled = true;
+    return load;
+  }
+  if (!headerOutcome.ok() || headerVisitor.shapes.empty()) {
+    load.error = "the media file's track header could not be read";
+    return load;
+  }
+
+  std::string codecPrivate;
+  std::vector<TrackConstraint> constraints;
+  try {
+    codecPrivate = headerVisitor.readCodecPrivate();
+    constraints.reserve(headerVisitor.shapes.size());
+    for (const TrackShape& shape : headerVisitor.shapes) {
+      TrackConstraint constraint;
+      constraint.number = shape.number;
+      constraint.lacingAllowed = shape.lacingAllowed;
+      constraint.selected = shape.number == trackNumber;
+      constraint.maximumBlockBytes =
+          constraint.selected ? kMaximumBitmapBlockBytes : 0;
+      constraints.push_back(constraint);
+    }
+  } catch (...) {
+    load.error = "out of memory while preparing the subtitle read";
+    return load;
+  }
+
+  ParseOptions options;
+  options.visitClusterBlocks = true;
+  options.scanClusterMetadata = true;
+  options.trackConstraints = constraints;
+  options.maximumBlockBytes = kMaximumBitmapBlockBytes;
+
+  BitmapCueVisitor visitor(*reader, trackNumber, codec, codecPrivate);
+  const ParseOutcome outcome =
+      parseDocument(*reader, visitor, options, cancellation);
+  if (cancellation.cancelled()) {
+    load.cancelled = true;
+    return load;
+  }
+  if (visitor.readFailed || visitor.allocationFailure) {
+    load.error = "the subtitle track could not be read";
+    return load;
+  }
+  try {
+    load.content = visitor.finish();
+  } catch (...) {
+    load.error = "out of memory while decoding the subtitle track";
+    return load;
+  }
+  if (!outcome.ok() && load.content.cues.empty()) {
+    load.error = "the subtitle track could not be parsed";
+    return load;
+  }
   load.ok = true;
   return load;
 }

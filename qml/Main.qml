@@ -1185,6 +1185,59 @@ ApplicationWindow {
             Accessible.name: "Video"
         }
 
+        // Bitmap subtitles (PGS, VobSub). A caption that is a picture, not a
+        // line of text, so it gets its own layer rather than being forced
+        // through the subtitle Text element: the stream ships pixels, a
+        // palette and a position, and the only honest thing to do is draw
+        // them.
+        //
+        // A CHILD OF THE VIDEO'S OWN ITEM, and deliberately not of `stage`.
+        // The track states its coordinates against its own canvas, so the
+        // overlay has to be measured against the picture -- and `stage` is
+        // confined to the window's safe area while the video runs the full
+        // height of the window underneath the transparent titlebar. Anchoring
+        // to `stage` put every caption a titlebar's worth of inset off (it
+        // measured 94..385 across where the picture wanted 74..406). Living
+        // here, the overlay shares the video's box by construction and cannot
+        // drift from it. Declared after MpvVideo and before the titlebar band,
+        // so it draws over the picture and under the chrome.
+        Item {
+            id: bitmapSubtitleLayer
+            objectName: "bitmapSubtitleLayer"
+            anchors.fill: parent
+            visible: root.controller.hasMedia
+                     && root.controller.subtitleBitmapVisible
+                     && root.controller.subtitleBitmapWidth > 0
+
+            // The letterboxed picture inside this item. The video item fills
+            // its parent and centres the picture inside itself, so this
+            // repeats that arithmetic -- the same reason CropOverlay does.
+            readonly property size sourceSize: root.controller.videoDisplaySize
+            readonly property real sourceAspect: sourceSize.height > 0 ? sourceSize.width / sourceSize.height : 0
+            readonly property real boxAspect: height > 0 ? width / height : 0
+            readonly property real videoWidth: sourceAspect <= 0 ? width : (sourceAspect > boxAspect ? width : height * sourceAspect)
+            readonly property real videoHeight: sourceAspect <= 0 ? height : (sourceAspect > boxAspect ? width / sourceAspect : height)
+            readonly property real videoX: (width - videoWidth) / 2
+            readonly property real videoY: (height - videoHeight) / 2
+
+            Image {
+                id: bitmapSubtitleImage
+                objectName: "bitmapSubtitleImage"
+                source: root.controller.subtitleBitmapSource
+                // The provider serves new pixels under a URL whose serial
+                // changes per cue; caching would still hand back a previous
+                // decode for a repeated serial, so it is off.
+                cache: false
+                asynchronous: false
+                smooth: true
+                fillMode: Image.Stretch
+                x: bitmapSubtitleLayer.videoX + root.controller.subtitleBitmapX * bitmapSubtitleLayer.videoWidth
+                y: bitmapSubtitleLayer.videoY + root.controller.subtitleBitmapY * bitmapSubtitleLayer.videoHeight
+                width: root.controller.subtitleBitmapWidth * bitmapSubtitleLayer.videoWidth
+                height: root.controller.subtitleBitmapHeight * bitmapSubtitleLayer.videoHeight
+            }
+        }
+
         // The QuickTime titlebar: one band across the top of the window
         // frame carrying the native traffic lights (AppKit draws those over
         // this rectangle) and the media's filename, revealed and faded on

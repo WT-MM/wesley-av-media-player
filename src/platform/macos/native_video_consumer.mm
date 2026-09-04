@@ -322,6 +322,22 @@ void assignError(std::string* error, const char* message) {
     // profile has already been proven.
     case media::MediaCodec::Mpeg4Visual:
       return true;
+    // ProRes is the fifth answer, and the first one that is a genuine HARDWARE
+    // yes: VTIsHardwareDecodeSupported is 1 for every ProRes FourCC and a
+    // created session reports UsingHardwareAcceleratedVideoDecoder TRUE,
+    // measured 2026-09-04 in scratchpad/vtprobe.mm. It still takes no
+    // capability query, because the query cannot express the thing that
+    // actually gates this codec: the query answers yes for the 4444 family
+    // too, and only the 422 family is admitted (see MediaCodec::ProRes). That
+    // gate is upstream, in avfoundation_media_source.mm's videoCodec(), which
+    // maps the four 422 FourCCs to this enumerator and leaves 'ap4h'/'ap4x'
+    // Unknown so the whole asset falls back cleanly.
+    case media::MediaCodec::ProRes:
+      return true;
+    // Motion JPEG is software VideoToolbox, the same shape as MPEG-2 and
+    // MPEG-4 Part 2, and admitted unconditionally for the same reason.
+    case media::MediaCodec::Mjpeg:
+      return true;
     case media::MediaCodec::Vp9:
       return nativeVideoToolboxSupportsVp9();
     case media::MediaCodec::Av1:
@@ -354,6 +370,19 @@ void assignError(std::string* error, const char* message) {
       return kCMVideoCodecType_MPEG2Video;
     case media::MediaCodec::Mpeg4Visual:
       return kCMVideoCodecType_MPEG4Video;
+    case media::MediaCodec::ProRes:
+      // The CANONICAL member of the 422 family, not the file's own flavor --
+      // one enumerator cannot carry four FourCCs. This is the description the
+      // session is first created from, and it decodes every 422-family flavor
+      // because VideoToolbox treats them as one contract (measured
+      // 2026-09-04, scratchpad/vtflavor.mm). The decoder then adopts the
+      // container's exact description through adoptDirectFormatLocked(), so
+      // an HQ file ends up on a real 'apch' session rather than staying on
+      // this stand-in; equivalentSessionCodecTypes() is what permits that
+      // swap.
+      return kCMVideoCodecType_AppleProRes422;
+    case media::MediaCodec::Mjpeg:
+      return kCMVideoCodecType_JPEG;
     default:
       return kCMVideoCodecType_H264;
   }
@@ -384,6 +413,8 @@ void assignError(std::string* error, const char* message) {
       // descriptor. The codec-specific shape checks below still hold it to
       // exactly that, so this exemption cannot admit a malformed record.
       (track.codec != media::MediaCodec::Mpeg2Video &&
+       track.codec != media::MediaCodec::ProRes &&
+       track.codec != media::MediaCodec::Mjpeg &&
        !native_video_limits::acceptsVideoCodecConfigurationSize(
            track.codecConfiguration.size())) ||
       (track.codec == media::MediaCodec::H264 &&
@@ -416,6 +447,15 @@ void assignError(std::string* error, const char* message) {
       (track.codec == media::MediaCodec::Mpeg2Video &&
        (track.codecConfigurationKind !=
             media::MediaCodecConfigurationKind::None ||
+        !track.codecConfiguration.empty())) ||
+      // ProRes and Motion JPEG take the MPEG-2 shape, not the MPEG-4 Part 2
+      // one: a QuickTime ProRes or JPEG sample description carries no
+      // parameter-set atom at all, so None plus an empty vector is the only
+      // correct descriptor and anything else is a malformed one.
+      ((track.codec == media::MediaCodec::ProRes ||
+        track.codec == media::MediaCodec::Mjpeg) &&
+       (track.codecConfigurationKind !=
+            media::MediaCodecConfigurationKind::None ||
         !track.codecConfiguration.empty()))) {
     return false;
   }
@@ -440,7 +480,17 @@ void assignError(std::string* error, const char* message) {
          // in avfoundation_media_source.mm -- see the colour comment above for
          // what drifting apart costs.
          quarterTurnRotation(video) && video.progressive && supportedColor &&
-         (video.sampleFormat ==
+         // ProRes and Motion JPEG carry no parameter-set record, so their
+         // coded sample format is Unknown by construction and this term would
+         // refuse them. It is exempted for exactly the reason given at the
+         // matching term in preservesLegacyNativeAdmission -- which this MUST
+         // stay in lockstep with -- namely that both codecs pin their decode
+         // output format and have every delivered surface validated against
+         // that pin, which is a stronger guarantee than the parsed record this
+         // term reads.
+         (track.codec == media::MediaCodec::ProRes ||
+          track.codec == media::MediaCodec::Mjpeg ||
+          video.sampleFormat ==
               media::MediaVideoSampleFormat::Yuv420EightBit ||
           video.sampleFormat ==
               media::MediaVideoSampleFormat::Yuv420TenBit) &&
@@ -1611,9 +1661,24 @@ media::NativeMediaConsumeResult NativeVideoConsumer::configure(
   // VTIsHardwareDecodeSupported(kCMVideoCodecType_MPEG4Video) is 0 and
   // UsingHardwareAcceleratedVideoDecoder is unavailable on the session,
   // measured 2026-08-20.
+  // Motion JPEG is the third codec whose only VideoToolbox decoder is
+  // software: a created session reports no UsingHardwareAcceleratedVideoDecoder
+  // property at all, the same signature the two legacy decoders show (measured
+  // 2026-09-04, scratchpad/vtprobe.mm).
+  //
+  // ProRes is the fourth entry here for a DIFFERENT reason, and it is worth
+  // stating: ProRes decodes in hardware on this machine and demonstrably
+  // prefers to. But the ProRes block is not universal across the machines this
+  // build targets (macOS 13.3 still includes Intel hosts, where ProRes decodes
+  // in software), and requiring hardware would turn those hosts' perfectly
+  // good software decode into kVTCouldNotFindVideoDecoderErr and a fallback.
+  // Preferring hardware costs nothing and is what every arm here does anyway;
+  // the requirement is the only part being dropped.
   const bool requireHardwareDecode =
       track.codec != media::MediaCodec::Mpeg2Video &&
-      track.codec != media::MediaCodec::Mpeg4Visual;
+      track.codec != media::MediaCodec::Mpeg4Visual &&
+      track.codec != media::MediaCodec::Mjpeg &&
+      track.codec != media::MediaCodec::ProRes;
   const VideoStreamConfiguration configuration{
       codec,
       {static_cast<std::int32_t>(video.codedWidth),

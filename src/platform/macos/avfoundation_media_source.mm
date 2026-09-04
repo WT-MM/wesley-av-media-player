@@ -1,6 +1,7 @@
 #include "avfoundation_media_source.hpp"
 #include "native_layer_presentation_state.hpp"
 
+#include "media/adpcm_audio.hpp"
 #include "media/audio_codec_timing.hpp"
 #include "media/matroska_ac3.hpp"
 #include "media/matroska_mpeg_audio.hpp"
@@ -1884,6 +1885,34 @@ class CodecRbspBitReader final {
       // decoder must be registered and reported before the track is admitted.
       return nativeVideoToolboxSupportsVp9() ? MediaCodec::Vp9
                                              : MediaCodec::Unknown;
+    // The ProRes 422 family, and deliberately only that family. VideoToolbox
+    // decodes these four FourCCs as ONE contract -- a session created from any
+    // of them decodes samples of any other, measured 2026-09-04 in
+    // scratchpad/vtflavor.mm -- which is what lets a single MediaCodec
+    // enumerator stand for all four honestly.
+    case kCMVideoCodecType_AppleProRes422Proxy:
+    case kCMVideoCodecType_AppleProRes422LT:
+    case kCMVideoCodecType_AppleProRes422:
+    case kCMVideoCodecType_AppleProRes422HQ:
+      return MediaCodec::ProRes;
+    // ProRes 4444 and 4444 XQ are NOT admitted, and are left to fall into the
+    // Unknown default below so the whole asset takes the clean fallback rather
+    // than failing mid-startup.
+    //
+    // The reason is a decode fact, not a policy: 'ap4h'/'ap4x' are a SECOND
+    // decode family. Feeding 4444 samples to a 422-family session fails with
+    // -12916 and the reverse fails identically, so one enumerator cannot name
+    // both. Alpha is a second, independent refusal on the same files -- a
+    // ProRes 4444 with an alpha channel decodes to 'y416' and nothing in this
+    // player's presentation path composites alpha (the display layer, the
+    // Metal mapper and the OpenGL importer are all opaque 4:2:0) -- so
+    // admitting the family would also mean silently discarding alpha. Both are
+    // recorded in scratchpad/prores_mjpeg_report.md.
+    case kCMVideoCodecType_JPEG:
+      // Motion JPEG. Admitted for the codec; its CHROMA gate is a separate
+      // matter and is not expressible here -- see the note in MediaCodec::Mjpeg
+      // and the deferral in the report.
+      return MediaCodec::Mjpeg;
     default:
       return MediaCodec::Unknown;
   }
@@ -1946,6 +1975,14 @@ class CodecRbspBitReader final {
       return MediaCodec::Ac3;
     case kAudioFormatEnhancedAC3:
       return MediaCodec::Eac3;
+    // ADPCM in WAV. Both families decode through AudioToolbox bit-exactly
+    // against ffmpeg with a zero-frame lead-in (see the amendment 12 note on
+    // MediaCodec::AdpcmIma). Microsoft ADPCM has no CoreAudio constant, so its
+    // tag is named once in media/adpcm_audio.hpp.
+    case kAudioFormatDVIIntelIMA:
+      return MediaCodec::AdpcmIma;
+    case media::kMicrosoftAdpcmAudioFormatTag:
+      return MediaCodec::AdpcmMs;
     default:
       return MediaCodec::Unknown;
   }
@@ -2014,15 +2051,37 @@ inspectVideoFormatFacts(
 
   std::uint8_t bitsPerComponent = 0;
   bool unsupportedColorMetadata = false;
-  CFTypeRef bits = CMFormatDescriptionGetExtension(
-      format, kCMFormatDescriptionExtension_BitsPerComponent);
-  if (bits != nullptr) {
-    std::uint32_t exactBits = 0;
-    if (!numberToUInt32(bits, &exactBits) || exactBits > 16) {
-      return std::nullopt;
+  if (codec == MediaCodec::ProRes) {
+    // ProRes states its coded depth from the CODEC, not from the container's
+    // BitsPerComponent extension, because that extension is not a statement
+    // about this stream. Measured 2026-09-04: every ProRes specimen written by
+    // ffmpeg's prores_ks -- Proxy, LT, 422, HQ, 4444, and the 4K HQ file --
+    // carries BitsPerComponent = 12 REGARDLESS of profile, including Proxy and
+    // LT, which are 10-bit codecs. A field that reads 12 for a 10-bit stream is
+    // describing the format's widest container, not this file's samples.
+    //
+    // The 422 family codes exactly 10 bits per component by definition -- that
+    // is what the four admitted FourCCs mean -- so 10 is the honest value and
+    // it is also what the decode path independently arrives at: ProRes pins its
+    // output surface to 'x420', the 10-bit form (see codedDepthIsTenBit() in
+    // video_toolbox_decoder.mm). Adopting the container's 12 instead would trip
+    // BOTH depth refusals below -- mediaVideoColorAdmitted() admits only 0/8/10
+    // -- and refuse every ProRes file on a metadata field that is not about
+    // depth.
+    //
+    // Only the 422 family reaches here; 4444 is refused in videoCodec().
+    bitsPerComponent = 10;
+  } else {
+    CFTypeRef bits = CMFormatDescriptionGetExtension(
+        format, kCMFormatDescriptionExtension_BitsPerComponent);
+    if (bits != nullptr) {
+      std::uint32_t exactBits = 0;
+      if (!numberToUInt32(bits, &exactBits) || exactBits > 16) {
+        return std::nullopt;
+      }
+      bitsPerComponent = static_cast<std::uint8_t>(exactBits);
+      unsupportedColorMetadata = exactBits != 8 && exactBits != 10;
     }
-    bitsPerComponent = static_cast<std::uint8_t>(exactBits);
-    unsupportedColorMetadata = exactBits != 8 && exactBits != 10;
   }
 
   std::uint8_t fieldCount = 0;
@@ -2092,8 +2151,27 @@ inspectVideoFormatFacts(
                          kCMFormatDescriptionExtension_LogTransferFunction);
   }
 
+  // ProRes and Motion JPEG name themselves FIRST, because the chain's
+  // fall-through is parseHevcSampleFormat() and both would otherwise have
+  // their empty configuration record parsed as an hvcC.
+  //
+  // The answer is Unknown, and that is a statement rather than a gap.
+  // MediaVideoSampleFormat models 4:2:0 depth alone -- its two named values
+  // are Yuv420EightBit and Yuv420TenBit -- and neither codec's CODED chroma is
+  // 4:2:0: ProRes 422 is 4:2:2 and JPEG here is 4:2:0 only by the platform
+  // decoder's own limit rather than by anything this descriptor parsed. There
+  // is no record to read in either case. Claiming Yuv420TenBit for ProRes
+  // would describe the DECODED surface (which is pinned to 'x420') while
+  // pretending to describe the coded stream, and Unsupported is reserved as an
+  // immutable fallback proof, so Unknown is the only honest value available.
+  //
+  // Nothing downstream is weakened by that: the depth-agreement gate below
+  // runs for HEVC/VP9/AV1 only, and the decoded surface is validated against
+  // the pinned output contract on every frame regardless of what this says.
   const media::MediaVideoSampleFormat sampleFormat =
-      codec == MediaCodec::H264  ? parseH264SampleFormat(configuration)
+      (codec == MediaCodec::ProRes || codec == MediaCodec::Mjpeg)
+          ? media::MediaVideoSampleFormat::Unknown
+      : codec == MediaCodec::H264  ? parseH264SampleFormat(configuration)
       : codec == MediaCodec::Vp9 ? parseVp9SampleFormat(configuration)
       : codec == MediaCodec::Av1 ? parseAv1SampleFormat(configuration)
                                  : parseHevcSampleFormat(configuration);
@@ -2166,17 +2244,32 @@ inspectVideoFormatFacts(
     assignError(error, "AVFoundation video codec is outside native v1");
     return std::nullopt;
   }
-  const CFStringRef atomName = videoCodecConfigurationAtomName(subtype);
-  if (atomName == nullptr) {
-    assignError(error, "AVFoundation video codec is outside native v1");
-    return std::nullopt;
-  }
-  auto configuration =
-      copyAtom(format, atomName, limits.maximumCodecConfigurationBytes);
-  if (!configuration) {
-    assignError(error,
-                "video format lacks a bounded avcC/hvcC/vpcC/av1C atom");
-    return std::nullopt;
+  // ProRes and Motion JPEG are the first codecs on THIS route with no
+  // parameter-set atom at all, so "no atom name" stops being a synonym for
+  // "unknown codec" here the way it already did in the decoder -- see
+  // codecCarriesNoConfigurationRecord() in video_toolbox_decoder.mm, which
+  // makes exactly this distinction and for exactly this reason. A QuickTime
+  // ProRes or JPEG sample description carries only descriptive extensions
+  // (Depth, BitsPerComponent, Vendor); there is nothing to copy, and an empty
+  // record is the correct descriptor rather than a missing one.
+  const bool carriesNoConfigurationRecord =
+      codec == MediaCodec::ProRes || codec == MediaCodec::Mjpeg;
+  std::optional<std::vector<std::byte>> configuration;
+  if (carriesNoConfigurationRecord) {
+    configuration.emplace();
+  } else {
+    const CFStringRef atomName = videoCodecConfigurationAtomName(subtype);
+    if (atomName == nullptr) {
+      assignError(error, "AVFoundation video codec is outside native v1");
+      return std::nullopt;
+    }
+    configuration =
+        copyAtom(format, atomName, limits.maximumCodecConfigurationBytes);
+    if (!configuration) {
+      assignError(error,
+                  "video format lacks a bounded avcC/hvcC/vpcC/av1C atom");
+      return std::nullopt;
+    }
   }
   auto video = inspectVideoFormatFacts(format, codec, *configuration, limits);
   if (!video) {
@@ -2766,20 +2859,35 @@ void incrementInventory(media::MediaTrackInventory* inventory,
   return quarterTurn && video.identityTransform == (rotation == 0);
 }
 
+// The A/V half of the track-inventory contract, stated ONCE so the cold-open
+// gate and the descriptor's restatement of it cannot drift into two subtly
+// different copies (the same reason the coded-dimension rule was centralized).
+//
+// Native v1 is a video contract: at most one video track, and the inventory
+// and the selection must agree in both directions on each lane. Audio is
+// optional (an audio-less GIF-to-MP4 conversion enumerates none).
+//
+// TIMED-TEXT TRACKS ARE ADMITTED. A tx3g/mov_text subtitle track, a legacy
+// QuickTime 'text' track and a CEA-608 closed-caption track are all inert to
+// this backend: none is ever selected, opened by the reader, or decoded, so
+// none costs the video or audio lane a byte or a cycle. They were refused
+// originally because nothing downstream could show them; the subtitle lane now
+// can, and in any case a file's captions must never decide whether its picture
+// plays. The count still rides the bounded kHardMaximumTracks total.
+[[nodiscard]] bool trackInventoryAdmitted(
+    const media::MediaTrackInventory& inventory, bool hasVideoSelection,
+    bool hasAudioSelection) noexcept {
+  return inventory.video <= 1 &&
+         hasVideoSelection == (inventory.video != 0) &&
+         hasAudioSelection == (inventory.audio != 0) &&
+         (hasVideoSelection || hasAudioSelection);
+}
+
 [[nodiscard]] bool preservesLegacyNativeAdmission(
     const MediaSourceDescriptor& descriptor, std::string* error) {
   const auto& inventory = descriptor.inventory;
-  // Native v1 is a video contract, so exactly one video track and its
-  // selection stay mandatory. Audio is optional: an audio-less asset (a
-  // GIF-to-MP4 conversion, for instance) enumerates zero audio tracks and
-  // leaves selectedAudio unset. The two must agree in both directions - an
-  // inventory with audio that selected none, or a selection with no audio in
-  // the inventory, is a descriptor this backend never builds.
-  if (inventory.video > 1 || inventory.subtitle != 0 ||
-      inventory.text != 0 || inventory.closedCaption != 0 ||
-      descriptor.selectedVideo.has_value() != (inventory.video != 0) ||
-      descriptor.selectedAudio.has_value() != (inventory.audio != 0) ||
-      (!descriptor.selectedVideo && !descriptor.selectedAudio)) {
+  if (!trackInventoryAdmitted(inventory, descriptor.selectedVideo.has_value(),
+                              descriptor.selectedAudio.has_value())) {
     assignError(error,
                 "track inventory is outside the native video v1 contract");
     return false;
@@ -2826,12 +2934,22 @@ void incrementInventory(media::MediaTrackInventory* inventory,
     //                 arithmetic key on a nonzero declared framesPerPacket, so
     //                 admitting it would mean reworking the frozen converter
     //                 for a codec that already plays natively from Matroska.
-    //   ALAC          Admitted by the converter, but a standalone ALAC .m4a
-    //                 drained 1.9 s before its declared timeline ended
-    //                 ("audio backend drained before its exact timeline
-    //                 ended"). Its stated duration is not the decoded sample
-    //                 count and its final packet is short; that is a duration
-    //                 fact this route does not yet state exactly.
+    //
+    // ALAC used to be listed here too, for "drained before its exact timeline
+    // ended". ROOT-CAUSED AND FIXED 2026-09-04: the shortfall was this file's
+    // own doing. restateCompressedAudioPacketDurations above lengthens a short
+    // trailing unit back to mFramesPerPacket -- right for AAC, whose packet
+    // really does decode a full 1024 and whose trim really is an edit; wrong
+    // for ALAC, whose final packet really does hold fewer frames (272 of 4096
+    // on the measured fixture, stated by the MP4 sample table and again in the
+    // ALAC frame header, which is how AudioToolbox decodes it exactly). The
+    // converter therefore budgeted 44*4096 = 180,224 frames against a decoder
+    // that can only ever emit 176,400 and failed the end-of-stream equality by
+    // 3,824. ALAC now carries FLAC's tail-shortfall bound and FLAC's exact
+    // decoded duration; the decoder was always exact. The recorded "1.9 s" was
+    // a misreading -- that was the RENDERER's position at teardown, with the
+    // rest of the gap sitting as buffered PCM in the ring; the real shortfall
+    // was always one short packet.
     //
     // The Matroska route carries its own codec sweep and is unaffected by this.
     switch (onlyAudio->codec) {
@@ -2841,6 +2959,19 @@ void incrementInventory(media::MediaTrackInventory* inventory,
       case MediaCodec::Pcm:
       case MediaCodec::Ac3:
       case MediaCodec::Eac3:
+      //   ADPCM WAV     176,958-177,567 frames exact on 4-second IMA and MS
+      //                 chirp fixtures, mono and stereo, 44.1 kHz: produced
+      //                 frames equal the declared count (delta 0), cross-
+      //                 correlation lag against ffmpeg 0 frames, and every
+      //                 decoded frame bit-identical to ffmpeg's. Measured
+      //                 2026-09-04; see the amendment 12 note on
+      //                 MediaCodec::AdpcmIma for why the fixture is a chirp.
+      case MediaCodec::AdpcmIma:
+      case MediaCodec::AdpcmMs:
+      //   ALAC          176,400 frames exact on a 4.000 s 44.1 kHz stereo
+      //                 fixture whose final packet holds 272 of 4096; EOF at
+      //                 the declared duration with the tail bound above.
+      case MediaCodec::Alac:
         break;
       default:
         assignError(error,
@@ -2855,8 +2986,20 @@ void incrementInventory(media::MediaTrackInventory* inventory,
   if (track == nullptr || track->kind != MediaTrackKind::Video ||
       !track->video ||
       (track->codec != MediaCodec::H264 && track->codec != MediaCodec::Hevc &&
-       track->codec != MediaCodec::Av1 && track->codec != MediaCodec::Vp9) ||
-      track->codecConfiguration.empty() ||
+       track->codec != MediaCodec::Av1 && track->codec != MediaCodec::Vp9 &&
+       track->codec != MediaCodec::ProRes &&
+       track->codec != MediaCodec::Mjpeg) ||
+      // The nonempty-record requirement is INVERTED for the two codecs that
+      // have no record, exactly as supportedVideoTrack() inverts it in
+      // native_video_consumer.mm. These two lines must keep agreeing with that
+      // function: a shape this route admits and the consumer refuses turns a
+      // clean Unsupported into a mid-startup Failed.
+      ((track->codec == MediaCodec::ProRes ||
+        track->codec == MediaCodec::Mjpeg)
+           ? (!track->codecConfiguration.empty() ||
+              track->codecConfigurationKind !=
+                  MediaCodecConfigurationKind::None)
+           : track->codecConfiguration.empty()) ||
       (track->codec == MediaCodec::H264 &&
        track->codecConfigurationKind != MediaCodecConfigurationKind::AvcC) ||
       (track->codec == MediaCodec::Hevc &&
@@ -2923,10 +3066,26 @@ void incrementInventory(media::MediaTrackInventory* inventory,
   } else if (!hevcDepthMatches) {
     geometryRefusal =
         "HEVC bit depth disagrees with the decoded sample format";
-  } else if (video.sampleFormat !=
+  } else if (track->codec != MediaCodec::ProRes &&
+             track->codec != MediaCodec::Mjpeg &&
+             video.sampleFormat !=
                  media::MediaVideoSampleFormat::Yuv420EightBit &&
              video.sampleFormat !=
                  media::MediaVideoSampleFormat::Yuv420TenBit) {
+    // ProRes and Motion JPEG are exempt because this gate asks its question of
+    // the wrong artefact for them. It proves that the DECODED surface will be
+    // 4:2:0 by reading the coded sample format out of a parameter-set record --
+    // which is sound for every codec that HAS such a record, and impossible for
+    // these two, which have none (their sampleFormat is Unknown by
+    // construction; see inspectVideoFormatFacts).
+    //
+    // The same guarantee is made for them by a stronger mechanism, not a
+    // weaker one: both codecs pin their decompression session's output pixel
+    // format (codecNeedsPinnedOutputPixelFormat), so the surface is 4:2:0 by
+    // request rather than by inference, and validateOutputSurfaceContract
+    // re-checks the delivered format on EVERY frame and fails the stream
+    // closed if it ever differs. A parsed record only ever predicted what this
+    // pin actually compels.
     geometryRefusal = "selected video sample format is outside native v1";
   } else if (!media::mediaVideoHasFullCodedAperture(video)) {
     geometryRefusal =
@@ -2973,30 +3132,45 @@ void incrementInventory(media::MediaTrackInventory* inventory,
       videoCodec(CMFormatDescriptionGetMediaSubType(format)) != track.codec) {
     return false;
   }
-  const CFStringRef atomName = track.codec == MediaCodec::H264
-                                   ? CFSTR("avcC")
-                                   : track.codec == MediaCodec::Hevc
-                                         ? CFSTR("hvcC")
-                                         : nullptr;
-  if (atomName == nullptr) {
-    return false;
+  // ProRes and Motion JPEG have no atom to borrow or compare, so the record
+  // equality below is vacuous for them and the codec-plus-facts comparison is
+  // the whole check. Their descriptor's record is empty by contract (proven at
+  // admission and re-proven by supportedVideoTrack), so an EMPTY span is the
+  // honest thing to hand inspectVideoFormatFacts -- exactly what admission
+  // handed it.
+  const bool carriesNoConfigurationRecord =
+      track.codec == MediaCodec::ProRes || track.codec == MediaCodec::Mjpeg;
+  std::span<const std::byte> configuration;
+  if (carriesNoConfigurationRecord) {
+    if (!track.codecConfiguration.empty()) {
+      return false;
+    }
+  } else {
+    const CFStringRef atomName = track.codec == MediaCodec::H264
+                                     ? CFSTR("avcC")
+                                     : track.codec == MediaCodec::Hevc
+                                           ? CFSTR("hvcC")
+                                           : nullptr;
+    if (atomName == nullptr) {
+      return false;
+    }
+    CFDataRef data = borrowAtom(format, atomName);
+    if (data == nullptr) {
+      return false;
+    }
+    const CFIndex length = CFDataGetLength(data);
+    const UInt8* bytes = CFDataGetBytePtr(data);
+    if (length <= 0 || bytes == nullptr ||
+        static_cast<std::uint64_t>(length) !=
+            track.codecConfiguration.size() ||
+        std::memcmp(bytes, track.codecConfiguration.data(),
+                    track.codecConfiguration.size()) != 0) {
+      return false;
+    }
+    configuration = std::span<const std::byte>(
+        reinterpret_cast<const std::byte*>(bytes),
+        static_cast<std::size_t>(length));
   }
-  CFDataRef data = borrowAtom(format, atomName);
-  if (data == nullptr) {
-    return false;
-  }
-  const CFIndex length = CFDataGetLength(data);
-  const UInt8* bytes = CFDataGetBytePtr(data);
-  if (length <= 0 || bytes == nullptr ||
-      static_cast<std::uint64_t>(length) !=
-          track.codecConfiguration.size() ||
-      std::memcmp(bytes, track.codecConfiguration.data(),
-                  track.codecConfiguration.size()) != 0) {
-    return false;
-  }
-  const auto configuration = std::span<const std::byte>(
-      reinterpret_cast<const std::byte*>(bytes),
-      static_cast<std::size_t>(length));
   const MediaSourceLimits limits =
       media::clampMediaSourceLimits(requestedLimits);
   const auto video = inspectVideoFormatFacts(format, track.codec,
@@ -3311,17 +3485,10 @@ class ProductionGeneration final : public AVFoundationGeneration {
                                                 : firstVideoTrack;
         audioTrack = preferredAudioTrack != nil ? preferredAudioTrack
                                                 : firstAudioTrack;
-        // Native v1 admits exactly one video track and no timed-text tracks.
-        // Audio is optional: an asset that enumerates no audio track (a
-        // GIF-to-MP4 conversion, for instance) is admitted video-only and
-        // leaves selectedAudio unset. An enumerated audio track that could not
-        // be resolved to a selection - or a resolved track the inventory never
-        // counted - stays a rejection, so the two must agree exactly.
-        if (inventory.video > 1 || inventory.subtitle != 0 ||
-            inventory.text != 0 || inventory.closedCaption != 0 ||
-            (videoTrack != nil) != (inventory.video != 0) ||
-            (audioTrack != nil) != (inventory.audio != 0) ||
-            (videoTrack == nil && audioTrack == nil)) {
+        // One statement of the A/V inventory rule; see trackInventoryAdmitted.
+        // Timed-text tracks are admitted here and carried to the subtitle lane.
+        if (!trackInventoryAdmitted(inventory, videoTrack != nil,
+                                    audioTrack != nil)) {
           result.status = AVFoundationGenerationStatus::Unsupported;
           result.error =
               "asset track inventory is outside the native video v1 contract";

@@ -1940,6 +1940,112 @@ void testPreEntryCancellationArm() {
          "exact pre-entry cancel prevents creation of a seek generation");
 }
 
+// A QuickTime ProRes / Motion JPEG sample description: NO parameter-set atom
+// at all, and the descriptive extensions a real one carries. BitsPerComponent
+// is deliberately 12 because that is what every ffmpeg-written ProRes file
+// declares regardless of profile (measured 2026-09-04), including the 10-bit
+// Proxy and LT flavors -- admitting ProRes means not treating that field as a
+// depth statement.
+OwnedFormat makeRecordlessVideoFormat(OSType codec, bool withBitsPerComponent) {
+  CFMutableDictionaryRef extensions = CFDictionaryCreateMutable(
+      kCFAllocatorDefault, 0, &kCFTypeDictionaryKeyCallBacks,
+      &kCFTypeDictionaryValueCallBacks);
+  const std::int32_t depth = 24;
+  CFNumberRef depthNumber =
+      CFNumberCreate(kCFAllocatorDefault, kCFNumberSInt32Type, &depth);
+  CFDictionarySetValue(extensions, kCMFormatDescriptionExtension_Depth,
+                       depthNumber);
+  CFRelease(depthNumber);
+  if (withBitsPerComponent) {
+    const std::int32_t bits = 12;
+    CFNumberRef bitsNumber =
+        CFNumberCreate(kCFAllocatorDefault, kCFNumberSInt32Type, &bits);
+    CFDictionarySetValue(
+        extensions, kCMFormatDescriptionExtension_BitsPerComponent,
+        bitsNumber);
+    CFRelease(bitsNumber);
+  }
+  const std::int32_t fields = 1;
+  CFNumberRef fieldNumber =
+      CFNumberCreate(kCFAllocatorDefault, kCFNumberSInt32Type, &fields);
+  CFDictionarySetValue(extensions, kCMFormatDescriptionExtension_FieldCount,
+                       fieldNumber);
+  CFRelease(fieldNumber);
+  CMVideoFormatDescriptionRef format = nullptr;
+  CMVideoFormatDescriptionCreate(kCFAllocatorDefault, codec, 16, 16,
+                                 extensions, &format);
+  CFRelease(extensions);
+  return OwnedFormat(format);
+}
+
+// SESSION_HANDOFF amendment 11. Pins the whole ProRes/MJPEG admission decision:
+// which FourCCs map to which enumerator, that a record-less codec is admitted
+// with an EMPTY record and the None kind, that ProRes states its own 10-bit
+// coded depth rather than the container's 12, and that the ProRes 4444 family
+// is refused BY NAME rather than silently mis-dispatched onto the 422 decode
+// contract.
+void testProResAndMotionJpegAdmission() {
+  using namespace wam::macos::avfoundation_media_source_testing;
+  std::string error;
+
+  // All four ProRes 422 flavors are one decode contract and one enumerator.
+  for (const OSType flavor :
+       {kCMVideoCodecType_AppleProRes422Proxy, kCMVideoCodecType_AppleProRes422LT,
+        kCMVideoCodecType_AppleProRes422, kCMVideoCodecType_AppleProRes422HQ}) {
+    auto format = makeRecordlessVideoFormat(flavor, true);
+    auto track = inspectVideoFormat(
+        static_cast<CMVideoFormatDescriptionRef>(format.get()), 3, {60, 1},
+        MediaSourceLimits{}, &error);
+    expect(track && track->codec == MediaCodec::ProRes,
+           "every ProRes 422 flavor maps to the single ProRes enumerator");
+    expect(track && track->codecConfigurationKind ==
+                        MediaCodecConfigurationKind::None &&
+               track->codecConfiguration.empty(),
+           "ProRes is admitted with no configuration record at all");
+    // The container says 12; ProRes 422 codes 10, and 12 would be refused by
+    // mediaVideoColorAdmitted(). This is the assertion that fails if the
+    // container's field is ever adopted again.
+    expect(track && track->video && track->video->bitsPerComponent == 10,
+           "ProRes states its own 10-bit coded depth, not the container's 12");
+    expect(track && track->video &&
+               track->video->sampleFormat == MediaVideoSampleFormat::Unknown,
+           "ProRes has no record to parse, so its sample format stays Unknown");
+    expect(track && track->video &&
+               wam::media::mediaVideoColorAdmitted(*track->video),
+           "an untagged ProRes track passes the shared colour rule");
+  }
+
+  // The 4444 family is a DIFFERENT decode contract (-12916 across the family
+  // boundary, measured) and one enumerator cannot name both. It must be
+  // refused here, so the asset takes the clean fallback.
+  for (const OSType refused :
+       {kCMVideoCodecType_AppleProRes4444, kCMVideoCodecType_AppleProRes4444XQ}) {
+    auto format = makeRecordlessVideoFormat(refused, true);
+    auto track = inspectVideoFormat(
+        static_cast<CMVideoFormatDescriptionRef>(format.get()), 4, {60, 1},
+        MediaSourceLimits{}, &error);
+    expect(!track,
+           "the ProRes 4444 family is refused by name, not mis-dispatched "
+           "onto the 422 decode contract");
+  }
+
+  // Motion JPEG: same record-less shape, but it carries no BitsPerComponent
+  // and must not have one invented for it.
+  auto jpeg = makeRecordlessVideoFormat(kCMVideoCodecType_JPEG, false);
+  auto jpegTrack = inspectVideoFormat(
+      static_cast<CMVideoFormatDescriptionRef>(jpeg.get()), 5, {60, 1},
+      MediaSourceLimits{}, &error);
+  expect(jpegTrack && jpegTrack->codec == MediaCodec::Mjpeg,
+         "'jpeg' maps to the Mjpeg enumerator");
+  expect(jpegTrack && jpegTrack->codecConfigurationKind ==
+                          MediaCodecConfigurationKind::None &&
+             jpegTrack->codecConfiguration.empty(),
+         "Motion JPEG is admitted with no configuration record at all");
+  expect(jpegTrack && jpegTrack->video &&
+             jpegTrack->video->bitsPerComponent == 0,
+         "Motion JPEG declares no component depth and none is invented");
+}
+
 void testDescriptorExtractionAndBounds() {
   using namespace wam::macos::avfoundation_media_source_testing;
   auto h264 = makeVideoFormat();
@@ -2308,11 +2414,51 @@ void testDescriptorExtractionAndBounds() {
   multipleVideo.inventory.total = 3;
   expect(!preservesLegacyNativeAdmission(multipleVideo, &error),
          "a second unselected video track must preserve fallback behavior");
+  // EMBEDDED TIMED TEXT IS ADMITTED (2026-09-04, the tx3g/CEA-608 lane).
+  // A subtitle, legacy 'text' or closed-caption track is inert to this
+  // backend: it is never selected, opened by the reader, or decoded. Refusing
+  // it sent every captioned MP4 to the fallback engine and cost the file its
+  // hardware video path, which is a steep price for a track we simply ignore.
+  MediaSourceDescriptor embeddedSubtitle = admitted;
+  embeddedSubtitle.inventory.subtitle = 1;
+  embeddedSubtitle.inventory.total = 3;
+  expect(preservesLegacyNativeAdmission(embeddedSubtitle, &error),
+         "an embedded subtitle track must not cost the file native playback");
   MediaSourceDescriptor embeddedText = admitted;
-  embeddedText.inventory.subtitle = 1;
+  embeddedText.inventory.text = 1;
   embeddedText.inventory.total = 3;
-  expect(!preservesLegacyNativeAdmission(embeddedText, &error),
-         "embedded subtitle inventory must preserve fallback behavior");
+  expect(preservesLegacyNativeAdmission(embeddedText, &error),
+         "a legacy QuickTime text track must not cost the file native playback");
+  MediaSourceDescriptor embeddedCaptions = admitted;
+  embeddedCaptions.inventory.closedCaption = 1;
+  embeddedCaptions.inventory.total = 3;
+  expect(preservesLegacyNativeAdmission(embeddedCaptions, &error),
+         "a closed-caption track must not cost the file native playback");
+  MediaSourceDescriptor everyTimedText = admitted;
+  everyTimedText.inventory.subtitle = 2;
+  everyTimedText.inventory.text = 1;
+  everyTimedText.inventory.closedCaption = 1;
+  everyTimedText.inventory.total = 6;
+  expect(preservesLegacyNativeAdmission(everyTimedText, &error),
+         "several timed-text tracks at once are still admitted");
+
+  // Widening the gate must not have turned it into a pass-through: the lane
+  // agreement it exists to enforce still has to fail closed in both
+  // directions, with a timed-text track present.
+  MediaSourceDescriptor subtitleWithLyingAudio = embeddedSubtitle;
+  subtitleWithLyingAudio.inventory.audio = 0;
+  subtitleWithLyingAudio.inventory.total = 2;
+  expect(!preservesLegacyNativeAdmission(subtitleWithLyingAudio, &error),
+         "a selection with no matching audio inventory must still be refused");
+  MediaSourceDescriptor subtitleWithPhantomAudio = embeddedSubtitle;
+  subtitleWithPhantomAudio.selectedAudio.reset();
+  expect(!preservesLegacyNativeAdmission(subtitleWithPhantomAudio, &error),
+         "an audio inventory that selected nothing must still be refused");
+  MediaSourceDescriptor subtitleWithTwoVideo = embeddedSubtitle;
+  subtitleWithTwoVideo.inventory.video = 2;
+  subtitleWithTwoVideo.inventory.total = 4;
+  expect(!preservesLegacyNativeAdmission(subtitleWithTwoVideo, &error),
+         "a second video track is still refused when subtitles are present");
   MediaSourceDescriptor cropped = admitted;
   cropped.tracks[0].video->cleanAperture->width = {31, 2};
   expect(!preservesLegacyNativeAdmission(cropped, &error),
@@ -3560,6 +3706,7 @@ int main(int argc, char** argv) {
     testInitialPositionUsesOneReaderAndPreservesAudioPreroll();
     testPreEntryCancellationArm();
     testDescriptorExtractionAndBounds();
+    testProResAndMotionJpegAdmission();
     testHevcDescriptorHardening();
     testImmutableVideoFormatIdentity();
     testImmutableAudioLayoutIdentity();

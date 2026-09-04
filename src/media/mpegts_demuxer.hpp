@@ -297,6 +297,19 @@ class MpegTsPreparedAsset final
   [[nodiscard]] const MediaSourceLimits& limits() const noexcept;
   [[nodiscard]] MpegTsFraming framing() const noexcept;
   [[nodiscard]] std::uint16_t programNumber() const noexcept;
+  // The other services in the multiplex, in PAT order, that the selection rule
+  // passed over. Empty for the single-program stream almost every file is.
+  //
+  // A SEAM FOR A PROGRAM PICKER, deliberately not a feature: choosing between
+  // services is a user decision this player currently makes on their behalf,
+  // and publishing what it chose between is the honest half of that. Nothing
+  // consumes it yet.
+  [[nodiscard]] std::span<const std::uint16_t> otherPrograms() const noexcept;
+  // True when the selected program carried both a routable video and a routable
+  // audio stream. False means the rule fell through to its video-only tier and
+  // the file will play silent -- which is a fact worth stating rather than
+  // leaving the user to notice.
+  [[nodiscard]] bool programSelectionComplete() const noexcept;
   [[nodiscard]] std::span<const MpegTsIndexEntry> index() const noexcept;
   // The extended 90 kHz tick that the exported timeline treats as zero. Every
   // MediaTime this demuxer publishes is (extendedTick - originTick) / 90000,
@@ -311,6 +324,16 @@ class MpegTsPreparedAsset final
   // content, which is the same distinction Matroska draws against its first
   // Cue.
   [[nodiscard]] MediaTime videoOriginTime() const noexcept;
+  // The StreamMuxConfig of the selected audio stream when -- and only when --
+  // it is AAC in LOAS/LATM framing (stream type 0x11). Null for ADTS AAC and
+  // for every other codec, so it doubles as the framing discriminator the
+  // platform layer needs: MediaCodec::Aac alone cannot say which of the two
+  // framings the access units arrive in.
+  //
+  // A LOAS frame that reuses the established config carries none of its own, so
+  // the platform layer's per-frame walk cannot start from nothing. This is the
+  // config preparation already proved, handed over rather than hunted for again.
+  [[nodiscard]] const LatmStreamMuxConfig* latmStreamMuxConfig() const noexcept;
 
   [[nodiscard]] MpegTsPlanOutcome planGeneration(
       MediaTime target, MediaSeekMode mode,

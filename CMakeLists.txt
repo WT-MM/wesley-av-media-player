@@ -149,6 +149,8 @@ qt_add_executable(wam MACOSX_BUNDLE WIN32
   src/qt/player_controller.hpp
   src/qt/subtitle_sources.cpp
   src/qt/subtitle_sources.hpp
+  src/qt/subtitle_bitmap_provider.cpp
+  src/qt/subtitle_bitmap_provider.hpp
   src/qt/scroll_gesture.cpp
   src/qt/scroll_gesture.hpp
   src/qt/player_core.cpp
@@ -305,8 +307,22 @@ if(APPLE)
     src/media/matroska_demuxer.cpp
     src/media/subtitle_text.hpp
     src/media/subtitle_text.cpp
+    src/media/subtitle_bitmap.hpp
+    src/media/subtitle_bitmap.cpp
+    src/media/subtitle_pgs.hpp
+    src/media/subtitle_pgs.cpp
+    src/media/subtitle_vobsub.hpp
+    src/media/subtitle_vobsub.cpp
     src/media/matroska_subtitles.hpp
     src/media/matroska_subtitles.cpp
+    src/media/tx3g_text.hpp
+    src/media/tx3g_text.cpp
+    src/media/mp4_subtitles.hpp
+    src/media/mp4_subtitles.cpp
+    src/media/h264_caption_sei.hpp
+    src/media/h264_caption_sei.cpp
+    src/media/cea608_decoder.hpp
+    src/media/cea608_decoder.cpp
     src/media/mpegts_packet.hpp
     src/media/mpegts_packet.cpp
     src/media/mpegts_demuxer.hpp
@@ -924,6 +940,16 @@ if(BUILD_TESTING)
     target_link_libraries(wam_subtitle_text_test PRIVATE wam_native_core)
     add_test(NAME subtitle_text COMMAND wam_subtitle_text_test)
 
+    add_executable(wam_embedded_captions_test
+      tests/embedded_captions_test.cpp)
+    target_link_libraries(wam_embedded_captions_test PRIVATE wam_native_core)
+    add_test(NAME embedded_captions COMMAND wam_embedded_captions_test)
+
+    add_executable(wam_subtitle_bitmap_test
+      tests/subtitle_bitmap_test.cpp)
+    target_link_libraries(wam_subtitle_bitmap_test PRIVATE wam_native_core)
+    add_test(NAME subtitle_bitmap COMMAND wam_subtitle_bitmap_test)
+
     add_executable(wam_matroska_subtitles_test
       tests/matroska_subtitles_test.cpp)
     target_link_libraries(wam_matroska_subtitles_test PRIVATE wam_native_core)
@@ -953,6 +979,11 @@ if(BUILD_TESTING)
       tests/audio_downmix_test.cpp)
     target_link_libraries(wam_audio_downmix_test PRIVATE wam_native_core)
     add_test(NAME audio_downmix COMMAND wam_audio_downmix_test)
+
+    add_executable(wam_audio_codec_timing_test
+      tests/audio_codec_timing_test.cpp)
+    target_link_libraries(wam_audio_codec_timing_test PRIVATE wam_native_core)
+    add_test(NAME audio_codec_timing COMMAND wam_audio_codec_timing_test)
 
     add_executable(wam_matroska_flac_test
       tests/matroska_flac_test.cpp)
@@ -1042,11 +1073,14 @@ if(BUILD_TESTING)
         wam_matroska_aac_test
         wam_matroska_ebml_test
         wam_subtitle_text_test
+        wam_embedded_captions_test
+        wam_subtitle_bitmap_test
         wam_matroska_subtitles_test
         wam_matroska_opus_test
         wam_matroska_vorbis_test
         wam_matroska_ac3_test
         wam_audio_downmix_test
+        wam_audio_codec_timing_test
         wam_matroska_flac_test
         wam_matroska_mpeg_audio_test
         wam_matroska_demuxer_test
@@ -1069,11 +1103,14 @@ if(BUILD_TESTING)
       matroska_aac
       matroska_ebml
       subtitle_text
+      embedded_captions
+      subtitle_bitmap
       matroska_subtitles
       matroska_opus
       matroska_vorbis
       matroska_ac3
       audio_downmix
+      audio_codec_timing
       matroska_flac
       matroska_mpeg_audio
       matroska_demuxer
@@ -1140,8 +1177,15 @@ if(BUILD_TESTING)
     src/qt/player_controller.hpp
     src/qt/subtitle_sources.cpp
     src/qt/subtitle_sources.hpp
+    src/qt/subtitle_bitmap_provider.cpp
+    src/qt/subtitle_bitmap_provider.hpp
     src/media/subtitle_text.cpp
     src/media/matroska_subtitles.cpp
+    src/media/tx3g_text.cpp
+    src/media/mp4_subtitles.cpp
+    src/media/subtitle_bitmap.cpp
+    src/media/subtitle_pgs.cpp
+    src/media/subtitle_vobsub.cpp
     src/media/matroska_ebml.cpp
     src/qt/scroll_gesture.cpp
     src/qt/scroll_gesture.hpp
@@ -1171,8 +1215,15 @@ if(BUILD_TESTING)
     src/qt/player_controller.hpp
     src/qt/subtitle_sources.cpp
     src/qt/subtitle_sources.hpp
+    src/qt/subtitle_bitmap_provider.cpp
+    src/qt/subtitle_bitmap_provider.hpp
     src/media/subtitle_text.cpp
     src/media/matroska_subtitles.cpp
+    src/media/tx3g_text.cpp
+    src/media/mp4_subtitles.cpp
+    src/media/subtitle_bitmap.cpp
+    src/media/subtitle_pgs.cpp
+    src/media/subtitle_vobsub.cpp
     src/media/matroska_ebml.cpp
     src/qt/scroll_gesture.cpp
     src/qt/scroll_gesture.hpp
@@ -1267,8 +1318,15 @@ if(BUILD_TESTING)
       src/qt/player_controller.hpp
       src/qt/subtitle_sources.cpp
       src/qt/subtitle_sources.hpp
+      src/qt/subtitle_bitmap_provider.cpp
+      src/qt/subtitle_bitmap_provider.hpp
       src/media/subtitle_text.cpp
       src/media/matroska_subtitles.cpp
+    src/media/tx3g_text.cpp
+    src/media/mp4_subtitles.cpp
+      src/media/subtitle_bitmap.cpp
+      src/media/subtitle_pgs.cpp
+      src/media/subtitle_vobsub.cpp
       src/media/matroska_ebml.cpp
       src/qt/scroll_gesture.cpp
       src/qt/scroll_gesture.hpp
