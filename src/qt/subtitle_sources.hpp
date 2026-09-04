@@ -1,8 +1,10 @@
 #pragma once
 
 #include "media/matroska_subtitles.hpp"
+#include "media/mp4_subtitles.hpp"
 #include "media/subtitle_text.hpp"
 
+#include <QImage>
 #include <QObject>
 #include <QString>
 #include <QVariantList>
@@ -59,8 +61,20 @@ public:
     std::int64_t mpvSid{0};
     // Native route: where the cues come from. Exactly one is set.
     std::uint64_t matroskaTrack{0};
+    // An MP4/MOV tx3g ("mov_text") track, by its tkhd track_id. Track ids are
+    // 1-based in the format, so zero means "not an MP4 track" exactly the way
+    // a zero matroskaTrack means "not a Matroska track".
+    std::uint32_t mp4Track{0};
     media::subtitles::TextCodec codec{media::subtitles::TextCodec::Unknown};
+    // Set instead of `codec` for an embedded PGS or VobSub track. A source is
+    // a text source or a bitmap source; the two never both hold.
+    media::subtitles::BitmapCodec bitmapCodec{
+        media::subtitles::BitmapCodec::Unknown};
     std::filesystem::path filePath;
+
+    [[nodiscard]] bool isBitmap() const noexcept {
+      return media::subtitles::isBitmapCodec(bitmapCodec);
+    }
 
     // Same source, whatever id it currently holds. Ids are positional and are
     // reassigned on every rebuild; identity is not.
@@ -134,6 +148,33 @@ public:
   }
   [[nodiscard]] bool hasCues() const noexcept { return !cues_.empty(); }
 
+  // ---------------------------------------------------------------------
+  // Bitmap cue lane (PGS, VobSub). Same shape as the text lane above: loaded
+  // on the same worker, answered from memory, and never touching playback.
+  // ---------------------------------------------------------------------
+
+  // What the overlay should draw at a media time. `image` is the active cues
+  // composited into one picture, and the rectangle is normalised (0..1) against
+  // the subtitle canvas the track declares -- NOT against the video, which the
+  // overlay resolves for itself.
+  struct BitmapFrame {
+    bool visible{false};
+    QImage image;
+    double x{0.0};
+    double y{0.0};
+    double width{0.0};
+    double height{0.0};
+    // Bumped whenever `image` changes, so the view can bust its image cache.
+    quint64 serial{0};
+  };
+
+  // Recomputes only when the set of covering cues turns over; steady playback
+  // costs a lookup and a comparison.
+  [[nodiscard]] const BitmapFrame &bitmapFrameAt(double seconds);
+  [[nodiscard]] bool hasBitmapCues() const noexcept {
+    return !bitmap_.cues.empty();
+  }
+
   // Load a sidecar file's cues synchronously. Subtitle files are small enough
   // that a worker would only add a race; a media container is not, which is
   // why the embedded path is asynchronous and this one is not.
@@ -149,6 +190,10 @@ signals:
 private:
   void applyLoad(std::uint64_t generation,
                  media::matroska::SubtitleTrackLoad load);
+  void applyBitmapLoad(std::uint64_t generation,
+                       media::matroska::BitmapSubtitleTrackLoad load);
+  void clearBitmapCues();
+  void composeBitmapFrame();
   void setLoading(bool loading);
 
   std::vector<Source> sources_;
@@ -162,6 +207,14 @@ private:
   // implicitly-shared QString copy, with no allocation and no UTF-8 decode.
   std::ptrdiff_t hint_{-1};
   QString cached_text_;
+
+  media::subtitles::BitmapSubtitleContent bitmap_;
+  // Indices of the cues the composed frame was built from, so an unchanged set
+  // short-circuits recomposition.
+  std::vector<std::size_t> bitmap_active_;
+  std::vector<std::size_t> bitmap_scratch_;
+  BitmapFrame bitmap_frame_;
+  quint64 bitmap_serial_{0};
 
   // One worker at a time, always joined before it is replaced or destroyed --
   // a detached thread holding `this` is the one way this lane could outlive

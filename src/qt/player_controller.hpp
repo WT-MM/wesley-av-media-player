@@ -96,6 +96,27 @@ class PlayerController final : public QObject {
   // `sub-text` property (mpv keeps decoding and timing subtitles with its own
   // rendering switched off, which is what lets one overlay serve both).
   Q_PROPERTY(QString subtitleText READ subtitleText NOTIFY subtitleTextChanged)
+  // The bitmap subtitle overlay (PGS, VobSub). `subtitleBitmapSource` is an
+  // image:// URL resolved by SubtitleBitmapProvider; `subtitleBitmapRect` is
+  // normalised 0..1 against the SUBTITLE CANVAS the track declares, which is
+  // not necessarily the video's coded size, so the overlay maps it onto the
+  // video rectangle itself. The three always change together and share a
+  // signal.
+  Q_PROPERTY(QString subtitleBitmapSource READ subtitleBitmapSource NOTIFY
+                 subtitleBitmapChanged)
+  // Four scalars rather than one QRectF, for the same reason the crop
+  // rectangle is four: QML binds them individually and one signal covers the
+  // whole change.
+  Q_PROPERTY(double subtitleBitmapX READ subtitleBitmapX NOTIFY
+                 subtitleBitmapChanged)
+  Q_PROPERTY(double subtitleBitmapY READ subtitleBitmapY NOTIFY
+                 subtitleBitmapChanged)
+  Q_PROPERTY(double subtitleBitmapWidth READ subtitleBitmapWidth NOTIFY
+                 subtitleBitmapChanged)
+  Q_PROPERTY(double subtitleBitmapHeight READ subtitleBitmapHeight NOTIFY
+                 subtitleBitmapChanged)
+  Q_PROPERTY(bool subtitleBitmapVisible READ subtitleBitmapVisible NOTIFY
+                 subtitleBitmapChanged)
   // Every selectable subtitle SOURCE for the current media, in menu order:
   // embedded text tracks, then generated captions, then loaded files. Each
   // entry is {id, label, language, origin, isDefault, isForced}; `id` is what
@@ -220,6 +241,20 @@ public:
   [[nodiscard]] double rate() const { return rate_; }
   [[nodiscard]] bool captionsVisible() const { return captions_visible_; }
   [[nodiscard]] QString subtitleText() const { return subtitle_text_; }
+  [[nodiscard]] QString subtitleBitmapSource() const {
+    return subtitle_bitmap_source_;
+  }
+  [[nodiscard]] double subtitleBitmapX() const { return subtitle_bitmap_x_; }
+  [[nodiscard]] double subtitleBitmapY() const { return subtitle_bitmap_y_; }
+  [[nodiscard]] double subtitleBitmapWidth() const {
+    return subtitle_bitmap_width_;
+  }
+  [[nodiscard]] double subtitleBitmapHeight() const {
+    return subtitle_bitmap_height_;
+  }
+  [[nodiscard]] bool subtitleBitmapVisible() const {
+    return subtitle_bitmap_visible_;
+  }
   [[nodiscard]] QVariantList subtitleTracks() const;
   [[nodiscard]] int activeSubtitleTrack() const;
   [[nodiscard]] bool preservePitch() const { return preserve_pitch_; }
@@ -369,6 +404,7 @@ signals:
   void rateChanged();
   void captionsVisibleChanged();
   void subtitleTextChanged();
+  void subtitleBitmapChanged();
   void subtitleTracksChanged();
   void activeSubtitleTrackChanged();
   void preservePitchChanged();
@@ -765,6 +801,7 @@ private:
   // Re-evaluates the on-screen line for the current position. Only the native
   // route needs this; on the compatibility route mpv pushes the text instead.
   void updateSubtitleForPosition();
+  void updateSubtitleBitmapForPosition();
   void resetSubtitlesForMediaChange();
   [[nodiscard]] bool nativeSubtitleRouteActive() const;
   // Adds a sidecar subtitle file on whichever route is live and selects it.
@@ -863,6 +900,12 @@ private:
   ::wam::CaptionService caption_service_;
   std::unique_ptr<SubtitleSources> subtitles_;
   QString subtitle_text_;
+  QString subtitle_bitmap_source_;
+  double subtitle_bitmap_x_{0.0};
+  double subtitle_bitmap_y_{0.0};
+  double subtitle_bitmap_width_{0.0};
+  double subtitle_bitmap_height_{0.0};
+  bool subtitle_bitmap_visible_{false};
   // The source the subtitle list was last built for, and under which engine.
   // A route flip (native admission refused mid-open) must rebuild the list
   // from the engine that actually ended up playing.

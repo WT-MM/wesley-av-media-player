@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <iostream>
 #include <span>
 #include <vector>
@@ -342,9 +343,81 @@ void testApplyIsInertOnAnInvalidMatrix() {
          "a frame count the buffer cannot hold folds nothing");
 }
 
+// The coefficients this module ships are not merely CLOSE to libswresample's
+// float matrix -- they are the same float32 values, bit for bit. Every column
+// below was recovered from ffmpeg itself rather than looked up: for each source
+// channel k of a layout, a signal that is exactly 1.0 on k and 0.0 elsewhere
+// was pushed through `ffmpeg -ac 2 -c:a pcm_f32le`, and because the downmix is
+// a memoryless linear map the resulting (L, R) pair IS column k, exactly, with
+// no fitting and no tolerance (scratchpad/audio_gaps/probe_matrix.py,
+// 2026-09-04, ffmpeg 9.0.1).
+//
+// The comparison is on the BIT PATTERN, not a tolerance, because that is the
+// actual claim: a tolerance test would still pass if someone replaced the
+// constant with 0.7071 and quietly moved every surround by 0.0001.
+void testCoefficientsAreBitExactWithFfmpegFloat() {
+  const auto bits = [](float value) {
+    std::uint32_t raw = 0;
+    static_assert(sizeof(raw) == sizeof(value));
+    std::memcpy(&raw, &value, sizeof(raw));
+    return raw;
+  };
+  // 0x3f3504f3 == 0.7071067690849304f, ffmpeg's M_SQRT1_2 rounded to float.
+  // Measured identically on the 5.1 centre and surround columns, on BOTH the
+  // side and the back pair of 7.1, and on 6.1's side pair.
+  expect(bits(kDownmixCenterCoefficient) == 0x3F3504F3U,
+         "the centre coefficient is ffmpeg's float M_SQRT1_2 bit for bit");
+  expect(bits(kDownmixSurroundCoefficient) == 0x3F3504F3U,
+         "the surround coefficient is ffmpeg's float M_SQRT1_2 bit for bit");
+  // 6.1's rear centre: swresample applies slev * M_SQRT1_2, and the product it
+  // stores is exactly 0.5f (0x3f000000), measured on the BC column of both
+  // 6.1 and 6.1(back).
+  expect(bits(kDownmixSurroundCenterCoefficient) == 0x3F000000U,
+         "the rear-centre coefficient is exactly 0.5 bit for bit");
+  expect(bits(kDownmixLowFrequencyCoefficient) == 0x00000000U,
+         "LFE is excluded by an exact zero, as swresample's default is");
+
+  // 7.1 as ffmpeg orders it (FL FR FC LFE BL BR SL SR): the BACK pair and the
+  // SIDE pair each measured 0.7071067690849304 into their own side and exactly
+  // zero into the other. Nothing is halved for there being two pairs -- the
+  // row sum reaches 1 + 4*(1/sqrt2) here, and mpv does not normalise either.
+  const std::array<AudioChannelRole, 8> sevenOne{
+      AudioChannelRole::Left,         AudioChannelRole::Right,
+      AudioChannelRole::Center,       AudioChannelRole::LowFrequency,
+      AudioChannelRole::SurroundLeft, AudioChannelRole::SurroundRight,
+      AudioChannelRole::SurroundLeft, AudioChannelRole::SurroundRight};
+  const StereoDownmixMatrix matrix = buildStereoDownmixMatrix(sevenOne);
+  expect(matrix.admitted(), "7.1 with a side and a back pair is admitted");
+  for (const std::size_t index : {std::size_t{4}, std::size_t{6}}) {
+    expect(bits(matrix.left[index]) == 0x3F3504F3U,
+           "each 7.1 left surround reaches left at ffmpeg's exact float");
+    expect(bits(matrix.right[index]) == 0x00000000U,
+           "each 7.1 left surround reaches right at exactly zero");
+  }
+  for (const std::size_t index : {std::size_t{5}, std::size_t{7}}) {
+    expect(bits(matrix.right[index]) == 0x3F3504F3U,
+           "each 7.1 right surround reaches right at ffmpeg's exact float");
+    expect(bits(matrix.left[index]) == 0x00000000U,
+           "each 7.1 right surround reaches left at exactly zero");
+  }
+
+  // 6.1 (FL FR FC LFE BC SL SR): the rear centre splits exactly equally.
+  const std::array<AudioChannelRole, 7> sixOne{
+      AudioChannelRole::Left,          AudioChannelRole::Right,
+      AudioChannelRole::Center,        AudioChannelRole::LowFrequency,
+      AudioChannelRole::SurroundCenter, AudioChannelRole::SurroundLeft,
+      AudioChannelRole::SurroundRight};
+  const StereoDownmixMatrix sixOneMatrix = buildStereoDownmixMatrix(sixOne);
+  expect(sixOneMatrix.admitted(), "6.1 with a rear centre is admitted");
+  expect(bits(sixOneMatrix.left[4]) == 0x3F000000U &&
+             bits(sixOneMatrix.right[4]) == 0x3F000000U,
+         "6.1's rear centre splits at exactly 0.5 into both outputs");
+}
+
 } // namespace
 
 int main() {
+  testCoefficientsAreBitExactWithFfmpegFloat();
   testCoefficientsPerCodecLayout();
   testCentreLandsEquallyWhateverTheIndex();
   testLowFrequencyIsExcluded();

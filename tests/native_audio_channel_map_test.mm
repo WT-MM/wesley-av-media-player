@@ -66,7 +66,7 @@ constexpr AudioChannelRole kCs = AudioChannelRole::SurroundCenter;
 constexpr AudioChannelRole kX = AudioChannelRole::Unmapped;
 
 void testMeasuredDecoderLayouts() {
-  const std::array<LayoutCase, 9> cases{
+  const std::array<LayoutCase, 12> cases{
       // The three DIFFERENT 5.1 orders one identical fixture produced.
       LayoutCase{"AAC-LC 5.1", 0x007C0006U, 6,
                  {kC, kL, kR, kSl, kSr, kE, kX, kX}},
@@ -78,6 +78,23 @@ void testMeasuredDecoderLayouts() {
       // the same coefficient.
       LayoutCase{"FLAC 7.1", 0x00BD0008U, 8,
                  {kL, kR, kC, kE, kSl, kSr, kSl, kSr}},
+      // The 7.1 and 6.1 arrangements a real AAC fixture produces, measured
+      // 2026-09-04 (scratchpad/audio_gaps/wamconv.mm) with the converter
+      // configured exactly as native_audio_converter.mm configures it: the
+      // decompression magic cookie set FIRST, then the input layout tag. The
+      // cookie is load-bearing for this answer -- without it the same
+      // converter, on the same file, reports the front-wide 0x007F0008 below
+      // instead, and the file would be refused for labels its bytes do not
+      // carry. AAC is C-first, and its side pair and rear pair carry different
+      // labels with the same coefficient.
+      LayoutCase{"AAC 7.1", 0x00B70008U, 8,
+                 {kC, kL, kR, kSl, kSr, kSl, kSr, kE}},
+      LayoutCase{"AAC 6.1", 0x008E0007U, 7,
+                 {kC, kL, kR, kSl, kSr, kCs, kE}},
+      // Multichannel LPCM (a 6.1 .wav) states the same family as FLAC and is
+      // L-first, so the rear centre lands at index 4 rather than index 5.
+      LayoutCase{"LPCM 6.1", 0x00BC0007U, 7,
+                 {kL, kR, kC, kE, kCs, kSl, kSr}},
       LayoutCase{"AC-3 3/2 (5.0)", 0x00770005U, 5,
                  {kL, kC, kR, kSl, kSr, kX, kX, kX}},
       LayoutCase{"AC-3 2/2 (quad)", 0x00840004U, 4,

@@ -340,12 +340,12 @@ CMVideoFormatDescriptionRef createMpegTsVideoFormatDescription(
   return description;
 }
 
-bool layOutMpegTsAudioFrames(std::span<const std::byte> payload,
-                             MediaCodec codec, std::uint32_t sampleRate,
-                             std::uint32_t channels,
-                             std::uint32_t framesPerPacket,
-                             MpegTsAudioFrameLayout& layout,
-                             std::string* error) noexcept {
+bool layOutMpegTsAudioFrames(
+    std::span<const std::byte> payload, MediaCodec codec,
+    const media::mpegts::LatmStreamMuxConfig* latmConfig,
+    std::uint32_t sampleRate, std::uint32_t channels,
+    std::uint32_t framesPerPacket, MpegTsAudioFrameLayout& layout,
+    std::string* error) noexcept {
   layout.reset();
   if (payload.empty() || sampleRate == 0 || channels == 0 ||
       framesPerPacket == 0) {
@@ -360,7 +360,50 @@ bool layOutMpegTsAudioFrames(std::span<const std::byte> payload,
     std::uint32_t rate = 0;
     std::uint32_t frameChannels = 0;
     std::uint32_t decoded = 0;
-    if (codec == MediaCodec::Aac) {
+    // Where this access unit begins inside `rest`, as a byte and a bit. Every
+    // byte-aligned framing leaves the shift at zero and the offset at its
+    // header length, which is exactly what the previous code derived.
+    std::uint32_t payloadOffset = 0;
+    std::uint32_t payloadBitShift = 0;
+    std::uint32_t payloadBytes = 0;
+    if (codec == MediaCodec::Aac && latmConfig != nullptr) {
+      media::mpegts::LatmFrame frame{};
+      const media::mpegts::LatmStatus status =
+          media::mpegts::parseLatmFrame(rest, latmConfig, frame);
+      if (status != media::mpegts::LatmStatus::Ok) {
+        // Named, not swallowed. A `break` here would fall through to the
+        // "does not divide into whole access units" refusal below and lose
+        // which of the six LATM verdicts actually fired -- the difference
+        // between a truncated PES, a mid-stream mux change and a config this
+        // route does not carry.
+        if (status == media::mpegts::LatmStatus::NotSynced && cursor > 0) {
+          break;  // trailing bytes: the remainder check below rules on them
+        }
+        const std::string reason =
+            std::string("mpeg-ts LOAS/LATM frame refused: ") +
+            media::mpegts::latmStatusName(status);
+        assignError(error, reason.c_str());
+        layout.reset();
+        return false;
+      }
+      // A StreamMuxConfig restated mid-stream must describe the SAME decoder.
+      // The ADTS path makes the identical check against every frame's header;
+      // this is that check, against the only place LATM states it.
+      if (frame.configPresent && !frame.config.sameDecoder(*latmConfig)) {
+        assignError(error,
+                    "mpeg-ts LOAS/LATM StreamMuxConfig changes mid-stream");
+        layout.reset();
+        return false;
+      }
+      frameBytes = frame.frameBytes;
+      payloadOffset = frame.payloadBitOffset / 8U;
+      payloadBitShift = frame.payloadBitOffset % 8U;
+      payloadBytes = frame.payloadBytes;
+      headerBytes = 0;  // not a byte-aligned prefix; see payloadOffset
+      rate = frame.config.sampleRate;
+      frameChannels = frame.config.channelConfiguration;
+      decoded = framesPerPacket;
+    } else if (codec == MediaCodec::Aac) {
       AdtsHeader header{};
       if (!media::mpegts::parseAdtsHeader(rest, header)) {
         break;
@@ -375,15 +418,17 @@ bool layOutMpegTsAudioFrames(std::span<const std::byte> payload,
       decoded = framesPerPacket;
     } else if (codec == MediaCodec::Ac3 || codec == MediaCodec::Eac3) {
       Ac3SyncFrame frame{};
-      if (!media::mpegts::parseAc3SyncFrame(rest, frame)) {
+      if (!media::mpegts::parseAc3OrEac3SyncFrame(rest, frame)) {
         break;
       }
       frameBytes = frame.frameBytes;
       headerBytes = 0;
       rate = frame.sampleRate;
-      frameChannels =
-          static_cast<std::uint32_t>(frame.channels) + (frame.lfe ? 1U : 0U);
-      decoded = framesPerPacket;
+      // `channels` already includes LFE; adding it again double-counted the
+      // subwoofer on any stream that had one, which no stream on this route
+      // ever did because >2 channels was refused at admission.
+      frameChannels = frame.channels;
+      decoded = frame.samplesPerFrame;
     } else if (codec == MediaCodec::Mp3) {
       MpegAudioFrame frame{};
       if (!media::mpegts::parseMpegAudioFrame(rest, frame)) {
@@ -403,6 +448,21 @@ bool layOutMpegTsAudioFrames(std::span<const std::byte> payload,
         headerBytes >= frameBytes) {
       break;
     }
+    // The byte-aligned framings state their access unit as "the frame minus a
+    // header"; LATM stated it explicitly above. Normalize to one shape so the
+    // copy has a single rule.
+    if (payloadBytes == 0) {
+      payloadOffset = headerBytes;
+      payloadBytes = frameBytes - headerBytes;
+    }
+    // The access unit, including the trailing byte a nonzero shift straddles
+    // into, must lie inside the frame this iteration claimed.
+    const std::uint64_t lastSourceByte =
+        static_cast<std::uint64_t>(payloadOffset) + payloadBytes +
+        (payloadBitShift != 0U ? 1U : 0U);
+    if (payloadBytes == 0 || lastSourceByte > frameBytes) {
+      break;
+    }
     // Every access unit in one generation must restate the SAME format. A
     // mid-stream rate or channel change is a format change this backend does
     // not implement, and letting one through would publish PCM the converter's
@@ -419,8 +479,12 @@ bool layOutMpegTsAudioFrames(std::span<const std::byte> payload,
     }
     layout.sourceOffset[layout.count] = static_cast<std::uint32_t>(cursor);
     layout.sourceSize[layout.count] = frameBytes;
-    layout.outputSize[layout.count] = frameBytes - headerBytes;
-    layout.outputBytes += frameBytes - headerBytes;
+    layout.outputSize[layout.count] = payloadBytes;
+    layout.outputOffset[layout.count] =
+        static_cast<std::uint32_t>(cursor) + payloadOffset;
+    layout.outputBitShift[layout.count] =
+        static_cast<std::uint8_t>(payloadBitShift);
+    layout.outputBytes += payloadBytes;
     layout.decodedFrames += framesPerPacket;
     ++layout.count;
     cursor += frameBytes;
@@ -588,8 +652,8 @@ MpegTsSampleBuildStatus buildMpegTsCompressedSampleBuffer(
       return MpegTsSampleBuildStatus::Failed;
     }
     MpegTsAudioFrameLayout& layout = *inputs.audioLayout;
-    if (!layOutMpegTsAudioFrames(gathered, inputs.codec, inputs.audioSampleRate,
-                                 inputs.audioChannels,
+    if (!layOutMpegTsAudioFrames(gathered, inputs.codec, inputs.latmConfig,
+                                 inputs.audioSampleRate, inputs.audioChannels,
                                  inputs.audioFramesPerPacket, layout, error)) {
       return MpegTsSampleBuildStatus::Failed;
     }
@@ -598,11 +662,27 @@ MpegTsSampleBuildStatus buildMpegTsCompressedSampleBuffer(
     }
     std::size_t written = 0;
     for (std::size_t index = 0; index < layout.count; ++index) {
-      const std::size_t skip =
-          layout.sourceSize[index] - layout.outputSize[index];
-      std::memcpy(destination.data() + written,
-                  gathered.data() + layout.sourceOffset[index] + skip,
-                  layout.outputSize[index]);
+      const std::byte* source = gathered.data() + layout.outputOffset[index];
+      const std::uint32_t shift = layout.outputBitShift[index];
+      if (shift == 0) {
+        std::memcpy(destination.data() + written, source,
+                    layout.outputSize[index]);
+      } else {
+        // LOAS/LATM only. Each output byte is the low (8 - shift) bits of one
+        // source byte followed by the high `shift` bits of the next; the layout
+        // proved the extra byte is inside the frame. This is the ONE place the
+        // TS route touches audio payload bits, and it is the price of a framing
+        // that does not byte-align its access units.
+        const std::uint32_t low = 8U - shift;
+        for (std::size_t i = 0; i < layout.outputSize[index]; ++i) {
+          const auto high = static_cast<std::uint32_t>(
+              static_cast<unsigned char>(source[i]));
+          const auto rest = static_cast<std::uint32_t>(
+              static_cast<unsigned char>(source[i + 1]));
+          destination[written + i] = static_cast<std::byte>(
+              ((high << shift) | (rest >> low)) & 0xFFU);
+        }
+      }
       written += layout.outputSize[index];
     }
     blockBytes = layout.outputBytes;

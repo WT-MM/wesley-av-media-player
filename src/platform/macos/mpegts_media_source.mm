@@ -315,6 +315,9 @@ struct MpegTsMediaSource::Impl {
   std::optional<MediaTime> audioProofCeiling;
   MediaCodec videoCodec{MediaCodec::Unknown};
   MediaCodec audioCodec{MediaCodec::Unknown};
+  // Borrowed from the prepared asset, which owns it and outlives this source.
+  // Non-null selects LOAS/LATM framing for the AAC frame walk.
+  const media::mpegts::LatmStreamMuxConfig* latmConfig{nullptr};
   MediaTime audioDecodeStart{};
   std::int64_t audioFramesPerPacket{0};
   std::int32_t audioSampleRate{0};
@@ -563,6 +566,11 @@ struct MpegTsMediaSource::Impl {
     inputs.audioChannels = audioChannels;
     inputs.audioFramesPerPacket =
         static_cast<std::uint32_t>(audioFramesPerPacket);
+    // Non-null exactly when the selected audio stream is AAC in LOAS/LATM
+    // framing. It is the config the DEMUXER proved at preparation, not one
+    // rediscovered here, which is what lets a generation start on any LOAS
+    // frame -- including the config-less one a seek almost always lands on.
+    inputs.latmConfig = video ? nullptr : latmConfig;
     inputs.audioPresentationTime = audioPresentation;
     MpegTsScopedSampleBuffer owned;
     const MpegTsSampleBuildStatus built =
@@ -767,6 +775,7 @@ struct MpegTsMediaSource::Impl {
     audioNextFrame = 0;
     audioAnchored = false;
     audioCodec = MediaCodec::Unknown;
+    latmConfig = nullptr;
     if (!descriptor->selectedAudio) {
       return true;
     }
@@ -789,6 +798,13 @@ struct MpegTsMediaSource::Impl {
     audioFramesPerPacket = framesPerPacket;
     audioChannels = track->audio->channels;
     audioCodec = track->codec;
+    // The asset owns this config and outlives every generation built from it,
+    // so borrowing a pointer is safe; it is re-read on each generation rather
+    // than cached across one, because a reopen may swap the asset.
+    if (audioCodec == MediaCodec::Aac && assetContext != nullptr &&
+        assetContext->asset() != nullptr) {
+      latmConfig = assetContext->asset()->latmStreamMuxConfig();
+    }
     return true;
   }
 

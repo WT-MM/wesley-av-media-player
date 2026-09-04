@@ -1,6 +1,7 @@
 #pragma once
 
 #include "media/matroska_ebml.hpp"
+#include "media/subtitle_bitmap.hpp"
 #include "media/subtitle_text.hpp"
 
 #include <cstdint>
@@ -27,15 +28,20 @@
 //   * admission is unaffected: an unreadable or absent subtitle track degrades
 //     to "no subtitle tracks", never to a playback failure.
 //
-// Bitmap subtitles (S_HDMV/PGS, S_VOBSUB) are out of scope and are simply not
-// reported as tracks: they need a bitmap decoder and a compositing surface,
-// which is a different feature from a text overlay.
+// Bitmap subtitles (S_HDMV/PGS, S_VOBSUB) ARE in scope as of the bitmap
+// subtitle work: they are reported as tracks like any other and are read by
+// loadMatroskaBitmapSubtitleTrack below, which runs on this same private
+// descriptor and obeys the same "never disturb playback" rule. A track is
+// either a text track or a bitmap track, never both -- `codec` and
+// `bitmapCodec` are mutually exclusive and exactly one is set.
 namespace wam::media::matroska {
 
 struct SubtitleTrackInfo {
   // Matroska TrackNumber -- the identity the cue loader takes.
   std::uint64_t number{0};
   subtitles::TextCodec codec{subtitles::TextCodec::Unknown};
+  // Set instead of `codec` for S_HDMV/PGS and S_VOBSUB.
+  subtitles::BitmapCodec bitmapCodec{subtitles::BitmapCodec::Unknown};
   // TrackEntry/Language, ISO 639-2 ("eng", "fre"). "und" when absent.
   // LanguageBCP47 (0x22B59D) is deliberately NOT consulted; the EBML parser
   // does not collect it today and Language is present on every real mux.
@@ -95,5 +101,35 @@ struct SubtitleTrackLoad {
 [[nodiscard]] SubtitleTrackLoad loadMatroskaSubtitleTrack(
     SeekableByteReader& reader, std::uint64_t trackNumber,
     subtitles::TextCodec codec, CancellationToken cancellation = {}) noexcept;
+
+// ---------------------------------------------------------------------------
+// Bitmap subtitle tracks (S_HDMV/PGS, S_VOBSUB).
+// ---------------------------------------------------------------------------
+
+struct BitmapSubtitleTrackLoad {
+  subtitles::BitmapSubtitleContent content;
+  bool ok{false};
+  bool cancelled{false};
+  std::string error;
+};
+
+// One bounded pass over the container with only `trackNumber` selected, exactly
+// like the text loader, decoding each Block through the PGS or VobSub decoder.
+//
+// A bitmap Block is larger than a text Block -- a full-width presentation
+// graphic is tens of kilobytes -- so this pass uses its own, larger per-Block
+// bound. It is still a few hundred kilobytes per cue at worst, read on a worker
+// thread through this lane's own descriptor.
+//
+// VobSub needs the track's CodecPrivate (the .idx palette); the loader reads it
+// during the header pass and hands it to the decoder, so the caller does not
+// have to.
+[[nodiscard]] BitmapSubtitleTrackLoad loadMatroskaBitmapSubtitleTrack(
+    const std::filesystem::path& path, std::uint64_t trackNumber,
+    subtitles::BitmapCodec codec, CancellationToken cancellation = {}) noexcept;
+
+[[nodiscard]] BitmapSubtitleTrackLoad loadMatroskaBitmapSubtitleTrack(
+    SeekableByteReader& reader, std::uint64_t trackNumber,
+    subtitles::BitmapCodec codec, CancellationToken cancellation = {}) noexcept;
 
 }  // namespace wam::media::matroska

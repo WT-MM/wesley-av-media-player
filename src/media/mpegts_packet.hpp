@@ -336,6 +336,35 @@ struct ProgramMapTable {
                                           const SectionHeader& header,
                                           ProgramMapTable& table) noexcept;
 
+// How good a program is as a choice, as a single ordered grade.
+//
+// A multi-program transport stream is a MULTIPLEX: several independent services
+// sharing one file, and nothing in the container says which one a player should
+// present. Choosing is therefore a policy, and this is where it is stated so it
+// can be tested against a PMT directly instead of only through a whole file.
+//
+// THE RULE:
+//   1. Prefer the first program, in PAT order, graded Complete.
+//   2. Failing that, the first graded VideoOnly. (An audio-less service, or one
+//      whose only audio is in a codec this player does not carry, is still
+//      worth playing.)
+//   3. Failing that, refuse by verdict.
+// PAT order breaks every tie because it is the only ordering the container
+// itself states. Program NUMBER is not it -- a PAT may legally list program 3
+// before program 1 -- and neither is bitrate or resolution, which would make
+// the choice depend on facts a bounded PSI scan does not have.
+enum class ProgramGrade : std::uint8_t {
+  None = 0,       // no ROUTABLE video stream: not a candidate at all
+  VideoOnly = 1,  // routable video, no routable audio
+  Complete = 2,   // routable video and routable audio
+};
+
+// Routable, not merely present: a video-kind stream whose codec is Unknown used
+// to win the selection and then fail admission, taking the whole file to
+// fallback while a complete program sat untouched in the same PAT.
+[[nodiscard]] ProgramGrade
+gradeProgram(const ProgramMapTable& table) noexcept;
+
 // Maps a PMT stream type (plus its descriptor facts) onto WAM's routing
 // family. Returns Unknown for anything the native route does not carry; the
 // caller turns that into a typed verdict rather than a silent skip.
@@ -572,20 +601,164 @@ struct AdtsHeader {
 [[nodiscard]] std::uint32_t
 adtsSampleRateForIndex(std::uint8_t index) noexcept;
 
+// --- LOAS / LATM (stream type 0x11) ---------------------------------------
+//
+// DVB and most European captures carry AAC in the LOAS sync layer rather than
+// in ADTS. The payload is the SAME raw AAC access unit the ADTS path strips
+// its header off -- proved byte-for-byte against ADTS twins of the same encode
+// on all six specimens of this lane's matrix, 1,629/1,629 access units -- so
+// everything downstream of the framing (the ES_Descriptor cookie, the 1024
+// frame grid, the audio-authoritative clock) is reused UNCHANGED. Only the
+// framing differs, and it differs in one way that matters:
+//
+// THE ACCESS UNIT IS NOT BYTE-ALIGNED INSIDE THE FRAME. AudioMuxElement opens
+// with a single useSameStreamMux bit, so on every frame that reuses the
+// established StreamMuxConfig the payload begins at bit offset 1 + 8k -- never
+// on a byte boundary. ADTS gets away with a `headerBytes` skip; this cannot,
+// which is why latmCopyPayload exists and why the frame layout below carries a
+// bit offset rather than a byte one.
+//
+// ADMITTED SHAPE. This route carries the shape ffmpeg's latm muxer and DVB
+// broadcast actually emit: allStreamsSameTimeFraming = 1, numProgram = 0,
+// numLayer = 0, numSubFrames = 0, frameLengthType = 0, audioMuxVersionA = 0.
+// Every other legal StreamMuxConfig is refused BY NAME (UnsupportedMux) rather
+// than mis-framed. That restriction is what lets a frame with
+// useSameStreamMux = 1 be parsed against the established config alone, with no
+// per-frame decoder state, which in turn is what makes a seek land correctly:
+// the frame a generation starts on is almost never the one carrying the
+// config.
+inline constexpr std::uint16_t kLoasSyncWord{0x2B7};  // 11 bits
+inline constexpr std::size_t kLoasHeaderBytes{3};
+// audioMuxLengthBytes is 13 bits, so a frame is at most 3 + 8191 bytes.
+inline constexpr std::uint32_t kMaximumLoasMuxLengthBytes{0x1FFF};
+inline constexpr std::uint32_t kMaximumLoasFrameBytes{
+    static_cast<std::uint32_t>(kLoasHeaderBytes) + kMaximumLoasMuxLengthBytes};
+// An AudioSpecificConfig this route admits is 2 bytes (canonical AAC-LC) or 5
+// (the ffmpeg form carrying an explicit "SBR absent" sync extension). Eight
+// bounds both with room and keeps the config trivially copyable.
+inline constexpr std::size_t kMaximumLatmAudioSpecificConfigBytes{8};
+
+enum class LatmStatus : std::uint8_t {
+  Ok,
+  NotSynced,           // no LOAS sync word at offset 0
+  Incomplete,          // the span ends before the declared frame does
+  Malformed,           // structure impossible within the frame
+  UnsupportedMux,      // a legal StreamMuxConfig shape this route does not carry
+  ConfigUnavailable,   // useSameStreamMux = 1 with no established config
+};
+
+[[nodiscard]] const char* latmStatusName(LatmStatus status) noexcept;
+
+// The StreamMuxConfig facts recovered from the sync layer. `audioSpecificConfig`
+// holds the ASC left-aligned and zero-padded -- exactly the canonical byte form
+// an ESDS cookie builder and an ADTS-derived ASC both present -- so the shared
+// AAC admission consumes it without knowing which framing produced it.
+struct LatmStreamMuxConfig {
+  std::array<std::byte, kMaximumLatmAudioSpecificConfigBytes>
+      audioSpecificConfig{};
+  std::uint32_t sampleRate{0};
+  std::uint16_t audioSpecificConfigBits{0};  // exact; need not be a byte multiple
+  std::uint8_t audioSpecificConfigBytes{0};  // ceil(bits / 8)
+  std::uint8_t audioObjectType{0};
+  std::uint8_t samplingFrequencyIndex{0};
+  std::uint8_t channelConfiguration{0};
+  std::uint8_t audioMuxVersion{0};  // 0 or 1; both carry the same ASC
+  // Zero is the only value this route admits, and it is the default so that a
+  // caller which has already proved the stream at preparation may state the
+  // established config without restating the proof.
+  std::uint8_t frameLengthType{0};
+
+  [[nodiscard]] constexpr std::span<const std::byte> config() const noexcept {
+    const std::size_t bounded =
+        audioSpecificConfigBytes <= audioSpecificConfig.size()
+            ? static_cast<std::size_t>(audioSpecificConfigBytes)
+            : audioSpecificConfig.size();
+    return {audioSpecificConfig.data(), bounded};
+  }
+  // Two configs describe the same decoder exactly when their ASCs agree bit for
+  // bit. Used to refuse a mid-stream format change rather than decode past one.
+  [[nodiscard]] constexpr bool sameDecoder(
+      const LatmStreamMuxConfig& other) const noexcept {
+    return audioSpecificConfigBits == other.audioSpecificConfigBits &&
+           audioSpecificConfig == other.audioSpecificConfig;
+  }
+
+  friend constexpr bool operator==(const LatmStreamMuxConfig&,
+                                   const LatmStreamMuxConfig&) = default;
+};
+static_assert(std::is_trivially_copyable_v<LatmStreamMuxConfig>);
+
+struct LatmFrame {
+  // The config this frame decodes against: the one it carried when
+  // `configPresent`, otherwise a copy of the established config it named.
+  LatmStreamMuxConfig config{};
+  std::uint32_t frameBytes{0};        // 3 + audioMuxLengthBytes
+  std::uint32_t payloadBytes{0};      // the raw AAC access unit's length
+  std::uint32_t payloadBitOffset{0};  // from the frame's FIRST byte
+  bool configPresent{false};          // this frame carried a StreamMuxConfig
+
+  friend constexpr bool operator==(const LatmFrame&, const LatmFrame&) = default;
+};
+
+// Reads one LOAS AudioSyncStream frame beginning at `bytes[0]`.
+//
+// `established` is the StreamMuxConfig already proved for this elementary
+// stream, or nullptr when none has been seen yet. A frame with
+// useSameStreamMux = 1 carries no config of its own and is therefore
+// unparseable without one: that is reported as ConfigUnavailable, never guessed
+// at. `bytes` may extend past the frame; only the declared length is read.
+[[nodiscard]] LatmStatus parseLatmFrame(std::span<const std::byte> bytes,
+                                        const LatmStreamMuxConfig* established,
+                                        LatmFrame& frame) noexcept;
+
+// Copies the access unit out of a LOAS frame, undoing the bit shift the sync
+// layer imposes. `destination` must be exactly `facts.payloadBytes` long and
+// `frame` must be the same span parseLatmFrame read. Returns false rather than
+// writing a partial access unit.
+[[nodiscard]] bool latmCopyPayload(std::span<const std::byte> frame,
+                                   const LatmFrame& facts,
+                                   std::span<std::byte> destination) noexcept;
+
 // AC-3 sync frame geometry (ATSC A/52). Needed to split a PES payload into
 // whole frames and to admit the stream's rate/channels without decoding.
 struct Ac3SyncFrame {
   std::uint32_t frameBytes{0};
   std::uint32_t sampleRate{0};
+  // Decoded samples this syncframe codes. A/52 legacy AC-3 always codes 6
+  // blocks of 256; E-AC-3 may code 1, 2, 3 or 6, and a route that assumed 1536
+  // would drift by three quarters of a frame on a short-block stream.
+  std::uint32_t samplesPerFrame{0};
+  // FULL-BANDWIDTH channels, excluding LFE. `channels` below is the total the
+  // decoder will emit and is what an ASBD must state.
+  std::uint8_t fullBandwidthChannels{0};
   std::uint8_t channels{0};
+  std::uint8_t bitstreamId{0};  // <= 10 is AC-3, 16 is E-AC-3
   bool lfe{false};
+  bool enhanced{false};
 
   friend constexpr bool operator==(const Ac3SyncFrame&, const Ac3SyncFrame&) =
       default;
 };
 
+inline constexpr std::uint8_t kEac3BitstreamId{16};
+inline constexpr std::uint32_t kAc3SamplesPerBlock{256};
+inline constexpr std::uint32_t kAc3BlocksPerSyncFrame{6};
+// A/52 Table 5.8: full-bandwidth channel count per acmod, LFE excluded.
+inline constexpr std::array<std::uint8_t, 8> kAc3AcmodChannels{2, 1, 2, 3,
+                                                               3, 4, 4, 5};
+
+// Legacy AC-3 (bsid <= 10). Refuses an E-AC-3 syncframe rather than mis-reading
+// its frmsiz as a frmsizecod table index.
 [[nodiscard]] bool parseAc3SyncFrame(std::span<const std::byte> bytes,
                                      Ac3SyncFrame& frame) noexcept;
+// E-AC-3 (A/52 Annex E, bsid 16). An entirely different bsi layout from the
+// first bit after the sync word.
+[[nodiscard]] bool parseEac3SyncFrame(std::span<const std::byte> bytes,
+                                      Ac3SyncFrame& frame) noexcept;
+// Dispatches on the bitstream id, which both syntaxes happen to place at the
+// same bit. This is what a frame walk should call.
+[[nodiscard]] bool parseAc3OrEac3SyncFrame(std::span<const std::byte> bytes,
+                                           Ac3SyncFrame& frame) noexcept;
 
 // MPEG-1/2 Layer I-III frame geometry (stream types 0x03/0x04).
 struct MpegAudioFrame {

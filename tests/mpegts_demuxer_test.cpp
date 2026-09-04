@@ -1420,6 +1420,503 @@ void testMultiProgramSelection() {
          "the inventory counts only the selected program's video streams");
 }
 
+// ---------------------------------------------------------------------------
+// LOAS/LATM framing (stream type 0x11)
+// ---------------------------------------------------------------------------
+
+// A minimal MSB-first bit writer, so every fixture below is written as the
+// SYNTAX, field by field, rather than as an opaque blob of hex whose meaning
+// only a comment asserts. A fixture you cannot read is a fixture you cannot
+// tell is wrong.
+class BitWriter {
+ public:
+  void put(std::uint32_t value, std::uint32_t count) {
+    for (std::uint32_t i = 0; i < count; ++i) {
+      const std::uint32_t bit = (value >> (count - 1U - i)) & 1U;
+      if ((bits_ & 7U) == 0U) {
+        bytes_.push_back(std::byte{0});
+      }
+      if (bit != 0U) {
+        bytes_.back() |= static_cast<std::byte>(1U << (7U - (bits_ & 7U)));
+      }
+      ++bits_;
+    }
+  }
+  void alignToByte() {
+    while ((bits_ & 7U) != 0U) {
+      put(0, 1);
+    }
+  }
+  [[nodiscard]] std::uint32_t bits() const { return bits_; }
+  [[nodiscard]] const Bytes& bytes() const { return bytes_; }
+
+ private:
+  Bytes bytes_;
+  std::uint32_t bits_{0};
+};
+
+struct LatmFixtureOptions {
+  std::uint32_t audioMuxVersion{0};
+  std::uint32_t allStreamsSameTimeFraming{1};
+  std::uint32_t numSubFrames{0};
+  std::uint32_t numProgram{0};
+  std::uint32_t numLayer{0};
+  std::uint32_t frameLengthType{0};
+  std::uint32_t samplingFrequencyIndex{3};  // 48 kHz
+  std::uint32_t channelConfiguration{2};    // stereo
+  std::uint32_t audioObjectType{2};         // AAC-LC
+  bool otherDataPresent{false};
+  bool crcCheckPresent{false};
+};
+
+// Builds one complete LOAS AudioSyncStream frame around `payload`.
+// `withConfig == false` produces the useSameStreamMux = 1 shape, which is what
+// every frame after the first looks like in a real mux and is the shape whose
+// access unit is NOT byte-aligned.
+Bytes makeLoasFrame(const Bytes& payload, bool withConfig,
+                    const LatmFixtureOptions& options = {}) {
+  BitWriter mux;
+  mux.put(withConfig ? 0U : 1U, 1);  // useSameStreamMux
+  if (withConfig) {
+    mux.put(options.audioMuxVersion, 1);
+    if (options.audioMuxVersion == 1U) {
+      mux.put(0, 1);        // audioMuxVersionA
+      mux.put(0, 2);        // taraBufferFullness: LatmGetValue, 1 byte
+      mux.put(0, 8);
+    }
+    mux.put(options.allStreamsSameTimeFraming, 1);
+    mux.put(options.numSubFrames, 6);
+    mux.put(options.numProgram, 4);
+    mux.put(options.numLayer, 3);
+    // AudioSpecificConfig: AAC-LC / rate index / channels / GASpecificConfig.
+    // Exactly 16 bits, which is the canonical two-byte ASC every AAC cookie
+    // builder in this repo consumes.
+    BitWriter asc;
+    asc.put(options.audioObjectType, 5);
+    asc.put(options.samplingFrequencyIndex, 4);
+    asc.put(options.channelConfiguration, 4);
+    asc.put(0, 1);  // frameLengthFlag
+    asc.put(0, 1);  // dependsOnCoreCoder
+    asc.put(0, 1);  // extensionFlag
+    if (options.audioMuxVersion == 1U) {
+      // ascLen as a LatmGetValue: two bits of byte count then the value.
+      mux.put(0, 2);
+      mux.put(asc.bits(), 8);
+    }
+    for (std::uint32_t i = 0; i < asc.bits(); ++i) {
+      const std::uint32_t byteIndex = i >> 3U;
+      const auto source =
+          static_cast<std::uint32_t>(asc.bytes()[byteIndex]);
+      mux.put((source >> (7U - (i & 7U))) & 1U, 1);
+    }
+    mux.put(options.frameLengthType, 3);
+    if (options.frameLengthType == 0U) {
+      mux.put(0xFF, 8);  // latmBufferFullness
+    } else if (options.frameLengthType == 1U) {
+      mux.put(0, 9);     // frameLength
+    }
+    mux.put(options.otherDataPresent ? 1U : 0U, 1);
+    if (options.otherDataPresent) {
+      mux.put(0, 1);  // escape: no continuation
+      mux.put(0, 8);
+    }
+    mux.put(options.crcCheckPresent ? 1U : 0U, 1);
+    if (options.crcCheckPresent) {
+      mux.put(0, 8);
+    }
+  }
+  // PayloadLengthInfo: MuxSlotLengthBytes as 255-escaped octets.
+  std::size_t remaining = payload.size();
+  while (remaining >= 255) {
+    mux.put(255, 8);
+    remaining -= 255;
+  }
+  mux.put(static_cast<std::uint32_t>(remaining), 8);
+  // PayloadMux: the access unit, at whatever bit offset the header left.
+  for (std::byte b : payload) {
+    mux.put(static_cast<std::uint32_t>(b), 8);
+  }
+  mux.alignToByte();
+
+  Bytes frame;
+  const std::uint32_t muxLength =
+      static_cast<std::uint32_t>(mux.bytes().size());
+  frame.push_back(octet(0x56));
+  frame.push_back(octet(0xE0U | ((muxLength >> 8) & 0x1FU)));
+  frame.push_back(octet(muxLength & 0xFFU));
+  frame.insert(frame.end(), mux.bytes().begin(), mux.bytes().end());
+  return frame;
+}
+
+Bytes rampPayload(std::size_t size, std::uint8_t seed) {
+  Bytes payload;
+  payload.reserve(size);
+  for (std::size_t i = 0; i < size; ++i) {
+    payload.push_back(octet(static_cast<std::uint8_t>(seed + i * 31U + (i >> 3))));
+  }
+  return payload;
+}
+
+void testLatmFraming() {
+  // --- the config-bearing frame -------------------------------------------
+  const Bytes payload = rampPayload(300, 0x5A);
+  const Bytes frame = makeLoasFrame(payload, /*withConfig=*/true);
+  LatmFrame facts{};
+  expect(parseLatmFrame(frame, nullptr, facts) == LatmStatus::Ok,
+         "a LOAS frame carrying a StreamMuxConfig parses without an "
+         "established config");
+  expect(facts.configPresent, "the frame reports that it carried a config");
+  expect(facts.frameBytes == frame.size(),
+         "the parsed frame length is the whole AudioSyncStream frame");
+  expect(facts.payloadBytes == payload.size(),
+         "MuxSlotLengthBytes recovers the exact access-unit length");
+  expect(facts.config.sampleRate == 48'000,
+         "the sampling frequency index is decoded to a real rate");
+  expect(facts.config.channelConfiguration == 2,
+         "the channel configuration is decoded");
+  expect(facts.config.audioObjectType == 2, "AAC-LC is decoded");
+  expect(facts.config.audioSpecificConfigBits == 16,
+         "the AudioSpecificConfig is the canonical 16 bits");
+  // 0x1190 is AAC-LC (2) / 48 kHz (index 3) / stereo (2), which is byte for
+  // byte what the ADTS path synthesizes for the same stream. That equality is
+  // the whole reason LATM needs no MediaCodec value of its own.
+  expect(facts.config.audioSpecificConfigBytes == 2 &&
+             facts.config.audioSpecificConfig[0] == octet(0x11) &&
+             facts.config.audioSpecificConfig[1] == octet(0x90),
+         "the recovered ASC is the canonical 0x1190");
+
+  // --- THE BIT-SHIFT PROOF -------------------------------------------------
+  // The access unit does not start on a byte boundary, and a copy that assumed
+  // it did would return payload shifted by one to seven bits -- which decodes
+  // as noise, not as an error. This is the assertion that catches that.
+  expect((facts.payloadBitOffset % 8U) != 0U,
+         "a real StreamMuxConfig leaves the access unit bit-misaligned");
+  Bytes extracted(facts.payloadBytes, std::byte{});
+  expect(latmCopyPayload(frame, facts, extracted),
+         "the payload copy succeeds");
+  expect(extracted == payload,
+         "the extracted access unit is byte-identical to what was muxed");
+
+  // --- the config-less frame every real mux emits after the first ----------
+  const Bytes payload2 = rampPayload(180, 0xC3);
+  const Bytes frame2 = makeLoasFrame(payload2, /*withConfig=*/false);
+  LatmFrame facts2{};
+  expect(parseLatmFrame(frame2, nullptr, facts2) ==
+             LatmStatus::ConfigUnavailable,
+         "a frame reusing the established config is refused when there is "
+         "none, rather than guessed at");
+  expect(parseLatmFrame(frame2, &facts.config, facts2) == LatmStatus::Ok,
+         "the same frame parses against the established config");
+  expect(!facts2.configPresent, "the frame reports it carried no config");
+  expect(facts2.config.sameDecoder(facts.config),
+         "the established config is carried onto the frame");
+  expect(facts2.payloadBitOffset % 8U == 1U,
+         "useSameStreamMux costs exactly one bit, so the access unit starts "
+         "at bit 1 of a byte");
+  Bytes extracted2(facts2.payloadBytes, std::byte{});
+  expect(latmCopyPayload(frame2, facts2, extracted2),
+         "the config-less payload copy succeeds");
+  expect(extracted2 == payload2,
+         "the config-less access unit is byte-identical to what was muxed");
+
+  // --- the 255 escape in MuxSlotLengthBytes --------------------------------
+  const Bytes big = rampPayload(600, 0x11);
+  const Bytes bigFrame = makeLoasFrame(big, /*withConfig=*/false);
+  LatmFrame bigFacts{};
+  expect(parseLatmFrame(bigFrame, &facts.config, bigFacts) == LatmStatus::Ok,
+         "a payload past 255 bytes parses through the length escape");
+  expect(bigFacts.payloadBytes == 600,
+         "the escaped MuxSlotLengthBytes sums to the exact length");
+  Bytes bigOut(bigFacts.payloadBytes, std::byte{});
+  expect(latmCopyPayload(bigFrame, bigFacts, bigOut) && bigOut == big,
+         "an escaped-length access unit extracts byte-identically");
+
+  // --- audioMuxVersion 1, whose ASC length is stated rather than parsed ----
+  LatmFixtureOptions v1;
+  v1.audioMuxVersion = 1;
+  v1.samplingFrequencyIndex = 4;  // 44.1 kHz
+  v1.channelConfiguration = 1;    // mono
+  const Bytes v1Frame = makeLoasFrame(payload, true, v1);
+  LatmFrame v1Facts{};
+  expect(parseLatmFrame(v1Frame, nullptr, v1Facts) == LatmStatus::Ok,
+         "audioMuxVersion 1 parses");
+  expect(v1Facts.config.audioMuxVersion == 1, "the mux version is reported");
+  expect(v1Facts.config.sampleRate == 44'100 &&
+             v1Facts.config.channelConfiguration == 1,
+         "the version 1 config decodes its rate and channels");
+  Bytes v1Out(v1Facts.payloadBytes, std::byte{});
+  expect(latmCopyPayload(v1Frame, v1Facts, v1Out) && v1Out == payload,
+         "an audioMuxVersion 1 access unit extracts byte-identically");
+
+  // --- refusals, each BY NAME ---------------------------------------------
+  Bytes desynced = frame;
+  desynced[0] = octet(0x57);
+  LatmFrame junk{};
+  expect(parseLatmFrame(desynced, nullptr, junk) == LatmStatus::NotSynced,
+         "a broken sync word is NotSynced, not a guess");
+  expect(parseLatmFrame(std::span<const std::byte>(frame).first(2), nullptr,
+                        junk) == LatmStatus::Incomplete,
+         "a span shorter than the LOAS header is Incomplete");
+  expect(parseLatmFrame(std::span<const std::byte>(frame).first(frame.size() - 1),
+                        nullptr, junk) == LatmStatus::Incomplete,
+         "a span shorter than the declared frame is Incomplete");
+
+  // Every mux shape this route deliberately does not carry must refuse by
+  // name. Mis-framing one of these silently is the failure mode that makes a
+  // broadcast decode as noise instead of falling back.
+  const struct {
+    const char* what;
+    LatmFixtureOptions options;
+  } unsupported[] = {
+      {"numLayer != 0", [] { LatmFixtureOptions o; o.numLayer = 1; return o; }()},
+      {"numProgram != 0", [] { LatmFixtureOptions o; o.numProgram = 1; return o; }()},
+      {"numSubFrames != 0", [] { LatmFixtureOptions o; o.numSubFrames = 1; return o; }()},
+      {"allStreamsSameTimeFraming == 0",
+       [] { LatmFixtureOptions o; o.allStreamsSameTimeFraming = 0; return o; }()},
+      {"frameLengthType == 1",
+       [] { LatmFixtureOptions o; o.frameLengthType = 1; return o; }()},
+  };
+  for (const auto& entry : unsupported) {
+    const Bytes bad = makeLoasFrame(payload, true, entry.options);
+    LatmFrame badFacts{};
+    const LatmStatus status = parseLatmFrame(bad, nullptr, badFacts);
+    expect(status == LatmStatus::UnsupportedMux,
+           "an unsupported mux shape refuses by name");
+    if (status != LatmStatus::UnsupportedMux) {
+      std::cerr << "  " << entry.what << " gave " << latmStatusName(status)
+                << '\n';
+    }
+  }
+
+  // otherDataPresent and crcCheckPresent are legal and MUST be carried: both
+  // sit between the config and the payload length, so skipping them wrongly
+  // moves the access unit.
+  for (bool other : {false, true}) {
+    for (bool crc : {false, true}) {
+      LatmFixtureOptions o;
+      o.otherDataPresent = other;
+      o.crcCheckPresent = crc;
+      const Bytes f = makeLoasFrame(payload, true, o);
+      LatmFrame fx{};
+      expect(parseLatmFrame(f, nullptr, fx) == LatmStatus::Ok,
+             "otherData and crcCheck fields are carried");
+      Bytes out(fx.payloadBytes, std::byte{});
+      expect(latmCopyPayload(f, fx, out) && out == payload,
+             "the access unit survives optional StreamMuxConfig fields");
+    }
+  }
+
+  // --- a real ffmpeg mux, pinned -------------------------------------------
+  // The first 24 bytes of `ffmpeg -f lavfi -i sine -c:a aac -f latm`, 48 kHz
+  // stereo. Hand-written fixtures prove the syntax; this proves the syntax is
+  // the one a real muxer writes. Only the header is pinned -- the payload is
+  // encoder output and would make this a change-detector.
+  const Bytes real{octet(0x56), octet(0xE1), octet(0x26), octet(0x20),
+                   octet(0x00), octet(0x11), octet(0x90), octet(0x1F),
+                   octet(0xE7), octet(0xF8), octet(0xFE), octet(0xE0)};
+  Bytes realFrame = real;
+  realFrame.resize(3 + 294, std::byte{});  // the declared audioMuxLengthBytes
+  LatmFrame realFacts{};
+  expect(parseLatmFrame(realFrame, nullptr, realFacts) == LatmStatus::Ok,
+         "a real ffmpeg LOAS frame parses");
+  expect(realFacts.frameBytes == 297,
+         "the real frame's declared length is 3 + 294");
+  expect(realFacts.config.sampleRate == 48'000 &&
+             realFacts.config.channelConfiguration == 2,
+         "the real frame's config is 48 kHz stereo");
+  expect(realFacts.config.audioSpecificConfigBytes == 2 &&
+             realFacts.config.audioSpecificConfig[0] == octet(0x11) &&
+             realFacts.config.audioSpecificConfig[1] == octet(0x90),
+         "the real frame yields the canonical 0x1190 ASC");
+  expect(realFacts.payloadBytes == 286,
+         "the real frame's MuxSlotLengthBytes is 255 + 31");
+  expect(realFacts.payloadBitOffset == 85,
+         "the real frame's access unit starts at bit 85, i.e. byte 10 bit 5");
+}
+
+// Builds an E-AC-3 (A/52 Annex E) syncframe header. The body is zero-filled:
+// nothing in this route reads past bsi.
+Bytes makeEac3Frame(std::uint32_t frameBytes, std::uint32_t fscod,
+                    std::uint32_t numblkscod, std::uint32_t acmod,
+                    bool lfeon, std::uint32_t bsid = kEac3BitstreamId) {
+  BitWriter w;
+  w.put(0x0B77, 16);
+  w.put(0, 2);  // strmtyp: independent substream
+  w.put(0, 3);  // substreamid
+  w.put(frameBytes / 2U - 1U, 11);  // frmsiz, in 16-bit words minus one
+  w.put(fscod, 2);
+  w.put(numblkscod, 2);
+  w.put(acmod, 3);
+  w.put(lfeon ? 1U : 0U, 1);
+  w.put(bsid, 5);
+  w.alignToByte();
+  Bytes frame = w.bytes();
+  frame.resize(frameBytes, std::byte{});
+  return frame;
+}
+
+void testEac3Framing() {
+  // --- the defect this fixes ----------------------------------------------
+  // E-AC-3 was mapped by stream type 0x87 and then dropped by every real file,
+  // because the LEGACY parser was the only one and an Annex E frame's bytes
+  // 2-4 are strmtyp/substreamid/frmsiz where AC-3 has crc1 and frmsizecod.
+  const Bytes eac3 = makeEac3Frame(768, 0, 3, 2, false);
+  Ac3SyncFrame legacy{};
+  expect(!parseAc3SyncFrame(eac3, legacy),
+         "the legacy AC-3 parser REFUSES an E-AC-3 frame instead of "
+         "mis-reading its frame size");
+
+  // The refusal above is not enough on its own, and finding that out is what a
+  // mutation check is for. In THAT frame byte 4 reads as frmsizecod 52, which
+  // the legacy table bound rejects for an unrelated reason -- so it would be
+  // refused even with the bitstream-id gate deleted, and it proves nothing
+  // about the gate.
+  //
+  // This frame is the one that matters: numblkscod 1 and acmod 2 make byte 4
+  // read as a PERFECTLY LEGAL frmsizecod of 20, so a legacy parser accepts it
+  // and reports a confident, entirely wrong frame length. That is how a
+  // mis-framed audio track becomes noise instead of a named refusal.
+  const Bytes deceptive = makeEac3Frame(768, 0, 1, 2, false);
+  expect((static_cast<std::uint32_t>(deceptive[4]) & 0x3FU) <= 37U,
+         "the deceptive fixture really does present a legal frmsizecod");
+  Ac3SyncFrame fooled{};
+  expect(!parseAc3SyncFrame(deceptive, fooled),
+         "an E-AC-3 frame whose byte 4 reads as a legal frmsizecod is still "
+         "refused by the legacy parser, on its bitstream id");
+  Ac3SyncFrame viaDispatch{};
+  expect(parseAc3OrEac3SyncFrame(deceptive, viaDispatch) &&
+             viaDispatch.enhanced && viaDispatch.frameBytes == 768,
+         "and the dispatcher reads its real length instead");
+
+  Ac3SyncFrame frame{};
+  expect(parseEac3SyncFrame(eac3, frame), "an E-AC-3 syncframe parses");
+  expect(frame.enhanced && frame.bitstreamId == 16,
+         "the frame is identified as E-AC-3 by its bitstream id");
+  expect(frame.frameBytes == 768,
+         "frmsiz is an explicit word count, not a table index");
+  expect(frame.sampleRate == 48'000, "the E-AC-3 rate is decoded");
+  expect(frame.channels == 2 && !frame.lfe,
+         "acmod 2 with no LFE is two channels");
+  expect(frame.samplesPerFrame == 1536,
+         "numblkscod 3 codes six blocks of 256 samples");
+
+  // numblkscod is the field a fixed 1536 assumption gets wrong. A one-block
+  // frame carries a QUARTER of the samples, and describing it as 1536 would
+  // run the audio-authoritative clock four times too fast.
+  const struct {
+    std::uint32_t code;
+    std::uint32_t samples;
+  } blocks[] = {{0, 256}, {1, 512}, {2, 768}, {3, 1536}};
+  for (const auto& entry : blocks) {
+    const Bytes f = makeEac3Frame(512, 0, entry.code, 2, false);
+    Ac3SyncFrame fx{};
+    expect(parseEac3SyncFrame(f, fx) && fx.samplesPerFrame == entry.samples,
+           "numblkscod names the exact decoded sample count");
+  }
+
+  // --- the LFE fix, which is what unblocked 5.1 ---------------------------
+  // acmod 7 is 3/2 -- five full-bandwidth channels -- and lfeon makes it 5.1.
+  // The old code hardcoded `lfe = false`, so a 5.1 stream was described to
+  // CoreAudio as FIVE channels. That is not a rounding error; it lays the
+  // decoder's own output out wrongly.
+  const Bytes eac351 = makeEac3Frame(1536, 0, 3, 7, true);
+  Ac3SyncFrame fx51{};
+  expect(parseEac3SyncFrame(eac351, fx51), "a 5.1 E-AC-3 frame parses");
+  expect(fx51.fullBandwidthChannels == 5 && fx51.lfe && fx51.channels == 6,
+         "acmod 7 plus lfeon is 5 full-bandwidth channels and 6 total");
+
+  // The same LFE arithmetic on LEGACY AC-3, where lfeon's bit position depends
+  // on which of cmixlev/surmixlev/dsurmod acmod brings with it.
+  {
+    // Real bytes: ffmpeg 5.1 48 kHz AC-3, acmod 7, lfeon set. Pinned because
+    // the conditional-field offsets are exactly the thing a hand fixture would
+    // get wrong in the same way the parser might.
+    const Bytes ac351{octet(0x0B), octet(0x77), octet(0xD6), octet(0xD8),
+                      octet(0x1E), octet(0x40), octet(0xEB), octet(0xF8)};
+    Ac3SyncFrame a{};
+    expect(parseAc3SyncFrame(ac351, a), "a real 5.1 AC-3 syncframe parses");
+    expect(a.bitstreamId == 8 && !a.enhanced,
+           "it is identified as legacy AC-3");
+    expect(a.fullBandwidthChannels == 5 && a.lfe && a.channels == 6,
+           "legacy 5.1 AC-3 reports six channels including LFE");
+    expect(a.samplesPerFrame == 1536,
+           "legacy AC-3 always codes six blocks of 256");
+  }
+  {
+    // acmod 2 (stereo) brings dsurmod, which moves lfeon by two bits. A parser
+    // that skipped the conditional fields would read a neighbouring bit here.
+    const Bytes ac3stereo{octet(0x0B), octet(0x77), octet(0x00), octet(0x00),
+                          octet(0x1E), octet(0x40), octet(0x40), octet(0x00)};
+    Ac3SyncFrame a{};
+    expect(parseAc3SyncFrame(ac3stereo, a), "a stereo AC-3 syncframe parses");
+    expect(a.fullBandwidthChannels == 2 && !a.lfe && a.channels == 2,
+           "acmod 2 with lfeon clear is two channels");
+  }
+
+  // --- the dispatcher ------------------------------------------------------
+  Ac3SyncFrame routed{};
+  expect(parseAc3OrEac3SyncFrame(eac3, routed) && routed.enhanced,
+         "the dispatcher routes an E-AC-3 frame to the Annex E parser");
+  const Bytes ac3{octet(0x0B), octet(0x77), octet(0xD6), octet(0xD8),
+                  octet(0x1E), octet(0x40), octet(0xEB), octet(0xF8)};
+  expect(parseAc3OrEac3SyncFrame(ac3, routed) && !routed.enhanced &&
+             routed.bitstreamId == 8,
+         "the dispatcher routes a legacy frame to the legacy parser");
+
+  // Half-rate E-AC-3 (fscod 3) is outside the admitted audio envelope and must
+  // be refused by structure rather than admitted with an invented rate.
+  const Bytes half = makeEac3Frame(768, 3, 3, 2, false);
+  Ac3SyncFrame h{};
+  expect(!parseEac3SyncFrame(half, h),
+         "fscod 3 (half sample rate) is refused rather than guessed at");
+}
+
+void testProgramGradeRule() {
+  // The three grades, from PMTs that differ in exactly one thing each.
+  ProgramMapTable table{};
+  const auto grade = [&](std::initializer_list<
+                          std::pair<std::uint8_t, std::uint16_t>> streams) {
+    table = ProgramMapTable{};
+    table.programNumber = 1;
+    std::uint8_t index = 0;
+    for (const auto& [type, pid] : streams) {
+      table.streams[index].streamType = type;
+      table.streams[index].elementaryPid = pid;
+      table.streams[index].codec = codecForStreamType(type, false, false, false);
+      table.streams[index].kind =
+          trackKindForStreamType(type, false, false, false);
+      ++index;
+    }
+    table.streamCount = index;
+    return gradeProgram(table);
+  };
+
+  expect(grade({{0x1BU, 0x100}, {0x0FU, 0x101}}) == ProgramGrade::Complete,
+         "H.264 plus ADTS AAC is a Complete program");
+  expect(grade({{0x1BU, 0x100}, {0x11U, 0x101}}) == ProgramGrade::Complete,
+         "H.264 plus AAC-LATM is a Complete program, which it was not before "
+         "stream type 0x11 was routed");
+  expect(grade({{0x24U, 0x100}, {0x81U, 0x101}}) == ProgramGrade::Complete,
+         "HEVC plus ATSC AC-3 is a Complete program");
+  expect(grade({{0x1BU, 0x100}}) == ProgramGrade::VideoOnly,
+         "video with no audio grades VideoOnly");
+  expect(grade({{0x1BU, 0x100}, {0x82U, 0x101}}) == ProgramGrade::VideoOnly,
+         "video whose only audio is unroutable (DTS) grades VideoOnly, not "
+         "Complete -- routable, not merely present");
+  expect(grade({{0x0FU, 0x101}}) == ProgramGrade::None,
+         "audio with no video is not a candidate");
+  expect(grade({{0x10U, 0x100}, {0x0FU, 0x101}}) == ProgramGrade::None,
+         "an unroutable video codec (MPEG-4 part 2) makes the program a "
+         "non-candidate rather than a video-bearing winner");
+  expect(grade({}) == ProgramGrade::None, "an empty program is None");
+
+  // The ORDER is the rule. Complete must outrank VideoOnly must outrank None,
+  // because the search compares grades with `>`.
+  expect(ProgramGrade::Complete > ProgramGrade::VideoOnly &&
+             ProgramGrade::VideoOnly > ProgramGrade::None,
+         "the grades are strictly ordered Complete > VideoOnly > None");
+}
+
 void testRolloverFixture() {
   const std::filesystem::path root = fixtureRoot();
   const std::filesystem::path path = root / "rollover.ts";
@@ -2035,6 +2532,9 @@ int main() {
   testHevcParameterSetFacts();
   testAnnexBToAvccRepack();
   testElementaryAudioFraming();
+  testLatmFraming();
+  testEac3Framing();
+  testProgramGradeRule();
   testFramingDetection();
   testPreparationRequestValidation();
   testRealMuxes();

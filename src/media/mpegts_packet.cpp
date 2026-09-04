@@ -376,6 +376,27 @@ bool parseProgramAssociationSection(std::span<const std::byte> section,
   return true;
 }
 
+ProgramGrade gradeProgram(const ProgramMapTable& table) noexcept {
+  bool video = false;
+  bool audio = false;
+  for (std::uint8_t s = 0; s < table.streamCount && s < table.streams.size();
+       ++s) {
+    const ElementaryStream& stream = table.streams[s];
+    if (stream.codec == MediaCodec::Unknown) {
+      continue;
+    }
+    if (stream.kind == MediaTrackKind::Video) {
+      video = true;
+    } else if (stream.kind == MediaTrackKind::Audio) {
+      audio = true;
+    }
+  }
+  if (!video) {
+    return ProgramGrade::None;
+  }
+  return audio ? ProgramGrade::Complete : ProgramGrade::VideoOnly;
+}
+
 MediaCodec codecForStreamType(std::uint8_t streamType, bool ac3Descriptor,
                               bool eac3Descriptor,
                               bool registrationAc3) noexcept {
@@ -385,6 +406,13 @@ MediaCodec codecForStreamType(std::uint8_t streamType, bool ac3Descriptor,
     case static_cast<std::uint8_t>(TsStreamType::Hevc):
       return MediaCodec::Hevc;
     case static_cast<std::uint8_t>(TsStreamType::AdtsAac):
+    case static_cast<std::uint8_t>(TsStreamType::LatmAac):
+      // ONE routing family, two framings. LOAS/LATM carries the same raw AAC
+      // access units ADTS does -- verified byte-for-byte against ADTS twins of
+      // the same encode -- so it needs no MediaCodec value of its own and the
+      // whole downstream (ES_Descriptor cookie, 1024-frame grid, audio-
+      // authoritative clock) is shared. The framing difference is carried by
+      // the stream type, which the demuxer already retains.
       return MediaCodec::Aac;
     case static_cast<std::uint8_t>(TsStreamType::Mpeg1Audio):
     case static_cast<std::uint8_t>(TsStreamType::Mpeg2Audio):
@@ -416,10 +444,10 @@ MediaCodec codecForStreamType(std::uint8_t streamType, bool ac3Descriptor,
     default:
       break;
   }
-  // MPEG-1 video (0x01), MPEG-4 part 2 (0x10), LATM AAC (0x11) and DTS (0x82)
-  // still have no route. That remains a deliberate, recorded gap: the demuxer
-  // reports the raw stream type in its verdict so the seam above refuses by
-  // name instead of silently dropping a track.
+  // MPEG-1 video (0x01), MPEG-4 part 2 (0x10) and DTS (0x82) still have no
+  // route. That remains a deliberate, recorded gap: the demuxer reports the raw
+  // stream type in its verdict so the seam above refuses by name instead of
+  // silently dropping a track.
   static_cast<void>(ac3Descriptor);
   static_cast<void>(eac3Descriptor);
   static_cast<void>(registrationAc3);
@@ -1174,6 +1202,500 @@ bool parseAdtsHeader(std::span<const std::byte> bytes,
   return true;
 }
 
+// ---------------------------------------------------------------------------
+// LOAS / LATM
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// A bounded MSB-first bit reader over one LOAS frame. Every read is checked
+// against the frame's own declared end, so a truncated or lying frame runs out
+// of bits and is refused instead of reading into whatever follows it.
+class LatmBitReader {
+ public:
+  LatmBitReader(std::span<const std::byte> bytes, std::uint32_t bitLimit,
+                std::uint32_t position) noexcept
+      : bytes_(bytes), limit_(bitLimit), position_(position) {}
+
+  [[nodiscard]] bool read(std::uint32_t count, std::uint32_t& value) noexcept {
+    value = 0;
+    if (count > 32U || position_ + count > limit_) {
+      overrun_ = true;
+      return false;
+    }
+    for (std::uint32_t i = 0; i < count; ++i) {
+      const std::size_t index = static_cast<std::size_t>(position_ >> 3U);
+      if (index >= bytes_.size()) {
+        overrun_ = true;
+        return false;
+      }
+      const std::uint32_t bit =
+          (static_cast<std::uint32_t>(byteAt(bytes_, index)) >>
+           (7U - (position_ & 7U))) &
+          1U;
+      value = (value << 1U) | bit;
+      ++position_;
+    }
+    return true;
+  }
+
+  // ISO/IEC 14496-3 LATM "LatmGetValue": a 2-bit byte count followed by that
+  // many-plus-one bytes, most significant first.
+  [[nodiscard]] bool readLatmValue(std::uint32_t& value) noexcept {
+    std::uint32_t byteCount = 0;
+    if (!read(2, byteCount)) {
+      return false;
+    }
+    value = 0;
+    for (std::uint32_t i = 0; i <= byteCount; ++i) {
+      std::uint32_t part = 0;
+      if (!read(8, part)) {
+        return false;
+      }
+      value = (value << 8U) | part;
+    }
+    return true;
+  }
+
+  [[nodiscard]] bool skip(std::uint32_t count) noexcept {
+    if (position_ + count > limit_) {
+      overrun_ = true;
+      return false;
+    }
+    position_ += count;
+    return true;
+  }
+
+  [[nodiscard]] std::uint32_t position() const noexcept { return position_; }
+  [[nodiscard]] bool overrun() const noexcept { return overrun_; }
+
+ private:
+  std::span<const std::byte> bytes_;
+  std::uint32_t limit_{0};
+  std::uint32_t position_{0};
+  bool overrun_{false};
+};
+
+// Reads AudioSpecificConfig far enough to know exactly where it ends. The bit
+// LENGTH is the point: audioMuxVersion 0 does not signal it, so the only way to
+// find the frameLengthType that follows is to parse the config to its last bit.
+//
+// Deliberately narrow -- this is a routing gate, not a general MPEG-4 parser.
+// The shared AAC admission re-parses the bytes it emits and applies the real
+// codec policy; anything with a program_config_element, an explicit sampling
+// frequency, or a core-coder dependency is refused HERE by structure, because
+// those forms change the config's length and a wrong length silently misframes
+// every subsequent field.
+[[nodiscard]] bool readAudioSpecificConfig(LatmBitReader& reader,
+                                           LatmStreamMuxConfig& config,
+                                           std::uint32_t start) noexcept {
+  std::uint32_t objectType = 0;
+  if (!reader.read(5, objectType)) {
+    return false;
+  }
+  if (objectType == 31U) {
+    // AOT escape: 32 + a further six bits. No such object type is routable
+    // here, but it must be READ correctly to be refused correctly.
+    std::uint32_t extended = 0;
+    if (!reader.read(6, extended)) {
+      return false;
+    }
+    objectType = 32U + extended;
+  }
+  std::uint32_t frequencyIndex = 0;
+  if (!reader.read(4, frequencyIndex)) {
+    return false;
+  }
+  if (frequencyIndex == 15U) {
+    return false;  // explicit 24-bit rate: not admitted, see above
+  }
+  std::uint32_t channelConfiguration = 0;
+  if (!reader.read(4, channelConfiguration)) {
+    return false;
+  }
+  if (channelConfiguration == 0U) {
+    return false;  // program_config_element: not admitted, see above
+  }
+  if (objectType == 5U || objectType == 29U) {
+    // Explicit SBR/PS signalling. The extension rate and the CORE object type
+    // follow, and the core type is what the GASpecificConfig below belongs to.
+    std::uint32_t extensionFrequencyIndex = 0;
+    if (!reader.read(4, extensionFrequencyIndex)) {
+      return false;
+    }
+    if (extensionFrequencyIndex == 15U) {
+      return false;
+    }
+    if (!reader.read(5, objectType)) {
+      return false;
+    }
+    if (objectType == 22U && !reader.skip(4)) {
+      return false;
+    }
+  }
+  // GASpecificConfig for the object types that use it. Anything else has a
+  // different config body whose length this parser cannot state.
+  if (objectType != 1U && objectType != 2U && objectType != 3U &&
+      objectType != 4U && objectType != 6U && objectType != 7U &&
+      objectType != 17U && objectType != 19U && objectType != 20U &&
+      objectType != 21U && objectType != 22U && objectType != 23U) {
+    return false;
+  }
+  std::uint32_t frameLengthFlag = 0;
+  if (!reader.read(1, frameLengthFlag)) {
+    return false;
+  }
+  std::uint32_t dependsOnCoreCoder = 0;
+  if (!reader.read(1, dependsOnCoreCoder)) {
+    return false;
+  }
+  if (dependsOnCoreCoder != 0U) {
+    return false;  // coreCoderDelay follows; not admitted, see above
+  }
+  std::uint32_t extensionFlag = 0;
+  if (!reader.read(1, extensionFlag)) {
+    return false;
+  }
+  if (objectType == 6U || objectType == 20U) {
+    if (!reader.skip(3)) {  // layerNr
+      return false;
+    }
+  }
+  if (extensionFlag != 0U) {
+    if (objectType == 22U && !reader.skip(5 + 11)) {
+      return false;
+    }
+    if ((objectType == 17U || objectType == 19U || objectType == 20U ||
+         objectType == 23U) &&
+        !reader.skip(3)) {
+      return false;
+    }
+    if (!reader.skip(1)) {  // extensionFlag3
+      return false;
+    }
+  }
+
+  // A trailing SBR/PS sync extension is deliberately NOT consumed here.
+  // audioMuxVersion 0 does not state the config's length, so the only way to
+  // know whether the next 11 bits are an extension or the frameLengthType that
+  // follows the config is to guess -- and a wrong guess misframes the entire
+  // rest of the stream silently. Left unconsumed, an extension's leading bits
+  // (0x2B7 -> 010...) read as frameLengthType 2, which this route refuses BY
+  // NAME as UnsupportedMux. A named refusal of HE-AAC-in-LATM-v0 is the honest
+  // outcome; the shared AAC admission refuses explicit SBR anyway.
+  const std::uint32_t bits = reader.position() - start;
+  if (bits == 0U || bits > kMaximumLatmAudioSpecificConfigBytes * 8U) {
+    return false;
+  }
+  config.audioObjectType = static_cast<std::uint8_t>(objectType);
+  config.samplingFrequencyIndex = static_cast<std::uint8_t>(frequencyIndex);
+  config.sampleRate =
+      adtsSampleRateForIndex(static_cast<std::uint8_t>(frequencyIndex));
+  config.channelConfiguration = static_cast<std::uint8_t>(channelConfiguration);
+  config.audioSpecificConfigBits = static_cast<std::uint16_t>(bits);
+  config.audioSpecificConfigBytes = static_cast<std::uint8_t>((bits + 7U) / 8U);
+  return config.sampleRate != 0U;
+}
+
+// Re-reads the config's exact bits and left-aligns them into whole bytes,
+// zero-padding the tail. That padding is not cosmetic: the shared AAC admission
+// refuses nonzero trailing bits, so a config re-emitted with stale padding
+// would be rejected downstream for a reason that has nothing to do with it.
+[[nodiscard]] bool captureAudioSpecificConfig(std::span<const std::byte> bytes,
+                                              std::uint32_t bitLimit,
+                                              std::uint32_t start,
+                                              LatmStreamMuxConfig& config) noexcept {
+  LatmBitReader reader(bytes, bitLimit, start);
+  const std::uint32_t bits = config.audioSpecificConfigBits;
+  config.audioSpecificConfig = {};
+  for (std::uint32_t i = 0; i < bits; ++i) {
+    std::uint32_t bit = 0;
+    if (!reader.read(1, bit)) {
+      return false;
+    }
+    if (bit != 0U) {
+      const std::size_t index = static_cast<std::size_t>(i >> 3U);
+      if (index >= config.audioSpecificConfig.size()) {
+        return false;
+      }
+      config.audioSpecificConfig[index] |=
+          static_cast<std::byte>(1U << (7U - (i & 7U)));
+    }
+  }
+  return true;
+}
+
+[[nodiscard]] LatmStatus readStreamMuxConfig(std::span<const std::byte> bytes,
+                                             std::uint32_t bitLimit,
+                                             LatmBitReader& reader,
+                                             LatmStreamMuxConfig& config) noexcept {
+  config = LatmStreamMuxConfig{};
+  std::uint32_t audioMuxVersion = 0;
+  if (!reader.read(1, audioMuxVersion)) {
+    return LatmStatus::Malformed;
+  }
+  config.audioMuxVersion = static_cast<std::uint8_t>(audioMuxVersion);
+  if (audioMuxVersion == 1U) {
+    std::uint32_t audioMuxVersionA = 0;
+    if (!reader.read(1, audioMuxVersionA)) {
+      return LatmStatus::Malformed;
+    }
+    if (audioMuxVersionA != 0U) {
+      // Reserved in 14496-3 and unparseable by construction.
+      return LatmStatus::UnsupportedMux;
+    }
+    std::uint32_t taraBufferFullness = 0;
+    if (!reader.readLatmValue(taraBufferFullness)) {
+      return LatmStatus::Malformed;
+    }
+  }
+  std::uint32_t allStreamsSameTimeFraming = 0;
+  std::uint32_t numSubFrames = 0;
+  std::uint32_t numProgram = 0;
+  std::uint32_t numLayer = 0;
+  if (!reader.read(1, allStreamsSameTimeFraming) ||
+      !reader.read(6, numSubFrames) || !reader.read(4, numProgram) ||
+      !reader.read(3, numLayer)) {
+    return LatmStatus::Malformed;
+  }
+  // The admitted shape, stated once. Every one of these is legal MPEG-4 and
+  // none of it appears in a broadcast AAC service; carrying them would mean
+  // multiplexing several programs or scalable layers out of one elementary
+  // stream, which this player has no way to present.
+  if (allStreamsSameTimeFraming != 1U || numSubFrames != 0U ||
+      numProgram != 0U || numLayer != 0U) {
+    return LatmStatus::UnsupportedMux;
+  }
+
+  const std::uint32_t configStart = reader.position();
+  if (audioMuxVersion == 0U) {
+    if (!readAudioSpecificConfig(reader, config, configStart)) {
+      return LatmStatus::UnsupportedMux;
+    }
+  } else {
+    // audioMuxVersion 1 states the config's length explicitly, which is the
+    // whole point of the version: a decoder may skip a config it cannot parse.
+    // We still parse it, then honour the DECLARED length -- the two disagreeing
+    // means the mux and this parser read different syntax, and following our
+    // own answer would misframe everything after it.
+    std::uint32_t declaredBits = 0;
+    if (!reader.readLatmValue(declaredBits)) {
+      return LatmStatus::Malformed;
+    }
+    const std::uint32_t declaredStart = reader.position();
+    if (!readAudioSpecificConfig(reader, config, declaredStart)) {
+      return LatmStatus::UnsupportedMux;
+    }
+    const std::uint32_t consumed = reader.position() - declaredStart;
+    if (declaredBits < consumed) {
+      return LatmStatus::Malformed;
+    }
+    if (!reader.skip(declaredBits - consumed)) {
+      return LatmStatus::Malformed;
+    }
+    // The DECLARED length is the config, not the part this parser understood.
+    // A trailing SBR/PS sync extension lives in exactly that gap, and the
+    // shared AAC admission is the thing entitled to rule on it -- handing it a
+    // config truncated to `consumed` would present an HE-AAC stream as plain
+    // AAC-LC, which is the one wrong answer worse than a refusal.
+    if (declaredBits > kMaximumLatmAudioSpecificConfigBytes * 8U) {
+      return LatmStatus::UnsupportedMux;
+    }
+    config.audioSpecificConfigBits = static_cast<std::uint16_t>(declaredBits);
+    config.audioSpecificConfigBytes =
+        static_cast<std::uint8_t>((declaredBits + 7U) / 8U);
+    if (!captureAudioSpecificConfig(bytes, bitLimit, declaredStart, config)) {
+      return LatmStatus::Malformed;
+    }
+    config.audioMuxVersion = 1U;
+  }
+  if (audioMuxVersion == 0U &&
+      !captureAudioSpecificConfig(bytes, bitLimit, configStart, config)) {
+    return LatmStatus::Malformed;
+  }
+
+  std::uint32_t frameLengthType = 0;
+  if (!reader.read(3, frameLengthType)) {
+    return LatmStatus::Malformed;
+  }
+  if (frameLengthType != 0U) {
+    // Type 1 is a fixed frame length in the config; types 3-7 are CELP/HVXC.
+    // Only type 0 carries the per-frame MuxSlotLengthBytes this route reads.
+    return LatmStatus::UnsupportedMux;
+  }
+  config.frameLengthType = 0;
+  if (!reader.skip(8)) {  // latmBufferFullness
+    return LatmStatus::Malformed;
+  }
+
+  std::uint32_t otherDataPresent = 0;
+  if (!reader.read(1, otherDataPresent)) {
+    return LatmStatus::Malformed;
+  }
+  if (otherDataPresent != 0U) {
+    if (audioMuxVersion == 1U) {
+      std::uint32_t otherDataLenBits = 0;
+      if (!reader.readLatmValue(otherDataLenBits)) {
+        return LatmStatus::Malformed;
+      }
+    } else {
+      // An escape-coded length: an 8-bit chunk per iteration, continued while
+      // the leading bit is set.
+      for (std::uint32_t guard = 0;; ++guard) {
+        std::uint32_t escape = 0;
+        std::uint32_t chunk = 0;
+        if (guard > 8U || !reader.read(1, escape) || !reader.read(8, chunk)) {
+          return LatmStatus::Malformed;
+        }
+        if (escape == 0U) {
+          break;
+        }
+      }
+    }
+  }
+  std::uint32_t crcCheckPresent = 0;
+  if (!reader.read(1, crcCheckPresent)) {
+    return LatmStatus::Malformed;
+  }
+  if (crcCheckPresent != 0U && !reader.skip(8)) {
+    return LatmStatus::Malformed;
+  }
+  return LatmStatus::Ok;
+}
+
+}  // namespace
+
+const char* latmStatusName(LatmStatus status) noexcept {
+  switch (status) {
+    case LatmStatus::Ok:
+      return "Ok";
+    case LatmStatus::NotSynced:
+      return "NotSynced";
+    case LatmStatus::Incomplete:
+      return "Incomplete";
+    case LatmStatus::Malformed:
+      return "Malformed";
+    case LatmStatus::UnsupportedMux:
+      return "UnsupportedMux";
+    case LatmStatus::ConfigUnavailable:
+      return "ConfigUnavailable";
+  }
+  return "Unknown";
+}
+
+LatmStatus parseLatmFrame(std::span<const std::byte> bytes,
+                          const LatmStreamMuxConfig* established,
+                          LatmFrame& frame) noexcept {
+  frame = LatmFrame{};
+  if (bytes.size() < kLoasHeaderBytes) {
+    return LatmStatus::Incomplete;
+  }
+  // AudioSyncStream: an 11-bit syncword then a 13-bit audioMuxLengthBytes.
+  const std::uint32_t header =
+      (static_cast<std::uint32_t>(byteAt(bytes, 0)) << 16U) |
+      (static_cast<std::uint32_t>(byteAt(bytes, 1)) << 8U) |
+      static_cast<std::uint32_t>(byteAt(bytes, 2));
+  if (((header >> 13U) & 0x7FFU) != kLoasSyncWord) {
+    return LatmStatus::NotSynced;
+  }
+  const std::uint32_t muxLength = header & 0x1FFFU;
+  if (muxLength == 0U) {
+    return LatmStatus::Malformed;
+  }
+  frame.frameBytes =
+      static_cast<std::uint32_t>(kLoasHeaderBytes) + muxLength;
+  if (bytes.size() < frame.frameBytes) {
+    return LatmStatus::Incomplete;
+  }
+  // Every subsequent read is bounded by the frame's OWN declared end, not by
+  // the span, so a caller that hands us a whole PES payload cannot have one
+  // frame's parse walk into the next.
+  const std::uint32_t bitLimit = frame.frameBytes * 8U;
+  LatmBitReader reader(bytes, bitLimit,
+                       static_cast<std::uint32_t>(kLoasHeaderBytes) * 8U);
+
+  std::uint32_t useSameStreamMux = 0;
+  if (!reader.read(1, useSameStreamMux)) {
+    return LatmStatus::Malformed;
+  }
+  if (useSameStreamMux == 0U) {
+    const LatmStatus status =
+        readStreamMuxConfig(bytes, bitLimit, reader, frame.config);
+    if (status != LatmStatus::Ok) {
+      return status;
+    }
+    frame.configPresent = true;
+  } else {
+    if (established == nullptr) {
+      return LatmStatus::ConfigUnavailable;
+    }
+    frame.config = *established;
+    if (frame.config.frameLengthType != 0U) {
+      return LatmStatus::UnsupportedMux;
+    }
+  }
+
+  // PayloadLengthInfo for the admitted shape: MuxSlotLengthBytes as a run of
+  // 8-bit values, each 255 meaning "add 255 and continue".
+  std::uint32_t payloadBytes = 0;
+  for (std::uint32_t guard = 0;; ++guard) {
+    std::uint32_t part = 0;
+    // A slot cannot exceed the frame that contains it, so the run is bounded by
+    // the frame length rather than by an invented constant.
+    if (guard > kMaximumLoasFrameBytes / 255U + 1U || !reader.read(8, part)) {
+      return LatmStatus::Malformed;
+    }
+    payloadBytes += part;
+    if (part != 255U) {
+      break;
+    }
+  }
+  frame.payloadBitOffset = reader.position();
+  frame.payloadBytes = payloadBytes;
+  // The access unit plus the bits already consumed must fit inside the frame.
+  // ByteAlign() leaves at most seven bits of padding after it.
+  const std::uint64_t end =
+      static_cast<std::uint64_t>(frame.payloadBitOffset) +
+      static_cast<std::uint64_t>(payloadBytes) * 8U;
+  if (payloadBytes == 0U || end > bitLimit) {
+    return LatmStatus::Malformed;
+  }
+  return LatmStatus::Ok;
+}
+
+bool latmCopyPayload(std::span<const std::byte> frame, const LatmFrame& facts,
+                     std::span<std::byte> destination) noexcept {
+  if (facts.payloadBytes == 0U ||
+      destination.size() != static_cast<std::size_t>(facts.payloadBytes)) {
+    return false;
+  }
+  const std::uint64_t end =
+      static_cast<std::uint64_t>(facts.payloadBitOffset) +
+      static_cast<std::uint64_t>(facts.payloadBytes) * 8U;
+  if (frame.size() < facts.frameBytes ||
+      end > static_cast<std::uint64_t>(facts.frameBytes) * 8U) {
+    return false;
+  }
+  const std::size_t first = static_cast<std::size_t>(facts.payloadBitOffset >> 3U);
+  const std::uint32_t shift = facts.payloadBitOffset & 7U;
+  if (shift == 0U) {
+    std::memcpy(destination.data(), frame.data() + first, facts.payloadBytes);
+    return true;
+  }
+  // Straddling copy: each output byte is the low (8 - shift) bits of one source
+  // byte followed by the high `shift` bits of the next. The final read is at
+  // `first + payloadBytes`, which the bound above proved is inside the frame.
+  const std::uint32_t low = 8U - shift;
+  for (std::uint32_t i = 0; i < facts.payloadBytes; ++i) {
+    const std::uint32_t high =
+        static_cast<std::uint32_t>(byteAt(frame, first + i)) << shift;
+    const std::uint32_t rest =
+        static_cast<std::uint32_t>(byteAt(frame, first + i + 1U)) >> low;
+    destination[i] = static_cast<std::byte>((high | rest) & 0xFFU);
+  }
+  return true;
+}
+
 bool parseAc3SyncFrame(std::span<const std::byte> bytes,
                        Ac3SyncFrame& frame) noexcept {
   frame = Ac3SyncFrame{};
@@ -1183,6 +1705,14 @@ bool parseAc3SyncFrame(std::span<const std::byte> bytes,
     return false;
   }
   if (byteAt(bytes, 0) != 0x0BU || byteAt(bytes, 1) != 0x77U) {
+    return false;
+  }
+  // bsid first: this parser reads the LEGACY bsi, and an E-AC-3 frame's bytes
+  // 2-4 mean something else entirely. Refusing here is what stops a plausible
+  // but wrong frame length from being handed to the frame walk.
+  const std::uint8_t bsid =
+      static_cast<std::uint8_t>((byteAt(bytes, 5) >> 3) & 0x1FU);
+  if (bsid > 10U) {
     return false;
   }
   const std::uint8_t fscod = static_cast<std::uint8_t>((byteAt(bytes, 4) >> 6) &
@@ -1226,16 +1756,107 @@ bool parseAc3SyncFrame(std::span<const std::byte> bytes,
                         : kWords32[index]);
   frame.sampleRate = kRates[fscod];
   frame.frameBytes = words * 2U;
+  frame.bitstreamId = bsid;
+  frame.enhanced = false;
+  // Legacy AC-3 always codes six blocks of 256 samples. There is no field.
+  frame.samplesPerFrame = kAc3BlocksPerSyncFrame * kAc3SamplesPerBlock;
 
   // acmod and lfeon live in bsi, after bsid(5) and bsmod(3) in byte 5.
   const std::uint8_t acmod = static_cast<std::uint8_t>((byteAt(bytes, 6) >> 5) &
                                                        0x07U);
-  static constexpr std::array<std::uint8_t, 8> kChannels{2, 1, 2, 3, 3, 4, 4, 5};
-  frame.channels = kChannels[acmod];
-  // The lfe bit's position depends on acmod's extra fields; a conservative
-  // parse is enough for admission because the decoder re-reads the frame.
-  frame.lfe = false;
+  frame.fullBandwidthChannels = kAc3AcmodChannels[acmod];
+  // The lfe bit's position depends on acmod's extra fields -- and it is worth
+  // reading exactly, because it is the difference between a 5.1 stream being
+  // described as six channels and as five. A five-channel ASBD on a 5.1 stream
+  // is not a rounding error: the converter would lay out the decoder's own
+  // output wrongly. A/52 5.3.2 puts these three conditional fields between
+  // acmod and lfeon, each present only for the acmod values that need them.
+  std::uint32_t offset = 3;  // bits consumed of byte 6, starting after acmod
+  if ((acmod & 0x01U) != 0U && acmod != 0x01U) {
+    offset += 2;  // cmixlev
+  }
+  if ((acmod & 0x04U) != 0U) {
+    offset += 2;  // surmixlev
+  }
+  if (acmod == 0x02U) {
+    offset += 2;  // dsurmod
+  }
+  // Every combination above keeps lfeon inside byte 6 (the widest is
+  // 3 + 2 + 2 = 7 bits consumed, leaving bit 0), so no further byte is read.
+  frame.lfe = ((byteAt(bytes, 6) >> (7U - offset)) & 0x01U) != 0U;
+  frame.channels = static_cast<std::uint8_t>(frame.fullBandwidthChannels +
+                                             (frame.lfe ? 1U : 0U));
   return frame.frameBytes >= 6;
+}
+
+bool parseEac3SyncFrame(std::span<const std::byte> bytes,
+                        Ac3SyncFrame& frame) noexcept {
+  frame = Ac3SyncFrame{};
+  // Six bytes: bsid is read out of byte 5 to prove this really is E-AC-3.
+  if (bytes.size() < 6) {
+    return false;
+  }
+  if (byteAt(bytes, 0) != 0x0BU || byteAt(bytes, 1) != 0x77U) {
+    return false;
+  }
+  // A/52 Annex E bsi. The layout diverges from legacy AC-3 immediately after
+  // the sync word -- where AC-3 has crc1 and a frmsizecod TABLE INDEX, E-AC-3
+  // has strmtyp/substreamid and an explicit frmsiz WORD COUNT. Reading one as
+  // the other yields a plausible-looking frame length that is simply wrong,
+  // which is exactly why every E-AC-3 transport stream was being dropped: the
+  // legacy parser "succeeded" on garbage and the frame walk then failed to
+  // divide the PES into whole frames.
+  const std::uint8_t bsid =
+      static_cast<std::uint8_t>((byteAt(bytes, 5) >> 3) & 0x1FU);
+  if (bsid != kEac3BitstreamId) {
+    return false;
+  }
+  const std::uint32_t frmsiz =
+      (static_cast<std::uint32_t>(byteAt(bytes, 2) & 0x07U) << 8) |
+      static_cast<std::uint32_t>(byteAt(bytes, 3));
+  const std::uint8_t fscod =
+      static_cast<std::uint8_t>((byteAt(bytes, 4) >> 6) & 0x03U);
+  const std::uint8_t numblkscod =
+      static_cast<std::uint8_t>((byteAt(bytes, 4) >> 4) & 0x03U);
+  const std::uint8_t acmod =
+      static_cast<std::uint8_t>((byteAt(bytes, 4) >> 1) & 0x07U);
+  const bool lfeon = (byteAt(bytes, 4) & 0x01U) != 0U;
+
+  static constexpr std::array<std::uint32_t, 3> kRates{48'000, 44'100, 32'000};
+  if (fscod == 3U) {
+    // fscod 3 selects a half-rate stream through fscod2 and pins six blocks.
+    // Those rates (24/22.05/16 kHz) are outside this player's admitted audio
+    // envelope, so the frame is refused here by structure rather than admitted
+    // and then rejected with a less specific verdict downstream.
+    return false;
+  }
+  // numblkscod names 1, 2, 3 or 6 blocks of 256 samples.
+  static constexpr std::array<std::uint32_t, 4> kBlocks{1, 2, 3, 6};
+  frame.sampleRate = kRates[fscod];
+  frame.frameBytes = (frmsiz + 1U) * 2U;
+  frame.samplesPerFrame = kBlocks[numblkscod] * kAc3SamplesPerBlock;
+  frame.fullBandwidthChannels = kAc3AcmodChannels[acmod];
+  frame.lfe = lfeon;
+  frame.channels = static_cast<std::uint8_t>(frame.fullBandwidthChannels +
+                                             (lfeon ? 1U : 0U));
+  frame.bitstreamId = bsid;
+  frame.enhanced = true;
+  return frame.frameBytes >= 6;
+}
+
+bool parseAc3OrEac3SyncFrame(std::span<const std::byte> bytes,
+                             Ac3SyncFrame& frame) noexcept {
+  // bsid sits at byte 5 bits 7..3 in BOTH syntaxes -- legacy AC-3 reaches it
+  // through crc1 and fscod/frmsizecod, E-AC-3 through strmtyp/substreamid,
+  // frmsiz and fscod/numblkscod/acmod/lfeon, and both land on the same bit.
+  // That coincidence is what makes a single dispatch honest rather than a
+  // heuristic.
+  if (bytes.size() >= 6 && byteAt(bytes, 0) == 0x0BU &&
+      byteAt(bytes, 1) == 0x77U &&
+      ((byteAt(bytes, 5) >> 3) & 0x1FU) == kEac3BitstreamId) {
+    return parseEac3SyncFrame(bytes, frame);
+  }
+  return parseAc3SyncFrame(bytes, frame);
 }
 
 bool parseMpegAudioFrame(std::span<const std::byte> bytes,

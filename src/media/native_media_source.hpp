@@ -130,6 +130,70 @@ enum class MediaCodec : std::uint8_t {
   // a configuration record, and the record is the esds the Matroska demuxer
   // synthesizes around the CodecPrivate headers.
   Mpeg4Visual,
+  // Appended 2026-09-04 under SESSION_HANDOFF amendment 11, for Apple ProRes
+  // and Motion JPEG in QuickTime/MP4. Every value above keeps its existing
+  // ordinal.
+  //
+  // ProRes is the FIRST codec here whose VideoToolbox decoder is genuinely
+  // HARDWARE on this machine: VTIsHardwareDecodeSupported is 1 and a created
+  // session reports UsingHardwareAcceleratedVideoDecoder = TRUE for all six
+  // FourCCs, measured 2026-09-04 in scratchpad/vtprobe.mm. Like Mpeg2Video it
+  // carries NO codec configuration record -- a QuickTime ProRes sample
+  // description has no parameter-set atom, and CMVideoFormatDescriptionCreate
+  // takes a null extensions dictionary.
+  //
+  // ONE enumerator deliberately names only the ProRes 422 FAMILY -- 'apco'
+  // (Proxy), 'apcs' (LT), 'apcn' (422) and 'apch' (HQ). That is exactly the
+  // set VideoToolbox decodes interchangeably: measured 2026-09-04 in
+  // scratchpad/vtflavor.mm, a session created from ANY 422-family format
+  // description decodes samples of ANY other 422-family flavor, while a
+  // 422-family session fed 4444 samples fails with -12916 and vice versa. The
+  // 4444 family ('ap4h', 'ap4x') is therefore a SECOND decode family that this
+  // single enumerator cannot name honestly, and it is refused by name at
+  // admission rather than silently mis-dispatched. See the ProRes 4444 note in
+  // scratchpad/prores_mjpeg_report.md for the amendment that would admit it.
+  ProRes,
+  // Motion JPEG ('jpeg'). Decoded by VideoToolbox's SOFTWARE JPEG decoder --
+  // VTIsHardwareDecodeSupported reports 1 but a created session reports no
+  // UsingHardwareAcceleratedVideoDecoder property at all, the same signature
+  // Mpeg2Video and Mpeg4Visual show. Carries no configuration record either.
+  //
+  // Admitted for 4:2:0 chroma ONLY. Measured 2026-09-04: Apple's JPEG video
+  // decoder fails 4:2:2, 4:4:4 and grayscale JPEG with kVTAllocationFailedErr
+  // (-12904), and AVAssetImageGenerator reports "Cannot Decode" for the same
+  // files, while ImageIO decodes the identical bytes -- so the limit is the
+  // video decoder's, not the media's. The chroma gate lives upstream on the
+  // JPEG frame header, exactly as inspectMpeg4VisualHeaders() gates profile.
+  Mjpeg,
+  // Appended 2026-09-04 under SESSION_HANDOFF amendment 12, for the two ADPCM
+  // families that real WAV files carry: IMA/DVI ADPCM ('ms\0\x11', the format
+  // of game clips and old voice recorders) and Microsoft ADPCM ('ms\0\x02').
+  // Every value above keeps its existing ordinal.
+  //
+  // TWO enumerators rather than one, because they are two different decoders
+  // with two different bitstreams; a single AdpcmWav enumerator would have to
+  // be disambiguated by format tag at every site that dispatches on it, which
+  // is precisely the mis-dispatch the ProRes 422/4444 note above refuses.
+  //
+  // These are the first codecs admitted here whose AudioToolbox decode was
+  // proven BIT-EXACT against ffmpeg rather than merely close: measured
+  // 2026-09-04 on 4-second linear-CHIRP fixtures at 44.1 kHz, mono and stereo,
+  // both families -- produced frames equal the container's declared frame count
+  // exactly (delta 0), the chirp cross-correlation lag against ffmpeg's decode
+  // is 0 frames, and every one of the 176,958-177,567 decoded frames matches
+  // ffmpeg's to the bit (max |diff| = 0). A chirp is load-bearing here and a
+  // tone would not be: a steady tone correlates nearly as well at a whole-period
+  // offset as at zero, so it can "prove" an alignment that is wrong by a period.
+  //
+  // Structurally they are CONSTANT-bit-rate inputs -- mBytesPerPacket 1024 with
+  // mFramesPerPacket 1012-2041, and CoreMedia attaches no packet descriptions --
+  // so they are carried by the CBR input-proc arm amendment 7 added for LPCM
+  // and by the packet-table synthesis path beside it, with no new converter
+  // machinery. Both state mBitsPerChannel = 0 and mBytesPerFrame = 0, which is
+  // why they are NOT spelled as MediaCodec::Pcm: that enumerator means linear
+  // PCM, whose sample depth those two fields carry.
+  AdpcmIma,
+  AdpcmMs,
 };
 
 enum class MediaCodecConfigurationKind : std::uint8_t {

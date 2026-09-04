@@ -1,5 +1,7 @@
 #include "qt/subtitle_sources.hpp"
 
+#include "qt/subtitle_bitmap_provider.hpp"
+
 #include <QFile>
 #include <QFileInfo>
 #include <QMetaObject>
@@ -7,6 +9,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <utility>
 
 namespace wam::qt {
@@ -91,7 +94,13 @@ void disambiguateSourceLabels(std::vector<SubtitleSources::Source> &sources) {
 
 SubtitleSources::SubtitleSources(QObject *parent) : QObject(parent) {}
 
-SubtitleSources::~SubtitleSources() { cancelNativeLoad(); }
+SubtitleSources::~SubtitleSources() {
+  cancelNativeLoad();
+  // The image store is process-wide; a window that goes away must not leave
+  // its last caption's pixels retained in it.
+  SubtitleBitmapStore::instance().forget(
+      static_cast<quint64>(reinterpret_cast<quintptr>(this)));
+}
 
 void SubtitleSources::clear() {
   cancelNativeLoad();
@@ -99,8 +108,9 @@ void SubtitleSources::clear() {
   active_id_ = kOffId;
   last_selected_id_ = kOffId;
   next_id_ = 1;
-  if (!cues_.empty()) {
+  if (!cues_.empty() || !bitmap_.cues.empty()) {
     cues_.clear();
+    clearBitmapCues();
     resetLookupHint();
     emit cuesChanged();
   }
@@ -149,8 +159,8 @@ void SubtitleSources::setEmbeddedTracks(std::vector<Source> tracks) {
 bool SubtitleSources::Source::matches(const Source &other) const noexcept {
   // Identity is what the source IS, never the id it currently holds.
   return origin == other.origin && matroskaTrack == other.matroskaTrack &&
-         mpvSid == other.mpvSid && filePath == other.filePath &&
-         label == other.label;
+         mp4Track == other.mp4Track && mpvSid == other.mpvSid &&
+         filePath == other.filePath && label == other.label;
 }
 
 int SubtitleSources::remap(const Source &previous) const noexcept {
@@ -200,6 +210,9 @@ QVariantList SubtitleSources::toVariantList() const {
     entry.insert(QStringLiteral("origin"), originName(source.origin));
     entry.insert(QStringLiteral("isDefault"), source.defaultFlag);
     entry.insert(QStringLiteral("isForced"), source.forcedFlag);
+    // The menu shows bitmap tracks exactly like text tracks; this flag exists
+    // so a future view can distinguish them without re-deriving the codec.
+    entry.insert(QStringLiteral("isBitmap"), source.isBitmap());
     list.append(entry);
   }
   return list;
@@ -255,7 +268,7 @@ void SubtitleSources::beginNativeLoad(int id) {
   if (source == nullptr)
     return;
 
-  if (source->matroskaTrack == 0) {
+  if (source->matroskaTrack == 0 && source->mp4Track == 0) {
     // A sidecar source on the native route: small, local, and read inline.
     QString error;
     if (!loadFileCues(source->filePath, &error))
@@ -263,8 +276,9 @@ void SubtitleSources::beginNativeLoad(int id) {
     return;
   }
 
-  if (!cues_.empty()) {
+  if (!cues_.empty() || !bitmap_.cues.empty()) {
     cues_.clear();
+    clearBitmapCues();
     resetLookupHint();
     emit cuesChanged();
   }
@@ -276,6 +290,60 @@ void SubtitleSources::beginNativeLoad(int id) {
   const std::uint64_t track = source->matroskaTrack;
   const media::subtitles::TextCodec codec = source->codec;
   setLoading(true);
+
+  if (source->mp4Track != 0) {
+    // The MP4 tx3g lane. Same worker discipline as the Matroska lanes: one
+    // thread, cancelled and joined before it can be replaced, result delivered
+    // queued onto the owning thread. The reader opens its own descriptor and
+    // never touches the playback source, so a subtitle read cannot perturb
+    // decode -- the same rule matroska_subtitles.hpp states and for the same
+    // reason.
+    const std::uint32_t mp4Track = source->mp4Track;
+    worker_ = std::thread([this, generation, path, mp4Track]() {
+      media::mp4::SubtitleTrackLoad mp4Load =
+          media::mp4::loadMp4SubtitleTrack(path, mp4Track);
+      // Restated as the Matroska load the apply path already understands, so
+      // the cue lane below stays single-shaped. Style spans are dropped here:
+      // the overlay is Text.PlainText by design (see the report's deferrals).
+      media::matroska::SubtitleTrackLoad load;
+      load.cues = std::move(mp4Load.cues);
+      load.ok = mp4Load.ok;
+      load.truncated = mp4Load.truncated;
+      load.skippedWithoutDuration = mp4Load.skipped;
+      load.error = std::move(mp4Load.error);
+      QMetaObject::invokeMethod(
+          this,
+          [this, generation, load = std::move(load)]() mutable {
+            applyLoad(generation, std::move(load));
+          },
+          Qt::QueuedConnection);
+    });
+    return;
+  }
+
+  if (source->isBitmap()) {
+    // The bitmap lane. Same worker discipline as the text lane: one thread,
+    // cancelled and joined before it can be replaced, result delivered queued
+    // onto the owning thread.
+    const media::subtitles::BitmapCodec bitmapCodec = source->bitmapCodec;
+    worker_ = std::thread([this, generation, path, track, bitmapCodec, cancel]() {
+      const media::matroska::CancellationToken token{
+          cancel.get(), [](const void *context) noexcept {
+            return static_cast<const std::atomic<bool> *>(context)->load(
+                std::memory_order_relaxed);
+          }};
+      media::matroska::BitmapSubtitleTrackLoad load =
+          media::matroska::loadMatroskaBitmapSubtitleTrack(path, track,
+                                                           bitmapCodec, token);
+      QMetaObject::invokeMethod(
+          this,
+          [this, generation, load = std::move(load)]() mutable {
+            applyBitmapLoad(generation, std::move(load));
+          },
+          Qt::QueuedConnection);
+    });
+    return;
+  }
 
   worker_ = std::thread([this, generation, path, track, codec, cancel]() {
     const media::matroska::CancellationToken token{
@@ -373,6 +441,132 @@ QString SubtitleSources::textAt(double seconds) noexcept {
                            : QString::fromStdString(
                                  cues_[static_cast<std::size_t>(index)].text);
   return cached_text_;
+}
+
+void SubtitleSources::clearBitmapCues() {
+  bitmap_ = {};
+  bitmap_active_.clear();
+  bitmap_frame_ = BitmapFrame{};
+  // Publishing a null image is the overlay's signal that there is nothing to
+  // draw, and it releases the last caption's pixels.
+  SubtitleBitmapStore::instance().publish(
+      static_cast<quint64>(reinterpret_cast<quintptr>(this)), QImage());
+}
+
+void SubtitleSources::applyBitmapLoad(
+    std::uint64_t generation, media::matroska::BitmapSubtitleTrackLoad load) {
+  // A newer selection already superseded this one.
+  if (generation != generation_)
+    return;
+  setLoading(false);
+  if (load.cancelled)
+    return;
+  if (!load.ok) {
+    emit loadFailed(load.error.empty()
+                        ? QStringLiteral("The subtitle track could not be read.")
+                        : QString::fromStdString(load.error));
+    return;
+  }
+  bitmap_ = std::move(load.content);
+  bitmap_active_.clear();
+  bitmap_frame_ = BitmapFrame{};
+  emit cuesChanged();
+}
+
+void SubtitleSources::composeBitmapFrame() {
+  bitmap_frame_ = BitmapFrame{};
+  const auto key = static_cast<quint64>(reinterpret_cast<quintptr>(this));
+  if (bitmap_active_.empty() || bitmap_.canvasWidth == 0 ||
+      bitmap_.canvasHeight == 0) {
+    SubtitleBitmapStore::instance().publish(key, QImage());
+    return;
+  }
+
+  // The union of the covering cues, so the overlay stays one image and one
+  // rectangle however many composition objects the format put on screen.
+  std::int64_t left = std::numeric_limits<std::int64_t>::max();
+  std::int64_t top = std::numeric_limits<std::int64_t>::max();
+  std::int64_t right = std::numeric_limits<std::int64_t>::min();
+  std::int64_t bottom = std::numeric_limits<std::int64_t>::min();
+  for (const std::size_t index : bitmap_active_) {
+    const auto &cue = bitmap_.cues[index];
+    left = std::min<std::int64_t>(left, cue.x);
+    top = std::min<std::int64_t>(top, cue.y);
+    right = std::max<std::int64_t>(right, cue.x + cue.image.width);
+    bottom = std::max<std::int64_t>(bottom, cue.y + cue.image.height);
+  }
+  if (right <= left || bottom <= top) {
+    SubtitleBitmapStore::instance().publish(key, QImage());
+    return;
+  }
+
+  const int width = static_cast<int>(right - left);
+  const int height = static_cast<int>(bottom - top);
+  QImage canvas(width, height, QImage::Format_ARGB32);
+  if (canvas.isNull()) {
+    SubtitleBitmapStore::instance().publish(key, QImage());
+    return;
+  }
+  canvas.fill(Qt::transparent);
+
+  std::vector<std::uint32_t> pixels;
+  for (const std::size_t index : bitmap_active_) {
+    const auto &cue = bitmap_.cues[index];
+    if (!media::subtitles::expandToBgra(cue.image, &pixels))
+      continue;
+    const int originX = static_cast<int>(cue.x - left);
+    if (originX < 0 || originX + static_cast<int>(cue.image.width) > width)
+      continue;
+    for (std::uint32_t row = 0; row < cue.image.height; ++row) {
+      const int y = static_cast<int>(cue.y - top) + static_cast<int>(row);
+      if (y < 0 || y >= height)
+        continue;
+      // Straight-alpha 0xAARRGGBB words are exactly QImage::Format_ARGB32, so
+      // no per-pixel conversion is needed -- only the transparency test, which
+      // keeps a later cue from erasing an earlier one through its holes.
+      auto *destination =
+          reinterpret_cast<std::uint32_t *>(canvas.scanLine(y)) + originX;
+      const std::uint32_t *source =
+          pixels.data() + static_cast<std::size_t>(row) * cue.image.width;
+      for (std::uint32_t column = 0; column < cue.image.width; ++column) {
+        if ((source[column] >> 24) != 0)
+          destination[column] = source[column];
+      }
+    }
+  }
+
+  bitmap_frame_.visible = true;
+  bitmap_frame_.image = canvas;
+  bitmap_frame_.x = static_cast<double>(left) / bitmap_.canvasWidth;
+  bitmap_frame_.y = static_cast<double>(top) / bitmap_.canvasHeight;
+  bitmap_frame_.width = static_cast<double>(width) / bitmap_.canvasWidth;
+  bitmap_frame_.height = static_cast<double>(height) / bitmap_.canvasHeight;
+  bitmap_frame_.serial = ++bitmap_serial_;
+  SubtitleBitmapStore::instance().publish(key, canvas);
+}
+
+const SubtitleSources::BitmapFrame &SubtitleSources::bitmapFrameAt(
+    double seconds) {
+  const bool usable = !bitmap_.cues.empty() && std::isfinite(seconds) &&
+                      seconds < 1.0e7;
+  if (!usable) {
+    if (!bitmap_active_.empty()) {
+      bitmap_active_.clear();
+      composeBitmapFrame();
+    }
+    return bitmap_frame_;
+  }
+  const auto t = static_cast<std::int64_t>(std::max(0.0, seconds) *
+                                           kNanosecondsPerSecond);
+  media::subtitles::bitmapCuesAt(bitmap_.cues, t, &bitmap_scratch_);
+  // Recompose only on turnover. This runs on every published position -- about
+  // thirty times a second -- and compositing an unchanged caption on each of
+  // those would be a full-size image allocation per frame.
+  if (bitmap_scratch_ == bitmap_active_)
+    return bitmap_frame_;
+  bitmap_active_ = bitmap_scratch_;
+  composeBitmapFrame();
+  return bitmap_frame_;
 }
 
 }  // namespace wam::qt
