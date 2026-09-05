@@ -428,7 +428,7 @@ bool CopyMatroskaKeyframe(const std::filesystem::path& path,
   inputs.format = format;
   inputs.video = true;
 
-  wam::macos::MatroskaScopedSampleBuffer built;
+  wam::macos::ScopedSampleBuffer built;
   const auto build = wam::macos::buildMatroskaCompressedSampleBuffer(
       inputs, keyframe, &built, error);
   if (build != wam::macos::MatroskaSampleBuildStatus::Built ||
@@ -539,7 +539,7 @@ bool CopyMpegTsKeyframe(const std::filesystem::path& path,
   inputs.video = true;
   inputs.workspace = &workspace;
 
-  wam::macos::MpegTsScopedSampleBuffer built;
+  wam::macos::ScopedSampleBuffer built;
   const auto build = wam::macos::buildMpegTsCompressedSampleBuffer(
       inputs, keyframe, &built, error);
   if (build != wam::macos::MpegTsSampleBuildStatus::Built ||

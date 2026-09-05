@@ -95,6 +95,8 @@ struct GraphState {
   std::mutex observationMutex;
   std::vector<std::shared_ptr<void>> queuedObservationTickets;
   std::atomic<bool> quiesceFirstPause{false};
+  // The 1-based setPaused call that answers Quiescing once; 0 for none.
+  std::atomic<std::uint64_t> quiescePauseCall{0};
   std::atomic<bool> blockPause{false};
   std::atomic<bool> pauseEntered{false};
   std::atomic<bool> releasePause{false};
@@ -738,6 +740,9 @@ NativeAudioSessionProgress audioPaused(void* context, bool paused) noexcept {
     return NativeAudioSessionProgress::Failed;
   }
   if (state.quiesceFirstPause.load(std::memory_order_acquire) && call == 1) {
+    return NativeAudioSessionProgress::Quiescing;
+  }
+  if (state.quiescePauseCall.load(std::memory_order_acquire) == call) {
     return NativeAudioSessionProgress::Quiescing;
   }
   state.clockGeneration.store(state.audioExposed, std::memory_order_release);
@@ -1741,6 +1746,249 @@ void expectExactCommitLifecycle(
   }
 }
 
+using CommitPhase = NativeMediaSessionCommitPhase;
+
+// The one admitted walk: every commit enters these phases in this order and
+// nothing else, whether the dispatcher accepts the seek synchronously or
+// reports it Pending first.
+const std::vector<CommitPhase> kCommitRing = {
+    CommitPhase::PausingSource,      CommitPhase::IssuingSeek,
+    CommitPhase::AwaitingSeekCommit, CommitPhase::ActivatingTimebase,
+    CommitPhase::StartingAudio,      CommitPhase::PausingTarget,
+    CommitPhase::AwaitingProofs,     CommitPhase::Idle,
+};
+
+std::vector<CommitPhase> commitPhaseTrace(const NativeMediaSession& session) {
+  const NativeMediaSessionTestCommitPhaseTrace trace =
+      NativeMediaSessionTestAccess::commitPhaseTrace(session);
+  return {trace.phases.begin(), trace.phases.begin() + trace.length};
+}
+
+// Waits for the worker to have entered at least `expected.size()` phases
+// (the final Idle is recorded after CommitReady is published, so it can trail
+// the fact by one worker pass), then requires the trace to be exactly it.
+void expectCommitPhaseTrace(const NativeMediaSession& session,
+                            const std::vector<CommitPhase>& expected,
+                            const char* message) {
+  waitUntil(
+      [&] { return commitPhaseTrace(session).size() >= expected.size(); },
+      message);
+  const std::vector<CommitPhase> actual = commitPhaseTrace(session);
+  if (actual != expected) {
+    std::cerr << "commit phases:";
+    for (const CommitPhase phase : actual) {
+      std::cerr << ' ' << nativeMediaSessionCommitPhaseName(phase);
+    }
+    std::cerr << '\n';
+    fail(message);
+  }
+}
+
+// Every pair of phases against the step table: exactly the ring's eight steps
+// are admitted, and the 56 others (self-steps, skips, reversals, an early
+// return to Idle) are refused.
+void testCommitPhaseStepTable() {
+  constexpr std::size_t kPhaseCount = 8;
+  std::size_t admitted = 0;
+  for (std::size_t from = 0; from < kPhaseCount; ++from) {
+    for (std::size_t to = 0; to < kPhaseCount; ++to) {
+      const bool step = nativeMediaSessionCommitStepAdmitted(
+          static_cast<CommitPhase>(from), static_cast<CommitPhase>(to));
+      const bool successor = to == (from + 1) % kPhaseCount;
+      expect(step == successor,
+             "the commit step table admits exactly each phase's successor");
+      admitted += step ? 1 : 0;
+    }
+  }
+  expect(admitted == kPhaseCount,
+         "the commit step table admits exactly eight steps");
+  for (std::size_t index = 1; index < kCommitRing.size(); ++index) {
+    expect(nativeMediaSessionCommitStepAdmitted(kCommitRing[index - 1],
+                                                kCommitRing[index]),
+           "the expected ring is the table's own walk");
+  }
+  expect(nativeMediaSessionCommitStepAdmitted(CommitPhase::Idle,
+                                              kCommitRing.front()),
+         "the ring opens from Idle");
+  for (std::size_t phase = 0; phase < kPhaseCount; ++phase) {
+    const char* name =
+        nativeMediaSessionCommitPhaseName(static_cast<CommitPhase>(phase));
+    expect(name != nullptr && name[0] != '?',
+           "every commit phase has a diagnostic name");
+  }
+}
+
+// A step the table refuses is applied to nothing and surfaces as a CommitSeek
+// failure carrying the commit's own stamp; the walk stays where it was.
+void testCommitPhaseRefusedStepIsANamedFailure() {
+  auto state = std::make_shared<GraphState>();
+  state->descriptor = descriptor();
+  state->blockCapacity.store(true);
+  std::shared_ptr<NativeMediaSessionWake> wake;
+  auto session = sessionFor(&state, &wake);
+  std::atomic<bool> fault{false};
+  NativeMediaSessionTestAccess::installCommitPhaseFault(*session, &fault);
+  expect(prepare(*session, prepareCommand()) ==
+             NativeMediaSessionCommandStatus::Accepted,
+         "refused-step Prepare accepted");
+  static_cast<void>(
+      waitFact<protocol::Prepared>(*session, "refused-step Prepared"));
+  expect(session->start({{{1}, {2}}, {7}, true}) ==
+             NativeMediaSessionCommandStatus::Accepted,
+         "refused-step Start accepted");
+  static_cast<void>(
+      waitFact<protocol::Started>(*session, "refused-step Started"));
+  expect(commitPhaseTrace(*session).empty() &&
+             NativeMediaSessionTestAccess::commitPhase(*session) ==
+                 CommitPhase::Idle,
+         "no commit phase is entered before a commit is accepted");
+
+  const auto target = session->preflightCommitTarget(2.0);
+  expect(target.has_value(), "refused-step commit target preflights");
+  const protocol::CommitSeek commit = commitCommand();
+  fault.store(true, std::memory_order_release);
+  expect(session->commitSeek(commit, *target) ==
+             NativeMediaSessionCommandStatus::Accepted,
+         "refused-step CommitSeek accepted");
+  const protocol::Failed failed = waitFact<protocol::Failed>(
+      *session, "a refused commit step publishes a CommitSeek failure");
+  expect(failed.reason == protocol::FailureReason::CommitSeek &&
+             failed.stamp == commit.stamp,
+         "the refused step names CommitSeek and the commit's own stamp");
+  expect(!fault.load(std::memory_order_acquire),
+         "the fault was consumed by exactly the step it replaced");
+  expect(session->facts().liveFailed && !session->facts().commitPending,
+         "a refused step latches the live failure and clears the commit");
+  expectCommitPhaseTrace(*session, {CommitPhase::PausingSource},
+                         "a refused step is never applied");
+  expect(NativeMediaSessionTestAccess::commitPhase(*session) ==
+             CommitPhase::PausingSource,
+         "the walk stays in the phase whose step was refused");
+  expect(state->sourceSeeks.load() == 0,
+         "no seek is issued after the refused step");
+  expect(session->stop({{{1}, {4}}, {9}}) ==
+             NativeMediaSessionCommandStatus::Accepted,
+         "Stop after a refused step accepted");
+  static_cast<void>(
+      waitFact<protocol::Stopped>(*session, "refused-step Stopped"));
+  expectCommitPhaseTrace(*session,
+                         {CommitPhase::PausingSource, CommitPhase::Idle},
+                         "Stop resets the refused walk to Idle");
+}
+
+// Stop latched while the worker is inside the commit's first child mutation
+// resets the walk from that phase straight to Idle: the terminal reset, which
+// is not one of the table's steps.
+void testStopDuringCommitResetsPhaseToIdle() {
+  auto state = std::make_shared<GraphState>();
+  state->descriptor = descriptor();
+  state->blockCapacity.store(true);
+  std::shared_ptr<NativeMediaSessionWake> wake;
+  auto session = sessionFor(&state, &wake);
+  expect(prepare(*session, prepareCommand()) ==
+             NativeMediaSessionCommandStatus::Accepted,
+         "mid-commit Stop Prepare accepted");
+  static_cast<void>(
+      waitFact<protocol::Prepared>(*session, "mid-commit Stop Prepared"));
+  expect(session->start({{{1}, {2}}, {7}, true}) ==
+             NativeMediaSessionCommandStatus::Accepted,
+         "mid-commit Stop Start accepted");
+  static_cast<void>(
+      waitFact<protocol::Started>(*session, "mid-commit Stop Started"));
+
+  const std::uint64_t pausesBefore =
+      state->pauseCalls.load(std::memory_order_acquire);
+  state->pauseEntered.store(false, std::memory_order_release);
+  state->blockPause.store(true, std::memory_order_release);
+  const auto target = session->preflightCommitTarget(2.0);
+  expect(target.has_value(), "mid-commit Stop target preflights");
+  expect(session->commitSeek(commitCommand(), *target) ==
+             NativeMediaSessionCommandStatus::Accepted,
+         "mid-commit Stop CommitSeek accepted");
+  waitUntil(
+      [&] {
+        return state->pauseEntered.load(std::memory_order_acquire) &&
+               state->pauseCalls.load(std::memory_order_acquire) ==
+                   pausesBefore + 1;
+      },
+      "the commit's source pause is the next audio mutation");
+  expect(NativeMediaSessionTestAccess::commitPhase(*session) ==
+             CommitPhase::PausingSource,
+         "the worker is inside PausingSource");
+  expect(session->stop({{{1}, {4}}, {9}}) ==
+             NativeMediaSessionCommandStatus::Accepted,
+         "Stop is accepted while the source pause is in flight");
+  state->releasePause.store(true, std::memory_order_release);
+  static_cast<void>(
+      waitFact<protocol::Stopped>(*session, "mid-commit Stop retires"));
+  expectCommitPhaseTrace(*session,
+                         {CommitPhase::PausingSource, CommitPhase::Idle},
+                         "Stop resets the walk from PausingSource to Idle");
+  expect(state->sourceSeeks.load() == 0,
+         "a commit reset by Stop never issues its seek");
+}
+
+// A Quiescing answer to the commit's source pause parks the walk in
+// PausingSource until the child's own wake, then the same pause is retried:
+// no failure, no phase movement, and the ring is still walked exactly once.
+void testQuiescingCommitPauseIsRetriedNotFailed() {
+  auto state = std::make_shared<GraphState>();
+  state->descriptor = descriptor();
+  state->blockCapacity.store(true);
+  std::shared_ptr<NativeMediaSessionWake> wake;
+  auto session = sessionFor(&state, &wake);
+  expect(prepare(*session, prepareCommand()) ==
+             NativeMediaSessionCommandStatus::Accepted,
+         "quiescing-pause Prepare accepted");
+  static_cast<void>(
+      waitFact<protocol::Prepared>(*session, "quiescing-pause Prepared"));
+  expect(session->start({{{1}, {2}}, {7}, true}) ==
+             NativeMediaSessionCommandStatus::Accepted,
+         "quiescing-pause Start accepted");
+  static_cast<void>(
+      waitFact<protocol::Started>(*session, "quiescing-pause Started"));
+
+  const std::uint64_t pausesBefore =
+      state->pauseCalls.load(std::memory_order_acquire);
+  state->quiescePauseCall.store(pausesBefore + 1, std::memory_order_release);
+  const auto target = session->preflightCommitTarget(2.0);
+  expect(target.has_value(), "quiescing-pause target preflights");
+  const protocol::CommitSeek commit = commitCommand();
+  expect(session->commitSeek(commit, *target) ==
+             NativeMediaSessionCommandStatus::Accepted,
+         "quiescing-pause CommitSeek accepted");
+  waitUntil(
+      [&] {
+        return state->pauseCalls.load(std::memory_order_acquire) ==
+               pausesBefore + 1;
+      },
+      "the commit's source pause is asked once and answers Quiescing");
+  expect(NativeMediaSessionTestAccess::commitPhase(*session) ==
+                 CommitPhase::PausingSource &&
+             state->sourceSeeks.load() == 0 && !session->facts().liveFailed,
+         "a Quiescing pause parks the walk in PausingSource without failing");
+  wake->audio().signal(wake->audio().context);
+  waitUntil([&] { return state->sourceSeeks.load() == 1; },
+            "the parked pause is retried on the child's wake and the seek "
+            "follows");
+  publishCommitDraw(*state, 8, 1, 2.0);
+  wake->video().signal(wake->video().context);
+  const protocol::CommitReady ready = waitFact<protocol::CommitReady>(
+      *session, "a commit whose pause quiesced once reaches readiness");
+  expect(protocol::commitReadyMatches(commit, target->drawBaseline(), ready),
+         "quiescing-pause CommitReady is exact");
+  expect(state->pauseCalls.load(std::memory_order_acquire) ==
+             pausesBefore + 3,
+         "source pause twice (Quiescing, then Done) and target pause once");
+  expectCommitPhaseTrace(*session, kCommitRing,
+                         "a retried pause does not re-enter any phase");
+  expect(session->stop({{{1}, {5}}, {9}}) ==
+             NativeMediaSessionCommandStatus::Accepted,
+         "quiescing-pause Stop accepted");
+  static_cast<void>(
+      waitFact<protocol::Stopped>(*session, "quiescing-pause Stopped"));
+}
+
 void testCommitSeekPendingReadyAndStopHighWater() {
   auto state = std::make_shared<GraphState>();
   state->descriptor = descriptor();
@@ -1786,6 +2034,9 @@ void testCommitSeekPendingReadyAndStopHighWater() {
   expectExactCommitLifecycle(
       state->finishCommitLifecycle(),
       "ordinary commit flushes before one target start, then pause and proofs");
+  expectCommitPhaseTrace(
+      *session, kCommitRing,
+      "a commit whose seek reports Pending walks the ring exactly once");
   expect(session->setRunState({{{1}, {4}}, {8}, true, 1.0}) ==
              NativeMediaSessionCommandStatus::Accepted,
          "post-commit run state addresses the active target generation");
@@ -1883,6 +2134,9 @@ void testCommitSeekAdmittedDuringStarting() {
       *session, "Starting commit reaches exact readiness without Start"));
   expect(state->sourceSeeks.load() == 1,
          "Starting commit issues exactly one source seek");
+  expectCommitPhaseTrace(
+      *session, kCommitRing,
+      "a commit whose seek is accepted synchronously walks the same ring");
   expect(session->stop({{{1}, {4}}, {9}}) ==
              NativeMediaSessionCommandStatus::Accepted,
          "Starting commit target retires exactly");
@@ -3152,6 +3406,10 @@ int main() {
   testAcceptedPreviewFailuresPublishExactTerminal();
   testPreviewFailureNamesLatestPublicReplacement();
   testCommitBurnsQueuedPreviewFailure();
+  testCommitPhaseStepTable();
+  testCommitPhaseRefusedStepIsANamedFailure();
+  testStopDuringCommitResetsPhaseToIdle();
+  testQuiescingCommitPauseIsRetriedNotFailed();
   testCommitSeekPendingReadyAndStopHighWater();
   testCommitSeekProceedsPastFailedPreviewLane();
   testCommitSeekAdmittedDuringStarting();

@@ -1,5 +1,7 @@
 #include "media/mpegts_packet.hpp"
 
+#include "media/rbsp_bit_reader.hpp"
+
 #include <algorithm>
 #include <cstring>
 #include <limits>
@@ -887,110 +889,6 @@ std::size_t annexBToAvcc(std::span<const std::byte> unit,
   return written;
 }
 
-namespace {
-
-// Bit reader over one NAL unit payload with ISO/IEC 23008-2 emulation
-// prevention undone as it reads. Allocation-free by construction: the
-// unescape is a running zero-count over the source span, never a copy into a
-// scratch buffer, which is what lets this live in the pure layer.
-class HevcRbspBitReader final {
- public:
-  explicit HevcRbspBitReader(std::span<const std::byte> escaped) noexcept
-      : bytes_(escaped) {}
-
-  [[nodiscard]] bool readBits(std::uint32_t count,
-                              std::uint32_t& value) noexcept {
-    if (count > 32) {
-      return false;
-    }
-    value = 0;
-    for (std::uint32_t index = 0; index < count; ++index) {
-      if (bitsLeft_ == 0) {
-        if (!nextByte(current_)) {
-          return false;
-        }
-        bitsLeft_ = 8;
-      }
-      --bitsLeft_;
-      value = (value << 1) |
-              ((static_cast<std::uint32_t>(current_) >> bitsLeft_) & 0x01U);
-    }
-    return true;
-  }
-
-  [[nodiscard]] bool skipBits(std::uint32_t count) noexcept {
-    std::uint32_t ignored = 0;
-    while (count > 32) {
-      if (!readBits(32, ignored)) {
-        return false;
-      }
-      count -= 32;
-    }
-    return readBits(count, ignored);
-  }
-
-  // ue(v). A leading-zero run past 30 is refused rather than shifted: the
-  // fields this reader consumes are all small, and an unbounded run is a
-  // mis-parse, not a large value.
-  [[nodiscard]] bool readUnsignedExpGolomb(std::uint32_t& value) noexcept {
-    std::uint32_t leadingZeros = 0;
-    std::uint32_t bit = 0;
-    while (true) {
-      if (!readBits(1, bit)) {
-        return false;
-      }
-      if (bit != 0) {
-        break;
-      }
-      ++leadingZeros;
-      if (leadingZeros > 30) {
-        return false;
-      }
-    }
-    if (leadingZeros == 0) {
-      value = 0;
-      return true;
-    }
-    std::uint32_t remainder = 0;
-    if (!readBits(leadingZeros, remainder)) {
-      return false;
-    }
-    value = ((1U << leadingZeros) - 1U) + remainder;
-    return true;
-  }
-
- private:
-  // The next RBSP byte. A 0x03 that follows two zero bytes is the
-  // emulation-prevention byte: it is consumed and the byte after it is
-  // returned, with the zero run restarted from that byte.
-  [[nodiscard]] bool nextByte(std::uint8_t& out) noexcept {
-    if (cursor_ >= bytes_.size()) {
-      return false;
-    }
-    std::uint8_t value = byteAt(bytes_, cursor_);
-    if (zeros_ >= 2 && value == 0x03U) {
-      ++cursor_;
-      if (cursor_ >= bytes_.size()) {
-        return false;
-      }
-      value = byteAt(bytes_, cursor_);
-      zeros_ = 0;
-    }
-    ++cursor_;
-    zeros_ = value == 0U ? zeros_ + 1U : 0U;
-    out = value;
-    return true;
-  }
-
-  std::span<const std::byte> bytes_;
-  std::size_t cursor_{0};
-  std::uint32_t zeros_{0};
-  std::uint8_t current_{0};
-  std::uint32_t bitsLeft_{0};
-};
-
-}  // namespace
-
 bool parseHevcSpsFacts(std::span<const std::byte> nal,
                        HevcSpsFacts& facts) noexcept {
   facts = HevcSpsFacts{};
@@ -1010,91 +908,58 @@ bool parseHevcSpsFacts(std::span<const std::byte> nal,
     return false;
   }
 
-  HevcRbspBitReader bits(nal.subspan(2));
-  std::uint32_t value = 0;
-  if (!bits.readBits(4, value) ||          // sps_video_parameter_set_id
-      !bits.readBits(3, value) || value > 6) {
-    return false;
-  }
-  facts.maxSubLayersMinusOne = static_cast<std::uint8_t>(value);
-  if (!bits.readBits(1, value)) {
-    return false;
-  }
-  facts.temporalIdNested = value != 0;
+  RbspBitReader bits(std::span<const std::uint8_t>(
+      reinterpret_cast<const std::uint8_t*>(nal.data()) + 2, nal.size() - 2));
+  bits.skipBits(4);  // sps_video_parameter_set_id
+  facts.maxSubLayersMinusOne = static_cast<std::uint8_t>(bits.readBitsAtMost(3, 6));
+  facts.temporalIdNested = bits.readBit();
 
   // The verbatim twelve. See the header for why this is a copy and not a
   // decode: the whole profile_tier_level() prefix is byte-aligned here.
   for (std::uint8_t& byte : facts.profileTierLevel) {
-    if (!bits.readBits(8, value)) {
-      return false;
-    }
-    byte = static_cast<std::uint8_t>(value);
+    byte = static_cast<std::uint8_t>(bits.readBits(8));
   }
 
   std::array<bool, 8> profilePresent{};
   std::array<bool, 8> levelPresent{};
   for (std::uint32_t layer = 0; layer < facts.maxSubLayersMinusOne; ++layer) {
-    if (!bits.readBits(1, value)) {
-      return false;
-    }
-    profilePresent[layer] = value != 0;
-    if (!bits.readBits(1, value)) {
-      return false;
-    }
-    levelPresent[layer] = value != 0;
+    profilePresent[layer] = bits.readBit();
+    levelPresent[layer] = bits.readBit();
   }
-  if (facts.maxSubLayersMinusOne > 0) {
-    for (std::uint32_t layer = facts.maxSubLayersMinusOne; layer < 8U;
-         ++layer) {
-      if (!bits.skipBits(2)) {
-        return false;
-      }
-    }
+  for (std::uint32_t layer = facts.maxSubLayersMinusOne;
+       layer < 8U && facts.maxSubLayersMinusOne > 0; ++layer) {
+    bits.skipBits(2);
   }
   for (std::uint32_t layer = 0; layer < facts.maxSubLayersMinusOne; ++layer) {
     // A present sub-layer profile is the same 88-bit prefix minus the level
     // byte; the level byte follows separately.
-    if (profilePresent[layer] && !bits.skipBits(88)) {
-      return false;
+    if (profilePresent[layer]) {
+      bits.skipBits(88);
     }
-    if (levelPresent[layer] && !bits.skipBits(8)) {
-      return false;
+    if (levelPresent[layer]) {
+      bits.skipBits(8);
     }
   }
 
-  std::uint32_t ignored = 0;
-  std::uint32_t chromaFormat = 0;
-  if (!bits.readUnsignedExpGolomb(ignored) || ignored > 15U ||
-      !bits.readUnsignedExpGolomb(chromaFormat) || chromaFormat > 3U) {
+  bits.readUnsignedExpGolombAtMost(15);  // sps_seq_parameter_set_id
+  facts.chromaFormatIdc =
+      static_cast<std::uint8_t>(bits.readUnsignedExpGolombAtMost(3));
+  if (facts.chromaFormatIdc == 3U) {
+    bits.skipBits(1);
+  }
+  bits.require(bits.readUnsignedExpGolomb() != 0U);  // pic_width_in_luma_samples
+  bits.require(bits.readUnsignedExpGolomb() != 0U);  // pic_height_in_luma_samples
+  if (bits.readBit()) {
+    bits.skipExpGolomb(4);  // conformance_window offsets
+  }
+  facts.bitDepthLumaMinusEight =
+      static_cast<std::uint8_t>(bits.readUnsignedExpGolombAtMost(7));
+  facts.bitDepthChromaMinusEight =
+      static_cast<std::uint8_t>(bits.readUnsignedExpGolombAtMost(7));
+  if (!bits.ok()) {
+    facts = HevcSpsFacts{};
     return false;
   }
-  facts.chromaFormatIdc = static_cast<std::uint8_t>(chromaFormat);
-  if (chromaFormat == 3U && !bits.skipBits(1)) {
-    return false;
-  }
-  std::uint32_t width = 0;
-  std::uint32_t height = 0;
-  std::uint32_t conformanceWindow = 0;
-  if (!bits.readUnsignedExpGolomb(width) || width == 0U ||
-      !bits.readUnsignedExpGolomb(height) || height == 0U ||
-      !bits.readBits(1, conformanceWindow)) {
-    return false;
-  }
-  if (conformanceWindow != 0U) {
-    for (int edge = 0; edge < 4; ++edge) {
-      if (!bits.readUnsignedExpGolomb(ignored)) {
-        return false;
-      }
-    }
-  }
-  std::uint32_t luma = 0;
-  std::uint32_t chroma = 0;
-  if (!bits.readUnsignedExpGolomb(luma) || luma > 7U ||
-      !bits.readUnsignedExpGolomb(chroma) || chroma > 7U) {
-    return false;
-  }
-  facts.bitDepthLumaMinusEight = static_cast<std::uint8_t>(luma);
-  facts.bitDepthChromaMinusEight = static_cast<std::uint8_t>(chroma);
   return true;
 }
 

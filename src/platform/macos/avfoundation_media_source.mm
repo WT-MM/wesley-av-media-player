@@ -8,6 +8,7 @@
 #include "media/media_codec_facts.hpp"
 #include "media/video_codec_configuration.hpp"
 #include "core_media_codec_facts.hpp"
+#include "core_media_source_support.hpp"
 #include "native_audio_channel_map.hpp"
 #include "native_video_codec_capability.hpp"
 #include "native_video_color.hpp"
@@ -139,47 +140,6 @@ struct AudioPrimingPlan {
   const auto scale = static_cast<std::int32_t>(sampleRate);
   return AudioPrimingPlan{MediaTime{floorFrame, scale},
                           MediaTime{ceilingFrame, scale}};
-}
-
-// The converter admits the first compressed access unit of a generation that
-// does not begin at the stream origin only when that unit is an
-// ImmediatePlayoutFrame, proved by a per-sample
-// kCMSampleAttachmentKey_AudioIndependentSampleDecoderRefreshCount of exactly
-// zero. AVFoundation never states that attachment for AAC-LC - it leaves the
-// per-sample attachment array absent - so this backend states it itself, and
-// only once it has MADE it true: the generation's reader range was placed at
-// least kAudioPrimingAccessUnits whole access units before the first audible
-// frame A, and the converter discards every decoded PCM frame in [D, A)
-// without relabeling. With that much decoded-and-discarded audio ahead of it,
-// the frame at A is fully primed, which is exactly the property the proof
-// asserts. Callers verify the unit against the priming ceiling first; an
-// unproved unit is left untouched so the converter fails the generation
-// closed rather than publishing un-primed PCM.
-[[nodiscard]] bool statedImmediatePlayoutFrame(
-    CMSampleBufferRef sample) noexcept {
-  if (sample == nullptr || CMSampleBufferGetNumSamples(sample) <= 0) {
-    return false;
-  }
-  CFArrayRef attachments =
-      CMSampleBufferGetSampleAttachmentsArray(sample, true);
-  if (attachments == nullptr || CFArrayGetCount(attachments) <= 0) {
-    return false;
-  }
-  CFTypeRef entry = CFArrayGetValueAtIndex(attachments, 0);
-  if (entry == nullptr || CFGetTypeID(entry) != CFDictionaryGetTypeID()) {
-    return false;
-  }
-  const std::int64_t refreshCount = 0;
-  CFNumberRef value = CFNumberCreate(kCFAllocatorDefault, kCFNumberSInt64Type,
-                                     &refreshCount);
-  if (value == nullptr) {
-    return false;
-  }
-  CFDictionarySetValue(
-      static_cast<CFMutableDictionaryRef>(const_cast<void*>(entry)),
-      kCMSampleAttachmentKey_AudioIndependentSampleDecoderRefreshCount, value);
-  CFRelease(value);
-  return true;
 }
 
 [[nodiscard]] bool trueAttachment(CMSampleBufferRef sample,
@@ -558,49 +518,12 @@ std::atomic<std::size_t> g_inspectedAudioChannelLayoutSize{
   return accepted;
 }
 
-class ScopedSampleBuffer final {
- public:
-  explicit ScopedSampleBuffer(CMSampleBufferRef sample = nullptr) noexcept
-      : sample_(sample) {}
-  ScopedSampleBuffer(const ScopedSampleBuffer&) = delete;
-  ScopedSampleBuffer& operator=(const ScopedSampleBuffer&) = delete;
-  ScopedSampleBuffer(ScopedSampleBuffer&& other) noexcept
-      : sample_(std::exchange(other.sample_, nullptr)) {}
-  ~ScopedSampleBuffer() {
-    if (sample_ != nullptr) {
-      CFRelease(sample_);
-    }
-  }
-
-  [[nodiscard]] CMSampleBufferRef get() const noexcept { return sample_; }
-  [[nodiscard]] CMSampleBufferRef release() noexcept {
-    return std::exchange(sample_, nullptr);
-  }
-  // Adopts a +1 reference, releasing whatever was held. Assignment stays
-  // deleted: a retained batch is only ever replaced deliberately.
-  void reset(CMSampleBufferRef sample = nullptr) noexcept {
-    CMSampleBufferRef prior = std::exchange(sample_, sample);
-    if (prior != nullptr && prior != sample) {
-      CFRelease(prior);
-    }
-  }
-
- private:
-  CMSampleBufferRef sample_{nullptr};
-};
-
 std::string describeNSError(NSError* error, const char* fallback) {
   if (error == nil || error.localizedDescription == nil) {
     return fallback;
   }
   const char* text = error.localizedDescription.UTF8String;
   return text == nullptr ? fallback : std::string(text);
-}
-
-void assignError(std::string* error, const char* message) {
-  if (error != nullptr) {
-    *error = message;
-  }
 }
 
 [[nodiscard]] std::optional<MediaTime> exactMediaTime(CMTime time) noexcept {
@@ -630,83 +553,6 @@ void assignError(std::string* error, const char* message) {
     return std::nullopt;
   }
   return converted;
-}
-
-[[nodiscard]] bool exactNonnegativeTimeWithinDuration(
-    MediaTime target, MediaTime duration) noexcept {
-  if (!target.valid() || target.value < 0 || !duration.valid() ||
-      duration.value < 0) {
-    return false;
-  }
-  const auto order = media::compareMediaTime(target, duration);
-  return order && *order != MediaTimeOrder::Greater;
-}
-
-[[nodiscard]] std::optional<MediaTime> checkedExactTimeSum(
-    MediaTime lhs, MediaTime rhs) noexcept {
-  if (!lhs.valid() || !rhs.valid()) {
-    return std::nullopt;
-  }
-
-  using WideSigned = __int128_t;
-  using WideUnsigned = __uint128_t;
-  const WideSigned numerator =
-      static_cast<WideSigned>(lhs.value) *
-          static_cast<WideSigned>(rhs.timescale) +
-      static_cast<WideSigned>(rhs.value) *
-          static_cast<WideSigned>(lhs.timescale);
-  const std::uint64_t denominator =
-      static_cast<std::uint64_t>(static_cast<std::uint32_t>(lhs.timescale)) *
-      static_cast<std::uint64_t>(static_cast<std::uint32_t>(rhs.timescale));
-  if (denominator == 0) {
-    return std::nullopt;
-  }
-
-  const WideUnsigned magnitude =
-      numerator < 0
-          ? static_cast<WideUnsigned>(-(numerator + 1)) + 1
-          : static_cast<WideUnsigned>(numerator);
-  const std::uint64_t common =
-      std::gcd(denominator,
-               static_cast<std::uint64_t>(magnitude % denominator));
-  const WideSigned reducedNumerator =
-      numerator / static_cast<WideSigned>(common);
-  const std::uint64_t reducedDenominator = denominator / common;
-  if (reducedNumerator <
-          static_cast<WideSigned>(std::numeric_limits<std::int64_t>::min()) ||
-      reducedNumerator >
-          static_cast<WideSigned>(std::numeric_limits<std::int64_t>::max()) ||
-      reducedDenominator >
-          static_cast<std::uint64_t>(
-              std::numeric_limits<std::int32_t>::max())) {
-    return std::nullopt;
-  }
-  return MediaTime{static_cast<std::int64_t>(reducedNumerator),
-                   static_cast<std::int32_t>(reducedDenominator)};
-}
-
-[[nodiscard]] std::optional<bool> accurateVideoDecodeOnlyFacts(
-    MediaTime presentationTime, MediaTime duration, MediaTime target,
-    std::string* error) noexcept {
-  if (!presentationTime.valid() || !duration.valid() || duration.value <= 0) {
-    assignError(error,
-                "accurate video sample has no exact positive interval");
-    return std::nullopt;
-  }
-  const auto intervalEnd = checkedExactTimeSum(presentationTime, duration);
-  if (!intervalEnd) {
-    assignError(error,
-                "accurate video sample interval is not exactly representable");
-    return std::nullopt;
-  }
-  const auto endAgainstTarget =
-      media::compareMediaTime(*intervalEnd, target);
-  if (!endAgainstTarget) {
-    assignError(error,
-                "video sample interval and seek target have incomparable time");
-    return std::nullopt;
-  }
-  return *endAgainstTarget != MediaTimeOrder::Greater;
 }
 
 [[nodiscard]] bool exactZero(CMTime time) noexcept {
@@ -2368,68 +2214,6 @@ inspectVideoFormatFacts(
   track.audio = audio;
   return track;
 }
-
-class CoreMediaSampleStorage final : public MediaPayloadStorage {
- public:
-  CoreMediaSampleStorage(CMSampleBufferRef ownedSample,
-                         std::size_t byteSize) noexcept
-      : sample_(ownedSample), byte_size_(byteSize) {}
-  ~CoreMediaSampleStorage() override {
-    if (sample_ != nullptr) {
-      CFRelease(sample_);
-    }
-  }
-
-  [[nodiscard]] std::size_t byteSize() const noexcept override {
-    return byte_size_;
-  }
-
-  [[nodiscard]] std::span<const std::byte>
-  contiguousBytes() const noexcept override {
-    CMBlockBufferRef block = CMSampleBufferGetDataBuffer(sample_);
-    if (block == nullptr) {
-      return {};
-    }
-    char* data = nullptr;
-    std::size_t contiguousLength = 0;
-    std::size_t totalLength = 0;
-    const OSStatus status = CMBlockBufferGetDataPointer(
-        block, 0, &contiguousLength, &totalLength, &data);
-    if (status != noErr || data == nullptr || totalLength != byte_size_ ||
-        contiguousLength != totalLength) {
-      return {};
-    }
-    return {reinterpret_cast<const std::byte*>(data), totalLength};
-  }
-
-  [[nodiscard]] bool copyBytes(
-      std::size_t offset,
-      std::span<std::byte> destination) const noexcept override {
-    if (offset > byte_size_ || destination.size() > byte_size_ - offset) {
-      return false;
-    }
-    if (destination.empty()) {
-      return true;
-    }
-    CMBlockBufferRef block = CMSampleBufferGetDataBuffer(sample_);
-    return block != nullptr &&
-           CMBlockBufferCopyDataBytes(block, offset, destination.size(),
-                                      destination.data()) == noErr;
-  }
-
- protected:
-  [[nodiscard]] std::optional<media::NativePayloadKind>
-  nativePayloadKind() const noexcept override {
-    return media::NativePayloadKind::CoreMediaSampleBuffer;
-  }
-  [[nodiscard]] const void* borrowedNativePayload() const noexcept override {
-    return sample_;
-  }
-
- private:
-  CMSampleBufferRef sample_{nullptr};
-  std::size_t byte_size_{0};
-};
 
 enum class AsyncLoadWaitStatus : std::uint8_t {
   Complete,
@@ -4492,11 +4276,6 @@ struct StagedSample {
   std::size_t payloadBytes{0};
 };
 
-[[nodiscard]] std::uint64_t saturatingIncrement(std::uint64_t value) noexcept {
-  return value == std::numeric_limits<std::uint64_t>::max() ? value
-                                                            : value + 1;
-}
-
 }  // namespace
 
 struct AVFoundationMediaSource::Impl {
@@ -4824,7 +4603,7 @@ struct AVFoundationMediaSource::Impl {
     mediaSample.payload = MediaPayloadLease(std::move(storage));
     if (kind == MediaSampleKind::EncodedVideo && requestedTarget &&
         seekMode == media::MediaSeekMode::Accurate) {
-      const auto decodeOnly = accurateVideoDecodeOnlyFacts(
+      const auto decodeOnly = accurateVideoDecodeOnly(
           *pts, duration, *requestedTarget, error);
       if (!decodeOnly) {
         return std::nullopt;
@@ -5707,7 +5486,7 @@ std::optional<bool> accurateVideoDecodeOnly(
                 "accurate video sample has no exact presentation timestamp");
     return std::nullopt;
   }
-  return accurateVideoDecodeOnlyFacts(
+  return wam::macos::accurateVideoDecodeOnly(
       *exactPresentationTime, exactDuration.value_or(media::MediaTime{}),
       target, error);
 }

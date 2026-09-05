@@ -2008,6 +2008,87 @@ void testPreservePitchLatch() {
   }
 }
 
+// The output unit's own declared group delay -- its sample-rate converter's,
+// when the stream rate is not the device rate -- shifts every published host
+// endpoint exactly as the stretch stage's does, and the two ADD. The shift is
+// in the clock domain only: frames, cursor and output samples are untouched,
+// and zero reduces every expression to the prior arithmetic verbatim.
+void testOutputLatencyShiftsHeardEndpoints() {
+  constexpr std::uint32_t kOutputFrames = 64;
+  constexpr std::uint32_t kUnitLatency = 16;  // what the real unit declares
+  {
+    Fixture fixture;
+    expect(fixture.ready && fixture.core.outputLatencyFrames() == 0,
+           "a fresh core carries no output-unit delay");
+    fixture.core.setOutputLatencyFrames(kUnitLatency);
+    expect(fixture.core.outputLatencyFrames() == kUnitLatency,
+           "the declared delay is published verbatim");
+    std::array<float, kOutputFrames * NativePcmRing::kChannels> output{};
+    expect(publishConstant(fixture.ring, 1, 256, 1.0F),
+           "latency fixture stocks the ring");
+    const NativeAudioRenderResult first =
+        renderTracked(fixture.core, hostInput(0, kOutputFrames, 1000), output);
+    const NativeMediaClockSnapshot afterFirst = fixture.clock.sample();
+    expect(first.committed && first.pcmFrames == kOutputFrames &&
+               first.silentFrames == 0,
+           "the delay changes no frame count");
+    expect(afterFirst.segmentEndHostTicks == 1000 + kOutputFrames + kUnitLatency,
+           "the published end is the callback end plus the declared delay");
+    // Adjacent callback: the constant shift cancels out of the continuity
+    // proof, so the interval is continuous and the end keeps the shift.
+    const NativeAudioRenderResult second = renderTracked(
+        fixture.core,
+        hostInput(kOutputFrames, kOutputFrames, 1000 + kOutputFrames), output);
+    expect(second.committed && second.continuous &&
+               fixture.clock.sample().segmentEndHostTicks ==
+                   1000 + 2 * kOutputFrames + kUnitLatency,
+           "adjacent callbacks stay continuous under a constant delay");
+    // The media position at the heard end is exactly the frames rendered.
+    fixture.host.ticks.store(1000 + 2 * kOutputFrames + kUnitLatency,
+                             std::memory_order_relaxed);
+    const auto expected =
+        mediaTimeSecondsAtFrame(MediaTime{0, 1}, 2 * kOutputFrames, kSampleRate);
+    const NativeMediaClockSnapshot heard = fixture.core.visibleClock();
+    expect(expected && heard.valid && heard.mediaSeconds == *expected,
+           "at the heard end the clock reads exactly the frames rendered");
+  }
+  {
+    // Composition with a stretch stage: the two delays add.
+    Fixture fixture;
+    FakeStretchStage stage;
+    stage.latencyOutputFrames = 37;
+    fixture.core.setOutputLatencyFrames(kUnitLatency);
+    fixture.core.setAccepting(false);
+    expect(fixture.ready && fixture.core.attachStretchStage(stage.seam()) &&
+               fixture.core.setRate(NativePlaybackRate{2, 1}),
+           "composition fixture attaches its stage and rate");
+    fixture.core.setAccepting(true);
+    std::array<float, kOutputFrames * NativePcmRing::kChannels> output{};
+    expect(publishConstant(fixture.ring, 1, 512, 1.0F),
+           "composition fixture stocks the ring");
+    const NativeAudioRenderResult result =
+        renderTracked(fixture.core, hostInput(0, kOutputFrames, 5000), output);
+    expect(result.committed && result.pcmFrames == 2 * kOutputFrames &&
+               fixture.clock.sample().segmentEndHostTicks ==
+                   5000 + kOutputFrames + 37 + kUnitLatency,
+           "the stretch stage's delay and the unit's delay add");
+  }
+  {
+    // A generation transition keeps it: it belongs to the configured unit,
+    // not to the generation.
+    Fixture fixture;
+    fixture.core.setOutputLatencyFrames(kUnitLatency);
+    fixture.core.setAccepting(false);
+    fixture.core.setPaused(true);
+    expect(fixture.ready && fixture.ring.flush(2) &&
+               fixture.clock.seek(1, 2, 0.0) &&
+               fixture.core.activate(2, 0, MediaTime{0, 1}, MediaTime{0, 1},
+                                     kSampleRate) &&
+               fixture.core.outputLatencyFrames() == kUnitLatency,
+           "activate() leaves the output-unit delay in force");
+  }
+}
+
 int main() {
   testPreflightLowerBoundAndProducerAppend();
   testRingAndClockBackpressureDoNotConsume();
@@ -2035,6 +2116,7 @@ int main() {
   testLateRetirementHeadroomIsRateIndependent();
   testExactRationalRateAdvance();
   testRateAdmission();
+  testOutputLatencyShiftsHeardEndpoints();
   testRateChangeStateMachine();
   testStretchPullBudgetIsHard();
   testStretchShortPrefixStaysExact();

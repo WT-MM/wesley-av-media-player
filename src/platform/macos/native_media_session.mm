@@ -11,6 +11,7 @@
 #include "media/native_media_dispatcher.hpp"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -29,6 +30,15 @@ namespace {
 
 using media::MediaGeneration;
 namespace protocol = media::native_playback;
+using CommitPhase = NativeMediaSessionCommitPhase;
+
+// The two commit edges written under `mutex` (acceptance and Stop's reset)
+// cannot take the runtime refusal path, which publishes a failure under that
+// same mutex; they are admitted here instead.
+static_assert(nativeMediaSessionCommitStepAdmitted(CommitPhase::Idle,
+                                                   CommitPhase::PausingSource));
+static_assert(!nativeMediaSessionCommitStepAdmitted(CommitPhase::Idle,
+                                                    CommitPhase::Idle));
 
 [[nodiscard]] const char* failureReasonName(
     protocol::FailureReason reason) noexcept {
@@ -1038,7 +1048,7 @@ struct NativeMediaSession::Impl final {
   void publishVideoDueHint() noexcept {
     std::uint64_t due = 0;
     if (!stopLatched && !liveFailed && !endingLatched && !endedPublished &&
-        !commitPending && !previewActivity && !previewPending &&
+        !commitInFlight() && !previewActivity && !previewPending &&
         videoControl.context != nullptr &&
         videoControl.nextDueHostTicks != nullptr) {
       due = videoControl.nextDueHostTicks(videoControl.context);
@@ -1078,13 +1088,7 @@ struct NativeMediaSession::Impl final {
         previewIssued = false;
         previewTarget.reset();
         publishedCommit.reset();
-        commitPending = false;
-        commitAudioStarted = false;
-        commitSourcePaused = false;
-        commitTargetPaused = false;
-        commitTimebaseActivated = false;
-        commitIssued = false;
-        commitCommitted = false;
+        resetCommitPhase();
         commitAudioProof.reset();
         commitVideoProof.reset();
         pendingFailure.reset();
@@ -1130,14 +1134,10 @@ struct NativeMediaSession::Impl final {
       previewPulled = true;
 #endif
     }
-    if (publishedCommit.has_value() && !commitPending) {
+    if (publishedCommit.has_value() && !commitInFlight()) {
       commitCommand = publishedCommit->command;
       commitTarget = publishedCommit->target;
       commitDrawBaseline = publishedCommit->drawBaseline;
-      commitAudioStarted = false;
-      commitSourcePaused = false;
-      commitTargetPaused = false;
-      commitTimebaseActivated = false;
       if (publishedCommit->reviveFromEnded) {
         endingLatched = false;
         endedPublished = false;
@@ -1145,9 +1145,8 @@ struct NativeMediaSession::Impl final {
         endingStamp = {};
       }
       publishedCommit.reset();
-      commitPending = true;
-      commitIssued = false;
-      commitCommitted = false;
+      commitPhase = CommitPhase::PausingSource;
+      recordCommitPhase();
       commitAudioProof.reset();
       commitVideoProof.reset();
       retainedVideoEvent.reset();
@@ -1672,7 +1671,7 @@ struct NativeMediaSession::Impl final {
 
   void progressPreview() noexcept {
     if ((!previewHandoffPending && !previewPending) || stopLatched ||
-        liveFailed || commitPending || previewHandoffFailed ||
+        liveFailed || commitInFlight() || previewHandoffFailed ||
         videoControl.quiesceForPreview == nullptr) {
       return;
     }
@@ -2502,7 +2501,7 @@ if (result != NativeAudioSessionProgress::Done) {
     if (!pauseSuspendEnabled() ||
         audioControl.suspendForPause == nullptr || !startedPublished ||
         stopLatched || liveFailed || endingLatched || endedPublished ||
-        commitPending || previewPending || previewActivity ||
+        commitInFlight() || previewPending || previewActivity ||
         previewHandoffPending || runPending || !appliedPaused ||
         audioProofPending.has_value()) {
       return;
@@ -2570,10 +2569,99 @@ if (result != NativeAudioSessionProgress::Done) {
     }
   }
 
+  [[nodiscard]] bool commitInFlight() const noexcept {
+    return commitPhase != CommitPhase::Idle;
+  }
+
+  void recordCommitPhase() noexcept {
+#if defined(WAM_NATIVE_MEDIA_SESSION_TESTING)
+    const auto phase = static_cast<std::uint8_t>(commitPhase);
+    const std::uint32_t length =
+        commitPhaseTraceLength.load(std::memory_order_acquire);
+    if (length < commitPhaseTrace.size()) {
+      commitPhaseTrace[length].store(phase, std::memory_order_release);
+      commitPhaseTraceLength.store(length + 1, std::memory_order_release);
+    }
+    commitPhaseObserved.store(phase, std::memory_order_release);
+#endif
+  }
+
+  // Terminal reset on the Stop latch: not a step of the walk, so it is not in
+  // the table. Called under `mutex`.
+  void resetCommitPhase() noexcept {
+    if (!commitInFlight()) {
+      return;
+    }
+    commitPhase = CommitPhase::Idle;
+    recordCommitPhase();
+  }
+
+  void failCommitSeek(const char* stage) noexcept {
+    logNativeFailure(stage, protocol::FailureReason::CommitSeek,
+                     dispatcher.get());
+    static_cast<void>(publishFailure(protocol::FailureReason::CommitSeek,
+                                     commitCommand.stamp));
+  }
+
+  // True only when a transport mutation of the commit walk completed and the
+  // walk may take its next step. A Stop that won the permit race, a Quiescing
+  // or WaitingForData child (retried on its own wake) and a failure published
+  // by name all leave the phase where it is; the caller returns on each.
+  [[nodiscard]] bool commitTransportDone(NativeAudioSessionProgress progress,
+                                         const char* stage) noexcept {
+    if (stopPublished()) {
+      acceptPublishedCommands();
+      return false;
+    }
+    if (progress == NativeAudioSessionProgress::Quiescing ||
+        progress == NativeAudioSessionProgress::WaitingForData) {
+      return false;
+    }
+    if (progress != NativeAudioSessionProgress::Done) {
+      failCommitSeek(stage);
+      return false;
+    }
+    return true;
+  }
+
+  [[nodiscard]] bool commitTransportPaused(const char* stage) noexcept {
+    if (!beginLiveIssue(nullptr, false, true)) {
+      acceptPublishedCommands();
+      return false;
+    }
+    const NativeAudioSessionProgress paused =
+        audioControl.setPaused(audioControl.context, true);
+    endLiveIssue();
+    return commitTransportDone(paused, stage);
+  }
+
+  // The one runtime step of the commit walk. A step the table refuses is a
+  // session defect, not a media condition: it is named on stderr, latched as a
+  // CommitSeek live failure, and never applied. Must not run under `mutex`.
+  [[nodiscard]] bool enterCommitPhase(CommitPhase next) noexcept {
+#if defined(WAM_NATIVE_MEDIA_SESSION_TESTING)
+    if (commitPhaseFault != nullptr &&
+        commitPhaseFault->exchange(false, std::memory_order_acq_rel)) {
+      next = commitPhase;
+    }
+#endif
+    if (!nativeMediaSessionCommitStepAdmitted(commitPhase, next)) {
+      char stage[64];
+      std::snprintf(stage, sizeof stage, "commit-seek/phase %s->%s",
+                    nativeMediaSessionCommitPhaseName(commitPhase),
+                    nativeMediaSessionCommitPhaseName(next));
+      failCommitSeek(stage);
+      return false;
+    }
+    commitPhase = next;
+    recordCommitPhase();
+    return true;
+  }
+
   void progressCommitSeek() noexcept {
-    if (!commitPending || stopLatched || liveFailed || dispatcher == nullptr ||
-        audioControl.start == nullptr || audioControl.setPaused == nullptr ||
-        audioControl.clock == nullptr) {
+    if (!commitInFlight() || stopLatched || liveFailed ||
+        dispatcher == nullptr || audioControl.start == nullptr ||
+        audioControl.setPaused == nullptr || audioControl.clock == nullptr) {
       return;
     }
 
@@ -2583,45 +2671,21 @@ if (result != NativeAudioSessionProgress::Done) {
       return;
     }
     if (previewStopped != NativePreviewFrameCancelProgress::Done) {
-        logNativeFailure("commit-seek/preview-stop",
-                         protocol::FailureReason::CommitSeek,
-                         dispatcher.get());
-        static_cast<void>(publishFailure(protocol::FailureReason::CommitSeek,
-                                       commitCommand.stamp));
+      failCommitSeek("commit-seek/preview-stop");
       return;
     }
 
     // Pause the retired generation before source/consumer seek. Pointer
     // scrubs normally arrive already paused, while direct seeks and Starting
     // reentrancy still need this explicit physical barrier.
-    if (!commitSourcePaused) {
-      if (!beginLiveIssue(nullptr, false, true)) {
-        acceptPublishedCommands();
+    if (commitPhase == CommitPhase::PausingSource) {
+      if (!commitTransportPaused("commit-seek/source-pause") ||
+          !enterCommitPhase(CommitPhase::IssuingSeek)) {
         return;
       }
-      const NativeAudioSessionProgress paused =
-          audioControl.setPaused(audioControl.context, true);
-      endLiveIssue();
-      if (stopPublished()) {
-        acceptPublishedCommands();
-        return;
-      }
-      if (paused == NativeAudioSessionProgress::Quiescing ||
-          paused == NativeAudioSessionProgress::WaitingForData) {
-        return;
-      }
-      if (paused != NativeAudioSessionProgress::Done) {
-        logNativeFailure("commit-seek/source-pause",
-                         protocol::FailureReason::CommitSeek,
-                         dispatcher.get());
-        static_cast<void>(publishFailure(protocol::FailureReason::CommitSeek,
-                                         commitCommand.stamp));
-        return;
-      }
-      commitSourcePaused = true;
     }
 
-    if (!commitIssued) {
+    if (commitPhase == CommitPhase::IssuingSeek) {
       if (!beginLiveIssue(nullptr, false, true)) {
         acceptPublishedCommands();
         return;
@@ -2636,24 +2700,24 @@ if (result != NativeAudioSessionProgress::Done) {
       }
       if (sought.status == media::NativeMediaDispatcherSeekStatus::Failed ||
           sought.status == media::NativeMediaDispatcherSeekStatus::Rejected) {
-        logNativeFailure("commit-seek/dispatcher-seek",
-                         protocol::FailureReason::CommitSeek,
-                         dispatcher.get());
-        static_cast<void>(publishFailure(protocol::FailureReason::CommitSeek,
-                                         commitCommand.stamp));
+        failCommitSeek("commit-seek/dispatcher-seek");
         return;
       }
-      commitIssued = true;
+      if (!enterCommitPhase(CommitPhase::AwaitingSeekCommit)) {
+        return;
+      }
       dispatcherExhausted = false;
       if (sought.status == media::NativeMediaDispatcherSeekStatus::Accepted) {
-        commitCommitted = true;
+        if (!enterCommitPhase(CommitPhase::ActivatingTimebase)) {
+          return;
+        }
       } else if (dispatcher->stats().lastWait ==
                  media::NativeMediaDispatcherWait::CallAgain) {
         dependencies.wake->notify();
       }
     }
 
-    if (!commitCommitted) {
+    if (commitPhase == CommitPhase::AwaitingSeekCommit) {
       if (!beginLiveIssue(nullptr, false, true)) {
         acceptPublishedCommands();
         return;
@@ -2667,14 +2731,12 @@ if (result != NativeAudioSessionProgress::Done) {
         return;
       }
       if (step.action == media::NativeMediaDispatcherAction::SeekCommitted) {
-        commitCommitted = true;
+        if (!enterCommitPhase(CommitPhase::ActivatingTimebase)) {
+          return;
+        }
       } else if (step.state == media::NativeMediaDispatcherState::Failed ||
                  step.action == media::NativeMediaDispatcherAction::Failed) {
-        logNativeFailure("commit-seek/seek-commit",
-                         protocol::FailureReason::CommitSeek,
-                         dispatcher.get());
-        static_cast<void>(publishFailure(protocol::FailureReason::CommitSeek,
-                                         commitCommand.stamp));
+        failCommitSeek("commit-seek/seek-commit");
         return;
       } else {
         if (step.wait == media::NativeMediaDispatcherWait::CallAgain) {
@@ -2690,22 +2752,21 @@ if (result != NativeAudioSessionProgress::Done) {
     // here, at the same point the dispatcher's flush would have reactivated
     // NativeAudioSession, and land it paused at the exact binary64 target the
     // controller published so refreshClockForCommit() matches bit for bit.
-    if (silentTimebase != nullptr && !commitTimebaseActivated) {
-      if (!silentTimebase->activate(commitCommand.targetGeneration.value,
+    if (commitPhase == CommitPhase::ActivatingTimebase) {
+      if (silentTimebase != nullptr &&
+          !silentTimebase->activate(commitCommand.targetGeneration.value,
                                     commitCommand.targetSeconds)) {
-        logNativeFailure("commit-seek/timebase-activate",
-                         protocol::FailureReason::CommitSeek,
-                         dispatcher.get());
-        static_cast<void>(publishFailure(protocol::FailureReason::CommitSeek,
-                                         commitCommand.stamp));
+        failCommitSeek("commit-seek/timebase-activate");
         return;
       }
-      commitTimebaseActivated = true;
+      if (!enterCommitPhase(CommitPhase::StartingAudio)) {
+        return;
+      }
     }
     // Dispatcher seek flushes NativeAudioSession and leaves the target
     // generation activated but Ready (output stopped). Start must therefore
     // follow SeekCommitted for every commit, not only replay from Ended.
-    if (!commitAudioStarted) {
+    if (commitPhase == CommitPhase::StartingAudio) {
       if (!beginLiveIssue(nullptr, false, true)) {
         acceptPublishedCommands();
         return;
@@ -2713,20 +2774,7 @@ if (result != NativeAudioSessionProgress::Done) {
       const NativeAudioSessionProgress started =
           audioControl.start(audioControl.context);
       endLiveIssue();
-      if (stopPublished()) {
-        acceptPublishedCommands();
-        return;
-      }
-      if (started == NativeAudioSessionProgress::Quiescing ||
-          started == NativeAudioSessionProgress::WaitingForData) {
-        return;
-      }
-      if (started != NativeAudioSessionProgress::Done) {
-        logNativeFailure("commit-seek/audio-start",
-                         protocol::FailureReason::CommitSeek,
-                         dispatcher.get());
-        static_cast<void>(publishFailure(protocol::FailureReason::CommitSeek,
-                                         commitCommand.stamp));
+      if (!commitTransportDone(started, "commit-seek/audio-start")) {
         return;
       }
       {
@@ -2740,38 +2788,26 @@ if (result != NativeAudioSessionProgress::Done) {
         publishedStart.reset();
         startPending = false;
         startedDrawBaseline = commitDrawBaseline;
-        commitAudioStarted = true;
+      }
+      if (!enterCommitPhase(CommitPhase::PausingTarget)) {
+        return;
       }
     }
     // Reassert the target-generation pause after Start. NativeAudioSession
     // starts with the flush-retained paused intent; this call makes that clock
     // state an explicit completed child mutation before readiness proofs.
-    if (!commitTargetPaused) {
-      if (!beginLiveIssue(nullptr, false, true)) {
-        acceptPublishedCommands();
+    if (commitPhase == CommitPhase::PausingTarget) {
+      if (!commitTransportPaused("commit-seek/target-pause") ||
+          !enterCommitPhase(CommitPhase::AwaitingProofs)) {
         return;
       }
-      const NativeAudioSessionProgress paused =
-          audioControl.setPaused(audioControl.context, true);
-      endLiveIssue();
-      if (stopPublished()) {
-        acceptPublishedCommands();
-        return;
-      }
-      if (paused == NativeAudioSessionProgress::Quiescing ||
-          paused == NativeAudioSessionProgress::WaitingForData) {
-        return;
-      }
-      if (paused != NativeAudioSessionProgress::Done) {
-        logNativeFailure("commit-seek/target-pause",
-                         protocol::FailureReason::CommitSeek,
-                         dispatcher.get());
-        static_cast<void>(publishFailure(protocol::FailureReason::CommitSeek,
-                                         commitCommand.stamp));
-        return;
-      }
-      commitTargetPaused = true;
     }
+    progressCommitProofs();
+  }
+
+  // AwaitingProofs: gather the paused-clock and covering-frame proofs, then
+  // publish CommitReady and close the walk.
+  void progressCommitProofs() noexcept {
     refreshClockForCommit();
     captureCommitProofs();
     if (!commitVideoProof.has_value()) {
@@ -2794,11 +2830,7 @@ if (result != NativeAudioSessionProgress::Done) {
       }
       if (step.state == media::NativeMediaDispatcherState::Failed ||
           step.action == media::NativeMediaDispatcherAction::Failed) {
-        logNativeFailure("commit-seek/proof",
-                         protocol::FailureReason::CommitSeek,
-                         dispatcher.get());
-        static_cast<void>(publishFailure(protocol::FailureReason::CommitSeek,
-                                         commitCommand.stamp));
+        failCommitSeek("commit-seek/proof");
         return;
       }
       captureCommitProofs();
@@ -2810,20 +2842,17 @@ if (result != NativeAudioSessionProgress::Done) {
     if (commitAudioProof.has_value() && commitVideoProof.has_value() &&
         publishCommitReady(commitCommand, commitDrawBaseline,
                            *commitAudioProof, *commitVideoProof)) {
-      commitPending = false;
-      commitAudioStarted = false;
-      commitSourcePaused = false;
-      commitTargetPaused = false;
-      commitTimebaseActivated = false;
-      commitIssued = false;
-      commitCommitted = false;
+      if (!enterCommitPhase(CommitPhase::Idle)) {
+        return;
+      }
       commitAudioProof.reset();
       commitVideoProof.reset();
     }
   }
 
   void refreshClockForCommit() noexcept {
-    if (!commitCommitted || commitAudioProof.has_value()) {
+    if (commitPhase != CommitPhase::AwaitingProofs ||
+        commitAudioProof.has_value()) {
       return;
     }
     if (!beginLiveIssue(nullptr, false, true)) {
@@ -2854,7 +2883,8 @@ if (result != NativeAudioSessionProgress::Done) {
   }
 
   void captureCommitProofs() noexcept {
-    if (!commitCommitted || commitVideoProof.has_value()) {
+    if (commitPhase != CommitPhase::AwaitingProofs ||
+        commitVideoProof.has_value()) {
       return;
     }
     if (videoLessGeneration()) {
@@ -3145,7 +3175,7 @@ if (result != NativeAudioSessionProgress::Done) {
   void publishRunningPositionForVideoLessGeneration() noexcept {
     if (!videoLessGeneration() || audioControl.clock == nullptr ||
         stopLatched || endingLatched || endedPublished || liveFailed ||
-        appliedPaused || commitPending) {
+        appliedPaused || commitInFlight()) {
       return;
     }
     protocol::Stamp runStamp{};
@@ -3233,7 +3263,7 @@ if (result != NativeAudioSessionProgress::Done) {
     }
     const bool active = !endedPublished && !stopLatched && !liveFailed &&
                         !endingLatched &&
-                        (commitPending || previewPending || !appliedPaused);
+                        (commitInFlight() || previewPending || !appliedPaused);
     dependencies.wake->setHostPacedDeadlines(
         active ? dependencies.hostClock : NativeMediaHostClock{});
   }
@@ -3282,7 +3312,7 @@ if (result != NativeAudioSessionProgress::Done) {
         if (liveFailed) {
           continue;
         }
-        if (commitPending) {
+        if (commitInFlight()) {
           progressCommitSeek();
           if (stopLatched) {
             progressStop();
@@ -3302,7 +3332,7 @@ if (result != NativeAudioSessionProgress::Done) {
         if (factBlocked()) {
           continue;
         }
-        if (commitPending) {
+        if (commitInFlight()) {
           progressCommitSeek();
           continue;
         }
@@ -3570,16 +3600,11 @@ if (result != NativeAudioSessionProgress::Done) {
   bool startPending{false};
   bool startedPublished{false};
   bool runPending{false};
-  bool commitPending{false};
-  bool commitAudioStarted{false};
-  bool commitSourcePaused{false};
-  bool commitTargetPaused{false};
-  // Audio-less only: the silent timebase's quiescent transition onto the
-  // target generation, performed once per commit between SeekCommitted and
-  // the transport start.
-  bool commitTimebaseActivated{false};
-  bool commitIssued{false};
-  bool commitCommitted{false};
+  // Worker-private like every owner field below. Written by enterCommitPhase()
+  // (runtime-refused against the step table), by resetCommitPhase() on the
+  // Stop latch, and by acceptance -- the last two under `mutex`, where the
+  // refusal path cannot run, so those edges are admitted at compile time.
+  CommitPhase commitPhase{CommitPhase::Idle};
   bool previewHandoffPending{false};
   bool previewHandoffReady{false};
   bool previewHandoffFailed{false};
@@ -3661,6 +3686,12 @@ if (result != NativeAudioSessionProgress::Done) {
   std::atomic<std::uint64_t> workerAutoreleasePoolsDrained{0};
   std::atomic<std::uint64_t> workerAutoreleasePoolsActive{0};
   std::atomic<std::uint64_t> workerAutoreleasePoolsPeak{0};
+  std::atomic<std::uint8_t> commitPhaseObserved{0};
+  std::array<std::atomic<std::uint8_t>,
+             NativeMediaSessionTestCommitPhaseTrace::kCapacity>
+      commitPhaseTrace{};
+  std::atomic<std::uint32_t> commitPhaseTraceLength{0};
+  std::atomic<bool>* commitPhaseFault{nullptr};
 #endif
 };
 
@@ -4484,6 +4515,42 @@ NativeMediaSessionTestAccess::workerPoolFacts(
   result.peakActive = session.impl_->workerAutoreleasePoolsPeak.load(
       std::memory_order_acquire);
   return result;
+}
+
+NativeMediaSessionCommitPhase NativeMediaSessionTestAccess::commitPhase(
+    const NativeMediaSession& session) noexcept {
+  if (session.impl_ == nullptr) {
+    return NativeMediaSessionCommitPhase::Idle;
+  }
+  return static_cast<NativeMediaSessionCommitPhase>(
+      session.impl_->commitPhaseObserved.load(std::memory_order_acquire));
+}
+
+NativeMediaSessionTestCommitPhaseTrace
+NativeMediaSessionTestAccess::commitPhaseTrace(
+    const NativeMediaSession& session) noexcept {
+  NativeMediaSessionTestCommitPhaseTrace result;
+  if (session.impl_ == nullptr) {
+    return result;
+  }
+  const std::uint32_t length =
+      session.impl_->commitPhaseTraceLength.load(std::memory_order_acquire);
+  result.length = std::min<std::size_t>(length, result.phases.size());
+  for (std::size_t index = 0; index < result.length; ++index) {
+    result.phases[index] = static_cast<NativeMediaSessionCommitPhase>(
+        session.impl_->commitPhaseTrace[index].load(
+            std::memory_order_acquire));
+  }
+  return result;
+}
+
+void NativeMediaSessionTestAccess::installCommitPhaseFault(
+    NativeMediaSession& session, std::atomic<bool>* armed) noexcept {
+  if (session.impl_ == nullptr) {
+    return;
+  }
+  std::lock_guard lock(session.impl_->mutex);
+  session.impl_->commitPhaseFault = armed;
 }
 #endif
 

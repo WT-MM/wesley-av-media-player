@@ -9,7 +9,9 @@
 #include "native_tracked_video_output.hpp"
 #include "native_video_consumer.hpp"
 
+#include <array>
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
@@ -20,6 +22,82 @@ namespace wam::macos {
 
 namespace native_playback = media::native_playback;
 struct NativeMediaSessionTestAccess;
+
+// The commit-seek walk. The session worker resumes it at the current phase on
+// every pass; each phase names exactly the child mutation the commit still
+// owes before readiness can be proved. A phase is entered only through the
+// step table below, so the seven child mutations can neither run twice nor
+// out of order, and a step the table refuses is a CommitSeek failure by name.
+enum class NativeMediaSessionCommitPhase : std::uint8_t {
+  Idle,
+  // Commit accepted; the retired generation's transport is not yet paused.
+  PausingSource,
+  // The dispatcher seek has not been issued.
+  IssuingSeek,
+  // Seek issued; the dispatcher has not reported SeekCommitted.
+  AwaitingSeekCommit,
+  // SeekCommitted; an audio-less generation's timebase is not yet on target.
+  ActivatingTimebase,
+  // The target generation's transport has not been started.
+  StartingAudio,
+  // Transport started; the target pause has not been reasserted.
+  PausingTarget,
+  // Clock and covering-frame proofs are outstanding.
+  AwaitingProofs,
+};
+
+[[nodiscard]] constexpr const char* nativeMediaSessionCommitPhaseName(
+    NativeMediaSessionCommitPhase phase) noexcept {
+  switch (phase) {
+  case NativeMediaSessionCommitPhase::Idle:
+    return "Idle";
+  case NativeMediaSessionCommitPhase::PausingSource:
+    return "PausingSource";
+  case NativeMediaSessionCommitPhase::IssuingSeek:
+    return "IssuingSeek";
+  case NativeMediaSessionCommitPhase::AwaitingSeekCommit:
+    return "AwaitingSeekCommit";
+  case NativeMediaSessionCommitPhase::ActivatingTimebase:
+    return "ActivatingTimebase";
+  case NativeMediaSessionCommitPhase::StartingAudio:
+    return "StartingAudio";
+  case NativeMediaSessionCommitPhase::PausingTarget:
+    return "PausingTarget";
+  case NativeMediaSessionCommitPhase::AwaitingProofs:
+    return "AwaitingProofs";
+  }
+  return "?";
+}
+
+// The only statement of the admitted commit steps: one ring, walked once per
+// commit, closed by the CommitReady publication. A seek that the dispatcher
+// accepts synchronously still passes through AwaitingSeekCommit within the
+// same worker pass. Stop's reset to Idle from any phase is a terminal reset,
+// not a step, and is deliberately absent here.
+[[nodiscard]] constexpr bool nativeMediaSessionCommitStepAdmitted(
+    NativeMediaSessionCommitPhase from,
+    NativeMediaSessionCommitPhase to) noexcept {
+  using Phase = NativeMediaSessionCommitPhase;
+  switch (from) {
+  case Phase::Idle:
+    return to == Phase::PausingSource;
+  case Phase::PausingSource:
+    return to == Phase::IssuingSeek;
+  case Phase::IssuingSeek:
+    return to == Phase::AwaitingSeekCommit;
+  case Phase::AwaitingSeekCommit:
+    return to == Phase::ActivatingTimebase;
+  case Phase::ActivatingTimebase:
+    return to == Phase::StartingAudio;
+  case Phase::StartingAudio:
+    return to == Phase::PausingTarget;
+  case Phase::PausingTarget:
+    return to == Phase::AwaitingProofs;
+  case Phase::AwaitingProofs:
+    return to == Phase::Idle;
+  }
+  return false;
+}
 
 // One capacity-one edge shared by AudioUnit, VideoToolbox, the tracked Qt
 // output, public commands, and fact-mailbox consumption. Callback-side signal
@@ -434,6 +512,15 @@ struct NativeMediaSessionTestWorkerPoolFacts {
   std::uint64_t peakActive{0};
 };
 
+// Every commit phase the worker entered since construction, in order. Bounded
+// so the worker records without allocating; entries past the capacity are
+// dropped and `length` stops growing, which a test then reads as overflow.
+struct NativeMediaSessionTestCommitPhaseTrace {
+  static constexpr std::size_t kCapacity = 64;
+  std::array<NativeMediaSessionCommitPhase, kCapacity> phases{};
+  std::size_t length{0};
+};
+
 using NativeMediaSessionTestGraphFactory =
     NativeMediaSessionTestGraph (*)(void* context);
 
@@ -479,6 +566,17 @@ struct NativeMediaSessionTestAccess {
       const NativeMediaSessionWake& wake) noexcept;
   [[nodiscard]] static NativeMediaSessionTestWorkerPoolFacts workerPoolFacts(
       const NativeMediaSession& session) noexcept;
+  // Read-only view of the worker's commit phase: the phase most recently
+  // entered, and the ordered trace of every phase entered so far.
+  [[nodiscard]] static NativeMediaSessionCommitPhase commitPhase(
+      const NativeMediaSession& session) noexcept;
+  [[nodiscard]] static NativeMediaSessionTestCommitPhaseTrace commitPhaseTrace(
+      const NativeMediaSession& session) noexcept;
+  // While `armed` reads true, the worker's next commit step is replaced by a
+  // step the table refuses (a repeat of the current phase), and `armed` is
+  // cleared. Proves the refusal path without a second copy of the walk.
+  static void installCommitPhaseFault(NativeMediaSession& session,
+                                      std::atomic<bool>* armed) noexcept;
 };
 #endif
 

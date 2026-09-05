@@ -23,133 +23,7 @@ using media::mpegts::MpegAudioFrame;
 using media::mpegts::MpegTsCompressedSample;
 using media::mpegts::MpegTsDemuxError;
 
-void assignError(std::string* error, const char* message) {
-  if (error != nullptr) {
-    *error = message;
-  }
-}
-
 }  // namespace
-
-MpegTsCoreMediaSampleStorage::MpegTsCoreMediaSampleStorage(
-    CMSampleBufferRef ownedSample, std::size_t byteSize) noexcept
-    : sample_(ownedSample), byte_size_(byteSize) {}
-
-MpegTsCoreMediaSampleStorage::~MpegTsCoreMediaSampleStorage() {
-  if (sample_ != nullptr) {
-    CFRelease(sample_);
-  }
-}
-
-std::size_t MpegTsCoreMediaSampleStorage::byteSize() const noexcept {
-  return byte_size_;
-}
-
-std::span<const std::byte>
-MpegTsCoreMediaSampleStorage::contiguousBytes() const noexcept {
-  CMBlockBufferRef block = CMSampleBufferGetDataBuffer(sample_);
-  if (block == nullptr) {
-    return {};
-  }
-  char* data = nullptr;
-  std::size_t contiguousLength = 0;
-  std::size_t totalLength = 0;
-  const OSStatus status = CMBlockBufferGetDataPointer(
-      block, 0, &contiguousLength, &totalLength, &data);
-  if (status != noErr || data == nullptr || totalLength != byte_size_ ||
-      contiguousLength != totalLength) {
-    return {};
-  }
-  return {reinterpret_cast<const std::byte*>(data), totalLength};
-}
-
-bool MpegTsCoreMediaSampleStorage::copyBytes(
-    std::size_t offset, std::span<std::byte> destination) const noexcept {
-  if (offset > byte_size_ || destination.size() > byte_size_ - offset) {
-    return false;
-  }
-  if (destination.empty()) {
-    return true;
-  }
-  CMBlockBufferRef block = CMSampleBufferGetDataBuffer(sample_);
-  return block != nullptr &&
-         CMBlockBufferCopyDataBytes(block, offset, destination.size(),
-                                    destination.data()) == noErr;
-}
-
-std::optional<media::NativePayloadKind>
-MpegTsCoreMediaSampleStorage::nativePayloadKind() const noexcept {
-  return media::NativePayloadKind::CoreMediaSampleBuffer;
-}
-
-const void* MpegTsCoreMediaSampleStorage::borrowedNativePayload()
-    const noexcept {
-  return sample_;
-}
-
-std::optional<media::MediaTime> mpegTsCheckedExactTimeSum(
-    MediaTime lhs, MediaTime rhs) noexcept {
-  if (!lhs.valid() || !rhs.valid()) {
-    return std::nullopt;
-  }
-
-  using WideSigned = __int128_t;
-  using WideUnsigned = __uint128_t;
-  const WideSigned numerator =
-      static_cast<WideSigned>(lhs.value) *
-          static_cast<WideSigned>(rhs.timescale) +
-      static_cast<WideSigned>(rhs.value) *
-          static_cast<WideSigned>(lhs.timescale);
-  const std::uint64_t denominator =
-      static_cast<std::uint64_t>(static_cast<std::uint32_t>(lhs.timescale)) *
-      static_cast<std::uint64_t>(static_cast<std::uint32_t>(rhs.timescale));
-  if (denominator == 0) {
-    return std::nullopt;
-  }
-
-  const WideUnsigned magnitude =
-      numerator < 0 ? static_cast<WideUnsigned>(-(numerator + 1)) + 1
-                    : static_cast<WideUnsigned>(numerator);
-  const std::uint64_t common = std::gcd(
-      denominator, static_cast<std::uint64_t>(magnitude % denominator));
-  const WideSigned reducedNumerator =
-      numerator / static_cast<WideSigned>(common);
-  const std::uint64_t reducedDenominator = denominator / common;
-  if (reducedNumerator <
-          static_cast<WideSigned>(std::numeric_limits<std::int64_t>::min()) ||
-      reducedNumerator >
-          static_cast<WideSigned>(std::numeric_limits<std::int64_t>::max()) ||
-      reducedDenominator >
-          static_cast<std::uint64_t>(
-              std::numeric_limits<std::int32_t>::max())) {
-    return std::nullopt;
-  }
-  return media::MediaTime{static_cast<std::int64_t>(reducedNumerator),
-                          static_cast<std::int32_t>(reducedDenominator)};
-}
-
-std::optional<bool> mpegTsAccurateVideoDecodeOnly(MediaTime presentationTime,
-                                                  MediaTime duration,
-                                                  MediaTime target,
-                                                  std::string* error) noexcept {
-  if (!presentationTime.valid() || !duration.valid() || duration.value <= 0) {
-    assignError(error, "accurate video sample has no exact positive interval");
-    return std::nullopt;
-  }
-  const auto intervalEnd = mpegTsCheckedExactTimeSum(presentationTime, duration);
-  if (!intervalEnd) {
-    assignError(error,
-                "accurate video sample interval is not exactly representable");
-    return std::nullopt;
-  }
-  const auto endAgainstTarget = media::compareMediaTime(*intervalEnd, target);
-  if (!endAgainstTarget) {
-    assignError(error,
-                "video sample interval and seek target have incomparable time");
-    return std::nullopt;
-  }
-  return *endAgainstTarget != MediaTimeOrder::Greater;
-}
 
 const char* mpegTsDemuxErrorNameForMessage(MpegTsDemuxError error) noexcept {
   return media::mpegts::mpegTsDemuxErrorName(error);
@@ -472,7 +346,7 @@ namespace {
 
 MpegTsSampleBuildStatus buildMpegTsCompressedSampleBuffer(
     const MpegTsSampleBuildInputs& inputs, const MpegTsCompressedSample& sample,
-    MpegTsScopedSampleBuffer* out, std::string* error) {
+    ScopedSampleBuffer* out, std::string* error) {
   if (out == nullptr || inputs.asset == nullptr || inputs.format == nullptr) {
     assignError(error, "mpeg-ts sample factory has no admitted format");
     return MpegTsSampleBuildStatus::Failed;
@@ -671,7 +545,7 @@ MpegTsSampleBuildStatus buildMpegTsCompressedSampleBuffer(
     assignError(error, "mpeg-ts sample buffer creation failed");
     return MpegTsSampleBuildStatus::Failed;
   }
-  MpegTsScopedSampleBuffer owned(created);
+  ScopedSampleBuffer owned(created);
   if (CMSampleBufferGetNumSamples(created) != numSamples ||
       !CMSampleBufferDataIsReady(created) || !CMSampleBufferIsValid(created)) {
     assignError(error, "mpeg-ts sample buffer did not admit its access units");

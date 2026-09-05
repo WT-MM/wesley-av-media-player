@@ -675,8 +675,7 @@ void testAccurateSeekBothDirections(const Fixtures& fixtures) {
          "stats count exactly the accepted seeks");
 }
 
-// The one legitimate late plan, and the divergence from the MPEG-TS twin when
-// no position is requested at all.
+// The one legitimate late plan, with and without a requested position.
 void testFirstCueClamp(const Fixtures& fixtures) {
   MediaTime firstCue{};
   {
@@ -698,10 +697,12 @@ void testFirstCueClamp(const Fixtures& fixtures) {
     firstCue = sample->presentationTime;
     expect(firstCue.valid() && firstCue.value > 0,
            "the offset fixture's first Cue is not at the timeline origin");
-    // MpegTsMediaSource clamps this case to the timeline origin; this backend
-    // publishes the Cue's own tick.
-    expect(sameTime(opened.actualDecodeStart, firstCue),
-           "an open with no requested position publishes the first Cue tick");
+    // The owner's timeline states target zero, so a video origin a few
+    // milliseconds in is not published as a late decode start -- the same
+    // clamp the MPEG-TS twin applies.
+    expect(sameTime(opened.actualDecodeStart, MediaTime{0, 1}),
+           "an open with no requested position publishes the timeline origin "
+           "rather than the first Cue tick");
   }
   {
     MatroskaMediaSource source;

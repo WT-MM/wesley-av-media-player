@@ -301,6 +301,19 @@ public:
   void setPreservePitch(bool preserve) noexcept;
   [[nodiscard]] bool preservePitch() const noexcept;
 
+  // Publishes the OUTPUT UNIT's own group delay, in output frames: the delay
+  // its sample-rate converter declares when the client format does not run at
+  // the device rate (measured 16 client frames at every admitted rate, zero
+  // when the two rates agree). Audio leaving this core is heard that much
+  // later, so the callback adds it to the stretch stage's group delay and
+  // shifts every host endpoint it publishes by the sum. Set by the serialized
+  // owner once the unit is initialized and before callbacks are admitted; it
+  // is a property of the configured unit, so it survives activate(). Zero --
+  // the default, and what a unit that declares nothing gets -- reduces every
+  // expression that reads it to the prior arithmetic verbatim.
+  void setOutputLatencyFrames(std::uint32_t frames) noexcept;
+  [[nodiscard]] std::uint32_t outputLatencyFrames() const noexcept;
+
   // Marks the exact generation-local frame after the final decoded PCM frame.
   // The boundary is immutable until clearTerminal() or activate(). EOF is a
   // one-shot fact only when a valid callback begins exactly at this boundary
@@ -419,6 +432,10 @@ private:
   // Release/acquire publication of stretch_. False means the callback must
   // not read that table at all, which is also what pins it to the unit rate.
   std::atomic<bool> stretch_installed_{false};
+  // The output unit's declared group delay, in output frames. Constant for the
+  // configured unit, so it cancels out of the adjacency proof exactly as the
+  // stretch stage's delay does; read once per callback.
+  std::atomic<std::uint32_t> output_latency_frames_{0};
 
   alignas(128) std::atomic_flag callback_gate_ = ATOMIC_FLAG_INIT;
   std::uint64_t activation_cursor_frame_{0};

@@ -1,5 +1,6 @@
 #include "native_audio_output.hpp"
 
+#include "native_audio_sample_rates.hpp"
 #include "native_concurrency_limits.hpp"
 
 #include <CoreAudio/HostTime.h>
@@ -500,12 +501,6 @@ bool NativeAudioOutput::validCallTable() const noexcept {
          calls_.hostClockFrequency != nullptr;
 }
 
-bool NativeAudioOutput::admittedSampleRate(
-    std::uint32_t sampleRate) const noexcept {
-  return sampleRate == 44100 || sampleRate == 48000 ||
-         sampleRate == 96000 || sampleRate == 192000;
-}
-
 bool NativeAudioOutput::usableDeviceRate(
     const AudioStreamBasicDescription &format) const noexcept {
   return std::isfinite(format.mSampleRate) && format.mSampleRate > 0.0;
@@ -785,7 +780,8 @@ NativeAudioOutputProgress NativeAudioOutput::configure(
       configuration.hostTicksPerSecond <= kMaximumExactDoubleInteger &&
       render_core_.compatibleHostTicksPerSecond(
           configuration.hostTicksPerSecond) &&
-      admittedSampleRate(configuration.sampleRate);
+      nativeAudioSampleRateSupported(
+          static_cast<double>(configuration.sampleRate));
   if (!validConfiguration) {
     return failConfigure(NativeAudioOutputFailure::InvalidConfiguration,
                          kAudio_ParamError,
@@ -1029,6 +1025,31 @@ NativeAudioOutputProgress NativeAudioOutput::configure(
     return failConfigure(NativeAudioOutputFailure::DeviceRateMismatch,
                          kAudioUnitErr_FormatNotSupported,
                          NativeAudioOutputProgress::Failed);
+  }
+
+  // The unit's own group delay: its sample-rate converter's, when the stream
+  // rate is not the device rate (declared 16 client frames at every admitted
+  // rate, and measured equal by chirp alignment), zero when the two agree.
+  // Valid only once the unit is initialized, which is why it is read here and
+  // not beside the client format. It is a property of the configured unit,
+  // never of a generation, so it is published to the render core once and is
+  // untouched by activate(). Best effort by design: a unit that will not
+  // declare its delay, or declares nonsense, is left uncompensated -- exactly
+  // the stretch stage's rule -- rather than shifted by a guess.
+  {
+    Float64 latencySeconds = 0.0;
+    propertySize = sizeof(latencySeconds);
+    std::uint32_t latencyFrames = 0;
+    if (getProperty(kAudioUnitProperty_Latency, kAudioUnitScope_Global, 0,
+                    &latencySeconds, &propertySize) == noErr &&
+        propertySize == sizeof(latencySeconds) &&
+        std::isfinite(latencySeconds) && latencySeconds >= 0.0 &&
+        latencySeconds <= 1.0) {
+      latencyFrames = static_cast<std::uint32_t>(
+          latencySeconds * static_cast<double>(sample_rate_) + 0.5);
+    }
+    unit_latency_frames_.store(latencyFrames, std::memory_order_release);
+    render_core_.setOutputLatencyFrames(latencyFrames);
   }
 
   configured_.store(true, std::memory_order_release);
@@ -2068,6 +2089,8 @@ NativeAudioOutputFacts NativeAudioOutput::facts() const noexcept {
   result.sampleRate = published_sample_rate_.load(std::memory_order_relaxed);
   result.deviceBufferFrames =
       device_buffer_frames_.load(std::memory_order_acquire);
+  result.unitLatencyFrames =
+      unit_latency_frames_.load(std::memory_order_acquire);
   result.callbackEntries =
       callback_entries_.load(std::memory_order_acquire);
   const std::uint64_t admission =

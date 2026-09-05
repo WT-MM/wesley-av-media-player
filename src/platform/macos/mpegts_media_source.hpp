@@ -3,10 +3,68 @@
 #include "media/native_media_source.hpp"
 #include "platform/macos/mpegts_asset_context.hpp"
 
+#include <CoreMedia/CoreMedia.h>
+
 #include <filesystem>
 #include <memory>
+#include <optional>
+#include <string>
 
 namespace wam::macos {
+
+// The MPEG-TS side of the shared custom-source core
+// (`native_custom_source_core.hpp`). Every rule stated here is a place where
+// this container deliberately differs from the Matroska twin; the core reads
+// them by name so a change to one container cannot silently move the other.
+struct MpegTsSourceTraits {
+  static constexpr const char* kName = "mpeg-ts";
+  // A transport stream with no video elementary stream is refused: the video
+  // cursor is always requested and the demuxer's refusal is the source's own.
+  static constexpr bool kVideoRequired = true;
+
+  using AssetContext = MpegTsAssetContext;
+  using PreparedAsset = media::mpegts::MpegTsPreparedAsset;
+  using Cursor = media::mpegts::MpegTsCursor;
+  using CompressedSample = media::mpegts::MpegTsCompressedSample;
+  using CursorReadResult = media::mpegts::MpegTsCursorReadResult;
+  using CursorEnd = media::mpegts::MpegTsCursorEnd;
+  using CursorCancelled = media::mpegts::MpegTsCursorCancelled;
+  using CursorFailure = media::mpegts::MpegTsCursorFailure;
+  using DemuxStatus = media::mpegts::MpegTsDemuxStatus;
+  using DemuxError = media::mpegts::MpegTsDemuxError;
+  using Plan = media::mpegts::MpegTsGenerationPlan;
+  using PrepareOutcome = media::mpegts::MpegTsPrepareOutcome;
+  using PlanOutcome = media::mpegts::MpegTsPlanOutcome;
+  using CancellationToken = media::mpegts::CancellationToken;
+
+  [[nodiscard]] static PrepareOutcome prepare(
+      const std::filesystem::path& path,
+      const media::MediaSourceOpenOptions& options,
+      CancellationToken cancellation) noexcept;
+  [[nodiscard]] static std::shared_ptr<const AssetContext> adoptContext(
+      const std::filesystem::path& path,
+      const media::MediaSourceOpenOptions& options,
+      std::shared_ptr<const PreparedAsset> asset) noexcept;
+  static void noteCursorCreationAttempt(const AssetContext& context) noexcept;
+  static void noteCursorStarted(const AssetContext& context) noexcept;
+  // The first video access unit's exact time, or empty when the asset states
+  // none.
+  [[nodiscard]] static std::optional<media::MediaTime> videoOrigin(
+      const PreparedAsset& asset) noexcept;
+  [[nodiscard]] static CMVideoFormatDescriptionRef
+  createVideoFormatDescription(const media::MediaTrackDescriptor& track) noexcept;
+  [[nodiscard]] static std::string demuxErrorMessage(const char* what,
+                                                     DemuxError error);
+  // THE MERGE KEY: `dts.valid() ? dts : pts`, the AVFoundation shape. A PES
+  // header states an explicit decode timestamp, so the two lanes are ordered
+  // by the times the decoders will actually consume them and there is NO
+  // synthetic ordering lead here. Copying Matroska's
+  // kVideoMergeLeadNanoseconds across would pull the video lane a quarter
+  // second ahead of a decode order that is already correct, inflating the
+  // video read-ahead and starving the audio lane for no reason at all.
+  [[nodiscard]] static media::MediaTime mergeOrderKey(
+      const media::MediaSample& sample) noexcept;
+};
 
 // macOS media source backed by the neutral MPEG-2 Transport Stream demuxer.
 //

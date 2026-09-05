@@ -183,6 +183,12 @@ struct NativeAudioOutputFacts {
   bool fatal{false};
   bool firstCallbackObserved{false};
   bool callbackQuiescent{true};
+  // The group delay the initialized unit declared, in STREAM frames: its
+  // sample-rate converter's delay when the stream and device rates differ
+  // (measured 16 at every admitted rate), zero when they agree or when the
+  // unit declares nothing. The render core shifts every published host
+  // endpoint by exactly this much.
+  std::uint32_t unitLatencyFrames{0};
 };
 
 // Serialized lifecycle owner for a macOS DefaultOutput AudioUnit. configure(),
@@ -204,6 +210,13 @@ struct NativeAudioOutputFacts {
 // AudioUnit's OWN converter resamples at the input-scope boundary, and the
 // render callback's frame counts and timestamps are already delivered in the
 // client domain. No sample-rate conversion is ever performed by this code.
+// That converter is what admits every rate in native_audio_sample_rates.hpp,
+// down to 8 kHz: it pulls the client domain contiguously with a ceil-carry
+// input demand (no cumulative drift) and declares a constant group delay of 16
+// client frames, which configure() reads from kAudioUnitProperty_Latency after
+// initialization and hands to the render core as the output-unit shift, so
+// the clock describes when audio is HEARD. A unit that declares nothing is
+// left uncompensated rather than guessed at.
 // A StreamFormat property listener remains installed for the complete unit
 // lifetime. The device rate observed at the first configure()-time query is
 // latched; every later query must still equal it. A StreamFormat notification
@@ -422,8 +435,6 @@ class NativeAudioOutput final
   [[nodiscard]] NativeAudioOutputProgress closeStep() noexcept;
 
   [[nodiscard]] bool validCallTable() const noexcept;
-  [[nodiscard]] bool admittedSampleRate(std::uint32_t sampleRate) const
-      noexcept;
   [[nodiscard]] bool usableDeviceRate(
       const AudioStreamBasicDescription &format) const noexcept;
   [[nodiscard]] bool validDeviceRate(
@@ -572,6 +583,7 @@ class NativeAudioOutput final
   std::atomic<std::uint64_t> frame_cursor_{0};
   std::atomic<std::uint32_t> published_sample_rate_{0};
   std::atomic<std::uint32_t> device_buffer_frames_{0};
+  std::atomic<std::uint32_t> unit_latency_frames_{0};
   std::atomic<bool> configured_{false};
   std::atomic<bool> published_activated_{false};
   std::atomic<bool> started_{false};

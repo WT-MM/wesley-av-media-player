@@ -25,69 +25,7 @@ using media::matroska::MatroskaDemuxError;
 constexpr std::size_t kMaximumLaceFrames{
     media::matroska::ParseOptions::kHardMaximumLaceFrames};
 
-void assignError(std::string* error, const char* message) {
-  if (error != nullptr) {
-    *error = message;
-  }
-}
-
 }  // namespace
-
-MatroskaCoreMediaSampleStorage::MatroskaCoreMediaSampleStorage(
-    CMSampleBufferRef ownedSample, std::size_t byteSize) noexcept
-    : sample_(ownedSample), byte_size_(byteSize) {}
-
-MatroskaCoreMediaSampleStorage::~MatroskaCoreMediaSampleStorage() {
-  if (sample_ != nullptr) {
-    CFRelease(sample_);
-  }
-}
-
-std::size_t MatroskaCoreMediaSampleStorage::byteSize() const noexcept {
-  return byte_size_;
-}
-
-std::span<const std::byte>
-MatroskaCoreMediaSampleStorage::contiguousBytes() const noexcept {
-  CMBlockBufferRef block = CMSampleBufferGetDataBuffer(sample_);
-  if (block == nullptr) {
-    return {};
-  }
-  char* data = nullptr;
-  std::size_t contiguousLength = 0;
-  std::size_t totalLength = 0;
-  const OSStatus status = CMBlockBufferGetDataPointer(
-      block, 0, &contiguousLength, &totalLength, &data);
-  if (status != noErr || data == nullptr || totalLength != byte_size_ ||
-      contiguousLength != totalLength) {
-    return {};
-  }
-  return {reinterpret_cast<const std::byte*>(data), totalLength};
-}
-
-bool MatroskaCoreMediaSampleStorage::copyBytes(
-    std::size_t offset, std::span<std::byte> destination) const noexcept {
-  if (offset > byte_size_ || destination.size() > byte_size_ - offset) {
-    return false;
-  }
-  if (destination.empty()) {
-    return true;
-  }
-  CMBlockBufferRef block = CMSampleBufferGetDataBuffer(sample_);
-  return block != nullptr &&
-         CMBlockBufferCopyDataBytes(block, offset, destination.size(),
-                                    destination.data()) == noErr;
-}
-
-std::optional<media::NativePayloadKind>
-MatroskaCoreMediaSampleStorage::nativePayloadKind() const noexcept {
-  return media::NativePayloadKind::CoreMediaSampleBuffer;
-}
-
-const void* MatroskaCoreMediaSampleStorage::borrowedNativePayload()
-    const noexcept {
-  return sample_;
-}
 
 // Exact Matroska tick -> MediaTime. A tick is timestampScaleNanoseconds
 // nanoseconds, so the reduced nanosecond rational is exact and never rounds
@@ -120,74 +58,6 @@ std::optional<media::MediaTime> matroskaTickTime(
     return std::nullopt;
   }
   return media::MediaTime{numerator, static_cast<std::int32_t>(denominator)};
-}
-
-// Exact sum of two container rationals. The intermediate product needs the full
-// 128-bit range: adjacent media ticks at a nanosecond timescale are already
-// above 2^53, so converting through double would silently move a sample across
-// the accurate-seek boundary. Copied verbatim from the AVFoundation backend so
-// both sources answer decodeOnly identically for the same interval.
-std::optional<media::MediaTime> matroskaCheckedExactTimeSum(
-    MediaTime lhs, MediaTime rhs) noexcept {
-  if (!lhs.valid() || !rhs.valid()) {
-    return std::nullopt;
-  }
-
-  using WideSigned = __int128_t;
-  using WideUnsigned = __uint128_t;
-  const WideSigned numerator =
-      static_cast<WideSigned>(lhs.value) *
-          static_cast<WideSigned>(rhs.timescale) +
-      static_cast<WideSigned>(rhs.value) *
-          static_cast<WideSigned>(lhs.timescale);
-  const std::uint64_t denominator =
-      static_cast<std::uint64_t>(static_cast<std::uint32_t>(lhs.timescale)) *
-      static_cast<std::uint64_t>(static_cast<std::uint32_t>(rhs.timescale));
-  if (denominator == 0) {
-    return std::nullopt;
-  }
-
-  const WideUnsigned magnitude =
-      numerator < 0 ? static_cast<WideUnsigned>(-(numerator + 1)) + 1
-                    : static_cast<WideUnsigned>(numerator);
-  const std::uint64_t common = std::gcd(
-      denominator, static_cast<std::uint64_t>(magnitude % denominator));
-  const WideSigned reducedNumerator =
-      numerator / static_cast<WideSigned>(common);
-  const std::uint64_t reducedDenominator = denominator / common;
-  if (reducedNumerator <
-          static_cast<WideSigned>(std::numeric_limits<std::int64_t>::min()) ||
-      reducedNumerator >
-          static_cast<WideSigned>(std::numeric_limits<std::int64_t>::max()) ||
-      reducedDenominator >
-          static_cast<std::uint64_t>(std::numeric_limits<std::int32_t>::max())) {
-    return std::nullopt;
-  }
-  return media::MediaTime{static_cast<std::int64_t>(reducedNumerator),
-                   static_cast<std::int32_t>(reducedDenominator)};
-}
-
-std::optional<bool> matroskaAccurateVideoDecodeOnly(
-    MediaTime presentationTime, MediaTime duration, MediaTime target,
-    std::string* error) noexcept {
-  if (!presentationTime.valid() || !duration.valid() || duration.value <= 0) {
-    assignError(error, "accurate video sample has no exact positive interval");
-    return std::nullopt;
-  }
-  const auto intervalEnd =
-      matroskaCheckedExactTimeSum(presentationTime, duration);
-  if (!intervalEnd) {
-    assignError(error,
-                "accurate video sample interval is not exactly representable");
-    return std::nullopt;
-  }
-  const auto endAgainstTarget = media::compareMediaTime(*intervalEnd, target);
-  if (!endAgainstTarget) {
-    assignError(error,
-                "video sample interval and seek target have incomparable time");
-    return std::nullopt;
-  }
-  return *endAgainstTarget != MediaTimeOrder::Greater;
 }
 
 const char* matroskaDemuxErrorName(MatroskaDemuxError error) noexcept {
@@ -368,7 +238,7 @@ CMVideoFormatDescriptionRef createMatroskaVideoFormatDescription(
 
 MatroskaSampleBuildStatus buildMatroskaCompressedSampleBuffer(
     const MatroskaSampleBuildInputs& inputs,
-    const MatroskaCompressedSample& sample, MatroskaScopedSampleBuffer* out,
+    const MatroskaCompressedSample& sample, ScopedSampleBuffer* out,
     std::string* error) {
   if (out == nullptr || inputs.asset == nullptr || inputs.format == nullptr) {
     assignError(error, "matroska sample factory has no admitted format");
@@ -436,6 +306,11 @@ MatroskaSampleBuildStatus buildMatroskaCompressedSampleBuffer(
   }
 
   CMSampleTimingInfo timing{};
+  if (!sample.presentationTime.valid()) {
+    CFRelease(block);
+    assignError(error, "matroska sample has no exact presentation time");
+    return MatroskaSampleBuildStatus::Failed;
+  }
   timing.presentationTimeStamp = CMTimeMake(sample.presentationTime.value,
                                             sample.presentationTime.timescale);
   timing.decodeTimeStamp = kCMTimeInvalid;
@@ -497,7 +372,7 @@ MatroskaSampleBuildStatus buildMatroskaCompressedSampleBuffer(
     assignError(error, "matroska sample buffer creation failed");
     return MatroskaSampleBuildStatus::Failed;
   }
-  MatroskaScopedSampleBuffer owned(created);
+  ScopedSampleBuffer owned(created);
   if (CMSampleBufferGetNumSamples(created) != numSamples ||
       !CMSampleBufferDataIsReady(created) || !CMSampleBufferIsValid(created)) {
     assignError(error, "matroska sample buffer did not admit its access units");

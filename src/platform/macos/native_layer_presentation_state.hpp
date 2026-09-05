@@ -19,8 +19,10 @@ namespace wam::macos {
 // The layer route is the default as of 2026-08-18: it passed the full
 // verification ladder (teardown, occlusion, chrome compositing, aspect snap,
 // harness, contract test, seeks) and measured at QuickTime-parity CPU/energy
-// with zero GPU work, where the scene-graph route pays ~4.4% GPU and retires
-// 60-82% of post-seek frames late. WAM_PRESENTATION=scenegraph opts back to
+// with zero GPU work, where the scene-graph route pays ~4.4% GPU and, because
+// it needs an in-process render pass, stops presenting whenever the window is
+// occluded (the clock retires those frames by design; the layer route needs no
+// render pass and is immune). WAM_PRESENTATION=scenegraph opts back to
 // the GL route, so a field problem is a relaunch away from the previous
 // behavior rather than a rebuild. Any other value (including junk) selects the
 // default: an unrecognized opt-out is no opt-out.
