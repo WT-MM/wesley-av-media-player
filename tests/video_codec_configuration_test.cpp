@@ -1030,6 +1030,20 @@ void testHevcRejections() {
               VideoCodecConfigurationError::UnsupportedColorDescription,
               "explicit HEVC BT.2020/PQ color description is rejected");
 
+  // SMPTE 170M primaries and transfer (6/6) with the BT.601 matrix are the
+  // ordinary SD description and are admitted through the bitstream gate;
+  // BT.470BG primaries (5) stay refused because one BT.601 primaries
+  // enumerator cannot carry 625-line chromaticities.
+  const std::array sd{HevcSpsSpec{
+      .color = ColorSpec{.primaries = 6U, .transfer = 6U, .matrix = 6U}}};
+  expect(inspectHevc(makeHvcC(sd)).admitted(),
+         "SMPTE 170M primaries and transfer are admitted");
+  const std::array pal{HevcSpsSpec{
+      .color = ColorSpec{.primaries = 5U, .transfer = 6U, .matrix = 5U}}};
+  expectError(inspectHevc(makeHvcC(pal)),
+              VideoCodecConfigurationError::UnsupportedColorDescription,
+              "BT.470BG primaries stay refused");
+
   const std::array uhdHevc{HevcSpsSpec{.width = 3840U, .height = 2160U}};
   expect(inspectHevc(makeHvcC(uhdHevc)).admitted(),
          "HEVC UHD is inside the 4096x2320 v1 envelope");

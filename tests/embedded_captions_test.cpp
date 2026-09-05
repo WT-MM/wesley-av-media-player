@@ -5,6 +5,7 @@
 
 #include "media/cea608_decoder.hpp"
 #include "media/h264_caption_sei.hpp"
+#include "media/live_caption_feed.hpp"
 #include "media/mp4_subtitles.hpp"
 #include "media/tx3g_text.hpp"
 
@@ -277,6 +278,89 @@ void testAnnexBWalk() {
   std::vector<CcTriplet> out;
   expect(appendCaptionTripletsFromAnnexB(stream, &out) == 1,
          "the Annex-B walker finds the caption SEI among other NALs");
+}
+
+// An AVCC access unit carrying one caption SEI with the given pairs.
+std::string avccPicture(const std::vector<std::pair<int, int>>& pairs) {
+  std::vector<CcTriplet> triplets;
+  for (const auto& [a, b] : pairs)
+    triplets.push_back(field1(a, b));
+  const std::string nal = ccSeiNal(triplets);
+  const std::size_t n = nal.size();
+  std::string sample = bytes({static_cast<int>((n >> 24) & 0xFF),
+                              static_cast<int>((n >> 16) & 0xFF),
+                              static_cast<int>((n >> 8) & 0xFF),
+                              static_cast<int>(n & 0xFF)});
+  sample += nal;
+  return sample;
+}
+
+// The live feed: pictures arrive in DECODE order and the 608 machine must
+// run in PRESENTATION order. A pop-on caption split across three pictures
+// delivered out of order (the EOC picture decodes first) must display at the
+// EOC picture's presentation time and nowhere earlier; a seek drops the open
+// caption but keeps what was already read; a stream with no caption bytes
+// never reports captions.
+void testLiveCaptionFeedOrdersByPresentation() {
+  using wam::media::captions::LiveCaptionFeed;
+  LiveCaptionFeed feed;
+  expect(!feed.sawCaptions(), "a fresh feed has seen no captions");
+
+  // Presentation 0 ms: RCL + ENM + PAC row 15 (0x94 = 0x14 with parity).
+  const std::string p0 =
+      avccPicture({{0x94, 0x20}, {0x94, 0xAE}, {0x94, 0xE0}});
+  // Presentation 33 ms: "HI".
+  const std::string p1 = avccPicture({{0xC8, 0x49}});
+  // Presentation 66 ms: EOC.
+  const std::string p2 = avccPicture({{0x94, 0x2F}});
+
+  // Decode order: the EOC picture first, as a B-frame reorder would do.
+  feed.noteCompressedPicture(66'000'000, p2, 4);
+  feed.noteCompressedPicture(0, p0, 4);
+  feed.noteCompressedPicture(33'000'000, p1, 4);
+  expect(!feed.sawCaptions(),
+         "stashed triplets are not captions until a picture is presented");
+  expect(feed.textAt(70'000'000).empty(),
+         "nothing displays before presentation feeds the machine");
+
+  feed.notePresentedPicture(0);
+  feed.notePresentedPicture(33'000'000);
+  expect(feed.sawCaptions(), "a presented caption byte marks the feed");
+  expect(feed.textAt(40'000'000).empty(),
+         "pop-on text stays off screen until its EOC is presented");
+  feed.notePresentedPicture(66'000'000);
+  expect(feed.textAt(70'000'000) == "HI",
+         "the caption displays from the EOC picture's presentation");
+  expect(feed.textAt(10'000'000).empty(),
+         "the caption is not back-dated before its EOC");
+
+  // EDM at 100 ms closes the cue; the closed cue stays readable.
+  feed.noteCompressedPicture(100'000'000, avccPicture({{0x94, 0x2C}}), 4);
+  feed.notePresentedPicture(100'000'000);
+  expect(feed.textAt(90'000'000) == "HI", "a closed cue is kept");
+  expect(feed.textAt(110'000'000).empty(), "EDM ends the cue");
+
+  // A new pop-on loads, then a seek resets before its EOC: nothing shows,
+  // but the earlier cue survives.
+  feed.noteCompressedPicture(
+      200'000'000, avccPicture({{0x94, 0x20}, {0x94, 0xE0}, {0xC8, 0x49}}),
+      4);
+  feed.notePresentedPicture(200'000'000);
+  feed.resetForSeek();
+  feed.noteCompressedPicture(300'000'000, avccPicture({{0x94, 0x2F}}), 4);
+  feed.notePresentedPicture(300'000'000);
+  expect(feed.textAt(310'000'000).empty(),
+         "an EOC after a seek shows nothing loaded before it");
+  expect(feed.textAt(90'000'000) == "HI", "a seek keeps closed cues");
+
+  feed.clear();
+  expect(!feed.sawCaptions() && feed.textAt(90'000'000).empty(),
+         "clear forgets everything");
+
+  // A picture without a caption SEI is free and leaves no trace.
+  feed.noteCompressedPicture(0, bytes({0x00, 0x00, 0x00, 0x01, 0x65}), 4);
+  feed.notePresentedPicture(0);
+  expect(!feed.sawCaptions(), "a captionless stream reports no captions");
 }
 
 void testAvccWalk() {
@@ -651,6 +735,7 @@ int main() {
   testCea608ParityIsChecked();
   testCea608IgnoresOtherField();
   testCea608IgnoresInvalidTriplet();
+  testLiveCaptionFeedOrdersByPresentation();
   testCea608CharacterSet();
   testCea608SpecialCharacter();
   testCea608Backspace();

@@ -1,6 +1,7 @@
 #include "platform/macos/mpegts_sample_builder.hpp"
 
 #include "media/mpegts_packet.hpp"
+#include "platform/macos/native_video_color.hpp"
 
 #import <CoreMedia/CoreMedia.h>
 
@@ -25,67 +26,6 @@ using media::mpegts::MpegTsDemuxError;
 void assignError(std::string* error, const char* message) {
   if (error != nullptr) {
     *error = message;
-  }
-}
-
-// Modelled colour facts -> the CoreMedia extension values. nullptr means "do
-// not write the key": absence is how an untagged stream is spelled, and it is
-// what every SDR transport stream has presented from since the TS route
-// landed, so omitting the key keeps those descriptions byte-identical.
-//
-// OtherExplicit and Srgb return nullptr rather than an approximation. They
-// cannot reach here -- mediaVideoColorAdmitted() refuses them upstream -- but
-// if that rule is ever widened, an untagged surface is a safe degradation and
-// a wrong tag is not.
-//
-// This table is the twin of the one in matroska_sample_builder.mm. Both
-// landed in the same session in two lanes; a third copy must not appear, and
-// the standing move is to collapse them into native_video_color.hpp once both
-// are on the branch.
-[[nodiscard]] CFStringRef
-colorPrimariesName(media::MediaColorPrimaries value) noexcept {
-  switch (value) {
-    case media::MediaColorPrimaries::Bt709:
-      return kCMFormatDescriptionColorPrimaries_ITU_R_709_2;
-    case media::MediaColorPrimaries::Bt2020:
-      return kCMFormatDescriptionColorPrimaries_ITU_R_2020;
-    default:
-      return nullptr;
-  }
-}
-
-[[nodiscard]] CFStringRef
-transferFunctionName(media::MediaTransferFunction value) noexcept {
-  switch (value) {
-    case media::MediaTransferFunction::Bt709:
-      return kCMFormatDescriptionTransferFunction_ITU_R_709_2;
-    case media::MediaTransferFunction::Pq:
-      return kCMFormatDescriptionTransferFunction_SMPTE_ST_2084_PQ;
-    case media::MediaTransferFunction::Hlg:
-      return kCMFormatDescriptionTransferFunction_ITU_R_2100_HLG;
-    default:
-      return nullptr;
-  }
-}
-
-[[nodiscard]] CFStringRef
-matrixCoefficientsName(media::MediaMatrixCoefficients value) noexcept {
-  switch (value) {
-    case media::MediaMatrixCoefficients::Bt709:
-      return kCMFormatDescriptionYCbCrMatrix_ITU_R_709_2;
-    case media::MediaMatrixCoefficients::Bt601:
-      return kCMFormatDescriptionYCbCrMatrix_ITU_R_601_4;
-    case media::MediaMatrixCoefficients::Bt2020Ncl:
-      return kCMFormatDescriptionYCbCrMatrix_ITU_R_2020;
-    default:
-      return nullptr;
-  }
-}
-
-void appendColorExtension(CFMutableDictionaryRef extensions, CFStringRef key,
-                          CFStringRef value) noexcept {
-  if (value != nullptr) {
-    CFDictionarySetValue(extensions, key, value);
   }
 }
 
@@ -305,18 +245,14 @@ CMVideoFormatDescriptionRef createMpegTsVideoFormatDescription(
       // and mpegts_demuxer.cpp turns that flag on BECAUSE of this block.
       //
       // Each key is written only when the fact is MODELLED and not Unknown.
-      // Omitting a key is how "untagged" is spelled, which is what every SDR
-      // transport stream presented from before this change -- so an untagged
-      // MPEG-2 or H.264 TS still gets a byte-identical description.
-      appendColorExtension(mutableExtensions,
-                           kCMFormatDescriptionExtension_ColorPrimaries,
-                           colorPrimariesName(track.video->colorPrimaries));
-      appendColorExtension(mutableExtensions,
-                           kCMFormatDescriptionExtension_TransferFunction,
-                           transferFunctionName(track.video->transferFunction));
-      appendColorExtension(
-          mutableExtensions, kCMFormatDescriptionExtension_YCbCrMatrix,
-          matrixCoefficientsName(track.video->matrixCoefficients));
+      // Omitting a key is how "untagged" is spelled, so an untagged MPEG-2 or
+      // H.264 TS keeps a byte-identical description. The mapping is the one
+      // table every producer shares (native_video_color.hpp), including the
+      // SMPTE_C spelling of BT.601 primaries that keeps VideoToolbox from
+      // inferring BT.709 by coded size.
+      applyColorExtensions(mutableExtensions, track.video->colorPrimaries,
+                           track.video->transferFunction,
+                           track.video->matrixCoefficients);
       extensions = mutableExtensions;
     }
   }

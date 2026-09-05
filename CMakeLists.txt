@@ -323,6 +323,8 @@ if(APPLE)
     src/media/h264_caption_sei.cpp
     src/media/cea608_decoder.hpp
     src/media/cea608_decoder.cpp
+    src/media/live_caption_feed.hpp
+    src/media/live_caption_feed.cpp
     src/media/mpegts_packet.hpp
     src/media/mpegts_packet.cpp
     src/media/mpegts_demuxer.hpp
@@ -1183,6 +1185,9 @@ if(BUILD_TESTING)
     src/media/matroska_subtitles.cpp
     src/media/tx3g_text.cpp
     src/media/mp4_subtitles.cpp
+    src/media/h264_caption_sei.cpp
+    src/media/cea608_decoder.cpp
+    src/media/live_caption_feed.cpp
     src/media/subtitle_bitmap.cpp
     src/media/subtitle_pgs.cpp
     src/media/subtitle_vobsub.cpp
@@ -1221,6 +1226,9 @@ if(BUILD_TESTING)
     src/media/matroska_subtitles.cpp
     src/media/tx3g_text.cpp
     src/media/mp4_subtitles.cpp
+    src/media/h264_caption_sei.cpp
+    src/media/cea608_decoder.cpp
+    src/media/live_caption_feed.cpp
     src/media/subtitle_bitmap.cpp
     src/media/subtitle_pgs.cpp
     src/media/subtitle_vobsub.cpp
@@ -1324,6 +1332,9 @@ if(BUILD_TESTING)
       src/media/matroska_subtitles.cpp
     src/media/tx3g_text.cpp
     src/media/mp4_subtitles.cpp
+    src/media/h264_caption_sei.cpp
+    src/media/cea608_decoder.cpp
+    src/media/live_caption_feed.cpp
       src/media/subtitle_bitmap.cpp
       src/media/subtitle_pgs.cpp
       src/media/subtitle_vobsub.cpp

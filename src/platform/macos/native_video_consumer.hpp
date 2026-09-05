@@ -1,5 +1,6 @@
 #pragma once
 
+#include "media/live_caption_feed.hpp"
 #include "media/native_media_dispatcher.hpp"
 #include "native_concurrency_limits.hpp"
 #include "native_media_clock.hpp"
@@ -299,12 +300,18 @@ class NativeVideoConsumer final : public media::NativeVideoConsumer {
                 "a full software VP8 pool at the v1 coded ceiling must fit the "
                 "process-wide byte budget");
 
+  // `captionFeed` is the live closed-caption tap: when non-null and the
+  // configured track is H.264, every compressed picture's A/53 caption
+  // triplets are stashed on consume and fed in presentation order as frames
+  // are presented. Null when no one reads captions.
   [[nodiscard]] static std::unique_ptr<NativeVideoConsumer> create(
       std::shared_ptr<void> externalLifetime,
       NativeVideoClockSeam clock,
       std::shared_ptr<NativeTrackedVideoOutput> output,
       NativeVideoConsumerWakeSeam wake,
-      std::string* error = nullptr) noexcept;
+      std::string* error = nullptr,
+      std::shared_ptr<media::captions::LiveCaptionFeed> captionFeed =
+          nullptr) noexcept;
   ~NativeVideoConsumer() override;
 
   [[nodiscard]] static std::unique_ptr<NativeVideoConsumer>

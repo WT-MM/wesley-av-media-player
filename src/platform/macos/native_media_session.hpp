@@ -1,5 +1,6 @@
 #pragma once
 
+#include "media/live_caption_feed.hpp"
 #include "media/native_playback_contract.hpp"
 #include "avfoundation_asset_context.hpp"
 #include "native_audio_session.hpp"
@@ -79,6 +80,9 @@ struct NativeMediaSessionDependencies {
   NativeMediaHostClock hostClock{};
   NativeAudioUnitCallTable audioUnitCalls{};
   std::unique_ptr<NativeAudioConverterBackend> audioConverterBackend;
+  // The live closed-caption tap the video consumer feeds; null when no one
+  // reads captions.
+  std::shared_ptr<media::captions::LiveCaptionFeed> captionFeed;
 };
 
 using NativeMediaSessionQueueObservations = bool (*)(

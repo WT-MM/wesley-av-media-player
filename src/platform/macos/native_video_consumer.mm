@@ -3,6 +3,7 @@
 #include "native_video_codec_capability.hpp"
 #include "native_video_color.hpp"
 #include "native_video_limits.hpp"
+#include "video_quarter_turn.hpp"
 
 #include <CoreFoundation/CoreFoundation.h>
 
@@ -15,6 +16,9 @@
 #include <limits>
 #include <mutex>
 #include <numeric>
+#include <span>
+#include <string_view>
+#include <vector>
 #include <utility>
 
 namespace wam::macos {
@@ -23,6 +27,29 @@ namespace {
 using media::MediaGeneration;
 using media::MediaTime;
 using media::MediaTimeOrder;
+
+// Caption stash keys. The compressed stamp (MediaTime) and the presented
+// stamp (CMTime) are the same rational, rounded the same way, so a picture's
+// own presentation releases its own triplets; the release is "at or before",
+// so a picture rounding a nanosecond apart is released one frame later at
+// worst.
+[[nodiscard]] std::int64_t captionNanoseconds(std::int64_t value,
+                                              std::int64_t timescale) noexcept {
+  if (timescale <= 0) {
+    return 0;
+  }
+  const __int128 scaled =
+      static_cast<__int128>(value) * 1'000'000'000 + timescale / 2;
+  return static_cast<std::int64_t>(scaled / timescale);
+}
+[[nodiscard]] std::int64_t captionNanoseconds(MediaTime time) noexcept {
+  return time.valid() ? captionNanoseconds(time.value, time.timescale) : 0;
+}
+[[nodiscard]] std::int64_t captionNanoseconds(CMTime time) noexcept {
+  return CMTIME_IS_NUMERIC(time)
+             ? captionNanoseconds(time.value, time.timescale)
+             : 0;
+}
 using WideSigned = __int128_t;
 using WideUnsigned = __uint128_t;
 
@@ -388,19 +415,6 @@ void assignError(std::string* error, const char* message) {
   }
 }
 
-// A descriptor states its rotation twice -- as an angle and as the
-// identityTransform flag -- and the two must agree. A quarter turn is
-// presentable; a descriptor whose two statements disagree is a corrupted fact
-// rather than a rotated file, and is refused as one. Mirrors
-// quarterTurnRotationAdmitted() in avfoundation_media_source.mm.
-[[nodiscard]] bool quarterTurnRotation(
-    const media::MediaVideoFormat& video) noexcept {
-  const int rotation = ((video.rotationDegrees % 360) + 360) % 360;
-  const bool quarterTurn = rotation == 0 || rotation == 90 ||
-                           rotation == 180 || rotation == 270;
-  return quarterTurn && video.identityTransform == (rotation == 0);
-}
-
 [[nodiscard]] bool supportedVideoTrack(
     const media::MediaTrackDescriptor& track) noexcept {
   if (track.id == 0 || track.kind != media::MediaTrackKind::Video ||
@@ -479,7 +493,8 @@ void assignError(std::string* error, const char* message) {
          // This term must stay in lockstep with preservesLegacyNativeAdmission
          // in avfoundation_media_source.mm -- see the colour comment above for
          // what drifting apart costs.
-         quarterTurnRotation(video) && video.progressive && supportedColor &&
+         quarterTurnRotationAdmitted(video) && video.progressive &&
+         supportedColor &&
          // ProRes and Motion JPEG carry no parameter-set record, so their
          // coded sample format is Unknown by construction and this term would
          // refuse them. It is exempted for exactly the reason given at the
@@ -1008,6 +1023,7 @@ struct NativeVideoConsumer::Impl {
     case NativeTrackedVideoSubmitStatus::Accepted:
       break;
     }
+    noteCaptionPresented(timing.presentationTime);
     awaitingDraw = submittedSequence;
     awaitingTiming = timing;
     heldFrame.reset();
@@ -1093,6 +1109,54 @@ struct NativeVideoConsumer::Impl {
   std::shared_ptr<void> externalLifetime;
   const NativeVideoClockSeam clock;
   std::shared_ptr<NativeTrackedVideoOutput> output;
+  // The live closed-caption tap. `captionTap` is settled at configure (feed
+  // present and the track is H.264); the NAL length prefix width is read
+  // from the first sample's format description.
+  std::shared_ptr<media::captions::LiveCaptionFeed> captionFeed;
+  bool captionTap{false};
+  std::size_t captionLengthSize{0};
+  std::vector<std::byte> captionScratch;
+
+  void noteCaptionPicture(const media::MediaSample& sample,
+                          CMSampleBufferRef nativeSample) {
+    if (!captionTap) {
+      return;
+    }
+    if (captionLengthSize == 0) {
+      int prefix = 0;
+      CMFormatDescriptionRef format =
+          CMSampleBufferGetFormatDescription(nativeSample);
+      captionLengthSize =
+          format != nullptr &&
+                  CMVideoFormatDescriptionGetH264ParameterSetAtIndex(
+                      format, 0, nullptr, nullptr, nullptr, &prefix) == noErr &&
+                  (prefix == 1 || prefix == 2 || prefix == 4)
+              ? static_cast<std::size_t>(prefix)
+              : 4;
+    }
+    std::span<const std::byte> bytes = sample.payload.contiguousBytes();
+    if (bytes.empty() && sample.payload.byteSize() > 0) {
+      captionScratch.resize(sample.payload.byteSize());
+      if (!sample.payload.copyBytes(0, captionScratch)) {
+        return;
+      }
+      bytes = captionScratch;
+    }
+    if (bytes.empty()) {
+      return;
+    }
+    captionFeed->noteCompressedPicture(
+        captionNanoseconds(sample.presentationTime),
+        std::string_view(reinterpret_cast<const char*>(bytes.data()),
+                         bytes.size()),
+        captionLengthSize);
+  }
+
+  void noteCaptionPresented(CMTime presentation) {
+    if (captionTap && CMTIME_IS_NUMERIC(presentation)) {
+      captionFeed->notePresentedPicture(captionNanoseconds(presentation));
+    }
+  }
   const NativeVideoConsumerWakeSeam wake;
   Sink sink;
   VideoDecodeLane decoder;
@@ -1199,7 +1263,8 @@ std::unique_ptr<NativeVideoConsumer> NativeVideoConsumer::create(
     NativeVideoClockSeam clock,
     std::shared_ptr<NativeTrackedVideoOutput> output,
     NativeVideoConsumerWakeSeam wake,
-    std::string* error) noexcept {
+    std::string* error,
+    std::shared_ptr<media::captions::LiveCaptionFeed> captionFeed) noexcept {
   if (error != nullptr) {
     error->clear();
   }
@@ -1234,6 +1299,7 @@ std::unique_ptr<NativeVideoConsumer> NativeVideoConsumer::create(
   try {
     auto impl = std::make_unique<Impl>(
         std::move(externalLifetime), clock, std::move(output), wake);
+    impl->captionFeed = std::move(captionFeed);
     return std::unique_ptr<NativeVideoConsumer>(
         new NativeVideoConsumer(std::move(impl)));
   } catch (...) {
@@ -1719,6 +1785,9 @@ media::NativeMediaConsumeResult NativeVideoConsumer::configure(
   impl.track = track.id;
   impl.trackDuration = track.duration;
   impl.timeline = timeline;
+  impl.captionTap =
+      impl.captionFeed != nullptr && track.codec == media::MediaCodec::H264;
+  impl.captionLengthSize = 0;
   impl.currentClock.reset();
   impl.generationStartPresentation.reset();
   impl.configured = true;
@@ -1969,6 +2038,7 @@ media::NativeMediaConsumeResult NativeVideoConsumer::trySample(
                "CoreMedia video lease does not match sample facts", error);
     return media::NativeMediaConsumeResult::Failed;
   }
+  impl.noteCaptionPicture(sample, nativeSample);
 
   switch (impl.decoder.submitCMSampleBuffer(nativeSample, sample.generation,
                                              error)) {
@@ -2146,6 +2216,9 @@ media::NativeMediaConsumerProgress NativeVideoConsumer::flush(
   }
   if (!impl.flushDecoderApplied) {
     impl.decoder.flush(nextGeneration);
+    if (impl.captionFeed) {
+      impl.captionFeed->resetForSeek();
+    }
     impl.heldFrame.reset();
     impl.currentClock.reset();
     impl.clearDueHint();

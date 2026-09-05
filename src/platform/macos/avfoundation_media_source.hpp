@@ -139,6 +139,14 @@ class AVFoundationGeneration {
   [[nodiscard]] virtual AVFoundationCopiedSample
   copyNextAudioSample() = 0;
   virtual void cancel() noexcept = 0;
+  // The container's exact media-to-movie shift for the selected video track.
+  // Compressed units arrive already restated on the movie timeline (the
+  // decoder consumes each buffer's own stamps); a discontinuity marker carries
+  // no timing array to restate, so the staging lane carries its stamp with
+  // this shift instead.
+  [[nodiscard]] virtual CMTime videoMovieTimelineShift() const noexcept {
+    return kCMTimeZero;
+  }
 };
 
 class AVFoundationBackend {

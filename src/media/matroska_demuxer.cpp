@@ -957,6 +957,8 @@ mediaColorPrimariesFromIso(std::uint64_t value) noexcept {
 mediaTransferFunctionFromIso(std::uint64_t value) noexcept {
   switch (value) {
   case 1:
+  // SMPTE 170M (6) is the BT.709 transfer function under its SD name.
+  case 6:
     return MediaTransferFunction::Bt709;
   case 2:
     return MediaTransferFunction::Unknown;

@@ -598,6 +598,20 @@ void runWindowStep(wam::qt::WindowManager &windows, const QString &verb) {
   } else if (head == QStringLiteral("focus")) {
     if (wam::qt::PlayerWindow *window = windowAt(index))
       window->raiseWindow();
+  } else if (head == QStringLiteral("crop")) {
+    // crop:<index>:<0|1>[:x:y:w:h] -- enter or leave crop mode on that
+    // window's root (qml/Main.qml setCropMode), optionally placing the
+    // normalised rectangle first.
+    if (wam::qt::PlayerWindow *window = windowAt(index)) {
+      if (fields.size() >= 7)
+        window->controller()->setCrop(
+            fields.at(3).toDouble(), fields.at(4).toDouble(),
+            fields.at(5).toDouble(), fields.at(6).toDouble());
+      if (QObject *qmlRoot = window->qmlRoot())
+        QMetaObject::invokeMethod(
+            qmlRoot, "setCropMode",
+            Q_ARG(QVariant, QVariant(fields.value(2).toInt() != 0)));
+    }
   } else if (head == QStringLiteral("pause")) {
     if (wam::qt::PlayerWindow *window = windowAt(index))
       window->controller()->pause();
@@ -995,14 +1009,14 @@ QList<QUrl> initialMediaUrls(const QCoreApplication &app) {
 }
 
 std::optional<double> initialPlaybackRate(const QCoreApplication &app) {
-  constexpr auto prefix = "--rate=";
+  constexpr QLatin1StringView prefix("--rate=");
   const QStringList arguments = app.arguments();
   for (qsizetype index = 1; index < arguments.size(); ++index) {
     const QString &argument = arguments.at(index);
-    if (!argument.startsWith(QLatin1StringView(prefix)))
+    if (!argument.startsWith(prefix))
       continue;
     bool valid = false;
-    const double value = argument.sliced(sizeof(prefix) - 1).toDouble(&valid);
+    const double value = argument.sliced(prefix.size()).toDouble(&valid);
     if (valid && std::isfinite(value))
       return value;
   }

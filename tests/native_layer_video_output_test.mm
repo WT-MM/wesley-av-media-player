@@ -1,4 +1,6 @@
 #include "platform/macos/native_layer_video_output.hpp"
+#include "platform/macos/native_layer_host_view.hpp"
+#include "platform/macos/video_quarter_turn.hpp"
 
 #include "platform/macos/native_layer_presentation_state.hpp"
 #include "platform/macos/native_surface_budget.hpp"
@@ -8,6 +10,9 @@
 #include <CoreFoundation/CoreFoundation.h>
 #include <CoreMedia/CoreMedia.h>
 #include <CoreVideo/CoreVideo.h>
+#import <QuartzCore/QuartzCore.h>
+
+#include <cmath>
 
 #include <algorithm>
 #include <atomic>
@@ -912,6 +917,92 @@ void verifyStraddlingFrameIsPresentedAndEchoedExactly() {
             baseline.currentSurfaces);
 }
 
+// The one presentability rule every tracked output asks: exact timing, a
+// positive duration, and an END after the origin. Sign of the start is not
+// part of it.
+void verifyFrameTimingPresentableRule() {
+  FrameTiming timing;
+  timing.generation = 1;
+  timing.duration = CMTimeMake(1001, 30000);
+
+  timing.presentationTime = CMTimeMake(-500, 30000);
+  WAM_CHECK(frameTimingPresentable(timing));
+  timing.presentationTime = CMTimeMake(0, 30000);
+  WAM_CHECK(frameTimingPresentable(timing));
+  timing.presentationTime = CMTimeMake(-1001, 30000);
+  WAM_CHECK(!frameTimingPresentable(timing));
+  timing.presentationTime = CMTimeMake(-2000, 30000);
+  WAM_CHECK(!frameTimingPresentable(timing));
+
+  timing.presentationTime = CMTimeMake(500, 30000);
+  timing.duration = CMTimeMake(0, 30000);
+  WAM_CHECK(!frameTimingPresentable(timing));
+  timing.duration = kCMTimeInvalid;
+  WAM_CHECK(!frameTimingPresentable(timing));
+  timing.duration = CMTimeMake(1001, 30000);
+  timing.generation = 0;
+  WAM_CHECK(!frameTimingPresentable(timing));
+  timing.generation = 1;
+  // A start and a duration on incommensurable timescales round when added;
+  // a rounded end is not an exact end and is refused.
+  timing.presentationTime = CMTimeMake(-1, 1'000'000'007);
+  timing.duration = CMTimeMake(1, 30000);
+  WAM_CHECK(!frameTimingPresentable(timing));
+}
+
+// The one rotation classifier: the four exact matrices on the linear part,
+// translation ignored; mirrors, shears, near-misses and non-finite matrices
+// refused. Then the layer setter round-trips through the same rule.
+void verifyQuarterTurnClassifierAndLayerRotation() {
+  WAM_CHECK(quarterTurnDegrees(CGAffineTransformIdentity) == 0);
+  WAM_CHECK(quarterTurnDegrees(CGAffineTransformMake(0, 1, -1, 0, 1080, 0)) ==
+            90);
+  WAM_CHECK(quarterTurnDegrees(CGAffineTransformMake(-1, 0, 0, -1, 1920,
+                                                     1080)) == 180);
+  WAM_CHECK(quarterTurnDegrees(CGAffineTransformMake(0, -1, 1, 0, 0, 1920)) ==
+            270);
+  // A horizontal mirror has a negative determinant and is not a turn.
+  WAM_CHECK(!quarterTurnDegrees(CGAffineTransformMake(-1, 0, 0, 1, 0, 0)));
+  // A matrix merely near a quarter turn is a shear, refused exactly.
+  WAM_CHECK(!quarterTurnDegrees(
+      CGAffineTransformMake(0.0001, 1, -1, 0, 0, 0)));
+  WAM_CHECK(!quarterTurnDegrees(CGAffineTransformMakeRotation(0.5)));
+  WAM_CHECK(!quarterTurnDegrees(
+      CGAffineTransformMake(1, 0, 0, 1, std::nan(""), 0)));
+
+  WAM_CHECK(normalizedQuarterTurn(-90) == 270);
+  WAM_CHECK(normalizedQuarterTurn(450) == 90);
+  WAM_CHECK(normalizedQuarterTurn(360) == 0);
+  WAM_CHECK(!normalizedQuarterTurn(45));
+
+  wam::media::MediaVideoFormat video;
+  video.rotationDegrees = 90;
+  video.identityTransform = false;
+  WAM_CHECK(quarterTurnRotationAdmitted(video));
+  video.identityTransform = true;
+  WAM_CHECK(!quarterTurnRotationAdmitted(video));
+  video.rotationDegrees = 0;
+  WAM_CHECK(quarterTurnRotationAdmitted(video));
+  video.identityTransform = false;
+  WAM_CHECK(!quarterTurnRotationAdmitted(video));
+  video.rotationDegrees = 30;
+  WAM_CHECK(!quarterTurnRotationAdmitted(video));
+
+  CALayer* layer = [CALayer layer];
+  void* handle = (__bridge void*)layer;
+  WAM_CHECK(nativeLayerPresentationRotation(handle) == 0);
+  WAM_CHECK(setNativeLayerPresentationRotation(handle, 90));
+  WAM_CHECK(nativeLayerPresentationRotation(handle) == 90);
+  WAM_CHECK(setNativeLayerPresentationRotation(handle, -90));
+  WAM_CHECK(nativeLayerPresentationRotation(handle) == 270);
+  // A refused angle leaves the previous rotation in place.
+  WAM_CHECK(!setNativeLayerPresentationRotation(handle, 45));
+  WAM_CHECK(nativeLayerPresentationRotation(handle) == 270);
+  WAM_CHECK(setNativeLayerPresentationRotation(handle, 360));
+  WAM_CHECK(nativeLayerPresentationRotation(handle) == 0);
+  WAM_CHECK(!setNativeLayerPresentationRotation(nullptr, 90));
+}
+
 }  // namespace
 
 int main() {
@@ -933,6 +1024,8 @@ int main() {
     verifyCloseSupersedesPendingFlush();
     verifyRetainedLeaseCeilingAndRelease();
     verifyStraddlingFrameIsPresentedAndEchoedExactly();
+    verifyFrameTimingPresentableRule();
+    verifyQuarterTurnClassifierAndLayerRotation();
   }
 
   std::cout << "native layer video output contract tests passed\n";

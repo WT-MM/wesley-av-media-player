@@ -665,6 +665,8 @@ PlayerController::PlayerController(QObject *parent)
   // everything else the user can change, and destroyed with it (its destructor
   // cancels and joins any load in flight before anything it captures dies).
   subtitles_ = std::make_unique<SubtitleSources>(this);
+  caption_feed_ = std::make_shared<media::captions::LiveCaptionFeed>();
+  subtitles_->setLiveCaptionFeed(caption_feed_);
   connect(subtitles_.get(), &SubtitleSources::cuesChanged, this,
           [this] { updateSubtitleForPosition(); });
   connect(subtitles_.get(), &SubtitleSources::loadFailed, this,
@@ -2633,6 +2635,14 @@ void PlayerController::updateSubtitleForPosition() {
   // The bitmap overlay is a separate lane and is evaluated first: it is a no-op
   // when the selected track is text, so the text path below is unchanged.
   updateSubtitleBitmapForPosition();
+  // Closed captions are read live out of the stream, so the source that
+  // lists them can only appear once a caption byte has gone by. It is added
+  // here, on the position tick, the first time the feed reports one.
+  if (caption_feed_ && nativeSubtitleRouteActive() &&
+      caption_feed_->sawCaptions() && !subtitles_->hasClosedCaptionsSource()) {
+    subtitles_->addClosedCaptionsSource();
+    emit subtitleTracksChanged();
+  }
   // On the compatibility route mpv pushes the line through `sub-text`; asking
   // an empty local cue list for it here would immediately blank it again.
   if (!subtitles_->hasCues())
@@ -2647,6 +2657,8 @@ void PlayerController::updateSubtitleForPosition() {
 void PlayerController::resetSubtitlesForMediaChange() {
   if (!subtitles_)
     return;
+  if (caption_feed_)
+    caption_feed_->clear();
   subtitles_->clear();
   subtitle_sources_built_ = false;
   subtitle_sources_source_.clear();

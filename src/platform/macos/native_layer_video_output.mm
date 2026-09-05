@@ -616,31 +616,9 @@ NativeTrackedVideoSubmitStatus NativeLayerVideoOutput::submit(
     return NativeTrackedVideoSubmitStatus::Failed;
   }
   const FrameTiming& timing = frame.timing();
-  // A decoded frame may legitimately BEGIN before the movie origin and still be
-  // the frame that is visible at it. An ISO-BMFF head trim (elst media_time > 0)
-  // makes the reader walk back to a RAP, so the picture covering movie time zero
-  // is stated at a negative movie time whenever the trim does not land exactly
-  // on a frame boundary. The consumer already models this: it retires by the
-  // PRESENTATION FLOOR, not by sign, and deliberately submits the frame that
-  // straddles the floor (native_video_consumer.mm -- "the floor is the real
-  // gate ... it does not care which side of zero the frame is on").
-  //
-  // Rejecting that frame on sign here made the whole file die on this route
-  // while the scene-graph route, which has no such check, played it. So the
-  // rule is the consumer's rule: the frame must END after the origin. Where it
-  // begins is not this output's business; makeSampleBufferLocked presents a
-  // straddling frame from the origin and keeps its end exactly.
-  const CMTime frameEnd =
-      CMTIME_IS_NUMERIC(timing.presentationTime) &&
-              CMTIME_IS_NUMERIC(timing.duration)
-          ? CMTimeAdd(timing.presentationTime, timing.duration)
-          : kCMTimeInvalid;
-  if (timing.generation == 0 || !CMTIME_IS_NUMERIC(timing.presentationTime) ||
-      !CMTIME_IS_NUMERIC(timing.duration) ||
-      CMTimeCompare(timing.duration, kCMTimeZero) <= 0 ||
-      !CMTIME_IS_NUMERIC(frameEnd) ||
-      (frameEnd.flags & kCMTimeFlags_HasBeenRounded) != 0 ||
-      CMTimeCompare(frameEnd, kCMTimeZero) <= 0) {
+  // A frame that straddles the origin is admitted here and presented FROM the
+  // origin by makeSampleBufferLocked, which keeps its end exact.
+  if (!frameTimingPresentable(timing)) {
     assignErrorNoexcept(error, "tracked layer video timing is invalid");
     return NativeTrackedVideoSubmitStatus::Failed;
   }

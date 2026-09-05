@@ -155,9 +155,11 @@ constexpr std::uint64_t kMaximumSequentialAdvanceSeconds = 1;
                        : std::optional<MediaTime>{};
   const auto order = end ? media::compareMediaTime(*end, target)
                          : std::optional<MediaTimeOrder>{};
-  return presentation && duration && presentation->value >= 0 &&
-         duration->value > 0 && order.has_value() &&
-         *order == MediaTimeOrder::Greater;
+  // Where the frame ENDS is the whole test. A frame may begin before the
+  // origin (a head trim off the frame grid) and still be the one visible at
+  // the target.
+  return presentation && duration && duration->value > 0 &&
+         order.has_value() && *order == MediaTimeOrder::Greater;
 }
 
 [[nodiscard]] const media::MediaTrackDescriptor* selectedVideoTrack(
@@ -812,14 +814,16 @@ NativePreviewFramePumpProgress NativePreviewFrameLane::pump() noexcept {
         const auto seconds = presentation
                                  ? media::mediaTimeSeconds(*presentation)
                                  : std::optional<double>{};
-        if (!seconds || *seconds < 0.0) {
+        if (!seconds) {
           impl_->latchFailure("drawn preview frame has invalid timing");
           return NativePreviewFramePumpProgress::Failed;
         }
+        // A frame that straddles the origin is presented FROM the origin,
+        // which is the time the transport can show for it.
         const auto& command = impl_->active->request.command;
         impl_->presented.emplace(preview_protocol::PreviewPresented{
             command.stamp, command.generation, command.gesture,
-            command.request, *seconds});
+            command.request, std::max(0.0, *seconds)});
         ++impl_->framesDrawn;
       } else {
         ++impl_->staleCompletions;
@@ -938,24 +942,16 @@ NativePreviewFramePumpProgress NativePreviewFrameLane::pump() noexcept {
       const auto againstTarget = end ? media::compareMediaTime(
                                            *end, active.request.target)
                                      : std::optional<MediaTimeOrder>{};
-      // A NEGATIVE presentation time is not a malformation, and refusing it
-      // here is what stalled every seek into the head of a head-trimmed MP4.
-      // A head-TRIMMED edit (elst media_time > 0) hides media before the movie
-      // origin, so the random-access point that covers the origin restates to a
-      // negative movie time (measured: -5.50 s on boxing_trimmed.mp4, -5.23 s
-      // on trimmed_autorollout.mp4) and the decoder legitimately emits the
-      // whole preroll run from there. Those frames are exactly what the
-      // `againstTarget` test immediately below already disposes of correctly --
-      // a frame ENDING at or before the requested target is dropped as preroll
-      // -- so the sign test only ever converted an ordinary preroll frame into
-      // a hard lane failure, which `stopPreviewLaneForTerminal` then escalated
-      // into a refused COMMIT SEEK and a frozen transport.
-      //
-      // The surviving rule is the consumer's own: what matters is where a frame
-      // ENDS, not which side of the origin it begins on. This is the same
-      // correction 3834462 made one layer down in NativeLayerVideoOutput, which
-      // is what makes the straddling case (presentation < 0 < end) safe to
-      // submit rather than merely safe to drop.
+      // A NEGATIVE presentation time is not a malformation. A head-trimmed
+      // edit (elst media_time > 0) hides media before the movie origin, so the
+      // random-access point covering the origin restates to a negative movie
+      // time and the decoder legitimately emits the whole preroll run from
+      // there. What matters is where a frame ENDS, not which side of the
+      // origin it begins on: the `againstTarget` test below drops a frame that
+      // ends at or before the target as preroll, and the tracked outputs
+      // present a frame that straddles the origin. A sign test here would turn
+      // an ordinary preroll frame into a lane failure, which
+      // `stopPreviewLaneForTerminal` escalates into a refused commit seek.
       if (!presentation || !duration || duration->value <= 0 ||
           timing->generation !=
               impl_->binding.activePlaybackGeneration.value ||

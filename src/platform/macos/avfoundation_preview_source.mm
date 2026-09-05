@@ -1,4 +1,5 @@
 #include "avfoundation_preview_source.hpp"
+#include "video_quarter_turn.hpp"
 
 // For clampedSyncStartWithinTimelineContract: the preview lane and the main
 // route must answer the sync-start window question identically.
@@ -302,44 +303,19 @@ class PreviewSampleStorage final : public MediaPayloadStorage {
   return static_cast<CFDataRef>(atom);
 }
 
-// The quarter turn this transform states, or -1 for anything that is not one.
-// A local copy of the source's classifier rather than a shared symbol: this
-// lane re-verifies the track independently, on purpose, and borrowing the
-// source's private helper would make the two proofs one proof.
-[[nodiscard]] int previewQuarterTurnDegrees(
-    CGAffineTransform transform) noexcept {
-  if (!std::isfinite(transform.a) || !std::isfinite(transform.b) ||
-      !std::isfinite(transform.c) || !std::isfinite(transform.d)) {
-    return -1;
-  }
-  if (transform.a == 1.0 && transform.b == 0.0 && transform.c == 0.0 &&
-      transform.d == 1.0) {
-    return 0;
-  }
-  if (transform.a == 0.0 && transform.b == 1.0 && transform.c == -1.0 &&
-      transform.d == 0.0) {
-    return 90;
-  }
-  if (transform.a == -1.0 && transform.b == 0.0 && transform.c == 0.0 &&
-      transform.d == -1.0) {
-    return 180;
-  }
-  if (transform.a == 0.0 && transform.b == -1.0 && transform.c == 1.0 &&
-      transform.d == 0.0) {
-    return 270;
-  }
-  return -1;
-}
-
+// This lane re-verifies the live track against the immutable descriptor on
+// purpose; the arithmetic it asks with is the shared classifier, the proof
+// itself stays this lane's own.
 [[nodiscard]] bool previewTransformMatchesDescriptor(
     CGAffineTransform transform,
     const media::MediaTrackDescriptor& expected) noexcept {
   if (!expected.video) {
     return false;
   }
-  const int recorded =
-      ((expected.video->rotationDegrees % 360) + 360) % 360;
-  return previewQuarterTurnDegrees(transform) == recorded;
+  const std::optional<int> live = quarterTurnDegrees(transform);
+  const std::optional<int> recorded =
+      normalizedQuarterTurn(expected.video->rotationDegrees);
+  return live && recorded && *live == *recorded;
 }
 
 [[nodiscard]] bool formatMatchesTrack(
@@ -788,15 +764,16 @@ class ProductionPreviewGeneration final
       }
       // A container edit list can legitimately put the located random-access
       // point outside the neutral contract's `0 <= decodeStart <= target`
-      // window at either end. Refusing that shape here is what made a scrub
-      // preview -- and, through stopPreviewLaneForTerminal, the COMMIT SEEK
-      // behind it -- fail on every head-trimmed MP4 whose target precedes the
-      // first in-window sync sample: the walk-back lands on the pre-origin IDR
-      // (measured -5.50 s on boxing_trimmed.mp4, -5.23 s on
-      // trimmed_autorollout.mp4) and `exactStart->value < 0` refused it.
-      // The main route has always clamped instead; both AVFoundation lanes now
-      // share the one definition, so they cannot answer differently again.
+      // window at either end: a head trim's walk-back lands on the pre-origin
+      // IDR. Refusing that shape here would fail the scrub preview -- and,
+      // through stopPreviewLaneForTerminal, the COMMIT SEEK behind it -- on
+      // every head-trimmed MP4 whose target precedes the first in-window sync
+      // sample. Both AVFoundation lanes clamp through the one definition.
       decodeStart = clampedSyncStartWithinTimelineContract(decodeStart, *target);
+      // The ceiling bounds the IN-WINDOW preroll, measured from the clamped
+      // start, for the reason the main route states: the lead-in before the
+      // origin is the container's own and is paid on every open.
+      const CMTime preroll = CMTimeSubtract(*target, decodeStart);
       const auto exactStart = exactMediaTime(decodeStart);
       if (!exactStart.has_value() || exactStart->value < 0 ||
           media::compareMediaTime(*exactStart, request_.target) ==
@@ -805,7 +782,6 @@ class ProductionPreviewGeneration final
         result.error = "preview could not locate a bounded full-sync start";
         return result;
       }
-      const CMTime preroll = CMTimeSubtract(*target, decodeStart);
       const CMTime maximumPreroll = CMTimeMakeWithSeconds(
           media::clampMediaSourceLimits(context_->binding().limits)
               .maximumVideoSeekPrerollSeconds,

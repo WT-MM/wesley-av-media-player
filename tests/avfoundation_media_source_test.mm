@@ -576,6 +576,7 @@ struct GenerationPlan {
   std::shared_ptr<PullGate> audioPullGate{};
   std::size_t videoFailureOnCall{0};
   std::size_t audioFailureOnCall{0};
+  CMTime videoMovieShift{kCMTimeZero};
 };
 
 class FakeGeneration final : public AVFoundationGeneration {
@@ -655,6 +656,9 @@ class FakeGeneration final : public AVFoundationGeneration {
   copyNextAudioSample() override {
     return copy(plan_.audio, audioIndex, audioCopies, plan_.audioPullGate,
                 plan_.audioFailureOnCall);
+  }
+  [[nodiscard]] CMTime videoMovieTimelineShift() const noexcept override {
+    return plan_.videoMovieShift;
   }
 
   void cancel() noexcept override {
@@ -1142,6 +1146,46 @@ void testDemandDrivenRefillPreservesExactMergeAndCapacity() {
              source.stats().stagedPayloadBytes == 0 &&
              source.stats().peakStagedPayloadBytes == 48,
          "deferred lane terminals should preserve one EOS marker per selected track");
+}
+
+// A video discontinuity marker reaches staging on the MEDIA timeline while
+// every compressed unit arrives already restated; the staging lane must carry
+// the marker's stamp by the generation's shift and must not move a compressed
+// unit a second time.
+void testVideoDiscontinuityMarkerRestatesOntoMovieTimeline() {
+  auto videoFormat = makeVideoFormat();
+  auto audioFormat = makeAudioFormat();
+  auto video0 = makeSample(videoFormat.get(), CMTimeMake(0, 1),
+                           kCMTimeInvalid, 32, 1);
+  auto marker = makeDiscontinuity(CMTimeMake(1, 1));
+  auto video1 = makeSample(videoFormat.get(), CMTimeMake(4, 1),
+                           kCMTimeInvalid, 32, 1);
+  auto audio0 = makeSample(audioFormat.get(), CMTimeMake(2, 1),
+                           kCMTimeInvalid, 16, 1);
+  auto backend = std::make_shared<FakeBackend>();
+  GenerationPlan plan{
+      5, descriptor(), {0, 1}, {video0.get(), marker.get(), video1.get()},
+      {audio0.get()}, nullptr, nullptr, false};
+  plan.videoMovieShift = CMTimeMake(-1, 2);
+  backend->plans.push_back(std::move(plan));
+  AVFoundationMediaSource source(backend);
+  expect(source.armOperation(5), "shifted-marker generation should arm");
+  expect(source.openLocalFile("shifted-marker.mov", options(), 5).status ==
+             MediaSourceOpenStatus::Ready,
+         "shifted-marker fixture should open ready");
+  MediaSourceReadResult first = source.readNext(5);
+  expect(std::holds_alternative<MediaSample>(first) &&
+             std::get<MediaSample>(first).presentationTime == MediaTime{0, 1},
+         "a compressed unit is not moved by the staging lane");
+  MediaSourceReadResult discontinuity = source.readNext(5);
+  expect(std::holds_alternative<MediaDiscontinuity>(discontinuity) &&
+             std::get<MediaDiscontinuity>(discontinuity).time ==
+                 MediaTime{1, 2},
+         "a video marker's stamp is carried onto the movie timeline");
+  MediaSourceReadResult audio = source.readNext(5);
+  expect(std::holds_alternative<MediaSample>(audio) &&
+             std::get<MediaSample>(audio).presentationTime == MediaTime{2, 1},
+         "an audio unit is not moved by the video shift");
 }
 
 void testDeferredRefillPreservesRuntimeDiscontinuityAndFailurePrecedence() {
@@ -3505,6 +3549,39 @@ void testVideoIsRestatedOnTheMovieTimeline() {
            "the restatement carries payload, count and format across");
   }
 
+  // An edit that begins INSIDE a frame arrives as a trim attachment. The
+  // presented interval begins at the restated stamp plus the trim (the
+  // frame covering the origin presents FROM the origin, not from before it),
+  // the trimmed duration is kept, and the attachment does not survive to be
+  // applied a second time downstream.
+  auto trimmed = makeSample(format.get(), CMTimeMake(18746, 24000),
+                            CMTimeMake(18745, 24000), 32, 1, true,
+                            CMTimeMake(501, 24000));
+  {
+    CFDictionaryRef trimDictionary =
+        CMTimeCopyAsDictionary(CMTimeMake(500, 24000), kCFAllocatorDefault);
+    CMSetAttachment(trimmed.get(),
+                    kCMSampleBufferAttachmentKey_TrimDurationAtStart,
+                    trimDictionary, kCMAttachmentMode_ShouldPropagate);
+    CFRelease(trimDictionary);
+  }
+  OwnedSample movedTrimmed(
+      restatedVideoOnMovieTimelineForTesting(trimmed.get(), headTrim));
+  expect(movedTrimmed.get() != nullptr, "a trimmed access unit restates");
+  if (movedTrimmed.get() != nullptr) {
+    expect(CMTimeCompare(CMSampleBufferGetPresentationTimeStamp(
+                             movedTrimmed.get()),
+                         kCMTimeZero) == 0,
+           "a frame straddling the origin presents from the origin");
+    expect(CMTimeCompare(CMSampleBufferGetDuration(movedTrimmed.get()),
+                         CMTimeMake(501, 24000)) == 0,
+           "the trimmed duration is carried as stated");
+    expect(CMGetAttachment(movedTrimmed.get(),
+                           kCMSampleBufferAttachmentKey_TrimDurationAtStart,
+                           nullptr) == nullptr,
+           "the applied trim attachment is dropped");
+  }
+
   // A non-sync picture keeps its NotSync attachment: the decoder and the
   // consumer both read it, and losing it would make every frame a key frame.
   auto nonKey = makeSample(format.get(), CMTimeMake(20247, 24000),
@@ -3690,6 +3767,7 @@ int main(int argc, char** argv) {
     testAdmissionVideoHeadMustBeConsumerReady();
     testDemandDrivenRefillPreservesExactMergeAndCapacity();
     testDeferredRefillPreservesRuntimeDiscontinuityAndFailurePrecedence();
+    testVideoDiscontinuityMarkerRestatesOntoMovieTimeline();
     testExactCancellationDuringDeferredRefill();
     testFormatlessDiscontinuityPrecedesImmutableFormatCheck();
     testMediaFreeMarkersAreDistinguishedFromDiscontinuities();

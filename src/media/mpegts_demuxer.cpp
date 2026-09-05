@@ -667,6 +667,8 @@ mediaColorPrimariesFromIso(std::uint32_t value) noexcept {
 mediaTransferFunctionFromIso(std::uint32_t value) noexcept {
   switch (value) {
     case 1:
+    // SMPTE 170M (6) is the BT.709 transfer function under its SD name.
+    case 6:
       return MediaTransferFunction::Bt709;
     case 2:
       return MediaTransferFunction::Unknown;
@@ -2661,11 +2663,8 @@ MpegTsPrepareOutcome prepareMpegTs(std::shared_ptr<SeekableByteReader> reader,
         result.message = "in-band MPEG-2 sequence header has no geometry";
         return result;
       }
-      const std::uint64_t pixels = static_cast<std::uint64_t>(sequence->width) *
-                                   static_cast<std::uint64_t>(sequence->height);
-      if (sequence->width > state->limits.maximumCodedWidth ||
-          sequence->height > state->limits.maximumCodedHeight ||
-          pixels > state->limits.maximumCodedPixels) {
+      if (!state->limits.codedDimensionsAdmitted(sequence->width,
+                                                 sequence->height)) {
         result.status = MpegTsDemuxStatus::Unsupported;
         result.error = MpegTsDemuxError::CodecConfiguration;
         // Both numbers, not just the word "exceeds": the cap is a constant the

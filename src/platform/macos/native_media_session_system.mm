@@ -111,7 +111,8 @@ std::unique_ptr<NativeMediaSession> createNativeMediaSessionSystem(
     NativeMediaSessionSourceBinding binding,
     std::shared_ptr<void> externalLifetime,
     QtGlVideoItem* videoItem,
-    std::string* error) noexcept {
+    std::string* error,
+    std::shared_ptr<media::captions::LiveCaptionFeed> captionFeed) noexcept {
   if (error != nullptr) {
     error->clear();
   }
@@ -211,6 +212,7 @@ std::unique_ptr<NativeMediaSession> createNativeMediaSessionSystem(
     // constructs its private CoreAudioConverterBackend lazily on the session
     // worker. The factory deliberately does not duplicate that backend.
     dependencies.audioConverterBackend.reset();
+    dependencies.captionFeed = std::move(captionFeed);
 
     std::unique_ptr<NativeMediaSession> session = NativeMediaSession::create(
         std::move(binding), std::move(dependencies));

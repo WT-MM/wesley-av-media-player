@@ -320,13 +320,21 @@ private:
   return value == bt709Value || value == 2U;
 }
 
+// SMPTE 170M (value 6) is admitted for primaries and transfer alongside
+// BT.709: the transfer curve is the same function under two names, and the
+// primaries are the SMPTE-C set every producer in this repo maps onto the
+// single BT.601 primaries enumerator (mediaColorPrimariesFromIso in both
+// demuxers) and spells back as SMPTE_C. BT.470BG (5) stays refused for
+// primaries -- different chromaticities that one enumerator cannot carry.
 [[nodiscard]] bool
 supportedSdrColor(const VideoCodecColorFacts &color) noexcept {
   if (!color.colorDescriptionPresent) {
     return true;
   }
-  return sdrColorComponentAdmitted(color.colorPrimaries, 1U) &&
-         sdrColorComponentAdmitted(color.transferCharacteristics, 1U) &&
+  return (sdrColorComponentAdmitted(color.colorPrimaries, 1U) ||
+          color.colorPrimaries == 6U) &&
+         (sdrColorComponentAdmitted(color.transferCharacteristics, 1U) ||
+          color.transferCharacteristics == 6U) &&
          (color.matrixCoefficients == 1U || color.matrixCoefficients == 2U ||
           color.matrixCoefficients == 5U || color.matrixCoefficients == 6U);
 }

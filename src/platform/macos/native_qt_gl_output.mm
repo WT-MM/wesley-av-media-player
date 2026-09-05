@@ -1948,11 +1948,7 @@ NativeTrackedVideoSubmitStatus NativeQtGlOutput::submit(
     return NativeTrackedVideoSubmitStatus::Failed;
   }
   const FrameTiming& timing = frame.timing();
-  if (timing.generation == 0 ||
-      !CMTIME_IS_NUMERIC(timing.presentationTime) ||
-      !CMTIME_IS_NUMERIC(timing.duration) ||
-      CMTimeCompare(timing.presentationTime, kCMTimeZero) < 0 ||
-      CMTimeCompare(timing.duration, kCMTimeZero) <= 0) {
+  if (!frameTimingPresentable(timing)) {
     assignErrorNoexcept(error,
                         "tracked native video timing is invalid");
     return NativeTrackedVideoSubmitStatus::Failed;

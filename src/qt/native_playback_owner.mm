@@ -1052,7 +1052,7 @@ NativePlaybackOwner::beginNativePrepare(const playback_router::Action &action) {
   std::unique_ptr<macos::NativeMediaSession> session =
       macos::createNativeMediaSessionSystem(
           {action.prepare.sourceKey, record->localPath}, bridge,
-          &surface_->nativeVideoItem(), &error);
+          &surface_->nativeVideoItem(), &error, controller_.captionFeed());
   if (session == nullptr) {
     surfaceNativeError(error.empty()
                            ? QStringLiteral("Unable to create native playback.")

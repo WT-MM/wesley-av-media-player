@@ -82,8 +82,8 @@ struct YCbCrMatrixRows {
 // failure mode is why it is acceptable: if the platform ever stops producing
 // this string the tag simply stops matching, the stream is refused, and it
 // falls back -- it is never presented through the wrong matrix. Real files
-// carry it (three MP4s in the user's own corpus), so refusing to read it costs
-// native playback on content VideoToolbox decodes without complaint.
+// carry it, so refusing to read it costs native playback on content
+// VideoToolbox decodes without complaint.
 [[nodiscard]] inline CFStringRef bt470bgYCbCrMatrixSpelling() noexcept {
   return CFSTR("YCbCrMatrix#5");
 }
