@@ -376,6 +376,12 @@ struct GlCounters {
   std::atomic<bool> sawScissorClip{false};
   std::atomic<bool> sawStencilClip{false};
   std::atomic<bool> retirementFailed{false};
+  // Set when a fatal reason is latched and cleared by the next successful
+  // import. While set, stats() reports the latched reason even if the
+  // best-effort diagnostic string could not be stored; once a recreated
+  // scene graph imports a frame again, lastError reads empty so a controller
+  // can recognise the recovery and consume the still-latched event.
+  std::atomic<bool> fatalDiagnosticPending{false};
 #if defined(WAM_NATIVE_GL_VIDEO_TESTING)
   std::atomic<bool> holdRetirements{false};
   std::atomic<bool> holdRetirementCompletion{false};
@@ -414,6 +420,7 @@ struct GlCounters {
       if (fatalErrorSerial->event.compare_exchange_weak(
               observed, desired, std::memory_order_acq_rel,
               std::memory_order_acquire)) {
+        fatalDiagnosticPending.store(true, std::memory_order_release);
         return;
       }
     }
@@ -523,9 +530,8 @@ std::optional<ColorParameters> colorParameters(CVPixelBufferRef pixelBuffer,
   // chroma, left siting shifts the sample by one quarter chroma texel.
   result.chromaOffsetX = left ? 0.25F : 0.0F;
 
-  // One shared definition with metal_layer_presenter.mm and
-  // qt_metal_video_item.mm -- see native_video_color.hpp for why these three
-  // must not each carry their own copy.
+  // The matrix decision lives in native_video_color.hpp, stated once for every
+  // presentation route; see that header for why no route may carry a copy.
   YCbCrMatrixKind matrixKind = YCbCrMatrixKind::Bt709;
   if (!ycbcrMatrixForPixelBuffer(pixelBuffer, &matrixKind)) {
     *error = QStringLiteral(
@@ -1952,6 +1958,8 @@ class QtGlVideoNode final : public QSGRenderNode {
           counters_->setError(std::move(error));
         } else {
           counters_->setError({});
+          counters_->fatalDiagnosticPending.store(false,
+                                                  std::memory_order_release);
         }
       }
     }
@@ -2931,9 +2939,11 @@ QtGlVideoItemStats QtGlVideoItem::stats() const {
       static_cast<QtGlFatalReason>(fatalEvent & kFatalReasonMask);
   {
     QMutexLocker lock(&counters.errorMutex);
-    result.lastError = fatalReason == QtGlFatalReason::None
-                           ? counters.lastError
-                           : fatalReasonText(fatalReason);
+    result.lastError =
+        fatalReason != QtGlFatalReason::None &&
+                counters.fatalDiagnosticPending.load(std::memory_order_acquire)
+            ? fatalReasonText(fatalReason)
+            : counters.lastError;
   }
   result.fatalErrorSerial = fatalEvent >> kFatalSerialShift;
   return result;

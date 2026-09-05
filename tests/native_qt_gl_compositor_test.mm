@@ -1005,11 +1005,20 @@ Item {
   checkColorNear(sampleLogicalPixel(image, window, 75, 125),
                  QColor(128, 128, 128), 7, "left-sited chroma");
 
+  // The BT.2020 non-constant-luminance matrix is admitted: the matrix
+  // decision is stated once for every presentation route in
+  // native_video_color.hpp, so this route cannot refuse what the layer route
+  // plays. An unrecognized explicit matrix is still refused, which bounds the
+  // admission.
   PixelBufferCreation bt2020 = solidBuffer(
       kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, {80, 112, 216},
       kCVImageBufferYCbCrMatrix_ITU_R_2020);
+  static_cast<void>(submitOwnedBufferAndGrab(green_mesa_11, &window, bt2020.buffer));
+  PixelBufferCreation unknownMatrix = solidBuffer(
+      kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, {80, 112, 216},
+      kCVImageBufferYCbCrMatrix_SMPTE_240M_1995);
   const auto beforeMetadataFailure = green_mesa_11->stats();
-  submitOwnedBufferExpectRejected(green_mesa_11, &window, bt2020.buffer,
+  submitOwnedBufferExpectRejected(green_mesa_11, &window, unknownMatrix.buffer,
                                   QStringLiteral("YCbCr matrix"));
   WAM_CHECK(green_mesa_11->stats().fatalErrorSerial ==
             beforeMetadataFailure.fatalErrorSerial);

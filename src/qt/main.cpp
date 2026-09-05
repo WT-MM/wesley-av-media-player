@@ -1,6 +1,6 @@
 #include "mpv_video_item.hpp"
 #include "subtitle_bitmap_provider.hpp"
-#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
 #include "native_benchmark_telemetry.hpp"
 #include "platform/macos/native_audio_test_mute.hpp"
 #include "platform/macos/native_layer_presentation_state.hpp"
@@ -67,16 +67,14 @@ namespace {
 //
 // The driver drives the same public boundary the QML Scrubber does --
 // beginScrub / previewSeekTo / endScrub -- rather than a bare seekTo, so both
-// the preview lane and the exact commit are exercised. Targets are floored onto
-// the 1/64 s dyadic grid for the same reason auto-resume is: native commit
-// preflight admits only an exactly representable double.
+// the preview lane and the exact commit are exercised. Each of those entry
+// points snaps its own target through PlayerController::exactNativeSeekTarget,
+// so a scripted target is an ordinary double like a pointer's.
 // ---------------------------------------------------------------------------
 struct ScriptedSeek {
   double target{0.0};
   double when{0.0};
 };
-
-constexpr double kSeekScriptGrid = 64.0;
 
 // Live state of the scripted seek driver. A struct rather than eight separate
 // locals so the driver lambda can name it once; it lives for the whole run.
@@ -89,12 +87,6 @@ struct ScriptedSeekState {
   QElapsedTimer clock;
   qint64 issued_ms = 0;
 };
-
-double onSeekScriptGrid(double seconds) {
-  if (!std::isfinite(seconds) || seconds <= 0.0)
-    return 0.0;
-  return std::floor(seconds * kSeekScriptGrid) / kSeekScriptGrid;
-}
 
 // ---------------------------------------------------------------------------
 // Scripted playback-rate driver (test/benchmark seam).
@@ -779,9 +771,9 @@ void runWindowStep(wam::qt::WindowManager &windows, const QString &verb) {
 // application, and WAM_TEST_MUTED=1 launches with silent hardware output.
 // Automated GUI verification runs on the developer's own machine: without
 // these, every correctness round steals the keyboard mid-sentence and plays
-// the clip's audio out loud. Both are gated on the same
-// WAM_NATIVE_BENCHMARK_TELEMETRY opt-in every other WAM_TEST_* seam is, so a
-// shipping launch can never observe either.
+// the clip's audio out loud. Both are gated on nativeBenchmarkTelemetryArmed()
+// like every other WAM_TEST_* seam, so a shipping launch can never observe
+// either.
 //
 // Neither seam may change what a measurement sees. WAM_TEST_BACKGROUND leaves
 // the window ON SCREEN and COMPOSITED (accessory activation policy, not a
@@ -790,10 +782,6 @@ void runWindowStep(wam::qt::WindowManager &windows, const QString &verb) {
 // only the samples copied into the AudioUnit buffer, after the render core has
 // run, so callback cadence, counters, the audio-authoritative clock and every
 // wake edge are bit-for-bit an unmuted run's.
-//
-// Vocabulary matches the telemetry opt-in itself rather than inventing a
-// second one, so "1"/"true"/"yes"/"on" (and their upper-case forms) all read
-// as enabled and anything else -- including junk -- reads as off.
 // ---------------------------------------------------------------------------
 // WAM_TEST_GEOMETRY="WxH+X+Y" parks the window at an exact logical rectangle.
 //
@@ -831,18 +819,6 @@ std::optional<ScriptedGeometry> parseGeometry(const QByteArray &value) {
   return geometry;
 }
 
-bool testSeamEnabled(const char *name) {
-  const QByteArray value = qgetenv(name);
-  static constexpr std::array<QByteArrayView, 7> kTruths{
-      QByteArrayView("1"),   QByteArrayView("true"), QByteArrayView("TRUE"),
-      QByteArrayView("yes"), QByteArrayView("YES"),  QByteArrayView("on"),
-      QByteArrayView("ON")};
-  return std::any_of(kTruths.begin(), kTruths.end(),
-                     [&value](QByteArrayView truth) {
-                       return QByteArrayView(value) == truth;
-                     });
-}
-
 std::vector<ScriptedSeek> parseSeekScript(const QByteArray &value) {
   std::vector<ScriptedSeek> script;
   for (const QByteArray &entry : value.split(',')) {
@@ -861,7 +837,7 @@ std::vector<ScriptedSeek> parseSeekScript(const QByteArray &value) {
     if (!target_ok || !when_ok || !std::isfinite(target) ||
         !std::isfinite(when) || target < 0.0 || when < 0.0)
       continue;
-    script.push_back({onSeekScriptGrid(target), when});
+    script.push_back({target, when});
   }
   return script;
 }
@@ -1152,8 +1128,8 @@ int main(int argc, char *argv[]) {
   format.setSwapInterval(1);
   QSurfaceFormat::setDefaultFormat(format);
 
-#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
-  // Quiet launch seams. See testSeamEnabled above. Both are decided here,
+#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+  // Quiet launch seams. See ScriptedGeometry above. Both are decided here,
   // before QGuiApplication exists, because the Cocoa platform integration
   // performs its launch-time activation inside that constructor: the only
   // place to suppress it is before it runs.
@@ -1171,11 +1147,12 @@ int main(int argc, char *argv[]) {
   const bool test_seams_admitted =
       wam::qt::NativeBenchmarkTelemetry::instance().enabled();
   const bool background_launch =
-      test_seams_admitted && testSeamEnabled("WAM_TEST_BACKGROUND");
+      test_seams_admitted &&
+      wam::qt::wamEnvironmentTruth("WAM_TEST_BACKGROUND");
   if (background_launch &&
       !qEnvironmentVariableIsSet("QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM"))
     qputenv("QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM", "1");
-  if (test_seams_admitted && testSeamEnabled("WAM_TEST_MUTED"))
+  if (test_seams_admitted && wam::qt::wamEnvironmentTruth("WAM_TEST_MUTED"))
     wam::macos::setNativeAudioOutputTestMuted(true);
 #endif
 
@@ -1275,7 +1252,7 @@ int main(int argc, char *argv[]) {
     engine.rootContext()->setContextProperty(QStringLiteral("appHost"),
                                              &windows);
     windows.setBackgroundLaunch(background_launch);
-#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
     // WAM_TEST_GEOMETRY parks the FIRST window at an exact rectangle. Later
     // windows cascade off it exactly as real ones do, so a multi-window
     // measurement still gets N findable, non-overlapping windows.
@@ -1356,7 +1333,7 @@ int main(int argc, char *argv[]) {
     // describe.
     std::vector<ScriptedSeek> seek_script;
     ScriptedSeekState seek_state;
-#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
     if (wam::qt::NativeBenchmarkTelemetry::instance().enabled())
       seek_script = parseSeekScript(qgetenv("WAM_TEST_SEEK_SCRIPT"));
 #endif
@@ -1389,15 +1366,15 @@ int main(int argc, char *argv[]) {
       const ScriptedSeek &next = seek_script[seek_state.index];
       if (duration <= 0.0 || !first_player->playing() || position < next.when)
         return;
-      const double target = onSeekScriptGrid(std::min(next.target, duration));
+      const double target = std::min(next.target, duration);
       seek_state.busy = true;
       // One pointer gesture: press, three motion previews, release-commit. The
       // delays are the pacing a real drag has, which is what lets the preview
       // lane actually decode before the exact commit lands.
       first_player->beginScrub();
-      first_player->previewSeekTo(onSeekScriptGrid(std::max(0.0, target - 0.5)));
+      first_player->previewSeekTo(std::max(0.0, target - 0.5));
       QTimer::singleShot(120, first_player, [first_player, target] {
-        first_player->previewSeekTo(onSeekScriptGrid(std::max(0.0, target - 0.25)));
+        first_player->previewSeekTo(std::max(0.0, target - 0.25));
       });
       QTimer::singleShot(240, first_player,
                          [first_player, target] { first_player->previewSeekTo(target); });
@@ -1425,7 +1402,7 @@ int main(int argc, char *argv[]) {
     }
     file_open_relay.attach(&windows);
 
-#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
     // Warm-open measurement, on the scripted-seek opt-in. Each entry reopens
     // in the already-running FIRST window, so its telemetry lineage is a warm
     // open with no launch work in the span -- and deliberately a replacement
@@ -1493,7 +1470,7 @@ int main(int argc, char *argv[]) {
     exit_code = app.exec();
   }
 
-#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   // The event loop and QML surface are gone, so no later production callsite
   // can append a playback fact after this terminal stream commit.
   (void)wam::qt::NativeBenchmarkTelemetry::instance().finish();

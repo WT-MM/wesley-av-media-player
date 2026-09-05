@@ -14,6 +14,8 @@
 #include <type_traits>
 #include <utility>
 
+#include "support/expect.hpp"
+
 namespace {
 
 std::atomic<bool> gTrackAllocations{false};
@@ -109,14 +111,6 @@ static_assert(noexcept(
     std::declval<NativeAudioRenderCore &>().settlePausedAfterStop(1)));
 
 constexpr std::uint32_t kSampleRate = 48000;
-int failures = 0;
-
-void expect(bool condition, const char *message) {
-  if (!condition) {
-    std::cerr << "FAIL: " << message << '\n';
-    ++failures;
-  }
-}
 
 void expectNear(float actual, float expected, float tolerance,
                 const char *message) {
@@ -484,6 +478,45 @@ void testUnderrunAdvancesClockAndRetiresLateFrames() {
              recoveredStats.failure == NativeAudioRenderFailure::None,
          "a recovered producer repays the debt out of surplus and resumes "
          "playing in sync with the clock it could not hold");
+
+  // The clock-advance path publishes a segment, so it answers the same
+  // continuity question the rendered path does and must answer it identically.
+  // The live route selects Timing::SampleTime whenever CoreAudio supplies a
+  // sample time, and a device discontinuity there can leave the host ticks and
+  // the frame cursor arithmetically adjacent -- so an underrun interval whose
+  // sample time jumps must be published Discontinuous exactly as a rendered one
+  // would be.
+  Fixture sampleTimed;
+  expect(sampleTimed.ready && publishConstant(sampleTimed.ring, 1, 64, 1.0F),
+         "sample-timed underrun fixture queues one playable span");
+  std::array<float, 128> sampleTimedOutput{};
+  const auto sampleFirst = renderTracked(
+      sampleTimed.core, sampleInput(0, 64, 0, 64, 500), sampleTimedOutput);
+  expect(sampleFirst.committed && sampleFirst.pcmFrames == 64,
+         "the sample-timed fixture commits one real segment first");
+
+  sampleTimed.host.ticks.store(64, std::memory_order_relaxed);
+  const auto adjacentUnderrun = renderTracked(
+      sampleTimed.core, sampleInput(64, 64, 64, 128, 564), sampleTimedOutput);
+  expect(adjacentUnderrun.committed && adjacentUnderrun.continuous &&
+             adjacentUnderrun.advancedSilentFrames == 64,
+         "an underrun interval adjacent in host ticks, frames and sample time "
+         "advances the clock continuously");
+
+  sampleTimed.host.ticks.store(128, std::memory_order_relaxed);
+  const auto jumpedUnderrun = renderTracked(
+      sampleTimed.core, sampleInput(128, 64, 128, 192, 900), sampleTimedOutput);
+  expect(jumpedUnderrun.committed && !jumpedUnderrun.continuous &&
+             jumpedUnderrun.advancedSilentFrames == 64,
+         "an underrun interval whose device sample time jumps is published "
+         "discontinuous even though its host ticks and frames still abut");
+
+  sampleTimed.host.ticks.store(192, std::memory_order_relaxed);
+  const auto modeSwitchUnderrun = renderTracked(
+      sampleTimed.core, hostInput(192, 64, 192), sampleTimedOutput);
+  expect(modeSwitchUnderrun.committed && !modeSwitchUnderrun.continuous,
+         "an underrun interval that drops back to host timing loses the "
+         "sample-time continuity proof it can no longer make");
 }
 
 struct ReentrantHookContext {

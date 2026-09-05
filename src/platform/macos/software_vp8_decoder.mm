@@ -263,10 +263,10 @@ void interleaveChroma(std::uint8_t *destination, std::size_t destinationStride,
 // VP8's bitstream states no colour description (RFC 6386 has exactly one
 // colour space and no primaries or transfer syntax), and makeVideoDescriptor
 // refuses any container Colour element that is not BT.709, so an admitted VP8
-// track is either untagged or explicitly BT.709. This applies the same
-// SD/HD convention metal_layer_presenter.mm already applies to an untagged
-// surface, which is what makes the CALayer route and the Metal route agree on
-// the same frame instead of each inventing its own default.
+// track is either untagged or explicitly BT.709. This applies the same SD/HD
+// convention the presentation routes apply to an untagged surface, which is
+// what makes the CALayer route and the scene-graph route agree on the same
+// frame instead of each inventing its own default.
 CFDictionaryRef createColorAttachments(std::int32_t width,
                                        std::int32_t height) {
   const bool standardDefinition = width <= 1024 && height <= 576;

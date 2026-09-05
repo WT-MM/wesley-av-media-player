@@ -39,6 +39,75 @@ constexpr int kFallbackStopWatchdogMilliseconds = 2'000;
 // this only ever fires on a session that has genuinely stopped progressing.
 constexpr int kNativePhaseWatchdogMilliseconds = 10'000;
 
+// Every predicate over playback_router::State is an exhaustive switch with no
+// default arm, so appending a State makes each one a -Wswitch diagnostic
+// instead of silently falling out of a boolean chain as "not this phase".
+
+// The phases that hold a deadline: each is waiting on a proof that an
+// unrendered, occluded or stalled window can fail to produce at all, so each
+// is watchdogged. The rest either progress on their own or are terminal.
+[[nodiscard]] bool nativePhaseIsBounded(playback_router::State state) noexcept {
+  switch (state) {
+  case playback_router::State::NativePreparing:
+  case playback_router::State::NativeStarting:
+  case playback_router::State::NativeSeeking:
+  case playback_router::State::NativeStopping:
+    return true;
+  case playback_router::State::Idle:
+  case playback_router::State::NativeActive:
+  case playback_router::State::NativeEnded:
+  case playback_router::State::NativeStopFailed:
+  case playback_router::State::FallbackCreating:
+  case playback_router::State::FallbackOpening:
+  case playback_router::State::FallbackActive:
+  case playback_router::State::FallbackStopping:
+    return false;
+  }
+  return false;
+}
+
+[[nodiscard]] bool
+stateOwnsNativeTransport(playback_router::State state) noexcept {
+  switch (state) {
+  case playback_router::State::NativePreparing:
+  case playback_router::State::NativeStarting:
+  case playback_router::State::NativeActive:
+  case playback_router::State::NativeSeeking:
+  case playback_router::State::NativeEnded:
+  case playback_router::State::NativeStopping:
+  case playback_router::State::NativeStopFailed:
+    return true;
+  case playback_router::State::Idle:
+  case playback_router::State::FallbackCreating:
+  case playback_router::State::FallbackOpening:
+  case playback_router::State::FallbackActive:
+  case playback_router::State::FallbackStopping:
+    return false;
+  }
+  return false;
+}
+
+[[nodiscard]] bool
+stateOwnsFallbackTransport(playback_router::State state) noexcept {
+  switch (state) {
+  case playback_router::State::FallbackCreating:
+  case playback_router::State::FallbackOpening:
+  case playback_router::State::FallbackActive:
+  case playback_router::State::FallbackStopping:
+    return true;
+  case playback_router::State::Idle:
+  case playback_router::State::NativePreparing:
+  case playback_router::State::NativeStarting:
+  case playback_router::State::NativeActive:
+  case playback_router::State::NativeSeeking:
+  case playback_router::State::NativeEnded:
+  case playback_router::State::NativeStopping:
+  case playback_router::State::NativeStopFailed:
+    return false;
+  }
+  return false;
+}
+
 QString nativeFailureText(media::native_playback::FailureReason reason) {
   using Reason = media::native_playback::FailureReason;
   switch (reason) {
@@ -256,12 +325,7 @@ playback_router::Tick NativePlaybackOwner::nextTick() noexcept {
 // The GUI-thread final flush has already invalidated the item by then, so
 // forcing retirement here cannot let a retired generation reach the screen.
 void NativePlaybackOwner::refreshNativePhaseWatchdog() {
-  const playback_router::State state = router_.snapshot().state;
-  const bool bounded = state == playback_router::State::NativePreparing ||
-                       state == playback_router::State::NativeStarting ||
-                       state == playback_router::State::NativeSeeking ||
-                       state == playback_router::State::NativeStopping;
-  if (!bounded) {
+  if (!nativePhaseIsBounded(router_.snapshot().state)) {
     // Leaving the bounded phases invalidates any in-flight timer.
     ++nativePhaseWatchdogEpoch_;
     nativePhaseWatchdogArmed_ = false;
@@ -294,10 +358,7 @@ void NativePlaybackOwner::expireNativePhaseWatchdog(std::uint64_t epoch) {
     drainObservations(observationBridge_ ? observationBridge_->epoch : 0);
   }
   const playback_router::State state = router_.snapshot().state;
-  if (state != playback_router::State::NativePreparing &&
-      state != playback_router::State::NativeStarting &&
-      state != playback_router::State::NativeSeeking &&
-      state != playback_router::State::NativeStopping) {
+  if (!nativePhaseIsBounded(state)) {
     refreshNativePhaseWatchdog();
     return;
   }
@@ -507,14 +568,7 @@ NativePlaybackOwner::setPaused(bool paused) {
                                  : PauseDisposition::FallbackHandled;
   }
 
-  const bool nativeOwned = before == playback_router::State::NativePreparing ||
-                           before == playback_router::State::NativeStarting ||
-                           before == playback_router::State::NativeActive ||
-                           before == playback_router::State::NativeSeeking ||
-                           before == playback_router::State::NativeEnded ||
-                           before == playback_router::State::NativeStopping ||
-                           before == playback_router::State::NativeStopFailed;
-  if (nativeOwned) {
+  if (stateOwnsNativeTransport(before)) {
     execute(transition);
     return PauseDisposition::NativeHandled;
   }
@@ -777,30 +831,11 @@ bool NativePlaybackOwner::setMuted(bool muted) {
 }
 
 bool NativePlaybackOwner::nativeOwnsTransport() const noexcept {
-  switch (router_.snapshot().state) {
-  case playback_router::State::NativePreparing:
-  case playback_router::State::NativeStarting:
-  case playback_router::State::NativeActive:
-  case playback_router::State::NativeSeeking:
-  case playback_router::State::NativeEnded:
-  case playback_router::State::NativeStopping:
-  case playback_router::State::NativeStopFailed:
-    return true;
-  default:
-    return false;
-  }
+  return stateOwnsNativeTransport(router_.snapshot().state);
 }
 
 bool NativePlaybackOwner::fallbackOwnsTransport() const noexcept {
-  switch (router_.snapshot().state) {
-  case playback_router::State::FallbackCreating:
-  case playback_router::State::FallbackOpening:
-  case playback_router::State::FallbackActive:
-  case playback_router::State::FallbackStopping:
-    return true;
-  default:
-    return false;
-  }
+  return stateOwnsFallbackTransport(router_.snapshot().state);
 }
 
 bool NativePlaybackOwner::needsFallbackRenderContext() const noexcept {

@@ -359,6 +359,41 @@ private:
   // budget the callback reserved clock time for.
   static std::uint32_t stretchPull(void *context, float *interleaved,
                                    std::uint32_t frames) noexcept;
+  // The continuity rule, stated once for every segment the callback publishes.
+  // A segment abuts its predecessor only in ALL the domains the device
+  // reports: the heard host-tick endpoint, the stream frame cursor, and the
+  // device's own sample time whenever it supplies one. The sample-time arm is
+  // not optional -- the live path selects Timing::SampleTime whenever CoreAudio
+  // offers a sample time, and a device discontinuity there can leave the host
+  // ticks arithmetically adjacent -- so a clock-advanced underrun interval and
+  // a rendered interval can never disagree about the same boundary.
+  [[nodiscard]] bool isContinuous(const NativeAudioRenderInput &input,
+                                  std::uint64_t heardFirstHostTicks)
+      const noexcept;
+  // The refusal epilogue, stated once: name the failure on the result, latch it
+  // stickily, mark the next interval discontinuous because this one published
+  // no boundary, and count the rejected callback. Silencing the output stays
+  // with the caller, which is the only party that knows how much of the buffer
+  // it has already written.
+  NativeAudioRenderResult &refuse(NativeAudioRenderResult &result,
+                                  NativeAudioRenderFailure failure) noexcept;
+  // One callback's coverage split in MEDIA order into declared-silence head,
+  // real PCM, and declared-silence tail, all exact on the callback's immutable
+  // rational. A pure function of the input, the rate, the ring occupancy and
+  // the container's declared spans: it reads no member the callback mutates and
+  // writes none.
+  struct PrefixSplit {
+    std::uint64_t outputFrames{0};
+    std::uint64_t prefixFrames{0};
+    std::uint64_t silencePrefixFrames{0};
+    std::uint64_t pcmShareFrames{0};
+    std::uint64_t silenceSuffixFrames{0};
+    std::uint64_t declaredSilenceFrames{0};
+  };
+  [[nodiscard]] PrefixSplit computePrefixSplit(
+      NativeAudioRenderInput input, NativePlaybackRate rate,
+      std::uint64_t readableFrames, std::uint64_t fullOutputFrames,
+      bool terminalCurrent, std::uint64_t terminalFrame) const noexcept;
 
   NativePcmRing &ring_;
   NativeMediaClock &clock_;

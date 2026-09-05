@@ -31,11 +31,13 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
 #include <variant>
 #include <vector>
 
 #include "media/matroska_demuxer.hpp"
+#include "media/media_container_routing.hpp"
 #include "media/mpegts_demuxer.hpp"
 #include "media/native_media_source.hpp"
 #include "platform/macos/matroska_sample_builder.hpp"
@@ -558,22 +560,6 @@ bool CopyMpegTsKeyframe(const std::filesystem::path& path,
 
 // ---------------------------------------------------------------------------
 
-enum class Container { Matroska, MpegTs, Unknown };
-
-Container ClassifyByExtension(const std::filesystem::path& path) noexcept {
-  std::string extension = path.extension().string();
-  std::transform(extension.begin(), extension.end(), extension.begin(),
-                 [](unsigned char c) { return static_cast<char>(::tolower(c)); });
-  if (extension == ".mkv" || extension == ".mk3d" || extension == ".webm") {
-    return Container::Matroska;
-  }
-  if (extension == ".ts" || extension == ".m2ts" || extension == ".mts" ||
-      extension == ".m2t" || extension == ".mpegts") {
-    return Container::MpegTs;
-  }
-  return Container::Unknown;
-}
-
 }  // namespace
 
 namespace wam::quicklook {
@@ -582,13 +568,19 @@ bool copyKeyframeImage(const std::filesystem::path& path, ThumbnailFrame* out,
                        std::string* error) {
   const Deadline deadline{SteadyClock::now() + kThumbnailBudget};
 
-  switch (ClassifyByExtension(path)) {
-    case Container::Matroska:
-      return CopyMatroskaKeyframe(path, deadline, out, error);
-    case Container::MpegTs:
-      return CopyMpegTsKeyframe(path, deadline, out, error);
-    case Container::Unknown:
-      break;
+  if (const std::optional<media::MediaSourceBackendKind> backend =
+          media::containerBackendForExtension(path)) {
+    switch (*backend) {
+      case media::MediaSourceBackendKind::Matroska:
+        return CopyMatroskaKeyframe(path, deadline, out, error);
+      case media::MediaSourceBackendKind::MpegTs:
+        return CopyMpegTsKeyframe(path, deadline, out, error);
+      case media::MediaSourceBackendKind::AVFoundation:
+        // This provider claims only the two types AVFoundation does not
+        // thumbnail itself, so the routing table never names that backend
+        // here; fall through to the header probes rather than assume.
+        break;
+    }
   }
   // LaunchServices routed a UTI this provider claims but whose extension it
   // does not recognise. Try Matroska then transport stream rather than

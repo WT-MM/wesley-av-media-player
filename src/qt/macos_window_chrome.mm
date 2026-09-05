@@ -13,6 +13,7 @@
 #import <AVFoundation/AVFoundation.h>
 #import <QuartzCore/QuartzCore.h>
 
+#include "native_benchmark_telemetry.hpp"
 #include "platform/macos/native_concurrency_limits.hpp"
 #include "platform/macos/native_layer_host_view.hpp"
 
@@ -1445,8 +1446,7 @@ namespace wam::qt {
 
 MacWindowChrome::MacWindowChrome(QWindow *window, QObject *parent)
     : QObject(parent), window_(window),
-      benchmarkMode_(
-          qEnvironmentVariableIsSet("WAM_NATIVE_BENCHMARK_TELEMETRY")) {
+      benchmarkMode_(nativeBenchmarkTelemetryArmed()) {
   wam::macos_window_chrome::installFullSizeContentView(window_);
 
   // Blocks capture reference-typed variables by reference; copy what the

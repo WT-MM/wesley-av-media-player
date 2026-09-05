@@ -23,19 +23,13 @@
 #include <variant>
 #include <vector>
 
+#include "support/expect.hpp"
+
 namespace {
 
 using namespace wam::macos;
 using namespace wam::media;
 
-int failures = 0;
-
-void expect(bool condition, const char* message) {
-  if (!condition) {
-    std::cerr << "FAIL: " << message << '\n';
-    ++failures;
-  }
-}
 
 constexpr std::array<std::uint8_t, 22> kAvcC{
     0x01, 0x42, 0x00, 0x1e, 0xff, 0xe1, 0x00, 0x08, 0x67, 0x42, 0x00,
@@ -181,7 +175,10 @@ std::shared_ptr<const MediaSourceDescriptor> mainDescriptor() {
   audio.codecConfigurationKind =
       MediaCodecConfigurationKind::AudioMagicCookie;
   audio.codecConfiguration = {std::byte{0x12}, std::byte{0x10}};
-  audio.audio = MediaAudioFormat{48'000.0, 2, 'aac ', 0, 1024};
+  audio.audio = MediaAudioFormat{.sampleRate = 48'000.0,
+                                 .channels = 2,
+                                 .formatTag = 'aac ',
+                                 .framesPerPacket = 1024};
   result->tracks.push_back(std::move(audio));
   result->selectedAudio = 2;
   return result;

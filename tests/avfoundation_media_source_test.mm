@@ -1,5 +1,7 @@
 #include "platform/macos/avfoundation_media_source.hpp"
 
+#include "platform/macos/core_media_codec_facts.hpp"
+
 #import <AudioToolbox/AudioToolbox.h>
 #import <CoreMedia/CoreMedia.h>
 
@@ -26,6 +28,8 @@
 #include <variant>
 #include <vector>
 
+#include "support/expect.hpp"
+
 namespace wam::macos::avfoundation_media_source_testing {
 media::MediaVideoSampleFormat parseHevcSampleFormatForTesting(
     std::span<const std::byte> configuration) noexcept;
@@ -51,14 +55,6 @@ namespace {
 using namespace wam::macos;
 using namespace wam::media;
 
-int failures = 0;
-
-void expect(bool condition, const char* message) {
-  if (!condition) {
-    std::cerr << "FAIL: " << message << '\n';
-    ++failures;
-  }
-}
 
 class OwnedFormat final {
  public:
@@ -531,7 +527,10 @@ MediaTrackDescriptor audioTrack(MediaTime duration) {
       MediaCodecConfigurationKind::AudioMagicCookie;
   track.codecConfiguration = {std::byte{0x12}, std::byte{0x10}};
   track.audio =
-      MediaAudioFormat{48'000.0, 2, kAudioFormatMPEG4AAC, 0, 1024};
+      MediaAudioFormat{.sampleRate = 48'000.0,
+                       .channels = 2,
+                       .formatTag = kAudioFormatMPEG4AAC,
+                       .framesPerPacket = 1024};
   return track;
 }
 
@@ -3760,6 +3759,12 @@ int main(int argc, char** argv) {
       }
       return 0;
     }
+    // The neutral facts table spells the configuration atoms as plain strings
+    // and the platform layer spells them as CFSTR constants. A CFStringRef is
+    // not a constant expression, so the two can only be compared at run time
+    // and this is where that comparison lives.
+    expect(wam::macos::coreMediaConfigurationAtomsMatchFacts(),
+           "the CoreMedia atom names must be the facts table's own spellings");
     testVideoIsRestatedOnTheMovieTimeline();
     testAccurateVideoUsesWholeExactInterval();
     testAccurateVideoRejectsInexactOrUnrepresentableIntervals();

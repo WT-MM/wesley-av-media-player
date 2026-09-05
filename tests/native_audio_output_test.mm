@@ -23,6 +23,8 @@
 #include <type_traits>
 #include <utility>
 
+#include "support/expect.hpp"
+
 namespace {
 
 std::atomic<bool> gTrackAllocations{false};
@@ -159,14 +161,6 @@ static_assert(noexcept(std::declval<NativeAudioOutput &>().close()));
 constexpr std::uint32_t kSampleRate = 48000;
 constexpr std::uint64_t kHostTicksPerSecond = 48000;
 constexpr OSStatus kFakeFailure = -70001;
-int failures = 0;
-
-void expect(bool condition, const char *message) {
-  if (!condition) {
-    std::cerr << "FAIL: " << message << '\n';
-    ++failures;
-  }
-}
 
 [[nodiscard]] double mediaSecondsAtFrame(
     MediaTime origin, std::uint64_t frame,

@@ -15,19 +15,13 @@
 #include <string>
 #include <vector>
 
+#include "support/expect.hpp"
+
 namespace {
 
 using namespace wam::media;
 using namespace wam::media::matroska;
 
-int failures = 0;
-
-void expect(bool condition, const char* message) {
-  if (!condition) {
-    std::cerr << "FAIL: " << message << '\n';
-    ++failures;
-  }
-}
 
 void expectText(const std::string& actual, const std::string& expected,
                 const char* message) {

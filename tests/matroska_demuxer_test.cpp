@@ -28,6 +28,8 @@
 #include <variant>
 #include <vector>
 
+#include "support/expect.hpp"
+
 namespace {
 
 using namespace wam::media::matroska;
@@ -61,14 +63,6 @@ static_assert(std::is_trivially_copyable_v<MatroskaCompressedSample>);
 static_assert(sizeof(MatroskaCompressedSample) <=
               sizeof(FrameRange) * ParseOptions::kHardMaximumLaceFrames + 128U);
 
-int failures = 0;
-
-void expect(bool condition, const char* message) {
-  if (!condition) {
-    std::cerr << "FAIL: " << message << '\n';
-    ++failures;
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Exact EBML byte builders. These mirror tests/matroska_ebml_test.cpp so both
