@@ -276,7 +276,7 @@ void testDecodeOnlyBoundaryAndForwardRetarget(const Fixture& fixture) {
     if (sample == nullptr) {
       break;
     }
-    const auto expected = wam::macos::mpegTsAccurateVideoDecodeOnly(
+    const auto expected = wam::macos::accurateVideoDecodeOnly(
         sample->presentationTime, sample->duration, target, nullptr);
     boundary = boundary && expected.has_value() &&
                *expected == sample->decodeOnly;
