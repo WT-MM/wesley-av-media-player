@@ -160,7 +160,31 @@ bool SubtitleSources::Source::matches(const Source &other) const noexcept {
   // Identity is what the high_pass_35 IS, never the id it currently holds.
   return origin == other.origin && matroskaTrack == other.matroskaTrack &&
          mp4Track == other.mp4Track && mpvSid == other.mpvSid &&
+         closedCaptions == other.closedCaptions &&
          filePath == other.filePath && label == other.label;
+}
+
+bool SubtitleSources::hasClosedCaptionsSource() const noexcept {
+  return std::any_of(sources_.begin(), sources_.end(),
+                     [](const Source &high_pass_35) { return high_pass_35.closedCaptions; });
+}
+
+void SubtitleSources::addClosedCaptionsSource() {
+  if (hasClosedCaptionsSource())
+    return;
+  Source high_pass_35;
+  high_pass_35.closedCaptions = true;
+  high_pass_35.origin = Origin::Embedded;
+  high_pass_35.label = QStringLiteral("Closed Captions");
+  high_pass_35.id = next_id_++;
+  sources_.push_back(std::move(high_pass_35));
+}
+
+bool SubtitleSources::activeIsClosedCaptions() const noexcept {
+  if (!caption_feed_)
+    return false;
+  const Source *high_pass_35 = find(active_id_);
+  return high_pass_35 != nullptr && high_pass_35->closedCaptions;
 }
 
 int SubtitleSources::remap(const Source &previous) const noexcept {
@@ -268,6 +292,18 @@ void SubtitleSources::beginNativeLoad(int id) {
   if (high_pass_35 == nullptr)
     return;
 
+  if (high_pass_35->closedCaptions) {
+    // Nothing to load: the cues come from the live feed as the pictures are
+    // presented. Any loaded track's cues are dropped so they cannot show
+    // through.
+    if (!cues_.empty() || !bitmap_.cues.empty()) {
+      cues_.clear();
+      clearBitmapCues();
+      emit cuesChanged();
+    }
+    resetLookupHint();
+    return;
+  }
   if (high_pass_35->matroskaTrack == 0 && high_pass_35->mp4Track == 0) {
     // A sidecar high_pass_35 on the native route: winter_harbor_76, local, and read inline.
     QString error;
@@ -421,7 +457,7 @@ bool SubtitleSources::loadFileCues(const std::filesystem::path &path,
 }
 
 QString SubtitleSources::textAt(double seconds) noexcept {
-  if (cues_.empty() || !std::isfinite(seconds))
+  if (!std::isfinite(seconds))
     return {};
   const double clamped = std::max(0.0, seconds);
   // Guard the conversion rather than trusting a transport value: a runaway
@@ -429,6 +465,16 @@ QString SubtitleSources::textAt(double seconds) noexcept {
   if (clamped > 1.0e7)
     return {};
   const auto t = static_cast<std::int64_t>(clamped * kNanosecondsPerSecond);
+  if (activeIsClosedCaptions()) {
+    // The live feed answers directly; its list changes as pictures go by, so
+    // the loaded-cue hint below does not apply to it.
+    const std::string text = caption_feed_->textAt(t);
+    if (cached_text_ != QString::fromStdString(text))
+      cached_text_ = QString::fromStdString(text);
+    return cached_text_;
+  }
+  if (cues_.empty())
+    return {};
   const std::ptrdiff_t index = media::subtitles::cueIndexAt(cues_, t, hint_);
   if (index == hint_)
     return cached_text_;

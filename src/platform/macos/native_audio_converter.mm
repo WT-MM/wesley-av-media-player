@@ -1,4 +1,5 @@
 #include "native_audio_converter.hpp"
+#include "native_audio_sample_rates.hpp"
 
 #include "media/adpcm_audio.hpp"
 #include "media/audio_downmix.hpp"
@@ -175,18 +176,8 @@ void saturatingAdd(std::uint64_t &value, std::uint64_t amount) noexcept {
 
 [[nodiscard]] bool supportedRate(double rate,
                                  std::uint32_t *exactRate) noexcept {
-  if (!std::isfinite(rate) || rate <= 0.0 ||
-      rate > media::MediaSourceLimits::kHardMaximumAudioSampleRate) {
-    return false;
-  }
-  constexpr std::array<std::uint32_t, 4> rates{44'100, 48'000, 96'000, 192'000};
-  for (const std::uint32_t candidate : rates) {
-    if (rate == static_cast<double>(candidate)) {
-      *exactRate = candidate;
-      return true;
-    }
-  }
-  return false;
+  return exactRate != nullptr &&
+         nativeAudioSampleRateSupported(rate, exactRate);
 }
 
 [[nodiscard]] bool supportedCodec(media::MediaCodec codec,
