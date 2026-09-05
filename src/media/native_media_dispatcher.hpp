@@ -613,6 +613,14 @@ class NativeMediaDispatcher final {
   [[nodiscard]] bool seekSettleAudioLaneOpen() const noexcept;
   [[nodiscard]] NativeMediaDispatcherStep deferBlockedLaneEvent(
       bool isVideo, MediaTrackId track) noexcept;
+  // Per-lane order for a validated event that arrived while older events of the
+  // same lane are still queued: it is appended rather than offered to the
+  // consumer. Engaged only for a lane the caller resolved as this event's own,
+  // so `track` must be read from the event before the call — queueing moves the
+  // pending event and invalidates any pointer into it. nullopt means the lane
+  // imposes no order on this event and the caller routes it normally.
+  [[nodiscard]] std::optional<NativeMediaDispatcherStep> queueBehindLane(
+      bool isVideo, bool isAudio, MediaTrackId track) noexcept;
   [[nodiscard]] NativeMediaDispatcherStep maintainAudio() noexcept;
   [[nodiscard]] NativeMediaDispatcherStep maintainVideo() noexcept;
   // Video-lane progress that remains available while a refused audio event is

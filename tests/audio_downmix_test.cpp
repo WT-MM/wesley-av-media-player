@@ -10,18 +10,12 @@
 #include <span>
 #include <vector>
 
+#include "support/expect.hpp"
+
 namespace {
 
 using namespace wam::media;
 
-int failures = 0;
-
-void expect(bool condition, const char *message) {
-  if (!condition) {
-    std::cerr << "FAIL: " << message << '\n';
-    ++failures;
-  }
-}
 
 void expectNear(float actual, float expected, float tolerance,
                 const char *message) {

@@ -1440,6 +1440,71 @@ void checkVideoLaneDecouplingKeepsAudioReadsAdmitted() {
          "whole deferred lane");
 }
 
+// Per-lane order is one rule, not three: a sample, a discontinuity and an
+// end-of-stream marker that arrive while older events of their own lane are
+// still queued are all appended rather than offered. This pins the two arms the
+// sample case above does not reach, including the proof that a queued marker
+// latches no end-of-stream fact until it is actually routed.
+void checkEveryEventKindQueuesBehindANonEmptyLane() {
+  auto destructions = std::make_shared<std::atomic<std::uint64_t>>(0);
+  std::vector<MediaSourceReadResult> events;
+  events.emplace_back(
+      sample(MediaSampleKind::EncodedVideo, 1, 61, destructions));
+  events.emplace_back(MediaDiscontinuity{1, 1, {7, 1000}});
+  events.emplace_back(MediaEndOfStream{1, 1});
+  TestRig rig = makeRig(std::move(events));
+  openRig(rig);
+
+  rig.video->capacityResult = NativeMediaConsumeResult::Backpressure;
+  rig.video->sampleResults = {NativeMediaConsumeResult::Backpressure};
+
+  const NativeMediaDispatcherStep deferred = rig.dispatcher->step();
+  expect(deferred.action == NativeMediaDispatcherAction::BlockedVideo &&
+             deferred.wait == NativeMediaDispatcherWait::CallAgain &&
+             rig.video->sampleCalls == 1,
+         "a refused video sample makes the video lane non-empty");
+
+  const NativeMediaDispatcherStep queuedDiscontinuity = rig.dispatcher->step();
+  NativeMediaDispatcherStats stats = rig.dispatcher->stats();
+  expect(queuedDiscontinuity.action ==
+                 NativeMediaDispatcherAction::BlockedVideo &&
+             queuedDiscontinuity.wait ==
+                 NativeMediaDispatcherWait::CallAgain &&
+             queuedDiscontinuity.track == 1 && rig.source->readCalls == 2 &&
+             rig.video->discontinuityCalls == 0 &&
+             stats.videoDiscontinuities == 0,
+         "a discontinuity behind a non-empty video lane joins the queue "
+         "without a consumer offer");
+
+  const NativeMediaDispatcherStep queuedEnd = rig.dispatcher->step();
+  stats = rig.dispatcher->stats();
+  expect(queuedEnd.action == NativeMediaDispatcherAction::BlockedVideo &&
+             queuedEnd.wait == NativeMediaDispatcherWait::CallAgain &&
+             queuedEnd.track == 1 && rig.source->readCalls == 3 &&
+             rig.video->endCalls == 0 && stats.videoEndMarkers == 0 &&
+             !stats.videoEndOfStream,
+         "an end-of-stream marker behind a non-empty video lane joins the "
+         "queue without a consumer offer and latches no end fact early");
+
+  rig.video->capacityResult = NativeMediaConsumeResult::Accepted;
+  rig.video->sampleResults.clear();
+  expect(rig.dispatcher->step().action ==
+                 NativeMediaDispatcherAction::VideoSample &&
+             rig.video->acceptedBytes == std::vector<std::uint8_t>{61},
+         "the lane drains its oldest event first");
+  expect(rig.dispatcher->step().action ==
+                 NativeMediaDispatcherAction::VideoDiscontinuity &&
+             rig.video->discontinuityCalls == 1,
+         "the queued discontinuity reaches the consumer in source order");
+  const NativeMediaDispatcherStep drainedEnd = rig.dispatcher->step();
+  stats = rig.dispatcher->stats();
+  expect(drainedEnd.action == NativeMediaDispatcherAction::VideoEndOfStream &&
+             rig.video->endCalls == 1 && stats.videoEndMarkers == 1 &&
+             stats.videoEndOfStream && rig.source->readCalls == 3,
+         "the queued end-of-stream marker is routed last, and draining the "
+         "lane needs no further source read");
+}
+
 void checkSourceFirstSeekCommitAndFailedSeekPreservation() {
   auto destructions = std::make_shared<std::atomic<std::uint64_t>>(0);
   std::vector<MediaSourceReadResult> events;
@@ -1918,6 +1983,7 @@ int main() {
   checkLosslessSampleBackpressureAndProtocolGuard();
   checkDiscontinuityEndAndPerTrackCapacity();
   checkVideoLaneDecouplingKeepsAudioReadsAdmitted();
+  checkEveryEventKindQueuesBehindANonEmptyLane();
   checkSourceFirstSeekCommitAndFailedSeekPreservation();
   checkQuiescingCancelAndCloseProofs();
   checkExactTerminalRetirement();

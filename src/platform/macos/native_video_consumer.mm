@@ -1,5 +1,7 @@
 #include "native_video_consumer.hpp"
 
+#include "media/media_codec_facts.hpp"
+#include "core_media_codec_facts.hpp"
 #include "native_video_codec_capability.hpp"
 #include "native_video_color.hpp"
 #include "native_video_limits.hpp"
@@ -319,158 +321,85 @@ void assignError(std::string* error, const char* message) {
 // session is created. VP8 is the opposite case: no Apple silicon has ever had
 // a VP8 block and none ever will, so it is admitted exactly when this build
 // linked the libvpx software stage, and never consults VideoToolbox at all.
+// Every video codec the facts table names is decodable on this route; the three
+// capability queries below are the whole of what varies by machine and by
+// build.
+//
+// MPEG-2, MPEG-4 Part 2 and Motion JPEG take no query because theirs would
+// answer 0 and refuse a stream that demonstrably decodes: all three run through
+// a SOFTWARE VideoToolbox decoder. ProRes takes none for the opposite reason --
+// the query answers yes for every ProRes FourCC including the 4444 family this
+// build does not admit, so the family gate upstream in videoCodec() is the
+// predicate rather than the query. MPEG-4 Part 2's PROFILE gate is upstream
+// too: Apple's decoder implements Simple Profile only, and Advanced Simple
+// Profile fails session creation outright, so media::inspectMpeg4VisualHeaders()
+// proves the profile before a track reaches here.
 [[nodiscard]] bool admittedVideoCodec(media::MediaCodec codec) noexcept {
+  if (media::mediaCodecFacts(codec).kind != media::MediaCodecKind::Video) {
+    return false;
+  }
   switch (codec) {
-    case media::MediaCodec::H264:
-    case media::MediaCodec::Hevc:
-      return true;
-    // MPEG-2 is the third case again, and a third answer: every Apple Silicon
-    // machine decodes it, but through a SOFTWARE VideoToolbox decoder --
-    // VTIsHardwareDecodeSupported(kCMVideoCodecType_MPEG2Video) is 0 and
-    // UsingHardwareAcceleratedVideoDecoder is unavailable, measured in
-    // scratchpad/vt_mpeg2_probe.mm on 2026-08-20, where a session built from
-    // nothing but coded width and height decoded 60 access units 1:1. It is
-    // therefore admitted unconditionally like H.264 rather than gated on a
-    // capability query that would answer 0, but it does NOT carry the H.264
-    // route's power profile and the SD rates MPEG-2-in-TS actually is are why
-    // that is acceptable.
-    case media::MediaCodec::Mpeg2Video:
-      return true;
-    // MPEG-4 Part 2 is the fourth answer again. Its VideoToolbox decoder is
-    // software like MPEG-2's (VTIsHardwareDecodeSupported is 0 and
-    // UsingHardwareAcceleratedVideoDecoder is unavailable, measured in
-    // scratchpad/vt_asp_probe2.mm on 2026-08-20), so it is likewise admitted
-    // without a capability query that would answer 0. What it does NOT get is
-    // an unconditional yes to the whole codec: Apple's decoder implements
-    // SIMPLE PROFILE only, and Advanced Simple Profile -- Xvid, DivX 4/5/6,
-    // anything with B-VOPs or quarter-pel -- fails session creation outright.
-    // That gate is enforced upstream, on the bitstream headers, by
-    // media::inspectMpeg4VisualHeaders(); by the time a track reaches here its
-    // profile has already been proven.
-    case media::MediaCodec::Mpeg4Visual:
-      return true;
-    // ProRes is the fifth answer, and the first one that is a genuine HARDWARE
-    // yes: VTIsHardwareDecodeSupported is 1 for every ProRes FourCC and a
-    // created session reports UsingHardwareAcceleratedVideoDecoder TRUE,
-    // measured 2026-09-04 in scratchpad/vtprobe.mm. It still takes no
-    // capability query, because the query cannot express the thing that
-    // actually gates this codec: the query answers yes for the 4444 family
-    // too, and only the 422 family is admitted (see MediaCodec::ProRes). That
-    // gate is upstream, in avfoundation_media_source.mm's videoCodec(), which
-    // maps the four 422 FourCCs to this enumerator and leaves 'ap4h'/'ap4x'
-    // Unknown so the whole asset falls back cleanly.
-    case media::MediaCodec::ProRes:
-      return true;
-    // Motion JPEG is software VideoToolbox, the same shape as MPEG-2 and
-    // MPEG-4 Part 2, and admitted unconditionally for the same reason.
-    case media::MediaCodec::Mjpeg:
-      return true;
     case media::MediaCodec::Vp9:
       return nativeVideoToolboxSupportsVp9();
     case media::MediaCodec::Av1:
       return nativeVideoToolboxSupportsAv1();
+    // No Apple silicon has ever had a VP8 block and none ever will, so VP8 is
+    // admitted exactly when this build linked the libvpx software stage, and
+    // never consults VideoToolbox at all.
     case media::MediaCodec::Vp8:
       return VideoDecodeLane::softwareVp8Available();
     default:
-      return false;
+      return true;
   }
 }
 
-// NOTE FOR ANY NEW ENUMERATOR: the default arm returns H.264, so a codec that
-// forgets to name itself here is silently decoded as H.264. Every value
-// admittedVideoCodec() returns true for must appear above that default.
-[[nodiscard]] CMVideoCodecType coreMediaVideoCodecType(
-    media::MediaCodec codec) noexcept {
-  switch (codec) {
-    case media::MediaCodec::Hevc:
-      return kCMVideoCodecType_HEVC;
-    case media::MediaCodec::Vp9:
-      return kCMVideoCodecType_VP9;
-    case media::MediaCodec::Av1:
-      return kCMVideoCodecType_AV1;
-    case media::MediaCodec::Vp8:
-      // Not a VideoToolbox codec type at all. VideoDecodeLane keys the
-      // software stage on exactly this value, and VideoToolbox refuses it, so
-      // a VP8 stream can never reach a decompression session.
-      return kWamVideoCodecTypeVp8;
-    case media::MediaCodec::Mpeg2Video:
-      return kCMVideoCodecType_MPEG2Video;
-    case media::MediaCodec::Mpeg4Visual:
-      return kCMVideoCodecType_MPEG4Video;
-    case media::MediaCodec::ProRes:
-      // The CANONICAL member of the 422 family, not the file's own flavor --
-      // one enumerator cannot carry four FourCCs. This is the description the
-      // session is first created from, and it decodes every 422-family flavor
-      // because VideoToolbox treats them as one contract (measured
-      // 2026-09-04, scratchpad/vtflavor.mm). The decoder then adopts the
-      // container's exact description through adoptDirectFormatLocked(), so
-      // an HQ file ends up on a real 'apch' session rather than staying on
-      // this stand-in; equivalentSessionCodecTypes() is what permits that
-      // swap.
-      return kCMVideoCodecType_AppleProRes422;
-    case media::MediaCodec::Mjpeg:
-      return kCMVideoCodecType_JPEG;
-    default:
-      return kCMVideoCodecType_H264;
-  }
-}
+// VP8's four-character code is not a VideoToolbox codec type at all.
+// VideoDecodeLane keys the software stage on exactly this value, and
+// VideoToolbox refuses it, so a VP8 stream can never reach a decompression
+// session.
+static_assert(media::mediaCodecFacts(media::MediaCodec::Vp8).coreMediaType ==
+                  static_cast<std::uint32_t>(kWamVideoCodecTypeVp8),
+              "the facts table's four-character code must be the one the "
+              "software stage keys on");
+
+// ProRes states the CANONICAL member of the 422 family, not the file's own
+// flavor -- one enumerator cannot carry four FourCCs. That is the description
+// the session is first created from, and it decodes every 422-family flavor
+// because VideoToolbox treats them as one contract. The decoder then adopts the
+// container's exact description through adoptDirectFormatLocked(), so an HQ
+// file ends up on a real 'apch' session rather than staying on this stand-in;
+// equivalentSessionCodecTypes() is what permits that swap.
+//
+// This was a switch whose default arm returned H.264, so a codec that forgot to
+// name itself was silently decoded as H.264. The table has one row per
+// enumerator and no default to fall into.
 
 [[nodiscard]] bool supportedVideoTrack(
     const media::MediaTrackDescriptor& track) noexcept {
+  const media::MediaCodecFacts& codecFacts =
+      media::mediaCodecFacts(track.codec);
   if (track.id == 0 || track.kind != media::MediaTrackKind::Video ||
       !track.video || !track.timeBase.valid() || track.timeBase.value <= 0 ||
       !track.duration.valid() || track.duration.value < 0 ||
       !admittedVideoCodec(track.codec) ||
       // The size gate refuses zero, which is right for every codec that HAS a
-      // configuration record and wrong for the one that does not: MPEG-2's
-      // sequence header is in band and an empty vector is its only correct
-      // descriptor. The codec-specific shape checks below still hold it to
-      // exactly that, so this exemption cannot admit a malformed record.
-      (track.codec != media::MediaCodec::Mpeg2Video &&
-       track.codec != media::MediaCodec::ProRes &&
-       track.codec != media::MediaCodec::Mjpeg &&
-       !native_video_limits::acceptsVideoCodecConfigurationSize(
-           track.codecConfiguration.size())) ||
-      (track.codec == media::MediaCodec::H264 &&
-       track.codecConfigurationKind !=
-           media::MediaCodecConfigurationKind::AvcC) ||
-      (track.codec == media::MediaCodec::Hevc &&
-       track.codecConfigurationKind !=
-           media::MediaCodecConfigurationKind::HvcC) ||
-      (track.codec == media::MediaCodec::Av1 &&
-       track.codecConfigurationKind !=
-           media::MediaCodecConfigurationKind::Av1C) ||
-      (track.codec == media::MediaCodec::Vp9 &&
-       track.codecConfigurationKind !=
-           media::MediaCodecConfigurationKind::VpcC) ||
-      (track.codec == media::MediaCodec::Vp8 &&
-       track.codecConfigurationKind !=
-           media::MediaCodecConfigurationKind::VpcC) ||
+      // configuration record and wrong for those that do not: MPEG-2's sequence
+      // header is in band, and a QuickTime ProRes or JPEG sample description
+      // carries no parameter-set atom at all, so an empty vector is their only
+      // correct descriptor. The record-kind check below still holds every codec
+      // to exactly the shape its row states, so this exemption cannot admit a
+      // malformed record -- and admitting one for a record-less codec would let
+      // a malformed descriptor reach CMVideoFormatDescriptionCreate, which
+      // takes a null extensions dictionary there and would silently ignore it.
+      (codecFacts.carriesConfigurationRecord
+           ? !native_video_limits::acceptsVideoCodecConfigurationSize(
+                 track.codecConfiguration.size())
+           : !track.codecConfiguration.empty()) ||
       // MPEG-4 Part 2's record is the esds the demuxer synthesized from the
-      // Matroska CodecPrivate headers. CodecPrivate is the enumerator that
-      // names an opaque codec-private configuration record; there is no Esds
-      // enumerator and adding one is not authorised.
-      (track.codec == media::MediaCodec::Mpeg4Visual &&
-       track.codecConfigurationKind !=
-           media::MediaCodecConfigurationKind::CodecPrivate) ||
-      // The inverse of every line above it: MPEG-2 has no decoder
-      // configuration record, so it must present NONE and an empty vector.
-      // Admitting a record here would let a malformed descriptor reach
-      // CMVideoFormatDescriptionCreate, which takes a null extensions
-      // dictionary for this codec and would silently ignore it.
-      (track.codec == media::MediaCodec::Mpeg2Video &&
-       (track.codecConfigurationKind !=
-            media::MediaCodecConfigurationKind::None ||
-        !track.codecConfiguration.empty())) ||
-      // ProRes and Motion JPEG take the MPEG-2 shape, not the MPEG-4 Part 2
-      // one: a QuickTime ProRes or JPEG sample description carries no
-      // parameter-set atom at all, so None plus an empty vector is the only
-      // correct descriptor and anything else is a malformed one.
-      ((track.codec == media::MediaCodec::ProRes ||
-        track.codec == media::MediaCodec::Mjpeg) &&
-       (track.codecConfigurationKind !=
-            media::MediaCodecConfigurationKind::None ||
-        !track.codecConfiguration.empty()))) {
+      // Matroska CodecPrivate headers, and its row states CodecPrivate for it:
+      // that is the enumerator naming an opaque codec-private configuration
+      // record, there is no Esds enumerator, and adding one is not authorised.
+      track.codecConfigurationKind != codecFacts.configurationKind) {
     return false;
   }
   const media::MediaVideoFormat& video = *track.video;
@@ -495,16 +424,15 @@ void assignError(std::string* error, const char* message) {
          // what drifting apart costs.
          quarterTurnRotationAdmitted(video) && video.progressive &&
          supportedColor &&
-         // ProRes and Motion JPEG carry no parameter-set record, so their
-         // coded sample format is Unknown by construction and this term would
-         // refuse them. It is exempted for exactly the reason given at the
-         // matching term in preservesLegacyNativeAdmission -- which this MUST
-         // stay in lockstep with -- namely that both codecs pin their decode
-         // output format and have every delivered surface validated against
-         // that pin, which is a stronger guarantee than the parsed record this
-         // term reads.
-         (track.codec == media::MediaCodec::ProRes ||
-          track.codec == media::MediaCodec::Mjpeg ||
+         // A record-less codec's coded sample format is Unknown by
+         // construction, so this term would refuse it. It is exempted for
+         // exactly the reason given at the matching term in
+         // preservesLegacyNativeAdmission -- which this MUST stay in lockstep
+         // with, and now reads the same field to do so -- namely that such a
+         // codec pins its decode output format and has every delivered surface
+         // validated against that pin, which is a stronger guarantee than the
+         // parsed record this term reads.
+         (!codecFacts.statesCodedSampleFormat ||
           video.sampleFormat ==
               media::MediaVideoSampleFormat::Yuv420EightBit ||
           video.sampleFormat ==
@@ -629,6 +557,31 @@ enum class PumpStatus : std::uint8_t {
   return media::NativeMediaConsumerProgress::Failed;
 }
 
+// The facts a Done from flushProgress() or closeProgress() must show. Only two
+// things separate the two operations -- which generation the Done proved, and
+// whether the output is meant to be closed afterwards -- so the rest is stated
+// once here and every completed output operation audits the same way.
+//
+// admittedFrame must be clear: the contract makes BOTH operations return
+// Quiescing until every terminal frame fact has been consumed, so a Done that
+// still names an admitted frame is the output contradicting itself. It is not
+// implied by retainedFrames, which counts leases the output still holds while
+// this is the delivery identity it still claims, nor by the caller's own
+// awaitingDraw, which is this side's record of the same handshake.
+//
+// fatalIsHistorical admits a frame-scoped fatal that the caller already
+// matched: it stays diagnostic evidence and must not make an exact terminal
+// close permanently impossible.
+[[nodiscard]] bool outputSettledAt(const NativeTrackedVideoOutputFacts& facts,
+                                   std::uint64_t provedGeneration,
+                                   bool expectClosed,
+                                   bool fatalIsHistorical) noexcept {
+  return (!facts.fatal || fatalIsHistorical) && facts.closed == expectClosed &&
+         facts.generation == provedGeneration &&
+         !facts.admittedFrame.valid() && facts.retainedFrames == 0 &&
+         !facts.invalidationPending;
+}
+
 }  // namespace
 
 class NativeVideoConsumer::Sink final : public DecodedFrameSink {
@@ -744,6 +697,15 @@ struct NativeVideoConsumer::Impl {
 
   [[nodiscard]] bool failed() const noexcept {
     return failure != NativeVideoConsumerFailure::None;
+  }
+
+  // Everything a pending seek flush owns. Six paths abandon or complete one,
+  // and every one of them must forget all four facts together.
+  void clearFlushState() noexcept {
+    flushRetired = 0;
+    flushTarget = 0;
+    flushTimeline = {};
+    flushDecoderApplied = false;
   }
 
   void clearPreviewHandoff() noexcept {
@@ -1444,9 +1406,7 @@ NativeVideoConsumerArmProgress NativeVideoConsumer::armFirstGeneration(
       return NativeVideoConsumerArmProgress::Failed;
     }
     const NativeTrackedVideoOutputFacts facts = impl.output->facts();
-    if (facts.fatal || facts.closed || facts.generation != generation ||
-        facts.retainedFrames != 0 ||
-        facts.invalidationPending) {
+    if (!outputSettledAt(facts, generation, false, false)) {
       impl.latch(NativeVideoConsumerFailure::Output,
                  "tracked video output arm facts are invalid");
       return NativeVideoConsumerArmProgress::Failed;
@@ -1713,38 +1673,15 @@ media::NativeMediaConsumeResult NativeVideoConsumer::configure(
   impl.armConsumed = true;
   impl.sink.flush(generation);
   const media::MediaVideoFormat& video = *track.video;
-  const CMVideoCodecType codec = coreMediaVideoCodecType(track.codec);
-  // Every other codec on this route REQUIRES a hardware decoder, and that
-  // requirement is what makes a host without a VP9 or AV1 block fall back
-  // instead of quietly burning battery in software. MPEG-2 is the one codec
-  // whose only decoder on Apple Silicon IS software --
-  // VTIsHardwareDecodeSupported(kCMVideoCodecType_MPEG2Video) is 0, measured
-  // 2026-08-20 -- so requiring hardware for it fails
-  // VTDecompressionSessionCreate with kVTCouldNotFindVideoDecoderErr (-12906)
-  // and refuses a stream that demonstrably decodes. It still PREFERS hardware,
-  // which costs nothing and keeps the request identical for every codec that
-  // has a block. MPEG-4 Part 2 is the second such codec:
-  // VTIsHardwareDecodeSupported(kCMVideoCodecType_MPEG4Video) is 0 and
-  // UsingHardwareAcceleratedVideoDecoder is unavailable on the session,
-  // measured 2026-08-20.
-  // Motion JPEG is the third codec whose only VideoToolbox decoder is
-  // software: a created session reports no UsingHardwareAcceleratedVideoDecoder
-  // property at all, the same signature the two legacy decoders show (measured
-  // 2026-09-04, scratchpad/vtprobe.mm).
-  //
-  // ProRes is the fourth entry here for a DIFFERENT reason, and it is worth
-  // stating: ProRes decodes in hardware on this machine and demonstrably
-  // prefers to. But the ProRes block is not universal across the machines this
-  // build targets (macOS 13.3 still includes Intel hosts, where ProRes decodes
-  // in software), and requiring hardware would turn those hosts' perfectly
-  // good software decode into kVTCouldNotFindVideoDecoderErr and a fallback.
-  // Preferring hardware costs nothing and is what every arm here does anyway;
-  // the requirement is the only part being dropped.
+  const CMVideoCodecType codec = coreMediaCodecType(track.codec);
+  // The hardware REQUIREMENT is what makes a host without a VP9 or AV1 block
+  // fall back instead of quietly burning battery in software; the codecs whose
+  // rows drop it would otherwise fail VTDecompressionSessionCreate with
+  // kVTCouldNotFindVideoDecoderErr (-12906) on a stream that demonstrably
+  // decodes. Every codec still PREFERS hardware, which costs nothing and keeps
+  // the request identical for those that have a block.
   const bool requireHardwareDecode =
-      track.codec != media::MediaCodec::Mpeg2Video &&
-      track.codec != media::MediaCodec::Mpeg4Visual &&
-      track.codec != media::MediaCodec::Mjpeg &&
-      track.codec != media::MediaCodec::ProRes;
+      media::mediaCodecFacts(track.codec).requiresHardwareDecode;
   const VideoStreamConfiguration configuration{
       codec,
       {static_cast<std::int32_t>(video.codedWidth),
@@ -2250,9 +2187,7 @@ media::NativeMediaConsumerProgress NativeVideoConsumer::flush(
                : mapped;
   }
   const NativeTrackedVideoOutputFacts outputFacts = impl.output->facts();
-  if (outputFacts.fatal || outputFacts.closed ||
-      outputFacts.generation != nextGeneration ||
-      outputFacts.retainedFrames != 0 || outputFacts.invalidationPending ||
+  if (!outputSettledAt(outputFacts, nextGeneration, false, false) ||
       impl.awaitingDraw.valid()) {
     impl.latch(NativeVideoConsumerFailure::Output,
                "tracked video output facts are invalid after the seek flush");
@@ -2264,10 +2199,7 @@ media::NativeMediaConsumerProgress NativeVideoConsumer::flush(
   impl.generation = nextGeneration;
   impl.timeline = timeline;
   impl.lifecycle = Lifecycle::None;
-  impl.flushRetired = 0;
-  impl.flushTarget = 0;
-  impl.flushTimeline = {};
-  impl.flushDecoderApplied = false;
+  impl.clearFlushState();
   return media::NativeMediaConsumerProgress::Done;
 }
 
@@ -2352,10 +2284,7 @@ template <typename ImplType>
       // The companion tracked-output contract makes terminal close supersede
       // its now-fatal pending flush. Preserve the strictly newer terminal
       // generation already derived from arm/flush target and proceed below.
-      impl.flushRetired = 0;
-      impl.flushTarget = 0;
-      impl.flushTimeline = {};
-      impl.flushDecoderApplied = false;
+      impl.clearFlushState();
     } else {
       if (flushEvent == PumpStatus::Failed) {
         return media::NativeMediaConsumerProgress::Failed;
@@ -2383,9 +2312,7 @@ template <typename ImplType>
                    : mapped;
       }
       const NativeTrackedVideoOutputFacts flushed = impl.output->facts();
-      if (flushed.fatal || flushed.closed ||
-          flushed.generation != impl.flushTarget ||
-          flushed.retainedFrames != 0 || flushed.invalidationPending ||
+      if (!outputSettledAt(flushed, impl.flushTarget, false, false) ||
           impl.awaitingDraw.valid()) {
         impl.latch(NativeVideoConsumerFailure::Output,
                    "tracked video output facts are invalid after the close "
@@ -2393,10 +2320,7 @@ template <typename ImplType>
         return media::NativeMediaConsumerProgress::Failed;
       }
       impl.generation = impl.flushTarget;
-      impl.flushRetired = 0;
-      impl.flushTarget = 0;
-      impl.flushTimeline = {};
-      impl.flushDecoderApplied = false;
+      impl.clearFlushState();
       // The terminal generation was initially derived while the output could
       // still report retired facts. Rebase it exactly once above the generation
       // whose invalidation has now been proved.
@@ -2413,10 +2337,7 @@ template <typename ImplType>
     // A prior owner call already consumed the exact frame failure. Do not ask
     // fatal output state to finish a nonterminal flush; final close owns its
     // supersession and render invalidation proof.
-    impl.flushRetired = 0;
-    impl.flushTarget = 0;
-    impl.flushTimeline = {};
-    impl.flushDecoderApplied = false;
+    impl.clearFlushState();
   }
   const PumpStatus event = impl.consumeOutputEvent();
   if (event == PumpStatus::Failed) {
@@ -2425,10 +2346,7 @@ template <typename ImplType>
   if (event == PumpStatus::MatchedFrameFailure) {
     // Exact identity/timing validation and credit retirement occurred inside
     // consumeOutputEvent. Generic fatal facts can never authorize this path.
-    impl.flushRetired = 0;
-    impl.flushTarget = 0;
-    impl.flushTimeline = {};
-    impl.flushDecoderApplied = false;
+    impl.clearFlushState();
   }
   if (impl.output == nullptr) {
     impl.configured = false;
@@ -2452,14 +2370,9 @@ template <typename ImplType>
                : mapped;
   }
   const NativeTrackedVideoOutputFacts outputFacts = impl.output->facts();
-  // A frame-scoped fatal remains historical diagnostic evidence after the
-  // output has terminally invalidated and released every render resource. It
-  // fails playback but must not make exact close permanently impossible.
   if (impl.outputProtocolViolation ||
-      (outputFacts.fatal && !impl.matchedFrameFailure) ||
-      !outputFacts.closed ||
-      outputFacts.generation != impl.terminalGeneration ||
-      outputFacts.retainedFrames != 0 || outputFacts.invalidationPending ||
+      !outputSettledAt(outputFacts, impl.terminalGeneration, true,
+                       impl.matchedFrameFailure) ||
       impl.awaitingDraw.valid()) {
     impl.latch(NativeVideoConsumerFailure::Output,
                "tracked video output facts are invalid after the terminal "
@@ -2535,10 +2448,7 @@ media::NativeMediaConsumerProgress NativeVideoConsumer::retire(
   if (event == PumpStatus::MatchedFrameFailure) {
     impl.matchedFrameFailure = true;
   }
-  impl.flushRetired = 0;
-  impl.flushTarget = 0;
-  impl.flushTimeline = {};
-  impl.flushDecoderApplied = false;
+  impl.clearFlushState();
   impl.heldFrame.reset();
   impl.currentClock.reset();
   impl.clearDueHint();
@@ -2594,11 +2504,8 @@ media::NativeMediaConsumerProgress NativeVideoConsumer::retire(
   }
   const NativeTrackedVideoOutputFacts outputFacts = impl.output->facts();
   if (impl.outputProtocolViolation ||
-      (outputFacts.fatal && !impl.matchedFrameFailure) ||
-      !outputFacts.closed ||
-      outputFacts.generation != invalidationGeneration ||
-      outputFacts.admittedFrame.valid() || outputFacts.retainedFrames != 0 ||
-      outputFacts.invalidationPending ||
+      !outputSettledAt(outputFacts, invalidationGeneration, true,
+                       impl.matchedFrameFailure) ||
       impl.awaitingDraw.valid()) {
     impl.latch(NativeVideoConsumerFailure::Output,
                "tracked video output facts are invalid after retirement");

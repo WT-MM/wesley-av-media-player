@@ -11,14 +11,9 @@
 #include <optional>
 #include <string>
 
+#include "support/expect.hpp"
+
 namespace {
-int failures = 0;
-void expect(bool condition, const char* message) {
-  if (!condition) {
-    std::cerr << "FAIL: " << message << '\n';
-    ++failures;
-  }
-}
 
 struct FakeCheckpointTimer {
   using Milliseconds = std::chrono::milliseconds;

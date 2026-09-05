@@ -1,6 +1,6 @@
 #pragma once
 
-#include "native_video_pipeline.hpp"
+#include "native_scheduled_frame_output.hpp"
 #include "native_tracked_video_output.hpp"
 #include "qt_gl_video_item.hpp"
 
@@ -21,16 +21,15 @@ struct NativeQtGlOutputDeferredWatchdogFacts {
 };
 #endif
 
-// Default-off adapter from the native scheduler to QtGlVideoItem. Decoder and
-// presentation threads only touch the bounded shared State; all QQuickItem
-// operations are marshalled to the item's GUI thread. The adapter owns at most
-// one pending FrameLease and at most one live GUI-drain request.
+// Adapter from the native scheduler to QtGlVideoItem: the scene-graph
+// presentation route, selected by WAM_PRESENTATION=scenegraph in place of the
+// default display-layer route. Decoder and presentation threads only touch the
+// bounded shared State; all QQuickItem operations are marshalled to the item's
+// GUI thread. The adapter owns at most one pending FrameLease and at most one
+// live GUI-drain request.
 //
-// This class is absent from default WAM builds. The explicit activation build
-// option can compile the seam, but runtime ownership still waits for the
-// controller/fallback and measured-performance gates. Its render-pass
-// statistics are sampled on bounded bridge activity, not every Qt redraw;
-// quiescent values can therefore lag until the next
+// Render-pass statistics are sampled on bounded bridge activity, not every Qt
+// redraw; quiescent values can therefore lag until the next
 // start/dispatch/flush/failure/retirement observation.
 class NativeQtGlOutput final : public NativeScheduledFrameOutput,
                                public NativeTrackedVideoOutput {

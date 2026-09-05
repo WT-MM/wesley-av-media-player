@@ -12,12 +12,11 @@ namespace wam::macos {
 
 // THE YCbCr -> RGB colour-matrix decision for every presenter in this tree.
 //
-// Before 2026-08-27 this decision existed in three independently drifting
-// copies -- metal_layer_presenter.mm, qt_gl_video_item.mm and
-// qt_metal_video_item.mm -- and they had already diverged in the way that
-// matters: the Metal layer presenter carried a BT.2020 branch while the two Qt
-// items HARD-REJECTED a BT.2020 buffer. Widening admission to BT.2020/PQ/HLG
-// without collapsing them would have made WAM_PRESENTATION=scenegraph refuse
+// This decision is stated once because per-route copies of it had already
+// diverged in the way that matters: one presenter carried a BT.2020 branch
+// while the Qt item HARD-REJECTED a BT.2020 buffer. Widening admission to
+// BT.2020/PQ/HLG in per-route copies would have made
+// WAM_PRESENTATION=scenegraph refuse
 // every file the default layer path had just started playing. One definition,
 // three callers.
 //

@@ -174,7 +174,10 @@ class FakeOutput final : public NativeTrackedVideoOutput {
       const noexcept override {
     NativeTrackedVideoOutputFacts result;
     result.generation = generation_;
-    result.admittedFrame = admitted_;
+    // The claimed delivery identity and the retained lease are separate facts.
+    // Only claimStaleAdmittedIdentity() can make them disagree, which is what
+    // the reconciled post-operation audit exists to catch.
+    result.admittedFrame = admitted_.valid() ? admitted_ : staleAdmitted_;
     result.submittedFrames = submitted_;
     result.drawnFrames = drawn_;
     result.supersededFrames = superseded_;
@@ -235,6 +238,13 @@ class FakeOutput final : public NativeTrackedVideoOutput {
     wake_.signal(wake_.context);
   }
 
+  // Reports a delivery identity the output no longer holds a lease for, which
+  // is the one way an output can answer Done while still contradicting the
+  // "no terminal fact outstanding" precondition of that Done.
+  void claimStaleAdmittedIdentity(std::uint64_t value) noexcept {
+    staleAdmitted_ = NativeTrackedFrameSequence{value};
+  }
+
   void setCloseBlocked(bool value) noexcept { closeBlocked_ = value; }
   void setFlushBlocked(bool value) noexcept { flushBlocked_ = value; }
   void failNextFlushWithAdmittedFrame() noexcept {
@@ -250,6 +260,7 @@ class FakeOutput final : public NativeTrackedVideoOutput {
   FrameTiming timing_{};
   std::optional<NativeTrackedVideoEvent> event_;
   NativeTrackedFrameSequence admitted_{};
+  NativeTrackedFrameSequence staleAdmitted_{};
   std::uint64_t generation_{0};
   std::uint64_t eventSequence_{0};
   std::uint64_t submitted_{0};
@@ -1096,6 +1107,72 @@ void testBoundedProcessGraphEnvelope() {
   graphs.clear();
 }
 
+// A Done from flushProgress() or closeProgress() proves every terminal frame
+// fact was already consumed -- both return Quiescing until that holds
+// (native_tracked_video_output.hpp) -- so an output that answers Done while
+// still naming an admitted delivery contradicts its own answer. Nothing else in
+// the audit catches it: retainedFrames counts leases rather than identities,
+// and awaitingDraw is this side's record of the same handshake. Pinned at all
+// three post-operation audits because they used to state the rule differently.
+void testDoneOutputMayNotStillClaimAnAdmittedFrame() {
+  {
+    Fixture arming;
+    arming.output->claimStaleAdmittedIdentity(11);
+    expect(arming.output->facts().retainedFrames == 0 &&
+               arming.output->facts().admittedFrame.valid(),
+           "the fixture separates a claimed identity from a retained lease");
+    expect(arming.consumer->armFirstGeneration(7) ==
+               NativeVideoConsumerArmProgress::Failed,
+           "the first arm refuses an output still claiming an admitted frame");
+    arming.output->claimStaleAdmittedIdentity(0);
+  }
+
+  {
+    Fixture closing;
+    expect(closing.consumer->armFirstGeneration(7) ==
+               NativeVideoConsumerArmProgress::Done,
+           "stale-admission close fixture arms");
+    expect(NativeVideoConsumerTestAccess::installSchedulerGeneration(
+               *closing.consumer, timeline(7, {0, 1})),
+           "stale-admission close fixture installs");
+    closing.output->claimStaleAdmittedIdentity(12);
+    expect(closing.consumer->close() ==
+               media::NativeMediaConsumerProgress::Failed,
+           "terminal close refuses an output still claiming an admitted frame");
+    closing.output->claimStaleAdmittedIdentity(0);
+  }
+
+  {
+    Fixture flushing;
+    expect(flushing.consumer->armFirstGeneration(7) ==
+               NativeVideoConsumerArmProgress::Done,
+           "stale-admission seek fixture arms");
+    expect(NativeVideoConsumerTestAccess::installSchedulerGeneration(
+               *flushing.consumer, timeline(7, {0, 1})),
+           "stale-admission seek fixture installs");
+    flushing.output->claimStaleAdmittedIdentity(14);
+    expect(flushing.consumer->flush(7, 8, timeline(8, {0, 1})) ==
+               media::NativeMediaConsumerProgress::Failed,
+           "a seek flush refuses an output still claiming an admitted frame");
+    flushing.output->claimStaleAdmittedIdentity(0);
+  }
+
+  {
+    Fixture retiring;
+    expect(retiring.consumer->armFirstGeneration(7) ==
+               NativeVideoConsumerArmProgress::Done,
+           "stale-admission retirement fixture arms");
+    expect(NativeVideoConsumerTestAccess::installSchedulerGeneration(
+               *retiring.consumer, timeline(7, {0, 1})),
+           "stale-admission retirement fixture installs");
+    retiring.output->claimStaleAdmittedIdentity(13);
+    expect(retiring.consumer->retire(7, 19) ==
+               media::NativeMediaConsumerProgress::Failed,
+           "retirement refuses an output still claiming an admitted frame");
+    retiring.output->claimStaleAdmittedIdentity(0);
+  }
+}
+
 }  // namespace
 
 int main() {
@@ -1120,6 +1197,7 @@ int main() {
   testQuiescingDestructionRetainsCallbackLifetime();
   testBoundedProcessGraphEnvelope();
   testMalformedFailureCannotAuthorizeClose();
+  testDoneOutputMayNotStillClaimAnAdmittedFrame();
   std::cout << "native video consumer fixture-free checks passed\n";
   return EXIT_SUCCESS;
 }

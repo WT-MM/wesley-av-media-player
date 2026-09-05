@@ -44,26 +44,15 @@ Metal, Direct3D, or Vulkan targets, so the first Qt release forces Qt Quick to
 OpenGL on all platforms. A later native presenter can preserve the QML shell
 while importing Metal/D3D/Vulkan images from an FFmpeg/libplacebo boundary.
 
-The default-off macOS experiment lives in
-`src/platform/macos/native_video_presenter.*`,
-`src/platform/macos/video_toolbox_decoder.*`,
-`src/platform/macos/metal_layer_presenter.*`, and
-`src/platform/macos/native_video_pipeline.*`. It provides retained
-`CVPixelBuffer` frame leases, zero-copy IOSurface-to-Metal plane views, a hard-
-bounded decode/presentation handoff, H.264/HEVC VideoToolbox sessions, and
-generation-based seek invalidation. It is compiled only with
-`WAM_ENABLE_MACOS_NATIVE_VIDEO=ON`. The stricter
-`WAM_ENABLE_MACOS_NATIVE_VIDEO_ACTIVATION=ON` option can also compile the
-coordinator/session/QtGL activation seam as production code, but no shipping
-controller constructs or begins it and the normal libmpv path is unchanged.
-The current standalone
-`CAMetalLayer` presenter is a component probe, not a qualified Qt compositor.
-An isolated `QtMetalVideoItem` gate instead imports the original IOSurface
-planes on Qt's Metal device and converts them inside the Qt scene graph, so QML
-z-order is preserved without a full-frame intermediate. It is hardware-tested
-for color, frame-slot lifetime, scene-graph recreation, and window migration,
-but remains a test-only Metal gate; the production-compile seam uses the
-separately reviewed Qt OpenGL item and still registers neither item.
+The shipping macOS native path (`WAM_ENABLE_MACOS_NATIVE_VIDEO`, default ON
+on Apple) is described in `docs/NATIVE_MACOS_VIDEO.md`: container backends
+(AVFoundation for MP4/MOV, WAM's own Matroska and MPEG-TS demuxers) feed
+VideoToolbox sessions through `native_media_session`, retained `CVPixelBuffer`
+frame leases carry decoded surfaces under a process-wide surface budget, and
+presentation goes either to an `AVSampleBufferDisplayLayer` composited by the
+WindowServer (default) or to the Qt scene graph through `QtGlVideoItem`
+(`WAM_PRESENTATION=scenegraph`). libmpv remains the compatibility fallback for
+anything the native path refuses.
 Pipeline stop, detach, and destruction transfer their demux/VideoToolbox drain
 to a self-owned background retirement slot, so the AppKit thread never joins
 those producers. A process-wide admission lease permits at most one native

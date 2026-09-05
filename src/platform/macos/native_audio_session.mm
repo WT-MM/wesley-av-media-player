@@ -4,6 +4,8 @@
 #include "media/audio_codec_timing.hpp"
 #include "media/audio_downmix.hpp"
 #include "media/matroska_vorbis.hpp"
+#include "media/media_codec_facts.hpp"
+#include "core_media_codec_facts.hpp"
 #include "native_audio_channel_map.hpp"
 #include "native_audio_sample_rates.hpp"
 #include "native_concurrency_limits.hpp"
@@ -184,56 +186,13 @@ void assignError(std::string* error, const char* message) noexcept {
          nativeAudioSampleRateSupported(rate, exactRate);
 }
 
+// The same whitelist NativeAudioConverter admits by, asked one layer earlier so
+// an inadmissible track produces a clean fallback rather than a converter
+// failure part-way through graph construction.
 [[nodiscard]] bool supportedCodec(const media::MediaTrackDescriptor& track)
     noexcept {
-  if (!track.audio) {
-    return false;
-  }
-  switch (track.codec) {
-  case media::MediaCodec::Aac:
-    return track.audio->formatTag == kAudioFormatMPEG4AAC ||
-           track.audio->formatTag == kAudioFormatMPEG4AAC_HE ||
-           track.audio->formatTag == kAudioFormatMPEG4AAC_HE_V2;
-  case media::MediaCodec::Alac:
-    return track.audio->formatTag == kAudioFormatAppleLossless;
-  // Uncompressed audio, which reaches this pipeline only from AVFoundation:
-  // a standalone .wav or .aiff, or an lpcm track in a QuickTime movie. There
-  // is no bitstream to parse and no decoder to prime, so the converter's whole
-  // per-codec table stays at its zero defaults; what the AudioConverter does
-  // for it is the interleaved-int-to-float restatement it would otherwise do
-  // as the last step of every decode. The format's own flags carry the sample
-  // depth, signedness and endianness, and exactAsbd already restates them
-  // verbatim, which is what lets one arm cover .wav (0xc) and .aiff (0xe)
-  // alike.
-  case media::MediaCodec::Pcm:
-    return track.audio->formatTag == kAudioFormatLinearPCM;
-  // ADPCM in WAV, admitted for exactly the measured reason stated at the
-  // matching arm in native_audio_converter.mm: a bit-exact decode against
-  // ffmpeg with a zero-frame lead-in, carried by the existing CBR arm.
-  case media::MediaCodec::AdpcmIma:
-    return track.audio->formatTag == kAudioFormatDVIIntelIMA;
-  case media::MediaCodec::AdpcmMs:
-    return track.audio->formatTag == media::kMicrosoftAdpcmAudioFormatTag;
-  case media::MediaCodec::Mp3:
-    // The routing family, not one layer. Layer II reaches this arm from
-    // MPEG-TS stream types 0x03/0x04, and it is admitted here for exactly the
-    // measured reason stated at the matching arm in native_audio_converter.mm.
-    return track.audio->formatTag == kAudioFormatMPEGLayer3 ||
-           track.audio->formatTag == kAudioFormatMPEGLayer2;
-  case media::MediaCodec::Opus:
-    return track.audio->formatTag == kAudioFormatOpus;
-  case media::MediaCodec::Vorbis:
-    return track.audio->formatTag ==
-           wam::media::matroska::kVorbisAudioFormatTag;
-  case media::MediaCodec::Ac3:
-    return track.audio->formatTag == kAudioFormatAC3;
-  case media::MediaCodec::Eac3:
-    return track.audio->formatTag == kAudioFormatEnhancedAC3;
-  case media::MediaCodec::Flac:
-    return track.audio->formatTag == kAudioFormatFLAC;
-  default:
-    return false;
-  }
+  return track.audio &&
+         audioCodecFormatTagAdmitted(track.codec, track.audio->formatTag);
 }
 
 // Whether this track's first access unit legitimately presents before media
@@ -277,23 +236,9 @@ void assignError(std::string* error, const char* message) noexcept {
          ceilingFrame > 0;
 }
 
-// Mirrors NativeAudioConverter's own rule exactly: mono and stereo must state
-// their canonical tag or none at all, and a multichannel track may state a tag
-// only when that tag expands to a stereo fold this player can perform. The
-// session refuses first so an inadmissible layout produces a clean fallback
-// instead of a converter failure part-way through graph construction.
 [[nodiscard]] bool supportedLayout(const media::MediaAudioFormat& audio)
     noexcept {
-  if (!audio.channelLayoutPresent) {
-    return audio.channelLayoutTag == 0;
-  }
-  if (audio.channels == 1) {
-    return audio.channelLayoutTag == kAudioChannelLayoutTag_Mono;
-  }
-  if (audio.channels == 2) {
-    return audio.channelLayoutTag == kAudioChannelLayoutTag_Stereo;
-  }
-  return multichannelLayoutTagAdmitted(audio.channelLayoutTag, audio.channels);
+  return audioChannelLayoutAdmitted(audio);
 }
 
 [[nodiscard]] bool validCallTable(
@@ -1282,6 +1227,239 @@ enum class DeviceReconcile : std::uint8_t {
   return media::NativeMediaConsumerProgress::Failed;
 }
 
+// A retire phase either yields the progress the caller must report or nothing,
+// which means the phase completed and retire may proceed to the next one.
+using RetireStep = std::optional<media::NativeMediaConsumerProgress>;
+
+// The retire failure rule, stated once. Retiring is a state latch() leaves
+// alone, but retire cannot assume it is already there: the testing seam
+// NativeAudioSessionTestAccess::stageFlushAfterStop writes Flushing with no
+// retire guard, so the state is re-asserted rather than inferred.
+[[nodiscard]] media::NativeMediaConsumerProgress
+failRetire(NativeAudioSessionControl& control,
+           NativeAudioSessionFailure failure,
+           media::NativeMediaConsumerProgress progress) noexcept {
+  control.latch(failure);
+  control.state = NativeAudioSessionState::Retiring;
+  return progress;
+}
+
+// The clock a pause may act on: published, valid, and carrying a generation.
+[[nodiscard]] bool
+clockPausable(const NativeMediaClockSnapshot& clock) noexcept {
+  return clock.publicationCurrent && clock.valid && clock.generation != 0;
+}
+
+// The clock an accepted pause must show.
+[[nodiscard]] bool clockPaused(const NativeMediaClockSnapshot& clock) noexcept {
+  return clock.publicationCurrent && clock.valid && !clock.running;
+}
+
+// The clock a completed invalidation must show. Retire proves this twice --
+// once where it performs the stop and once in its final audit -- so it is
+// stated once and the two proofs cannot drift apart.
+[[nodiscard]] bool
+clockInvalidatedTo(const NativeMediaClockSnapshot& clock,
+                   media::MediaGeneration invalidation) noexcept {
+  return clock.publicationCurrent && !clock.valid && !clock.running &&
+         clock.generation == invalidation;
+}
+
+// A converter that owns nothing: no configuration, no prepared sample, no
+// retained payload lease.
+[[nodiscard]] bool
+converterRetired(const NativeAudioConverterStats& converter) noexcept {
+  return !converter.configured && !converter.samplePrepared &&
+         !converter.sampleRetained;
+}
+
+// The output an accepted close must show.
+[[nodiscard]] bool
+outputClosedCleanly(const NativeAudioOutputFacts& output) noexcept {
+  return !output.configured && !output.started && output.stopped &&
+         output.callbackQuiescent &&
+         output.state == NativeAudioOutputState::Closed;
+}
+
+// Admission: a retire is legal only for the generation the graph last exposed,
+// and only towards an invalidation generation strictly above every generation
+// any part of the graph still holds. Admitting it parks the session -- paused,
+// no lifecycle, no terminal override -- before any irreversible step runs.
+[[nodiscard]] RetireStep
+beginRetire(NativeAudioSessionControl& control,
+            media::MediaGeneration retiredGeneration,
+            media::MediaGeneration invalidationGeneration) noexcept {
+  if (retiredGeneration != control.highestExposedGeneration) {
+    return media::NativeMediaConsumerProgress::StaleGeneration;
+  }
+  const NativeAudioConverterStats converter = control.converter.stats();
+  const NativeAudioOutputFacts output = control.output != nullptr
+                                            ? control.output->facts()
+                                            : NativeAudioOutputFacts{};
+  const NativeMediaClockSnapshot clock = control.clock.sample();
+  media::MediaGeneration highestInstalled = control.ring.generation();
+  highestInstalled = std::max(highestInstalled, control.generation);
+  highestInstalled = std::max(highestInstalled, converter.generation);
+  highestInstalled = std::max(highestInstalled, output.generation);
+  highestInstalled = std::max(highestInstalled, clock.generation);
+  highestInstalled = std::max(highestInstalled, control.lifecycleTarget);
+  if (invalidationGeneration == 0 ||
+      invalidationGeneration <= retiredGeneration ||
+      invalidationGeneration <= highestInstalled) {
+    return media::NativeMediaConsumerProgress::Failed;
+  }
+  control.retireRequested = true;
+  control.retireRetiredGeneration = retiredGeneration;
+  control.retireInvalidationGeneration = invalidationGeneration;
+  control.retireStage = RetireStage::StopOutput;
+  control.lifecycle = SessionLifecycle::None;
+  control.lifecycleRetired = 0;
+  control.lifecycleTarget = 0;
+  control.terminalOverride = TerminalOverride::None;
+  control.terminalOverrideGeneration = 0;
+  control.requestedPaused = true;
+  control.renderCore.setPaused(true);
+  control.outputSuspension = OutputSuspension::None;
+  control.state = NativeAudioSessionState::Retiring;
+  return std::nullopt;
+}
+
+// Retire phase 1: stop the device and park the clock.
+[[nodiscard]] RetireStep
+retireStopOutput(NativeAudioSessionControl& control) noexcept {
+  if (control.retireStage != RetireStage::StopOutput) {
+    return std::nullopt;
+  }
+  if (control.output != nullptr) {
+    const NativeAudioOutputProgress stopped = control.output->stop();
+    if (stopped == NativeAudioOutputProgress::Quiescing) {
+      return media::NativeMediaConsumerProgress::Quiescing;
+    }
+    if (stopped != NativeAudioOutputProgress::Done) {
+      // A partially configured output can be in Detaching, where stop() is
+      // intentionally invalid but close() remains the only legal progress
+      // operation. Lower-layer failure may also have completed part of its
+      // close sequence, so keep the exact pair retryable rather than
+      // claiming an irreversible terminal failure.
+      const media::NativeMediaConsumerProgress refusal =
+          failRetire(control, NativeAudioSessionFailure::Output,
+                     media::NativeMediaConsumerProgress::Progress);
+      const NativeAudioOutputProgress closed = control.output->close();
+      if (closed == NativeAudioOutputProgress::Quiescing) {
+        return media::NativeMediaConsumerProgress::Quiescing;
+      }
+      if (closed != NativeAudioOutputProgress::Done) {
+        return refusal;
+      }
+    }
+  }
+
+  if (control.clockActivated) {
+    NativeMediaClockSnapshot clock = control.clock.sample();
+    if (!clockPausable(clock) || !control.clock.pause(clock.generation)) {
+      return failRetire(control, NativeAudioSessionFailure::ClockTransition,
+                        media::NativeMediaConsumerProgress::Failed);
+    }
+    clock = control.clock.sample();
+    if (!clockPaused(clock)) {
+      return failRetire(control, NativeAudioSessionFailure::ClockTransition,
+                        media::NativeMediaConsumerProgress::Failed);
+    }
+    if (control.output != nullptr) {
+      const NativeAudioOutputFacts output = control.output->facts();
+      if (output.activated && output.generation == clock.generation &&
+          !control.renderCore.settlePausedAfterStop(clock.generation)) {
+        return failRetire(control, NativeAudioSessionFailure::ClockTransition,
+                          media::NativeMediaConsumerProgress::Failed);
+      }
+    }
+  }
+  control.retireStage = RetireStage::InvalidateGraph;
+  return std::nullopt;
+}
+
+// Retire phase 2: move the ring and clock to the invalidation generation and
+// give up the converter.
+[[nodiscard]] RetireStep
+retireInvalidateGraph(NativeAudioSessionControl& control) noexcept {
+  if (control.retireStage != RetireStage::InvalidateGraph) {
+    return std::nullopt;
+  }
+  const media::MediaGeneration invalidation =
+      control.retireInvalidationGeneration;
+  if (control.ring.generation() != invalidation &&
+      !control.ring.flush(invalidation)) {
+    return failRetire(control, NativeAudioSessionFailure::RingTransition,
+                      media::NativeMediaConsumerProgress::Failed);
+  }
+
+  if (control.clockActivated) {
+    const NativeMediaClockSnapshot clock = control.clock.sample();
+    if (clock.generation != invalidation &&
+        (!clock.valid || clock.generation == 0 ||
+         !control.clock.stop(clock.generation, invalidation))) {
+      return failRetire(control, NativeAudioSessionFailure::ClockTransition,
+                        media::NativeMediaConsumerProgress::Failed);
+    }
+    if (!clockInvalidatedTo(control.clock.sample(), invalidation)) {
+      return failRetire(control, NativeAudioSessionFailure::ClockTransition,
+                        media::NativeMediaConsumerProgress::Failed);
+    }
+  }
+
+  control.renderCore.clearTerminal(control.generation);
+  control.converter.close();
+  if (!converterRetired(control.converter.stats())) {
+    return failRetire(control, NativeAudioSessionFailure::Converter,
+                      media::NativeMediaConsumerProgress::Failed);
+  }
+  control.endOfStreamRequested = false;
+  control.terminalPublished = false;
+  // Nothing compares CloseOutput, and that IS its effect: both stage guards
+  // above fail once it is set, so a retry re-runs only the close-and-audit
+  // tail, which is the only part of retire that is idempotent.
+  control.retireStage = RetireStage::CloseOutput;
+  return std::nullopt;
+}
+
+// Retire phase 3: close the device and prove it closed.
+[[nodiscard]] RetireStep
+retireCloseOutput(NativeAudioSessionControl& control) noexcept {
+  if (control.output == nullptr) {
+    return std::nullopt;
+  }
+  const NativeAudioOutputProgress closed = control.output->close();
+  if (closed == NativeAudioOutputProgress::Quiescing) {
+    return media::NativeMediaConsumerProgress::Quiescing;
+  }
+  if (closed != NativeAudioOutputProgress::Done ||
+      !outputClosedCleanly(control.output->facts())) {
+    return failRetire(control, NativeAudioSessionFailure::Output,
+                      media::NativeMediaConsumerProgress::Progress);
+  }
+  return std::nullopt;
+}
+
+// Retire phase 4: the audit that admits Done. Nothing here may make progress;
+// it only proves the graph holds nothing from the retired generation.
+[[nodiscard]] RetireStep
+retireAuditQuiesced(NativeAudioSessionControl& control) noexcept {
+  const media::MediaGeneration invalidation =
+      control.retireInvalidationGeneration;
+  if (control.ring.generation() != invalidation ||
+      control.ring.queuedSlabs() != 0 ||
+      !converterRetired(control.converter.stats())) {
+    return failRetire(control, NativeAudioSessionFailure::ConsumerProtocol,
+                      media::NativeMediaConsumerProgress::Failed);
+  }
+  if (control.clockActivated &&
+      !clockInvalidatedTo(control.clock.sample(), invalidation)) {
+    return failRetire(control, NativeAudioSessionFailure::ClockTransition,
+                      media::NativeMediaConsumerProgress::Failed);
+  }
+  return std::nullopt;
+}
+
 } // namespace
 
 NativeAudioSession::NativeAudioSession(
@@ -2206,178 +2384,27 @@ media::NativeMediaConsumerProgress NativeAudioSession::retire(
     if (control.retireDone) {
       return media::NativeMediaConsumerProgress::Done;
     }
-  } else {
-    if (retiredGeneration != control.highestExposedGeneration) {
-      return media::NativeMediaConsumerProgress::StaleGeneration;
-    }
-    const NativeAudioConverterStats converter = control.converter.stats();
-    const NativeAudioOutputFacts output =
-        control.output != nullptr ? control.output->facts()
-                                  : NativeAudioOutputFacts{};
-    const NativeMediaClockSnapshot clock = control.clock.sample();
-    media::MediaGeneration highestInstalled = control.ring.generation();
-    highestInstalled = std::max(highestInstalled, control.generation);
-    highestInstalled = std::max(highestInstalled, converter.generation);
-    highestInstalled = std::max(highestInstalled, output.generation);
-    highestInstalled = std::max(highestInstalled, clock.generation);
-    highestInstalled =
-        std::max(highestInstalled, control.lifecycleTarget);
-    if (invalidationGeneration == 0 ||
-        invalidationGeneration <= retiredGeneration ||
-        invalidationGeneration <= highestInstalled) {
-      return media::NativeMediaConsumerProgress::Failed;
-    }
-    control.retireRequested = true;
-    control.retireRetiredGeneration = retiredGeneration;
-    control.retireInvalidationGeneration = invalidationGeneration;
-    control.retireStage = RetireStage::StopOutput;
-    control.lifecycle = SessionLifecycle::None;
-    control.lifecycleRetired = 0;
-    control.lifecycleTarget = 0;
-    control.terminalOverride = TerminalOverride::None;
-    control.terminalOverrideGeneration = 0;
-    control.requestedPaused = true;
-    control.renderCore.setPaused(true);
-    control.outputSuspension = OutputSuspension::None;
-    control.state = NativeAudioSessionState::Retiring;
+  } else if (const RetireStep admission =
+                 beginRetire(control, retiredGeneration,
+                             invalidationGeneration)) {
+    return *admission;
   }
 
-  if (control.retireStage == RetireStage::StopOutput) {
-    if (control.output != nullptr) {
-      const NativeAudioOutputProgress stopped = control.output->stop();
-      if (stopped == NativeAudioOutputProgress::Quiescing) {
-        return media::NativeMediaConsumerProgress::Quiescing;
-      }
-      if (stopped != NativeAudioOutputProgress::Done) {
-        // A partially configured output can be in Detaching, where stop() is
-        // intentionally invalid but close() remains the only legal progress
-        // operation. Lower-layer failure may also have completed part of its
-        // close sequence, so keep the exact pair retryable rather than
-        // claiming an irreversible terminal failure.
-        control.latch(NativeAudioSessionFailure::Output);
-        control.state = NativeAudioSessionState::Retiring;
-        const NativeAudioOutputProgress closed = control.output->close();
-        if (closed == NativeAudioOutputProgress::Quiescing) {
-          return media::NativeMediaConsumerProgress::Quiescing;
-        }
-        if (closed != NativeAudioOutputProgress::Done) {
-          return media::NativeMediaConsumerProgress::Progress;
-        }
-      }
-    }
-
-    if (control.clockActivated) {
-      NativeMediaClockSnapshot clock = control.clock.sample();
-      if (!clock.publicationCurrent || !clock.valid ||
-          clock.generation == 0 ||
-          !control.clock.pause(clock.generation)) {
-        control.latch(NativeAudioSessionFailure::ClockTransition);
-        control.state = NativeAudioSessionState::Retiring;
-        return media::NativeMediaConsumerProgress::Failed;
-      }
-      clock = control.clock.sample();
-      if (!clock.publicationCurrent || !clock.valid || clock.running) {
-        control.latch(NativeAudioSessionFailure::ClockTransition);
-        control.state = NativeAudioSessionState::Retiring;
-        return media::NativeMediaConsumerProgress::Failed;
-      }
-      if (control.output != nullptr) {
-        const NativeAudioOutputFacts output = control.output->facts();
-        if (output.activated && output.generation == clock.generation &&
-            !control.renderCore.settlePausedAfterStop(clock.generation)) {
-          control.latch(NativeAudioSessionFailure::ClockTransition);
-          control.state = NativeAudioSessionState::Retiring;
-          return media::NativeMediaConsumerProgress::Failed;
-        }
-      }
-    }
-    control.retireStage = RetireStage::InvalidateGraph;
+  if (const RetireStep step = retireStopOutput(control)) {
+    return *step;
   }
-
-  if (control.retireStage == RetireStage::InvalidateGraph) {
-    const media::MediaGeneration invalidation =
-        control.retireInvalidationGeneration;
-    const media::MediaGeneration ringGeneration = control.ring.generation();
-    if (ringGeneration != invalidation &&
-        !control.ring.flush(invalidation)) {
-      control.latch(NativeAudioSessionFailure::RingTransition);
-      control.state = NativeAudioSessionState::Retiring;
-      return media::NativeMediaConsumerProgress::Failed;
-    }
-
-    if (control.clockActivated) {
-      const NativeMediaClockSnapshot clock = control.clock.sample();
-      if (clock.generation != invalidation) {
-        if (!clock.valid || clock.generation == 0 ||
-            !control.clock.stop(clock.generation, invalidation)) {
-          control.latch(NativeAudioSessionFailure::ClockTransition);
-          control.state = NativeAudioSessionState::Retiring;
-          return media::NativeMediaConsumerProgress::Failed;
-        }
-      }
-      const NativeMediaClockSnapshot invalid = control.clock.sample();
-      if (!invalid.publicationCurrent || invalid.valid || invalid.running ||
-          invalid.generation != invalidation) {
-        control.latch(NativeAudioSessionFailure::ClockTransition);
-        control.state = NativeAudioSessionState::Retiring;
-        return media::NativeMediaConsumerProgress::Failed;
-      }
-    }
-
-    control.renderCore.clearTerminal(control.generation);
-    control.converter.close();
-    const NativeAudioConverterStats converter = control.converter.stats();
-    if (converter.configured || converter.samplePrepared ||
-        converter.sampleRetained) {
-      control.latch(NativeAudioSessionFailure::Converter);
-      control.state = NativeAudioSessionState::Retiring;
-      return media::NativeMediaConsumerProgress::Failed;
-    }
-    control.endOfStreamRequested = false;
-    control.terminalPublished = false;
-    control.retireStage = RetireStage::CloseOutput;
+  if (const RetireStep step = retireInvalidateGraph(control)) {
+    return *step;
   }
-
-  if (control.output != nullptr) {
-    const NativeAudioOutputProgress closed = control.output->close();
-    if (closed == NativeAudioOutputProgress::Quiescing) {
-      return media::NativeMediaConsumerProgress::Quiescing;
-    }
-    if (closed != NativeAudioOutputProgress::Done) {
-      control.latch(NativeAudioSessionFailure::Output);
-      control.state = NativeAudioSessionState::Retiring;
-      return media::NativeMediaConsumerProgress::Progress;
-    }
-    const NativeAudioOutputFacts output = control.output->facts();
-    if (output.configured || output.started || !output.stopped ||
-        !output.callbackQuiescent ||
-        output.state != NativeAudioOutputState::Closed) {
-      control.latch(NativeAudioSessionFailure::Output);
-      control.state = NativeAudioSessionState::Retiring;
-      return media::NativeMediaConsumerProgress::Progress;
-    }
+  if (const RetireStep step = retireCloseOutput(control)) {
+    return *step;
+  }
+  if (const RetireStep step = retireAuditQuiesced(control)) {
+    return *step;
   }
 
   const media::MediaGeneration invalidation =
       control.retireInvalidationGeneration;
-  const NativeAudioConverterStats converter = control.converter.stats();
-  if (control.ring.generation() != invalidation ||
-      control.ring.queuedSlabs() != 0 || converter.configured ||
-      converter.samplePrepared || converter.sampleRetained) {
-    control.latch(NativeAudioSessionFailure::ConsumerProtocol);
-    control.state = NativeAudioSessionState::Retiring;
-    return media::NativeMediaConsumerProgress::Failed;
-  }
-  if (control.clockActivated) {
-    const NativeMediaClockSnapshot clock = control.clock.sample();
-    if (!clock.publicationCurrent || clock.valid || clock.running ||
-        clock.generation != invalidation) {
-      control.latch(NativeAudioSessionFailure::ClockTransition);
-      control.state = NativeAudioSessionState::Retiring;
-      return media::NativeMediaConsumerProgress::Failed;
-    }
-  }
-
   control.output.reset();
   control.generation = invalidation;
   control.configured = false;

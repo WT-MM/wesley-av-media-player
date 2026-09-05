@@ -62,6 +62,37 @@ class TestPayload final : public MediaPayloadStorage {
                                   std::byte{3}, std::byte{4}};
 };
 
+// A descriptor for a codec that carries NO out-of-band configuration record:
+// its record is empty and its record kind is None, which is the only correct
+// shape for ProRes, Motion JPEG and MPEG-2, and the exact shape a preview
+// binding validator that demands a nonempty record refuses.
+std::shared_ptr<const MediaSourceDescriptor> recordLessDescriptor(
+    MediaCodec codec) {
+  MediaVideoFormat format;
+  format.codedWidth = 640;
+  format.codedHeight = 360;
+  format.displayWidth = 640;
+  format.displayHeight = 360;
+  format.bitsPerComponent = 8;
+  format.sampleFormat = MediaVideoSampleFormat::Unknown;
+
+  MediaTrackDescriptor track;
+  track.id = 7;
+  track.kind = MediaTrackKind::Video;
+  track.codec = codec;
+  track.timeBase = {1, 1000};
+  track.duration = {10, 1};
+  track.codecConfigurationKind = MediaCodecConfigurationKind::None;
+  track.video = format;
+
+  auto result = std::make_shared<MediaSourceDescriptor>();
+  result->duration = {10, 1};
+  result->inventory = {.video = 1, .total = 1};
+  result->tracks = {std::move(track)};
+  result->selectedVideo = 7;
+  return result;
+}
+
 std::shared_ptr<const MediaSourceDescriptor> descriptor() {
   MediaVideoFormat format;
   format.codedWidth = 640;
@@ -394,6 +425,30 @@ void checkBindingAndEventValidation() {
   expect(validateMediaPreviewDiscontinuity(discontinuity, valid, {3}) &&
              !validateMediaPreviewDiscontinuity(discontinuity, valid, {2}),
          "preview discontinuities exact-match private epoch and video");
+
+  // The record-less codecs. Demanding a nonempty configuration record here
+  // refuses every one of them, and the requirement is INVERTED rather than
+  // dropped: a record they cannot carry is still a malformed descriptor.
+  for (const MediaCodec recordLess :
+       {MediaCodec::ProRes, MediaCodec::Mjpeg, MediaCodec::Mpeg2Video}) {
+    MediaSourceOpenOptions options;
+    options.selection.requireVideo = true;
+    const MediaPreviewBinding admitted{std::make_shared<const TestContext>(
+        MediaSourceBackendKind::AVFoundation,
+        "/private/tmp/native-media-backend.mov", options,
+        recordLessDescriptor(recordLess))};
+    expect(validateMediaPreviewBinding(admitted),
+           "a record-less codec previews with an empty configuration record");
+
+    auto stated = recordLessDescriptor(recordLess);
+    auto forged = std::make_shared<MediaSourceDescriptor>(*stated);
+    forged->tracks.front().codecConfiguration = {std::byte{1}, std::byte{2}};
+    const MediaPreviewBinding refused{std::make_shared<const TestContext>(
+        MediaSourceBackendKind::AVFoundation,
+        "/private/tmp/native-media-backend.mov", options, std::move(forged))};
+    expect(!validateMediaPreviewBinding(refused),
+           "a record-less codec presenting a record is still refused");
+  }
 
   expect(!validateMediaPreviewBinding({}),
          "preview rejects a missing prepared context");

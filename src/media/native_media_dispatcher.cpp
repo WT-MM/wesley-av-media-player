@@ -1,5 +1,7 @@
 #include "media/native_media_dispatcher.hpp"
 
+#include <variant>
+
 #include "media/audio_codec_timing.hpp"
 
 #include <algorithm>
@@ -57,6 +59,37 @@ void saturatingIncrement(Integer& value) noexcept {
   if (value != std::numeric_limits<Integer>::max()) {
     ++value;
   }
+}
+
+// Exhaustive over the frozen read-result variant. std::visit builds a
+// seven-entry function-pointer table to read one scalar field; the switch reads
+// it directly, and the static_assert turns an appended alternative into a
+// compile error instead of a generation silently read as zero. Indexed rather
+// than typed so an alternative can never be paired with the wrong case.
+[[nodiscard]] MediaGeneration eventGeneration(
+    const MediaSourceReadResult& event) noexcept {
+  static_assert(std::variant_size_v<MediaSourceReadResult> == 7,
+                "read the new MediaSourceReadResult alternative's generation "
+                "below before raising this count");
+  switch (event.index()) {
+  case 0:
+    return std::get_if<0>(&event)->generation;
+  case 1:
+    return std::get_if<1>(&event)->generation;
+  case 2:
+    return std::get_if<2>(&event)->generation;
+  case 3:
+    return std::get_if<3>(&event)->generation;
+  case 4:
+    return std::get_if<4>(&event)->generation;
+  case 5:
+    return std::get_if<5>(&event)->generation;
+  case 6:
+    return std::get_if<6>(&event)->generation;
+  default:
+    break;
+  }
+  return 0;
 }
 
 bool lifecycleFailure(NativeMediaConsumerProgress progress) noexcept {
@@ -1132,9 +1165,7 @@ NativeMediaDispatcherStats NativeMediaDispatcher::stats() const noexcept {
     if (lane.size == 0) {
       return 0;
     }
-    return std::visit(
-        [](const auto& event) noexcept { return event.generation; },
-        *lane.events[lane.head]);
+    return eventGeneration(*lane.events[lane.head]);
   };
   result.pendingGeneration = pending_ ? pending_generation_
                              : video_lane_.size != 0
@@ -1201,7 +1232,44 @@ NativeMediaDispatcherStep NativeMediaDispatcher::deferBlockedLaneEvent(
       track);
 }
 
+std::optional<NativeMediaDispatcherStep>
+NativeMediaDispatcher::queueBehindLane(bool isVideo, bool isAudio,
+                                       MediaTrackId track) noexcept {
+  if (isVideo && video_lane_.size != 0 &&
+      pending_lane_head_ != PendingLaneHead::Video) {
+    // Older video events are still queued, so per-lane order forbids offering
+    // this one to the consumer. Append it and keep reading. A full lane keeps
+    // the event as the head-of-line blocker instead, which shuts the read gate
+    // and names the wake that reopens it.
+    const bool queued = queuePendingIntoLane(video_lane_);
+    return makeStep(NativeMediaDispatcherAction::BlockedVideo,
+                    queued ? NativeMediaDispatcherWait::CallAgain
+                           : NativeMediaDispatcherWait::VideoConsumer,
+                    track);
+  }
+  if (isAudio && audio_lane_.size != 0 &&
+      pending_lane_head_ != PendingLaneHead::Audio) {
+    // Same per-lane order rule for an audio lane the seek-settle window filled.
+    // It applies whenever the lane is non-empty, including after the window
+    // closes, so the lane always drains in source order.
+    const bool queued = queuePendingIntoLane(audio_lane_);
+    return makeStep(NativeMediaDispatcherAction::BlockedAudio,
+                    queued ? NativeMediaDispatcherWait::CallAgain
+                           : NativeMediaDispatcherWait::AudioConsumer,
+                    track);
+  }
+  return std::nullopt;
+}
+
 NativeMediaDispatcherStep NativeMediaDispatcher::routePending() noexcept {
+  // Every alternative of the frozen read-result variant is routed by the
+  // get_if chain below. The contract allows append-only additions; a new
+  // alternative that is not handled here falls silently through to the
+  // InvalidEvent failure at the end, so this pins the arm count to the handled
+  // set and turns the next append into a compile error instead.
+  static_assert(std::variant_size_v<MediaSourceReadResult> == 7,
+                "route a new MediaSourceReadResult alternative below before "
+                "raising this count");
   if (!pending_ || descriptor_ == nullptr) {
     return failStep(NativeMediaDispatcherFailure::InvalidEvent);
   }
@@ -1222,30 +1290,8 @@ NativeMediaDispatcherStep NativeMediaDispatcher::routePending() noexcept {
       return failStep(NativeMediaDispatcherFailure::InvalidSample);
     }
 
-    if (isVideo && video_lane_.size != 0 &&
-        pending_lane_head_ != PendingLaneHead::Video) {
-      // Older video events are still queued, so per-lane order forbids
-      // offering this one to the consumer. Append it and keep reading. A full
-      // lane keeps the event as the head-of-line blocker instead, which shuts
-      // the read gate and names the wake that reopens it.
-      const MediaTrackId track = sample->track;
-      const bool queued = queuePendingIntoLane(video_lane_);
-      return makeStep(NativeMediaDispatcherAction::BlockedVideo,
-                      queued ? NativeMediaDispatcherWait::CallAgain
-                             : NativeMediaDispatcherWait::VideoConsumer,
-                      track);
-    }
-    if (isAudio && audio_lane_.size != 0 &&
-        pending_lane_head_ != PendingLaneHead::Audio) {
-      // Same per-lane order rule for an audio lane the seek-settle window
-      // filled. It applies whenever the lane is non-empty, including after the
-      // window closes, so the lane always drains in source order.
-      const MediaTrackId track = sample->track;
-      const bool queued = queuePendingIntoLane(audio_lane_);
-      return makeStep(NativeMediaDispatcherAction::BlockedAudio,
-                      queued ? NativeMediaDispatcherWait::CallAgain
-                             : NativeMediaDispatcherWait::AudioConsumer,
-                      track);
+    if (const auto queued = queueBehindLane(isVideo, isAudio, sample->track)) {
+      return *queued;
     }
 
     NativeMediaSampleDelivery delivery(*sample);
@@ -1298,30 +1344,9 @@ NativeMediaDispatcherStep NativeMediaDispatcher::routePending() noexcept {
     if (!isVideo && !isAudio) {
       return failStep(NativeMediaDispatcherFailure::InvalidEvent);
     }
-    if (isVideo && video_lane_.size != 0 &&
-        pending_lane_head_ != PendingLaneHead::Video) {
-      // Older video events are still queued, so per-lane order forbids
-      // offering this one to the consumer. Append it and keep reading. A full
-      // lane keeps the event as the head-of-line blocker instead, which shuts
-      // the read gate and names the wake that reopens it.
-      const MediaTrackId track = discontinuity->track;
-      const bool queued = queuePendingIntoLane(video_lane_);
-      return makeStep(NativeMediaDispatcherAction::BlockedVideo,
-                      queued ? NativeMediaDispatcherWait::CallAgain
-                             : NativeMediaDispatcherWait::VideoConsumer,
-                      track);
-    }
-    if (isAudio && audio_lane_.size != 0 &&
-        pending_lane_head_ != PendingLaneHead::Audio) {
-      // Same per-lane order rule for an audio lane the seek-settle window
-      // filled. It applies whenever the lane is non-empty, including after the
-      // window closes, so the lane always drains in source order.
-      const MediaTrackId track = discontinuity->track;
-      const bool queued = queuePendingIntoLane(audio_lane_);
-      return makeStep(NativeMediaDispatcherAction::BlockedAudio,
-                      queued ? NativeMediaDispatcherWait::CallAgain
-                             : NativeMediaDispatcherWait::AudioConsumer,
-                      track);
+    if (const auto queued =
+            queueBehindLane(isVideo, isAudio, discontinuity->track)) {
+      return *queued;
     }
     NativeMediaConsumeResult consumed{NativeMediaConsumeResult::Failed};
     try {
@@ -1367,30 +1392,8 @@ NativeMediaDispatcherStep NativeMediaDispatcher::routePending() noexcept {
     if (!isVideo && !isAudio) {
       return failStep(NativeMediaDispatcherFailure::InvalidEvent);
     }
-    if (isVideo && video_lane_.size != 0 &&
-        pending_lane_head_ != PendingLaneHead::Video) {
-      // Older video events are still queued, so per-lane order forbids
-      // offering this one to the consumer. Append it and keep reading. A full
-      // lane keeps the event as the head-of-line blocker instead, which shuts
-      // the read gate and names the wake that reopens it.
-      const MediaTrackId track = end->track;
-      const bool queued = queuePendingIntoLane(video_lane_);
-      return makeStep(NativeMediaDispatcherAction::BlockedVideo,
-                      queued ? NativeMediaDispatcherWait::CallAgain
-                             : NativeMediaDispatcherWait::VideoConsumer,
-                      track);
-    }
-    if (isAudio && audio_lane_.size != 0 &&
-        pending_lane_head_ != PendingLaneHead::Audio) {
-      // Same per-lane order rule for an audio lane the seek-settle window
-      // filled. It applies whenever the lane is non-empty, including after the
-      // window closes, so the lane always drains in source order.
-      const MediaTrackId track = end->track;
-      const bool queued = queuePendingIntoLane(audio_lane_);
-      return makeStep(NativeMediaDispatcherAction::BlockedAudio,
-                      queued ? NativeMediaDispatcherWait::CallAgain
-                             : NativeMediaDispatcherWait::AudioConsumer,
-                      track);
+    if (const auto queued = queueBehindLane(isVideo, isAudio, end->track)) {
+      return *queued;
     }
     NativeMediaConsumeResult consumed{NativeMediaConsumeResult::Failed};
     try {
@@ -2241,8 +2244,7 @@ bool NativeMediaDispatcher::takeLaneHead(ReadAheadLane& lane,
     // is still queued behind older events of the same lane.
     lane.ended = false;
   }
-  pending_generation_ = std::visit(
-      [](const auto& event) noexcept { return event.generation; }, *pending_);
+  pending_generation_ = eventGeneration(*pending_);
   pending_payload_bytes_ = bytes;
   pending_lane_head_ = head;
   return true;
@@ -2267,8 +2269,7 @@ void NativeMediaDispatcher::releaseRetainedEvents() noexcept {
 }
 
 void NativeMediaDispatcher::installPending(MediaSourceReadResult&& result) {
-  const MediaGeneration generation = std::visit(
-      [](const auto& event) noexcept { return event.generation; }, result);
+  const MediaGeneration generation = eventGeneration(result);
   const auto* sample = std::get_if<MediaSample>(&result);
   const std::size_t bytes =
       sample == nullptr ? 0 : sample->payload.byteSize();

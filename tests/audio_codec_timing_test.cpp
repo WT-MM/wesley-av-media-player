@@ -18,6 +18,8 @@
 #include <cstdlib>
 #include <iostream>
 
+#include "support/expect.hpp"
+
 namespace {
 
 using wam::media::audioCodecPrecedesStreamOrigin;
@@ -25,14 +27,6 @@ using wam::media::audioCodecStatesExactDecodedDuration;
 using wam::media::matroskaFramesFromNanoseconds;
 using wam::media::MediaCodec;
 
-int failures = 0;
-
-void expect(bool condition, const char *message) {
-  if (!condition) {
-    std::cerr << "FAIL: " << message << '\n';
-    ++failures;
-  }
-}
 
 void testCodecsThatPrecedeTheStreamOrigin() {
   // Codecs with a real encoder/decoder lead-in.

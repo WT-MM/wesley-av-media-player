@@ -9,19 +9,13 @@
 #include "media/mp4_subtitles.hpp"
 #include "media/tx3g_text.hpp"
 
+#include "support/expect.hpp"
+
 namespace {
 
 using namespace wam::media::subtitles;
 using namespace wam::media::captions;
 
-int failures = 0;
-
-void expect(bool condition, const char* message) {
-  if (!condition) {
-    std::cerr << "FAIL: " << message << '\n';
-    ++failures;
-  }
-}
 
 void expectText(const std::string& actual, const std::string& expected,
                 const char* message) {

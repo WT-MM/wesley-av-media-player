@@ -1,5 +1,7 @@
 #include "video_toolbox_decoder.hpp"
 
+#include "media/media_codec_facts.hpp"
+#include "core_media_codec_facts.hpp"
 #include "native_video_codec_capability.hpp"
 #include "native_video_color.hpp"
 #include "native_video_limits.hpp"
@@ -1833,70 +1835,47 @@ void deliverDecodedFrame(const std::shared_ptr<AsyncDecodeState> &state,
   notifyProgress(state);
 }
 
+// The codec a CoreMedia four-character code names here, or Unknown for one this
+// decoder has no enumerator for.
+[[nodiscard]] media::MediaCodec namedCodec(CMVideoCodecType codec) noexcept {
+  return media::mediaCodecForCoreMediaType(static_cast<std::uint32_t>(codec));
+}
+
+// VideoToolbox cannot build a VP9 or AV1 decompression session without the
+// codec configuration record: CMVideoFormatDescriptionCreate succeeds but
+// session creation fails with kVTCouldNotFindVideoDecoderErr (-8971). The
+// vpcC/av1C atoms travel through the exact same sample-description-extension
+// dictionary as avcC/hvcC, and MPEG-4 Part 2's 'esds' does too -- the raw
+// headers in band, or an ES_Descriptor missing the box's four version/flags
+// bytes, both return kVTVideoDecoderBadDataErr (-12909).
 CFStringRef codecConfigurationAtomName(CMVideoCodecType codec) noexcept {
-  // VideoToolbox cannot build a VP9 or AV1 decompression session without the
-  // codec configuration record: CMVideoFormatDescriptionCreate succeeds but
-  // session creation fails with kVTCouldNotFindVideoDecoderErr (-8971). The
-  // vpcC/av1C atoms travel through the exact same sample-description-extension
-  // dictionary as avcC/hvcC, so naming them here is the only change the
-  // format-description path needs.
-  // MPEG-4 Part 2 is the same story with a different atom: the format
-  // description must carry an 'esds' -- the ISO/IEC 14496-1 ES_Descriptor
-  // wrapping the VisualObjectSequence -- or VTDecompressionSessionCreate
-  // fails. Measured 2026-08-20: the raw headers in band, or an ES_Descriptor
-  // missing the box's four version/flags bytes, both return
-  // kVTVideoDecoderBadDataErr (-12909).
-  return codec == kCMVideoCodecType_H264       ? CFSTR("avcC")
-         : codec == kCMVideoCodecType_HEVC     ? CFSTR("hvcC")
-         : codec == kCMVideoCodecType_VP9      ? CFSTR("vpcC")
-         : codec == kCMVideoCodecType_AV1      ? CFSTR("av1C")
-         : codec == kCMVideoCodecType_MPEG4Video ? CFSTR("esds")
-                                                 : nullptr;
+  return coreMediaConfigurationAtomName(namedCodec(codec));
 }
 
 // True for a codec that has NO out-of-band decoder configuration record at
 // all, so that "no atom" is the correct format description rather than a
 // missing one.
 //
-// MPEG-2 is the only such codec this decoder admits. Its sequence header is
-// in band, `CMVideoFormatDescriptionCreate` takes a null extensions argument,
-// and a session built that way decoded 60 access units 1:1 in
-// scratchpad/vt_mpeg2_probe.mm. Every other admitted codec must present its
-// atom, and the atom-name lookup above stays the authority on which one.
-//
-// This predicate exists rather than being folded into the null return above
-// because the two "nullptr" cases mean opposite things: an unknown codec has
-// no atom NAME and must be refused, while MPEG-2 has no atom and must be
-// admitted.
-// The ProRes 422 family, and exactly that family.
-//
-// VideoToolbox decodes these four FourCCs INTERCHANGEABLY: measured 2026-09-04
-// in scratchpad/vtflavor.mm, a session created from a synthesized description
-// of any one of them decodes real samples of any other, on every specimen and
-// at 4K. The 4444 family ('ap4h'/'ap4x') is interchangeable within itself and
-// NOT with this one -- feeding 4444 samples to a 422-family session fails with
-// -12916, and the reverse fails identically -- so the two families are
-// genuinely different decode contracts and only this one is admitted today.
-// VTDecompressionSessionCanAcceptFormatDescription is exact-match regardless,
-// which is why adoptDirectFormatLocked() still swaps in the container's own
-// description; the interchangeability is what makes the SYNTHESIZED one decode
-// in the first place.
-bool codecIsProRes422Family(CMVideoCodecType codec) noexcept {
-  return codec == kCMVideoCodecType_AppleProRes422Proxy ||
-         codec == kCMVideoCodecType_AppleProRes422LT ||
-         codec == kCMVideoCodecType_AppleProRes422 ||
-         codec == kCMVideoCodecType_AppleProRes422HQ;
+// This predicate exists rather than being folded into the atom-name lookup
+// above because the two "nullptr" cases mean opposite things: an unknown codec
+// has no atom NAME and must be refused, while these codecs have no atom and
+// must be admitted. Their sample descriptions carry only descriptive extensions
+// (Depth, BitsPerComponent, Vendor), and a session built from dimensions plus
+// codec type with null extensions decodes their samples 1:1.
+bool codecCarriesNoConfigurationRecord(CMVideoCodecType codec) noexcept {
+  const media::MediaCodec named = namedCodec(codec);
+  return named != media::MediaCodec::Unknown &&
+         !media::mediaCodecFacts(named).carriesConfigurationRecord;
 }
 
-bool codecCarriesNoConfigurationRecord(CMVideoCodecType codec) noexcept {
-  // ProRes and Motion JPEG join MPEG-2 here for the same reason and with the
-  // same evidence: a QuickTime ProRes or JPEG sample description carries no
-  // parameter-set atom at all (measured 2026-09-04, scratchpad/vtprobe.mm --
-  // the extension dictionaries hold only Depth/BitsPerComponent/Vendor and
-  // friends), and a session built from dimensions plus codec type with null
-  // extensions decodes their samples 1:1.
-  return codec == kCMVideoCodecType_MPEG2Video ||
-         codecIsProRes422Family(codec) || codec == kCMVideoCodecType_JPEG;
+// The ProRes 422 family, and exactly that family. See the facts table for why
+// the 4444 family is a different decode contract that this one enumerator
+// cannot name. VTDecompressionSessionCanAcceptFormatDescription is exact-match
+// regardless, which is why adoptDirectFormatLocked() still swaps in the
+// container's own description; the interchangeability is what makes the
+// SYNTHESIZED one decode in the first place.
+bool codecIsProRes422Family(CMVideoCodecType codec) noexcept {
+  return namedCodec(codec) == media::MediaCodec::ProRes;
 }
 
 // True for a codec whose VideoToolbox decoder does NOT natively produce a
@@ -1937,9 +1916,9 @@ bool codecCarriesNoConfigurationRecord(CMVideoCodecType codec) noexcept {
 // file makes rather than a property of whichever JPEG happens to be playing --
 // the same reason every other legacy decoder is pinned.
 bool codecNeedsPinnedOutputPixelFormat(CMVideoCodecType codec) noexcept {
-  return codec == kCMVideoCodecType_MPEG2Video ||
-         codec == kCMVideoCodecType_MPEG4Video ||
-         codecIsProRes422Family(codec) || codec == kCMVideoCodecType_JPEG;
+  const media::MediaCodec named = namedCodec(codec);
+  return named != media::MediaCodec::Unknown &&
+         media::mediaCodecFacts(named).needsPinnedOutputPixelFormat;
 }
 
 struct CodecConfigurationAtomMetadata {
@@ -3317,36 +3296,28 @@ bool VideoToolboxDecoder::configure(
   // registered, which the capability helper does before its first query, so
   // consulting it here also satisfies the registration precondition for the
   // decompression session created further below.
+  // Every video codec the facts table names decodes here except VP8, which has
+  // no VideoToolbox decoder at all and is routed to the software stage before
+  // this point. The two capability queries are the whole of what varies by
+  // machine. The three legacy codecs take no query because theirs would answer
+  // 0 and refuse a stream that demonstrably decodes, and ProRes takes none for
+  // the opposite reason: the query answers yes for every flavor including the
+  // 4444 family this build does not admit, so the family gate is the predicate
+  // rather than the query. MPEG-4 Part 2's PROFILE gate is upstream -- only
+  // Simple Profile survives media::inspectMpeg4VisualHeaders(), because Apple's
+  // decoder refuses Advanced Simple Profile here with codecBadDataErr (-8969).
+  const media::MediaCodec namedConfigurationCodec =
+      namedCodec(configuration.codec);
   const bool admittedCodec =
-      configuration.codec == kCMVideoCodecType_H264 ||
-      configuration.codec == kCMVideoCodecType_HEVC ||
-      // MPEG-2 decodes through VideoToolbox's SOFTWARE decoder on this
-      // platform, so it is admitted without a capability query -- the query
-      // would answer 0 and refuse a stream that demonstrably decodes.
-      configuration.codec == kCMVideoCodecType_MPEG2Video ||
-      // MPEG-4 Part 2 is software on this platform too, and for the same
-      // reason takes no capability query. Its PROFILE gate is upstream: only
-      // Simple Profile survives media::inspectMpeg4VisualHeaders(), because
-      // Apple's decoder refuses Advanced Simple Profile here with
-      // codecBadDataErr (-8969).
-      configuration.codec == kCMVideoCodecType_MPEG4Video ||
-      // ProRes is the one codec on this list with a real HARDWARE decoder on
-      // Apple Silicon (VTIsHardwareDecodeSupported is 1 and a created session
-      // reports UsingHardwareAcceleratedVideoDecoder TRUE, measured
-      // 2026-09-04), so it takes no capability query for the opposite reason
-      // to MPEG-2: the query would answer yes for every flavor including the
-      // 4444 family this build does not admit. The family gate is the
-      // predicate, not the query.
-      codecIsProRes422Family(configuration.codec) ||
-      // Motion JPEG decodes through VideoToolbox's software JPEG decoder and
-      // is admitted unconditionally like MPEG-2, for the same reason.
-      configuration.codec == kCMVideoCodecType_JPEG ||
-      (configuration.codec == kCMVideoCodecType_VP9 &&
-       nativeVideoToolboxSupportsVp9()) ||
-      (configuration.codec == kCMVideoCodecType_AV1 &&
+      media::mediaCodecFacts(namedConfigurationCodec).kind ==
+          media::MediaCodecKind::Video &&
+      namedConfigurationCodec != media::MediaCodec::Vp8 &&
+      (namedConfigurationCodec != media::MediaCodec::Vp9 ||
+       nativeVideoToolboxSupportsVp9()) &&
+      (namedConfigurationCodec != media::MediaCodec::Av1 ||
        nativeVideoToolboxSupportsAv1());
-  // The record requirement is inverted for MPEG-2 and stated that way: it must
-  // present NO record, because it has none.
+  // The record requirement is inverted for the record-less codecs and stated
+  // that way: they must present NO record, because they have none.
   const bool admittedConfigurationShape =
       codecCarriesNoConfigurationRecord(configuration.codec)
           ? configuration.codecConfiguration.empty()
@@ -3355,10 +3326,10 @@ bool VideoToolboxDecoder::configure(
       configuration.codedSize.height <= 0 || !admittedConfigurationShape) {
     assignError(error,
                 "VideoToolbox requires a decodable "
-                "H.264/HEVC/VP9/AV1/MPEG-2/MPEG-4 Part 2 stream, positive "
-                "dimensions, and the configuration record shape its codec "
-                "states (avcC/hvcC/vpcC/av1C/esds, or none at all for "
-                "MPEG-2)");
+                "H.264/HEVC/VP9/AV1/MPEG-2/MPEG-4 Part 2/ProRes/Motion JPEG "
+                "stream, positive dimensions, and the configuration record "
+                "shape its codec states (avcC/hvcC/vpcC/av1C/esds, or none at "
+                "all for MPEG-2, ProRes and Motion JPEG)");
     return false;
   }
 

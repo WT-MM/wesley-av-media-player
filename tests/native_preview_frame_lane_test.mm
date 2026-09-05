@@ -114,6 +114,23 @@ std::shared_ptr<const MediaSourceDescriptor> descriptor() {
   return result;
 }
 
+// A descriptor for a codec that carries no out-of-band configuration record,
+// with the record present or absent as the caller asks. Absent is the only
+// correct shape for ProRes, Motion JPEG and MPEG-2; present is a malformed
+// descriptor the lane must still refuse.
+std::shared_ptr<const MediaSourceDescriptor> recordLessDescriptor(
+    MediaCodec codec, bool statesRecord) {
+  auto result = std::make_shared<MediaSourceDescriptor>(*descriptor());
+  MediaTrackDescriptor& track = result->tracks.front();
+  track.codec = codec;
+  track.codecConfigurationKind = MediaCodecConfigurationKind::None;
+  track.codecConfiguration.clear();
+  if (statesRecord) {
+    track.codecConfiguration = {std::byte{1}, std::byte{2}};
+  }
+  return result;
+}
+
 NativePreviewBinding sourceBinding() {
   return {"/private/tmp/wam-preview-lane-fixture.mov", descriptor(), {}};
 }
@@ -1193,6 +1210,54 @@ void deterministicLatestWinsStressStaysBounded() {
          "stress stop must leave no active, pending, source, sink, or output work");
 }
 
+// The lane's codec admission, in both directions.
+//
+// Two gates have to agree for a record-less codec to be scrubbed at all: the
+// codec whitelist must name it, and the record requirement must be inverted for
+// it, because a nonempty configuration record is the exact shape it is required
+// NOT to present. Both halves are asserted, because admitting the codec while
+// still demanding a record leaves it with no preview.
+void recordLessCodecsAreAdmittedWithNoConfigurationRecord() {
+  auto port = std::make_shared<FakePreviewPort>(kPlaybackGeneration);
+  auto wakes = std::make_shared<WakeCounter>();
+  // MPEG-2 is record-less too and the lane admits it, but it reaches this
+  // player only through the transport-stream preview source, so it cannot be
+  // driven from this fixture's AVFoundation one.
+  for (const MediaCodec recordLess : {MediaCodec::ProRes, MediaCodec::Mjpeg}) {
+    const NativePreviewBinding admittedSource{
+        "/private/tmp/wam-preview-lane-fixture.mov",
+        recordLessDescriptor(recordLess, false),
+        {}};
+    auto admitted = NativePreviewFrameLaneTestAccess::create(
+        {admittedSource, protocol::Generation{kPlaybackGeneration},
+         protocol::Stamp{protocol::AttemptId{1}, protocol::Serial{1}}},
+        port, {wakes, wake, wakes.get()},
+        AVFoundationPreviewSource::create(
+            admittedSource, std::make_shared<FakeSourceBackend>()));
+    expect(admitted != nullptr,
+           "a record-less codec must configure a preview lane with an empty "
+           "configuration record");
+    if (admitted != nullptr) {
+      expect(admitted->stop(protocol::Generation{kPlaybackGeneration}) ==
+                 NativePreviewFrameCancelProgress::Done,
+             "the record-less lane must stop without output work");
+    }
+
+    const NativePreviewBinding refusedSource{
+        "/private/tmp/wam-preview-lane-fixture.mov",
+        recordLessDescriptor(recordLess, true),
+        {}};
+    expect(NativePreviewFrameLaneTestAccess::create(
+               {refusedSource, protocol::Generation{kPlaybackGeneration},
+                protocol::Stamp{protocol::AttemptId{1}, protocol::Serial{1}}},
+               port, {wakes, wake, wakes.get()},
+               AVFoundationPreviewSource::create(
+                   refusedSource, std::make_shared<FakeSourceBackend>())) ==
+               nullptr,
+           "a record-less codec presenting a record is still refused");
+  }
+}
+
 }  // namespace
 
 int main() {
@@ -1215,6 +1280,7 @@ int main() {
   malformedPreviewFrameTimingStillFailsClosed();
   unknownOutputEventsFailClosed();
   deterministicLatestWinsStressStaysBounded();
+  recordLessCodecsAreAdmittedWithNoConfigurationRecord();
   if (failures != 0) {
     return EXIT_FAILURE;
   }

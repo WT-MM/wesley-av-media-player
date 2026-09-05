@@ -752,6 +752,18 @@ double NativeAudioOutput::hostClockFrequency() noexcept {
   return 0.0;
 }
 
+// The configure() refusal epilogue, stated once. Everything past the first
+// irreversible AudioUnit call must give that instance back; the seventeen
+// refusals below each follow one such call, so the close is not optional and
+// not theirs to remember individually.
+NativeAudioOutputProgress NativeAudioOutput::failConfigure(
+    NativeAudioOutputFailure failure, OSStatus status,
+    NativeAudioOutputProgress progress) noexcept {
+  latchFailure(failure, status);
+  static_cast<void>(close());
+  return progress;
+}
+
 NativeAudioOutputProgress NativeAudioOutput::configure(
     NativeAudioOutputConfiguration configuration) noexcept {
   if (used_ || !claim_held_) {
@@ -775,10 +787,9 @@ NativeAudioOutputProgress NativeAudioOutput::configure(
           configuration.hostTicksPerSecond) &&
       admittedSampleRate(configuration.sampleRate);
   if (!validConfiguration) {
-    latchFailure(NativeAudioOutputFailure::InvalidConfiguration,
-                 kAudio_ParamError);
-    static_cast<void>(close());
-    return NativeAudioOutputProgress::Invalid;
+    return failConfigure(NativeAudioOutputFailure::InvalidConfiguration,
+                         kAudio_ParamError,
+                         NativeAudioOutputProgress::Invalid);
   }
 
   sample_rate_ = configuration.sampleRate;
@@ -795,10 +806,9 @@ NativeAudioOutputProgress NativeAudioOutput::configure(
   const double frequency = hostClockFrequency();
   if (!std::isfinite(frequency) || frequency <= 0.0 ||
       frequency != static_cast<double>(host_ticks_per_second_)) {
-    latchFailure(NativeAudioOutputFailure::InvalidConfiguration,
-                 kAudio_ParamError);
-    static_cast<void>(close());
-    return NativeAudioOutputProgress::Invalid;
+    return failConfigure(NativeAudioOutputFailure::InvalidConfiguration,
+                         kAudio_ParamError,
+                         NativeAudioOutputProgress::Invalid);
   }
 
   AudioComponentDescription description{};
@@ -807,17 +817,16 @@ NativeAudioOutputProgress NativeAudioOutput::configure(
   description.componentManufacturer = kAudioUnitManufacturer_Apple;
   const AudioComponent component = findComponent(description);
   if (component == nullptr) {
-    latchFailure(NativeAudioOutputFailure::ComponentUnavailable,
-                 kAudio_ParamError);
-    static_cast<void>(close());
-    return NativeAudioOutputProgress::Failed;
+    return failConfigure(NativeAudioOutputFailure::ComponentUnavailable,
+                         kAudio_ParamError,
+                         NativeAudioOutputProgress::Failed);
   }
 
   OSStatus status = newInstance(component, &unit_);
   if (status != noErr || unit_ == nullptr) {
-    latchFailure(NativeAudioOutputFailure::InstanceCreationFailed, status);
-    static_cast<void>(close());
-    return NativeAudioOutputProgress::Failed;
+    return failConfigure(NativeAudioOutputFailure::InstanceCreationFailed,
+                         status,
+                         NativeAudioOutputProgress::Failed);
   }
 
   AudioStreamBasicDescription deviceFormat{};
@@ -826,9 +835,9 @@ NativeAudioOutputProgress NativeAudioOutput::configure(
                        kAudioUnitScope_Output, 0, &deviceFormat,
                        &propertySize);
   if (status != noErr || propertySize != sizeof(deviceFormat)) {
-    latchFailure(NativeAudioOutputFailure::DeviceFormatQueryFailed, status);
-    static_cast<void>(close());
-    return NativeAudioOutputProgress::Failed;
+    return failConfigure(NativeAudioOutputFailure::DeviceFormatQueryFailed,
+                         status,
+                         NativeAudioOutputProgress::Failed);
   }
   // The device need not run at the stream rate; it only has to report a usable
   // rate. Latch it so every later query can prove the device did not change.
@@ -837,10 +846,9 @@ NativeAudioOutputProgress NativeAudioOutput::configure(
        kAdmissionDeviceInvalid) != 0 ||
       failure_.load(std::memory_order_acquire) !=
           static_cast<std::uint8_t>(NativeAudioOutputFailure::None)) {
-    latchFailure(NativeAudioOutputFailure::DeviceRateMismatch,
-                 kAudioUnitErr_FormatNotSupported);
-    static_cast<void>(close());
-    return NativeAudioOutputProgress::Failed;
+    return failConfigure(NativeAudioOutputFailure::DeviceRateMismatch,
+                         kAudioUnitErr_FormatNotSupported,
+                         NativeAudioOutputProgress::Failed);
   }
   device_rate_ = deviceFormat.mSampleRate;
 
@@ -861,11 +869,9 @@ NativeAudioOutputProgress NativeAudioOutput::configure(
     }
   }
   if (status != noErr) {
-    latchFailure(
-        NativeAudioOutputFailure::MaximumFramesConfigurationFailed,
-        status);
-    static_cast<void>(close());
-    return NativeAudioOutputProgress::Failed;
+    return failConfigure(
+        NativeAudioOutputFailure::MaximumFramesConfigurationFailed, status,
+        NativeAudioOutputProgress::Failed);
   }
 
   // Device IO buffer size. Unstated, the device simply keeps whatever the last
@@ -903,10 +909,10 @@ NativeAudioOutputProgress NativeAudioOutput::configure(
                           propertySize == sizeof(acceptedDeviceFrames) &&
                           acceptedDeviceFrames != 0;
     if (reported && acceptedDeviceFrames > kMaximumFramesPerSlice) {
-      latchFailure(NativeAudioOutputFailure::DeviceBufferFramesUnsupported,
-                   kAudioUnitErr_InvalidPropertyValue);
-      static_cast<void>(close());
-      return NativeAudioOutputProgress::Failed;
+      return failConfigure(
+          NativeAudioOutputFailure::DeviceBufferFramesUnsupported,
+          kAudioUnitErr_InvalidPropertyValue,
+          NativeAudioOutputProgress::Failed);
     }
     // A device that will not report its size is not a failure: render()
     // enforces the same bound on every individual callback regardless.
@@ -931,11 +937,9 @@ NativeAudioOutputProgress NativeAudioOutput::configure(
     }
   }
   if (status != noErr) {
-    latchFailure(
-        NativeAudioOutputFailure::ClientFormatConfigurationFailed,
-        status);
-    static_cast<void>(close());
-    return NativeAudioOutputProgress::Failed;
+    return failConfigure(
+        NativeAudioOutputFailure::ClientFormatConfigurationFailed, status,
+        NativeAudioOutputProgress::Failed);
   }
 
   if (!render_core_.activate(configuration.generation,
@@ -944,10 +948,9 @@ NativeAudioOutputProgress NativeAudioOutput::configure(
                              configuration.pausedClockPosition,
                              configuration.sampleRate,
                              configuration.declaredSilence)) {
-    latchFailure(NativeAudioOutputFailure::RenderCoreActivationFailed,
-                 kAudio_ParamError);
-    static_cast<void>(close());
-    return NativeAudioOutputProgress::Failed;
+    return failConfigure(NativeAudioOutputFailure::RenderCoreActivationFailed,
+                         kAudio_ParamError,
+                         NativeAudioOutputProgress::Failed);
   }
   activated_ = true;
   published_activated_.store(true, std::memory_order_release);
@@ -959,10 +962,9 @@ NativeAudioOutputProgress NativeAudioOutput::configure(
                        kAudioUnitScope_Input, 0, &callback,
                        sizeof(callback));
   if (status != noErr) {
-    latchFailure(NativeAudioOutputFailure::CallbackInstallationFailed,
-                 status);
-    static_cast<void>(close());
-    return NativeAudioOutputProgress::Failed;
+    return failConfigure(NativeAudioOutputFailure::CallbackInstallationFailed,
+                         status,
+                         NativeAudioOutputProgress::Failed);
   }
   callback_attached_ = true;
   callback_self_owner_ = shared_from_this();
@@ -974,11 +976,9 @@ NativeAudioOutputProgress NativeAudioOutput::configure(
 
   status = addDeviceListener();
   if (status != noErr) {
-    latchFailure(
-        NativeAudioOutputFailure::DeviceListenerInstallationFailed,
-        status);
-    static_cast<void>(close());
-    return NativeAudioOutputProgress::Failed;
+    return failConfigure(
+        NativeAudioOutputFailure::DeviceListenerInstallationFailed, status,
+        NativeAudioOutputProgress::Failed);
   }
   listener_attached_ = true;
 
@@ -988,28 +988,26 @@ NativeAudioOutputProgress NativeAudioOutput::configure(
                        kAudioUnitScope_Output, 0, &deviceFormat,
                        &propertySize);
   if (status != noErr || propertySize != sizeof(deviceFormat)) {
-    latchFailure(NativeAudioOutputFailure::DeviceFormatQueryFailed,
-                 status);
-    static_cast<void>(close());
-    return NativeAudioOutputProgress::Failed;
+    return failConfigure(NativeAudioOutputFailure::DeviceFormatQueryFailed,
+                         status,
+                         NativeAudioOutputProgress::Failed);
   }
   if (!validDeviceRate(deviceFormat) ||
       (admission_gate_.load(std::memory_order_acquire) &
        kAdmissionDeviceInvalid) != 0 ||
       failure_.load(std::memory_order_acquire) !=
           static_cast<std::uint8_t>(NativeAudioOutputFailure::None)) {
-    latchFailure(NativeAudioOutputFailure::DeviceRateMismatch,
-                 kAudioUnitErr_FormatNotSupported);
-    static_cast<void>(close());
-    return NativeAudioOutputProgress::Failed;
+    return failConfigure(NativeAudioOutputFailure::DeviceRateMismatch,
+                         kAudioUnitErr_FormatNotSupported,
+                         NativeAudioOutputProgress::Failed);
   }
 
   initialize_attempted_ = true;
   status = initializeUnit();
   if (status != noErr) {
-    latchFailure(NativeAudioOutputFailure::InitializationFailed, status);
-    static_cast<void>(close());
-    return NativeAudioOutputProgress::Failed;
+    return failConfigure(NativeAudioOutputFailure::InitializationFailed,
+                         status,
+                         NativeAudioOutputProgress::Failed);
   }
   initialized_ = true;
 
@@ -1019,20 +1017,18 @@ NativeAudioOutputProgress NativeAudioOutput::configure(
                        kAudioUnitScope_Output, 0, &deviceFormat,
                        &propertySize);
   if (status != noErr || propertySize != sizeof(deviceFormat)) {
-    latchFailure(NativeAudioOutputFailure::DeviceFormatQueryFailed,
-                 status);
-    static_cast<void>(close());
-    return NativeAudioOutputProgress::Failed;
+    return failConfigure(NativeAudioOutputFailure::DeviceFormatQueryFailed,
+                         status,
+                         NativeAudioOutputProgress::Failed);
   }
   if (!validDeviceRate(deviceFormat) ||
       (admission_gate_.load(std::memory_order_acquire) &
        kAdmissionDeviceInvalid) != 0 ||
       failure_.load(std::memory_order_acquire) !=
           static_cast<std::uint8_t>(NativeAudioOutputFailure::None)) {
-    latchFailure(NativeAudioOutputFailure::DeviceRateMismatch,
-                 kAudioUnitErr_FormatNotSupported);
-    static_cast<void>(close());
-    return NativeAudioOutputProgress::Failed;
+    return failConfigure(NativeAudioOutputFailure::DeviceRateMismatch,
+                         kAudioUnitErr_FormatNotSupported,
+                         NativeAudioOutputProgress::Failed);
   }
 
   configured_.store(true, std::memory_order_release);

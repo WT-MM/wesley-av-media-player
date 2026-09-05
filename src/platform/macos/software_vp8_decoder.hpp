@@ -126,8 +126,8 @@ inline constexpr std::size_t kSoftwareVp8PoolDepth = 6;
 // than the planar y420 CoreVideo also accepts (measured: an
 // AVSampleBufferDisplayLayer displays both correctly, and the 3-plane copy is
 // ~2.5 us/frame cheaper at 1080p) because NV12 is the only 4:2:0 layout every
-// one of WAM's presentation routes can sample -- the Metal and OpenGL items
-// and metal_layer_presenter all hard-assume two planes.
+// one of WAM's presentation routes can sample -- every route hard-assumes two
+// planes.
 class SoftwareVp8Decoder final : public VideoDecodeBackend {
 public:
   explicit SoftwareVp8Decoder(VideoToolboxDecoderOptions options = {});

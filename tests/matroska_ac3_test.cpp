@@ -9,18 +9,12 @@
 #include <span>
 #include <vector>
 
+#include "support/expect.hpp"
+
 namespace {
 
 using namespace wam::media::matroska;
 
-int failures = 0;
-
-void expect(bool condition, const char *message) {
-  if (!condition) {
-    std::cerr << "FAIL: " << message << '\n';
-    ++failures;
-  }
-}
 
 // The first syncframe of scratchpad/fixtures/sw/c_ac3.mkv, byte for byte as
 // ffmpeg muxed it: 48 kHz, 192 kbit/s (frmsizecod 20 -> 768 bytes), bsid 8,

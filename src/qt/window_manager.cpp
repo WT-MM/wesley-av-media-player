@@ -10,7 +10,7 @@
 #if defined(Q_OS_MACOS)
 #include "macos_window_chrome.hpp"
 #endif
-#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
 #include "platform/macos/native_concurrency_limits.hpp"
 #endif
 
@@ -32,7 +32,7 @@
 #include <chrono>
 #include <cmath>
 
-#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
 // The window factory's cap and the native resource envelope's cap are two
 // statements of one number. Assert they agree rather than letting a future
 // edit raise one and silently overrun the other: N windows each hold their own
@@ -361,15 +361,11 @@ void PlayerWindow::applyPendingResume() {
       manager_.requestCheckpoint();
     return;
   }
-  // Native seeking admits only an exactly representable target, and a
-  // remembered position is a decimal that has been through text. Floor it onto
-  // a binary grid, which every such value converts to exactly, so the restore
-  // seek is never rejected for its last fractional digits. A 1/64 s grid is
-  // finer than one video frame at any admitted rate.
-  constexpr double kResumeGrid = 64.0;
-  const double bounded = std::min(resume_position_, controller_->duration());
-  controller_->seekTo(
-      std::max(0.0, std::floor(bounded * kResumeGrid) / kResumeGrid));
+  // A remembered position is a decimal that has been through text, and native
+  // seeking admits only an exactly representable target. Snapping it is
+  // PlayerController::exactNativeSeekTarget's job and only its job; the guard
+  // above already holds this value strictly inside the duration.
+  controller_->seekTo(resume_position_);
 }
 
 void PlayerWindow::wireResumeTracking() {

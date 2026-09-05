@@ -9,18 +9,12 @@
 #include <span>
 #include <vector>
 
+#include "support/expect.hpp"
+
 namespace {
 
 using namespace wam::media::matroska;
 
-int failures = 0;
-
-void expect(bool condition, const char *message) {
-  if (!condition) {
-    std::cerr << "FAIL: " << message << '\n';
-    ++failures;
-  }
-}
 
 // The first frame header of scratchpad/fixtures/sw/c_mp3.mkv, byte for byte as
 // LAME produced it: MPEG-1 Layer III, 192 kbit/s, 44.1 kHz, no padding, joint

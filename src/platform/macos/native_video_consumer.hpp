@@ -158,7 +158,7 @@ struct NativeVideoConsumerQuarantineFacts {
 // decode, so the route is paced by the media clock rather than by the
 // display, and a compositor that stops presenting cannot pin the decoder.
 //
-// The consumer never wraps or invokes the legacy NativeVideoPipeline. The shared output reference is a scene-graph
+// The shared output reference is a scene-graph
 // lifetime requirement, not a fan-out seam: exactly one consumer may submit
 // through a tracked output instance. The process admits at most
 // kMaximumConcurrentPlayerWindows graphs at once -- one per open player window
