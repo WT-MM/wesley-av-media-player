@@ -1,4 +1,5 @@
 #include "native_layer_host_view.hpp"
+#include "video_quarter_turn.hpp"
 
 #import <AVFoundation/AVFoundation.h>
 #import <AppKit/AppKit.h>
@@ -158,11 +159,7 @@ int videoRotationForLayer(CALayer* layer) noexcept {
   if (![value isKindOfClass:[NSNumber class]]) {
     return 0;
   }
-  const int degrees = [(NSNumber*)value intValue];
-  const int normalized = ((degrees % 360) + 360) % 360;
-  return (normalized == 90 || normalized == 180 || normalized == 270)
-             ? normalized
-             : 0;
+  return normalizedQuarterTurn([(NSNumber*)value intValue]).value_or(0);
 }
 
 // Place the video layer inside its container for the current rotation.
@@ -259,7 +256,6 @@ AVSampleBufferDisplayLayer* findDisplayLayer(NSView* view) {
 
 }  // namespace
 
-
 void setNativeLayerVividBoost(void* nsWindow, double boost) noexcept {
   if (nsWindow == nullptr || ![NSThread isMainThread]) {
     return;
@@ -341,9 +337,8 @@ bool setNativeLayerPresentationRotation(void* displayLayer,
   if (displayLayer == nullptr) {
     return false;
   }
-  const int normalized = ((degrees % 360) + 360) % 360;
-  if (normalized != 0 && normalized != 90 && normalized != 180 &&
-      normalized != 270) {
+  const std::optional<int> normalized = normalizedQuarterTurn(degrees);
+  if (!normalized) {
     return false;
   }
   @autoreleasepool {
@@ -353,7 +348,7 @@ bool setNativeLayerPresentationRotation(void* displayLayer,
     }
     CALayer* layer = static_cast<CALayer*>(candidate);
     objc_setAssociatedObject(layer, videoRotationAssociationKey(),
-                             @(normalized), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+                             @(*normalized), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     // This is called from the SESSION WORKER thread -- the consumer settles
     // rotation while configuring a generation, which is nowhere near the GUI
     // thread -- so the CoreAnimation half hops rather than refusing.

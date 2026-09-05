@@ -1,5 +1,6 @@
 #pragma once
 
+#include "media/live_caption_feed.hpp"
 #include "media/matroska_subtitles.hpp"
 #include "media/mp4_subtitles.hpp"
 #include "media/subtitle_text.hpp"
@@ -70,6 +71,10 @@ public:
     // a text source or a bitmap source; the two never both hold.
     media::subtitles::BitmapCodec bitmapCodec{
         media::subtitles::BitmapCodec::Unknown};
+    // The closed captions read live out of the H.264 stream (CEA-608 in
+    // A/53 SEI). Not a track and not a file: the cues come from the live
+    // caption feed as the pictures are presented.
+    bool closedCaptions{false};
     std::filesystem::path filePath;
 
     [[nodiscard]] bool isBitmap() const noexcept {
@@ -95,6 +100,18 @@ public:
   // added. `mpvSid` is 0 on the native route.
   int addFileSource(const std::filesystem::path &path, Origin origin,
                     const QString &label, std::int64_t mpvSid);
+
+  // The live feed the "Closed Captions" source reads from. Set once by the
+  // owning controller; the source itself is added only once the feed has
+  // seen a caption byte, so a stream without captions lists nothing.
+  void setLiveCaptionFeed(
+      std::shared_ptr<media::captions::LiveCaptionFeed> feed) noexcept {
+    caption_feed_ = std::move(feed);
+  }
+  [[nodiscard]] bool hasClosedCaptionsSource() const noexcept;
+  // Appends the source (an embedded one, so a rebuild of the embedded list
+  // drops it and the controller re-adds it while captions are still seen).
+  void addClosedCaptionsSource();
 
   [[nodiscard]] const std::vector<Source> &sources() const noexcept {
     return sources_;
@@ -146,7 +163,11 @@ public:
     hint_ = -1;
     cached_text_.clear();
   }
-  [[nodiscard]] bool hasCues() const noexcept { return !cues_.empty(); }
+  // True when there is something to look up: loaded cues, or the live
+  // caption feed behind a selected Closed Captions source.
+  [[nodiscard]] bool hasCues() const noexcept {
+    return !cues_.empty() || activeIsClosedCaptions();
+  }
 
   // ---------------------------------------------------------------------
   // Bitmap cue lane (PGS, VobSub). Same shape as the text lane above: loaded
@@ -201,7 +222,10 @@ private:
   int last_selected_id_{kOffId};
   int next_id_{1};
 
+  [[nodiscard]] bool activeIsClosedCaptions() const noexcept;
+
   std::vector<media::subtitles::Cue> cues_;
+  std::shared_ptr<media::captions::LiveCaptionFeed> caption_feed_;
   // Index of the cue last resolved, and its text. The pair is the whole
   // steady-state cost of the lane: a hit is one integer compare and an
   // implicitly-shared QString copy, with no allocation and no UTF-8 decode.

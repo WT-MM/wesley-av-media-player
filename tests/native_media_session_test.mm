@@ -82,6 +82,9 @@ struct GraphState {
   std::atomic<std::uint64_t> videoFlushes{0};
   std::atomic<std::uint64_t> audioFlushes{0};
   std::atomic<bool> quiesceFirstVideoFlush{false};
+  // The preview lane answers its terminal stop with Failed, as a lane that has
+  // latched a failure does.
+  std::atomic<bool> previewStopFails{false};
   std::atomic<bool> quiesceFirstPreview{false};
   std::atomic<bool> previewQuiesceEntered{false};
   std::atomic<bool> releasePreviewQuiesce{false};
@@ -698,7 +701,9 @@ NativePreviewFrameCancelProgress stopPreview(
   state.previewCommand.reset();
   state.previewPresented.reset();
   state.previewStops.fetch_add(1, std::memory_order_relaxed);
-  return NativePreviewFrameCancelProgress::Done;
+  return state.previewStopFails.load(std::memory_order_acquire)
+             ? NativePreviewFrameCancelProgress::Failed
+             : NativePreviewFrameCancelProgress::Done;
 }
 
 NativeAudioSessionProgress audioStart(void* context) noexcept {
@@ -1801,6 +1806,55 @@ void testCommitSeekPendingReadyAndStopHighWater() {
          "Stop strictly above committed target accepted");
   static_cast<void>(waitFact<protocol::Stopped>(*session,
                                                  "commit Stop retires"));
+}
+
+// A preview lane that has latched a failure answers its terminal stop with
+// Failed. That lane holds nothing the commit needs -- the commit flush IS the
+// recovery -- so the commit must proceed to readiness rather than publish a
+// CommitSeek failure and leave the transport dead.
+void testCommitSeekProceedsPastFailedPreviewLane() {
+  auto state = std::make_shared<GraphState>();
+  state->descriptor = descriptor();
+  state->blockCapacity.store(true);
+  state->quiesceFirstVideoFlush.store(true);
+  state->previewStopFails.store(true);
+  std::shared_ptr<NativeMediaSessionWake> wake;
+  auto session = sessionFor(&state, &wake);
+  expect(prepare(*session, prepareCommand()) ==
+             NativeMediaSessionCommandStatus::Accepted,
+         "failed-lane commit Prepare accepted");
+  static_cast<void>(waitFact<protocol::Prepared>(
+      *session, "failed-lane commit Prepared"));
+  expect(session->start({{{1}, {2}}, {7}, true}) ==
+             NativeMediaSessionCommandStatus::Accepted,
+         "failed-lane commit Start accepted");
+  static_cast<void>(waitFact<protocol::Started>(
+      *session, "failed-lane commit Started"));
+
+  const auto target = session->preflightCommitTarget(2.0);
+  expect(target.has_value(), "failed-lane commit target preflights");
+  const protocol::CommitSeek commit = commitCommand();
+  state->beginCommitLifecycle(commit.targetGeneration.value);
+  expect(session->commitSeek(commit, *target) ==
+             NativeMediaSessionCommandStatus::Accepted,
+         "failed-lane CommitSeek accepted");
+  waitUntil([&] { return state->sourceSeeks.load() == 1; },
+            "a failed preview lane does not veto the source seek");
+  expect(state->previewStops.load(std::memory_order_acquire) != 0,
+         "the terminal stop was asked of the failed lane");
+  wake->video().signal(wake->video().context);
+  publishCommitDraw(*state, 8, 1, 2.0);
+  wake->video().signal(wake->video().context);
+  const protocol::CommitReady ready = waitFact<protocol::CommitReady>(
+      *session, "commit reaches readiness past a failed preview lane");
+  expect(protocol::commitReadyMatches(commit, target->drawBaseline(), ready) &&
+             session->facts().generation == 8,
+         "readiness advances the generation past a failed preview lane");
+  expect(session->stop({{{1}, {5}}, {9}}) ==
+             NativeMediaSessionCommandStatus::Accepted,
+         "Stop after a failed-lane commit accepted");
+  static_cast<void>(waitFact<protocol::Stopped>(
+      *session, "Stop after a failed-lane commit retires"));
 }
 
 void testCommitSeekAdmittedDuringStarting() {
@@ -3099,6 +3153,7 @@ int main() {
   testPreviewFailureNamesLatestPublicReplacement();
   testCommitBurnsQueuedPreviewFailure();
   testCommitSeekPendingReadyAndStopHighWater();
+  testCommitSeekProceedsPastFailedPreviewLane();
   testCommitSeekAdmittedDuringStarting();
   testExactTimeAndSequencing();
   testUnobservedDirectRetireBarrier();

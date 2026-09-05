@@ -28,6 +28,28 @@ struct FrameTiming {
   bool keyFrame{false};
 };
 
+// Whether a decoded frame can be presented at all: exact timing, a positive
+// duration, and an END after the movie origin. Where the frame BEGINS is not
+// an output's business. An ISO-BMFF head trim (elst media_time > 0) makes the
+// reader walk back to a random-access point, so the picture covering movie
+// time zero is stated at a negative stamp whenever the trim does not land on a
+// frame boundary, and the consumer submits that frame on purpose because it
+// retires by the presentation floor rather than by sign. Every tracked output
+// asks this one question, so the rule cannot drift between routes.
+[[nodiscard]] inline bool frameTimingPresentable(
+    const FrameTiming &timing) noexcept {
+  if (timing.generation == 0 || !CMTIME_IS_NUMERIC(timing.presentationTime) ||
+      !CMTIME_IS_NUMERIC(timing.duration) ||
+      CMTimeCompare(timing.duration, kCMTimeZero) <= 0) {
+    return false;
+  }
+  const CMTime frameEnd =
+      CMTimeAdd(timing.presentationTime, timing.duration);
+  return CMTIME_IS_NUMERIC(frameEnd) &&
+         (frameEnd.flags & kCMTimeFlags_HasBeenRounded) == 0 &&
+         CMTimeCompare(frameEnd, kCMTimeZero) > 0;
+}
+
 // A cheap, reference-counted lease on a VideoToolbox/CoreVideo output frame.
 // CPU-backed buffers retain the borrowed CoreVideo reference directly.
 // IOSurface-backed buffers are admitted through NativeSurfaceBudget before

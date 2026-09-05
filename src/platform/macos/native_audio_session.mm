@@ -5,6 +5,7 @@
 #include "media/audio_downmix.hpp"
 #include "media/matroska_vorbis.hpp"
 #include "native_audio_channel_map.hpp"
+#include "native_audio_sample_rates.hpp"
 #include "native_concurrency_limits.hpp"
 
 #import <AudioToolbox/AudioToolbox.h>
@@ -179,18 +180,8 @@ void assignError(std::string* error, const char* message) noexcept {
 
 [[nodiscard]] bool supportedRate(double rate,
                                  std::uint32_t* exactRate) noexcept {
-  constexpr std::array<std::uint32_t, 4> supported{
-      44'100, 48'000, 96'000, 192'000};
-  if (!std::isfinite(rate) || exactRate == nullptr) {
-    return false;
-  }
-  for (const std::uint32_t candidate : supported) {
-    if (rate == static_cast<double>(candidate)) {
-      *exactRate = candidate;
-      return true;
-    }
-  }
-  return false;
+  return exactRate != nullptr &&
+         nativeAudioSampleRateSupported(rate, exactRate);
 }
 
 [[nodiscard]] bool supportedCodec(const media::MediaTrackDescriptor& track)

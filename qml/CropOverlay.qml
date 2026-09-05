@@ -41,16 +41,25 @@ Item {
     readonly property real minimumFraction: 0.02
 
     // ---------------------------------------------------------------------
-    // The letterboxed video rectangle inside this item. The video item fills
-    // the window and centres the picture inside itself, so the crop surface
-    // has to do the same arithmetic or the rectangle would be drawn against
-    // the window instead of against the image.
+    // The item the picture is drawn in. This overlay lives in the safe-area
+    // `stage`, while the video item runs the full window under the
+    // transparent titlebar, so the picture's box is MEASURED from that item
+    // rather than assumed to be this one: anchoring to the stage put the
+    // rectangle a titlebar's inset off the picture.
+    property Item videoItem: null
+    readonly property rect videoBox: videoItem
+        ? overlay.mapFromItem(videoItem, 0, 0, videoItem.width, videoItem.height)
+        : Qt.rect(0, 0, width, height)
+
+    // The letterboxed video rectangle inside that box. The video item centres
+    // the picture inside itself, so the crop surface repeats that arithmetic
+    // or the rectangle would be drawn against the box instead of the image.
     readonly property real sourceAspect: sourceSize.height > 0 ? sourceSize.width / sourceSize.height : 0
-    readonly property real boxAspect: height > 0 ? width / height : 0
-    readonly property real videoWidth: sourceAspect <= 0 ? width : (sourceAspect > boxAspect ? width : height * sourceAspect)
-    readonly property real videoHeight: sourceAspect <= 0 ? height : (sourceAspect > boxAspect ? width / sourceAspect : height)
-    readonly property real videoX: (width - videoWidth) / 2
-    readonly property real videoY: (height - videoHeight) / 2
+    readonly property real boxAspect: videoBox.height > 0 ? videoBox.width / videoBox.height : 0
+    readonly property real videoWidth: sourceAspect <= 0 ? videoBox.width : (sourceAspect > boxAspect ? videoBox.width : videoBox.height * sourceAspect)
+    readonly property real videoHeight: sourceAspect <= 0 ? videoBox.height : (sourceAspect > boxAspect ? videoBox.width / sourceAspect : videoBox.height)
+    readonly property real videoX: videoBox.x + (videoBox.width - videoWidth) / 2
+    readonly property real videoY: videoBox.y + (videoBox.height - videoHeight) / 2
 
     // The live rectangle in overlay pixels, derived from the controller. The
     // controller is the single source of truth: a drag writes through to it

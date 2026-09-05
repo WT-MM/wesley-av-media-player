@@ -2,6 +2,7 @@
 
 #include "caption_service.hpp"
 #include "jobs.hpp"
+#include "media/live_caption_feed.hpp"
 #include "playback_policy.hpp"
 #include "scroll_gesture.hpp"
 
@@ -355,6 +356,12 @@ public:
   // Normalized source coordinates; the rectangle is clamped into the frame
   // and to a workable minimum size on the way in.
   Q_INVOKABLE void setCrop(double x, double y, double width, double height);
+
+  // The live closed-caption tap this window's native session feeds.
+  [[nodiscard]] const std::shared_ptr<media::captions::LiveCaptionFeed> &
+  captionFeed() const noexcept {
+    return caption_feed_;
+  }
   Q_INVOKABLE void resetCrop();
   Q_INVOKABLE void exportSelection();
   Q_INVOKABLE void exportSelectionTo(const QUrl &destination);
@@ -899,6 +906,10 @@ private:
   ::wam::BackgroundJob export_job_;
   ::wam::CaptionService caption_service_;
   std::unique_ptr<SubtitleSources> subtitles_;
+  // The live closed-caption tap the native video consumer feeds for this
+  // window. Owned here so it outlives any one session; handed to the session
+  // at creation.
+  std::shared_ptr<media::captions::LiveCaptionFeed> caption_feed_;
   QString subtitle_text_;
   QString subtitle_bitmap_source_;
   double subtitle_bitmap_x_{0.0};

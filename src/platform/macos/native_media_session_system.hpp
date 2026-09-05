@@ -25,6 +25,8 @@ createNativeMediaSessionSystem(
     NativeMediaSessionSourceBinding binding,
     std::shared_ptr<void> externalLifetime,
     QtGlVideoItem* videoItem,
-    std::string* error = nullptr) noexcept;
+    std::string* error = nullptr,
+    std::shared_ptr<media::captions::LiveCaptionFeed> captionFeed =
+        nullptr) noexcept;
 
 }  // namespace wam::macos

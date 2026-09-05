@@ -1874,6 +1874,7 @@ ApplicationWindow {
                 player: root.controller
                 sourceSize: root.controller.videoDisplaySize
                 lockedAspect: root.cropAspect
+                videoItem: video
             }
         }
 

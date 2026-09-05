@@ -3,6 +3,7 @@
 #include "avfoundation_media_source.hpp"
 #include "matroska_media_source.hpp"
 #include "mpegts_media_source.hpp"
+#include "native_audio_sample_rates.hpp"
 #include "native_silent_timebase.hpp"
 #include "native_video_limits.hpp"
 
@@ -199,6 +200,43 @@ exactFrameTime(CMTime time) noexcept {
   return media::MediaTime{time.value, time.timescale};
 }
 
+// The interval a drawn frame is PRESENTED over, in seconds. A frame that
+// straddles the movie origin (a head trim off the frame grid) is presented
+// from the origin by every tracked output, so its proof states that interval
+// -- start at zero, the frame's own end kept exactly -- rather than the
+// negative stamp the decoder reported.
+[[nodiscard]] bool presentedFrameInterval(const FrameTiming& timing,
+                                          double* startSeconds,
+                                          double* durationSeconds) noexcept {
+  const auto presentation = exactFrameTime(timing.presentationTime);
+  const auto duration = exactFrameTime(timing.duration);
+  if (!presentation.has_value() || !duration.has_value() ||
+      startSeconds == nullptr || durationSeconds == nullptr) {
+    return false;
+  }
+  if (presentation->value >= 0) {
+    const auto start = media::mediaTimeSeconds(*presentation);
+    const auto length = media::mediaTimeSeconds(*duration);
+    if (!start.has_value() || !length.has_value()) {
+      return false;
+    }
+    *startSeconds = *start;
+    *durationSeconds = *length;
+    return true;
+  }
+  const auto end =
+      exactFrameTime(CMTimeAdd(timing.presentationTime, timing.duration));
+  const auto endSeconds =
+      end.has_value() && end->value > 0 ? media::mediaTimeSeconds(*end)
+                                        : std::optional<double>{};
+  if (!endSeconds.has_value()) {
+    return false;
+  }
+  *startSeconds = 0.0;
+  *durationSeconds = *endSeconds;
+  return true;
+}
+
 [[nodiscard]] const media::MediaTrackDescriptor* selectedTrack(
     const media::MediaSourceDescriptor& descriptor,
     std::optional<media::MediaTrackId> selected) noexcept {
@@ -293,16 +331,30 @@ class NativeV1AdmissionSource final : public media::MediaSource {
       MediaGeneration generation) override {
     media::MediaSourceOpenOutcome result =
         source_->openLocalFile(path, options, generation);
-    if (result.status == media::MediaSourceOpenStatus::Ready &&
-        (result.descriptor == nullptr ||
-         !nativeV1Descriptor(*result.descriptor))) {
+    if (result.status != media::MediaSourceOpenStatus::Ready) {
+      return result;
+    }
+    const char* refusal = nullptr;
+    if (result.descriptor == nullptr ||
+        !nativeV1Descriptor(*result.descriptor)) {
+      refusal = "native v1 requires at least one selected lane, and when "
+                "the source carries both, an audio duration that covers "
+                "the video duration apart from a bounded "
+                "container-artefact shortfall";
+    } else if (const media::MediaTrackDescriptor* audio = selectedTrack(
+                   *result.descriptor, result.descriptor->selectedAudio);
+               audio != nullptr && audio->audio &&
+               !nativeAudioSampleRateSupported(audio->audio->sampleRate)) {
+      // The audio session would refuse this rate at configure, after the
+      // generation is armed; refusing it here keeps it an admission verdict.
+      refusal = "selected audio sample rate is outside the native audio "
+                "envelope";
+    }
+    if (refusal != nullptr) {
       source_->close();
       result.status = media::MediaSourceOpenStatus::Unsupported;
       result.descriptor.reset();
-      result.error = "native v1 requires at least one selected lane, and when "
-                     "the source carries both, an audio duration that covers "
-                     "the video duration apart from a bounded "
-                     "container-artefact shortfall";
+      result.error = refusal;
     }
     return result;
   }
@@ -1292,7 +1344,7 @@ struct NativeMediaSession::Impl final {
           true};
       video = NativeVideoConsumer::create(
           childLifetime, clock, dependencies.videoOutput,
-          dependencies.wake->video());
+          dependencies.wake->video(), nullptr, dependencies.captionFeed);
     } catch (...) {
       return false;
     }
@@ -1512,7 +1564,14 @@ struct NativeMediaSession::Impl final {
     if (progress == NativePreviewFrameCancelProgress::Quiescing) {
       return progress;
     }
-    if (progress != NativePreviewFrameCancelProgress::Done) {
+    // A lane that has latched a failure cannot be stopped through its own
+    // protocol, but it holds nothing the terminal command needs: the commit
+    // flush and the exact stop ARE the recovery from a preview failure, and
+    // the lane's destructor retires its graph. A thumbnail lane must never
+    // veto the transport, so a failed lane is torn down here and the terminal
+    // proceeds exactly as if the stop had completed.
+    if (progress != NativePreviewFrameCancelProgress::Done &&
+        progress != NativePreviewFrameCancelProgress::Failed) {
       return progress;
     }
     previewActivity = false;
@@ -2859,19 +2918,15 @@ if (result != NativeAudioSessionProgress::Done) {
         event->timing.generation != commitCommand.targetGeneration.value) {
       return;
     }
-    const auto presentation = exactFrameTime(event->timing.presentationTime);
-    const auto duration = exactFrameTime(event->timing.duration);
-    if (!presentation.has_value() || !duration.has_value()) {
-      return;
-    }
-    const auto presentationSeconds = media::mediaTimeSeconds(*presentation);
-    const auto durationSeconds = media::mediaTimeSeconds(*duration);
-    if (!presentationSeconds.has_value() || !durationSeconds.has_value()) {
+    double presentationSeconds = 0.0;
+    double durationSeconds = 0.0;
+    if (!presentedFrameInterval(event->timing, &presentationSeconds,
+                                &durationSeconds)) {
       return;
     }
     const protocol::VideoDrawProof proof{
         commitCommand.stamp, commitCommand.targetGeneration,
-        event->eventSequence, *presentationSeconds, *durationSeconds};
+        event->eventSequence, presentationSeconds, durationSeconds};
     if (!protocol::valid(proof) ||
         !protocol::frameCoversPosition(proof, commitCommand.targetSeconds)) {
       return;
@@ -2919,16 +2974,11 @@ if (result != NativeAudioSessionProgress::Done) {
         return;
       }
     }
-    const auto presentation = exactFrameTime(event->timing.presentationTime);
-    const auto duration = exactFrameTime(event->timing.duration);
-    if (!presentation.has_value() || !duration.has_value() ||
-        event->timing.generation != activeGeneration) {
-      retainedVideoEvent.reset();
-      return;
-    }
-    const auto presentationSeconds = media::mediaTimeSeconds(*presentation);
-    const auto durationSeconds = media::mediaTimeSeconds(*duration);
-    if (!presentationSeconds.has_value() || !durationSeconds.has_value()) {
+    double presentationSeconds = 0.0;
+    double durationSeconds = 0.0;
+    if (event->timing.generation != activeGeneration ||
+        !presentedFrameInterval(event->timing, &presentationSeconds,
+                                &durationSeconds)) {
       retainedVideoEvent.reset();
       return;
     }
@@ -2936,8 +2986,8 @@ if (result != NativeAudioSessionProgress::Done) {
         appliedRunStamp,
         protocol::Generation{activeGeneration},
         event->eventSequence,
-        *presentationSeconds,
-        *durationSeconds};
+        presentationSeconds,
+        durationSeconds};
     if (!protocol::valid(proof)) {
       retainedVideoEvent.reset();
       return;
