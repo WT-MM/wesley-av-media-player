@@ -2375,6 +2375,7 @@ def _parse_framed_wam_native_telemetry(raw: str) -> dict[str, Any]:
         chain_hasher = hashlib.sha256()
         chain_hasher.update(chain)
         chain_hasher.update(payload_digest)
+        # Field order mirrors nextStreamChain() in src/qt/native_benchmark_telemetry.cpp.
         chain_hasher.update(struct.pack(">QQQQ", expected_batch, count, first, last))
         next_chain = chain_hasher.digest()
         commit_integers_are_exact = all(

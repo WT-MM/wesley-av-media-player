@@ -5,6 +5,7 @@
 #include "media/audio_codec_timing.hpp"
 #include "media/matroska_ac3.hpp"
 #include "media/matroska_mpeg_audio.hpp"
+#include "media/media_codec_facts.hpp"
 
 #import <AudioToolbox/AudioToolbox.h>
 #import <CoreMedia/CoreMedia.h>
@@ -74,21 +75,13 @@ constexpr std::int64_t kMaximumAudioFramesPerPacket{65'536};
 // refused with `audio session: Converter` (measured: AC-3 reported
 // first=256 floor=0 before this existed).
 //
-// The values are the shared constants rather than copies, so a future
-// measurement that moves one moves both sides of the proof together.
+// The value is the shared codec fact rather than a copy, so a future
+// measurement that moves one moves every side of the proof together. AAC
+// swallows nothing -- measured deficit zero over whole tracks -- and its
+// encoder priming is real audio at the head of the elementary stream that the
+// PES timestamps already describe.
 [[nodiscard]] std::int64_t audioDecoderLeadInFrames(MediaCodec codec) noexcept {
-  switch (codec) {
-  case MediaCodec::Ac3:
-  case MediaCodec::Eac3:
-    return media::matroska::kAc3DecoderDelayFrames;
-  case MediaCodec::Mp3:
-    return media::matroska::kMpegLayer3DecoderDelayFrames;
-  // AAC swallows nothing -- measured deficit zero over whole tracks -- and its
-  // encoder priming is real audio at the head of the elementary stream that
-  // the PES timestamps already describe.
-  default:
-    return 0;
-  }
+  return media::mediaCodecFacts(codec).decoderLeadInFrames;
 }
 
 void assignError(std::string* error, const char* message) {

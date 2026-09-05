@@ -5,6 +5,9 @@
 // route must answer the sync-start window question identically.
 #include "platform/macos/avfoundation_media_source.hpp"
 
+#include "media/media_codec_facts.hpp"
+#include "core_media_codec_facts.hpp"
+
 #import <AVFoundation/AVFoundation.h>
 
 #include <algorithm>
@@ -144,11 +147,18 @@ void assignError(std::string* error, const char* message) {
     }
     const MediaTrackDescriptor* track = media::findMediaTrack(
         *binding.descriptor, *binding.descriptor->selectedVideo);
-    return track != nullptr && track->kind == MediaTrackKind::Video &&
-           track->video.has_value() &&
-           (track->codec == MediaCodec::H264 ||
-            track->codec == MediaCodec::Hevc) &&
-           !track->codecConfiguration.empty();
+    // Two facts, both shared with the preview lane so neither can admit a
+    // codec the other refuses: the lane must be able to decode it, and the
+    // record requirement is INVERTED for the codecs that carry none, whose only
+    // correct descriptor is an empty record.
+    if (track == nullptr || track->kind != MediaTrackKind::Video ||
+        !track->video.has_value()) {
+      return false;
+    }
+    const media::MediaCodecFacts& facts = media::mediaCodecFacts(track->codec);
+    return facts.avfoundationVideoAdmitted && facts.previewScrubAdmitted &&
+           facts.carriesConfigurationRecord !=
+               track->codecConfiguration.empty();
   } catch (...) {
     return false;
   }
@@ -293,8 +303,13 @@ class PreviewSampleStorage final : public MediaPayloadStorage {
       CFGetTypeID(atomsValue) != CFDictionaryGetTypeID()) {
     return nullptr;
   }
-  CFStringRef key = codec == MediaCodec::H264 ? CFSTR("avcC")
-                                               : CFSTR("hvcC");
+  // The atom NAME is the shared codec fact rather than an H.264-or-HEVC
+  // ternary: such a ternary reads an hvcC for every codec that is not H.264,
+  // which borrows the wrong atom for any codec admitted beside those two.
+  const CFStringRef key = coreMediaConfigurationAtomName(codec);
+  if (key == nullptr) {
+    return nullptr;
+  }
   CFTypeRef atom = CFDictionaryGetValue(
       static_cast<CFDictionaryRef>(atomsValue), key);
   if (atom == nullptr || CFGetTypeID(atom) != CFDataGetTypeID()) {
@@ -326,10 +341,11 @@ class PreviewSampleStorage final : public MediaPayloadStorage {
       CMFormatDescriptionGetMediaType(format) != kCMMediaType_Video) {
     return false;
   }
-  const CMVideoCodecType expectedCodec =
-      track.codec == MediaCodec::H264 ? kCMVideoCodecType_H264
-                                      : kCMVideoCodecType_HEVC;
-  if (CMFormatDescriptionGetMediaSubType(format) != expectedCodec) {
+  // The live subtype has to name the SAME codec, not the same four-character
+  // code: ProRes is one enumerator over four interchangeable 422-family codes,
+  // so an HQ file's 'apch' description must still match an 'apcn' track.
+  if (media::mediaCodecForCoreMediaType(static_cast<std::uint32_t>(
+          CMFormatDescriptionGetMediaSubType(format))) != track.codec) {
     return false;
   }
   const CMVideoDimensions dimensions = CMVideoFormatDescriptionGetDimensions(
@@ -340,6 +356,13 @@ class PreviewSampleStorage final : public MediaPayloadStorage {
       static_cast<std::uint32_t>(dimensions.height) !=
           track.video->codedHeight) {
     return false;
+  }
+  // A record-less codec has no atom to borrow or compare, so the record
+  // equality below is vacuous for it and the codec-plus-dimensions comparison
+  // is the whole check. Its descriptor's record is empty by contract, proven at
+  // admission by supportedPreviewTrack.
+  if (!media::mediaCodecFacts(track.codec).carriesConfigurationRecord) {
+    return track.codecConfiguration.empty();
   }
   CFDataRef atom = configurationAtom(format, track.codec);
   if (atom == nullptr || CFDataGetLength(atom) < 0 ||

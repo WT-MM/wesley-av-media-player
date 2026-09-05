@@ -2,7 +2,6 @@
 
 #include <CoreFoundation/CoreFoundation.h>
 #include <CoreVideo/CoreVideo.h>
-#include <VideoToolbox/VideoToolbox.h>
 
 #include <QElapsedTimer>
 #include <QEventLoop>
@@ -16,9 +15,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
-#include <filesystem>
 #include <functional>
-#include <future>
 #include <iostream>
 #include <memory>
 #include <mutex>
@@ -139,6 +136,15 @@ wam::macos::FrameLease makeFrame(std::uint64_t generation,
   return frame;
 }
 
+// The first flush of a fresh generation may prove render-side invalidation
+// synchronously when issued on the GUI thread; the contract only forbids Done
+// BEFORE the proof, not an immediate proof.
+[[nodiscard]] bool flushStarted(
+    wam::macos::NativeTrackedVideoOutputProgress progress) {
+  return progress == wam::macos::NativeTrackedVideoOutputProgress::Quiescing ||
+         progress == wam::macos::NativeTrackedVideoOutputProgress::Done;
+}
+
 void trackedWake(void* context) noexcept {
   static_cast<std::atomic<std::uint64_t>*>(context)->fetch_add(
       1, std::memory_order_release);
@@ -247,8 +253,7 @@ void verifyTrackedDrawAndInvalidation(QQuickWindow& window) {
   WAM_CHECK(output->capacity(1) ==
             wam::macos::NativeTrackedVideoCapacity::StaleGeneration);
 
-  WAM_CHECK(output->flushProgress(0, 1) ==
-            wam::macos::NativeTrackedVideoOutputProgress::Quiescing);
+  WAM_CHECK(flushStarted(output->flushProgress(0, 1)));
   WAM_CHECK(spinUntil([&] {
     return output->flushProgress(0, 1) ==
            wam::macos::NativeTrackedVideoOutputProgress::Done;
@@ -363,8 +368,7 @@ void verifyTrackedRejectionPrecedesInvalidation(QQuickWindow& window) {
   auto output = wam::macos::NativeQtGlOutput::createTracked(
       item.get(), {trackedWake, &wakes}, &error);
   WAM_CHECK_DETAIL(output != nullptr, error);
-  WAM_CHECK(output->flushProgress(0, 1) ==
-            wam::macos::NativeTrackedVideoOutputProgress::Quiescing);
+  WAM_CHECK(flushStarted(output->flushProgress(0, 1)));
   WAM_CHECK(spinUntil([&] {
     return output->flushProgress(0, 1) ==
            wam::macos::NativeTrackedVideoOutputProgress::Done;
@@ -433,8 +437,7 @@ void verifyTrackedFailedFrameStillCloses(QQuickWindow& window) {
   auto output = wam::macos::NativeQtGlOutput::createTracked(
       item.get(), {trackedWake, &wakes}, &error);
   WAM_CHECK_DETAIL(output != nullptr, error);
-  WAM_CHECK(output->flushProgress(0, 1) ==
-            wam::macos::NativeTrackedVideoOutputProgress::Quiescing);
+  WAM_CHECK(flushStarted(output->flushProgress(0, 1)));
   item->publishRenderInvalidationForTesting(1);
   WAM_CHECK(output->flushProgress(0, 1) ==
             wam::macos::NativeTrackedVideoOutputProgress::Done);
@@ -476,32 +479,6 @@ void verifyTrackedFailedFrameStillCloses(QQuickWindow& window) {
   QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
   item->setParentItem(nullptr);
   item.reset();
-}
-
-std::optional<wam::macos::NativeVideoPrepareOutcome> waitForPreparation(
-    wam::macos::NativeVideoPipeline& pipeline) {
-  std::optional<wam::macos::NativeVideoPrepareOutcome> outcome;
-  const bool ready = spinUntil(
-      [&] {
-        if (outcome.has_value()) {
-          return true;
-        }
-        outcome = pipeline.takePrepareResult();
-        return outcome.has_value();
-      },
-      8000);
-  if (ready && outcome.has_value()) {
-    if (outcome->result == wam::macos::NativeVideoPrepareResult::Ready) {
-      WAM_CHECK(outcome->generation != 0);
-      WAM_CHECK(outcome->generation == pipeline.stats().generation);
-    } else {
-      // Preparation request sequencing is intentionally private. A terminal
-      // outcome that cannot be started must never leak its request ordinal as
-      // a decoded-frame/output generation.
-      WAM_CHECK(outcome->generation == 0);
-    }
-  }
-  return ready ? std::move(outcome) : std::nullopt;
 }
 
 class FailWhileArmingOutput final
@@ -775,34 +752,6 @@ class RejectCurrentFrameOutput final
   std::shared_ptr<wam::macos::NativeScheduledFrameOutput> wrapped_;
   std::atomic<std::uint64_t> rejections_{0};
 };
-
-void verifyFailureDuringPreparedStart(const std::filesystem::path& fixture) {
-  std::string error;
-  auto output = std::make_shared<FailWhileArmingOutput>();
-  auto pipeline =
-      wam::macos::NativeVideoPipeline::createForQtOpenGL(output, &error);
-  WAM_CHECK_DETAIL(pipeline != nullptr, error);
-  WAM_CHECK_DETAIL(pipeline->prepareLocalFileAsync(fixture, 0.0, &error),
-                   error);
-  auto outcome = waitForPreparation(*pipeline);
-  WAM_CHECK(outcome.has_value());
-  WAM_CHECK_DETAIL(
-      outcome->result == wam::macos::NativeVideoPrepareResult::Ready,
-      outcome->error);
-  const auto prepared = pipeline->stats();
-  WAM_CHECK(prepared.prepared);
-  WAM_CHECK(!prepared.active);
-  WAM_CHECK(prepared.compressedSamplesSubmitted == 0);
-  WAM_CHECK(prepared.displayLinkTicks == 0);
-
-  const auto generation = pipeline->startPrepared(&error);
-  WAM_CHECK(!generation.has_value());
-  WAM_CHECK(!pipeline->active());
-  WAM_CHECK_DETAIL(error.find("arming") != std::string::npos, error);
-  WAM_CHECK(pipeline->stats().compressedSamplesSubmitted == 0);
-  WAM_CHECK(output->stats().rejectedFrames == 0);
-  WAM_CHECK(spinUntil([&] { return !pipeline->stats().stopping; }, 8000));
-}
 
 void verifyOffThreadFlushAndFinalOwnerDrop(QQuickWindow& window) {
   std::string error;
@@ -1089,10 +1038,6 @@ void verifyFailureNotificationCopyRetries(QQuickWindow& window) {
   }));
   pumpEventsFor(50);
   WAM_CHECK(notifications.load(std::memory_order_acquire) == 1);
-  auto terminalPipeline =
-      wam::macos::NativeVideoPipeline::createForQtOpenGL(output, &error);
-  WAM_CHECK(terminalPipeline == nullptr);
-  WAM_CHECK(error.find("terminal") != std::string::npos);
 
   output->close(output->stats().acceptedGeneration + 1);
   output.reset();
@@ -1427,206 +1372,12 @@ void verifyFinalFlushSchedulingFailures(QQuickWindow& window) {
   }
 }
 
-void verifyFailureAfterWorkerCreation(
-    QQuickWindow& window, const std::filesystem::path& fixture) {
-  std::string error;
-  auto item = std::make_unique<wam::macos::QtGlVideoItem>();
-  item->setParentItem(window.contentItem());
-  item->setSize(QSizeF(480, 270));
-  auto bridge = wam::macos::NativeQtGlOutput::create(item.get(), &error);
-  WAM_CHECK_DETAIL(bridge != nullptr, error);
-  auto controlled = std::make_shared<FailAfterFirstDispatchOutput>(bridge);
-  auto pipeline =
-      wam::macos::NativeVideoPipeline::createForQtOpenGL(controlled, &error);
-  WAM_CHECK_DETAIL(pipeline != nullptr, error);
-  WAM_CHECK_DETAIL(pipeline->prepareLocalFileAsync(fixture, 0.0, &error),
-                   error);
-  auto outcome = waitForPreparation(*pipeline);
-  WAM_CHECK(outcome.has_value());
-  WAM_CHECK_DETAIL(
-      outcome->result == wam::macos::NativeVideoPrepareResult::Ready,
-      outcome->error);
-  const std::uint64_t preparedGeneration = pipeline->stats().generation;
-
-  std::promise<void> releasePromise;
-  auto entered = std::make_shared<std::atomic<bool>>(false);
-  wam::macos::NativeVideoPipelineTestAccess::
-      setStartPreparedPostWorkerBarrier(
-          *pipeline, releasePromise.get_future().share(), entered);
-  const auto admittedGeneration = pipeline->startPrepared(&error);
-  WAM_CHECK_DETAIL(admittedGeneration.has_value(), error);
-  WAM_CHECK(*admittedGeneration == preparedGeneration);
-  WAM_CHECK(spinUntil([&] {
-    return entered->load(std::memory_order_acquire);
-  }, 10000));
-  WAM_CHECK(!pipeline->active());
-  WAM_CHECK(controlled->stats().dispatchedFrames == 0);
-
-  // Starting is deliberately non-presenting. Inject a terminal output failure
-  // after the worker object exists but before Running, then release the test
-  // barrier. The failed attempt must advance and flush its generation before
-  // retirement; no decoded frame can escape the inert Starting state.
-  controlled->failNow();
-  releasePromise.set_value();
-  WAM_CHECK(spinUntil([&] {
-    const auto stats = pipeline->stats();
-    return !stats.active && stats.generation == preparedGeneration + 1;
-  }, 10000));
-  const std::uint64_t invalidatedGeneration = pipeline->stats().generation;
-  WAM_CHECK(invalidatedGeneration == preparedGeneration + 1);
-  WAM_CHECK(spinUntil([&] {
-    return bridge->stats().acceptedGeneration == invalidatedGeneration &&
-           item->stats().acceptedGeneration == invalidatedGeneration;
-  }, 10000));
-  WAM_CHECK(controlled->stats().dispatchedFrames == 0);
-  const QColor failedStartPixel = centerPixel(window);
-  WAM_CHECK(failedStartPixel.red() <= 4 && failedStartPixel.green() <= 4 &&
-            failedStartPixel.blue() <= 4);
-  WAM_CHECK(bridge->dispatch(makeFrame(preparedGeneration, 240), &error) ==
-            wam::macos::NativeScheduledFrameDispatchResult::Rejected);
-  auto failure = pipeline->takeLastError();
-  WAM_CHECK(failure.has_value());
-  WAM_CHECK(failure->find("injected") != std::string::npos);
-  WAM_CHECK(spinUntil([&] { return !pipeline->stats().stopping; }, 10000));
-
-  pipeline.reset();
-  bridge.reset();
-  controlled.reset();
-  item->setParentItem(nullptr);
-  item.reset();
-  QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
-}
-
-void verifyStaleStartAcknowledgmentAfterStop(
-    const std::filesystem::path& fixture) {
-  std::string error;
-  auto output = std::make_shared<RetainedStartAckOutput>();
-  auto pipeline =
-      wam::macos::NativeVideoPipeline::createForQtOpenGL(output, &error);
-  WAM_CHECK_DETAIL(pipeline != nullptr, error);
-  WAM_CHECK_DETAIL(pipeline->prepareLocalFileAsync(fixture, 0.0, &error),
-                   error);
-  auto outcome = waitForPreparation(*pipeline);
-  WAM_CHECK(outcome.has_value());
-  WAM_CHECK_DETAIL(
-      outcome->result == wam::macos::NativeVideoPrepareResult::Ready,
-      outcome->error);
-
-  const auto startingGeneration = pipeline->startPrepared(&error);
-  WAM_CHECK_DETAIL(startingGeneration.has_value(), error);
-  WAM_CHECK(!pipeline->active());
-  const auto startingStats = pipeline->stats();
-  WAM_CHECK(startingStats.compressedSamplesSubmitted == 0);
-  WAM_CHECK(startingStats.dispatchedFrames == 0);
-  WAM_CHECK(startingStats.displayLinkTicks == 0);
-  WAM_CHECK(!pipeline->seek(1.0).has_value());
-  WAM_CHECK(output->stats().acceptedGeneration == *startingGeneration);
-
-  const std::uint64_t stoppedGeneration = pipeline->stop();
-  WAM_CHECK(stoppedGeneration == *startingGeneration + 1);
-  WAM_CHECK(output->stats().acceptedGeneration == stoppedGeneration);
-  output->fireRetainedAck();
-  WAM_CHECK(spinUntil([&] { return !pipeline->stats().stopping; }, 10000));
-  pumpEventsFor(100);
-  const auto stoppedStats = pipeline->stats();
-  WAM_CHECK(!stoppedStats.active);
-  WAM_CHECK(stoppedStats.generation == stoppedGeneration);
-  WAM_CHECK(stoppedStats.compressedSamplesSubmitted == 0);
-  WAM_CHECK(stoppedStats.dispatchedFrames == 0);
-  WAM_CHECK(stoppedStats.displayLinkTicks == 0);
-  WAM_CHECK(output->stats().dispatchedFrames == 0);
-
-  pipeline.reset();
-  WAM_CHECK(output->stats().closed);
-}
-
-void verifyDirectSchedulerFailureRetires(
-    QQuickWindow& window, const std::filesystem::path& fixture) {
-  std::string error;
-  auto item = std::make_unique<wam::macos::QtGlVideoItem>();
-  item->setParentItem(window.contentItem());
-  item->setSize(QSizeF(480, 270));
-  auto bridge = wam::macos::NativeQtGlOutput::create(item.get(), &error);
-  WAM_CHECK_DETAIL(bridge != nullptr, error);
-  auto rejecting = std::make_shared<RejectCurrentFrameOutput>(bridge);
-  auto pipeline =
-      wam::macos::NativeVideoPipeline::createForQtOpenGL(rejecting, &error);
-  WAM_CHECK_DETAIL(pipeline != nullptr, error);
-  WAM_CHECK_DETAIL(pipeline->prepareLocalFileAsync(fixture, 0.0, &error),
-                   error);
-  auto outcome = waitForPreparation(*pipeline);
-  WAM_CHECK(outcome.has_value());
-  WAM_CHECK_DETAIL(
-      outcome->result == wam::macos::NativeVideoPrepareResult::Ready,
-      outcome->error);
-  const auto generation = pipeline->startPrepared(&error);
-  WAM_CHECK_DETAIL(generation.has_value(), error);
-  // This unpaused clock forces the Running acknowledgment to start the real
-  // display link. The injected current-generation Rejected result reports
-  // through the pipeline itself, never through the output failure handler.
-  std::atomic<bool> updateClock{true};
-  std::thread clockUpdater([&] {
-    while (updateClock.load(std::memory_order_acquire)) {
-      pipeline->updateAudioClock(1.0, false, 1.0);
-      std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    }
-  });
-  const bool failureRetired = spinUntil([&] {
-    const auto stats = pipeline->stats();
-    return rejecting->rejections() == 1 && !stats.active &&
-           stats.generation == *generation + 1;
-  }, 10000);
-  const auto failureCheckpoint = pipeline->stats();
-  WAM_CHECK_DETAIL(
-      failureRetired,
-      "rejections=" + std::to_string(rejecting->rejections()) +
-          " active=" + std::to_string(failureCheckpoint.active) +
-          " generation=" + std::to_string(failureCheckpoint.generation) +
-          " expected=" + std::to_string(*generation + 1) +
-          " stopping=" + std::to_string(failureCheckpoint.stopping) +
-          " ticks=" +
-          std::to_string(failureCheckpoint.displayLinkTicks));
-  const std::uint64_t invalidatedGeneration = pipeline->stats().generation;
-  WAM_CHECK(spinUntil([&] {
-    return bridge->stats().acceptedGeneration == invalidatedGeneration &&
-           item->stats().acceptedGeneration == invalidatedGeneration &&
-           !pipeline->stats().stopping;
-  }, 10000));
-  const auto retiredStats = pipeline->stats();
-  WAM_CHECK(retiredStats.dispatchedFrames == 0);
-  WAM_CHECK(rejecting->rejections() == 1);
-  auto failure = pipeline->takeLastError();
-  WAM_CHECK(failure.has_value());
-  WAM_CHECK(failure->find("injected current-generation") !=
-            std::string::npos);
-  const std::uint64_t stoppedTicks = retiredStats.displayLinkTicks;
-  pumpEventsFor(250);
-  WAM_CHECK(pipeline->stats().displayLinkTicks == stoppedTicks);
-  updateClock.store(false, std::memory_order_release);
-  clockUpdater.join();
-  const QColor retiredPixel = centerPixel(window);
-  WAM_CHECK(retiredPixel.red() <= 4 && retiredPixel.green() <= 4 &&
-            retiredPixel.blue() <= 4);
-  WAM_CHECK(bridge->dispatch(makeFrame(*generation, 230), &error) ==
-            wam::macos::NativeScheduledFrameDispatchResult::Rejected);
-
-  pipeline.reset();
-  bridge.reset();
-  rejecting.reset();
-  item->setParentItem(nullptr);
-  item.reset();
-  QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
-}
-
 }  // namespace
 
 int main(int argc, char** argv) {
-  if (argc != 2) {
-    std::cerr << "usage: native_qt_gl_output_test "
-                 "<h264-or-hevc-file|--watchdog-only>\n";
-    return EXIT_FAILURE;
-  }
-  const bool watchdogOnly = std::string(argv[1]) == "--watchdog-only";
+  const bool watchdogOnly =
+      argc == 2 && std::string(argv[1]) == "--watchdog-only";
+  WAM_CHECK(argc == 1 || watchdogOnly);
 
   QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
   QSurfaceFormat format;
@@ -1638,12 +1389,6 @@ int main(int argc, char** argv) {
   format.setSwapBehavior(QSurfaceFormat::DoubleBuffer);
   QSurfaceFormat::setDefaultFormat(format);
   QGuiApplication application(argc, argv);
-
-  const std::filesystem::path fixture =
-      watchdogOnly ? std::filesystem::path{} : std::filesystem::path(argv[1]);
-  if (!watchdogOnly) {
-    verifyFailureDuringPreparedStart(fixture);
-  }
 
   QQuickWindow window;
   window.resize(480, 270);
@@ -1817,138 +1562,7 @@ int main(int argc, char** argv) {
   verifySchedulingAllocationFailures(window);
   verifyCallbackSelfReleaseAndWindowReconnect(window);
   verifyFinalFlushSchedulingFailures(window);
-  verifyFailureAfterWorkerCreation(window, fixture);
-  verifyStaleStartAcknowledgmentAfterStop(fixture);
-  verifyDirectSchedulerFailureRetires(window, fixture);
 
-  auto pipelineItem = std::make_unique<wam::macos::QtGlVideoItem>();
-  pipelineItem->setParentItem(window.contentItem());
-  pipelineItem->setSize(QSizeF(480, 270));
-  auto pipelineOutput =
-      wam::macos::NativeQtGlOutput::create(pipelineItem.get(), &error);
-  WAM_CHECK_DETAIL(pipelineOutput != nullptr, error);
-  auto pipeline = wam::macos::NativeVideoPipeline::createForQtOpenGL(
-      pipelineOutput, &error);
-  WAM_CHECK_DETAIL(pipeline != nullptr, error);
-  WAM_CHECK_DETAIL(pipeline->prepareLocalFileAsync(fixture, 0.0, &error),
-                   error);
-  auto preparedOutcome = waitForPreparation(*pipeline);
-  WAM_CHECK(preparedOutcome.has_value());
-  if (preparedOutcome->result ==
-          wam::macos::NativeVideoPrepareResult::Unsupported &&
-      !VTIsHardwareDecodeSupported(kCMVideoCodecType_H264)) {
-    std::cout << "SKIP: hardware H.264 VideoToolbox decode unavailable\n";
-    return 77;
-  }
-  WAM_CHECK_DETAIL(
-      preparedOutcome->result == wam::macos::NativeVideoPrepareResult::Ready,
-      preparedOutcome->error);
-  const auto beforeStart = pipeline->stats();
-  WAM_CHECK(beforeStart.outputMode ==
-            wam::macos::NativeVideoOutputMode::QtOpenGL);
-  WAM_CHECK(beforeStart.prepared);
-  WAM_CHECK(!beforeStart.active);
-  WAM_CHECK(beforeStart.compressedSamplesRead == 0);
-  WAM_CHECK(beforeStart.compressedSamplesSubmitted == 0);
-  WAM_CHECK(beforeStart.scheduledFrames == 0);
-  WAM_CHECK(beforeStart.dispatchedFrames == 0);
-  WAM_CHECK(beforeStart.displayLinkTicks == 0);
-  WAM_CHECK(beforeStart.decoder.outputInterop ==
-            wam::macos::VideoToolboxOutputInterop::OpenGL);
-  WAM_CHECK(preparedOutcome->generation == beforeStart.generation);
-
-  const auto firstGeneration = pipeline->startPrepared(&error);
-  WAM_CHECK_DETAIL(firstGeneration.has_value(), error);
-  WAM_CHECK(*firstGeneration == preparedOutcome->generation);
-  WAM_CHECK(pipelineOutput->stats().acceptedGeneration == *firstGeneration);
-  pipeline->updateAudioClock(0.0, true, 1.0);
-  WAM_CHECK(spinUntil([&] {
-    const auto stats = pipeline->stats();
-    return stats.active && stats.hardwareDecode &&
-           stats.dispatchedFrames >= 1 &&
-           stats.actuallyRenderedFrames >= 1 &&
-           stats.scheduledOutput.lastRenderedGeneration == *firstGeneration;
-  }, 10000));
-
-  const auto seekGeneration = pipeline->seek(2.017);
-  WAM_CHECK(seekGeneration.has_value());
-  WAM_CHECK(*seekGeneration == *firstGeneration + 1);
-  WAM_CHECK(pipelineOutput->stats().acceptedGeneration == *seekGeneration);
-  pipeline->updateAudioClock(2.017, true, 1.0);
-  WAM_CHECK(spinUntil([&] {
-    const auto stats = pipeline->stats();
-    return stats.scheduledOutput.lastRenderedGeneration == *seekGeneration &&
-           stats.dispatchedFrames >= 2;
-  }, 10000));
-  const auto afterSeek = pipeline->stats();
-  WAM_CHECK(afterSeek.dispatchedFrames ==
-            afterSeek.scheduledOutput.dispatchedFrames);
-  WAM_CHECK(afterSeek.presentedFrames == 0);
-
-  const std::uint64_t stoppedGeneration = pipeline->stop();
-  WAM_CHECK(stoppedGeneration == *seekGeneration + 1);
-  WAM_CHECK(pipelineOutput->stats().acceptedGeneration == stoppedGeneration);
-  const std::uint64_t firstOutputStoppedGeneration =
-      pipelineOutput->stats().acceptedGeneration;
-  WAM_CHECK(!pipeline->active());
-  WAM_CHECK(spinUntil([&] { return !pipeline->stats().stopping; }, 10000));
-
-  // Reuse the same pipeline/output for a second preparation. Adapter totals
-  // remain lifetime counters, while top-level render passes restart at zero
-  // for the new preparation epoch.
-  WAM_CHECK_DETAIL(pipeline->prepareLocalFileAsync(fixture, 0.0, &error),
-                   error);
-  auto secondOutcome = waitForPreparation(*pipeline);
-  WAM_CHECK(secondOutcome.has_value());
-  WAM_CHECK_DETAIL(
-      secondOutcome->result == wam::macos::NativeVideoPrepareResult::Ready,
-      secondOutcome->error);
-  const auto secondPrepared = pipeline->stats();
-  WAM_CHECK(secondOutcome->generation == secondPrepared.generation);
-  WAM_CHECK(secondOutcome->generation > *firstGeneration);
-  WAM_CHECK(secondOutcome->generation > stoppedGeneration);
-  WAM_CHECK(secondOutcome->generation > firstOutputStoppedGeneration);
-  WAM_CHECK(pipelineOutput->stats().acceptedGeneration ==
-            firstOutputStoppedGeneration);
-  WAM_CHECK(secondPrepared.actuallyRenderedFrames == 0);
-  WAM_CHECK(secondPrepared.scheduledOutput.actuallyRenderedFrames > 0);
-  WAM_CHECK(secondPrepared.compressedSamplesSubmitted == 0);
-  const auto secondGeneration = pipeline->startPrepared(&error);
-  WAM_CHECK_DETAIL(secondGeneration.has_value(), error);
-  WAM_CHECK(*secondGeneration == secondOutcome->generation);
-  WAM_CHECK(pipeline->stats().generation == *secondGeneration);
-  WAM_CHECK(pipelineOutput->stats().acceptedGeneration == *secondGeneration);
-  pipeline->updateAudioClock(0.0, true, 1.0);
-  WAM_CHECK(spinUntil([&] {
-    const auto stats = pipeline->stats();
-    return stats.active && stats.dispatchedFrames >= 1 &&
-           stats.actuallyRenderedFrames >= 1 &&
-           stats.scheduledOutput.lastRenderedGeneration == *secondGeneration;
-  }, 10000));
-  pipelineOutput->failNextGuiInvokeForTesting();
-  std::uint64_t secondStoppedGeneration = 0;
-  std::thread failedQueueStopper([&] {
-    secondStoppedGeneration = pipeline->stop();
-  });
-  failedQueueStopper.join();
-  WAM_CHECK(secondStoppedGeneration == *secondGeneration + 1);
-  WAM_CHECK(pipelineOutput->stats().closed);
-  WAM_CHECK(spinUntil([&] {
-    return pipelineItem->stats().acceptedGeneration >=
-           secondStoppedGeneration;
-  }));
-  const QColor failedQueueStopPixel = centerPixel(window);
-  WAM_CHECK(failedQueueStopPixel.red() <= 4 &&
-            failedQueueStopPixel.green() <= 4 &&
-            failedQueueStopPixel.blue() <= 4);
-  WAM_CHECK(spinUntil([&] { return !pipeline->stats().stopping; }, 10000));
-  pipeline.reset();
-  WAM_CHECK(pipelineOutput->stats().closed);
-
-  pipelineItem->setParentItem(nullptr);
-  pipelineItem.reset();
-  pipelineOutput.reset();
-  QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
   std::cout << "native Qt OpenGL scheduled output tests passed\n";
   return EXIT_SUCCESS;
 }

@@ -7,6 +7,7 @@
 #include "media/matroska_mpeg_audio.hpp"
 #include "media/matroska_opus.hpp"
 #include "media/matroska_vorbis.hpp"
+#include "media/media_iso_color.hpp"
 #include "media/video_codec_configuration.hpp"
 
 #include <algorithm>
@@ -912,83 +913,9 @@ constexpr std::size_t kVp9KeyframeProbeClusters{4};
   return false;
 }
 
-// ISO/IEC 23091-2 code points -> the modelled colour facts.
-//
-// Two sources speak these same numbers -- the SPS/VUI (via
-// VideoCodecColorFacts) and the Matroska Colour element -- so the mapping is
-// stated once and applied to both. Value 2 is "unspecified", which carries
-// exactly as much information as an absent description and is therefore
-// Unknown, NOT OtherExplicit: OtherExplicit means "an explicit value this
-// renderer does not support" and is a fallback proof, and mapping unspecified
-// onto it made every stream with a partial VUI fail consumer configuration.
-//
-// Anything not named here stays OtherExplicit and is refused by name. The set
-// named here is EXACTLY the set the AVFoundation route models in
-// copyColorPrimaries / copyTransferFunction / copyMatrixCoefficients, so the
-// same stream gets the same verdict in .mkv and in .mp4. Deliberately NOT
-// widened past it: SMPTE 170M (transfer 6) and the two BT.2020 transfers
-// (14, 15) are arguably the BT.709 curve, but the MP4 route does not model
-// them and this session has no fixture proving how they present, so inventing
-// a mapping here would make Matroska MORE permissive than MP4 -- the same
-// asymmetry these mappings exist to prevent, pointed the other way.
-[[nodiscard]] constexpr MediaColorPrimaries
-mediaColorPrimariesFromIso(std::uint64_t value) noexcept {
-  switch (value) {
-  case 1:
-    return MediaColorPrimaries::Bt709;
-  case 2:
-    return MediaColorPrimaries::Unknown;
-  case 6:
-    // SMPTE 170M (525) only. BT.470BG (625, value 5) is a DIFFERENT set of
-    // chromaticities, and the contract has one BT.601 primaries enumerator --
-    // which is bound to SMPTE-C so colorPrimariesExtension() can spell it back
-    // exactly. Folding 5 in here would let a 625-line stream be admitted and
-    // then presented as 525. It keeps its named refusal until the enumerator
-    // is split; see the amendment proposed in the SD colour report.
-    return MediaColorPrimaries::Bt601;
-  case 9:
-    return MediaColorPrimaries::Bt2020;
-  default:
-    return MediaColorPrimaries::OtherExplicit;
-  }
-}
-
-[[nodiscard]] constexpr MediaTransferFunction
-mediaTransferFunctionFromIso(std::uint64_t value) noexcept {
-  switch (value) {
-  case 1:
-  // SMPTE 170M (6) is the BT.709 transfer function under its SD name.
-  case 6:
-    return MediaTransferFunction::Bt709;
-  case 2:
-    return MediaTransferFunction::Unknown;
-  case 13:
-    return MediaTransferFunction::Srgb;
-  case 16:
-    return MediaTransferFunction::Pq;
-  case 18:
-    return MediaTransferFunction::Hlg;
-  default:
-    return MediaTransferFunction::OtherExplicit;
-  }
-}
-
-[[nodiscard]] constexpr MediaMatrixCoefficients
-mediaMatrixCoefficientsFromIso(std::uint64_t value) noexcept {
-  switch (value) {
-  case 1:
-    return MediaMatrixCoefficients::Bt709;
-  case 2:
-    return MediaMatrixCoefficients::Unknown;
-  case 5:
-  case 6:
-    return MediaMatrixCoefficients::Bt601;
-  case 9:
-    return MediaMatrixCoefficients::Bt2020Ncl;
-  default:
-    return MediaMatrixCoefficients::OtherExplicit;
-  }
-}
+// Two sources speak the ISO/IEC 23091-2 numbers here -- the SPS/VUI (via
+// VideoCodecColorFacts) and the Matroska Colour element -- and both go
+// through the shared mapping in media/media_iso_color.hpp.
 
 [[nodiscard]] bool makeVideoDescriptor(
     SeekableByteReader& reader, const TrackEntry& entry,
@@ -4238,7 +4165,8 @@ MatroskaPrepareOutcome prepareMatroska(
         } else {
           result.error = MatroskaDemuxError::CodecConfiguration;
           result.message =
-              "selected AVC/HEVC/AV1/VP9/VP8 track was not admitted";
+              "selected AVC/HEVC/AV1/VP9/VP8/MPEG-4 Part 2 track was not "
+              "admitted";
         }
         return result;
       }

@@ -9,18 +9,12 @@
 #include <optional>
 #include <span>
 
+#include "support/expect.hpp"
+
 namespace {
 
 using namespace wam::media::matroska;
 
-int failures = 0;
-
-void expect(bool condition, const char *message) {
-  if (!condition) {
-    std::cerr << "FAIL: " << message << '\n';
-    ++failures;
-  }
-}
 
 // One OpusHead identification header, family 0, built field by field so every
 // rejection case differs from the canonical bytes in exactly one place.

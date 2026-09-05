@@ -4,12 +4,35 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
+#include <cstring>
 #include <memory>
 #include <thread>
 
 namespace wam::qt {
 
 struct NativeBenchmarkTelemetryTestAccess;
+
+// The truth vocabulary for every WAM_* environment opt-in: "1", "true",
+// "yes", "on" and their upper-case forms read as enabled; an unset variable
+// and anything else -- including "0" and junk -- read as off.
+[[nodiscard]] inline bool wamEnvironmentTruth(const char *name) noexcept {
+  const char *const value = std::getenv(name);
+  if (value == nullptr) {
+    return false;
+  }
+  return std::strcmp(value, "1") == 0 || std::strcmp(value, "true") == 0 ||
+         std::strcmp(value, "TRUE") == 0 || std::strcmp(value, "yes") == 0 ||
+         std::strcmp(value, "YES") == 0 || std::strcmp(value, "on") == 0 ||
+         std::strcmp(value, "ON") == 0;
+}
+
+// The single armed test: the telemetry stream, every WAM_TEST_* seam that may
+// only exist for a measured run, and the window chrome's benchmark mode all
+// key on this one answer, so no launch can arm one of them and not another.
+[[nodiscard]] inline bool nativeBenchmarkTelemetryArmed() noexcept {
+  return wamEnvironmentTruth("WAM_NATIVE_BENCHMARK_TELEMETRY");
+}
 
 // Opt-in JSONL proof stream for native playback benchmarks. Production owns
 // one process-wide instance. When WAM_NATIVE_BENCHMARK_TELEMETRY is unset (or

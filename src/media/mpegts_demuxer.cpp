@@ -1,6 +1,7 @@
 #include "media/mpegts_demuxer.hpp"
 
 #include "media/matroska_aac.hpp"
+#include "media/media_iso_color.hpp"
 #include "media/video_codec_configuration.hpp"
 
 #include <algorithm>
@@ -624,81 +625,11 @@ struct AssetState {
          appendArray(34, pictureSets, pictureCount);
 }
 
-// ISO/IEC 23091-2 code points -> the modelled colour facts.
-//
 // The transport stream's ONLY colour statement is the SPS VUI, so unlike
 // Matroska (Colour element) or MP4 (`colr` box) there is no container source
-// to cross-check against and no second vocabulary to reconcile -- these three
-// functions are the whole colour path for this container.
-//
-// Value 2 is "unspecified", which carries exactly as much information as an
-// absent description and is therefore Unknown, NOT OtherExplicit:
-// OtherExplicit means "an explicit value this renderer does not support" and
-// is a fallback proof. Anything not named here stays OtherExplicit and is
-// refused by name downstream, in mediaVideoColorAdmitted().
-//
-// The named set is EXACTLY the set the AVFoundation route models, so one
-// stream gets one verdict whether it arrives as .ts, .mkv or .mp4. This is
-// character-for-character the same table the Matroska demuxer states for the
-// same reason; the two are separate today because they are landing in two
-// lanes at once, and the honest next move is to collapse them into one
-// definition rather than let a third copy appear.
-[[nodiscard]] constexpr MediaColorPrimaries
-mediaColorPrimariesFromIso(std::uint32_t value) noexcept {
-  switch (value) {
-    case 1:
-      return MediaColorPrimaries::Bt709;
-    case 2:
-      return MediaColorPrimaries::Unknown;
-    case 6:
-      // SMPTE 170M (525) only; BT.470BG (625, value 5) keeps its named
-      // refusal. Same reason as the Matroska mapping: the single BT.601
-      // primaries enumerator is bound to SMPTE-C so it can be spelled back
-      // exactly, and 625 chromaticities cannot ride on it.
-      return MediaColorPrimaries::Bt601;
-    case 9:
-      return MediaColorPrimaries::Bt2020;
-    default:
-      return MediaColorPrimaries::OtherExplicit;
-  }
-}
-
-[[nodiscard]] constexpr MediaTransferFunction
-mediaTransferFunctionFromIso(std::uint32_t value) noexcept {
-  switch (value) {
-    case 1:
-    // SMPTE 170M (6) is the BT.709 transfer function under its SD name.
-    case 6:
-      return MediaTransferFunction::Bt709;
-    case 2:
-      return MediaTransferFunction::Unknown;
-    case 13:
-      return MediaTransferFunction::Srgb;
-    case 16:
-      return MediaTransferFunction::Pq;
-    case 18:
-      return MediaTransferFunction::Hlg;
-    default:
-      return MediaTransferFunction::OtherExplicit;
-  }
-}
-
-[[nodiscard]] constexpr MediaMatrixCoefficients
-mediaMatrixCoefficientsFromIso(std::uint32_t value) noexcept {
-  switch (value) {
-    case 1:
-      return MediaMatrixCoefficients::Bt709;
-    case 2:
-      return MediaMatrixCoefficients::Unknown;
-    case 5:
-    case 6:
-      return MediaMatrixCoefficients::Bt601;
-    case 9:
-      return MediaMatrixCoefficients::Bt2020Ncl;
-    default:
-      return MediaMatrixCoefficients::OtherExplicit;
-  }
-}
+// to cross-check against and no second vocabulary to reconcile -- the shared
+// ISO mapping in media/media_iso_color.hpp is the whole colour path for this
+// container.
 
 // The shared inspector's verdict, by name, for a refusal message. Local
 // rather than published from video_codec_configuration.hpp so this lane adds

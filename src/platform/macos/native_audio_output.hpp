@@ -451,6 +451,12 @@ class NativeAudioOutput final
                                 std::uint64_t amount) noexcept;
   void latchFailure(NativeAudioOutputFailure failure,
                     OSStatus status) noexcept;
+  // The configure() refusal epilogue. Every refusal after the AudioUnit
+  // instance exists must close it: an omitted close() leaks that instance for
+  // the life of the process, and configure() has seventeen exits.
+  [[nodiscard]] NativeAudioOutputProgress failConfigure(
+      NativeAudioOutputFailure failure, OSStatus status,
+      NativeAudioOutputProgress progress) noexcept;
   void setState(NativeAudioOutputState state) noexcept;
 
   [[nodiscard]] AudioComponent findComponent(

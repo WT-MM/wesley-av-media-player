@@ -22,17 +22,6 @@ namespace {
 
 constexpr std::string_view kSchema = "wam.native.benchmark.v2";
 
-bool enabledFromEnvironment() noexcept {
-  const char *value = std::getenv("WAM_NATIVE_BENCHMARK_TELEMETRY");
-  if (value == nullptr) {
-    return false;
-  }
-  return std::strcmp(value, "1") == 0 || std::strcmp(value, "true") == 0 ||
-         std::strcmp(value, "TRUE") == 0 || std::strcmp(value, "yes") == 0 ||
-         std::strcmp(value, "YES") == 0 || std::strcmp(value, "on") == 0 ||
-         std::strcmp(value, "ON") == 0;
-}
-
 bool validRunId(std::string_view value) noexcept {
   if (value.size() != 36) {
     return false;
@@ -224,6 +213,10 @@ void unsignedBigEndian(std::uint64_t value, unsigned char (&output)[8]) noexcept
   }
 }
 
+// Chain input layout -- previous digest, payload digest, then batch, count,
+// first and last as big-endian uint64 in that order -- is re-derived by
+// benchmarks/macos/run_suite.py (struct.pack(">QQQQ", ...)) when it verifies
+// a stream; the two must agree byte for byte.
 bool nextStreamChain(
     const unsigned char (&previous)[CC_SHA256_DIGEST_LENGTH],
     const unsigned char (&payload)[CC_SHA256_DIGEST_LENGTH],
@@ -244,7 +237,7 @@ bool nextStreamChain(
 } // namespace
 
 NativeBenchmarkTelemetry &NativeBenchmarkTelemetry::instance() noexcept {
-  static NativeBenchmarkTelemetry telemetry(enabledFromEnvironment(),
+  static NativeBenchmarkTelemetry telemetry(nativeBenchmarkTelemetryArmed(),
                                             &monotonicNanoseconds, &stderrSink,
                                             &stderrFlush, nullptr);
   return telemetry;

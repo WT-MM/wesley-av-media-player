@@ -7,6 +7,7 @@
 #include "native_silent_timebase.hpp"
 #include "native_video_limits.hpp"
 
+#include "media/media_container_routing.hpp"
 #include "media/native_media_dispatcher.hpp"
 
 #include <algorithm>
@@ -129,67 +130,6 @@ void logNativeFailure(const char* stage, protocol::FailureReason reason,
     return false;
   }
 }
-
-// Extension-only container routing for backend selection. This states which
-// demuxer is even capable of the container, never whether the media is
-// admissible: the selected source owns that decision and reports Unsupported
-// through the one existing fallback route. `.mka` is deliberately included so
-// an audio-only Matroska reaches the Matroska source and is rejected there for
-// having no video track, rather than being handed to a backend that cannot
-// parse the container at all.
-[[nodiscard]] bool matroskaLocalContainer(
-    const std::filesystem::path& path) noexcept {
-  try {
-    std::string extension = path.extension().string();
-    if (extension.empty() || extension.front() != '.') {
-      return false;
-    }
-    for (char& character : extension) {
-      if (character >= 'A' && character <= 'Z') {
-        character = static_cast<char>(character - 'A' + 'a');
-      }
-    }
-    return extension == ".mkv" || extension == ".mk3d" ||
-           extension == ".mka" || extension == ".webm";
-  } catch (...) {
-    return false;
-  }
-}
-
-// The same extension-only statement for MPEG-2 Transport Stream.
-//
-// This is a BEHAVIOURAL CHANGE and it is deliberate rather than quiet: `.ts`
-// already reached NativeVideoDemuxPreference::ProbeAvFoundation, and
-// AVFoundation can open some transport streams, so routing them here moves
-// files that already worked onto a new path. The mitigation is structural
-// rather than hopeful -- every refusal in the MPEG-TS demuxer is an
-// `Unsupported` verdict rather than a `Failed` one, so anything outside its
-// envelope (HEVC, DTS, LATM AAC, a program with no video) falls back through
-// the single existing rejection route instead of reporting a protocol fault.
-//
-// `.mpg`/`.mpeg` are deliberately NOT included. Those extensions name MPEG
-// PROGRAM streams far more often than transport streams, and a program stream
-// is a different container this demuxer would refuse at its first sync-byte
-// probe. Sending them here would trade a working AVFoundation route for a
-// guaranteed fallback.
-[[nodiscard]] bool mpegTsLocalContainer(
-    const std::filesystem::path& path) noexcept {
-  try {
-    std::string extension = path.extension().string();
-    if (extension.empty() || extension.front() != '.') {
-      return false;
-    }
-    for (char& character : extension) {
-      if (character >= 'A' && character <= 'Z') {
-        character = static_cast<char>(character - 'A' + 'a');
-      }
-    }
-    return extension == ".ts" || extension == ".m2ts" || extension == ".mts";
-  } catch (...) {
-    return false;
-  }
-}
-
 
 [[nodiscard]] std::optional<media::MediaTime>
 exactFrameTime(CMTime time) noexcept {
@@ -1313,19 +1253,24 @@ struct NativeMediaSession::Impl final {
     std::unique_ptr<NativeAudioSession> audio;
     std::unique_ptr<NativeVideoConsumer> video;
     try {
-      // Container routing. AVFoundation cannot demux Matroska at all, so a
-      // Matroska/WebM local file is admitted through the neutral Matroska
-      // demuxer instead. Selection is by container only: the Matroska source
-      // still applies its own exact codec envelope and reports Unsupported for
-      // anything outside it (VP9, subtitle-only, audio-only, ...), which keeps
+      // Container routing (media/media_container_routing.hpp). AVFoundation
+      // cannot demux Matroska at all, and routing a transport stream to the
+      // neutral demuxer moves files AVFoundation could also have opened: both
+      // are safe because the selected source still applies its own exact codec
+      // envelope and reports Unsupported for anything outside it, which keeps
       // the existing fallback path as the single rejection route.
       std::unique_ptr<media::MediaSource> backendSource;
-      if (matroskaLocalContainer(binding.localPath)) {
+      switch (media::containerBackendForExtension(binding.localPath)
+                  .value_or(media::MediaSourceBackendKind::AVFoundation)) {
+      case media::MediaSourceBackendKind::Matroska:
         backendSource = std::make_unique<MatroskaMediaSource>();
-      } else if (mpegTsLocalContainer(binding.localPath)) {
+        break;
+      case media::MediaSourceBackendKind::MpegTs:
         backendSource = std::make_unique<MpegTsMediaSource>();
-      } else {
+        break;
+      case media::MediaSourceBackendKind::AVFoundation:
         backendSource = std::make_unique<AVFoundationMediaSource>();
+        break;
       }
       source = std::make_unique<NativeV1AdmissionSource>(
           std::move(backendSource), cancellation);
@@ -2638,6 +2583,9 @@ if (result != NativeAudioSessionProgress::Done) {
       return;
     }
     if (previewStopped != NativePreviewFrameCancelProgress::Done) {
+        logNativeFailure("commit-seek/preview-stop",
+                         protocol::FailureReason::CommitSeek,
+                         dispatcher.get());
         static_cast<void>(publishFailure(protocol::FailureReason::CommitSeek,
                                        commitCommand.stamp));
       return;
@@ -2663,6 +2611,9 @@ if (result != NativeAudioSessionProgress::Done) {
         return;
       }
       if (paused != NativeAudioSessionProgress::Done) {
+        logNativeFailure("commit-seek/source-pause",
+                         protocol::FailureReason::CommitSeek,
+                         dispatcher.get());
         static_cast<void>(publishFailure(protocol::FailureReason::CommitSeek,
                                          commitCommand.stamp));
         return;
@@ -2685,6 +2636,9 @@ if (result != NativeAudioSessionProgress::Done) {
       }
       if (sought.status == media::NativeMediaDispatcherSeekStatus::Failed ||
           sought.status == media::NativeMediaDispatcherSeekStatus::Rejected) {
+        logNativeFailure("commit-seek/dispatcher-seek",
+                         protocol::FailureReason::CommitSeek,
+                         dispatcher.get());
         static_cast<void>(publishFailure(protocol::FailureReason::CommitSeek,
                                          commitCommand.stamp));
         return;
@@ -2716,6 +2670,9 @@ if (result != NativeAudioSessionProgress::Done) {
         commitCommitted = true;
       } else if (step.state == media::NativeMediaDispatcherState::Failed ||
                  step.action == media::NativeMediaDispatcherAction::Failed) {
+        logNativeFailure("commit-seek/seek-commit",
+                         protocol::FailureReason::CommitSeek,
+                         dispatcher.get());
         static_cast<void>(publishFailure(protocol::FailureReason::CommitSeek,
                                          commitCommand.stamp));
         return;
@@ -2736,6 +2693,9 @@ if (result != NativeAudioSessionProgress::Done) {
     if (silentTimebase != nullptr && !commitTimebaseActivated) {
       if (!silentTimebase->activate(commitCommand.targetGeneration.value,
                                     commitCommand.targetSeconds)) {
+        logNativeFailure("commit-seek/timebase-activate",
+                         protocol::FailureReason::CommitSeek,
+                         dispatcher.get());
         static_cast<void>(publishFailure(protocol::FailureReason::CommitSeek,
                                          commitCommand.stamp));
         return;
@@ -2762,6 +2722,9 @@ if (result != NativeAudioSessionProgress::Done) {
         return;
       }
       if (started != NativeAudioSessionProgress::Done) {
+        logNativeFailure("commit-seek/audio-start",
+                         protocol::FailureReason::CommitSeek,
+                         dispatcher.get());
         static_cast<void>(publishFailure(protocol::FailureReason::CommitSeek,
                                          commitCommand.stamp));
         return;
@@ -2800,6 +2763,9 @@ if (result != NativeAudioSessionProgress::Done) {
         return;
       }
       if (paused != NativeAudioSessionProgress::Done) {
+        logNativeFailure("commit-seek/target-pause",
+                         protocol::FailureReason::CommitSeek,
+                         dispatcher.get());
         static_cast<void>(publishFailure(protocol::FailureReason::CommitSeek,
                                          commitCommand.stamp));
         return;
@@ -2828,6 +2794,9 @@ if (result != NativeAudioSessionProgress::Done) {
       }
       if (step.state == media::NativeMediaDispatcherState::Failed ||
           step.action == media::NativeMediaDispatcherAction::Failed) {
+        logNativeFailure("commit-seek/proof",
+                         protocol::FailureReason::CommitSeek,
+                         dispatcher.get());
         static_cast<void>(publishFailure(protocol::FailureReason::CommitSeek,
                                          commitCommand.stamp));
         return;

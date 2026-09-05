@@ -51,6 +51,8 @@
 #include <variant>
 #include <vector>
 
+#include "support/expect.hpp"
+
 namespace {
 
 using wam::macos::MatroskaPreviewSource;
@@ -71,14 +73,6 @@ using wam::media::matroska::MatroskaPrepareOutcome;
 using wam::media::matroska::SeekableByteReader;
 using Bytes = std::vector<std::byte>;
 
-int failures = 0;
-
-void expect(bool condition, const char* message) {
-  if (!condition) {
-    std::cerr << "FAIL: " << message << '\n';
-    ++failures;
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Exact EBML byte builders. Same primitives as tests/matroska_demuxer_test.cpp,

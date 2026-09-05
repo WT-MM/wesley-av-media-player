@@ -1,5 +1,7 @@
 #include "native_preview_frame_lane.hpp"
 
+#include "media/media_codec_facts.hpp"
+#include "core_media_codec_facts.hpp"
 #include "native_video_limits.hpp"
 
 #include <CoreMedia/CoreMedia.h>
@@ -188,24 +190,12 @@ constexpr std::uint64_t kMaximumSequentialAdvanceSeconds = 1;
          preview_protocol::validLive(binding.acceptedThrough) &&
          track != nullptr && track->video->codedWidth != 0 &&
          track->video->codedHeight != 0 &&
-         // MPEG-2 is the one admitted codec with NO decoder configuration
-         // record: its sequence header is in band and an empty vector is its
-         // only correct descriptor. Every other codec must present one.
-         (track->codec == media::MediaCodec::Mpeg2Video
-              ? track->codecConfiguration.empty()
-              : !track->codecConfiguration.empty()) &&
-         (track->codec == media::MediaCodec::H264 ||
-          track->codec == media::MediaCodec::Hevc ||
-          track->codec == media::MediaCodec::Mpeg2Video ||
-          // MPEG-4 Part 2 Simple Profile fits this lane without any new
-          // machinery: the same software VideoToolbox decoder MPEG-2 uses, a
-          // non-empty configuration record (the synthesized esds), and -- the
-          // property that actually matters to a preview lane -- a reorder
-          // depth of zero, because Simple Profile forbids B-VOPs. A scrub
-          // preview decodes from a key frame forward and shows the first
-          // frame it gets, so a codec that never holds a frame back is the
-          // easiest case this lane has.
-          track->codec == media::MediaCodec::Mpeg4Visual);
+         // The record requirement is INVERTED for the codecs that carry none:
+         // an in-band sequence header or a bare QuickTime sample description
+         // makes an empty vector their only correct descriptor.
+         media::mediaCodecFacts(track->codec).carriesConfigurationRecord !=
+             track->codecConfiguration.empty() &&
+         media::mediaCodecFacts(track->codec).previewScrubAdmitted;
 }
 
 [[nodiscard]] CMSampleBufferRef nativeSample(
@@ -420,24 +410,19 @@ struct NativePreviewFrameLane::Impl final {
         return false;
       }
       const media::MediaVideoFormat& video = *track->video;
-      // MPEG-2's only decoder on this platform is software, so requiring
-      // hardware here fails VTDecompressionSessionCreate with -12906 on a
-      // stream the main playback lane decodes perfectly well. It still
-      // PREFERS hardware, exactly as the main video consumer does.
-      // MPEG-4 Part 2's decoder is software for the same reason.
-      const bool requireHardwareDecode =
-          track->codec != media::MediaCodec::Mpeg2Video &&
-          track->codec != media::MediaCodec::Mpeg4Visual;
+      // Requiring hardware where the codec's only decoder on this platform is
+      // software fails VTDecompressionSessionCreate with -12906 on a stream the
+      // main playback lane decodes perfectly well. Both facts come from the
+      // shared table, so this lane and the main video consumer cannot answer
+      // either question differently, and the codec type in particular cannot
+      // fall through to HEVC for a codec no arm names.
+      const media::MediaCodecFacts& codecFacts =
+          media::mediaCodecFacts(track->codec);
       const VideoStreamConfiguration configuration{
-          track->codec == media::MediaCodec::H264 ? kCMVideoCodecType_H264
-          : track->codec == media::MediaCodec::Mpeg2Video
-              ? kCMVideoCodecType_MPEG2Video
-          : track->codec == media::MediaCodec::Mpeg4Visual
-              ? kCMVideoCodecType_MPEG4Video
-              : kCMVideoCodecType_HEVC,
+          coreMediaCodecType(track->codec),
           {static_cast<std::int32_t>(video.codedWidth),
            static_cast<std::int32_t>(video.codedHeight)},
-          track->codecConfiguration, true, requireHardwareDecode,
+          track->codecConfiguration, true, codecFacts.requiresHardwareDecode,
           binding.activePlaybackGeneration.value};
       std::string configurationError;
       if (!decoder.configure(configuration, sink, &configurationError)) {

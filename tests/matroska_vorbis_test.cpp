@@ -8,18 +8,12 @@
 #include <span>
 #include <vector>
 
+#include "support/expect.hpp"
+
 namespace {
 
 using namespace wam::media::matroska;
 
-int failures = 0;
-
-void expect(bool condition, const char *message) {
-  if (!condition) {
-    std::cerr << "FAIL: " << message << '\n';
-    ++failures;
-  }
-}
 
 // The identification header of fixtures/vp8_vorbis.webm, byte for byte as
 // ffmpeg muxed it: 2 channels, 44100 Hz (0x0000AC44), packed block sizes 0xBB

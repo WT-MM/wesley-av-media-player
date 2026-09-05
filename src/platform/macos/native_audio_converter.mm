@@ -7,6 +7,8 @@
 #include "media/matroska_mpeg_audio.hpp"
 #include "media/matroska_opus.hpp"
 #include "media/matroska_vorbis.hpp"
+#include "media/media_codec_facts.hpp"
+#include "core_media_codec_facts.hpp"
 #include "native_audio_channel_map.hpp"
 
 #include <vector>
@@ -180,98 +182,30 @@ void saturatingAdd(std::uint64_t &value, std::uint64_t amount) noexcept {
          nativeAudioSampleRateSupported(rate, exactRate);
 }
 
+// The AudioToolbox format identifier whitelist, stated once for this file and
+// the audio session in core_media_codec_facts.hpp.
 [[nodiscard]] bool supportedCodec(media::MediaCodec codec,
                                   std::uint32_t formatTag) noexcept {
-  switch (codec) {
-  case media::MediaCodec::Aac:
-    return formatTag == kAudioFormatMPEG4AAC ||
-           formatTag == kAudioFormatMPEG4AAC_HE ||
-           formatTag == kAudioFormatMPEG4AAC_HE_V2;
-  case media::MediaCodec::Alac:
-    return formatTag == kAudioFormatAppleLossless;
-  // Uncompressed audio from AVFoundation. See the matching arm in
-  // native_audio_session.mm's supportedCodec for why one arm covers both .wav
-  // and .aiff, and why every per-codec value below stays at its default.
-  case media::MediaCodec::Pcm:
-    return formatTag == kAudioFormatLinearPCM;
-  // ADPCM in WAV. Constant-bit-rate like LPCM (mBytesPerPacket 1024), so it
-  // rides amendment 7's CBR input-proc arm unchanged; unlike LPCM it is a real
-  // decode, and it is admitted because that decode was measured bit-exact
-  // against ffmpeg with a zero-frame lead-in. See the amendment 12 note on
-  // media::MediaCodec::AdpcmIma.
-  case media::MediaCodec::AdpcmIma:
-    return formatTag == kAudioFormatDVIIntelIMA;
-  case media::MediaCodec::AdpcmMs:
-    return formatTag == media::kMicrosoftAdpcmAudioFormatTag;
-  case media::MediaCodec::Mp3:
-    // MediaCodec::Mp3 is the MPEG-1/2 audio ROUTING FAMILY, not one layer.
-    // Matroska only ever reaches this arm with Layer III, but a transport
-    // stream's stream types 0x03/0x04 carry Layer I, II or III and broadcast
-    // MPEG-2 is overwhelmingly Layer II. Layer II is admitted here because it
-    // was measured, not assumed: scratchpad/mp2_probe.mm reports '.mp2' among
-    // kAudioFormatProperty_DecodeFormatIDs on this platform, and
-    // scratchpad/mp2_decode.mm decodes a real 115-frame MP2 elementary stream
-    // to exactly 115 x 1152 = 132,480 PCM frames through an AudioConverter
-    // created with mFormatID = kAudioFormatMPEGLayer2 and no magic cookie.
-    // Layer I is deliberately NOT admitted: the format ID is listed but no
-    // fixture of this project exercises it, and an unmeasured admission is
-    // exactly the shape of bug this audio path has been bitten by before.
-    return formatTag == kAudioFormatMPEGLayer3 ||
-           formatTag == kAudioFormatMPEGLayer2;
-  case media::MediaCodec::Opus:
-    return formatTag == kAudioFormatOpus;
-  case media::MediaCodec::Vorbis:
-    return formatTag == wam::media::matroska::kVorbisAudioFormatTag;
-  case media::MediaCodec::Ac3:
-    return formatTag == kAudioFormatAC3;
-  case media::MediaCodec::Eac3:
-    return formatTag == kAudioFormatEnhancedAC3;
-  case media::MediaCodec::Flac:
-    return formatTag == kAudioFormatFLAC;
-  default:
-    return false;
-  }
+  return audioCodecFormatTagAdmitted(codec, formatTag);
 }
 
 // AudioToolbox swallows this many leading frames before it emits anything, so a
 // generation decodes this many fewer frames than its packets declare. It is a
-// property of the decoder, not of the container, which is why it is stated here
-// and not carried in the timeline.
+// property of the decoder, not of the container, which is why it is stated in
+// the codec facts table and not carried in the timeline.
 //
-// Opus: a fixed 120 frames, the libopus decoder delay, which AudioToolbox drops
-// while ignoring the OpusHead pre-skip entirely.
-//
-// Vorbis: exactly one access unit. The format's first packet carries only the
+// Vorbis is the one codec whose answer is not a constant: its lead-in is
+// exactly one access unit, because the format's first packet carries only the
 // left half of an overlap-add window and decodes to zero samples by
-// specification, so the swallow is the packet size rather than a constant.
-// Measured invariant across fresh converters and across AudioConverterReset
-// alike -- see scratchpad/vorbreset_probe.mm -- which is why Vorbis keeps the
-// cheap reset that Opus had to give up.
+// specification. Measured invariant across fresh converters and across
+// AudioConverterReset alike, which is why Vorbis keeps the cheap reset that
+// Opus had to give up.
 [[nodiscard]] std::uint32_t decoderLeadInFrames(
     media::MediaCodec codec, std::uint32_t framesPerPacket) noexcept {
-  switch (codec) {
-  case media::MediaCodec::Opus:
-    return wam::media::matroska::kOpusDecoderDelayFrames;
-  case media::MediaCodec::Vorbis:
+  if (codec == media::MediaCodec::Vorbis) {
     return framesPerPacket;
-  // AC-3 and E-AC-3: a fixed 256 frames, the decoder delay, which is also
-  // exactly the CodecDelay every real mux states -- so the head trim the
-  // demuxer derives from it is provably zero. Measured invariant across
-  // durations, channel counts and AudioConverterReset.
-  case media::MediaCodec::Ac3:
-  case media::MediaCodec::Eac3:
-    return wam::media::matroska::kAc3DecoderDelayFrames;
-  // MP3: a fixed 529 frames. The decoder swallows them at the head and
-  // flushes the same number at the end, so the stream still decodes to
-  // exactly packets * 1152 frames while its content sits 529 frames earlier
-  // than the packet grid alone would say.
-  case media::MediaCodec::Mp3:
-    return wam::media::matroska::kMpegLayer3DecoderDelayFrames;
-  // AAC and FLAC swallow nothing: measured deficit zero over whole tracks,
-  // and for FLAC the decode is bit-exact against ffmpeg from frame zero.
-  default:
-    return 0U;
   }
+  return media::mediaCodecFacts(codec).decoderLeadInFrames;
 }
 
 // The frames a decoder never emits at all. Identical to its lead-in for every
@@ -331,20 +265,7 @@ struct ChannelLayoutIdentity {
 
 [[nodiscard]] bool
 supportedChannelLayout(const media::MediaAudioFormat &audio) noexcept {
-  if (!audio.channelLayoutPresent) {
-    return audio.channelLayoutTag == 0;
-  }
-  if (audio.channels == 1) {
-    return audio.channelLayoutTag == kAudioChannelLayoutTag_Mono;
-  }
-  if (audio.channels == 2) {
-    return audio.channelLayoutTag == kAudioChannelLayoutTag_Stereo;
-  }
-  // A multichannel source may state a layout tag, but only one whose expansion
-  // is a downmix this player can perform exactly. An unrecognised label makes
-  // the whole track inadmissible -- a clean fallback -- rather than a channel
-  // this path would silently drop.
-  return multichannelLayoutTagAdmitted(audio.channelLayoutTag, audio.channels);
+  return audioChannelLayoutAdmitted(audio);
 }
 
 [[nodiscard]] bool readSupportedChannelLayout(
@@ -912,6 +833,14 @@ struct NativeAudioConverter::Impl {
         backend(injected ? std::move(injected)
                          : std::make_unique<CoreAudioConverterBackend>()) {}
 
+  // The committed input sample's three states. Ordering is not a ladder: a
+  // generation cycles Idle -> Feeding -> AwaitingRelease -> Idle once per
+  // sample. AwaitingRelease means the backend still borrows the encoded
+  // storage, so it always implies a held lease -- which is why "released
+  // storage the converter never handed over" is a single comparison and not a
+  // pair of flags that could disagree.
+  enum class InputPhase : std::uint8_t { Idle, Feeding, AwaitingRelease };
+
   bool fail(std::string *error, const char *message) noexcept {
     saturatingAdd(statistics.failures, 1);
     try {
@@ -959,8 +888,11 @@ struct NativeAudioConverter::Impl {
     }
   }
 
+  // The only place the lease is dropped, so it is also the only place the
+  // input phase returns to Idle.
   void releaseSample() noexcept {
     lease.reset();
+    input_phase = InputPhase::Idle;
     retained_payload_bytes = 0;
     clearInputMetadata();
   }
@@ -968,7 +900,6 @@ struct NativeAudioConverter::Impl {
   void clearFlow() noexcept {
     releaseSample();
     clearPreparedProof();
-    awaiting_input_release = false;
     eof_requested = false;
     drained = false;
   }
@@ -1061,6 +992,152 @@ struct NativeAudioConverter::Impl {
     failed = true;
     statistics.configured = false;
     statistics.failed = true;
+  }
+
+  // True when a full slab decoded from here would land entirely before the
+  // accurate-seek floor and therefore be discarded whole. Such a block must
+  // not be held back by ring backpressure: it never reaches the ring, so
+  // waiting for ring space would stall the seek forever.
+  [[nodiscard]] bool nextBlockIsAllPreroll() const noexcept {
+    std::int64_t blockEnd = 0;
+    return timeline.trimBeforeFloor && has_input_timeline &&
+           decoded_cursor_frame < presentation_floor_frame &&
+           checkedFrameEnd(decoded_cursor_frame, kFramesPerPump, &blockEnd) &&
+           blockEnd <= presentation_floor_frame;
+  }
+
+  // Projects one decoded block onto the generation's exact accepted timeline
+  // without committing it. Both out-params are set for an empty block too, so
+  // the caller can carry them forward unconditionally.
+  [[nodiscard]] bool projectDecodedBlock(std::uint64_t producedFrames,
+                                         std::uint64_t *decodedAfter,
+                                         std::int64_t *cursorAfter)
+      const noexcept {
+    *decodedAfter = statistics.decodedPcmFrames;
+    *cursorAfter = decoded_cursor_frame;
+    if (producedFrames == 0) {
+      return true;
+    }
+    return has_input_timeline &&
+           checkedAdd(statistics.decodedPcmFrames, producedFrames,
+                      decodedAfter) &&
+           decodedWithinBudget(*decodedAfter) &&
+           checkedFrameEnd(decoded_cursor_frame, producedFrames, cursorAfter);
+  }
+
+  // Everything a backend return value must satisfy before any part of it is
+  // believed. The backend is an injectable virtual boundary, so this is a
+  // check on an external contract and not on this converter's own state.
+  [[nodiscard]] bool
+  resultWithinContract(const NativeAudioBackendResult &converted,
+                       std::size_t offeredPackets,
+                       bool sendingEof) const noexcept {
+    return !converted.failed && converted.consumedPackets <= offeredPackets &&
+           converted.producedFrames <= kFramesPerPump &&
+           (!converted.needsInput ||
+            converted.consumedPackets == offeredPackets) &&
+           (!converted.drained || sendingEof);
+  }
+
+  // The one end-of-stream seal. Three pump exits reach a drain and the exact
+  // budget identity is the same at all three.
+  [[nodiscard]] bool sealDrain(std::uint64_t decodedFrames,
+                               std::string *error) noexcept {
+    if (!decodedBudgetExhausted(decodedFrames)) {
+      failPump(error, "audio backend drained before its exact timeline ended");
+      return false;
+    }
+    drained = true;
+    return true;
+  }
+
+  struct PcmTrimPlan {
+    std::int64_t publishStart{0};
+    std::uint64_t headDiscarded{0};
+    std::uint64_t tailDiscarded{0};
+    std::uint64_t publishFrames{0};
+    std::uint64_t discardedTrimAfter{0};
+    std::uint64_t publishedAfter{0};
+  };
+
+  // Head and tail trim for one decoded block. Pure: it commits nothing, so the
+  // caller still owns the rule that frame accounting is final before the PCM
+  // changes shape. Returns the refusing message, or nullptr when the plan
+  // holds.
+  [[nodiscard]] const char *planTrim(std::uint64_t producedFrames,
+                                     std::int64_t cursorAfter,
+                                     PcmTrimPlan *plan) const noexcept {
+    std::uint64_t discarded = 0;
+    if (timeline.trimBeforeFloor &&
+        decoded_cursor_frame < presentation_floor_frame) {
+      const std::int64_t discardEnd =
+          std::min(cursorAfter, presentation_floor_frame);
+      if (!frameDistance(decoded_cursor_frame, discardEnd, &discarded) ||
+          discarded > producedFrames) {
+        return "accurate-seek PCM trim is not frame-exact";
+      }
+    }
+    std::int64_t publishStart = 0;
+    if (!checkedFrameEnd(decoded_cursor_frame, discarded, &publishStart)) {
+      return "generation-local PCM accounting overflowed";
+    }
+    // Mirror image of the head trim. The final packet of a constant-frame
+    // codec always overruns the stream's exact end; those frames are decoded
+    // (so the budget identity still holds) but never published.
+    std::uint64_t tailDiscarded = 0;
+    if (has_presentation_ceiling && cursorAfter > presentation_ceiling_frame) {
+      const std::int64_t keepEnd =
+          std::max(publishStart, presentation_ceiling_frame);
+      if (!frameDistance(keepEnd, cursorAfter, &tailDiscarded) ||
+          tailDiscarded > producedFrames - discarded) {
+        return "end-of-stream PCM trim is not frame-exact";
+      }
+    }
+    const std::uint64_t publishFrames =
+        producedFrames - discarded - tailDiscarded;
+    std::uint64_t trimmed = 0;
+    std::uint64_t discardedAfter = 0;
+    std::uint64_t publishedAfter = 0;
+    if (!checkedAdd(discarded, tailDiscarded, &trimmed) ||
+        !checkedAdd(statistics.discardedTrimFrames, trimmed, &discardedAfter) ||
+        !checkedAdd(statistics.publishedPcmFrames, publishFrames,
+                    &publishedAfter)) {
+      return "generation-local PCM accounting overflowed";
+    }
+    plan->publishStart = publishStart;
+    plan->headDiscarded = discarded;
+    plan->tailDiscarded = tailDiscarded;
+    plan->publishFrames = publishFrames;
+    plan->discardedTrimAfter = discardedAfter;
+    plan->publishedAfter = publishedAfter;
+    return nullptr;
+  }
+
+  // A backend that returns without consuming, producing, releasing, asking or
+  // draining has stalled the generation. Every input to that verdict is named
+  // in the message because the combination, not any one flag, is the defect.
+  void describeStall(const NativeAudioBackendResult &converted, bool sendingEof,
+                     bool hasInput, std::string *error) noexcept {
+    char detail[256];
+    std::snprintf(detail, sizeof(detail),
+                  "native audio backend made no bounded progress "
+                  "[produced=%llu consumed=%llu needsInput=%d finalRel=%d "
+                  "drained=%d sendingEof=%d hasInput=%d eofReq=%d await=%d "
+                  "next=%llu count=%llu decoded=%llu accepted=%llu "
+                  "deficit=%u lead=%u]",
+                  (unsigned long long)converted.producedFrames,
+                  (unsigned long long)converted.consumedPackets,
+                  converted.needsInput ? 1 : 0,
+                  converted.finalInputReleased ? 1 : 0,
+                  converted.drained ? 1 : 0, sendingEof ? 1 : 0,
+                  hasInput ? 1 : 0, eof_requested ? 1 : 0,
+                  input_phase == InputPhase::AwaitingRelease ? 1 : 0,
+                  (unsigned long long)next_packet,
+                  (unsigned long long)packet_count,
+                  (unsigned long long)statistics.decodedPcmFrames,
+                  (unsigned long long)accepted_pcm_frames,
+                  frame_deficit_frames, lead_in_frames);
+    failPump(error, detail);
   }
 
   [[nodiscard]] bool formatMatches(CMSampleBufferRef sample) const noexcept {
@@ -1408,7 +1485,7 @@ struct NativeAudioConverter::Impl {
   bool prepared_discontinuity{false};
   std::uint32_t prepared_decoded_audio_frames{0};
   bool has_input_timeline{false};
-  bool awaiting_input_release{false};
+  InputPhase input_phase{InputPhase::Idle};
   bool eof_requested{false};
   bool drained{false};
 };
@@ -1780,6 +1857,7 @@ bool NativeAudioConverter::commitPrepared(
 
   const std::size_t retainedBytes = state.encoded_size;
   state.lease = std::move(sample.payload);
+  state.input_phase = Impl::InputPhase::Feeding;
   state.retained_payload_bytes = retainedBytes;
   state.peak_retained_payload_bytes =
       std::max(state.peak_retained_payload_bytes, retainedBytes);
@@ -1825,21 +1903,16 @@ NativeAudioPumpResult NativeAudioConverter::pump(std::string *error) {
   if (state.drained) {
     return NativeAudioPumpResult::Drained;
   }
-  std::int64_t maximumBlockEnd = 0;
-  const bool maximumBlockIsPreroll =
-      state.timeline.trimBeforeFloor && state.has_input_timeline &&
-      state.decoded_cursor_frame < state.presentation_floor_frame &&
-      checkedFrameEnd(state.decoded_cursor_frame, kFramesPerPump,
-                      &maximumBlockEnd) &&
-      maximumBlockEnd <= state.presentation_floor_frame;
-  if (!maximumBlockIsPreroll &&
+  if (!state.nextBlockIsAllPreroll() &&
       state.ring.queuedSlabs() >= NativePcmRing::kSlabCount) {
     saturatingAdd(state.statistics.ringBackpressure, 1);
     return NativeAudioPumpResult::Backpressure;
   }
-  const bool hasInput = state.lease && !state.awaiting_input_release &&
+  const bool awaitingRelease =
+      state.input_phase == Impl::InputPhase::AwaitingRelease;
+  const bool hasInput = state.input_phase == Impl::InputPhase::Feeding &&
                         state.next_packet < state.packet_count;
-  if (!hasInput && !state.awaiting_input_release && !state.eof_requested) {
+  if (!hasInput && !awaitingRelease && !state.eof_requested) {
     return NativeAudioPumpResult::NeedsInput;
   }
   if (hasInput && state.encoded_data == nullptr) {
@@ -1855,8 +1928,7 @@ NativeAudioPumpResult NativeAudioConverter::pump(std::string *error) {
                                     state.packets.data() + state.next_packet,
                                     state.packet_count - state.next_packet)
                               : std::span<const NativeAudioPacketDescription>{};
-  const bool sendingEof =
-      state.eof_requested && !hasInput && !state.awaiting_input_release;
+  const bool sendingEof = state.eof_requested && !hasInput && !awaitingRelease;
   NativeAudioBackendResult converted;
   try {
     converted = state.backend->convert(
@@ -1867,23 +1939,14 @@ NativeAudioPumpResult NativeAudioConverter::pump(std::string *error) {
     state.failPump(error, "native audio backend convert threw");
     return NativeAudioPumpResult::Failed;
   }
-  if (converted.failed || converted.consumedPackets > packetSpan.size() ||
-      converted.producedFrames > kFramesPerPump ||
-      (converted.needsInput &&
-       converted.consumedPackets != packetSpan.size()) ||
-      (converted.drained && !sendingEof)) {
+  if (!state.resultWithinContract(converted, packetSpan.size(), sendingEof)) {
     state.failPump(error, "native audio backend violated its bounded contract");
     return NativeAudioPumpResult::Failed;
   }
-  std::uint64_t decodedAfter = state.statistics.decodedPcmFrames;
-  std::int64_t cursorAfter = state.decoded_cursor_frame;
-  if (converted.producedFrames != 0 &&
-      (!state.has_input_timeline ||
-       !checkedAdd(state.statistics.decodedPcmFrames, converted.producedFrames,
-                   &decodedAfter) ||
-       !state.decodedWithinBudget(decodedAfter) ||
-       !checkedFrameEnd(state.decoded_cursor_frame, converted.producedFrames,
-                        &cursorAfter))) {
+  std::uint64_t decodedAfter = 0;
+  std::int64_t cursorAfter = 0;
+  if (!state.projectDecodedBlock(converted.producedFrames, &decodedAfter,
+                                 &cursorAfter)) {
     state.failPump(error,
                    "decoded audio exceeds its exact accepted timeline budget");
     return NativeAudioPumpResult::Failed;
@@ -1891,65 +1954,29 @@ NativeAudioPumpResult NativeAudioConverter::pump(std::string *error) {
   state.next_packet += converted.consumedPackets;
   saturatingAdd(state.statistics.consumedPackets, converted.consumedPackets);
   saturatingAdd(state.statistics.producedFrames, converted.producedFrames);
-  if (state.lease && state.next_packet == state.packet_count) {
-    state.awaiting_input_release = true;
+  if (state.input_phase == Impl::InputPhase::Feeding &&
+      state.next_packet == state.packet_count) {
+    state.input_phase = Impl::InputPhase::AwaitingRelease;
   }
   if (converted.finalInputReleased) {
-    if (!state.lease || !state.awaiting_input_release) {
+    if (state.input_phase != Impl::InputPhase::AwaitingRelease) {
       state.failPump(error,
                      "native audio backend released untracked input storage");
       return NativeAudioPumpResult::Failed;
     }
     state.releaseSample();
-    state.awaiting_input_release = false;
   }
   if (converted.producedFrames != 0) {
-    std::uint64_t discarded = 0;
-    if (state.timeline.trimBeforeFloor &&
-        state.decoded_cursor_frame < state.presentation_floor_frame) {
-      const std::int64_t discardEnd =
-          std::min(cursorAfter, state.presentation_floor_frame);
-      if (!frameDistance(state.decoded_cursor_frame, discardEnd, &discarded) ||
-          discarded > converted.producedFrames) {
-        state.failPump(error, "accurate-seek PCM trim is not frame-exact");
-        return NativeAudioPumpResult::Failed;
-      }
-    }
-    std::int64_t publishStart = 0;
-    if (!checkedFrameEnd(state.decoded_cursor_frame, discarded,
-                         &publishStart)) {
-      state.failPump(error, "generation-local PCM accounting overflowed");
+    Impl::PcmTrimPlan plan;
+    if (const char *refusal =
+            state.planTrim(converted.producedFrames, cursorAfter, &plan)) {
+      state.failPump(error, refusal);
       return NativeAudioPumpResult::Failed;
     }
-    // Mirror image of the head trim. The final packet of a constant-frame
-    // codec always overruns the stream's exact end; those frames are decoded
-    // (so the budget identity above still holds) but never published.
-    std::uint64_t tailDiscarded = 0;
-    if (state.has_presentation_ceiling &&
-        cursorAfter > state.presentation_ceiling_frame) {
-      const std::int64_t keepEnd =
-          std::max(publishStart, state.presentation_ceiling_frame);
-      if (!frameDistance(keepEnd, cursorAfter, &tailDiscarded) ||
-          tailDiscarded > converted.producedFrames - discarded) {
-        state.failPump(error, "end-of-stream PCM trim is not frame-exact");
-        return NativeAudioPumpResult::Failed;
-      }
-    }
-    const std::uint64_t publishFrames =
-        converted.producedFrames - discarded - tailDiscarded;
-    std::uint64_t discardedAfter = 0;
-    std::uint64_t publishedAfter = 0;
-    std::uint64_t trimmed = 0;
-    if (!checkedAdd(discarded, tailDiscarded, &trimmed) ||
-        !checkedAdd(state.statistics.discardedTrimFrames, trimmed,
-                    &discardedAfter) ||
-        !checkedAdd(state.statistics.publishedPcmFrames, publishFrames,
-                    &publishedAfter)) {
-      state.failPump(error, "generation-local PCM accounting overflowed");
-      return NativeAudioPumpResult::Failed;
-    }
+    const std::uint64_t discarded = plan.headDiscarded;
+    const std::uint64_t publishFrames = plan.publishFrames;
     state.statistics.decodedPcmFrames = decodedAfter;
-    state.statistics.discardedTrimFrames = discardedAfter;
+    state.statistics.discardedTrimFrames = plan.discardedTrimAfter;
     state.decoded_cursor_frame = cursorAfter;
     // Width normalisation, and the ONLY place the decoded PCM changes shape.
     // It happens after the frame accounting above is already final and before
@@ -1970,13 +1997,8 @@ NativeAudioPumpResult NativeAudioConverter::pump(std::string *error) {
                     converted.producedFrames);
     }
     if (publishFrames == 0) {
-      if (converted.drained) {
-        if (!state.decodedBudgetExhausted(decodedAfter)) {
-          state.failPump(
-              error, "audio backend drained before its exact timeline ended");
-          return NativeAudioPumpResult::Failed;
-        }
-        state.drained = true;
+      if (converted.drained && !state.sealDrain(decodedAfter, error)) {
+        return NativeAudioPumpResult::Failed;
       }
       return NativeAudioPumpResult::Progress;
     }
@@ -1997,29 +2019,21 @@ NativeAudioPumpResult NativeAudioConverter::pump(std::string *error) {
       state.failPump(error, "native PCM ring rejected decoded audio");
       return NativeAudioPumpResult::Failed;
     }
-    state.statistics.publishedPcmFrames = publishedAfter;
+    state.statistics.publishedPcmFrames = plan.publishedAfter;
     if (!state.statistics.firstPublishedFrameKnown) {
-      state.statistics.firstPublishedFrame = publishStart;
+      state.statistics.firstPublishedFrame = plan.publishStart;
       state.statistics.firstPublishedFrameKnown = true;
     }
     saturatingAdd(state.statistics.publishedSlabs, 1);
-    if (converted.drained) {
-      if (!state.decodedBudgetExhausted(decodedAfter)) {
-        state.failPump(error,
-                       "audio backend drained before its exact timeline ended");
-        return NativeAudioPumpResult::Failed;
-      }
-      state.drained = true;
+    if (converted.drained && !state.sealDrain(decodedAfter, error)) {
+      return NativeAudioPumpResult::Failed;
     }
     return NativeAudioPumpResult::Published;
   }
   if (converted.drained) {
-    if (!state.decodedBudgetExhausted(state.statistics.decodedPcmFrames)) {
-      state.failPump(error,
-                     "audio backend drained before its exact timeline ended");
+    if (!state.sealDrain(state.statistics.decodedPcmFrames, error)) {
       return NativeAudioPumpResult::Failed;
     }
-    state.drained = true;
     return NativeAudioPumpResult::Drained;
   }
   if (converted.consumedPackets != 0 || converted.finalInputReleased) {
@@ -2028,28 +2042,7 @@ NativeAudioPumpResult NativeAudioConverter::pump(std::string *error) {
   if (converted.needsInput && !state.eof_requested) {
     return NativeAudioPumpResult::NeedsInput;
   }
-  {
-    char detail[256];
-    std::snprintf(detail, sizeof(detail),
-                  "native audio backend made no bounded progress "
-                  "[produced=%llu consumed=%llu needsInput=%d finalRel=%d "
-                  "drained=%d sendingEof=%d hasInput=%d eofReq=%d await=%d "
-                  "next=%llu count=%llu decoded=%llu accepted=%llu "
-                  "deficit=%u lead=%u]",
-                  (unsigned long long)converted.producedFrames,
-                  (unsigned long long)converted.consumedPackets,
-                  converted.needsInput ? 1 : 0,
-                  converted.finalInputReleased ? 1 : 0,
-                  converted.drained ? 1 : 0, sendingEof ? 1 : 0,
-                  hasInput ? 1 : 0, state.eof_requested ? 1 : 0,
-                  state.awaiting_input_release ? 1 : 0,
-                  (unsigned long long)state.next_packet,
-                  (unsigned long long)state.packet_count,
-                  (unsigned long long)state.statistics.decodedPcmFrames,
-                  (unsigned long long)state.accepted_pcm_frames,
-                  state.frame_deficit_frames, state.lead_in_frames);
-    state.failPump(error, detail);
-  }
+  state.describeStall(converted, sendingEof, hasInput, error);
   return NativeAudioPumpResult::Failed;
 }
 

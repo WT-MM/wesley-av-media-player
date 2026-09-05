@@ -732,6 +732,12 @@ private:
   dispatchNativeSeekIntent(const NativeSeekIntent &intent, void *context,
                            NativeSeekSubmitter submitter);
 #if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+  // The production NativePreviewSubmitter: `context` is the NativePlaybackOwner
+  // and the mapping from its PreviewDisposition to NativePreviewSubmission is
+  // stated here once, for the demand, presented and failed entry points alike.
+  [[nodiscard]] static NativePreviewSubmission
+  submitNativePreviewFrame(void *context,
+                           const NativePreviewIntent &intent) noexcept;
   void dispatchNativePreviewIntent(const NativePreviewIntent &intent);
   void nativePreviewPresented(
       const ::wam::media::native_playback::PreviewPresented &presented);
@@ -810,7 +816,10 @@ private:
   void updateSubtitleForPosition();
   void updateSubtitleBitmapForPosition();
   void resetSubtitlesForMediaChange();
-  [[nodiscard]] bool nativeSubtitleRouteActive() const;
+  // The one statement of "the native engine owns this window's transport
+  // right now", null check included. Route admission (whether an open MAY go
+  // native) is a different question and lives in nativeRouteAdmissionAllowed.
+  [[nodiscard]] bool nativeRouteActive() const;
   // Adds a sidecar subtitle file on whichever route is live and selects it.
   bool attachSubtitleSource(const std::filesystem::path &path, int origin,
                             const QString &label);

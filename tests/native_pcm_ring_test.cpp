@@ -13,6 +13,8 @@
 #include <type_traits>
 #include <utility>
 
+#include "support/expect.hpp"
+
 namespace wam::macos {
 
 struct NativePcmRingTestAccess {
@@ -72,14 +74,6 @@ namespace {
 using wam::macos::NativePcmRing;
 using wam::macos::NativePcmRingTestAccess;
 
-int failures = 0;
-
-void expect(bool condition, const char *message) {
-  if (!condition) {
-    std::cerr << "FAIL: " << message << '\n';
-    ++failures;
-  }
-}
 
 template <typename Range> bool allEqual(const Range &values, float expected) {
   return std::all_of(values.begin(), values.end(),

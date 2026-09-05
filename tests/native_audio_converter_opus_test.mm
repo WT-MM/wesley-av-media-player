@@ -17,19 +17,13 @@
 #include <utility>
 #include <vector>
 
+#include "support/expect.hpp"
+
 namespace {
 
 using namespace wam::macos;
 using namespace wam::media;
 
-int failures = 0;
-
-void expect(bool condition, const char *message) {
-  if (!condition) {
-    std::cerr << "FAIL: " << message << '\n';
-    ++failures;
-  }
-}
 
 // AudioToolbox swallows exactly this many leading frames from a freshly
 // created Opus converter, so an Opus generation decodes this many fewer PCM
@@ -123,17 +117,14 @@ MediaTrackDescriptor makeOpusTrack() {
   track.duration = {10, 1};
   track.codecConfigurationKind = MediaCodecConfigurationKind::AudioMagicCookie;
   track.codecConfiguration = opusHeadCookie();
-  track.audio = MediaAudioFormat{48'000.0,
-                                 2,
-                                 kAudioFormatOpus,
-                                 0,
-                                 kOpusFramesPerPacket,
-                                 0,
-                                 0,
-                                 0,
-                                 kAudioChannelLayoutTag_Stereo,
-                                 true,
-                                 true};
+  track.audio = MediaAudioFormat{.sampleRate = 48'000.0,
+                                 .channels = 2,
+                                 .formatTag = kAudioFormatOpus,
+                                 .framesPerPacket = kOpusFramesPerPacket,
+                                 .channelLayoutTag =
+                                     kAudioChannelLayoutTag_Stereo,
+                                 .interleaved = true,
+                                 .channelLayoutPresent = true};
   return track;
 }
 
@@ -146,17 +137,14 @@ MediaTrackDescriptor makeAacTrack() {
   track.duration = {10, 1};
   track.codecConfigurationKind = MediaCodecConfigurationKind::AudioMagicCookie;
   track.codecConfiguration = {std::byte{0x12}, std::byte{0x10}};
-  track.audio = MediaAudioFormat{48'000.0,
-                                 2,
-                                 kAudioFormatMPEG4AAC,
-                                 0,
-                                 kAacFramesPerPacket,
-                                 0,
-                                 0,
-                                 0,
-                                 kAudioChannelLayoutTag_Stereo,
-                                 true,
-                                 true};
+  track.audio = MediaAudioFormat{.sampleRate = 48'000.0,
+                                 .channels = 2,
+                                 .formatTag = kAudioFormatMPEG4AAC,
+                                 .framesPerPacket = kAacFramesPerPacket,
+                                 .channelLayoutTag =
+                                     kAudioChannelLayoutTag_Stereo,
+                                 .interleaved = true,
+                                 .channelLayoutPresent = true};
   return track;
 }
 

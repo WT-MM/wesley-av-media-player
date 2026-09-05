@@ -7,18 +7,12 @@
 #include <string>
 #include <vector>
 
+#include "support/expect.hpp"
+
 namespace {
 
 using namespace wam::media::subtitles;
 
-int failures = 0;
-
-void expect(bool condition, const char* message) {
-  if (!condition) {
-    std::cerr << "FAIL: " << message << '\n';
-    ++failures;
-  }
-}
 
 template <typename T>
 void expectEqual(T actual, T expected, const char* message) {

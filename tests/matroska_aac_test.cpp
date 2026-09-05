@@ -8,19 +8,13 @@
 #include <limits>
 #include <span>
 
+#include "support/expect.hpp"
+
 namespace {
 
 using wam::media::MediaTime;
 using namespace wam::media::matroska;
 
-int failures = 0;
-
-void expect(bool condition, const char *message) {
-  if (!condition) {
-    std::cerr << "FAIL: " << message << '\n';
-    ++failures;
-  }
-}
 
 template <std::size_t Size>
 [[nodiscard]] constexpr std::array<std::byte, Size>

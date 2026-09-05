@@ -790,9 +790,36 @@ void laterOpenRestoresFirstDrawWriteBarrier() {
          "the terminal batch preserves the later open and fallback evidence");
 }
 
+void environmentTruthVocabularyIsStatedOnce() {
+  unsetenv("WAM_NATIVE_BENCHMARK_TELEMETRY");
+  expect(!wam::qt::nativeBenchmarkTelemetryArmed(),
+         "an unset opt-in leaves telemetry and every seam disarmed");
+  static constexpr const char *kOff[] = {"0",  "",   "off", "false",
+                                         "no", "On", "junk"};
+  for (const char *value : kOff) {
+    setenv("WAM_NATIVE_BENCHMARK_TELEMETRY", value, 1);
+    expect(!wam::qt::nativeBenchmarkTelemetryArmed(),
+           "anything outside the truth vocabulary disarms every seam");
+  }
+  static constexpr const char *kOn[] = {"1",   "true", "TRUE", "yes",
+                                        "YES", "on",   "ON"};
+  for (const char *value : kOn) {
+    setenv("WAM_NATIVE_BENCHMARK_TELEMETRY", value, 1);
+    expect(wam::qt::nativeBenchmarkTelemetryArmed(),
+           "every truth spelling arms telemetry and every seam together");
+  }
+  unsetenv("WAM_NATIVE_BENCHMARK_TELEMETRY");
+  setenv("WAM_TEST_TRUTH_VOCABULARY", "yes", 1);
+  expect(wam::qt::wamEnvironmentTruth("WAM_TEST_TRUTH_VOCABULARY") &&
+             !wam::qt::wamEnvironmentTruth("WAM_TEST_TRUTH_VOCABULARY_UNSET"),
+         "the same vocabulary answers for every WAM_* opt-in");
+  unsetenv("WAM_TEST_TRUTH_VOCABULARY");
+}
+
 } // namespace
 
 int main() {
+  environmentTruthVocabularyIsStatedOnce();
   disabledPathDoesNoWork();
   enabledIdentityFailsClosedWithoutExactAssetToken();
   requiredFactsAreStableJsonLines();

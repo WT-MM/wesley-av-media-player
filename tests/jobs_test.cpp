@@ -17,19 +17,14 @@
 #include <cerrno>
 #include <csignal>
 #include <unistd.h>
+
+#include "support/expect.hpp"
 #endif
 
 static_assert(noexcept(std::declval<wam::BackgroundJob&>().cancel()),
               "background cancellation must remain no-throw");
 
 namespace {
-int failures = 0;
-void expect(bool condition, const char* message) {
-  if (!condition) {
-    std::cerr << "FAIL: " << message << '\n';
-    ++failures;
-  }
-}
 }  // namespace
 
 std::string readFile(const std::filesystem::path& path) {

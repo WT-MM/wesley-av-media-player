@@ -22,6 +22,8 @@
 #include <numbers>
 #include <vector>
 
+#include "support/expect.hpp"
+
 namespace {
 
 using wam::macos::NativeAudioStretchStage;
@@ -32,14 +34,6 @@ constexpr std::uint32_t kChannels = 2;
 constexpr std::uint32_t kBlockFrames = 1024;
 constexpr double kToneHz = 1000.0;
 
-int failures = 0;
-
-void expect(bool condition, const char *message) {
-  if (!condition) {
-    std::cerr << "FAIL: " << message << '\n';
-    ++failures;
-  }
-}
 
 // One 1000 Hz sine generator shared by every case, so the stage's input is a
 // continuous tone across an entire run rather than a restarted one per block.

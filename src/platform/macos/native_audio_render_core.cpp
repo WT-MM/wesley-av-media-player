@@ -573,6 +573,114 @@ bool NativeAudioRenderCore::timingRange(
   return false;
 }
 
+bool NativeAudioRenderCore::isContinuous(
+    const NativeAudioRenderInput &input,
+    std::uint64_t heardFirstHostTicks) const noexcept {
+  return !next_discontinuous_ &&
+         prior_end_host_ticks_ == heardFirstHostTicks &&
+         prior_end_frame_ == input.streamFrameStart &&
+         ((input.timing == NativeAudioRenderInput::Timing::HostTicks &&
+           !prior_sample_time_valid_) ||
+          (input.timing == NativeAudioRenderInput::Timing::SampleTime &&
+           prior_sample_time_valid_ &&
+           prior_end_sample_time_ == input.firstSampleTime));
+}
+
+NativeAudioRenderResult &NativeAudioRenderCore::refuse(
+    NativeAudioRenderResult &result,
+    NativeAudioRenderFailure failure) noexcept {
+  result.failure = failure;
+  latchFailure(failure);
+  next_discontinuous_ = true;
+  prior_sample_time_valid_ = false;
+  saturatingAdd(rejected_callbacks_, 1);
+  return result;
+}
+
+NativeAudioRenderCore::PrefixSplit NativeAudioRenderCore::computePrefixSplit(
+    NativeAudioRenderInput input, NativePlaybackRate rate,
+    std::uint64_t readableFrames, std::uint64_t fullOutputFrames,
+    bool terminalCurrent, std::uint64_t terminalFrame) const noexcept {
+  const std::uint64_t rateNumerator = rate.numerator;
+  const std::uint64_t rateDenominator = rate.denominator;
+  // Output frames this callback will actually fill with real audio, and the
+  // media frames they consume. `outputFrames` is always a multiple of the
+  // rate denominator, so `prefixFrames = outputFrames * p / q` is exact and
+  // the stretch stage's own rounding has nothing to disagree with. At the
+  // unit rate the pair collapses to the historical
+  // `min(frameCount, readable)` verbatim.
+  const auto mediaLimitedOutput =
+      [rateNumerator, rateDenominator](std::uint64_t mediaFrames) noexcept {
+        const std::uint64_t candidate =
+            mediaFrames / rateNumerator * rateDenominator +
+            mediaFrames % rateNumerator * rateDenominator / rateNumerator;
+        return candidate - candidate % rateDenominator;
+      };
+  // Container-DECLARED silence available at this cursor, in media frames.
+  //
+  // Head: the leading empty edit's span. The container states that no audio
+  // media exists on [0, mediaStart); the session sizes it in frames and hands
+  // it to activate(), so real PCM begins at lead_in_end_frame_ exactly.
+  //
+  // Tail: whatever lies between the exhausted ring and a PUBLISHED terminal.
+  // A terminal is published only after the converter reports drained, so the
+  // ring already holds every remaining real PCM frame of the generation and
+  // the difference is silence the source declared -- a video tail past the end
+  // of the selected audio -- not audio the producer still owes. That is what
+  // makes it safe to advance the clock here where a genuine underrun (no
+  // terminal yet) still must not.
+  //
+  // Both are zero for every source that declares no silence, and every
+  // expression below then reduces to the prior arithmetic verbatim.
+  const std::uint64_t leadInSilence =
+      lead_in_end_frame_ > input.streamFrameStart
+          ? lead_in_end_frame_ - input.streamFrameStart
+          : 0;
+  const std::uint64_t leadInAndRing = leadInSilence + readableFrames;
+  //
+  // The tail is admitted ONLY by the container's own statement -- never by an
+  // exhausted ring, and deliberately never by a published terminal alone. An
+  // exhausted ring at a preterminal cursor still means a late producer, and
+  // the underrun path still owns it, `pending_late_frames_` and all. Past the
+  // stated audio end the source itself says there is no more audio, which is
+  // the earlier and the stronger fact: end-of-stream is signalled when READS
+  // reach the end of the FILE, which on a two-hour movie is most of a second
+  // after the audio track's last sample.
+  const std::uint64_t tailCeiling =
+      (declared_end_frame_ != 0 &&
+       input.streamFrameStart + leadInAndRing >= declared_pcm_end_frame_)
+          ? declared_end_frame_
+          : 0;
+  const std::uint64_t tailSilence =
+      tailCeiling > input.streamFrameStart + leadInAndRing
+          ? tailCeiling - input.streamFrameStart - leadInAndRing
+          : 0;
+  PrefixSplit split;
+  split.outputFrames = std::min<std::uint64_t>(
+      fullOutputFrames, mediaLimitedOutput(leadInAndRing + tailSilence));
+  if (terminalCurrent && terminalFrame > input.streamFrameStart) {
+    split.outputFrames = std::min<std::uint64_t>(
+        split.outputFrames,
+        mediaLimitedOutput(terminalFrame - input.streamFrameStart));
+  }
+  split.prefixFrames = split.outputFrames * rateNumerator / rateDenominator;
+  // The media frames this callback covers, split in MEDIA ORDER into the
+  // declared-silence head, the real PCM, and the declared-silence tail. At the
+  // unit rate output frames and media frames are the same quantity, so this
+  // split is also the output split and the first real sample therefore lands
+  // on exactly the frame the container's edit list names -- sample-exact, with
+  // no boundary callback and no relabelling.
+  split.silencePrefixFrames =
+      std::min<std::uint64_t>(split.prefixFrames, leadInSilence);
+  split.pcmShareFrames = std::min<std::uint64_t>(
+      split.prefixFrames - split.silencePrefixFrames, readableFrames);
+  split.silenceSuffixFrames =
+      split.prefixFrames - split.silencePrefixFrames - split.pcmShareFrames;
+  split.declaredSilenceFrames =
+      split.silencePrefixFrames + split.silenceSuffixFrames;
+  return split;
+}
+
 NativeAudioRenderResult NativeAudioRenderCore::render(
     NativeAudioRenderInput input,
     std::span<float> interleavedStereoOutput) noexcept {
@@ -610,10 +718,7 @@ NativeAudioRenderResult NativeAudioRenderCore::render(
       input.frameCount >
           kMaximumExactDoubleInteger - input.streamFrameStart) {
     silenceAll();
-    result.failure = NativeAudioRenderFailure::InvalidInput;
-    latchFailure(result.failure);
-    saturatingAdd(rejected_callbacks_, 1);
-    return result;
+    return refuse(result, NativeAudioRenderFailure::InvalidInput);
   }
 
   const std::uint64_t generation =
@@ -634,23 +739,14 @@ NativeAudioRenderResult NativeAudioRenderCore::render(
   const NativeAudioRenderFailure latched = failure();
   if (latched != NativeAudioRenderFailure::None) {
     silenceAll();
-    result.failure = latched;
-    next_discontinuous_ = true;
-    prior_sample_time_valid_ = false;
-    saturatingAdd(rejected_callbacks_, 1);
-    return result;
+    return refuse(result, latched);
   }
 
   if (paused_.load(std::memory_order_acquire)) {
     silenceAll();
     if (!pause_fact_published_) {
       if (running_ && !clock_.pause(generation)) {
-        result.failure = NativeAudioRenderFailure::ClockCommitFailed;
-        latchFailure(result.failure);
-        next_discontinuous_ = true;
-        prior_sample_time_valid_ = false;
-        saturatingAdd(rejected_callbacks_, 1);
-        return result;
+        return refuse(result, NativeAudioRenderFailure::ClockCommitFailed);
       }
       running_ = false;
       pause_fact_published_ = true;
@@ -684,10 +780,7 @@ NativeAudioRenderResult NativeAudioRenderCore::render(
           !stretch_.setRate(stretch_.context, requested.numerator,
                             requested.denominator, requestedPreservePitch)) {
         silenceAll();
-        result.failure = NativeAudioRenderFailure::StretchStageFailed;
-        latchFailure(result.failure);
-        saturatingAdd(rejected_callbacks_, 1);
-        return result;
+        return refuse(result, NativeAudioRenderFailure::StretchStageFailed);
       }
       active_rate_ = requested;
       // Latched even at the unit rate, where nothing is applied: the pitch
@@ -725,24 +818,14 @@ NativeAudioRenderResult NativeAudioRenderCore::render(
       !hostTicksForOutputFrames(input, stretch_latency_output_frames_,
                                 &latency_ticks)) {
     silenceAll();
-    result.failure = NativeAudioRenderFailure::InvalidInput;
-    latchFailure(result.failure);
-    next_discontinuous_ = true;
-    prior_sample_time_valid_ = false;
-    saturatingAdd(rejected_callbacks_, 1);
-    return result;
+    return refuse(result, NativeAudioRenderFailure::InvalidInput);
   }
   if (latency_ticks >
           std::numeric_limits<std::uint64_t>::max() - first_host_ticks ||
       latency_ticks > std::numeric_limits<std::uint64_t>::max() -
                           callback_end_host_ticks) {
     silenceAll();
-    result.failure = NativeAudioRenderFailure::InvalidInput;
-    latchFailure(result.failure);
-    next_discontinuous_ = true;
-    prior_sample_time_valid_ = false;
-    saturatingAdd(rejected_callbacks_, 1);
-    return result;
+    return refuse(result, NativeAudioRenderFailure::InvalidInput);
   }
   const std::uint64_t heard_first_host_ticks =
       first_host_ticks + latency_ticks;
@@ -773,12 +856,7 @@ NativeAudioRenderResult NativeAudioRenderCore::render(
       terminalPublished && terminalGeneration == generation;
   if (terminalCurrent && input.streamFrameStart > terminalFrame) {
     silenceAll();
-    result.failure = NativeAudioRenderFailure::InvalidInput;
-    latchFailure(result.failure);
-    next_discontinuous_ = true;
-    prior_sample_time_valid_ = false;
-    saturatingAdd(rejected_callbacks_, 1);
-    return result;
+    return refuse(result, NativeAudioRenderFailure::InvalidInput);
   }
   if (terminalCurrent && input.streamFrameStart == terminalFrame) {
     silenceAll();
@@ -861,11 +939,7 @@ NativeAudioRenderResult NativeAudioRenderCore::render(
   const NativeAudioRenderFailure failureAfterHook = failure();
   if (failureAfterHook != NativeAudioRenderFailure::None) {
     silenceAll();
-    result.failure = failureAfterHook;
-    next_discontinuous_ = true;
-    prior_sample_time_valid_ = false;
-    saturatingAdd(rejected_callbacks_, 1);
-    return result;
+    return refuse(result, failureAfterHook);
   }
   if (readable.staleConsumer) {
     silenceAll();
@@ -880,84 +954,16 @@ NativeAudioRenderResult NativeAudioRenderCore::render(
                             std::numeric_limits<std::uint32_t>::max()));
   result.bufferedPcmFramesKnown = true;
 
-  // Output frames this callback will actually fill with real audio, and the
-  // media frames they consume. `outputFrames` is always a multiple of the
-  // rate denominator, so `prefixFrames = outputFrames * p / q` is exact and
-  // the stretch stage's own rounding has nothing to disagree with. At the
-  // unit rate the pair collapses to the historical
-  // `min(frameCount, readable)` verbatim.
-  const auto mediaLimitedOutput =
-      [rateNumerator, rateDenominator](std::uint64_t mediaFrames) noexcept {
-        const std::uint64_t candidate =
-            mediaFrames / rateNumerator * rateDenominator +
-            mediaFrames % rateNumerator * rateDenominator / rateNumerator;
-        return candidate - candidate % rateDenominator;
-      };
-  // Container-DECLARED silence available at this cursor, in media frames.
-  //
-  // Head: the leading empty edit's span. The container states that no audio
-  // media exists on [0, mediaStart); the session sizes it in frames and hands
-  // it to activate(), so real PCM begins at lead_in_end_frame_ exactly.
-  //
-  // Tail: whatever lies between the exhausted ring and a PUBLISHED terminal.
-  // A terminal is published only after the converter reports drained, so the
-  // ring already holds every remaining real PCM frame of the generation and
-  // the difference is silence the source declared -- a video tail past the end
-  // of the selected audio -- not audio the producer still owes. That is what
-  // makes it safe to advance the clock here where a genuine underrun (no
-  // terminal yet) still must not.
-  //
-  // Both are zero for every source that declares no silence, and every
-  // expression below then reduces to the prior arithmetic verbatim.
-  const std::uint64_t leadInSilence =
-      lead_in_end_frame_ > input.streamFrameStart
-          ? lead_in_end_frame_ - input.streamFrameStart
-          : 0;
-  const std::uint64_t leadInAndRing =
-      leadInSilence + static_cast<std::uint64_t>(readable.frames);
-  //
-  // The tail is admitted ONLY by the container's own statement -- never by an
-  // exhausted ring, and deliberately never by a published terminal alone. An
-  // exhausted ring at a preterminal cursor still means a late producer, and
-  // the underrun path still owns it, `pending_late_frames_` and all. Past the
-  // stated audio end the source itself says there is no more audio, which is
-  // the earlier and the stronger fact: end-of-stream is signalled when READS
-  // reach the end of the FILE, which on a two-hour movie is most of a second
-  // after the audio track's last sample.
-  const std::uint64_t tailCeiling =
-      (declared_end_frame_ != 0 &&
-       input.streamFrameStart + leadInAndRing >= declared_pcm_end_frame_)
-          ? declared_end_frame_
-          : 0;
-  const std::uint64_t tailSilence =
-      tailCeiling > input.streamFrameStart + leadInAndRing
-          ? tailCeiling - input.streamFrameStart - leadInAndRing
-          : 0;
-  std::uint64_t outputFrames = std::min<std::uint64_t>(
-      full_output_frames, mediaLimitedOutput(leadInAndRing + tailSilence));
-  if (terminalCurrent && terminalFrame > input.streamFrameStart) {
-    outputFrames = std::min<std::uint64_t>(
-        outputFrames,
-        mediaLimitedOutput(terminalFrame - input.streamFrameStart));
-  }
-  const std::size_t prefixFrames = static_cast<std::size_t>(
-      outputFrames * rateNumerator / rateDenominator);
-  // The media frames this callback covers, split in MEDIA ORDER into the
-  // declared-silence head, the real PCM, and the declared-silence tail. At the
-  // unit rate output frames and media frames are the same quantity, so this
-  // split is also the output split and the first real sample therefore lands
-  // on exactly the frame the container's edit list names -- sample-exact, with
-  // no boundary callback and no relabelling.
-  const std::uint64_t silencePrefixFrames =
-      std::min<std::uint64_t>(prefixFrames, leadInSilence);
-  const std::uint64_t pcmShareFrames =
-      std::min<std::uint64_t>(prefixFrames - silencePrefixFrames,
-                              static_cast<std::uint64_t>(readable.frames));
-  const std::uint64_t silenceSuffixFrames =
-      static_cast<std::uint64_t>(prefixFrames) - silencePrefixFrames -
-      pcmShareFrames;
-  const std::uint64_t declaredSilenceFrames =
-      silencePrefixFrames + silenceSuffixFrames;
+  const PrefixSplit split = computePrefixSplit(
+      input, rate, static_cast<std::uint64_t>(readable.frames),
+      full_output_frames, terminalCurrent, terminalFrame);
+  const std::uint64_t outputFrames = split.outputFrames;
+  const std::size_t prefixFrames =
+      static_cast<std::size_t>(split.prefixFrames);
+  const std::uint64_t silencePrefixFrames = split.silencePrefixFrames;
+  const std::uint64_t pcmShareFrames = split.pcmShareFrames;
+  const std::uint64_t silenceSuffixFrames = split.silenceSuffixFrames;
+  const std::uint64_t declaredSilenceFrames = split.declaredSilenceFrames;
 
   if (outputFrames == 0 || prefixFrames == 0) {
     silenceAll();
@@ -994,9 +1000,7 @@ NativeAudioRenderResult NativeAudioRenderCore::render(
       segment.mediaStart = *silenceStart;
       segment.mediaEnd = *silenceEnd;
       segment.continuity =
-          (!next_discontinuous_ &&
-           prior_end_host_ticks_ == heard_first_host_ticks &&
-           prior_end_frame_ == input.streamFrameStart)
+          isContinuous(input, heard_first_host_ticks)
               ? NativeMediaSegmentContinuity::Continuous
               : NativeMediaSegmentContinuity::Discontinuous;
       const NativeMediaSegmentAdmission admission =
@@ -1045,12 +1049,7 @@ NativeAudioRenderResult NativeAudioRenderCore::render(
       segmentEndHostTicks > heard_callback_end_host_ticks ||
       segment_serial_ == std::numeric_limits<std::uint64_t>::max()) {
     silenceAll();
-    result.failure = NativeAudioRenderFailure::InvalidInput;
-    latchFailure(result.failure);
-    next_discontinuous_ = true;
-    prior_sample_time_valid_ = false;
-    saturatingAdd(rejected_callbacks_, 1);
-    return result;
+    return refuse(result, NativeAudioRenderFailure::InvalidInput);
   }
 
   const std::uint64_t endFrame =
@@ -1061,12 +1060,7 @@ NativeAudioRenderResult NativeAudioRenderCore::render(
       media_origin_, endFrame, input.sampleRate);
   if (!mediaStart || !mediaEnd || !(*mediaEnd > *mediaStart)) {
     silenceAll();
-    result.failure = NativeAudioRenderFailure::InvalidInput;
-    latchFailure(result.failure);
-    next_discontinuous_ = true;
-    prior_sample_time_valid_ = false;
-    saturatingAdd(rejected_callbacks_, 1);
-    return result;
+    return refuse(result, NativeAudioRenderFailure::InvalidInput);
   }
 
   if (!running_) {
@@ -1078,25 +1072,12 @@ NativeAudioRenderResult NativeAudioRenderCore::render(
     if (!clock_.runAtHostTicks(generation, heard_first_host_ticks,
                                rate.toDouble())) {
       silenceAll();
-      result.failure = NativeAudioRenderFailure::ResumeRejected;
-      latchFailure(result.failure);
-      next_discontinuous_ = true;
-      prior_sample_time_valid_ = false;
-      saturatingAdd(rejected_callbacks_, 1);
-      return result;
+      return refuse(result, NativeAudioRenderFailure::ResumeRejected);
     }
     running_ = true;
   }
 
-  const bool continuous =
-      !next_discontinuous_ &&
-      prior_end_host_ticks_ == heard_first_host_ticks &&
-      prior_end_frame_ == input.streamFrameStart &&
-      ((input.timing == NativeAudioRenderInput::Timing::HostTicks &&
-        !prior_sample_time_valid_) ||
-       (input.timing == NativeAudioRenderInput::Timing::SampleTime &&
-        prior_sample_time_valid_ &&
-        prior_end_sample_time_ == input.firstSampleTime));
+  const bool continuous = isContinuous(input, heard_first_host_ticks);
   NativeMediaSegment segment;
   segment.serial = segment_serial_ + 1U;
   segment.firstHostTicks = heard_first_host_ticks;
@@ -1128,12 +1109,7 @@ NativeAudioRenderResult NativeAudioRenderCore::render(
     }
     if (!committed) {
       silenceAll();
-      result.failure = NativeAudioRenderFailure::ClockCommitFailed;
-      latchFailure(result.failure);
-      next_discontinuous_ = true;
-      prior_sample_time_valid_ = false;
-      saturatingAdd(rejected_callbacks_, 1);
-      return result;
+      return refuse(result, NativeAudioRenderFailure::ClockCommitFailed);
     }
     result.committed = true;
     segment_serial_ = segment.serial;
@@ -1177,13 +1153,8 @@ NativeAudioRenderResult NativeAudioRenderCore::render(
       static_cast<void>(clock_.cancelSegment(reservation));
       zero(interleavedStereoOutput);
       result.silentFrames = input.frameCount;
-      result.failure = NativeAudioRenderFailure::RingContractViolation;
-      latchFailure(result.failure);
-      next_discontinuous_ = true;
-      prior_sample_time_valid_ = false;
       saturatingAdd(silent_frames_, input.frameCount);
-      saturatingAdd(rejected_callbacks_, 1);
-      return result;
+      return refuse(result, NativeAudioRenderFailure::RingContractViolation);
     }
   } else {
     // The stage pulls its own input through stretchPull(), which is budgeted
@@ -1211,15 +1182,11 @@ NativeAudioRenderResult NativeAudioRenderCore::render(
       static_cast<void>(clock_.cancelSegment(reservation));
       zero(interleavedStereoOutput);
       result.silentFrames = input.frameCount;
-      result.failure = ringFailed
-                           ? NativeAudioRenderFailure::RingContractViolation
-                           : NativeAudioRenderFailure::StretchStageFailed;
-      latchFailure(result.failure);
-      next_discontinuous_ = true;
-      prior_sample_time_valid_ = false;
       saturatingAdd(silent_frames_, input.frameCount);
-      saturatingAdd(rejected_callbacks_, 1);
-      return result;
+      return refuse(result,
+                    ringFailed
+                        ? NativeAudioRenderFailure::RingContractViolation
+                        : NativeAudioRenderFailure::StretchStageFailed);
     }
     if (taken < prefixFrames) {
       // A stage that under-pulled produced audio for less media than the
@@ -1249,13 +1216,8 @@ NativeAudioRenderResult NativeAudioRenderCore::render(
   if (!committed) {
     zero(interleavedStereoOutput);
     result.silentFrames = input.frameCount;
-    result.failure = NativeAudioRenderFailure::ClockCommitFailed;
-    latchFailure(result.failure);
-    next_discontinuous_ = true;
-    prior_sample_time_valid_ = false;
     saturatingAdd(silent_frames_, input.frameCount);
-    saturatingAdd(rejected_callbacks_, 1);
-    return result;
+    return refuse(result, NativeAudioRenderFailure::ClockCommitFailed);
   }
 
   segment_serial_ = segment.serial;

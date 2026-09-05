@@ -21,6 +21,8 @@
 #include <utility>
 #include <vector>
 
+#include "support/expect.hpp"
+
 namespace {
 
 using namespace wam::media::matroska;
@@ -34,14 +36,6 @@ static_assert(std::is_nothrow_move_constructible_v<SegmentChildCursor>);
 static_assert(!std::is_copy_constructible_v<ClusterChildCursor>);
 static_assert(std::is_nothrow_move_constructible_v<ClusterChildCursor>);
 
-int failures = 0;
-
-void expect(bool condition, const char* message) {
-  if (!condition) {
-    std::cerr << "FAIL: " << message << '\n';
-    ++failures;
-  }
-}
 
 void append(Bytes& destination, std::span<const std::byte> source) {
   destination.insert(destination.end(), source.begin(), source.end());

@@ -484,14 +484,62 @@ h264MaxDpbMacroblocks(std::uint32_t level, bool level1b) noexcept {
   }
 }
 
+// The profiles whose SPS carries chroma_format_idc, the bit-depth fields and
+// the scaling matrices (H.264 7.3.2.1.1). Reading a profile outside this set as
+// "high" -- or one inside it as "not high" -- shifts every subsequent field by
+// a variable number of bits, so this must be the full spec list, not the subset
+// the admission whitelist below happens to reach today.
 [[nodiscard]] constexpr bool h264HighProfile(std::uint32_t profile) noexcept {
-  return profile == 100U;
+  switch (profile) {
+    case 44U:
+    case 83U:
+    case 86U:
+    case 100U:
+    case 110U:
+    case 118U:
+    case 122U:
+    case 128U:
+    case 134U:
+    case 135U:
+    case 138U:
+    case 139U:
+    case 244U:
+      return true;
+    default:
+      return false;
+  }
 }
 
+// The profiles for which constraint_set3_flag selects an intra-only profile
+// (H.264 A.2.4-A.2.10): every picture is a reference-free intra picture, so
+// the reorder depth is zero regardless of what the VUI declares.
 [[nodiscard]] constexpr bool
 h264ConstraintSet3ZeroReorder(std::uint32_t profile) noexcept {
-  return profile == 100U;
+  switch (profile) {
+    case 44U:
+    case 86U:
+    case 100U:
+    case 110U:
+    case 122U:
+    case 244U:
+      return true;
+    default:
+      return false;
+  }
 }
+
+// The admitted profiles (66/77/88/100 in parseH264Sps) and both classifiers
+// must stay consistent: 100 is the only admitted profile whose SPS takes the
+// high-profile parse path and the only one whose constraint_set3_flag means
+// intra-only; 66/77/88 must take neither. Widening admission to a 10-bit
+// profile without the parser and surface contract following would reintroduce
+// the classifier drift this pins shut.
+static_assert(h264HighProfile(100U) && h264ConstraintSet3ZeroReorder(100U));
+static_assert(!h264HighProfile(66U) && !h264HighProfile(77U) &&
+              !h264HighProfile(88U));
+static_assert(!h264ConstraintSet3ZeroReorder(66U) &&
+              !h264ConstraintSet3ZeroReorder(77U) &&
+              !h264ConstraintSet3ZeroReorder(88U));
 
 [[nodiscard]] constexpr bool
 h264ConstraintSet3Level1b(std::uint32_t profile) noexcept {

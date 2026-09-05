@@ -19,6 +19,8 @@
 #include <span>
 #include <vector>
 
+#include "support/expect.hpp"
+
 namespace {
 
 using wam::macos::channelRolesForLayout;
@@ -29,14 +31,6 @@ using wam::media::buildStereoDownmixMatrix;
 using wam::media::kMaximumDownmixSourceChannels;
 using wam::media::StereoDownmixMatrix;
 
-int failures = 0;
-
-void expect(bool condition, const char *message) {
-  if (!condition) {
-    std::cerr << "FAIL: " << message << '\n';
-    ++failures;
-  }
-}
 
 [[nodiscard]] bool rolesForTag(
     std::uint32_t tag, std::uint32_t channels,

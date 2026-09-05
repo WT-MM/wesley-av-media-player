@@ -1,5 +1,7 @@
 #include "media/native_media_backend.hpp"
 
+#include "media/media_codec_facts.hpp"
+
 #include <utility>
 
 namespace wam::media {
@@ -58,9 +60,15 @@ bool validateMediaPreviewBinding(const MediaPreviewBinding& binding,
       return false;
     }
     const MediaTrackDescriptor* track = selectedVideo(binding);
+    // The nonempty-record requirement is INVERTED for the codecs that carry no
+    // out-of-band configuration record: an empty record is their only correct
+    // descriptor, so demanding one refuses every ProRes, Motion JPEG and MPEG-2
+    // track a preview lane can decode perfectly well.
     if (track == nullptr || track->kind != MediaTrackKind::Video ||
         !track->video || track->codec == MediaCodec::Unknown ||
-        track->codecConfiguration.empty()) {
+        (mediaCodecFacts(track->codec).carriesConfigurationRecord
+             ? track->codecConfiguration.empty()
+             : !track->codecConfiguration.empty())) {
       assignError(error,
                   "preview binding has no selected encoded video track");
       return false;
