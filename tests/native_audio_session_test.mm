@@ -881,7 +881,7 @@ void testTerminalGainMuteRejection() {
         1, dependencies(platform,
                         std::make_unique<FakeBackend>(backendState)));
     expect(session->setGain(0.4F) == NativeAudioSessionProgress::Done &&
-               session->configure(audioTrack(32'000.0), 1, timeline(1, 0),
+               session->configure(audioTrack(7'000.0), 1, timeline(1, 0),
                                   nullptr) ==
                    NativeMediaConsumeResult::Unsupported,
            "unsupported control fixture reaches its pre-resource terminal");
@@ -974,7 +974,7 @@ void testPreflightAndPostResourceFailure() {
         1, dependencies(platform,
                         std::make_unique<FakeBackend>(backendState)));
     expect(session != nullptr, "unsupported preflight session is created");
-    MediaTrackDescriptor unsupported = audioTrack(32'000.0);
+    MediaTrackDescriptor unsupported = audioTrack(7'000.0);
     expect(session->configure(unsupported, 1, timeline(1, 0), nullptr) ==
                NativeMediaConsumeResult::Unsupported,
            "unsupported rate is rejected before resource entry");
@@ -1429,7 +1429,7 @@ void testExactTerminalRetirement() {
     auto session = NativeAudioSession::create(
         1, dependencies(platform,
                         std::make_unique<FakeBackend>(backendState)));
-    expect(session->configure(audioTrack(32'000.0), 1, timeline(1, 0),
+    expect(session->configure(audioTrack(7'000.0), 1, timeline(1, 0),
                               nullptr) ==
                    NativeMediaConsumeResult::Unsupported &&
                !session->facts().resourceEntered &&

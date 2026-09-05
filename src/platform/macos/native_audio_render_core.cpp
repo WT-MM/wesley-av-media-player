@@ -305,6 +305,15 @@ bool NativeAudioRenderCore::preservePitch() const noexcept {
   return requested_preserve_pitch_.load(std::memory_order_acquire);
 }
 
+void NativeAudioRenderCore::setOutputLatencyFrames(
+    std::uint32_t frames) noexcept {
+  output_latency_frames_.store(frames, std::memory_order_release);
+}
+
+std::uint32_t NativeAudioRenderCore::outputLatencyFrames() const noexcept {
+  return output_latency_frames_.load(std::memory_order_acquire);
+}
+
 NativePlaybackRate NativeAudioRenderCore::requestedRate() const noexcept {
   const std::uint64_t packed =
       requested_rate_.load(std::memory_order_acquire);
@@ -806,16 +815,23 @@ NativeAudioRenderResult NativeAudioRenderCore::render(
   const std::uint64_t rateDenominator = rate.denominator;
 
   // Group-delay shift. Audio leaving the ring in this callback is HEARD
-  // stretch_latency_output_frames_ output frames later, so every host
-  // endpoint this callback publishes is moved forward by exactly that much.
-  // The shift is constant for a given rate, so it cancels out of the
-  // adjacency proof (prior end == this start) and out of the coalescing
-  // identities; only a rate change moves it, and that boundary is already
-  // marked discontinuous above. At the unit rate it is exactly zero and
-  // every expression below reduces to the pre-rate arithmetic verbatim.
+  // later by the stretch stage's group delay at this rate plus the output
+  // unit's own declared delay (its sample-rate converter, when the client
+  // format does not run at the device rate), so every host endpoint this
+  // callback publishes is moved forward by exactly their sum, in output
+  // frames. Both terms are constant between rate changes, so the shift cancels
+  // out of the adjacency proof (prior end == this start) and out of the
+  // coalescing identities; only a rate change moves it, and that boundary is
+  // already marked discontinuous above. At the unit rate on a device running
+  // at the stream rate the sum is exactly zero and every expression below
+  // reduces to the pre-rate arithmetic verbatim.
+  const std::uint64_t latency_output_frames =
+      static_cast<std::uint64_t>(stretch_latency_output_frames_) +
+      static_cast<std::uint64_t>(
+          output_latency_frames_.load(std::memory_order_relaxed));
   std::uint64_t latency_ticks = 0;
-  if (stretch_latency_output_frames_ != 0 &&
-      !hostTicksForOutputFrames(input, stretch_latency_output_frames_,
+  if (latency_output_frames != 0 &&
+      !hostTicksForOutputFrames(input, latency_output_frames,
                                 &latency_ticks)) {
     silenceAll();
     return refuse(result, NativeAudioRenderFailure::InvalidInput);

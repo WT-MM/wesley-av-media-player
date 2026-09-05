@@ -398,7 +398,7 @@ NativePreviewReadResult MpegTsPreviewSource::readNext(
     inputs.codec = impl_->track->codec;
     inputs.video = true;
     inputs.workspace = &impl_->payloadWorkspace;
-    MpegTsScopedSampleBuffer owned;
+    ScopedSampleBuffer owned;
     const MpegTsSampleBuildStatus built =
         buildMpegTsCompressedSampleBuffer(inputs, raw, &owned, &error);
     if (built != MpegTsSampleBuildStatus::Built) {
@@ -428,7 +428,7 @@ NativePreviewReadResult MpegTsPreviewSource::readNext(
       impl_->stagedSampleBuffers.store(0, std::memory_order_release);
     };
 
-    const auto decodeOnly = mpegTsAccurateVideoDecodeOnly(
+    const auto decodeOnly = accurateVideoDecodeOnly(
         raw.presentationTime, raw.duration, impl_->target, &error);
     if (!decodeOnly) {
       clearStage();
@@ -440,7 +440,7 @@ NativePreviewReadResult MpegTsPreviewSource::readNext(
     }
 
     auto storage =
-        std::make_shared<MpegTsCoreMediaSampleStorage>(owned.get(), bytes);
+        std::make_shared<CoreMediaSampleStorage>(owned.get(), bytes);
     static_cast<void>(owned.release());
     MediaSample sample;
     sample.generation = expectedEpoch;

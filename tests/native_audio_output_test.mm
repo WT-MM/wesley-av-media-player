@@ -220,6 +220,11 @@ struct FakeAudioUnit {
   bool deviceBufferFramesSupported{true};
   double deviceRate{kSampleRate};
   double hostFrequency{kHostTicksPerSecond};
+  // kAudioUnitProperty_Latency as the initialized unit declares it. The real
+  // unit declares 16 client frames whenever its converter is engaged and zero
+  // otherwise; latencySupported false models a unit that will not say.
+  double latencySeconds{0.0};
+  bool latencySupported{true};
   AudioStreamBasicDescription clientFormat{};
   AURenderCallback callback{nullptr};
   void *callbackContext{nullptr};
@@ -419,6 +424,18 @@ struct FakeAudioUnit {
         *dataSize = sizeof(AudioStreamBasicDescription);
       }
       return result;
+    }
+    if (property == kAudioUnitProperty_Latency &&
+        scope == kAudioUnitScope_Global) {
+      if (!fake.latencySupported || !fake.initialized) {
+        return kAudioUnitErr_InvalidProperty;
+      }
+      if (*dataSize < sizeof(Float64)) {
+        return kAudio_ParamError;
+      }
+      *static_cast<Float64 *>(data) = fake.latencySeconds;
+      *dataSize = sizeof(Float64);
+      return noErr;
     }
     return kAudioUnitErr_InvalidProperty;
   }
@@ -798,8 +815,11 @@ void testConfigurationAndExactDeviceFormat() {
              !unusableRate.fake.sawOrdered({Call::SetClientFormat}),
          "an unusable device rate fails before any client format is set");
 
+  // 88.2 kHz is the frozen converter test's canonical unsupported rate; the
+  // output refuses it before any CoreAudio call, by the same stated-once
+  // family every other gate reads.
   Fixture invalid;
-  expect(invalid.output->configure(invalid.configuration(32000)) ==
+  expect(invalid.output->configure(invalid.configuration(88200)) ==
              NativeAudioOutputProgress::Invalid &&
              invalid.output->facts().failure ==
                  NativeAudioOutputFailure::InvalidConfiguration,
@@ -1214,6 +1234,105 @@ void testTimestampModesAndRationalCarry() {
              exactScalar.output->facts().renderedCallbacks == 2 &&
              exactScalar.clock.sample().segmentEndHostTicks == 170668543,
          "exact scalar remainder preserves the next adjacent boundary");
+}
+
+// A 22050 Hz stream on a 48000 Hz device: the same unit-converter path as
+// 44100, one octave down, and the path every sub-44.1 kHz rate in the family
+// takes. The unit's declared converter delay (16 client frames, as the real
+// unit declares it) must be read after initialization, published in the
+// facts, handed to the render core, and visible as a shift of exactly
+// floor(16 * hostFrequency / 22050) ticks on the published clock endpoint --
+// while a unit that declares nothing is left uncompensated.
+void testConvertedStreamRateCompensatesUnitLatency() {
+  constexpr std::uint32_t kStreamRate = 22050;
+  constexpr std::uint64_t kConverterHostFrequency = 24000000;
+  constexpr std::uint32_t kDeclaredFrames = 16;
+  // 441 client frames per 960-frame device period, exactly (measured).
+  constexpr std::uint32_t kSlice = 441;
+  constexpr std::uint64_t kSliceTicks =
+      static_cast<std::uint64_t>(kSlice) * kConverterHostFrequency /
+      kStreamRate;  // 480000, exact
+  constexpr std::uint64_t kLatencyTicks =
+      static_cast<std::uint64_t>(kDeclaredFrames) * kConverterHostFrequency /
+      kStreamRate;  // floor(17414.96) = 17414
+  static_assert(kSliceTicks == 480000 && kLatencyTicks == 17414);
+
+  {
+    Fixture converted(kConverterHostFrequency);
+    converted.fake.deviceRate = 48000.0;
+    converted.fake.latencySeconds =
+        static_cast<double>(kDeclaredFrames) / kStreamRate;
+    expect(converted.anchored && converted.output &&
+               converted.output->configure(
+                   converted.configuration(kStreamRate)) ==
+                   NativeAudioOutputProgress::Done &&
+               converted.output->facts().failure ==
+                   NativeAudioOutputFailure::None,
+           "a 22050 stream configures against a 48000 default output device");
+    expect(converted.fake.clientFormat.mSampleRate ==
+                   static_cast<Float64>(kStreamRate) &&
+               converted.output->facts().sampleRate == kStreamRate &&
+               NativeAudioOutputTestAccess::deviceRate(*converted.output) ==
+                   48000.0,
+           "the client format carries 22050 while the device keeps 48000");
+    expect(converted.output->facts().unitLatencyFrames == kDeclaredFrames &&
+               converted.core.outputLatencyFrames() == kDeclaredFrames,
+           "the unit's declared delay is published in stream frames and "
+           "handed to the render core");
+    converted.core.setPaused(false);
+    expect(converted.output->start() == NativeAudioOutputProgress::Done,
+           "a 22050 stream starts on a 48000 device");
+    // Callbacks land at DEVICE time; the clock is sampled inside the HEARD
+    // interval each one publishes, which begins the declared delay later.
+    std::array<float, kSlice * 2> slice{};
+    converted.host.ticks.store(0, std::memory_order_relaxed);
+    const bool firstInvoked =
+        publishConstant(converted.ring, kSlice) &&
+        invokeTracked(converted.fake, hostTimestamp(0), kSlice, slice) ==
+            noErr;
+    converted.host.ticks.store(kLatencyTicks, std::memory_order_relaxed);
+    expect(firstInvoked && converted.output->facts().frameCursor == kSlice &&
+               converted.clock.sample().anchorHostTicks == kLatencyTicks &&
+               converted.clock.sample().segmentEndHostTicks ==
+                   kSliceTicks + kLatencyTicks,
+           "the first client slice is published shifted by exactly the "
+           "declared delay at both endpoints");
+    converted.host.ticks.store(kSliceTicks, std::memory_order_relaxed);
+    const bool secondInvoked =
+        publishConstant(converted.ring, kSlice) &&
+        invokeTracked(converted.fake, hostTimestamp(kSliceTicks), kSlice,
+                      slice) == noErr;
+    converted.host.ticks.store(kSliceTicks + kLatencyTicks,
+                               std::memory_order_relaxed);
+    expect(secondInvoked &&
+               converted.output->facts().frameCursor == 2 * kSlice &&
+               converted.clock.sample().segmentEndHostTicks ==
+                   2 * kSliceTicks + kLatencyTicks &&
+               converted.output->facts().failure ==
+                   NativeAudioOutputFailure::None,
+           "the adjacent slice keeps the constant shift and stays continuous");
+  }
+  {
+    Fixture silentUnit(kConverterHostFrequency);
+    silentUnit.fake.deviceRate = 48000.0;
+    silentUnit.fake.latencySupported = false;
+    expect(silentUnit.anchored && silentUnit.output &&
+               silentUnit.output->configure(
+                   silentUnit.configuration(kStreamRate)) ==
+                   NativeAudioOutputProgress::Done &&
+               silentUnit.output->facts().unitLatencyFrames == 0 &&
+               silentUnit.core.outputLatencyFrames() == 0,
+           "a unit that declares no latency is left uncompensated, not "
+           "guessed at");
+  }
+  {
+    // The bypass: stream rate equal to the device rate declares zero, and
+    // the clock arithmetic is the pre-existing arithmetic verbatim.
+    Fixture bypass;
+    expect(bypass.start() && bypass.output->facts().unitLatencyFrames == 0 &&
+               bypass.core.outputLatencyFrames() == 0,
+           "at the device rate the unit declares nothing and nothing shifts");
+  }
 }
 
 // A 44100 Hz stream on a 48000 Hz device. The device nominal rate is never
@@ -2707,6 +2826,7 @@ int main() {
     testPartialInitializationAndStartUnwind();
     testTimestampModesAndRationalCarry();
     testStreamRateBelowDeviceRateUsesUnitConverter();
+    testConvertedStreamRateCompensatesUnitLatency();
     testMalformedAndPostStopCallbacks();
     testFrameAndTimestampOverflow();
     testDeviceChangeWinsStartCommit();

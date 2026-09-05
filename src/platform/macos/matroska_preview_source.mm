@@ -427,7 +427,7 @@ NativePreviewReadResult MatroskaPreviewSource::readNext(
     inputs.cancellation = impl_->cancellation();
     inputs.format = static_cast<CMFormatDescriptionRef>(impl_->format);
     inputs.video = true;
-    MatroskaScopedSampleBuffer owned;
+    ScopedSampleBuffer owned;
     const MatroskaSampleBuildStatus built =
         buildMatroskaCompressedSampleBuffer(inputs, raw, &owned, &error);
     if (built != MatroskaSampleBuildStatus::Built) {
@@ -452,7 +452,7 @@ NativePreviewReadResult MatroskaPreviewSource::readNext(
       impl_->stagedSampleBuffers.store(0, std::memory_order_release);
     };
 
-    const auto decodeOnly = matroskaAccurateVideoDecodeOnly(
+    const auto decodeOnly = accurateVideoDecodeOnly(
         raw.presentationTime, raw.duration, impl_->target, &error);
     if (!decodeOnly) {
       clearStage();
@@ -463,7 +463,7 @@ NativePreviewReadResult MatroskaPreviewSource::readNext(
                         : std::move(error)};
     }
 
-    auto storage = std::make_shared<MatroskaCoreMediaSampleStorage>(
+    auto storage = std::make_shared<CoreMediaSampleStorage>(
         owned.get(), bytes);
     static_cast<void>(owned.release());
     MediaSample sample;

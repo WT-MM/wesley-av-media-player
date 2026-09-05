@@ -1,5 +1,7 @@
 #include "media/video_codec_configuration.hpp"
 
+#include "media/rbsp_bit_reader.hpp"
+
 #include <algorithm>
 #include <array>
 #include <limits>
@@ -50,190 +52,26 @@ asBytes(std::span<const std::byte> bytes) noexcept {
          static_cast<std::uint32_t>(bytes[offset + 3U]);
 }
 
-class RbspBitReader final {
-public:
-  explicit RbspBitReader(std::span<const std::uint8_t> escapedBytes) noexcept
-      : bytes_(escapedBytes) {}
-
-  [[nodiscard]] bool readBit(bool &value) noexcept {
-    std::uint32_t bit = 0;
-    if (!readBits(1U, bit)) {
-      return false;
-    }
-    value = bit != 0U;
-    return true;
-  }
-
-  [[nodiscard]] bool readBits(std::size_t count,
-                              std::uint32_t &value) noexcept {
-    if (count > 32U) {
-      return false;
-    }
-    value = 0;
-    for (std::size_t index = 0; index < count; ++index) {
-      if (bitsRemaining_ == 0U && !loadByte()) {
-        return false;
-      }
-      value = static_cast<std::uint32_t>(
-          (value << 1U) | ((currentByte_ >> (bitsRemaining_ - 1U)) & 1U));
-      --bitsRemaining_;
-    }
-    return true;
-  }
-
-  [[nodiscard]] bool skipBits(std::size_t count) noexcept {
-    while (count != 0U) {
-      const std::size_t chunk = std::min<std::size_t>(count, 32U);
-      std::uint32_t ignored = 0;
-      if (!readBits(chunk, ignored)) {
-        return false;
-      }
-      count -= chunk;
-    }
-    return true;
-  }
-
-  [[nodiscard]] bool readUnsignedExpGolomb(std::uint32_t &value) noexcept {
-    std::size_t leadingZeroBits = 0;
-    bool bit = false;
-    while (true) {
-      if (!readBit(bit)) {
-        return false;
-      }
-      if (bit) {
-        break;
-      }
-      if (++leadingZeroBits > 31U) {
-        return false;
-      }
-    }
-    std::uint32_t suffix = 0;
-    if (!readBits(leadingZeroBits, suffix)) {
-      return false;
-    }
-    const std::uint64_t decoded =
-        ((std::uint64_t{1} << leadingZeroBits) - 1U) + suffix;
-    if (decoded > std::numeric_limits<std::uint32_t>::max()) {
-      return false;
-    }
-    value = static_cast<std::uint32_t>(decoded);
-    return true;
-  }
-
-  [[nodiscard]] bool readSignedExpGolomb(std::int32_t &value) noexcept {
-    std::uint32_t encoded = 0;
-    if (!readUnsignedExpGolomb(encoded)) {
-      return false;
-    }
-    const std::int64_t magnitude = static_cast<std::int64_t>(
-        (static_cast<std::uint64_t>(encoded) + 1U) / 2U);
-    const std::int64_t decoded = (encoded & 1U) != 0U ? magnitude : -magnitude;
-    if (decoded < std::numeric_limits<std::int32_t>::min() ||
-        decoded > std::numeric_limits<std::int32_t>::max()) {
-      return false;
-    }
-    value = static_cast<std::int32_t>(decoded);
-    return true;
-  }
-
-  // Reports whether syntax bits remain before rbsp_trailing_bits without
-  // consuming either. A copied reader is sufficient because the reader owns
-  // no storage and carries only bounded scalar state.
-  [[nodiscard]] bool moreRbspData(bool &more) const noexcept {
-    RbspBitReader probe = *this;
-    bool possibleStopBit = false;
-    if (!probe.readBit(possibleStopBit)) {
-      return false;
-    }
-    if (!possibleStopBit) {
-      more = true;
-      return true;
-    }
-    while (probe.bitsRemaining_ != 0U) {
-      bool padding = false;
-      if (!probe.readBit(padding)) {
-        return false;
-      }
-      if (padding) {
-        more = true;
-        return true;
-      }
-    }
-    more = probe.offset_ != probe.bytes_.size();
-    return true;
-  }
-
-  // Accepted SPS syntax is parsed through rbsp_trailing_bits. This catches
-  // both truncation and hidden payload after the claimed syntax without an
-  // unescape allocation.
-  [[nodiscard]] bool finishRbsp() noexcept {
-    bool stopBit = false;
-    if (!readBit(stopBit) || !stopBit) {
-      return false;
-    }
-    while (bitsRemaining_ != 0U) {
-      bool padding = false;
-      if (!readBit(padding) || padding) {
-        return false;
-      }
-    }
-    return offset_ == bytes_.size();
-  }
-
-private:
-  [[nodiscard]] bool loadByte() noexcept {
-    while (offset_ < bytes_.size()) {
-      const std::uint8_t value = bytes_[offset_++];
-      if (zeroCount_ >= 2U && value == 0x03U) {
-        if (offset_ >= bytes_.size() || bytes_[offset_] > 0x03U) {
-          return false;
-        }
-        zeroCount_ = 0;
-        continue;
-      }
-      if (zeroCount_ >= 2U && value <= 0x02U) {
-        return false;
-      }
-      zeroCount_ = value == 0U ? zeroCount_ + 1U : 0U;
-      currentByte_ = value;
-      bitsRemaining_ = 8U;
-      return true;
-    }
-    return false;
-  }
-
-  std::span<const std::uint8_t> bytes_;
-  std::size_t offset_{0};
-  std::size_t zeroCount_{0};
-  std::uint8_t currentByte_{0};
-  std::size_t bitsRemaining_{0};
-};
-
-// AV1 and VP9 headers are plain bit strings: neither codec uses the RBSP
-// emulation-prevention escaping that RbspBitReader must undo, and applying
-// that unescaping to them would corrupt any header containing 00 00 03. This
-// reader is otherwise the same shape -- bounded, allocation-free, and false on
-// any read that would run past the supplied bytes.
+// AV1, VP9 and MPEG-4 Part 2 headers are plain bit strings: none of them uses
+// the RBSP emulation-prevention escaping that RbspBitReader must undo, and
+// applying that unescaping to them would corrupt any header containing
+// 00 00 03. Same latching contract as RbspBitReader otherwise.
 class PlainBitReader final {
 public:
   explicit PlainBitReader(std::span<const std::uint8_t> bytes) noexcept
       : bytes_(bytes) {}
 
-  [[nodiscard]] bool readBit(bool &value) noexcept {
-    std::uint32_t bit = 0;
-    if (!readBits(1U, bit)) {
-      return false;
-    }
-    value = bit != 0U;
-    return true;
-  }
+  [[nodiscard]] bool ok() const noexcept { return !failed_; }
+  void require(bool condition) noexcept { failed_ = failed_ || !condition; }
 
-  [[nodiscard]] bool readBits(std::size_t count,
-                              std::uint32_t &value) noexcept {
-    if (count > 32U || count > bitsRemaining()) {
-      return false;
+  bool readBit() noexcept { return readBits(1U) != 0U; }
+
+  std::uint32_t readBits(std::size_t count) noexcept {
+    if (failed_ || count > 32U || count > bitsRemaining()) {
+      failed_ = true;
+      return 0U;
     }
-    value = 0;
+    std::uint32_t value = 0;
     for (std::size_t index = 0; index < count; ++index) {
       const std::uint8_t current = bytes_[bitOffset_ / 8U];
       const std::size_t shift = 7U - (bitOffset_ % 8U);
@@ -241,61 +79,41 @@ public:
               static_cast<std::uint32_t>((current >> shift) & 1U);
       ++bitOffset_;
     }
-    return true;
+    return value;
   }
 
-  [[nodiscard]] bool skipBits(std::size_t count) noexcept {
-    if (count > bitsRemaining()) {
-      return false;
+  void skipBits(std::size_t count) noexcept {
+    if (failed_ || count > bitsRemaining()) {
+      failed_ = true;
+      return;
     }
     bitOffset_ += count;
-    return true;
   }
 
   // AV1 uvlc(): a unary prefix of zeroes then that many suffix bits. A prefix
   // of 32 or more is the spec's saturated "value unknown" encoding, which no
   // field this parser needs may legitimately use, so it fails closed.
-  [[nodiscard]] bool readUvlc(std::uint32_t &value) noexcept {
+  std::uint32_t readUvlc() noexcept {
     std::size_t leadingZeroBits = 0;
-    while (true) {
-      bool bit = false;
-      if (!readBit(bit)) {
-        return false;
-      }
-      if (bit) {
-        break;
-      }
-      if (++leadingZeroBits >= 32U) {
-        return false;
+    while (!readBit()) {
+      if (failed_ || ++leadingZeroBits >= 32U) {
+        failed_ = true;
+        return 0U;
       }
     }
-    std::uint32_t suffix = 0;
-    if (!readBits(leadingZeroBits, suffix)) {
-      return false;
-    }
-    const std::uint64_t decoded =
-        suffix + (std::uint64_t{1} << leadingZeroBits) - 1U;
-    if (decoded > std::numeric_limits<std::uint32_t>::max()) {
-      return false;
-    }
-    value = static_cast<std::uint32_t>(decoded);
-    return true;
+    const std::uint32_t suffix = readBits(leadingZeroBits);
+    return static_cast<std::uint32_t>(
+        suffix + (std::uint64_t{1} << leadingZeroBits) - 1U);
   }
 
   // AV1 trailing_bits(): a single one bit then zero bits to the byte boundary,
   // and nothing after it.
   [[nodiscard]] bool finishTrailingBits() noexcept {
-    bool stopBit = false;
-    if (!readBit(stopBit) || !stopBit) {
-      return false;
+    require(readBit());
+    while ((bitOffset_ % 8U) != 0U && !failed_) {
+      require(!readBit());
     }
-    while ((bitOffset_ % 8U) != 0U) {
-      bool padding = false;
-      if (!readBit(padding) || padding) {
-        return false;
-      }
-    }
-    return bitOffset_ == bytes_.size() * 8U;
+    return ok() && bitOffset_ == bytes_.size() * 8U;
   }
 
   [[nodiscard]] std::size_t bitsRemaining() const noexcept {
@@ -305,6 +123,7 @@ public:
 private:
   std::span<const std::uint8_t> bytes_;
   std::size_t bitOffset_{0};
+  bool failed_{false};
 };
 
 // ISO/IEC 23091-2 value 2 is "unspecified": it carries exactly as much color
@@ -369,79 +188,53 @@ supportedSdrColor(const VideoCodecColorFacts &color) noexcept {
           color.matrixCoefficients == 9U);
 }
 
-[[nodiscard]] bool parseVuiColorPrefix(RbspBitReader &bits,
-                                       VideoCodecColorFacts &color) noexcept {
-  bool present = false;
-  std::uint32_t value = 0;
-  if (!bits.readBit(present)) {
-    return false;
+// vui_parameters() from aspect_ratio_info_present_flag through the colour
+// description, shared by H.264 E.1.1 and HEVC E.2.1 which agree to the bit.
+void parseVuiColorPrefix(RbspBitReader &bits,
+                         VideoCodecColorFacts &color) noexcept {
+  if (bits.readBit() && bits.readBits(8U) == 255U) {
+    bits.skipBits(32U);
   }
-  if (present) {
-    if (!bits.readBits(8U, value) || (value == 255U && !bits.skipBits(32U))) {
-      return false;
-    }
+  if (bits.readBit()) {
+    bits.skipBits(1U);
   }
-  if (!bits.readBit(present) || (present && !bits.skipBits(1U)) ||
-      !bits.readBit(color.videoSignalTypePresent)) {
-    return false;
-  }
+  color.videoSignalTypePresent = bits.readBit();
   if (!color.videoSignalTypePresent) {
-    return true;
+    return;
   }
-  if (!bits.skipBits(3U) || !bits.readBit(color.fullRange) ||
-      !bits.readBit(color.colorDescriptionPresent)) {
-    return false;
-  }
+  bits.skipBits(3U);
+  color.fullRange = bits.readBit();
+  color.colorDescriptionPresent = bits.readBit();
   if (!color.colorDescriptionPresent) {
-    return true;
+    return;
   }
-  std::uint32_t primaries = 0;
-  std::uint32_t transfer = 0;
-  std::uint32_t matrix = 0;
-  if (!bits.readBits(8U, primaries) || !bits.readBits(8U, transfer) ||
-      !bits.readBits(8U, matrix)) {
-    return false;
-  }
-  color.colorPrimaries = static_cast<std::uint8_t>(primaries);
-  color.transferCharacteristics = static_cast<std::uint8_t>(transfer);
-  color.matrixCoefficients = static_cast<std::uint8_t>(matrix);
-  return true;
+  color.colorPrimaries = static_cast<std::uint8_t>(bits.readBits(8U));
+  color.transferCharacteristics = static_cast<std::uint8_t>(bits.readBits(8U));
+  color.matrixCoefficients = static_cast<std::uint8_t>(bits.readBits(8U));
 }
 
-[[nodiscard]] bool skipH264ScalingList(RbspBitReader &bits,
-                                       std::size_t size) noexcept {
+void skipH264ScalingList(RbspBitReader &bits, std::size_t size) noexcept {
   std::int32_t lastScale = 8;
   std::int32_t nextScale = 8;
   for (std::size_t index = 0; index < size; ++index) {
     if (nextScale != 0) {
-      std::int32_t deltaScale = 0;
-      if (!bits.readSignedExpGolomb(deltaScale) || deltaScale < -128 ||
-          deltaScale > 127) {
-        return false;
-      }
-      nextScale = (lastScale + deltaScale + 256) % 256;
+      nextScale =
+          (lastScale + bits.readSignedExpGolombWithin(-128, 127) + 256) % 256;
     }
     if (nextScale != 0) {
       lastScale = nextScale;
     }
   }
-  return true;
 }
 
-[[nodiscard]] bool skipH264Hrd(RbspBitReader &bits) noexcept {
-  std::uint32_t cpbCountMinusOne = 0;
-  if (!bits.readUnsignedExpGolomb(cpbCountMinusOne) || cpbCountMinusOne > 31U ||
-      !bits.skipBits(8U)) {
-    return false;
-  }
+void skipH264Hrd(RbspBitReader &bits) noexcept {
+  const std::uint32_t cpbCountMinusOne = bits.readUnsignedExpGolombAtMost(31U);
+  bits.skipBits(8U);
   for (std::uint32_t index = 0; index <= cpbCountMinusOne; ++index) {
-    std::uint32_t ignored = 0;
-    if (!bits.readUnsignedExpGolomb(ignored) ||
-        !bits.readUnsignedExpGolomb(ignored) || !bits.skipBits(1U)) {
-      return false;
-    }
+    bits.skipExpGolomb(2U);
+    bits.skipBits(1U);
   }
-  return bits.skipBits(20U);
+  bits.skipBits(20U);
 }
 
 [[nodiscard]] std::optional<std::uint32_t>
@@ -528,22 +321,39 @@ h264ConstraintSet3ZeroReorder(std::uint32_t profile) noexcept {
   }
 }
 
-// The admitted profiles (66/77/88/100 in parseH264Sps) and both classifiers
-// must stay consistent: 100 is the only admitted profile whose SPS takes the
-// high-profile parse path and the only one whose constraint_set3_flag means
-// intra-only; 66/77/88 must take neither. Widening admission to a 10-bit
-// profile without the parser and surface contract following would reintroduce
-// the classifier drift this pins shut.
+// The one admission whitelist for AVC, read by the avcC record byte and again
+// by every SPS inside it.
+[[nodiscard]] constexpr bool h264AdmittedProfile(std::uint32_t profile) noexcept {
+  return profile == 66U || profile == 77U || profile == 88U || profile == 100U;
+}
+
+// The admitted profiles and both classifiers must stay consistent: 100 is the
+// only admitted profile whose SPS takes the high-profile parse path and the
+// only one whose constraint_set3_flag means intra-only; 66/77/88 must take
+// neither. Widening admission to a 10-bit profile without the parser and
+// surface contract following would reintroduce the classifier drift this pins
+// shut.
 static_assert(h264HighProfile(100U) && h264ConstraintSet3ZeroReorder(100U));
 static_assert(!h264HighProfile(66U) && !h264HighProfile(77U) &&
               !h264HighProfile(88U));
 static_assert(!h264ConstraintSet3ZeroReorder(66U) &&
               !h264ConstraintSet3ZeroReorder(77U) &&
               !h264ConstraintSet3ZeroReorder(88U));
+static_assert(h264AdmittedProfile(66U) && h264AdmittedProfile(77U) &&
+              h264AdmittedProfile(88U) && h264AdmittedProfile(100U));
 
 [[nodiscard]] constexpr bool
 h264ConstraintSet3Level1b(std::uint32_t profile) noexcept {
   return profile == 66U || profile == 77U || profile == 88U;
+}
+
+// forbidden_zero_bit clear, the expected nal_unit_type, and a non-zero
+// nal_ref_idc (a parameter set is always a reference NAL).
+[[nodiscard]] bool validH264NalHeader(std::span<const std::uint8_t> nal,
+                                      std::uint8_t expectedType,
+                                      std::size_t minimumSize) noexcept {
+  return nal.size() >= minimumSize && (nal[0] & 0x80U) == 0U &&
+         (nal[0] & 0x1FU) == expectedType && (nal[0] & 0x60U) != 0U;
 }
 
 struct ParsedSpsFacts {
@@ -553,135 +363,91 @@ struct ParsedSpsFacts {
   std::uint32_t height{0};
   std::uint8_t bitDepth{0};
   std::uint8_t reorderFrames{0};
+  bool reorderFramesInferred{false};
   bool temporalIdNested{false};
   VideoCodecColorFacts color{};
 };
 
-[[nodiscard]] Error parseH264Sps(std::span<const std::uint8_t> nal,
-                                 std::uint8_t expectedProfile,
-                                 std::uint8_t expectedCompatibility,
-                                 std::uint8_t expectedLevel,
-                                 const VideoCodecConfigurationLimits &limits,
-                                 ParsedSpsFacts &facts) noexcept {
-  if (nal.size() < 5U || (nal[0] & 0x80U) != 0U || (nal[0] & 0x1FU) != 7U ||
-      (nal[0] & 0x60U) == 0U) {
+// chroma_format_idc through seq_scaling_matrix, present only for the
+// high-profile family (H.264 7.3.2.1.1).
+[[nodiscard]] Error parseH264SpsHighProfileFields(RbspBitReader &bits) noexcept {
+  const std::uint32_t chromaFormat = bits.readUnsignedExpGolomb();
+  if (!bits.ok()) {
     return Error::MalformedRecord;
   }
-  RbspBitReader bits(nal.subspan(1U));
-  std::uint32_t profile = 0;
-  std::uint32_t compatibility = 0;
-  std::uint32_t level = 0;
-  if (!bits.readBits(8U, profile) || !bits.readBits(8U, compatibility) ||
-      !bits.readBits(8U, level) || profile != expectedProfile ||
-      compatibility != expectedCompatibility || level != expectedLevel) {
-    return Error::ParameterSetMismatch;
+  if (chromaFormat != 1U) {
+    return Error::UnsupportedChromaFormat;
   }
-  if ((compatibility & 0x03U) != 0U) {
+  const std::uint32_t lumaDepthMinusEight = bits.readUnsignedExpGolomb();
+  const std::uint32_t chromaDepthMinusEight = bits.readUnsignedExpGolomb();
+  if (!bits.ok()) {
     return Error::MalformedRecord;
   }
-  if (profile != 66U && profile != 77U && profile != 88U && profile != 100U) {
-    return Error::UnsupportedProfile;
+  if (lumaDepthMinusEight != 0U || chromaDepthMinusEight != 0U) {
+    return Error::UnsupportedBitDepth;
   }
-  if (!bits.readUnsignedExpGolomb(facts.id) || facts.id > 31U) {
-    return Error::MalformedRecord;
-  }
-
-  std::uint32_t chromaFormat = 1U;
-  std::uint32_t lumaDepthMinusEight = 0;
-  std::uint32_t chromaDepthMinusEight = 0;
-  if (h264HighProfile(profile)) {
-    bool scalingMatrixPresent = false;
-    if (!bits.readUnsignedExpGolomb(chromaFormat)) {
-      return Error::MalformedRecord;
-    }
-    if (chromaFormat != 1U) {
-      return Error::UnsupportedChromaFormat;
-    }
-    if (!bits.readUnsignedExpGolomb(lumaDepthMinusEight) ||
-        !bits.readUnsignedExpGolomb(chromaDepthMinusEight)) {
-      return Error::MalformedRecord;
-    }
-    if (lumaDepthMinusEight != 0U || chromaDepthMinusEight != 0U) {
-      return Error::UnsupportedBitDepth;
-    }
-    if (!bits.skipBits(1U) || !bits.readBit(scalingMatrixPresent)) {
-      return Error::MalformedRecord;
-    }
-    if (scalingMatrixPresent) {
-      for (std::size_t index = 0; index < 8U; ++index) {
-        bool present = false;
-        if (!bits.readBit(present) ||
-            (present && !skipH264ScalingList(bits, index < 6U ? 16U : 64U))) {
-          return Error::MalformedRecord;
-        }
+  bits.skipBits(1U);
+  if (bits.readBit()) {
+    for (std::size_t index = 0; index < 8U; ++index) {
+      if (bits.readBit()) {
+        skipH264ScalingList(bits, index < 6U ? 16U : 64U);
       }
     }
   }
-  facts.bitDepth = 8U;
+  return Error::None;
+}
 
-  std::uint32_t ignored = 0;
-  std::uint32_t picOrderCountType = 0;
-  if (!bits.readUnsignedExpGolomb(ignored) || ignored > 12U ||
-      !bits.readUnsignedExpGolomb(picOrderCountType) ||
-      picOrderCountType > 2U) {
-    return Error::MalformedRecord;
-  }
+// log2_max_frame_num_minus4 through the pic_order_cnt_type dependants; none of
+// it is a fact this admission reports.
+void skipH264SpsPictureOrderCount(RbspBitReader &bits) noexcept {
+  bits.readUnsignedExpGolombAtMost(12U);
+  const std::uint32_t picOrderCountType = bits.readUnsignedExpGolombAtMost(2U);
   if (picOrderCountType == 0U) {
-    if (!bits.readUnsignedExpGolomb(ignored) || ignored > 12U) {
-      return Error::MalformedRecord;
-    }
+    bits.readUnsignedExpGolombAtMost(12U);
   } else if (picOrderCountType == 1U) {
-    std::int32_t ignoredSigned = 0;
-    std::uint32_t cycle = 0;
-    if (!bits.skipBits(1U) || !bits.readSignedExpGolomb(ignoredSigned) ||
-        !bits.readSignedExpGolomb(ignoredSigned) ||
-        !bits.readUnsignedExpGolomb(cycle) || cycle > 255U) {
-      return Error::MalformedRecord;
-    }
-    for (std::uint32_t index = 0; index < cycle; ++index) {
-      if (!bits.readSignedExpGolomb(ignoredSigned)) {
-        return Error::MalformedRecord;
-      }
-    }
+    bits.skipBits(1U);
+    bits.skipExpGolomb(2U);
+    bits.skipExpGolomb(bits.readUnsignedExpGolombAtMost(255U));
   }
+}
 
-  std::uint32_t maxReferenceFrames = 0;
-  std::uint32_t widthMinusOne = 0;
-  std::uint32_t heightMapUnitsMinusOne = 0;
-  bool frameMbsOnly = false;
-  if (!bits.readUnsignedExpGolomb(maxReferenceFrames) || !bits.skipBits(1U) ||
-      !bits.readUnsignedExpGolomb(widthMinusOne) ||
-      !bits.readUnsignedExpGolomb(heightMapUnitsMinusOne) ||
-      !bits.readBit(frameMbsOnly) || (!frameMbsOnly && !bits.skipBits(1U)) ||
-      !bits.skipBits(1U)) {
-    return Error::MalformedRecord;
+struct H264SpsGeometry {
+  std::uint32_t maxReferenceFrames{0};
+  std::uint64_t widthMbs{0};
+  std::uint64_t heightMapUnits{0};
+  std::uint64_t frameHeightMultiplier{1};
+};
+
+// max_num_ref_frames through frame_cropping. Reports the cropped luma
+// dimensions into `facts` and keeps the macroblock geometry for the DPB bound.
+[[nodiscard]] Error
+parseH264SpsGeometry(RbspBitReader &bits,
+                     const VideoCodecConfigurationLimits &limits,
+                     H264SpsGeometry &geometry, ParsedSpsFacts &facts) noexcept {
+  geometry.maxReferenceFrames = bits.readUnsignedExpGolomb();
+  bits.skipBits(1U);
+  geometry.widthMbs = std::uint64_t{bits.readUnsignedExpGolomb()} + 1U;
+  geometry.heightMapUnits = std::uint64_t{bits.readUnsignedExpGolomb()} + 1U;
+  const bool frameMbsOnly = bits.readBit();
+  geometry.frameHeightMultiplier = frameMbsOnly ? 1U : 2U;
+  if (!frameMbsOnly) {
+    bits.skipBits(1U);
   }
-
-  bool cropping = false;
+  bits.skipBits(1U);
   std::array<std::uint32_t, 4> crop{};
-  if (!bits.readBit(cropping)) {
-    return Error::MalformedRecord;
-  }
-  if (cropping) {
+  if (bits.readBit()) {
     for (std::uint32_t &value : crop) {
-      if (!bits.readUnsignedExpGolomb(value)) {
-        return Error::MalformedRecord;
-      }
+      value = bits.readUnsignedExpGolomb();
     }
   }
-
-  const std::uint64_t widthMbs = static_cast<std::uint64_t>(widthMinusOne) + 1U;
-  const std::uint64_t heightMapUnits =
-      static_cast<std::uint64_t>(heightMapUnitsMinusOne) + 1U;
-  const std::uint64_t frameHeightMultiplier = frameMbsOnly ? 1U : 2U;
-  if (widthMbs > std::numeric_limits<std::uint64_t>::max() / 16U ||
-      heightMapUnits > std::numeric_limits<std::uint64_t>::max() /
-                           (16U * frameHeightMultiplier)) {
+  if (!bits.ok()) {
     return Error::MalformedRecord;
   }
-  const std::uint64_t storageWidth = widthMbs * 16U;
+  // widthMbs and heightMapUnits are at most 2^32, so neither product can
+  // overflow.
+  const std::uint64_t storageWidth = geometry.widthMbs * 16U;
   const std::uint64_t storageHeight =
-      heightMapUnits * frameHeightMultiplier * 16U;
+      geometry.heightMapUnits * geometry.frameHeightMultiplier * 16U;
   const std::uint64_t cropWidth =
       (static_cast<std::uint64_t>(crop[0]) + crop[1]) * 2U;
   const std::uint64_t cropHeight =
@@ -697,82 +463,147 @@ struct ParsedSpsFacts {
   }
   facts.width = static_cast<std::uint32_t>(width);
   facts.height = static_cast<std::uint32_t>(height);
+  return Error::None;
+}
 
+// H.264 A.3.1 MaxDpbFrames for the level and picture size, bounded to the
+// contract's reorder ceiling. Runs after the geometry gate, which bounds both
+// axes to the contract ceiling, so the macroblock product fits in 2^59.
+[[nodiscard]] Error h264MaximumDpbFrames(std::uint32_t profile,
+                                         std::uint32_t compatibility,
+                                         std::uint32_t level,
+                                         const H264SpsGeometry &geometry,
+                                         std::uint32_t &maximumDpbFrames) noexcept {
   const auto maximumDpbMacroblocks =
       h264MaxDpbMacroblocks(level, (compatibility & 0x10U) != 0U &&
                                        h264ConstraintSet3Level1b(profile));
-  const std::uint64_t pictureMacroblocks =
-      widthMbs * heightMapUnits * frameHeightMultiplier;
-  if (!maximumDpbMacroblocks || pictureMacroblocks == 0U) {
+  if (!maximumDpbMacroblocks) {
     return Error::MalformedRecord;
   }
-  const std::uint64_t calculatedDpb =
-      static_cast<std::uint64_t>(*maximumDpbMacroblocks) / pictureMacroblocks;
-  const std::uint32_t maximumDpbFrames = static_cast<std::uint32_t>(
-      std::min<std::uint64_t>(kMaximumVideoCodecReorderFrames, calculatedDpb));
-  if (maximumDpbFrames == 0U || maxReferenceFrames > maximumDpbFrames) {
+  const std::uint64_t pictureMacroblocks = geometry.widthMbs *
+                                           geometry.heightMapUnits *
+                                           geometry.frameHeightMultiplier;
+  maximumDpbFrames = static_cast<std::uint32_t>(std::min<std::uint64_t>(
+      kMaximumVideoCodecReorderFrames,
+      static_cast<std::uint64_t>(*maximumDpbMacroblocks) / pictureMacroblocks));
+  if (maximumDpbFrames == 0U ||
+      geometry.maxReferenceFrames > maximumDpbFrames) {
     return Error::MalformedRecord;
   }
+  return Error::None;
+}
 
-  bool vuiPresent = false;
-  if (!bits.readBit(vuiPresent)) {
+// vui_parameters() (H.264 E.1.1) through bitstream_restriction.
+// `reorderFrames` arrives as the E.2.1 inference and leaves as the stream's
+// own statement when bitstream_restriction makes one.
+[[nodiscard]] Error parseH264Vui(RbspBitReader &bits,
+                                 const VideoCodecConfigurationLimits &limits,
+                                 std::uint32_t maximumDpbFrames,
+                                 std::uint32_t maxReferenceFrames,
+                                 ParsedSpsFacts &facts,
+                                 std::uint32_t &reorderFrames) noexcept {
+  parseVuiColorPrefix(bits, facts.color);
+  if (!bits.ok()) {
     return Error::MalformedRecord;
   }
-  std::uint32_t reorderFrames =
-      ((compatibility & 0x10U) != 0U && h264ConstraintSet3ZeroReorder(profile))
-          ? 0U
-          : maximumDpbFrames;
-  if (vuiPresent) {
-    if (!parseVuiColorPrefix(bits, facts.color)) {
-      return Error::MalformedRecord;
+  if (!supportedColor(facts.color, limits.admitHighDynamicRangeColor)) {
+    return Error::UnsupportedColorDescription;
+  }
+  if (bits.readBit()) {
+    bits.skipExpGolomb(2U);
+  }
+  if (bits.readBit()) {
+    bits.require(bits.readBits(32U) != 0U);
+    bits.require(bits.readBits(32U) != 0U);
+    bits.skipBits(1U);
+  }
+  const bool nalHrd = bits.readBit();
+  if (nalHrd) {
+    skipH264Hrd(bits);
+  }
+  const bool vclHrd = bits.readBit();
+  if (vclHrd) {
+    skipH264Hrd(bits);
+  }
+  if (nalHrd || vclHrd) {
+    bits.skipBits(1U);
+  }
+  bits.skipBits(1U);
+  if (bits.readBit()) {
+    bits.skipBits(1U);
+    bits.skipExpGolomb(4U);
+    reorderFrames = bits.readUnsignedExpGolomb();
+    const std::uint32_t decodedFrameBuffering = bits.readUnsignedExpGolomb();
+    bits.require(reorderFrames <= decodedFrameBuffering &&
+                 decodedFrameBuffering <= maximumDpbFrames &&
+                 decodedFrameBuffering >= maxReferenceFrames);
+    facts.reorderFramesInferred = false;
+  }
+  return bits.ok() ? Error::None : Error::MalformedRecord;
+}
+
+[[nodiscard]] Error parseH264Sps(std::span<const std::uint8_t> nal,
+                                 std::uint8_t expectedProfile,
+                                 std::uint8_t expectedCompatibility,
+                                 std::uint8_t expectedLevel,
+                                 const VideoCodecConfigurationLimits &limits,
+                                 ParsedSpsFacts &facts) noexcept {
+  if (!validH264NalHeader(nal, 7U, 5U)) {
+    return Error::MalformedRecord;
+  }
+  RbspBitReader bits(nal.subspan(1U));
+  const std::uint32_t profile = bits.readBits(8U);
+  const std::uint32_t compatibility = bits.readBits(8U);
+  const std::uint32_t level = bits.readBits(8U);
+  if (!bits.ok() || profile != expectedProfile ||
+      compatibility != expectedCompatibility || level != expectedLevel) {
+    return Error::ParameterSetMismatch;
+  }
+  if ((compatibility & 0x03U) != 0U) {
+    return Error::MalformedRecord;
+  }
+  if (!h264AdmittedProfile(profile)) {
+    return Error::UnsupportedProfile;
+  }
+  facts.id = bits.readUnsignedExpGolombAtMost(31U);
+  if (h264HighProfile(profile)) {
+    const Error error = parseH264SpsHighProfileFields(bits);
+    if (error != Error::None) {
+      return error;
     }
-    if (!supportedColor(facts.color, limits.admitHighDynamicRangeColor)) {
-      return Error::UnsupportedColorDescription;
+  }
+  facts.bitDepth = 8U;
+  skipH264SpsPictureOrderCount(bits);
+  H264SpsGeometry geometry;
+  const Error geometryError =
+      parseH264SpsGeometry(bits, limits, geometry, facts);
+  if (geometryError != Error::None) {
+    return geometryError;
+  }
+  std::uint32_t maximumDpbFrames = 0;
+  const Error dpbError = h264MaximumDpbFrames(profile, compatibility, level,
+                                              geometry, maximumDpbFrames);
+  if (dpbError != Error::None) {
+    return dpbError;
+  }
+  // Nothing stated yet. E.2.1's two inference arms both apply: the
+  // constraint_set3 arm infers an exact zero from a profile constraint the
+  // stream really carries, so it is as good as a declaration; the general arm
+  // infers MaxDpbFrames, which is only a ceiling.
+  const bool intraOnly =
+      (compatibility & 0x10U) != 0U && h264ConstraintSet3ZeroReorder(profile);
+  std::uint32_t reorderFrames = intraOnly ? 0U : maximumDpbFrames;
+  facts.reorderFramesInferred = !intraOnly;
+  if (bits.readBit()) {
+    const Error vuiError =
+        parseH264Vui(bits, limits, maximumDpbFrames,
+                     geometry.maxReferenceFrames, facts, reorderFrames);
+    if (vuiError != Error::None) {
+      return vuiError;
     }
-    bool present = false;
-    if (!bits.readBit(present)) {
-      return Error::MalformedRecord;
-    }
-    if (present) {
-      if (!bits.readUnsignedExpGolomb(ignored) ||
-          !bits.readUnsignedExpGolomb(ignored)) {
-        return Error::MalformedRecord;
-      }
-    }
-    if (!bits.readBit(present)) {
-      return Error::MalformedRecord;
-    }
-    if (present) {
-      std::uint32_t numUnitsInTick = 0;
-      std::uint32_t timeScale = 0;
-      if (!bits.readBits(32U, numUnitsInTick) ||
-          !bits.readBits(32U, timeScale) || numUnitsInTick == 0U ||
-          timeScale == 0U || !bits.skipBits(1U)) {
-        return Error::MalformedRecord;
-      }
-    }
-    bool nalHrd = false;
-    bool vclHrd = false;
-    if (!bits.readBit(nalHrd) || (nalHrd && !skipH264Hrd(bits)) ||
-        !bits.readBit(vclHrd) || (vclHrd && !skipH264Hrd(bits)) ||
-        ((nalHrd || vclHrd) && !bits.skipBits(1U)) || !bits.skipBits(1U) ||
-        !bits.readBit(present)) {
-      return Error::MalformedRecord;
-    }
-    if (present) {
-      std::uint32_t decodedFrameBuffering = 0;
-      if (!bits.skipBits(1U) || !bits.readUnsignedExpGolomb(ignored) ||
-          !bits.readUnsignedExpGolomb(ignored) ||
-          !bits.readUnsignedExpGolomb(ignored) ||
-          !bits.readUnsignedExpGolomb(ignored) ||
-          !bits.readUnsignedExpGolomb(reorderFrames) ||
-          !bits.readUnsignedExpGolomb(decodedFrameBuffering) ||
-          reorderFrames > decodedFrameBuffering ||
-          decodedFrameBuffering > maximumDpbFrames ||
-          decodedFrameBuffering < maxReferenceFrames) {
-        return Error::MalformedRecord;
-      }
-    }
+  }
+  if (!bits.ok()) {
+    return Error::MalformedRecord;
   }
   if (reorderFrames > limits.maximumReorderFrames) {
     return Error::ReorderLimitExceeded;
@@ -789,18 +620,17 @@ struct HevcProfileTierLevel {
   std::uint8_t level{0};
 };
 
+// profile_tier_level() (HEVC 7.3.3) checked against the hvcC's own copy.
+// `subLayers` is at most 6, which bounds the per-layer arrays.
 [[nodiscard]] bool
 parseHevcProfileTierLevel(RbspBitReader &bits, std::uint32_t subLayers,
                           const HevcProfileTierLevel &expected) noexcept {
-  std::uint32_t profileByte = 0;
-  std::uint32_t compatibility = 0;
-  std::uint32_t constraintHigh = 0;
-  std::uint32_t constraintLow = 0;
-  std::uint32_t level = 0;
-  if (!bits.readBits(8U, profileByte) || !bits.readBits(32U, compatibility) ||
-      !bits.readBits(32U, constraintHigh) ||
-      !bits.readBits(16U, constraintLow) || !bits.readBits(8U, level) ||
-      profileByte != expected.profileByte ||
+  const std::uint32_t profileByte = bits.readBits(8U);
+  const std::uint32_t compatibility = bits.readBits(32U);
+  const std::uint32_t constraintHigh = bits.readBits(32U);
+  const std::uint32_t constraintLow = bits.readBits(16U);
+  const std::uint32_t level = bits.readBits(8U);
+  if (!bits.ok() || profileByte != expected.profileByte ||
       compatibility != expected.compatibility ||
       constraintHigh != expected.constraintHigh ||
       constraintLow != expected.constraintLow || level != expected.level) {
@@ -809,41 +639,49 @@ parseHevcProfileTierLevel(RbspBitReader &bits, std::uint32_t subLayers,
   std::array<bool, 7> profilePresent{};
   std::array<bool, 7> levelPresent{};
   for (std::uint32_t layer = 0; layer < subLayers; ++layer) {
-    if (!bits.readBit(profilePresent[layer]) ||
-        !bits.readBit(levelPresent[layer])) {
-      return false;
-    }
+    profilePresent[layer] = bits.readBit();
+    levelPresent[layer] = bits.readBit();
   }
   for (std::uint32_t layer = subLayers; layer < 8U && subLayers != 0U;
        ++layer) {
-    std::uint32_t reserved = 0;
-    if (!bits.readBits(2U, reserved) || reserved != 0U) {
-      return false;
-    }
+    bits.require(bits.readBits(2U) == 0U);
   }
   for (std::uint32_t layer = 0; layer < subLayers; ++layer) {
     if (profilePresent[layer]) {
-      std::uint32_t subProfile = 0;
-      std::uint32_t ignored = 0;
-      if (!bits.readBits(8U, subProfile) || (subProfile & 0xC0U) != 0U ||
-          (subProfile & 0x1FU) != (expected.profileByte & 0x1FU) ||
-          !bits.readBits(32U, ignored) || !bits.readBits(32U, ignored) ||
-          !bits.readBits(16U, ignored)) {
-        return false;
-      }
+      const std::uint32_t subProfile = bits.readBits(8U);
+      bits.require((subProfile & 0xC0U) == 0U &&
+                   (subProfile & 0x1FU) == (expected.profileByte & 0x1FU));
+      bits.skipBits(80U);
     }
-    if (levelPresent[layer] && !bits.skipBits(8U)) {
-      return false;
+    if (levelPresent[layer]) {
+      bits.skipBits(8U);
     }
   }
-  return true;
+  return bits.ok();
 }
 
-struct ParsedHevcVps {
-  std::uint32_t id{0};
-  std::uint32_t subLayers{0};
-  bool temporalIdNested{false};
-};
+// sub_layer_ordering_info, identical in the VPS and the SPS. Returns the
+// largest sps_max_num_reorder_pics / vps_max_num_reorder_pics.
+std::uint32_t parseHevcSubLayerOrderingInfo(RbspBitReader &bits,
+                                            std::uint32_t subLayers) noexcept {
+  const std::uint32_t firstLayer = bits.readBit() ? 0U : subLayers;
+  std::uint32_t previousBuffering = 0;
+  std::uint32_t previousReorder = 0;
+  std::uint32_t maximumReorder = 0;
+  for (std::uint32_t layer = firstLayer; layer <= subLayers; ++layer) {
+    const std::uint32_t bufferingMinusOne =
+        bits.readUnsignedExpGolombAtMost(kMaximumVideoCodecReorderFrames - 1U);
+    const std::uint32_t reorder =
+        bits.readUnsignedExpGolombAtMost(bufferingMinusOne);
+    bits.skipExpGolomb(1U);
+    bits.require(layer == firstLayer || (bufferingMinusOne >= previousBuffering &&
+                                         reorder >= previousReorder));
+    previousBuffering = bufferingMinusOne;
+    previousReorder = reorder;
+    maximumReorder = std::max(maximumReorder, reorder);
+  }
+  return maximumReorder;
+}
 
 struct HevcHrdState {
   bool initialized{false};
@@ -852,10 +690,61 @@ struct HevcHrdState {
   bool subPicture{false};
 };
 
-[[nodiscard]] bool skipHevcHrd(RbspBitReader &bits,
-                               bool commonInformationPresent,
-                               std::uint32_t subLayers,
-                               HevcHrdState &state) noexcept;
+void skipHevcSubLayerHrd(RbspBitReader &bits, std::uint32_t cpbCountMinusOne,
+                         bool subPicture) noexcept {
+  for (std::uint32_t index = 0; index <= cpbCountMinusOne; ++index) {
+    bits.skipExpGolomb(subPicture ? 4U : 2U);
+    bits.skipBits(1U);
+  }
+}
+
+// hrd_parameters() (HEVC E.2.2). The common information is stated once per
+// VPS and shared by later hrd_parameters() in it, so `state` carries it.
+void skipHevcHrd(RbspBitReader &bits, bool commonInformationPresent,
+                 std::uint32_t subLayers, HevcHrdState &state) noexcept {
+  if (commonInformationPresent) {
+    state = {};
+    state.nalPresent = bits.readBit();
+    state.vclPresent = bits.readBit();
+    if (state.nalPresent || state.vclPresent) {
+      state.subPicture = bits.readBit();
+      if (state.subPicture) {
+        bits.skipBits(19U);
+      }
+      bits.skipBits(8U);
+      if (state.subPicture) {
+        bits.skipBits(4U);
+      }
+      bits.skipBits(15U);
+    }
+    state.initialized = true;
+  }
+  bits.require(state.initialized);
+  for (std::uint32_t layer = 0; layer <= subLayers; ++layer) {
+    const bool fixedGeneral = bits.readBit();
+    const bool fixedWithin = fixedGeneral || bits.readBit();
+    bool lowDelay = false;
+    if (fixedWithin) {
+      bits.skipExpGolomb(1U);
+    } else {
+      lowDelay = bits.readBit();
+    }
+    const std::uint32_t cpbCountMinusOne =
+        lowDelay ? 0U : bits.readUnsignedExpGolombAtMost(31U);
+    if (state.nalPresent) {
+      skipHevcSubLayerHrd(bits, cpbCountMinusOne, state.subPicture);
+    }
+    if (state.vclPresent) {
+      skipHevcSubLayerHrd(bits, cpbCountMinusOne, state.subPicture);
+    }
+  }
+}
+
+struct ParsedHevcVps {
+  std::uint32_t id{0};
+  std::uint32_t subLayers{0};
+  bool temporalIdNested{false};
+};
 
 [[nodiscard]] Error parseHevcVps(std::span<const std::uint8_t> nal,
                                  const HevcProfileTierLevel &expected,
@@ -864,537 +753,297 @@ struct HevcHrdState {
     return Error::MalformedRecord;
   }
   RbspBitReader bits(nal.subspan(2U));
-  std::uint32_t ignored = 0;
-  std::uint32_t reserved = 0;
-  if (!bits.readBits(4U, vps.id) || !bits.skipBits(1U) || !bits.skipBits(1U) ||
-      !bits.readBits(6U, ignored) || !bits.readBits(3U, vps.subLayers) ||
-      vps.subLayers > 6U || !bits.readBit(vps.temporalIdNested) ||
-      !bits.readBits(16U, reserved) || reserved != 0xFFFFU ||
-      !parseHevcProfileTierLevel(bits, vps.subLayers, expected)) {
+  vps.id = bits.readBits(4U);
+  bits.skipBits(2U);
+  bits.skipBits(6U);
+  vps.subLayers = bits.readBitsAtMost(3U, 6U);
+  vps.temporalIdNested = bits.readBit();
+  bits.require(bits.readBits(16U) == 0xFFFFU);
+  if (!parseHevcProfileTierLevel(bits, vps.subLayers, expected)) {
     return Error::ParameterSetMismatch;
   }
-  bool orderingInfoPresent = false;
-  if (!bits.readBit(orderingInfoPresent)) {
-    return Error::MalformedRecord;
-  }
-  const std::uint32_t firstLayer = orderingInfoPresent ? 0U : vps.subLayers;
-  std::uint32_t previousBuffering = 0;
-  std::uint32_t previousReorder = 0;
-  for (std::uint32_t layer = firstLayer; layer <= vps.subLayers; ++layer) {
-    std::uint32_t bufferingMinusOne = 0;
-    std::uint32_t reorder = 0;
-    std::uint32_t latency = 0;
-    if (!bits.readUnsignedExpGolomb(bufferingMinusOne) ||
-        !bits.readUnsignedExpGolomb(reorder) ||
-        !bits.readUnsignedExpGolomb(latency) ||
-        bufferingMinusOne >= kMaximumVideoCodecReorderFrames ||
-        reorder > bufferingMinusOne ||
-        (layer > firstLayer && (bufferingMinusOne < previousBuffering ||
-                                reorder < previousReorder))) {
-      return Error::MalformedRecord;
-    }
-    previousBuffering = bufferingMinusOne;
-    previousReorder = reorder;
-  }
-  std::uint32_t maximumLayerId = 0;
-  std::uint32_t layerSetsMinusOne = 0;
-  if (!bits.readBits(6U, maximumLayerId) || maximumLayerId > 62U ||
-      !bits.readUnsignedExpGolomb(layerSetsMinusOne) ||
-      layerSetsMinusOne > 1023U) {
-    return Error::MalformedRecord;
-  }
+  parseHevcSubLayerOrderingInfo(bits, vps.subLayers);
+  const std::uint32_t maximumLayerId = bits.readBitsAtMost(6U, 62U);
+  const std::uint32_t layerSetsMinusOne =
+      bits.readUnsignedExpGolombAtMost(1023U);
   for (std::uint32_t set = 1U; set <= layerSetsMinusOne; ++set) {
-    if (!bits.skipBits(static_cast<std::size_t>(maximumLayerId) + 1U)) {
-      return Error::MalformedRecord;
-    }
+    bits.skipBits(static_cast<std::size_t>(maximumLayerId) + 1U);
   }
-  bool timingPresent = false;
-  if (!bits.readBit(timingPresent)) {
-    return Error::MalformedRecord;
-  }
-  if (timingPresent) {
-    std::uint32_t numUnitsInTick = 0;
-    std::uint32_t timeScale = 0;
-    bool pocProportional = false;
-    std::uint32_t hrdCount = 0;
-    if (!bits.readBits(32U, numUnitsInTick) || !bits.readBits(32U, timeScale) ||
-        numUnitsInTick == 0U || timeScale == 0U ||
-        !bits.readBit(pocProportional) ||
-        (pocProportional && !bits.readUnsignedExpGolomb(ignored)) ||
-        !bits.readUnsignedExpGolomb(hrdCount) ||
-        hrdCount > layerSetsMinusOne + 1U) {
-      return Error::MalformedRecord;
+  if (bits.readBit()) {
+    bits.require(bits.readBits(32U) != 0U);
+    bits.require(bits.readBits(32U) != 0U);
+    if (bits.readBit()) {
+      bits.skipExpGolomb(1U);
     }
+    const std::uint32_t hrdCount =
+        bits.readUnsignedExpGolombAtMost(layerSetsMinusOne + 1U);
     HevcHrdState hrdState;
     for (std::uint32_t hrd = 0; hrd < hrdCount; ++hrd) {
-      std::uint32_t layerSetIndex = 0;
-      bool commonInformationPresent = true;
-      if (!bits.readUnsignedExpGolomb(layerSetIndex) ||
-          layerSetIndex > layerSetsMinusOne ||
-          (hrd != 0U && !bits.readBit(commonInformationPresent)) ||
-          !skipHevcHrd(bits, commonInformationPresent, vps.subLayers,
-                       hrdState)) {
-        return Error::MalformedRecord;
-      }
+      bits.readUnsignedExpGolombAtMost(layerSetsMinusOne);
+      const bool commonInformationPresent = hrd == 0U || bits.readBit();
+      skipHevcHrd(bits, commonInformationPresent, vps.subLayers, hrdState);
     }
   }
-  bool extensionPresent = false;
-  if (!bits.readBit(extensionPresent) || extensionPresent) {
-    return extensionPresent ? Error::UnsupportedProfile
-                            : Error::MalformedRecord;
+  const bool extensionPresent = bits.readBit();
+  if (!bits.ok()) {
+    return Error::MalformedRecord;
+  }
+  if (extensionPresent) {
+    return Error::UnsupportedProfile;
   }
   return bits.finishRbsp() ? Error::None : Error::MalformedRecord;
 }
 
-[[nodiscard]] bool skipHevcScalingList(RbspBitReader &bits) noexcept {
+void skipHevcScalingList(RbspBitReader &bits) noexcept {
   for (std::uint32_t sizeId = 0; sizeId < 4U; ++sizeId) {
     const std::uint32_t step = sizeId == 3U ? 3U : 1U;
     for (std::uint32_t matrixId = 0; matrixId < 6U; matrixId += step) {
-      bool predictionMode = false;
-      if (!bits.readBit(predictionMode)) {
-        return false;
-      }
-      if (!predictionMode) {
-        std::uint32_t delta = 0;
-        if (!bits.readUnsignedExpGolomb(delta) || delta > matrixId) {
-          return false;
-        }
+      if (!bits.readBit()) {
+        bits.readUnsignedExpGolombAtMost(matrixId);
         continue;
       }
       if (sizeId > 1U) {
-        std::int32_t ignoredSigned = 0;
-        if (!bits.readSignedExpGolomb(ignoredSigned)) {
-          return false;
-        }
+        bits.skipExpGolomb(1U);
       }
-      const std::uint32_t coefficientCount =
-          std::min<std::uint32_t>(64U, 1U << (4U + 2U * sizeId));
-      for (std::uint32_t index = 0; index < coefficientCount; ++index) {
-        std::int32_t ignoredSigned = 0;
-        if (!bits.readSignedExpGolomb(ignoredSigned)) {
-          return false;
-        }
-      }
+      bits.skipExpGolomb(std::min<std::uint32_t>(64U, 1U << (4U + 2U * sizeId)));
     }
   }
-  return true;
 }
 
-[[nodiscard]] bool
-skipHevcShortTermReferencePictureSets(RbspBitReader &bits,
-                                      std::uint32_t count) noexcept {
-  constexpr std::uint32_t kMaximumSets = 64U;
+constexpr std::uint32_t kHevcMaximumShortTermReferencePictureSets{64};
+
+// st_ref_pic_set() for every set in the SPS (HEVC 7.3.7). `count` is at most
+// kHevcMaximumShortTermReferencePictureSets, which bounds the per-set array;
+// the derived picture counts are bounded by construction, so the
+// inter-predicted walk is too.
+void skipHevcShortTermReferencePictureSets(RbspBitReader &bits,
+                                           std::uint32_t count) noexcept {
   constexpr std::uint32_t kMaximumPictures = 64U;
-  if (count > kMaximumSets) {
-    return false;
-  }
-  std::array<std::uint32_t, kMaximumSets> deltaPictureCounts{};
+  std::array<std::uint32_t, kHevcMaximumShortTermReferencePictureSets>
+      deltaPictureCounts{};
   for (std::uint32_t set = 0; set < count; ++set) {
-    bool interPrediction = false;
-    if (set != 0U && !bits.readBit(interPrediction)) {
-      return false;
-    }
+    const bool interPrediction = set != 0U && bits.readBit();
     if (interPrediction) {
-      if (!bits.skipBits(1U)) {
-        return false;
-      }
-      std::uint32_t ignored = 0;
-      if (!bits.readUnsignedExpGolomb(ignored)) {
-        return false;
-      }
+      bits.skipBits(1U);
+      bits.skipExpGolomb(1U);
       const std::uint32_t referencePictures = deltaPictureCounts[set - 1U];
       std::uint32_t derivedPictures = 0;
       for (std::uint32_t picture = 0; picture <= referencePictures; ++picture) {
-        bool used = false;
-        bool useDelta = true;
-        if (!bits.readBit(used) || (!used && !bits.readBit(useDelta))) {
-          return false;
-        }
-        if ((used || useDelta) && ++derivedPictures > kMaximumPictures) {
-          return false;
+        const bool used = bits.readBit();
+        const bool useDelta = used || bits.readBit();
+        if (useDelta) {
+          ++derivedPictures;
         }
       }
+      bits.require(derivedPictures <= kMaximumPictures);
       deltaPictureCounts[set] = derivedPictures;
       continue;
     }
-    std::uint32_t negative = 0;
-    std::uint32_t positive = 0;
-    if (!bits.readUnsignedExpGolomb(negative) ||
-        !bits.readUnsignedExpGolomb(positive) || negative > kMaximumPictures ||
-        positive > kMaximumPictures - negative) {
-      return false;
-    }
+    const std::uint32_t negative =
+        bits.readUnsignedExpGolombAtMost(kMaximumPictures);
+    const std::uint32_t positive =
+        bits.readUnsignedExpGolombAtMost(kMaximumPictures - negative);
     for (std::uint32_t picture = 0; picture < negative + positive; ++picture) {
-      std::uint32_t ignored = 0;
-      if (!bits.readUnsignedExpGolomb(ignored) || !bits.skipBits(1U)) {
-        return false;
-      }
+      bits.skipExpGolomb(1U);
+      bits.skipBits(1U);
     }
     deltaPictureCounts[set] = negative + positive;
   }
-  return true;
 }
 
-[[nodiscard]] bool skipHevcSubLayerHrd(RbspBitReader &bits,
-                                       std::uint32_t cpbCountMinusOne,
-                                       bool subPicture) noexcept {
-  for (std::uint32_t index = 0; index <= cpbCountMinusOne; ++index) {
-    std::uint32_t ignored = 0;
-    if (!bits.readUnsignedExpGolomb(ignored) ||
-        !bits.readUnsignedExpGolomb(ignored) ||
-        (subPicture && (!bits.readUnsignedExpGolomb(ignored) ||
-                        !bits.readUnsignedExpGolomb(ignored))) ||
-        !bits.skipBits(1U)) {
-      return false;
+void skipH264SliceGroupMap(RbspBitReader &bits,
+                           std::uint32_t sliceGroupsMinusOne) noexcept {
+  const std::uint32_t mapType = bits.readUnsignedExpGolombAtMost(6U);
+  switch (mapType) {
+  case 0U:
+    bits.skipExpGolomb(sliceGroupsMinusOne + 1U);
+    break;
+  case 2U:
+    bits.skipExpGolomb(2U * sliceGroupsMinusOne);
+    break;
+  case 3U:
+  case 4U:
+  case 5U:
+    bits.skipBits(1U);
+    bits.skipExpGolomb(1U);
+    break;
+  case 6U: {
+    constexpr std::uint32_t kMaximumMapUnits = 8192U;
+    const std::uint32_t mapUnits =
+        bits.readUnsignedExpGolombAtMost(kMaximumMapUnits - 1U) + 1U;
+    const std::uint32_t groupCount = sliceGroupsMinusOne + 1U;
+    const std::size_t groupIdBits = groupCount <= 2U   ? 1U
+                                    : groupCount <= 4U ? 2U
+                                                       : 3U;
+    for (std::uint32_t unit = 0; unit < mapUnits; ++unit) {
+      bits.readBitsAtMost(groupIdBits, groupCount - 1U);
     }
+    break;
   }
-  return true;
-}
-
-[[nodiscard]] bool skipHevcHrd(RbspBitReader &bits,
-                               bool commonInformationPresent,
-                               std::uint32_t subLayers,
-                               HevcHrdState &state) noexcept {
-  if (commonInformationPresent) {
-    state = {};
-    if (!bits.readBit(state.nalPresent) || !bits.readBit(state.vclPresent)) {
-      return false;
-    }
-    if (state.nalPresent || state.vclPresent) {
-      if (!bits.readBit(state.subPicture) ||
-          (state.subPicture && !bits.skipBits(19U)) || !bits.skipBits(8U) ||
-          (state.subPicture && !bits.skipBits(4U)) || !bits.skipBits(15U)) {
-        return false;
-      }
-    }
-    state.initialized = true;
-  } else if (!state.initialized) {
-    return false;
+  default:
+    break;
   }
-  for (std::uint32_t layer = 0; layer <= subLayers; ++layer) {
-    bool fixedGeneral = false;
-    bool fixedWithin = true;
-    bool lowDelay = false;
-    if (!bits.readBit(fixedGeneral) ||
-        (!fixedGeneral && !bits.readBit(fixedWithin))) {
-      return false;
-    }
-    if (fixedGeneral || fixedWithin) {
-      std::uint32_t ignored = 0;
-      if (!bits.readUnsignedExpGolomb(ignored)) {
-        return false;
-      }
-    } else if (!bits.readBit(lowDelay)) {
-      return false;
-    }
-    std::uint32_t cpbCountMinusOne = 0;
-    if (!lowDelay && (!bits.readUnsignedExpGolomb(cpbCountMinusOne) ||
-                      cpbCountMinusOne > 31U)) {
-      return false;
-    }
-    if ((state.nalPresent &&
-         !skipHevcSubLayerHrd(bits, cpbCountMinusOne, state.subPicture)) ||
-        (state.vclPresent &&
-         !skipHevcSubLayerHrd(bits, cpbCountMinusOne, state.subPicture))) {
-      return false;
-    }
-  }
-  return true;
 }
 
 [[nodiscard]] bool parseH264Pps(std::span<const std::uint8_t> nal,
                                 std::uint32_t spsIds, std::uint32_t &ppsId,
                                 std::uint32_t &spsId) noexcept {
   RbspBitReader bits(nal.subspan(1U));
-  if (!bits.readUnsignedExpGolomb(ppsId) || ppsId > 255U ||
-      !bits.readUnsignedExpGolomb(spsId) || spsId > 31U ||
-      (spsIds & (std::uint32_t{1} << spsId)) == 0U) {
-    return false;
-  }
-  bool bottomFieldOrderPresent = false;
-  std::uint32_t sliceGroupsMinusOne = 0;
-  if (!bits.skipBits(1U) || !bits.readBit(bottomFieldOrderPresent) ||
-      !bits.readUnsignedExpGolomb(sliceGroupsMinusOne) ||
-      sliceGroupsMinusOne > 7U) {
-    return false;
-  }
+  ppsId = bits.readUnsignedExpGolombAtMost(255U);
+  spsId = bits.readUnsignedExpGolombAtMost(31U);
+  bits.require((spsIds & (std::uint32_t{1} << spsId)) != 0U);
+  bits.skipBits(2U);
+  const std::uint32_t sliceGroupsMinusOne = bits.readUnsignedExpGolombAtMost(7U);
   if (sliceGroupsMinusOne != 0U) {
-    std::uint32_t mapType = 0;
-    std::uint32_t ignored = 0;
-    if (!bits.readUnsignedExpGolomb(mapType) || mapType > 6U) {
-      return false;
-    }
-    if (mapType == 0U) {
-      for (std::uint32_t group = 0; group <= sliceGroupsMinusOne; ++group) {
-        if (!bits.readUnsignedExpGolomb(ignored)) {
-          return false;
-        }
-      }
-    } else if (mapType == 2U) {
-      for (std::uint32_t group = 0; group < sliceGroupsMinusOne; ++group) {
-        if (!bits.readUnsignedExpGolomb(ignored) ||
-            !bits.readUnsignedExpGolomb(ignored)) {
-          return false;
-        }
-      }
-    } else if (mapType == 3U || mapType == 4U || mapType == 5U) {
-      if (!bits.skipBits(1U) || !bits.readUnsignedExpGolomb(ignored)) {
-        return false;
-      }
-    } else if (mapType == 6U) {
-      constexpr std::uint32_t kMaximumMapUnits = 8192U;
-      std::uint32_t mapUnitsMinusOne = 0;
-      if (!bits.readUnsignedExpGolomb(mapUnitsMinusOne) ||
-          mapUnitsMinusOne >= kMaximumMapUnits) {
-        return false;
-      }
-      const std::uint32_t groupCount = sliceGroupsMinusOne + 1U;
-      const std::size_t groupIdBits = groupCount <= 2U   ? 1U
-                                      : groupCount <= 4U ? 2U
-                                                         : 3U;
-      for (std::uint32_t unit = 0; unit <= mapUnitsMinusOne; ++unit) {
-        std::uint32_t groupId = 0;
-        if (!bits.readBits(groupIdBits, groupId) || groupId >= groupCount) {
-          return false;
-        }
-      }
-    }
+    skipH264SliceGroupMap(bits, sliceGroupsMinusOne);
   }
-  std::uint32_t ignored = 0;
-  std::int32_t ignoredSigned = 0;
-  if (!bits.readUnsignedExpGolomb(ignored) || ignored > 31U ||
-      !bits.readUnsignedExpGolomb(ignored) || ignored > 31U ||
-      !bits.skipBits(1U) || !bits.skipBits(2U) ||
-      !bits.readSignedExpGolomb(ignoredSigned) || ignoredSigned < -26 ||
-      ignoredSigned > 25 || !bits.readSignedExpGolomb(ignoredSigned) ||
-      ignoredSigned < -26 || ignoredSigned > 25 ||
-      !bits.readSignedExpGolomb(ignoredSigned) || ignoredSigned < -12 ||
-      ignoredSigned > 12 || !bits.skipBits(3U)) {
-    return false;
-  }
-  bool moreData = false;
-  if (!bits.moreRbspData(moreData)) {
-    return false;
-  }
-  if (moreData) {
-    bool transform8x8 = false;
-    bool scalingMatrixPresent = false;
-    if (!bits.readBit(transform8x8) || !bits.readBit(scalingMatrixPresent)) {
-      return false;
-    }
-    if (scalingMatrixPresent) {
+  bits.readUnsignedExpGolombAtMost(31U);
+  bits.readUnsignedExpGolombAtMost(31U);
+  bits.skipBits(3U);
+  bits.readSignedExpGolombWithin(-26, 25);
+  bits.readSignedExpGolombWithin(-26, 25);
+  bits.readSignedExpGolombWithin(-12, 12);
+  bits.skipBits(3U);
+  if (bits.moreRbspData()) {
+    const bool transform8x8 = bits.readBit();
+    if (bits.readBit()) {
       const std::size_t listCount = transform8x8 ? 8U : 6U;
       for (std::size_t index = 0; index < listCount; ++index) {
-        bool listPresent = false;
-        if (!bits.readBit(listPresent) ||
-            (listPresent &&
-             !skipH264ScalingList(bits, index < 6U ? 16U : 64U))) {
-          return false;
+        if (bits.readBit()) {
+          skipH264ScalingList(bits, index < 6U ? 16U : 64U);
         }
       }
     }
-    if (!bits.readSignedExpGolomb(ignoredSigned) || ignoredSigned < -12 ||
-        ignoredSigned > 12) {
-      return false;
-    }
+    bits.readSignedExpGolombWithin(-12, 12);
   }
   return bits.finishRbsp();
+}
+
+void skipHevcTiles(RbspBitReader &bits) noexcept {
+  const std::uint32_t columnsMinusOne = bits.readUnsignedExpGolombAtMost(19U);
+  const std::uint32_t rowsMinusOne = bits.readUnsignedExpGolombAtMost(21U);
+  if (!bits.readBit()) {
+    bits.skipExpGolomb(columnsMinusOne);
+    bits.skipExpGolomb(rowsMinusOne);
+  }
+  bits.skipBits(1U);
+}
+
+void skipHevcDeblocking(RbspBitReader &bits) noexcept {
+  bits.skipBits(1U);
+  if (!bits.readBit()) {
+    bits.readSignedExpGolombWithin(-6, 6);
+    bits.readSignedExpGolombWithin(-6, 6);
+  }
+}
+
+// pps_extension_4bits and the range extension are parsed; every other
+// extension names a profile outside Main/Main10.
+[[nodiscard]] Error parseHevcPpsExtensions(RbspBitReader &bits,
+                                           std::uint8_t bitDepth,
+                                           bool transformSkipEnabled) noexcept {
+  const bool rangeExtension = bits.readBit();
+  const bool otherExtensions = bits.readBits(3U) != 0U;
+  const bool extension4Bits = bits.readBits(4U) != 0U;
+  if (rangeExtension) {
+    if (transformSkipEnabled) {
+      bits.readUnsignedExpGolombAtMost(3U);
+    }
+    bits.skipBits(1U);
+    if (bits.readBit()) {
+      bits.readUnsignedExpGolombAtMost(6U);
+      const std::uint32_t listLength = bits.readUnsignedExpGolombAtMost(5U) + 1U;
+      for (std::uint32_t index = 0; index < listLength; ++index) {
+        bits.readSignedExpGolombWithin(-12, 12);
+        bits.readSignedExpGolombWithin(-12, 12);
+      }
+    }
+    const std::uint32_t maximumSaoScale =
+        bitDepth > 10U ? static_cast<std::uint32_t>(bitDepth - 10U) : 0U;
+    bits.readUnsignedExpGolombAtMost(maximumSaoScale);
+    bits.readUnsignedExpGolombAtMost(maximumSaoScale);
+  }
+  if (!bits.ok()) {
+    return Error::MalformedRecord;
+  }
+  if (otherExtensions || extension4Bits) {
+    return Error::UnsupportedProfile;
+  }
+  return Error::None;
 }
 
 [[nodiscard]] Error parseHevcPps(std::span<const std::uint8_t> nal,
                                  std::uint8_t bitDepth, std::uint32_t &ppsId,
                                  std::uint32_t &spsId) noexcept {
   RbspBitReader bits(nal.subspan(2U));
-  std::uint32_t extraSliceHeaderBits = 0;
-  if (!bits.readUnsignedExpGolomb(ppsId) || ppsId > 63U ||
-      !bits.readUnsignedExpGolomb(spsId) || spsId > 15U || !bits.skipBits(2U) ||
-      !bits.readBits(3U, extraSliceHeaderBits) || !bits.skipBits(2U)) {
-    return Error::MalformedRecord;
-  }
-  std::uint32_t ignored = 0;
-  std::int32_t ignoredSigned = 0;
-  const std::int32_t qpBdOffsetY = static_cast<std::int32_t>(
+  ppsId = bits.readUnsignedExpGolombAtMost(63U);
+  spsId = bits.readUnsignedExpGolombAtMost(15U);
+  bits.skipBits(2U);
+  bits.skipBits(3U);
+  bits.skipBits(2U);
+  bits.readUnsignedExpGolombAtMost(14U);
+  bits.readUnsignedExpGolombAtMost(14U);
+  const auto qpBdOffsetY = static_cast<std::int32_t>(
       6U * (static_cast<std::uint32_t>(bitDepth) - 8U));
-  const std::int32_t minimumInitialQpMinus26 = -26 - qpBdOffsetY;
-  if (!bits.readUnsignedExpGolomb(ignored) || ignored > 14U ||
-      !bits.readUnsignedExpGolomb(ignored) || ignored > 14U ||
-      !bits.readSignedExpGolomb(ignoredSigned) ||
-      ignoredSigned < minimumInitialQpMinus26 || ignoredSigned > 25) {
-    return Error::MalformedRecord;
+  bits.readSignedExpGolombWithin(-26 - qpBdOffsetY, 25);
+  bits.skipBits(1U);
+  const bool transformSkipEnabled = bits.readBit();
+  if (bits.readBit()) {
+    bits.readUnsignedExpGolombAtMost(6U);
   }
-  bool constrainedIntraPrediction = false;
-  bool transformSkipEnabled = false;
-  if (!bits.readBit(constrainedIntraPrediction) ||
-      !bits.readBit(transformSkipEnabled)) {
-    return Error::MalformedRecord;
-  }
-  bool cuQpDeltaEnabled = false;
-  if (!bits.readBit(cuQpDeltaEnabled) ||
-      (cuQpDeltaEnabled &&
-       (!bits.readUnsignedExpGolomb(ignored) || ignored > 6U)) ||
-      !bits.readSignedExpGolomb(ignoredSigned) || ignoredSigned < -12 ||
-      ignoredSigned > 12 || !bits.readSignedExpGolomb(ignoredSigned) ||
-      ignoredSigned < -12 || ignoredSigned > 12 || !bits.skipBits(4U)) {
-    return Error::MalformedRecord;
-  }
-  bool tilesEnabled = false;
-  bool entropyCodingSyncEnabled = false;
-  if (!bits.readBit(tilesEnabled) || !bits.readBit(entropyCodingSyncEnabled)) {
-    return Error::MalformedRecord;
-  }
+  bits.readSignedExpGolombWithin(-12, 12);
+  bits.readSignedExpGolombWithin(-12, 12);
+  bits.skipBits(4U);
+  const bool tilesEnabled = bits.readBit();
+  bits.skipBits(1U);
   if (tilesEnabled) {
-    std::uint32_t columnsMinusOne = 0;
-    std::uint32_t rowsMinusOne = 0;
-    bool uniformSpacing = false;
-    if (!bits.readUnsignedExpGolomb(columnsMinusOne) || columnsMinusOne > 19U ||
-        !bits.readUnsignedExpGolomb(rowsMinusOne) || rowsMinusOne > 21U ||
-        !bits.readBit(uniformSpacing)) {
-      return Error::MalformedRecord;
-    }
-    if (!uniformSpacing) {
-      for (std::uint32_t column = 0; column < columnsMinusOne; ++column) {
-        if (!bits.readUnsignedExpGolomb(ignored)) {
-          return Error::MalformedRecord;
-        }
-      }
-      for (std::uint32_t row = 0; row < rowsMinusOne; ++row) {
-        if (!bits.readUnsignedExpGolomb(ignored)) {
-          return Error::MalformedRecord;
-        }
-      }
-    }
-    if (!bits.skipBits(1U)) {
-      return Error::MalformedRecord;
-    }
+    skipHevcTiles(bits);
   }
-  bool deblockingControlPresent = false;
-  if (!bits.skipBits(1U) || !bits.readBit(deblockingControlPresent)) {
-    return Error::MalformedRecord;
+  bits.skipBits(1U);
+  if (bits.readBit()) {
+    skipHevcDeblocking(bits);
   }
-  if (deblockingControlPresent) {
-    bool deblockingDisabled = false;
-    if (!bits.skipBits(1U) || !bits.readBit(deblockingDisabled) ||
-        (!deblockingDisabled &&
-         (!bits.readSignedExpGolomb(ignoredSigned) || ignoredSigned < -6 ||
-          ignoredSigned > 6 || !bits.readSignedExpGolomb(ignoredSigned) ||
-          ignoredSigned < -6 || ignoredSigned > 6))) {
-      return Error::MalformedRecord;
-    }
+  if (bits.readBit()) {
+    skipHevcScalingList(bits);
   }
-  bool scalingListPresent = false;
-  if (!bits.readBit(scalingListPresent) ||
-      (scalingListPresent && !skipHevcScalingList(bits)) ||
-      !bits.skipBits(1U) || !bits.readUnsignedExpGolomb(ignored) ||
-      ignored > 6U || !bits.skipBits(1U)) {
-    return Error::MalformedRecord;
-  }
-  bool extensionPresent = false;
-  if (!bits.readBit(extensionPresent)) {
-    return Error::MalformedRecord;
-  }
-  if (extensionPresent) {
-    bool rangeExtension = false;
-    bool multilayerExtension = false;
-    bool extension3d = false;
-    bool screenContentExtension = false;
-    std::uint32_t extension4Bits = 0;
-    if (!bits.readBit(rangeExtension) || !bits.readBit(multilayerExtension) ||
-        !bits.readBit(extension3d) || !bits.readBit(screenContentExtension) ||
-        !bits.readBits(4U, extension4Bits)) {
-      return Error::MalformedRecord;
-    }
-    if (rangeExtension) {
-      if (transformSkipEnabled &&
-          (!bits.readUnsignedExpGolomb(ignored) || ignored > 3U)) {
-        return Error::MalformedRecord;
-      }
-      bool chromaOffsetListEnabled = false;
-      if (!bits.skipBits(1U) || !bits.readBit(chromaOffsetListEnabled)) {
-        return Error::MalformedRecord;
-      }
-      if (chromaOffsetListEnabled) {
-        std::uint32_t listLengthMinusOne = 0;
-        if (!bits.readUnsignedExpGolomb(ignored) || ignored > 6U ||
-            !bits.readUnsignedExpGolomb(listLengthMinusOne) ||
-            listLengthMinusOne > 5U) {
-          return Error::MalformedRecord;
-        }
-        for (std::uint32_t index = 0; index <= listLengthMinusOne; ++index) {
-          if (!bits.readSignedExpGolomb(ignoredSigned) || ignoredSigned < -12 ||
-              ignoredSigned > 12 || !bits.readSignedExpGolomb(ignoredSigned) ||
-              ignoredSigned < -12 || ignoredSigned > 12) {
-            return Error::MalformedRecord;
-          }
-        }
-      }
-      const std::uint32_t maximumSaoScale =
-          bitDepth > 10U ? static_cast<std::uint32_t>(bitDepth - 10U) : 0U;
-      if (!bits.readUnsignedExpGolomb(ignored) || ignored > maximumSaoScale ||
-          !bits.readUnsignedExpGolomb(ignored) || ignored > maximumSaoScale) {
-        return Error::MalformedRecord;
-      }
-    }
-    if (multilayerExtension || extension3d || screenContentExtension ||
-        extension4Bits != 0U) {
-      return Error::UnsupportedProfile;
+  bits.skipBits(1U);
+  bits.readUnsignedExpGolombAtMost(6U);
+  bits.skipBits(1U);
+  if (bits.readBit()) {
+    const Error error =
+        parseHevcPpsExtensions(bits, bitDepth, transformSkipEnabled);
+    if (error != Error::None) {
+      return error;
     }
   }
   return bits.finishRbsp() ? Error::None : Error::MalformedRecord;
 }
 
-[[nodiscard]] bool parseHevcVui(RbspBitReader &bits, std::uint32_t subLayers,
-                                VideoCodecColorFacts &color) noexcept {
-  if (!parseVuiColorPrefix(bits, color)) {
-    return false;
+void parseHevcVui(RbspBitReader &bits, std::uint32_t subLayers,
+                  VideoCodecColorFacts &color) noexcept {
+  parseVuiColorPrefix(bits, color);
+  if (bits.readBit()) {
+    bits.skipExpGolomb(2U);
   }
-  bool present = false;
-  std::uint32_t ignored = 0;
-  if (!bits.readBit(present)) {
-    return false;
+  bits.skipBits(3U);
+  if (bits.readBit()) {
+    bits.skipExpGolomb(4U);
   }
-  if (present && (!bits.readUnsignedExpGolomb(ignored) ||
-                  !bits.readUnsignedExpGolomb(ignored))) {
-    return false;
-  }
-  if (!bits.skipBits(3U) || !bits.readBit(present)) {
-    return false;
-  }
-  if (present) {
-    for (std::size_t index = 0; index < 4U; ++index) {
-      if (!bits.readUnsignedExpGolomb(ignored)) {
-        return false;
-      }
+  if (bits.readBit()) {
+    bits.require(bits.readBits(32U) != 0U);
+    bits.require(bits.readBits(32U) != 0U);
+    if (bits.readBit()) {
+      bits.skipExpGolomb(1U);
+    }
+    if (bits.readBit()) {
+      HevcHrdState hrdState;
+      skipHevcHrd(bits, true, subLayers, hrdState);
     }
   }
-  if (!bits.readBit(present)) {
-    return false;
+  if (bits.readBit()) {
+    bits.skipBits(3U);
+    bits.skipExpGolomb(5U);
   }
-  if (present) {
-    std::uint32_t numUnitsInTick = 0;
-    std::uint32_t timeScale = 0;
-    bool pocProportional = false;
-    bool hrdPresent = false;
-    HevcHrdState hrdState;
-    if (!bits.readBits(32U, numUnitsInTick) || !bits.readBits(32U, timeScale) ||
-        numUnitsInTick == 0U || timeScale == 0U ||
-        !bits.readBit(pocProportional) ||
-        (pocProportional && !bits.readUnsignedExpGolomb(ignored)) ||
-        !bits.readBit(hrdPresent) ||
-        (hrdPresent && !skipHevcHrd(bits, true, subLayers, hrdState))) {
-      return false;
-    }
-  }
-  if (!bits.readBit(present)) {
-    return false;
-  }
-  if (present && (!bits.skipBits(3U) || !bits.readUnsignedExpGolomb(ignored) ||
-                  !bits.readUnsignedExpGolomb(ignored) ||
-                  !bits.readUnsignedExpGolomb(ignored) ||
-                  !bits.readUnsignedExpGolomb(ignored) ||
-                  !bits.readUnsignedExpGolomb(ignored))) {
-    return false;
-  }
-  return true;
 }
 
 [[nodiscard]] Error parseHevcSps(std::span<const std::uint8_t> nal,
@@ -1407,84 +1056,49 @@ skipHevcShortTermReferencePictureSets(RbspBitReader &bits,
     return Error::MalformedRecord;
   }
   RbspBitReader bits(nal.subspan(2U));
-  std::uint32_t subLayers = 0;
-  if (!bits.readBits(4U, facts.dependencyId) || facts.dependencyId > 15U ||
-      !bits.readBits(3U, subLayers) || subLayers > 6U ||
-      !bits.readBit(facts.temporalIdNested) ||
-      !parseHevcProfileTierLevel(bits, subLayers, expected)) {
+  facts.dependencyId = bits.readBits(4U);
+  const std::uint32_t subLayers = bits.readBitsAtMost(3U, 6U);
+  facts.temporalIdNested = bits.readBit();
+  if (!parseHevcProfileTierLevel(bits, subLayers, expected)) {
     return Error::ParameterSetMismatch;
   }
   subLayersOut = subLayers;
-  std::uint32_t chromaFormat = 0;
-  std::uint32_t pictureWidth = 0;
-  std::uint32_t pictureHeight = 0;
-  if (!bits.readUnsignedExpGolomb(facts.id) || facts.id > 15U ||
-      !bits.readUnsignedExpGolomb(chromaFormat)) {
+  facts.id = bits.readUnsignedExpGolombAtMost(15U);
+  const std::uint32_t chromaFormat = bits.readUnsignedExpGolomb();
+  if (!bits.ok()) {
     return Error::MalformedRecord;
   }
   if (chromaFormat != 1U) {
     return Error::UnsupportedChromaFormat;
   }
-  if (!bits.readUnsignedExpGolomb(pictureWidth) || pictureWidth == 0U ||
-      !bits.readUnsignedExpGolomb(pictureHeight) || pictureHeight == 0U) {
-    return Error::MalformedRecord;
-  }
-  bool conformanceWindow = false;
+  const std::uint32_t pictureWidth = bits.readUnsignedExpGolomb();
+  bits.require(pictureWidth != 0U);
+  const std::uint32_t pictureHeight = bits.readUnsignedExpGolomb();
+  bits.require(pictureHeight != 0U);
   std::array<std::uint32_t, 4> crop{};
-  if (!bits.readBit(conformanceWindow)) {
-    return Error::MalformedRecord;
-  }
-  if (conformanceWindow) {
+  if (bits.readBit()) {
     for (std::uint32_t &value : crop) {
-      if (!bits.readUnsignedExpGolomb(value)) {
-        return Error::MalformedRecord;
-      }
+      value = bits.readUnsignedExpGolomb();
     }
   }
-  std::uint32_t lumaDepthMinusEight = 0;
-  std::uint32_t chromaDepthMinusEight = 0;
-  std::uint32_t log2MaxPocLsbMinusFour = 0;
-  if (!bits.readUnsignedExpGolomb(lumaDepthMinusEight) ||
-      !bits.readUnsignedExpGolomb(chromaDepthMinusEight)) {
+  const std::uint32_t lumaDepthMinusEight = bits.readUnsignedExpGolomb();
+  const std::uint32_t chromaDepthMinusEight = bits.readUnsignedExpGolomb();
+  if (!bits.ok()) {
     return Error::MalformedRecord;
   }
   if (lumaDepthMinusEight != expectedDepthMinusEight ||
       chromaDepthMinusEight != expectedDepthMinusEight) {
     return Error::ParameterSetMismatch;
   }
-  if ((lumaDepthMinusEight != 0U && lumaDepthMinusEight != 2U)) {
+  if (lumaDepthMinusEight != 0U && lumaDepthMinusEight != 2U) {
     return Error::UnsupportedBitDepth;
   }
   facts.bitDepth = static_cast<std::uint8_t>(8U + lumaDepthMinusEight);
-  if (!bits.readUnsignedExpGolomb(log2MaxPocLsbMinusFour) ||
-      log2MaxPocLsbMinusFour > 12U) {
+  const std::uint32_t log2MaxPocLsb = bits.readUnsignedExpGolombAtMost(12U) + 4U;
+  const std::uint32_t maximumReorder =
+      parseHevcSubLayerOrderingInfo(bits, subLayers);
+  if (!bits.ok()) {
     return Error::MalformedRecord;
-  }
-
-  bool orderingInfoPresent = false;
-  if (!bits.readBit(orderingInfoPresent)) {
-    return Error::MalformedRecord;
-  }
-  const std::uint32_t firstLayer = orderingInfoPresent ? 0U : subLayers;
-  std::uint32_t previousBuffering = 0;
-  std::uint32_t previousReorder = 0;
-  std::uint32_t maximumReorder = 0;
-  for (std::uint32_t layer = firstLayer; layer <= subLayers; ++layer) {
-    std::uint32_t bufferingMinusOne = 0;
-    std::uint32_t reorder = 0;
-    std::uint32_t ignored = 0;
-    if (!bits.readUnsignedExpGolomb(bufferingMinusOne) ||
-        !bits.readUnsignedExpGolomb(reorder) ||
-        !bits.readUnsignedExpGolomb(ignored) ||
-        bufferingMinusOne >= kMaximumVideoCodecReorderFrames ||
-        reorder > bufferingMinusOne ||
-        (layer > firstLayer && (bufferingMinusOne < previousBuffering ||
-                                reorder < previousReorder))) {
-      return Error::MalformedRecord;
-    }
-    previousBuffering = bufferingMinusOne;
-    previousReorder = reorder;
-    maximumReorder = std::max(maximumReorder, reorder);
   }
   if (maximumReorder > limits.maximumReorderFrames) {
     return Error::ReorderLimitExceeded;
@@ -1506,69 +1120,39 @@ skipHevcShortTermReferencePictureSets(RbspBitReader &bits,
   facts.width = static_cast<std::uint32_t>(width);
   facts.height = static_cast<std::uint32_t>(height);
 
-  std::uint32_t ignored = 0;
-  for (std::size_t index = 0; index < 6U; ++index) {
-    if (!bits.readUnsignedExpGolomb(ignored)) {
-      return Error::MalformedRecord;
-    }
+  bits.skipExpGolomb(6U);
+  if (bits.readBit() && bits.readBit()) {
+    skipHevcScalingList(bits);
   }
-  bool scalingListEnabled = false;
-  if (!bits.readBit(scalingListEnabled)) {
-    return Error::MalformedRecord;
+  bits.skipBits(2U);
+  if (bits.readBit()) {
+    bits.skipBits(8U);
+    bits.skipExpGolomb(2U);
+    bits.skipBits(1U);
   }
-  if (scalingListEnabled) {
-    bool scalingListPresent = false;
-    if (!bits.readBit(scalingListPresent) ||
-        (scalingListPresent && !skipHevcScalingList(bits))) {
-      return Error::MalformedRecord;
-    }
-  }
-  bool pcmEnabled = false;
-  if (!bits.skipBits(2U) || !bits.readBit(pcmEnabled)) {
-    return Error::MalformedRecord;
-  }
-  if (pcmEnabled &&
-      (!bits.skipBits(8U) || !bits.readUnsignedExpGolomb(ignored) ||
-       !bits.readUnsignedExpGolomb(ignored) || !bits.skipBits(1U))) {
-    return Error::MalformedRecord;
-  }
-  std::uint32_t shortTermSets = 0;
-  if (!bits.readUnsignedExpGolomb(shortTermSets) ||
-      !skipHevcShortTermReferencePictureSets(bits, shortTermSets)) {
-    return Error::MalformedRecord;
-  }
-  bool longTermPresent = false;
-  if (!bits.readBit(longTermPresent)) {
-    return Error::MalformedRecord;
-  }
-  if (longTermPresent) {
-    std::uint32_t longTermCount = 0;
-    if (!bits.readUnsignedExpGolomb(longTermCount) || longTermCount > 32U) {
-      return Error::MalformedRecord;
-    }
+  skipHevcShortTermReferencePictureSets(
+      bits, bits.readUnsignedExpGolombAtMost(
+                kHevcMaximumShortTermReferencePictureSets));
+  if (bits.readBit()) {
+    const std::uint32_t longTermCount = bits.readUnsignedExpGolombAtMost(32U);
     for (std::uint32_t index = 0; index < longTermCount; ++index) {
-      if (!bits.skipBits(
-              static_cast<std::size_t>(log2MaxPocLsbMinusFour + 4U)) ||
-          !bits.skipBits(1U)) {
-        return Error::MalformedRecord;
-      }
+      bits.skipBits(log2MaxPocLsb);
+      bits.skipBits(1U);
     }
   }
-  bool vuiPresent = false;
-  if (!bits.skipBits(2U) || !bits.readBit(vuiPresent) ||
-      (vuiPresent && !parseHevcVui(bits, subLayers, facts.color))) {
+  bits.skipBits(2U);
+  if (bits.readBit()) {
+    parseHevcVui(bits, subLayers, facts.color);
+  }
+  if (!bits.ok()) {
     return Error::MalformedRecord;
   }
   if (!supportedColor(facts.color, limits.admitHighDynamicRangeColor)) {
     return Error::UnsupportedColorDescription;
   }
-  bool extensionPresent = false;
-  if (!bits.readBit(extensionPresent)) {
-    return Error::MalformedRecord;
-  }
   // Main/Main10 native v1 has no SPS extension contract. Reject instead of
   // pretending to validate range, multilayer, 3D, or SCC syntax.
-  if (extensionPresent) {
+  if (bits.readBit()) {
     return Error::UnsupportedProfile;
   }
   return bits.finishRbsp() ? Error::None : Error::MalformedRecord;
@@ -1604,7 +1188,7 @@ inspectAvcC(std::span<const std::uint8_t> bytes,
     return rejected(Error::MalformedRecord);
   }
   const std::uint8_t profile = bytes[1];
-  if (profile != 66U && profile != 77U && profile != 88U && profile != 100U) {
+  if (!h264AdmittedProfile(profile)) {
     return rejected(Error::UnsupportedProfile);
   }
 
@@ -1648,6 +1232,12 @@ inspectAvcC(std::span<const std::uint8_t> bytes,
     }
     result.maximumReorderFrames =
         std::max(result.maximumReorderFrames, parsed.reorderFrames);
+    // Every admitted SPS states the same depth; the inference is only as weak
+    // as its weakest statement, so one stated depth makes the record stated.
+    result.maximumReorderFramesInferred =
+        index == 0U ? parsed.reorderFramesInferred
+                    : (result.maximumReorderFramesInferred &&
+                       parsed.reorderFramesInferred);
     offset += length;
   }
   if (offset >= bytes.size()) {
@@ -1664,9 +1254,8 @@ inspectAvcC(std::span<const std::uint8_t> bytes,
     }
     const std::size_t length = readBigEndian16(bytes, offset);
     offset += 2U;
-    if (length < 2U || length > bytes.size() - offset ||
-        (bytes[offset] & 0x80U) != 0U || (bytes[offset] & 0x1FU) != 8U ||
-        (bytes[offset] & 0x60U) == 0U) {
+    if (length > bytes.size() - offset ||
+        !validH264NalHeader(bytes.subspan(offset, length), 8U, 2U)) {
       return rejected(Error::MalformedRecord);
     }
     std::uint32_t ppsId = 0;
@@ -1907,25 +1496,129 @@ struct Av1SequenceHeaderFacts {
   VideoCodecColorFacts color{};
 };
 
-[[nodiscard]] bool skipAv1TimingInfo(PlainBitReader &bits) noexcept {
-  bool equalPictureInterval = false;
-  std::uint32_t ignored = 0;
-  if (!bits.skipBits(64U) || !bits.readBit(equalPictureInterval)) {
-    return false;
+// timing_info() and, when present, decoder_model_info() and the per-operating-
+// point fields that depend on them (AV1 5.5.1). None of it is a fact this
+// admission reports.
+void skipAv1OperatingPoints(PlainBitReader &bits) noexcept {
+  bool decoderModelInfoPresent = false;
+  std::uint32_t bufferDelayLength = 0;
+  if (bits.readBit()) {
+    bits.skipBits(64U);
+    if (bits.readBit()) {
+      bits.readUvlc();
+    }
+    decoderModelInfoPresent = bits.readBit();
+    if (decoderModelInfoPresent) {
+      bufferDelayLength = bits.readBits(5U) + 1U;
+      bits.skipBits(42U);
+    }
   }
-  return !equalPictureInterval || bits.readUvlc(ignored);
+  const bool initialDisplayDelayPresent = bits.readBit();
+  const std::uint32_t operatingPoints = bits.readBits(5U) + 1U;
+  for (std::uint32_t index = 0; index < operatingPoints; ++index) {
+    bits.skipBits(12U);
+    if (bits.readBits(5U) > 7U) {
+      bits.skipBits(1U);
+    }
+    if (decoderModelInfoPresent && bits.readBit()) {
+      bits.skipBits(std::size_t{2} * bufferDelayLength + 1U);
+    }
+    if (initialDisplayDelayPresent && bits.readBit()) {
+      bits.skipBits(4U);
+    }
+  }
 }
 
-[[nodiscard]] bool
-skipAv1DecoderModelInfo(PlainBitReader &bits,
-                        std::uint32_t &bufferDelayLength) noexcept {
-  std::uint32_t bufferDelayLengthMinusOne = 0;
-  if (!bits.readBits(5U, bufferDelayLengthMinusOne) || !bits.skipBits(32U) ||
-      !bits.skipBits(10U)) {
-    return false;
+// frame_id_numbers_present_flag through enable_restoration (AV1 5.5.1): the
+// coding-tool flags between the frame size and color_config().
+void skipAv1CodingTools(PlainBitReader &bits,
+                        bool reducedStillPictureHeader) noexcept {
+  if (!reducedStillPictureHeader && bits.readBit()) {
+    bits.skipBits(7U);
   }
-  bufferDelayLength = bufferDelayLengthMinusOne + 1U;
-  return true;
+  bits.skipBits(3U);
+  if (!reducedStillPictureHeader) {
+    bits.skipBits(4U);
+    const bool enableOrderHint = bits.readBit();
+    if (enableOrderHint) {
+      bits.skipBits(2U);
+    }
+    const bool forceScreenContentTools = bits.readBit() || bits.readBit();
+    if (forceScreenContentTools && !bits.readBit()) {
+      bits.skipBits(1U);
+    }
+    if (enableOrderHint) {
+      bits.skipBits(3U);
+    }
+  }
+  bits.skipBits(3U);
+}
+
+// color_config() (AV1 5.5.2). A monochrome stream ends its parse at
+// color_range: nothing after it can change a verdict that inspectAv1C refuses
+// on the av1C's own monochrome bit anyway.
+[[nodiscard]] Error parseAv1ColorConfig(PlainBitReader &bits,
+                                        std::uint32_t seqProfile,
+                                        Av1SequenceHeaderFacts &facts) noexcept {
+  const bool highBitdepth = bits.readBit();
+  const bool twelveBit = seqProfile == 2U && highBitdepth && bits.readBit();
+  if (!bits.ok()) {
+    return Error::MalformedRecord;
+  }
+  if (seqProfile > 2U) {
+    return Error::UnsupportedProfile;
+  }
+  facts.bitDepth = twelveBit ? 12U : highBitdepth ? 10U : 8U;
+  facts.monochrome = seqProfile != 1U && bits.readBit();
+  facts.color.videoSignalTypePresent = true;
+  facts.color.colorDescriptionPresent = bits.readBit();
+  std::uint32_t primaries = 2U;
+  std::uint32_t transfer = 2U;
+  std::uint32_t matrix = 2U;
+  if (facts.color.colorDescriptionPresent) {
+    primaries = bits.readBits(8U);
+    transfer = bits.readBits(8U);
+    matrix = bits.readBits(8U);
+    // An absent description leaves the reported values at zero, matching the
+    // AVC and HEVC parsers; the spec's implied "unspecified" defaults are used
+    // only for the sRGB shortcut test below, which is a bitstream syntax
+    // decision rather than a reported fact.
+    facts.color.colorPrimaries = static_cast<std::uint8_t>(primaries);
+    facts.color.transferCharacteristics = static_cast<std::uint8_t>(transfer);
+    facts.color.matrixCoefficients = static_cast<std::uint8_t>(matrix);
+  }
+  if (facts.monochrome) {
+    facts.color.fullRange = bits.readBit();
+    facts.subsamplingX = true;
+    facts.subsamplingY = true;
+    return bits.ok() ? Error::None : Error::MalformedRecord;
+  }
+  if (primaries == 1U && transfer == 13U && matrix == 0U) {
+    // The spec's sRGB shortcut: 4:4:4 full range with no coded color_range.
+    facts.color.fullRange = true;
+    facts.subsamplingX = false;
+    facts.subsamplingY = false;
+  } else {
+    facts.color.fullRange = bits.readBit();
+    if (seqProfile == 0U) {
+      facts.subsamplingX = true;
+      facts.subsamplingY = true;
+    } else if (seqProfile == 1U) {
+      facts.subsamplingX = false;
+      facts.subsamplingY = false;
+    } else if (facts.bitDepth == 12U) {
+      facts.subsamplingX = bits.readBit();
+      facts.subsamplingY = facts.subsamplingX && bits.readBit();
+    } else {
+      facts.subsamplingX = true;
+      facts.subsamplingY = false;
+    }
+    if (facts.subsamplingX && facts.subsamplingY) {
+      bits.skipBits(2U);
+    }
+  }
+  bits.skipBits(2U);
+  return bits.finishTrailingBits() ? Error::None : Error::MalformedRecord;
 }
 
 // sequence_header_obu() of AV1 (AV1 Bitstream & Decoding Process 5.5). Parsed
@@ -1938,228 +1631,29 @@ parseAv1SequenceHeader(std::span<const std::uint8_t> payload,
                        const VideoCodecConfigurationLimits &limits,
                        Av1SequenceHeaderFacts &facts) noexcept {
   PlainBitReader bits(payload);
-  std::uint32_t seqProfile = 0;
-  bool stillPicture = false;
-  bool reducedStillPictureHeader = false;
-  if (!bits.readBits(3U, seqProfile) || !bits.readBit(stillPicture) ||
-      !bits.readBit(reducedStillPictureHeader)) {
-    return Error::MalformedRecord;
-  }
+  const std::uint32_t seqProfile = bits.readBits(3U);
   facts.seqProfile = static_cast<std::uint8_t>(seqProfile);
-
-  bool decoderModelInfoPresent = false;
-  bool initialDisplayDelayPresent = false;
-  std::uint32_t bufferDelayLength = 0;
+  bits.skipBits(1U);
+  const bool reducedStillPictureHeader = bits.readBit();
   if (reducedStillPictureHeader) {
-    std::uint32_t levelIdx = 0;
-    if (!bits.readBits(5U, levelIdx)) {
-      return Error::MalformedRecord;
-    }
+    bits.skipBits(5U);
   } else {
-    bool timingInfoPresent = false;
-    if (!bits.readBit(timingInfoPresent)) {
-      return Error::MalformedRecord;
-    }
-    if (timingInfoPresent) {
-      if (!skipAv1TimingInfo(bits) || !bits.readBit(decoderModelInfoPresent)) {
-        return Error::MalformedRecord;
-      }
-      if (decoderModelInfoPresent &&
-          !skipAv1DecoderModelInfo(bits, bufferDelayLength)) {
-        return Error::MalformedRecord;
-      }
-    }
-    std::uint32_t operatingPointsMinusOne = 0;
-    if (!bits.readBit(initialDisplayDelayPresent) ||
-        !bits.readBits(5U, operatingPointsMinusOne)) {
-      return Error::MalformedRecord;
-    }
-    for (std::uint32_t index = 0; index <= operatingPointsMinusOne; ++index) {
-      std::uint32_t idc = 0;
-      std::uint32_t levelIdx = 0;
-      if (!bits.readBits(12U, idc) || !bits.readBits(5U, levelIdx)) {
-        return Error::MalformedRecord;
-      }
-      if (levelIdx > 7U && !bits.skipBits(1U)) {
-        return Error::MalformedRecord;
-      }
-      if (decoderModelInfoPresent) {
-        bool operatingParametersPresent = false;
-        if (!bits.readBit(operatingParametersPresent)) {
-          return Error::MalformedRecord;
-        }
-        if (operatingParametersPresent &&
-            !bits.skipBits(std::size_t{2} * bufferDelayLength + 1U)) {
-          return Error::MalformedRecord;
-        }
-      }
-      if (initialDisplayDelayPresent) {
-        bool delayPresent = false;
-        if (!bits.readBit(delayPresent)) {
-          return Error::MalformedRecord;
-        }
-        if (delayPresent && !bits.skipBits(4U)) {
-          return Error::MalformedRecord;
-        }
-      }
-    }
+    skipAv1OperatingPoints(bits);
   }
-
-  std::uint32_t widthBitsMinusOne = 0;
-  std::uint32_t heightBitsMinusOne = 0;
-  std::uint32_t maxWidthMinusOne = 0;
-  std::uint32_t maxHeightMinusOne = 0;
-  if (!bits.readBits(4U, widthBitsMinusOne) ||
-      !bits.readBits(4U, heightBitsMinusOne) ||
-      !bits.readBits(widthBitsMinusOne + 1U, maxWidthMinusOne) ||
-      !bits.readBits(heightBitsMinusOne + 1U, maxHeightMinusOne)) {
+  const std::uint32_t widthBits = bits.readBits(4U) + 1U;
+  const std::uint32_t heightBits = bits.readBits(4U) + 1U;
+  const std::uint64_t width = std::uint64_t{bits.readBits(widthBits)} + 1U;
+  const std::uint64_t height = std::uint64_t{bits.readBits(heightBits)} + 1U;
+  if (!bits.ok()) {
     return Error::MalformedRecord;
   }
-  const std::uint64_t width = static_cast<std::uint64_t>(maxWidthMinusOne) + 1U;
-  const std::uint64_t height =
-      static_cast<std::uint64_t>(maxHeightMinusOne) + 1U;
   if (codecDimensionsExceedLimits(width, height, limits)) {
     return Error::DimensionLimitExceeded;
   }
   facts.width = static_cast<std::uint32_t>(width);
   facts.height = static_cast<std::uint32_t>(height);
-
-  bool frameIdNumbersPresent = false;
-  if (!reducedStillPictureHeader && !bits.readBit(frameIdNumbersPresent)) {
-    return Error::MalformedRecord;
-  }
-  // delta_frame_id_length_minus_2 f(4) + additional_frame_id_length_minus_1
-  // f(3).
-  if (frameIdNumbersPresent && !bits.skipBits(7U)) {
-    return Error::MalformedRecord;
-  }
-  // use_128x128_superblock, enable_filter_intra, enable_intra_edge_filter.
-  if (!bits.skipBits(3U)) {
-    return Error::MalformedRecord;
-  }
-  if (!reducedStillPictureHeader) {
-    bool enableOrderHint = false;
-    bool chooseScreenContentTools = false;
-    bool forceScreenContentTools = true;
-    // enable_interintra_compound, enable_masked_compound,
-    // enable_warped_motion, enable_dual_filter.
-    if (!bits.skipBits(4U) || !bits.readBit(enableOrderHint)) {
-      return Error::MalformedRecord;
-    }
-    // enable_jnt_comp, enable_ref_frame_mvs.
-    if (enableOrderHint && !bits.skipBits(2U)) {
-      return Error::MalformedRecord;
-    }
-    if (!bits.readBit(chooseScreenContentTools)) {
-      return Error::MalformedRecord;
-    }
-    if (!chooseScreenContentTools && !bits.readBit(forceScreenContentTools)) {
-      return Error::MalformedRecord;
-    }
-    if (forceScreenContentTools) {
-      bool chooseIntegerMv = false;
-      if (!bits.readBit(chooseIntegerMv)) {
-        return Error::MalformedRecord;
-      }
-      if (!chooseIntegerMv && !bits.skipBits(1U)) {
-        return Error::MalformedRecord;
-      }
-    }
-    if (enableOrderHint && !bits.skipBits(3U)) {
-      return Error::MalformedRecord;
-    }
-  }
-  // enable_superres, enable_cdef, enable_restoration.
-  if (!bits.skipBits(3U)) {
-    return Error::MalformedRecord;
-  }
-
-  // color_config().
-  bool highBitdepth = false;
-  if (!bits.readBit(highBitdepth)) {
-    return Error::MalformedRecord;
-  }
-  if (seqProfile == 2U && highBitdepth) {
-    bool twelveBit = false;
-    if (!bits.readBit(twelveBit)) {
-      return Error::MalformedRecord;
-    }
-    facts.bitDepth = twelveBit ? 12U : 10U;
-  } else if (seqProfile <= 2U) {
-    facts.bitDepth = highBitdepth ? 10U : 8U;
-  } else {
-    return Error::UnsupportedProfile;
-  }
-  if (seqProfile == 1U) {
-    facts.monochrome = false;
-  } else if (!bits.readBit(facts.monochrome)) {
-    return Error::MalformedRecord;
-  }
-  facts.color.videoSignalTypePresent = true;
-  if (!bits.readBit(facts.color.colorDescriptionPresent)) {
-    return Error::MalformedRecord;
-  }
-  std::uint32_t primaries = 2U;
-  std::uint32_t transfer = 2U;
-  std::uint32_t matrix = 2U;
-  if (facts.color.colorDescriptionPresent) {
-    if (!bits.readBits(8U, primaries) || !bits.readBits(8U, transfer) ||
-        !bits.readBits(8U, matrix)) {
-      return Error::MalformedRecord;
-    }
-    // An absent description leaves the reported values at zero, matching the
-    // AVC and HEVC parsers; the spec's implied "unspecified" defaults are used
-    // only for the sRGB shortcut test below, which is a bitstream syntax
-    // decision rather than a reported fact.
-    facts.color.colorPrimaries = static_cast<std::uint8_t>(primaries);
-    facts.color.transferCharacteristics = static_cast<std::uint8_t>(transfer);
-    facts.color.matrixCoefficients = static_cast<std::uint8_t>(matrix);
-  }
-  if (facts.monochrome) {
-    if (!bits.readBit(facts.color.fullRange)) {
-      return Error::MalformedRecord;
-    }
-    facts.subsamplingX = true;
-    facts.subsamplingY = true;
-    return Error::None;
-  }
-  if (primaries == 1U && transfer == 13U && matrix == 0U) {
-    // The spec's sRGB shortcut: 4:4:4 full range with no coded color_range.
-    facts.color.fullRange = true;
-    facts.subsamplingX = false;
-    facts.subsamplingY = false;
-  } else {
-    if (!bits.readBit(facts.color.fullRange)) {
-      return Error::MalformedRecord;
-    }
-    if (seqProfile == 0U) {
-      facts.subsamplingX = true;
-      facts.subsamplingY = true;
-    } else if (seqProfile == 1U) {
-      facts.subsamplingX = false;
-      facts.subsamplingY = false;
-    } else if (facts.bitDepth == 12U) {
-      if (!bits.readBit(facts.subsamplingX)) {
-        return Error::MalformedRecord;
-      }
-      facts.subsamplingY = false;
-      if (facts.subsamplingX && !bits.readBit(facts.subsamplingY)) {
-        return Error::MalformedRecord;
-      }
-    } else {
-      facts.subsamplingX = true;
-      facts.subsamplingY = false;
-    }
-    // chroma_sample_position f(2).
-    if (facts.subsamplingX && facts.subsamplingY && !bits.skipBits(2U)) {
-      return Error::MalformedRecord;
-    }
-  }
-  // separate_uv_delta_q, then film_grain_params_present.
-  if (!bits.skipBits(2U)) {
-    return Error::MalformedRecord;
-  }
-  return bits.finishTrailingBits() ? Error::None : Error::MalformedRecord;
+  skipAv1CodingTools(bits, reducedStillPictureHeader);
+  return parseAv1ColorConfig(bits, seqProfile, facts);
 }
 
 [[nodiscard]] bool readLeb128(std::span<const std::uint8_t> bytes,
@@ -2601,55 +2095,28 @@ splitMpeg4VisualHeaders(std::span<const std::uint8_t> bytes,
                                           VideoCodecColorFacts &color,
                                           std::uint32_t &verid) noexcept {
   PlainBitReader bits(bytes);
-  bool identifierPresent = false;
-  if (!bits.readBit(identifierPresent)) {
-    return false;
-  }
   verid = kMpeg4Version1Verid;
-  if (identifierPresent) {
-    if (!bits.readBits(4U, verid) || !bits.skipBits(3U)) {
-      return false;
-    }
-  }
-  std::uint32_t visualObjectType = 0;
-  if (!bits.readBits(4U, visualObjectType)) {
-    return false;
+  if (bits.readBit()) {
+    verid = bits.readBits(4U);
+    bits.skipBits(3U);
   }
   // 1 is "video ID"; 2 is still texture. Only the former is a coded video
   // object layer, which is the only thing this player decodes.
-  if (visualObjectType != 1U) {
-    return false;
+  bits.require(bits.readBits(4U) == 1U);
+  if (!bits.readBit()) {
+    return bits.ok();
   }
-  bool videoSignalType = false;
-  if (!bits.readBit(videoSignalType)) {
-    return false;
-  }
-  if (!videoSignalType) {
-    return true;
-  }
-  bool videoRange = false;
-  bool colourDescription = false;
-  if (!bits.skipBits(3U) || !bits.readBit(videoRange) ||
-      !bits.readBit(colourDescription)) {
-    return false;
-  }
+  bits.skipBits(3U);
   color.videoSignalTypePresent = true;
-  color.fullRange = videoRange;
-  if (!colourDescription) {
-    return true;
-  }
-  std::uint32_t primaries = 0;
-  std::uint32_t transfer = 0;
-  std::uint32_t matrix = 0;
-  if (!bits.readBits(8U, primaries) || !bits.readBits(8U, transfer) ||
-      !bits.readBits(8U, matrix)) {
-    return false;
+  color.fullRange = bits.readBit();
+  if (!bits.readBit()) {
+    return bits.ok();
   }
   color.colorDescriptionPresent = true;
-  color.colorPrimaries = static_cast<std::uint8_t>(primaries);
-  color.transferCharacteristics = static_cast<std::uint8_t>(transfer);
-  color.matrixCoefficients = static_cast<std::uint8_t>(matrix);
-  return true;
+  color.colorPrimaries = static_cast<std::uint8_t>(bits.readBits(8U));
+  color.transferCharacteristics = static_cast<std::uint8_t>(bits.readBits(8U));
+  color.matrixCoefficients = static_cast<std::uint8_t>(bits.readBits(8U));
+  return bits.ok();
 }
 
 struct Mpeg4VideoObjectLayer {
@@ -2671,105 +2138,61 @@ struct Mpeg4VideoObjectLayer {
 parseMpeg4VideoObjectLayer(std::span<const std::uint8_t> bytes,
                            Mpeg4VideoObjectLayer &out) noexcept {
   PlainBitReader bits(bytes);
-  bool randomAccessible = false;
-  if (!bits.readBit(randomAccessible) ||
-      !bits.readBits(8U, out.videoObjectType)) {
-    return false;
-  }
-  bool identifierPresent = false;
-  if (!bits.readBit(identifierPresent)) {
-    return false;
-  }
-  if (identifierPresent) {
-    if (!bits.readBits(4U, out.verid) || !bits.skipBits(3U)) {
-      return false;
-    }
-  }
-  std::uint32_t aspectRatioInfo = 0;
-  if (!bits.readBits(4U, aspectRatioInfo)) {
-    return false;
+  bits.skipBits(1U);
+  out.videoObjectType = bits.readBits(8U);
+  if (bits.readBit()) {
+    out.verid = bits.readBits(4U);
+    bits.skipBits(3U);
   }
   // 0x0F is extended_PAR: an explicit 8-bit numerator and denominator follow.
-  if (aspectRatioInfo == 0x0FU && !bits.skipBits(16U)) {
-    return false;
+  if (bits.readBits(4U) == 0x0FU) {
+    bits.skipBits(16U);
   }
-  bool controlParameters = false;
-  if (!bits.readBit(controlParameters)) {
-    return false;
-  }
-  out.controlParametersPresent = controlParameters;
-  if (controlParameters) {
-    bool lowDelay = false;
-    bool vbvParameters = false;
-    if (!bits.readBits(2U, out.chromaFormat) || !bits.readBit(lowDelay) ||
-        !bits.readBit(vbvParameters)) {
-      return false;
-    }
-    if (vbvParameters) {
+  out.controlParametersPresent = bits.readBit();
+  if (out.controlParametersPresent) {
+    out.chromaFormat = bits.readBits(2U);
+    bits.skipBits(1U);
+    if (bits.readBit()) {
       // first_half_bit_rate(15) marker latter_half_bit_rate(15) marker
       // first_half_vbv_buffer_size(15) marker latter_half_vbv_buffer_size(3)
       // first_half_vbv_occupancy(11) marker latter_half_vbv_occupancy(15)
       // marker -- 79 bits in total, none of which this player consults.
-      if (!bits.skipBits(79U)) {
-        return false;
-      }
+      bits.skipBits(79U);
     }
   }
-  if (!bits.readBits(2U, out.shape)) {
-    return false;
-  }
+  out.shape = bits.readBits(2U);
   // Grayscale shape in a version 2 or later layer carries a 4-bit extension.
   // Unreachable for the Simple Profile this admits, but parsing it keeps the
   // reader honest about where the following marker bit is.
-  if (out.shape == 3U && out.verid != kMpeg4Version1Verid &&
-      !bits.skipBits(4U)) {
-    return false;
+  if (out.shape == 3U && out.verid != kMpeg4Version1Verid) {
+    bits.skipBits(4U);
   }
-  bool marker = false;
-  std::uint32_t timeIncrementResolution = 0;
-  if (!bits.readBit(marker) || !marker ||
-      !bits.readBits(16U, timeIncrementResolution) || !bits.readBit(marker) ||
-      !marker) {
-    return false;
-  }
-  if (timeIncrementResolution == 0U) {
-    return false;
-  }
-  bool fixedVopRate = false;
-  if (!bits.readBit(fixedVopRate)) {
-    return false;
-  }
-  if (fixedVopRate &&
-      !bits.skipBits(mpeg4TimeIncrementBits(timeIncrementResolution))) {
-    return false;
+  bits.require(bits.readBit());
+  const std::uint32_t timeIncrementResolution = bits.readBits(16U);
+  bits.require(bits.readBit());
+  bits.require(timeIncrementResolution != 0U);
+  if (bits.readBit()) {
+    bits.skipBits(mpeg4TimeIncrementBits(timeIncrementResolution));
   }
   // Shape 2 is "binary only", which codes no luma at all and therefore states
   // no dimensions. It is not a Simple Profile shape and is refused above, but
   // the reader must not walk off the end while proving that.
   if (out.shape == 2U) {
-    return true;
+    return bits.ok();
   }
   if (out.shape == 0U) {
-    if (!bits.readBit(marker) || !marker || !bits.readBits(13U, out.width) ||
-        !bits.readBit(marker) || !marker ||
-        !bits.readBits(13U, out.height) || !bits.readBit(marker) || !marker) {
-      return false;
-    }
+    bits.require(bits.readBit());
+    out.width = bits.readBits(13U);
+    bits.require(bits.readBit());
+    out.height = bits.readBits(13U);
+    bits.require(bits.readBit());
   }
-  bool interlaced = false;
-  bool obmcDisable = false;
-  if (!bits.readBit(interlaced) || !bits.readBit(obmcDisable)) {
-    return false;
-  }
-  out.interlaced = interlaced;
-  std::uint32_t spriteEnable = 0;
+  out.interlaced = bits.readBit();
+  bits.skipBits(1U);
   // One bit in a version 1 layer; two from version 2 onward.
-  if (!bits.readBits(out.verid == kMpeg4Version1Verid ? 1U : 2U,
-                     spriteEnable)) {
-    return false;
-  }
-  out.spriteEnabled = spriteEnable != 0U;
-  return true;
+  out.spriteEnabled =
+      bits.readBits(out.verid == kMpeg4Version1Verid ? 1U : 2U) != 0U;
+  return bits.ok();
 }
 
 [[nodiscard]] VideoCodecConfigurationInspection
@@ -3054,78 +2477,49 @@ VideoCodecConfigurationInspection inspectVp9BitstreamKeyframe(
       std::min<std::size_t>(all.size(), kVp9KeyframeHeaderMaximumBytes));
   PlainBitReader bits(bytes);
 
-  std::uint32_t frameMarker = 0;
-  bool profileLowBit = false;
-  bool profileHighBit = false;
-  if (!bits.readBits(2U, frameMarker) || frameMarker != 2U ||
-      !bits.readBit(profileLowBit) || !bits.readBit(profileHighBit)) {
-    return rejected(Error::MalformedRecord);
-  }
+  bits.require(bits.readBits(2U) == 2U);
+  const bool profileLowBit = bits.readBit();
+  const bool profileHighBit = bits.readBit();
   const auto profile = static_cast<std::uint8_t>(
       (profileHighBit ? 2U : 0U) | (profileLowBit ? 1U : 0U));
   if (profile == 3U) {
-    bool reservedZero = true;
-    if (!bits.readBit(reservedZero) || reservedZero) {
-      return rejected(Error::MalformedRecord);
-    }
+    bits.require(!bits.readBit());
   }
-  bool showExistingFrame = false;
-  bool nonKeyFrame = false;
-  bool showFrame = false;
-  bool errorResilientMode = false;
-  std::uint32_t syncCode = 0;
-  if (!bits.readBit(showExistingFrame) || showExistingFrame ||
-      !bits.readBit(nonKeyFrame) || nonKeyFrame ||
-      !bits.readBit(showFrame) || !bits.readBit(errorResilientMode) ||
-      !bits.readBits(24U, syncCode) || syncCode != 0x498342U) {
-    return rejected(Error::MalformedRecord);
-  }
+  bits.require(!bits.readBit());
+  bits.require(!bits.readBit());
+  bits.skipBits(2U);
+  bits.require(bits.readBits(24U) == 0x498342U);
 
   // color_config().
   std::uint8_t bitDepth = 8U;
   if (profile >= 2U) {
-    bool tenOrTwelveBit = false;
-    if (!bits.readBit(tenOrTwelveBit)) {
-      return rejected(Error::MalformedRecord);
-    }
-    bitDepth = tenOrTwelveBit ? 12U : 10U;
+    bitDepth = bits.readBit() ? 12U : 10U;
   }
-  std::uint32_t colorSpace = 0;
-  if (!bits.readBits(3U, colorSpace)) {
-    return rejected(Error::MalformedRecord);
-  }
+  const std::uint32_t colorSpace = bits.readBits(3U);
   VideoCodecColorFacts color;
   color.videoSignalTypePresent = true;
   bool subsamplingX = true;
   bool subsamplingY = true;
   if (colorSpace != 7U) {
-    if (!bits.readBit(color.fullRange)) {
-      return rejected(Error::MalformedRecord);
-    }
+    color.fullRange = bits.readBit();
     if (profile == 1U || profile == 3U) {
-      bool reservedZero = true;
-      if (!bits.readBit(subsamplingX) || !bits.readBit(subsamplingY) ||
-          !bits.readBit(reservedZero) || reservedZero) {
-        return rejected(Error::MalformedRecord);
-      }
+      subsamplingX = bits.readBit();
+      subsamplingY = bits.readBit();
+      bits.require(!bits.readBit());
     }
   } else {
     color.fullRange = true;
     if (profile == 1U || profile == 3U) {
-      bool reservedZero = true;
-      if (!bits.readBit(reservedZero) || reservedZero) {
-        return rejected(Error::MalformedRecord);
-      }
+      bits.require(!bits.readBit());
     }
     subsamplingX = false;
     subsamplingY = false;
   }
 
   // frame_size().
-  std::uint32_t widthMinusOne = 0;
-  std::uint32_t heightMinusOne = 0;
-  if (!bits.readBits(16U, widthMinusOne) ||
-      !bits.readBits(16U, heightMinusOne)) {
+  const std::uint64_t width = std::uint64_t{bits.readBits(16U)} + 1U;
+  const std::uint64_t height = std::uint64_t{bits.readBits(16U)} + 1U;
+  if (!bits.ok()) {
     return rejected(Error::MalformedRecord);
   }
 
@@ -3138,8 +2532,6 @@ VideoCodecConfigurationInspection inspectVp9BitstreamKeyframe(
   if (bitDepth != 8U && bitDepth != 10U) {
     return rejected(Error::UnsupportedBitDepth);
   }
-  const std::uint64_t width = static_cast<std::uint64_t>(widthMinusOne) + 1U;
-  const std::uint64_t height = static_cast<std::uint64_t>(heightMinusOne) + 1U;
   if (codecDimensionsExceedLimits(width, height, limits)) {
     return rejected(Error::DimensionLimitExceeded);
   }

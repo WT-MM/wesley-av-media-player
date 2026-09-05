@@ -2,13 +2,13 @@
 
 #include "media/matroska_demuxer.hpp"
 #include "media/native_media_source.hpp"
+#include "platform/macos/core_media_source_support.hpp"
 
 #include <CoreMedia/CoreMedia.h>
 
 #include <cstddef>
 #include <cstdint>
 #include <optional>
-#include <span>
 #include <string>
 
 namespace wam::macos {
@@ -29,99 +29,6 @@ namespace wam::macos {
 // through double the way a seconds conversion would.
 [[nodiscard]] std::optional<media::MediaTime> matroskaTickTime(
     std::int64_t tick, std::uint64_t timestampScaleNanoseconds) noexcept;
-
-// Exact sum of two container rationals. The intermediate product needs the full
-// 128-bit range: adjacent media ticks at a nanosecond timescale are already
-// above 2^53, so converting through double would silently move a sample across
-// the accurate-seek boundary. Copied verbatim from the AVFoundation backend so
-// both sources answer decodeOnly identically for the same interval, and shared
-// from here so the main and preview Matroska sources cannot drift apart.
-[[nodiscard]] std::optional<media::MediaTime> matroskaCheckedExactTimeSum(
-    media::MediaTime lhs, media::MediaTime rhs) noexcept;
-
-// True when the sample's whole presentation interval closes at or before the
-// accurate-seek target, which is exactly the decodeOnly predicate. Empty when
-// the interval is not exactly representable or comparable, with the reason
-// written through `error`.
-[[nodiscard]] std::optional<bool> matroskaAccurateVideoDecodeOnly(
-    media::MediaTime presentationTime, media::MediaTime duration,
-    media::MediaTime target, std::string* error) noexcept;
-
-// Owns the +1 on one retained CoreMedia buffer. The name carries the backend
-// prefix because it is now a namespace-scope type sharing `wam::macos` with the
-// AVFoundation backend's own file-local guard of the same shape.
-class MatroskaScopedSampleBuffer final {
- public:
-  MatroskaScopedSampleBuffer() noexcept = default;
-  explicit MatroskaScopedSampleBuffer(CMSampleBufferRef owned) noexcept
-      : value_(owned) {}
-  ~MatroskaScopedSampleBuffer() {
-    if (value_ != nullptr) {
-      CFRelease(value_);
-    }
-  }
-
-  MatroskaScopedSampleBuffer(MatroskaScopedSampleBuffer&& other) noexcept
-      : value_(other.value_) {
-    other.value_ = nullptr;
-  }
-  MatroskaScopedSampleBuffer& operator=(
-      MatroskaScopedSampleBuffer&& other) noexcept {
-    if (this != &other) {
-      if (value_ != nullptr) {
-        CFRelease(value_);
-      }
-      value_ = other.value_;
-      other.value_ = nullptr;
-    }
-    return *this;
-  }
-  MatroskaScopedSampleBuffer(const MatroskaScopedSampleBuffer&) = delete;
-  MatroskaScopedSampleBuffer& operator=(const MatroskaScopedSampleBuffer&) =
-      delete;
-
-  [[nodiscard]] CMSampleBufferRef get() const noexcept { return value_; }
-  [[nodiscard]] CMSampleBufferRef release() noexcept {
-    CMSampleBufferRef owned = value_;
-    value_ = nullptr;
-    return owned;
-  }
-
- private:
-  CMSampleBufferRef value_{nullptr};
-};
-
-// Owns the +1 on one retained CoreMedia buffer for the lifetime of every lease
-// taken against it. Shape copied from the AVFoundation backend's storage so the
-// native video consumer, the audio converter, and the preview decoder accept
-// Matroska samples unchanged.
-class MatroskaCoreMediaSampleStorage final : public media::MediaPayloadStorage {
- public:
-  MatroskaCoreMediaSampleStorage(CMSampleBufferRef ownedSample,
-                                 std::size_t byteSize) noexcept;
-  ~MatroskaCoreMediaSampleStorage() override;
-
-  MatroskaCoreMediaSampleStorage(const MatroskaCoreMediaSampleStorage&) =
-      delete;
-  MatroskaCoreMediaSampleStorage& operator=(
-      const MatroskaCoreMediaSampleStorage&) = delete;
-
-  [[nodiscard]] std::size_t byteSize() const noexcept override;
-  [[nodiscard]] std::span<const std::byte>
-  contiguousBytes() const noexcept override;
-  [[nodiscard]] bool copyBytes(
-      std::size_t offset,
-      std::span<std::byte> destination) const noexcept override;
-
- protected:
-  [[nodiscard]] std::optional<media::NativePayloadKind>
-  nativePayloadKind() const noexcept override;
-  [[nodiscard]] const void* borrowedNativePayload() const noexcept override;
-
- private:
-  CMSampleBufferRef sample_{nullptr};
-  std::size_t byte_size_{0};
-};
 
 enum class MatroskaSampleBuildStatus : std::uint8_t {
   Built,
@@ -159,7 +66,7 @@ struct MatroskaSampleBuildInputs {
 [[nodiscard]] MatroskaSampleBuildStatus buildMatroskaCompressedSampleBuffer(
     const MatroskaSampleBuildInputs& inputs,
     const media::matroska::MatroskaCompressedSample& sample,
-    MatroskaScopedSampleBuffer* out, std::string* error);
+    ScopedSampleBuffer* out, std::string* error);
 
 [[nodiscard]] const char* matroskaDemuxErrorName(
     media::matroska::MatroskaDemuxError error) noexcept;

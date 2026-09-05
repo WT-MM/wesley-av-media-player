@@ -12,6 +12,7 @@
 #include <utility>
 #include <vector>
 
+
 namespace allocation_probe {
 bool active = false;
 std::size_t calls = 0;
@@ -58,6 +59,200 @@ void expect(bool condition, const char *message) {
     ++failures;
   }
 }
+
+// Every inspection below reaches the parser through these witnesses, which
+// shadow the wam::media entry points for unqualified calls. Each witness
+// also inspects the record truncated at every byte offset and requires each
+// truncation to be refused or, when the record carries an optional tail
+// (the avcC high-profile extension, ignored user_data, a keyframe header
+// prefix), admitted with facts identical to the whole record's; a prefix of a
+// refused record may be admitted, since the refusal may be the tail. None of
+// this allocates, so the allocation probes around individual inspections
+// stay exact. The 524b985 parser was compiled beside this one while the
+// sticky reader landed and matched it on every fixture, every truncation and
+// every single-bit flip; that oracle is gone, the witness stays.
+static_assert(noexcept(wam::media::inspectVideoCodecConfiguration(
+    MediaCodec::H264, MediaCodecConfigurationKind::AvcC, {})));
+static_assert(noexcept(wam::media::inspectVp9BitstreamKeyframe({})));
+static_assert(noexcept(wam::media::inspectVp8BitstreamKeyframe({})));
+static_assert(noexcept(wam::media::inspectMpeg4VisualHeaders({})));
+static_assert(noexcept(wam::media::buildMpeg4VisualEsds({}, {}, nullptr)));
+
+namespace witness {
+
+enum class Entry { Configuration, Vp9Keyframe, Vp8Keyframe, Mpeg4Headers };
+
+struct Summary {
+  std::size_t inspections{0};
+  std::size_t truncations{0};
+  std::size_t truncationsRefused{0};
+  std::size_t truncationsAdmittedIdentical{0};
+  std::size_t truncationsAdmittedPrefixOfRefused{0};
+  std::size_t truncationFaults{0};
+};
+Summary summary;
+
+[[nodiscard]] const char *errorName(VideoCodecConfigurationError error) {
+  switch (error) {
+  case VideoCodecConfigurationError::None:
+    return "None";
+  case VideoCodecConfigurationError::UnsupportedCodec:
+    return "UnsupportedCodec";
+  case VideoCodecConfigurationError::ConfigurationKindMismatch:
+    return "ConfigurationKindMismatch";
+  case VideoCodecConfigurationError::EmptyConfiguration:
+    return "EmptyConfiguration";
+  case VideoCodecConfigurationError::ConfigurationTooLarge:
+    return "ConfigurationTooLarge";
+  case VideoCodecConfigurationError::MalformedRecord:
+    return "MalformedRecord";
+  case VideoCodecConfigurationError::MissingParameterSet:
+    return "MissingParameterSet";
+  case VideoCodecConfigurationError::ParameterSetMismatch:
+    return "ParameterSetMismatch";
+  case VideoCodecConfigurationError::UnsupportedProfile:
+    return "UnsupportedProfile";
+  case VideoCodecConfigurationError::UnsupportedChromaFormat:
+    return "UnsupportedChromaFormat";
+  case VideoCodecConfigurationError::UnsupportedBitDepth:
+    return "UnsupportedBitDepth";
+  case VideoCodecConfigurationError::UnsupportedColorDescription:
+    return "UnsupportedColorDescription";
+  case VideoCodecConfigurationError::DimensionLimitExceeded:
+    return "DimensionLimitExceeded";
+  case VideoCodecConfigurationError::ReorderLimitExceeded:
+    return "ReorderLimitExceeded";
+  }
+  return "?";
+}
+
+[[nodiscard]] VideoCodecConfigurationInspection
+run(Entry entry, MediaCodec codec, MediaCodecConfigurationKind kind,
+    std::span<const std::byte> bytes,
+    VideoCodecConfigurationLimits limits) noexcept {
+  switch (entry) {
+  case Entry::Configuration:
+    return wam::media::inspectVideoCodecConfiguration(codec, kind, bytes,
+                                                      limits);
+  case Entry::Vp9Keyframe:
+    return wam::media::inspectVp9BitstreamKeyframe(bytes, limits);
+  case Entry::Vp8Keyframe:
+    return wam::media::inspectVp8BitstreamKeyframe(bytes, limits);
+  case Entry::Mpeg4Headers:
+    return wam::media::inspectMpeg4VisualHeaders(bytes, limits);
+  }
+  return {};
+}
+
+
+void fault(const char *what, const char *subject, std::size_t length,
+           const VideoCodecConfigurationInspection &current,
+           const VideoCodecConfigurationInspection &other) {
+  ++failures;
+  std::cerr << "FAIL: " << what << " (" << subject << ", " << length
+            << " bytes): " << errorName(current.error) << " vs "
+            << errorName(other.error) << '\n';
+}
+
+[[nodiscard]] VideoCodecConfigurationInspection
+observe(Entry entry, MediaCodec codec, MediaCodecConfigurationKind kind,
+        std::span<const std::byte> bytes, VideoCodecConfigurationLimits limits,
+        const char *subject) noexcept {
+  const auto full = run(entry, codec, kind, bytes, limits);
+  ++summary.inspections;
+  for (std::size_t length = 0; length < bytes.size(); ++length) {
+    const auto truncated =
+        run(entry, codec, kind, bytes.first(length), limits);
+    ++summary.truncations;
+    if (!truncated.admitted()) {
+      ++summary.truncationsRefused;
+    } else if (full.admitted() && truncated.facts == full.facts) {
+      ++summary.truncationsAdmittedIdentical;
+    } else if (!full.admitted()) {
+      // A refused record whose prefix is a whole valid record: the fixture is
+      // a valid record followed by a deliberately bad tail.
+      ++summary.truncationsAdmittedPrefixOfRefused;
+    } else {
+      ++summary.truncationFaults;
+      fault("truncation admitted with different facts", subject, length,
+            truncated, full);
+    }
+  }
+  return full;
+}
+
+[[nodiscard]] const char *kindName(MediaCodecConfigurationKind kind) {
+  switch (kind) {
+  case MediaCodecConfigurationKind::AvcC:
+    return "avcC";
+  case MediaCodecConfigurationKind::HvcC:
+    return "hvcC";
+  case MediaCodecConfigurationKind::Av1C:
+    return "av1C";
+  case MediaCodecConfigurationKind::VpcC:
+    return "vpcC";
+  case MediaCodecConfigurationKind::CodecPrivate:
+    return "CodecPrivate";
+  default:
+    return "record";
+  }
+}
+
+void report() {
+  std::cout << "witness: " << summary.inspections << " inspections, "
+            << summary.truncations << " truncations (" << summary.truncationsRefused
+            << " refused, " << summary.truncationsAdmittedIdentical
+            << " admitted with identical facts, "
+            << summary.truncationsAdmittedPrefixOfRefused
+            << " valid prefixes of refused records, "
+            << summary.truncationFaults << " faults)\n";
+}
+
+
+[[nodiscard]] VideoCodecConfigurationInspection inspectVideoCodecConfiguration(
+    MediaCodec codec, MediaCodecConfigurationKind kind,
+    std::span<const std::byte> configuration,
+    VideoCodecConfigurationLimits limits = {}) noexcept {
+  return witness::observe(witness::Entry::Configuration, codec, kind,
+                          configuration, limits, witness::kindName(kind));
+}
+
+[[nodiscard]] VideoCodecConfigurationInspection inspectVp9BitstreamKeyframe(
+    std::span<const std::byte> keyframe,
+    VideoCodecConfigurationLimits limits = {}) noexcept {
+  return witness::observe(witness::Entry::Vp9Keyframe, MediaCodec::Vp9,
+                          MediaCodecConfigurationKind::None, keyframe, limits,
+                          "VP9 keyframe");
+}
+
+[[nodiscard]] VideoCodecConfigurationInspection inspectVp8BitstreamKeyframe(
+    std::span<const std::byte> keyframe,
+    VideoCodecConfigurationLimits limits = {}) noexcept {
+  return witness::observe(witness::Entry::Vp8Keyframe, MediaCodec::Vp8,
+                          MediaCodecConfigurationKind::None, keyframe, limits,
+                          "VP8 keyframe");
+}
+
+[[nodiscard]] VideoCodecConfigurationInspection inspectMpeg4VisualHeaders(
+    std::span<const std::byte> headers,
+    VideoCodecConfigurationLimits limits = {}) noexcept {
+  return witness::observe(witness::Entry::Mpeg4Headers,
+                          MediaCodec::Mpeg4Visual,
+                          MediaCodecConfigurationKind::None, headers, limits,
+                          "MPEG-4 headers");
+}
+
+[[nodiscard]] bool buildMpeg4VisualEsds(std::span<const std::byte> headers,
+                                        std::span<std::byte> esds,
+                                        std::size_t *written,
+                                        VideoCodecConfigurationLimits limits =
+                                            {}) noexcept {
+  const bool built =
+      wam::media::buildMpeg4VisualEsds(headers, esds, written, limits);
+  return built;
+}
+
+} // namespace witness
 
 class BitWriter final {
 public:
@@ -454,7 +649,7 @@ byteView(const std::vector<std::uint8_t> &bytes) noexcept {
 [[nodiscard]] VideoCodecConfigurationInspection
 inspectAvc(const std::vector<std::uint8_t> &bytes,
            VideoCodecConfigurationLimits limits = {}) noexcept {
-  return inspectVideoCodecConfiguration(MediaCodec::H264,
+  return witness::inspectVideoCodecConfiguration(MediaCodec::H264,
                                         MediaCodecConfigurationKind::AvcC,
                                         byteView(bytes), limits);
 }
@@ -462,7 +657,7 @@ inspectAvc(const std::vector<std::uint8_t> &bytes,
 [[nodiscard]] VideoCodecConfigurationInspection
 inspectHevc(const std::vector<std::uint8_t> &bytes,
             VideoCodecConfigurationLimits limits = {}) noexcept {
-  return inspectVideoCodecConfiguration(MediaCodec::Hevc,
+  return witness::inspectVideoCodecConfiguration(MediaCodec::Hevc,
                                         MediaCodecConfigurationKind::HvcC,
                                         byteView(bytes), limits);
 }
@@ -633,40 +828,37 @@ void testApiAndHardBounds() {
   static_assert(kMaximumVideoCodecPixels == 4096ULL * 2320ULL);
   static_assert(kMaximumVideoCodecPixels == 9'502'720ULL);
   static_assert(kMaximumVideoCodecReorderFrames == 16U);
-  static_assert(noexcept(inspectVideoCodecConfiguration(
-      MediaCodec::H264, MediaCodecConfigurationKind::AvcC, {})));
 
   // VP9 is an admitted codec now, so this case proves the kind gate rather
   // than the codec gate: VP9 facts may only be read out of a vpcC.
-  expectError(inspectVideoCodecConfiguration(
+  expectError(witness::inspectVideoCodecConfiguration(
                   MediaCodec::Vp9, MediaCodecConfigurationKind::CodecPrivate,
                   std::array{std::byte{1U}}),
               VideoCodecConfigurationError::ConfigurationKindMismatch,
               "VP9 facts are only read from a vpcC record");
-  expectError(inspectVideoCodecConfiguration(
+  expectError(witness::inspectVideoCodecConfiguration(
                   MediaCodec::Av1, MediaCodecConfigurationKind::VpcC,
                   std::array{std::byte{1U}}),
               VideoCodecConfigurationError::ConfigurationKindMismatch,
               "AV1 facts are only read from an av1C record");
-  expectError(inspectVideoCodecConfiguration(
+  expectError(witness::inspectVideoCodecConfiguration(
                   MediaCodec::Aac, MediaCodecConfigurationKind::CodecPrivate,
                   std::array{std::byte{1U}}),
               VideoCodecConfigurationError::UnsupportedCodec,
               "unsupported codec is rejected before record parsing");
-  expectError(inspectVideoCodecConfiguration(
+  expectError(witness::inspectVideoCodecConfiguration(
                   MediaCodec::Av1, MediaCodecConfigurationKind::Av1C, {}),
               VideoCodecConfigurationError::EmptyConfiguration,
               "empty AV1 configuration is rejected exactly");
-  static_assert(noexcept(inspectVp9BitstreamKeyframe({})));
-  expectError(inspectVp9BitstreamKeyframe({}),
+  expectError(witness::inspectVp9BitstreamKeyframe({}),
               VideoCodecConfigurationError::EmptyConfiguration,
               "empty VP9 keyframe is rejected exactly");
-  expectError(inspectVideoCodecConfiguration(MediaCodec::H264,
+  expectError(witness::inspectVideoCodecConfiguration(MediaCodec::H264,
                                              MediaCodecConfigurationKind::HvcC,
                                              std::array{std::byte{1U}}),
               VideoCodecConfigurationError::ConfigurationKindMismatch,
               "codec and configuration-record kind must agree");
-  expectError(inspectVideoCodecConfiguration(
+  expectError(witness::inspectVideoCodecConfiguration(
                   MediaCodec::H264, MediaCodecConfigurationKind::AvcC, {}),
               VideoCodecConfigurationError::EmptyConfiguration,
               "empty configuration is rejected exactly");
@@ -721,7 +913,7 @@ void testCompactH264() {
              high.facts->sampleFormat == MediaVideoSampleFormat::Yuv420EightBit,
          "H.264 High profile explicitly proves 4:2:0 8-bit format");
 
-  const auto repositorySample = inspectVideoCodecConfiguration(
+  const auto repositorySample = witness::inspectVideoCodecConfiguration(
       MediaCodec::H264, MediaCodecConfigurationKind::AvcC,
       {reinterpret_cast<const std::byte *>(kRepositorySampleAvcC.data()),
        kRepositorySampleAvcC.size()});
@@ -765,6 +957,34 @@ void testH264Rejections() {
   expectError(inspectAvc(makeAvcC(validSpec, false)),
               VideoCodecConfigurationError::MissingParameterSet,
               "H.264 requires PPS as well as SPS");
+
+  // seq_parameter_set_id is 0..31; the value gates a 32-entry id set.
+  expect(inspectAvc(makeAvcC(std::array{H264SpsSpec{.id = 31U}})).admitted(),
+         "H.264 seq_parameter_set_id 31 is admitted");
+  expectError(inspectAvc(makeAvcC(std::array{H264SpsSpec{.id = 32U}})),
+              VideoCodecConfigurationError::MalformedRecord,
+              "H.264 seq_parameter_set_id above 31 is rejected");
+
+  // A high-profile SPS cut inside seq_parameter_set_id (ue(15) is nine bits,
+  // so four payload bytes end mid-code) must be MalformedRecord, not the
+  // chroma verdict a zero-valued unread chroma_format_idc would produce: the
+  // record's own length prefix is shortened to match so the SPS parser, not
+  // the record walker, sees the cut.
+  {
+    const auto full =
+        makeAvcC(std::array{H264SpsSpec{.id = 15U, .profile = 100U}});
+    const std::size_t spsLength =
+        (static_cast<std::size_t>(full[6]) << 8U) | full[7];
+    std::vector<std::uint8_t> cut(full.begin(), full.begin() + 8);
+    cut.insert(cut.end(), full.begin() + 8, full.begin() + 8 + 5);
+    cut[6] = 0U;
+    cut[7] = 5U;
+    cut.insert(cut.end(), full.begin() + 8 + static_cast<std::ptrdiff_t>(spsLength),
+               full.end());
+    expectError(inspectAvc(cut), VideoCodecConfigurationError::MalformedRecord,
+                "an SPS cut inside seq_parameter_set_id is malformed, not "
+                "an unsupported chroma format");
+  }
 
   auto truncated = valid;
   truncated.pop_back();
@@ -1262,7 +1482,7 @@ std::vector<std::uint8_t> makeAv1C(const Av1cSpec &spec) {
 [[nodiscard]] VideoCodecConfigurationInspection
 inspectAv1(const std::vector<std::uint8_t> &bytes,
            VideoCodecConfigurationLimits limits = {}) noexcept {
-  return inspectVideoCodecConfiguration(MediaCodec::Av1,
+  return witness::inspectVideoCodecConfiguration(MediaCodec::Av1,
                                         MediaCodecConfigurationKind::Av1C,
                                         byteView(bytes), limits);
 }
@@ -1270,7 +1490,7 @@ inspectAv1(const std::vector<std::uint8_t> &bytes,
 [[nodiscard]] VideoCodecConfigurationInspection
 inspectVpcc(const std::vector<std::uint8_t> &bytes,
             VideoCodecConfigurationLimits limits = {}) noexcept {
-  return inspectVideoCodecConfiguration(MediaCodec::Vp9,
+  return witness::inspectVideoCodecConfiguration(MediaCodec::Vp9,
                                         MediaCodecConfigurationKind::VpcC,
                                         byteView(bytes), limits);
 }
@@ -1278,13 +1498,13 @@ inspectVpcc(const std::vector<std::uint8_t> &bytes,
 [[nodiscard]] VideoCodecConfigurationInspection
 inspectVp9Keyframe(const std::vector<std::uint8_t> &bytes,
                    VideoCodecConfigurationLimits limits = {}) noexcept {
-  return inspectVp9BitstreamKeyframe(byteView(bytes), limits);
+  return witness::inspectVp9BitstreamKeyframe(byteView(bytes), limits);
 }
 
 [[nodiscard]] VideoCodecConfigurationInspection
 inspectVp8Keyframe(const std::vector<std::uint8_t> &bytes,
                    VideoCodecConfigurationLimits limits = {}) noexcept {
-  return inspectVp8BitstreamKeyframe(byteView(bytes), limits);
+  return witness::inspectVp8BitstreamKeyframe(byteView(bytes), limits);
 }
 
 // The av1C from test-media/codec-envelope/av1-aac.mkv: 1920x1080, seq_profile
@@ -1578,7 +1798,6 @@ void testVp8() {
   // The exact header size is both necessary and sufficient, and is asserted so
   // a change to the constant has to restate why.
   static_assert(kVp8KeyframeHeaderMaximumBytes == 10U);
-  static_assert(noexcept(inspectVp8BitstreamKeyframe({})));
 
   const auto real1080p = inspectVp8Keyframe(kRealVp8Keyframe1080p);
   expect(real1080p.admitted(),
@@ -1623,7 +1842,7 @@ void testVp8() {
              inspectVp8Keyframe(longFrame).facts->width == 1920U,
          "VP8 key frame facts come from a bounded header prefix");
 
-  expectError(inspectVp8BitstreamKeyframe({}),
+  expectError(witness::inspectVp8BitstreamKeyframe({}),
               VideoCodecConfigurationError::EmptyConfiguration,
               "an empty VP8 key frame is refused");
   for (std::size_t truncated = 1; truncated < 10U; ++truncated) {
@@ -1748,10 +1967,10 @@ void testVp8() {
            "VP9 vpcC synthesis refuses VP8 facts");
   }
 
-  // inspectVideoCodecConfiguration() is the record-parsing entry point and has
+  // witness::inspectVideoCodecConfiguration() is the record-parsing entry point and has
   // no VP8 record to parse, so it must refuse the codec rather than fall
   // through to the vpcC parser.
-  expectError(inspectVideoCodecConfiguration(
+  expectError(witness::inspectVideoCodecConfiguration(
                   MediaCodec::Vp8, MediaCodecConfigurationKind::VpcC,
                   byteView(kRealVp8Keyframe1080p)),
               VideoCodecConfigurationError::UnsupportedCodec,
@@ -2047,12 +2266,11 @@ mpeg4Headers(const std::array<std::uint8_t, 48> &source) {
 [[nodiscard]] VideoCodecConfigurationInspection
 inspectMpeg4(const std::vector<std::uint8_t> &bytes,
              VideoCodecConfigurationLimits limits = {}) noexcept {
-  return inspectMpeg4VisualHeaders(byteView(bytes), limits);
+  return witness::inspectMpeg4VisualHeaders(byteView(bytes), limits);
 }
 
 void testMpeg4Visual() {
   static_assert(kMpeg4VisualEsdsOverheadBytes == 41U);
-  static_assert(noexcept(inspectMpeg4VisualHeaders({})));
 
   const auto simple = inspectMpeg4(mpeg4Headers(kRealMpeg4SimpleProfileHeaders));
   expect(simple.admitted(),
@@ -2153,7 +2371,7 @@ void testMpeg4Visual() {
                 "headers without a VisualObjectSequence are refused");
   }
 
-  expectError(inspectMpeg4VisualHeaders({}),
+  expectError(witness::inspectMpeg4VisualHeaders({}),
               VideoCodecConfigurationError::EmptyConfiguration,
               "empty MPEG-4 Part 2 headers are refused");
   {
@@ -2244,7 +2462,7 @@ void testMpeg4Visual() {
   const auto headers = mpeg4Headers(kRealMpeg4SimpleProfileHeaders);
   std::vector<std::byte> esds(kMpeg4VisualEsdsOverheadBytes + headers.size());
   std::size_t written = 0;
-  expect(buildMpeg4VisualEsds(byteView(headers), esds, &written) &&
+  expect(witness::buildMpeg4VisualEsds(byteView(headers), esds, &written) &&
              written == esds.size(),
          "an esds is built at exactly the documented size");
   // Shape the measurement fixed: version/flags, then ES_Descr, and the
@@ -2289,14 +2507,14 @@ void testMpeg4Visual() {
 
   // Round trip: the stored record inspects back to the same facts, through the
   // common entry point every other codec uses.
-  const auto roundTrip = inspectVideoCodecConfiguration(
+  const auto roundTrip = witness::inspectVideoCodecConfiguration(
       MediaCodec::Mpeg4Visual, MediaCodecConfigurationKind::CodecPrivate, esds);
   expect(roundTrip.admitted() && simple.facts && roundTrip.facts &&
              *roundTrip.facts == *simple.facts,
          "the synthesized esds inspects back to identical facts");
 
   expectError(
-      inspectVideoCodecConfiguration(MediaCodec::Mpeg4Visual,
+      witness::inspectVideoCodecConfiguration(MediaCodec::Mpeg4Visual,
                                      MediaCodecConfigurationKind::AvcC, esds),
       VideoCodecConfigurationError::ConfigurationKindMismatch,
       "an MPEG-4 Part 2 record must present the CodecPrivate kind");
@@ -2307,15 +2525,15 @@ void testMpeg4Visual() {
     std::vector<std::byte> refused(kMpeg4VisualEsdsOverheadBytes +
                                    advanced.size());
     std::size_t ignored = 0;
-    expect(!buildMpeg4VisualEsds(byteView(advanced), refused, &ignored),
+    expect(!witness::buildMpeg4VisualEsds(byteView(advanced), refused, &ignored),
            "no esds is built around Advanced Simple Profile headers");
   }
   {
     std::vector<std::byte> tooSmall(headers.size());
     std::size_t ignored = 0;
-    expect(!buildMpeg4VisualEsds(byteView(headers), tooSmall, &ignored),
+    expect(!witness::buildMpeg4VisualEsds(byteView(headers), tooSmall, &ignored),
            "an undersized esds buffer is refused");
-    expect(!buildMpeg4VisualEsds(byteView(headers), esds, nullptr),
+    expect(!witness::buildMpeg4VisualEsds(byteView(headers), esds, nullptr),
            "a null written pointer is refused");
   }
   // Every truncation of the stored esds must be refused by the round trip.
@@ -2323,13 +2541,14 @@ void testMpeg4Visual() {
     std::vector<std::byte> shortEsds(esds.begin(),
                                      esds.begin() +
                                          static_cast<std::ptrdiff_t>(truncated));
-    expect(!inspectVideoCodecConfiguration(
+    expect(!witness::inspectVideoCodecConfiguration(
                 MediaCodec::Mpeg4Visual,
                 MediaCodecConfigurationKind::CodecPrivate, shortEsds)
                 .admitted(),
            "a truncated esds is never admitted");
   }
 }
+
 
 } // namespace
 
@@ -2343,6 +2562,7 @@ int main() {
   testVp9();
   testVp8();
   testMpeg4Visual();
+  witness::report();
   if (failures != 0) {
     std::cerr << failures << " video codec configuration test(s) failed\n";
     return EXIT_FAILURE;

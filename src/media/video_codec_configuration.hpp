@@ -118,6 +118,14 @@ struct VideoCodecConfigurationFacts {
   std::uint8_t profile{0};
   std::uint8_t nalLengthBytes{0};
   std::uint8_t maximumReorderFrames{0};
+  // True only when the stream states no reorder depth and maximumReorderFrames
+  // is ISO/IEC 14496-10 E.2.1's MaxDpbFrames inference in its place: what an
+  // AVC stream without bitstream_restriction COULD require, not what it does.
+  // Every other codec states its depth or has a fixed reorder model, so the
+  // default is the stated case and only the inference arm has to say so. A
+  // decoder may clamp an inferred depth to its bound; a stated one above the
+  // bound is a refusal.
+  bool maximumReorderFramesInferred{false};
   std::uint16_t vpsCount{0};
   std::uint16_t spsCount{0};
   std::uint16_t ppsCount{0};

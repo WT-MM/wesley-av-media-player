@@ -401,7 +401,10 @@ if(APPLE)
   target_compile_options(wam_macos_native_video_core PRIVATE
     "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>"
     -Wall -Wextra -Wpedantic)
+  # The decoder derives an AVC stream's reorder depth through the neutral
+  # configuration parser rather than a second SPS parser of its own.
   target_link_libraries(wam_macos_native_video_core PUBLIC
+    wam_native_core
     "${WAM_COREFOUNDATION_FRAMEWORK}"
     "${WAM_COREMEDIA_FRAMEWORK}"
     "${WAM_COREVIDEO_FRAMEWORK}"
@@ -505,6 +508,8 @@ if(APPLE)
       LINKER_LANGUAGE OBJCXX)
 
     set(WAM_MACOS_NATIVE_BACKEND_SOURCES
+      src/platform/macos/core_media_source_support.hpp
+      src/platform/macos/native_custom_source_core.hpp
       src/platform/macos/avfoundation_asset_context.hpp
       src/platform/macos/avfoundation_asset_context.mm
       src/platform/macos/avfoundation_media_source.hpp
@@ -890,6 +895,14 @@ if(BUILD_TESTING)
     target_link_libraries(wam_audio_codec_timing_test PRIVATE wam_native_core)
     add_test(NAME audio_codec_timing COMMAND wam_audio_codec_timing_test)
 
+    add_executable(wam_native_audio_sample_rates_test
+      tests/native_audio_sample_rates_test.cpp
+      src/platform/macos/native_audio_sample_rates.hpp)
+    target_link_libraries(wam_native_audio_sample_rates_test PRIVATE
+      wam_native_core)
+    add_test(NAME native_audio_sample_rates
+      COMMAND wam_native_audio_sample_rates_test)
+
     add_executable(wam_media_codec_facts_test
       tests/media_codec_facts_test.cpp)
     target_link_libraries(wam_media_codec_facts_test PRIVATE wam_native_core)
@@ -991,6 +1004,7 @@ if(BUILD_TESTING)
         wam_matroska_ac3_test
         wam_audio_downmix_test
         wam_audio_codec_timing_test
+        wam_native_audio_sample_rates_test
         wam_media_codec_facts_test
         wam_matroska_flac_test
         wam_matroska_mpeg_audio_test
@@ -1022,6 +1036,7 @@ if(BUILD_TESTING)
       matroska_ac3
       audio_downmix
       audio_codec_timing
+      native_audio_sample_rates
       media_codec_facts
       matroska_flac
       matroska_mpeg_audio
@@ -1386,6 +1401,21 @@ if(BUILD_TESTING)
       set_tests_properties(macos_native_audio_stretch_stage PROPERTIES
         TIMEOUT 60)
 
+      add_executable(wam_native_audio_output_converter_test
+        tests/native_audio_output_converter_test.mm
+        src/platform/macos/native_audio_sample_rates.hpp)
+      target_include_directories(wam_native_audio_output_converter_test
+        PRIVATE src)
+      target_link_libraries(wam_native_audio_output_converter_test PRIVATE
+        wam_native_core
+        "${WAM_FOUNDATION_FRAMEWORK}"
+        "${WAM_AUDIOTOOLBOX_FRAMEWORK}"
+        "${WAM_COREAUDIO_FRAMEWORK}")
+      add_test(NAME macos_native_audio_output_converter
+        COMMAND wam_native_audio_output_converter_test)
+      set_tests_properties(macos_native_audio_output_converter PROPERTIES
+        TIMEOUT 120)
+
       add_executable(wam_native_audio_output_test
         tests/native_audio_output_test.mm
         src/platform/macos/native_audio_output.hpp
@@ -1458,6 +1488,7 @@ if(BUILD_TESTING)
           WAM_ENABLE_SOFTWARE_VP8
           WAM_SOFTWARE_VP8_TESTING=1)
         target_link_libraries(wam_software_vp8_test PRIVATE
+          wam_native_core
           PkgConfig::WAM_LIBVPX
           "${WAM_COREFOUNDATION_FRAMEWORK}"
           "${WAM_COREMEDIA_FRAMEWORK}"
@@ -1707,6 +1738,39 @@ if(BUILD_TESTING)
         TIMEOUT 120
         SKIP_RETURN_CODE 77)
 
+      # The Traits seam of the shared custom-source core: both backends are
+      # linked so the two Traits can be compared in one binary.
+      add_executable(wam_native_custom_source_traits_test
+        tests/native_custom_source_traits_test.mm
+        src/platform/macos/native_custom_source_core.hpp
+        src/platform/macos/matroska_asset_context.hpp
+        src/platform/macos/matroska_asset_context.cpp
+        src/platform/macos/matroska_media_source.hpp
+        src/platform/macos/matroska_media_source.mm
+        src/platform/macos/matroska_sample_builder.hpp
+        src/platform/macos/matroska_sample_builder.mm
+        src/platform/macos/mpegts_asset_context.hpp
+        src/platform/macos/mpegts_asset_context.cpp
+        src/platform/macos/mpegts_media_source.hpp
+        src/platform/macos/mpegts_media_source.mm
+        src/platform/macos/mpegts_sample_builder.hpp
+        src/platform/macos/mpegts_sample_builder.mm)
+      target_include_directories(
+        wam_native_custom_source_traits_test PRIVATE src)
+      target_link_libraries(wam_native_custom_source_traits_test PRIVATE
+        wam_native_core
+        wam_macos_native_video_core
+        "${WAM_COREMEDIA_FRAMEWORK}"
+        "${WAM_COREFOUNDATION_FRAMEWORK}"
+        "${WAM_COREGRAPHICS_FRAMEWORK}"
+        "${WAM_FOUNDATION_FRAMEWORK}"
+        "${WAM_AUDIOTOOLBOX_FRAMEWORK}"
+        "${WAM_AVFOUNDATION_FRAMEWORK}")
+      add_test(NAME macos_native_custom_source_traits
+        COMMAND wam_native_custom_source_traits_test)
+      set_tests_properties(macos_native_custom_source_traits PROPERTIES
+        TIMEOUT 30)
+
       # The lane's deterministic synthetic-frame seam is absent from the
       # shipping class. Compile the lane and its source dependency privately
       # under one macro, while reusing the production decoder/video core.
@@ -1837,8 +1901,10 @@ if(BUILD_TESTING)
           wam_matroska_media_source_test
           wam_mpegts_media_source_test
           wam_mpegts_preview_source_test
+          wam_native_custom_source_traits_test
           wam_native_audio_converter_test
           wam_native_audio_output_test
+          wam_native_audio_output_converter_test
           wam_native_audio_stretch_stage_test
           wam_native_surface_budget_test
           wam_native_video_consumer_test
@@ -1962,6 +2028,7 @@ if(BUILD_TESTING)
           PkgConfig::WAM_LIBVPX)
       endif()
       target_link_libraries(wam_video_toolbox_decoder_test PRIVATE
+        wam_native_core
         "${WAM_COREFOUNDATION_FRAMEWORK}"
         "${WAM_COREMEDIA_FRAMEWORK}"
         "${WAM_COREVIDEO_FRAMEWORK}"

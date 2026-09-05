@@ -2,6 +2,7 @@
 
 #include "media/mpegts_demuxer.hpp"
 #include "media/native_media_source.hpp"
+#include "platform/macos/core_media_source_support.hpp"
 
 #include <CoreMedia/CoreMedia.h>
 
@@ -23,89 +24,6 @@ namespace wam::macos {
 //
 // Nothing here is part of the shipping surface of `mpegts_media_source.hpp`;
 // this header is included only by MPEG-TS backend translation units.
-
-// Owns the +1 on one retained CoreMedia buffer.
-class MpegTsScopedSampleBuffer final {
- public:
-  MpegTsScopedSampleBuffer() noexcept = default;
-  explicit MpegTsScopedSampleBuffer(CMSampleBufferRef owned) noexcept
-      : value_(owned) {}
-  ~MpegTsScopedSampleBuffer() {
-    if (value_ != nullptr) {
-      CFRelease(value_);
-    }
-  }
-
-  MpegTsScopedSampleBuffer(MpegTsScopedSampleBuffer&& other) noexcept
-      : value_(other.value_) {
-    other.value_ = nullptr;
-  }
-  MpegTsScopedSampleBuffer& operator=(MpegTsScopedSampleBuffer&& other) noexcept {
-    if (this != &other) {
-      if (value_ != nullptr) {
-        CFRelease(value_);
-      }
-      value_ = other.value_;
-      other.value_ = nullptr;
-    }
-    return *this;
-  }
-  MpegTsScopedSampleBuffer(const MpegTsScopedSampleBuffer&) = delete;
-  MpegTsScopedSampleBuffer& operator=(const MpegTsScopedSampleBuffer&) = delete;
-
-  [[nodiscard]] CMSampleBufferRef get() const noexcept { return value_; }
-  [[nodiscard]] CMSampleBufferRef release() noexcept {
-    CMSampleBufferRef owned = value_;
-    value_ = nullptr;
-    return owned;
-  }
-
- private:
-  CMSampleBufferRef value_{nullptr};
-};
-
-// Owns the +1 on one retained CoreMedia buffer for the lifetime of every lease
-// taken against it. Shape copied from the AVFoundation and Matroska storages so
-// the native video consumer and the audio converter accept MPEG-TS samples
-// unchanged.
-class MpegTsCoreMediaSampleStorage final : public media::MediaPayloadStorage {
- public:
-  MpegTsCoreMediaSampleStorage(CMSampleBufferRef ownedSample,
-                               std::size_t byteSize) noexcept;
-  ~MpegTsCoreMediaSampleStorage() override;
-
-  MpegTsCoreMediaSampleStorage(const MpegTsCoreMediaSampleStorage&) = delete;
-  MpegTsCoreMediaSampleStorage& operator=(const MpegTsCoreMediaSampleStorage&) =
-      delete;
-
-  [[nodiscard]] std::size_t byteSize() const noexcept override;
-  [[nodiscard]] std::span<const std::byte>
-  contiguousBytes() const noexcept override;
-  [[nodiscard]] bool copyBytes(
-      std::size_t offset,
-      std::span<std::byte> destination) const noexcept override;
-
- protected:
-  [[nodiscard]] std::optional<media::NativePayloadKind>
-  nativePayloadKind() const noexcept override;
-  [[nodiscard]] const void* borrowedNativePayload() const noexcept override;
-
- private:
-  CMSampleBufferRef sample_{nullptr};
-  std::size_t byte_size_{0};
-};
-
-// Exact sum of two container rationals, in 128 bits. Copied from the
-// AVFoundation and Matroska backends so all three answer decodeOnly
-// identically for the same interval.
-[[nodiscard]] std::optional<media::MediaTime> mpegTsCheckedExactTimeSum(
-    media::MediaTime lhs, media::MediaTime rhs) noexcept;
-
-// True when the sample's whole presentation interval closes at or before the
-// accurate-seek target, which is exactly the decodeOnly predicate.
-[[nodiscard]] std::optional<bool> mpegTsAccurateVideoDecodeOnly(
-    media::MediaTime presentationTime, media::MediaTime duration,
-    media::MediaTime target, std::string* error) noexcept;
 
 [[nodiscard]] const char* mpegTsDemuxErrorNameForMessage(
     media::mpegts::MpegTsDemuxError error) noexcept;
@@ -239,6 +157,6 @@ struct MpegTsSampleBuildInputs {
 [[nodiscard]] MpegTsSampleBuildStatus buildMpegTsCompressedSampleBuffer(
     const MpegTsSampleBuildInputs& inputs,
     const media::mpegts::MpegTsCompressedSample& sample,
-    MpegTsScopedSampleBuffer* out, std::string* error);
+    ScopedSampleBuffer* out, std::string* error);
 
 }  // namespace wam::macos

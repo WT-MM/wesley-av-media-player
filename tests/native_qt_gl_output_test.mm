@@ -43,15 +43,24 @@ void check(bool condition, const char* expression, int line,
 #define WAM_CHECK_DETAIL(expression, detail)                                   \
   check(static_cast<bool>(expression), #expression, __LINE__, (detail))
 
+// Returns the value of the LAST evaluation, never re-evaluating after success.
+// Several predicates consume a capacity-one mailbox (takeEvent()); a trailing
+// re-evaluation would take the event a second time, see an empty mailbox, and
+// report the wait as failed exactly when it had succeeded.
 template <typename Predicate>
 bool spinUntil(Predicate predicate, int timeoutMs = 5000) {
   QElapsedTimer timer;
   timer.start();
-  while (!predicate() && timer.elapsed() < timeoutMs) {
+  for (;;) {
+    if (predicate()) {
+      return true;
+    }
+    if (timer.elapsed() >= timeoutMs) {
+      return false;
+    }
     QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
     std::this_thread::sleep_for(std::chrono::milliseconds(2));
   }
-  return predicate();
 }
 
 void pumpEventsFor(int durationMs) {
@@ -1330,7 +1339,12 @@ void verifyFinalFlushSchedulingFailures(QQuickWindow& window) {
       owned.reset();
     });
     closer.join();
+    // The flush owner is the GuiContext destructor, reached through
+    // deleteLater(). The app runs an exec() loop, which delivers a deferred
+    // delete posted at loop level 0; this harness pumps with processEvents()
+    // at level 0, which by Qt's rule postpones it forever, so deliver it here.
     WAM_CHECK(spinUntil([&] {
+      QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
       return item->stats().acceptedGeneration >= 1;
     }));
     auto replacement =

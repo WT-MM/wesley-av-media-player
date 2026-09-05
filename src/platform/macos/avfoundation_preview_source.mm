@@ -7,6 +7,7 @@
 
 #include "media/media_codec_facts.hpp"
 #include "core_media_codec_facts.hpp"
+#include "core_media_source_support.hpp"
 
 #import <AVFoundation/AVFoundation.h>
 
@@ -41,12 +42,6 @@ using media::MediaTrackKind;
 
 constexpr std::size_t kMaximumSyncCursorSteps{100'000};
 
-void assignError(std::string* error, const char* message) {
-  if (error != nullptr) {
-    *error = message;
-  }
-}
-
 [[nodiscard]] std::string describeNSError(NSError* error,
                                           const char* fallback) {
   if (error == nil || error.localizedDescription == nil) {
@@ -73,54 +68,6 @@ void assignError(std::string* error, const char* message) {
     return std::nullopt;
   }
   return CMTimeMake(time.value, time.timescale);
-}
-
-[[nodiscard]] bool withinDuration(MediaTime target,
-                                  MediaTime duration) noexcept {
-  if (!target.valid() || target.value < 0 || !duration.valid() ||
-      duration.value < 0) {
-    return false;
-  }
-  const auto order = media::compareMediaTime(target, duration);
-  return order.has_value() && *order != MediaTimeOrder::Greater;
-}
-
-[[nodiscard]] std::optional<MediaTime> checkedTimeSum(MediaTime lhs,
-                                                       MediaTime rhs) noexcept {
-  if (!lhs.valid() || !rhs.valid()) {
-    return std::nullopt;
-  }
-  using WideSigned = __int128_t;
-  using WideUnsigned = __uint128_t;
-  const WideSigned numerator =
-      static_cast<WideSigned>(lhs.value) * rhs.timescale +
-      static_cast<WideSigned>(rhs.value) * lhs.timescale;
-  const std::uint64_t denominator =
-      static_cast<std::uint64_t>(static_cast<std::uint32_t>(lhs.timescale)) *
-      static_cast<std::uint64_t>(static_cast<std::uint32_t>(rhs.timescale));
-  if (denominator == 0) {
-    return std::nullopt;
-  }
-  const WideUnsigned magnitude =
-      numerator < 0
-          ? static_cast<WideUnsigned>(-(numerator + 1)) + 1
-          : static_cast<WideUnsigned>(numerator);
-  const std::uint64_t common =
-      std::gcd(denominator,
-               static_cast<std::uint64_t>(magnitude % denominator));
-  const WideSigned reduced = numerator / static_cast<WideSigned>(common);
-  const std::uint64_t scale = denominator / common;
-  if (reduced <
-          static_cast<WideSigned>(std::numeric_limits<std::int64_t>::min()) ||
-      reduced >
-          static_cast<WideSigned>(std::numeric_limits<std::int64_t>::max()) ||
-      scale == 0 ||
-      scale > static_cast<std::uint64_t>(
-                  std::numeric_limits<std::int32_t>::max())) {
-    return std::nullopt;
-  }
-  return MediaTime{static_cast<std::int64_t>(reduced),
-                   static_cast<std::int32_t>(scale)};
 }
 
 [[nodiscard]] bool validBinding(
@@ -167,93 +114,8 @@ void assignError(std::string* error, const char* message) {
 [[nodiscard]] bool validRequest(const NativePreviewBinding& binding,
                                 NativePreviewRequest request) noexcept {
   return request.epoch != 0 && binding.descriptor != nullptr &&
-         withinDuration(request.target, binding.descriptor->duration);
+         exactNonnegativeTimeWithinDuration(request.target, binding.descriptor->duration);
 }
-
-class ScopedSampleBuffer final {
- public:
-  explicit ScopedSampleBuffer(CMSampleBufferRef sample = nullptr) noexcept
-      : sample_(sample) {}
-  ScopedSampleBuffer(const ScopedSampleBuffer&) = delete;
-  ScopedSampleBuffer& operator=(const ScopedSampleBuffer&) = delete;
-  ScopedSampleBuffer(ScopedSampleBuffer&& other) noexcept
-      : sample_(std::exchange(other.sample_, nullptr)) {}
-  ~ScopedSampleBuffer() {
-    if (sample_ != nullptr) {
-      CFRelease(sample_);
-    }
-  }
-
-  [[nodiscard]] CMSampleBufferRef get() const noexcept { return sample_; }
-  [[nodiscard]] CMSampleBufferRef release() noexcept {
-    return std::exchange(sample_, nullptr);
-  }
-
- private:
-  CMSampleBufferRef sample_{nullptr};
-};
-
-class PreviewSampleStorage final : public MediaPayloadStorage {
- public:
-  PreviewSampleStorage(CMSampleBufferRef ownedSample,
-                       std::size_t byteSize) noexcept
-      : sample_(ownedSample), byteSize_(byteSize) {}
-  ~PreviewSampleStorage() override {
-    if (sample_ != nullptr) {
-      CFRelease(sample_);
-    }
-  }
-
-  [[nodiscard]] std::size_t byteSize() const noexcept override {
-    return byteSize_;
-  }
-
-  [[nodiscard]] std::span<const std::byte>
-  contiguousBytes() const noexcept override {
-    CMBlockBufferRef block = CMSampleBufferGetDataBuffer(sample_);
-    if (block == nullptr) {
-      return {};
-    }
-    char* data = nullptr;
-    std::size_t contiguous = 0;
-    std::size_t total = 0;
-    const OSStatus status = CMBlockBufferGetDataPointer(
-        block, 0, &contiguous, &total, &data);
-    if (status != noErr || data == nullptr || total != byteSize_ ||
-        contiguous != total) {
-      return {};
-    }
-    return {reinterpret_cast<const std::byte*>(data), total};
-  }
-
-  [[nodiscard]] bool copyBytes(
-      std::size_t offset,
-      std::span<std::byte> destination) const noexcept override {
-    if (offset > byteSize_ || destination.size() > byteSize_ - offset) {
-      return false;
-    }
-    if (destination.empty()) {
-      return true;
-    }
-    CMBlockBufferRef block = CMSampleBufferGetDataBuffer(sample_);
-    return block != nullptr &&
-           CMBlockBufferCopyDataBytes(block, offset, destination.size(),
-                                      destination.data()) == noErr;
-  }
-
- protected:
-  [[nodiscard]] std::optional<media::NativePayloadKind>
-  nativePayloadKind() const noexcept override {
-    return media::NativePayloadKind::CoreMediaSampleBuffer;
-  }
-  [[nodiscard]] const void* borrowedNativePayload() const noexcept override {
-    return sample_;
-  }
-
- private:
-  CMSampleBufferRef sample_{nullptr};
-  std::size_t byteSize_{0};
-};
 
 [[nodiscard]] bool sampleIsKeyFrame(CMSampleBufferRef sample,
                                     bool* keyFrame) noexcept {
@@ -406,7 +268,7 @@ class PreviewSampleStorage final : public MediaPayloadStorage {
     assignError(error, "preview video sample exceeds its bounded contract");
     return std::nullopt;
   }
-  const auto intervalEnd = checkedTimeSum(*presentation, *duration);
+  const auto intervalEnd = checkedExactTimeSum(*presentation, *duration);
   const auto endAgainstTarget =
       intervalEnd ? media::compareMediaTime(*intervalEnd, target)
                   : std::nullopt;
@@ -418,7 +280,7 @@ class PreviewSampleStorage final : public MediaPayloadStorage {
   // allocated and completed its noexcept storage construction. Releasing it
   // as a function argument would leak if allocation threw first.
   auto storage =
-      std::make_shared<PreviewSampleStorage>(owned.get(), bytes);
+      std::make_shared<CoreMediaSampleStorage>(owned.get(), bytes);
   static_cast<void>(owned.release());
   MediaSample result;
   result.generation = epoch;
@@ -1326,7 +1188,7 @@ bool AVFoundationPreviewSource::advanceTarget(
       expectedEpoch != impl_->operationEpoch.load(std::memory_order_acquire) ||
       !impl_->open.load(std::memory_order_acquire) ||
       impl_->cancelledEpoch.load(std::memory_order_acquire) == expectedEpoch ||
-      !withinDuration(target, impl_->binding.descriptor->duration)) {
+      !exactNonnegativeTimeWithinDuration(target, impl_->binding.descriptor->duration)) {
     return false;
   }
   const auto order = media::compareMediaTime(impl_->target, target);
