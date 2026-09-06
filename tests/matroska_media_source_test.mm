@@ -151,7 +151,12 @@ struct Fixtures {
   // Video shifted behind audio, so the first Cue is not at the timeline origin.
   std::filesystem::path offsetVideo;
   std::filesystem::path audioOnly;
+  // AudioToolbox-encoded AAC (aac_at): 2112 frames of priming, i.e. a
+  // CodecDelay longer than an access unit. Muxed separately because the
+  // encoder exists only in ffmpeg builds on macOS; absent, only its test skips.
+  std::filesystem::path applePrimed;
   bool valid{false};
+  bool applePrimedValid{false};
 
   ~Fixtures() {
     std::error_code ignored;
@@ -196,12 +201,17 @@ void buildFixtures(const std::string& ffmpeg, Fixtures& fixtures) {
         "-c:a", "aac"}) {
     audio.emplace_back(argument);
   }
+  std::vector<std::string> applePrimed = audioVideo;
+  applePrimed.back() = "aac_at";
   audioVideo.push_back(fixtures.audioVideo.string());
   offset.push_back(fixtures.offsetVideo.string());
   audio.push_back(fixtures.audioOnly.string());
+  fixtures.applePrimed = fixtures.directory / "apple_primed.mkv";
+  applePrimed.push_back(fixtures.applePrimed.string());
 
   fixtures.valid = runFfmpeg(ffmpeg, audioVideo) && runFfmpeg(ffmpeg, offset) &&
                    runFfmpeg(ffmpeg, audio);
+  fixtures.applePrimedValid = runFfmpeg(ffmpeg, applePrimed);
 }
 
 // ---------------------------------------------------------------------------
@@ -563,6 +573,59 @@ void testSamplesRestateExactContainerTiming(const Fixtures& fixtures) {
          "precede the timeline origin");
 }
 
+// The iPhone shape: Apple's AAC encoder primes 2112 frames, so ordinals 0, 1
+// and 2 (-2112, -1088 and -64 frames) all present before media time zero.
+// The window's decodeStart names the first; every later unit inside the
+// lead-in is admitted by ordinal continuity, not by equalling the start.
+void testApplePrimedLeadInIsHonoured(const Fixtures& fixtures) {
+  if (!fixtures.applePrimedValid) {
+    std::cerr << "  (aac_at unavailable; Apple-primed lead-in not proved)\n";
+    return;
+  }
+  MatroskaMediaSource source;
+  const MediaSourceOpenOutcome opened =
+      openAt(source, fixtures.applePrimed, 1, std::nullopt, videoOptions());
+  expect(opened.status == MediaSourceOpenStatus::Ready,
+         "an Apple-primed (2112-frame CodecDelay) AAC track opens natively");
+  if (opened.status != MediaSourceOpenStatus::Ready) {
+    return;
+  }
+  const MediaTime start = opened.audioWindow.decodeStart;
+  expect(start.valid() &&
+             static_cast<std::int64_t>(start.value) * kAudioSampleRate ==
+                 -2112 * static_cast<std::int64_t>(start.timescale),
+         "the audio window's decode start is exactly -2112/48000");
+  const Drained drained = drain(source, 1);
+  expect(drained.failure.empty(),
+         "a lead-in longer than one access unit drains without a window "
+         "refusal");
+  std::optional<MediaTime> firstAudio;
+  std::size_t negativeUnits = 0;
+  bool contiguous = true;
+  std::optional<std::int64_t> nextFrame;
+  for (const Drained::Unit& unit : drained.units) {
+    if (unit.video) {
+      continue;
+    }
+    if (!firstAudio) {
+      firstAudio = unit.presentation;
+    }
+    negativeUnits += unit.presentation.value < 0 ? 1U : 0U;
+    if (!onExactGrid(unit.presentation, kAudioSampleRate) ||
+        !onExactGrid(unit.duration, kAudioSampleRate)) {
+      contiguous = false;
+      continue;
+    }
+    const std::int64_t frame = gridOrdinal(unit.presentation, kAudioSampleRate);
+    contiguous = contiguous && (!nextFrame || frame == *nextFrame);
+    nextFrame = frame + gridOrdinal(unit.duration, kAudioSampleRate);
+  }
+  expect(firstAudio.has_value() && sameTime(*firstAudio, start) &&
+             negativeUnits == 3 && contiguous,
+         "three access units precede the origin, the first is the decode "
+         "start, and the grid stays contiguous through the lead-in");
+}
+
 void testCoreMediaBuffersRestateTheSameRationals(const Fixtures& fixtures) {
   MatroskaMediaSource source;
   if (openAt(source, fixtures.audioVideo, 1, std::nullopt, videoOptions())
@@ -831,6 +894,7 @@ int main(int argc, char** argv) {
   testEntryRefusalsAndPublication(fixtures);
   testMergeStatesTheDecodeOrderLead(fixtures);
   testSamplesRestateExactContainerTiming(fixtures);
+  testApplePrimedLeadInIsHonoured(fixtures);
   testCoreMediaBuffersRestateTheSameRationals(fixtures);
   testAccurateSeekBothDirections(fixtures);
   testFirstCueClamp(fixtures);

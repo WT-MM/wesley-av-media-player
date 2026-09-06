@@ -505,6 +505,10 @@ inline constexpr std::int64_t kMaximumOpusGridTickResidual{2};
 // generation. Two is what the decoder needs to reach full precision, and it is
 // the same preroll the AVFoundation backend places for the identical reason.
 inline constexpr std::uint64_t kAacPrimingAccessUnits{2};
+// Hostile-value ceiling on the AAC head trim, not a format fact: every
+// measured encoder delay is under three access units.
+inline constexpr std::uint32_t kAacLcMaximumCodecDelayFrames{
+    8U * kAacLcSamplesPerAccessUnit};
 
 // Opus states its own decoder warm-up as SeekPreRoll (80 ms from every real
 // encoder). Two 20 ms packets would stage only 40 ms, so the priming is the
@@ -649,6 +653,40 @@ audioCodecAllowedInDocument(std::string_view codecId,
 // Opus is the single exception, and only because its delay IS provable -- the
 // container's CodecDelay must be exactly the OpusHead pre-skip expressed in
 // nanoseconds, which is checked at admission. AAC keeps the historic rule.
+// BlockAddIDType 'dvcC' / 'dvvC': a Dolby Vision configuration record, the
+// one BlockAdditionMapping this player admits. Its 24 bytes are
+// dv_version_major, dv_version_minor, then profile(7) level(6) rpu_present(1)
+// el_present(1) bl_present(1) and bl_signal_compatibility_id(4).
+constexpr std::uint64_t kBlockAddIdTypeDvcC{0x64766343};
+constexpr std::uint64_t kBlockAddIdTypeDvvC{0x64767643};
+
+// The record is admitted only when the base layer is a complete HEVC stream
+// on its own: profile 8 with a cross-compatibility id (1 HDR10, 2 SDR, 4 HLG)
+// and no enhancement layer. The record is then IGNORED -- the RPU NAL units
+// stay in-band and VideoToolbox decodes the base layer as plain HEVC.
+// Profile 5 (IPT-PQ-C2, no standalone base layer), profile 7 (enhancement
+// layer), profile 8.0 (no compatible base) and every other mapping type are
+// refused.
+[[nodiscard]] bool dolbyVisionBaseLayerStandalone(
+    const BlockAdditionMapping& mapping) noexcept {
+  if ((mapping.type != kBlockAddIdTypeDvcC &&
+       mapping.type != kBlockAddIdTypeDvvC) ||
+      mapping.value ||
+      mapping.extraDataSize != BlockAdditionMapping::kRetainedExtraDataBytes) {
+    return false;
+  }
+  const auto octet = [&mapping](std::size_t index) {
+    return std::to_integer<std::uint8_t>(mapping.extraData[index]);
+  };
+  const std::uint8_t profile = octet(2) >> 1U;
+  const bool enhancementLayerPresent = ((octet(3) >> 1U) & 1U) != 0U;
+  const bool baseLayerPresent = (octet(3) & 1U) != 0U;
+  const std::uint8_t compatibility = octet(4) >> 4U;
+  return octet(0) == 1U && profile == 8U && baseLayerPresent &&
+         !enhancementLayerPresent &&
+         (compatibility == 1U || compatibility == 2U || compatibility == 4U);
+}
+
 [[nodiscard]] bool selectedTrackFeaturesSupported(
     const TrackEntry& track, bool allowCodecDelay = false) noexcept {
   return track.timestampScale == 1.0 && !track.timestampOffsetPresent &&
@@ -656,7 +694,38 @@ audioCodecAllowedInDocument(std::string_view codecId,
           (track.codecDelayNanoseconds == 0 &&
            track.seekPreRollNanoseconds == 0)) &&
          !track.contentEncodingsPresent && !track.trackOperationPresent &&
-         !track.blockAdditionMappingPresent;
+         (track.blockAdditionMappingCount == 0 ||
+          (track.blockAdditionMappingCount == 1 && track.video &&
+           track.blockAdditionMapping &&
+           dolbyVisionBaseLayerStandalone(*track.blockAdditionMapping)));
+}
+
+// A rectangular Projection whose only pose is a roll of an exact quarter turn
+// is the rotation a display matrix remuxes into (ffmpeg writes the MP4
+// matrix's angle as ProjectionPoseRoll). Roll is counter-clockwise positive;
+// rotationDegrees is clockwise. Spherical types, ProjectionPrivate, any yaw
+// or pitch, and a roll that is not exactly a quarter turn are refused.
+[[nodiscard]] std::optional<int> projectionQuarterTurn(
+    const std::optional<VideoProjection>& projection) noexcept {
+  if (!projection) {
+    return 0;
+  }
+  if (projection->type != 0 || projection->privatePresent ||
+      projection->poseYaw != 0.0 || projection->posePitch != 0.0) {
+    return std::nullopt;
+  }
+  struct Turn {
+    double roll;
+    int degrees;
+  };
+  constexpr Turn kTurns[]{
+      {0.0, 0}, {-90.0, 90}, {90.0, 270}, {180.0, 180}, {-180.0, 180}};
+  for (const Turn& turn : kTurns) {
+    if (projection->poseRoll == turn.roll) {
+      return turn.degrees;
+    }
+  }
+  return std::nullopt;
 }
 
 [[nodiscard]] MediaTrackKind inventoryKind(std::uint64_t type) noexcept {
@@ -956,9 +1025,11 @@ constexpr std::size_t kVp9KeyframeProbeClusters{4};
   // SEI, so the container's copy is a presence signal and never a payload we
   // re-carry. Re-carrying it would create a second copy that could only ever
   // disagree with the decoder's.
+  const std::optional<int> rotationDegrees =
+      projectionQuarterTurn(entry.video->projection);
   if ((entry.video->interlaced != 0 && entry.video->interlaced != 2) ||
       entry.video->stereoMode != 0 || entry.video->alphaMode != 0 ||
-      entry.video->projectionPresent) {
+      !rotationDegrees) {
     return false;
   }
   std::vector<std::byte> configuration;
@@ -1106,8 +1177,12 @@ constexpr std::size_t kVp9KeyframeProbeClusters{4};
   MediaVideoFormat format;
   format.codedWidth = facts.width;
   format.codedHeight = facts.height;
+  // Coded orientation, as on the MP4 route: mediaVideoDisplaySize() is the
+  // one place the quarter turn transposes the rectangle.
   format.displayWidth = facts.width;
   format.displayHeight = facts.height;
+  format.rotationDegrees = static_cast<std::int16_t>(*rotationDegrees);
+  format.identityTransform = *rotationDegrees == 0;
   format.bitsPerComponent = facts.bitDepth;
   format.progressive = true;
   format.sampleFormat = facts.sampleFormat;
@@ -2294,12 +2369,12 @@ void fillAudioDescriptor(const TrackEntry& entry, MediaTrackId id,
   }
   const std::uint32_t sampleRate = admission.configuration->sampleRate;
 
-  // AAC's encoder priming is exactly one access unit and nothing else. FFmpeg
-  // states 21,333,333 ns on a 48 kHz track, which is 1024 frames; a track that
-  // was copied rather than encoded states nothing at all. Any OTHER value
-  // describes priming this path cannot prove, so it falls back rather than
-  // being trimmed on a derivation -- the same discipline as the Opus
-  // CodecDelay == preSkip identity.
+  // AAC's CodecDelay is the encoder's priming, and it is honoured as an exact
+  // head trim whenever it is a whole number of frames: 1024 (ffmpeg's native
+  // encoder), 2048 (FDK) and 2112 (Apple, hence every iPhone capture) are all
+  // real. A value that is not a rounded frame count, or one past the ceiling,
+  // is priming this path cannot prove and falls back -- the same discipline
+  // as the Opus CodecDelay == preSkip identity.
   //
   // AudioToolbox's AAC decoder swallows NOTHING of its own (measured: a
   // 283-packet track decodes to exactly 283 * 1024 frames), so the head trim
@@ -2311,10 +2386,8 @@ void fillAudioDescriptor(const TrackEntry& entry, MediaTrackId id,
   }
   const auto codecDelayFrames = matroskaFramesFromNanoseconds(
       static_cast<std::int64_t>(entry.codecDelayNanoseconds), sampleRate,
-      kAacLcSamplesPerAccessUnit);
-  if (!codecDelayFrames ||
-      (*codecDelayFrames != 0U &&
-       *codecDelayFrames != kAacLcSamplesPerAccessUnit)) {
+      kAacLcMaximumCodecDelayFrames);
+  if (!codecDelayFrames) {
     return false;
   }
 

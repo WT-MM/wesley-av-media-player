@@ -94,6 +94,16 @@ constexpr std::uint32_t kDisplayWidthId{0x54B0};
 constexpr std::uint32_t kDisplayHeightId{0x54BA};
 constexpr std::uint32_t kDisplayUnitId{0x54B2};
 constexpr std::uint32_t kColourId{0x55B0};
+constexpr std::uint32_t kProjectionId{0x7670};
+constexpr std::uint32_t kProjectionTypeId{0x7671};
+constexpr std::uint32_t kProjectionPrivateId{0x7672};
+constexpr std::uint32_t kProjectionPoseYawId{0x7673};
+constexpr std::uint32_t kProjectionPosePitchId{0x7674};
+constexpr std::uint32_t kProjectionPoseRollId{0x7675};
+constexpr std::uint32_t kBlockAdditionMappingId{0x41E4};
+constexpr std::uint32_t kBlockAddIdValueId{0x41F0};
+constexpr std::uint32_t kBlockAddIdTypeId{0x41E7};
+constexpr std::uint32_t kBlockAddIdExtraDataId{0x41ED};
 constexpr std::uint32_t kMaxCllId{0x55BC};
 constexpr std::uint32_t kMaxFallId{0x55BD};
 constexpr std::uint32_t kMasteringMetadataId{0x55D0};
@@ -231,6 +241,17 @@ Bytes doubleElement(std::uint32_t id, double value) {
   const auto bits = std::bit_cast<std::uint64_t>(value);
   Bytes payload;
   for (unsigned index = 8; index > 0; --index) {
+    payload.push_back(
+        static_cast<std::byte>((bits >> ((index - 1U) * 8U)) & 0xFFU));
+  }
+  return element(id, payload);
+}
+
+// The four-byte float ffmpeg writes for every Projection pose angle.
+Bytes floatElement(std::uint32_t id, float value) {
+  const auto bits = std::bit_cast<std::uint32_t>(value);
+  Bytes payload;
+  for (unsigned index = 4; index > 0; --index) {
     payload.push_back(
         static_cast<std::byte>((bits >> ((index - 1U) * 8U)) & 0xFFU));
   }
@@ -645,6 +666,24 @@ struct FixtureSpec {
   bool videoMasteringMetadata{false};
   std::optional<std::uint64_t> videoMaxCll;
   std::optional<std::uint64_t> videoMaxFall;
+  // The Projection element ffmpeg writes from an MP4 display matrix: type 0
+  // and a single ProjectionPoseRoll. Yaw/pitch/private reach the other shapes.
+  struct Projection {
+    std::uint64_t type{0};
+    float yaw{0.0F};
+    float pitch{0.0F};
+    float roll{0.0F};
+    bool privateData{false};
+  };
+  std::optional<Projection> videoProjection;
+  // One BlockAdditionMapping on the video track: BlockAddIDType and the
+  // BlockAddIDExtraData payload, plus an optional BlockAddIDValue.
+  struct BlockAdditionMapping {
+    std::uint64_t type{0};
+    Bytes extraData;
+    std::optional<std::uint64_t> value;
+  };
+  std::optional<BlockAdditionMapping> videoBlockAdditionMapping;
   double audioSamplingFrequency{static_cast<double>(kAudioSampleRate)};
   std::uint64_t audioChannels{2};
   std::optional<std::uint64_t> audioBitDepth;
@@ -738,12 +777,47 @@ Bytes videoTrackEntry(const FixtureSpec& spec) {
     }
     append(videoPayload, element(kColourId, colourPayload));
   }
+  if (spec.videoProjection) {
+    Bytes projectionPayload;
+    if (spec.videoProjection->type != 0) {
+      append(projectionPayload,
+             uintElement(kProjectionTypeId, spec.videoProjection->type));
+    }
+    if (spec.videoProjection->privateData) {
+      append(projectionPayload,
+             element(kProjectionPrivateId, Bytes{std::byte{0}}));
+    }
+    if (spec.videoProjection->yaw != 0.0F) {
+      append(projectionPayload,
+             floatElement(kProjectionPoseYawId, spec.videoProjection->yaw));
+    }
+    if (spec.videoProjection->pitch != 0.0F) {
+      append(projectionPayload,
+             floatElement(kProjectionPosePitchId, spec.videoProjection->pitch));
+    }
+    append(projectionPayload,
+           floatElement(kProjectionPoseRollId, spec.videoProjection->roll));
+    append(videoPayload, element(kProjectionId, projectionPayload));
+  }
 
   Bytes payload;
   append(payload, uintElement(kTrackNumberId, spec.videoTrackNumber));
   append(payload, uintElement(kTrackUidId, 0xAB11));
   append(payload, uintElement(kTrackTypeId, 1));
   append(payload, uintElement(kFlagLacingId, 0));
+  if (spec.videoBlockAdditionMapping) {
+    Bytes mappingPayload;
+    if (spec.videoBlockAdditionMapping->value) {
+      append(mappingPayload,
+             uintElement(kBlockAddIdValueId,
+                         *spec.videoBlockAdditionMapping->value));
+    }
+    append(mappingPayload,
+           uintElement(kBlockAddIdTypeId, spec.videoBlockAdditionMapping->type));
+    append(mappingPayload, element(kBlockAddIdExtraDataId,
+                                   spec.videoBlockAdditionMapping->extraData));
+    append(payload, element(kBlockAdditionMappingId, mappingPayload));
+  }
   if (spec.videoDefaultDuration) {
     append(payload, uintElement(kDefaultDurationId,
                                 kVideoDefaultDurationNanoseconds));
@@ -2219,15 +2293,47 @@ void testCodecAdmissionAndSelection() {
            "admitted");
   }
   {
-    // Any OTHER value is priming this path cannot prove, so the distrust the
-    // historic rule expressed is kept exactly where it is still earned.
-    // 6,500,000 ns is 312 frames at 48 kHz -- an Opus pre-skip, not an AAC
-    // access unit.
+    // The iPhone shape: Apple's AAC encoder primes 2112 frames, which is not
+    // a whole access unit, and ffmpeg copies it into CodecDelay as
+    // 44,000,000 ns at 48 kHz. It is a whole number of frames, so it is an
+    // exact head trim and is admitted; the derived origin and grid offset
+    // are the proof that the trim is the WHOLE delay.
     FixtureSpec spec;
-    spec.audioCodecDelayNanoseconds = 6'500'000;
+    spec.audioCodecDelayNanoseconds = 44'000'000;
+    const PreparedFixture prepared = prepareFixture(spec);
+    expect(prepared.outcome.status == MatroskaDemuxStatus::Ready &&
+               prepared.outcome.asset != nullptr,
+           "an AAC track whose CodecDelay is 2112 frames (Apple priming) is "
+           "admitted");
+    if (prepared.outcome.asset != nullptr) {
+      const MatroskaPlanOutcome planned = prepared.asset().planGeneration(
+          MediaTime{0, 1}, MediaSeekMode::Accurate);
+      const MediaTime start =
+          planned.plan ? planned.plan->audioWindow.decodeStart : MediaTime{};
+      expect(planned.plan.has_value() && start.valid() &&
+                 static_cast<std::int64_t>(start.value) * 48'000 ==
+                     -2112 * static_cast<std::int64_t>(start.timescale),
+             "the 2112-frame delay becomes the audio window's exact negative "
+             "decode start, -2112/48000");
+    }
+  }
+  {
+    // A value that is not a rounded whole frame count is priming this path
+    // cannot prove, so the historic distrust is kept exactly where it is
+    // still earned. 6,505,000 ns is 312.24 frames at 48 kHz.
+    FixtureSpec spec;
+    spec.audioCodecDelayNanoseconds = 6'505'000;
     expectPrepareError(
         spec, MatroskaDemuxError::CodecConfiguration,
-        "an AAC CodecDelay that is not one whole access unit still falls back");
+        "an AAC CodecDelay that is not a whole number of frames falls back");
+  }
+  {
+    // Past the ceiling: 9 access units at 48 kHz.
+    FixtureSpec spec;
+    spec.audioCodecDelayNanoseconds = 192'000'000;
+    expectPrepareError(spec, MatroskaDemuxError::CodecConfiguration,
+                       "an AAC CodecDelay past the head-trim ceiling falls "
+                       "back");
   }
   {
     // A_AC3, A_EAC3, A_FLAC and A_MPEG/L3 are now selectable CodecIDs, so a
@@ -4540,6 +4646,202 @@ void testHdrMetadataPresenceIsModelledNotRefused() {
   }
 }
 
+// THE REMUXED PORTRAIT CAPTURE. ffmpeg writes an MP4 display matrix into a
+// Matroska Projection as a bare ProjectionPoseRoll (type 0, no yaw/pitch),
+// -90 for every iPhone/Sony portrait clip. That is the same quarter turn the
+// MP4 route carries on rotationDegrees, and the picture must reach the layer
+// upright; everything that is not that one shape stays refused.
+void testProjectionQuarterTurn() {
+  struct Rotation {
+    std::int16_t degrees{0};
+    bool identity{true};
+    std::uint32_t displayWidth{0};
+    std::uint32_t displayHeight{0};
+  };
+  const auto rotationOf =
+      [](const FixtureSpec& spec) -> std::optional<Rotation> {
+    const PreparedFixture prepared = prepareFixture(spec);
+    if (prepared.outcome.asset == nullptr) {
+      return std::nullopt;
+    }
+    const auto descriptor = prepared.outcome.asset->descriptor();
+    const auto* video = descriptor != nullptr
+                            ? wam::media::findMediaTrack(*descriptor, 1)
+                            : nullptr;
+    if (video == nullptr || !video->video) {
+      return std::nullopt;
+    }
+    const auto size = wam::media::mediaVideoDisplaySize(*video->video);
+    return Rotation{video->video->rotationDegrees,
+                    video->video->identityTransform, size.width, size.height};
+  };
+  {
+    FixtureSpec spec;
+    spec.videoProjection = FixtureSpec::Projection{.roll = -90.0F};
+    const auto rotation = rotationOf(spec);
+    expect(rotation.has_value() && rotation->degrees == 90 &&
+               !rotation->identity &&
+               rotation->displayWidth == kSampleAvcHeight &&
+               rotation->displayHeight == kSampleAvcWidth,
+           "a rectangular Projection with roll -90 is the 90-degree clockwise "
+           "quarter turn, and the display rectangle is transposed");
+  }
+  {
+    FixtureSpec spec;
+    spec.videoProjection = FixtureSpec::Projection{.roll = 90.0F};
+    const auto rotation = rotationOf(spec);
+    expect(rotation.has_value() && rotation->degrees == 270 &&
+               !rotation->identity,
+           "roll +90 (counter-clockwise) is the 270-degree clockwise turn");
+  }
+  {
+    FixtureSpec spec;
+    spec.videoProjection = FixtureSpec::Projection{.roll = 180.0F};
+    const auto rotation = rotationOf(spec);
+    expect(rotation.has_value() && rotation->degrees == 180 &&
+               !rotation->identity &&
+               rotation->displayWidth == kSampleAvcWidth,
+           "roll 180 is the half turn and keeps the coded rectangle");
+  }
+  {
+    FixtureSpec spec;
+    spec.videoProjection = FixtureSpec::Projection{.roll = 0.0F};
+    const auto rotation = rotationOf(spec);
+    expect(rotation.has_value() && rotation->degrees == 0 &&
+               rotation->identity,
+           "a rectangular Projection with roll 0 is the identity");
+  }
+  {
+    FixtureSpec spec;
+    spec.videoProjection = FixtureSpec::Projection{.roll = -45.0F};
+    expectPrepareError(spec, MatroskaDemuxError::CodecConfiguration,
+                       "a roll that is not a quarter turn is refused");
+  }
+  {
+    FixtureSpec spec;
+    spec.videoProjection = FixtureSpec::Projection{.type = 1, .roll = -90.0F};
+    expectPrepareError(spec, MatroskaDemuxError::CodecConfiguration,
+                       "an equirectangular Projection is refused even with a "
+                       "quarter-turn roll");
+  }
+  {
+    FixtureSpec spec;
+    spec.videoProjection = FixtureSpec::Projection{.yaw = 90.0F};
+    expectPrepareError(spec, MatroskaDemuxError::CodecConfiguration,
+                       "a Projection with yaw is refused");
+  }
+  {
+    FixtureSpec spec;
+    spec.videoProjection =
+        FixtureSpec::Projection{.roll = -90.0F, .privateData = true};
+    expectPrepareError(spec, MatroskaDemuxError::CodecConfiguration,
+                       "a Projection carrying ProjectionPrivate is refused");
+  }
+}
+
+// THE REMUXED HDR iPHONE CAPTURE. ffmpeg copies the MP4's dvvC box into a
+// BlockAdditionMapping; the base layer is plain HEVC Main 10 (HLG) that
+// VideoToolbox decodes, so a profile-8 record with a cross-compatible base and
+// no enhancement layer is admitted and ignored. Records whose base layer is
+// not a standalone stream, and every other mapping, keep refusing.
+void testDolbyVisionMappingAdmission() {
+  constexpr std::uint64_t kDvvC{0x64767643};
+  constexpr std::uint64_t kDvcC{0x64766343};
+  // dv_version 1.0, then profile/level/flags and the compatibility id.
+  const auto record = [](std::uint8_t profile, std::uint8_t level,
+                         bool rpu, bool el, bool bl,
+                         std::uint8_t compatibility) {
+    Bytes bytes(24, std::byte{0});
+    bytes[0] = std::byte{1};
+    bytes[2] = static_cast<std::byte>((profile << 1U) | (level >> 5U));
+    bytes[3] = static_cast<std::byte>(((level & 0x1FU) << 3U) |
+                                      (rpu ? 4U : 0U) | (el ? 2U : 0U) |
+                                      (bl ? 1U : 0U));
+    bytes[4] = static_cast<std::byte>(compatibility << 4U);
+    return bytes;
+  };
+  const auto admitted = [](const FixtureSpec& spec) {
+    const PreparedFixture prepared = prepareFixture(spec);
+    return prepared.outcome.status == MatroskaDemuxStatus::Ready &&
+           prepared.outcome.asset != nullptr;
+  };
+  {
+    // Profile 8.4 (HLG base), the IMG_7267 / iPhone HDR shape.
+    FixtureSpec spec;
+    spec.videoBlockAdditionMapping = FixtureSpec::BlockAdditionMapping{
+        kDvvC, record(8, 4, true, false, true, 4)};
+    expect(admitted(spec),
+           "a dvvC profile 8.4 mapping (HLG cross-compatible base layer) is "
+           "admitted");
+  }
+  {
+    FixtureSpec spec;
+    spec.videoBlockAdditionMapping = FixtureSpec::BlockAdditionMapping{
+        kDvcC, record(8, 5, true, false, true, 1)};
+    expect(admitted(spec),
+           "a dvcC profile 8.1 mapping (HDR10 base layer) is admitted");
+  }
+  {
+    FixtureSpec spec;
+    spec.videoBlockAdditionMapping = FixtureSpec::BlockAdditionMapping{
+        kDvvC, record(5, 6, true, false, true, 0)};
+    expectPrepareError(spec, MatroskaDemuxError::CodecConfiguration,
+                       "profile 5 (no standalone base layer) is refused");
+  }
+  {
+    // The profile rule on its own: a profile-5 record that claims an HLG
+    // compatibility id is still refused, because profile 5's base layer is
+    // IPT-PQ-C2 whatever the id says.
+    FixtureSpec spec;
+    spec.videoBlockAdditionMapping = FixtureSpec::BlockAdditionMapping{
+        kDvvC, record(5, 6, true, false, true, 4)};
+    expectPrepareError(spec, MatroskaDemuxError::CodecConfiguration,
+                       "profile 5 is refused even with a compatibility id");
+  }
+  {
+    FixtureSpec spec;
+    spec.videoBlockAdditionMapping = FixtureSpec::BlockAdditionMapping{
+        kDvvC, record(7, 6, true, true, true, 6)};
+    expectPrepareError(spec, MatroskaDemuxError::CodecConfiguration,
+                       "profile 7 (enhancement layer present) is refused");
+  }
+  {
+    FixtureSpec spec;
+    spec.videoBlockAdditionMapping = FixtureSpec::BlockAdditionMapping{
+        kDvvC, record(8, 4, true, false, true, 0)};
+    expectPrepareError(spec, MatroskaDemuxError::CodecConfiguration,
+                       "profile 8 with compatibility id 0 is refused");
+  }
+  {
+    // The enhancement-layer rule on its own: an otherwise admissible
+    // profile-8 record that states an enhancement layer is refused, because
+    // the base layer alone is then not the picture the file describes.
+    FixtureSpec spec;
+    spec.videoBlockAdditionMapping = FixtureSpec::BlockAdditionMapping{
+        kDvvC, record(8, 4, true, true, true, 4)};
+    expectPrepareError(spec, MatroskaDemuxError::CodecConfiguration,
+                       "profile 8 with an enhancement layer is refused");
+  }
+  {
+    Bytes truncated = record(8, 4, true, false, true, 4);
+    truncated.pop_back();
+    FixtureSpec spec;
+    spec.videoBlockAdditionMapping =
+        FixtureSpec::BlockAdditionMapping{kDvvC, truncated};
+    expectPrepareError(spec, MatroskaDemuxError::CodecConfiguration,
+                       "a record that is not exactly 24 bytes is refused");
+  }
+  {
+    // BlockAddIDType 0 with a BlockAddIDValue is a per-Block addition
+    // (alpha, or an opaque extension), which no Block here may carry.
+    FixtureSpec spec;
+    spec.videoBlockAdditionMapping = FixtureSpec::BlockAdditionMapping{
+        0, record(8, 4, true, false, true, 4), 2};
+    expectPrepareError(spec, MatroskaDemuxError::CodecConfiguration,
+                       "a non-Dolby-Vision BlockAdditionMapping is refused");
+  }
+}
+
 // THE GSTREAMER VFR CASE.
 //
 // matroskamux writes neither BlockDuration nor DefaultDuration for a
@@ -4632,6 +4934,8 @@ int main() {
   testAdmittedPreparationDoesNotWalkClusterTails();
   testSubtitleCuesAreNotProvenAtOpen();
   testVideoDisplayGeometry();
+  testProjectionQuarterTurn();
+  testDolbyVisionMappingAdmission();
   testMultichannelAacAdmitted();
   testInadmissibleAacRefusedBeforeClusterScan();
   testPreparationRequestValidation();

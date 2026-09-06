@@ -146,12 +146,14 @@ struct MatroskaMediaSource::Impl final
     }
     // Video timing is always nonnegative. Audio is not: Matroska stores an
     // audio Block's timestamp on the codec grid and states CodecDelay
-    // separately, so the first access unit of an Opus track legitimately
-    // presents before media time zero. The demuxer bounds that lead-in at
-    // admission (the pre-skip ceiling) and the window's decodeStart names it
-    // exactly, so the negative window is proved rather than tolerated: it must
-    // be exactly the planned decode start, which the check below enforces for
-    // the first staged unit and ordinal continuity enforces thereafter.
+    // separately, so the leading access units of an Opus or AAC track
+    // legitimately present before media time zero -- more than one of them
+    // when the delay exceeds an access unit (Apple AAC primes 2112 frames).
+    // The demuxer bounds that lead-in at admission and the window's
+    // decodeStart names its start exactly, so the negative window is proved
+    // rather than tolerated: no unit may precede the planned decode start,
+    // stateAudioWindow requires the first staged unit to BE it, and ordinal
+    // continuity covers the rest.
     const bool negativeStartAllowed =
         !video && audioDecodeStart.valid() && audioDecodeStart.value < 0;
     if (!raw.presentationTime.valid() ||
@@ -161,8 +163,8 @@ struct MatroskaMediaSource::Impl final
       return std::nullopt;
     }
     if (raw.presentationTime.value < 0 &&
-        media::compareMediaTime(raw.presentationTime, audioDecodeStart) !=
-            MediaTimeOrder::Equal) {
+        media::compareMediaTime(raw.presentationTime, audioDecodeStart) ==
+            MediaTimeOrder::Less) {
       assignError(error,
                   "matroska audio access unit precedes its planned window");
       return std::nullopt;

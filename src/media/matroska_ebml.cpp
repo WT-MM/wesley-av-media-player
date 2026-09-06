@@ -51,6 +51,10 @@ constexpr std::uint32_t kTrackOffset{0x537F};
 constexpr std::uint32_t kTrackOperation{0xE2};
 constexpr std::uint32_t kContentEncodings{0x6D80};
 constexpr std::uint32_t kBlockAdditionMapping{0x41E4};
+constexpr std::uint32_t kBlockAddIdValue{0x41F0};
+constexpr std::uint32_t kBlockAddIdName{0x41A4};
+constexpr std::uint32_t kBlockAddIdType{0x41E7};
+constexpr std::uint32_t kBlockAddIdExtraData{0x41ED};
 constexpr std::uint32_t kVideo{0xE0};
 constexpr std::uint32_t kAudio{0xE1};
 constexpr std::uint32_t kFlagInterlaced{0x9A};
@@ -69,6 +73,11 @@ constexpr std::uint32_t kDisplayHeight{0x54BA};
 constexpr std::uint32_t kDisplayUnit{0x54B2};
 constexpr std::uint32_t kColour{0x55B0};
 constexpr std::uint32_t kProjection{0x7670};
+constexpr std::uint32_t kProjectionType{0x7671};
+constexpr std::uint32_t kProjectionPrivate{0x7672};
+constexpr std::uint32_t kProjectionPoseYaw{0x7673};
+constexpr std::uint32_t kProjectionPosePitch{0x7674};
+constexpr std::uint32_t kProjectionPoseRoll{0x7675};
 constexpr std::uint32_t kMatrixCoefficients{0x55B1};
 constexpr std::uint32_t kBitsPerChannel{0x55B2};
 constexpr std::uint32_t kChromaSubsamplingHorz{0x55B3};
@@ -1073,6 +1082,12 @@ class Parser final {
   [[nodiscard]] bool parseColour(const ElementHeader& header,
                                  VideoColour& colour,
                                  std::uint8_t depth) noexcept;
+  [[nodiscard]] bool parseProjection(const ElementHeader& header,
+                                     VideoProjection& projection,
+                                     std::uint8_t depth) noexcept;
+  [[nodiscard]] bool parseBlockAdditionMapping(const ElementHeader& header,
+                                               BlockAdditionMapping& mapping,
+                                               std::uint8_t depth) noexcept;
   [[nodiscard]] bool parseAudio(const ElementHeader& header, Audio& audio,
                                 std::uint8_t depth) noexcept;
   [[nodiscard]] bool parseCluster(const ElementHeader& header,
@@ -1916,7 +1931,10 @@ bool Parser::parseVideo(const ElementHeader& header, Video& video,
         break;
       case kProjection:
         identity = Projection;
-        video.projectionPresent = true;
+        video.projection.emplace();
+        if (!parseProjection(field, *video.projection, depth + 1)) {
+          return false;
+        }
         break;
       default:
         break;
@@ -1953,6 +1971,120 @@ bool Parser::parseVideo(const ElementHeader& header, Video& video,
   if ((video.displayWidth && *video.displayWidth == 0) ||
       (video.displayHeight && *video.displayHeight == 0)) {
     return access_.fail(ParseError::InvalidValue, header.data.offset);
+  }
+  return true;
+}
+
+bool Parser::parseProjection(const ElementHeader& header,
+                             VideoProjection& projection,
+                             std::uint8_t depth) noexcept {
+  if (!knownSize(header)) {
+    return false;
+  }
+  enum Field : std::size_t { Type, Private, Yaw, Pitch, Roll, Count };
+  std::array<bool, Count> seen{};
+  auto position = header.data.offset;
+  const auto end = rangeEnd(header.data);
+  while (position < end) {
+    ElementHeader field;
+    if (!child(position, end, depth + 1, field) || !knownSize(field)) {
+      return false;
+    }
+    Field identity = Count;
+    switch (field.id) {
+      case kProjectionType:
+        identity = Type;
+        if (!readUnsigned(field, projection.type)) return false;
+        break;
+      case kProjectionPrivate:
+        identity = Private;
+        projection.privatePresent = true;
+        break;
+      case kProjectionPoseYaw:
+        identity = Yaw;
+        if (!readFloat(field, projection.poseYaw)) return false;
+        break;
+      case kProjectionPosePitch:
+        identity = Pitch;
+        if (!readFloat(field, projection.posePitch)) return false;
+        break;
+      case kProjectionPoseRoll:
+        identity = Roll;
+        if (!readFloat(field, projection.poseRoll)) return false;
+        break;
+      default:
+        break;
+    }
+    if (identity != Count) {
+      if (seen[identity]) {
+        return access_.fail(ParseError::DuplicateElement,
+                            field.encoded.offset);
+      }
+      seen[identity] = true;
+    }
+    position = rangeEnd(field.encoded);
+  }
+  if (projection.type > 3) {
+    return access_.fail(ParseError::InvalidValue, header.data.offset);
+  }
+  return true;
+}
+
+bool Parser::parseBlockAdditionMapping(const ElementHeader& header,
+                                       BlockAdditionMapping& mapping,
+                                       std::uint8_t depth) noexcept {
+  if (!knownSize(header)) {
+    return false;
+  }
+  enum Field : std::size_t { Value, Name, Type, ExtraData, Count };
+  std::array<bool, Count> seen{};
+  auto position = header.data.offset;
+  const auto end = rangeEnd(header.data);
+  while (position < end) {
+    ElementHeader field;
+    if (!child(position, end, depth + 1, field) || !knownSize(field)) {
+      return false;
+    }
+    Field identity = Count;
+    switch (field.id) {
+      case kBlockAddIdValue: {
+        identity = Value;
+        std::uint64_t value = 0;
+        if (!readUnsigned(field, value)) return false;
+        mapping.value = value;
+        break;
+      }
+      case kBlockAddIdName:
+        identity = Name;
+        break;
+      case kBlockAddIdType:
+        identity = Type;
+        if (!readUnsigned(field, mapping.type)) return false;
+        break;
+      case kBlockAddIdExtraData: {
+        identity = ExtraData;
+        mapping.extraDataSize = field.data.size;
+        const auto retained = static_cast<std::size_t>(std::min<std::uint64_t>(
+            field.data.size, mapping.extraData.size()));
+        if (retained != 0 &&
+            !access_.copyExact(field.data.offset,
+                               std::span<std::byte>(mapping.extraData.data(),
+                                                    retained))) {
+          return false;
+        }
+        break;
+      }
+      default:
+        break;
+    }
+    if (identity != Count) {
+      if (seen[identity]) {
+        return access_.fail(ParseError::DuplicateElement,
+                            field.encoded.offset);
+      }
+      seen[identity] = true;
+    }
+    position = rangeEnd(field.encoded);
   }
   return true;
 }
@@ -2166,7 +2298,17 @@ bool Parser::parseTrackEntry(const ElementHeader& header,
         track.contentEncodingsPresent = true;
         break;
       case kBlockAdditionMapping:
-        track.blockAdditionMappingPresent = true;
+        if (track.blockAdditionMappingCount !=
+            std::numeric_limits<std::uint8_t>::max()) {
+          ++track.blockAdditionMappingCount;
+        }
+        if (!track.blockAdditionMapping) {
+          track.blockAdditionMapping.emplace();
+          if (!parseBlockAdditionMapping(field, *track.blockAdditionMapping,
+                                         depth + 1)) {
+            return false;
+          }
+        }
         break;
       default:
         break;
