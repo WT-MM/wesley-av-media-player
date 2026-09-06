@@ -1500,6 +1500,11 @@ void NativePlaybackOwner::consumeLifecycle(
             controller_.updateMediaTitle(
                 QFileInfo(record->url.toLocalFile()).fileName());
           }
+          // Before the duration: durationChanged may issue the resume seek,
+          // and that target must already be snapped under the ceiling.
+          controller_.updateNativeSeekCeiling(
+              nativeSession_ != nullptr ? nativeSession_->seekCeilingSeconds()
+                                        : 0.0);
           controller_.updateDuration(event.descriptor.durationSeconds);
           // The container's own display geometry, from the backend that
           // actually demuxed it. This is the only path by which a Matroska,
@@ -1796,6 +1801,7 @@ void NativePlaybackOwner::clearNativeSession() noexcept {
   clearNativePreview();
   clearNativeCommit(true);
   nativeSession_.reset();
+  controller_.updateNativeSeekCeiling(0.0);
   observationBridge_.reset();
   lastAudioProofSerial_ = 0;
   lastVideoDrawSequence_ = 0;

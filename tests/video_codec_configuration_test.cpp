@@ -506,6 +506,7 @@ struct HevcSpsSpec {
   std::uint8_t depthMinusEight{0};
   std::int32_t initQpMinus26{0};
   ColorSpec color{};
+  bool temporalIdNested{true};
 };
 
 [[nodiscard]] std::vector<std::uint8_t> makeHevcSps(const HevcSpsSpec &spec) {
@@ -513,7 +514,7 @@ struct HevcSpsSpec {
   BitWriter bits;
   bits.bits(0U, 4U); // sps_video_parameter_set_id
   bits.bits(0U, 3U); // sps_max_sub_layers_minus1
-  bits.bit(true);
+  bits.bit(spec.temporalIdNested); // sps_temporal_id_nesting_flag
   writeHevcProfileTierLevel(bits, profile);
   bits.unsignedExpGolomb(spec.id);
   bits.unsignedExpGolomb(spec.chromaFormat);
@@ -1209,11 +1210,48 @@ void testHevcRejections() {
               VideoCodecConfigurationError::ParameterSetMismatch,
               "HEVC hvcC, VPS, and SPS PTL must match");
 
-  auto temporalMismatch = valid;
-  temporalMismatch[21] &= 0xFBU;
-  expectError(inspectHevc(temporalMismatch),
+  // Byte 21's temporal fields are claims about the SPS that ISO/IEC 14496-15
+  // lets a muxer decline to make (numTemporalLayers 0 = unknown,
+  // temporalIdNested 0 = may not be met). A declined claim is admitted; a
+  // positive claim the parameter sets contradict is a mismatch. Apple and
+  // Sony muxers write temporalIdNested 0 over a nested SPS on every real
+  // record, and Apple's HLG muxer writes numTemporalLayers 0.
+  auto nestingDeclined = valid;
+  nestingDeclined[21] &= 0xFBU;
+  expect(inspectHevc(nestingDeclined).admitted(),
+         "HEVC hvcC temporalIdNested 0 over a nested SPS is admitted");
+
+  auto layersUnknown = valid;
+  layersUnknown[21] &= 0xC7U;
+  expect(inspectHevc(layersUnknown).admitted(),
+         "HEVC hvcC numTemporalLayers 0 (unknown) is admitted");
+
+  auto layersOverstated = valid;
+  layersOverstated[21] = static_cast<std::uint8_t>((valid[21] & 0xC7U) | 0x10U);
+  expectError(inspectHevc(layersOverstated),
               VideoCodecConfigurationError::ParameterSetMismatch,
-              "HEVC hvcC temporal nesting must match VPS and SPS");
+              "HEVC hvcC may not assert more temporal layers than the SPS");
+
+  const std::array unnestedSpec{HevcSpsSpec{.temporalIdNested = false}};
+  expectError(inspectHevc(makeHvcC(unnestedSpec)),
+              VideoCodecConfigurationError::ParameterSetMismatch,
+              "HEVC hvcC may not assert nesting the SPS does not state");
+  auto unnestedDeclined = makeHvcC(unnestedSpec);
+  unnestedDeclined[21] &= 0xFBU;
+  expect(inspectHevc(unnestedDeclined).admitted(),
+         "HEVC hvcC temporalIdNested 0 over an unnested SPS is admitted");
+  // vps_temporal_id_nesting_flag is bit 0 of the VPS's second RBSP byte
+  // (after the two-byte NAL header, so byte 3 of the NAL).
+  auto vpsUnnested = valid;
+  if (vpsArray) {
+    vpsUnnested[*vpsArray + 8U] &= 0xFEU;
+    expectError(inspectHevc(vpsUnnested),
+                VideoCodecConfigurationError::ParameterSetMismatch,
+                "HEVC hvcC may not assert nesting the VPS does not state");
+    vpsUnnested[21] &= 0xFBU;
+    expect(inspectHevc(vpsUnnested).admitted(),
+           "HEVC hvcC temporalIdNested 0 over an unnested VPS is admitted");
+  }
 
   auto wrongNal = valid;
   if (spsArray) {
