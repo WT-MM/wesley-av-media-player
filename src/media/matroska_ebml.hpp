@@ -342,6 +342,16 @@ struct VideoColour {
   bool masteringMetadataPresent{false};
 };
 
+// ProjectionType 0 is rectangular; 1-3 are equirectangular, cubemap and mesh.
+// Pose angles are degrees; roll is counter-clockwise positive (RFC 9559).
+struct VideoProjection {
+  std::uint64_t type{0};
+  bool privatePresent{false};
+  double poseYaw{0.0};
+  double posePitch{0.0};
+  double poseRoll{0.0};
+};
+
 struct Video {
   std::optional<std::uint64_t> pixelWidth;
   std::optional<std::uint64_t> pixelHeight;
@@ -357,7 +367,20 @@ struct Video {
   std::uint64_t stereoMode{0};
   std::uint64_t alphaMode{0};
   VideoColour colour;
-  bool projectionPresent{false};
+  std::optional<VideoProjection> projection;
+};
+
+// The first BlockAdditionMapping of a track. Only the leading bytes of
+// BlockAddIDExtraData are retained: the one record this player interprets
+// (a Dolby Vision configuration) is exactly kRetainedExtraDataBytes long, and
+// extraDataSize keeps the true length so a longer payload is never mistaken
+// for one.
+struct BlockAdditionMapping {
+  static constexpr std::size_t kRetainedExtraDataBytes{24};
+  std::uint64_t type{0};
+  std::optional<std::uint64_t> value;
+  std::uint64_t extraDataSize{0};
+  std::array<std::byte, kRetainedExtraDataBytes> extraData{};
 };
 
 struct Audio {
@@ -400,7 +423,9 @@ struct TrackEntry {
   std::optional<Audio> audio;
   bool contentEncodingsPresent{false};
   bool trackOperationPresent{false};
-  bool blockAdditionMappingPresent{false};
+  // Saturating count of every BlockAdditionMapping; the first is retained.
+  std::uint8_t blockAdditionMappingCount{0};
+  std::optional<BlockAdditionMapping> blockAdditionMapping;
 };
 
 struct Cluster {
