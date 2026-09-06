@@ -1,4 +1,5 @@
 #include "platform/macos/video_toolbox_decoder.hpp"
+#include "platform/macos/native_video_callback_audit.hpp"
 #include "platform/macos/native_video_limits.hpp"
 
 #import <AVFoundation/AVFoundation.h>
@@ -13,6 +14,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <barrier>
 #include <chrono>
 #include <condition_variable>
 #include <cstddef>
@@ -29,6 +31,17 @@
 #include <thread>
 #include <utility>
 #include <vector>
+
+void* operator new(std::size_t bytes) {
+  if (wam::macos::activeVideoCallbackAudit != nullptr) {
+    ++wam::macos::activeVideoCallbackAudit->allocations;
+  }
+  if (void* result = std::malloc(bytes == 0 ? 1 : bytes)) return result;
+  throw std::bad_alloc();
+}
+void* operator new[](std::size_t bytes) { return ::operator new(bytes); }
+void operator delete(void* pointer) noexcept { std::free(pointer); }
+void operator delete[](void* pointer) noexcept { std::free(pointer); }
 
 namespace {
 
@@ -1231,7 +1244,6 @@ void testPersistentCallbackTailBlocksClose() {
       error);
 
   std::atomic<bool> callbackReturned{false};
-  std::atomic<bool> closeEntered{false};
   std::atomic<bool> closeReturned{false};
   std::thread callback([&] {
     std::string callbackError;
@@ -1250,24 +1262,33 @@ void testPersistentCallbackTailBlocksClose() {
   WAM_CHECK(active.activeCallbacks == 1);
   WAM_CHECK(active.available == 1);
 
+  struct ReadinessProbe {
+    BlockingProgressProbe gate;
+    bool observed{false};
+  } readiness;
+  wam::macos::VideoToolboxDecoderTestAccess::setTeardownReadiness(
+      decoder, [](void* context, bool complete) noexcept {
+        auto& probeState = *static_cast<ReadinessProbe*>(context);
+        if (!probeState.observed) {
+          WAM_CHECK(!complete);
+          probeState.observed = true;
+          const auto handler = probeState.gate.handler();
+          handler.function(handler.context);
+        }
+      }, &readiness);
   std::thread closer([&] {
-    closeEntered.store(true, std::memory_order_release);
     decoder.close();
     closeReturned.store(true, std::memory_order_release);
   });
-  const auto closeDeadline =
-      std::chrono::steady_clock::now() + std::chrono::seconds(5);
-  while (!closeEntered.load(std::memory_order_acquire) &&
-         std::chrono::steady_clock::now() < closeDeadline) {
-    std::this_thread::yield();
-  }
-  WAM_CHECK(closeEntered.load(std::memory_order_acquire));
-  std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  WAM_CHECK(readiness.gate.waitUntilEntered());
   WAM_CHECK(!callbackReturned.load(std::memory_order_acquire));
   WAM_CHECK(!closeReturned.load(std::memory_order_acquire));
   probe.release();
+  readiness.gate.release();
   callback.join();
   closer.join();
+  wam::macos::VideoToolboxDecoderTestAccess::setTeardownReadiness(
+      decoder, nullptr, nullptr);
   WAM_CHECK(callbackReturned.load(std::memory_order_acquire));
   WAM_CHECK(closeReturned.load(std::memory_order_acquire));
   const auto closed =
@@ -1357,9 +1378,7 @@ void testEventDrivenDecoderProgressWake() {
   using wam::macos::VideoToolboxDecoderTestAccess;
   using wam::macos::kNativeSurfaceBudgetProcessMaximumSurfaces;
 
-  // A no-frame completion is an ordered tombstone. Its callback must publish
-  // the 2 -> 1 admission-credit transition before signalling the owner, and
-  // the signal must run after both callback-owned locks have been released.
+  // Publication wakes the owner without retiring its ordered admission credit.
   {
     constexpr std::uint64_t generation = 81;
     ProgressWakeProbe probe;
@@ -1384,7 +1403,7 @@ void testEventDrivenDecoderProgressWake() {
                          kVTDecodeInfo_FrameDropped, &error),
                      error);
     WAM_CHECK(probe.calls.load(std::memory_order_acquire) == 1);
-    WAM_CHECK(probe.lastInFlight.load(std::memory_order_acquire) == 1);
+    WAM_CHECK(probe.lastInFlight.load(std::memory_order_acquire) == 2);
     WAM_CHECK(probe.callbackLocksWereAvailable.load(
         std::memory_order_acquire));
     WAM_CHECK(decoder.stats().inFlightFrames == 1);
@@ -1396,7 +1415,7 @@ void testEventDrivenDecoderProgressWake() {
                          kVTDecodeInfo_FrameDropped, &error),
                      error);
     WAM_CHECK(probe.calls.load(std::memory_order_acquire) == 2);
-    WAM_CHECK(probe.lastInFlight.load(std::memory_order_acquire) == 0);
+    WAM_CHECK(probe.lastInFlight.load(std::memory_order_acquire) == 1);
     decoder.close();
   }
 
@@ -1429,7 +1448,7 @@ void testEventDrivenDecoderProgressWake() {
                      error);
     CVPixelBufferRelease(surface);
     WAM_CHECK(probe.calls.load(std::memory_order_acquire) == 1);
-    WAM_CHECK(probe.lastInFlight.load(std::memory_order_acquire) == 0);
+    WAM_CHECK(probe.lastInFlight.load(std::memory_order_acquire) == 1);
     WAM_CHECK(probe.callbackLocksWereAvailable.load(
         std::memory_order_acquire));
     WAM_CHECK(decoder.drainPresentation(generation, &error) ==
@@ -1438,8 +1457,7 @@ void testEventDrivenDecoderProgressWake() {
     decoder.close();
   }
 
-  // The callback's allocation-failure fail-closed path must also retire its
-  // sequence and wake exactly after the error and credit are observable.
+  // Owner collection failures retire the published sequence exactly once.
   {
     constexpr std::uint64_t generation = 88;
     ProgressWakeProbe probe;
@@ -1466,7 +1484,7 @@ void testEventDrivenDecoderProgressWake() {
                          decoder, 0, nullptr, timing, noErr, 0, &error),
                      error);
     WAM_CHECK(probe.calls.load(std::memory_order_acquire) == 1);
-    WAM_CHECK(probe.lastInFlight.load(std::memory_order_acquire) == 0);
+    WAM_CHECK(probe.lastInFlight.load(std::memory_order_acquire) == 1);
     WAM_CHECK(probe.callbackLocksWereAvailable.load(
         std::memory_order_acquire));
     WAM_CHECK(decoder.stats().inFlightFrames == 0);
@@ -1506,7 +1524,7 @@ void testEventDrivenDecoderProgressWake() {
                          decoder, 0, nullptr, staleTiming, noErr, 0, &error),
                      error);
     WAM_CHECK(probe.calls.load(std::memory_order_acquire) == 2);
-    WAM_CHECK(probe.lastInFlight.load(std::memory_order_acquire) == 0);
+    WAM_CHECK(probe.lastInFlight.load(std::memory_order_acquire) == 1);
     WAM_CHECK(probe.callbackLocksWereAvailable.load(
         std::memory_order_acquire));
     WAM_CHECK(decoder.stats().droppedFrames == 1);
@@ -1547,7 +1565,7 @@ void testEventDrivenDecoderProgressWake() {
       CVPixelBufferRelease(mismatchedSurface);
     }
     WAM_CHECK(probe.calls.load(std::memory_order_acquire) == 1);
-    WAM_CHECK(probe.lastInFlight.load(std::memory_order_acquire) == 0);
+    WAM_CHECK(probe.lastInFlight.load(std::memory_order_acquire) == 1);
     WAM_CHECK(probe.callbackLocksWereAvailable.load(
         std::memory_order_acquire));
     WAM_CHECK(decoder.stats().inFlightFrames == 0);
@@ -1601,7 +1619,7 @@ void testEventDrivenDecoderProgressWake() {
                      error);
     CVPixelBufferRelease(deniedSurface);
     WAM_CHECK(probe.calls.load(std::memory_order_acquire) == 1);
-    WAM_CHECK(probe.lastInFlight.load(std::memory_order_acquire) == 0);
+    WAM_CHECK(probe.lastInFlight.load(std::memory_order_acquire) == 1);
     WAM_CHECK(probe.callbackLocksWereAvailable.load(
         std::memory_order_acquire));
     WAM_CHECK(decoder.stats().surfaceBudgetRejections == 1);
@@ -3666,7 +3684,205 @@ void testUnpinnedDisplayLayerAdmitsFullRangeDecodedSurfaces() {
                     VideoToolboxOutputInterop::Metal));
 }
 
+void testBoundedCompletionPublication() {
+  using namespace wam::macos;
+  using Access = VideoToolboxDecoderTestAccess;
+  BoundedFrameQueue sink(3, 700);
+  VideoToolboxDecoderOptions options;
+  options.maxInFlightFrames = 3;
+  options.maxPendingPresentationFrames = 1;
+  VideoToolboxDecoder decoder(options);
+  std::string error;
+  const auto expectError = [&](std::string_view message) {
+    const auto actual = decoder.takeLastError();
+    WAM_CHECK(actual.has_value());
+    WAM_CHECK(actual->find(message) != std::string::npos);
+  };
+  WAM_CHECK(Access::prepareInjectedCallbacks(decoder, sink, 700, &error));
+  WAM_CHECK(Access::setPresentationReorderDepth(decoder, 1, &error));
+  std::array<std::uint64_t, 3> tickets{};
+  constexpr std::array<int, 3> pts{0, 2, 1};
+  for (std::size_t i = 0; i < tickets.size(); ++i) {
+    std::uint64_t sequence = 0;
+    WAM_CHECK(Access::reserveInjectedSubmission(decoder,
+        FrameTiming{CMTimeMake(pts[i], 30), CMTimeMake(1, 30), 700, i == 0},
+        &sequence, &error, 11, true) == VideoDecodeSubmitResult::Accepted);
+    tickets[i] = Access::completionTicket(decoder, sequence);
+    WAM_CHECK(tickets[i] != 0);
+  }
+  CVPixelBufferRef pixelBuffer = createIOSurfacePixelBuffer(
+      kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, 64, 32);
+  NativeVideoCallbackAudit control;
+  activeVideoCallbackAudit = &control;
+  void* allocation = ::operator new(1);
+  ::operator delete(allocation);
+  VideoDecoderMutex mutex;
+  mutex.lock();
+  mutex.unlock();
+  activeVideoCallbackAudit = nullptr;
+  WAM_CHECK(control.allocations == 1);
+  WAM_CHECK(control.locks == 1);
+  NativeVideoCallbackAudit audit;
+  activeVideoCallbackAudit = &audit;
+  Access::publishCompletion(decoder, tickets[2], pixelBuffer);
+  activeVideoCallbackAudit = nullptr;
+  WAM_CHECK(audit.allocations == 0);
+  WAM_CHECK(audit.locks == 0);
+  WAM_CHECK(Access::publishedCompletions(decoder) == 1);
+  WAM_CHECK(sink.size() == 0);
+  WAM_CHECK(NativeSurfaceBudget::stats().currentSurfaces == 1);
+  std::uint64_t rejected = 0;
+  WAM_CHECK(Access::reserveInjectedSubmission(decoder,
+      FrameTiming{CMTimeMake(3, 30), CMTimeMake(1, 30), 700, false},
+      &rejected, &error) == VideoDecodeSubmitResult::Backpressure);
+  WAM_CHECK(decoder.memoryFacts().currentCompressedBytes == 33);
+  Access::publishCompletion(decoder, tickets[2], pixelBuffer);
+  expectError("duplicate or stale");
+  WAM_CHECK(decoder.memoryFacts().inFlightFrames == 3);
+  std::barrier start(3);
+  std::array<NativeVideoCallbackAudit, 2> competingAudits{};
+  const auto competingCallback = [&](std::size_t index) {
+    start.arrive_and_wait();
+    activeVideoCallbackAudit = &competingAudits[index];
+    Access::publishCompletion(decoder, tickets[1], pixelBuffer);
+    activeVideoCallbackAudit = nullptr;
+  };
+  std::thread first(competingCallback, 0);
+  std::thread duplicate(competingCallback, 1);
+  start.arrive_and_wait();
+  first.join();
+  duplicate.join();
+  for (const auto& competingAudit : competingAudits) {
+    WAM_CHECK(competingAudit.allocations == 0);
+    WAM_CHECK(competingAudit.locks == 0);
+  }
+  Access::publishCompletion(decoder, tickets[0], pixelBuffer);
+  WAM_CHECK(Access::publishedCompletions(decoder) == 2);
+  WAM_CHECK(decoder.memoryFacts().inFlightFrames == 0);
+  expectError("duplicate or stale");
+  WAM_CHECK(decoder.memoryFacts().currentCompressedBytes == 0);
+  WAM_CHECK(decoder.stats().pendingPresentationFrames == 3);
+  WAM_CHECK(decoder.drainPresentation(700, &error) == VideoDecodeDrainProgress::Progress);
+  auto frame = sink.tryTake();
+  WAM_CHECK(frame && CMTimeCompare(frame->timing().presentationTime, CMTimeMake(0, 30)) == 0);
+  frame.reset();
+  WAM_CHECK(decoder.drainPresentation(700, &error) == VideoDecodeDrainProgress::Progress);
+  frame = sink.tryTake();
+  WAM_CHECK(frame && CMTimeCompare(frame->timing().presentationTime, CMTimeMake(1, 30)) == 0);
+  frame.reset();
+  WAM_CHECK(decoder.beginEndOfStream(700, &error) == VideoDecodeDrainProgress::Progress);
+  WAM_CHECK(decoder.drainEndOfStream(700, &error) == VideoDecodeDrainProgress::Done);
+  frame = sink.tryTake();
+  WAM_CHECK(frame && CMTimeCompare(frame->timing().presentationTime, CMTimeMake(2, 30)) == 0);
+  frame.reset();
+  decoder.flush(701);
+  WAM_CHECK(Access::reserveInjectedSubmission(decoder,
+      FrameTiming{CMTimeMake(0, 30), CMTimeMake(1, 30), 701, true},
+      &rejected, &error, 17, false) == VideoDecodeSubmitResult::Accepted);
+  const auto newTicket = Access::completionTicket(decoder, rejected);
+  WAM_CHECK(newTicket != tickets[0]);
+  Access::publishCompletion(decoder, tickets[0], pixelBuffer);
+  WAM_CHECK(Access::publishedCompletions(decoder) == 0);
+  expectError("duplicate or stale");
+  WAM_CHECK(decoder.memoryFacts().currentCompressedBytes == 17);
+  Access::publishCompletion(decoder, newTicket, pixelBuffer, -1);
+  WAM_CHECK(decoder.stats().inFlightFrames == 0);
+  expectError("reported failure");
+  Access::publishCompletion(decoder, 0, nullptr);
+  expectError("duplicate or stale");
+  Access::exhaustCompletionTickets(decoder);
+  WAM_CHECK(Access::reserveInjectedSubmission(decoder,
+      FrameTiming{CMTimeMake(1, 30), CMTimeMake(1, 30), 701, true},
+      &rejected, &error) == VideoDecodeSubmitResult::Rejected);
+  WAM_CHECK(error == "VideoToolbox completion ticket identity exhausted");
+  WAM_CHECK(decoder.memoryFacts().inFlightFrames == 0);
+  WAM_CHECK(Access::frameRefConSlotStats(decoder).available == 3);
+  decoder.close();
+  CVPixelBufferRelease(pixelBuffer);
+  WAM_CHECK(NativeSurfaceBudget::stats().currentSurfaces == 0);
+  std::cout << "Accepted completion: WAM C++ allocations=" << audit.allocations
+            << " decoder lock attempts=" << audit.locks << '\n';
+}
+
+void testCompletionDrivenTeardownSteps() {
+  using namespace wam::macos;
+  using Access = VideoToolboxDecoderTestAccess;
+  {
+    BoundedFrameQueue sink(1, 900);
+    VideoToolboxDecoder decoder;
+    std::string error;
+    WAM_CHECK(Access::prepareInjectedCallbacks(decoder, sink, 900, &error));
+    std::uint64_t sequence = 0;
+    WAM_CHECK(Access::reserveInjectedSubmission(decoder,
+        FrameTiming{CMTimeMake(0, 30), CMTimeMake(1, 30), 900, true},
+        &sequence, &error) == VideoDecodeSubmitResult::Accepted);
+    auto pixelBuffer = createIOSurfacePixelBuffer(
+        kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, 64, 32);
+    Access::publishCompletion(decoder, Access::completionTicket(decoder, sequence), pixelBuffer);
+    WAM_CHECK(NativeSurfaceBudget::stats().currentSurfaces == 1);
+    decoder.flush(901);
+    WAM_CHECK(decoder.stats().droppedFrames == 1);
+    WAM_CHECK(NativeSurfaceBudget::stats().currentSurfaces == 0);
+    WAM_CHECK(sink.size() == 0);
+    decoder.close();
+    CVPixelBufferRelease(pixelBuffer);
+  }
+  for (bool seek : {false, true}) {
+    BoundedFrameQueue sink(3, 800);
+    VideoToolboxDecoderOptions options;
+    options.maxInFlightFrames = 3;
+    options.maxPendingPresentationFrames = 1;
+    VideoToolboxDecoder decoder(options);
+    std::string error;
+    WAM_CHECK(Access::prepareInjectedCallbacks(decoder, sink, 800, &error));
+    struct Driver {
+      VideoToolboxDecoder* decoder;
+      std::array<std::uint64_t, 3> tickets{};
+      std::size_t steps{0};
+      CVPixelBufferRef pixelBuffer;
+    } driver{&decoder, {}, 0, createIOSurfacePixelBuffer(
+        kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, 64, 32)};
+    for (std::size_t i = 0; i < driver.tickets.size(); ++i) {
+      std::uint64_t sequence = 0;
+      WAM_CHECK(Access::reserveInjectedSubmission(decoder,
+          FrameTiming{CMTimeMake(static_cast<std::int64_t>(i), 30), CMTimeMake(1, 30), 800, i == 0},
+          &sequence, &error, 19, true) == VideoDecodeSubmitResult::Accepted);
+      driver.tickets[i] = Access::completionTicket(decoder, sequence);
+    }
+    Access::setTeardownStep(decoder, [](void* context) noexcept {
+      auto& drive = *static_cast<Driver*>(context);
+      WAM_CHECK(drive.steps < 3);
+      constexpr std::array<std::size_t, 3> order{2, 0, 1};
+      Access::publishCompletion(*drive.decoder, drive.tickets[order[drive.steps]], drive.pixelBuffer);
+      WAM_CHECK(NativeSurfaceBudget::stats().currentSurfaces == 0);
+      ++drive.steps;
+    }, &driver);
+    if (seek) {
+      decoder.flush(801);
+    } else {
+      decoder.close();
+    }
+    Access::setTeardownStep(decoder, nullptr, nullptr);
+    WAM_CHECK(driver.steps == 3);
+    WAM_CHECK(decoder.stats().droppedFrames == 3);
+    WAM_CHECK(decoder.memoryFacts().inFlightFrames == 0);
+    WAM_CHECK(decoder.memoryFacts().currentCompressedBytes == 0);
+    WAM_CHECK(decoder.stats().pendingPresentationFrames == 0);
+    WAM_CHECK(sink.size() == 0);
+    WAM_CHECK(NativeSurfaceBudget::stats().currentSurfaces == 0);
+    decoder.close();
+    CVPixelBufferRelease(driver.pixelBuffer);
+  }
+}
+
 int main(int argc, char **argv) {
+  if (argc == 2 && std::string_view(argv[1]) == "--completion-publication-only") {
+    testBoundedCompletionPublication();
+    testCompletionDrivenTeardownSteps();
+    testPersistentCallbackTailBlocksClose();
+    testDecodedSurfaceBudgetTombstoneAndGenerationFlush();
+    return EXIT_SUCCESS;
+  }
   testSharedLimitBoundaries();
   testUnpinnedDisplayLayerAdmitsFullRangeDecodedSurfaces();
   testPersistentFrameRefConSlotLifecycle();

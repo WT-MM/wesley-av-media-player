@@ -1,4 +1,5 @@
 #include "native_tracked_video_arbiter.hpp"
+#include "native_tracked_video_binding.hpp"
 
 #include <limits>
 #include <new>
@@ -78,7 +79,7 @@ struct NativeTrackedVideoArbiter::State final {
   };
 
   explicit State(std::shared_ptr<NativeTrackedVideoOutput> wrapped) noexcept
-      : output(std::move(wrapped)) {}
+      : output(std::move(wrapped)), calls(output.get()) {}
 
   [[nodiscard]] bool allocateInternal(
       NativeTrackedFrameSequence* sequence) noexcept {
@@ -146,7 +147,7 @@ struct NativeTrackedVideoArbiter::State final {
     if (fatal || mainEvent || previewEvent) {
       return;
     }
-    const std::optional<NativeTrackedVideoEvent> event = output->takeEvent();
+    const std::optional<NativeTrackedVideoEvent> event = calls.takeEvent();
     if (!event) {
       return;
     }
@@ -213,7 +214,7 @@ struct NativeTrackedVideoArbiter::State final {
   [[nodiscard]] NativeTrackedVideoCapacity capacity(
       std::uint64_t generation) noexcept {
     pumpEvent();
-    const NativeTrackedVideoCapacity wrapped = output->capacity(generation);
+    const NativeTrackedVideoCapacity wrapped = calls.capacity(generation);
     if (fatal || wrapped == NativeTrackedVideoCapacity::Failed) {
       return NativeTrackedVideoCapacity::Failed;
     }
@@ -247,6 +248,7 @@ struct NativeTrackedVideoArbiter::State final {
   }
 
   std::shared_ptr<NativeTrackedVideoOutput> output;
+  NativeTrackedVideoBinding calls;
   Admission admission{};
   std::optional<NativeTrackedVideoEvent> mainEvent;
   std::optional<NativeTrackedVideoPreviewEvent> previewEvent;
@@ -265,20 +267,16 @@ struct NativeTrackedVideoArbiter::State final {
   bool fatal{false};
 };
 
-class NativeTrackedVideoArbiter::MainOutput final
-    : public NativeTrackedVideoOutput {
- public:
-  explicit MainOutput(std::shared_ptr<State> state) noexcept
-      : state_(std::move(state)) {}
+NativeTrackedVideoArbiter::MainOutput::MainOutput(
+    std::shared_ptr<State> state) noexcept : state_(std::move(state)) {}
 
-  [[nodiscard]] NativeTrackedVideoCapacity capacity(
-      std::uint64_t generation) const noexcept override {
+NativeTrackedVideoCapacity NativeTrackedVideoArbiter::MainOutput::capacity(
+    std::uint64_t generation) const noexcept {
     return state_->capacity(generation);
   }
 
-  [[nodiscard]] NativeTrackedVideoSubmitStatus submit(
-      const FrameLease& frame, NativeTrackedFrameSequence sequence,
-      std::string* error) noexcept override {
+NativeTrackedVideoSubmitStatus NativeTrackedVideoArbiter::MainOutput::submit(
+    const FrameLease& frame, NativeTrackedFrameSequence sequence, std::string* error) noexcept {
     clearError(error);
     if (!sequence.valid() ||
         (state_->lastMainSequence.valid() &&
@@ -306,7 +304,7 @@ class NativeTrackedVideoArbiter::MainOutput final
       return NativeTrackedVideoSubmitStatus::Failed;
     }
     const NativeTrackedVideoSubmitStatus status =
-        state_->output->submit(frame, internal, error);
+        state_->calls.submit(frame, internal, error);
     if (status != NativeTrackedVideoSubmitStatus::Accepted) {
       if (status == NativeTrackedVideoSubmitStatus::Failed) {
         state_->fatal = true;
@@ -322,8 +320,8 @@ class NativeTrackedVideoArbiter::MainOutput final
     return NativeTrackedVideoSubmitStatus::Accepted;
   }
 
-  [[nodiscard]] std::optional<NativeTrackedVideoEvent>
-  takeEvent() noexcept override {
+std::optional<NativeTrackedVideoEvent> NativeTrackedVideoArbiter::MainOutput::takeEvent(
+    ) noexcept {
     state_->pumpEvent();
     if (!state_->mainEvent) {
       return std::nullopt;
@@ -337,16 +335,15 @@ class NativeTrackedVideoArbiter::MainOutput final
     return result;
   }
 
-  [[nodiscard]] NativeTrackedVideoOutputProgress flushProgress(
-      std::uint64_t retiredGeneration,
-      std::uint64_t nextGeneration) noexcept override {
+NativeTrackedVideoOutputProgress NativeTrackedVideoArbiter::MainOutput::flushProgress(
+    std::uint64_t retiredGeneration, std::uint64_t nextGeneration) noexcept {
     state_->pumpEvent();
     state_->requestPreviewCancel();
     if (state_->frameTerminalPending()) {
       return NativeTrackedVideoOutputProgress::Quiescing;
     }
     const NativeTrackedVideoOutputProgress progress =
-        state_->output->flushProgress(retiredGeneration, nextGeneration);
+        state_->calls.flushProgress(retiredGeneration, nextGeneration);
     state_->pumpEvent();
     if (state_->fatal) {
       return NativeTrackedVideoOutputProgress::Failed;
@@ -356,15 +353,15 @@ class NativeTrackedVideoArbiter::MainOutput final
                : progress;
   }
 
-  [[nodiscard]] NativeTrackedVideoOutputProgress closeProgress(
-      std::uint64_t finalGeneration) noexcept override {
+NativeTrackedVideoOutputProgress NativeTrackedVideoArbiter::MainOutput::closeProgress(
+    std::uint64_t finalGeneration) noexcept {
     state_->pumpEvent();
     state_->requestPreviewCancel();
     if (state_->frameTerminalPending()) {
       return NativeTrackedVideoOutputProgress::Quiescing;
     }
     const NativeTrackedVideoOutputProgress progress =
-        state_->output->closeProgress(finalGeneration);
+        state_->calls.closeProgress(finalGeneration);
     state_->pumpEvent();
     if (state_->fatal) {
       return NativeTrackedVideoOutputProgress::Failed;
@@ -374,26 +371,20 @@ class NativeTrackedVideoArbiter::MainOutput final
                : progress;
   }
 
-  // A pure facade fact: the arbiter neither samples nor converts the surface,
-  // so the answer is whatever the wrapped presenter can consume. Forwarding is
-  // what keeps the decoder's format contract keyed on the real presenter rather
-  // than on the wrapper that happens to sit in front of it.
-  [[nodiscard]] bool presentsDecodedSurfacesDirectly() const noexcept override {
-    return state_->output->presentsDecodedSurfacesDirectly();
+bool NativeTrackedVideoArbiter::MainOutput::presentsDecodedSurfacesDirectly(
+    ) const noexcept {
+    return state_->calls.presentsDecodedSurfacesDirectly();
   }
 
-  // Forwarded for the same reason and with the same care: the arbiter draws
-  // nothing, so whether a rotation can be presented is the wrapped presenter's
-  // answer. Answering it here would let the wrapper claim a capability the
-  // real presenter does not have.
-  [[nodiscard]] bool setPresentationRotation(int degrees) noexcept override {
-    return state_->output->setPresentationRotation(degrees);
+bool NativeTrackedVideoArbiter::MainOutput::setPresentationRotation(
+    int degrees) noexcept {
+    return state_->calls.setPresentationRotation(degrees);
   }
 
-  [[nodiscard]] NativeTrackedVideoOutputFacts facts()
-      const noexcept override {
+NativeTrackedVideoOutputFacts NativeTrackedVideoArbiter::MainOutput::facts(
+    ) const noexcept {
     state_->pumpEvent();
-    NativeTrackedVideoOutputFacts result = state_->output->facts();
+    NativeTrackedVideoOutputFacts result = state_->calls.facts();
     result.admittedFrame =
         state_->admission.owner == AdmissionOwner::Main
             ? state_->admission.mainSequence
@@ -410,9 +401,6 @@ class NativeTrackedVideoArbiter::MainOutput final
     return result;
   }
 
- private:
-  std::shared_ptr<State> state_;
-};
 
 class NativeTrackedVideoArbiter::PreviewPort final
     : public NativeTrackedVideoPreviewPort {
@@ -455,7 +443,7 @@ class NativeTrackedVideoArbiter::PreviewPort final
       return {NativeTrackedVideoSubmitStatus::Failed, {}};
     }
     const NativeTrackedVideoSubmitStatus status =
-        state_->output->submit(frame, internal, error);
+        state_->calls.submit(frame, internal, error);
     if (status != NativeTrackedVideoSubmitStatus::Accepted) {
       if (status == NativeTrackedVideoSubmitStatus::Failed) {
         state_->fatal = true;

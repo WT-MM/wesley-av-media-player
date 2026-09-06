@@ -14,7 +14,7 @@ namespace wam::macos {
 #if defined(WAM_NATIVE_VIDEO_TESTING)
 struct VideoToolboxDecoderTestAccess;
 
-// Test-only fault locations at the two callback-owned container insertion
+// Test-only fault locations at the two owner-side container insertion
 // boundaries. Production builds neither expose nor evaluate these seams.
 enum class VideoToolboxDecoderTestAllocationPoint : std::uint8_t {
   CompletedDecode,
@@ -376,6 +376,18 @@ struct VideoToolboxDecoderTestAccess {
   [[nodiscard]] static bool prepareInjectedCallbacks(
       VideoToolboxDecoder &decoder, DecodedFrameSink &sink,
       std::uint64_t generation, std::string *error);
+  [[nodiscard]] static std::uint64_t completionTicket(
+      VideoToolboxDecoder &decoder, std::uint64_t sequence) noexcept;
+  static void publishCompletion(VideoToolboxDecoder &decoder,
+      std::uint64_t ticket, CVPixelBufferRef pixelBuffer,
+      std::int32_t status = 0, std::uint32_t flags = 0) noexcept;
+  static void exhaustCompletionTickets(VideoToolboxDecoder &decoder) noexcept;
+  static void setTeardownStep(VideoToolboxDecoder &decoder,
+      void (*step)(void*) noexcept, void* context) noexcept;
+  static void setTeardownReadiness(VideoToolboxDecoder &decoder,
+      void (*probe)(void*, bool) noexcept, void* context) noexcept;
+  [[nodiscard]] static std::size_t publishedCompletions(
+      const VideoToolboxDecoder &decoder) noexcept;
   [[nodiscard]] static bool injectDecodedFrame(
       VideoToolboxDecoder &decoder, std::uint64_t submissionSequence,
       CVPixelBufferRef pixelBuffer, FrameTiming timing, std::string *error);
@@ -385,7 +397,7 @@ struct VideoToolboxDecoderTestAccess {
       std::int32_t callbackStatus, std::uint32_t callbackInfoFlags,
       std::string *error);
   // Nonblocking proof seam for progress-handler tests. Success means both
-  // callback-owned mutexes were available and returns the credit visible at
+  // owner-state mutexes were available and returns the credit visible at
   // the instant the handler ran.
   [[nodiscard]] static bool inspectProgressState(
       VideoToolboxDecoder &decoder, std::size_t *inFlight) noexcept;

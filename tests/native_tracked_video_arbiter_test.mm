@@ -1,4 +1,5 @@
 #include "platform/macos/native_tracked_video_arbiter.hpp"
+#include "platform/macos/native_tracked_video_binding.hpp"
 
 #include <CoreVideo/CoreVideo.h>
 
@@ -278,14 +279,18 @@ struct Fixture {
       : output(std::make_shared<FakeTrackedOutput>(generation)),
         arbiter(NativeTrackedVideoArbiter::create(output)),
         main(arbiter == nullptr ? nullptr : arbiter->mainOutput()),
+        mainCalls(main.get()),
         preview(arbiter == nullptr ? nullptr : arbiter->previewPort()) {
     expect(arbiter != nullptr && main != nullptr && preview != nullptr,
            "fresh output creates both arbiter ports");
+    expect(mainCalls.kind() == wam::macos::NativeTrackedVideoBinding::Kind::Main,
+           "main output binds the concrete arbiter at construction");
   }
 
   std::shared_ptr<FakeTrackedOutput> output;
   std::shared_ptr<NativeTrackedVideoArbiter> arbiter;
   std::shared_ptr<NativeTrackedVideoOutput> main;
+  wam::macos::NativeTrackedVideoBinding mainCalls;
   std::shared_ptr<NativeTrackedVideoPreviewPort> preview;
 };
 
@@ -314,15 +319,15 @@ void previewEventNeverAppearsAsMain() {
   expect(fixture.output->acceptedSequences() ==
              std::vector<std::uint64_t>{1},
          "arbiter assigns the first shared internal sequence");
-  const NativeTrackedVideoOutputFacts hidden = fixture.main->facts();
+  const NativeTrackedVideoOutputFacts hidden = fixture.mainCalls.facts();
   expect(!hidden.admittedFrame.valid() && hidden.submittedFrames == 0 &&
              hidden.lastEventSequence == 0 && hidden.retainedFrames == 1,
          "main facts hide preview identity and counters but retain shared credit");
 
   fixture.output->draw();
-  expect(!fixture.main->takeEvent(),
+  expect(!fixture.mainCalls.takeEvent(),
          "polling main routes but never returns preview terminal event");
-  expect(fixture.main->capacity(7) ==
+  expect(fixture.mainCalls.capacity(7) ==
              NativeTrackedVideoCapacity::Backpressure,
          "typed preview mailbox preserves global capacity one");
   const auto event = fixture.preview->takeEvent();
@@ -331,8 +336,8 @@ void previewEventNeverAppearsAsMain() {
              event->frameSequence == submitted.sequence &&
              event->generation == 7 && sameTiming(event->timing, timing),
          "preview receives its exact translated draw fact");
-  expect(!fixture.main->takeEvent() &&
-             fixture.main->capacity(7) ==
+  expect(!fixture.mainCalls.takeEvent() &&
+             fixture.mainCalls.capacity(7) ==
                  NativeTrackedVideoCapacity::Available,
          "preview draw never enters main lane and releases shared credit once");
 }
@@ -341,7 +346,7 @@ void mainEventNeverAppearsAsPreview() {
   Fixture fixture;
   FrameLease frame = makeFrame(7, 240);
   const FrameTiming timing = frame.timing();
-  expect(fixture.main->submit(frame, NativeTrackedFrameSequence{41}, nullptr) ==
+  expect(fixture.mainCalls.submit(frame, NativeTrackedFrameSequence{41}, nullptr) ==
              NativeTrackedVideoSubmitStatus::Accepted,
          "main facade accepts caller identity");
   expect(fixture.output->acceptedSequences() ==
@@ -350,7 +355,7 @@ void mainEventNeverAppearsAsPreview() {
   fixture.output->draw();
   expect(!fixture.preview->takeEvent(),
          "polling preview routes but never returns main terminal event");
-  const auto event = fixture.main->takeEvent();
+  const auto event = fixture.mainCalls.takeEvent();
   expect(event && event->kind == NativeTrackedVideoEventKind::FrameDrawn &&
              event->frameSequence == NativeTrackedFrameSequence{41} &&
              event->eventSequence == 1 &&
@@ -358,7 +363,7 @@ void mainEventNeverAppearsAsPreview() {
          "main receives exact caller identity in its own event sequence domain");
   expect(!fixture.preview->takeEvent(),
          "main draw never enters typed preview lane");
-  const NativeTrackedVideoOutputFacts facts = fixture.main->facts();
+  const NativeTrackedVideoOutputFacts facts = fixture.mainCalls.facts();
   expect(facts.submittedFrames == 1 && facts.drawnFrames == 1 &&
              facts.supersededFrames == 0 && facts.lastEventSequence == 1,
          "main facts count only main-owned work");
@@ -373,12 +378,12 @@ void ownersShareOneNonwrappingSequenceDomain() {
          "first preview credit terminates");
 
   FrameLease mainFrame = makeFrame(7, 20);
-  expect(fixture.main->submit(mainFrame, NativeTrackedFrameSequence{900},
+  expect(fixture.mainCalls.submit(mainFrame, NativeTrackedFrameSequence{900},
                               nullptr) ==
              NativeTrackedVideoSubmitStatus::Accepted,
          "main admission follows preview admission");
   fixture.output->draw();
-  expect(fixture.main->takeEvent().has_value(),
+  expect(fixture.mainCalls.takeEvent().has_value(),
          "main credit terminates");
 
   FrameLease secondPreviewFrame = makeFrame(7, 30);
@@ -397,12 +402,12 @@ void mainLifecycleCancelsPreviewFirst() {
   expect(fixture.preview->cancel() ==
              NativeTrackedVideoPreviewCancelProgress::Quiescing,
          "preview cancel never fabricates a terminal fact");
-  expect(fixture.main->flushProgress(7, 8) ==
+  expect(fixture.mainCalls.flushProgress(7, 8) ==
              NativeTrackedVideoOutputProgress::Quiescing,
          "main flush first supersedes accepted preview frame");
-  expect(!fixture.main->takeEvent(),
+  expect(!fixture.mainCalls.takeEvent(),
          "preview supersession is not observable as a main frame event");
-  expect(fixture.main->flushProgress(7, 8) ==
+  expect(fixture.mainCalls.flushProgress(7, 8) ==
              NativeTrackedVideoOutputProgress::Done,
          "main lifecycle does not wait for preview client to poll routed fact");
   const auto event = fixture.preview->takeEvent();
@@ -427,7 +432,7 @@ void lifecycleEventsAreMainOnly() {
   fixture.output->publishInvalidated(7);
   expect(!fixture.preview->takeEvent(),
          "typed preview port cannot observe lifecycle diagnostics");
-  const auto event = fixture.main->takeEvent();
+  const auto event = fixture.mainCalls.takeEvent();
   expect(event &&
              event->kind ==
                  NativeTrackedVideoEventKind::GenerationInvalidated &&
