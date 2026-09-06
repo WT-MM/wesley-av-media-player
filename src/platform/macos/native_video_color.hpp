@@ -10,16 +10,6 @@
 
 namespace wam::macos {
 
-// THE YCbCr -> RGB colour-matrix decision for every presenter in this tree.
-//
-// This decision is stated once because per-route copies of it had already
-// diverged in the way that matters: one presenter carried a BT.2020 branch
-// while the Qt item HARD-REJECTED a BT.2020 buffer. Widening admission to
-// BT.2020/PQ/HLG in per-route copies would have made
-// WAM_PRESENTATION=scenegraph refuse
-// every file the default layer path had just started playing. One definition,
-// three callers.
-//
 // The coefficients are the exact inverse-matrix top rows for each standard's
 // non-constant-luminance YCbCr:
 //   R = Y                 + 2(1-Kr)      * Cr
@@ -28,15 +18,6 @@ namespace wam::macos {
 // with (Kr, Kb) = (0.299, 0.114) for BT.601, (0.2126, 0.0722) for BT.709 and
 // (0.2627, 0.0593) for BT.2020 non-constant luminance.
 //
-// NOTE ON SCOPE. This is the matrix only -- the YCbCr-to-RGB step. It is NOT
-// tone mapping. On the default presentation path (AVSampleBufferDisplayLayer)
-// none of this runs at all: the surface carries its own primaries, transfer
-// and CGColorSpace from VideoToolbox and WindowServer does the whole
-// conversion. These matrices exist for the scenegraph presenters, which
-// convert in a shader. A PQ or HLG buffer put through them gets its matrix
-// right and its transfer function left as-is, which is correct for a
-// scenegraph path that has no tone mapper -- and is why the scenegraph route
-// keeps its own named verdict rather than claiming HDR correctness.
 enum class YCbCrMatrixKind : std::uint8_t {
   Bt601,
   Bt709,

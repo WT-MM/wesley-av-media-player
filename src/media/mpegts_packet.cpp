@@ -508,6 +508,7 @@ bool parseProgramMapSection(std::span<const std::byte> section,
 
   while (cursor + 5 <= end) {
     ElementaryStream stream{};
+    bool registeredOpus = false;
     stream.streamType = byteAt(section, cursor);
     stream.elementaryPid = static_cast<std::uint16_t>(
         readBigEndian16(section, cursor + 1) & 0x1FFFU);
@@ -538,6 +539,8 @@ bool parseProgramMapSection(std::span<const std::byte> section,
               stream.registrationAc3 = true;
             } else if (identifier == 0x45414333U /* 'EAC3' */) {
               stream.eac3Descriptor = true;
+            } else if (identifier == 0x4F707573U /* 'Opus' */) {
+              registeredOpus = true;
             }
           }
           break;
@@ -552,6 +555,10 @@ bool parseProgramMapSection(std::span<const std::byte> section,
     stream.kind =
         trackKindForStreamType(stream.streamType, stream.ac3Descriptor,
                                stream.eac3Descriptor, stream.registrationAc3);
+    if (stream.streamType == static_cast<std::uint8_t>(TsStreamType::PrivatePes) &&
+        registeredOpus) {
+      stream.kind = MediaTrackKind::Audio;
+    }
     if (table.streamCount >= kMaximumProgramStreams) {
       table.truncated = true;
       break;

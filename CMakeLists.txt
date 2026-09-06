@@ -927,6 +927,21 @@ if(BUILD_TESTING)
       tests/mpegts_demuxer_test.cpp)
     target_link_libraries(wam_mpegts_demuxer_test PRIVATE wam_native_core)
     add_test(NAME mpegts_demuxer COMMAND wam_mpegts_demuxer_test)
+    find_program(WAM_MPEGTS_PYTHON NAMES python3 REQUIRED)
+    find_program(WAM_MPEGTS_FFMPEG NAMES ffmpeg
+      HINTS "${CMAKE_BINARY_DIR}/runtime" REQUIRED)
+    set(WAM_MPEGTS_FIXTURE_DIR "${CMAKE_BINARY_DIR}/mpegts-fixtures-v1")
+    add_test(NAME mpegts_fixture_setup
+      COMMAND "${WAM_MPEGTS_PYTHON}"
+        "${CMAKE_SOURCE_DIR}/tests/prepare_mpegts_fixtures.py"
+        --root "${WAM_MPEGTS_FIXTURE_DIR}" --ffmpeg "${WAM_MPEGTS_FFMPEG}")
+    set_tests_properties(mpegts_fixture_setup PROPERTIES
+      FIXTURES_SETUP mpegts_corpus TIMEOUT 120)
+    add_test(NAME mpegts_demuxer_integration
+      COMMAND wam_mpegts_demuxer_test --integration)
+    set_tests_properties(mpegts_demuxer_integration PROPERTIES
+      FIXTURES_REQUIRED mpegts_corpus
+      ENVIRONMENT "WAM_MPEGTS_FIXTURES=${WAM_MPEGTS_FIXTURE_DIR}")
 
     # Regime microbenchmarks for the demuxer. EXCLUDE_FROM_ALL keeps it off the
     # default build; the ctest entry carries the `benchmark` label so it never
@@ -1691,10 +1706,10 @@ if(BUILD_TESTING)
         "${WAM_AUDIOTOOLBOX_FRAMEWORK}"
         "${WAM_AVFOUNDATION_FRAMEWORK}")
       add_test(NAME macos_mpegts_media_source
-        COMMAND wam_mpegts_media_source_test "${WAM_CONTAINER_FIXTURE_MUXER}")
+        COMMAND wam_mpegts_media_source_test "${WAM_MPEGTS_FIXTURE_DIR}")
       set_tests_properties(macos_mpegts_media_source PROPERTIES
         TIMEOUT 120
-        SKIP_RETURN_CODE 77)
+        FIXTURES_REQUIRED mpegts_corpus)
 
       add_executable(wam_mpegts_preview_source_test
         tests/mpegts_preview_source_test.mm
@@ -1802,6 +1817,7 @@ if(BUILD_TESTING)
       # NativeMediaSession is linked.
       add_executable(wam_native_media_session_test
         tests/native_media_session_test.mm
+        src/platform/macos/mpegts_media_source.mm
         src/media/native_media_source.hpp
         src/media/native_media_source.cpp
         src/media/native_media_dispatcher.hpp
@@ -1847,6 +1863,11 @@ if(BUILD_TESTING)
         "${WAM_AVFOUNDATION_FRAMEWORK}")
       add_test(NAME macos_native_media_session
         COMMAND wam_native_media_session_test)
+      add_test(NAME macos_mpegts_session_fallback
+        COMMAND wam_native_media_session_test --mpegts-integration)
+      set_tests_properties(macos_mpegts_session_fallback PROPERTIES
+        FIXTURES_REQUIRED mpegts_corpus
+        ENVIRONMENT "WAM_MPEGTS_FIXTURES=${WAM_MPEGTS_FIXTURE_DIR}")
       set_tests_properties(macos_native_media_session PROPERTIES TIMEOUT 30)
 
       # Pure route/retirement contract gate. It intentionally links the one

@@ -344,6 +344,34 @@ struct Fixture {
   std::unique_ptr<NativeVideoConsumer> consumer;
 };
 
+void testPresentationBackstop() {
+  for (const auto& entry : {std::pair{media::MediaTransferFunction::Pq, "SceneGraphPqUnsupported"},
+                            std::pair{media::MediaTransferFunction::Hlg, "SceneGraphHlgUnsupported"}}) {
+    Fixture fixture;
+    expect(fixture.consumer->armFirstGeneration(7) == NativeVideoConsumerArmProgress::Done,
+           "presentation fixture arms");
+    media::MediaTrackDescriptor track;
+    track.id = 1;
+    track.kind = media::MediaTrackKind::Video;
+    track.codec = media::MediaCodec::Mpeg2Video;
+    track.duration = {10, 1};
+    track.timeBase = {1, 90'000};
+    track.video = media::MediaVideoFormat{};
+    track.video->codedWidth = track.video->displayWidth = 16;
+    track.video->codedHeight = track.video->displayHeight = 16;
+    track.video->bitsPerComponent = 8;
+    track.video->sampleFormat = media::MediaVideoSampleFormat::Yuv420EightBit;
+    track.video->progressive = true;
+    track.video->transferFunction = entry.first;
+    track.video->colorPrimaries = media::MediaColorPrimaries::Bt2020;
+    track.video->matrixCoefficients = media::MediaMatrixCoefficients::Bt2020Ncl;
+    std::string error;
+    expect(fixture.consumer->configure(track, 7, timeline(7, {0, 1}), &error) ==
+               media::NativeMediaConsumeResult::Unsupported && error == entry.second,
+           "consumer refuses HDR on its actual GL output before decoder configuration");
+  }
+}
+
 void testArmContract() {
   Fixture fixture;
   expect(fixture.consumer->armFirstGeneration(7) ==
@@ -1209,6 +1237,7 @@ void testDoneOutputMayNotStillClaimAnAdmittedFrame() {
 }  // namespace
 
 int main() {
+  testPresentationBackstop();
   testArmContract();
   testDelayedLifecycleDiagnostic();
   testCloseRetiresQuiescingArm();

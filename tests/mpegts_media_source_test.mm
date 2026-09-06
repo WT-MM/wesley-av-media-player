@@ -2,7 +2,7 @@
 //
 // The neutral MediaSource surface -- openLocalFile, seek, readNext,
 // requestCancel, close, stats -- driven directly against the transport stream
-// backend over real container bytes. Five rules are proved here that no other
+// backend over real container bytes. Three rules are proved here that no other
 // suite reaches, and every one of them is a place where this backend
 // deliberately differs from its Matroska twin:
 //
@@ -18,14 +18,6 @@
 //      to lie off the 90 kHz grid they were read from.
 //   3. The anchor is shifted by the decoder lead-in for the codecs whose
 //      decoders swallow frames, because a PES header has no CodecDelay field.
-//   4. An unroutable audio stream is dropped and video is prepared muted,
-//      rather than refusing the file.
-//   5. A transport stream with no video elementary stream is refused, which is
-//      the mirror of the audio-only route Matroska admits.
-//
-// There is no checked-in transport stream, so the fixtures are muxed at test
-// time. Without a muxer the binary skips.
-
 #include "platform/macos/mpegts_media_source.hpp"
 
 #include "media/matroska_ac3.hpp"
@@ -34,10 +26,6 @@
 #include "platform/macos/mpegts_asset_context.hpp"
 
 #import <CoreMedia/CoreMedia.h>
-
-#include <spawn.h>
-#include <sys/wait.h>
-#include <unistd.h>
 
 #include <cstdint>
 #include <filesystem>
@@ -50,8 +38,6 @@
 #include <vector>
 
 #include "support/expect.hpp"
-
-extern char** environ;
 
 namespace {
 
@@ -121,97 +107,15 @@ constexpr std::int64_t kTransportStreamAudioTimeBase{90'000};
 constexpr std::int64_t kFullRateAudio{48'000};
 constexpr std::int64_t kOddRateAudio{44'100};
 
-[[nodiscard]] bool runFfmpeg(const std::string& executable,
-                             const std::vector<std::string>& arguments) {
-  std::vector<char*> argv;
-  argv.reserve(arguments.size() + 2);
-  std::string program = executable;
-  argv.push_back(program.data());
-  std::vector<std::string> owned = arguments;
-  for (std::string& argument : owned) {
-    argv.push_back(argument.data());
-  }
-  argv.push_back(nullptr);
-  pid_t child = 0;
-  if (posix_spawn(&child, executable.c_str(), nullptr, nullptr, argv.data(),
-                  environ) != 0) {
-    return false;
-  }
-  int status = 0;
-  if (waitpid(child, &status, 0) != child) {
-    return false;
-  }
-  return WIFEXITED(status) && WEXITSTATUS(status) == 0;
-}
-
 struct Fixtures {
-  std::filesystem::path directory;
   std::filesystem::path audioVideo;
-  // A codec frame grid the container's 90 kHz base cannot express.
   std::filesystem::path oddRate;
-  // A codec whose decoder swallows a fixed lead-in the container never states.
   std::filesystem::path leadIn;
-  // An audio elementary stream this backend cannot route.
   std::filesystem::path unroutableAudio;
+  std::filesystem::path rejectedAudio;
   std::filesystem::path audioOnly;
-  bool valid{false};
-
-  ~Fixtures() {
-    std::error_code ignored;
-    if (!directory.empty()) {
-      std::filesystem::remove_all(directory, ignored);
-    }
-  }
+  std::filesystem::path opus;
 };
-
-std::vector<std::string> muxCommand(const char* audioCodec,
-                                    std::int64_t audioRate,
-                                    const std::filesystem::path& output) {
-  std::vector<std::string> command{"-hide_banner", "-loglevel", "error",
-                                   "-nostdin",     "-y",        "-f",
-                                   "lavfi",        "-i",
-                                   "testsrc2=size=320x180:rate=30:duration=3",
-                                   "-f",           "lavfi",     "-i"};
-  command.emplace_back("sine=frequency=440:sample_rate=" +
-                       std::to_string(audioRate) + ":duration=3");
-  for (const char* argument : {"-c:v", "libx264", "-preset", "veryfast", "-bf",
-                               "2", "-pix_fmt", "yuv420p", "-g", "15",
-                               "-c:a"}) {
-    command.emplace_back(argument);
-  }
-  command.emplace_back(audioCodec);
-  command.emplace_back("-f");
-  command.emplace_back("mpegts");
-  command.push_back(output.string());
-  return command;
-}
-
-void buildFixtures(const std::string& ffmpeg, Fixtures& fixtures) {
-  std::error_code ignored;
-  fixtures.directory =
-      std::filesystem::temp_directory_path() /
-      ("wam-mpegts-media-source-" + std::to_string(::getpid()));
-  std::filesystem::create_directories(fixtures.directory, ignored);
-  fixtures.audioVideo = fixtures.directory / "av.ts";
-  fixtures.oddRate = fixtures.directory / "odd.ts";
-  fixtures.leadIn = fixtures.directory / "leadin.ts";
-  fixtures.unroutableAudio = fixtures.directory / "unroutable.ts";
-  fixtures.audioOnly = fixtures.directory / "audio.ts";
-
-  std::vector<std::string> audioOnly{
-      "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-f", "lavfi",
-      "-i", "sine=frequency=440:sample_rate=48000:duration=3", "-c:a", "aac",
-      "-f", "mpegts"};
-  audioOnly.push_back(fixtures.audioOnly.string());
-
-  fixtures.valid =
-      runFfmpeg(ffmpeg, muxCommand("aac", kFullRateAudio, fixtures.audioVideo)) &&
-      runFfmpeg(ffmpeg, muxCommand("aac", kOddRateAudio, fixtures.oddRate)) &&
-      runFfmpeg(ffmpeg, muxCommand("ac3", kFullRateAudio, fixtures.leadIn)) &&
-      runFfmpeg(ffmpeg,
-                muxCommand("libopus", kFullRateAudio, fixtures.unroutableAudio)) &&
-      runFfmpeg(ffmpeg, audioOnly);
-}
 
 // ---------------------------------------------------------------------------
 // Driving helpers
@@ -605,34 +509,19 @@ void testDecoderLeadInShiftsTheAnchor(const Fixtures& fixtures) {
 }
 
 // The audio-refusal rule this backend does not share with Matroska.
-void testUnroutableAudioPreparesMutedVideo(const Fixtures& fixtures) {
-  MpegTsMediaSource source;
-  const MediaSourceOpenOutcome opened =
-      openAt(source, fixtures.unroutableAudio, 1, std::nullopt, videoOptions());
-  expect(opened.status == MediaSourceOpenStatus::Ready &&
-             opened.descriptor != nullptr,
-         "an unroutable audio stream downgrades to video rather than refusing "
-         "the file");
-  if (opened.status != MediaSourceOpenStatus::Ready) {
-    return;
+void testUnroutableAudioRefuses(const Fixtures& fixtures) {
+  for (const auto& entry : {std::pair{fixtures.unroutableAudio, "0x82"},
+                            std::pair{fixtures.rejectedAudio, "0x0F"},
+                            std::pair{fixtures.opus, "0x06"}}) {
+    MpegTsMediaSource source;
+    const auto opened = openAt(source, entry.first, 1, std::nullopt, videoOptions());
+    expect(opened.status == MediaSourceOpenStatus::Unsupported && !opened.descriptor &&
+               opened.error.find(entry.second) != std::string::npos,
+           "audio refusal crosses the source boundary with its named reason");
+    expect(!source.stats().open && source.assetContext() == nullptr &&
+               source.stats().stagedVideoHeads == 0 && source.stats().stagedAudioHeads == 0,
+           "refused soundtrack publishes no context or staged media");
   }
-  expect(opened.descriptor->selectedVideo.has_value() &&
-             !opened.descriptor->selectedAudio.has_value(),
-         "the downgraded generation selects video and no audio");
-  expect(!opened.audioWindow.decodeStart.valid() &&
-             !opened.audioWindow.presentationStart.valid(),
-         "a muted generation states no audio window");
-  expect(source.stats().stagedVideoHeads == 1 &&
-             source.stats().stagedAudioHeads == 0,
-         "a muted generation stages one head and no audio head");
-  const Drained drained = drain(source, 1);
-  bool videoOnly = !drained.units.empty();
-  for (const Drained::Unit& unit : drained.units) {
-    videoOnly = videoOnly && unit.video;
-  }
-  expect(videoOnly && drained.exhausted && drained.endOfStream.size() == 1 &&
-             drained.endOfStream.front() == *opened.descriptor->selectedVideo,
-         "a muted generation drains video and ends exactly one output");
 }
 
 // The mirror of the audio-only route Matroska admits.
@@ -776,16 +665,19 @@ void testCancellation(const Fixtures& fixtures) {
 }  // namespace
 
 int main(int argc, char** argv) {
-  if (argc < 2 || argv[1] == nullptr || *argv[1] == '\0' ||
-      !std::filesystem::exists(argv[1])) {
-    std::cerr << "mpeg-ts media source contracts need a muxer; skipping\n";
-    return 77;
-  }
-  Fixtures fixtures;
-  buildFixtures(argv[1], fixtures);
-  if (!fixtures.valid) {
-    std::cerr << "FAIL: fixtures could not be muxed\n";
+  if (argc != 2) {
+    std::cerr << "FAIL: required fixture directory was not supplied\n";
     return 1;
+  }
+  const std::filesystem::path root(argv[1]);
+  Fixtures fixtures{root / "av.ts", root / "odd.ts", root / "leadin.ts",
+                    root / "dts-only.ts", root / "rejected-aac.ts", root / "audio.ts", root / "opus.ts"};
+  for (const auto& path : {fixtures.audioVideo, fixtures.oddRate, fixtures.leadIn,
+                           fixtures.unroutableAudio, fixtures.rejectedAudio, fixtures.audioOnly, fixtures.opus}) {
+    if (!std::filesystem::is_regular_file(path)) {
+      std::cerr << "FAIL: missing required fixture " << path << '\n';
+      return 1;
+    }
   }
 
   testColdOpenClampsToTheTimelineOrigin(fixtures);
@@ -793,7 +685,7 @@ int main(int argc, char** argv) {
   testMergeKeysOnRealDecodeTimestamps(fixtures);
   testAudioTimelineIsAnExactFrameOrdinal(fixtures);
   testDecoderLeadInShiftsTheAnchor(fixtures);
-  testUnroutableAudioPreparesMutedVideo(fixtures);
+  testUnroutableAudioRefuses(fixtures);
   testAudioOnlyStreamIsRefused(fixtures);
   testAccurateSeekBothDirections(fixtures);
   testCancellation(fixtures);

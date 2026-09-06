@@ -1,5 +1,7 @@
 #include "native_video_consumer.hpp"
 
+#include "native_presentation_admission.hpp"
+
 #include "media/media_codec_facts.hpp"
 #include "core_media_codec_facts.hpp"
 #include "native_video_codec_capability.hpp"
@@ -1640,27 +1642,10 @@ media::NativeMediaConsumeResult NativeVideoConsumer::configure(
     assignError(error, "video track is outside native SDR v1");
     return media::NativeMediaConsumeResult::Unsupported;
   }
-  // Rotation is a PRESENTATION capability, so it is settled here, against the
-  // output this generation will actually draw into, and before anything is
-  // committed. The layer route turns the layer; the scene-graph routes have no
-  // rotation and say so, and this becomes a clean Unsupported that opens the
-  // file on the compatibility renderer the right way up. Refusing here rather
-  // than drawing sideways is the whole point: a native window showing a
-  // portrait video on its side is worse than a fallback that shows it
-  // correctly.
-  //
-  // Stated once per generation because a track's rotation cannot change
-  // within one; a track whose transform changes under the reader is refused
-  // by the source's rebind proof, not here.
-  {
-    const int rotation =
-        track.video ? ((track.video->rotationDegrees % 360) + 360) % 360 : 0;
-    if (!impl.output->setPresentationRotation(rotation)) {
-      assignError(error,
-                  "this presentation route cannot rotate video; the "
-                  "compatibility renderer will present it upright");
-      return media::NativeMediaConsumeResult::Unsupported;
-    }
+  if (const char* refusal = nativePresentationRefusal(*track.video,
+                                                     *impl.output)) {
+    assignError(error, refusal);
+    return media::NativeMediaConsumeResult::Unsupported;
   }
   if (!validTimeline(timeline, generation, track.duration)) {
     impl.latch(NativeVideoConsumerFailure::InvalidTimeline,

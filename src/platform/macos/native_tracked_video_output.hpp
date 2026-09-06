@@ -151,8 +151,8 @@ class NativeTrackedVideoOutput {
 
   // Ask this output to present its frames turned by `degrees` clockwise. The
   // argument is always one of 0, 90, 180, 270 -- the source refuses every
-  // other transform long before a frame exists -- and it is stated once, at
-  // configure time, because a track's rotation cannot change mid-generation.
+  // other transform long before a frame exists -- and it is stated at
+  // admission and configure time. Repeating the same rotation is idempotent.
   //
   // Returns whether the output can actually do it. This is a CAPABILITY
   // question, not a request that may fail later: the consumer asks before it
