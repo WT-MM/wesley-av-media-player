@@ -1,4 +1,5 @@
 #include "platform/macos/native_qt_gl_output.hpp"
+#include "platform/macos/native_tracked_video_binding.hpp"
 
 #include <CoreFoundation/CoreFoundation.h>
 #include <CoreVideo/CoreVideo.h>
@@ -258,28 +259,30 @@ void verifyTrackedDrawAndInvalidation(QQuickWindow& window) {
   auto output = wam::macos::NativeQtGlOutput::createTracked(
       item.get(), {trackedWake, &wakes}, &error);
   WAM_CHECK_DETAIL(output != nullptr, error);
+  wam::macos::NativeTrackedVideoBinding bound(output.get());
+  WAM_CHECK(bound.kind() == wam::macos::NativeTrackedVideoBinding::Kind::SceneGraph);
   renderProbeOutput.store(output.get(), std::memory_order_release);
-  WAM_CHECK(output->capacity(1) ==
+  WAM_CHECK(bound.capacity(1) ==
             wam::macos::NativeTrackedVideoCapacity::StaleGeneration);
 
-  WAM_CHECK(flushStarted(output->flushProgress(0, 1)));
+  WAM_CHECK(flushStarted(bound.flushProgress(0, 1)));
   WAM_CHECK(spinUntil([&] {
-    return output->flushProgress(0, 1) ==
+    return bound.flushProgress(0, 1) ==
            wam::macos::NativeTrackedVideoOutputProgress::Done;
   }));
-  WAM_CHECK(output->capacity(1) ==
+  WAM_CHECK(bound.capacity(1) ==
             wam::macos::NativeTrackedVideoCapacity::Available);
 
   auto frame = makeFrame(1, 180);
   wakes.store(0, std::memory_order_release);
   renderProbeCalls.store(0, std::memory_order_release);
   renderProbeArmed.store(true, std::memory_order_release);
-  WAM_CHECK(output->submit(
+  WAM_CHECK(bound.submit(
                 frame, wam::macos::NativeTrackedFrameSequence{1}, &error) ==
             wam::macos::NativeTrackedVideoSubmitStatus::Accepted);
-  WAM_CHECK(output->capacity(1) ==
+  WAM_CHECK(bound.capacity(1) ==
             wam::macos::NativeTrackedVideoCapacity::Backpressure);
-  WAM_CHECK(output->submit(
+  WAM_CHECK(bound.submit(
                 frame, wam::macos::NativeTrackedFrameSequence{2}, &error) ==
             wam::macos::NativeTrackedVideoSubmitStatus::Backpressure);
   WAM_CHECK(spinUntil([&] {
@@ -291,7 +294,7 @@ void verifyTrackedDrawAndInvalidation(QQuickWindow& window) {
   renderProbeArmed.store(false, std::memory_order_release);
   std::optional<wam::macos::NativeTrackedVideoEvent> draw;
   WAM_CHECK(spinUntil([&] {
-    draw = output->takeEvent();
+    draw = bound.takeEvent();
     return draw.has_value();
   }));
   WAM_CHECK(draw->kind ==
@@ -300,30 +303,30 @@ void verifyTrackedDrawAndInvalidation(QQuickWindow& window) {
   WAM_CHECK(draw->generation == 1);
   WAM_CHECK(CMTimeCompare(draw->timing.presentationTime,
                           frame.timing().presentationTime) == 0);
-  const auto afterDraw = output->facts();
+  const auto afterDraw = bound.facts();
   WAM_CHECK(afterDraw.drawnFrames == 1);
   WAM_CHECK(afterDraw.retainedFrames == 0);
   WAM_CHECK(wakes.load(std::memory_order_acquire) > 0);
 
   auto second = makeFrame(1, 210);
-  WAM_CHECK(output->submit(
+  WAM_CHECK(bound.submit(
                 second, wam::macos::NativeTrackedFrameSequence{2}, &error) ==
             wam::macos::NativeTrackedVideoSubmitStatus::Accepted);
-  WAM_CHECK(output->flushProgress(1, 2) ==
+  WAM_CHECK(bound.flushProgress(1, 2) ==
             wam::macos::NativeTrackedVideoOutputProgress::Quiescing);
   std::optional<wam::macos::NativeTrackedVideoEvent> superseded;
   WAM_CHECK(spinUntil([&] {
-    superseded = output->takeEvent();
+    superseded = bound.takeEvent();
     return superseded.has_value();
   }));
   WAM_CHECK(superseded->kind ==
             wam::macos::NativeTrackedVideoEventKind::FrameSuperseded);
   WAM_CHECK(superseded->frameSequence.value == 2);
   WAM_CHECK(spinUntil([&] {
-    return output->flushProgress(1, 2) ==
+    return bound.flushProgress(1, 2) ==
            wam::macos::NativeTrackedVideoOutputProgress::Done;
   }));
-  WAM_CHECK(output->facts().supersededFrames == 1);
+  WAM_CHECK(bound.facts().supersededFrames == 1);
 
   // Pin a callback before terminal detachment. closeProgress must atomically
   // close the same gate, reject every later entry, and remain Quiescing until
@@ -337,10 +340,10 @@ void verifyTrackedDrawAndInvalidation(QQuickWindow& window) {
   });
   WAM_CHECK(spinUntil(
       [&] { return pinnedEntered.load(std::memory_order_acquire); }));
-  WAM_CHECK(output->closeProgress(3) ==
+  WAM_CHECK(bound.closeProgress(3) ==
             wam::macos::NativeTrackedVideoOutputProgress::Quiescing);
   WAM_CHECK(spinUntil([&] {
-    const auto progress = output->closeProgress(3);
+    const auto progress = bound.closeProgress(3);
     WAM_CHECK(progress !=
               wam::macos::NativeTrackedVideoOutputProgress::Done);
     std::atomic<bool> lateEntered{false};
@@ -355,10 +358,10 @@ void verifyTrackedDrawAndInvalidation(QQuickWindow& window) {
   pinnedRelease.store(true, std::memory_order_release);
   pinnedWake.join();
   WAM_CHECK(spinUntil([&] {
-    return output->closeProgress(3) ==
+    return bound.closeProgress(3) ==
            wam::macos::NativeTrackedVideoOutputProgress::Done;
   }));
-  WAM_CHECK(output->closeProgress(3) ==
+  WAM_CHECK(bound.closeProgress(3) ==
             wam::macos::NativeTrackedVideoOutputProgress::Done);
   renderProbeOutput.store(nullptr, std::memory_order_release);
   QObject::disconnect(renderProbe);
@@ -377,19 +380,21 @@ void verifyTrackedRejectionPrecedesInvalidation(QQuickWindow& window) {
   auto output = wam::macos::NativeQtGlOutput::createTracked(
       item.get(), {trackedWake, &wakes}, &error);
   WAM_CHECK_DETAIL(output != nullptr, error);
-  WAM_CHECK(flushStarted(output->flushProgress(0, 1)));
+  wam::macos::NativeTrackedVideoBinding bound(output.get());
+  WAM_CHECK(bound.kind() == wam::macos::NativeTrackedVideoBinding::Kind::SceneGraph);
+  WAM_CHECK(flushStarted(bound.flushProgress(0, 1)));
   WAM_CHECK(spinUntil([&] {
-    return output->flushProgress(0, 1) ==
+    return bound.flushProgress(0, 1) ==
            wam::macos::NativeTrackedVideoOutputProgress::Done;
   }));
 
   auto frame = makeFrame(1, 190);
-  WAM_CHECK(output->submit(
+  WAM_CHECK(bound.submit(
                 frame, wam::macos::NativeTrackedFrameSequence{77}, &error) ==
             wam::macos::NativeTrackedVideoSubmitStatus::Accepted);
   wam::macos::NativeTrackedVideoOutputProgress flushResult =
       wam::macos::NativeTrackedVideoOutputProgress::Failed;
-  std::thread flusher([&] { flushResult = output->flushProgress(1, 2); });
+  std::thread flusher([&] { flushResult = bound.flushProgress(1, 2); });
   flusher.join();
   WAM_CHECK(flushResult ==
             wam::macos::NativeTrackedVideoOutputProgress::Quiescing);
@@ -400,17 +405,17 @@ void verifyTrackedRejectionPrecedesInvalidation(QQuickWindow& window) {
   item->publishRenderInvalidationForTesting(2);
   item->publishTrackedRejectionForTesting(
       wam::macos::QtGlFrameIdentity{1, 77}, 1, 1);
-  const auto terminal = output->takeEvent();
+  const auto terminal = bound.takeEvent();
   WAM_CHECK(terminal.has_value());
   WAM_CHECK(terminal->kind ==
             wam::macos::NativeTrackedVideoEventKind::Failed);
   WAM_CHECK(terminal->frameSequence.value == 77);
-  const auto facts = output->facts();
+  const auto facts = bound.facts();
   WAM_CHECK(facts.fatal);
   WAM_CHECK(facts.retainedFrames == 0);
   WAM_CHECK(facts.invalidationPending);
 
-  const auto closeStarted = output->closeProgress(3);
+  const auto closeStarted = bound.closeProgress(3);
   WAM_CHECK(closeStarted ==
                 wam::macos::NativeTrackedVideoOutputProgress::Quiescing ||
             closeStarted ==
@@ -420,10 +425,10 @@ void verifyTrackedRejectionPrecedesInvalidation(QQuickWindow& window) {
     item->publishRenderInvalidationForTesting(3);
   }
   WAM_CHECK(spinUntil([&] {
-    return output->closeProgress(3) ==
+    return bound.closeProgress(3) ==
            wam::macos::NativeTrackedVideoOutputProgress::Done;
   }));
-  const auto closedFacts = output->facts();
+  const auto closedFacts = bound.facts();
   WAM_CHECK(closedFacts.fatal);
   WAM_CHECK(closedFacts.closed);
   WAM_CHECK(closedFacts.generation == 3);
@@ -446,26 +451,28 @@ void verifyTrackedFailedFrameStillCloses(QQuickWindow& window) {
   auto output = wam::macos::NativeQtGlOutput::createTracked(
       item.get(), {trackedWake, &wakes}, &error);
   WAM_CHECK_DETAIL(output != nullptr, error);
-  WAM_CHECK(flushStarted(output->flushProgress(0, 1)));
+  wam::macos::NativeTrackedVideoBinding bound(output.get());
+  WAM_CHECK(bound.kind() == wam::macos::NativeTrackedVideoBinding::Kind::SceneGraph);
+  WAM_CHECK(flushStarted(bound.flushProgress(0, 1)));
   item->publishRenderInvalidationForTesting(1);
-  WAM_CHECK(output->flushProgress(0, 1) ==
+  WAM_CHECK(bound.flushProgress(0, 1) ==
             wam::macos::NativeTrackedVideoOutputProgress::Done);
 
   auto frame = makeFrame(1, 200);
-  WAM_CHECK(output->submit(
+  WAM_CHECK(bound.submit(
                 frame, wam::macos::NativeTrackedFrameSequence{91}, &error) ==
             wam::macos::NativeTrackedVideoSubmitStatus::Accepted);
   item->publishTrackedRejectionForTesting(
       wam::macos::QtGlFrameIdentity{1, 91}, 1, 1);
-  const auto failed = output->takeEvent();
+  const auto failed = bound.takeEvent();
   WAM_CHECK(failed.has_value());
   WAM_CHECK(failed->kind ==
             wam::macos::NativeTrackedVideoEventKind::Failed);
   WAM_CHECK(failed->frameSequence.value == 91);
-  WAM_CHECK(output->facts().fatal);
-  WAM_CHECK(output->facts().retainedFrames == 0);
+  WAM_CHECK(bound.facts().fatal);
+  WAM_CHECK(bound.facts().retainedFrames == 0);
 
-  const auto closeStarted = output->closeProgress(2);
+  const auto closeStarted = bound.closeProgress(2);
   WAM_CHECK(closeStarted ==
                 wam::macos::NativeTrackedVideoOutputProgress::Quiescing ||
             closeStarted ==
@@ -474,9 +481,9 @@ void verifyTrackedFailedFrameStillCloses(QQuickWindow& window) {
       wam::macos::NativeTrackedVideoOutputProgress::Done) {
     item->publishRenderInvalidationForTesting(2);
   }
-  WAM_CHECK(output->closeProgress(2) ==
+  WAM_CHECK(bound.closeProgress(2) ==
             wam::macos::NativeTrackedVideoOutputProgress::Done);
-  const auto closedFacts = output->facts();
+  const auto closedFacts = bound.facts();
   WAM_CHECK(closedFacts.fatal);
   WAM_CHECK(closedFacts.closed);
   WAM_CHECK(closedFacts.generation == 2);

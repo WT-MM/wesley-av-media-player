@@ -1,4 +1,5 @@
 #include "native_video_consumer.hpp"
+#include "native_tracked_video_binding.hpp"
 
 #include "native_presentation_admission.hpp"
 
@@ -658,6 +659,7 @@ struct NativeVideoConsumer::Impl {
       : externalLifetime(std::move(lifetime)),
         clock(mediaClock),
         output(std::move(trackedOutput)),
+        outputCalls(std::in_place, output.get()),
         wake(wakeSeam),
         // `output` is declared before `decoder`, so it is already the live
         // presenter here and the interop is decided once, from the presenter
@@ -792,7 +794,7 @@ struct NativeVideoConsumer::Impl {
     if (output == nullptr) {
       return protocolFailure("tracked video output is missing");
     }
-    const std::optional<NativeTrackedVideoEvent> event = output->takeEvent();
+    const std::optional<NativeTrackedVideoEvent> event = outputCalls->takeEvent();
     if (!event) {
       return PumpStatus::Idle;
     }
@@ -957,7 +959,7 @@ struct NativeVideoConsumer::Impl {
       return PumpStatus::Blocked;
     }
 
-    switch (output->capacity(generation)) {
+    switch (outputCalls->capacity(generation)) {
     case NativeTrackedVideoCapacity::Backpressure:
       return PumpStatus::Blocked;
     case NativeTrackedVideoCapacity::StaleGeneration:
@@ -975,7 +977,7 @@ struct NativeVideoConsumer::Impl {
       return PumpStatus::Failed;
     }
     const NativeTrackedFrameSequence submittedSequence = nextFrameSequence;
-    switch (output->submit(*heldFrame, submittedSequence, error)) {
+    switch (outputCalls->submit(*heldFrame, submittedSequence, error)) {
     case NativeTrackedVideoSubmitStatus::Backpressure:
       return PumpStatus::Blocked;
     case NativeTrackedVideoSubmitStatus::StaleGeneration:
@@ -1073,6 +1075,7 @@ struct NativeVideoConsumer::Impl {
   std::shared_ptr<void> externalLifetime;
   const NativeVideoClockSeam clock;
   std::shared_ptr<NativeTrackedVideoOutput> output;
+  std::optional<NativeTrackedVideoBinding> outputCalls;
   // The live closed-caption tap. `captionTap` is settled at configure (feed
   // present and the track is H.264); the NAL length prefix width is read
   // from the first sample's format description.
@@ -1406,7 +1409,7 @@ NativeVideoConsumerArmProgress NativeVideoConsumer::armFirstGeneration(
                "tracked video output event failed before the first arm");
     return NativeVideoConsumerArmProgress::Failed;
   }
-  switch (impl.output->flushProgress(0, generation)) {
+  switch (impl.outputCalls->flushProgress(0, generation)) {
   case NativeTrackedVideoOutputProgress::Done: {
     const PumpStatus event = impl.consumeOutputEvent();
     if (event == PumpStatus::Failed || event == PumpStatus::Stale) {
@@ -1414,7 +1417,7 @@ NativeVideoConsumerArmProgress NativeVideoConsumer::armFirstGeneration(
                  "tracked video output event failed during the first arm flush");
       return NativeVideoConsumerArmProgress::Failed;
     }
-    const NativeTrackedVideoOutputFacts facts = impl.output->facts();
+    const NativeTrackedVideoOutputFacts facts = impl.outputCalls->facts();
     if (!outputSettledAt(facts, generation, false, false)) {
       impl.latch(NativeVideoConsumerFailure::Output,
                  "tracked video output arm facts are invalid");
@@ -1512,7 +1515,7 @@ NativeVideoConsumer::quiesceForPreview(MediaGeneration generation) noexcept {
                "tracked video output is missing during the preview quiesce");
     return NativeVideoConsumerPreviewProgress::Failed;
   }
-  const NativeTrackedVideoOutputFacts outputFacts = impl.output->facts();
+  const NativeTrackedVideoOutputFacts outputFacts = impl.outputCalls->facts();
   if (outputFacts.fatal || outputFacts.closed ||
       outputFacts.generation != generation ||
       outputFacts.invalidationPending) {
@@ -1596,7 +1599,7 @@ NativeVideoConsumer::releasePreviewQuiesce(
   decoderConfigured =
       decoderConfigured || impl.testSyntheticDecoderConfigured;
 #endif
-  const NativeTrackedVideoOutputFacts outputFacts = impl.output->facts();
+  const NativeTrackedVideoOutputFacts outputFacts = impl.outputCalls->facts();
   if (!decoderConfigured || decoderFacts.generation != generation ||
       !decoderFacts.awaitingKeyFrame || decoderFacts.inFlightFrames != 0 ||
       decoderFacts.retainedPresentationFrames != 0 ||
@@ -1652,7 +1655,7 @@ media::NativeMediaConsumeResult NativeVideoConsumer::configure(
                "native video generation timeline is invalid", error);
     return media::NativeMediaConsumeResult::Failed;
   }
-  const NativeTrackedVideoOutputFacts outputFacts = impl.output->facts();
+  const NativeTrackedVideoOutputFacts outputFacts = impl.outputCalls->facts();
   if (outputFacts.fatal || outputFacts.closed ||
       outputFacts.generation != generation ||
       outputFacts.retainedFrames != 0 ||
@@ -2175,7 +2178,7 @@ media::NativeMediaConsumerProgress NativeVideoConsumer::flush(
     return media::NativeMediaConsumerProgress::StaleGeneration;
   }
   const NativeTrackedVideoOutputProgress output =
-      impl.output->flushProgress(retiredGeneration, nextGeneration);
+      impl.outputCalls->flushProgress(retiredGeneration, nextGeneration);
   if (output != NativeTrackedVideoOutputProgress::Done) {
     const auto mapped = mapOutputProgress(output);
     if (mapped == media::NativeMediaConsumerProgress::Failed) {
@@ -2187,7 +2190,7 @@ media::NativeMediaConsumerProgress NativeVideoConsumer::flush(
                ? media::NativeMediaConsumerProgress::Progress
                : mapped;
   }
-  const NativeTrackedVideoOutputFacts outputFacts = impl.output->facts();
+  const NativeTrackedVideoOutputFacts outputFacts = impl.outputCalls->facts();
   if (!outputSettledAt(outputFacts, nextGeneration, false, false) ||
       impl.awaitingDraw.valid()) {
     impl.latch(NativeVideoConsumerFailure::Output,
@@ -2243,7 +2246,7 @@ template <typename ImplType>
   if (impl.lifecycle != lifecycle) {
     const NativeTrackedVideoOutputFacts facts =
         impl.output == nullptr ? NativeTrackedVideoOutputFacts{}
-                               : impl.output->facts();
+                               : impl.outputCalls->facts();
     const MediaGeneration active = std::max(
         {impl.generation, impl.armGeneration, impl.flushTarget,
          impl.highestExposedGeneration, facts.generation});
@@ -2299,7 +2302,7 @@ template <typename ImplType>
         return media::NativeMediaConsumerProgress::Failed;
       }
       const NativeTrackedVideoOutputProgress flushOutput =
-          impl.output->flushProgress(impl.flushRetired, impl.flushTarget);
+          impl.outputCalls->flushProgress(impl.flushRetired, impl.flushTarget);
       if (flushOutput != NativeTrackedVideoOutputProgress::Done) {
         const auto mapped = mapOutputProgress(flushOutput);
         if (mapped == media::NativeMediaConsumerProgress::Failed) {
@@ -2312,7 +2315,7 @@ template <typename ImplType>
                    ? media::NativeMediaConsumerProgress::Progress
                    : mapped;
       }
-      const NativeTrackedVideoOutputFacts flushed = impl.output->facts();
+      const NativeTrackedVideoOutputFacts flushed = impl.outputCalls->facts();
       if (!outputSettledAt(flushed, impl.flushTarget, false, false) ||
           impl.awaitingDraw.valid()) {
         impl.latch(NativeVideoConsumerFailure::Output,
@@ -2358,7 +2361,7 @@ template <typename ImplType>
     return media::NativeMediaConsumerProgress::Done;
   }
   const NativeTrackedVideoOutputProgress output =
-      impl.output->closeProgress(impl.terminalGeneration);
+      impl.outputCalls->closeProgress(impl.terminalGeneration);
   if (output != NativeTrackedVideoOutputProgress::Done) {
     const auto mapped = mapOutputProgress(output);
     if (mapped == media::NativeMediaConsumerProgress::Failed) {
@@ -2370,7 +2373,7 @@ template <typename ImplType>
                ? media::NativeMediaConsumerProgress::Progress
                : mapped;
   }
-  const NativeTrackedVideoOutputFacts outputFacts = impl.output->facts();
+  const NativeTrackedVideoOutputFacts outputFacts = impl.outputCalls->facts();
   if (impl.outputProtocolViolation ||
       !outputSettledAt(outputFacts, impl.terminalGeneration, true,
                        impl.matchedFrameFailure) ||
@@ -2380,6 +2383,7 @@ template <typename ImplType>
                "close");
     return media::NativeMediaConsumerProgress::Failed;
   }
+  impl.outputCalls.reset();
   impl.output.reset();
   impl.configured = false;
   impl.cancelled = lifecycle == Lifecycle::Cancel;
@@ -2414,7 +2418,7 @@ media::NativeMediaConsumerProgress NativeVideoConsumer::retire(
     }
     const NativeTrackedVideoOutputFacts outputFacts =
         impl.output == nullptr ? NativeTrackedVideoOutputFacts{}
-                               : impl.output->facts();
+                               : impl.outputCalls->facts();
     const VideoToolboxDecoderStats decoderFacts = impl.decoder.stats();
     const MediaGeneration exposed = std::max(
         {impl.generation, impl.armGeneration, impl.flushTarget,
@@ -2492,7 +2496,7 @@ media::NativeMediaConsumerProgress NativeVideoConsumer::retire(
     return media::NativeMediaConsumerProgress::Failed;
   }
   const NativeTrackedVideoOutputProgress output =
-      impl.output->closeProgress(invalidationGeneration);
+      impl.outputCalls->closeProgress(invalidationGeneration);
   if (output != NativeTrackedVideoOutputProgress::Done) {
     const auto mapped = mapOutputProgress(output);
     if (mapped == media::NativeMediaConsumerProgress::Failed) {
@@ -2504,7 +2508,7 @@ media::NativeMediaConsumerProgress NativeVideoConsumer::retire(
                ? media::NativeMediaConsumerProgress::Progress
                : mapped;
   }
-  const NativeTrackedVideoOutputFacts outputFacts = impl.output->facts();
+  const NativeTrackedVideoOutputFacts outputFacts = impl.outputCalls->facts();
   if (impl.outputProtocolViolation ||
       !outputSettledAt(outputFacts, invalidationGeneration, true,
                        impl.matchedFrameFailure) ||
@@ -2515,6 +2519,7 @@ media::NativeMediaConsumerProgress NativeVideoConsumer::retire(
   }
 
   impl.retiredOutputFacts = outputFacts;
+  impl.outputCalls.reset();
   impl.output.reset();
   impl.generation = invalidationGeneration;
   impl.configured = false;
@@ -2616,7 +2621,7 @@ NativeVideoConsumerFacts NativeVideoConsumer::facts() const noexcept {
   result.decoder = impl.decoder.stats();
   result.decodedFrames = result.decoder.deliveredFrames;
   if (impl.output != nullptr) {
-    result.output = impl.output->facts();
+    result.output = impl.outputCalls->facts();
   } else if (impl.retiredOutputFacts) {
     result.output = *impl.retiredOutputFacts;
   }

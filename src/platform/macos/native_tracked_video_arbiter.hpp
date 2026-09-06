@@ -87,7 +87,24 @@ class NativeTrackedVideoPreviewPort {
 // does not expose its historical frame-sequence high-water, so wrapping an
 // already-used instance could not assign a provably increasing next identity.
 class NativeTrackedVideoArbiter final {
+  struct State;
  public:
+  class MainOutput final : public NativeTrackedVideoOutput {
+   public:
+    explicit MainOutput(std::shared_ptr<State> state) noexcept;
+    [[nodiscard]] NativeTrackedVideoCapacity capacity(std::uint64_t generation) const noexcept override;
+    [[nodiscard]] NativeTrackedVideoSubmitStatus submit(const FrameLease& frame, NativeTrackedFrameSequence sequence, std::string* error) noexcept override;
+    [[nodiscard]] std::optional<NativeTrackedVideoEvent> takeEvent() noexcept override;
+    [[nodiscard]] NativeTrackedVideoOutputProgress flushProgress(std::uint64_t retiredGeneration, std::uint64_t nextGeneration) noexcept override;
+    [[nodiscard]] NativeTrackedVideoOutputProgress closeProgress(std::uint64_t finalGeneration) noexcept override;
+    [[nodiscard]] bool presentsDecodedSurfacesDirectly() const noexcept override;
+    [[nodiscard]] bool setPresentationRotation(int degrees) noexcept override;
+    [[nodiscard]] NativeTrackedVideoOutputFacts facts() const noexcept override;
+   private:
+    std::shared_ptr<State> state_;
+  };
+
+
   [[nodiscard]] static std::shared_ptr<NativeTrackedVideoArbiter> create(
       std::shared_ptr<NativeTrackedVideoOutput> output,
       std::string* error = nullptr) noexcept;
@@ -103,8 +120,6 @@ class NativeTrackedVideoArbiter final {
   previewPort() const noexcept;
 
  private:
-  struct State;
-  class MainOutput;
   class PreviewPort;
 
   explicit NativeTrackedVideoArbiter(std::shared_ptr<State> state);

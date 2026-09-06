@@ -550,6 +550,8 @@ if(APPLE)
       src/platform/macos/native_preview_frame_lane.mm
       src/platform/macos/native_tracked_video_arbiter.hpp
       src/platform/macos/native_tracked_video_arbiter.mm
+      src/platform/macos/native_tracked_video_binding.hpp
+      src/platform/macos/native_tracked_video_binding.mm
       src/platform/macos/native_tracked_video_output.hpp
       src/platform/macos/native_video_consumer.hpp
       src/platform/macos/native_video_consumer.mm)
@@ -564,6 +566,7 @@ if(APPLE)
     target_link_libraries(wam_macos_native_backend PUBLIC
       wam_native_core
       wam_macos_native_video_core
+      wam_macos_native_qt_tracked
       "${WAM_COREFOUNDATION_FRAMEWORK}"
       "${WAM_COREGRAPHICS_FRAMEWORK}"
       "${WAM_COREMEDIA_FRAMEWORK}"
@@ -577,10 +580,7 @@ if(APPLE)
     set_target_properties(wam_macos_native_backend PROPERTIES
       LINKER_LANGUAGE OBJCXX)
 
-    # This production factory is the only layer that joins the platform
-    # session backend to its tracked Qt output. PlayerController's macOS route
-    # owner now consumes it directly; keep both implementations single-owned
-    # while making the native route part of the shipping executable.
+    # Host construction and presentation selection belong to the system factory.
     add_library(wam_macos_native_session_system STATIC
       src/platform/macos/native_media_session_system.hpp
       src/platform/macos/native_media_session_system.mm)
@@ -1521,6 +1521,8 @@ if(BUILD_TESTING)
       endif()
 
       add_executable(wam_native_video_consumer_test
+        src/platform/macos/native_tracked_video_arbiter.mm
+        src/platform/macos/native_tracked_video_binding.mm
         tests/native_video_consumer_test.mm
         src/platform/macos/native_video_consumer.hpp
         src/platform/macos/native_video_consumer.mm
@@ -1543,6 +1545,7 @@ if(BUILD_TESTING)
           PkgConfig::WAM_LIBVPX)
       endif()
       target_link_libraries(wam_native_video_consumer_test PRIVATE
+        wam_macos_native_qt_tracked
         wam_native_core
         "${WAM_COREFOUNDATION_FRAMEWORK}"
         "${WAM_COREMEDIA_FRAMEWORK}"
@@ -1575,6 +1578,7 @@ if(BUILD_TESTING)
       target_include_directories(
         wam_native_layer_video_output_test PRIVATE src)
       target_link_libraries(wam_native_layer_video_output_test PRIVATE
+        wam_macos_native_backend
         wam_native_core
         wam_macos_native_video_core
         "${WAM_COREFOUNDATION_FRAMEWORK}"
@@ -2004,6 +2008,8 @@ if(BUILD_TESTING)
       # the test compiles the adapter and item privately instead of linking
       # the production archive.
       add_executable(wam_native_qt_gl_output_test
+        src/platform/macos/native_tracked_video_arbiter.mm
+        src/platform/macos/native_tracked_video_binding.mm
         tests/native_qt_gl_output_test.mm
         src/platform/macos/native_qt_gl_output.hpp
         src/platform/macos/native_qt_gl_output.mm
@@ -2014,6 +2020,7 @@ if(BUILD_TESTING)
         WAM_NATIVE_GL_VIDEO_TESTING=1
         GL_SILENCE_DEPRECATION=1)
       target_link_libraries(wam_native_qt_gl_output_test PRIVATE
+        wam_macos_native_qt_tracked
         wam_macos_native_video_core
         Qt6::Core
         Qt6::Gui
@@ -2064,6 +2071,13 @@ if(BUILD_TESTING)
         -Wall -Wextra -Wpedantic)
       set_target_properties(wam_video_toolbox_decoder_test PROPERTIES
         LINKER_LANGUAGE OBJCXX)
+      add_test(NAME macos_video_toolbox_progress_wake
+        COMMAND wam_video_toolbox_decoder_test --progress-wake-only)
+      set_tests_properties(macos_video_toolbox_progress_wake PROPERTIES TIMEOUT 20)
+      add_test(NAME macos_video_toolbox_completion_publication
+        COMMAND wam_video_toolbox_decoder_test --completion-publication-only)
+      set_tests_properties(macos_video_toolbox_completion_publication PROPERTIES
+        TIMEOUT 20)
       add_test(NAME macos_video_toolbox_decoder_limits
         COMMAND wam_video_toolbox_decoder_test --limits-only)
       set_tests_properties(macos_video_toolbox_decoder_limits PROPERTIES

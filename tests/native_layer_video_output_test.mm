@@ -1,4 +1,5 @@
 #include "platform/macos/native_layer_video_output.hpp"
+#include "platform/macos/native_tracked_video_binding.hpp"
 #include "platform/macos/native_layer_host_view.hpp"
 #include "platform/macos/video_quarter_turn.hpp"
 
@@ -221,6 +222,9 @@ std::shared_ptr<NativeLayerVideoOutput> createDetached(
   auto output = NativeLayerVideoOutput::createTracked(
       nullptr, NativeTrackedVideoOutputWakeSeam{trackedWake, wakes}, &error);
   WAM_CHECK_DETAIL(output != nullptr, error);
+  wam::macos::NativeTrackedVideoBinding bound(output.get());
+  WAM_CHECK(bound.kind() == wam::macos::NativeTrackedVideoBinding::Kind::Layer);
+  WAM_CHECK(bound.presentsDecodedSurfacesDirectly());
   WAM_CHECK(error.empty());
   return output;
 }
@@ -230,11 +234,12 @@ std::shared_ptr<NativeLayerVideoOutput> createDetached(
 // one. finalGeneration must be strictly newer than the accepted generation.
 void closeAndDrop(std::shared_ptr<NativeLayerVideoOutput> output,
                   std::uint64_t finalGeneration) {
+  wam::macos::NativeTrackedVideoBinding bound(output.get());
   WAM_CHECK(spinUntil([&] {
-    return output->closeProgress(finalGeneration) ==
+    return bound.closeProgress(finalGeneration) ==
            NativeTrackedVideoOutputProgress::Done;
   }));
-  WAM_CHECK(output->facts().closed);
+  WAM_CHECK(bound.facts().closed);
   output.reset();
   WAM_CHECK(!nativeLayerPresentationActive());
 }

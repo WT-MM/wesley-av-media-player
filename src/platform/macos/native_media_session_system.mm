@@ -6,6 +6,7 @@
 #include "native_layer_video_output.hpp"
 #include "native_qt_gl_output.hpp"
 #include "native_tracked_video_arbiter.hpp"
+#include "native_tracked_video_binding.hpp"
 
 #include <QQuickItem>
 #include <QQuickWindow>
@@ -178,6 +179,11 @@ std::unique_ptr<NativeMediaSession> createNativeMediaSessionSystem(
         return {};
       }
       trackedOutput = concreteOutput;
+    }
+    const NativeTrackedVideoBinding selectedOutput(trackedOutput.get());
+    if (selectedOutput.kind() == NativeTrackedVideoBinding::Kind::Injected) {
+      assignError(error, "system native presentation has no concrete output binding");
+      return {};
     }
     std::shared_ptr<NativeTrackedVideoArbiter> videoArbiter =
         NativeTrackedVideoArbiter::create(std::move(trackedOutput), error);
