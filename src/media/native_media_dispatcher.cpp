@@ -61,6 +61,31 @@ void saturatingIncrement(Integer& value) noexcept {
   }
 }
 
+// Consumer results that carry no error out-parameter -- capacity() and the
+// whole lifecycle set, seek flush included -- can still fail a step, and only
+// the port knows which of its internal gates refused. Without this the
+// always-on stderr failure line reports the class with error="" for every one
+// of them, which names the seam but not the branch. Adopt the port's own gate
+// text when the step published nothing more specific.
+void adoptPortFailureText(std::string& message, NativeVideoConsumer* video,
+                          NativeAudioConsumer* audio) noexcept {
+  if (!message.empty()) {
+    return;
+  }
+  try {
+    if (video != nullptr) {
+      message = video->failureText();
+    }
+    if (message.empty() && audio != nullptr) {
+      message = audio->failureText();
+    }
+  } catch (...) {
+    // A copy for a diagnostic string must never change the failure the step
+    // already decided. Leaving the message empty degrades the stderr line to
+    // its last-resort text and nothing more.
+  }
+}
+
 // Exhaustive over the frozen read-result variant. std::visit builds a
 // seven-entry function-pointer table to read one scalar field; the switch reads
 // it directly, and the static_assert turns an appended alternative into a
@@ -349,6 +374,23 @@ enum class OpenConfigureVerdict : std::uint8_t {
 }
 
 }  // namespace
+
+MediaTime presentableSeekCeiling(
+    const MediaSourceDescriptor& descriptor) noexcept {
+  if (!descriptor.selectedVideo.has_value()) {
+    return descriptor.duration;
+  }
+  const MediaTrackDescriptor* video =
+      findMediaTrack(descriptor, *descriptor.selectedVideo);
+  if (video == nullptr || !video->duration.valid() ||
+      video->duration.value <= 0) {
+    return descriptor.duration;
+  }
+  const auto order = compareMediaTime(video->duration, descriptor.duration);
+  return order.has_value() && *order == MediaTimeOrder::Less
+             ? video->duration
+             : descriptor.duration;
+}
 
 static_assert(std::is_standard_layout_v<NativeMediaGenerationTimeline>);
 static_assert(std::is_trivially_copyable_v<NativeMediaGenerationTimeline>);
@@ -796,17 +838,27 @@ NativeMediaDispatcherStep NativeMediaDispatcher::step() noexcept {
   // frame covering it, so the buffer cannot retire a single slab until the
   // very work this return skipped has happened. checkReadCapacity() below
   // re-asks the audio consumer and still refuses the read, so read admission
-  // is unchanged. Draining keeps the original return: there the audio route
-  // owes a terminal drain, and the exhausted-source invariant below treats an
-  // undrained consumer as a protocol fault rather than as work to schedule.
+  // is unchanged. Draining has the same circle with one more turn: the audio
+  // route's terminal drain waits on its paused output, and the video route's
+  // terminal drain is the ONLY thing that can still emit the covering frame
+  // when that frame sits behind the codec's reorder floor and is released by
+  // end of stream alone -- every seek into the last reorder window of a file.
+  // So a blocked audio drain pumps the video drain before it is reported, and
+  // is reported unchanged when video has nothing to do: the exhausted-source
+  // invariant below treats an undrained consumer as a protocol fault rather
+  // than as work to schedule, and a waiting audio drain must never fall
+  // through to it.
   if (audioProgress.action != NativeMediaDispatcherAction::Idle &&
-      (audioProgress.action != NativeMediaDispatcherAction::BlockedAudio ||
-       stats_.state != NativeMediaDispatcherState::Ready)) {
+      audioProgress.action != NativeMediaDispatcherAction::BlockedAudio) {
     return audioProgress;
   }
   NativeMediaDispatcherStep videoProgress = maintainVideo();
   if (videoProgress.action != NativeMediaDispatcherAction::Idle) {
     return videoProgress;
+  }
+  if (audioProgress.action == NativeMediaDispatcherAction::BlockedAudio &&
+      stats_.state == NativeMediaDispatcherState::Draining) {
+    return audioProgress;
   }
 
   if (stats_.state == NativeMediaDispatcherState::Draining) {
@@ -898,6 +950,10 @@ NativeMediaDispatcherSeekOutcome NativeMediaDispatcher::seek(
       !sought.actualDecodeStart.valid()) {
     // No new source generation committed. Preserve the old consumer
     // generation and old pending event; only exact close may retire them.
+    // The source's own refusal text is the only statement of WHY (a target
+    // outside its seekable range, a RAP too far back); carry it to the
+    // failure line instead of reporting the class alone.
+    failure_message_ = sought.error;
     operation_generation_.store(0, std::memory_order_release);
     stats_.state = NativeMediaDispatcherState::Failed;
     stats_.failure = NativeMediaDispatcherFailure::Seek;
@@ -1841,6 +1897,7 @@ NativeMediaDispatcherStep NativeMediaDispatcher::advanceLifecycle() noexcept {
     stats_.failure = kind == NativeMediaDispatcherLifecycleKind::Seek
                          ? NativeMediaDispatcherFailure::Flush
                          : NativeMediaDispatcherFailure::Consumer;
+    adoptPortFailureText(failure_message_, video_.get(), audio_.get());
     if (kind == NativeMediaDispatcherLifecycleKind::Close ||
         kind == NativeMediaDispatcherLifecycleKind::Retire ||
         kind == NativeMediaDispatcherLifecycleKind::FailureClose) {
@@ -1987,21 +2044,9 @@ NativeMediaDispatcherStep NativeMediaDispatcher::failStep(
   // failure line reports class=Consumer with error="" for every one of them,
   // which names the seam but not the branch. Adopt the port's own gate text
   // when this step published nothing more specific.
-  if (failure_message_.empty() &&
-      (failure == NativeMediaDispatcherFailure::Consumer ||
-       failure == NativeMediaDispatcherFailure::ConsumerProtocol)) {
-    try {
-      if (video_ != nullptr) {
-        failure_message_ = video_->failureText();
-      }
-      if (failure_message_.empty() && audio_ != nullptr) {
-        failure_message_ = audio_->failureText();
-      }
-    } catch (...) {
-      // A copy for a diagnostic string must never change the failure this
-      // step already decided. Leaving failure_message_ empty degrades the
-      // stderr line back to its previous behaviour and nothing more.
-    }
+  if (failure == NativeMediaDispatcherFailure::Consumer ||
+      failure == NativeMediaDispatcherFailure::ConsumerProtocol) {
+    adoptPortFailureText(failure_message_, video_.get(), audio_.get());
   }
   // Last resort, and the reason the stderr failure line can no longer carry an
   // empty error string. A seam that fails without publishing a reason is a

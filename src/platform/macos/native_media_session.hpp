@@ -388,6 +388,12 @@ class NativeMediaSession final {
   preflightCommitTarget(double seconds) noexcept;
   [[nodiscard]] std::optional<NativePreviewFrameTarget>
   preflightPreviewTarget(double seconds) noexcept;
+  // The bound both preflights hold a target strictly below, as seconds --
+  // media::presentableSeekCeiling of the prepared descriptor. 0 until
+  // Prepared. The controller snaps its native targets under the same value so
+  // a drag to the end of the timeline lands on the last frame instead of
+  // being refused here.
+  [[nodiscard]] double seekCeilingSeconds() const noexcept;
 
   // Must be bound exactly once before Prepare. The edge is retained and
   // capacity-one; no controller polling is needed to discover observations.

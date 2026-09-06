@@ -1575,10 +1575,11 @@ class CodecRbspBitReader final {
       return media::MediaVideoSampleFormat::Unsupported;
     }
     const std::uint8_t nalType = arrayHeader & 0x3fU;
-    if (nalType >= 32U && nalType <= 34U &&
-        (arrayHeader & 0x80U) == 0) {
-      return media::MediaVideoSampleFormat::Unsupported;
-    }
+    // array_completeness is not required, for the reason the neutral
+    // inspector stopped requiring it on 2026-08-17: ISO/IEC 14496-15 lets a
+    // muxer clear it to say parameter sets may also travel in band, which
+    // VideoToolbox handles either way. Two real MP4 records in the corpus
+    // (RustDesk h265 recordings) clear it and were refused here alone.
     if (nalType >= 32U && nalType <= 34U) {
       const std::size_t parameterSetIndex = nalType - 32U;
       if (parameterSetArrays[parameterSetIndex]) {

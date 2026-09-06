@@ -1363,6 +1363,83 @@ void checkDiscontinuityEndAndPerTrackCapacity() {
 // stays full". The dispatcher absorbs refused video events into a bounded
 // per-lane read-ahead queue, keeps pulling, and still routes the queued video
 // events in exact source order once the video consumer reopens.
+// Draining with a waiting audio drain must still pump the video drain. During
+// an accurate seek the audio route is paused at the target and its terminal
+// drain cannot finish until the clock runs; the clock runs only after video
+// draws the frame covering the target; and when that frame sits behind the
+// codec's reorder floor it is released by the video end-of-stream drain alone.
+// Returning the blocked audio drain without pumping video was a deadlock for
+// every seek into a file's last reorder window, broken only by the owner's
+// watchdog. When video has nothing left to drain the blocked audio drain is
+// reported as before, never the undrained-consumer protocol fault.
+void checkDrainingAudioBlockDoesNotStarveVideoDrain() {
+  std::vector<MediaSourceReadResult> events;
+  events.emplace_back(MediaEndOfStream{1, 2});
+  events.emplace_back(MediaEndOfStream{1, 1});
+  events.emplace_back(MediaSourceExhausted{1});
+  TestRig rig = makeRig(std::move(events));
+  // Both ports answer EOS with Draining, so each still owes a drain() proof
+  // when the source is exhausted; both drains wait until the scripts below.
+  rig.audio->endResult = NativeMediaConsumeResult::Draining;
+  rig.video->endResult = NativeMediaConsumeResult::Draining;
+  rig.audio->drainResults.assign(8, NativeMediaConsumerProgress::Quiescing);
+  rig.video->drainResults.assign(8, NativeMediaConsumerProgress::Quiescing);
+  openRig(rig);
+
+  bool exhaustedSource = false;
+  for (unsigned pass = 0; pass != 8 && !exhaustedSource; ++pass) {
+    const NativeMediaDispatcherStep step = rig.dispatcher->step();
+    exhaustedSource =
+        step.action == NativeMediaDispatcherAction::SourceExhausted;
+    expect(step.action != NativeMediaDispatcherAction::Failed,
+           "the walk into Draining never fails");
+  }
+  expect(exhaustedSource && rig.dispatcher->stats().state ==
+                                NativeMediaDispatcherState::Draining,
+         "both EOS markers and exhaustion enter Draining with both drains "
+         "still owed");
+
+  rig.video->drainResults = {NativeMediaConsumerProgress::Quiescing,
+                             NativeMediaConsumerProgress::Progress,
+                             NativeMediaConsumerProgress::Done};
+  rig.video->drainCursor = 0;
+  rig.audio->drainResults.assign(6, NativeMediaConsumerProgress::Quiescing);
+  rig.audio->drainCursor = 0;
+  const std::uint64_t videoDrainsBefore = rig.video->drainCalls;
+  NativeMediaDispatcherStep first = rig.dispatcher->step();
+  expect(first.action == NativeMediaDispatcherAction::BlockedVideo &&
+             first.wait == NativeMediaDispatcherWait::VideoConsumer &&
+             rig.video->drainCalls == videoDrainsBefore + 1 &&
+             rig.audio->drainCalls >= 1,
+         "a waiting audio drain pumps the video drain before it is reported");
+  NativeMediaDispatcherStep second = rig.dispatcher->step();
+  expect(second.action == NativeMediaDispatcherAction::VideoProgress &&
+             second.wait == NativeMediaDispatcherWait::CallAgain &&
+             rig.video->drainCalls == videoDrainsBefore + 2,
+         "video drain progress is reported while audio still waits");
+  NativeMediaDispatcherStep third = rig.dispatcher->step();
+  expect(third.action == NativeMediaDispatcherAction::VideoProgress &&
+             rig.video->drainCalls == videoDrainsBefore + 3 &&
+             rig.dispatcher->stats().videoDrained &&
+             !rig.dispatcher->stats().audioDrained,
+         "the video drain completes with the audio drain still owed");
+  NativeMediaDispatcherStep fourth = rig.dispatcher->step();
+  expect(fourth.action == NativeMediaDispatcherAction::BlockedAudio &&
+             fourth.wait == NativeMediaDispatcherWait::AudioConsumer &&
+             rig.video->drainCalls == videoDrainsBefore + 3 &&
+             rig.dispatcher->stats().state ==
+                 NativeMediaDispatcherState::Draining,
+         "with video drained the waiting audio drain is reported, not a "
+         "protocol fault");
+  rig.audio->drainResults.clear();
+  rig.audio->drainCursor = 0;
+  NativeMediaDispatcherStep exhausted = rig.dispatcher->step();
+  expect(exhausted.action == NativeMediaDispatcherAction::Exhausted &&
+             rig.dispatcher->stats().state ==
+                 NativeMediaDispatcherState::Exhausted,
+         "the audio drain's completion exhausts the dispatcher");
+}
+
 void checkVideoLaneDecouplingKeepsAudioReadsAdmitted() {
   auto destructions = std::make_shared<std::atomic<std::uint64_t>>(0);
   std::vector<MediaSourceReadResult> events;
@@ -1982,6 +2059,7 @@ int main() {
   checkCapacityGateAndSingleOpen();
   checkLosslessSampleBackpressureAndProtocolGuard();
   checkDiscontinuityEndAndPerTrackCapacity();
+  checkDrainingAudioBlockDoesNotStarveVideoDrain();
   checkVideoLaneDecouplingKeepsAudioReadsAdmitted();
   checkEveryEventKindQueuesBehindANonEmptyLane();
   checkSourceFirstSeekCommitAndFailedSeekPreservation();

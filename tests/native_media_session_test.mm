@@ -3391,6 +3391,32 @@ void testStopWinsDispatcherFailurePublication() {
          "only exact Stopped escapes Stop/failure race");
 }
 
+// The shape of test-media/edit-list/audio-empty-edit-trim.mp4: the video
+// edit ends at exactly 10 s while the audio edit runs to 10.021333 s
+// (481,024 - 48,000 media frames after a 1 s empty edit), so the source
+// duration is 3758/375 s. Seek admission must stop at the video's end: a
+// target in [10, 10.0213) has no frame to draw, and admitting it against the
+// duration alone reaches the video port's flush refusal only after the
+// transport has been committed to the seek.
+void testSeekAdmissionStopsAtThePresentableCeiling() {
+  auto state = std::make_shared<GraphState>();
+  auto tail = std::make_shared<media::MediaSourceDescriptor>(*descriptor());
+  tail->duration = {3758, 375};
+  state->descriptor = tail;
+  auto session = sessionFor(&state);
+  prepareStartedPausedForPreview(*session);
+  expect(session->seekCeilingSeconds() == 10.0,
+         "the ceiling is the selected video track's end, not the duration");
+  expect(!session->preflightCommitTarget(10.015625).has_value(),
+         "a commit target inside the video-less audio tail is refused");
+  expect(!session->preflightPreviewTarget(10.015625).has_value(),
+         "a preview target inside the video-less audio tail is refused");
+  expect(session->preflightCommitTarget(9.984375).has_value(),
+         "the last grid point below the video's end is admitted");
+  expect(session->preflightPreviewTarget(9.984375).has_value(),
+         "the last grid point below the video's end previews");
+}
+
 }  // namespace
 
 int main() {
@@ -3434,6 +3460,7 @@ int main() {
   testDispatcherFailureIsPublished();
   testDispatcherFailureUsesLatestQueuedStamp();
   testStopWinsDispatcherFailurePublication();
+  testSeekAdmissionStopsAtThePresentableCeiling();
   std::cout << "native media session tests passed\n";
   return EXIT_SUCCESS;
 }

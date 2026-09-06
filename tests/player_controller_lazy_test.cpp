@@ -1133,6 +1133,15 @@ class PlayerControllerTestAccess final {
     controller.handleEndFile(end);
   }
 
+  static void setNativeSeekCeiling(PlayerController &controller,
+                                   double seconds) {
+    controller.updateNativeSeekCeiling(seconds);
+  }
+
+  static double exactNativeSeekTarget(const PlayerController &controller,
+                                      double seconds) {
+    return controller.exactNativeSeekTarget(seconds);
+  }
 };
 
 }  // namespace wam::qt
@@ -3229,6 +3238,37 @@ int main(int argc, char **argv) {
     expect(Access::frameStepTarget(controller, 10.0, true) < 10.0,
            "a frame-step target past the end is clamped strictly inside the "
            "duration");
+  }
+
+  {
+    // test-media/edit-list/audio-empty-edit-trim.mp4: the video edit ends at
+    // exactly 10 s, the audio edit at 3758/375 s (10.021333...). The native
+    // route publishes the video's end as its seek ceiling; the snap must hold
+    // every native target strictly below it, or a drag to the end of the
+    // timeline commits a target with no frame to draw.
+    using Access = wam::qt::PlayerControllerTestAccess;
+    wam::qt::PlayerController controller;
+    Access::setDuration(controller, 3758.0 / 375.0);
+    expect(Access::exactNativeSeekTarget(controller, 10.75) == 10.015625,
+           "without a ceiling the duration alone admits the video-less tail");
+    Access::setNativeSeekCeiling(controller, 10.0);
+    expect(Access::exactNativeSeekTarget(controller, 10.75) == 9.984375 &&
+               Access::exactNativeSeekTarget(controller, 10.015625) ==
+                   9.984375 &&
+               Access::exactNativeSeekTarget(controller, 10.0) == 9.984375,
+           "a native target at or past the video's end snaps to the last grid "
+           "point below the ceiling");
+    expect(Access::exactNativeSeekTarget(controller, 9.984375) == 9.984375 &&
+               Access::exactNativeSeekTarget(controller, 5.5) == 5.5,
+           "targets below the ceiling are untouched by it");
+    expect(Access::frameStepTarget(controller, 10.75, true) < 10.0 &&
+               Access::frameStepTarget(controller, 10.0, false) < 10.0,
+           "frame steps hold the same ceiling on their finer grid");
+    expect(nearlyEqual(controller.duration(), 3758.0 / 375.0),
+           "the ceiling never shortens the published duration");
+    Access::setNativeSeekCeiling(controller, 0.0);
+    expect(Access::exactNativeSeekTarget(controller, 10.75) == 10.015625,
+           "clearing the ceiling restores the duration bound (fallback route)");
   }
 
   // Any wakeup posted during initialization is context-bound to the destroyed

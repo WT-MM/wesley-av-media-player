@@ -67,6 +67,18 @@ struct NativeMediaGenerationTimeline {
       default;
 };
 
+// The instant every seek target must stay strictly below: the selected video
+// track's duration when one is selected, the source duration otherwise. A
+// container may let audio outlive the last picture (AAC padding, an audio
+// edit longer than the video edit), and the source duration then names an
+// interval in which no frame covers any target -- the video port refuses the
+// seek flush at its own track duration, and a target admitted against the
+// source duration alone reaches that refusal only after the transport has
+// been committed to it. Stated once here so the controller's snap, the
+// session's admission and the video port's gate agree by construction.
+[[nodiscard]] MediaTime presentableSeekCeiling(
+    const MediaSourceDescriptor& descriptor) noexcept;
+
 // Transactional ownership boundary for a compressed sample. A consumer may
 // inspect sample() without changing it. It obtains ownership only by calling
 // take() exactly once and must then return Accepted. Returning Backpressure,
@@ -119,7 +131,12 @@ class NativeVideoConsumer {
       MediaGeneration generation) noexcept = 0;
   // Called only after the source has successfully installed nextGeneration.
   // Repeated calls with the same exact pair and timeline resume one operation.
-  // No route may admit nextGeneration until it returns Done.
+  // No route may admit nextGeneration until it returns Done. The call itself
+  // exposes nextGeneration to the port before ANY outcome, including a
+  // refusal: the dispatcher records the target as this port's exposed
+  // generation the moment it issues the call, and retire() is later handed
+  // exactly that value as retiredGeneration. A port that refuses without
+  // exposing makes its own retirement unreachable.
   [[nodiscard]] virtual NativeMediaConsumerProgress flush(
       MediaGeneration retiredGeneration,
       MediaGeneration nextGeneration,

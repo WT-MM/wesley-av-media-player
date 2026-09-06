@@ -2229,7 +2229,14 @@ if (descriptor == nullptr || !nativeV1Descriptor(*descriptor)) {
         activeGeneration = reservedGeneration;
         preparedPublished = true;
         publicPrepared = true;
-        publicDurationSeconds = descriptorDurationSeconds(*descriptor);
+        // Seek admission is bounded by the presentable ceiling, not the
+        // source duration: the two differ exactly when audio outlives the last
+        // picture, and a target in that tail would pass here only to be
+        // refused by the video port's seek flush after the transport had
+        // already been committed to it (the route then fails closed).
+        publicSeekCeilingSeconds =
+            media::mediaTimeSeconds(media::presentableSeekCeiling(*descriptor))
+                .value_or(0.0);
         // A generation with no selected video track has no frame to preview
         // and never will: there is no thumbnail to decode, so every scrub
         // gesture would arm the lane, fail construction, and publish one
@@ -3480,7 +3487,7 @@ if (result != NativeAudioSessionProgress::Done) {
   MediaGeneration publicActiveGeneration{0};
   MediaGeneration generationHighWater{0};
   std::uint64_t publicLastOutputEventSequence{0};
-  double publicDurationSeconds{0.0};
+  double publicSeekCeilingSeconds{0.0};
   // True once Prepared has published a generation with no selected video
   // track. Guarded by `mutex` like every other public fact; read by
   // preparePreviewHandoff() and previewFrame() to refuse the scrub lane
@@ -3747,12 +3754,20 @@ NativeMediaSession::preflightCommitTarget(double seconds) noexcept {
       impl_->publicActiveGeneration == 0 ||
       impl_->publicLastOutputEventSequence ==
           std::numeric_limits<std::uint64_t>::max() ||
-      !(seconds < impl_->publicDurationSeconds)) {
+      !(seconds < impl_->publicSeekCeilingSeconds)) {
     return std::nullopt;
   }
   return NativeMediaSessionCommitTarget{
       seconds, *exact, impl_->publicLastOutputEventSequence,
       impl_->publicActiveGeneration};
+}
+
+double NativeMediaSession::seekCeilingSeconds() const noexcept {
+  if (impl_ == nullptr) {
+    return 0.0;
+  }
+  std::lock_guard lock(impl_->mutex);
+  return impl_->publicPrepared ? impl_->publicSeekCeilingSeconds : 0.0;
 }
 
 std::optional<NativePreviewFrameTarget>
@@ -3772,7 +3787,7 @@ NativeMediaSession::preflightPreviewTarget(double seconds) noexcept {
       impl_->publicCommitPending || impl_->publicPreviewHandoffFailed ||
       !impl_->publicPrepared ||
       impl_->publicActiveGeneration == 0 ||
-      !(seconds < impl_->publicDurationSeconds)) {
+      !(seconds < impl_->publicSeekCeilingSeconds)) {
     return std::nullopt;
   }
   return target;
@@ -4089,7 +4104,7 @@ NativePreviewFrameRequestStatus NativeMediaSession::previewFrame(
     }
     if (!impl_->publicPrepared ||
         command.generation.value != impl_->publicActiveGeneration ||
-        !(command.targetSeconds < impl_->publicDurationSeconds)) {
+        !(command.targetSeconds < impl_->publicSeekCeilingSeconds)) {
       return NativePreviewFrameRequestStatus::Invalid;
     }
     if (!protocol::previewFollows(
