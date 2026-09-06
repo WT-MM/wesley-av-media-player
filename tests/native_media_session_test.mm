@@ -1,6 +1,9 @@
 #define WAM_NATIVE_MEDIA_SESSION_TESTING 1
 
 #include "platform/macos/native_media_session.hpp"
+#include "platform/macos/native_presentation_admission.hpp"
+#include "media/playback_router.hpp"
+#include "platform/macos/mpegts_media_source.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -144,6 +147,8 @@ struct GraphState {
   std::atomic<media::MediaGeneration> trackedCommitGeneration{0};
   std::mutex commitLifecycleMutex;
   std::vector<CommitLifecycleEvent> commitLifecycle;
+  bool directPresentation{false};
+  std::filesystem::path transportPath;
   media::MediaSourceOpenStatus openStatus{
       media::MediaSourceOpenStatus::Ready};
   std::shared_ptr<const media::MediaSourceDescriptor> descriptor;
@@ -505,6 +510,11 @@ class FakeConsumer : public Base {
 
 class NullOutput final : public NativeTrackedVideoOutput {
  public:
+  explicit NullOutput(bool direct = false) : direct_(direct) {}
+  bool presentsDecodedSurfacesDirectly() const noexcept override { return direct_; }
+  bool setPresentationRotation(int degrees) noexcept override {
+    return direct_ || degrees == 0;
+  }
   NativeTrackedVideoCapacity capacity(std::uint64_t) const noexcept override {
     return NativeTrackedVideoCapacity::Available;
   }
@@ -536,6 +546,7 @@ class NullOutput final : public NativeTrackedVideoOutput {
   }
 
  private:
+  bool direct_;
   std::uint64_t generation_{0};
   std::uint64_t lastEventSequence_{0};
   bool closed_{false};
@@ -867,7 +878,8 @@ NativeMediaSessionTestGraph makeGraph(void* context) {
     std::this_thread::yield();
   }
   NativeMediaSessionTestGraph graph;
-  graph.source = std::make_unique<FakeSource>(state);
+  if (state->transportPath.empty()) graph.source = std::make_unique<FakeSource>(state);
+  else graph.source = std::make_unique<MpegTsMediaSource>();
   graph.video =
       std::make_unique<FakeConsumer<media::NativeVideoConsumer>>(state, true);
   graph.audio =
@@ -898,11 +910,13 @@ std::unique_ptr<NativeMediaSession> sessionFor(
   NativeMediaSessionDependencies dependencies;
   dependencies.externalLifetime = *state;
   dependencies.wake = wake;
-  dependencies.videoOutput = std::make_shared<NullOutput>();
+  dependencies.videoOutput = std::make_shared<NullOutput>((*state)->directPresentation);
   dependencies.previewOutput = std::make_shared<NullPreviewOutput>();
   dependencies.hostClock = {&ticks, nullptr, 1'000};
   auto result = NativeMediaSession::create(
-      {{1}, std::filesystem::path("/tmp/native-session-test.mov")},
+      {{1}, (*state)->transportPath.empty()
+                ? std::filesystem::path("/tmp/native-session-test.mov")
+                : (*state)->transportPath},
       std::move(dependencies));
   expect(result != nullptr, "test session creates");
   NativeMediaSessionTestAccess::installGraphFactory(
@@ -2224,6 +2238,124 @@ void testExactTimeAndSequencing() {
          "Stopped echoes exact Stop pair");
 }
 
+void testMpegTsRefusalFallback() {
+  namespace router = media::playback_router;
+  const char* root = std::getenv("WAM_MPEGTS_FIXTURES");
+  expect(root != nullptr, "MPEG-TS session fixtures are required");
+  for (const char* name : {"dts-only.ts", "rejected-aac.ts", "opus.ts",
+                           "hevc-main10-pq.ts", "hevc-main10-hlg.ts"}) {
+    auto state = std::make_shared<GraphState>();
+    state->transportPath = std::filesystem::path(root) / name;
+    expect(std::filesystem::is_regular_file(state->transportPath), "required soundtrack fixture exists");
+    auto session = sessionFor(&state);
+    router::PlaybackRouter route;
+    const auto opened = route.open({{1}, router::Route::NativeEligibleLocal, 0.0, false}, {1});
+    expect(opened.action && prepare(*session, opened.action->prepare) ==
+               NativeMediaSessionCommandStatus::Accepted, "real transport source accepts Prepare");
+    const auto failed = waitFact<protocol::Failed>(*session, "unadmitted transport source fails startup");
+    expect(failed.reason == protocol::FailureReason::Startup &&
+               state->videoConfigures == 0 && state->audioConfigures == 0,
+           "real transport refusal configures neither consumer");
+    const auto stopping = route.onNativeFailed(failed, {2});
+    expect(stopping.action && stopping.action->kind == router::ActionKind::NativeStop &&
+               session->stop(stopping.action->stop) == NativeMediaSessionCommandStatus::Accepted,
+           "transport refusal retires native before compatibility playback");
+    const auto stopped = waitFact<protocol::Stopped>(*session, "real transport source retires");
+    const auto fallback = route.onNativeStopped(stopped, {3});
+    expect(fallback.action && fallback.action->kind == router::ActionKind::CreateFallback &&
+               fallback.action->fallback.sourceKey == protocol::SourceKey{1},
+           "unsupported transport releases mpv fallback for the same source");
+    if (std::string(name).starts_with("hevc-")) {
+      auto layerState = std::make_shared<GraphState>();
+      layerState->transportPath = state->transportPath;
+      layerState->directPresentation = true;
+      auto layerSession = sessionFor(&layerState);
+      expect(prepare(*layerSession, prepareCommand()) == NativeMediaSessionCommandStatus::Accepted,
+             "real HDR source accepts layer Prepare");
+      static_cast<void>(waitFact<protocol::Prepared>(*layerSession, "real HDR source remains admitted on layer"));
+    }
+  }
+}
+
+void testPresentationAdmissionAndFallback() {
+  namespace router = media::playback_router;
+  struct Case {
+    media::MediaTransferFunction transfer;
+    media::MediaColorPrimaries primaries;
+    int rotation;
+    const char* refusal;
+  };
+  const Case cases[] = {
+      {media::MediaTransferFunction::Pq, media::MediaColorPrimaries::Bt2020,
+       0, "SceneGraphPqUnsupported"},
+      {media::MediaTransferFunction::Hlg, media::MediaColorPrimaries::Bt2020,
+       0, "SceneGraphHlgUnsupported"},
+      {media::MediaTransferFunction::Bt709, media::MediaColorPrimaries::Bt2020,
+       0, "SceneGraphPrimariesUnsupported"},
+      {media::MediaTransferFunction::Bt709, media::MediaColorPrimaries::Bt601,
+       0, "SceneGraphPrimariesUnsupported"},
+      {media::MediaTransferFunction::Unknown, media::MediaColorPrimaries::Unknown,
+       0, nullptr},
+      {media::MediaTransferFunction::Bt709, media::MediaColorPrimaries::Bt709,
+       90, "PresentationRotationUnsupported"},
+      {media::MediaTransferFunction::Bt709, media::MediaColorPrimaries::Bt709,
+       0, nullptr},
+  };
+  const char* previous = std::getenv("WAM_PRESENTATION");
+  const std::optional<std::string> saved = previous ? std::optional<std::string>(previous)
+                                                   : std::nullopt;
+  for (bool direct : {false, true}) {
+    // The default layer preference can still produce a scene-graph output.
+    setenv("WAM_PRESENTATION", direct ? "scenegraph" : "layer", 1);
+    for (const auto& entry : cases) {
+      auto state = std::make_shared<GraphState>();
+      auto source = std::make_shared<media::MediaSourceDescriptor>(*descriptor());
+      auto& video = *source->tracks.front().video;
+      video.transferFunction = entry.transfer;
+      video.colorPrimaries = entry.primaries;
+      video.rotationDegrees = static_cast<std::int16_t>(entry.rotation);
+      video.identityTransform = entry.rotation == 0;
+      state->descriptor = source;
+      state->directPresentation = direct;
+      NullOutput output(direct);
+      const char* refusal = nativePresentationRefusal(video, output);
+      const bool refused = !direct && entry.refusal != nullptr;
+      expect(refused ? refusal && std::string(refusal) == entry.refusal
+                     : refusal == nullptr,
+             "actual output returns the exact named presentation verdict");
+      auto session = sessionFor(&state);
+      router::PlaybackRouter route;
+      const auto opened = route.open({{1}, router::Route::NativeEligibleLocal,
+                                      0.0, false}, {1});
+      expect(opened.action && prepare(*session, opened.action->prepare) ==
+                                    NativeMediaSessionCommandStatus::Accepted,
+             "presentation session accepts router Prepare");
+      if (refused) {
+        const auto failed = waitFact<protocol::Failed>(*session,
+                                                     "presentation refusal fails startup");
+        expect(failed.reason == protocol::FailureReason::Startup &&
+                   state->videoConfigures == 0 && state->audioConfigures == 0,
+               "presentation refusal precedes either consumer configuration");
+        const auto stopping = route.onNativeFailed(failed, {2});
+        expect(stopping.action && stopping.action->kind == router::ActionKind::NativeStop,
+               "presentation failure requires native retirement");
+        expect(session->stop(stopping.action->stop) == NativeMediaSessionCommandStatus::Accepted,
+               "session accepts router retirement");
+        const auto stopped = waitFact<protocol::Stopped>(*session, "presentation retirement completes");
+        const auto fallback = route.onNativeStopped(stopped, {3});
+        expect(fallback.action && fallback.action->kind == router::ActionKind::CreateFallback &&
+                   fallback.action->fallback.sourceKey == protocol::SourceKey{1},
+               "named presentation refusal releases mpv fallback for the same source");
+      } else {
+        static_cast<void>(waitFact<protocol::Prepared>(*session, "supported presentation prepares"));
+        expect(state->videoConfigures == 1, "supported presentation reaches video configuration");
+      }
+    }
+  }
+  if (saved) setenv("WAM_PRESENTATION", saved->c_str(), 1);
+  else unsetenv("WAM_PRESENTATION");
+}
+
 void testUnobservedDirectRetireBarrier() {
   auto state = std::make_shared<GraphState>();
   state->descriptor = descriptor();
@@ -3419,7 +3551,11 @@ void testSeekAdmissionStopsAtThePresentableCeiling() {
 
 }  // namespace
 
-int main() {
+int main(int argc, char** argv) {
+  if (argc == 2 && std::string(argv[1]) == "--mpegts-integration") {
+    testMpegTsRefusalFallback();
+    return EXIT_SUCCESS;
+  }
   testEveryWorkerWakeOwnsOneDrainedAutoreleasePool();
   testObservationQueueRejectionRetriesWithoutPolling();
   testStopWinsEveryPreviewChildCompletion();
@@ -3440,6 +3576,7 @@ int main() {
   testCommitSeekProceedsPastFailedPreviewLane();
   testCommitSeekAdmittedDuringStarting();
   testExactTimeAndSequencing();
+  testPresentationAdmissionAndFallback();
   testUnobservedDirectRetireBarrier();
   testObservedUsesDispatcherRetireOnly();
   testAdmissionGateBeforeConfigure();

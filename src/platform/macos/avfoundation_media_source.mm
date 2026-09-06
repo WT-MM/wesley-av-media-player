@@ -1,5 +1,4 @@
 #include "avfoundation_media_source.hpp"
-#include "native_layer_presentation_state.hpp"
 
 #include "media/adpcm_audio.hpp"
 #include "media/audio_codec_timing.hpp"
@@ -2761,19 +2760,6 @@ void incrementInventory(media::MediaTrackInventory* inventory,
     geometryRefusal =
         "selected video rotation is outside the native v1 presentation "
         "contract";
-  } else if (video.rotationDegrees != 0 &&
-             !layerPresentationRouteSelected()) {
-    // The scene-graph route has no rotation stage, so a rotated file must be
-    // refused -- but it has to be refused HERE, at source admission, where a
-    // refusal is a clean UnsupportedSource that opens the file on the
-    // compatibility renderer with the friendly notice. NativeVideoConsumer
-    // asks its output the same question and would also refuse, but that late
-    // refusal surfaces as "native playback rejected an internal command",
-    // which reads like a defect rather than a supported format falling back.
-    // The consumer's check stays as the backstop that keeps the two honest.
-    geometryRefusal =
-        "rotated video needs the layer presentation route; the compatibility "
-        "renderer will present it upright";
   } else if (!video.progressive) {
     geometryRefusal = "interlaced video is outside native v1";
   } else if (!supportedModeledColor) {

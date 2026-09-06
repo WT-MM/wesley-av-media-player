@@ -2452,6 +2452,17 @@ void testDescriptorExtractionAndBounds() {
   MediaSourceDescriptor admitted = *descriptor();
   expect(preservesLegacyNativeAdmission(admitted, &error),
          "selected A/V inventory should preserve legacy native admission");
+  const char* previousRoute = std::getenv("WAM_PRESENTATION");
+  const std::optional<std::string> savedRoute = previousRoute
+      ? std::optional<std::string>(previousRoute) : std::nullopt;
+  setenv("WAM_PRESENTATION", "scenegraph", 1);
+  MediaSourceDescriptor rotatedForOutput = admitted;
+  rotatedForOutput.tracks[0].video->rotationDegrees = 90;
+  rotatedForOutput.tracks[0].video->identityTransform = false;
+  expect(preservesLegacyNativeAdmission(rotatedForOutput, &error),
+         "container rotation admission is independent of presentation preference");
+  if (savedRoute) setenv("WAM_PRESENTATION", savedRoute->c_str(), 1);
+  else unsetenv("WAM_PRESENTATION");
   MediaSourceDescriptor multipleVideo = admitted;
   multipleVideo.inventory.video = 2;
   multipleVideo.inventory.total = 3;

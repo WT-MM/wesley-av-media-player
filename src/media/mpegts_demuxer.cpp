@@ -1856,9 +1856,9 @@ findLatmStreamMuxConfig(std::span<const std::byte> payload,
 }
 
 struct FirstUnitFacts;
-[[nodiscard]] std::string audioDowngradeReason(std::uint8_t streamType,
-                                               MediaCodec codec,
-                                               const FirstUnitFacts& facts);
+[[nodiscard]] std::string audioRefusalReason(std::uint8_t streamType,
+                                             MediaCodec codec,
+                                             const FirstUnitFacts& facts);
 
 struct FirstUnitFacts {
   std::vector<std::byte> parameterSets;
@@ -1885,8 +1885,8 @@ struct FirstUnitFacts {
 // Why the selected audio stream was not carried. Every branch names something
 // actionable: the framing that could not be read, the mux shape that is not
 // carried, or the codec-level admission that refused.
-std::string audioDowngradeReason(std::uint8_t streamType, MediaCodec codec,
-                                 const FirstUnitFacts& facts) {
+std::string audioRefusalReason(std::uint8_t streamType, MediaCodec codec,
+                               const FirstUnitFacts& facts) {
   const std::string type = hexStreamType(streamType);
   if (streamType == static_cast<std::uint8_t>(TsStreamType::LatmAac)) {
     if (!facts.hasLatmConfig) {
@@ -2394,7 +2394,14 @@ MpegTsPrepareOutcome prepareMpegTs(std::shared_ptr<SeekableByteReader> reader,
       state->audio.id = audioStream->elementaryPid;
       state->hasAudio = true;
     }
-    static_cast<void>(rejectedAudioType);
+    // A present soundtrack requires an admitted selection.
+    if (audioStream == nullptr && rejectedAudioType != 0) {
+      result.status = MpegTsDemuxStatus::Unsupported;
+      result.error = MpegTsDemuxError::UnsupportedStreamType;
+      result.message = "mpeg-ts audio stream type is not routable: " +
+                       hexStreamType(rejectedAudioType);
+      return result;
+    }
 
     // --- first access units ------------------------------------------------
     FirstUnitFacts facts{};
@@ -2745,14 +2752,6 @@ MpegTsPrepareOutcome prepareMpegTs(std::shared_ptr<SeekableByteReader> reader,
               haveConfig = true;
             }
           }
-          if (!haveConfig) {
-            // Name which of the two LATM refusals this is. "No audio" is what
-            // the user hears either way, but a capture that simply never
-            // reached a StreamMuxConfig inside the bounded scan and a stream
-            // whose config states a mux shape this route cannot carry are
-            // different problems with different fixes.
-            rejectedAudioType = state->audio.streamType;
-          }
         } else {
           AdtsHeader adts{};
           std::array<std::byte, 2> adtsConfig{};
@@ -2886,22 +2885,12 @@ MpegTsPrepareOutcome prepareMpegTs(std::shared_ptr<SeekableByteReader> reader,
         descriptor->selectedAudio = track.id;
         descriptor->tracks.push_back(std::move(track));
       } else {
-        // The audio stream stays in the inventory and out of the selection.
-        // Refusing the whole file for an unroutable audio track would reject
-        // playable video, which is exactly the silent-drop failure mode this
-        // demuxer is built to avoid — so it is a recorded downgrade, not a
-        // silent one, and the caller sees selectedAudio absent.
-        //
-        // "Recorded" now means recorded. Until this lane the downgrade left NO
-        // trace anywhere: an AAC-LATM broadcast opened as a silent video and
-        // nothing in the outcome said why, which is how stream type 0x11 sat
-        // unnoticed. The Ready outcome's message is read by nobody in the
-        // adapter (it is consulted only when status != Ready), so stating the
-        // reason here costs nothing and makes the downgrade testable.
-        state->hasAudio = false;
-        result.message = "mpeg-ts audio stream dropped: " +
-                         audioDowngradeReason(state->audio.streamType,
-                                              state->audio.codec, facts);
+        result.status = MpegTsDemuxStatus::Unsupported;
+        result.error = MpegTsDemuxError::CodecConfiguration;
+        result.message = "mpeg-ts audio configuration refused: " +
+                         audioRefusalReason(state->audio.streamType,
+                                            state->audio.codec, facts);
+        return result;
       }
     }
 

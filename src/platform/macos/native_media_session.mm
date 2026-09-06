@@ -1,5 +1,7 @@
 #include "native_media_session.hpp"
 
+#include "native_presentation_admission.hpp"
+
 #include "avfoundation_media_source.hpp"
 #include "matroska_media_source.hpp"
 #include "mpegts_media_source.hpp"
@@ -252,9 +254,10 @@ class NativeV1AdmissionSource final : public media::MediaSource {
  public:
   explicit NativeV1AdmissionSource(
       std::unique_ptr<media::MediaSource> source,
-      std::shared_ptr<NativeMediaSessionCancellation> cancellation) noexcept
+      std::shared_ptr<NativeMediaSessionCancellation> cancellation,
+      std::shared_ptr<NativeTrackedVideoOutput> output) noexcept
       : source_(std::move(source)),
-        cancellation_(std::move(cancellation)) {}
+        cancellation_(std::move(cancellation)), output_(std::move(output)) {}
 
   bool armOperation(MediaGeneration generation) noexcept override {
     if (source_ == nullptr || generation == 0) {
@@ -300,6 +303,13 @@ class NativeV1AdmissionSource final : public media::MediaSource {
       refusal = "selected audio sample rate is outside the native audio "
                 "envelope";
     }
+    if (refusal == nullptr && result.descriptor->selectedVideo) {
+      const auto* video = selectedTrack(*result.descriptor,
+                                       result.descriptor->selectedVideo);
+      if (video != nullptr && video->video) {
+        refusal = nativePresentationRefusal(*video->video, *output_);
+      }
+    }
     if (refusal != nullptr) {
       source_->close();
       result.status = media::MediaSourceOpenStatus::Unsupported;
@@ -337,6 +347,7 @@ class NativeV1AdmissionSource final : public media::MediaSource {
  private:
   std::unique_ptr<media::MediaSource> source_;
   std::shared_ptr<NativeMediaSessionCancellation> cancellation_;
+  std::shared_ptr<NativeTrackedVideoOutput> output_;
   std::atomic<MediaGeneration> armedGeneration_{0};
 };
 
@@ -1238,7 +1249,7 @@ struct NativeMediaSession::Impl final {
       previewBindingObserver = graph.observePreviewBinding;
       previewBindingObserverContext = graph.previewBindingObserverContext;
       sourceOwned = std::make_unique<NativeV1AdmissionSource>(
-          std::move(graph.source), cancellation);
+          std::move(graph.source), cancellation, dependencies.videoOutput);
       videoOwned = std::move(graph.video);
       audioOwned = std::move(graph.audio);
       videoObserver = videoOwned.get();
@@ -1272,7 +1283,7 @@ struct NativeMediaSession::Impl final {
         break;
       }
       source = std::make_unique<NativeV1AdmissionSource>(
-          std::move(backendSource), cancellation);
+          std::move(backendSource), cancellation, dependencies.videoOutput);
       NativeAudioSessionDependencies audioDependencies;
       audioDependencies.externalLifetime = childLifetime;
       audioDependencies.hostClock = dependencies.hostClock;

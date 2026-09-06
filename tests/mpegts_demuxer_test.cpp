@@ -5,7 +5,6 @@
 
 #include <algorithm>
 #include <array>
-#include <cmath>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -63,11 +62,9 @@ void expect(bool condition, const char* message) {
   }
 }
 
-int skipped = 0;
-
-void skip(const char* message) {
-  std::cerr << "SKIP: " << message << '\n';
-  ++skipped;
+void missingFixture(const char* message) {
+  std::cerr << "FAIL: required fixture unavailable: " << message << '\n';
+  ++failures;
 }
 
 [[nodiscard]] std::byte octet(unsigned value) noexcept {
@@ -1107,6 +1104,94 @@ void testPreparationRequestValidation() {
          "every error enumerator names itself for telemetry");
 }
 
+MpegTsPrepareOutcome prepareAudioSelection(std::uint8_t audioType,
+                                           bool rejectedConfig = false,
+                                           bool alternate = false) {
+  Bytes bytes;
+  const auto packet = [&](PacketSpec spec) {
+    const Bytes encoded = makePacket(spec);
+    bytes.insert(bytes.end(), encoded.begin(), encoded.end());
+  };
+  const auto section = [&](std::uint16_t pid, Bytes payload) {
+    payload.insert(payload.begin(), octet(0));
+    PacketSpec spec;
+    spec.pid = pid;
+    spec.payloadUnitStart = true;
+    spec.payload = std::move(payload);
+    packet(std::move(spec));
+  };
+  section(0, makePatSection(1, {{1, 0x1000}}));
+  std::vector<PmtStreamSpec> streams{{0x1b, 0x100, {}}};
+  if (audioType != 0) {
+    Bytes registration;
+    if (audioType == 0x06) append(registration, {0x05, 4, 'O', 'p', 'u', 's'});
+    streams.push_back({audioType, 0x101, registration});
+  }
+  if (alternate) streams.push_back({0x0f, 0x102, {}});
+  section(0x1000, makePmtSection(1, 0x100, streams));
+  Bytes video;
+  append(video, {0,0,0,1,9,0xf0, 0,0,0,1,
+      0x67,0x64,0,0x1f,0xac,0xd9,0x40,0x50,0x05,0xbb,0x01,0x10,
+      0,0,3,0,0x10,0,0,3,3,0xc0,0xf1,0x83,0x19,0x60,
+      0,0,0,1,0x68,0xef,0x8f,0xcb, 0,0,0,1,0x65,0x88,0x80,0x10});
+  Bytes audio;
+  append(audio, {0xff,0xf1, rejectedConfig ? 0x10 : 0x50,
+                 0x80,0x01,0x1f,0xfc,0});
+  for (std::uint8_t i = 0; i < 30; ++i) {
+    PacketSpec spec;
+    spec.pid = 0x100;
+    spec.continuityCounter = i;
+    spec.payloadUnitStart = true;
+    spec.randomAccess = true;
+    spec.withPcr = true;
+    spec.pcrBase = 90'000 + static_cast<std::uint64_t>(i) * 3'000;
+    spec.payload = makePesPacket(0xe0, spec.pcrBase + 63'000,
+                                std::nullopt, video);
+    packet(spec);
+    if (audioType != 0) {
+      spec.pid = alternate ? 0x102 : 0x101;
+      spec.withPcr = false;
+      spec.payload = makePesPacket(0xc0, spec.pcrBase + 63'000,
+                                  std::nullopt, audio);
+      packet(spec);
+    }
+  }
+  return prepareMpegTs(std::make_shared<MemoryReader>(std::move(bytes)),
+                       "audio-selection.ts", {});
+}
+
+void testAudioSelectionRefusals() {
+  const auto unsupported = prepareAudioSelection(0x82);
+  expect(unsupported.status == MpegTsDemuxStatus::Unsupported &&
+             unsupported.error == MpegTsDemuxError::UnsupportedStreamType &&
+             unsupported.message.find("0x82") != std::string::npos &&
+             !unsupported.asset,
+         "DTS-only soundtrack refuses the asset by stream type");
+  const auto opus = prepareAudioSelection(0x06);
+  expect(opus.status == MpegTsDemuxStatus::Unsupported &&
+             opus.error == MpegTsDemuxError::UnsupportedStreamType &&
+             opus.message.find("0x06") != std::string::npos && !opus.asset,
+         "registered Opus is an unsupported soundtrack, not metadata");
+  const auto configuration = prepareAudioSelection(0x0f, true);
+  expect(configuration.status == MpegTsDemuxStatus::Unsupported &&
+             configuration.error == MpegTsDemuxError::CodecConfiguration &&
+             configuration.message.find("0x0F") != std::string::npos &&
+             !configuration.asset,
+         "rejected AAC configuration refuses the asset by configuration");
+  for (const auto& outcome : {prepareAudioSelection(0),
+                              prepareAudioSelection(0x82, false, true)}) {
+    if (!outcome.asset) std::cerr << outcome.message << '\n';
+    expect(outcome.status == MpegTsDemuxStatus::Ready && outcome.asset,
+           "video-only and supported alternate audio remain admitted");
+  }
+  const auto alternate = prepareAudioSelection(0x82, false, true);
+  expect(alternate.asset && alternate.asset->descriptor()->selectedAudio == 0x102,
+         "the supported alternate soundtrack is selected");
+  const auto silent = prepareAudioSelection(0);
+  expect(silent.asset && !silent.asset->descriptor()->selectedAudio,
+         "genuine video-only retains no selected audio");
+}
+
 // ---------------------------------------------------------------------------
 // Real ffmpeg muxes
 // ---------------------------------------------------------------------------
@@ -1195,7 +1280,7 @@ struct WalkSummary {
 void testRealMuxes() {
   const std::filesystem::path root = fixtureRoot();
   if (root.empty() || !std::filesystem::exists(root)) {
-    skip("WAM_MPEGTS_FIXTURES is unset; real-mux tests did not run");
+    missingFixture("WAM_MPEGTS_FIXTURES is unset; real-mux tests did not run");
     return;
   }
 
@@ -1208,14 +1293,14 @@ void testRealMuxes() {
   const std::array<Case, 4> cases{{
       {"h264-aac.ts", true, 188, "h264-aac.ts"},
       {"h264-only.ts", false, 188, "h264-only.ts"},
-      {"h264-ac3.m2ts", false, 192, "h264-ac3.m2ts (AC-3 not admitted)"},
+      {"h264-ac3.m2ts", true, 192, "h264-ac3.m2ts"},
       {"video.ts", true, 188, "video.ts (independent session fixture)"},
   }};
 
   for (const Case& entry : cases) {
     const std::filesystem::path path = root / entry.file;
     if (!std::filesystem::exists(path)) {
-      skip(entry.label);
+      missingFixture(entry.label);
       continue;
     }
     const MpegTsPrepareOutcome outcome = prepareMpegTsLocalFile(path, {});
@@ -1310,7 +1395,7 @@ void testRealMuxes() {
 void testGroundTruthAgainstFfmpeg() {
   const std::filesystem::path root = fixtureRoot();
   if (root.empty()) {
-    skip("ground truth against ffmpeg");
+    missingFixture("ground truth against ffmpeg");
     return;
   }
   struct Truth {
@@ -1321,22 +1406,24 @@ void testGroundTruthAgainstFfmpeg() {
     std::uint64_t audioUnits;   // zero means "do not check audio"
     std::uint64_t audioBytes;
   };
-  // videoUnits equals ffprobe's nb_read_frames; videoKeyFrames equals its
-  // count of key_frame=1; videoBytes/audioBytes equal the size of ffmpeg's
-  // own stream-copy output.
-  const std::array<Truth, 6> truths{{
-      {"h264-aac.ts", 75, 3, 276'909, 14, 37'424},
-      {"h264-only.ts", 75, 3, 276'909, 0, 0},
-      {"h264-ac3.m2ts", 75, 3, 276'909, 0, 0},
-      {"video.ts", 180, 1, 547'363, 36, 98'271},
-      {"seek.ts", 500, 20, 5'905'419, 87, 246'824},
-      {"L_video.ts", 600, 3, 1'849'336, 0, 0},
-  }};
+  std::vector<Truth> truths;
+  std::vector<std::string> names;
+  std::ifstream input(root / "truth.txt");
+  expect(input.good(), "required ffmpeg byte-count manifest exists");
+  std::string name;
+  Truth entry{};
+  while (input >> name >> entry.videoUnits >> entry.videoKeyFrames >>
+         entry.videoBytes >> entry.audioUnits >> entry.audioBytes) {
+    names.push_back(name);
+    truths.push_back(entry);
+  }
+  expect(truths.size() == 6, "all six ground-truth measurements exist");
+  for (std::size_t i = 0; i < truths.size(); ++i) truths[i].file = names[i].c_str();
 
   for (const Truth& truth : truths) {
     const std::filesystem::path path = root / truth.file;
     if (!std::filesystem::exists(path)) {
-      skip(truth.file);
+      missingFixture(truth.file);
       continue;
     }
     const MpegTsPrepareOutcome outcome = prepareMpegTsLocalFile(path, {});
@@ -1394,10 +1481,16 @@ void testGroundTruthAgainstFfmpeg() {
 }
 
 void testMultiProgramSelection() {
+  const auto complete = prepareMpegTsLocalFile(fixtureRoot() / "multiprogram-dts-first.ts", {});
+  expect(complete.status == MpegTsDemuxStatus::Ready && complete.asset &&
+             complete.asset->programNumber() == 2 &&
+             complete.asset->descriptor()->selectedAudio.has_value(),
+         "a complete second program outranks a first program with only DTS audio");
+
   const std::filesystem::path root = fixtureRoot();
   const std::filesystem::path path = root / "multiprogram.ts";
   if (root.empty() || !std::filesystem::exists(path)) {
-    skip("multiprogram.ts");
+    missingFixture("multiprogram.ts");
     return;
   }
   const MpegTsPrepareOutcome outcome = prepareMpegTsLocalFile(path, {});
@@ -1921,7 +2014,7 @@ void testRolloverFixture() {
   const std::filesystem::path root = fixtureRoot();
   const std::filesystem::path path = root / "rollover.ts";
   if (root.empty() || !std::filesystem::exists(path)) {
-    skip("rollover.ts");
+    missingFixture("rollover.ts");
     return;
   }
   const MpegTsPrepareOutcome outcome = prepareMpegTsLocalFile(path, {});
@@ -1973,7 +2066,7 @@ void testCorruptionResync() {
   const std::filesystem::path damaged = root / "h264-aac-corrupt.ts";
   if (root.empty() || !std::filesystem::exists(clean) ||
       !std::filesystem::exists(damaged)) {
-    skip("h264-aac-corrupt.ts");
+    missingFixture("h264-aac-corrupt.ts");
     return;
   }
   const MpegTsPrepareOutcome cleanOutcome = prepareMpegTsLocalFile(clean, {});
@@ -2023,127 +2116,48 @@ void testCorruptionResync() {
             << broken.resynchronizations << " resynchronizations\n";
 }
 
-// One fixture's worth of seek-accuracy measurement.
-//
-// `maximumUndershoot` is the fixture's own contract, not the demuxer's: a
-// 1 s-GOP mux can be held to a tight number while an 8.33 s-GOP one cannot,
-// and conflating the two would measure the fixture. What is NOT negotiable in
-// either is `allLandedAtOrBefore`: an accurate seek must never land after its
-// target, because the frame the user asked for would then never be decoded.
-void measureSeekAccuracy(const std::filesystem::path& path, const char* label,
-                         double maximumUndershoot) {
-  const MpegTsPrepareOutcome outcome = prepareMpegTsLocalFile(path, {});
-  if (outcome.status != MpegTsDemuxStatus::Ready) {
-    skip("seek accuracy (fixture did not prepare)");
-    return;
-  }
-  const MpegTsPreparedAsset& asset = *outcome.asset;
-  const MediaTime duration = asset.descriptor()->duration;
-  const std::optional<double> durationSeconds =
-      wam::media::mediaTimeSeconds(duration);
-  if (!durationSeconds || *durationSeconds < 4.0) {
-    skip("seek accuracy (fixture is too short)");
-    return;
-  }
-
-  bool allLandedAtOrBefore = true;
-  bool allCursorsStartCold = true;
-  double worstUndershoot = 0.0;
-  // Deliberately off-grid targets (tenths of a second) so a seek cannot be
-  // right by landing on a keyframe it happened to be asked for. Spread across
-  // the whole clip so a long-GOP fixture exercises the deepest backoff round
-  // rather than only the shallow ones near the origin.
-  std::array<std::int64_t, 8> targetTenths{15, 33, 57, 74, 92, 111, 138, 165};
-  if (*durationSeconds > 20.0) {
-    const double span = *durationSeconds - 1.0;
-    for (std::size_t i = 0; i < targetTenths.size(); ++i) {
-      targetTenths[i] = static_cast<std::int64_t>(
-          (span * static_cast<double>(i + 1) / 9.0) * 10.0 + 5.0);
-    }
-  }
-  std::size_t measured = 0;
-  for (const std::int64_t tenths : targetTenths) {
-    if (static_cast<double>(tenths) / 10.0 >= *durationSeconds) {
-      continue;
-    }
-    ++measured;
-    const MediaTime target{tenths, 10};
-    const MpegTsPlanOutcome plan =
-        asset.planGeneration(target, MediaSeekMode::Accurate);
-    if (plan.status != MpegTsDemuxStatus::Ready) {
-      std::cerr << "  seek to " << target.value << "s -> "
-                << mpegTsDemuxErrorName(plan.error) << ": " << plan.message
-                << '\n';
-      expect(false, "an in-range accurate seek plans successfully");
-      continue;
-    }
-    const std::optional<MediaTimeOrder> order =
-        compareMediaTime(plan.plan->actualDecodeStart, target);
-    if (!order || *order == MediaTimeOrder::Greater) {
-      allLandedAtOrBefore = false;
-    }
-    const std::optional<double> landed =
-        wam::media::mediaTimeSeconds(plan.plan->actualDecodeStart);
-    const std::optional<double> wanted = wam::media::mediaTimeSeconds(target);
-    if (landed && wanted) {
-      worstUndershoot = std::max(worstUndershoot, *wanted - *landed);
-    }
-    std::unique_ptr<MpegTsCursor> cursor = asset.makeVideoCursor(*plan.plan);
-    if (cursor == nullptr) {
-      allCursorsStartCold = false;
-      continue;
-    }
-    MpegTsCursorReadResult first = cursor->readNext();
-    const auto* sample = std::get_if<MpegTsCompressedSample>(&first);
-    if (sample == nullptr || !sample->decodableFromCold) {
-      allCursorsStartCold = false;
-    }
-  }
-  expect(allLandedAtOrBefore,
-         "an accurate seek never lands AFTER its target, so no requested "
-         "frame is skipped");
-  expect(allCursorsStartCold,
-         "every seek cursor's first sample is decodable from a cold decoder");
-  std::cerr << "  seek " << label << ": worst undershoot " << worstUndershoot
-            << " s across " << measured << " off-grid targets in a "
-            << *durationSeconds << " s clip\n";
-  expect(worstUndershoot < maximumUndershoot,
-         "the undershoot stays inside this fixture's own GOP-derived ceiling");
+std::optional<std::int64_t> mediaTimeToTicks(MediaTime time) {
+  if (!time.valid()) return std::nullopt;
+  const __int128 scaled = static_cast<__int128>(time.value) * kTimestampHz;
+  if (scaled % time.timescale != 0) return std::nullopt;
+  return static_cast<std::int64_t>(scaled / time.timescale);
 }
 
 void testSeekAccuracy() {
-  const std::filesystem::path root = fixtureRoot();
-  if (root.empty()) {
-    skip("seek accuracy (no fixture root)");
-    return;
-  }
-  struct Case {
-    const char* file;
-    const char* label;
-    double maximumUndershoot;
-  };
-  // seek.ts is a 20 s clip at -g 25: one random access point per second, which
-  // is what makes a tight landed-position measurement meaningful. `video.ts`
-  // deliberately is NOT used -- it carries exactly one keyframe in 5 s, so
-  // every seek past 1.5 s legitimately has no random access point after it.
-  //
-  // The HEVC fixtures are the opposite shape and are here on purpose: an
-  // 8.33 s GOP at a higher bitrate than its H.264 twin is exactly what broke
-  // the old fixed-16-entry backoff, and only a target deep into the clip
-  // reaches the rounds that fix it.
-  const std::array<Case, 4> cases{{
-      {"seek.ts", "seek.ts (1 s GOP)", 12.0},
-      {"hevc-aac.ts", "hevc-aac.ts (8.33 s GOP)", 12.0},
-      {"hevc-main10.ts", "hevc-main10.ts", 12.0},
-      {"hevc-ac3.m2ts", "hevc-ac3.m2ts", 12.0},
-  }};
-  for (const Case& entry : cases) {
-    const std::filesystem::path path = root / entry.file;
-    if (!std::filesystem::exists(path)) {
-      skip(entry.label);
-      continue;
+  for (const char* file : {"seek.ts", "hevc-aac.ts", "hevc-main10.ts", "hevc-ac3.m2ts"}) {
+    const auto outcome = prepareMpegTsLocalFile(fixtureRoot() / file, {});
+    expect(outcome.status == MpegTsDemuxStatus::Ready && outcome.asset,
+           "required seek fixture prepares");
+    if (!outcome.asset) continue;
+    std::size_t measured = 0;
+    std::int64_t worstTicks = 0;
+    for (std::int64_t tenths : {15, 33, 57, 74, 92, 111, 138, 165}) {
+      const MediaTime target{tenths, 10};
+      const auto plan = outcome.asset->planGeneration(target, MediaSeekMode::Accurate);
+      expect(plan.status == MpegTsDemuxStatus::Ready && plan.plan,
+             "in-range accurate seek plans successfully");
+      if (!plan.plan) continue;
+      const auto landed = plan.plan->actualDecodeStart;
+      const auto order = compareMediaTime(landed, target);
+      expect(order && *order != MediaTimeOrder::Greater,
+             "accurate seek never lands after its target");
+      const auto ticks = mediaTimeToTicks(landed);
+      expect(ticks.has_value(), "seek position is exact on the transport grid");
+      if (ticks) worstTicks = std::max(worstTicks, tenths * 9'000 - *ticks);
+      auto cursor = outcome.asset->makeVideoCursor(*plan.plan);
+      expect(cursor != nullptr, "every seek creates a cursor");
+      if (!cursor) continue;
+      const auto first = cursor->readNext();
+      const auto* sample = std::get_if<MpegTsCompressedSample>(&first);
+      expect(sample && sample->decodableFromCold, "seek cursor starts cold-decodable");
+      ++measured;
     }
-    measureSeekAccuracy(path, entry.label, entry.maximumUndershoot);
+    expect(measured == 8, "all eight seek measurements executed");
+    const std::int64_t maximumTicks = std::string(file) == "seek.ts"
+                                          ? kTimestampHz : 10 * kTimestampHz;
+    expect(worstTicks < maximumTicks, "seek stays within the encoded GOP ceiling");
+    std::cerr << "  seek " << file << ": " << measured << " measurements, worst "
+              << worstTicks << "/90000 s\n";
   }
 }
 
@@ -2151,11 +2165,11 @@ void testFileIdentityAndCancellation() {
   const std::filesystem::path root = fixtureRoot();
   const std::filesystem::path source = root / "h264-only.ts";
   if (root.empty() || !std::filesystem::exists(source)) {
-    skip("file identity");
+    missingFixture("file identity");
     return;
   }
   const std::filesystem::path temporary =
-      std::filesystem::temp_directory_path() / "wam-mpegts-identity.ts";
+      root / "identity-working.ts";
   std::filesystem::remove(temporary);
   std::filesystem::copy_file(source, temporary);
 
@@ -2197,33 +2211,13 @@ void testFileIdentityAndCancellation() {
 }
 
 void testUnsupportedStreamTypeVerdicts() {
-  const std::filesystem::path root = fixtureRoot();
-  // HEVC is the only video codec still outside the envelope, and the point of
-  // the test is that it is refused BY NAME and as an envelope verdict, so the
-  // session falls back cleanly instead of reporting a protocol fault.
-  struct Case {
-    const char* file;
-    const char* label;
-  };
-  const std::array<Case, 1> cases{{
-      {"hevc-ac3.ts", "hevc-ac3.ts (HEVC)"},
-  }};
-  for (const Case& entry : cases) {
-    const std::filesystem::path path = root / entry.file;
-    if (root.empty() || !std::filesystem::exists(path)) {
-      skip(entry.label);
-      continue;
-    }
-    const MpegTsPrepareOutcome outcome = prepareMpegTsLocalFile(path, {});
-    expect(outcome.status == MpegTsDemuxStatus::Unsupported,
-           "a stream outside the admitted codec envelope is Unsupported");
-    expect(outcome.error == MpegTsDemuxError::UnsupportedStreamType,
-           "the refusal names the stream type, never a generic failure");
-    expect(!outcome.message.empty(),
-           "the refusal carries a message naming what is missing");
-    std::cerr << "  " << entry.label << " -> "
-              << mpegTsDemuxErrorName(outcome.error) << ": " << outcome.message
-              << '\n';
+  for (const auto& entry : {std::pair{"dts-only.ts", MpegTsDemuxError::UnsupportedStreamType},
+                            std::pair{"rejected-aac.ts", MpegTsDemuxError::CodecConfiguration}}) {
+    const auto outcome = prepareMpegTsLocalFile(fixtureRoot() / entry.first, {});
+    expect(outcome.status == MpegTsDemuxStatus::Unsupported &&
+               outcome.error == entry.second && !outcome.asset &&
+               !outcome.message.empty(),
+           "unsupported soundtrack fails closed with a named refusal");
   }
 }
 
@@ -2244,17 +2238,18 @@ void testHevcAdmission() {
     std::uint8_t expectedProfileIdc;
     MediaCodec audio;
   };
-  const std::array<Case, 4> cases{{
+  const std::array<Case, 5> cases{{
       {"hevc-aac.ts", "hevc-aac.ts (Main 8-bit)", 8, 1, MediaCodec::Aac},
       {"hevc-main10.ts", "hevc-main10.ts", 10, 2, MediaCodec::Aac},
       {"hevc-main10-pq.ts", "hevc-main10-pq.ts (BT.2020 PQ)", 10, 2,
        MediaCodec::Aac},
       {"hevc-ac3.m2ts", "hevc-ac3.m2ts", 8, 1, MediaCodec::Ac3},
+      {"hevc-main10-hlg.ts", "hevc-main10-hlg.ts (BT.2020 HLG)", 10, 2, MediaCodec::Aac},
   }};
   for (const Case& entry : cases) {
     const std::filesystem::path path = root / entry.file;
     if (root.empty() || !std::filesystem::exists(path)) {
-      skip(entry.label);
+      missingFixture(entry.label);
       continue;
     }
     const MpegTsPrepareOutcome outcome = prepareMpegTsLocalFile(path, {});
@@ -2266,6 +2261,15 @@ void testHevcAdmission() {
       continue;
     }
     const MediaSourceDescriptor& descriptor = *outcome.asset->descriptor();
+    if (std::string(entry.file).find("-pq") != std::string::npos ||
+        std::string(entry.file).find("-hlg") != std::string::npos) {
+      const auto* hdr = findMediaTrack(descriptor, *descriptor.selectedVideo);
+      const auto expected = std::string(entry.file).find("-pq") != std::string::npos
+          ? wam::media::MediaTransferFunction::Pq : wam::media::MediaTransferFunction::Hlg;
+      expect(hdr && hdr->video && hdr->video->transferFunction == expected &&
+                 hdr->video->colorPrimaries == wam::media::MediaColorPrimaries::Bt2020,
+             "required HDR fixture carries the exact transfer and primaries in its bitstream");
+    }
     const MediaTrackDescriptor* video =
         descriptor.selectedVideo
             ? findMediaTrack(descriptor, *descriptor.selectedVideo)
@@ -2368,7 +2372,7 @@ void testMpeg2AndAc3Admission() {
   for (const Case& entry : cases) {
     const std::filesystem::path path = root / entry.file;
     if (root.empty() || !std::filesystem::exists(path)) {
-      skip(entry.label);
+      missingFixture(entry.label);
       continue;
     }
     const MpegTsPrepareOutcome outcome = prepareMpegTsLocalFile(path, {});
@@ -2462,95 +2466,58 @@ void testMpeg2AndAc3Admission() {
   }
 }
 
-// The exported duration must be the end of the MEDIA, not the last program
-// clock reference.
-//
-// 13818-1's buffering model puts a picture's presentation one end-to-end buffer
-// delay after the byte that carried it, so the last PCR sits most of a second
-// before the last presentation time -- measured across this corpus, 0.73 s to
-// 0.88 s, every time, in the same direction. A PCR-derived duration therefore
-// shortens the scrubber's range, makes seeks near the end unrepresentable, and
-// truncates published audio whenever the short value lands on the audio frame
-// grid. Ground truth is ffprobe's container duration for each fixture.
 void testDurationAgainstGroundTruth() {
-  const std::filesystem::path root = fixtureRoot();
-  struct Case {
-    const char* file;
-    double seconds;  // ffprobe's stated container duration
-  };
-  const std::array<Case, 7> cases{{
-      {"h264-aac.ts", 3.02},
-      {"mpeg2-mp2.ts", 3.01},
-      {"mpeg2-mp3.ts", 3.01},
-      {"h264-ac3.m2ts", 3.01},
-      {"video.ts", 6.02},
-      {"L_video.ts", 20.02},
-      {"seek.ts", 20.02},
-  }};
-  double worst = 0.0;
-  for (const Case& entry : cases) {
-    const std::filesystem::path path = root / entry.file;
-    if (root.empty() || !std::filesystem::exists(path)) {
-      skip(entry.file);
-      continue;
-    }
-    const MpegTsPrepareOutcome outcome = prepareMpegTsLocalFile(path, {});
+  std::size_t measured = 0;
+  for (const auto& entry : {std::pair{"h264-aac.ts", 3}, {"mpeg2-mp2.ts", 3},
+                            {"mpeg2-mp3.ts", 3}, {"h264-ac3.m2ts", 3},
+                            {"video.ts", 6}, {"L_video.ts", 20}, {"seek.ts", 20}}) {
+    const auto outcome = prepareMpegTsLocalFile(fixtureRoot() / entry.first, {});
     expect(outcome.status == MpegTsDemuxStatus::Ready && outcome.asset,
-           "the fixture is admitted");
-    if (!outcome.asset) {
-      continue;
-    }
-    const auto seconds =
-        wam::media::mediaTimeSeconds(outcome.asset->descriptor()->duration);
-    expect(seconds.has_value(), "the duration is exactly representable");
-    if (!seconds) {
-      continue;
-    }
-    const double error = *seconds - entry.seconds;
-    worst = std::max(worst, std::abs(error));
-    // 50 ms is comfortably above ffprobe's own centisecond quantisation and
-    // one frame of jitter, and an order of magnitude below the 0.73 s the
-    // PCR-derived value was wrong by.
-    expect(std::abs(error) < 0.05,
-           "the duration is within 50 ms of the container's own");
+           "required duration fixture prepares");
+    if (!outcome.asset) continue;
+    const auto ticks = mediaTimeToTicks(outcome.asset->descriptor()->duration);
+    expect(ticks && std::abs(*ticks - entry.second * kTimestampHz) < 9'000,
+           "duration is within 100 ms of the exact encoded frame span");
+    ++measured;
   }
-  std::cerr << "  duration: worst error " << worst
-            << " s against ffprobe across the corpus\n";
+  expect(measured == 7, "all seven duration measurements executed");
+  std::cerr << "  duration: " << measured << " exact-tick measurements\n";
 }
 
 }  // namespace
 
-int main() {
-  testTimestampRollover();
-  testExactTicks();
-  testPacketDecoding();
-  testContinuityTracking();
-  testSectionAssemblyAndCrc();
-  testProgramMapParsing();
-  testPesHeaderDecoding();
-  testAccessUnitScanning();
-  testHevcParameterSetFacts();
-  testAnnexBToAvccRepack();
-  testElementaryAudioFraming();
-  testLatmFraming();
-  testEac3Framing();
-  testProgramGradeRule();
-  testFramingDetection();
-  testPreparationRequestValidation();
-  testRealMuxes();
-  testGroundTruthAgainstFfmpeg();
-  testMultiProgramSelection();
-  testRolloverFixture();
-  testCorruptionResync();
-  testSeekAccuracy();
-  testFileIdentityAndCancellation();
-  testUnsupportedStreamTypeVerdicts();
-  testMpeg2AndAc3Admission();
-  testHevcAdmission();
-  testDurationAgainstGroundTruth();
-
-  if (skipped != 0) {
-    std::cerr << skipped << " MPEG-TS test group(s) skipped\n";
+int main(int argc, char** argv) {
+  const bool integration = argc == 2 && std::string(argv[1]) == "--integration";
+  if (!integration) {
+    testTimestampRollover();
+    testExactTicks();
+    testPacketDecoding();
+    testContinuityTracking();
+    testSectionAssemblyAndCrc();
+    testProgramMapParsing();
+    testPesHeaderDecoding();
+    testAccessUnitScanning();
+    testHevcParameterSetFacts();
+    testAnnexBToAvccRepack();
+    testElementaryAudioFraming();
+    testLatmFraming();
+    testEac3Framing();
+    testProgramGradeRule();
+    testFramingDetection();
+    testPreparationRequestValidation();
+    testAudioSelectionRefusals();
+  } else {
+    testRealMuxes();
+    testGroundTruthAgainstFfmpeg();
+    testMultiProgramSelection();
+    testRolloverFixture();
+    testCorruptionResync();
+    testSeekAccuracy();
+    testFileIdentityAndCancellation();
+    testUnsupportedStreamTypeVerdicts();
+    testMpeg2AndAc3Admission();
+    testHevcAdmission();
+    testDurationAgainstGroundTruth();
   }
   if (failures != 0) {
     std::cerr << failures << " MPEG-TS demuxer test(s) failed\n";
