@@ -691,6 +691,8 @@ private:
   [[nodiscard]] static std::optional<std::uint64_t>
   reserveNativeSeekIdentity(std::uint64_t &high_water) noexcept;
   [[nodiscard]] double boundedSeekTarget(double seconds) const noexcept;
+  // The bound every native target is held strictly below. See the definition.
+  [[nodiscard]] double nativeSeekLimit() const noexcept;
   // boundedSeekTarget restated for the native route, which admits only a
   // target that is both exactly representable as a rational media time and
   // strictly inside the duration. See the definition for the exactness rule.
@@ -868,6 +870,10 @@ private:
   void updateIdle(bool idle);
   void updateEof(bool eof_reached);
   void updateDuration(double duration);
+  // The native route's presentable ceiling (NativeMediaSession::
+  // seekCeilingSeconds); 0 while no native session is prepared. Read only by
+  // the native target snap, never shown: the timeline keeps the real duration.
+  void updateNativeSeekCeiling(double seconds);
   // Publishes a display size from whichever engine demuxed the container. Both
   // callers -- NativePlaybackOwner's Prepared arm and the mpv dwidth/dheight
   // observation -- go through here so the dedupe and the "an empty size never
@@ -962,6 +968,7 @@ private:
   bool preserve_pitch_ = true;
   double position_ = 0.0;
   double duration_ = 0.0;
+  double native_seek_ceiling_ = 0.0;
   QSize video_display_size_;
   double volume_ = 1.0;
   // Default 200%, the user-confirmed default for the Preferences setting.

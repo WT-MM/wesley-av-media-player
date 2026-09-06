@@ -1134,6 +1134,13 @@ struct NativeVideoConsumer::Impl {
   MediaGeneration completedFlushRetired{0};
   MediaGeneration completedFlushTarget{0};
   MediaGeneration terminalGeneration{0};
+  // The highest generation a flush() call has named, recorded before that
+  // call decides anything. The dispatcher hands retire() the generation it
+  // passed to flush() -- see NativeVideoConsumer::flush() in the port
+  // contract -- so a flush refused at its own timeline gate must still count
+  // as exposure here, or the exact retirement pair can never match and the
+  // route dies unretired instead of falling back.
+  MediaGeneration highestExposedGeneration{0};
   media::MediaTrackId track{0};
   MediaTime trackDuration{};
   media::NativeMediaGenerationTimeline timeline{};
@@ -2122,6 +2129,10 @@ media::NativeMediaConsumerProgress NativeVideoConsumer::flush(
   if (impl.retirementStarted) {
     return media::NativeMediaConsumerProgress::Failed;
   }
+  if (nextGeneration > retiredGeneration &&
+      nextGeneration > impl.highestExposedGeneration) {
+    impl.highestExposedGeneration = nextGeneration;
+  }
   if (impl.completedFlush &&
       impl.completedFlushRetired == retiredGeneration &&
       impl.completedFlushTarget == nextGeneration &&
@@ -2134,14 +2145,19 @@ media::NativeMediaConsumerProgress NativeVideoConsumer::flush(
       return media::NativeMediaConsumerProgress::StaleGeneration;
     }
   } else {
+    if (retiredGeneration != impl.generation) {
+      return media::NativeMediaConsumerProgress::StaleGeneration;
+    }
     if (impl.lifecycle != Lifecycle::None || !impl.configured ||
-        impl.failed() || retiredGeneration != impl.generation ||
-        nextGeneration <= retiredGeneration ||
-        nextGeneration == std::numeric_limits<MediaGeneration>::max() ||
-        !validTimeline(timeline, nextGeneration, impl.trackDuration)) {
-      return retiredGeneration != impl.generation
-                 ? media::NativeMediaConsumerProgress::StaleGeneration
-                 : media::NativeMediaConsumerProgress::Failed;
+        impl.failed() || nextGeneration <= retiredGeneration ||
+        nextGeneration == std::numeric_limits<MediaGeneration>::max()) {
+      return media::NativeMediaConsumerProgress::Failed;
+    }
+    if (!validTimeline(timeline, nextGeneration, impl.trackDuration)) {
+      impl.latch(NativeVideoConsumerFailure::InvalidTimeline,
+                 "seek timeline is outside the selected video track: the "
+                 "target must lie before the track's last frame ends");
+      return media::NativeMediaConsumerProgress::Failed;
     }
     // A real seek owns the decoder/output generation transition and safely
     // supersedes either phase of the same-generation preview handoff.
@@ -2245,7 +2261,7 @@ template <typename ImplType>
                                : impl.output->facts();
     const MediaGeneration active = std::max(
         {impl.generation, impl.armGeneration, impl.flushTarget,
-         facts.generation});
+         impl.highestExposedGeneration, facts.generation});
     const auto final = media::nextMediaGeneration(active);
     if (!final) {
       impl.latch(NativeVideoConsumerFailure::Lifecycle,
@@ -2417,7 +2433,8 @@ media::NativeMediaConsumerProgress NativeVideoConsumer::retire(
     const VideoToolboxDecoderStats decoderFacts = impl.decoder.stats();
     const MediaGeneration exposed = std::max(
         {impl.generation, impl.armGeneration, impl.flushTarget,
-         outputFacts.generation, decoderFacts.generation});
+         impl.highestExposedGeneration, outputFacts.generation,
+         decoderFacts.generation});
     if (retiredGeneration != exposed || invalidationGeneration == 0 ||
         invalidationGeneration <= exposed) {
       return retiredGeneration != exposed

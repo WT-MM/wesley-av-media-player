@@ -1264,13 +1264,33 @@ double PlayerController::exactNativeSeekTarget(double seconds) const noexcept {
   if (!std::isfinite(bounded) || bounded <= 0.0)
     return 0.0;
   double target = std::floor(bounded * kSeekGrid) / kSeekGrid;
-  // Strictly inside the duration, on the grid: the largest admissible target
-  // is the last grid point below duration_, not duration_ itself.
-  if (duration_ > 0.0 && target >= duration_)
-    target = std::floor((duration_ - 1.0 / kSeekGrid) * kSeekGrid) / kSeekGrid;
+  // Strictly inside the limit, on the grid: the largest admissible target is
+  // the last grid point below nativeSeekLimit(), never the limit itself.
+  const double limit = nativeSeekLimit();
+  if (limit > 0.0 && target >= limit)
+    target = std::floor((limit - 1.0 / kSeekGrid) * kSeekGrid) / kSeekGrid;
   if (!(target > 0.0))
     return 0.0;
   return target;
+}
+
+double PlayerController::nativeSeekLimit() const noexcept {
+  // The duration is the right bound only while every selected lane reaches
+  // it. A container may let audio outlive the last picture, and a target in
+  // that tail has no frame to draw: the session admits targets strictly below
+  // its presentable ceiling (NativeMediaSession::seekCeilingSeconds, the
+  // selected video track's end), so the snap holds them there too -- a drag to
+  // the end of the timeline lands on the last frame instead of being refused.
+  // The two bounds are the same rule stated in two places by necessity: the
+  // session's is the admission gate, this is the snap that satisfies it.
+  if (native_seek_ceiling_ > 0.0 &&
+      (duration_ <= 0.0 || native_seek_ceiling_ < duration_))
+    return native_seek_ceiling_;
+  return duration_;
+}
+
+void PlayerController::updateNativeSeekCeiling(double seconds) {
+  native_seek_ceiling_ = std::isfinite(seconds) ? std::max(0.0, seconds) : 0.0;
 }
 
 double PlayerController::frameStepSeekTarget(double seconds,
@@ -1302,11 +1322,12 @@ double PlayerController::frameStepSeekTarget(double seconds,
       round_up
           ? std::ceil(bounded * kFrameStepGrid) / kFrameStepGrid
           : (std::ceil(bounded * kFrameStepGrid) - 1.0) / kFrameStepGrid;
-  // Same strictly-inside-the-duration rule exactNativeSeekTarget applies, on
-  // this grid: the last admissible target is the last grid point below the
-  // duration, never the duration itself.
-  if (duration_ > 0.0 && target >= duration_) {
-    target = std::floor((duration_ - 1.0 / kFrameStepGrid) * kFrameStepGrid) /
+  // Same strictly-inside-the-limit rule exactNativeSeekTarget applies, on
+  // this grid: the last admissible target is the last grid point below
+  // nativeSeekLimit(), never the limit itself.
+  const double limit = nativeSeekLimit();
+  if (limit > 0.0 && target >= limit) {
+    target = std::floor((limit - 1.0 / kFrameStepGrid) * kFrameStepGrid) /
              kFrameStepGrid;
   }
   if (!(target > 0.0))
@@ -5464,6 +5485,7 @@ void PlayerController::resetTimeline() {
     duration_ = 0.0;
     emit durationChanged();
   }
+  native_seek_ceiling_ = 0.0;
   // The one place a display size is deliberately forgotten (see
   // updateVideoDisplaySize, which refuses to publish an empty one). Every
   // media transition routes through here, so the previous file's aspect

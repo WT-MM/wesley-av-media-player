@@ -2585,6 +2585,38 @@ void testHevcDescriptorHardening() {
   const std::vector<std::uint8_t> main = fixtureFreeHvcC(0);
   expect(coreMediaAcceptsFixtureFreeHevcParameterSets(main),
          "CoreMedia should validate the complete fixture-free Main parameter sets");
+
+  // array_completeness is a muxer convention (ISO/IEC 14496-15 lets it be
+  // zero when parameter sets may also travel in band), aligned with the
+  // neutral inspector's 2026-08-17 decision: clearing it on every array must
+  // not change the verdict, while a NAL length that overruns the record must.
+  const auto asBytes = [](const std::vector<std::uint8_t>& record) {
+    return std::span<const std::byte>(
+        reinterpret_cast<const std::byte*>(record.data()), record.size());
+  };
+  std::vector<std::uint8_t> incompleteArrays = main;
+  std::vector<std::uint8_t> overrunLength = main;
+  for (std::size_t offset = 23, array = 0; array < main[22]; ++array) {
+    incompleteArrays[offset] &= 0x7FU;
+    const std::size_t count =
+        (static_cast<std::size_t>(main[offset + 1]) << 8U) | main[offset + 2];
+    offset += 3;
+    for (std::size_t index = 0; index < count; ++index) {
+      const std::size_t length =
+          (static_cast<std::size_t>(main[offset]) << 8U) | main[offset + 1];
+      if (array == 1 && index == 0) {
+        overrunLength[offset] = 0xFFU;
+        overrunLength[offset + 1] = 0xFFU;
+      }
+      offset += 2 + length;
+    }
+  }
+  expect(parseHevcSampleFormatForTesting(asBytes(incompleteArrays)) ==
+             MediaVideoSampleFormat::Yuv420EightBit,
+         "hvcC arrays with array_completeness cleared keep their sample format");
+  expect(parseHevcSampleFormatForTesting(asBytes(overrunLength)) ==
+             MediaVideoSampleFormat::Unsupported,
+         "hvcC NAL length overrunning the record is still refused");
   auto mainWithoutBitsFormat = makeVideoFormat(
       kCMVideoCodecType_HEVC, 16, 16,
       VideoFormatOptions{.configuration = main});
@@ -2745,8 +2777,6 @@ void testHevcDescriptorHardening() {
   reserved[13] &= 0x0fU;
   std::vector<std::uint8_t> arrayReserved = main;
   arrayReserved[23] |= 0x40U;
-  std::vector<std::uint8_t> incompleteParameterSet = main;
-  incompleteParameterSet[23] &= 0x7fU;
   std::vector<std::uint8_t> duplicateVps = main;
   duplicateVps[22] = 4;
   duplicateVps.insert(duplicateVps.end(), main.begin() + 23,
@@ -2768,7 +2798,6 @@ void testHevcDescriptorHardening() {
   trailing.push_back(0);
   expect(rejectsConfiguration(reserved) &&
              rejectsConfiguration(arrayReserved) &&
-             rejectsConfiguration(incompleteParameterSet) &&
              rejectsConfiguration(duplicateVps) &&
              rejectsConfiguration(headerOnlyVps) &&
              rejectsConfiguration(forbiddenBit) &&

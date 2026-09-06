@@ -1,7 +1,6 @@
 #include "video_toolbox_decoder.hpp"
 
 #include "media/media_codec_facts.hpp"
-#include "media/rbsp_bit_reader.hpp"
 #include "media/video_codec_configuration.hpp"
 #include "core_media_codec_facts.hpp"
 #include "native_video_codec_capability.hpp"
@@ -30,7 +29,6 @@
 namespace wam::macos {
 namespace {
 
-constexpr std::size_t kMaximumCodecReorderFrames = 16;
 constexpr std::size_t kAsyncErrorCapacity = 384;
 
 constexpr VTDecodeFrameFlags
@@ -74,10 +72,16 @@ std::string statusError(const char *operation, OSStatus status) {
 }
 
 // The decoder asks one question of a parameter set -- the presentation-reorder
-// depth -- and for AVC the neutral parser answers it together with the
-// authority behind the answer, so no second SPS parser lives here. Colour is
+// depth -- and for AVC and HEVC alike the neutral parser answers it together
+// with the authority behind the answer, so no parameter-set reader lives
+// here. (HEVC always states sps_max_num_reorder_pics, so its depth is always
+// Declared; the parser's inferred flag stays false for it.) Colour is
 // admitted at its widest: it is the source's question, settled before any
-// stream reaches this decoder under limits at least this strict.
+// stream reaches this decoder under limits at least this strict. Measured
+// 2026-09-05 over 23 real hvcC records: the parser and the reader this
+// replaced agreed on every record the parser admits, and the one it refuses
+// (P3 primaries) is refused by the AVFoundation source before any decoder
+// sees it.
 [[nodiscard]] media::VideoCodecConfigurationLimits
 reorderDepthLimits() noexcept {
   media::VideoCodecConfigurationLimits limits;
@@ -86,10 +90,11 @@ reorderDepthLimits() noexcept {
 }
 
 std::optional<CodecReorderDepth>
-h264CodecReorderDepth(std::span<const std::byte> record) {
+recordCodecReorderDepth(media::MediaCodec codec,
+                        media::MediaCodecConfigurationKind kind,
+                        std::span<const std::byte> record) {
   const auto inspection = media::inspectVideoCodecConfiguration(
-      media::MediaCodec::H264, media::MediaCodecConfigurationKind::AvcC,
-      record, reorderDepthLimits());
+      codec, kind, record, reorderDepthLimits());
   if (!inspection.admitted()) {
     return std::nullopt;
   }
@@ -97,127 +102,6 @@ h264CodecReorderDepth(std::span<const std::byte> record) {
                            inspection.facts->maximumReorderFramesInferred
                                ? CodecReorderDepthOrigin::Inferred
                                : CodecReorderDepthOrigin::Declared};
-}
-
-void skipHevcProfileTierLevel(media::RbspBitReader &bits,
-                              std::uint32_t maxSubLayersMinusOne) noexcept {
-  bits.skipBits(96);
-  std::array<bool, 8> profilePresent{};
-  std::array<bool, 8> levelPresent{};
-  for (std::uint32_t index = 0; index < maxSubLayersMinusOne; ++index) {
-    profilePresent[index] = bits.readBit();
-    levelPresent[index] = bits.readBit();
-  }
-  for (std::uint32_t index = maxSubLayersMinusOne;
-       index < 8 && maxSubLayersMinusOne > 0; ++index) {
-    bits.skipBits(2);
-  }
-  for (std::uint32_t index = 0; index < maxSubLayersMinusOne; ++index) {
-    if (profilePresent[index]) {
-      bits.skipBits(88);
-    }
-    if (levelPresent[index]) {
-      bits.skipBits(8);
-    }
-  }
-}
-
-// The one parameter-set reader this decoder keeps. The neutral parser
-// cross-checks an hvcC against its SPS and refuses a record whose
-// numTemporalLayers disagrees with sps_max_sub_layers_minus1; measured
-// 2026-09-05 that refuses 19 of 23 real hvcC records, including the corpus's
-// native HLG file (Untitled.mp4), which the AVFoundation source admits and
-// VideoToolbox decodes. This decoder must not refuse a stream its source
-// admitted, so it reads sps_max_num_reorder_pics itself, on the shared reader.
-std::optional<std::size_t>
-parseHevcSpsReorderFrames(std::span<const std::uint8_t> nal) {
-  if (nal.size() < 3 || ((nal.front() >> 1U) & 0x3fU) != 33U) {
-    return std::nullopt;
-  }
-  media::RbspBitReader bits(nal.subspan(2));
-  bits.skipBits(4);
-  const std::uint32_t subLayers = bits.readBitsAtMost(3, 6);
-  bits.skipBits(1);
-  skipHevcProfileTierLevel(bits, subLayers);
-  bits.skipExpGolomb(1);
-  if (bits.readUnsignedExpGolombAtMost(3) == 3) {
-    bits.skipBits(1);
-  }
-  bits.skipExpGolomb(2);
-  if (bits.readBit()) {
-    bits.skipExpGolomb(4);
-  }
-  bits.skipExpGolomb(3);
-  const std::uint32_t firstLayer = bits.readBit() ? 0 : subLayers;
-  std::size_t maximumReorder = 0;
-  std::uint32_t previousBuffering = 0;
-  std::uint32_t previousReorder = 0;
-  for (std::uint32_t layer = firstLayer; layer <= subLayers; ++layer) {
-    const std::uint32_t bufferingMinusOne =
-        bits.readUnsignedExpGolombAtMost(kMaximumCodecReorderFrames - 1);
-    const std::uint32_t reorder =
-        bits.readUnsignedExpGolombAtMost(bufferingMinusOne);
-    bits.skipExpGolomb(1);
-    bits.require(layer == firstLayer ||
-                 (bufferingMinusOne >= previousBuffering &&
-                  reorder >= previousReorder));
-    previousBuffering = bufferingMinusOne;
-    previousReorder = reorder;
-    maximumReorder = std::max(maximumReorder,
-                              static_cast<std::size_t>(reorder));
-  }
-  if (!bits.ok()) {
-    return std::nullopt;
-  }
-  return maximumReorder;
-}
-
-// HEVC always states sps_max_num_reorder_pics -- it is a mandatory element of
-// the SPS, not an optional restriction section -- so every HEVC depth this
-// returns is declared and there is no inference arm to mark.
-std::optional<CodecReorderDepth>
-hevcCodecReorderDepth(std::span<const std::uint8_t> bytes) {
-  if (bytes.size() < 23 || bytes[0] != 1) {
-    return std::nullopt;
-  }
-  std::size_t offset = 23;
-  const std::size_t arrayCount = bytes[22];
-  std::optional<std::size_t> maximum;
-  for (std::size_t array = 0; array < arrayCount; ++array) {
-    if (offset + 3 > bytes.size()) {
-      return std::nullopt;
-    }
-    const std::uint8_t nalType = bytes[offset] & 0x3fU;
-    const std::size_t nalCount =
-        (static_cast<std::size_t>(bytes[offset + 1]) << 8U) |
-        bytes[offset + 2];
-    offset += 3;
-    for (std::size_t index = 0; index < nalCount; ++index) {
-      if (offset + 2 > bytes.size()) {
-        return std::nullopt;
-      }
-      const std::size_t length =
-          (static_cast<std::size_t>(bytes[offset]) << 8U) |
-          bytes[offset + 1];
-      offset += 2;
-      if (length == 0 || length > bytes.size() - offset) {
-        return std::nullopt;
-      }
-      if (nalType == 33U) {
-        const auto reorder =
-            parseHevcSpsReorderFrames(bytes.subspan(offset, length));
-        if (!reorder) {
-          return std::nullopt;
-        }
-        maximum = std::max(maximum.value_or(0), *reorder);
-      }
-      offset += length;
-    }
-  }
-  if (!maximum) {
-    return std::nullopt;
-  }
-  return CodecReorderDepth{*maximum, CodecReorderDepthOrigin::Declared};
 }
 
 // Defined with the other codec predicates further down, where the measurement
@@ -232,10 +116,14 @@ deriveCodecReorderDepth(const VideoStreamConfiguration &configuration) {
           configuration.codecConfiguration.data()),
       configuration.codecConfiguration.size());
   if (configuration.codec == kCMVideoCodecType_H264) {
-    return h264CodecReorderDepth(configuration.codecConfiguration);
+    return recordCodecReorderDepth(media::MediaCodec::H264,
+                                   media::MediaCodecConfigurationKind::AvcC,
+                                   configuration.codecConfiguration);
   }
   if (configuration.codec == kCMVideoCodecType_HEVC) {
-    return hevcCodecReorderDepth(bytes);
+    return recordCodecReorderDepth(media::MediaCodec::Hevc,
+                                   media::MediaCodecConfigurationKind::HvcC,
+                                   configuration.codecConfiguration);
   }
   if (configuration.codec == kCMVideoCodecType_MPEG2Video) {
     // One, and it is a property of the codec rather than of the stream.

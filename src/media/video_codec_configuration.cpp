@@ -1460,14 +1460,28 @@ inspectHvcC(std::span<const std::uint8_t> bytes,
   if (offset != bytes.size() || !canonical || !canonicalSubLayers) {
     return rejected(Error::MalformedRecord);
   }
+  // Byte 21 of the record states two things ABOUT the parameter sets, and
+  // ISO/IEC 14496-15 8.3.3.1.3 defines both as claims a muxer may decline to
+  // make: numTemporalLayers 0 is "unknown whether the stream is temporally
+  // scalable", and temporalIdNested 0 is "the nesting conditions are not or
+  // MAY NOT be met". Only a positive claim can contradict the SPS -- a record
+  // asserting more sub-layers than the SPS permits, or asserting nesting the
+  // SPS and VPS do not state -- so those are the mismatches, and a declined
+  // claim is admitted. Demanding equality instead refused 19 of 23 real
+  // records (measured 2026-09-05): every Apple and Sony muxer writes
+  // temporalIdNested 0 over an sps_temporal_id_nesting_flag that H.265
+  // 7.4.3.2.1 REQUIRES to be 1 for a single-sub-layer SPS, and Apple's HLG
+  // muxer writes numTemporalLayers 0, while VideoToolbox decodes all of them.
+  // ffmpeg-built records derive both fields from the SPS, which is why no
+  // fixture or corpus file had ever met the equality rule.
   const std::uint32_t declaredTemporalLayers =
       (static_cast<std::uint32_t>(bytes[21]) >> 3U) & 0x07U;
   const bool declaredTemporalIdNested = (bytes[21] & 0x04U) != 0U;
   if (!canonicalVpsSubLayers || !canonicalVpsTemporalIdNested ||
       *canonicalVpsSubLayers != *canonicalSubLayers ||
-      declaredTemporalLayers != *canonicalSubLayers + 1U ||
-      declaredTemporalIdNested != canonical->temporalIdNested ||
-      declaredTemporalIdNested != *canonicalVpsTemporalIdNested) {
+      declaredTemporalLayers > *canonicalSubLayers + 1U ||
+      (declaredTemporalIdNested &&
+       (!canonical->temporalIdNested || !*canonicalVpsTemporalIdNested))) {
     return rejected(Error::ParameterSetMismatch);
   }
   result.width = canonical->width;

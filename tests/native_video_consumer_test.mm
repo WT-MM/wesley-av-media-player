@@ -517,6 +517,39 @@ void testRetirementSupersedesPendingSeek() {
          "pending seek decoder, sink, and render route share final generation");
 }
 
+// A seek flush refused at the port's own timeline gate must still count as
+// exposure of its target. The dispatcher records the target as this port's
+// exposed generation when it issues flush() and later hands retire() exactly
+// that value; a refusal that left the target unexposed made every retirement
+// pair stale, so a refused near-EOF seek left the route dead instead of
+// retiring into compatibility playback.
+void testRefusedSeekFlushStillExposesItsTarget() {
+  Fixture fixture;
+  expect(fixture.consumer->armFirstGeneration(7) ==
+             NativeVideoConsumerArmProgress::Done,
+         "refused-flush fixture arms");
+  expect(NativeVideoConsumerTestAccess::installSchedulerGeneration(
+             *fixture.consumer, timeline(7, {0, 1})),
+         "refused-flush fixture installs a 60 s track");
+  // Target after the track's last frame: the flush gate refuses it by name.
+  expect(fixture.consumer->flush(7, 8, timeline(8, {61, 1})) ==
+             media::NativeMediaConsumerProgress::Failed,
+         "a target after the selected video track is refused at the flush");
+  expect(!fixture.consumer->failureText().empty(),
+         "the refused flush names its gate");
+  expect(fixture.consumer->retire(7, 31) ==
+             media::NativeMediaConsumerProgress::StaleGeneration,
+         "the retired generation before the refused flush is stale");
+  expect(fixture.consumer->retire(8, 31) ==
+             media::NativeMediaConsumerProgress::Done,
+         "the refused flush's target is the exposed generation retire() must "
+         "name, and that pair retires the port");
+  const auto facts = fixture.consumer->facts();
+  expect(facts.closed && facts.generation == 31 &&
+             facts.output.closed && facts.output.generation == 31,
+         "retirement after a refused flush publishes the exact invalidation");
+}
+
 void testQuiescingRetirementKeepsExactPair() {
   Fixture fixture;
   expect(fixture.consumer->armFirstGeneration(7) ==
@@ -1182,6 +1215,7 @@ int main() {
   testExactRetirementGapAndPairOwnership();
   testArmOnlyAndPendingArmRetirement();
   testRetirementSupersedesPendingSeek();
+  testRefusedSeekFlushStillExposesItsTarget();
   testQuiescingRetirementKeepsExactPair();
   testMatchedFrameFailureRetiresExactly();
   testExactTimeMath();
