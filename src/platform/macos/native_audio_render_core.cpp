@@ -211,6 +211,9 @@ bool NativeAudioRenderCore::activate(
     stretch_.reset(stretch_.context);
   }
   cached_paused_clock_ = paused;
+  cached_paused_clock_.exactAnchor = pausedClockPosition;
+  cached_paused_clock_.exactPausedTarget = pausedClockPosition;
+  cached_paused_clock_.exactAudioPresentationStart = mediaOrigin;
   first_segment_committed_.store(false, std::memory_order_release);
   terminal_observed_generation_.store(0, std::memory_order_release);
   terminal_published_.store(false, std::memory_order_release);

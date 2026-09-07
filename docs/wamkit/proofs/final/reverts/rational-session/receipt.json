@@ -1,0 +1,12 @@
+{
+  "case": "rational-session",
+  "path": "src/platform/macos/native_media_session.mm",
+  "test": "macos_native_media_session",
+  "sha256": "fa128eabce2ad8ead4bc980183ce71cd4f1137ee6c6738ba8c8c4129bd22633f",
+  "baseline_rc": 0,
+  "reverted_build_rc": 0,
+  "reverted_test_rc": 8,
+  "byte_identical_restore": true,
+  "restored_build_rc": 0,
+  "restored_test_rc": 0
+}
