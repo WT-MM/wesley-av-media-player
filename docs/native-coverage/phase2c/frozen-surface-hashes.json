@@ -1,0 +1,27 @@
+{
+  "before": {
+    "SESSION_HANDOFF.md": "53a63c48907383b05abc65104a696048a0d1bf8e2d0789740f6095703b01d920",
+    "src/media/native_media_source.hpp": "db900c7a5fbf2056fb11942d2e81f89a5b270eb907d985a878fa31548df1ec9c",
+    "src/media/native_playback_contract.hpp": "f45fb6311766ecf1136a6cc07323fb7da7f431408e775f6786618ab4d36f4f38",
+    "src/platform/macos/native_audio_converter.hpp": "ce28047e722a91987a4b8a32841ace29723a47989d5b10cb6db0cf8fd61f0df6",
+    "src/platform/macos/native_audio_converter.mm": "0d6954096c69651aa5cc07ae850be05cf825a37b656a62f4a957c0bc2cc46f4e",
+    "src/platform/macos/native_audio_session.hpp": "e292f128df1e5cb5b218bb8004cc149bb1ab4ae357289ef3629f4d33bd25c034",
+    "src/platform/macos/native_audio_session.mm": "908c9b6c95e519d79b14e539ef44b1d9f4fe48bc69846044f2ac75d082b6f9e3",
+    "src/platform/macos/native_surface_budget.hpp": "69cb4a16f0bcf194b07ad6b6fdf5b41ffe6bdf65ba196285170821288a075fec",
+    "tests/native_audio_session_test.mm": "8ac89f540d5ddc339b4cc25301e62c64793ee3a38de3caa74ffd8b675f192783",
+    "tests/native_audio_converter_test.mm": "1fb62d1fb5a69db4999d350b2b8cdaa4b17762b7b47e23beaa07e2462ecdc18c"
+  },
+  "after": {
+    "SESSION_HANDOFF.md": "53a63c48907383b05abc65104a696048a0d1bf8e2d0789740f6095703b01d920",
+    "src/media/native_media_source.hpp": "db900c7a5fbf2056fb11942d2e81f89a5b270eb907d985a878fa31548df1ec9c",
+    "src/media/native_playback_contract.hpp": "f45fb6311766ecf1136a6cc07323fb7da7f431408e775f6786618ab4d36f4f38",
+    "src/platform/macos/native_audio_converter.hpp": "ce28047e722a91987a4b8a32841ace29723a47989d5b10cb6db0cf8fd61f0df6",
+    "src/platform/macos/native_audio_converter.mm": "0d6954096c69651aa5cc07ae850be05cf825a37b656a62f4a957c0bc2cc46f4e",
+    "src/platform/macos/native_audio_session.hpp": "e292f128df1e5cb5b218bb8004cc149bb1ab4ae357289ef3629f4d33bd25c034",
+    "src/platform/macos/native_audio_session.mm": "908c9b6c95e519d79b14e539ef44b1d9f4fe48bc69846044f2ac75d082b6f9e3",
+    "src/platform/macos/native_surface_budget.hpp": "69cb4a16f0bcf194b07ad6b6fdf5b41ffe6bdf65ba196285170821288a075fec",
+    "tests/native_audio_session_test.mm": "8ac89f540d5ddc339b4cc25301e62c64793ee3a38de3caa74ffd8b675f192783",
+    "tests/native_audio_converter_test.mm": "1fb62d1fb5a69db4999d350b2b8cdaa4b17762b7b47e23beaa07e2462ecdc18c"
+  },
+  "all_unchanged": true
+}

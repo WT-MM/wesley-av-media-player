@@ -1,0 +1,95 @@
+[
+  {
+    "name": "verify",
+    "rc": 0,
+    "pid": 36869,
+    "run_id": "7efc3fd6-529b-4281-8e90-d6984b958e11",
+    "asset_sha256": "99c9967d7c99c43671bc8ac78b8a130c39f46f136f488d2f806b1c30e89a25d0",
+    "candidate_sha256": "f7a30dab7e16b437a990af1118ed9bcf6453045e2a9bf8ab5f31b7c522003b5e",
+    "inventory": null,
+    "diagnostics": [
+      "native_codec_stages version=2 present=true libavcodec=63.1.101 libavutil=61.1.101 loading=lazy lease_retirement=unload license=LGPL-2.1-or-later required_decoders=present audio_routing=disabled",
+      "native_hardware_capabilities av1= true vp9= true"
+    ]
+  },
+  {
+    "name": "hardware",
+    "rc": 0,
+    "pid": 36870,
+    "run_id": "11467347-40c1-4afe-8dd2-23864cd2eba9",
+    "asset_sha256": "99c9967d7c99c43671bc8ac78b8a130c39f46f136f488d2f806b1c30e89a25d0",
+    "candidate_sha256": "f7a30dab7e16b437a990af1118ed9bcf6453045e2a9bf8ab5f31b7c522003b5e",
+    "inventory": {
+      "rc": 0,
+      "ffmpeg_images": []
+    },
+    "diagnostics": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "name": "software",
+    "rc": 0,
+    "pid": 36884,
+    "run_id": "78684903-752e-4a5f-a0bf-f7a7d6e84c6f",
+    "asset_sha256": "cb64159e9180709af8a3b33bc4330eec61771cc2205c489acdb7fe09e758cf1b",
+    "candidate_sha256": "f7a30dab7e16b437a990af1118ed9bcf6453045e2a9bf8ab5f31b7c522003b5e",
+    "inventory": {
+      "rc": 0,
+      "ffmpeg_images": [
+        "__DATA                      11e094000-11e098000    [   16K    16K    16K     0K] rw-/rwx SM=COW          /Users/wesleymaa/Documents/WAM/build/WAM.app/Contents/Frameworks/libavutil-wamnative.61.dylib",
+        "__DATA                      11e098000-11e1a4000    [ 1072K     0K     0K     0K] rw-/rwx SM=NUL          /Users/wesleymaa/Documents/WAM/build/WAM.app/Contents/Frameworks/libavutil-wamnative.61.dylib",
+        "__DATA                      11e848000-11e84c000    [   16K    16K    16K     0K] rw-/rwx SM=COW          /Users/wesleymaa/Documents/WAM/build/WAM.app/Contents/Frameworks/libavcodec-wamnative.63.dylib",
+        "__DATA                      11e84c000-11e984000    [ 1248K   320K   320K     0K] rw-/rwx SM=PRV          /Users/wesleymaa/Documents/WAM/build/WAM.app/Contents/Frameworks/libavcodec-wamnative.63.dylib",
+        "__DATA_CONST                11e080000-11e094000    [   80K    80K    80K     0K] r--/rwx SM=COW          /Users/wesleymaa/Documents/WAM/build/WAM.app/Contents/Frameworks/libavutil-wamnative.61.dylib",
+        "__DATA_CONST                11e834000-11e848000    [   80K    80K    80K     0K] r--/rwx SM=COW          /Users/wesleymaa/Documents/WAM/build/WAM.app/Contents/Frameworks/libavcodec-wamnative.63.dylib",
+        "__LINKEDIT                  11e1a4000-11e1b4000    [   64K    16K     0K     0K] r--/rwx SM=COW          /Users/wesleymaa/Documents/WAM/build/WAM.app/Contents/Frameworks/libavutil-wamnative.61.dylib",
+        "__LINKEDIT                  11e984000-11e99c000    [   96K    16K     0K     0K] r--/rwx SM=COW          /Users/wesleymaa/Documents/WAM/build/WAM.app/Contents/Frameworks/libavcodec-wamnative.63.dylib",
+        "__TEXT                      11dff4000-11e080000    [  560K   256K     0K     0K] r-x/rwx SM=COW          /Users/wesleymaa/Documents/WAM/build/WAM.app/Contents/Frameworks/libavutil-wamnative.61.dylib",
+        "__TEXT                      11e50c000-11e834000    [ 3232K   576K     0K     0K] r-x/rwx SM=COW          /Users/wesleymaa/Documents/WAM/build/WAM.app/Contents/Frameworks/libavcodec-wamnative.63.dylib"
+      ]
+    },
+    "diagnostics": [
+      "WAM: native decoder stage=Libavcodec codec=6d703476"
+    ]
+  },
+  {
+    "name": "dts",
+    "rc": 0,
+    "pid": 36903,
+    "run_id": "c7655d61-ad00-4348-a983-20a79a962860",
+    "asset_sha256": "c6fa55a983a98a969d9b627ea1f4984abc890bc00c724b839aee022a661276cd",
+    "candidate_sha256": "f7a30dab7e16b437a990af1118ed9bcf6453045e2a9bf8ab5f31b7c522003b5e",
+    "inventory": null,
+    "diagnostics": [
+      "WAM: native failure stage=open reason=Startup class=UnsupportedSource error=\"requested Matroska tracks are unavailable (TrackSelection); libavformat: LibavformatAudioTimingUnproven: unmapped codec\"",
+      "WAM: cannot load bundled fallback: Cannot load library /dev/fd/18: dlopen(/dev/fd/18, 0x0006): Library not loaded: /opt/homebrew/opt/ffmpeg/lib/libavcodec.62.dylib"
+    ]
+  },
+  {
+    "name": "truehd",
+    "rc": 0,
+    "pid": 36913,
+    "run_id": "41f62898-4ad0-44f0-af9f-a3b170dbe4b3",
+    "asset_sha256": "4c6c8ed55ed85b6136d8de2fabd1d087ccfe9becae2d1c44aff9a9ebe61e1534",
+    "candidate_sha256": "f7a30dab7e16b437a990af1118ed9bcf6453045e2a9bf8ab5f31b7c522003b5e",
+    "inventory": null,
+    "diagnostics": [
+      "WAM: native failure stage=open reason=Startup class=UnsupportedSource error=\"requested Matroska tracks are unavailable (TrackSelection); libavformat: LibavformatAudioTimingUnproven: unmapped codec\"",
+      "WAM: cannot load bundled fallback: Cannot load library /dev/fd/18: dlopen(/dev/fd/18, 0x0006): Library not loaded: /opt/homebrew/opt/ffmpeg/lib/libavcodec.62.dylib"
+    ]
+  },
+  {
+    "name": "mlp",
+    "rc": 0,
+    "pid": 36926,
+    "run_id": "520f5c16-9aed-4e48-a070-f1c598edbf28",
+    "asset_sha256": "2de4b46a2327c01b2ee918e7a15af136e22ed6d73134b80affbd9f2a242263e7",
+    "candidate_sha256": "f7a30dab7e16b437a990af1118ed9bcf6453045e2a9bf8ab5f31b7c522003b5e",
+    "inventory": null,
+    "diagnostics": [
+      "WAM: native failure stage=open reason=Startup class=UnsupportedSource error=\"requested Matroska tracks are unavailable (TrackSelection); libavformat: LibavformatAudioTimingUnproven: unmapped codec\"",
+      "WAM: cannot load bundled fallback: Cannot load library /dev/fd/18: dlopen(/dev/fd/18, 0x0006): Library not loaded: /opt/homebrew/opt/ffmpeg/lib/libavcodec.62.dylib"
+    ]
+  }
+]
