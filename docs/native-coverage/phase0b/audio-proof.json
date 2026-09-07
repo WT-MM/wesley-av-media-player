@@ -1,0 +1,193 @@
+{
+  "version": 1,
+  "ffmpeg": "ffmpeg version 9.0.1 Copyright (c) 2000-2026 the FFmpeg developers\nbuilt with Apple clang version 21.0.0 (clang-2100.1.1.101)\nconfiguration: --prefix=/opt/homebrew/Cellar/ffmpeg/9.0.1_1 --enable-shared --enable-pthreads --enable-version3 --cc=clang --host-cflags= --host-ldflags= --enable-ffplay --enable-gpl --enable-libsvtav1 --enable-libopus --enable-libx264 --enable-libmp3lame --enable-libdav1d --enable-libvmaf --enable-libvpx --enable-libx265 --enable-openssl --enable-videotoolbox --enable-audiotoolbox --enable-neon\nlibavutil      61.  1.101 / 61.  1.101\nlibavcodec     63.  1.101 / 63.  1.101\nlibavformat    63.  1.101 / 63.  1.101\nlibavdevice    63.  1.101 / 63.  1.101\nlibavfilter    12.  1.101 / 12.  1.101\nlibswscale     10.  1.101 / 10.  1.101\nlibswresample   7.  1.101 /  7.  1.101\n\nExiting with exit code 0\n",
+  "specimens": [
+    {
+      "file": "alac.mka",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=48000",
+        "-t",
+        "4",
+        "-c:a",
+        "alac",
+        "/private/tmp/wam-phase0b/audio-integrated/alac.mka"
+      ],
+      "sha256": "d1a32b592fc28827f397c3db73aef4da1f1587ba53289f36787f06f23d8147f3"
+    },
+    {
+      "file": "pcm_s16le.mka",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=48000",
+        "-t",
+        "4",
+        "-c:a",
+        "pcm_s16le",
+        "/private/tmp/wam-phase0b/audio-integrated/pcm_s16le.mka"
+      ],
+      "sha256": "0293d5c657770b99e7ee0cd2691a606ef8ddedcda42a3e66d43c9d113e7d99bb"
+    },
+    {
+      "file": "pcm_f32le.mka",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=48000",
+        "-t",
+        "4",
+        "-c:a",
+        "pcm_f32le",
+        "/private/tmp/wam-phase0b/audio-integrated/pcm_f32le.mka"
+      ],
+      "sha256": "2e0b0ae0ca41692e5515c6ddd8fc9d820fb4ae564fcafb49b2e6085dc0348537"
+    },
+    {
+      "file": "adpcm_ima_wav.mka",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=48000",
+        "-t",
+        "4",
+        "-c:a",
+        "adpcm_ima_wav",
+        "/private/tmp/wam-phase0b/audio-integrated/adpcm_ima_wav.mka"
+      ],
+      "sha256": "d46d1c5440681a0f1d36ef9d5ec26313eb06ee6cf9d6a77be70a8a7217ac1e04"
+    },
+    {
+      "file": "adpcm_ms.mka",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=48000",
+        "-t",
+        "4",
+        "-c:a",
+        "adpcm_ms",
+        "/private/tmp/wam-phase0b/audio-integrated/adpcm_ms.mka"
+      ],
+      "sha256": "675ba1c71f1ce1e4cdeae4446e8353fbd611555b9b3dbc4079a9be395d959ee9"
+    }
+  ],
+  "proofs": [
+    {
+      "file": "alac.mka",
+      "target": 0,
+      "frames": 192000,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=192000 first=0 decoded=192000 trim=0 exact=1 drained=1 error="
+    },
+    {
+      "file": "alac.mka",
+      "target": 2,
+      "frames": 96000,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=96000 first=96000 decoded=105984 trim=9984 exact=1 drained=1 error="
+    },
+    {
+      "file": "pcm_s16le.mka",
+      "target": 0,
+      "frames": 192000,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=192000 first=0 decoded=192000 trim=0 exact=1 drained=1 error="
+    },
+    {
+      "file": "pcm_s16le.mka",
+      "target": 2,
+      "frames": 96000,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=96000 first=96000 decoded=98816 trim=2816 exact=1 drained=1 error="
+    },
+    {
+      "file": "pcm_f32le.mka",
+      "target": 0,
+      "frames": 192000,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=192000 first=0 decoded=192000 trim=0 exact=1 drained=1 error="
+    },
+    {
+      "file": "pcm_f32le.mka",
+      "target": 2,
+      "frames": 96000,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=96000 first=96000 decoded=98816 trim=2816 exact=1 drained=1 error="
+    },
+    {
+      "file": "adpcm_ima_wav.mka",
+      "target": 0,
+      "frames": 192000,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=192000 first=0 decoded=192213 trim=213 exact=1 drained=1 error="
+    },
+    {
+      "file": "adpcm_ima_wav.mka",
+      "target": 2,
+      "frames": 96000,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=96000 first=96000 decoded=98649 trim=2649 exact=1 drained=1 error="
+    },
+    {
+      "file": "adpcm_ms.mka",
+      "target": 0,
+      "frames": 192000,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=192000 first=0 decoded=192280 trim=280 exact=1 drained=1 error="
+    },
+    {
+      "file": "adpcm_ms.mka",
+      "target": 2,
+      "frames": 96000,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=96000 first=96000 decoded=99176 trim=3176 exact=1 drained=1 error="
+    }
+  ]
+}

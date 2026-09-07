@@ -49,6 +49,7 @@ struct GraphState {
   std::atomic<std::uint64_t> sourceArms{0};
   std::atomic<std::uint64_t> sourceOpens{0};
   std::atomic<std::uint64_t> sourceSeeks{0};
+  bool singleGop{false};
   std::atomic<std::uint64_t> sourceCancels{0};
   std::atomic<std::uint64_t> sourceCloses{0};
   std::atomic<std::uint64_t> videoArms{0};
@@ -333,7 +334,7 @@ class FakeSource final : public media::MediaSource {
             audioWindow.decodeStart == media::MediaTime{0, 1};
       }
     }
-    return {true, request.generation, request.target, {}, {}, audioWindow};
+    return {true, request.generation, state_->singleGop ? media::MediaTime{0, 1} : request.target, {}, {}, audioWindow};
   }
 
   media::MediaSourceReadResult readNext(
@@ -2005,6 +2006,48 @@ void testQuiescingCommitPauseIsRetriedNotFailed() {
       waitFact<protocol::Stopped>(*session, "quiescing-pause Stopped"));
 }
 
+void testPendingSeekIsSuperseded() {
+  auto state = std::make_shared<GraphState>();
+  auto longDescriptor = std::make_shared<media::MediaSourceDescriptor>(*descriptor());
+  longDescriptor->duration = {40, 1};
+  for (auto& track : longDescriptor->tracks) track.duration = {40, 1};
+  state->descriptor = longDescriptor;
+  state->singleGop = true;
+  state->blockCapacity.store(true);
+  std::shared_ptr<NativeMediaSessionWake> wake;
+  auto session = sessionFor(&state, &wake);
+  expect(prepare(*session, prepareCommand()) == NativeMediaSessionCommandStatus::Accepted,
+         "supersession prepares");
+  static_cast<void>(waitFact<protocol::Prepared>(*session, "supersession Prepared"));
+  expect(session->start({{{1}, {2}}, {7}, true}) == NativeMediaSessionCommandStatus::Accepted,
+         "supersession starts");
+  static_cast<void>(waitFact<protocol::Started>(*session, "supersession Started"));
+  const auto firstTarget = session->preflightCommitTarget(30.0);
+  expect(firstTarget.has_value(), "first target is valid");
+  expect(session->commitSeek(commitCommand(3, 8, 30.0), *firstTarget) == NativeMediaSessionCommandStatus::Accepted,
+         "first seek starts");
+  waitUntil([&] { return NativeMediaSessionTestAccess::commitPhase(*session) == CommitPhase::AwaitingProofs; },
+            "first seek is pending video proof");
+  const auto newer = session->preflightCommitTarget(3.0);
+  expect(newer.has_value(), "pending slow seek accepts a newer exact target");
+  if (newer) {
+    const auto command = commitCommand(4, 9, 3.0);
+    expect(session->commitSeek(command, *newer) == NativeMediaSessionCommandStatus::Accepted,
+           "newer seek supersedes the pending generation");
+    waitUntil([&] { return state->sourceSeeks.load() == 2; }, "new seek reaches source");
+    publishCommitDraw(*state, 8, 1, 30.0);
+    wake->video().signal(wake->video().context);
+    publishCommitDraw(*state, 9, 2, 3.0);
+    wake->video().signal(wake->video().context);
+    const auto ready = waitFact<protocol::CommitReady>(*session, "new seek reaches exact ready");
+    expect(protocol::commitReadyMatches(command, newer->drawBaseline(), ready),
+           "only newest target can publish commit readiness");
+  }
+  expect(session->stop({{{1}, {5}}, {10}}) == NativeMediaSessionCommandStatus::Accepted,
+         "supersession retires all burned generations");
+  static_cast<void>(waitFact<protocol::Stopped>(*session, "supersession stopped"));
+}
+
 void testCommitSeekPendingReadyAndStopHighWater() {
   auto state = std::make_shared<GraphState>();
   state->descriptor = descriptor();
@@ -3578,6 +3621,7 @@ int main(int argc, char** argv) {
   testCommitPhaseRefusedStepIsANamedFailure();
   testStopDuringCommitResetsPhaseToIdle();
   testQuiescingCommitPauseIsRetriedNotFailed();
+  testPendingSeekIsSuperseded();
   testCommitSeekPendingReadyAndStopHighWater();
   testCommitSeekProceedsPastFailedPreviewLane();
   testCommitSeekAdmittedDuringStarting();

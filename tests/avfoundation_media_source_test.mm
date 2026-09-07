@@ -2067,9 +2067,9 @@ void testProResAndMotionJpegAdmission() {
     auto track = inspectVideoFormat(
         static_cast<CMVideoFormatDescriptionRef>(format.get()), 4, {60, 1},
         MediaSourceLimits{}, &error);
-    expect(!track,
-           "the ProRes 4444 family is refused by name, not mis-dispatched "
-           "onto the 422 decode contract");
+    expect(track && track->codec == MediaCodec::ProRes4444 &&
+               track->video->sampleFormat == MediaVideoSampleFormat::Unknown,
+           "ProRes 4444 and XQ retain a distinct opaque decode contract");
   }
 
   // Motion JPEG: same record-less shape, but it carries no BitsPerComponent

@@ -9,9 +9,9 @@
 // This offline harness runs the production source, converter and ring on one
 // bounded worker. Its output is interleaved stereo float32 at the media rate.
 int main(int argc, char **argv) {
-  if (argc != 3 && argc != 4)
+  if (argc < 3 || argc > 5)
     return 2;
-  const int target = argc == 4 ? std::atoi(argv[3]) : 0;
+  const int target = argc >= 4 ? std::atoi(argv[3]) : 0;
   if (target < 0)
     return 2;
   using namespace wam::media;
@@ -26,7 +26,7 @@ int main(int argc, char **argv) {
   MediaSourceOpenOptions options;
   options.selection.requireAudio = true;
   options.initialPosition =
-      MediaSourceInitialPosition{{target, 1}, MediaSeekMode::Accurate};
+      MediaSourceInitialPosition{{argc == 5 ? 0 : target, 1}, MediaSeekMode::Accurate};
   options.selection.requireVideo = false;
   if (!source->armOperation(1))
     return 1;
@@ -44,7 +44,7 @@ int main(int argc, char **argv) {
   NativeAudioConverter converter(ring);
   NativeAudioGenerationTimeline timeline;
   timeline.trimBeforeFloor = true;
-  timeline.presentationFloor = opened.audioWindow.presentationStart;
+  timeline.presentationFloor = argc == 5 ? MediaTime{target, 1} : opened.audioWindow.presentationStart;
   timeline.startsAtStreamOrigin = opened.audioWindow.startsAtStreamOrigin;
   timeline.presentationCeiling = track->duration;
   timeline.trimAfterCeiling = true;

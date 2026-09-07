@@ -70,18 +70,18 @@ def main():
     manifest = {'version': 1, 'ffmpeg': run([a.ffmpeg, '-version']).stdout,
                 'specimens': [], 'proofs': []}
 
-    def generate(name, rate=48000, codec='aac', extra=()):
+    def generate(name, rate=48000, codec='aac', extra=(), seconds=4):
         argv = [a.ffmpeg, '-v', 'error', '-y', '-f', 'lavfi', '-i',
                 f'aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s={rate}',
-                '-t', '4', '-c:a', codec, *extra, root/name]
+                '-t', str(seconds), '-c:a', codec, *extra, root/name]
         run(argv)
         manifest['specimens'].append({'file': name, 'argv': [str(x) for x in argv],
             'sha256': hashlib.sha256((root/name).read_bytes()).hexdigest()})
         return root/name
 
-    def decode(path, rate, frames, target=0, reference=None, bit_exact=False):
+    def decode(path, rate, frames, target=0, reference=None, bit_exact=False, origin=False):
         pcm = root/(path.name+f'-{target}.f32')
-        result = run([a.audio, path, pcm, target])
+        result = run([a.audio, path, pcm, target, *(["origin"] if origin else [])])
         assert f'rate={rate}' in result.stderr and f'frames={frames-target*rate} ' in result.stderr, result.stderr
         assert 'exact=1 drained=1' in result.stderr, result.stderr
         assert pcm.stat().st_size == (frames-target*rate)*8
@@ -148,6 +148,23 @@ def main():
             ref=root/(codec+'.count.f32')
             run([a.ffmpeg,'-v','error','-y','-i',path,'-ac','2','-c:a','pcm_f32le','-f','f32le',ref])
             decode(path,48000,ref.stat().st_size//8,bit_exact=True)
+    if a.case in ('all','matroska-apple'):
+        for codec in ('alac','pcm_s16le','pcm_f32le','adpcm_ima_wav','adpcm_ms'):
+            path=generate(codec+'.mka',48000,codec)
+            decode(path,48000,192000,bit_exact=True)
+            decode(path,48000,192000,2,bit_exact=True)
+    if a.case in ('all','slow-audio'):
+        path=generate('slow-audio.wav',48000,'pcm_s16le',seconds=32)
+        decode(path,48000,1536000,30,bit_exact=True,origin=True)
+    if a.case in ('all','he-aac'):
+        for profile in (4,28):
+            path=generate(f'he-aac-{profile}.m4a',48000,'aac_at',('-profile:a',str(profile),'-b:a','48k'))
+            matroska=root/(path.name+'.mka')
+            run([a.ffmpeg,'-v','error','-y','-i',path,'-c','copy',matroska])
+            for container in (path,matroska):
+                result=run([a.source,container],expected=1)
+                assert 'HeAacSbrDecoderDelayUnproven' in result.stdout, result.stdout
+                manifest['proofs'].append(dict(file=container.name,diagnostic=result.stdout.strip()))
     (root/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
 
 if __name__=='__main__': main()

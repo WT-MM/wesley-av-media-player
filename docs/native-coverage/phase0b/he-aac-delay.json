@@ -1,0 +1,18 @@
+[
+  {
+    "name": "he-aac",
+    "apple_frames": 196544,
+    "ffmpeg_frames": 196544,
+    "best_reference_offset": 962,
+    "zero_cost": 113.68207406555453,
+    "aligned_cost": 6.724558285572434e-12
+  },
+  {
+    "name": "he-aacv2",
+    "apple_frames": 196544,
+    "ffmpeg_frames": 196544,
+    "best_reference_offset": 962,
+    "zero_cost": 105.16726995674307,
+    "aligned_cost": 8.781139373749164e-12
+  }
+]

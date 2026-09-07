@@ -667,15 +667,10 @@ class ProductionPreviewGeneration final
         result.error = "preview could not locate a bounded full-sync start";
         return result;
       }
-      const CMTime maximumPreroll = CMTimeMakeWithSeconds(
-          media::clampMediaSourceLimits(context_->binding().limits)
-              .maximumVideoSeekPrerollSeconds,
-          60'000);
       if (!CMTIME_IS_NUMERIC(preroll) ||
-          CMTimeCompare(preroll, kCMTimeZero) < 0 ||
-          CMTimeCompare(preroll, maximumPreroll) > 0) {
+          CMTimeCompare(preroll, kCMTimeZero) < 0) {
         result.status = NativePreviewStatus::Unsupported;
-        result.error = "preview target exceeds bounded sync preroll";
+        result.error = "preview random-access timeline is invalid";
         return result;
       }
 

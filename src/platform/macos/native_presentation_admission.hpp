@@ -2,6 +2,7 @@
 
 #include "native_tracked_video_output.hpp"
 #include "media/native_media_source.hpp"
+#include "media/media_codec_facts.hpp"
 
 namespace wam::macos {
 
@@ -10,8 +11,18 @@ namespace wam::macos {
 // the renderer's default color space; explicit primaries must be BT.709.
 [[nodiscard]] inline const char* nativePresentationRefusal(
     const media::MediaVideoFormat& video,
-    NativeTrackedVideoOutput& output) noexcept {
+    NativeTrackedVideoOutput& output,
+    media::MediaCodec codec = media::MediaCodec::Unknown) noexcept {
+  if (codec == media::MediaCodec::ProRes4444) {
+    if (!output.presentsDecodedSurfacesDirectly()) return "SceneGraphProRes4444OpaqueUnsupported";
+    if (video.transferFunction == media::MediaTransferFunction::Pq ||
+        video.transferFunction == media::MediaTransferFunction::Hlg)
+      return "ProRes4444OpaqueRgbHdrUnsupported";
+  }
   if (!output.presentsDecodedSurfacesDirectly()) {
+    if (media::mediaSampleFormatIs422(video.sampleFormat)) {
+      return "SceneGraph422Unsupported";
+    }
     switch (video.transferFunction) {
     case media::MediaTransferFunction::Pq:
       return "SceneGraphPqUnsupported";

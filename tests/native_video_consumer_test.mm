@@ -1,3 +1,4 @@
+#include "platform/macos/native_presentation_admission.hpp"
 #include "platform/macos/native_video_consumer.hpp"
 
 #include "platform/macos/native_video_limits.hpp"
@@ -345,6 +346,23 @@ struct Fixture {
 };
 
 void testPresentationBackstop() {
+  {
+    Fixture fixture;
+    media::MediaVideoFormat video;
+    const char* refusal = nativePresentationRefusal(video, *fixture.output, media::MediaCodec::ProRes4444);
+    expect(refusal && std::string(refusal) == "SceneGraphProRes4444OpaqueUnsupported",
+           "scene graph refuses opaque packed RGB without a shader contract");
+  }
+  for (const auto format : {media::MediaVideoSampleFormat::Yuv422EightBit,
+                            media::MediaVideoSampleFormat::Yuv422TenBit}) {
+    Fixture fixture;
+    media::MediaVideoFormat video;
+    video.sampleFormat = format;
+    const char* refusal = nativePresentationRefusal(video, *fixture.output);
+    expect(refusal && std::string(refusal) == "SceneGraph422Unsupported",
+           "scene graph refuses both 422 families by name");
+  }
+
   for (const auto& entry : {std::pair{media::MediaTransferFunction::Pq, "SceneGraphPqUnsupported"},
                             std::pair{media::MediaTransferFunction::Hlg, "SceneGraphHlgUnsupported"}}) {
     Fixture fixture;

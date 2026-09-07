@@ -355,7 +355,7 @@ void commitSeekPromotesOnlyExactReady() {
                  beforeInvalidBaseline.generationHighWater,
          "an unwinnable maximum draw baseline is rejected before lineage "
          "reservation");
-  const auto commit =
+  auto commit =
       action(router.commitSeek({native::GestureId{9}, native::RequestId{12},
                                 42.5, 20},
                                {4}),
@@ -372,13 +372,15 @@ void commitSeekPromotesOnlyExactReady() {
              commit.targetGeneration.value > run.generation.value,
          "commit immediately burns serial and target generation while the "
          "source generation remains active");
-  const auto duplicate = router.commitSeek(
+  const auto oldCommit = commit;
+  const auto replacement = router.commitSeek(
       {native::GestureId{9}, native::RequestId{13}, 43.0, 20}, {5});
-  expect(duplicate.status == router::Status::Ignored &&
-             router.snapshot().serial == seeking.serial &&
-             router.snapshot().generationHighWater ==
-                 seeking.generationHighWater,
-         "a second commit cannot supersede an in-flight exact commit");
+  expect(replacement.status == router::Status::Applied && replacement.action &&
+             router.snapshot().generationHighWater.value > seeking.generationHighWater.value,
+         "a newer commit supersedes an in-flight seek with fresh lineage");
+  expect(router.onNativeCommitReady(readyFor(oldCommit, 21), {5}).status == router::Status::Ignored,
+         "superseded seek proof cannot promote a generation");
+  commit = replacement.action->commitSeek;
 
   native::CommitReady wrong = readyFor(commit, 21);
   wrong.videoDraw.drawSequence = 20;

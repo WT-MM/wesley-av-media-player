@@ -208,7 +208,7 @@ struct MatroskaMediaSource::Impl final
       stateAudioPlayoutProofOnce(raw.presentationTime, owned.get());
     }
 
-    const std::size_t sampleCount = video ? 1 : frameCount;
+    const std::size_t sampleCount = video ? 1 : static_cast<std::size_t>(CMSampleBufferGetNumSamples(owned.get()));
     auto storage =
         std::make_shared<CoreMediaSampleStorage>(owned.release(), bytes);
     MediaSample sample;

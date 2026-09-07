@@ -1,154 +1,181 @@
-# Native coverage evidence — 2026-09-06
+# Native coverage — phase 0b, 2026-09-06
 
-This is an implemented, verified subset of phases 0–1. The complete requested
-Apple admission expansion and slow-seek work are **not complete**. No FFmpeg
-library was built or linked. All user-frozen files and SESSION_HANDOFF.md remain
-unchanged. The interrupted working-tree edits were inspected and continued.
+Phase 0b adds hardware ProRes 4444/XQ and HEVC 4:2:2 presentation,
+Matroska Apple audio carriage, and bounded, supersedable long-GOP seeks.
+HE-AAC/v2 and HEVC 4:4:4 remain explicitly refused for the reasons below.
+The [phase 0/1 report](phase01-report.md) is preserved as historical evidence;
+its statements that no amendments or new hardware families were implemented
+apply to that earlier run.
 
-## Apple capability ledger
+Host: Apple M3 Max, arm64, macOS 26.3.1 (a), build 25D771280a, Xcode 26.6.
+Apple codec-service proofs ran outside the filesystem sandbox. No FFmpeg
+library was added or linked. FFmpeg is the offline generator/reference only.
 
-Host: Apple M3 Max, arm64, macOS 26.3.1 (a), build 25D771280a;
-Xcode 26.6. Run the probes outside the filesystem sandbox: its unavailable
-codec services produced an incomplete three-ID AudioToolbox registry and false
-audio configure failures. The retained registry is the corrected host result.
+## Family results
 
-| Specimen/profile | Actual Apple result | WAM disposition |
+| Family / carriage | Production route | Specimen and proof |
 | --- | --- | --- |
-| ProRes 4444 / 4444 XQ, 320×180, 60 frames | VT hardware and software each decode 60/60; `y416` output | Deferred: separate frozen codec identity and explicit opaque presentation contract required |
-| HEVC 4:2:2 10-bit, `hvc1` MOV | VT hardware 60/60, `p422`; VT software 60/60, `x422` | Deferred: frozen 4:2:0 sample-format identity and budget need revision |
-| Same HEVC bytes, `hev1` MOV | VT create −12906 in both modes | Carriage-specific limitation; **not** absence of HEVC 4:2:2 hardware |
-| VP9 profile 0, MP4 | VT hardware 60/60; forced software create −12906 | Already admitted; host hardware capability verified |
-| AV1 Main, MP4 | VT hardware 60/60; forced software create −12906 | Already admitted; host hardware capability verified |
-| MJPEG 4:2:0 | VT software 60/60; hardware property false | Existing route preserved |
-| MJPEG 4:2:2 / 4:4:4 | VT produces no frames (−12904 / −12910); ImageIO reads first image | Now refused at open by SOF0 chroma name; no bounded ImageIO→presentation adapter proved |
-| HE-AAC / HE-AACv2 | ExtAudioFile/AudioToolbox decodes 196,544 frames at 48 kHz, actual tags `aach` / `aacp` | Matroska still refused; timing/content parity not accepted (reference lag −962 frames) |
-| ALAC, PCM, Microsoft IMA/MS ADPCM | Apple output bit-exact against reference, exact file-declared counts | Existing MOV/WAV paths retained; Matroska carriage still refused |
-| G.711 A-law/µ-law, QuickTime IMA4 | Apple output bit-exact, 192,000 frames | Additional missing frozen codec identities; not mislabeled as linear PCM or Microsoft IMA |
+| ProRes 4444 / XQ, MOV (`ap4h` / `ap4x`) | Required VT hardware → display layer; opaque packed RGB10 (`w30r`), alpha ignored | 320×180, 30 frames per fidelity specimen; both 30/30 hardware, RGB max error 1/255, RMS 0.36262/255 against ffmpeg; final built-app native selection and first-frame draw |
+| HEVC Main 4:2:2 10, `hvc1` MOV | Required VT hardware → explicit `x422` → display layer | 320×180, 30/30; RGB max error 3/255, RMS 1.15484/255; final app native selection and first-frame draw |
+| Matroska ALAC | Matroska demuxer → AudioToolbox | Bare 24-byte CodecPrivate, explicit ALAC final-packet count; 192,000 frames at zero, 96,000 at 2 s; bit-exact stereo float output and zero-frame chirp lag |
+| Matroska PCM integer / float | Matroska demuxer → AudioToolbox PCM conversion | `A_PCM/INT/LIT` s16 and `A_PCM/FLOAT/IEEE` f32; same exact counts, bit-exact samples and zero lag |
+| Matroska IMA / MS ADPCM | `A_MS/ACM` WAVEFORMATEX → AudioToolbox | Block size, samples/block and standard MS coefficients validated; exact DiscardPadding; same exact counts, bit-exact samples and zero lag |
+| HE-AAC / HE-AACv2, MP4 and Matroska | Named native refusal; compatibility route remains available | `HeAacSbrDecoderDelayUnproven`; reproduced 962-frame SBR offset at 48 kHz, no full-length zero-offset proof |
+| VP9 profile 2, 10-bit MP4 | VT hardware → display layer | 30/30 hardware in retained profile test; final app native selection and first-frame draw. Actual reader/descriptor/hardware gates supersede AVFoundation's false `playable` hint for VP9 |
+| AV1 Main 10-bit MP4 | Existing VT hardware route verified | 30/30 hardware; final app native selection and first-frame draw |
+| HEVC 4:4:4 10-bit, `hvc1` MP4 | Native refusal: `Hevc444SurfaceContractUnsupported` | Hardware **does** decode 30/30 (`p444`); software decodes too. No authorized coded 4:4:4 surface identity or validated production output contract was added |
 
-`apple-registered-capabilities.txt` contains every reported AudioToolbox format
-ID from this host plus registered VP9/AV1 hardware hints. Registry entries include
-transport aliases; they are not individual specimen decode proofs. This run is
-not an exhaustive proof for every Apple-registered format, codec profile or
-machine. Missing genuine specimens and unmapped identities remain explicit work.
+Compressed specimens are retained locally under `test-media/native-phase0b/`
+(about 10 MB, covered by the repository's existing media ignore rules).
+[Specimen hashes](phase0b/retained-specimens.json), generator argv and diagnostics
+are in the [video](phase0b/video-proof.json), [audio](phase0b/audio-proof.json),
+and [HE-AAC refusal](phase0b/he-aac-refusals.json) receipts. The integration tests
+regenerate their own specimens under `/private/tmp`; they do not depend on
+ignored local media. PCM admission also validates 8/24/32-bit packed integer
+layouts; those depths do not have full decoded chirp specimens in this run.
+Float64, nonstandard MS coefficients, discontinuous packet grids and unsupported
+packet sizes remain closed.
 
-Raw receipts: `apple-video-probes.json`, `apple-audio-probes.json`,
-`he-aac-alignment.json`, and `specimens.json` (generator argv, hashes and ffprobe
-stream/container facts). Packet/frame counts are decode evidence, not a claimed
-pixel-fidelity acceptance for the deferred hardware families.
+### Pixel and alpha proof limits
 
-### CPU and energy scope
+The fidelity probe grabs the first decoded surface in-process and uses
+VTPixelTransfer to read opaque BGRA, compared with ffmpeg's first-frame RGB.
+The generated ProRes alpha plane is fully opaque, so its reference is also the
+opaque composite over black. Production selects `w30r`, which has no alpha
+plane; it ignores alpha rather than compositing it. These results are pixel
+comparisons with stated conversion tolerances, **not byte-exact RGB** or a proof
+of transparent-alpha compositing or preservation of all 12 coded bits.
 
-Two-second, 320×180, 60-frame offline decodes, one measurement per mode:
+ProRes 4444 is refused on the scene-graph route by
+`SceneGraphProRes4444OpaqueUnsupported`; PQ/HLG packed-RGB presentation is refused
+by `ProRes4444OpaqueRgbHdrUnsupported`. Both 4:2:2 surface depths are refused on
+the scene-graph route by `SceneGraph422Unsupported`. No shader was widened.
+The earlier ProRes 422 route retains its existing output conversion.
 
-| Family | Hardware process CPU / energy | Software process CPU / energy |
+An unpinned `p422` readback did not establish color parity. Production therefore
+pins the verified `x422` request and refuses `p422` as a mismatched output.
+The app's window-script `grab` captures its Qt window, but not the separate
+AVSampleBufferDisplayLayer image. Those grabs establish neither compositor
+pixel parity nor display color accuracy. [App telemetry](phase0b/gui-proof.json) separately proves
+native selection, successful presentation and no fallback for these specimens.
+
+## CPU and energy
+
+Five paired offline decodes per mode, alternating order; 2-second, 320×180,
+60-frame specimens. Medians, with capture disabled during measurement:
+
+| Family | VT hardware CPU / energy | Forced VT software CPU / energy |
 | --- | --- | --- |
-| HEVC 4:2:2 10-bit (`hvc1`) | 11.428 ms / 31.969 mJ | 15.561 ms / 40.803 mJ |
-| ProRes 4444 | 12.280 ms / 35.352 mJ | 13.044 ms / 40.134 mJ |
-| ProRes 4444 XQ | 12.674 ms / 35.602 mJ | 17.099 ms / 44.137 mJ |
+| ProRes 4444, `w30r` | 11.839 ms / 35.088 mJ | 14.574 ms / 41.567 mJ |
+| ProRes 4444 XQ, `w30r` | 11.841 ms / 33.945 mJ | 15.135 ms / 40.567 mJ |
+| HEVC 4:2:2 10, `x422` | 10.381 ms / 30.239 mJ | 12.029 ms / 35.385 mJ |
+| VP9 profile 2, 10-bit | 9.779 ms / 28.531 mJ | No Apple software decoder: create −12906 |
+| AV1 Main 10-bit | 10.144 ms / 29.322 mJ | No Apple software decoder: create −12906 |
+| HEVC 4:4:4 10, probe only | 10.284 ms / 30.172 mJ | 12.190 ms / 35.579 mJ |
 
-The XQ and other raw values are in `apple-video-probes.json`. CPU comes from
-`getrusage(RUSAGE_SELF)` and energy from `proc_pid_rusage(RUSAGE_INFO_V6)`.
-These exclude decoder helpers and are throughput probes, not real-time playback,
-coalition energy or statistical hardware-win evidence. **No new hardware decode
-family was landed in WAM**, so no end-to-end hardware efficiency win is claimed.
-AudioToolbox process-local measurements are retained with the audio receipts.
+[Raw samples, exact asset hashes and decoder hardware-property proofs](phase0b/performance.json).
+CPU is `getrusage(RUSAGE_SELF)`; energy is `proc_pid_rusage(RUSAGE_INFO_V6)`.
+These exclude framework helpers, display/compositor costs and compatibility
+player overhead. They are process-local throughput measurements, not system
+power, coalition energy, or an end-to-end hardware-efficiency acceptance.
+Matroska audio uses the Apple software/conversion path; no audio hardware
+acceleration or new hardware-versus-software energy comparison is claimed.
+Earlier Apple audio process measurements remain in
+[the phase 0/1 receipts](apple-audio-probes.json).
 
-## Landed behavior and tests
+## HE-AAC delay ownership
 
-| Change | Proof |
-| --- | --- |
-| Opus input rates normalized to the 48 kHz output grid | 8/24/48 kHz input specimens each publish 192,000 frames, zero-lag chirps; explicit output 48 kHz passes and 24 kHz refuses; pre-skip/discard checks retained |
-| Shared complete-descriptor audio selection | Invalid 88.2 kHz default plus valid 48 kHz AAC chooses track 2 in MOV and MKA; explicit requested-track failure remains exact and closed |
-| MJPEG early inspection | 4:2:0 opens; 4:2:2/4:4:4 refuse with `Motion JPEG chroma...`; malformed/truncated/non-SOF0/header cases tested |
-| Standalone AAC tail | Explicit target-zero open: 191,488 → 192,000 frames; two-second start retains 96,000 frames; reader extent includes priming edit and converter still owns exact tail trim |
-| MP3 LSF LAME delay/padding | 8/22.05/24 kHz: 32,000/88,200/96,000 frames, zero-lag stereo chirps; 32 kHz MPEG-1 remains 128,000; independent count and origin reversions fail |
-| Routine admission notice suppressed | Source Unsupported carries an observation-side route-choice fact through unchanged exact retirement; genuine Failed retains its diagnostic and notice; owner wiring has a static guard test |
-| Retained offline audio harness | Production source→converter→ring, armed exact initial position, exact first/last publication counts, seek-floor case, channel-specific chirps and lossless controls |
+For both HE-AAC variants, Apple and ffmpeg produce 196,544 frames at 48 kHz.
+The best correlation is `Apple[i] ≈ reference[i + 962]` (the previous report's
+lag convention called this −962). The doubled-rate SBR signature is 962 frames,
+not a container edit or an extra 1024-frame AAC-LC packet.
 
-`macos_native_coverage_integration` generates temporary specimens and checks
-sample counts, file size, finite PCM, zero-lag channel-specific chirps and lossy
-maximum absolute error <0.004. Actual AAC/MP3 error is much smaller; Opus errors
-are near float-rounding noise. ALAC/PCM/ADPCM require exact equality. It requires
-a fixture FFmpeg with AAC, libmp3lame, libopus, MJPEG and the lossless encoders;
-this does not add a runtime FFmpeg library dependency. The CMake test is enabled
-when a fixture FFmpeg executable is found.
+Shifting the overlapping region aligns it closely, but the ffmpeg reference has
+nonzero samples in the missing leading region and Apple's final 962 frames are
+zero. Merely changing timestamps, trimming again, or inserting silence cannot
+establish exact full-length identity. The ExtAudioFile evidence does not prove
+how to recover that head through the production AudioConverter API while
+assigning the implicit decoder delay exactly once. Consequently no speculative
+second trim or fabricated padding was introduced. MP4 format-list inspection
+and Matroska explicit/implicit SBR signaling produce the named refusal.
+[Offset evidence](phase0b/he-aac-delay.json) and [overlap/head/tail measurements](phase0b/he-aac-overlap.json); four container/profile refusal
+regressions are part of the integration suite. HE-AAC admission remains deferred.
 
-Reproduce and retain receipts:
+## Bounded, cancelable slow seeks
 
-```sh
-python3 tests/native_coverage_integration.py \
-  --audio build/wam_native_coverage_audio_probe \
-  --source build/wam_native_coverage_source_probe \
-  --ffmpeg /opt/homebrew/bin/ffmpeg \
-  --artifacts /private/tmp/wam-native-coverage-repro
-build/wam_native_apple_video_probe
-build/wam_native_apple_video_probe /path/to/specimen.mov 1
-build/wam_native_apple_video_probe /path/to/specimen.mov 2
-build/wam_native_apple_audio_probe /path/to/specimen.m4a /private/tmp/apple.f32
-```
+The existing 12-second values are fast-seek thresholds, not admission ceilings.
+Source, preview, dispatcher and converter no longer reject solely for longer
+preroll. Matroska admits sparse but usable random-access indexes;
+`SparseRandomAccess` now denotes the absence of usable random-access points.
+Existing index-scan budgets and all sample, ring and frame-retention limits stay
+in force. Decode/discard proceeds incrementally; no preroll-sized buffer is built.
 
-Ten separate reversion checks were killed, with byte-identical restoration of
-each source. `reversion-proofs.json` records target, command, exit code and
-restored SHA-256; detailed build/test receipts are in
-`/private/tmp/wam-coverage/mutations/`. The notice owner proof is a static wiring
-check, not an assertion that a Qt notice was observed in a graphical test.
+The session accepts a newer seek while awaiting the old seek's presentation
+proof, burns a fresh generation, and retires the older work at its worker
+checkpoint. Old draw proofs cannot promote the newer target. The owner polls
+preroll progress every 250 ms and reports decoded-frame progress for slow seeks;
+its 10-second watchdog now measures inactivity rather than total decode time.
 
-## Final verification
+Proofs:
 
-`cmake --build build --parallel` completed successfully. The full settled
-`ctest --output-on-failure` run passed **81/81**, with zero failures. After the
-last test-only extension, all three native-coverage tests passed again. Apple
-codec tests require access to host codec services; sandbox-only execution can
-produce false configuration failures. The earlier disk-churn run had killed
-fresh binaries; the complete settled rerun is the reported result.
+- A synthesized 40-second single-GOP H.264 file opens and previews target 30 s
+  from random-access point zero in the production-source integration test.
+- A 3840×2160, 40-second single-GOP file lands at exactly 30 s in the final app:
+  commit submitted → commit-ready/frame-drawn in **1.272 seconds**. A 640×360
+  version lands in 148 ms. The 4K specimen is only 44 KB.
+- A deterministic session regression holds that same 30-second preroll pending,
+  accepts a newer 3-second seek, rejects the older generation's draw proof and
+  publishes only the newer commit readiness.
+- A bounded PCM regression starts decoding at zero, discards exactly 1,440,000
+  frames, and publishes exactly 96,000 frames from target 30 s, bit-identical to
+  ffmpeg with zero chirp lag ([restored converter receipt](phase0b/slow-audio-origin30.restored.log)).
 
-The requested 97-file corpus remains **78/97 native, zero baseline-native
-regressions**. Every launch used the build app, all four telemetry identity
-variables, an isolated scratch HOME, background/muted geometry and a six-second
-orderly exit. The final app SHA-256 matches the corpus candidate exactly:
-`9573d70f6f8b0b79a3e68e4c341d01699600c440129ea17464cc60db28b473e9`.
+## Amendments and budget
 
-Corpus telemetry was emitted on stderr. The initial stdout-only classification
-was invalid; retained results were corrected from the unchanged captures using
-both streams, requiring native selection and a drawn frame, no native failure
-or fallback event, and exit code zero. `corpus-results.json` and
-`corpus-results.tsv` contain the corrected per-file results. The maintained
-`tests/native_coverage_corpus.py` reads both streams.
+The maintainer's exact ratification text and every touched frozen line's
+before/after are recorded in the local, gitignored `SESSION_HANDOFF.md` ledger.
+[An exact copy of that ledger section](phase0b/amendments.md) is retained here.
+The only changes to frozen `native_media_source.hpp` are the appended codec and
+sample-format enum values and the threshold comments. The other three frozen
+files remain byte-identical to HEAD.
 
-The AAC and MP3 LSF measured playback runs each completed forward, backward and
-near-end seeks (2, 0.5 and 3.5 seconds) without native failure; event receipts are
-in `playback-seeks.json`. The offline harness separately checks exact sample
-publication at the two-second target. `verification.json` records the frozen
-file hashes, build/test results and matching app identity. No frozen file was
-changed, and no changes were staged or committed.
+The surface-budget header preserves 4:2:0 payload 28,508,160 bytes, slack
+1,599,488 bytes and padded surface 30,107,648 bytes. For 4:2:2, the payload is
+38,010,880 bytes and slack 2,121,728 bytes: **40,132,608 per surface**, ten requiring
+**401,326,080 bytes**. The **384 MiB = 402,653,184-byte** ceiling leaves 1,327,104
+bytes. Opaque single-plane RGB10 fits below that bound. The ten-surface count
+and derived 16-window process count are unchanged. Every original budget
+assertion remains, with explicit exact-number assertions added for both families.
 
-## Remaining contract proposals and work
+## Verification
 
-- **PROPOSAL 15 — distinct Apple codec identities.** Append ProRes4444 after
-  AdpcmMs in frozen `native_media_source.hpp`; preserve existing values and
-  distinguish the two ProRes decode families. Name opaque/alpha-ignored behavior
-  explicitly. Further proven G.711 and IMA4 families need their own identities.
-- **PROPOSAL 16 — HEVC 4:2:2 output contract/budget.** Append Yuv422TenBit and
-  matching consumer/import/color facts. Re-derive worst-case surface bytes:
-  `9,502,720×4 + (4096+4096)×255 + 2×16,384 = 40,132,608`;
-  ten surfaces need 401,326,080 B. A 384 MiB ceiling (402,653,184 B) covers that;
-  the current 288 MiB ceiling does not. Re-prove compressed formats, Metal/GL
-  import, chroma mapping and pixel fidelity before admission.
-- **PROPOSAL 17 — cancelable slow seeks.** The frozen source contract explicitly
-  caps video and audio preroll at 12 seconds; silently ignoring it is not a
-  contract-preserving implementation. Add a slow-seek capability distinct from
-  resource limits, maintain bounded queues and generation cancellation, and
-  replace the fixed seeking watchdog with a progress/cancellation policy.
-  Current SparseRandomAccess remains Unsupported, not corruption.
-- HE-AAC/v2 Matroska needs decoded-rate/AU and decoder-delay proof; the Apple
-  probe has a 962-frame disagreement and WAM's AVFoundation view exposes the
-  24 kHz AAC core. No full-bandwidth/sample-exact support is claimed.
-- ALAC/PCM/ADPCM Matroska packet/cookie/block framing is still unimplemented;
-  their positive Apple decode probes do not prove Matroska carriage. This is
-  remaining phase-0 implementation work, not an Apple decoder limitation.
-- No ImageIO worker/pool/conversion route, complete Apple-profile enumeration,
-  pixel-correct hardware-family acceptance or coalition energy campaign was
-  completed. Do not use these receipts to claim universal native coverage.
+- Reconfigured after CMake changes; `cmake --build build --parallel` passes.
+- First full suite: **82/82**. Final restored build: **82/82**, 94.43 s;
+  [final log](phase0b/ctest-final.log). No ctest run overlapped our linker.
+- **19 temporary-revert groups**, **29 test failures** and one compile-time
+  budget-invariant failure; each original working-tree file was restored
+  byte-for-byte and the passing test repeated. [Receipts](phase0b/revert-proofs.json)
+  and [executed procedure](phase0b/revert-proofs.py). That procedure records this
+  campaign's scratch paths and skips groups already present in its results file;
+  use a fresh results file for a new campaign. A failed decoder-harness
+  invocation without its required mode was corrected before counting that proof.
+- Reverts cover both AVFoundation new families and long seek, shared HEVC parsing,
+  all five Matroska audio specimens, PCM sample construction/counts, HE-AAC named
+  refusals, slow audio trimming, dispatcher/preview admission, router/session
+  supersession, packed-RGB requests, scene-graph refusals, progress and budget.
+- Final quiet corpus: **78/97 native**, baseline **78/97**, **zero regressions**.
+  [Per-file results](phase0b/corpus-results.json), [TSV](phase0b/corpus-results.tsv),
+  [campaign log](phase0b/corpus.log). Every launch used the final candidate hash
+  recorded in [verification](phase0b/verification.json), all four identity
+  variables, scratch HOME, muted/background geometry and a six-second dwell.
+- No git staging, commits, stash, reset or checkout. The maintainer owns acceptance.
 
-The pinned library/notice plan and `--verify-runtime` extension design are in
-[`ffmpeg-dependency-plan.md`](ffmpeg-dependency-plan.md).
+## Remaining work
+
+HE-AAC/v2 exact decoder-delay ownership; HEVC 4:4:4 coded/output authorization and
+pixel proof; ProRes `V_PRORES` Matroska sample-description wiring; transparent
+alpha/compositor proof; HDR packed-RGB proof; true end-to-end CPU/energy comparison
+against compatibility playback. ProRes MP4 carriage was not independently
+specimen-tested. The prior G.711/QuickTime IMA4 identity gaps and unsupported
+`hev1` HEVC 4:2:2 carriage remain deferred. This is not an exhaustive proof for
+all Apple-registered formats, profiles, operating systems or machines.

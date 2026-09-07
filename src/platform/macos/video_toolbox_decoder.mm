@@ -107,7 +107,7 @@ recordCodecReorderDepth(media::MediaCodec codec,
 // Defined with the other codec predicates further down, where the measurement
 // that justifies it lives; declared here because the reorder-depth derivation
 // is the first thing in this file that needs to recognise the family.
-bool codecIsProRes422Family(CMVideoCodecType codec) noexcept;
+bool codecIsProResFamily(CMVideoCodecType codec) noexcept;
 
 std::optional<CodecReorderDepth>
 deriveCodecReorderDepth(const VideoStreamConfiguration &configuration) {
@@ -149,7 +149,7 @@ deriveCodecReorderDepth(const VideoStreamConfiguration &configuration) {
     }
     return CodecReorderDepth{1, CodecReorderDepthOrigin::Declared};
   }
-  if (codecIsProRes422Family(configuration.codec) ||
+  if (codecIsProResFamily(configuration.codec) ||
       configuration.codec == kCMVideoCodecType_JPEG) {
     // Zero, and for the strongest reason available: both codecs are ALL-INTRA
     // by construction. Every ProRes frame is independently coded -- the format
@@ -613,60 +613,15 @@ biPlanarSurfaceLayout(OSType pixelFormat) noexcept {
   }
 }
 
-// The AGX lossless-compressed counterpart of a bounded native decode format,
-// or 0 for a format that has none. Apple silicon video decoders emit these
-// natively; a display layer consumes them unchanged, while any in-process
-// sampler needs the uncompressed form and therefore pays a per-frame
-// VTPixelTransferSession to get it.
-OSType losslessCounterpartFormat(OSType pixelFormat) noexcept {
-  switch (pixelFormat) {
-  case kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange:
-    return kCVPixelFormatType_Lossless_420YpCbCr8BiPlanarVideoRange;
-  case kCVPixelFormatType_420YpCbCr8BiPlanarFullRange:
-    return kCVPixelFormatType_Lossless_420YpCbCr8BiPlanarFullRange;
-  // The 10-bit lossless forms are compressed-*packed*: they carry no padding
-  // bits between pixels, so they are not layout-compatible with the padded
-  // 'x420'/'xf20' surfaces an in-process sampler expects. That costs nothing
-  // here, because a display layer never inspects the layout.
-  //
-  // The FullRange enumerator is spelled as its four-character code '&xf0'
-  // (0x26786630) because SDKs older than the one on the development machine
-  // (e.g. the Xcode 15.4 SDK on CI runners) declare only the VideoRange
-  // form; the values are ABI, not SDK policy, so the literal is stable.
-  case kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange:
-    return kCVPixelFormatType_Lossless_420YpCbCr10PackedBiPlanarVideoRange;
-  case kCVPixelFormatType_420YpCbCr10BiPlanarFullRange:
-    return 0x26786630;  // kCVPixelFormatType_Lossless_420YpCbCr10PackedBiPlanarFullRange
-  default:
-    return 0;
-  }
-}
-
-// The exact set of output formats a given interop contract admits. Pinned
-// contracts admit only what they asked for; the display-layer contract leaves
-// the format unpinned and therefore also admits the lossless counterpart the
-// decoder produces natively. Nothing else is ever admitted -- an unpinned
-// session that returned, say, BGRA would be a silent per-frame conversion in
-// the other direction, which is precisely the cost this contract removes.
-// The full-range twin of a bounded native decode format, or 0 for one that has
-// none. requestedPixelFormat() always names a VIDEO-range format, but the
-// display-layer session is deliberately left unpinned (see the pin gate in the
-// session builder), so VideoToolbox delivers whatever the stream's
-// video_full_range_flag implies -- '420f' for full-range material. Before this
-// twin existed, such a stream failed the output contract on its FIRST frame.
-OSType fullRangeCounterpartFormat(OSType pixelFormat) noexcept {
-  switch (pixelFormat) {
-  case kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange:
-    return kCVPixelFormatType_420YpCbCr8BiPlanarFullRange;
-  case kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange:
-    return kCVPixelFormatType_420YpCbCr10BiPlanarFullRange;
-  default:
-    return 0;
-  }
-}
-
+// Display-layer counterparts must preserve depth, chroma and range.
 bool admitsOutputPixelFormat(OSType pixelFormat, OSType expectedPixelFormat,
                              VideoToolboxOutputInterop outputInterop) noexcept {
+  if (outputInterop != VideoToolboxOutputInterop::DisplayLayer &&
+      (expectedPixelFormat == kCVPixelFormatType_30RGBLEPackedWideGamut ||
+       expectedPixelFormat == kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange ||
+       expectedPixelFormat == kCVPixelFormatType_422YpCbCr8BiPlanarVideoRange)) {
+    return false;
+  }
   if (pixelFormat == expectedPixelFormat) {
     return true;
   }
@@ -1292,14 +1247,10 @@ bool codecCarriesNoConfigurationRecord(CMVideoCodecType codec) noexcept {
          !media::mediaCodecFacts(named).carriesConfigurationRecord;
 }
 
-// The ProRes 422 family, and exactly that family. See the facts table for why
-// the 4444 family is a different decode contract that this one enumerator
-// cannot name. VTDecompressionSessionCanAcceptFormatDescription is exact-match
-// regardless, which is why adoptDirectFormatLocked() still swaps in the
-// container's own description; the interchangeability is what makes the
-// SYNTHESIZED one decode in the first place.
-bool codecIsProRes422Family(CMVideoCodecType codec) noexcept {
-  return namedCodec(codec) == media::MediaCodec::ProRes;
+// Both ProRes identities require a recordless hardware session.
+bool codecIsProResFamily(CMVideoCodecType codec) noexcept {
+  return namedCodec(codec) == media::MediaCodec::ProRes ||
+         namedCodec(codec) == media::MediaCodec::ProRes4444;
 }
 
 // True for a codec whose VideoToolbox decoder does NOT natively produce a
@@ -1431,25 +1382,11 @@ bool inspectFormatCodecConfiguration(
       codec, CMFormatDescriptionGetExtensions(format), metadata, error);
 }
 
-// Two codec types that name the same decode contract.
-//
-// Equality, except within the ProRes 422 family. A ProRes track reaches
-// configure() as one MediaCodec enumerator, so the description this decoder
-// synthesizes names the family's canonical FourCC ('apcn') while the
-// container's own description names the file's actual flavor -- 'apch' for HQ,
-// 'apcs' for LT, 'apco' for Proxy. Those are not a mismatch to reconcile: the
-// four flavors are a single decode contract, measured 2026-09-04 in
-// scratchpad/vtflavor.mm, where a session created from any one of them decodes
-// real samples of any other. Treating them as unequal here would refuse the
-// container's description and leave only 'apcn' files playing.
-//
-// This deliberately does NOT span the 4444 family, which is a genuinely
-// different contract (-12916 in both directions across the boundary) and is
-// not admitted at all.
+// ProRes subtypes are interchangeable only within their named family.
 bool equivalentSessionCodecTypes(CMVideoCodecType configured,
                                  CMVideoCodecType direct) noexcept {
-  return configured == direct || (codecIsProRes422Family(configured) &&
-                                  codecIsProRes422Family(direct));
+  return configured == direct || (codecIsProResFamily(configured) &&
+                                  namedCodec(configured) == namedCodec(direct));
 }
 
 bool equivalentCodecConfigurationAtoms(
@@ -1656,20 +1593,8 @@ bool codedDepthIsTenBit(
     //              a malformed av1C never reaches here because configure()
     //              rejected it first.
     tenBit = ((bytes[2] >> 6U) & 0x01U) != 0U;
-  } else if (codecIsProRes422Family(configuration.codec)) {
-    // ProRes is a 10-bit codec by definition -- every 422-family flavor codes
-    // 10 bits per component, and there is no 8-bit ProRes to distinguish. It
-    // therefore states the answer rather than deriving it, exactly as MPEG-2
-    // and MPEG-4 Part 2 state theirs below. There is no record to read here in
-    // any case: ProRes is in codecCarriesNoConfigurationRecord().
-    //
-    // This is the whole reason ProRes lands on 'x420' rather than '420v'. The
-    // decoded surface is 4:2:0 either way -- nothing downstream samples 4:2:2
-    // (see the pixel-format allowlists in this file and in the Metal/GL
-    // items) -- but pinning to the 10-bit form keeps ProRes's actual precision
-    // instead of quantising a mastering codec to 8 bits, and it costs nothing:
-    // 'x420' is 3 bytes/pixel, which is exactly the per-pixel payload
-    // native_surface_budget.hpp already budgets for.
+  } else if (codecIsProResFamily(configuration.codec)) {
+    // ProRes output retains at least ten bits per component.
     tenBit = true;
   }
   // MPEG-2, MPEG-4 Part 2 and Motion JPEG are deliberately absent from the
@@ -1698,6 +1623,17 @@ bool codedDepthIsTenBit(
 // `x420` delivered from 8-bit PQ H.264 -- so nothing here is speculative.
 OSType
 requestedPixelFormat(const VideoStreamConfiguration &configuration) noexcept {
+  if (namedCodec(configuration.codec) == media::MediaCodec::ProRes4444) {
+    return kCVPixelFormatType_30RGBLEPackedWideGamut;
+  }
+  const bool is422 = (configuration.codec == kCMVideoCodecType_HEVC &&
+       configuration.codecConfiguration.size() > 16 &&
+       (std::to_integer<unsigned>(configuration.codecConfiguration[16]) & 3U) == 2U);
+  if (is422) {
+    return codedDepthIsTenBit(configuration)
+        ? kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange
+        : kCVPixelFormatType_422YpCbCr8BiPlanarVideoRange;
+  }
   return (codedDepthIsTenBit(configuration) ||
           configuration.highDynamicRangeTransfer)
              ? kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange
@@ -2074,6 +2010,8 @@ struct VideoToolboxDecoder::Impl {
     const bool pinOutputPixelFormat =
         options.outputInterop != VideoToolboxOutputInterop::DisplayLayer ||
         codecNeedsPinnedOutputPixelFormat(sessionCodec) ||
+        outputPixelFormat == kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange ||
+        outputPixelFormat == kCVPixelFormatType_422YpCbCr8BiPlanarVideoRange ||
         hdrOutputSurfaceRequired;
     CFNumberRef pixelFormatNumber = nullptr;
     if (pinOutputPixelFormat) {
@@ -2725,8 +2663,8 @@ bool VideoToolboxDecoder::configure(
   // this point. The two capability queries are the whole of what varies by
   // machine. The three legacy codecs take no query because theirs would answer
   // 0 and refuse a stream that demonstrably decodes, and ProRes takes none for
-  // the opposite reason: the query answers yes for every flavor including the
-  // 4444 family this build does not admit, so the family gate is the predicate
+  // the opposite reason: the query answers yes for every flavor including both
+  // named families, so the family gate is the predicate
   // rather than the query. MPEG-4 Part 2's PROFILE gate is upstream -- only
   // Simple Profile survives media::inspectMpeg4VisualHeaders(), because Apple's
   // decoder refuses Advanced Simple Profile here with codecBadDataErr (-8969).
@@ -3916,6 +3854,11 @@ bool VideoToolboxDecoderTestAccess::validateOutputSurface(
   }
   return validateOutputSurfaceContract(pixelBuffer, expectedPixelFormat,
                                        outputInterop, error);
+}
+
+OSType VideoToolboxDecoderTestAccess::requestedOutputFormat(
+    const VideoStreamConfiguration& configuration) noexcept {
+  return requestedPixelFormat(configuration);
 }
 
 bool VideoToolboxDecoderTestAccess::admitsDecodedOutputPixelFormat(

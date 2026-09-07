@@ -143,21 +143,7 @@ void saturatingAdd(std::uint64_t &value, std::uint64_t amount) noexcept {
   return true;
 }
 
-[[nodiscard]] bool distanceWithin(std::int64_t start, std::int64_t end,
-                                  std::uint64_t limit) noexcept {
-  if (start > end) {
-    return false;
-  }
-  if (start >= 0) {
-    return static_cast<std::uint64_t>(end - start) <= limit;
-  }
-  if (end < 0) {
-    return magnitude(start) - magnitude(end) <= limit;
-  }
-  const std::uint64_t beforeZero = magnitude(start);
-  return beforeZero <= limit &&
-         static_cast<std::uint64_t>(end) <= limit - beforeZero;
-}
+
 
 [[nodiscard]] bool frameDistance(std::int64_t start, std::int64_t end,
                                  std::uint64_t *distance) noexcept {
@@ -1721,15 +1707,10 @@ NativeAudioConverter::prepare(const media::MediaSample &sample,
     return outcome;
   }
 
-  constexpr std::uint64_t maximumPrerollSeconds = 12;
-  const std::uint64_t maximumPrerollFrames =
-      maximumPrerollSeconds * state.sample_rate;
   const bool timelineAdmissible =
       state.has_input_timeline ? sampleStart == state.expected_input_frame
       : state.timeline.trimBeforeFloor
-          ? sampleStart <= state.presentation_floor_frame &&
-                distanceWithin(sampleStart, state.presentation_floor_frame,
-                               maximumPrerollFrames)
+          ? sampleStart <= state.presentation_floor_frame
           : sampleStart == state.presentation_floor_frame;
   const bool needsRefreshProof =
       !state.timeline.startsAtStreamOrigin && !state.has_input_timeline;

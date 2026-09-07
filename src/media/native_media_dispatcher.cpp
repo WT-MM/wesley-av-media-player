@@ -320,14 +320,7 @@ enum class OpenConfigureVerdict : std::uint8_t {
     return refuse("audio window's stream-origin flag disagrees with its "
                   "decode start against media start");
   }
-  const std::uint64_t prerollFrames = static_cast<std::uint64_t>(
-      *presentationFrame - *decodeFrame);
-  const std::uint64_t maximumPrerollFrames =
-      static_cast<std::uint64_t>(maximumAudioSeekPrerollSeconds) *
-      static_cast<std::uint64_t>(sampleRate);
-  if (prerollFrames > maximumPrerollFrames) {
-    return refuse("audio preroll exceeds the maximum seek preroll");
-  }
+  (void)maximumAudioSeekPrerollSeconds;
 
   switch (mode) {
   case MediaSeekMode::Accurate: {

@@ -47,6 +47,10 @@ void checkStats(std::uint64_t currentSurfaces, std::uint64_t currentBytes,
 void resetBudget() { WAM_CHECK(NativeSurfaceBudgetTestAccess::reset()); }
 
 void testInvalidIdentitiesFailClosed() {
+  WAM_CHECK(kNativeSurfaceBudgetMaximumBytes == 384ULL * 1024 * 1024);
+  WAM_CHECK(wam::macos::kNativeSurfaceBudgetWorstCaseSurfaceBytes == 40'132'608);
+  WAM_CHECK(wam::macos::kNativeSurfaceBudget420SurfaceBytes == 30'107'648);
+
   resetBudget();
   WAM_CHECK(!NativeSurfaceBudgetTestAccess::tryAcquire(0, 1));
   WAM_CHECK(!NativeSurfaceBudgetTestAccess::tryAcquire(1, 0));

@@ -360,6 +360,20 @@ MatroskaSampleBuildStatus buildMatroskaCompressedSampleBuffer(
     sizeEntries = numSamples;
   }
 
+  if (!inputs.video) {
+    const auto* asbd = CMAudioFormatDescriptionGetStreamBasicDescription(inputs.format);
+    if (asbd && asbd->mFormatID == kAudioFormatLinearPCM) {
+      if (asbd->mBytesPerFrame == 0 || bytes % asbd->mBytesPerFrame != 0) {
+        CFRelease(block);
+        assignError(error, "Matroska PCM block is not frame aligned");
+        return MatroskaSampleBuildStatus::Failed;
+      }
+      numSamples = static_cast<CMItemCount>(bytes / asbd->mBytesPerFrame);
+      sizeEntries = 1;
+      sizes[0] = asbd->mBytesPerFrame;
+      timing.duration = CMTimeMake(1, inputs.audioSampleRate);
+    }
+  }
   CMSampleBufferRef created = nullptr;
   status = CMSampleBufferCreateReady(kCFAllocatorDefault, block, inputs.format,
                                      numSamples, 1, &timing, sizeEntries,
