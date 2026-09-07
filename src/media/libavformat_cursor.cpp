@@ -1,3 +1,4 @@
+#include "avcodec/library_directory.hpp"
 #include "media/libavformat_cursor.hpp"
 #include "media/avcodec/api.hpp"
 #include "media/avcodec/closure.hpp"
@@ -130,17 +131,7 @@ struct LibavformatCursor::Impl {
       error = why;
       return false;
     }
-    std::array<char, PATH_MAX> executable{};
-    std::uint32_t size = executable.size();
-    if (_NSGetExecutablePath(executable.data(), &size)) {
-      error = "LibavformatExecutablePath";
-      return false;
-    }
-    const auto directory =
-        std::filesystem::canonical(executable.data()).parent_path();
-    const auto libraries = directory.filename() == "MacOS"
-                               ? directory.parent_path() / "Frameworks"
-                               : directory / "native-codecs";
+    const auto libraries = avcodec::libraryDirectory(reinterpret_cast<const void*>(&LibavformatCursor::runtimeFailure));
     const auto path = libraries / "libavformat-wamnative.63.dylib";
     if (!std::filesystem::is_regular_file(path)) {
       error = "LibavformatStageNotBuilt";

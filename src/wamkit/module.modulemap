@@ -1,0 +1,5 @@
+framework module WAMKit {
+  header "WAMKit.h"
+  header "WAMKitObjC.h"
+  export *
+}

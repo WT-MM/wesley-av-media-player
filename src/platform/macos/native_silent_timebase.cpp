@@ -58,6 +58,18 @@ bool NativeSilentTimebase::activate(media::MediaGeneration generation,
   return true;
 }
 
+bool NativeSilentTimebase::activateExact(media::MediaGeneration generation,
+                                          media::MediaTime target) noexcept {
+  if (retired_ || generation == 0 || generation <= generation_) return false;
+  const bool applied = generation_ == 0
+      ? clock_.anchorExact(generation, target, rate_.toDouble(), false)
+      : clock_.pause(generation_) && clock_.seekExact(generation_, generation, target);
+  if (!applied) return false;
+  generation_ = generation;
+  running_ = false;
+  return true;
+}
+
 NativeAudioSessionProgress NativeSilentTimebase::start() noexcept {
   if (retired_ || generation_ == 0) {
     return NativeAudioSessionProgress::Invalid;
