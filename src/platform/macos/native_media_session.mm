@@ -3277,7 +3277,7 @@ if (result != NativeAudioSessionProgress::Done) {
       static_assert(sizeof(mediaSecondsBits) == sizeof(clock.mediaSeconds));
       std::memcpy(&mediaSecondsBits, &clock.mediaSeconds,
                   sizeof(mediaSecondsBits));
-      std::memcpy(&rateBits, &clock.rate, sizeof(rateBits));
+      std::memcpy(&rateBits, &clock.requestedRate, sizeof(rateBits));
       metricsMediaSecondsBits.store(mediaSecondsBits,
                                     std::memory_order_relaxed);
       metricsClockRateBits.store(rateBits, std::memory_order_relaxed);
@@ -4372,7 +4372,7 @@ NativeMediaSessionCommandStatus NativeMediaSession::stop(
     // built the source, it observes Stop before arm; if it is blocked in open,
     // requestCancel sees the dispatcher's published exact operation slot.
     if (impl_->dispatcherObserver != nullptr) {
-      impl_->dispatcherObserver->requestCancel(cancellationGeneration);
+      impl_->dispatcherObserver->requestRetirementCancellation(cancellationGeneration);
     }
     impl_->latestAcceptedStamp = command.stamp;
     impl_->factMailbox.reset();

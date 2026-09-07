@@ -110,6 +110,8 @@ struct NativeMediaClockSnapshot {
   double pendingMediaStart{0.0};
   double pendingMediaEnd{0.0};
   double rate{1.0};
+  // Transport intent remains independent of the selected audio interval slope.
+  double requestedRate{1.0};
   bool valid{false};
   bool running{false};
   bool segmentBounded{false};

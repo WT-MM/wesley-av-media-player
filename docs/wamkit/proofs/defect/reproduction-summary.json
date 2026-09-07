@@ -1,0 +1,8 @@
+{
+  "total": 198,
+  "environmental_aborts": 2,
+  "measured_baseline_runs": 196,
+  "clock_failures": 57,
+  "sigtraps": 1,
+  "unclean_nontrap": 14
+}

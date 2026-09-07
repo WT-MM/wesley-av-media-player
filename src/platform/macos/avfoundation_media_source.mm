@@ -2840,7 +2840,21 @@ template <typename NoteReaderCreationAttempt>
 class ProductionGeneration final : public AVFoundationGeneration {
  public:
   explicit ProductionGeneration(AVFoundationGenerationRequest request)
-      : request_(std::move(request)) {}
+      : request_(std::move(request)) {
+    cancellation_queue_ = dispatch_queue_create("WAM.reader.cancel", DISPATCH_QUEUE_SERIAL);
+    cancellation_done_ = dispatch_semaphore_create(0);
+    cancellation_source_ = dispatch_source_create(DISPATCH_SOURCE_TYPE_DATA_OR, 0, 0,
+                                                 cancellation_queue_);
+    dispatch_source_set_event_handler(cancellation_source_, ^{ cancelObjects(); });
+    const auto done = cancellation_done_;
+    dispatch_source_set_cancel_handler(cancellation_source_, ^{ dispatch_semaphore_signal(done); });
+    dispatch_resume(cancellation_source_);
+  }
+  ~ProductionGeneration() override {
+    // The source/retirement owner must outlive the cancellation handler.
+    dispatch_source_cancel(cancellation_source_);
+    dispatch_semaphore_wait(cancellation_done_, DISPATCH_TIME_FOREVER);
+  }
 
   [[nodiscard]] MediaGeneration generation() const noexcept override {
     return request_.generation;
@@ -3521,7 +3535,7 @@ class ProductionGeneration final : public AVFoundationGeneration {
         audio_output_ = audioOutput;
       }
       if (cancelled_.load(std::memory_order_acquire)) {
-        [reader cancelReading];
+        cancel();
         result.status = AVFoundationGenerationStatus::Cancelled;
         return result;
       }
@@ -3582,8 +3596,13 @@ class ProductionGeneration final : public AVFoundationGeneration {
   }
 
   void cancel() noexcept override {
+    cancelled_.store(true, std::memory_order_release);
+    dispatch_source_merge_data(cancellation_source_, 1);
+  }
+
+ private:
+  void cancelObjects() noexcept {
     try {
-      cancelled_.store(true, std::memory_order_release);
       metadata_load_signal_->cancel();
       @autoreleasepool {
         AVURLAsset* loadingAsset = nil;
@@ -3591,7 +3610,11 @@ class ProductionGeneration final : public AVFoundationGeneration {
         {
           std::lock_guard lock(objects_mutex_);
           loadingAsset = loading_asset_;
-          reader = reader_;
+          loading_asset_ = nil;
+          if (!reader_cancellation_issued_ && reader_ != nil) {
+            reader = reader_;
+            reader_cancellation_issued_ = true;
+          }
         }
         [loadingAsset cancelLoading];
         [reader cancelReading];
@@ -4063,6 +4086,10 @@ class ProductionGeneration final : public AVFoundationGeneration {
   std::atomic<bool> cancelled_{false};
   const std::shared_ptr<AsyncLoadSignal> metadata_load_signal_{
       std::make_shared<AsyncLoadSignal>()};
+  dispatch_queue_t cancellation_queue_;
+  dispatch_source_t cancellation_source_;
+  dispatch_semaphore_t cancellation_done_;
+  bool reader_cancellation_issued_{false};
   std::mutex objects_mutex_;
   // Non-null only during the cold metadata prepare. Once the immutable
   // context is published, cancellation touches readers but never the asset.
@@ -4151,6 +4178,7 @@ struct AVFoundationMediaSource::Impl {
   // atomic<shared_ptr> specialization. The standard shared_ptr atomic free
   // functions provide the same lifetime-safe publication on those runtimes.
   std::shared_ptr<AVFoundationGeneration> publishedGeneration;
+  std::atomic<unsigned> cancellationReaders{0};
   std::optional<StagedSample> videoHead;
   std::optional<StagedSample> audioHead;
   std::optional<MediaTime> requestedTarget;
@@ -4275,8 +4303,13 @@ struct AVFoundationMediaSource::Impl {
                observed, requested, std::memory_order_release,
                std::memory_order_relaxed)) {
     }
+    struct Pin {
+      std::atomic<unsigned>& readers;
+      explicit Pin(std::atomic<unsigned>& value) : readers(value) { readers.fetch_add(1); }
+      ~Pin() { readers.fetch_sub(1); readers.notify_all(); }
+    } pin(cancellationReaders);
     auto active = std::atomic_load_explicit(&publishedGeneration,
-                                            std::memory_order_acquire);
+                                            std::memory_order_seq_cst);
     if (active != nullptr && active->generation() == requested) {
       active->cancel();
     }
@@ -4312,11 +4345,17 @@ struct AVFoundationMediaSource::Impl {
   void retireActive() noexcept {
     auto active = std::atomic_exchange_explicit(
         &publishedGeneration, std::shared_ptr<AVFoundationGeneration>{},
-        std::memory_order_acq_rel);
+        std::memory_order_seq_cst);
     if (active != nullptr) {
       active->cancel();
     }
     ownerGeneration.reset();
+    // Generation destruction belongs to this source owner, never a cancelling caller.
+    auto readers = cancellationReaders.load();
+    while (readers != 0) {
+      cancellationReaders.wait(readers);
+      readers = cancellationReaders.load();
+    }
   }
 
   void withdrawFailedOperation() noexcept {
@@ -4775,7 +4814,7 @@ struct AVFoundationMediaSource::Impl {
       return invalid;
     }
     std::atomic_store_explicit(&publishedGeneration, ownerGeneration,
-                               std::memory_order_release);
+                               std::memory_order_seq_cst);
     if (isCancelled()) {
       ownerGeneration->cancel();
     }

@@ -560,6 +560,9 @@ class NativeMediaDispatcher final {
   // that makes stale and future generations inert. Object destruction must
   // not race this call.
   void requestCancel(MediaGeneration generation) noexcept;
+  // Interrupts source I/O without granting ordinary Cancel authority to ports.
+  // Only owner-thread retire() may consume the terminal invalidation.
+  void requestRetirementCancellation(MediaGeneration generation) noexcept;
   // Owner-thread cancellation also retires the two consumer generations and
   // releases the single pending event. Stale/future generations are inert.
   [[nodiscard]] NativeMediaDispatcherLifecycleOutcome cancel(
@@ -739,6 +742,7 @@ class NativeMediaDispatcher final {
   MediaGeneration retirement_expected_generation_{0};
   MediaGeneration retirement_invalidation_generation_{0};
   std::atomic<MediaGeneration> operation_generation_{0};
+  std::atomic<MediaGeneration> retirement_cancellation_{0};
 };
 
 }  // namespace wam::media

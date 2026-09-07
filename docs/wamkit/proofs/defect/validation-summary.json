@@ -1,0 +1,47 @@
+{
+  "hosts": {
+    "wamkit_host_mp4": 30,
+    "wamkit_host_mkv": 30,
+    "wamkit_host_refusal": 30,
+    "wamkit_host_api": 30
+  },
+  "relocated_matroska": "10/10",
+  "revert_controls": "6/6",
+  "full_ctest": [
+    {
+      "attempt": 1,
+      "passed": true,
+      "tests": 124,
+      "seconds": 164.74
+    },
+    {
+      "attempt": 2,
+      "passed": false,
+      "failed_test": "macos_native_qt_gl_compositor",
+      "seconds": 224.5
+    },
+    {
+      "attempt": 3,
+      "passed": true,
+      "tests": 124,
+      "seconds": 191.33
+    }
+  ],
+  "gl_isolated_retry": true,
+  "replays": "7/7",
+  "drawn_frames": [
+    19,
+    207,
+    212,
+    188,
+    208,
+    198,
+    202
+  ],
+  "frozen_unchanged": true,
+  "deferrals": [
+    "Only one fresh SIGTRAP reproduction obtained in 196 baseline launches; three requested.",
+    "Baseline audio-device-recovery seek Flush refusal remains uninvestigated.",
+    "Unmodified Qt compositor timeout reproduced once; isolated retry and subsequent full suite passed."
+  ]
+}

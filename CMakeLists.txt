@@ -1160,6 +1160,10 @@ if(BUILD_TESTING)
         "${WAM_AUDIOTOOLBOX_FRAMEWORK}"
         "${WAM_AVFOUNDATION_FRAMEWORK}"
         "${WAM_VIDEOTOOLBOX_FRAMEWORK}")
+      add_test(NAME macos_avfoundation_reader_cancellation
+        COMMAND wam_avfoundation_media_source_test --cancel-only
+          "${PROJECT_SOURCE_DIR}/test-media/wamkit/av.mp4")
+      set_tests_properties(macos_avfoundation_reader_cancellation PROPERTIES TIMEOUT 15)
       add_test(NAME macos_avfoundation_media_source
         COMMAND wam_avfoundation_media_source_test)
       set_tests_properties(macos_avfoundation_media_source PROPERTIES

@@ -333,6 +333,7 @@ class FakeSource final : public MediaSource, public AudioTrackRetrySource {
   [[nodiscard]] MediaSourceReadResult readNext(
       MediaGeneration expectedGeneration) override {
     ++readCalls;
+    if (duringRead) duringRead();
     if (expectedGeneration != currentGeneration) {
       return MediaSourceCancelled{expectedGeneration};
     }
@@ -407,6 +408,7 @@ class FakeSource final : public MediaSource, public AudioTrackRetrySource {
   std::uint64_t armCalls{0};
   std::uint64_t openCalls{0};
   std::uint64_t seekCalls{0};
+  std::function<void()> duringRead;
   std::uint64_t readCalls{0};
   std::uint64_t closeCalls{0};
   std::uint64_t unarmedOperationEntries{0};
@@ -2117,7 +2119,26 @@ void backendTrackRetry() {
   }
 }
 
+void checkStopCancellationPreservesRetirementAuthority() {
+  std::vector<MediaSourceReadResult> events;
+  events.emplace_back(MediaSourceCancelled{1});
+  auto rig = makeRig(std::move(events));
+  openRig(rig);
+  rig.source->duringRead = [&] { rig.dispatcher->requestRetirementCancellation(1); };
+  const auto step = rig.dispatcher->step();
+  expect(step.action == NativeMediaDispatcherAction::Idle &&
+             step.wait == NativeMediaDispatcherWait::Command &&
+             rig.video->cancelCalls == 0 && rig.audio->cancelCalls == 0,
+         "Stop during read cannot issue an independent consumer Cancel");
+  const auto retired = rig.dispatcher->retire(1, 9);
+  expect(retired.status == NativeMediaDispatcherLifecycleStatus::Done &&
+             rig.video->retireGenerations == std::vector<std::pair<MediaGeneration, MediaGeneration>>{{1, 9}} &&
+             rig.audio->retireGenerations == std::vector<std::pair<MediaGeneration, MediaGeneration>>{{1, 9}},
+         "Stop retains the exact owner invalidation through interrupted read");
+}
+
 int main() {
+  checkStopCancellationPreservesRetirementAuthority();
   backendTrackRetry();
   static_assert(
       noexcept(std::declval<const NativeMediaDispatcher&>().stats()));

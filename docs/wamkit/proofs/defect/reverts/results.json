@@ -1,0 +1,68 @@
+[
+  {
+    "name": "clock-requested",
+    "file": "src/platform/macos/native_media_clock.cpp",
+    "sha256": "7448c8fd90198d2e0d519e3efd6ed49cdc9924e59b7d619e9606d164dad46589",
+    "baseline_rc": 0,
+    "regressed_build_rc": 0,
+    "regressed_test_rc": 8,
+    "byte_identical_restore": true,
+    "restored_build_rc": 0,
+    "restored_test_rc": 0
+  },
+  {
+    "name": "metrics-requested",
+    "file": "src/platform/macos/native_media_session.mm",
+    "sha256": "afffa1fa8be0c8b7f2b012c5007bfa4e065a44592a8ecb5f468bb7695ddb14f5",
+    "baseline_rc": 0,
+    "regressed_build_rc": 0,
+    "regressed_test_rc": 8,
+    "byte_identical_restore": true,
+    "restored_build_rc": 0,
+    "restored_test_rc": 0
+  },
+  {
+    "name": "stop-cancellation",
+    "file": "src/platform/macos/native_media_session.mm",
+    "sha256": "afffa1fa8be0c8b7f2b012c5007bfa4e065a44592a8ecb5f468bb7695ddb14f5",
+    "baseline_rc": 0,
+    "regressed_build_rc": 0,
+    "regressed_test_rc": 8,
+    "byte_identical_restore": true,
+    "restored_build_rc": 0,
+    "restored_test_rc": 0
+  },
+  {
+    "name": "retirement-authority",
+    "file": "src/media/native_media_dispatcher.cpp",
+    "sha256": "31dfa21b4daa7d3465bf99324b002e7b27ab85e6b1286f2f87a066a55251f11e",
+    "baseline_rc": 0,
+    "regressed_build_rc": 0,
+    "regressed_test_rc": 8,
+    "byte_identical_restore": true,
+    "restored_build_rc": 0,
+    "restored_test_rc": 0
+  },
+  {
+    "name": "cancellation-owner",
+    "file": "src/platform/macos/avfoundation_media_source.mm",
+    "sha256": "1d475bceca1ddc18836a770fed6793f3c0a07896de1d2a3b7883dd0464cf2060",
+    "baseline_rc": 0,
+    "regressed_build_rc": 0,
+    "regressed_test_rc": 8,
+    "byte_identical_restore": true,
+    "restored_build_rc": 0,
+    "restored_test_rc": 0
+  },
+  {
+    "name": "reader-cancellation",
+    "file": "src/platform/macos/avfoundation_media_source.mm",
+    "sha256": "1d475bceca1ddc18836a770fed6793f3c0a07896de1d2a3b7883dd0464cf2060",
+    "baseline_rc": 0,
+    "regressed_build_rc": 0,
+    "regressed_test_rc": 8,
+    "byte_identical_restore": true,
+    "restored_build_rc": 0,
+    "restored_test_rc": 0
+  }
+]
