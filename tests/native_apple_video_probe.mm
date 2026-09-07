@@ -11,6 +11,7 @@ struct Output {
   std::atomic<int> count{0};
   std::atomic<OSStatus> error{0};
   std::atomic<OSType> pixel{0};
+  std::atomic<CVPixelBufferRef> first{nullptr};
 };
 static void decoded(void *p, void *, OSStatus e, VTDecodeInfoFlags,
                     CVImageBufferRef b, CMTime, CMTime) {
@@ -18,6 +19,8 @@ static void decoded(void *p, void *, OSStatus e, VTDecodeInfoFlags,
   if (e)
     o.error = e;
   if (b) {
+    CVPixelBufferRef empty = nullptr;
+    if (o.first.compare_exchange_strong(empty, b)) CVPixelBufferRetain(b);
     ++o.count;
     o.pixel = CVPixelBufferGetPixelFormatType(b);
   }
@@ -65,7 +68,7 @@ int main(int argc, char **argv) {
                 @NO
           }
                                          : nil;
-    NSDictionary *dest = argc > 3 ? @{
+    NSDictionary *dest = argc > 3 && strtoul(argv[3], nullptr, 16) != 0 ? @{
       (id)kCVPixelBufferPixelFormatTypeKey :
           @((OSType)strtoul(argv[3], nullptr, 16))
     }
@@ -125,6 +128,29 @@ int main(int argc, char **argv) {
     }
     VTDecompressionSessionFinishDelayedFrames(s);
     VTDecompressionSessionWaitForAsynchronousFrames(s);
+    if (argc > 4 && output.first.load()) {
+      CVPixelBufferRef source = output.first.load(), rgb = nullptr;
+      VTPixelTransferSessionRef transfer = nullptr;
+      const auto width = CVPixelBufferGetWidth(source), height = CVPixelBufferGetHeight(source);
+      OSStatus grab = CVPixelBufferCreate(nullptr, width, height,
+          kCVPixelFormatType_32BGRA, nullptr, &rgb);
+      if (!grab) grab = VTPixelTransferSessionCreate(nullptr, &transfer);
+      if (!grab) grab = VTPixelTransferSessionTransferImage(transfer, source, rgb);
+      if (!grab && CVPixelBufferLockBaseAddress(rgb, kCVPixelBufferLock_ReadOnly) == 0) {
+        FILE* file = fopen(argv[4], "wb");
+        if (file) {
+          const auto* data = static_cast<const unsigned char*>(CVPixelBufferGetBaseAddress(rgb));
+          for (size_t y = 0; y < height; ++y)
+            fwrite(data + y * CVPixelBufferGetBytesPerRow(rgb), 4, width, file);
+          fclose(file);
+        } else grab = -1;
+        CVPixelBufferUnlockBaseAddress(rgb, kCVPixelBufferLock_ReadOnly);
+      }
+      printf("grab=%d width=%zu height=%zu ", grab, width, height);
+      if (transfer) CFRelease(transfer);
+      if (rgb) CVPixelBufferRelease(rgb);
+    }
+    if (output.first.load()) CVPixelBufferRelease(output.first.load());
     getrusage(RUSAGE_SELF, &after);
     int ea = proc_pid_rusage(getpid(), RUSAGE_INFO_V6, (rusage_info_t *)&ra);
     auto us = [](timeval t) {

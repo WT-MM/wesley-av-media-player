@@ -1,4 +1,6 @@
+#include "media/native_seek_progress.hpp"
 #include "media/audio_track_admission.hpp"
+#include "media/matroska_apple_audio.hpp"
 #include "media/media_codec_facts.hpp"
 #include "media/mjpeg_admission.hpp"
 #include "media/mp3_lame_gapless.hpp"
@@ -94,5 +96,27 @@ int main() {
   mp3[28] = std::byte{1};
   mp3[32] = std::byte{1};
   check(!inspectMp3LsfGapless(mp3), "padding cannot consume the stream");
+
+  const auto pcm = matroska::appleAudioPacketFormat("A_PCM/INT/LIT", {}, 48000, 2, 24);
+  check(pcm.codec == MediaCodec::Pcm && pcm.format.bytesPerFrame == 6 &&
+            pcm.format.bitsPerChannel == 24, "PCM descriptor preserves packed sample depth");
+  check(matroska::appleAudioPacketFormat("A_PCM/FLOAT/IEEE", {}, 48000, 2, 64).codec ==
+            MediaCodec::Unknown, "unproved float depth refuses");
+  const unsigned cookieRaw[]{0,0,16,0,0,24,40,10,14,2,0,0,0,0,96,4,0,35,40,0,0,0,187,128};
+  std::array<std::byte,24> cookie{};
+  for (unsigned i=0;i<24;++i) cookie[i]=static_cast<std::byte>(cookieRaw[i]);
+  check(matroska::appleAudioPacketFormat("A_ALAC", cookie,48000,2,24).blockFrames==4096,
+        "Matroska ALAC private is the bare 24-byte cookie");
+  for (unsigned n=0;n<24;++n)
+    check(matroska::appleAudioPacketFormat("A_ALAC", std::span(cookie).first(n),48000,2,24).codec==MediaCodec::Unknown,
+          "truncated ALAC private refuses");
+  const std::array<std::byte,7> alacTail{std::byte{0x20},std::byte{0},std::byte{0x14},std::byte{0},std::byte{0},std::byte{0x1c},std::byte{0}};
+  check(matroska::alacPacketFrames(alacTail,4096)==3584,"ALAC explicit tail count is exact");
+  check(!isSlowVideoSeek({12,1},{0,1}) && isSlowVideoSeek({577,48},{0,1}) &&
+            isSlowVideoSeek({30,1},{0,1}), "fast seek threshold is exact and does not cap admission");
+  SeekProgressDeadline deadline;
+  for (unsigned i=1;i<40;++i) check(!deadline.expired(0), "seek keeps inactivity grace");
+  check(deadline.expired(0), "stalled seek expires");
+  check(!deadline.expired(1) && deadline.idleMilliseconds==0, "decode progress resets the deadline");
   return failures != 0;
 }

@@ -1,0 +1,658 @@
+[
+  {
+    "name": "prores4444",
+    "sha256": "5a3cd71d154c7f86c8f22e8c4cc88bb0ec2f5e95ce8ad1287f78f6bf9f9e1d0d",
+    "pixel": "77333072",
+    "samples": [
+      {
+        "mode": 1,
+        "iteration": 0,
+        "rc": 0,
+        "output": "codec=61703468 create=0 using_hw=1 packets=60 frames=60 error=0 pixel=77333072 imageio=0 cpu_us=11996 energy_status=0/0 energy_nj=35729884",
+        "using_hw": 1,
+        "frames": 60,
+        "cpu_us": 11996,
+        "energy_nj": 35729884
+      },
+      {
+        "mode": 2,
+        "iteration": 0,
+        "rc": 0,
+        "output": "codec=61703468 create=0 using_hw=0 packets=60 frames=60 error=0 pixel=77333072 imageio=0 cpu_us=15178 energy_status=0/0 energy_nj=41959582",
+        "using_hw": 0,
+        "frames": 60,
+        "cpu_us": 15178,
+        "energy_nj": 41959582
+      },
+      {
+        "mode": 2,
+        "iteration": 1,
+        "rc": 0,
+        "output": "codec=61703468 create=0 using_hw=0 packets=60 frames=60 error=0 pixel=77333072 imageio=0 cpu_us=14574 energy_status=0/0 energy_nj=41567211",
+        "using_hw": 0,
+        "frames": 60,
+        "cpu_us": 14574,
+        "energy_nj": 41567211
+      },
+      {
+        "mode": 1,
+        "iteration": 1,
+        "rc": 0,
+        "output": "codec=61703468 create=0 using_hw=1 packets=60 frames=60 error=0 pixel=77333072 imageio=0 cpu_us=12258 energy_status=0/0 energy_nj=36766120",
+        "using_hw": 1,
+        "frames": 60,
+        "cpu_us": 12258,
+        "energy_nj": 36766120
+      },
+      {
+        "mode": 1,
+        "iteration": 2,
+        "rc": 0,
+        "output": "codec=61703468 create=0 using_hw=1 packets=60 frames=60 error=0 pixel=77333072 imageio=0 cpu_us=11775 energy_status=0/0 energy_nj=34930657",
+        "using_hw": 1,
+        "frames": 60,
+        "cpu_us": 11775,
+        "energy_nj": 34930657
+      },
+      {
+        "mode": 2,
+        "iteration": 2,
+        "rc": 0,
+        "output": "codec=61703468 create=0 using_hw=0 packets=60 frames=60 error=0 pixel=77333072 imageio=0 cpu_us=14332 energy_status=0/0 energy_nj=41893705",
+        "using_hw": 0,
+        "frames": 60,
+        "cpu_us": 14332,
+        "energy_nj": 41893705
+      },
+      {
+        "mode": 2,
+        "iteration": 3,
+        "rc": 0,
+        "output": "codec=61703468 create=0 using_hw=0 packets=60 frames=60 error=0 pixel=77333072 imageio=0 cpu_us=14666 energy_status=0/0 energy_nj=40766429",
+        "using_hw": 0,
+        "frames": 60,
+        "cpu_us": 14666,
+        "energy_nj": 40766429
+      },
+      {
+        "mode": 1,
+        "iteration": 3,
+        "rc": 0,
+        "output": "codec=61703468 create=0 using_hw=1 packets=60 frames=60 error=0 pixel=77333072 imageio=0 cpu_us=11497 energy_status=0/0 energy_nj=34773943",
+        "using_hw": 1,
+        "frames": 60,
+        "cpu_us": 11497,
+        "energy_nj": 34773943
+      },
+      {
+        "mode": 1,
+        "iteration": 4,
+        "rc": 0,
+        "output": "codec=61703468 create=0 using_hw=1 packets=60 frames=60 error=0 pixel=77333072 imageio=0 cpu_us=11839 energy_status=0/0 energy_nj=35088086",
+        "using_hw": 1,
+        "frames": 60,
+        "cpu_us": 11839,
+        "energy_nj": 35088086
+      },
+      {
+        "mode": 2,
+        "iteration": 4,
+        "rc": 0,
+        "output": "codec=61703468 create=0 using_hw=0 packets=60 frames=60 error=0 pixel=77333072 imageio=0 cpu_us=14002 energy_status=0/0 energy_nj=40592641",
+        "using_hw": 0,
+        "frames": 60,
+        "cpu_us": 14002,
+        "energy_nj": 40592641
+      }
+    ],
+    "median": {
+      "1": {
+        "cpu_us": 11839,
+        "energy_nj": 35088086
+      },
+      "2": {
+        "cpu_us": 14574,
+        "energy_nj": 41567211
+      }
+    }
+  },
+  {
+    "name": "prores4444xq",
+    "sha256": "5155f8f3d787a14ad80a4af2418be63ba47fba4067856a305e5e9a9d4fc08af3",
+    "pixel": "77333072",
+    "samples": [
+      {
+        "mode": 1,
+        "iteration": 0,
+        "rc": 0,
+        "output": "codec=61703478 create=0 using_hw=1 packets=60 frames=60 error=0 pixel=77333072 imageio=0 cpu_us=11643 energy_status=0/0 energy_nj=34232709",
+        "using_hw": 1,
+        "frames": 60,
+        "cpu_us": 11643,
+        "energy_nj": 34232709
+      },
+      {
+        "mode": 2,
+        "iteration": 0,
+        "rc": 0,
+        "output": "codec=61703478 create=0 using_hw=0 packets=60 frames=60 error=0 pixel=77333072 imageio=0 cpu_us=15091 energy_status=0/0 energy_nj=41898390",
+        "using_hw": 0,
+        "frames": 60,
+        "cpu_us": 15091,
+        "energy_nj": 41898390
+      },
+      {
+        "mode": 2,
+        "iteration": 1,
+        "rc": 0,
+        "output": "codec=61703478 create=0 using_hw=0 packets=60 frames=60 error=0 pixel=77333072 imageio=0 cpu_us=15517 energy_status=0/0 energy_nj=41050815",
+        "using_hw": 0,
+        "frames": 60,
+        "cpu_us": 15517,
+        "energy_nj": 41050815
+      },
+      {
+        "mode": 1,
+        "iteration": 1,
+        "rc": 0,
+        "output": "codec=61703478 create=0 using_hw=1 packets=60 frames=60 error=0 pixel=77333072 imageio=0 cpu_us=11890 energy_status=0/0 energy_nj=34331377",
+        "using_hw": 1,
+        "frames": 60,
+        "cpu_us": 11890,
+        "energy_nj": 34331377
+      },
+      {
+        "mode": 1,
+        "iteration": 2,
+        "rc": 0,
+        "output": "codec=61703478 create=0 using_hw=1 packets=60 frames=60 error=0 pixel=77333072 imageio=0 cpu_us=11584 energy_status=0/0 energy_nj=33944894",
+        "using_hw": 1,
+        "frames": 60,
+        "cpu_us": 11584,
+        "energy_nj": 33944894
+      },
+      {
+        "mode": 2,
+        "iteration": 2,
+        "rc": 0,
+        "output": "codec=61703478 create=0 using_hw=0 packets=60 frames=60 error=0 pixel=77333072 imageio=0 cpu_us=14333 energy_status=0/0 energy_nj=38733270",
+        "using_hw": 0,
+        "frames": 60,
+        "cpu_us": 14333,
+        "energy_nj": 38733270
+      },
+      {
+        "mode": 2,
+        "iteration": 3,
+        "rc": 0,
+        "output": "codec=61703478 create=0 using_hw=0 packets=60 frames=60 error=0 pixel=77333072 imageio=0 cpu_us=15591 energy_status=0/0 energy_nj=40566507",
+        "using_hw": 0,
+        "frames": 60,
+        "cpu_us": 15591,
+        "energy_nj": 40566507
+      },
+      {
+        "mode": 1,
+        "iteration": 3,
+        "rc": 0,
+        "output": "codec=61703478 create=0 using_hw=1 packets=60 frames=60 error=0 pixel=77333072 imageio=0 cpu_us=11841 energy_status=0/0 energy_nj=33508103",
+        "using_hw": 1,
+        "frames": 60,
+        "cpu_us": 11841,
+        "energy_nj": 33508103
+      },
+      {
+        "mode": 1,
+        "iteration": 4,
+        "rc": 0,
+        "output": "codec=61703478 create=0 using_hw=1 packets=60 frames=60 error=0 pixel=77333072 imageio=0 cpu_us=12095 energy_status=0/0 energy_nj=33777851",
+        "using_hw": 1,
+        "frames": 60,
+        "cpu_us": 12095,
+        "energy_nj": 33777851
+      },
+      {
+        "mode": 2,
+        "iteration": 4,
+        "rc": 0,
+        "output": "codec=61703478 create=0 using_hw=0 packets=60 frames=60 error=0 pixel=77333072 imageio=0 cpu_us=15135 energy_status=0/0 energy_nj=39527132",
+        "using_hw": 0,
+        "frames": 60,
+        "cpu_us": 15135,
+        "energy_nj": 39527132
+      }
+    ],
+    "median": {
+      "1": {
+        "cpu_us": 11841,
+        "energy_nj": 33944894
+      },
+      "2": {
+        "cpu_us": 15135,
+        "energy_nj": 40566507
+      }
+    }
+  },
+  {
+    "name": "hevc422",
+    "sha256": "3bff8e42b06a3be06ec4424f99dadf34ca7881bb9249fc194d0f71cc3c473989",
+    "pixel": "78343232",
+    "samples": [
+      {
+        "mode": 1,
+        "iteration": 0,
+        "rc": 0,
+        "output": "codec=68766331 create=0 using_hw=1 packets=60 frames=60 error=0 pixel=78343232 imageio=0 cpu_us=10501 energy_status=0/0 energy_nj=30238580",
+        "using_hw": 1,
+        "frames": 60,
+        "cpu_us": 10501,
+        "energy_nj": 30238580
+      },
+      {
+        "mode": 2,
+        "iteration": 0,
+        "rc": 0,
+        "output": "codec=68766331 create=0 using_hw=0 packets=60 frames=60 error=0 pixel=78343232 imageio=0 cpu_us=11527 energy_status=0/0 energy_nj=35384412",
+        "using_hw": 0,
+        "frames": 60,
+        "cpu_us": 11527,
+        "energy_nj": 35384412
+      },
+      {
+        "mode": 2,
+        "iteration": 1,
+        "rc": 0,
+        "output": "codec=68766331 create=0 using_hw=0 packets=60 frames=60 error=0 pixel=78343232 imageio=0 cpu_us=11939 energy_status=0/0 energy_nj=35087223",
+        "using_hw": 0,
+        "frames": 60,
+        "cpu_us": 11939,
+        "energy_nj": 35087223
+      },
+      {
+        "mode": 1,
+        "iteration": 1,
+        "rc": 0,
+        "output": "codec=68766331 create=0 using_hw=1 packets=60 frames=60 error=0 pixel=78343232 imageio=0 cpu_us=11304 energy_status=0/0 energy_nj=31669188",
+        "using_hw": 1,
+        "frames": 60,
+        "cpu_us": 11304,
+        "energy_nj": 31669188
+      },
+      {
+        "mode": 1,
+        "iteration": 2,
+        "rc": 0,
+        "output": "codec=68766331 create=0 using_hw=1 packets=60 frames=60 error=0 pixel=78343232 imageio=0 cpu_us=10381 energy_status=0/0 energy_nj=29908391",
+        "using_hw": 1,
+        "frames": 60,
+        "cpu_us": 10381,
+        "energy_nj": 29908391
+      },
+      {
+        "mode": 2,
+        "iteration": 2,
+        "rc": 0,
+        "output": "codec=68766331 create=0 using_hw=0 packets=60 frames=60 error=0 pixel=78343232 imageio=0 cpu_us=13794 energy_status=0/0 energy_nj=37088609",
+        "using_hw": 0,
+        "frames": 60,
+        "cpu_us": 13794,
+        "energy_nj": 37088609
+      },
+      {
+        "mode": 2,
+        "iteration": 3,
+        "rc": 0,
+        "output": "codec=68766331 create=0 using_hw=0 packets=60 frames=60 error=0 pixel=78343232 imageio=0 cpu_us=12029 energy_status=0/0 energy_nj=35385420",
+        "using_hw": 0,
+        "frames": 60,
+        "cpu_us": 12029,
+        "energy_nj": 35385420
+      },
+      {
+        "mode": 1,
+        "iteration": 3,
+        "rc": 0,
+        "output": "codec=68766331 create=0 using_hw=1 packets=60 frames=60 error=0 pixel=78343232 imageio=0 cpu_us=9897 energy_status=0/0 energy_nj=30489772",
+        "using_hw": 1,
+        "frames": 60,
+        "cpu_us": 9897,
+        "energy_nj": 30489772
+      },
+      {
+        "mode": 1,
+        "iteration": 4,
+        "rc": 0,
+        "output": "codec=68766331 create=0 using_hw=1 packets=60 frames=60 error=0 pixel=78343232 imageio=0 cpu_us=10286 energy_status=0/0 energy_nj=30142837",
+        "using_hw": 1,
+        "frames": 60,
+        "cpu_us": 10286,
+        "energy_nj": 30142837
+      },
+      {
+        "mode": 2,
+        "iteration": 4,
+        "rc": 0,
+        "output": "codec=68766331 create=0 using_hw=0 packets=60 frames=60 error=0 pixel=78343232 imageio=0 cpu_us=12323 energy_status=0/0 energy_nj=35533673",
+        "using_hw": 0,
+        "frames": 60,
+        "cpu_us": 12323,
+        "energy_nj": 35533673
+      }
+    ],
+    "median": {
+      "1": {
+        "cpu_us": 10381,
+        "energy_nj": 30238580
+      },
+      "2": {
+        "cpu_us": 12029,
+        "energy_nj": 35385420
+      }
+    }
+  },
+  {
+    "name": "vp9p2",
+    "sha256": "a305f04d9e9b88e7104dd5e7432434437a007c7ee166d50f8dab83617db3fee1",
+    "pixel": "0",
+    "samples": [
+      {
+        "mode": 1,
+        "iteration": 0,
+        "rc": 0,
+        "output": "codec=76703039 create=0 using_hw=1 packets=60 frames=60 error=0 pixel=70343230 imageio=0 cpu_us=9729 energy_status=0/0 energy_nj=28531032",
+        "using_hw": 1,
+        "frames": 60,
+        "cpu_us": 9729,
+        "energy_nj": 28531032
+      },
+      {
+        "mode": 2,
+        "iteration": 0,
+        "rc": 1,
+        "output": "codec=76703039 create=-12906"
+      },
+      {
+        "mode": 2,
+        "iteration": 1,
+        "rc": 1,
+        "output": "codec=76703039 create=-12906"
+      },
+      {
+        "mode": 1,
+        "iteration": 1,
+        "rc": 0,
+        "output": "codec=76703039 create=0 using_hw=1 packets=60 frames=60 error=0 pixel=70343230 imageio=0 cpu_us=9534 energy_status=0/0 energy_nj=28097669",
+        "using_hw": 1,
+        "frames": 60,
+        "cpu_us": 9534,
+        "energy_nj": 28097669
+      },
+      {
+        "mode": 1,
+        "iteration": 2,
+        "rc": 0,
+        "output": "codec=76703039 create=0 using_hw=1 packets=60 frames=60 error=0 pixel=70343230 imageio=0 cpu_us=9779 energy_status=0/0 energy_nj=28470766",
+        "using_hw": 1,
+        "frames": 60,
+        "cpu_us": 9779,
+        "energy_nj": 28470766
+      },
+      {
+        "mode": 2,
+        "iteration": 2,
+        "rc": 1,
+        "output": "codec=76703039 create=-12906"
+      },
+      {
+        "mode": 2,
+        "iteration": 3,
+        "rc": 1,
+        "output": "codec=76703039 create=-12906"
+      },
+      {
+        "mode": 1,
+        "iteration": 3,
+        "rc": 0,
+        "output": "codec=76703039 create=0 using_hw=1 packets=60 frames=60 error=0 pixel=70343230 imageio=0 cpu_us=10027 energy_status=0/0 energy_nj=28821147",
+        "using_hw": 1,
+        "frames": 60,
+        "cpu_us": 10027,
+        "energy_nj": 28821147
+      },
+      {
+        "mode": 1,
+        "iteration": 4,
+        "rc": 0,
+        "output": "codec=76703039 create=0 using_hw=1 packets=60 frames=60 error=0 pixel=70343230 imageio=0 cpu_us=9780 energy_status=0/0 energy_nj=28586845",
+        "using_hw": 1,
+        "frames": 60,
+        "cpu_us": 9780,
+        "energy_nj": 28586845
+      },
+      {
+        "mode": 2,
+        "iteration": 4,
+        "rc": 1,
+        "output": "codec=76703039 create=-12906"
+      }
+    ],
+    "median": {
+      "1": {
+        "cpu_us": 9779,
+        "energy_nj": 28531032
+      },
+      "2": null
+    }
+  },
+  {
+    "name": "av1-10",
+    "sha256": "da46be654113e8862a8be27486d764c79b72b4541af512e94d89bb861cb9f637",
+    "pixel": "0",
+    "samples": [
+      {
+        "mode": 1,
+        "iteration": 0,
+        "rc": 0,
+        "output": "codec=61763031 create=0 using_hw=1 packets=60 frames=60 error=0 pixel=70343230 imageio=0 cpu_us=10144 energy_status=0/0 energy_nj=29322321",
+        "using_hw": 1,
+        "frames": 60,
+        "cpu_us": 10144,
+        "energy_nj": 29322321
+      },
+      {
+        "mode": 2,
+        "iteration": 0,
+        "rc": 1,
+        "output": "codec=61763031 create=-12906"
+      },
+      {
+        "mode": 2,
+        "iteration": 1,
+        "rc": 1,
+        "output": "codec=61763031 create=-12906"
+      },
+      {
+        "mode": 1,
+        "iteration": 1,
+        "rc": 0,
+        "output": "codec=61763031 create=0 using_hw=1 packets=60 frames=60 error=0 pixel=70343230 imageio=0 cpu_us=10726 energy_status=0/0 energy_nj=30252912",
+        "using_hw": 1,
+        "frames": 60,
+        "cpu_us": 10726,
+        "energy_nj": 30252912
+      },
+      {
+        "mode": 1,
+        "iteration": 2,
+        "rc": 0,
+        "output": "codec=61763031 create=0 using_hw=1 packets=60 frames=60 error=0 pixel=70343230 imageio=0 cpu_us=9496 energy_status=0/0 energy_nj=28470476",
+        "using_hw": 1,
+        "frames": 60,
+        "cpu_us": 9496,
+        "energy_nj": 28470476
+      },
+      {
+        "mode": 2,
+        "iteration": 2,
+        "rc": 1,
+        "output": "codec=61763031 create=-12906"
+      },
+      {
+        "mode": 2,
+        "iteration": 3,
+        "rc": 1,
+        "output": "codec=61763031 create=-12906"
+      },
+      {
+        "mode": 1,
+        "iteration": 3,
+        "rc": 0,
+        "output": "codec=61763031 create=0 using_hw=1 packets=60 frames=60 error=0 pixel=70343230 imageio=0 cpu_us=9928 energy_status=0/0 energy_nj=28999356",
+        "using_hw": 1,
+        "frames": 60,
+        "cpu_us": 9928,
+        "energy_nj": 28999356
+      },
+      {
+        "mode": 1,
+        "iteration": 4,
+        "rc": 0,
+        "output": "codec=61763031 create=0 using_hw=1 packets=60 frames=60 error=0 pixel=70343230 imageio=0 cpu_us=10724 energy_status=0/0 energy_nj=30368002",
+        "using_hw": 1,
+        "frames": 60,
+        "cpu_us": 10724,
+        "energy_nj": 30368002
+      },
+      {
+        "mode": 2,
+        "iteration": 4,
+        "rc": 1,
+        "output": "codec=61763031 create=-12906"
+      }
+    ],
+    "median": {
+      "1": {
+        "cpu_us": 10144,
+        "energy_nj": 29322321
+      },
+      "2": null
+    }
+  },
+  {
+    "name": "hevc444",
+    "sha256": "98e5f0d1d45eb8fa108be567ebe1c145e2a5ae2a900255a3db16b44446dbd5f2",
+    "pixel": "0",
+    "samples": [
+      {
+        "mode": 1,
+        "iteration": 0,
+        "rc": 0,
+        "output": "codec=68766331 create=0 using_hw=1 packets=60 frames=60 error=0 pixel=70343434 imageio=0 cpu_us=10101 energy_status=0/0 energy_nj=29735411",
+        "using_hw": 1,
+        "frames": 60,
+        "cpu_us": 10101,
+        "energy_nj": 29735411
+      },
+      {
+        "mode": 2,
+        "iteration": 0,
+        "rc": 0,
+        "output": "codec=68766331 create=0 using_hw=0 packets=60 frames=60 error=0 pixel=78343434 imageio=0 cpu_us=12152 energy_status=0/0 energy_nj=35123574",
+        "using_hw": 0,
+        "frames": 60,
+        "cpu_us": 12152,
+        "energy_nj": 35123574
+      },
+      {
+        "mode": 2,
+        "iteration": 1,
+        "rc": 0,
+        "output": "codec=68766331 create=0 using_hw=0 packets=60 frames=60 error=0 pixel=78343434 imageio=0 cpu_us=12226 energy_status=0/0 energy_nj=35578531",
+        "using_hw": 0,
+        "frames": 60,
+        "cpu_us": 12226,
+        "energy_nj": 35578531
+      },
+      {
+        "mode": 1,
+        "iteration": 1,
+        "rc": 0,
+        "output": "codec=68766331 create=0 using_hw=1 packets=60 frames=60 error=0 pixel=70343434 imageio=0 cpu_us=10284 energy_status=0/0 energy_nj=30172483",
+        "using_hw": 1,
+        "frames": 60,
+        "cpu_us": 10284,
+        "energy_nj": 30172483
+      },
+      {
+        "mode": 1,
+        "iteration": 2,
+        "rc": 0,
+        "output": "codec=68766331 create=0 using_hw=1 packets=60 frames=60 error=0 pixel=70343434 imageio=0 cpu_us=10213 energy_status=0/0 energy_nj=29775385",
+        "using_hw": 1,
+        "frames": 60,
+        "cpu_us": 10213,
+        "energy_nj": 29775385
+      },
+      {
+        "mode": 2,
+        "iteration": 2,
+        "rc": 0,
+        "output": "codec=68766331 create=0 using_hw=0 packets=60 frames=60 error=0 pixel=78343434 imageio=0 cpu_us=12064 energy_status=0/0 energy_nj=35086723",
+        "using_hw": 0,
+        "frames": 60,
+        "cpu_us": 12064,
+        "energy_nj": 35086723
+      },
+      {
+        "mode": 2,
+        "iteration": 3,
+        "rc": 0,
+        "output": "codec=68766331 create=0 using_hw=0 packets=60 frames=60 error=0 pixel=78343434 imageio=0 cpu_us=12785 energy_status=0/0 energy_nj=36488978",
+        "using_hw": 0,
+        "frames": 60,
+        "cpu_us": 12785,
+        "energy_nj": 36488978
+      },
+      {
+        "mode": 1,
+        "iteration": 3,
+        "rc": 0,
+        "output": "codec=68766331 create=0 using_hw=1 packets=60 frames=60 error=0 pixel=70343434 imageio=0 cpu_us=10487 energy_status=0/0 energy_nj=30439431",
+        "using_hw": 1,
+        "frames": 60,
+        "cpu_us": 10487,
+        "energy_nj": 30439431
+      },
+      {
+        "mode": 1,
+        "iteration": 4,
+        "rc": 0,
+        "output": "codec=68766331 create=0 using_hw=1 packets=60 frames=60 error=0 pixel=70343434 imageio=0 cpu_us=10500 energy_status=0/0 energy_nj=31013599",
+        "using_hw": 1,
+        "frames": 60,
+        "cpu_us": 10500,
+        "energy_nj": 31013599
+      },
+      {
+        "mode": 2,
+        "iteration": 4,
+        "rc": 0,
+        "output": "codec=68766331 create=0 using_hw=0 packets=60 frames=60 error=0 pixel=78343434 imageio=0 cpu_us=12190 energy_status=0/0 energy_nj=36638998",
+        "using_hw": 0,
+        "frames": 60,
+        "cpu_us": 12190,
+        "energy_nj": 36638998
+      }
+    ],
+    "median": {
+      "1": {
+        "cpu_us": 10284,
+        "energy_nj": 30172483
+      },
+      "2": {
+        "cpu_us": 12190,
+        "energy_nj": 35578531
+      }
+    }
+  }
+]

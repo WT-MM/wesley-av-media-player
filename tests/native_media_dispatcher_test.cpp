@@ -1053,9 +1053,9 @@ void checkExactAudioGenerationWindows() {
                                  MediaSeekMode::Accurate};
   expect(overCap.dispatcher
                  ->openLocalFile("over-cap.mp4", overOneSecond, 1)
-                 .status == NativeMediaDispatcherOpenStatus::Failed &&
-             overCap.audio->configureCalls == 0,
-         "audio preroll one frame beyond the exact cap fails closed");
+                 .status == NativeMediaDispatcherOpenStatus::Ready &&
+             overCap.audio->configureCalls == 1,
+         "audio preroll beyond the fast threshold retains the bounded pipeline");
 
   TestRig missingSeek = makeRig({});
   openRig(missingSeek);

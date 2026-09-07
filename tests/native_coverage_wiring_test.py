@@ -12,3 +12,9 @@ assert 'controller_.setLastNotice(nativeFailureText(event.reason))' in failed
 assert 'controller_.setLastError(nativeFailureText(event.reason))' in failed
 session = (root/'src/platform/macos/native_media_session.mm').read_text()
 assert 'logNativeFailure("open", reason, dispatcher.get())' in session
+
+seek = owner[owner.index('NativePlaybackOwner::commitNativeSeek'): ] if 'NativePlaybackOwner::commitNativeSeek' in owner else owner
+assert 'case playback_router::State::NativeSeeking:\n    break;' in seek
+assert 'nativeSeekProgress_.expired(progress.decodedPrerollFrames)' in owner
+assert 'media::SeekProgressDeadline::pollMilliseconds' in owner
+assert 'if (progress.slowSeek)' in owner

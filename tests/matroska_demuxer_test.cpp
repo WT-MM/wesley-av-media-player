@@ -1842,7 +1842,7 @@ void testBoundedIndexes() {
     const auto outcome = prepareMatroska(reader, kFixturePath, {});
     // The directory itself is admitted at the cap; the document then fails
     // only because these minimal clusters carry no Cues.
-    expect(outcome.error == MatroskaDemuxError::MissingCues,
+    expect(outcome.error == MatroskaDemuxError::SparseRandomAccess,
            "exactly 65,536 clusters stay inside the bounded directory");
   }
   {
@@ -1869,7 +1869,7 @@ void testBoundedIndexes() {
     // payload-free document -- so the refusal names the absent index, not the
     // Cue shape that triggered the rebuild.
     expect(outcome.asset == nullptr &&
-               outcome.error == MatroskaDemuxError::MissingCues,
+               outcome.error == MatroskaDemuxError::SparseRandomAccess,
            "65,536 cues parse, are discarded, and the scan finds no Block");
   }
   {
@@ -3706,61 +3706,22 @@ void testScannedRandomAccessIndex() {
     }
   }
 
-  // --- 6. The one refusal left, and it is about the BITSTREAM. -------------
-  //
-  // Two Clusters 13 s apart: the file's Cues describe the medium accurately,
-  // the scan confirms them, and there is still no seed inside the 12 s
-  // preroll. No index can invent one, so the verdict says so -- and says it as
-  // Unsupported, because the file plays perfectly from its origin.
-  {
-    FixtureSpec spec;
-    spec.clusterTimestamps = {0, 13'000};
-    spec.durationTicks = 14'000.0;
-    spec.includeAudioTrack = false;
-    spec.includeSubtitleTrack = false;
-    const PreparedFixture prepared = prepareFixture(spec);
-    const bool named =
-        prepared.outcome.asset == nullptr &&
-        prepared.outcome.status == MatroskaDemuxStatus::Unsupported &&
-        prepared.outcome.error == MatroskaDemuxError::SparseRandomAccess &&
-        prepared.outcome.message.find("2 random access points") !=
-            std::string::npos &&
-        prepared.outcome.message.find("13.000 s span") != std::string::npos &&
-        prepared.outcome.message.find("12.000 s") != std::string::npos;
-    if (!named) {
-      std::cerr << "  (observed " << errorName(prepared.outcome.error) << ": \""
-                << prepared.outcome.message << "\")\n";
-    }
-    expect(named,
-           "a bitstream with no RAP inside the preroll is named, not blamed "
-           "on its Cues");
-  }
-
-  // --- 7. The single-entry hole, closed. -----------------------------------
-  //
-  // One Cluster, one keyframe, and a duration far past it: exactly the shape a
-  // live screen capture writes. The gap loop runs from entry 1 and so never
-  // examined this file at all -- it was admitted with an index that seeded
-  // every seek at tick zero however far away the target was. Measuring the
-  // tail against the duration is what closes it.
-  {
+  for (const auto duration : {14'000.0, 40'000.0}) {
     FixtureSpec spec;
     spec.clusterTimestamps = {0};
-    spec.durationTicks = 20'000.0;
+    spec.durationTicks = duration;
     spec.includeAudioTrack = false;
     spec.includeSubtitleTrack = false;
     const PreparedFixture prepared = prepareFixture(spec);
-    const bool closed =
-        prepared.outcome.asset == nullptr &&
-        prepared.outcome.status == MatroskaDemuxStatus::Unsupported &&
-        prepared.outcome.error == MatroskaDemuxError::SparseRandomAccess &&
-        prepared.outcome.message.find("1 random access point,") !=
-            std::string::npos;
-    if (!closed) {
-      std::cerr << "  (observed " << errorName(prepared.outcome.error) << ": \""
-                << prepared.outcome.message << "\")\n";
+    expect(prepared.outcome.status == MatroskaDemuxStatus::Ready &&
+               prepared.outcome.asset != nullptr,
+           "single-RAP long GOP is admitted for bounded slow seek");
+    if (prepared.outcome.asset && duration > 30'000) {
+      const auto plan = prepared.asset().planGeneration({30, 1}, MediaSeekMode::Accurate);
+      expect(plan.status == MatroskaDemuxStatus::Ready && plan.plan &&
+                 plan.plan->actualDecodeStart == MediaTime{0, 1},
+             "30-second slow seek retains the preceding RAP");
     }
-    expect(closed, "a one-entry index is measured against the duration");
   }
 
   // --- 8. A duration inside the preroll keeps a one-entry index legal. ------

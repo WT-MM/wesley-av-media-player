@@ -1376,6 +1376,13 @@ if(BUILD_TESTING)
             --source "$<TARGET_FILE:wam_native_coverage_source_probe>"
             --ffmpeg "${WAM_COVERAGE_FFMPEG}")
         set_tests_properties(macos_native_coverage_integration PROPERTIES TIMEOUT 90)
+        add_test(NAME macos_native_phase0b_integration
+          COMMAND "${WAM_MPEGTS_PYTHON}"
+            "${CMAKE_SOURCE_DIR}/tests/native_phase0b_integration.py"
+            --source "$<TARGET_FILE:wam_native_coverage_source_probe>"
+            --video "$<TARGET_FILE:wam_native_apple_video_probe>"
+            --ffmpeg "${WAM_COVERAGE_FFMPEG}")
+        set_tests_properties(macos_native_phase0b_integration PROPERTIES TIMEOUT 180)
       endif()
 
       add_executable(wam_native_audio_converter_test

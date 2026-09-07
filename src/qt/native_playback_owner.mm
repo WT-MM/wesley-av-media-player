@@ -335,10 +335,14 @@ void NativePlaybackOwner::refreshNativePhaseWatchdog() {
     return;
   }
   nativePhaseWatchdogArmed_ = true;
+  const bool seeking = router_.snapshot().state == playback_router::State::NativeSeeking;
+  if (seeking && nativeSession_) static_cast<void>(nativeSession_->metrics());
+  if (!seeking) nativeSeekProgress_ = {};
   const std::uint64_t epoch = ++nativePhaseWatchdogEpoch_;
   const QPointer<PlayerController> controller = &controller_;
   QTimer::singleShot(
-      kNativePhaseWatchdogMilliseconds, &controller_, [controller, epoch] {
+      seeking ? media::SeekProgressDeadline::pollMilliseconds : kNativePhaseWatchdogMilliseconds,
+      &controller_, [controller, epoch] {
         if (controller == nullptr || !controller->native_playback_) {
           return;
         }
@@ -364,6 +368,17 @@ void NativePlaybackOwner::expireNativePhaseWatchdog(std::uint64_t epoch) {
   }
   const bool seeking = state == playback_router::State::NativeSeeking;
   const bool stopping = state == playback_router::State::NativeStopping;
+  if (seeking && nativeSession_ != nullptr) {
+    const auto progress = nativeSession_->metrics();
+    if (!nativeSeekProgress_.expired(progress.decodedPrerollFrames)) {
+      if (progress.slowSeek) {
+        controller_.setLastNotice(QStringLiteral("Seeking: decoded %1 preroll frames")
+                                     .arg(progress.decodedPrerollFrames));
+      }
+      refreshNativePhaseWatchdog();
+      return;
+    }
+  }
   // Cross the armed phase deadline in the router's own tick domain. The budget
   // is unreachable by ordinary event ticks, so this is the only way advance()
   // observes an expired deadline.
@@ -706,9 +721,9 @@ NativePlaybackOwner::commitSeek(double targetSeconds, std::uint64_t gesture,
   case playback_router::State::NativeStarting:
   case playback_router::State::NativeActive:
   case playback_router::State::NativeEnded:
+  case playback_router::State::NativeSeeking:
     break;
   case playback_router::State::NativePreparing:
-  case playback_router::State::NativeSeeking:
   case playback_router::State::NativeStopping:
   case playback_router::State::NativeStopFailed:
     return SeekDisposition::NativeRejected;
@@ -745,6 +760,7 @@ NativePlaybackOwner::commitSeek(double targetSeconds, std::uint64_t gesture,
   const native_protocol::CommitSeek command = transition.action->commitSeek;
   nativeCommitTarget_ = std::move(target);
   nativeCommit_ = command;
+  nativeSeekProgress_ = {};
   nativeCommitDrawBaseline_ = nativeCommitTarget_->drawBaseline();
   nativeCommitDispatchAccepted_ = false;
 

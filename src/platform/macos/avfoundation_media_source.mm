@@ -1498,222 +1498,13 @@ class CodecRbspBitReader final {
 
 [[nodiscard]] media::MediaVideoSampleFormat parseHevcSampleFormat(
     std::span<const std::byte> configuration) noexcept {
-  const auto bytes = std::span<const std::uint8_t>(
-      reinterpret_cast<const std::uint8_t*>(configuration.data()),
-      configuration.size());
-  if (bytes.size() < 23 || bytes[0] != 1 ||
-      (bytes[13] & 0xf0U) != 0xf0U ||
-      (bytes[15] & 0xfcU) != 0xfcU ||
-      (bytes[16] & 0xfcU) != 0xfcU ||
-      (bytes[17] & 0xf8U) != 0xf8U ||
-      (bytes[18] & 0xf8U) != 0xf8U ||
-      (bytes[16] & 0x03U) != 1U) {
-    return media::MediaVideoSampleFormat::Unsupported;
-  }
-  const std::uint8_t lumaDepthMinusEight = bytes[17] & 0x07U;
-  const std::uint8_t chromaDepthMinusEight = bytes[18] & 0x07U;
-  if (lumaDepthMinusEight != chromaDepthMinusEight ||
-      (lumaDepthMinusEight != 0 && lumaDepthMinusEight != 2)) {
-    return media::MediaVideoSampleFormat::Unsupported;
-  }
-  const std::uint8_t expectedProfileIdc =
-      lumaDepthMinusEight == 2 ? 2U : 1U;
-  const std::uint8_t configurationProfile = bytes[1];
-  if ((configurationProfile & 0xc0U) != 0 ||
-      (configurationProfile & 0x1fU) != expectedProfileIdc) {
-    return media::MediaVideoSampleFormat::Unsupported;
-  }
-  const std::uint32_t configurationCompatibility =
-      (static_cast<std::uint32_t>(bytes[2]) << 24U) |
-      (static_cast<std::uint32_t>(bytes[3]) << 16U) |
-      (static_cast<std::uint32_t>(bytes[4]) << 8U) | bytes[5];
-  const std::uint32_t configurationConstraintHigh =
-      (static_cast<std::uint32_t>(bytes[6]) << 24U) |
-      (static_cast<std::uint32_t>(bytes[7]) << 16U) |
-      (static_cast<std::uint32_t>(bytes[8]) << 8U) | bytes[9];
-  const std::uint16_t configurationConstraintLow =
-      static_cast<std::uint16_t>(
-          (static_cast<std::uint16_t>(bytes[10]) << 8U) | bytes[11]);
-  const std::uint8_t configurationLevel = bytes[12];
-  const auto skipProfileTierLevel = [](CodecRbspBitReader* bits,
-                                       std::uint32_t subLayers,
-                                       std::uint8_t expectedProfileByte,
-                                       std::uint32_t expectedCompatibility,
-                                       std::uint32_t expectedConstraintHigh,
-                                       std::uint16_t expectedConstraintLow,
-                                       std::uint8_t expectedLevel) noexcept {
-    std::uint32_t profileByte = 0;
-    std::uint32_t compatibility = 0;
-    std::uint32_t constraintHigh = 0;
-    std::uint32_t constraintLow = 0;
-    std::uint32_t level = 0;
-    std::uint32_t ignored = 0;
-    if (!bits->readBits(8, &profileByte) ||
-        profileByte != expectedProfileByte ||
-        !bits->readBits(32, &compatibility) ||
-        compatibility != expectedCompatibility ||
-        !bits->readBits(32, &constraintHigh) ||
-        constraintHigh != expectedConstraintHigh ||
-        !bits->readBits(16, &constraintLow) ||
-        constraintLow != expectedConstraintLow ||
-        !bits->readBits(8, &level) || level != expectedLevel) {
-      return false;
-    }
-    std::array<std::uint32_t, 8> profilePresent{};
-    std::array<std::uint32_t, 8> levelPresent{};
-    for (std::uint32_t layer = 0; layer < subLayers; ++layer) {
-      if (!bits->readBits(1, &profilePresent[layer]) ||
-          !bits->readBits(1, &levelPresent[layer])) {
-        return false;
-      }
-    }
-    if (subLayers > 0) {
-      for (std::uint32_t layer = subLayers; layer < 8; ++layer) {
-        if (!bits->readBits(2, &ignored)) {
-          return false;
-        }
-      }
-    }
-    for (std::uint32_t layer = 0; layer < subLayers; ++layer) {
-      if (profilePresent[layer]) {
-        std::uint32_t subLayerProfileByte = 0;
-        if (!bits->readBits(8, &subLayerProfileByte) ||
-            (subLayerProfileByte & 0xc0U) != 0 ||
-            (subLayerProfileByte & 0x1fU) !=
-                (expectedProfileByte & 0x1fU) ||
-            !bits->readBits(32, &ignored) ||
-            !bits->readBits(32, &ignored) ||
-            !bits->readBits(16, &ignored)) {
-          return false;
-        }
-      }
-      if (levelPresent[layer] && !bits->readBits(8, &ignored)) {
-        return false;
-      }
-    }
-    return true;
-  };
-
-  std::size_t offset = 23;
-  bool foundVps = false;
-  bool foundSps = false;
-  bool foundPps = false;
-  std::array<bool, 3> parameterSetArrays{};
-  for (std::size_t array = 0; array < bytes[22]; ++array) {
-    if (offset + 3 > bytes.size()) {
-      return media::MediaVideoSampleFormat::Unsupported;
-    }
-    const std::uint8_t arrayHeader = bytes[offset];
-    if ((arrayHeader & 0x40U) != 0) {
-      return media::MediaVideoSampleFormat::Unsupported;
-    }
-    const std::uint8_t nalType = arrayHeader & 0x3fU;
-    // array_completeness is not required, for the reason the neutral
-    // inspector stopped requiring it on 2026-08-17: ISO/IEC 14496-15 lets a
-    // muxer clear it to say parameter sets may also travel in band, which
-    // VideoToolbox handles either way. Two real MP4 records in the corpus
-    // (RustDesk h265 recordings) clear it and were refused here alone.
-    if (nalType >= 32U && nalType <= 34U) {
-      const std::size_t parameterSetIndex = nalType - 32U;
-      if (parameterSetArrays[parameterSetIndex]) {
-        return media::MediaVideoSampleFormat::Unsupported;
-      }
-      parameterSetArrays[parameterSetIndex] = true;
-    }
-    const std::size_t nalCount =
-        (static_cast<std::size_t>(bytes[offset + 1]) << 8U) |
-        bytes[offset + 2];
-    offset += 3;
-    for (std::size_t index = 0; index < nalCount; ++index) {
-      if (offset + 2 > bytes.size()) {
-        return media::MediaVideoSampleFormat::Unsupported;
-      }
-      const std::size_t length =
-          (static_cast<std::size_t>(bytes[offset]) << 8U) |
-          bytes[offset + 1];
-      offset += 2;
-      if (length < 2 || length > bytes.size() - offset) {
-        return media::MediaVideoSampleFormat::Unsupported;
-      }
-      const std::uint8_t nalHeader0 = bytes[offset];
-      const std::uint8_t nalHeader1 = bytes[offset + 1];
-      const std::uint8_t layerId = static_cast<std::uint8_t>(
-          ((nalHeader0 & 0x01U) << 5U) | (nalHeader1 >> 3U));
-      if ((nalHeader0 & 0x80U) != 0 ||
-          ((nalHeader0 >> 1U) & 0x3fU) != nalType ||
-          (nalHeader1 & 0x07U) == 0) {
-        return media::MediaVideoSampleFormat::Unsupported;
-      }
-      if (nalType >= 32U && nalType <= 34U &&
-          (length < 3 || layerId != 0 || (nalHeader1 & 0x07U) != 1U)) {
-        return media::MediaVideoSampleFormat::Unsupported;
-      }
-      if (nalType == 32U) {
-        CodecRbspBitReader bits(bytes.subspan(offset + 2, length - 2));
-        std::uint32_t ignored = 0;
-        std::uint32_t subLayers = 0;
-        std::uint32_t reserved = 0;
-        if (!bits.readBits(4, &ignored) || !bits.readBits(1, &ignored) ||
-            !bits.readBits(1, &ignored) || !bits.readBits(6, &ignored) ||
-            !bits.readBits(3, &subLayers) || subLayers > 6 ||
-            !bits.readBits(1, &ignored) || !bits.readBits(16, &reserved) ||
-            reserved != 0xffffU ||
-            !skipProfileTierLevel(
-                &bits, subLayers, configurationProfile,
-                configurationCompatibility, configurationConstraintHigh,
-                configurationConstraintLow, configurationLevel)) {
-          return media::MediaVideoSampleFormat::Unsupported;
-        }
-        foundVps = true;
-      } else if (nalType == 34U) {
-        foundPps = true;
-      }
-      if (nalType == 33U) {
-        CodecRbspBitReader bits(bytes.subspan(offset + 2, length - 2));
-        std::uint32_t ignored = 0;
-        std::uint32_t subLayers = 0;
-        std::uint32_t chromaFormat = 0;
-        std::uint32_t spsLumaDepthMinusEight = 0;
-        std::uint32_t spsChromaDepthMinusEight = 0;
-        if (!bits.readBits(4, &ignored) ||
-            !bits.readBits(3, &subLayers) || subLayers > 6 ||
-            !bits.readBits(1, &ignored) ||
-            !skipProfileTierLevel(
-                &bits, subLayers, configurationProfile,
-                configurationCompatibility, configurationConstraintHigh,
-                configurationConstraintLow, configurationLevel) ||
-            !bits.readUnsignedExpGolomb(&ignored) ||
-            !bits.readUnsignedExpGolomb(&chromaFormat) || chromaFormat != 1 ||
-            !bits.readUnsignedExpGolomb(&ignored) ||
-            !bits.readUnsignedExpGolomb(&ignored) ||
-            !bits.readBits(1, &ignored)) {
-          return media::MediaVideoSampleFormat::Unsupported;
-        }
-        if (ignored != 0) {
-          for (std::size_t windowOffset = 0; windowOffset < 4;
-               ++windowOffset) {
-            if (!bits.readUnsignedExpGolomb(&ignored)) {
-              return media::MediaVideoSampleFormat::Unsupported;
-            }
-          }
-        }
-        if (!bits.readUnsignedExpGolomb(&spsLumaDepthMinusEight) ||
-            !bits.readUnsignedExpGolomb(&spsChromaDepthMinusEight) ||
-            spsLumaDepthMinusEight != lumaDepthMinusEight ||
-            spsChromaDepthMinusEight != chromaDepthMinusEight) {
-          return media::MediaVideoSampleFormat::Unsupported;
-        }
-        foundSps = true;
-      }
-      offset += length;
-    }
-  }
-  if (!foundVps || !foundSps || !foundPps || offset != bytes.size()) {
-    return media::MediaVideoSampleFormat::Unsupported;
-  }
-  return lumaDepthMinusEight == 2
-             ? media::MediaVideoSampleFormat::Yuv420TenBit
-             : media::MediaVideoSampleFormat::Yuv420EightBit;
+  media::VideoCodecConfigurationLimits limits;
+  limits.admitHighDynamicRangeColor = true;
+  const auto result = media::inspectVideoCodecConfiguration(
+      MediaCodec::Hevc, media::MediaCodecConfigurationKind::HvcC,
+      configuration, limits);
+  return result.admitted() ? result.facts->sampleFormat
+                : media::MediaVideoSampleFormat::Unsupported;
 }
 
 [[nodiscard]] CFDataRef borrowAtom(CMFormatDescriptionRef format,
@@ -1765,13 +1556,6 @@ class CodecRbspBitReader final {
 // reproduces VideoToolbox's Advanced Simple Profile failure on a plain mp4v
 // MP4, so admitting it would fail mid-startup instead of falling back cleanly.
 //
-// ProRes 4444 and 4444 XQ are Unknown for a decode fact rather than a policy:
-// 'ap4h'/'ap4x' are a SECOND decode family (feeding 4444 samples to a
-// 422-family session fails with -12916 and the reverse fails identically), so
-// one enumerator cannot name both, and the table's family list is the gate.
-// Alpha is a second, independent refusal on the same files -- a ProRes 4444
-// with an alpha channel decodes to 'y416' and nothing in this player's
-// presentation path composites alpha.
 [[nodiscard]] MediaCodec videoCodec(CMVideoCodecType codec) noexcept {
   const MediaCodec named =
       media::mediaCodecForCoreMediaType(static_cast<std::uint32_t>(codec));
@@ -1838,17 +1622,8 @@ class CodecRbspBitReader final {
 // codec carries -- or its empty one -- to the hvcC parser; refusing is the only
 // honest answer for a codec this route cannot classify.
 //
-// Unknown for ProRes and Motion JPEG is a statement rather than a gap.
-// MediaVideoSampleFormat models 4:2:0 depth alone -- its two named values are
-// Yuv420EightBit and Yuv420TenBit -- and neither codec's CODED chroma is 4:2:0:
-// ProRes 422 is 4:2:2 and JPEG here is 4:2:0 only by the platform decoder's own
-// limit rather than by anything this descriptor parsed. There is no record to
-// read in either case. Claiming Yuv420TenBit for ProRes would describe the
-// DECODED surface (which is pinned to 'x420') while pretending to describe the
-// coded stream, and Unsupported is reserved as an immutable fallback proof, so
-// Unknown is the only honest value available. Nothing downstream is weakened by
-// that: the depth-agreement gate runs for HEVC/VP9/AV1 only, and the decoded
-// surface is validated against the pinned output contract on every frame.
+// Recordless coded chroma remains Unknown; the decoder validates its explicit
+// output surface contract independently.
 [[nodiscard]] std::optional<media::MediaVideoSampleFormat> parseSampleFormat(
     MediaCodec codec, std::span<const std::byte> configuration) noexcept {
   switch (codec) {
@@ -1860,6 +1635,7 @@ class CodecRbspBitReader final {
       return parseVp9SampleFormat(configuration);
     case MediaCodec::Av1:
       return parseAv1SampleFormat(configuration);
+    case MediaCodec::ProRes4444:
     case MediaCodec::ProRes:
     case MediaCodec::Mjpeg:
       return media::MediaVideoSampleFormat::Unknown;
@@ -1950,25 +1726,9 @@ inspectVideoFormatFacts(
 
   std::uint8_t bitsPerComponent = 0;
   bool unsupportedColorMetadata = false;
-  if (codec == MediaCodec::ProRes) {
-    // ProRes states its coded depth from the CODEC, not from the container's
-    // BitsPerComponent extension, because that extension is not a statement
-    // about this stream. Measured 2026-09-04: every ProRes specimen written by
-    // ffmpeg's prores_ks -- Proxy, LT, 422, HQ, 4444, and the 4K HQ file --
-    // carries BitsPerComponent = 12 REGARDLESS of profile, including Proxy and
-    // LT, which are 10-bit codecs. A field that reads 12 for a 10-bit stream is
-    // describing the format's widest container, not this file's samples.
-    //
-    // The 422 family codes exactly 10 bits per component by definition -- that
-    // is what the four admitted FourCCs mean -- so 10 is the honest value and
-    // it is also what the decode path independently arrives at: ProRes pins its
-    // output surface to 'x420', the 10-bit form (see codedDepthIsTenBit() in
-    // video_toolbox_decoder.mm). Adopting the container's 12 instead would trip
-    // BOTH depth refusals below -- mediaVideoColorAdmitted() admits only 0/8/10
-    // -- and refuse every ProRes file on a metadata field that is not about
-    // depth.
-    //
-    // Only the 422 family reaches here; 4444 is refused in videoCodec().
+  if (codec == MediaCodec::ProRes || codec == MediaCodec::ProRes4444) {
+    // The opaque presentation contract retains ten bits per component.
+    // Container BitsPerComponent may describe wider storage than coded samples.
     bitsPerComponent = 10;
   } else {
     CFTypeRef bits = CMFormatDescriptionGetExtension(
@@ -2033,10 +1793,9 @@ inspectVideoFormatFacts(
       extensionPresent(
           format,
           kCMFormatDescriptionExtension_AlternativeTransferCharacteristics) ||
-      extensionPresent(format,
-                       kCMFormatDescriptionExtension_AlphaChannelMode) ||
-      extensionPresent(format,
-                       kCMFormatDescriptionExtension_ContainsAlphaChannel);
+      (codec != MediaCodec::ProRes4444 &&
+       (extensionPresent(format, kCMFormatDescriptionExtension_AlphaChannelMode) ||
+        extensionPresent(format, kCMFormatDescriptionExtension_ContainsAlphaChannel)));
   if (@available(macOS 14.0, *)) {
     unsupportedColorMetadata =
         unsupportedColorMetadata ||
@@ -2066,7 +1825,7 @@ inspectVideoFormatFacts(
       return std::nullopt;
     }
     const std::uint8_t parsedBits =
-        sampleFormat == media::MediaVideoSampleFormat::Yuv420TenBit ? 10 : 8;
+        static_cast<std::uint8_t>(media::mediaSampleFormatDepth(sampleFormat));
     // Main 10 carries the same colour contract as Main -- and under amendment
     // 6 that contract now includes BT.2020/PQ/HLG. This gate used to hold a
     // SECOND, 10-bit-only copy of the colour rule, which is exactly the kind
@@ -2147,6 +1906,11 @@ inspectVideoFormatFacts(
       return std::nullopt;
     }
   }
+  if (codec == MediaCodec::Hevc && configuration->size() > 16 &&
+      (std::to_integer<unsigned>((*configuration)[16]) & 3U) == 3U) {
+    assignError(error, "Hevc444SurfaceContractUnsupported");
+    return std::nullopt;
+  }
   auto video = inspectVideoFormatFacts(format, codec, *configuration, limits);
   if (!video) {
     assignError(error,
@@ -2198,6 +1962,27 @@ inspectVideoFormatFacts(
     return std::nullopt;
   }
 
+  if (asbd->mFormatID == kAudioFormatMPEG4AAC_HE ||
+      asbd->mFormatID == kAudioFormatMPEG4AAC_HE_V2) {
+    assignError(error, media::kHeAacDecoderDelayRefusal);
+    return std::nullopt;
+  }
+  if (codec == MediaCodec::Aac && cookieSize != 0) {
+    AudioFormatInfo info{*asbd, cookie, static_cast<UInt32>(cookieSize)};
+    std::array<AudioFormatListItem, 8> formats{};
+    UInt32 size = sizeof(formats);
+    if (AudioFormatGetProperty(kAudioFormatProperty_FormatList, sizeof(info),
+                              &info, &size, formats.data()) == noErr &&
+        size <= sizeof(formats) && size % sizeof(AudioFormatListItem) == 0) {
+      for (std::size_t i = 0; i < size / sizeof(AudioFormatListItem); ++i) {
+        if (formats[i].mASBD.mFormatID == kAudioFormatMPEG4AAC_HE ||
+            formats[i].mASBD.mFormatID == kAudioFormatMPEG4AAC_HE_V2) {
+          assignError(error, media::kHeAacDecoderDelayRefusal);
+          return std::nullopt;
+        }
+      }
+    }
+  }
   MediaTrackDescriptor track;
   track.id = trackId;
   track.kind = MediaTrackKind::Audio;
@@ -2768,10 +2553,7 @@ void incrementInventory(media::MediaTrackInventory* inventory,
   const bool supportedModeledColor = media::mediaVideoColorAdmitted(video);
   const bool hevcDepthMatches =
       track->codec != MediaCodec::Hevc || video.bitsPerComponent == 0 ||
-      (video.sampleFormat == media::MediaVideoSampleFormat::Yuv420EightBit &&
-       video.bitsPerComponent == 8) ||
-      (video.sampleFormat == media::MediaVideoSampleFormat::Yuv420TenBit &&
-       video.bitsPerComponent == 10);
+      media::mediaSampleFormatDepth(video.sampleFormat) == video.bitsPerComponent;
   // Main 10 shares the 8-bit colour contract: supportedModeledColor above is
   // the one rule for both depths, so an untagged Main 10 stream is admitted
   // exactly like an untagged Main one, and a BT.2020/PQ/HLG stream is admitted
@@ -2803,10 +2585,7 @@ void incrementInventory(media::MediaTrackInventory* inventory,
     geometryRefusal =
         "HEVC bit depth disagrees with the decoded sample format";
   } else if (videoFacts.statesCodedSampleFormat &&
-             video.sampleFormat !=
-                 media::MediaVideoSampleFormat::Yuv420EightBit &&
-             video.sampleFormat !=
-                 media::MediaVideoSampleFormat::Yuv420TenBit) {
+             media::mediaSampleFormatDepth(video.sampleFormat) == 0) {
     // A record-less codec is exempt because this gate asks its question of the
     // wrong artefact for it. It proves that the DECODED surface will be 4:2:0
     // by reading the coded sample format out of a parameter-set record -- which
@@ -3172,7 +2951,16 @@ class ProductionGeneration final : public AVFoundationGeneration {
 
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
-        if (!asset.playable || asset.hasProtectedContent) {
+        bool supplementalVp9Demuxable = false;
+        if (!asset.playable && !asset.hasProtectedContent && nativeVideoToolboxSupportsVp9()) {
+          for (AVAssetTrack* candidate in [asset tracksWithMediaType:AVMediaTypeVideo]) {
+            for (id value in candidate.formatDescriptions) {
+              auto description = (__bridge CMFormatDescriptionRef)value;
+              supplementalVp9Demuxable |= CMFormatDescriptionGetMediaSubType(description) == kCMVideoCodecType_VP9;
+            }
+          }
+        }
+        if ((!asset.playable && !supplementalVp9Demuxable) || asset.hasProtectedContent) {
           result.status = AVFoundationGenerationStatus::Unsupported;
           result.error =
               "protected or unplayable media is not native-admissible";
@@ -3459,20 +3247,7 @@ class ProductionGeneration final : public AVFoundationGeneration {
         // four sources with no origin floor at all.
         decodeStart = clampedSyncStartWithinTimelineContract(decodeStart,
                                                              *target);
-        // The ceiling bounds the IN-WINDOW preroll a seek buys, so it is
-        // measured from the clamped start: the lead-in before the origin is
-        // the container's own and is decoded on every cold open of the file
-        // regardless, and counting it here would refuse at open a file whose
-        // trim sits further than the ceiling behind its one keyframe.
-        const CMTime preroll = CMTimeSubtract(*target, decodeStart);
-        const CMTime maximumPreroll = CMTimeMakeWithSeconds(
-            limits.maximumVideoSeekPrerollSeconds, 60'000);
-        if (CMTimeCompare(preroll, kCMTimeZero) < 0 ||
-            CMTimeCompare(preroll, maximumPreroll) > 0) {
-          result.status = AVFoundationGenerationStatus::Unsupported;
-          result.error = "native seek exceeds its bounded sync preroll";
-          return result;
-        }
+
       }
       const auto exactStart = exactMediaTime(decodeStart);
       if (!exactStart) {

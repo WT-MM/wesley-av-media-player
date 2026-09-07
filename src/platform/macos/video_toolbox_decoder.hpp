@@ -409,6 +409,8 @@ struct VideoToolboxDecoderTestAccess {
   // legitimately returns -- the lossless-compressed fourccs in particular are
   // decoder-only and CVPixelBufferCreate refuses them -- so the range/lossless
   // admission rule is pinned here directly.
+  [[nodiscard]] static OSType requestedOutputFormat(
+      const VideoStreamConfiguration& configuration) noexcept;
   [[nodiscard]] static bool admitsDecodedOutputPixelFormat(
       OSType pixelFormat, OSType expectedPixelFormat,
       VideoToolboxOutputInterop outputInterop) noexcept;

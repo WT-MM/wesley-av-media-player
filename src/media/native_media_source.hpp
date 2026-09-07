@@ -194,6 +194,7 @@ enum class MediaCodec : std::uint8_t {
   // PCM, whose sample depth those two fields carry.
   AdpcmIma,
   AdpcmMs,
+  ProRes4444,
 };
 
 enum class MediaCodecConfigurationKind : std::uint8_t {
@@ -243,6 +244,8 @@ enum class MediaVideoSampleFormat : std::uint8_t {
   Yuv420EightBit,
   Yuv420TenBit,
   Unsupported,
+  Yuv422EightBit,
+  Yuv422TenBit,
 };
 
 // Exact bounded scalar used for container display geometry. Values are always
@@ -655,6 +658,8 @@ struct MediaSourceLimits {
   }
   static constexpr std::uint32_t kHardMaximumAudioChannels{8};
   static constexpr double kHardMaximumAudioSampleRate{384'000.0};
+  // Fast-seek thresholds; longer preroll is streamed with bounded retention
+  // and may be superseded by a newer generation. These are not admission caps.
   static constexpr double kHardMaximumVideoSeekPrerollSeconds{12.0};
   static constexpr std::uint32_t kHardMaximumAudioSeekPrerollSeconds{12};
 
@@ -688,7 +693,7 @@ struct MediaSourceLimits {
   double maximumAudioSampleRate{kHardMaximumAudioSampleRate};
   double maximumVideoSeekPrerollSeconds{
       kHardMaximumVideoSeekPrerollSeconds};
-  // An integer bound keeps source/dispatcher frame-budget proofs exact.
+  // The integer fast-seek threshold keeps frame-domain comparisons exact.
   std::uint32_t maximumAudioSeekPrerollSeconds{
       kHardMaximumAudioSeekPrerollSeconds};
 };

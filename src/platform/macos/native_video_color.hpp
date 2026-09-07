@@ -10,6 +10,49 @@
 
 namespace wam::macos {
 
+inline OSType losslessCounterpartFormat(OSType pixelFormat) noexcept {
+  switch (pixelFormat) {
+  case kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange:
+    return kCVPixelFormatType_Lossless_420YpCbCr8BiPlanarVideoRange;
+  case kCVPixelFormatType_420YpCbCr8BiPlanarFullRange:
+    return kCVPixelFormatType_Lossless_420YpCbCr8BiPlanarFullRange;
+  // The 10-bit lossless forms are compressed-*packed*: they carry no padding
+  // bits between pixels, so they are not layout-compatible with the padded
+  // 'x420'/'xf20' surfaces an in-process sampler expects. That costs nothing
+  // here, because a display layer never inspects the layout.
+  //
+  // The FullRange enumerator is spelled as its four-character code '&xf0'
+  // (0x26786630) because SDKs older than the one on the development machine
+  // (e.g. the Xcode 15.4 SDK on CI runners) declare only the VideoRange
+  // form; the values are ABI, not SDK policy, so the literal is stable.
+  case kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange:
+    return kCVPixelFormatType_Lossless_420YpCbCr10PackedBiPlanarVideoRange;
+  case kCVPixelFormatType_420YpCbCr10BiPlanarFullRange:
+    return 0x26786630;  // kCVPixelFormatType_Lossless_420YpCbCr10PackedBiPlanarFullRange
+  case kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange:
+    return kCVPixelFormatType_Lossless_422YpCbCr10PackedBiPlanarVideoRange;
+  default:
+    return 0;
+  }
+}
+
+
+inline OSType fullRangeCounterpartFormat(OSType pixelFormat) noexcept {
+  switch (pixelFormat) {
+  case kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange:
+    return kCVPixelFormatType_420YpCbCr8BiPlanarFullRange;
+  case kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange:
+    return kCVPixelFormatType_420YpCbCr10BiPlanarFullRange;
+  case kCVPixelFormatType_422YpCbCr8BiPlanarVideoRange:
+    return kCVPixelFormatType_422YpCbCr8BiPlanarFullRange;
+  case kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange:
+    return kCVPixelFormatType_422YpCbCr10BiPlanarFullRange;
+  default:
+    return 0;
+  }
+}
+
+
 // The coefficients are the exact inverse-matrix top rows for each standard's
 // non-constant-luminance YCbCr:
 //   R = Y                 + 2(1-Kr)      * Cr

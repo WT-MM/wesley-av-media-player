@@ -1,3 +1,4 @@
+#include "media/native_seek_progress.hpp"
 #include "native_media_session.hpp"
 
 #include "native_presentation_admission.hpp"
@@ -307,7 +308,7 @@ class NativeV1AdmissionSource final : public media::MediaSource {
       const auto* video = selectedTrack(*result.descriptor,
                                        result.descriptor->selectedVideo);
       if (video != nullptr && video->video) {
-        refusal = nativePresentationRefusal(*video->video, *output_);
+        refusal = nativePresentationRefusal(*video->video, *output_, video->codec);
       }
     }
     if (refusal != nullptr) {
@@ -1145,7 +1146,8 @@ struct NativeMediaSession::Impl final {
       previewPulled = true;
 #endif
     }
-    if (publishedCommit.has_value() && !commitInFlight()) {
+    if (publishedCommit.has_value() &&
+        (!commitInFlight() || commitPhase == CommitPhase::AwaitingProofs)) {
       commitCommand = publishedCommit->command;
       commitTarget = publishedCommit->target;
       commitDrawBaseline = publishedCommit->drawBaseline;
@@ -1347,6 +1349,7 @@ struct NativeMediaSession::Impl final {
           out->submittedFrames = facts.output.submittedFrames;
           out->supersededFrames = facts.output.supersededFrames;
           out->discardedLateFrames = facts.discardedLateFrames;
+          out->decodedPrerollFrames = facts.discardedPrerollFrames;
           return true;
         }};
     audioControl = {
@@ -3144,7 +3147,12 @@ if (result != NativeAudioSessionProgress::Done) {
     NativeMediaSessionMetrics sampled;
     if (videoControl.metrics != nullptr && videoControl.context != nullptr &&
         videoControl.metrics(videoControl.context, &sampled)) {
+      const auto timeline = dispatcher ? dispatcher->timeline() : std::nullopt;
+      metricsSlowSeek.store(commitInFlight() && timeline &&
+          media::isSlowVideoSeek(timeline->requestedTarget, timeline->actualDecodeStart),
+          std::memory_order_relaxed);
       metricsDrawnFrames.store(sampled.drawnFrames, std::memory_order_relaxed);
+      metricsDecodedPrerollFrames.store(sampled.decodedPrerollFrames, std::memory_order_relaxed);
       metricsSubmittedFrames.store(sampled.submittedFrames,
                                    std::memory_order_relaxed);
       metricsSupersededFrames.store(sampled.supersededFrames,
@@ -3594,6 +3602,8 @@ if (result != NativeAudioSessionProgress::Done) {
   std::atomic<bool> metricsAudioValid{false};
   std::atomic<bool> metricsClockValid{false};
   std::atomic<std::uint64_t> metricsDrawnFrames{0};
+  std::atomic<std::uint64_t> metricsDecodedPrerollFrames{0};
+  std::atomic<bool> metricsSlowSeek{false};
   std::atomic<std::uint64_t> metricsSubmittedFrames{0};
   std::atomic<std::uint64_t> metricsSupersededFrames{0};
   std::atomic<std::uint64_t> metricsDiscardedLateFrames{0};
@@ -3767,7 +3777,6 @@ NativeMediaSession::preflightCommitTarget(double seconds) noexcept {
       impl_->publicLiveFailed ||
       (impl_->publicEnding && !impl_->publicEnded) ||
       !impl_->publicPrepared ||
-      impl_->publicCommitPending || impl_->commitReadySlot.has_value() ||
       impl_->publicActiveGeneration == 0 ||
       impl_->publicLastOutputEventSequence ==
           std::numeric_limits<std::uint64_t>::max() ||
@@ -4039,7 +4048,6 @@ NativeMediaSessionCommandStatus NativeMediaSession::commitSeek(
       return NativeMediaSessionCommandStatus::Ignored;
     }
     if (!impl_->publicPrepared || !impl_->publishedPrepare.has_value() ||
-        impl_->publicCommitPending || impl_->commitReadySlot.has_value() ||
         command.sourceGeneration.value != targetToken.sourceGeneration_ ||
         targetToken.sourceGeneration_ != impl_->publicActiveGeneration ||
         !(impl_->latestPreview.has_value()
@@ -4349,6 +4357,9 @@ NativeMediaSessionMetrics NativeMediaSession::metrics() const noexcept {
   if (result.videoValid) {
     result.drawnFrames =
         impl_->metricsDrawnFrames.load(std::memory_order_relaxed);
+    result.slowSeek = impl_->metricsSlowSeek.load(std::memory_order_relaxed);
+    result.decodedPrerollFrames =
+        impl_->metricsDecodedPrerollFrames.load(std::memory_order_relaxed);
     result.submittedFrames =
         impl_->metricsSubmittedFrames.load(std::memory_order_relaxed);
     result.supersededFrames =

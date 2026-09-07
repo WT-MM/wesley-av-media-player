@@ -3,12 +3,14 @@
 
 #include "media/audio_codec_timing.hpp"
 #include "media/matroska_aac.hpp"
+#include "media/matroska_apple_audio.hpp"
 #include "media/matroska_ac3.hpp"
 #include "media/matroska_flac.hpp"
 #include "media/matroska_mpeg_audio.hpp"
 #include "media/matroska_opus.hpp"
 #include "media/matroska_vorbis.hpp"
 #include "media/media_iso_color.hpp"
+#include "media/media_codec_facts.hpp"
 #include "media/video_codec_configuration.hpp"
 
 #include <algorithm>
@@ -589,7 +591,8 @@ inline constexpr std::size_t kOpusTailProbeClusters{8};
 }
 
 [[nodiscard]] bool isAudioCodec(std::string_view id) noexcept {
-  return id == "A_AAC" || id == "A_OPUS" || id == "A_VORBIS" ||
+  return id == "A_ALAC" || id == "A_PCM/INT/LIT" ||
+         id == "A_PCM/FLOAT/IEEE" || id == "A_MS/ACM" || id == "A_AAC" || id == "A_OPUS" || id == "A_VORBIS" ||
          id == "A_AC3" || id == "A_EAC3" || id == "A_FLAC" ||
          id == "A_MPEG/L3";
 }
@@ -615,7 +618,9 @@ audioCodecAllowedInDocument(std::string_view codecId,
     return true;
   }
   return codecId != "A_AC3" && codecId != "A_EAC3" && codecId != "A_FLAC" &&
-         codecId != "A_MPEG/L3";
+         codecId != "A_MPEG/L3" && codecId != "A_ALAC" &&
+         codecId != "A_PCM/INT/LIT" && codecId != "A_PCM/FLOAT/IEEE" &&
+         codecId != "A_MS/ACM";
 }
 
 [[nodiscard]] const TrackEntry* chooseTrack(
@@ -2299,6 +2304,91 @@ void fillAudioDescriptor(const TrackEntry& entry, MediaTrackId id,
          !entry.audio->outputSamplingFrequency;
 }
 
+[[nodiscard]] bool makeAppleAudioDescriptor(
+    SeekableByteReader& reader, const TrackEntry& entry,
+    const MediaSourceLimits& limits, std::span<const Cluster> clusters,
+    std::span<const TrackConstraint> constraints, std::uint64_t tickScale,
+    CancellationToken cancellation, MediaTrackDescriptor* result,
+    TrackRuntime* runtime) {
+  if (!sweepTrackFeaturesSupported(entry) || entry.codecDelayNanoseconds != 0 ||
+      !entry.audio || !trackId(entry.number)) return false;
+  const double rate = entry.audio->samplingFrequency;
+  if (!std::isfinite(rate) || rate <= 0 || rate > limits.maximumAudioSampleRate ||
+      rate != std::floor(rate) || entry.audio->channels > 2) return false;
+  std::vector<std::byte> privateBytes;
+  if (entry.codecPrivate && !readRange(reader, *entry.codecPrivate, &privateBytes, cancellation)) return false;
+  auto format = appleAudioPacketFormat(inlineString(entry.codecId), privateBytes,
+      static_cast<std::uint32_t>(rate), static_cast<std::uint32_t>(entry.audio->channels),
+      static_cast<std::uint32_t>(entry.audio->bitDepth.value_or(0)));
+  if (format.codec == MediaCodec::Unknown) return false;
+  const auto options = parserOptions(limits, constraints);
+  std::uint64_t ordinal = 0, totalFrames = 0;
+  bool shortTail = false, valid = true;
+  std::uint64_t tailOffset = 0;
+  std::int64_t tailPadding = 0;
+  for (std::size_t ci = 0; ci < clusters.size(); ++ci) {
+    if (cancellation.cancelled() || !clusters[ci].timestamp) return false;
+    if (!visitTrackBlocksInCluster(reader, clusters[ci], options, entry.number, cancellation, ci,
+        [&](std::size_t, const CapturedBlockVisitor& block) {
+          const auto tick = signedBlockTick(*clusters[ci].timestamp, block.header.relativeTimestamp);
+          if (!tick || block.frameCount == 0 || shortTail) { valid = false; return false; }
+          for (unsigned i = 0; i < block.frameCount; ++i) {
+            const auto bytes = block.frames[i].bytes;
+            std::uint32_t count = format.blockFrames;
+            if (format.codec == MediaCodec::Pcm) {
+              if (bytes.size % format.format.bytesPerFrame != 0 ||
+                  bytes.size / format.format.bytesPerFrame > limits.maximumAudioSampleCount) { valid = false; return false; }
+              count = static_cast<std::uint32_t>(bytes.size / format.format.bytesPerFrame);
+              if (format.blockFrames == 0) format.blockFrames = count;
+            } else if (format.codec == MediaCodec::Alac) {
+              std::array<std::byte, 7> header{};
+              if (bytes.size < header.size() || !reader.readAt(bytes.offset, header)) { valid = false; return false; }
+              count = alacPacketFrames(header, format.blockFrames);
+            } else if (bytes.size != format.format.bytesPerPacket) { valid = false; return false; }
+            if (count == 0 || count > format.blockFrames || shortTail) { valid = false; return false; }
+            if (i == 0) {
+              const auto projected = nearestAacAccessUnitForMatroskaTick(*tick, {0,1},
+                  static_cast<std::uint32_t>(rate), tickScale, format.blockFrames);
+              if (!aacProjectionOnGrid(projected, kMaximumOpusGridTickResidual) ||
+                  projected->accessUnitOrdinal != ordinal) { valid = false; return false; }
+            }
+            shortTail = count < format.blockFrames;
+            if (totalFrames > static_cast<std::uint64_t>(INT64_MAX) - count) { valid = false; return false; }
+            totalFrames += count;
+            ++ordinal;
+          }
+          if (block.group.discardPaddingNanoseconds) {
+            tailPadding = *block.group.discardPaddingNanoseconds;
+            const auto trim = matroskaFramesFromNanoseconds(tailPadding,
+                static_cast<std::uint32_t>(rate), format.blockFrames - 1U);
+            if (!trim || *trim >= totalFrames) { valid = false; return false; }
+            totalFrames -= *trim;
+            tailOffset = block.header.containerEncoded.offset;
+            shortTail = true;
+          }
+          return true;
+        }) || !valid) return false;
+  }
+  if (!totalFrames || totalFrames > INT64_MAX) return false;
+  const auto divisor = std::gcd(totalFrames, static_cast<std::uint64_t>(rate));
+  AudioDescriptorFields fields;
+  fields.codec = format.codec;
+  fields.formatTag = format.format.formatTag;
+  fields.sampleRate = static_cast<std::uint32_t>(rate);
+  fields.channelCount = static_cast<std::uint8_t>(entry.audio->channels);
+  fields.samplesPerAccessUnit = format.blockFrames;
+  fields.duration = {static_cast<std::int64_t>(totalFrames/divisor), static_cast<std::int32_t>(static_cast<std::uint64_t>(rate)/divisor)};
+  fields.magicCookie = format.cookie;
+  fields.tailBlockKnown = tailOffset != 0;
+  fields.tailBlockOffset = tailOffset;
+  fields.tailDiscardPaddingNanoseconds = tailPadding;
+  fillAudioDescriptor(entry, *trackId(entry.number), fields, result, runtime);
+  applyChannelLayoutTag(&format.format, fields.channelCount);
+  result->audio = format.format;
+  if (format.cookie.empty()) result->codecConfigurationKind = MediaCodecConfigurationKind::None;
+  return true;
+}
+
 [[nodiscard]] bool makeAudioDescriptor(
     SeekableByteReader& reader, const TrackEntry& entry,
     const MediaSourceLimits& limits, MediaTime duration,
@@ -2307,6 +2397,12 @@ void fillAudioDescriptor(const TrackEntry& entry, MediaTrackId id,
     std::uint64_t timestampScaleNanoseconds,
     CancellationToken cancellation, MediaTrackDescriptor* result,
     TrackRuntime* runtime) {
+  const auto appleId = inlineString(entry.codecId);
+  if (appleId == "A_ALAC" || appleId == "A_PCM/INT/LIT" ||
+      appleId == "A_PCM/FLOAT/IEEE" || appleId == "A_MS/ACM") {
+    return makeAppleAudioDescriptor(reader, entry, limits, clusters, constraints,
+        timestampScaleNanoseconds, cancellation, result, runtime);
+  }
   if (inlineString(entry.codecId) == "A_OPUS") {
     return makeOpusAudioDescriptor(reader, entry, limits, clusters, constraints,
                                    timestampScaleNanoseconds, cancellation,
@@ -2652,94 +2748,6 @@ template <typename Predicate>
 // ---------------------------------------------------------------------------
 // Random access index coverage, and the scanned index that repairs it.
 // ---------------------------------------------------------------------------
-
-// Three decimals: the resolution a 1 ms timestamp scale can actually state,
-// and never the exponent form, because these numbers end up in a verdict a
-// person reads.
-[[nodiscard]] std::string formatSeconds(double value) {
-  std::array<char, 32> buffer{};
-  const int written =
-      std::snprintf(buffer.data(), buffer.size(), "%.3f", value);
-  if (written <= 0 || static_cast<std::size_t>(written) >= buffer.size()) {
-    return std::string("?");
-  }
-  return std::string(buffer.data(), static_cast<std::size_t>(written));
-}
-
-// The widest span a seek can be asked to decode through, given an index:
-// every gap between consecutive entries, PLUS the tail from the last entry to
-// the end of the medium. Returns false when some span is wider than the seek
-// preroll this route promises to decode and discard, and reports the widest
-// span it measured either way (for the verdict text only -- the decision is
-// exact 128-bit integer arithmetic, the report is a double).
-//
-// The tail term is not decoration. The gap loop it joins starts at entry 1, so
-// a ONE-entry index -- what a live mux writes, and what the GStreamer
-// screencast carries -- used to satisfy a bound that never examined it, and
-// every seek on such a file seeded at that single entry however far away the
-// target was. A one-entry index is now measured against the duration like any
-// other.
-[[nodiscard]] bool indexSeedsWithinPreroll(
-    const AssetState& state, double* widestSpanSeconds) noexcept {
-  *widestSpanSeconds = 0.0;
-  if (state.cues.empty()) {
-    return false;
-  }
-  // The preroll bound is a policy ceiling expressed in seconds, so it enters as
-  // a whole nanosecond count once; every per-entry term below is exact 128-bit
-  // integer arithmetic. Cross-multiplying through `long double` would be plain
-  // binary64 on arm64, where a timescale near the int32 ceiling pushes both
-  // sides past a 53-bit mantissa and the bound gets decided by rounding.
-  constexpr __int128 kNanosecondsPerSecond{1'000'000'000};
-  const auto prerollNanoseconds = static_cast<__int128>(
-      state.limits.maximumVideoSeekPrerollSeconds * 1.0e9);
-  bool within = true;
-  const auto measure = [&](const MediaTime& earlier, const MediaTime& later) {
-    // (later - earlier) > preroll, cross-multiplied by both timescales and by
-    // 1e9 so the seconds bound stays an integer nanosecond count. Magnitudes:
-    // |value| < 2^63 and timescale < 2^31 bound the left side by 2^124 and the
-    // right by 2^96, both inside __int128.
-    const __int128 span =
-        (static_cast<__int128>(later.value) * earlier.timescale -
-         static_cast<__int128>(earlier.value) * later.timescale) *
-        kNanosecondsPerSecond;
-    const __int128 bound = prerollNanoseconds *
-                           static_cast<__int128>(later.timescale) *
-                           static_cast<__int128>(earlier.timescale);
-    const double seconds =
-        static_cast<double>(later.value) / static_cast<double>(later.timescale) -
-        static_cast<double>(earlier.value) / static_cast<double>(earlier.timescale);
-    if (seconds > *widestSpanSeconds) {
-      *widestSpanSeconds = seconds;
-    }
-    if (span > bound) {
-      within = false;
-    }
-  };
-  // The conversion of entry n-1 is carried forward instead of recomputed. Each
-  // conversion is a gcd reduction, and doing both ends of every gap did exactly
-  // twice the work this check needs, at open time, O(entries).
-  auto previous = timeFromSignedTick(
-      static_cast<std::int64_t>(state.cues.front().timestampTick),
-      state.timestampScaleNanoseconds);
-  if (!previous) {
-    return false;
-  }
-  for (std::size_t index = 1; index < state.cues.size(); ++index) {
-    const auto current = timeFromSignedTick(
-        static_cast<std::int64_t>(state.cues[index].timestampTick),
-        state.timestampScaleNanoseconds);
-    if (!current) {
-      return false;
-    }
-    measure(*previous, *current);
-    previous = current;
-  }
-  if (state.descriptor) {
-    measure(*previous, state.descriptor->duration);
-  }
-  return within;
-}
 
 struct ScannedCueIndexOutcome {
   MatroskaDemuxStatus status{MatroskaDemuxStatus::Ready};
@@ -3139,9 +3147,16 @@ MatroskaCursor::readNextRaw(CancellationToken cancellation) noexcept {
                                          "audio presentation overflow"};
           }
           sample.presentationTime = *presentation;
-          const std::uint64_t frameCount =
-              static_cast<std::uint64_t>(sample.frameCount) *
-              samplesPerAccessUnit;
+          std::uint64_t frameCount =
+              static_cast<std::uint64_t>(sample.frameCount) * samplesPerAccessUnit;
+          if (state.audio->codec == MediaCodec::Pcm) {
+            const auto* descriptor = findMediaTrack(*state.descriptor, state.audio->id);
+            if (!descriptor || !descriptor->audio || descriptor->audio->bytesPerFrame == 0 ||
+                bytes % descriptor->audio->bytesPerFrame != 0) {
+              return MatroskaCursorFailure{MatroskaDemuxError::InvalidTimeline, "PCM block is not frame aligned"};
+            }
+            frameCount = bytes / descriptor->audio->bytesPerFrame;
+          }
           const std::uint64_t divisor =
               std::gcd(frameCount,
                        static_cast<std::uint64_t>(state.audio->audioSampleRate));
@@ -3817,7 +3832,9 @@ namespace {
   MatroskaPrepareOutcome result;
   result.status = MatroskaDemuxStatus::Unsupported;
   result.error = MatroskaDemuxError::CodecConfiguration;
-  result.message = "selected AAC-LC or Opus track was not admitted";
+  result.message = aacSbrSignaled(configuration)
+      ? kHeAacDecoderDelayRefusal
+      : "selected AAC-LC or Opus track was not admitted";
   return result;
 }
 
@@ -4430,18 +4447,12 @@ MatroskaPrepareOutcome prepareMatroska(
     //
     // Coverage is measured by the same predicate in both places, so a scanned
     // index is held to exactly the bound a file-supplied one is.
-    double widestSpanSeconds = 0.0;
     if (state->video) {
       if (degenerate == nullptr && state->cues.empty()) {
         degenerate = "the file carries no Cues for the selected video track";
       }
       if (degenerate == nullptr && state->cues.size() > kMaximumMatroskaCues) {
         degenerate = "the selected video Cue index is over its bound";
-      }
-      if (degenerate == nullptr &&
-          !indexSeedsWithinPreroll(*state, &widestSpanSeconds)) {
-        degenerate =
-            "the selected video Cues leave a span wider than the seek preroll";
       }
       if (degenerate != nullptr) {
         const ScannedCueIndexOutcome scanned = buildScannedVideoCueIndex(
@@ -4459,31 +4470,14 @@ MatroskaPrepareOutcome prepareMatroska(
           // from, at any target, so this is the index genuinely being absent
           // rather than the medium being coarse.
           result.status = MatroskaDemuxStatus::Unsupported;
-          result.error = MatroskaDemuxError::MissingCues;
+          result.error = MatroskaDemuxError::SparseRandomAccess;
           result.message =
               std::string("no random access Block for the selected video "
                           "track exists in any Cluster, and ") +
               degenerate;
           return result;
         }
-        if (!indexSeedsWithinPreroll(*state, &widestSpanSeconds)) {
-          // Unsupported, not Failed: the file is conforming and plays from its
-          // origin perfectly well. What it cannot do is seed a seek, and the
-          // route that can (compatibility playback) should take it without the
-          // hard protocol fault a Failed status renders as.
-          result.status = MatroskaDemuxStatus::Unsupported;
-          result.error = MatroskaDemuxError::SparseRandomAccess;
-          result.message =
-              "the selected video track offers " +
-              std::to_string(state->cues.size()) +
-              (state->cues.size() == 1 ? " random access point"
-                                       : " random access points") +
-              ", leaving a " + formatSeconds(widestSpanSeconds) +
-              " s span with no seek seed against a bounded preroll of " +
-              formatSeconds(state->limits.maximumVideoSeekPrerollSeconds) +
-              " s";
-          return result;
-        }
+
       }
     }
 

@@ -1,0 +1,30 @@
+[
+  {
+    "family": "he-aac",
+    "channels": 2,
+    "rate": 48000,
+    "apple_frames": 196544,
+    "reference_frames": 196544,
+    "reference_offset_frames": 962,
+    "overlap_max_error": 4.924368113279343e-07,
+    "overlap_rms": 4.830956655637468e-08,
+    "reference_leading_962_max": 6.206305897649145e-06,
+    "apple_trailing_962_max": 0.0,
+    "apple_sha256": "b09b21970159401b2f7e29df4761dad93b8142c78510d31ea51862f6705ee5c5",
+    "reference_sha256": "0e114f18e78dc85f1394ee7296445389385bd747275518f9d0dd4b9bc1a6deb2"
+  },
+  {
+    "family": "he-aacv2",
+    "channels": 2,
+    "rate": 48000,
+    "apple_frames": 196544,
+    "reference_frames": 196544,
+    "reference_offset_frames": 962,
+    "overlap_max_error": 5.960464477539062e-07,
+    "overlap_rms": 6.103006834454339e-08,
+    "reference_leading_962_max": 4.998526037525153e-06,
+    "apple_trailing_962_max": 0.0,
+    "apple_sha256": "5380f78b91abf36698c57881267b3c0b5cc57b9c0637dda6fc7fc502996bbcbb",
+    "reference_sha256": "402bf20c2a04ce5248d0228a80845b24edccf4f5df91fad8e436bed0751d0171"
+  }
+]

@@ -144,7 +144,7 @@ struct MediaCodecFacts {
   bool requiresMjpegHeaderInspection{false};
 };
 
-inline constexpr std::array<MediaCodecFacts, 21> kMediaCodecFacts{{
+inline constexpr std::array<MediaCodecFacts, 22> kMediaCodecFacts{{
     {MediaCodec::Unknown, MediaCodecKind::Unknown, 0,
      MediaCodecConfigurationKind::None, nullptr, false, false, false, false,
      false, false, 0},
@@ -226,7 +226,38 @@ inline constexpr std::array<MediaCodecFacts, 21> kMediaCodecFacts{{
     {MediaCodec::AdpcmMs, MediaCodecKind::Audio, 0,
      MediaCodecConfigurationKind::None, nullptr, false, false, false, false,
      false, false, 0},
+    // Opaque presentation ignores alpha in packed RGB10; chroma is not subsampled.
+    {MediaCodec::ProRes4444, MediaCodecKind::Video, 0x61703468U,
+     MediaCodecConfigurationKind::None, nullptr, false, true, true, false,
+     false, true, 0},
 }};
+
+inline constexpr std::uint32_t kHeAacImplicitDecoderDelayFrames = 962;
+inline constexpr const char* kHeAacDecoderDelayRefusal =
+    "HeAacSbrDecoderDelayUnproven: doubled-rate delay and tail lack an exact ownership proof";
+
+[[nodiscard]] constexpr bool aacSbrSignaled(std::span<const std::byte> asc) noexcept {
+  if (asc.empty()) return false;
+  const auto type = std::to_integer<unsigned>(asc[0]) >> 3U;
+  if (type == 5U || type == 29U) return true;
+  return asc.size() >= 5 && type == 2U && asc[2] == std::byte{0x56} &&
+         asc[3] == std::byte{0xe5} && (std::to_integer<unsigned>(asc[4]) & 0x80U);
+}
+
+[[nodiscard]] constexpr bool mediaSampleFormatIs422(MediaVideoSampleFormat format) noexcept {
+  return format == MediaVideoSampleFormat::Yuv422EightBit ||
+         format == MediaVideoSampleFormat::Yuv422TenBit;
+}
+
+[[nodiscard]] constexpr unsigned mediaSampleFormatDepth(MediaVideoSampleFormat format) noexcept {
+  switch (format) {
+  case MediaVideoSampleFormat::Yuv420EightBit:
+  case MediaVideoSampleFormat::Yuv422EightBit: return 8;
+  case MediaVideoSampleFormat::Yuv420TenBit:
+  case MediaVideoSampleFormat::Yuv422TenBit: return 10;
+  default: return 0;
+  }
+}
 
 // The row for a codec.
 //
@@ -243,7 +274,7 @@ mediaCodecFacts(MediaCodec codec) noexcept {
 
 // The last enumerator of the frozen, append-only MediaCodec. Appending one
 // without adding its row fails the coverage assertion below.
-inline constexpr MediaCodec kLastMediaCodec = MediaCodec::AdpcmMs;
+inline constexpr MediaCodec kLastMediaCodec = MediaCodec::ProRes4444;
 inline constexpr std::size_t kMediaCodecCount =
     static_cast<std::size_t>(kLastMediaCodec) + 1U;
 
@@ -277,7 +308,7 @@ static_assert(detail::mediaCodecFactsRowsAreOrdered(),
 // The 4444 family ('ap4h'/'ap4x') is interchangeable within itself and NOT with
 // this one -- feeding 4444 samples to a 422-family session fails with -12916,
 // and the reverse fails identically -- so the two are different decode
-// contracts and only this one has an enumerator to be named by.
+// contracts with distinct enumerators.
 inline constexpr std::array<std::uint32_t, 4> kProRes422FamilyCoreMediaTypes{
     0x6170636FU /* 'apco', Proxy */, 0x61706373U /* 'apcs', LT */,
     0x6170636EU /* 'apcn', 422 */, 0x61706368U /* 'apch', HQ */};
@@ -297,6 +328,9 @@ mediaCodecForCoreMediaType(std::uint32_t coreMediaType) noexcept {
     if (coreMediaType == proRes) {
       return MediaCodec::ProRes;
     }
+  }
+  if (coreMediaType == 0x61703478U) {
+    return MediaCodec::ProRes4444;
   }
   for (const MediaCodecFacts &facts : kMediaCodecFacts) {
     if (facts.coreMediaType == coreMediaType) {

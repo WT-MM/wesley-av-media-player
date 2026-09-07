@@ -88,7 +88,9 @@ void testCoreMediaTypesRoundTrip() {
   }
   // 'ap4h' is the 4444 family, a SECOND decode contract this build does not
   // admit, so it must stay unnamed rather than fold into the 422 enumerator.
-  expect(mediaCodecForCoreMediaType(0x61703468U) == MediaCodec::Unknown,
+  expect(mediaCodecForCoreMediaType(0x61703468U) == MediaCodec::ProRes4444 &&
+             mediaCodecForCoreMediaType(0x61703478U) == MediaCodec::ProRes4444 &&
+             mediaCodecFacts(MediaCodec::ProRes4444).requiresHardwareDecode,
          "ProRes 4444 is not named by the 422 enumerator");
   expect(mediaCodecForCoreMediaType(0) == MediaCodec::Unknown &&
              mediaCodecForCoreMediaType(0x7A7A7A7AU) == MediaCodec::Unknown,

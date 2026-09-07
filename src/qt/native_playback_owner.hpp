@@ -1,5 +1,7 @@
 #pragma once
 
+#include "media/native_seek_progress.hpp"
+
 #include "media/playback_router.hpp"
 #include "platform/macos/native_media_session.hpp"
 #include "platform/macos/native_preview_frame_lane.hpp"
@@ -254,6 +256,7 @@ private:
   bool surfaceLost_{false};
   std::uint64_t nativePhaseWatchdogEpoch_{0};
   bool nativePhaseWatchdogArmed_{false};
+  media::SeekProgressDeadline nativeSeekProgress_{};
   NativeBenchmarkTelemetry *telemetry_{nullptr};
   // Constructed only when the opt-in playback metrics stream is enabled.
   std::unique_ptr<QTimer> metricsTimer_;

@@ -1,0 +1,112 @@
+[
+  {
+    "file": "hevc422.mov",
+    "bytes": 29159,
+    "sha256": "2462d3e1353041275066f09d719dae1b7f45691a9bc86aa504e39d5594f57c37"
+  },
+  {
+    "file": "prores4444.mov",
+    "bytes": 1449447,
+    "sha256": "8942947cd94a421af0162e6569bda4ef0f7efb604a195696c5a481926f1022ce"
+  },
+  {
+    "file": "prores4444xq.mov",
+    "bytes": 1449447,
+    "sha256": "45dcb50baf699a7b2576f4e8f81480657c5caa9fb55a2725e080db176daea9b7"
+  },
+  {
+    "file": "vp9p2.mp4",
+    "bytes": 40160,
+    "sha256": "5a14d43d9b0914a8142b8077089f58718dfc308a3bc78e0d84a3781ad54f6ceb"
+  },
+  {
+    "file": "av1-10.mp4",
+    "bytes": 46629,
+    "sha256": "902270a41ee06ef164ac909c1932cac3194c1c31e7f2f06eeb5db9beec0a9771"
+  },
+  {
+    "file": "hevc444.mp4",
+    "bytes": 20105,
+    "sha256": "6a1c6feb1b241b2b966bb3220a2186fcd1697c815b46b98d8db4abab98a2785a"
+  },
+  {
+    "file": "single-gop.mp4",
+    "bytes": 3736411,
+    "sha256": "84a37b19b6d93617822e30caf1517610a5c63fc33476553b04dd3e538a4343b1"
+  },
+  {
+    "file": "pcm_s16le.mka",
+    "bytes": 769876,
+    "sha256": "0293d5c657770b99e7ee0cd2691a606ef8ddedcda42a3e66d43c9d113e7d99bb"
+  },
+  {
+    "file": "pcm_f32le.mka",
+    "bytes": 1537879,
+    "sha256": "2e0b0ae0ca41692e5515c6ddd8fc9d820fb4ae564fcafb49b2e6085dc0348537"
+  },
+  {
+    "file": "alac.mka",
+    "bytes": 596038,
+    "sha256": "d1a32b592fc28827f397c3db73aef4da1f1587ba53289f36787f06f23d8147f3"
+  },
+  {
+    "file": "adpcm_ima_wav.mka",
+    "bytes": 195461,
+    "sha256": "d46d1c5440681a0f1d36ef9d5ec26313eb06ee6cf9d6a77be70a8a7217ac1e04"
+  },
+  {
+    "file": "adpcm_ms.mka",
+    "bytes": 196518,
+    "sha256": "675ba1c71f1ce1e4cdeae4446e8353fbd611555b9b3dbc4079a9be395d959ee9"
+  },
+  {
+    "file": "he-aac-28.m4a",
+    "bytes": 25999,
+    "sha256": "29dd1219c9b0f5909c44ed5d24472a9ddb27e485b6d4de99e8bbf8ed7b6f0ce5"
+  },
+  {
+    "file": "he-aac-4.m4a",
+    "bytes": 25890,
+    "sha256": "b630eab8e05459bd7b6eb415da0c6143534c4315daae8882dd43adef81cae866"
+  },
+  {
+    "file": "he-aac-4.m4a.mka",
+    "bytes": 26046,
+    "sha256": "744567cab1b7ce66db98009f2f9341c31c28b2ce22680409eff7cfac77c01d0a"
+  },
+  {
+    "file": "he-aac-28.m4a.mka",
+    "bytes": 26157,
+    "sha256": "6e642b8c4338216e7d2a4cb70736118296c6c8e3f8a43803f26256e414a49f76"
+  },
+  {
+    "file": "single-gop-4k.mp4",
+    "bytes": 45027,
+    "sha256": "72cf058c022de01751bbfb352f12207919d4e6e19ae97da305415bebffacf4af",
+    "argv": [
+      "ffmpeg",
+      "-v",
+      "error",
+      "-y",
+      "-f",
+      "lavfi",
+      "-i",
+      "color=c=blue:size=3840x2160:rate=30",
+      "-t",
+      "40",
+      "-c:v",
+      "libx264",
+      "-preset",
+      "ultrafast",
+      "-threads",
+      "2",
+      "-g",
+      "99999",
+      "-keyint_min",
+      "99999",
+      "-sc_threshold",
+      "0",
+      "test-media/native-phase0b/single-gop-4k.mp4"
+    ]
+  }
+]
