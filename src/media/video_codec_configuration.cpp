@@ -361,7 +361,8 @@ struct ParsedSpsFacts {
   std::uint32_t dependencyId{0};
   std::uint32_t width{0};
   std::uint32_t height{0};
-  std::uint8_t bitDepth{0};
+  std::uint8_t bitDepth{8};
+  std::uint8_t chromaFormat{1};
   std::uint8_t reorderFrames{0};
   bool reorderFramesInferred{false};
   bool temporalIdNested{false};
@@ -370,12 +371,12 @@ struct ParsedSpsFacts {
 
 // chroma_format_idc through seq_scaling_matrix, present only for the
 // high-profile family (H.264 7.3.2.1.1).
-[[nodiscard]] Error parseH264SpsHighProfileFields(RbspBitReader &bits) noexcept {
+[[nodiscard]] Error parseH264SpsHighProfileFields(RbspBitReader &bits, bool software, ParsedSpsFacts& facts) noexcept {
   const std::uint32_t chromaFormat = bits.readUnsignedExpGolomb();
   if (!bits.ok()) {
     return Error::MalformedRecord;
   }
-  if (chromaFormat != 1U) {
+  if (chromaFormat != 1U && !(software && chromaFormat == 2U)) {
     return Error::UnsupportedChromaFormat;
   }
   const std::uint32_t lumaDepthMinusEight = bits.readUnsignedExpGolomb();
@@ -383,9 +384,12 @@ struct ParsedSpsFacts {
   if (!bits.ok()) {
     return Error::MalformedRecord;
   }
-  if (lumaDepthMinusEight != 0U || chromaDepthMinusEight != 0U) {
+  if (lumaDepthMinusEight != chromaDepthMinusEight ||
+      (lumaDepthMinusEight != 0U && !(software && lumaDepthMinusEight == 2U))) {
     return Error::UnsupportedBitDepth;
   }
+  facts.bitDepth = static_cast<std::uint8_t>(8U + lumaDepthMinusEight);
+  facts.chromaFormat = static_cast<std::uint8_t>(chromaFormat);
   bits.skipBits(1U);
   if (bits.readBit()) {
     for (std::size_t index = 0; index < 8U; ++index) {
@@ -452,7 +456,7 @@ parseH264SpsGeometry(RbspBitReader &bits,
       (static_cast<std::uint64_t>(crop[0]) + crop[1]) * 2U;
   const std::uint64_t cropHeight =
       (static_cast<std::uint64_t>(crop[2]) + crop[3]) *
-      (frameMbsOnly ? 2U : 4U);
+      (frameMbsOnly ? 1U : 2U) * (facts.chromaFormat == 1U ? 2U : 1U);
   if (cropWidth >= storageWidth || cropHeight >= storageHeight) {
     return Error::MalformedRecord;
   }
@@ -562,17 +566,17 @@ parseH264SpsGeometry(RbspBitReader &bits,
   if ((compatibility & 0x03U) != 0U) {
     return Error::MalformedRecord;
   }
-  if (!h264AdmittedProfile(profile)) {
+  if (!h264AdmittedProfile(profile) &&
+      !(limits.admitSoftwareProfiles && (profile == 110U || profile == 122U))) {
     return Error::UnsupportedProfile;
   }
   facts.id = bits.readUnsignedExpGolombAtMost(31U);
   if (h264HighProfile(profile)) {
-    const Error error = parseH264SpsHighProfileFields(bits);
+    const Error error = parseH264SpsHighProfileFields(bits, limits.admitSoftwareProfiles && !h264AdmittedProfile(profile), facts);
     if (error != Error::None) {
       return error;
     }
   }
-  facts.bitDepth = 8U;
   skipH264SpsPictureOrderCount(bits);
   H264SpsGeometry geometry;
   const Error geometryError =
@@ -1175,7 +1179,7 @@ void parseHevcVui(RbspBitReader &bits, std::uint32_t subLayers,
 [[nodiscard]] bool sameImmutableFacts(const ParsedSpsFacts &left,
                                       const ParsedSpsFacts &right) noexcept {
   return left.width == right.width && left.height == right.height &&
-         left.bitDepth == right.bitDepth &&
+         left.bitDepth == right.bitDepth && left.chromaFormat == right.chromaFormat &&
          left.reorderFrames == right.reorderFrames &&
          left.temporalIdNested == right.temporalIdNested &&
          left.color == right.color;
@@ -1189,7 +1193,8 @@ inspectAvcC(std::span<const std::uint8_t> bytes,
     return rejected(Error::MalformedRecord);
   }
   const std::uint8_t profile = bytes[1];
-  if (!h264AdmittedProfile(profile)) {
+  if (!h264AdmittedProfile(profile) &&
+      !(limits.admitSoftwareProfiles && (profile == 110U || profile == 122U))) {
     return rejected(Error::UnsupportedProfile);
   }
 
@@ -1278,11 +1283,11 @@ inspectAvcC(std::span<const std::uint8_t> bytes,
     // present, accept only the current 4:2:0 8-bit contract and no SPS-ext
     // payload. Anything else is a real, unsupported tail rather than padding.
     if (!h264HighProfile(profile) || bytes.size() - offset != 4U ||
-        (bytes[offset] & 0xFCU) != 0xFCU || (bytes[offset] & 0x03U) != 1U ||
+        (bytes[offset] & 0xFCU) != 0xFCU || (bytes[offset] & 0x03U) != canonical->chromaFormat ||
         (bytes[offset + 1U] & 0xF8U) != 0xF8U ||
-        (bytes[offset + 1U] & 0x07U) != 0U ||
+        (bytes[offset + 1U] & 0x07U) != canonical->bitDepth - 8U ||
         (bytes[offset + 2U] & 0xF8U) != 0xF8U ||
-        (bytes[offset + 2U] & 0x07U) != 0U || bytes[offset + 3U] != 0U) {
+        (bytes[offset + 2U] & 0x07U) != canonical->bitDepth - 8U || bytes[offset + 3U] != 0U) {
       return rejected(Error::MalformedRecord);
     }
     offset += 4U;
@@ -1290,6 +1295,12 @@ inspectAvcC(std::span<const std::uint8_t> bytes,
   if (!canonical || offset != bytes.size()) {
     return rejected(Error::MalformedRecord);
   }
+  result.bitDepth = canonical->bitDepth;
+  result.profile = h264AdmittedProfile(profile) ? 0U : profile;
+  if (canonical->chromaFormat == 2U)
+    result.sampleFormat = canonical->bitDepth == 10U ? MediaVideoSampleFormat::Yuv422TenBit : MediaVideoSampleFormat::Yuv422EightBit;
+  else
+    result.sampleFormat = canonical->bitDepth == 10U ? MediaVideoSampleFormat::Yuv420TenBit : MediaVideoSampleFormat::Yuv420EightBit;
   result.width = canonical->width;
   result.height = canonical->height;
   result.color = canonical->color;
@@ -2220,7 +2231,8 @@ inspectMpeg4Visual(std::span<const std::uint8_t> bytes,
   if (!splitMpeg4VisualHeaders(bytes, headers)) {
     return rejected(Error::MalformedRecord);
   }
-  if (!mpeg4SimpleProfileIndication(headers.profileAndLevel)) {
+  const bool asp = limits.admitSoftwareProfiles && headers.profileAndLevel >= 0xF0U && headers.profileAndLevel <= 0xF5U;
+  if (!mpeg4SimpleProfileIndication(headers.profileAndLevel) && !asp) {
     return rejected(Error::UnsupportedProfile);
   }
   VideoCodecColorFacts color;
@@ -2238,9 +2250,9 @@ inspectMpeg4Visual(std::span<const std::uint8_t> bytes,
   }
   // THE GATE. Both fields, and the profile byte, must independently say Simple
   // Profile version 1 -- this is what VideoToolbox itself enforces, measured.
-  if (layer.videoObjectType != kMpeg4SimpleVideoObjectType ||
-      layer.verid != kMpeg4Version1Verid ||
-      visualObjectVerid != kMpeg4Version1Verid) {
+  if ((!asp && (layer.videoObjectType != kMpeg4SimpleVideoObjectType ||
+      layer.verid != kMpeg4Version1Verid || visualObjectVerid != kMpeg4Version1Verid)) ||
+      (asp && layer.videoObjectType != 17U)) {
     return rejected(Error::UnsupportedProfile);
   }
   // Everything below is a feature Simple Profile forbids, so a layer that
@@ -2274,7 +2286,7 @@ inspectMpeg4Visual(std::span<const std::uint8_t> bytes,
   // Simple Profile forbids B-VOPs, so decode order is presentation order and
   // nothing is ever held back. This zero is what lets the Matroska route carry
   // the codec with no reorder window at all.
-  result.maximumReorderFrames = 0U;
+  result.maximumReorderFrames = asp ? 2U : 0U;
   result.color = color;
   return {Error::None, result};
 }
@@ -2373,6 +2385,13 @@ inspectMpeg4VisualHeaders(std::span<const std::byte> headers,
     return rejected(Error::ConfigurationTooLarge);
   }
   return inspectMpeg4Visual(asBytes(headers), limits);
+}
+
+std::optional<std::span<const std::byte>>
+mpeg4VisualDecoderSpecificInfo(std::span<const std::byte> esds) noexcept {
+  std::span<const std::uint8_t> payload;
+  if (!mpeg4VisualEsdsDecoderSpecificInfo(asBytes(esds), payload)) return std::nullopt;
+  return std::span<const std::byte>(reinterpret_cast<const std::byte*>(payload.data()), payload.size());
 }
 
 bool buildMpeg4VisualEsds(std::span<const std::byte> headers,

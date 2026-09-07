@@ -1,31 +1,53 @@
-# Native decoder dependency lock — plan only
+# Native decoder dependency lock — phase 2 work in progress
 
-Status: no FFmpeg library configured, built, linked or bundled by this change.
-The existing fixture/export CLI remains a separate executable. The native route
-continues to use Apple frameworks and the existing optional libvpx stage.
+Status: FFmpeg 9.0.1 is built locally. The opt-in video stage and standalone
+audio adapter have tests; phase 2 acceptance is incomplete. Automatic releases
+keep WAM_ENABLE_AVCODEC_STAGE off until the remaining integration and campaign
+are accepted. See [phase 2 report](phase2/REPORT.md).
 
 ## Source lock
 
 | Input | Pin |
 | --- | --- |
-| FFmpeg release | 8.1.1 |
-| Archive | https://ffmpeg.org/releases/ffmpeg-8.1.1.tar.xz |
-| SHA-256 | `b6863adde98898f42602017462871b5f6333e65aec803fdd7a6308639c52edf3` |
-| Signature | https://ffmpeg.org/releases/ffmpeg-8.1.1.tar.xz.asc |
+| FFmpeg release | 9.0.1 |
+| Archive | https://ffmpeg.org/releases/ffmpeg-9.0.1.tar.xz |
+| SHA-256 | `cf38e0e28c7e5605942c4a77755349b0145804a397af37eb1fb4c77cb237f635` |
+| Signature | https://ffmpeg.org/releases/ffmpeg-9.0.1.tar.xz.asc |
 | Patch set | empty; any future patch must acquire an individual SHA-256 |
-| Architectures | separate arm64 and x86_64 builds, universal libraries after ABI comparison |
+| Architectures | arm64; x86_64 deferred |
 | Deployment target | macOS 13.3 |
 | External FFmpeg dependencies | none; automatic dependency discovery disabled |
 
-The archive was downloaded from the primary release server and hashed locally
-on 2026-09-06. Its configure help was inspected, but configure was not executed.
-Signature authentication is a release prerequisite; this run does not claim it.
-The reproducible release recipe must additionally record the exact Xcode/clang,
-SDK, environment, archive signature/key verification and configure outputs.
-The local fixture FFmpeg version is recorded separately in specimen receipts;
-it is not the proposed library build.
+The owner supplied the archive offline. Its SHA-256 was verified before
+extraction; no downloads were attempted. Signature authentication is unclaimed.
+The unchanged archive is retained in `third_party/ffmpeg-source/` so CI can
+rebuild without a download. No source patches were applied.
 
-## Proposed configure arguments
+## Executed build
+
+`scripts/build_ffmpeg_lgpl.sh` is the authoritative argument vector. The exact
+shell-escaped [configure command](phase2/configure-command.txt),
+[build receipt](phase2/build-receipt.txt), configuration headers, license texts
+and [notices](phase2/FFMPEG_NOTICES.md) are retained alongside the report.
+The local build took 36 seconds with four jobs, installed 6.2 MiB into
+`third_party/ffmpeg-lgpl/`, and removed its intermediate build directory.
+Only libavcodec and libavutil are built. Layout copies and planar-to-interleaved
+float conversion need neither swscale nor swresample. libavformat is disabled.
+Libraries use the `-wamnative` suffix to prevent basename collisions with the
+export and mpv closure. Coexistence of both configurations in one process has
+not been accepted; the single-playback-closure requirement below remains a
+release blocker. The suffix alone is not that proof. The opt-in target currently links the
+libraries eagerly; lazy-stage binding remains required before release.
+
+The native AV1 decoder in this source requires a hardware accelerator
+(`libavcodec/av1dec.c`, get_pixel_format). Software AV1 requires a separately
+pinned dav1d/libaom dependency. It is not advertised by this build.
+
+## Superseded phase-0 configure sketch
+
+The sketch below is historical; the executed command above disables avformat,
+swscale, swresample and all decoders except the explicit whitelist.
+
 
 Run once per architecture in isolated build directories, with an empty pkg-config
 search path and an explicit SDK root. Substitute architecture and staging prefix:

@@ -1,0 +1,397 @@
+[
+  {
+    "path": "/Users/wesleymaa/Downloads/kbot-pushing.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/appleads.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/Untitled.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=68766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/leflexitac_assembly_edited_compressed.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/vidya.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/PXL_20250729_045448421.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "REFUSED"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/human_teleop.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/C0478_1.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/teleop.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/IMG_6793.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/pyflexitac_tutorial_compressed.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/boxing_trimmed.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/Untitled-wam.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/fasterkick.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/SLOWMOTION.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/trimmed_handpose_test.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/leflexitac_assembly.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/stand_jun2.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/C0478.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/leflexitac_assembly_light.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/boxing_trimed.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/leflexitac_assembly_edited.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/Screen Recording 2024-10-16 at 6.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/side_cam.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/RobstrideOfficeSmall.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/il_rollout.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/embedded.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/vids/left_1.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/vids/left_0.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/vids/left_2.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/vids/left_3.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/vids/left_4.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/vids/left_5.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/mujoco_scripts/force_test_20250206_100039.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/insta_2025/kbot-pushing-short.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/slide_assets/pizza.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/slide_assets/diffusion_yep.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/slide_assets/diffusion_example.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/slide_assets/wipe_ood_4x.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/slide_assets/lstm_example.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/slide_assets/franka_pour_corn.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/slide_assets/trimmed_autorollout.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/_part1_5x_6x.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/angel_bamboo_6x_8x.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/angel_bamboo_20s.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/_part2_4x_5x.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/angel_bamboo_60s.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/_shishi1_4x_5x.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/shishi_prep.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/_shishi2_5x_6x.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/shishi_odoshi.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/shishi_video.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/part1.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/angel_bamboo_30s.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/_part2_6x_8x.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/part2.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/_shishi2_3x_4x.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/angel_bamboo_4x_5x.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/_part1_3x_4x.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/_shishi1_6x_8x.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/shishi2_raw.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/shishi2_v.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/_shishi1_3x_4x.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/angel_bamboo_5x_6x.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/angel_bamboo_45s.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/_part1_6x_8x.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/video_no_audio.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/_shishi2_6x_8x.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/_part2_3x_4x.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/shishi1_v.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/_part1_4x_5x.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/_part2_5x_6x.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/angel_bamboo_15s.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/_shishi1_5x_6x.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/_shishi2_4x_5x.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/angel_bamboo_3x_4x.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/angel_bamboo_final.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Desktop/Audio Files/POW #4 Oral Presentation.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Desktop/Audio Files/\u841d\u535c\u7cd5.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  }
+]

@@ -1,0 +1,122 @@
+[
+  {
+    "name": "ladder_order",
+    "path": "src/media/native_decode_plan.hpp",
+    "returncode": -6,
+    "stdout": "",
+    "stderr": "line 57: plan.implementation==DecodeImplementation::VideoToolboxHardware\n",
+    "killed": true,
+    "before_sha256": "a9b86ab60c1a3ed6db6fea11a19f1c459590742602ea8f029d565667fa0fe05e",
+    "restored_sha256": "a9b86ab60c1a3ed6db6fea11a19f1c459590742602ea8f029d565667fa0fe05e"
+  },
+  {
+    "name": "owned_packet",
+    "path": "src/media/avcodec/decode_worker.cpp",
+    "returncode": -6,
+    "stdout": "",
+    "stderr": "[h264 @ 0xba6c10000] Invalid NAL unit size (0 > 4513).\n[h264 @ 0xba6c10000] Error splitting the input into NAL units.\nline 79: !worker.failure()\n",
+    "killed": true,
+    "before_sha256": "95f4e8e219f30a1cc550a755194a71aa3a4d0ef21ddc743b39f19f06d8bdae3c",
+    "restored_sha256": "95f4e8e219f30a1cc550a755194a71aa3a4d0ef21ddc743b39f19f06d8bdae3c"
+  },
+  {
+    "name": "frame_pts",
+    "path": "src/media/avcodec/decode_worker.cpp",
+    "returncode": -6,
+    "stdout": "",
+    "stderr": "line 35: time==__int128(self.count.load())*40\n",
+    "killed": true,
+    "before_sha256": "95f4e8e219f30a1cc550a755194a71aa3a4d0ef21ddc743b39f19f06d8bdae3c",
+    "restored_sha256": "95f4e8e219f30a1cc550a755194a71aa3a4d0ef21ddc743b39f19f06d8bdae3c"
+  },
+  {
+    "name": "generation",
+    "path": "src/media/avcodec/decode_worker.cpp",
+    "returncode": -6,
+    "stdout": "",
+    "stderr": "line 75: worker.submit(bytes,stale)==WorkerResult::StaleGeneration\n",
+    "killed": true,
+    "before_sha256": "95f4e8e219f30a1cc550a755194a71aa3a4d0ef21ddc743b39f19f06d8bdae3c",
+    "restored_sha256": "95f4e8e219f30a1cc550a755194a71aa3a4d0ef21ddc743b39f19f06d8bdae3c"
+  },
+  {
+    "name": "drain",
+    "path": "src/media/avcodec/decode_worker.cpp",
+    "returncode": -6,
+    "stdout": "",
+    "stderr": "AvcodecDrainNeedsInput\nline 89: !worker.failure()\n",
+    "killed": true,
+    "before_sha256": "95f4e8e219f30a1cc550a755194a71aa3a4d0ef21ddc743b39f19f06d8bdae3c",
+    "restored_sha256": "95f4e8e219f30a1cc550a755194a71aa3a4d0ef21ddc743b39f19f06d8bdae3c"
+  },
+  {
+    "name": "frame_preservation",
+    "path": "src/media/avcodec/decode_worker.cpp",
+    "returncode": -6,
+    "stdout": "",
+    "stderr": "line 35: time==__int128(self.count.load())*40\n",
+    "killed": true,
+    "before_sha256": "95f4e8e219f30a1cc550a755194a71aa3a4d0ef21ddc743b39f19f06d8bdae3c",
+    "restored_sha256": "95f4e8e219f30a1cc550a755194a71aa3a4d0ef21ddc743b39f19f06d8bdae3c"
+  },
+  {
+    "name": "planar_float",
+    "path": "src/platform/macos/software_avcodec_audio_backend.cpp",
+    "returncode": -6,
+    "stdout": "",
+    "stderr": "line 39: std::abs(output[i]-expected[frames*2+i])<=(dts?0.000002F:0.0F)\n",
+    "killed": true,
+    "before_sha256": "cd5e7e1e9b7686ee88070fb3d3901bdc0f6c95b35a7ac5eab43b4658f93dd29c",
+    "restored_sha256": "cd5e7e1e9b7686ee88070fb3d3901bdc0f6c95b35a7ac5eab43b4658f93dd29c"
+  },
+  {
+    "name": "packet_release",
+    "path": "src/platform/macos/software_avcodec_audio_backend.cpp",
+    "returncode": -6,
+    "stdout": "",
+    "stderr": "line 37: result.finalInputReleased\n",
+    "killed": true,
+    "before_sha256": "cd5e7e1e9b7686ee88070fb3d3901bdc0f6c95b35a7ac5eab43b4658f93dd29c",
+    "restored_sha256": "cd5e7e1e9b7686ee88070fb3d3901bdc0f6c95b35a7ac5eab43b4658f93dd29c"
+  },
+  {
+    "name": "audio_piece_offset",
+    "path": "src/platform/macos/software_avcodec_audio_backend.cpp",
+    "returncode": -6,
+    "stdout": "",
+    "stderr": "line 39: std::abs(output[i]-expected[frames*2+i])<=(dts?0.000002F:0.0F)\n",
+    "killed": true,
+    "before_sha256": "cd5e7e1e9b7686ee88070fb3d3901bdc0f6c95b35a7ac5eab43b4658f93dd29c",
+    "restored_sha256": "cd5e7e1e9b7686ee88070fb3d3901bdc0f6c95b35a7ac5eab43b4658f93dd29c"
+  },
+  {
+    "name": "video_lane",
+    "path": "src/platform/macos/video_decode_lane.hpp",
+    "returncode": -6,
+    "stdout": "",
+    "stderr": "line 105: decoder.configure(config,sink,&error)\n",
+    "killed": true,
+    "before_sha256": "53e5dcc1a86d979c0365b6b730359e2cd8fef2bb849e73b57781b99cadf316fd",
+    "restored_sha256": "53e5dcc1a86d979c0365b6b730359e2cd8fef2bb849e73b57781b99cadf316fd"
+  },
+  {
+    "name": "p010_bits",
+    "path": "src/platform/macos/software_presentation_pool.mm",
+    "returncode": -6,
+    "stdout": "",
+    "stderr": "line 41: std::uint16_t(a<<6)==b\n",
+    "killed": true,
+    "before_sha256": "526e691cbb4d70047c6d8317d5664fa53aad9c65d88fb5738f099294314e123f",
+    "restored_sha256": "526e691cbb4d70047c6d8317d5664fa53aad9c65d88fb5738f099294314e123f"
+  },
+  {
+    "name": "software_sps",
+    "path": "src/media/video_codec_configuration.cpp",
+    "returncode": -6,
+    "stdout": "",
+    "stderr": "line 105: decoder.configure(config,sink,&error)\n",
+    "killed": true,
+    "before_sha256": "50a9142a66b67e75d75c6241b47d63d7bc5e78777c387c05cd32dedfef60d212",
+    "restored_sha256": "50a9142a66b67e75d75c6241b47d63d7bc5e78777c387c05cd32dedfef60d212"
+  }
+]

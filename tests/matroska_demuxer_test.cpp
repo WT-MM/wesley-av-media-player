@@ -1971,9 +1971,15 @@ void testCodecAdmissionAndSelection() {
     // failing an open.
     FixtureSpec spec = mpeg4VisualFixtureSpec();
     spec.videoCodecPrivate = fromOctets(kSampleMpeg4AdvancedSimple);
+#if defined(WAM_ENABLE_AVCODEC_STAGE)
+    const PreparedFixture prepared = prepareFixture(spec);
+    expect(prepared.outcome.status == MatroskaDemuxStatus::Ready && prepared.outcome.asset,
+           "Advanced Simple Profile is admitted when the libavcodec stage is built");
+#else
     expectPrepareError(spec, MatroskaDemuxError::CodecConfiguration,
                        "an Advanced Simple Profile MPEG-4 Part 2 track is not "
                        "admitted");
+#endif
   }
   {
     // The headers are the only fact source, so a track without them cannot be

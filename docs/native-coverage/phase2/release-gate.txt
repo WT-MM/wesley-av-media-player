@@ -1,0 +1,14 @@
+release.yml external Mach-O dependency audit: PASS
+/private/tmp/wam-ffmpeg-phase2/bundle/WAM.app/Contents/Frameworks/libavcodec-wamnative.63.dylib:
+	@rpath/libavcodec-wamnative.63.dylib (compatibility version 63.0.0, current version 63.1.101)
+	@loader_path/libavutil-wamnative.61.dylib (compatibility version 61.0.0, current version 61.1.101)
+	/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1356.0.0)
+	/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation (compatibility version 150.0.0, current version 5026.5.4)
+	/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo (compatibility version 1.2.0, current version 734.4.0)
+	/System/Library/Frameworks/CoreMedia.framework/Versions/A/CoreMedia (compatibility version 1.0.0, current version 3320.8.5)
+/private/tmp/wam-ffmpeg-phase2/bundle/WAM.app/Contents/Frameworks/libavutil-wamnative.61.dylib:
+	@rpath/libavutil-wamnative.61.dylib (compatibility version 61.0.0, current version 61.1.101)
+	/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1356.0.0)
+	/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation (compatibility version 150.0.0, current version 5026.5.4)
+	/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo (compatibility version 1.2.0, current version 734.4.0)
+	/System/Library/Frameworks/CoreMedia.framework/Versions/A/CoreMedia (compatibility version 1.0.0, current version 3320.8.5)

@@ -1,0 +1,12 @@
+[
+  [
+    "/private/tmp/wam-ffmpeg-phase2/bundle/WAM.app/Contents/Frameworks/QtPdf.framework/Versions/A/QtPdf",
+    "/opt/homebrew/opt/libpng/lib/libpng16.16.dylib",
+    "@rpath/libpng16.16.dylib"
+  ],
+  [
+    "/private/tmp/wam-ffmpeg-phase2/bundle/WAM.app/Contents/Frameworks/QtHunspellInputMethod.framework/Versions/A/QtHunspellInputMethod",
+    "/opt/homebrew/opt/hunspell/lib/libhunspell-1.7.0.dylib",
+    "@rpath/libhunspell-1.7.0.dylib"
+  ]
+]

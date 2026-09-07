@@ -1,0 +1,2 @@
+native_codec_stages version=1 libavcodec=63 libavutil=61 license=LGPL-2.1-or-later required_decoders=present audio_routing=disabled
+WAM runtime verification passed.

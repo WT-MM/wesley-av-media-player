@@ -1,0 +1,50 @@
+[
+  {
+    "specimen": "hi10p",
+    "mode": "hardware",
+    "sha256": "2eeffae492786b2790ad501d87b456a853e1996a78ccd52bafa2a13bd69d856b",
+    "rc": 0,
+    "stdout": "codec=61766331 create=0 using_hw=1 packets=50 frames=50 error=0 pixel=70343230 imageio=0 cpu_us=9681 energy_status=0/0 energy_nj=27936023\n",
+    "stderr": ""
+  },
+  {
+    "specimen": "hi10p",
+    "mode": "software",
+    "sha256": "2eeffae492786b2790ad501d87b456a853e1996a78ccd52bafa2a13bd69d856b",
+    "rc": 1,
+    "stdout": "codec=61766331 create=0 using_hw=0 packets=50 frames=0 error=-8969 pixel=00000000 imageio=0 cpu_us=7597 energy_status=0/0 energy_nj=25336881\n",
+    "stderr": ""
+  },
+  {
+    "specimen": "asp",
+    "mode": "hardware",
+    "sha256": "7acd935be8f9c05b304765acc7da6acdc909b78cb1db5b82d577ff05ccb2c37f",
+    "rc": 1,
+    "stdout": "codec=6d703476 create=-12906 \n",
+    "stderr": ""
+  },
+  {
+    "specimen": "asp",
+    "mode": "software",
+    "sha256": "7acd935be8f9c05b304765acc7da6acdc909b78cb1db5b82d577ff05ccb2c37f",
+    "rc": 1,
+    "stdout": "codec=6d703476 create=-8969 \n",
+    "stderr": ""
+  },
+  {
+    "specimen": "h264422",
+    "mode": "hardware",
+    "sha256": "cbb9af09536da9f1265d8898abf650c85528ff57f121ccb0db390f1b44f92850",
+    "rc": 0,
+    "stdout": "codec=61766331 create=0 using_hw=1 packets=50 frames=50 error=0 pixel=70343232 imageio=0 cpu_us=9464 energy_status=0/0 energy_nj=27551331\n",
+    "stderr": ""
+  },
+  {
+    "specimen": "h264422",
+    "mode": "software",
+    "sha256": "cbb9af09536da9f1265d8898abf650c85528ff57f121ccb0db390f1b44f92850",
+    "rc": 1,
+    "stdout": "codec=61766331 create=0 using_hw=0 packets=50 frames=0 error=-8969 pixel=00000000 imageio=0 cpu_us=9120 energy_status=0/0 energy_nj=27035803\n",
+    "stderr": ""
+  }
+]

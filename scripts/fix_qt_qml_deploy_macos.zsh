@@ -97,6 +97,22 @@ if [[ -n "$QML_SOURCE_DIR" ]]; then
 fi
 "$MACDEPLOYQT" "${deploy_arguments[@]}" > /dev/null
 
+# Native FFmpeg uses distinct install names from the export/compatibility closure.
+if [[ "$(otool -L "$APP_PATH/Contents/MacOS/WAM")" == *libavcodec-wamnative.* ]]; then
+  native_prefix="${WAM_FFMPEG_LGPL_ROOT:-${0:A:h:h}/third_party/ffmpeg-lgpl}"
+  for native_library in libavcodec-wamnative.63.dylib libavutil-wamnative.61.dylib; do
+    native_destination="$APP_PATH/Contents/Frameworks/$native_library"
+    if [[ ! -f "$native_destination" ]]; then
+      [[ -f "$native_prefix/lib/$native_library" ]] || {
+        print -u2 "NativeFfmpegLibraryMissing: $native_library"
+        exit 1
+      }
+      cp -L "$native_prefix/lib/$native_library" "$native_destination"
+    fi
+  done
+fi
+
+
 # Normalize what macdeployqt left behind. It rewrites load commands for the
 # frameworks it set out to deploy, but a library pulled in only by a QML
 # plugin can land in the bundle with its original absolute paths intact, and
