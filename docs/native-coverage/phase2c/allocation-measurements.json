@@ -1,0 +1,2997 @@
+[
+  {
+    "name": "asp",
+    "command": [
+      "/Users/wesleymaa/Documents/WAM/build/wam_avcodec_video_allocation_test",
+      "/Users/wesleymaa/Documents/WAM/test-media/native-coverage/phase2/asp.packets",
+      "asp"
+    ],
+    "rc": 0,
+    "stdout": "{\"probe\":\"worker_lifetime\",\"frames\":50,\"worker_allocations\":909,\"worker_locks\":1109,\"worker_cpp_new\":0,\"adapter_allocations_including_frameworks\":151,\"adapter_locks_including_frameworks\":1053,\"adapter_cpp_new\":0,\"peak_tracked_heap_bytes\":615424,\"remaining_tracked_heap_bytes\":4480,\"table_overflow\":0}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_malloc\",\"calls\":101}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_mallocz\",\"calls\":750}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_buffer_realloc\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_memdup\",\"calls\":1}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_calloc\",\"calls\":5}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_malloc_array\",\"calls\":2}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"lock\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_refstruct_pool_get\",\"calls\":400}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"lock\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_buffer_pool_get\",\"calls\":300}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo\",\"symbol\":\"_ZL48pixelBufferBackingCreateIOSurfaceWiringAssertionP11__IOSurfaceP16os_unfair_lock_sPP26__IOSurfaceWiringAssertionPjb\",\"calls\":500}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/IOSurface.framework/Versions/A/IOSurface\",\"symbol\":\"IOSurfaceClientRemoveValue\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"allocation\",\"image\":\"/usr/lib/system/libsystem_malloc.dylib\",\"symbol\":\"_malloc_type_calloc_outlined\",\"calls\":101}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"allocation\",\"image\":\"/usr/lib/system/libsystem_malloc.dylib\",\"symbol\":\"_malloc_type_malloc_outlined\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo\",\"symbol\":\"_ZN15CVBufferBacking11retainUsageEv\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/IOSurface.framework/Versions/A/IOSurface\",\"symbol\":\"IOSurfaceClientRemoveCoreVideoBridgedValues\",\"calls\":100}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/usr/lib/libc++abi.dylib\",\"symbol\":\"__cxa_guard_acquire\",\"calls\":1}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/usr/lib/system/libcorecrypto.dylib\",\"symbol\":\"ccrng_crypto_generate\",\"calls\":1}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/usr/lib/libc++abi.dylib\",\"symbol\":\"__cxa_guard_release\",\"calls\":1}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo\",\"symbol\":\"_ZN20CVPixelBufferBacking15lockBaseAddressEy\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo\",\"symbol\":\"_ZN13CVPixelBuffer16removeAttachmentEPK10__CFString\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo\",\"symbol\":\"_ZN20CVPixelBufferBacking17unlockBaseAddressEy\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo\",\"symbol\":\"_ZN13CVPixelBuffer13setAttachmentEPK10__CFStringPKv16CVAttachmentMode.cold.1\",\"calls\":200}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"lock\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_refstruct_pool_alloc_ext_c\",\"calls\":406}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"lock\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_buffer_pool_uninit\",\"calls\":3}\n{\"probe\":\"worker_lifetime\",\"frames\":50,\"worker_allocations\":909,\"worker_locks\":1109,\"worker_cpp_new\":0,\"adapter_allocations_including_frameworks\":151,\"adapter_locks_including_frameworks\":1050,\"adapter_cpp_new\":0,\"peak_tracked_heap_bytes\":615424,\"remaining_tracked_heap_bytes\":4480,\"table_overflow\":0}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_malloc\",\"calls\":101}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_mallocz\",\"calls\":750}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_buffer_realloc\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_memdup\",\"calls\":1}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_calloc\",\"calls\":5}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_malloc_array\",\"calls\":2}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"lock\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_refstruct_pool_get\",\"calls\":400}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"lock\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_buffer_pool_get\",\"calls\":300}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo\",\"symbol\":\"_ZL48pixelBufferBackingCreateIOSurfaceWiringAssertionP11__IOSurfaceP16os_unfair_lock_sPP26__IOSurfaceWiringAssertionPjb\",\"calls\":500}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/IOSurface.framework/Versions/A/IOSurface\",\"symbol\":\"IOSurfaceClientRemoveValue\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"allocation\",\"image\":\"/usr/lib/system/libsystem_malloc.dylib\",\"symbol\":\"_malloc_type_calloc_outlined\",\"calls\":101}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"allocation\",\"image\":\"/usr/lib/system/libsystem_malloc.dylib\",\"symbol\":\"_malloc_type_malloc_outlined\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo\",\"symbol\":\"_ZN15CVBufferBacking11retainUsageEv\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/IOSurface.framework/Versions/A/IOSurface\",\"symbol\":\"IOSurfaceClientRemoveCoreVideoBridgedValues\",\"calls\":100}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo\",\"symbol\":\"_ZN20CVPixelBufferBacking15lockBaseAddressEy\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo\",\"symbol\":\"_ZN13CVPixelBuffer16removeAttachmentEPK10__CFString\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo\",\"symbol\":\"_ZN20CVPixelBufferBacking17unlockBaseAddressEy\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo\",\"symbol\":\"_ZN13CVPixelBuffer13setAttachmentEPK10__CFStringPKv16CVAttachmentMode.cold.1\",\"calls\":200}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"lock\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_refstruct_pool_alloc_ext_c\",\"calls\":406}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"lock\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_buffer_pool_uninit\",\"calls\":3}\nvideo adapter packet/EOS/flush/backpressure and surface format passed\n",
+    "stderr": "WAM: native decoder stage=Libavcodec codec=6d703476\n",
+    "measurements": [
+      {
+        "probe": "worker_lifetime",
+        "frames": 50,
+        "worker_allocations": 909,
+        "worker_locks": 1109,
+        "worker_cpp_new": 0,
+        "adapter_allocations_including_frameworks": 151,
+        "adapter_locks_including_frameworks": 1053,
+        "adapter_cpp_new": 0,
+        "peak_tracked_heap_bytes": 615424,
+        "remaining_tracked_heap_bytes": 4480,
+        "table_overflow": 0
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_malloc",
+        "calls": 101
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_mallocz",
+        "calls": 750
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_buffer_realloc",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_memdup",
+        "calls": 1
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_calloc",
+        "calls": 5
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_malloc_array",
+        "calls": 2
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "lock",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_refstruct_pool_get",
+        "calls": 400
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "lock",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_buffer_pool_get",
+        "calls": 300
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "symbol": "_ZL48pixelBufferBackingCreateIOSurfaceWiringAssertionP11__IOSurfaceP16os_unfair_lock_sPP26__IOSurfaceWiringAssertionPjb",
+        "calls": 500
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/IOSurface.framework/Versions/A/IOSurface",
+        "symbol": "IOSurfaceClientRemoveValue",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "allocation",
+        "image": "/usr/lib/system/libsystem_malloc.dylib",
+        "symbol": "_malloc_type_calloc_outlined",
+        "calls": 101
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "allocation",
+        "image": "/usr/lib/system/libsystem_malloc.dylib",
+        "symbol": "_malloc_type_malloc_outlined",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "symbol": "_ZN15CVBufferBacking11retainUsageEv",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/IOSurface.framework/Versions/A/IOSurface",
+        "symbol": "IOSurfaceClientRemoveCoreVideoBridgedValues",
+        "calls": 100
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/usr/lib/libc++abi.dylib",
+        "symbol": "__cxa_guard_acquire",
+        "calls": 1
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/usr/lib/system/libcorecrypto.dylib",
+        "symbol": "ccrng_crypto_generate",
+        "calls": 1
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/usr/lib/libc++abi.dylib",
+        "symbol": "__cxa_guard_release",
+        "calls": 1
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "symbol": "_ZN20CVPixelBufferBacking15lockBaseAddressEy",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "symbol": "_ZN13CVPixelBuffer16removeAttachmentEPK10__CFString",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "symbol": "_ZN20CVPixelBufferBacking17unlockBaseAddressEy",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "symbol": "_ZN13CVPixelBuffer13setAttachmentEPK10__CFStringPKv16CVAttachmentMode.cold.1",
+        "calls": 200
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "lock",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_refstruct_pool_alloc_ext_c",
+        "calls": 406
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "lock",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_buffer_pool_uninit",
+        "calls": 3
+      },
+      {
+        "probe": "worker_lifetime",
+        "frames": 50,
+        "worker_allocations": 909,
+        "worker_locks": 1109,
+        "worker_cpp_new": 0,
+        "adapter_allocations_including_frameworks": 151,
+        "adapter_locks_including_frameworks": 1050,
+        "adapter_cpp_new": 0,
+        "peak_tracked_heap_bytes": 615424,
+        "remaining_tracked_heap_bytes": 4480,
+        "table_overflow": 0
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_malloc",
+        "calls": 101
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_mallocz",
+        "calls": 750
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_buffer_realloc",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_memdup",
+        "calls": 1
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_calloc",
+        "calls": 5
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_malloc_array",
+        "calls": 2
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "lock",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_refstruct_pool_get",
+        "calls": 400
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "lock",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_buffer_pool_get",
+        "calls": 300
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "symbol": "_ZL48pixelBufferBackingCreateIOSurfaceWiringAssertionP11__IOSurfaceP16os_unfair_lock_sPP26__IOSurfaceWiringAssertionPjb",
+        "calls": 500
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/IOSurface.framework/Versions/A/IOSurface",
+        "symbol": "IOSurfaceClientRemoveValue",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "allocation",
+        "image": "/usr/lib/system/libsystem_malloc.dylib",
+        "symbol": "_malloc_type_calloc_outlined",
+        "calls": 101
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "allocation",
+        "image": "/usr/lib/system/libsystem_malloc.dylib",
+        "symbol": "_malloc_type_malloc_outlined",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "symbol": "_ZN15CVBufferBacking11retainUsageEv",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/IOSurface.framework/Versions/A/IOSurface",
+        "symbol": "IOSurfaceClientRemoveCoreVideoBridgedValues",
+        "calls": 100
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "symbol": "_ZN20CVPixelBufferBacking15lockBaseAddressEy",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "symbol": "_ZN13CVPixelBuffer16removeAttachmentEPK10__CFString",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "symbol": "_ZN20CVPixelBufferBacking17unlockBaseAddressEy",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "symbol": "_ZN13CVPixelBuffer13setAttachmentEPK10__CFStringPKv16CVAttachmentMode.cold.1",
+        "calls": 200
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "lock",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_refstruct_pool_alloc_ext_c",
+        "calls": 406
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "lock",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_buffer_pool_uninit",
+        "calls": 3
+      }
+    ]
+  },
+  {
+    "name": "hi10p",
+    "command": [
+      "/Users/wesleymaa/Documents/WAM/build/wam_avcodec_video_allocation_test",
+      "/Users/wesleymaa/Documents/WAM/test-media/native-coverage/phase2/hi10p.packets",
+      "hi10p"
+    ],
+    "rc": 0,
+    "stdout": "{\"probe\":\"worker_lifetime\",\"frames\":50,\"worker_allocations\":1338,\"worker_locks\":907,\"worker_cpp_new\":0,\"adapter_allocations_including_frameworks\":151,\"adapter_locks_including_frameworks\":1053,\"adapter_cpp_new\":0,\"peak_tracked_heap_bytes\":1972512,\"remaining_tracked_heap_bytes\":4480,\"table_overflow\":0}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_malloc\",\"calls\":187}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_mallocz\",\"calls\":1020}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_calloc\",\"calls\":14}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_fast_realloc\",\"calls\":4}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_malloc_array\",\"calls\":5}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_buffer_realloc\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavcodec-wamnative.63.dylib\",\"symbol\":\"avcodec_default_get_buffer2\",\"calls\":1}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_memdup\",\"calls\":1}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"lock\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_buffer_pool_get\",\"calls\":300}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"lock\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_refstruct_pool_get\",\"calls\":300}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_frame_side_data_add\",\"calls\":1}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_fast_malloc\",\"calls\":4}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_frame_side_data_free\",\"calls\":1}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_strdup\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo\",\"symbol\":\"_ZL48pixelBufferBackingCreateIOSurfaceWiringAssertionP11__IOSurfaceP16os_unfair_lock_sPP26__IOSurfaceWiringAssertionPjb\",\"calls\":500}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/IOSurface.framework/Versions/A/IOSurface\",\"symbol\":\"IOSurfaceClientRemoveValue\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"allocation\",\"image\":\"/usr/lib/system/libsystem_malloc.dylib\",\"symbol\":\"_malloc_type_calloc_outlined\",\"calls\":101}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"allocation\",\"image\":\"/usr/lib/system/libsystem_malloc.dylib\",\"symbol\":\"_malloc_type_malloc_outlined\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo\",\"symbol\":\"_ZN15CVBufferBacking11retainUsageEv\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/IOSurface.framework/Versions/A/IOSurface\",\"symbol\":\"IOSurfaceClientRemoveCoreVideoBridgedValues\",\"calls\":100}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/usr/lib/libc++abi.dylib\",\"symbol\":\"__cxa_guard_acquire\",\"calls\":1}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/usr/lib/system/libcorecrypto.dylib\",\"symbol\":\"ccrng_crypto_generate\",\"calls\":1}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/usr/lib/libc++abi.dylib\",\"symbol\":\"__cxa_guard_release\",\"calls\":1}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo\",\"symbol\":\"_ZN20CVPixelBufferBacking15lockBaseAddressEy\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo\",\"symbol\":\"_ZN13CVPixelBuffer16removeAttachmentEPK10__CFString\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo\",\"symbol\":\"_ZN20CVPixelBufferBacking17unlockBaseAddressEy\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo\",\"symbol\":\"_ZN13CVPixelBuffer13setAttachmentEPK10__CFStringPKv16CVAttachmentMode.cold.1\",\"calls\":200}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"lock\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_refstruct_pool_alloc_ext_c\",\"calls\":304}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"lock\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_buffer_pool_uninit\",\"calls\":3}\n{\"probe\":\"worker_lifetime\",\"frames\":50,\"worker_allocations\":1338,\"worker_locks\":907,\"worker_cpp_new\":0,\"adapter_allocations_including_frameworks\":151,\"adapter_locks_including_frameworks\":1050,\"adapter_cpp_new\":0,\"peak_tracked_heap_bytes\":1972512,\"remaining_tracked_heap_bytes\":4480,\"table_overflow\":0}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_malloc\",\"calls\":187}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_mallocz\",\"calls\":1020}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_calloc\",\"calls\":14}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_fast_realloc\",\"calls\":4}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_malloc_array\",\"calls\":5}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_buffer_realloc\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavcodec-wamnative.63.dylib\",\"symbol\":\"avcodec_default_get_buffer2\",\"calls\":1}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_memdup\",\"calls\":1}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"lock\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_buffer_pool_get\",\"calls\":300}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"lock\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_refstruct_pool_get\",\"calls\":300}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_frame_side_data_add\",\"calls\":1}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_fast_malloc\",\"calls\":4}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_frame_side_data_free\",\"calls\":1}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_strdup\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo\",\"symbol\":\"_ZL48pixelBufferBackingCreateIOSurfaceWiringAssertionP11__IOSurfaceP16os_unfair_lock_sPP26__IOSurfaceWiringAssertionPjb\",\"calls\":500}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/IOSurface.framework/Versions/A/IOSurface\",\"symbol\":\"IOSurfaceClientRemoveValue\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"allocation\",\"image\":\"/usr/lib/system/libsystem_malloc.dylib\",\"symbol\":\"_malloc_type_calloc_outlined\",\"calls\":101}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"allocation\",\"image\":\"/usr/lib/system/libsystem_malloc.dylib\",\"symbol\":\"_malloc_type_malloc_outlined\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo\",\"symbol\":\"_ZN15CVBufferBacking11retainUsageEv\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/IOSurface.framework/Versions/A/IOSurface\",\"symbol\":\"IOSurfaceClientRemoveCoreVideoBridgedValues\",\"calls\":100}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo\",\"symbol\":\"_ZN20CVPixelBufferBacking15lockBaseAddressEy\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo\",\"symbol\":\"_ZN13CVPixelBuffer16removeAttachmentEPK10__CFString\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo\",\"symbol\":\"_ZN20CVPixelBufferBacking17unlockBaseAddressEy\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo\",\"symbol\":\"_ZN13CVPixelBuffer13setAttachmentEPK10__CFStringPKv16CVAttachmentMode.cold.1\",\"calls\":200}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"lock\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_refstruct_pool_alloc_ext_c\",\"calls\":304}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"lock\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_buffer_pool_uninit\",\"calls\":3}\nvideo adapter packet/EOS/flush/backpressure and surface format passed\n",
+    "stderr": "WAM: native decoder stage=Libavcodec codec=61766331\n",
+    "measurements": [
+      {
+        "probe": "worker_lifetime",
+        "frames": 50,
+        "worker_allocations": 1338,
+        "worker_locks": 907,
+        "worker_cpp_new": 0,
+        "adapter_allocations_including_frameworks": 151,
+        "adapter_locks_including_frameworks": 1053,
+        "adapter_cpp_new": 0,
+        "peak_tracked_heap_bytes": 1972512,
+        "remaining_tracked_heap_bytes": 4480,
+        "table_overflow": 0
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_malloc",
+        "calls": 187
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_mallocz",
+        "calls": 1020
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_calloc",
+        "calls": 14
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_fast_realloc",
+        "calls": 4
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_malloc_array",
+        "calls": 5
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_buffer_realloc",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavcodec-wamnative.63.dylib",
+        "symbol": "avcodec_default_get_buffer2",
+        "calls": 1
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_memdup",
+        "calls": 1
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "lock",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_buffer_pool_get",
+        "calls": 300
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "lock",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_refstruct_pool_get",
+        "calls": 300
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_frame_side_data_add",
+        "calls": 1
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_fast_malloc",
+        "calls": 4
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_frame_side_data_free",
+        "calls": 1
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_strdup",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "symbol": "_ZL48pixelBufferBackingCreateIOSurfaceWiringAssertionP11__IOSurfaceP16os_unfair_lock_sPP26__IOSurfaceWiringAssertionPjb",
+        "calls": 500
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/IOSurface.framework/Versions/A/IOSurface",
+        "symbol": "IOSurfaceClientRemoveValue",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "allocation",
+        "image": "/usr/lib/system/libsystem_malloc.dylib",
+        "symbol": "_malloc_type_calloc_outlined",
+        "calls": 101
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "allocation",
+        "image": "/usr/lib/system/libsystem_malloc.dylib",
+        "symbol": "_malloc_type_malloc_outlined",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "symbol": "_ZN15CVBufferBacking11retainUsageEv",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/IOSurface.framework/Versions/A/IOSurface",
+        "symbol": "IOSurfaceClientRemoveCoreVideoBridgedValues",
+        "calls": 100
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/usr/lib/libc++abi.dylib",
+        "symbol": "__cxa_guard_acquire",
+        "calls": 1
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/usr/lib/system/libcorecrypto.dylib",
+        "symbol": "ccrng_crypto_generate",
+        "calls": 1
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/usr/lib/libc++abi.dylib",
+        "symbol": "__cxa_guard_release",
+        "calls": 1
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "symbol": "_ZN20CVPixelBufferBacking15lockBaseAddressEy",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "symbol": "_ZN13CVPixelBuffer16removeAttachmentEPK10__CFString",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "symbol": "_ZN20CVPixelBufferBacking17unlockBaseAddressEy",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "symbol": "_ZN13CVPixelBuffer13setAttachmentEPK10__CFStringPKv16CVAttachmentMode.cold.1",
+        "calls": 200
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "lock",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_refstruct_pool_alloc_ext_c",
+        "calls": 304
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "lock",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_buffer_pool_uninit",
+        "calls": 3
+      },
+      {
+        "probe": "worker_lifetime",
+        "frames": 50,
+        "worker_allocations": 1338,
+        "worker_locks": 907,
+        "worker_cpp_new": 0,
+        "adapter_allocations_including_frameworks": 151,
+        "adapter_locks_including_frameworks": 1050,
+        "adapter_cpp_new": 0,
+        "peak_tracked_heap_bytes": 1972512,
+        "remaining_tracked_heap_bytes": 4480,
+        "table_overflow": 0
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_malloc",
+        "calls": 187
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_mallocz",
+        "calls": 1020
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_calloc",
+        "calls": 14
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_fast_realloc",
+        "calls": 4
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_malloc_array",
+        "calls": 5
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_buffer_realloc",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavcodec-wamnative.63.dylib",
+        "symbol": "avcodec_default_get_buffer2",
+        "calls": 1
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_memdup",
+        "calls": 1
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "lock",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_buffer_pool_get",
+        "calls": 300
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "lock",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_refstruct_pool_get",
+        "calls": 300
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_frame_side_data_add",
+        "calls": 1
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_fast_malloc",
+        "calls": 4
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_frame_side_data_free",
+        "calls": 1
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_strdup",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "symbol": "_ZL48pixelBufferBackingCreateIOSurfaceWiringAssertionP11__IOSurfaceP16os_unfair_lock_sPP26__IOSurfaceWiringAssertionPjb",
+        "calls": 500
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/IOSurface.framework/Versions/A/IOSurface",
+        "symbol": "IOSurfaceClientRemoveValue",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "allocation",
+        "image": "/usr/lib/system/libsystem_malloc.dylib",
+        "symbol": "_malloc_type_calloc_outlined",
+        "calls": 101
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "allocation",
+        "image": "/usr/lib/system/libsystem_malloc.dylib",
+        "symbol": "_malloc_type_malloc_outlined",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "symbol": "_ZN15CVBufferBacking11retainUsageEv",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/IOSurface.framework/Versions/A/IOSurface",
+        "symbol": "IOSurfaceClientRemoveCoreVideoBridgedValues",
+        "calls": 100
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "symbol": "_ZN20CVPixelBufferBacking15lockBaseAddressEy",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "symbol": "_ZN13CVPixelBuffer16removeAttachmentEPK10__CFString",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "symbol": "_ZN20CVPixelBufferBacking17unlockBaseAddressEy",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "symbol": "_ZN13CVPixelBuffer13setAttachmentEPK10__CFStringPKv16CVAttachmentMode.cold.1",
+        "calls": 200
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "lock",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_refstruct_pool_alloc_ext_c",
+        "calls": 304
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "lock",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_buffer_pool_uninit",
+        "calls": 3
+      }
+    ]
+  },
+  {
+    "name": "h264422",
+    "command": [
+      "/Users/wesleymaa/Documents/WAM/build/wam_avcodec_video_allocation_test",
+      "/Users/wesleymaa/Documents/WAM/test-media/native-coverage/phase2/h264422.packets",
+      "h264422"
+    ],
+    "rc": 0,
+    "stdout": "{\"probe\":\"worker_lifetime\",\"frames\":50,\"worker_allocations\":1338,\"worker_locks\":907,\"worker_cpp_new\":0,\"adapter_allocations_including_frameworks\":151,\"adapter_locks_including_frameworks\":1053,\"adapter_cpp_new\":0,\"peak_tracked_heap_bytes\":2300512,\"remaining_tracked_heap_bytes\":4480,\"table_overflow\":0}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_malloc\",\"calls\":187}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_mallocz\",\"calls\":1020}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_calloc\",\"calls\":14}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_fast_realloc\",\"calls\":4}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_malloc_array\",\"calls\":5}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_buffer_realloc\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavcodec-wamnative.63.dylib\",\"symbol\":\"avcodec_default_get_buffer2\",\"calls\":1}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_memdup\",\"calls\":1}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"lock\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_buffer_pool_get\",\"calls\":300}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"lock\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_refstruct_pool_get\",\"calls\":300}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_frame_side_data_add\",\"calls\":1}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_fast_malloc\",\"calls\":4}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_frame_side_data_free\",\"calls\":1}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_strdup\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo\",\"symbol\":\"_ZL48pixelBufferBackingCreateIOSurfaceWiringAssertionP11__IOSurfaceP16os_unfair_lock_sPP26__IOSurfaceWiringAssertionPjb\",\"calls\":500}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/IOSurface.framework/Versions/A/IOSurface\",\"symbol\":\"IOSurfaceClientRemoveValue\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"allocation\",\"image\":\"/usr/lib/system/libsystem_malloc.dylib\",\"symbol\":\"_malloc_type_calloc_outlined\",\"calls\":101}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"allocation\",\"image\":\"/usr/lib/system/libsystem_malloc.dylib\",\"symbol\":\"_malloc_type_malloc_outlined\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo\",\"symbol\":\"_ZN15CVBufferBacking11retainUsageEv\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/IOSurface.framework/Versions/A/IOSurface\",\"symbol\":\"IOSurfaceClientRemoveCoreVideoBridgedValues\",\"calls\":100}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/usr/lib/libc++abi.dylib\",\"symbol\":\"__cxa_guard_acquire\",\"calls\":1}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/usr/lib/system/libcorecrypto.dylib\",\"symbol\":\"ccrng_crypto_generate\",\"calls\":1}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/usr/lib/libc++abi.dylib\",\"symbol\":\"__cxa_guard_release\",\"calls\":1}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo\",\"symbol\":\"_ZN20CVPixelBufferBacking15lockBaseAddressEy\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo\",\"symbol\":\"_ZN13CVPixelBuffer16removeAttachmentEPK10__CFString\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo\",\"symbol\":\"_ZN20CVPixelBufferBacking17unlockBaseAddressEy\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo\",\"symbol\":\"_ZN13CVPixelBuffer13setAttachmentEPK10__CFStringPKv16CVAttachmentMode.cold.1\",\"calls\":200}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"lock\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_refstruct_pool_alloc_ext_c\",\"calls\":304}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"lock\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_buffer_pool_uninit\",\"calls\":3}\n{\"probe\":\"worker_lifetime\",\"frames\":50,\"worker_allocations\":1338,\"worker_locks\":907,\"worker_cpp_new\":0,\"adapter_allocations_including_frameworks\":151,\"adapter_locks_including_frameworks\":1050,\"adapter_cpp_new\":0,\"peak_tracked_heap_bytes\":2300512,\"remaining_tracked_heap_bytes\":4480,\"table_overflow\":0}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_malloc\",\"calls\":187}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_mallocz\",\"calls\":1020}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_calloc\",\"calls\":14}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_fast_realloc\",\"calls\":4}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_malloc_array\",\"calls\":5}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_buffer_realloc\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavcodec-wamnative.63.dylib\",\"symbol\":\"avcodec_default_get_buffer2\",\"calls\":1}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_memdup\",\"calls\":1}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"lock\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_buffer_pool_get\",\"calls\":300}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"lock\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_refstruct_pool_get\",\"calls\":300}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_frame_side_data_add\",\"calls\":1}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_fast_malloc\",\"calls\":4}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_frame_side_data_free\",\"calls\":1}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_strdup\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo\",\"symbol\":\"_ZL48pixelBufferBackingCreateIOSurfaceWiringAssertionP11__IOSurfaceP16os_unfair_lock_sPP26__IOSurfaceWiringAssertionPjb\",\"calls\":500}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/IOSurface.framework/Versions/A/IOSurface\",\"symbol\":\"IOSurfaceClientRemoveValue\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"allocation\",\"image\":\"/usr/lib/system/libsystem_malloc.dylib\",\"symbol\":\"_malloc_type_calloc_outlined\",\"calls\":101}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"allocation\",\"image\":\"/usr/lib/system/libsystem_malloc.dylib\",\"symbol\":\"_malloc_type_malloc_outlined\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo\",\"symbol\":\"_ZN15CVBufferBacking11retainUsageEv\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/IOSurface.framework/Versions/A/IOSurface\",\"symbol\":\"IOSurfaceClientRemoveCoreVideoBridgedValues\",\"calls\":100}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo\",\"symbol\":\"_ZN20CVPixelBufferBacking15lockBaseAddressEy\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo\",\"symbol\":\"_ZN13CVPixelBuffer16removeAttachmentEPK10__CFString\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo\",\"symbol\":\"_ZN20CVPixelBufferBacking17unlockBaseAddressEy\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo\",\"symbol\":\"_ZN13CVPixelBuffer13setAttachmentEPK10__CFStringPKv16CVAttachmentMode.cold.1\",\"calls\":200}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"lock\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_refstruct_pool_alloc_ext_c\",\"calls\":304}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"lock\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_buffer_pool_uninit\",\"calls\":3}\nvideo adapter packet/EOS/flush/backpressure and surface format passed\n",
+    "stderr": "WAM: native decoder stage=Libavcodec codec=61766331\n",
+    "measurements": [
+      {
+        "probe": "worker_lifetime",
+        "frames": 50,
+        "worker_allocations": 1338,
+        "worker_locks": 907,
+        "worker_cpp_new": 0,
+        "adapter_allocations_including_frameworks": 151,
+        "adapter_locks_including_frameworks": 1053,
+        "adapter_cpp_new": 0,
+        "peak_tracked_heap_bytes": 2300512,
+        "remaining_tracked_heap_bytes": 4480,
+        "table_overflow": 0
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_malloc",
+        "calls": 187
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_mallocz",
+        "calls": 1020
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_calloc",
+        "calls": 14
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_fast_realloc",
+        "calls": 4
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_malloc_array",
+        "calls": 5
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_buffer_realloc",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavcodec-wamnative.63.dylib",
+        "symbol": "avcodec_default_get_buffer2",
+        "calls": 1
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_memdup",
+        "calls": 1
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "lock",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_buffer_pool_get",
+        "calls": 300
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "lock",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_refstruct_pool_get",
+        "calls": 300
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_frame_side_data_add",
+        "calls": 1
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_fast_malloc",
+        "calls": 4
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_frame_side_data_free",
+        "calls": 1
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_strdup",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "symbol": "_ZL48pixelBufferBackingCreateIOSurfaceWiringAssertionP11__IOSurfaceP16os_unfair_lock_sPP26__IOSurfaceWiringAssertionPjb",
+        "calls": 500
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/IOSurface.framework/Versions/A/IOSurface",
+        "symbol": "IOSurfaceClientRemoveValue",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "allocation",
+        "image": "/usr/lib/system/libsystem_malloc.dylib",
+        "symbol": "_malloc_type_calloc_outlined",
+        "calls": 101
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "allocation",
+        "image": "/usr/lib/system/libsystem_malloc.dylib",
+        "symbol": "_malloc_type_malloc_outlined",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "symbol": "_ZN15CVBufferBacking11retainUsageEv",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/IOSurface.framework/Versions/A/IOSurface",
+        "symbol": "IOSurfaceClientRemoveCoreVideoBridgedValues",
+        "calls": 100
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/usr/lib/libc++abi.dylib",
+        "symbol": "__cxa_guard_acquire",
+        "calls": 1
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/usr/lib/system/libcorecrypto.dylib",
+        "symbol": "ccrng_crypto_generate",
+        "calls": 1
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/usr/lib/libc++abi.dylib",
+        "symbol": "__cxa_guard_release",
+        "calls": 1
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "symbol": "_ZN20CVPixelBufferBacking15lockBaseAddressEy",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "symbol": "_ZN13CVPixelBuffer16removeAttachmentEPK10__CFString",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "symbol": "_ZN20CVPixelBufferBacking17unlockBaseAddressEy",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "symbol": "_ZN13CVPixelBuffer13setAttachmentEPK10__CFStringPKv16CVAttachmentMode.cold.1",
+        "calls": 200
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "lock",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_refstruct_pool_alloc_ext_c",
+        "calls": 304
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "lock",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_buffer_pool_uninit",
+        "calls": 3
+      },
+      {
+        "probe": "worker_lifetime",
+        "frames": 50,
+        "worker_allocations": 1338,
+        "worker_locks": 907,
+        "worker_cpp_new": 0,
+        "adapter_allocations_including_frameworks": 151,
+        "adapter_locks_including_frameworks": 1050,
+        "adapter_cpp_new": 0,
+        "peak_tracked_heap_bytes": 2300512,
+        "remaining_tracked_heap_bytes": 4480,
+        "table_overflow": 0
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_malloc",
+        "calls": 187
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_mallocz",
+        "calls": 1020
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_calloc",
+        "calls": 14
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_fast_realloc",
+        "calls": 4
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_malloc_array",
+        "calls": 5
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_buffer_realloc",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavcodec-wamnative.63.dylib",
+        "symbol": "avcodec_default_get_buffer2",
+        "calls": 1
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_memdup",
+        "calls": 1
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "lock",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_buffer_pool_get",
+        "calls": 300
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "lock",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_refstruct_pool_get",
+        "calls": 300
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_frame_side_data_add",
+        "calls": 1
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_fast_malloc",
+        "calls": 4
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_frame_side_data_free",
+        "calls": 1
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_strdup",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "symbol": "_ZL48pixelBufferBackingCreateIOSurfaceWiringAssertionP11__IOSurfaceP16os_unfair_lock_sPP26__IOSurfaceWiringAssertionPjb",
+        "calls": 500
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/IOSurface.framework/Versions/A/IOSurface",
+        "symbol": "IOSurfaceClientRemoveValue",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "allocation",
+        "image": "/usr/lib/system/libsystem_malloc.dylib",
+        "symbol": "_malloc_type_calloc_outlined",
+        "calls": 101
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "allocation",
+        "image": "/usr/lib/system/libsystem_malloc.dylib",
+        "symbol": "_malloc_type_malloc_outlined",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "symbol": "_ZN15CVBufferBacking11retainUsageEv",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/IOSurface.framework/Versions/A/IOSurface",
+        "symbol": "IOSurfaceClientRemoveCoreVideoBridgedValues",
+        "calls": 100
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "symbol": "_ZN20CVPixelBufferBacking15lockBaseAddressEy",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "symbol": "_ZN13CVPixelBuffer16removeAttachmentEPK10__CFString",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "symbol": "_ZN20CVPixelBufferBacking17unlockBaseAddressEy",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "symbol": "_ZN13CVPixelBuffer13setAttachmentEPK10__CFStringPKv16CVAttachmentMode.cold.1",
+        "calls": 200
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "lock",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_refstruct_pool_alloc_ext_c",
+        "calls": 304
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "lock",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_buffer_pool_uninit",
+        "calls": 3
+      }
+    ]
+  },
+  {
+    "name": "vp9",
+    "command": [
+      "/Users/wesleymaa/Documents/WAM/build/wam_avcodec_video_allocation_test",
+      "/Users/wesleymaa/Documents/WAM/test-media/native-coverage/phase2/vp9.packets",
+      "vp9"
+    ],
+    "rc": 0,
+    "stdout": "{\"probe\":\"worker_lifetime\",\"frames\":50,\"worker_allocations\":1094,\"worker_locks\":505,\"worker_cpp_new\":0,\"adapter_allocations_including_frameworks\":151,\"adapter_locks_including_frameworks\":953,\"adapter_cpp_new\":0,\"peak_tracked_heap_bytes\":584608,\"remaining_tracked_heap_bytes\":4480,\"table_overflow\":0}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_malloc\",\"calls\":137}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_mallocz\",\"calls\":901}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_get_token\",\"calls\":2}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_dynarray_add_nofree\",\"calls\":1}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_buffer_realloc\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_malloc_array\",\"calls\":1}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_memdup\",\"calls\":1}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_calloc\",\"calls\":1}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"lock\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_refstruct_pool_get\",\"calls\":100}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"lock\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_buffer_pool_get\",\"calls\":300}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo\",\"symbol\":\"_ZL48pixelBufferBackingCreateIOSurfaceWiringAssertionP11__IOSurfaceP16os_unfair_lock_sPP26__IOSurfaceWiringAssertionPjb\",\"calls\":450}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/IOSurface.framework/Versions/A/IOSurface\",\"symbol\":\"IOSurfaceClientRemoveValue\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"allocation\",\"image\":\"/usr/lib/system/libsystem_malloc.dylib\",\"symbol\":\"_malloc_type_calloc_outlined\",\"calls\":101}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"allocation\",\"image\":\"/usr/lib/system/libsystem_malloc.dylib\",\"symbol\":\"_malloc_type_malloc_outlined\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo\",\"symbol\":\"_ZN15CVBufferBacking11retainUsageEv\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/IOSurface.framework/Versions/A/IOSurface\",\"symbol\":\"IOSurfaceClientRemoveCoreVideoBridgedValues\",\"calls\":100}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/usr/lib/libc++abi.dylib\",\"symbol\":\"__cxa_guard_acquire\",\"calls\":1}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/usr/lib/system/libcorecrypto.dylib\",\"symbol\":\"ccrng_crypto_generate\",\"calls\":1}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/usr/lib/libc++abi.dylib\",\"symbol\":\"__cxa_guard_release\",\"calls\":1}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo\",\"symbol\":\"_ZN20CVPixelBufferBacking15lockBaseAddressEy\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo\",\"symbol\":\"_ZN13CVPixelBuffer16removeAttachmentEPK10__CFString\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo\",\"symbol\":\"_ZN20CVPixelBufferBacking17unlockBaseAddressEy\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo\",\"symbol\":\"_ZN13CVPixelBuffer13setAttachmentEPK10__CFStringPKv16CVAttachmentMode.cold.1\",\"calls\":150}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"lock\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_refstruct_pool_alloc_ext_c\",\"calls\":102}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"lock\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_buffer_pool_uninit\",\"calls\":3}\n{\"probe\":\"worker_lifetime\",\"frames\":50,\"worker_allocations\":1094,\"worker_locks\":505,\"worker_cpp_new\":0,\"adapter_allocations_including_frameworks\":151,\"adapter_locks_including_frameworks\":950,\"adapter_cpp_new\":0,\"peak_tracked_heap_bytes\":584608,\"remaining_tracked_heap_bytes\":4480,\"table_overflow\":0}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_malloc\",\"calls\":137}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_mallocz\",\"calls\":901}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_get_token\",\"calls\":2}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_dynarray_add_nofree\",\"calls\":1}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_buffer_realloc\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_malloc_array\",\"calls\":1}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_memdup\",\"calls\":1}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_calloc\",\"calls\":1}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"lock\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_refstruct_pool_get\",\"calls\":100}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"lock\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_buffer_pool_get\",\"calls\":300}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo\",\"symbol\":\"_ZL48pixelBufferBackingCreateIOSurfaceWiringAssertionP11__IOSurfaceP16os_unfair_lock_sPP26__IOSurfaceWiringAssertionPjb\",\"calls\":450}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/IOSurface.framework/Versions/A/IOSurface\",\"symbol\":\"IOSurfaceClientRemoveValue\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"allocation\",\"image\":\"/usr/lib/system/libsystem_malloc.dylib\",\"symbol\":\"_malloc_type_calloc_outlined\",\"calls\":101}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"allocation\",\"image\":\"/usr/lib/system/libsystem_malloc.dylib\",\"symbol\":\"_malloc_type_malloc_outlined\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo\",\"symbol\":\"_ZN15CVBufferBacking11retainUsageEv\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/IOSurface.framework/Versions/A/IOSurface\",\"symbol\":\"IOSurfaceClientRemoveCoreVideoBridgedValues\",\"calls\":100}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo\",\"symbol\":\"_ZN20CVPixelBufferBacking15lockBaseAddressEy\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo\",\"symbol\":\"_ZN13CVPixelBuffer16removeAttachmentEPK10__CFString\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo\",\"symbol\":\"_ZN20CVPixelBufferBacking17unlockBaseAddressEy\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo\",\"symbol\":\"_ZN13CVPixelBuffer13setAttachmentEPK10__CFStringPKv16CVAttachmentMode.cold.1\",\"calls\":150}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"lock\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_refstruct_pool_alloc_ext_c\",\"calls\":102}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"lock\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_buffer_pool_uninit\",\"calls\":3}\nvideo adapter packet/EOS/flush/backpressure and surface format passed\n",
+    "stderr": "WAM: native decoder stage=Libavcodec codec=76703039\n",
+    "measurements": [
+      {
+        "probe": "worker_lifetime",
+        "frames": 50,
+        "worker_allocations": 1094,
+        "worker_locks": 505,
+        "worker_cpp_new": 0,
+        "adapter_allocations_including_frameworks": 151,
+        "adapter_locks_including_frameworks": 953,
+        "adapter_cpp_new": 0,
+        "peak_tracked_heap_bytes": 584608,
+        "remaining_tracked_heap_bytes": 4480,
+        "table_overflow": 0
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_malloc",
+        "calls": 137
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_mallocz",
+        "calls": 901
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_get_token",
+        "calls": 2
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_dynarray_add_nofree",
+        "calls": 1
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_buffer_realloc",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_malloc_array",
+        "calls": 1
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_memdup",
+        "calls": 1
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_calloc",
+        "calls": 1
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "lock",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_refstruct_pool_get",
+        "calls": 100
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "lock",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_buffer_pool_get",
+        "calls": 300
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "symbol": "_ZL48pixelBufferBackingCreateIOSurfaceWiringAssertionP11__IOSurfaceP16os_unfair_lock_sPP26__IOSurfaceWiringAssertionPjb",
+        "calls": 450
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/IOSurface.framework/Versions/A/IOSurface",
+        "symbol": "IOSurfaceClientRemoveValue",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "allocation",
+        "image": "/usr/lib/system/libsystem_malloc.dylib",
+        "symbol": "_malloc_type_calloc_outlined",
+        "calls": 101
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "allocation",
+        "image": "/usr/lib/system/libsystem_malloc.dylib",
+        "symbol": "_malloc_type_malloc_outlined",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "symbol": "_ZN15CVBufferBacking11retainUsageEv",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/IOSurface.framework/Versions/A/IOSurface",
+        "symbol": "IOSurfaceClientRemoveCoreVideoBridgedValues",
+        "calls": 100
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/usr/lib/libc++abi.dylib",
+        "symbol": "__cxa_guard_acquire",
+        "calls": 1
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/usr/lib/system/libcorecrypto.dylib",
+        "symbol": "ccrng_crypto_generate",
+        "calls": 1
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/usr/lib/libc++abi.dylib",
+        "symbol": "__cxa_guard_release",
+        "calls": 1
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "symbol": "_ZN20CVPixelBufferBacking15lockBaseAddressEy",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "symbol": "_ZN13CVPixelBuffer16removeAttachmentEPK10__CFString",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "symbol": "_ZN20CVPixelBufferBacking17unlockBaseAddressEy",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "symbol": "_ZN13CVPixelBuffer13setAttachmentEPK10__CFStringPKv16CVAttachmentMode.cold.1",
+        "calls": 150
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "lock",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_refstruct_pool_alloc_ext_c",
+        "calls": 102
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "lock",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_buffer_pool_uninit",
+        "calls": 3
+      },
+      {
+        "probe": "worker_lifetime",
+        "frames": 50,
+        "worker_allocations": 1094,
+        "worker_locks": 505,
+        "worker_cpp_new": 0,
+        "adapter_allocations_including_frameworks": 151,
+        "adapter_locks_including_frameworks": 950,
+        "adapter_cpp_new": 0,
+        "peak_tracked_heap_bytes": 584608,
+        "remaining_tracked_heap_bytes": 4480,
+        "table_overflow": 0
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_malloc",
+        "calls": 137
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_mallocz",
+        "calls": 901
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_get_token",
+        "calls": 2
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_dynarray_add_nofree",
+        "calls": 1
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_buffer_realloc",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_malloc_array",
+        "calls": 1
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_memdup",
+        "calls": 1
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_calloc",
+        "calls": 1
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "lock",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_refstruct_pool_get",
+        "calls": 100
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "lock",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_buffer_pool_get",
+        "calls": 300
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "symbol": "_ZL48pixelBufferBackingCreateIOSurfaceWiringAssertionP11__IOSurfaceP16os_unfair_lock_sPP26__IOSurfaceWiringAssertionPjb",
+        "calls": 450
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/IOSurface.framework/Versions/A/IOSurface",
+        "symbol": "IOSurfaceClientRemoveValue",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "allocation",
+        "image": "/usr/lib/system/libsystem_malloc.dylib",
+        "symbol": "_malloc_type_calloc_outlined",
+        "calls": 101
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "allocation",
+        "image": "/usr/lib/system/libsystem_malloc.dylib",
+        "symbol": "_malloc_type_malloc_outlined",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "symbol": "_ZN15CVBufferBacking11retainUsageEv",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/IOSurface.framework/Versions/A/IOSurface",
+        "symbol": "IOSurfaceClientRemoveCoreVideoBridgedValues",
+        "calls": 100
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "symbol": "_ZN20CVPixelBufferBacking15lockBaseAddressEy",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "symbol": "_ZN13CVPixelBuffer16removeAttachmentEPK10__CFString",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "symbol": "_ZN20CVPixelBufferBacking17unlockBaseAddressEy",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "symbol": "_ZN13CVPixelBuffer13setAttachmentEPK10__CFStringPKv16CVAttachmentMode.cold.1",
+        "calls": 150
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "lock",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_refstruct_pool_alloc_ext_c",
+        "calls": 102
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "lock",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_buffer_pool_uninit",
+        "calls": 3
+      }
+    ]
+  },
+  {
+    "name": "vp9p2",
+    "command": [
+      "/Users/wesleymaa/Documents/WAM/build/wam_avcodec_video_allocation_test",
+      "/Users/wesleymaa/Documents/WAM/test-media/native-coverage/phase2/vp9p2.packets",
+      "vp9p2"
+    ],
+    "rc": 0,
+    "stdout": "{\"probe\":\"worker_lifetime\",\"frames\":50,\"worker_allocations\":1094,\"worker_locks\":505,\"worker_cpp_new\":0,\"adapter_allocations_including_frameworks\":151,\"adapter_locks_including_frameworks\":953,\"adapter_cpp_new\":0,\"peak_tracked_heap_bytes\":993696,\"remaining_tracked_heap_bytes\":4480,\"table_overflow\":0}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_malloc\",\"calls\":137}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_mallocz\",\"calls\":901}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_get_token\",\"calls\":2}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_dynarray_add_nofree\",\"calls\":1}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_buffer_realloc\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_malloc_array\",\"calls\":1}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_memdup\",\"calls\":1}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_calloc\",\"calls\":1}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"lock\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_refstruct_pool_get\",\"calls\":100}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"lock\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_buffer_pool_get\",\"calls\":300}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo\",\"symbol\":\"_ZL48pixelBufferBackingCreateIOSurfaceWiringAssertionP11__IOSurfaceP16os_unfair_lock_sPP26__IOSurfaceWiringAssertionPjb\",\"calls\":450}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/IOSurface.framework/Versions/A/IOSurface\",\"symbol\":\"IOSurfaceClientRemoveValue\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"allocation\",\"image\":\"/usr/lib/system/libsystem_malloc.dylib\",\"symbol\":\"_malloc_type_calloc_outlined\",\"calls\":101}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"allocation\",\"image\":\"/usr/lib/system/libsystem_malloc.dylib\",\"symbol\":\"_malloc_type_malloc_outlined\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo\",\"symbol\":\"_ZN15CVBufferBacking11retainUsageEv\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/IOSurface.framework/Versions/A/IOSurface\",\"symbol\":\"IOSurfaceClientRemoveCoreVideoBridgedValues\",\"calls\":100}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/usr/lib/libc++abi.dylib\",\"symbol\":\"__cxa_guard_acquire\",\"calls\":1}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/usr/lib/system/libcorecrypto.dylib\",\"symbol\":\"ccrng_crypto_generate\",\"calls\":1}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/usr/lib/libc++abi.dylib\",\"symbol\":\"__cxa_guard_release\",\"calls\":1}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo\",\"symbol\":\"_ZN20CVPixelBufferBacking15lockBaseAddressEy\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo\",\"symbol\":\"_ZN13CVPixelBuffer16removeAttachmentEPK10__CFString\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo\",\"symbol\":\"_ZN20CVPixelBufferBacking17unlockBaseAddressEy\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo\",\"symbol\":\"_ZN13CVPixelBuffer13setAttachmentEPK10__CFStringPKv16CVAttachmentMode.cold.1\",\"calls\":150}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"lock\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_refstruct_pool_alloc_ext_c\",\"calls\":102}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"lock\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_buffer_pool_uninit\",\"calls\":3}\n{\"probe\":\"worker_lifetime\",\"frames\":50,\"worker_allocations\":1094,\"worker_locks\":505,\"worker_cpp_new\":0,\"adapter_allocations_including_frameworks\":151,\"adapter_locks_including_frameworks\":950,\"adapter_cpp_new\":0,\"peak_tracked_heap_bytes\":993696,\"remaining_tracked_heap_bytes\":4480,\"table_overflow\":0}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_malloc\",\"calls\":137}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_mallocz\",\"calls\":901}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_get_token\",\"calls\":2}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_dynarray_add_nofree\",\"calls\":1}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_buffer_realloc\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_malloc_array\",\"calls\":1}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_memdup\",\"calls\":1}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_calloc\",\"calls\":1}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"lock\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_refstruct_pool_get\",\"calls\":100}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"lock\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_buffer_pool_get\",\"calls\":300}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo\",\"symbol\":\"_ZL48pixelBufferBackingCreateIOSurfaceWiringAssertionP11__IOSurfaceP16os_unfair_lock_sPP26__IOSurfaceWiringAssertionPjb\",\"calls\":450}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/IOSurface.framework/Versions/A/IOSurface\",\"symbol\":\"IOSurfaceClientRemoveValue\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"allocation\",\"image\":\"/usr/lib/system/libsystem_malloc.dylib\",\"symbol\":\"_malloc_type_calloc_outlined\",\"calls\":101}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"allocation\",\"image\":\"/usr/lib/system/libsystem_malloc.dylib\",\"symbol\":\"_malloc_type_malloc_outlined\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo\",\"symbol\":\"_ZN15CVBufferBacking11retainUsageEv\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/IOSurface.framework/Versions/A/IOSurface\",\"symbol\":\"IOSurfaceClientRemoveCoreVideoBridgedValues\",\"calls\":100}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo\",\"symbol\":\"_ZN20CVPixelBufferBacking15lockBaseAddressEy\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo\",\"symbol\":\"_ZN13CVPixelBuffer16removeAttachmentEPK10__CFString\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo\",\"symbol\":\"_ZN20CVPixelBufferBacking17unlockBaseAddressEy\",\"calls\":50}\n{\"probe\":\"call_site\",\"domain\":2,\"kind\":\"lock\",\"image\":\"/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo\",\"symbol\":\"_ZN13CVPixelBuffer13setAttachmentEPK10__CFStringPKv16CVAttachmentMode.cold.1\",\"calls\":150}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"lock\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_refstruct_pool_alloc_ext_c\",\"calls\":102}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"lock\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_buffer_pool_uninit\",\"calls\":3}\nvideo adapter packet/EOS/flush/backpressure and surface format passed\n",
+    "stderr": "WAM: native decoder stage=Libavcodec codec=76703039\n",
+    "measurements": [
+      {
+        "probe": "worker_lifetime",
+        "frames": 50,
+        "worker_allocations": 1094,
+        "worker_locks": 505,
+        "worker_cpp_new": 0,
+        "adapter_allocations_including_frameworks": 151,
+        "adapter_locks_including_frameworks": 953,
+        "adapter_cpp_new": 0,
+        "peak_tracked_heap_bytes": 993696,
+        "remaining_tracked_heap_bytes": 4480,
+        "table_overflow": 0
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_malloc",
+        "calls": 137
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_mallocz",
+        "calls": 901
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_get_token",
+        "calls": 2
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_dynarray_add_nofree",
+        "calls": 1
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_buffer_realloc",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_malloc_array",
+        "calls": 1
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_memdup",
+        "calls": 1
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_calloc",
+        "calls": 1
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "lock",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_refstruct_pool_get",
+        "calls": 100
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "lock",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_buffer_pool_get",
+        "calls": 300
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "symbol": "_ZL48pixelBufferBackingCreateIOSurfaceWiringAssertionP11__IOSurfaceP16os_unfair_lock_sPP26__IOSurfaceWiringAssertionPjb",
+        "calls": 450
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/IOSurface.framework/Versions/A/IOSurface",
+        "symbol": "IOSurfaceClientRemoveValue",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "allocation",
+        "image": "/usr/lib/system/libsystem_malloc.dylib",
+        "symbol": "_malloc_type_calloc_outlined",
+        "calls": 101
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "allocation",
+        "image": "/usr/lib/system/libsystem_malloc.dylib",
+        "symbol": "_malloc_type_malloc_outlined",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "symbol": "_ZN15CVBufferBacking11retainUsageEv",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/IOSurface.framework/Versions/A/IOSurface",
+        "symbol": "IOSurfaceClientRemoveCoreVideoBridgedValues",
+        "calls": 100
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/usr/lib/libc++abi.dylib",
+        "symbol": "__cxa_guard_acquire",
+        "calls": 1
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/usr/lib/system/libcorecrypto.dylib",
+        "symbol": "ccrng_crypto_generate",
+        "calls": 1
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/usr/lib/libc++abi.dylib",
+        "symbol": "__cxa_guard_release",
+        "calls": 1
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "symbol": "_ZN20CVPixelBufferBacking15lockBaseAddressEy",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "symbol": "_ZN13CVPixelBuffer16removeAttachmentEPK10__CFString",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "symbol": "_ZN20CVPixelBufferBacking17unlockBaseAddressEy",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "symbol": "_ZN13CVPixelBuffer13setAttachmentEPK10__CFStringPKv16CVAttachmentMode.cold.1",
+        "calls": 150
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "lock",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_refstruct_pool_alloc_ext_c",
+        "calls": 102
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "lock",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_buffer_pool_uninit",
+        "calls": 3
+      },
+      {
+        "probe": "worker_lifetime",
+        "frames": 50,
+        "worker_allocations": 1094,
+        "worker_locks": 505,
+        "worker_cpp_new": 0,
+        "adapter_allocations_including_frameworks": 151,
+        "adapter_locks_including_frameworks": 950,
+        "adapter_cpp_new": 0,
+        "peak_tracked_heap_bytes": 993696,
+        "remaining_tracked_heap_bytes": 4480,
+        "table_overflow": 0
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_malloc",
+        "calls": 137
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_mallocz",
+        "calls": 901
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_get_token",
+        "calls": 2
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_dynarray_add_nofree",
+        "calls": 1
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_buffer_realloc",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_malloc_array",
+        "calls": 1
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_memdup",
+        "calls": 1
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_calloc",
+        "calls": 1
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "lock",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_refstruct_pool_get",
+        "calls": 100
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "lock",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_buffer_pool_get",
+        "calls": 300
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "symbol": "_ZL48pixelBufferBackingCreateIOSurfaceWiringAssertionP11__IOSurfaceP16os_unfair_lock_sPP26__IOSurfaceWiringAssertionPjb",
+        "calls": 450
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/IOSurface.framework/Versions/A/IOSurface",
+        "symbol": "IOSurfaceClientRemoveValue",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "allocation",
+        "image": "/usr/lib/system/libsystem_malloc.dylib",
+        "symbol": "_malloc_type_calloc_outlined",
+        "calls": 101
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "allocation",
+        "image": "/usr/lib/system/libsystem_malloc.dylib",
+        "symbol": "_malloc_type_malloc_outlined",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "symbol": "_ZN15CVBufferBacking11retainUsageEv",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/IOSurface.framework/Versions/A/IOSurface",
+        "symbol": "IOSurfaceClientRemoveCoreVideoBridgedValues",
+        "calls": 100
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "symbol": "_ZN20CVPixelBufferBacking15lockBaseAddressEy",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "symbol": "_ZN13CVPixelBuffer16removeAttachmentEPK10__CFString",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "symbol": "_ZN20CVPixelBufferBacking17unlockBaseAddressEy",
+        "calls": 50
+      },
+      {
+        "probe": "call_site",
+        "domain": 2,
+        "kind": "lock",
+        "image": "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "symbol": "_ZN13CVPixelBuffer13setAttachmentEPK10__CFStringPKv16CVAttachmentMode.cold.1",
+        "calls": 150
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "lock",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_refstruct_pool_alloc_ext_c",
+        "calls": 102
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "lock",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_buffer_pool_uninit",
+        "calls": 3
+      }
+    ]
+  },
+  {
+    "name": "dts",
+    "command": [
+      "/Users/wesleymaa/Documents/WAM/build/wam_avcodec_audio_allocation_test",
+      "/Users/wesleymaa/Documents/WAM/test-media/native-coverage/phase2/dts.audio-packets",
+      "/Users/wesleymaa/Documents/WAM/test-media/native-coverage/phase2/dts.f32",
+      "dts"
+    ],
+    "rc": 0,
+    "stdout": "{\"probe\":\"worker_lifetime\",\"frames\":188,\"worker_allocations\":2924,\"worker_locks\":1003,\"worker_cpp_new\":0,\"adapter_allocations_including_frameworks\":0,\"adapter_locks_including_frameworks\":0,\"adapter_cpp_new\":0,\"peak_tracked_heap_bytes\":119824,\"remaining_tracked_heap_bytes\":0,\"table_overflow\":0}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_malloc\",\"calls\":390}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_mallocz\",\"calls\":2151}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_fast_realloc\",\"calls\":4}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"lock\",\"image\":\"/usr/lib/system/libsystem_c.dylib\",\"symbol\":\"localeconv_l\",\"calls\":250}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_malloc_array\",\"calls\":2}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_buffer_realloc\",\"calls\":188}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_fast_malloc\",\"calls\":1}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"lock\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_buffer_pool_get\",\"calls\":752}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_frame_side_data_free\",\"calls\":188}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"lock\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_buffer_pool_uninit\",\"calls\":1}\n{\"probe\":\"worker_lifetime\",\"frames\":188,\"worker_allocations\":2924,\"worker_locks\":1003,\"worker_cpp_new\":0,\"adapter_allocations_including_frameworks\":0,\"adapter_locks_including_frameworks\":0,\"adapter_cpp_new\":0,\"peak_tracked_heap_bytes\":119824,\"remaining_tracked_heap_bytes\":0,\"table_overflow\":0}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_malloc\",\"calls\":390}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_mallocz\",\"calls\":2151}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_fast_realloc\",\"calls\":4}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"lock\",\"image\":\"/usr/lib/system/libsystem_c.dylib\",\"symbol\":\"localeconv_l\",\"calls\":250}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_malloc_array\",\"calls\":2}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_buffer_realloc\",\"calls\":188}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_fast_malloc\",\"calls\":1}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"lock\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_buffer_pool_get\",\"calls\":752}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_frame_side_data_free\",\"calls\":188}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"lock\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_buffer_pool_uninit\",\"calls\":1}\n{\"probe\":\"worker_lifetime\",\"frames\":0,\"worker_allocations\":95,\"worker_locks\":250,\"worker_cpp_new\":0,\"adapter_allocations_including_frameworks\":0,\"adapter_locks_including_frameworks\":0,\"adapter_cpp_new\":0,\"peak_tracked_heap_bytes\":92032,\"remaining_tracked_heap_bytes\":0,\"table_overflow\":0}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_malloc\",\"calls\":11}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_mallocz\",\"calls\":78}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_fast_realloc\",\"calls\":4}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"lock\",\"image\":\"/usr/lib/system/libsystem_c.dylib\",\"symbol\":\"localeconv_l\",\"calls\":250}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_malloc_array\",\"calls\":2}\naudio sample count, zero-offset PCM comparison, roles, packet release, EOS and reset passed\n",
+    "stderr": "",
+    "measurements": [
+      {
+        "probe": "worker_lifetime",
+        "frames": 188,
+        "worker_allocations": 2924,
+        "worker_locks": 1003,
+        "worker_cpp_new": 0,
+        "adapter_allocations_including_frameworks": 0,
+        "adapter_locks_including_frameworks": 0,
+        "adapter_cpp_new": 0,
+        "peak_tracked_heap_bytes": 119824,
+        "remaining_tracked_heap_bytes": 0,
+        "table_overflow": 0
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_malloc",
+        "calls": 390
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_mallocz",
+        "calls": 2151
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_fast_realloc",
+        "calls": 4
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "lock",
+        "image": "/usr/lib/system/libsystem_c.dylib",
+        "symbol": "localeconv_l",
+        "calls": 250
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_malloc_array",
+        "calls": 2
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_buffer_realloc",
+        "calls": 188
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_fast_malloc",
+        "calls": 1
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "lock",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_buffer_pool_get",
+        "calls": 752
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_frame_side_data_free",
+        "calls": 188
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "lock",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_buffer_pool_uninit",
+        "calls": 1
+      },
+      {
+        "probe": "worker_lifetime",
+        "frames": 188,
+        "worker_allocations": 2924,
+        "worker_locks": 1003,
+        "worker_cpp_new": 0,
+        "adapter_allocations_including_frameworks": 0,
+        "adapter_locks_including_frameworks": 0,
+        "adapter_cpp_new": 0,
+        "peak_tracked_heap_bytes": 119824,
+        "remaining_tracked_heap_bytes": 0,
+        "table_overflow": 0
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_malloc",
+        "calls": 390
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_mallocz",
+        "calls": 2151
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_fast_realloc",
+        "calls": 4
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "lock",
+        "image": "/usr/lib/system/libsystem_c.dylib",
+        "symbol": "localeconv_l",
+        "calls": 250
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_malloc_array",
+        "calls": 2
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_buffer_realloc",
+        "calls": 188
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_fast_malloc",
+        "calls": 1
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "lock",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_buffer_pool_get",
+        "calls": 752
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_frame_side_data_free",
+        "calls": 188
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "lock",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_buffer_pool_uninit",
+        "calls": 1
+      },
+      {
+        "probe": "worker_lifetime",
+        "frames": 0,
+        "worker_allocations": 95,
+        "worker_locks": 250,
+        "worker_cpp_new": 0,
+        "adapter_allocations_including_frameworks": 0,
+        "adapter_locks_including_frameworks": 0,
+        "adapter_cpp_new": 0,
+        "peak_tracked_heap_bytes": 92032,
+        "remaining_tracked_heap_bytes": 0,
+        "table_overflow": 0
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_malloc",
+        "calls": 11
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_mallocz",
+        "calls": 78
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_fast_realloc",
+        "calls": 4
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "lock",
+        "image": "/usr/lib/system/libsystem_c.dylib",
+        "symbol": "localeconv_l",
+        "calls": 250
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_malloc_array",
+        "calls": 2
+      }
+    ]
+  },
+  {
+    "name": "truehd",
+    "command": [
+      "/Users/wesleymaa/Documents/WAM/build/wam_avcodec_audio_allocation_test",
+      "/Users/wesleymaa/Documents/WAM/test-media/native-coverage/phase2/truehd.audio-packets",
+      "/Users/wesleymaa/Documents/WAM/test-media/native-coverage/phase2/truehd.f32",
+      "truehd"
+    ],
+    "rc": 0,
+    "stdout": "{\"probe\":\"worker_lifetime\",\"frames\":2400,\"worker_allocations\":21688,\"worker_locks\":4801,\"worker_cpp_new\":0,\"adapter_allocations_including_frameworks\":0,\"adapter_locks_including_frameworks\":0,\"adapter_cpp_new\":0,\"peak_tracked_heap_bytes\":22288,\"remaining_tracked_heap_bytes\":0,\"table_overflow\":0}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_malloc\",\"calls\":2411}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_mallocz\",\"calls\":16876}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_buffer_realloc\",\"calls\":2400}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"lock\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_buffer_pool_get\",\"calls\":4800}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_frame_side_data_free\",\"calls\":1}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"lock\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_buffer_pool_uninit\",\"calls\":1}\n{\"probe\":\"worker_lifetime\",\"frames\":2400,\"worker_allocations\":21688,\"worker_locks\":4801,\"worker_cpp_new\":0,\"adapter_allocations_including_frameworks\":0,\"adapter_locks_including_frameworks\":0,\"adapter_cpp_new\":0,\"peak_tracked_heap_bytes\":22288,\"remaining_tracked_heap_bytes\":0,\"table_overflow\":0}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_malloc\",\"calls\":2411}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_mallocz\",\"calls\":16876}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_buffer_realloc\",\"calls\":2400}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"lock\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_buffer_pool_get\",\"calls\":4800}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_frame_side_data_free\",\"calls\":1}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"lock\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_buffer_pool_uninit\",\"calls\":1}\n{\"probe\":\"worker_lifetime\",\"frames\":0,\"worker_allocations\":78,\"worker_locks\":0,\"worker_cpp_new\":0,\"adapter_allocations_including_frameworks\":0,\"adapter_locks_including_frameworks\":0,\"adapter_cpp_new\":0,\"peak_tracked_heap_bytes\":20480,\"remaining_tracked_heap_bytes\":0,\"table_overflow\":0}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_malloc\",\"calls\":8}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_mallocz\",\"calls\":70}\naudio sample count, zero-offset PCM comparison, roles, packet release, EOS and reset passed\n",
+    "stderr": "",
+    "measurements": [
+      {
+        "probe": "worker_lifetime",
+        "frames": 2400,
+        "worker_allocations": 21688,
+        "worker_locks": 4801,
+        "worker_cpp_new": 0,
+        "adapter_allocations_including_frameworks": 0,
+        "adapter_locks_including_frameworks": 0,
+        "adapter_cpp_new": 0,
+        "peak_tracked_heap_bytes": 22288,
+        "remaining_tracked_heap_bytes": 0,
+        "table_overflow": 0
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_malloc",
+        "calls": 2411
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_mallocz",
+        "calls": 16876
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_buffer_realloc",
+        "calls": 2400
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "lock",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_buffer_pool_get",
+        "calls": 4800
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_frame_side_data_free",
+        "calls": 1
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "lock",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_buffer_pool_uninit",
+        "calls": 1
+      },
+      {
+        "probe": "worker_lifetime",
+        "frames": 2400,
+        "worker_allocations": 21688,
+        "worker_locks": 4801,
+        "worker_cpp_new": 0,
+        "adapter_allocations_including_frameworks": 0,
+        "adapter_locks_including_frameworks": 0,
+        "adapter_cpp_new": 0,
+        "peak_tracked_heap_bytes": 22288,
+        "remaining_tracked_heap_bytes": 0,
+        "table_overflow": 0
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_malloc",
+        "calls": 2411
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_mallocz",
+        "calls": 16876
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_buffer_realloc",
+        "calls": 2400
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "lock",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_buffer_pool_get",
+        "calls": 4800
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_frame_side_data_free",
+        "calls": 1
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "lock",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_buffer_pool_uninit",
+        "calls": 1
+      },
+      {
+        "probe": "worker_lifetime",
+        "frames": 0,
+        "worker_allocations": 78,
+        "worker_locks": 0,
+        "worker_cpp_new": 0,
+        "adapter_allocations_including_frameworks": 0,
+        "adapter_locks_including_frameworks": 0,
+        "adapter_cpp_new": 0,
+        "peak_tracked_heap_bytes": 20480,
+        "remaining_tracked_heap_bytes": 0,
+        "table_overflow": 0
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_malloc",
+        "calls": 8
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_mallocz",
+        "calls": 70
+      }
+    ]
+  },
+  {
+    "name": "dts51",
+    "command": [
+      "/Users/wesleymaa/Documents/WAM/build/wam_avcodec_audio_allocation_test",
+      "/Users/wesleymaa/Documents/WAM/test-media/native-coverage/phase2/dts51.audio-packets",
+      "/Users/wesleymaa/Documents/WAM/test-media/native-coverage/phase2/dts51.f32",
+      "dts51",
+      "6",
+      "/Users/wesleymaa/Documents/WAM/test-media/native-coverage/phase2/dts51.stereo.f32"
+    ],
+    "rc": 0,
+    "stdout": "{\"probe\":\"worker_lifetime\",\"frames\":94,\"worker_allocations\":1902,\"worker_locks\":1379,\"worker_cpp_new\":0,\"adapter_allocations_including_frameworks\":0,\"adapter_locks_including_frameworks\":0,\"adapter_cpp_new\":0,\"peak_tracked_heap_bytes\":128784,\"remaining_tracked_heap_bytes\":0,\"table_overflow\":0}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_malloc\",\"calls\":206}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_mallocz\",\"calls\":1501}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_fast_realloc\",\"calls\":4}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"lock\",\"image\":\"/usr/lib/system/libsystem_c.dylib\",\"symbol\":\"localeconv_l\",\"calls\":250}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_malloc_array\",\"calls\":2}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_buffer_realloc\",\"calls\":94}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_fast_malloc\",\"calls\":1}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"lock\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_buffer_pool_get\",\"calls\":1128}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_frame_side_data_free\",\"calls\":94}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"lock\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_buffer_pool_uninit\",\"calls\":1}\n{\"probe\":\"worker_lifetime\",\"frames\":94,\"worker_allocations\":1902,\"worker_locks\":1379,\"worker_cpp_new\":0,\"adapter_allocations_including_frameworks\":0,\"adapter_locks_including_frameworks\":0,\"adapter_cpp_new\":0,\"peak_tracked_heap_bytes\":128784,\"remaining_tracked_heap_bytes\":0,\"table_overflow\":0}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_malloc\",\"calls\":206}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_mallocz\",\"calls\":1501}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_fast_realloc\",\"calls\":4}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"lock\",\"image\":\"/usr/lib/system/libsystem_c.dylib\",\"symbol\":\"localeconv_l\",\"calls\":250}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_malloc_array\",\"calls\":2}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_buffer_realloc\",\"calls\":94}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_fast_malloc\",\"calls\":1}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"lock\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_buffer_pool_get\",\"calls\":1128}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_frame_side_data_free\",\"calls\":94}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"lock\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_buffer_pool_uninit\",\"calls\":1}\n{\"probe\":\"worker_lifetime\",\"frames\":0,\"worker_allocations\":95,\"worker_locks\":250,\"worker_cpp_new\":0,\"adapter_allocations_including_frameworks\":0,\"adapter_locks_including_frameworks\":0,\"adapter_cpp_new\":0,\"peak_tracked_heap_bytes\":92032,\"remaining_tracked_heap_bytes\":0,\"table_overflow\":0}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_malloc\",\"calls\":11}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_mallocz\",\"calls\":78}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_fast_realloc\",\"calls\":4}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"lock\",\"image\":\"/usr/lib/system/libsystem_c.dylib\",\"symbol\":\"localeconv_l\",\"calls\":250}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_malloc_array\",\"calls\":2}\naudio sample count, zero-offset PCM comparison, roles, packet release, EOS and reset passed\n",
+    "stderr": "",
+    "measurements": [
+      {
+        "probe": "worker_lifetime",
+        "frames": 94,
+        "worker_allocations": 1902,
+        "worker_locks": 1379,
+        "worker_cpp_new": 0,
+        "adapter_allocations_including_frameworks": 0,
+        "adapter_locks_including_frameworks": 0,
+        "adapter_cpp_new": 0,
+        "peak_tracked_heap_bytes": 128784,
+        "remaining_tracked_heap_bytes": 0,
+        "table_overflow": 0
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_malloc",
+        "calls": 206
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_mallocz",
+        "calls": 1501
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_fast_realloc",
+        "calls": 4
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "lock",
+        "image": "/usr/lib/system/libsystem_c.dylib",
+        "symbol": "localeconv_l",
+        "calls": 250
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_malloc_array",
+        "calls": 2
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_buffer_realloc",
+        "calls": 94
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_fast_malloc",
+        "calls": 1
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "lock",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_buffer_pool_get",
+        "calls": 1128
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_frame_side_data_free",
+        "calls": 94
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "lock",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_buffer_pool_uninit",
+        "calls": 1
+      },
+      {
+        "probe": "worker_lifetime",
+        "frames": 94,
+        "worker_allocations": 1902,
+        "worker_locks": 1379,
+        "worker_cpp_new": 0,
+        "adapter_allocations_including_frameworks": 0,
+        "adapter_locks_including_frameworks": 0,
+        "adapter_cpp_new": 0,
+        "peak_tracked_heap_bytes": 128784,
+        "remaining_tracked_heap_bytes": 0,
+        "table_overflow": 0
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_malloc",
+        "calls": 206
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_mallocz",
+        "calls": 1501
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_fast_realloc",
+        "calls": 4
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "lock",
+        "image": "/usr/lib/system/libsystem_c.dylib",
+        "symbol": "localeconv_l",
+        "calls": 250
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_malloc_array",
+        "calls": 2
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_buffer_realloc",
+        "calls": 94
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_fast_malloc",
+        "calls": 1
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "lock",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_buffer_pool_get",
+        "calls": 1128
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_frame_side_data_free",
+        "calls": 94
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "lock",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_buffer_pool_uninit",
+        "calls": 1
+      },
+      {
+        "probe": "worker_lifetime",
+        "frames": 0,
+        "worker_allocations": 95,
+        "worker_locks": 250,
+        "worker_cpp_new": 0,
+        "adapter_allocations_including_frameworks": 0,
+        "adapter_locks_including_frameworks": 0,
+        "adapter_cpp_new": 0,
+        "peak_tracked_heap_bytes": 92032,
+        "remaining_tracked_heap_bytes": 0,
+        "table_overflow": 0
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_malloc",
+        "calls": 11
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_mallocz",
+        "calls": 78
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_fast_realloc",
+        "calls": 4
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "lock",
+        "image": "/usr/lib/system/libsystem_c.dylib",
+        "symbol": "localeconv_l",
+        "calls": 250
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_malloc_array",
+        "calls": 2
+      }
+    ]
+  },
+  {
+    "name": "truehd51",
+    "command": [
+      "/Users/wesleymaa/Documents/WAM/build/wam_avcodec_audio_allocation_test",
+      "/Users/wesleymaa/Documents/WAM/test-media/native-coverage/phase2/truehd51.audio-packets",
+      "/Users/wesleymaa/Documents/WAM/test-media/native-coverage/phase2/truehd51.f32",
+      "truehd51",
+      "6",
+      "/Users/wesleymaa/Documents/WAM/test-media/native-coverage/phase2/truehd51.stereo.f32"
+    ],
+    "rc": 0,
+    "stdout": "{\"probe\":\"worker_lifetime\",\"frames\":1200,\"worker_allocations\":10883,\"worker_locks\":2401,\"worker_cpp_new\":0,\"adapter_allocations_including_frameworks\":0,\"adapter_locks_including_frameworks\":0,\"adapter_cpp_new\":0,\"peak_tracked_heap_bytes\":23024,\"remaining_tracked_heap_bytes\":0,\"table_overflow\":0}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_malloc\",\"calls\":1210}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_mallocz\",\"calls\":8473}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_buffer_realloc\",\"calls\":1200}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"lock\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_buffer_pool_get\",\"calls\":2400}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"lock\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_buffer_pool_uninit\",\"calls\":1}\n{\"probe\":\"worker_lifetime\",\"frames\":1200,\"worker_allocations\":10883,\"worker_locks\":2401,\"worker_cpp_new\":0,\"adapter_allocations_including_frameworks\":0,\"adapter_locks_including_frameworks\":0,\"adapter_cpp_new\":0,\"peak_tracked_heap_bytes\":23024,\"remaining_tracked_heap_bytes\":0,\"table_overflow\":0}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_malloc\",\"calls\":1210}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_mallocz\",\"calls\":8473}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_buffer_realloc\",\"calls\":1200}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"lock\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_buffer_pool_get\",\"calls\":2400}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"lock\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_buffer_pool_uninit\",\"calls\":1}\n{\"probe\":\"worker_lifetime\",\"frames\":0,\"worker_allocations\":78,\"worker_locks\":0,\"worker_cpp_new\":0,\"adapter_allocations_including_frameworks\":0,\"adapter_locks_including_frameworks\":0,\"adapter_cpp_new\":0,\"peak_tracked_heap_bytes\":20480,\"remaining_tracked_heap_bytes\":0,\"table_overflow\":0}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_malloc\",\"calls\":8}\n{\"probe\":\"call_site\",\"domain\":1,\"kind\":\"allocation\",\"image\":\"/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib\",\"symbol\":\"av_mallocz\",\"calls\":70}\naudio sample count, zero-offset PCM comparison, roles, packet release, EOS and reset passed\n",
+    "stderr": "",
+    "measurements": [
+      {
+        "probe": "worker_lifetime",
+        "frames": 1200,
+        "worker_allocations": 10883,
+        "worker_locks": 2401,
+        "worker_cpp_new": 0,
+        "adapter_allocations_including_frameworks": 0,
+        "adapter_locks_including_frameworks": 0,
+        "adapter_cpp_new": 0,
+        "peak_tracked_heap_bytes": 23024,
+        "remaining_tracked_heap_bytes": 0,
+        "table_overflow": 0
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_malloc",
+        "calls": 1210
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_mallocz",
+        "calls": 8473
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_buffer_realloc",
+        "calls": 1200
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "lock",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_buffer_pool_get",
+        "calls": 2400
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "lock",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_buffer_pool_uninit",
+        "calls": 1
+      },
+      {
+        "probe": "worker_lifetime",
+        "frames": 1200,
+        "worker_allocations": 10883,
+        "worker_locks": 2401,
+        "worker_cpp_new": 0,
+        "adapter_allocations_including_frameworks": 0,
+        "adapter_locks_including_frameworks": 0,
+        "adapter_cpp_new": 0,
+        "peak_tracked_heap_bytes": 23024,
+        "remaining_tracked_heap_bytes": 0,
+        "table_overflow": 0
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_malloc",
+        "calls": 1210
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_mallocz",
+        "calls": 8473
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_buffer_realloc",
+        "calls": 1200
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "lock",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_buffer_pool_get",
+        "calls": 2400
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "lock",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_buffer_pool_uninit",
+        "calls": 1
+      },
+      {
+        "probe": "worker_lifetime",
+        "frames": 0,
+        "worker_allocations": 78,
+        "worker_locks": 0,
+        "worker_cpp_new": 0,
+        "adapter_allocations_including_frameworks": 0,
+        "adapter_locks_including_frameworks": 0,
+        "adapter_cpp_new": 0,
+        "peak_tracked_heap_bytes": 20480,
+        "remaining_tracked_heap_bytes": 0,
+        "table_overflow": 0
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_malloc",
+        "calls": 8
+      },
+      {
+        "probe": "call_site",
+        "domain": 1,
+        "kind": "allocation",
+        "image": "/Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib",
+        "symbol": "av_mallocz",
+        "calls": 70
+      }
+    ]
+  }
+]

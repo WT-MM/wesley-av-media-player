@@ -1,0 +1,425 @@
+{
+  "native": [
+    {
+      "path": "/Users/wesleymaa/Documents/WAM/build/WAM.app/Contents/Frameworks/libavcodec-wamnative.63.dylib",
+      "loads": [
+        "@rpath/libavutil-wamnative.61.dylib",
+        "/usr/lib/libSystem.B.dylib",
+        "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+        "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "/System/Library/Frameworks/CoreMedia.framework/Versions/A/CoreMedia"
+      ],
+      "rpaths": [],
+      "minos": [
+        "13.3"
+      ],
+      "at_or_below_13_3": true
+    },
+    {
+      "path": "/Users/wesleymaa/Documents/WAM/build/WAM.app/Contents/Frameworks/libavutil-wamnative.61.dylib",
+      "loads": [
+        "/usr/lib/libSystem.B.dylib",
+        "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+        "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "/System/Library/Frameworks/CoreMedia.framework/Versions/A/CoreMedia"
+      ],
+      "rpaths": [],
+      "minos": [
+        "13.3"
+      ],
+      "at_or_below_13_3": true
+    },
+    {
+      "path": "/Users/wesleymaa/Documents/WAM/build/WAM.app/Contents/Frameworks/libavformat-wamnative.63.dylib",
+      "loads": [
+        "@rpath/libavcodec-wamnative.63.dylib",
+        "@rpath/libavutil-wamnative.61.dylib",
+        "/usr/lib/libSystem.B.dylib",
+        "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+        "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "/System/Library/Frameworks/CoreMedia.framework/Versions/A/CoreMedia"
+      ],
+      "rpaths": [],
+      "minos": [
+        "13.3"
+      ],
+      "at_or_below_13_3": true
+    }
+  ],
+  "main": {
+    "path": "/Users/wesleymaa/Documents/WAM/build/WAM.app/Contents/MacOS/WAM",
+    "loads": [
+      "/opt/homebrew/opt/qtdeclarative/lib/QtQuickControls2.framework/Versions/A/QtQuickControls2",
+      "/opt/homebrew/opt/qtdeclarative/lib/QtQuickDialogs2.framework/Versions/A/QtQuickDialogs2",
+      "/opt/homebrew/opt/qtdeclarative/lib/QtQuickLayouts.framework/Versions/A/QtQuickLayouts",
+      "/opt/homebrew/opt/qtdeclarative/lib/QtLabsPlatform.framework/Versions/A/QtLabsPlatform",
+      "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+      "/System/Library/Frameworks/QuartzCore.framework/Versions/A/QuartzCore",
+      "/System/Library/Frameworks/AVFoundation.framework/Versions/A/AVFoundation",
+      "/opt/homebrew/opt/qtdeclarative/lib/QtQuick.framework/Versions/A/QtQuick",
+      "/opt/homebrew/opt/qtbase/lib/QtOpenGL.framework/Versions/A/QtOpenGL",
+      "/opt/homebrew/opt/qtbase/lib/QtGui.framework/Versions/A/QtGui",
+      "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+      "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+      "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+      "/opt/homebrew/opt/qtdeclarative/lib/QtQml.framework/Versions/A/QtQml",
+      "/opt/homebrew/opt/qtbase/lib/QtNetwork.framework/Versions/A/QtNetwork",
+      "/opt/homebrew/opt/qtbase/lib/QtCore.framework/Versions/A/QtCore",
+      "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+      "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+      "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+      "/System/Library/Frameworks/CoreImage.framework/Versions/A/CoreImage",
+      "/opt/homebrew/opt/libvpx/lib/libvpx.12.dylib",
+      "/usr/lib/libSystem.B.dylib",
+      "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+      "/System/Library/Frameworks/CoreGraphics.framework/Versions/A/CoreGraphics",
+      "/System/Library/Frameworks/CoreMedia.framework/Versions/A/CoreMedia",
+      "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+      "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+      "/System/Library/Frameworks/IOSurface.framework/Versions/A/IOSurface",
+      "/System/Library/Frameworks/AudioToolbox.framework/Versions/A/AudioToolbox",
+      "/System/Library/Frameworks/CoreAudio.framework/Versions/A/CoreAudio",
+      "/System/Library/Frameworks/VideoToolbox.framework/Versions/A/VideoToolbox",
+      "/usr/lib/libc++.1.dylib",
+      "/usr/lib/libobjc.A.dylib"
+    ],
+    "rpaths": [],
+    "minos": [
+      "13.3"
+    ],
+    "at_or_below_13_3": true
+  },
+  "bundled_machos": [
+    {
+      "path": "/Users/wesleymaa/Documents/WAM/build/WAM.app/Contents/Frameworks/WAMMpvFallback.dylib",
+      "loads": [
+        "/opt/homebrew/opt/libass/lib/libass.9.dylib",
+        "/opt/homebrew/opt/ffmpeg/lib/libavcodec.62.dylib",
+        "/opt/homebrew/opt/ffmpeg/lib/libavfilter.11.dylib",
+        "/opt/homebrew/opt/ffmpeg/lib/libavformat.62.dylib",
+        "/opt/homebrew/opt/ffmpeg/lib/libavutil.60.dylib",
+        "/opt/homebrew/opt/libplacebo/lib/libplacebo.360.dylib",
+        "/opt/homebrew/opt/ffmpeg/lib/libswresample.6.dylib",
+        "/opt/homebrew/opt/ffmpeg/lib/libswscale.9.dylib",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/QuartzCore.framework/Versions/A/QuartzCore",
+        "/usr/lib/libiconv.2.dylib",
+        "/opt/homebrew/opt/mujs/lib/libmujs.dylib",
+        "/opt/homebrew/opt/little-cms2/lib/liblcms2.2.dylib",
+        "/opt/homebrew/opt/libarchive/lib/libarchive.13.dylib",
+        "/opt/homebrew/opt/ffmpeg/lib/libavdevice.62.dylib",
+        "/opt/homebrew/opt/libbluray/lib/libbluray.4.dylib",
+        "/usr/lib/libSystem.B.dylib",
+        "/opt/homebrew/opt/luajit/lib/libluajit-5.1.2.dylib",
+        "/opt/homebrew/opt/rubberband/lib/librubberband.3.dylib",
+        "/opt/homebrew/opt/uchardet/lib/libuchardet.0.dylib",
+        "/opt/homebrew/opt/zimg/lib/libzimg.2.dylib",
+        "/usr/lib/libz.1.dylib",
+        "/System/Library/Frameworks/CoreMedia.framework/Versions/A/CoreMedia",
+        "/System/Library/Frameworks/AVFoundation.framework/Versions/A/AVFoundation",
+        "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+        "/System/Library/Frameworks/CoreAudio.framework/Versions/A/CoreAudio",
+        "/System/Library/Frameworks/AudioUnit.framework/Versions/A/AudioUnit",
+        "/System/Library/Frameworks/AudioToolbox.framework/Versions/A/AudioToolbox",
+        "/opt/homebrew/opt/jpeg-turbo/lib/libjpeg.8.dylib",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/opt/homebrew/opt/vulkan-loader/lib/libvulkan.1.dylib",
+        "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/Carbon.framework/Versions/A/Carbon",
+        "/System/Library/Frameworks/CoreGraphics.framework/Versions/A/CoreGraphics",
+        "/System/Library/Frameworks/CoreServices.framework/Versions/A/CoreServices",
+        "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+        "/System/Library/Frameworks/IOSurface.framework/Versions/A/IOSurface",
+        "/System/Library/Frameworks/MediaPlayer.framework/Versions/A/MediaPlayer",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "/System/Library/Frameworks/QuickLookThumbnailing.framework/Versions/A/QuickLookThumbnailing",
+        "/usr/lib/libobjc.A.dylib",
+        "/usr/lib/swift/libswiftAVFoundation.dylib",
+        "/usr/lib/swift/libswiftCore.dylib",
+        "/usr/lib/swift/libswiftCoreAudio.dylib",
+        "/usr/lib/swift/libswiftCoreFoundation.dylib",
+        "/usr/lib/swift/libswiftCoreImage.dylib",
+        "/usr/lib/swift/libswiftCoreMIDI.dylib",
+        "/usr/lib/swift/libswiftCoreMedia.dylib",
+        "/usr/lib/swift/libswiftDispatch.dylib",
+        "/usr/lib/swift/libswiftIOKit.dylib",
+        "/usr/lib/swift/libswiftMetal.dylib",
+        "/usr/lib/swift/libswiftOSLog.dylib",
+        "/usr/lib/swift/libswiftObjectiveC.dylib",
+        "/usr/lib/swift/libswiftQuartzCore.dylib",
+        "/usr/lib/swift/libswiftSpatial.dylib",
+        "/usr/lib/swift/libswiftUniformTypeIdentifiers.dylib",
+        "/usr/lib/swift/libswiftXPC.dylib",
+        "/usr/lib/swift/libswift_Builtin_float.dylib",
+        "/usr/lib/swift/libswiftos.dylib",
+        "/usr/lib/swift/libswiftsimd.dylib"
+      ],
+      "rpaths": [
+        "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/macosx",
+        "/usr/lib/swift"
+      ],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/Users/wesleymaa/Documents/WAM/build/WAM.app/Contents/Frameworks/libavcodec-wamnative.63.dylib",
+      "loads": [
+        "@rpath/libavutil-wamnative.61.dylib",
+        "/usr/lib/libSystem.B.dylib",
+        "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+        "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "/System/Library/Frameworks/CoreMedia.framework/Versions/A/CoreMedia"
+      ],
+      "rpaths": [],
+      "minos": [
+        "13.3"
+      ],
+      "at_or_below_13_3": true
+    },
+    {
+      "path": "/Users/wesleymaa/Documents/WAM/build/WAM.app/Contents/Frameworks/libavformat-wamnative.63.dylib",
+      "loads": [
+        "@rpath/libavcodec-wamnative.63.dylib",
+        "@rpath/libavutil-wamnative.61.dylib",
+        "/usr/lib/libSystem.B.dylib",
+        "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+        "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "/System/Library/Frameworks/CoreMedia.framework/Versions/A/CoreMedia"
+      ],
+      "rpaths": [],
+      "minos": [
+        "13.3"
+      ],
+      "at_or_below_13_3": true
+    },
+    {
+      "path": "/Users/wesleymaa/Documents/WAM/build/WAM.app/Contents/Frameworks/libavutil-wamnative.61.dylib",
+      "loads": [
+        "/usr/lib/libSystem.B.dylib",
+        "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+        "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "/System/Library/Frameworks/CoreMedia.framework/Versions/A/CoreMedia"
+      ],
+      "rpaths": [],
+      "minos": [
+        "13.3"
+      ],
+      "at_or_below_13_3": true
+    },
+    {
+      "path": "/Users/wesleymaa/Documents/WAM/build/WAM.app/Contents/MacOS/WAM",
+      "loads": [
+        "/opt/homebrew/opt/qtdeclarative/lib/QtQuickControls2.framework/Versions/A/QtQuickControls2",
+        "/opt/homebrew/opt/qtdeclarative/lib/QtQuickDialogs2.framework/Versions/A/QtQuickDialogs2",
+        "/opt/homebrew/opt/qtdeclarative/lib/QtQuickLayouts.framework/Versions/A/QtQuickLayouts",
+        "/opt/homebrew/opt/qtdeclarative/lib/QtLabsPlatform.framework/Versions/A/QtLabsPlatform",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/QuartzCore.framework/Versions/A/QuartzCore",
+        "/System/Library/Frameworks/AVFoundation.framework/Versions/A/AVFoundation",
+        "/opt/homebrew/opt/qtdeclarative/lib/QtQuick.framework/Versions/A/QtQuick",
+        "/opt/homebrew/opt/qtbase/lib/QtOpenGL.framework/Versions/A/QtOpenGL",
+        "/opt/homebrew/opt/qtbase/lib/QtGui.framework/Versions/A/QtGui",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "/opt/homebrew/opt/qtdeclarative/lib/QtQml.framework/Versions/A/QtQml",
+        "/opt/homebrew/opt/qtbase/lib/QtNetwork.framework/Versions/A/QtNetwork",
+        "/opt/homebrew/opt/qtbase/lib/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/System/Library/Frameworks/CoreImage.framework/Versions/A/CoreImage",
+        "/opt/homebrew/opt/libvpx/lib/libvpx.12.dylib",
+        "/usr/lib/libSystem.B.dylib",
+        "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+        "/System/Library/Frameworks/CoreGraphics.framework/Versions/A/CoreGraphics",
+        "/System/Library/Frameworks/CoreMedia.framework/Versions/A/CoreMedia",
+        "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+        "/System/Library/Frameworks/IOSurface.framework/Versions/A/IOSurface",
+        "/System/Library/Frameworks/AudioToolbox.framework/Versions/A/AudioToolbox",
+        "/System/Library/Frameworks/CoreAudio.framework/Versions/A/CoreAudio",
+        "/System/Library/Frameworks/VideoToolbox.framework/Versions/A/VideoToolbox",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libobjc.A.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "13.3"
+      ],
+      "at_or_below_13_3": true
+    },
+    {
+      "path": "/Users/wesleymaa/Documents/WAM/build/WAM.app/Contents/PlugIns/WAMThumbnail.appex/Contents/MacOS/WAMThumbnail",
+      "loads": [
+        "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+        "/System/Library/Frameworks/CoreGraphics.framework/Versions/A/CoreGraphics",
+        "/System/Library/Frameworks/CoreMedia.framework/Versions/A/CoreMedia",
+        "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+        "/System/Library/Frameworks/QuickLookThumbnailing.framework/Versions/A/QuickLookThumbnailing",
+        "/System/Library/Frameworks/VideoToolbox.framework/Versions/A/VideoToolbox",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib",
+        "/usr/lib/libobjc.A.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "13.3"
+      ],
+      "at_or_below_13_3": true
+    }
+  ],
+  "direct_external_dependencies": [
+    {
+      "owner": "/Users/wesleymaa/Documents/WAM/build/WAM.app/Contents/Frameworks/WAMMpvFallback.dylib",
+      "dependency": "/opt/homebrew/opt/libass/lib/libass.9.dylib"
+    },
+    {
+      "owner": "/Users/wesleymaa/Documents/WAM/build/WAM.app/Contents/Frameworks/WAMMpvFallback.dylib",
+      "dependency": "/opt/homebrew/opt/ffmpeg/lib/libavcodec.62.dylib"
+    },
+    {
+      "owner": "/Users/wesleymaa/Documents/WAM/build/WAM.app/Contents/Frameworks/WAMMpvFallback.dylib",
+      "dependency": "/opt/homebrew/opt/ffmpeg/lib/libavfilter.11.dylib"
+    },
+    {
+      "owner": "/Users/wesleymaa/Documents/WAM/build/WAM.app/Contents/Frameworks/WAMMpvFallback.dylib",
+      "dependency": "/opt/homebrew/opt/ffmpeg/lib/libavformat.62.dylib"
+    },
+    {
+      "owner": "/Users/wesleymaa/Documents/WAM/build/WAM.app/Contents/Frameworks/WAMMpvFallback.dylib",
+      "dependency": "/opt/homebrew/opt/ffmpeg/lib/libavutil.60.dylib"
+    },
+    {
+      "owner": "/Users/wesleymaa/Documents/WAM/build/WAM.app/Contents/Frameworks/WAMMpvFallback.dylib",
+      "dependency": "/opt/homebrew/opt/libplacebo/lib/libplacebo.360.dylib"
+    },
+    {
+      "owner": "/Users/wesleymaa/Documents/WAM/build/WAM.app/Contents/Frameworks/WAMMpvFallback.dylib",
+      "dependency": "/opt/homebrew/opt/ffmpeg/lib/libswresample.6.dylib"
+    },
+    {
+      "owner": "/Users/wesleymaa/Documents/WAM/build/WAM.app/Contents/Frameworks/WAMMpvFallback.dylib",
+      "dependency": "/opt/homebrew/opt/ffmpeg/lib/libswscale.9.dylib"
+    },
+    {
+      "owner": "/Users/wesleymaa/Documents/WAM/build/WAM.app/Contents/Frameworks/WAMMpvFallback.dylib",
+      "dependency": "/opt/homebrew/opt/mujs/lib/libmujs.dylib"
+    },
+    {
+      "owner": "/Users/wesleymaa/Documents/WAM/build/WAM.app/Contents/Frameworks/WAMMpvFallback.dylib",
+      "dependency": "/opt/homebrew/opt/little-cms2/lib/liblcms2.2.dylib"
+    },
+    {
+      "owner": "/Users/wesleymaa/Documents/WAM/build/WAM.app/Contents/Frameworks/WAMMpvFallback.dylib",
+      "dependency": "/opt/homebrew/opt/libarchive/lib/libarchive.13.dylib"
+    },
+    {
+      "owner": "/Users/wesleymaa/Documents/WAM/build/WAM.app/Contents/Frameworks/WAMMpvFallback.dylib",
+      "dependency": "/opt/homebrew/opt/ffmpeg/lib/libavdevice.62.dylib"
+    },
+    {
+      "owner": "/Users/wesleymaa/Documents/WAM/build/WAM.app/Contents/Frameworks/WAMMpvFallback.dylib",
+      "dependency": "/opt/homebrew/opt/libbluray/lib/libbluray.4.dylib"
+    },
+    {
+      "owner": "/Users/wesleymaa/Documents/WAM/build/WAM.app/Contents/Frameworks/WAMMpvFallback.dylib",
+      "dependency": "/opt/homebrew/opt/luajit/lib/libluajit-5.1.2.dylib"
+    },
+    {
+      "owner": "/Users/wesleymaa/Documents/WAM/build/WAM.app/Contents/Frameworks/WAMMpvFallback.dylib",
+      "dependency": "/opt/homebrew/opt/rubberband/lib/librubberband.3.dylib"
+    },
+    {
+      "owner": "/Users/wesleymaa/Documents/WAM/build/WAM.app/Contents/Frameworks/WAMMpvFallback.dylib",
+      "dependency": "/opt/homebrew/opt/uchardet/lib/libuchardet.0.dylib"
+    },
+    {
+      "owner": "/Users/wesleymaa/Documents/WAM/build/WAM.app/Contents/Frameworks/WAMMpvFallback.dylib",
+      "dependency": "/opt/homebrew/opt/zimg/lib/libzimg.2.dylib"
+    },
+    {
+      "owner": "/Users/wesleymaa/Documents/WAM/build/WAM.app/Contents/Frameworks/WAMMpvFallback.dylib",
+      "dependency": "/opt/homebrew/opt/jpeg-turbo/lib/libjpeg.8.dylib"
+    },
+    {
+      "owner": "/Users/wesleymaa/Documents/WAM/build/WAM.app/Contents/Frameworks/WAMMpvFallback.dylib",
+      "dependency": "/opt/homebrew/opt/vulkan-loader/lib/libvulkan.1.dylib"
+    },
+    {
+      "owner": "/Users/wesleymaa/Documents/WAM/build/WAM.app/Contents/MacOS/WAM",
+      "dependency": "/opt/homebrew/opt/qtdeclarative/lib/QtQuickControls2.framework/Versions/A/QtQuickControls2"
+    },
+    {
+      "owner": "/Users/wesleymaa/Documents/WAM/build/WAM.app/Contents/MacOS/WAM",
+      "dependency": "/opt/homebrew/opt/qtdeclarative/lib/QtQuickDialogs2.framework/Versions/A/QtQuickDialogs2"
+    },
+    {
+      "owner": "/Users/wesleymaa/Documents/WAM/build/WAM.app/Contents/MacOS/WAM",
+      "dependency": "/opt/homebrew/opt/qtdeclarative/lib/QtQuickLayouts.framework/Versions/A/QtQuickLayouts"
+    },
+    {
+      "owner": "/Users/wesleymaa/Documents/WAM/build/WAM.app/Contents/MacOS/WAM",
+      "dependency": "/opt/homebrew/opt/qtdeclarative/lib/QtLabsPlatform.framework/Versions/A/QtLabsPlatform"
+    },
+    {
+      "owner": "/Users/wesleymaa/Documents/WAM/build/WAM.app/Contents/MacOS/WAM",
+      "dependency": "/opt/homebrew/opt/qtdeclarative/lib/QtQuick.framework/Versions/A/QtQuick"
+    },
+    {
+      "owner": "/Users/wesleymaa/Documents/WAM/build/WAM.app/Contents/MacOS/WAM",
+      "dependency": "/opt/homebrew/opt/qtbase/lib/QtOpenGL.framework/Versions/A/QtOpenGL"
+    },
+    {
+      "owner": "/Users/wesleymaa/Documents/WAM/build/WAM.app/Contents/MacOS/WAM",
+      "dependency": "/opt/homebrew/opt/qtbase/lib/QtGui.framework/Versions/A/QtGui"
+    },
+    {
+      "owner": "/Users/wesleymaa/Documents/WAM/build/WAM.app/Contents/MacOS/WAM",
+      "dependency": "/opt/homebrew/opt/qtdeclarative/lib/QtQml.framework/Versions/A/QtQml"
+    },
+    {
+      "owner": "/Users/wesleymaa/Documents/WAM/build/WAM.app/Contents/MacOS/WAM",
+      "dependency": "/opt/homebrew/opt/qtbase/lib/QtNetwork.framework/Versions/A/QtNetwork"
+    },
+    {
+      "owner": "/Users/wesleymaa/Documents/WAM/build/WAM.app/Contents/MacOS/WAM",
+      "dependency": "/opt/homebrew/opt/qtbase/lib/QtCore.framework/Versions/A/QtCore"
+    },
+    {
+      "owner": "/Users/wesleymaa/Documents/WAM/build/WAM.app/Contents/MacOS/WAM",
+      "dependency": "/opt/homebrew/opt/libvpx/lib/libvpx.12.dylib"
+    }
+  ],
+  "unresolved_dependencies": [
+    {
+      "owner": "/Users/wesleymaa/Documents/WAM/build/WAM.app/Contents/Frameworks/libavcodec-wamnative.63.dylib",
+      "dependency": "@rpath/libavutil-wamnative.61.dylib"
+    },
+    {
+      "owner": "/Users/wesleymaa/Documents/WAM/build/WAM.app/Contents/Frameworks/libavformat-wamnative.63.dylib",
+      "dependency": "@rpath/libavcodec-wamnative.63.dylib"
+    },
+    {
+      "owner": "/Users/wesleymaa/Documents/WAM/build/WAM.app/Contents/Frameworks/libavformat-wamnative.63.dylib",
+      "dependency": "@rpath/libavutil-wamnative.61.dylib"
+    }
+  ],
+  "errors": [],
+  "eager_native_ffmpeg": false,
+  "notices": {
+    "FFMPEG_NOTICES.md": true,
+    "COPYING.LGPLv2.1": true,
+    "LICENSE.md": true,
+    "configure-command.txt": true,
+    "build-receipt.txt": true,
+    "SOURCE_DISTRIBUTION.md": true
+  },
+  "bundled_floor_13_3_pass": false,
+  "closure_relocatable": false,
+  "clean_machine_ready": false
+}

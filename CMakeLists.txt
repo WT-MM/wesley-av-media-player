@@ -2321,7 +2321,12 @@ if(BUILD_TESTING AND WAM_ENABLE_AVCODEC_STAGE)
     "${CMAKE_SOURCE_DIR}/tests/native_avcodec_fixtures.py"
     --output "${CMAKE_SOURCE_DIR}/test-media/native-coverage/phase2"
     --ffmpeg "${WAM_AVCODEC_FIXTURE_FFMPEG}" --ffprobe "${WAM_AVCODEC_FIXTURE_FFPROBE}")
-  set_tests_properties(avcodec_fixtures PROPERTIES FIXTURES_SETUP avcodec_media TIMEOUT 60)
+  set_tests_properties(avcodec_fixtures PROPERTIES
+    FIXTURES_SETUP avcodec_media RUN_SERIAL TRUE RESOURCE_LOCK avcodec_fixture_generation TIMEOUT 120)
+  add_test(NAME avcodec_packaging_audit COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_SOURCE_DIR}/tests/native_avcodec_packaging_audit_test.py")
+  add_test(NAME avcodec_fixture_transaction COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_SOURCE_DIR}/tests/native_avcodec_fixture_transaction_test.py")
   set_tests_properties(avcodec_worker_hi10p avcodec_worker_h264422 avcodec_worker_asp
     software_avcodec_video_hi10p software_avcodec_video_h264422 software_avcodec_video_asp
     software_avcodec_video_vp9 software_avcodec_video_vp9p2
@@ -2385,6 +2390,11 @@ if(BUILD_TESTING AND WAM_ENABLE_AVCODEC_STAGE)
   add_executable(wam_avcodec_video_allocation_test tests/software_avcodec_video_test.mm)
   target_link_libraries(wam_avcodec_video_allocation_test PRIVATE
     wam_avcodec_instrumented wam_macos_native_video_core)
+  add_test(NAME avcodec_allocation_attribution COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_SOURCE_DIR}/tests/avcodec_allocation_attribution_test.py"
+    "$<TARGET_FILE:wam_avcodec_video_allocation_test>"
+    "${CMAKE_SOURCE_DIR}/test-media/native-coverage/phase2/asp.packets" asp)
+  set_tests_properties(avcodec_allocation_attribution PROPERTIES FIXTURES_REQUIRED avcodec_media TIMEOUT 45)
 endif()
 
 if(BUILD_TESTING AND WAM_ENABLE_AVCODEC_STAGE)

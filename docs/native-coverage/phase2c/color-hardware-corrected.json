@@ -1,0 +1,98 @@
+[
+  {
+    "name": "asp",
+    "icc_profile": "DELL S2725HS",
+    "pixels": 80359,
+    "tolerance": {
+      "max_abs_projection": 0.15,
+      "max_rms_8bit": 6.0
+    },
+    "encoded": {
+      "rms": 20.669187023430386,
+      "projections": {
+        "wrong_matrix": 0.6183106800173613,
+        "wrong_range": 1.142133944245097
+      }
+    },
+    "srgb": {
+      "rms": 2.3509910753116707,
+      "projections": {
+        "wrong_matrix": 0.0017754738767865983,
+        "wrong_range": -0.05133747904998547
+      }
+    },
+    "matrix_range_projection_pass": true
+  },
+  {
+    "name": "baseline",
+    "icc_profile": "DELL S2725HS",
+    "pixels": 84813,
+    "tolerance": {
+      "max_abs_projection": 0.15,
+      "max_rms_8bit": 6.0
+    },
+    "encoded": {
+      "rms": 20.490051481734696,
+      "projections": {
+        "wrong_matrix": 0.6261801158512932,
+        "wrong_range": 1.121271698914949
+      }
+    },
+    "srgb": {
+      "rms": 2.455391001286914,
+      "projections": {
+        "wrong_matrix": 0.00222403527399592,
+        "wrong_range": -0.05490907842454335
+      }
+    },
+    "matrix_range_projection_pass": true
+  },
+  {
+    "name": "h264422",
+    "icc_profile": "DELL S2725HS",
+    "pixels": 82255,
+    "tolerance": {
+      "max_abs_projection": 0.15,
+      "max_rms_8bit": 6.0
+    },
+    "encoded": {
+      "rms": 20.533455110066527,
+      "projections": {
+        "wrong_matrix": 0.6497311559063793,
+        "wrong_range": 1.1340303262086844
+      }
+    },
+    "srgb": {
+      "rms": 2.500352337728959,
+      "projections": {
+        "wrong_matrix": 0.008386657513067332,
+        "wrong_range": -0.049171372183614726
+      }
+    },
+    "matrix_range_projection_pass": true
+  },
+  {
+    "name": "hi10p",
+    "icc_profile": "DELL S2725HS",
+    "pixels": 84569,
+    "tolerance": {
+      "max_abs_projection": 0.15,
+      "max_rms_8bit": 6.0
+    },
+    "encoded": {
+      "rms": 20.54021644267319,
+      "projections": {
+        "wrong_matrix": 0.6319623870504999,
+        "wrong_range": 1.1238985142710118
+      }
+    },
+    "srgb": {
+      "rms": 2.4888000051135215,
+      "projections": {
+        "wrong_matrix": 0.005425667407793212,
+        "wrong_range": -0.051334057232606804
+      }
+    },
+    "matrix_range_projection_pass": true
+  }
+]

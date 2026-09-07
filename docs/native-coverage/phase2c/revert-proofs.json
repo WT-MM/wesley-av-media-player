@@ -1,0 +1,53 @@
+[
+  {
+    "file": "tests/native_avcodec_fixtures.py",
+    "reverted_rc": 2,
+    "restored_rc": 0,
+    "restored_sha256": "7bd94d09fb9b91ebb10cff19f1bbdd12c908b0ba99e413121c2503face8745ca",
+    "byte_identical": true
+  },
+  {
+    "file": "tests/native_avcodec_packaging_audit.py",
+    "reverted_rc": 2,
+    "restored_rc": 0,
+    "restored_sha256": "466314aa5e31fa643d8ece40c5b4e1b91717bd3fdcdabc171718aa271f66fca1",
+    "byte_identical": true
+  },
+  {
+    "file": "tests/native_avcodec_color_projection.py",
+    "test": [
+      "python3",
+      "tests/native_avcodec_color_projection_test.py",
+      "--captures",
+      "/private/tmp/wam-phase2b/display-hardware"
+    ],
+    "reverted_rc": 1,
+    "restored_rc": 0,
+    "restored_sha256": "bf7bc07563dce95c846f18935fd072ddd4b7be91181851c5964396355c059f31",
+    "byte_identical": true
+  },
+  {
+    "file": "tests/avcodec_allocation_probe.cpp",
+    "test": "allocation attribution reconciles every allocation and lock",
+    "reverted_rc": 1,
+    "restored_rc": 0,
+    "restored_sha256": "1cb5a21c2ec08eaea8985f86cbfe9f0f7905be8b1cc144ab9ae710cc6987745c",
+    "byte_identical": true
+  },
+  {
+    "file": "CMakeLists.txt",
+    "test": "generated fixture RUN_SERIAL and RESOURCE_LOCK policy",
+    "reverted_rc": 1,
+    "restored_rc": 0,
+    "restored_sha256": "948338b368d2651b26088e711fbfb5d3850b1d27f50cdd286716d3d08070550b",
+    "byte_identical": true
+  },
+  {
+    "file": "tests/native_avcodec_display_probe.py",
+    "test": "full-range six-family capture launch policy with hardware oracle",
+    "reverted_rc": 2,
+    "restored_rc": 0,
+    "restored_sha256": "9d225295e0f643bbaf491746635d67286960d60ca105fa2d1994979102401771",
+    "byte_identical": true
+  }
+]

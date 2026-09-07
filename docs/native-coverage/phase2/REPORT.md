@@ -1,259 +1,217 @@
-# Phase 2b final decision — OFF, not release-ready
+# Phase 2c decision — OFF; acceptance incomplete
 
-`WAM_ENABLE_AVCODEC_STAGE` remains **OFF by default**. The local acceptance
-build uses ON. This run advances the opt-in stage but does not finish phase 2b.
-The maintainer must not enable release builds from these results.
+`WAM_ENABLE_AVCODEC_STAGE` and `WAM_ENABLE_AVFORMAT_STAGE` remain **OFF by
+default**. Both are ON in the local acceptance build. This run does not complete
+production libavcodec audio or mixed-stream demux qualification. No production
+C++ behavior was changed; the changes improve test generation, instrumentation
+and qualification tools. Do not enable the stages from these results.
 
 Measured executable SHA-256:
-`693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1`.
-The final rebuild after the aggregate-initializer correction is byte-identical
-to the executable used for playback and the corpus. All changes are unstaged;
-no commit, add, stash, reset or checkout was performed. The earlier
-[phase-2 checkpoint](PHASE2_CHECKPOINT.md) is retained as historical evidence.
+`f7a30dab7e16b437a990af1118ed9bcf6453045e2a9bf8ab5f31b7c522003b5e`.
+The earlier [phase-2b report](../phase2c/PHASE2B_REPORT.md) is retained.
 
-## Amendments 19–21
+## Required items, in order
 
-All three proposals are ratified, not awaiting permission. Their complete
-ratification text, exact frozen-line before/after diffs and implementation
-limits are in the append-only local `SESSION_HANDOFF.md` ledger and the
-[retained ledger copy](../phase2b/amendments.md).
+| Item | Outcome and proof |
+| --- | --- |
+| 1. Production DTS / TrueHD / MLP audio | **FAILED.** Fresh H.264 + DTS/TrueHD/MLP Matroska app trials refuse at `TrackSelection`, followed by `LibavformatAudioTimingUnproven: unmapped codec`. The isolated decoder tests pass; production exact retained counts, zero-lag PCM, `V−A=0`, once-only trims, ceil-audio seeks and TrueHD major-sync preroll remain unimplemented. [App receipts](../phase2c/runtime-audio-results.json). |
+| 2. Private heap admission | **PARTIAL.** All five video families measured at 1080p and 4K in a separate decoder-only probe, 32 frames each, zero tracked heap after teardown. Production still uses the 1080p area refusal. Reference-picture versus scratch accounting and an enforced derived reservation remain absent. [Measurements](../phase2c/private-heap-measurements.json). |
+| 3. Display color | **METHOD FIXED; current acceptance BLOCKED.** Correct source-primary/transfer and device-ICC conversion makes the retained hardware oracle and three retained software families pass the original tolerances. All twelve fresh limited/full-range captures, including hardware controls, are black and now refuse `DisplayCaptureNoSignal`. Fresh VP9/full-range qualification is not claimed. |
+| 4. Resource / sixteen windows | **FAILED.** Allocation and lock call sites are now counted and reconciled. The hardware 16-window seek/close control has zero native failures; the software ASP run has five `video decoder presentation drain failed` failures. Both close all windows and release native FFmpeg images. Surface-leak freedom and 16 software A/V sessions remain unproven. |
+| 5. Packaging | **AUDIT FIXED; acceptance FAILED.** The audit reads bundled Mach-O files only, including plugins/tools/transitive libraries. Native FFmpeg files report 13.3, but no examined full app satisfies the requested floor. No relocated full-app playback proof was made. See the artifact-specific floors below. |
+| 6. Native/mpv coexistence | **Conservative refusal retained**, as permitted by this directive. The precise cost is described below. No reconciled closure or simultaneous native-software/mpv qualification is claimed. |
+| 7. Fixture concurrency | **PASSED.** Unique scratch directory, destination-scoped interprocess lock, complete-file atomic replacement, manifest last, bounded encoder threads, and CTest `RUN_SERIAL`/`RESOURCE_LOCK`. Ten consecutive `ctest -j 8` passes: **124/124 each**, no failed fixture or Not Run dependent. [Logs and times](../phase2c/ctest-parallel.json). |
+| 8. Libavformat routes | **FAILED / unchanged.** Mixed A/V still refuses before publication; FLV AAC, ASF WMA, Vorbis and MPEG-PS timing is not newly qualified. Fragmented MP4+AAC, AVI+MP3, RustDesk+audio and mounted-local campaigns are unfinished. Already-proven single-stream routes remain opt-in; removing the mixed guard alone would silently discard a lane in this single-track implementation. |
+| 9. Default / final acceptance | **OFF.** Corpus is **84/97**, zero regressions against phase 3's 84/97, with identical asset hashes. The measurement table was rerun. Passing unit/corpus checks do not override the failed production/audio, resource, display and packaging acceptance. [Corpus comparison](../phase2c/corpus-latest-summary.json). |
 
-- **19:** the isolated backend receives neutral raw extradata and a DecodePlan
-  with implementation and representation identity. Raw extradata, Apple magic
-  cookies and ESDS are distinct. Existing production audio rows are still
-  Apple-routed and retain their tag assertion. No DTS/TrueHD/MLP MediaCodec
-  enumerators or production admission were added.
-- **20:** `finalInputReleased` now means actual end of borrowing; an owned copy
-  satisfies it. Apple proves release at its existing input-proc boundary.
-  All frozen converter/session test bytes remain unchanged. The isolated
-  decoder keeps manual skip handling and takes actual roles from the first
-  decoded frame. Production trim/deficit/tail selection and TrueHD major-sync
-  seek/ordinal contracts remain unfinished.
-- **21:** packet storage, conversion scratch, picture-area admission and worker
-  counts are derived and asserted beside the unchanged 10-surface/384-MiB
-  presentation ceilings. Private decoder heap admission is **not** established
-  by an area cap or observed heap peak. Instrumented counts below do not
-  complete this amendment's resource qualification.
+## Rerun hardware/software measurement table
 
-The strict audio-session compilation caught one missing default initializer
-on the newly appended raw span. Its explicit `{}` correction is recorded as
-an amendment-19 continuation; no Apple implementation or frozen test pin was
-changed. [Frozen-file hashes](../phase2b/frozen-surface-hashes.json).
+1280x720, 25 fps, 12 seconds, video only. Every row drew **300/300**, discarded
+zero late frames, reported clock rate **1.0000**, exited normally and recorded
+no native failure. These are single process-rusage trials including startup
+and EOS idle, not whole-system energy or a statistical improvement claim.
+The fresh black capture controls prevent a current displayed-color claim.
+Software hardware-absence seams are explicitly armed; normal routing remains
+Apple first. [Identities and metrics](../phase2c/playback-measurements.json).
 
-## Family proofs and measured costs
+| Specimen | Selected step | CPU (% one core) | Process J | Peak footprint MiB |
+| --- | --- | ---: | ---: | ---: |
+| H.264 8-bit control | VideoToolbox hardware | 6.86 | 0.647 | 448.8 |
+| MPEG-4 ASP | libavcodec, Apple refusal | 13.73 | 1.615 | 480.7 |
+| Hi10P | VideoToolbox hardware | 7.94 | 1.260 | 455.1 |
+| H.264 4:2:2 10-bit | VideoToolbox hardware | 7.65 | 1.272 | 449.2 |
+| H.264 8-bit control | VideoToolbox hardware | 7.85 | 1.286 | 451.0 |
+| Hi10P | libavcodec, forced absence | 21.52 | 2.066 | 503.0 |
+| H.264 4:2:2 10-bit | libavcodec, forced absence | 22.83 | 2.363 | 505.0 |
+| VP9 profile 0 | libavcodec, forced absence | 18.34 | 1.775 | 480.0 |
+| VP9 profile 2 | libavcodec, forced absence | 19.32 | 1.974 | 490.4 |
+| VP9 profile 0 | VideoToolbox hardware | 8.01 | 1.339 | 451.0 |
+| VP9 profile 2 | VideoToolbox hardware | 7.89 | 1.264 | 448.8 |
 
-The following are 1280×720, 25-fps, 12-second video-only trials. Each drew
-300/300 frames, discarded zero late frames, reported clock rate 1.0000,
-exited normally and had no native failure. Process sampling includes startup
-and EOS idle time. Energy is process rusage energy, **not whole-system energy**;
-these single trials do not prove steady-state or energy parity.
+## Decoder-private observations and adapter attribution
 
-| Specimen | Selected step | CPU (% one core) | Process J | Peak footprint MiB | Hardware comparison |
-| --- | --- | ---: | ---: | ---: | --- |
-| H.264 8-bit control | VideoToolbox hardware | 6.52 | 1.246 | 442.2 | Hardware baseline |
-| MPEG-4 ASP | libavcodec after Apple refusal | 14.50 | 1.557 | 474.7 | H.264 control before/after |
-| Hi10P | VideoToolbox hardware | 7.14 | 1.236 | 442.0 | Hardware baseline |
-| H.264 4:2:2 10-bit | VideoToolbox hardware | 7.03 | 1.292 | 442.4 | Hardware baseline |
-| H.264 8-bit control | VideoToolbox hardware | 6.86 | 1.285 | 441.6 | Hardware baseline |
-| Hi10P | libavcodec (capability faked absent) | 21.03 | 2.024 | 494.3 | Matched family hardware row |
-| H.264 4:2:2 10-bit | libavcodec (capability faked absent) | 22.34 | 2.395 | 502.8 | Matched family hardware row |
-| VP9 profile 0 | libavcodec (capability faked absent) | 17.99 | 1.749 | 477.9 | Matched family hardware row |
-| VP9 profile 2 | libavcodec (capability faked absent) | 20.05 | 1.836 | 489.0 | Matched family hardware row |
-| VP9 profile 0 | VideoToolbox hardware | 6.59 | 1.327 | 446.8 | Hardware baseline |
-| VP9 profile 2 | VideoToolbox hardware | 6.80 | 1.254 | 446.7 | Hardware baseline |
+The standalone `avcodec_private_heap_probe.cpp` deliberately measures beyond
+production admission. It uses the same pinned lazy-loaded decoder, one decoder
+thread, 32 decoded frames, and records the encoded stream facts and hashes.
+H.264 variants request 16 references. These are synthetic stress observations,
+not proof that those profiles pass every production admission predicate.
+The caller's packet archive, mapped code, stacks, VM allocations outside the
+intercepted APIs, and presentation surfaces are excluded. Decoder reference
+pictures and scratch are still combined; no admission ceiling is inferred by
+rounding the observations.
 
-[Identity-bound playback measurements](../phase2b/playback-measurements.json).
-Apple hardware stays first in normal operation. Runtime capability queries
-report AV1=true and VP9=true after supplemental registration; both VP9
-profiles also decode all 300 frames in their actual hardware trials. Software
-AV1 remains unavailable: the supplied FFmpeg build has no software AV1
-implementation, and no pinned dav1d/libaom source was supplied. The installed
-CLI's dav1d decoder is not a source-qualified native dependency.
+| Family | 1080p tracked peak bytes | 4K tracked peak bytes | Tracked bytes after teardown |
+| --- | ---: | ---: | ---: |
+| MPEG-4 ASP | 13,911,104 | 52,366,688 | 0 / 0 |
+| Hi10P | 129,776,768 | 511,116,416 | 0 / 0 |
+| H.264 4:2:2 10-bit | 165,444,736 | 653,182,080 | 0 / 0 |
+| VP9 profile 0 | 14,217,664 | 56,291,776 | 0 / 0 |
+| VP9 profile 2 | 26,823,104 | 106,523,072 | 0 / 0 |
 
-Software VP9 admission now reaches the Matroska sample builder, native video
-consumer and decode lane when hardware capability is absent. Tests fake that
-absence deterministically and decode real profile-0/profile-2 packets through
-the production lane. Hi10P and 4:2:2 tests also use the production lane with
-hardware absent. Each video adapter test compares all decoded pixels to
-ffmpeg, exercises backpressure, drain, reset and generation retirement.
+Production `AvcodecSoftwareReferenceBudgetExceeded` remains an area-derived
+refusal. The H.264 reference stress peaks exceed the old ten-frame observations
+substantially; ASP/VP9 4K peaks can be lower than H.264 1080p peaks. This is
+evidence against treating picture area alone as private-byte admission.
+[Unapplied proposal 25](../phase2c/amendments-proposed.md) states the missing
+reference/scratch reservation work without inventing a budget from a peak.
 
-Forward/backward/near-EOF software-video seeks complete at requested targets
-7, 1 and the existing quantized 11.390625 seconds for Hi10P, 4:2:2 and both VP9
-profiles. The displayed frame interval contains the target (for example,
-11.36–11.40 at near EOF), rather than relabeling its start as the target.
-[Seek events](../phase2b/seek-events.json). These are video-only proofs;
-`|V−A|=0` and sample-exact audio seeks are not proven.
+The allocator probe now records immediate calling image/symbol, domain, kind
+and count, with a fixed 512-entry call-site table. It aborts on attribution
+failure/overflow and reconciles every observed allocation/lock with its domain
+total. It is test instrumentation and changes measurement overhead; the GUI
+CPU/energy table uses the app without that interposer.
 
-| Audio specimen | Isolated backend proof | Production with video |
-| --- | --- | --- |
-| DTS core stereo, 2 s | 96,256 elementary decoded frames; zero-offset PCM within 2e-6 of ffmpeg, EOS and reset | Refused at Matroska TrackSelection; the 256-frame container tail is not an end-to-end publication proof |
-| DTS core 5.1 impulses, 1 s | 48,128 elementary decoded frames; every channel compared, then existing downmix compared to ffmpeg stereo within 2e-6 | Not routed; retained container count of 48,000 is not proven |
-| TrueHD stereo, 2 s | 96,000 frames, bit-exact PCM, zero offset, EOS/reset | Refused at Matroska TrackSelection |
-| TrueHD 5.1 impulses, 1 s | 48,000 frames, bit-exact native-width PCM; existing downmix within 2e-6 | Not routed; major-sync seek/preroll and ordinal timing unproven |
-| MLP stereo, 2 s | 96,000 frames, bit-exact PCM, EOS/reset | Refused at Matroska TrackSelection |
-| DTS-HD MA / genuine 7.1 | No valid retained specimen | Not admitted |
+For each 50-frame video pass, adapter allocations remain 151 (3.02/frame).
+H.264/ASP have 1,053 first-pass locks (21.06/frame); VP9 has 953 (19.06/frame).
+All adapter C++ new counts are zero. The immediate allocation callers are
+Apple `_malloc_type_calloc_outlined` (101) and `_malloc_type_malloc_outlined`
+(50), rather than direct WAM allocator call sites. Locks identify CoreVideo
+IOSurface wiring, backing retain/lock/unlock, attachment mutation and IOSurface
+bridged-value cleanup; three first-pass calls are C++ guard/crypto initialization.
+Audio handlers again record zero allocations and locks.
 
-The installed `dca` encoder's experimental switch enables DTS core encoding;
-it does not implement DTS-HD MA. Its only private option is ADPCM and its
-channel layouts stop at 5.1. The available TrueHD encoder also stops at 5.1.
-[Encoder/source evidence](../phase2b/dependency-capabilities.json). These limits
-cannot be represented as successful HD-MA/7.1 tests. Audio CPU/energy beside
-hardware and A/V publication measurements remain absent because production
-routing is not implemented; short isolated tests are not substitutes.
+WAM's inspected receive/copy/attachment loop has no explicit allocator or
+mutex acquisition. The allocator wrappers do not provide a complete initiating
+stack, so this report does not upgrade that observation to a complete
+transitive ownership audit. Framework calls occur on the bounded decode worker,
+not the audio callback or presentation scheduler, under amendment 18. Full
+owner-loop attribution remains open. [All call sites](../phase2c/allocation-measurements.json).
 
-## Resource and allocation qualification
+The real 16-window test opens every window on the same identity-bound asset,
+issues seek/scroll cancellation storms, then closes windows in reverse order.
+Hardware has zero failures; ASP has five steady-state decode failures. Both
+report window counts 16, 16, 0 and normal process exit. ASP's two native FFmpeg
+images are present during playback and absent after close. This proves closure
+release for this run, not complete surface accounting or successful software
+stress. [Hardware receipt](../phase2c/multiwindow-hardware-result.json),
+[software receipt](../phase2c/multiwindow-software-result.json). The lower-level cause of the generic presentation-drain failures is
+unresolved; it is not asserted to be the worker cap without evidence.
 
-One decoder thread per worker, four owned packet slots, 16 workers process-wide.
-Actual thread count was 1 before, 17 during and 1 after teardown. Sixteen
-workers open; worker seventeen refuses
-`AvcodecWorkerBudgetExceeded`; closing the workers restores the initial thread
-count and unloads the native closure. This is not a sixteen-window A/V stress
-proof. Sixteen windows with two software lanes can exceed that process cap.
-[Thread receipt](../phase2b/worker-budget.txt).
+## Color method and current capture limitation
 
-Derived packet storage: 16,777,472 bytes per worker including padding,
-268,439,552 bytes at sixteen workers. Video-packet plus audio-conversion scratch
-is 4,325,376 bytes per session. Presentation ceilings remain 10 surfaces and
-384 MiB per session. The software picture cap remains 1920×1080 pixels.
+The old comparison treated FFmpeg `scale` RGB output as display/sRGB RGB.
+That output still has the source SMPTE-C primaries and nonlinear BT.709 signal.
+Converting only the grab's DELL ICC profile to sRGB leaves the reference in a
+different color space. The corrected method inverts the BT.709 transfer,
+converts linear SMPTE-C primaries to BT.709/sRGB primaries with D65 white,
+then applies the sRGB transfer. Correct and deliberately wrong matrix/range
+references go through that same conversion; the grab goes from device ICC to
+sRGB. Flat-patch masks exclude chroma boundaries. Neither tolerance moved:
+absolute projection <=0.15 and RMS <=6/255.
 
-The dyld interposer covers malloc/calloc/realloc/posix_memalign/free, C++ new,
-pthread mutex/try-lock/rwlock and os_unfair_lock calls. A fixed 65,536-entry
-allocation table per observed worker reports no overflow. An initial inert
-interposer was rejected; the retained probe aborts if a decoded run observes
-no allocator activity. Counts include worker startup/drain and library calls,
-so division by decoded frames is an amortized lifetime count, not a claim of
-steady-state count. Worker lock totals include worker-control synchronization;
-these measurements do not isolate all WAM owner-loop lock calls.
+On the retained hardware H.264 control, corrected RMS is 2.455/255, matrix
+projection 0.0022 and range projection -0.0549. The retained software ASP,
+Hi10P and 4:2:2 observations have RMS 2.351, 2.489 and 2.500, with both
+projections inside the original limits. Reverting the method makes the
+hardware-oracle regression test fail; byte-identical restoration passes.
+[Hardware](../phase2c/color-hardware-corrected.json),
+[software](../phase2c/color-software-corrected.json).
 
-| 320×180 video / native-rate audio | Frames | Worker alloc/frame | Worker lock/frame | Video/audio handler C++ new | Handler alloc/frame incl. frameworks |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| asp | 50 | 18.180 | 22.180 | 0 | 3.020 |
-| hi10p | 50 | 26.760 | 18.140 | 0 | 3.020 |
-| h264422 | 50 | 26.760 | 18.140 | 0 | 3.020 |
-| vp9 | 50 | 21.880 | 10.100 | 0 | 3.020 |
-| vp9p2 | 50 | 21.880 | 10.100 | 0 | 3.020 |
-| dts | 188 | 15.553 | 5.335 | 0 | 0.000 |
-| truehd | 2400 | 9.037 | 2.000 | 0 | 0.000 |
-| dts51 | 94 | 20.234 | 14.670 | 0 | 0.000 |
-| truehd51 | 1200 | 9.069 | 2.001 | 0 | 0.000 |
+Fresh captures use the current candidate and the required geometry. All are
+black, including the known-good hardware control; `saved=1` alone was not
+liveness. The measurement now reports `DisplayCaptureNoSignal` before a color
+verdict. A request for an onscreen-position exception remains unanswered; the
+required geometry was preserved. No software family is declared color-broken
+from an invalid hardware control, and no fresh full-range/VP9 pass is claimed.
+[Limited-range attempts](../phase2c/display-limited-runs.json),
+[full-range attempts](../phase2c/display-full-runs.json).
 
-Video handler framework lock counts are roughly 19–21/frame; audio handler
-allocation and lock counts are zero. These include CoreVideo pool/attachment
-operations and must not be called zero-allocation/zero-lock call trees merely
-because C++ new is zero. Complete WAM adapter-loop attribution remains open.
-[Raw counts and tracked heap](../phase2b/allocation-measurements.json).
+## Packaging and coexistence
 
-1080p, ten-frame decoder-only trials measured 13,914,368 bytes peak tracked
-heap for ASP and 39,784,272 for Hi10P, with zero tracked heap remaining after
-teardown. This excludes the owner-allocated packet slots, stack, mapped code,
-VM allocations outside the intercepted APIs, and presentation surfaces.
-DTS stereo/5.1 measured 119,824/128,784 bytes; TrueHD stereo/5.1
-22,288/23,024 bytes. Audio measurements are resolution-independent isolated
-backend results, not 1080p/4K A/V session measurements.
+`native_avcodec_packaging_audit.py` inventories every contained Mach-O,
+including lazy libraries, Qt plugins and bundled tools. It checks all parsed
+macOS deployment versions and never invokes otool on external dependencies or
+escaping symlinks. A bundled high-floor plugin, missing native library, missing
+notice, eager FFmpeg load and escaping symlink are covered by real compiled
+Mach-O tests. External load references are reported as references, not read as
+shipped payload. Rpath entries not resolved by the static search remain
+unqualified; they are not presented as a runtime-loader failure proof.
 
-Both 4K decoder probes refuse `AvcodecSoftwareReferenceBudgetExceeded`.
-The software video adapter now checks that cap before prewarming presentation
-surfaces. No 4K software decode or private-memory bound is claimed.
-[Dimension receipts](../phase2b/resource-dimensions.json).
+- The three native FFmpeg bundle files have minos 13.3.
+- The developer build still references external libraries and its six-file
+  Mach-O inventory is not a complete relocatable closure.
+- The retained phase-3 scratch app has 171 Mach-O files, including Qt files
+  with minos 26.0.
+- A read-only audit of the current `/Applications/WAM.app` finds 168 Mach-O
+  files, Qt libraries/tools with minos 14.0, and no native stage. This is not
+  evidence for a 13.3 full app, nor the measured stage-ON candidate.
 
-## Lazy loading and closure limits
+[Developer bundle](../phase2c/build-closure-audit.json),
+[phase-3 scratch bundle](../phase2c/shipped-closure-audit.json),
+[current installed copy](../phase2c/installed-closure-audit.json).
+No minimum was inferred from a Homebrew input or rewritten to conceal it.
+Full-app relocation remains unproven. Item 5's relocated GUI launch would also
+need an explicit exception to hard rule 7's build-executable-only restriction;
+no scratch or installed app was launched.
 
-The app has no FFmpeg load commands or unresolved FFmpeg symbols. Cold native
-playback does not resolve the API table. A worker acquires a cold-path runtime
-lease that loads bundle-relative libavutil/libavcodec with RTLD_LOCAL and binds
-an explicit typed API table. The final worker joins, destroys its AV objects,
-and releases its lease before both libraries are unloaded and the table cleared.
-No SDK/Homebrew search fallback exists for this native stage.
+The native/mpv exclusion remains `PlaybackFfmpegClosureConflict`. While a
+native decoder/demux lease is active, compatibility loading is refused. Once
+all native leases close, mpv can load if its own closure is valid. Once the
+cached mpv runtime loads, its process-lifetime images prevent subsequent
+native libavcodec AND libavformat sessions until app restart. Pure Apple
+AVFoundation/Matroska/TS sessions do not need that native FFmpeg lease and are
+not excluded by this closure rule. Thus a hardware-decoded RustDesk stream
+using libavformat still conflicts, whereas hardware AVFoundation playback
+does not. The local fallback seed also retains its pre-existing missing
+FFmpeg .62 dependency. Distinct native install names do not by themselves
+prove safe symbol/ABI coexistence.
 
-Missing files refuse `DecoderStageNotBuilt`; corrupt files, ABI/configuration/
-license/symbol mismatches and external symlinks refuse `DecoderUnavailable`.
-Standalone and bundle-layout relocated loader tests pass, including missing,
-corrupt and external-symlink cases. These are loader tests, not relocated full
-GUI application acceptance. `--verify-runtime` reports presence, full versions
-63.1.101/61.1.101, LGPL configuration, required decoders and hardware hints.
-[Runtime tests](../phase2b/runtime-relocation.json).
+Fresh vmmap controls show zero FFmpeg images for ordinary hardware playback,
+and only the two bundle-native images for software ASP. The conservative
+refusal is the allowed item-6 decision, rather than an unresolved requirement
+to force two incompatible closures into one process.
 
-A real app vmmap at hardware playback shows **zero FFmpeg images**; ASP shows
-only the two native Frameworks images. Both playback loaders serialize closure
-inspection/loading. Concurrent native/mpv FFmpeg images are refused with
-`DecoderUnavailable: PlaybackFfmpegClosureConflict`. This is conservative
-exclusion, not a reconciled single ABI/configuration for simultaneous native
-and compatibility windows. The cached mpv runtime is process-lifetime.
-The local mpv fallback additionally fails to load its missing
-`/opt/homebrew/opt/ffmpeg/lib/libavcodec.62.dylib` dependency.
-[App observations](../phase2b/runtime-app.json),
-[app loads](../phase2b/app-load-commands.txt),
-[mpv loads](../phase2b/mpv-load-commands.txt).
+## Validation, unchanged contracts, and remaining work
 
-## Display-route color and packaging
+Ten consecutive parallel suites passed 124/124, 40.5–47.9 seconds each. The
+initial sandbox-only attempt could not access macOS media/window services;
+the authorized unsandboxed sequence is fully green. Final delivery verification
+after the temporary reversions passed **124/124 in 38.93 seconds**. The required
+`cmake --build build --parallel` and post-CMake reconfiguration completed first.
+The delivery executable is byte-identical to the corpus/measurement candidate.
+[Final CTest](../phase2c/ctest-delivery-final.log),
+[final build](../phase2c/build-delivery-final.log).
 
-Actual composited captures were obtained through the in-process `videograb`
-seam alongside `grab`; the latter alone captures only the Qt scene on this
-route. Pause/position reports bracket each capture. ASP, Hi10P and 4:2:2 SD
-bars all select libavcodec under the armed hardware-absence seam.
+Six implementation/policy revert proofs cover fixture publication, generated
+CTest serialization, packaging audit, hardware color comparison and allocation
+attribution, plus the six-family full-range/hardware-oracle launch policy.
+Every original was restored byte-identically; the checks fail
+with the old behavior and pass after restoration. Measurement-only campaign
+harness additions are not claims of production behavior rollback coverage.
+[Revert receipts](../phase2c/revert-proofs.json).
 
-The SD-lane projection statistic was applied against ffmpeg correct,
-wrong-matrix and wrong-range references. It does **not pass** the probe's
-stated |projection|≤0.15/RMS≤6 criteria: encoded-image RMS is about 20.5/255,
-with projections around 0.62–0.65 and 1.12–1.14. Actual Apple
-hardware controls reproduce the same discrepancy in the flat-patch statistics.
-The display capture carries the DELL S2725HS ICC profile; conversion to sRGB
-alone does not make the reference comparison pass. Thus the reference's full
-color-management projection remains unresolved, rather than proving a
-software-specific matrix/range defect. Full-range display variants and final
-color acceptance are still outstanding. No tolerance was relaxed to pass.
-[Software projections](../phase2b/display-projections.json),
-[hardware controls](../phase2b/display-hardware-projections.json),
-[captures](../phase2b/display/).
+All supplied frozen contract/converter/session hashes and SESSION_HANDOFF.md
+are unchanged. No amendment was applied. [Hashes](../phase2c/frozen-surface-hashes.json).
+[Proposals 24–25](../phase2c/amendments-proposed.md) cover the new production-audio
+identity/converter changes and private admission. They are scope proposals,
+not completed implementation or ratification. No Git mutation command or
+network access was used. The maintainer owns review and commit.
+[Reproduction commands](../phase2c/REPRODUCE.md).
 
-CMake automatically copies both native dylibs and the license/configuration/
-source-distribution notices into the build bundle. Packaging scripts detect
-its stage manifest instead of relying on eager FFmpeg load commands.
-Both new native Mach-O libraries have minos 13.3. The whole built app is
-**not clean-machine relocatable**: it still loads external Homebrew Qt/libvpx,
-and the actual installed libvpx and several Qt components declare minos 26.0.
-That floor is real dependency metadata, not an anomaly cured by rewriting
-load commands. Rebuilding/replacing those dependencies for 13.3 needs matching
-source or qualified binary inputs absent from this run. The automated audit
-fails with `NativeBundleNotRelocatable`; no relocated full-app playback or
-minimum-OS success is claimed. [Audit](../phase2b/packaging-audit.json).
-
-The exact FFmpeg source archive, SHA-256, offline build/replacement procedure
-and remaining distribution requirements are documented in
-[SOURCE_DISTRIBUTION](../phase2b/SOURCE_DISTRIBUTION.md), also copied into the
-bundle. A release-specific corresponding-source URL, About/licenses UI and
-download-page presentation remain unfinished.
-
-## Final validation and deferrals
-
-The required `cmake --build build --parallel` completed successfully. Final
-`ctest --output-on-failure` from `build/` passed **99/99**, zero failures, in
-119.84 seconds. The earlier strict audio-session compile failure was fixed
-with the ledgered default initializer; its isolated retry and the complete
-final suite passed. No tests ran concurrently with application linking.
-[Build log](../phase2b/build.txt), [final CTest log](../phase2b/ctest-final.txt).
-
-Eighteen behavior reversions/mutations were detected: twelve inherited
-codec/pixel/ownership cases, four new lease/worker/representation/layout cases,
-and two whole-app VP9 ingress reversions. Each was restored byte-for-byte and
-its baseline passed again. The two ingress proofs rebuild the real app and
-observe no-hardware playback fail under the old gate, then pass after restore.
-[Inherited receipts](../phase2b/inherited-mutation-proofs.json),
-[new receipts](../phase2b/new-mutation-proofs.json),
-[production ingress receipts](../phase2b/production-ingress-revert-proofs.json).
-This is still not a complete full-patch rollback proof for every new behavior;
-all runtime replacement, color, resource and packaging branches are not covered.
-
-The final quiet six-second corpus is **78/97 native, zero regressions** versus
-the phase-2/phase-0b baseline, on the identical final executable.
-[Corpus summary](../phase2b/corpus-summary.json),
-[per-file identities/results](../phase2b/corpus-results.json).
-
-Release remains OFF for explicit unmet acceptance: production audio routing
-and exact once-only trims; TrueHD ordinal/major-sync seeks and |V−A|=0;
-genuine DTS-HD MA/7.1 specimens; pinned software AV1; decoder-private byte
-admission and full adapter allocation/lock attribution; sixteen-window A/V
-stress; accepted display-color references and full-range variants; reconciled
-mpv/native dependency closure; clean-machine full-bundle relocation and 13.3
-floor; complete source/license presentation; and complete behavior rollback
-coverage. No remaining proposal needs re-ratification.
+Remaining acceptance is substantive: production audio and all its exact A/V,
+trim, ordinal and seek proofs; decoder-private reference/scratch bounds tied
+to admission; successful software 16-window storms and surface accounting;
+valid fresh display captures; a 13.3 full app plus relocation playback; mixed
+libavformat audio/video and mounted-local qualification; and default enablement
+only after those pass. The earlier unavailable DTS-HD MA/7.1 specimen and
+software AV1/source-distribution limitations are not silently claimed solved.
