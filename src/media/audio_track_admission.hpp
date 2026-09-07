@@ -2,10 +2,36 @@
 
 #include "media/native_media_source.hpp"
 
+#include <array>
 #include <optional>
 #include <span>
 
 namespace wam::media {
+
+// Cold-open retry is optional and never changes an explicit track request.
+// Implementations must retire the prior source attempt before reopening.
+class AudioTrackRetrySource {
+ public:
+  virtual ~AudioTrackRetrySource() = default;
+  virtual MediaSourceOpenOutcome retryAudioTrack(
+      const std::filesystem::path&, const MediaSourceOpenOptions&,
+      MediaGeneration, MediaTrackId rejected) = 0;
+};
+
+struct AudioTrackRejections {
+  std::array<MediaTrackId, MediaSourceLimits::kHardMaximumTracks> tracks{};
+  std::size_t count{0};
+  [[nodiscard]] bool contains(MediaTrackId id) const noexcept {
+    for (std::size_t i = 0; i < count; ++i)
+      if (tracks[i] == id) return true;
+    return false;
+  }
+  [[nodiscard]] bool add(MediaTrackId id) noexcept {
+    if (id == 0 || count == tracks.size() || contains(id)) return false;
+    tracks[count++] = id;
+    return true;
+  }
+};
 
 struct AudioTrackCandidate {
   MediaTrackId id{0};

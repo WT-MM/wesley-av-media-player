@@ -92,6 +92,11 @@ struct AacFrameGridPosition {
   std::uint32_t samplesPerAccessUnit{kAacLcSamplesPerAccessUnit};
 };
 
+// Packet timing accepts positive rates within the source ceiling; codec and
+// native output admission remain separate from exact-rational projection.
+[[nodiscard]] std::optional<MediaTime>
+audioPacketGridTime(AacFrameGridPosition position) noexcept;
+
 // Returns the reduced exact rational timestamp when it fits MediaTime.
 [[nodiscard]] std::optional<MediaTime>
 aacAccessUnitGridTime(AacFrameGridPosition position) noexcept;
@@ -118,6 +123,12 @@ struct AacTickGridProjection {
   friend constexpr bool operator==(const AacTickGridProjection &,
                                    const AacTickGridProjection &) = default;
 };
+
+[[nodiscard]] std::optional<AacTickGridProjection>
+nearestAudioPacketForMatroskaTick(
+    std::int64_t observedTick, MediaTime origin, std::uint32_t sampleRate,
+    std::uint64_t timestampScaleNanoseconds,
+    std::uint32_t samplesPerPacket) noexcept;
 
 // Projects an observed Matroska tick onto the nearest nonnegative AAC access-
 // unit ordinal. The inverse calculation operates on the exact tick and origin

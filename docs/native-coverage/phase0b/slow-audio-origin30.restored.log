@@ -1,0 +1,7 @@
+Regenerated final-restored converter proof; not a historical phase-0b receipt.
+Associated app SHA-256: acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354
+Audio probe SHA-256: 6c5d65fe1a476a6638af9ceaf7d776029fab16e1002cc5181115a56ad279b57d
+Generator: {"file": "slow-audio.wav", "argv": ["/opt/homebrew/bin/ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=48000", "-t", "32", "-c:a", "pcm_s16le", "/private/tmp/wam-qa-fixes/final-audio/slow-audio.wav"], "sha256": "4c5d911130c1ea27f72cebd2936e198c5c33d84f9b42eda279186a3c74840ae7"}
+Command: build/wam_native_coverage_audio_probe /private/tmp/wam-qa-fixes/final-audio/slow-audio.wav <capture.f32> 30 origin
+Result: {"file": "slow-audio.wav", "asset_sha256": "4c5d911130c1ea27f72cebd2936e198c5c33d84f9b42eda279186a3c74840ae7", "target": 30, "frames": 96000, "rms": 0.0, "maximum": 0.0, "best_lag": 0, "diagnostic": "track=1 rate=48000 frames=96000 first=1440000 decoded=1536000 trim=1440000 exact=1 drained=1 error="}
+Exit: 0

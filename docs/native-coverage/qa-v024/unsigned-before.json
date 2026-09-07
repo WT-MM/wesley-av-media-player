@@ -1,0 +1,39 @@
+{
+  "frames": 96000,
+  "differing_samples": 192000,
+  "maximum": 1.0,
+  "wam_first": [
+    -0.625,
+    0.75,
+    -0.625,
+    0.75,
+    -0.625,
+    0.75,
+    -0.625,
+    0.75
+  ],
+  "ffmpeg_first": [
+    0.375,
+    -0.25,
+    0.375,
+    -0.25,
+    0.375,
+    -0.25,
+    0.375,
+    -0.25
+  ],
+  "asset_path": "/private/tmp/wam-qa-fixes/unsigned.mka",
+  "asset_sha256": "a17f2e51dacfc0aea2f17bbd77598e56b9f0cb66eba6a5e111bd5dd233bbd067",
+  "capture_path": "/private/tmp/wam-qa-fixes/unsigned.before.f32",
+  "capture_sha256": "dada51297bf42b6769e00cc62ff80a93f64c0acc1465fdda395f3603a165fc59",
+  "reference_path": "/private/tmp/wam-qa-fixes/unsigned.reference.f32",
+  "reference_sha256": "1ab936de0f54697735c211595ced4de7aedf95601d189c08a119b5157c7cb6a8",
+  "capture_path_kind": "production Matroska source -> NativeAudioConverter -> NativePcmRing -> interleaved stereo float32",
+  "generator_signal": [
+    "0.375+0.03*sin(2*PI*(200*t+100*t*t))",
+    "-0.25+0.02*sin(2*PI*(300*t+130*t*t))"
+  ],
+  "sample_rate": 48000,
+  "seconds": 2,
+  "codec": "pcm_u8"
+}

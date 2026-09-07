@@ -1,0 +1,1541 @@
+{
+  "version": 2,
+  "audio_probe_sha256": "6c5d65fe1a476a6638af9ceaf7d776029fab16e1002cc5181115a56ad279b57d",
+  "source_probe_sha256": "2a8e7c17968ad446c5398af34df5ae67c1727e2465bda6436f7174ecfb960dbc",
+  "ffmpeg": "ffmpeg version 9.0.1 Copyright (c) 2000-2026 the FFmpeg developers\nbuilt with Apple clang version 21.0.0 (clang-2100.1.1.101)\nconfiguration: --prefix=/opt/homebrew/Cellar/ffmpeg/9.0.1_1 --enable-shared --enable-pthreads --enable-version3 --cc=clang --host-cflags= --host-ldflags= --enable-ffplay --enable-gpl --enable-libsvtav1 --enable-libopus --enable-libx264 --enable-libmp3lame --enable-libdav1d --enable-libvmaf --enable-libvpx --enable-libx265 --enable-openssl --enable-videotoolbox --enable-audiotoolbox --enable-neon\nlibavutil      61.  1.101 / 61.  1.101\nlibavcodec     63.  1.101 / 63.  1.101\nlibavformat    63.  1.101 / 63.  1.101\nlibavdevice    63.  1.101 / 63.  1.101\nlibavfilter    12.  1.101 / 12.  1.101\nlibswscale     10.  1.101 / 10.  1.101\nlibswresample   7.  1.101 /  7.  1.101\n\nExiting with exit code 0\n",
+  "specimens": [
+    {
+      "file": "aac.m4a",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=48000",
+        "-t",
+        "4",
+        "-c:a",
+        "aac",
+        "/private/tmp/wam-qa-fixes/final-audio/aac.m4a"
+      ],
+      "sha256": "cb4d5a341f748d7c64c3e68d24b3ab240cd52878e02efce4b476e8f558447db4"
+    },
+    {
+      "file": "mp3-8000.mp3",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=8000",
+        "-t",
+        "4",
+        "-c:a",
+        "libmp3lame",
+        "/private/tmp/wam-qa-fixes/final-audio/mp3-8000.mp3"
+      ],
+      "sha256": "2db9de870e45d2ca419405ad81cabf649ce199c4acf7f9796a4119eaa098c8fa"
+    },
+    {
+      "file": "mp3-22050.mp3",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=22050",
+        "-t",
+        "4",
+        "-c:a",
+        "libmp3lame",
+        "/private/tmp/wam-qa-fixes/final-audio/mp3-22050.mp3"
+      ],
+      "sha256": "58b7db77d2c84ca21021d7181076af5cd72ddd24f215c3bd2680225aa6735c9c"
+    },
+    {
+      "file": "mp3-24000.mp3",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=24000",
+        "-t",
+        "4",
+        "-c:a",
+        "libmp3lame",
+        "/private/tmp/wam-qa-fixes/final-audio/mp3-24000.mp3"
+      ],
+      "sha256": "e835667679a2a9819277457530c7faf691d4f03dcde20fb53325934bd4409f01"
+    },
+    {
+      "file": "mp3-32000.mp3",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=32000",
+        "-t",
+        "4",
+        "-c:a",
+        "libmp3lame",
+        "/private/tmp/wam-qa-fixes/final-audio/mp3-32000.mp3"
+      ],
+      "sha256": "7adc7132e6ea362fad1264aefd59acd5b9d0156104cac959a553712cdf8cf0dd"
+    },
+    {
+      "file": "opus-8000.webm",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=8000",
+        "-t",
+        "4",
+        "-c:a",
+        "libopus",
+        "/private/tmp/wam-qa-fixes/final-audio/opus-8000.webm"
+      ],
+      "sha256": "6f278af1a325bf3769a4271411a5858de33597ef47f4b6f5dba43c7696fa85e3"
+    },
+    {
+      "file": "opus-24000.webm",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=24000",
+        "-t",
+        "4",
+        "-c:a",
+        "libopus",
+        "/private/tmp/wam-qa-fixes/final-audio/opus-24000.webm"
+      ],
+      "sha256": "e0f51ebc33da78e66f1b0f7c692a32bb1c027b6223539b7f4f32d1aa78565f35"
+    },
+    {
+      "file": "opus-48000.webm",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=48000",
+        "-t",
+        "4",
+        "-c:a",
+        "libopus",
+        "/private/tmp/wam-qa-fixes/final-audio/opus-48000.webm"
+      ],
+      "sha256": "b0600191d17dd156751af7a083ab3f47845e780aae8421be0f2d859cb611fd44"
+    },
+    {
+      "file": "bad.m4a",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=88200",
+        "-t",
+        "4",
+        "-c:a",
+        "aac",
+        "/private/tmp/wam-qa-fixes/final-audio/bad.m4a"
+      ],
+      "sha256": "396810f0b6a9ce8648cf62bb99b1bbe7101a92a69b82a6bc9e96909b641355db"
+    },
+    {
+      "file": "good.m4a",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=48000",
+        "-t",
+        "4",
+        "-c:a",
+        "aac",
+        "/private/tmp/wam-qa-fixes/final-audio/good.m4a"
+      ],
+      "sha256": "cb4d5a341f748d7c64c3e68d24b3ab240cd52878e02efce4b476e8f558447db4"
+    },
+    {
+      "file": "alac.m4a",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=48000",
+        "-t",
+        "4",
+        "-c:a",
+        "alac",
+        "/private/tmp/wam-qa-fixes/final-audio/alac.m4a"
+      ],
+      "sha256": "5af318c89ad18e0a57b4574ae2444f63da289e0554ac204acf06c62acfcc1685"
+    },
+    {
+      "file": "pcm_s16le.wav",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=48000",
+        "-t",
+        "4",
+        "-c:a",
+        "pcm_s16le",
+        "/private/tmp/wam-qa-fixes/final-audio/pcm_s16le.wav"
+      ],
+      "sha256": "71500c5505aae330dbc0d83fc9a10a41e8ce8765d19d26c3b65771ce284700c6"
+    },
+    {
+      "file": "adpcm_ima_wav.wav",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=48000",
+        "-t",
+        "4",
+        "-c:a",
+        "adpcm_ima_wav",
+        "/private/tmp/wam-qa-fixes/final-audio/adpcm_ima_wav.wav"
+      ],
+      "sha256": "0acf780dd304e4b3a65f8dfa5fac5be9f2bfdab114ea9da2bc7deee72af1cc03"
+    },
+    {
+      "file": "adpcm_ms.wav",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=48000",
+        "-t",
+        "4",
+        "-c:a",
+        "adpcm_ms",
+        "/private/tmp/wam-qa-fixes/final-audio/adpcm_ms.wav"
+      ],
+      "sha256": "01f7765a9d3e80ceffbb5d2a72ede9c0466cb42859f1adbb1543ec5c31bc4351"
+    },
+    {
+      "file": "pcm-u8-offset.mka",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.375+0.03*sin(2*PI*(200*t+100*t*t))|-0.25+0.02*sin(2*PI*(300*t+130*t*t)):s=48000",
+        "-t",
+        "2",
+        "-c:a",
+        "pcm_u8",
+        "/private/tmp/wam-qa-fixes/final-audio/pcm-u8-offset.mka"
+      ],
+      "sha256": "f8e886cd3b0fe1d8d717206a1fb30eb68f5004d614758b6490ea6e3fb8869e6b"
+    },
+    {
+      "file": "alac.mka",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=48000",
+        "-t",
+        "4",
+        "-c:a",
+        "alac",
+        "/private/tmp/wam-qa-fixes/final-audio/alac.mka"
+      ],
+      "sha256": "c6047317b00f331198dc4d726370022d2116460cd16993852b74a4e11ba9c59c"
+    },
+    {
+      "file": "pcm_s16le.mka",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=48000",
+        "-t",
+        "4",
+        "-c:a",
+        "pcm_s16le",
+        "/private/tmp/wam-qa-fixes/final-audio/pcm_s16le.mka"
+      ],
+      "sha256": "a90e6a90769c9fd83520ef1d40ced230d6ac7cf947322cda427bd43e46624bd4"
+    },
+    {
+      "file": "pcm_f32le.mka",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=48000",
+        "-t",
+        "4",
+        "-c:a",
+        "pcm_f32le",
+        "/private/tmp/wam-qa-fixes/final-audio/pcm_f32le.mka"
+      ],
+      "sha256": "7fd94fad226e16d09a9d8d3f729d26573c2f74cd2c318d50f77c239b37322f33"
+    },
+    {
+      "file": "adpcm_ima_wav.mka",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=48000",
+        "-t",
+        "4",
+        "-c:a",
+        "adpcm_ima_wav",
+        "/private/tmp/wam-qa-fixes/final-audio/adpcm_ima_wav.mka"
+      ],
+      "sha256": "e445ef63b35dc8bbca72d65fe27b41b4241c56a30ff6d325d8b2f29c91f17bbb"
+    },
+    {
+      "file": "adpcm_ms.mka",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=48000",
+        "-t",
+        "4",
+        "-c:a",
+        "adpcm_ms",
+        "/private/tmp/wam-qa-fixes/final-audio/adpcm_ms.mka"
+      ],
+      "sha256": "9a0764ce367a1f82afbfb64b4653ad58f6780f9ce2c9f704f0961a570b03ed50"
+    },
+    {
+      "file": "pcm_s16le-8000.mka",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=8000",
+        "-t",
+        "2",
+        "-c:a",
+        "pcm_s16le",
+        "/private/tmp/wam-qa-fixes/final-audio/pcm_s16le-8000.mka"
+      ],
+      "sha256": "00476bd98d57eda6ff97486c3299bb69e9ec727728f330daeb6ec07a454cc0e9"
+    },
+    {
+      "file": "alac-8000.mka",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=8000",
+        "-t",
+        "2",
+        "-c:a",
+        "alac",
+        "/private/tmp/wam-qa-fixes/final-audio/alac-8000.mka"
+      ],
+      "sha256": "75086ca2d55fa399bc875dd31fd686efe5e551ce30d2a1b780ac877d97bb4d60"
+    },
+    {
+      "file": "pcm_s16le-11025.mka",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=11025",
+        "-t",
+        "2",
+        "-c:a",
+        "pcm_s16le",
+        "/private/tmp/wam-qa-fixes/final-audio/pcm_s16le-11025.mka"
+      ],
+      "sha256": "fd9611d63e7366a83c59922ccd52c4029493957a5d6b325f6dcf9fb4bf52e1e4"
+    },
+    {
+      "file": "alac-11025.mka",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=11025",
+        "-t",
+        "2",
+        "-c:a",
+        "alac",
+        "/private/tmp/wam-qa-fixes/final-audio/alac-11025.mka"
+      ],
+      "sha256": "eead39de0da86f2fb195d53ee389033f4b650338712b68d89c5a7f1add838879"
+    },
+    {
+      "file": "pcm_s16le-12000.mka",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=12000",
+        "-t",
+        "2",
+        "-c:a",
+        "pcm_s16le",
+        "/private/tmp/wam-qa-fixes/final-audio/pcm_s16le-12000.mka"
+      ],
+      "sha256": "12bd0e79fae8a7da7c36a871e6ced380c4f5ef61c3199ebdd6bd3020622265fa"
+    },
+    {
+      "file": "alac-12000.mka",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=12000",
+        "-t",
+        "2",
+        "-c:a",
+        "alac",
+        "/private/tmp/wam-qa-fixes/final-audio/alac-12000.mka"
+      ],
+      "sha256": "20bf9a9781b9f00ae8164306f97d2a74d0636301ceb58b9455cd538b521e29e8"
+    },
+    {
+      "file": "pcm_s16le-16000.mka",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=16000",
+        "-t",
+        "2",
+        "-c:a",
+        "pcm_s16le",
+        "/private/tmp/wam-qa-fixes/final-audio/pcm_s16le-16000.mka"
+      ],
+      "sha256": "1beda5f95871d4ff51a5fc8d68e95c94afa17fccb9fec477ae5c4b6524e0213a"
+    },
+    {
+      "file": "alac-16000.mka",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=16000",
+        "-t",
+        "2",
+        "-c:a",
+        "alac",
+        "/private/tmp/wam-qa-fixes/final-audio/alac-16000.mka"
+      ],
+      "sha256": "fb8b6d7445fb69cab6d2b1ccc1ee833a8d0fe0dba9acb41bd39e1c4b60c81353"
+    },
+    {
+      "file": "pcm_s16le-22050.mka",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=22050",
+        "-t",
+        "2",
+        "-c:a",
+        "pcm_s16le",
+        "/private/tmp/wam-qa-fixes/final-audio/pcm_s16le-22050.mka"
+      ],
+      "sha256": "567d75d411636efefd9a304ead1094e0b5da5de9efe267655b331cd7434fa3e5"
+    },
+    {
+      "file": "alac-22050.mka",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=22050",
+        "-t",
+        "2",
+        "-c:a",
+        "alac",
+        "/private/tmp/wam-qa-fixes/final-audio/alac-22050.mka"
+      ],
+      "sha256": "3555389718387c3dfe0100ceeeaa60e0a09537694a27e55507eca923cac9ea50"
+    },
+    {
+      "file": "pcm_s16le-24000.mka",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=24000",
+        "-t",
+        "2",
+        "-c:a",
+        "pcm_s16le",
+        "/private/tmp/wam-qa-fixes/final-audio/pcm_s16le-24000.mka"
+      ],
+      "sha256": "77d6394b7144cce77eae8dfa08c6da01725227f79ec42159171a7cd20922668b"
+    },
+    {
+      "file": "alac-24000.mka",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=24000",
+        "-t",
+        "2",
+        "-c:a",
+        "alac",
+        "/private/tmp/wam-qa-fixes/final-audio/alac-24000.mka"
+      ],
+      "sha256": "29cc7277fbcc50b1231b3b018478ceda1d40b5693d32183f73b56053d4061118"
+    },
+    {
+      "file": "pcm_s16le-32000.mka",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=32000",
+        "-t",
+        "2",
+        "-c:a",
+        "pcm_s16le",
+        "/private/tmp/wam-qa-fixes/final-audio/pcm_s16le-32000.mka"
+      ],
+      "sha256": "8cf30627f499a6eefb19e7096f6dab230b0b9381da4e316f41fd4dc5304e5fd7"
+    },
+    {
+      "file": "alac-32000.mka",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=32000",
+        "-t",
+        "2",
+        "-c:a",
+        "alac",
+        "/private/tmp/wam-qa-fixes/final-audio/alac-32000.mka"
+      ],
+      "sha256": "1324c13dd35dd10009fb49c85fcce6959394604e31f29f5c1266fadcef50dd4f"
+    },
+    {
+      "file": "pcm_s16le-44100.mka",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=44100",
+        "-t",
+        "2",
+        "-c:a",
+        "pcm_s16le",
+        "/private/tmp/wam-qa-fixes/final-audio/pcm_s16le-44100.mka"
+      ],
+      "sha256": "4de97bce89f452138837d5c307bf8f5b919ea5e37df7d5fa4a0a1ae50a37ce90"
+    },
+    {
+      "file": "alac-44100.mka",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=44100",
+        "-t",
+        "2",
+        "-c:a",
+        "alac",
+        "/private/tmp/wam-qa-fixes/final-audio/alac-44100.mka"
+      ],
+      "sha256": "352a2a131eebdfe5e0d52dbb657bdd65fde89474b5d955bb47380d673edd701b"
+    },
+    {
+      "file": "pcm_s16le-48000.mka",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=48000",
+        "-t",
+        "2",
+        "-c:a",
+        "pcm_s16le",
+        "/private/tmp/wam-qa-fixes/final-audio/pcm_s16le-48000.mka"
+      ],
+      "sha256": "ef64f09ab8a1156ffb8ee47aee10896b9dc146106deea348274f9d091261204f"
+    },
+    {
+      "file": "alac-48000.mka",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=48000",
+        "-t",
+        "2",
+        "-c:a",
+        "alac",
+        "/private/tmp/wam-qa-fixes/final-audio/alac-48000.mka"
+      ],
+      "sha256": "bde56a52f1c40c0ade34b344d200ba7e8e0720218102a33345484338c476dead"
+    },
+    {
+      "file": "pcm_s16le-96000.mka",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=96000",
+        "-t",
+        "2",
+        "-c:a",
+        "pcm_s16le",
+        "/private/tmp/wam-qa-fixes/final-audio/pcm_s16le-96000.mka"
+      ],
+      "sha256": "353af8ce4244112ea4580ffc27b6a6175888eac55ff877469614b7917bd13f3c"
+    },
+    {
+      "file": "alac-96000.mka",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=96000",
+        "-t",
+        "2",
+        "-c:a",
+        "alac",
+        "/private/tmp/wam-qa-fixes/final-audio/alac-96000.mka"
+      ],
+      "sha256": "9ffab1e52cee5c46fe71449cb64bcebb5566743f5f140ca6d9c301e79ebaf5b8"
+    },
+    {
+      "file": "pcm_s16le-192000.mka",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=192000",
+        "-t",
+        "2",
+        "-c:a",
+        "pcm_s16le",
+        "/private/tmp/wam-qa-fixes/final-audio/pcm_s16le-192000.mka"
+      ],
+      "sha256": "a09280249d6e94d44d454de1815bf17e602f153facb36713723c7cd600b12b1c"
+    },
+    {
+      "file": "alac-192000.mka",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=192000",
+        "-t",
+        "2",
+        "-c:a",
+        "alac",
+        "/private/tmp/wam-qa-fixes/final-audio/alac-192000.mka"
+      ],
+      "sha256": "ddb6bd80b33c41eebc9619894a36b2d1d02364c2a7eee8faf23c3192b00d37d4"
+    },
+    {
+      "file": "slow-audio.wav",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=48000",
+        "-t",
+        "32",
+        "-c:a",
+        "pcm_s16le",
+        "/private/tmp/wam-qa-fixes/final-audio/slow-audio.wav"
+      ],
+      "sha256": "4c5d911130c1ea27f72cebd2936e198c5c33d84f9b42eda279186a3c74840ae7"
+    },
+    {
+      "file": "he-aac-4.m4a",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=48000",
+        "-t",
+        "4",
+        "-c:a",
+        "aac_at",
+        "-profile:a",
+        "4",
+        "-b:a",
+        "48k",
+        "/private/tmp/wam-qa-fixes/final-audio/he-aac-4.m4a"
+      ],
+      "sha256": "b630eab8e05459bd7b6eb415da0c6143534c4315daae8882dd43adef81cae866"
+    },
+    {
+      "file": "he-aac-28.m4a",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=48000",
+        "-t",
+        "4",
+        "-c:a",
+        "aac_at",
+        "-profile:a",
+        "28",
+        "-b:a",
+        "48k",
+        "/private/tmp/wam-qa-fixes/final-audio/he-aac-28.m4a"
+      ],
+      "sha256": "29dd1219c9b0f5909c44ed5d24472a9ddb27e485b6d4de99e8bbf8ed7b6f0ce5"
+    }
+  ],
+  "proofs": [
+    {
+      "file": "aac.m4a",
+      "asset_sha256": "cb4d5a341f748d7c64c3e68d24b3ab240cd52878e02efce4b476e8f558447db4",
+      "target": 0,
+      "frames": 192000,
+      "rms": 9.200001035097748e-06,
+      "maximum": 0.0004960522055625916,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=192000 first=0 decoded=193536 trim=1536 exact=1 drained=1 error="
+    },
+    {
+      "file": "aac.m4a",
+      "asset_sha256": "cb4d5a341f748d7c64c3e68d24b3ab240cd52878e02efce4b476e8f558447db4",
+      "target": 2,
+      "frames": 96000,
+      "rms": 3.4793020983045673e-06,
+      "maximum": 0.000249725766479969,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=96000 first=96000 decoded=102400 trim=6400 exact=1 drained=1 error="
+    },
+    {
+      "file": "mp3-8000.mp3",
+      "asset_sha256": "2db9de870e45d2ca419405ad81cabf649ce199c4acf7f9796a4119eaa098c8fa",
+      "target": 0,
+      "frames": 32000,
+      "rms": 9.020297958215177e-06,
+      "maximum": 2.3886561393737793e-05,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=8000 frames=32000 first=0 decoded=33408 trim=1408 exact=1 drained=1 error="
+    },
+    {
+      "file": "mp3-22050.mp3",
+      "asset_sha256": "58b7db77d2c84ca21021d7181076af5cd72ddd24f215c3bd2680225aa6735c9c",
+      "target": 0,
+      "frames": 88200,
+      "rms": 8.995971053493404e-06,
+      "maximum": 2.230703830718994e-05,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=22050 frames=88200 first=0 decoded=89856 trim=1656 exact=1 drained=1 error="
+    },
+    {
+      "file": "mp3-22050.mp3",
+      "asset_sha256": "58b7db77d2c84ca21021d7181076af5cd72ddd24f215c3bd2680225aa6735c9c",
+      "target": 2,
+      "frames": 44100,
+      "rms": 8.999986000832007e-06,
+      "maximum": 2.136826515197754e-05,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=22050 frames=44100 first=44100 decoded=48960 trim=4860 exact=1 drained=1 error="
+    },
+    {
+      "file": "mp3-24000.mp3",
+      "asset_sha256": "e835667679a2a9819277457530c7faf691d4f03dcde20fb53325934bd4409f01",
+      "target": 0,
+      "frames": 96000,
+      "rms": 8.97753300343855e-06,
+      "maximum": 2.3171305656433105e-05,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=24000 frames=96000 first=0 decoded=97344 trim=1344 exact=1 drained=1 error="
+    },
+    {
+      "file": "mp3-32000.mp3",
+      "asset_sha256": "7adc7132e6ea362fad1264aefd59acd5b9d0156104cac959a553712cdf8cf0dd",
+      "target": 0,
+      "frames": 128000,
+      "rms": 8.98644050851435e-06,
+      "maximum": 2.1517276763916016e-05,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=32000 frames=128000 first=0 decoded=130176 trim=2176 exact=1 drained=1 error="
+    },
+    {
+      "file": "opus-8000.webm",
+      "asset_sha256": "6f278af1a325bf3769a4271411a5858de33597ef47f4b6f5dba43c7696fa85e3",
+      "target": 0,
+      "frames": 192000,
+      "rms": 1.685805284790849e-08,
+      "maximum": 1.043081283569336e-07,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=192000 first=0 decoded=192840 trim=840 exact=1 drained=1 error="
+    },
+    {
+      "file": "opus-24000.webm",
+      "asset_sha256": "e0f51ebc33da78e66f1b0f7c692a32bb1c027b6223539b7f4f32d1aa78565f35",
+      "target": 0,
+      "frames": 192000,
+      "rms": 1.7221881479933962e-08,
+      "maximum": 1.043081283569336e-07,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=192000 first=0 decoded=192840 trim=840 exact=1 drained=1 error="
+    },
+    {
+      "file": "opus-48000.webm",
+      "asset_sha256": "b0600191d17dd156751af7a083ab3f47845e780aae8421be0f2d859cb611fd44",
+      "target": 0,
+      "frames": 192000,
+      "rms": 1.9558430914306465e-08,
+      "maximum": 1.430511474609375e-06,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=192000 first=0 decoded=192840 trim=840 exact=1 drained=1 error="
+    },
+    {
+      "file": "opus-output-48000.webm",
+      "asset_sha256": "22e215ba82874e8ac3fe26746248dbcd1d90e9a189f182c2d865e5dde7508bce",
+      "target": 0,
+      "frames": 192000,
+      "rms": 1.9558430914306465e-08,
+      "maximum": 1.430511474609375e-06,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=192000 first=0 decoded=192840 trim=840 exact=1 drained=1 error="
+    },
+    {
+      "file": "opus-output-24000.webm",
+      "asset_sha256": "c4582f9f7e8b7c2b4aa4962cfd9d48d494ba9ce0fda7d2127fbba663122b7e1c",
+      "diagnostic": "status=1 error=OpusOutputSampleRateUnsupported (CodecConfiguration)\ndecode_start=0/0"
+    },
+    {
+      "file": "opus-output-96000.webm",
+      "asset_sha256": "db2660d20c9fcd4984bcc796b6c0cfb8e3c02a6e98e042ea52891489f6c00840",
+      "diagnostic": "status=1 error=OpusOutputSampleRateUnsupported (CodecConfiguration)\ndecode_start=0/0"
+    },
+    {
+      "file": "alternate.mov",
+      "asset_sha256": "dceaeb7d435bb6a030013daa8f24aa611a786f38dc3a8864dc9a22d9b4dad85f",
+      "target": 0,
+      "frames": 192000,
+      "rms": 9.200001035097748e-06,
+      "maximum": 0.0004960522055625916,
+      "best_lag": 0,
+      "diagnostic": "track=2 rate=48000 frames=192000 first=0 decoded=193536 trim=1536 exact=1 drained=1 error="
+    },
+    {
+      "file": "alternate.mka",
+      "asset_sha256": "d7e816dba47c31a430b49c88115a770adb06b1433d85af1d6285e932c85f2fc1",
+      "target": 0,
+      "frames": 192000,
+      "rms": 9.200001035097748e-06,
+      "maximum": 0.0004960522055625916,
+      "best_lag": 0,
+      "diagnostic": "track=2 rate=48000 frames=192000 first=0 decoded=193536 trim=1536 exact=1 drained=1 error="
+    },
+    {
+      "file": "mjpeg420.mov",
+      "diagnostic": "status=0 error=\ndecode_start=0/1"
+    },
+    {
+      "file": "mjpeg422.mov",
+      "diagnostic": "status=1 error=Motion JPEG chroma is outside the native 4:2:0 decoder envelope\ndecode_start=0/1"
+    },
+    {
+      "file": "mjpeg444.mov",
+      "diagnostic": "status=1 error=Motion JPEG chroma is outside the native 4:2:0 decoder envelope\ndecode_start=0/1"
+    },
+    {
+      "file": "alac.m4a",
+      "asset_sha256": "5af318c89ad18e0a57b4574ae2444f63da289e0554ac204acf06c62acfcc1685",
+      "target": 0,
+      "frames": 192000,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=192000 first=0 decoded=192000 trim=0 exact=1 drained=1 error=",
+      "capture_sha256": "b91f0792fac3eb0009bf4fb29957f1bc211b53bd3d3c01a386fa7810bc24fd72",
+      "reference_segment_sha256": "b91f0792fac3eb0009bf4fb29957f1bc211b53bd3d3c01a386fa7810bc24fd72",
+      "byte_identical": true
+    },
+    {
+      "file": "pcm_s16le.wav",
+      "asset_sha256": "71500c5505aae330dbc0d83fc9a10a41e8ce8765d19d26c3b65771ce284700c6",
+      "target": 0,
+      "frames": 192000,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=192000 first=0 decoded=192000 trim=0 exact=1 drained=1 error=",
+      "capture_sha256": "2084a537a06369f33d7bcb8963d8d66c9543836a32e56a53c48ba07f4b1ef5be",
+      "reference_segment_sha256": "2084a537a06369f33d7bcb8963d8d66c9543836a32e56a53c48ba07f4b1ef5be",
+      "byte_identical": true
+    },
+    {
+      "file": "adpcm_ima_wav.wav",
+      "asset_sha256": "0acf780dd304e4b3a65f8dfa5fac5be9f2bfdab114ea9da2bc7deee72af1cc03",
+      "target": 0,
+      "frames": 192213,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=192213 first=0 decoded=192213 trim=0 exact=1 drained=1 error=",
+      "capture_sha256": "3e5379c7cb5154b6df33313a83d2721e1dc9f20300034b2c30d7c822f552261d",
+      "reference_segment_sha256": "3e5379c7cb5154b6df33313a83d2721e1dc9f20300034b2c30d7c822f552261d",
+      "byte_identical": true
+    },
+    {
+      "file": "adpcm_ms.wav",
+      "asset_sha256": "01f7765a9d3e80ceffbb5d2a72ede9c0466cb42859f1adbb1543ec5c31bc4351",
+      "target": 0,
+      "frames": 192280,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=192280 first=0 decoded=192280 trim=0 exact=1 drained=1 error=",
+      "capture_sha256": "a7d36c3accfea9c4b38a2cced893706256781a262db691193281c740a57dff61",
+      "reference_segment_sha256": "a7d36c3accfea9c4b38a2cced893706256781a262db691193281c740a57dff61",
+      "byte_identical": true
+    },
+    {
+      "file": "pcm-u8-offset.mka",
+      "asset_sha256": "f8e886cd3b0fe1d8d717206a1fb30eb68f5004d614758b6490ea6e3fb8869e6b",
+      "target": 0,
+      "frames": 96000,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=96000 first=0 decoded=96000 trim=0 exact=1 drained=1 error=",
+      "capture_sha256": "1ab936de0f54697735c211595ced4de7aedf95601d189c08a119b5157c7cb6a8",
+      "reference_segment_sha256": "1ab936de0f54697735c211595ced4de7aedf95601d189c08a119b5157c7cb6a8",
+      "byte_identical": true
+    },
+    {
+      "file": "alac.mka",
+      "asset_sha256": "c6047317b00f331198dc4d726370022d2116460cd16993852b74a4e11ba9c59c",
+      "target": 0,
+      "frames": 192000,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=192000 first=0 decoded=192000 trim=0 exact=1 drained=1 error=",
+      "capture_sha256": "b91f0792fac3eb0009bf4fb29957f1bc211b53bd3d3c01a386fa7810bc24fd72",
+      "reference_segment_sha256": "b91f0792fac3eb0009bf4fb29957f1bc211b53bd3d3c01a386fa7810bc24fd72",
+      "byte_identical": true
+    },
+    {
+      "file": "alac.mka",
+      "asset_sha256": "c6047317b00f331198dc4d726370022d2116460cd16993852b74a4e11ba9c59c",
+      "target": 2,
+      "frames": 96000,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=96000 first=96000 decoded=105984 trim=9984 exact=1 drained=1 error=",
+      "capture_sha256": "f6ea159a3a5ce99364ae9d4efab7868b59e574ae72a33db3c710d8988f2888dc",
+      "reference_segment_sha256": "f6ea159a3a5ce99364ae9d4efab7868b59e574ae72a33db3c710d8988f2888dc",
+      "byte_identical": true
+    },
+    {
+      "file": "pcm_s16le.mka",
+      "asset_sha256": "a90e6a90769c9fd83520ef1d40ced230d6ac7cf947322cda427bd43e46624bd4",
+      "target": 0,
+      "frames": 192000,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=192000 first=0 decoded=192000 trim=0 exact=1 drained=1 error=",
+      "capture_sha256": "2084a537a06369f33d7bcb8963d8d66c9543836a32e56a53c48ba07f4b1ef5be",
+      "reference_segment_sha256": "2084a537a06369f33d7bcb8963d8d66c9543836a32e56a53c48ba07f4b1ef5be",
+      "byte_identical": true
+    },
+    {
+      "file": "pcm_s16le.mka",
+      "asset_sha256": "a90e6a90769c9fd83520ef1d40ced230d6ac7cf947322cda427bd43e46624bd4",
+      "target": 2,
+      "frames": 96000,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=96000 first=96000 decoded=98816 trim=2816 exact=1 drained=1 error=",
+      "capture_sha256": "b7a52124a6805dba5c04ec3c04d3b59e91e97dc5e01178422a555c91a81fc639",
+      "reference_segment_sha256": "b7a52124a6805dba5c04ec3c04d3b59e91e97dc5e01178422a555c91a81fc639",
+      "byte_identical": true
+    },
+    {
+      "file": "pcm_f32le.mka",
+      "asset_sha256": "7fd94fad226e16d09a9d8d3f729d26573c2f74cd2c318d50f77c239b37322f33",
+      "target": 0,
+      "frames": 192000,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=192000 first=0 decoded=192000 trim=0 exact=1 drained=1 error=",
+      "capture_sha256": "a681650a785a3e65a7065887ea4d0a2d3a5034ec9f0af4dcc2630c8f68ea6998",
+      "reference_segment_sha256": "a681650a785a3e65a7065887ea4d0a2d3a5034ec9f0af4dcc2630c8f68ea6998",
+      "byte_identical": true
+    },
+    {
+      "file": "pcm_f32le.mka",
+      "asset_sha256": "7fd94fad226e16d09a9d8d3f729d26573c2f74cd2c318d50f77c239b37322f33",
+      "target": 2,
+      "frames": 96000,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=96000 first=96000 decoded=98816 trim=2816 exact=1 drained=1 error=",
+      "capture_sha256": "ff6af2ebae54dd5bf9e4a804142ff4f07867a54b5fce9f10bd98dd0f2c21dbc8",
+      "reference_segment_sha256": "ff6af2ebae54dd5bf9e4a804142ff4f07867a54b5fce9f10bd98dd0f2c21dbc8",
+      "byte_identical": true
+    },
+    {
+      "file": "adpcm_ima_wav.mka",
+      "asset_sha256": "e445ef63b35dc8bbca72d65fe27b41b4241c56a30ff6d325d8b2f29c91f17bbb",
+      "target": 0,
+      "frames": 192000,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=192000 first=0 decoded=192213 trim=213 exact=1 drained=1 error=",
+      "capture_sha256": "26a30c5e97d821c0d59d538e3ebed44f7d24b6885ce876da9142a080226ca62e",
+      "reference_segment_sha256": "26a30c5e97d821c0d59d538e3ebed44f7d24b6885ce876da9142a080226ca62e",
+      "byte_identical": true
+    },
+    {
+      "file": "adpcm_ima_wav.mka",
+      "asset_sha256": "e445ef63b35dc8bbca72d65fe27b41b4241c56a30ff6d325d8b2f29c91f17bbb",
+      "target": 2,
+      "frames": 96000,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=96000 first=96000 decoded=98649 trim=2649 exact=1 drained=1 error=",
+      "capture_sha256": "1e618ca0237440ef06eae90d89b63ab54ed5f52a6d5da001e4efb0a2f71f4ee0",
+      "reference_segment_sha256": "1e618ca0237440ef06eae90d89b63ab54ed5f52a6d5da001e4efb0a2f71f4ee0",
+      "byte_identical": true
+    },
+    {
+      "file": "adpcm_ms.mka",
+      "asset_sha256": "9a0764ce367a1f82afbfb64b4653ad58f6780f9ce2c9f704f0961a570b03ed50",
+      "target": 0,
+      "frames": 192000,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=192000 first=0 decoded=192280 trim=280 exact=1 drained=1 error=",
+      "capture_sha256": "02db04fb1c9ab53557f2fd8fd8cf5557c3b3557fab59b3f083e1c217391b7d2f",
+      "reference_segment_sha256": "02db04fb1c9ab53557f2fd8fd8cf5557c3b3557fab59b3f083e1c217391b7d2f",
+      "byte_identical": true
+    },
+    {
+      "file": "adpcm_ms.mka",
+      "asset_sha256": "9a0764ce367a1f82afbfb64b4653ad58f6780f9ce2c9f704f0961a570b03ed50",
+      "target": 2,
+      "frames": 96000,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=96000 first=96000 decoded=99176 trim=3176 exact=1 drained=1 error=",
+      "capture_sha256": "72e6f405183691af4ea987a1a1b3de69c0d1f42d3f9127b4c3837637dbe6a8b1",
+      "reference_segment_sha256": "72e6f405183691af4ea987a1a1b3de69c0d1f42d3f9127b4c3837637dbe6a8b1",
+      "byte_identical": true
+    },
+    {
+      "file": "pcm_s16le-8000.mka",
+      "asset_sha256": "00476bd98d57eda6ff97486c3299bb69e9ec727728f330daeb6ec07a454cc0e9",
+      "target": 0,
+      "frames": 16000,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=8000 frames=16000 first=0 decoded=16000 trim=0 exact=1 drained=1 error=",
+      "capture_sha256": "3189db34c58deaa43ecebae237668c3305785124c200d5204ced037ab3ad2ced",
+      "reference_segment_sha256": "3189db34c58deaa43ecebae237668c3305785124c200d5204ced037ab3ad2ced",
+      "byte_identical": true
+    },
+    {
+      "file": "alac-8000.mka",
+      "asset_sha256": "75086ca2d55fa399bc875dd31fd686efe5e551ce30d2a1b780ac877d97bb4d60",
+      "target": 0,
+      "frames": 16000,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=8000 frames=16000 first=0 decoded=16000 trim=0 exact=1 drained=1 error=",
+      "capture_sha256": "facfaa347362391b18ef80d966260e0e6a5e998b5ec8abef810ba955e714fa4e",
+      "reference_segment_sha256": "facfaa347362391b18ef80d966260e0e6a5e998b5ec8abef810ba955e714fa4e",
+      "byte_identical": true
+    },
+    {
+      "file": "pcm_s16le-11025.mka",
+      "asset_sha256": "fd9611d63e7366a83c59922ccd52c4029493957a5d6b325f6dcf9fb4bf52e1e4",
+      "target": 0,
+      "frames": 22050,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=11025 frames=22050 first=0 decoded=22050 trim=0 exact=1 drained=1 error=",
+      "capture_sha256": "985cf22f9b717b4defd523f3d4c204ee8375beccc3d722e0b949c84823637d57",
+      "reference_segment_sha256": "985cf22f9b717b4defd523f3d4c204ee8375beccc3d722e0b949c84823637d57",
+      "byte_identical": true
+    },
+    {
+      "file": "alac-11025.mka",
+      "asset_sha256": "eead39de0da86f2fb195d53ee389033f4b650338712b68d89c5a7f1add838879",
+      "target": 0,
+      "frames": 22050,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=11025 frames=22050 first=0 decoded=22050 trim=0 exact=1 drained=1 error=",
+      "capture_sha256": "f86c41c3f0cba6f27027aeeccc4534ac41be0ac1b03ccf995f6d8a25e9b82568",
+      "reference_segment_sha256": "f86c41c3f0cba6f27027aeeccc4534ac41be0ac1b03ccf995f6d8a25e9b82568",
+      "byte_identical": true
+    },
+    {
+      "file": "pcm_s16le-12000.mka",
+      "asset_sha256": "12bd0e79fae8a7da7c36a871e6ced380c4f5ef61c3199ebdd6bd3020622265fa",
+      "target": 0,
+      "frames": 24000,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=12000 frames=24000 first=0 decoded=24000 trim=0 exact=1 drained=1 error=",
+      "capture_sha256": "62b000f4175bd6b2d11395c81cc87534067c580927d6a2f91d64e4af413605a2",
+      "reference_segment_sha256": "62b000f4175bd6b2d11395c81cc87534067c580927d6a2f91d64e4af413605a2",
+      "byte_identical": true
+    },
+    {
+      "file": "alac-12000.mka",
+      "asset_sha256": "20bf9a9781b9f00ae8164306f97d2a74d0636301ceb58b9455cd538b521e29e8",
+      "target": 0,
+      "frames": 24000,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=12000 frames=24000 first=0 decoded=24000 trim=0 exact=1 drained=1 error=",
+      "capture_sha256": "17485332b231a8afd3eec81321d8af149d0d0fe9b61ce0c1df1d53cb914c2007",
+      "reference_segment_sha256": "17485332b231a8afd3eec81321d8af149d0d0fe9b61ce0c1df1d53cb914c2007",
+      "byte_identical": true
+    },
+    {
+      "file": "pcm_s16le-16000.mka",
+      "asset_sha256": "1beda5f95871d4ff51a5fc8d68e95c94afa17fccb9fec477ae5c4b6524e0213a",
+      "target": 0,
+      "frames": 32000,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=16000 frames=32000 first=0 decoded=32000 trim=0 exact=1 drained=1 error=",
+      "capture_sha256": "d1ebb9f45b9b0883bd6fc4e0358281538355da0828f14a49fcf6471e32aa5612",
+      "reference_segment_sha256": "d1ebb9f45b9b0883bd6fc4e0358281538355da0828f14a49fcf6471e32aa5612",
+      "byte_identical": true
+    },
+    {
+      "file": "alac-16000.mka",
+      "asset_sha256": "fb8b6d7445fb69cab6d2b1ccc1ee833a8d0fe0dba9acb41bd39e1c4b60c81353",
+      "target": 0,
+      "frames": 32000,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=16000 frames=32000 first=0 decoded=32000 trim=0 exact=1 drained=1 error=",
+      "capture_sha256": "1c890a4ba543ecc15186693ecb938377d2f5a28633f13a5330a876fab2c6e502",
+      "reference_segment_sha256": "1c890a4ba543ecc15186693ecb938377d2f5a28633f13a5330a876fab2c6e502",
+      "byte_identical": true
+    },
+    {
+      "file": "pcm_s16le-22050.mka",
+      "asset_sha256": "567d75d411636efefd9a304ead1094e0b5da5de9efe267655b331cd7434fa3e5",
+      "target": 0,
+      "frames": 44100,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=22050 frames=44100 first=0 decoded=44100 trim=0 exact=1 drained=1 error=",
+      "capture_sha256": "a7926c9fea8a5f0ce3394a97f5bcb93853a87efedcf7e088633d6a75f5b1d177",
+      "reference_segment_sha256": "a7926c9fea8a5f0ce3394a97f5bcb93853a87efedcf7e088633d6a75f5b1d177",
+      "byte_identical": true
+    },
+    {
+      "file": "alac-22050.mka",
+      "asset_sha256": "3555389718387c3dfe0100ceeeaa60e0a09537694a27e55507eca923cac9ea50",
+      "target": 0,
+      "frames": 44100,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=22050 frames=44100 first=0 decoded=44100 trim=0 exact=1 drained=1 error=",
+      "capture_sha256": "7b80e2f9e8c3a5591640d4c0d8f78f1b2a4a59f7468cce4c0709b882d1869e62",
+      "reference_segment_sha256": "7b80e2f9e8c3a5591640d4c0d8f78f1b2a4a59f7468cce4c0709b882d1869e62",
+      "byte_identical": true
+    },
+    {
+      "file": "pcm_s16le-24000.mka",
+      "asset_sha256": "77d6394b7144cce77eae8dfa08c6da01725227f79ec42159171a7cd20922668b",
+      "target": 0,
+      "frames": 48000,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=24000 frames=48000 first=0 decoded=48000 trim=0 exact=1 drained=1 error=",
+      "capture_sha256": "1398f86efb4e9d8532e47e6b590b955220e88f4fd53473ddefa0d7ba3048bee3",
+      "reference_segment_sha256": "1398f86efb4e9d8532e47e6b590b955220e88f4fd53473ddefa0d7ba3048bee3",
+      "byte_identical": true
+    },
+    {
+      "file": "alac-24000.mka",
+      "asset_sha256": "29cc7277fbcc50b1231b3b018478ceda1d40b5693d32183f73b56053d4061118",
+      "target": 0,
+      "frames": 48000,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=24000 frames=48000 first=0 decoded=48000 trim=0 exact=1 drained=1 error=",
+      "capture_sha256": "33d13e823ae98cdfe0aa238277be112144830cd8e974ad57b071c5d7ddc2fde4",
+      "reference_segment_sha256": "33d13e823ae98cdfe0aa238277be112144830cd8e974ad57b071c5d7ddc2fde4",
+      "byte_identical": true
+    },
+    {
+      "file": "pcm_s16le-32000.mka",
+      "asset_sha256": "8cf30627f499a6eefb19e7096f6dab230b0b9381da4e316f41fd4dc5304e5fd7",
+      "target": 0,
+      "frames": 64000,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=32000 frames=64000 first=0 decoded=64000 trim=0 exact=1 drained=1 error=",
+      "capture_sha256": "9b5be484006a143efedd7b81c3119b9be4ab98f29a92f71a33164bec69d6c72b",
+      "reference_segment_sha256": "9b5be484006a143efedd7b81c3119b9be4ab98f29a92f71a33164bec69d6c72b",
+      "byte_identical": true
+    },
+    {
+      "file": "alac-32000.mka",
+      "asset_sha256": "1324c13dd35dd10009fb49c85fcce6959394604e31f29f5c1266fadcef50dd4f",
+      "target": 0,
+      "frames": 64000,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=32000 frames=64000 first=0 decoded=64000 trim=0 exact=1 drained=1 error=",
+      "capture_sha256": "dc88b5899bc0eed19367ce30eac85141600bcd71382c3cb7dfe0e7c4ece9eb66",
+      "reference_segment_sha256": "dc88b5899bc0eed19367ce30eac85141600bcd71382c3cb7dfe0e7c4ece9eb66",
+      "byte_identical": true
+    },
+    {
+      "file": "pcm_s16le-44100.mka",
+      "asset_sha256": "4de97bce89f452138837d5c307bf8f5b919ea5e37df7d5fa4a0a1ae50a37ce90",
+      "target": 0,
+      "frames": 88200,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=44100 frames=88200 first=0 decoded=88200 trim=0 exact=1 drained=1 error=",
+      "capture_sha256": "f9700d28aee590285d2217b8c776dadc4411ceac7cee78d7f1a8c527401ce796",
+      "reference_segment_sha256": "f9700d28aee590285d2217b8c776dadc4411ceac7cee78d7f1a8c527401ce796",
+      "byte_identical": true
+    },
+    {
+      "file": "alac-44100.mka",
+      "asset_sha256": "352a2a131eebdfe5e0d52dbb657bdd65fde89474b5d955bb47380d673edd701b",
+      "target": 0,
+      "frames": 88200,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=44100 frames=88200 first=0 decoded=88200 trim=0 exact=1 drained=1 error=",
+      "capture_sha256": "68f4af50dc984a70ba024bb76dac2fd91f5e9bc23475c0a713e412addf940643",
+      "reference_segment_sha256": "68f4af50dc984a70ba024bb76dac2fd91f5e9bc23475c0a713e412addf940643",
+      "byte_identical": true
+    },
+    {
+      "file": "pcm_s16le-48000.mka",
+      "asset_sha256": "ef64f09ab8a1156ffb8ee47aee10896b9dc146106deea348274f9d091261204f",
+      "target": 0,
+      "frames": 96000,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=96000 first=0 decoded=96000 trim=0 exact=1 drained=1 error=",
+      "capture_sha256": "a7ed734c7411e4518ad3d6c48112f9250e1d63abfa8f2a9f2e819b9efc8447b6",
+      "reference_segment_sha256": "a7ed734c7411e4518ad3d6c48112f9250e1d63abfa8f2a9f2e819b9efc8447b6",
+      "byte_identical": true
+    },
+    {
+      "file": "alac-48000.mka",
+      "asset_sha256": "bde56a52f1c40c0ade34b344d200ba7e8e0720218102a33345484338c476dead",
+      "target": 0,
+      "frames": 96000,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=96000 first=0 decoded=96000 trim=0 exact=1 drained=1 error=",
+      "capture_sha256": "107bb2e9fa90cce4dc2320fd7dbbc114dcf181d149bb03a38461762fad4cf3ae",
+      "reference_segment_sha256": "107bb2e9fa90cce4dc2320fd7dbbc114dcf181d149bb03a38461762fad4cf3ae",
+      "byte_identical": true
+    },
+    {
+      "file": "pcm_s16le-96000.mka",
+      "asset_sha256": "353af8ce4244112ea4580ffc27b6a6175888eac55ff877469614b7917bd13f3c",
+      "target": 0,
+      "frames": 192000,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=96000 frames=192000 first=0 decoded=192000 trim=0 exact=1 drained=1 error=",
+      "capture_sha256": "d4c46d933cd4415a599395fd1e03a3709446356606afc5d97c6b41cd9d890cfc",
+      "reference_segment_sha256": "d4c46d933cd4415a599395fd1e03a3709446356606afc5d97c6b41cd9d890cfc",
+      "byte_identical": true
+    },
+    {
+      "file": "alac-96000.mka",
+      "asset_sha256": "9ffab1e52cee5c46fe71449cb64bcebb5566743f5f140ca6d9c301e79ebaf5b8",
+      "target": 0,
+      "frames": 192000,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=96000 frames=192000 first=0 decoded=192000 trim=0 exact=1 drained=1 error=",
+      "capture_sha256": "b81064aaf97281fe03a6347373dbdb2808e33cc3c783873e438cbea39508dea7",
+      "reference_segment_sha256": "b81064aaf97281fe03a6347373dbdb2808e33cc3c783873e438cbea39508dea7",
+      "byte_identical": true
+    },
+    {
+      "file": "pcm_s16le-192000.mka",
+      "asset_sha256": "a09280249d6e94d44d454de1815bf17e602f153facb36713723c7cd600b12b1c",
+      "target": 0,
+      "frames": 384000,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=192000 frames=384000 first=0 decoded=384000 trim=0 exact=1 drained=1 error=",
+      "capture_sha256": "a1a95c888288fa420f5677a6fc11e2ae89881e8649683e011f049d399c20d988",
+      "reference_segment_sha256": "a1a95c888288fa420f5677a6fc11e2ae89881e8649683e011f049d399c20d988",
+      "byte_identical": true
+    },
+    {
+      "file": "alac-192000.mka",
+      "asset_sha256": "ddb6bd80b33c41eebc9619894a36b2d1d02364c2a7eee8faf23c3192b00d37d4",
+      "target": 0,
+      "frames": 384000,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=192000 frames=384000 first=0 decoded=384000 trim=0 exact=1 drained=1 error=",
+      "capture_sha256": "e7ae27d95b73f02808d898e24efc41fb61869ad0068a2b839fec2e11e14db452",
+      "reference_segment_sha256": "e7ae27d95b73f02808d898e24efc41fb61869ad0068a2b839fec2e11e14db452",
+      "byte_identical": true
+    },
+    {
+      "file": "slow-audio.wav",
+      "asset_sha256": "4c5d911130c1ea27f72cebd2936e198c5c33d84f9b42eda279186a3c74840ae7",
+      "target": 30,
+      "frames": 96000,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=96000 first=1440000 decoded=1536000 trim=1440000 exact=1 drained=1 error=",
+      "capture_sha256": "961e7e338e8ecdfa33d5710a5f74d7e690c08018cd2f4e8023f61c17ee7937fc",
+      "reference_segment_sha256": "961e7e338e8ecdfa33d5710a5f74d7e690c08018cd2f4e8023f61c17ee7937fc",
+      "byte_identical": true
+    },
+    {
+      "file": "he-aac-4.m4a",
+      "diagnostic": "status=1 error=HeAacSbrDecoderDelayUnproven: doubled-rate delay and tail lack an exact ownership proof\ndecode_start=0/0"
+    },
+    {
+      "file": "he-aac-4.m4a.mka",
+      "diagnostic": "status=1 error=HeAacSbrDecoderDelayUnproven: doubled-rate delay and tail lack an exact ownership proof (CodecConfiguration)\ndecode_start=0/0"
+    },
+    {
+      "file": "he-aac-28.m4a",
+      "diagnostic": "status=1 error=HeAacSbrDecoderDelayUnproven: doubled-rate delay and tail lack an exact ownership proof\ndecode_start=0/0"
+    },
+    {
+      "file": "he-aac-28.m4a.mka",
+      "diagnostic": "status=1 error=HeAacSbrDecoderDelayUnproven: doubled-rate delay and tail lack an exact ownership proof (CodecConfiguration)\ndecode_start=0/0"
+    },
+    {
+      "file": "two-he.mka",
+      "asset_sha256": "b6de1e63cbd1a8364e055f41e6f7c5d92d44c8ba3d49946c6961c0b063eb217e",
+      "diagnostic": "status=1 error=HeAacSbrDecoderDelayUnproven: doubled-rate delay and tail lack an exact ownership proof; candidates: [track 1 (A_AAC): HeAacSbrDecoderDelayUnproven: doubled-rate delay and tail lack an exact ownership proof; track 2 (A_AAC): HeAacSbrDecoderDelayUnproven: doubled-rate delay and tail lack an exact ownership proof] (CodecConfiguration)\ndecode_start=0/0"
+    }
+  ],
+  "associated_app_sha256": "acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354"
+}

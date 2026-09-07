@@ -166,6 +166,12 @@ class NativeAudioConsumer {
  public:
   virtual ~NativeAudioConsumer() = default;
 
+  // Only a rejected cold configure may be replaced. Success proves the old
+  // graph fully closed; a pending close retains ownership and refuses retry.
+  [[nodiscard]] virtual bool resetRejectedConfiguration(MediaGeneration) noexcept {
+    return false;
+  }
+
   // See NativeVideoConsumer::configure() for timeline lifetime.
   [[nodiscard]] virtual NativeMediaConsumeResult configure(
       const MediaTrackDescriptor& track, MediaGeneration generation,
@@ -437,6 +443,8 @@ struct NativeMediaDispatcherStats {
 // Parallel open-time configuration. VTDecompressionSessionCreate and
 // AudioUnitInitialize are independent and both IPC-bound, so configuring the
 // two ports one after the other charged every open the sum of their latencies.
+// Automatic alternate-track opens finish audio admission before exposing
+// video; the single-candidate path retains concurrent port configuration.
 // openLocalFile() therefore configures audio on one worker thread while it
 // configures video on the owner thread, and joins that worker before it
 // decides any verdict. Both ports are marked configured and stamped with the

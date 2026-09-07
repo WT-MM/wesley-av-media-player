@@ -1,6 +1,7 @@
 #pragma once
 
 #include "media/native_media_source.hpp"
+#include "media/audio_track_admission.hpp"
 #include "platform/macos/avfoundation_asset_context.hpp"
 
 #include <CoreMedia/CoreMedia.h>
@@ -87,6 +88,7 @@ struct AVFoundationGenerationRequest {
   // Null on cold open. Every later main seek receives the exact context
   // returned by the admitted first generation.
   std::shared_ptr<const AVFoundationAssetContext> assetContext;
+  media::AudioTrackRejections rejectedAudio;
 };
 
 struct AVFoundationGenerationStart {
@@ -160,7 +162,7 @@ class AVFoundationBackend {
   makeGeneration(AVFoundationGenerationRequest request) = 0;
 };
 
-class AVFoundationMediaSource final : public media::MediaSource {
+class AVFoundationMediaSource final : public media::MediaSource, public media::AudioTrackRetrySource {
  public:
   AVFoundationMediaSource();
   explicit AVFoundationMediaSource(
@@ -176,6 +178,9 @@ class AVFoundationMediaSource final : public media::MediaSource {
       const std::filesystem::path& path,
       const media::MediaSourceOpenOptions& options,
       media::MediaGeneration generation) override;
+  media::MediaSourceOpenOutcome retryAudioTrack(
+      const std::filesystem::path&, const media::MediaSourceOpenOptions&,
+      media::MediaGeneration, media::MediaTrackId rejected) override;
   [[nodiscard]] media::MediaSourceSeekOutcome seek(
       const media::MediaSourceSeekRequest& request) override;
   [[nodiscard]] media::MediaSourceReadResult
@@ -192,6 +197,7 @@ class AVFoundationMediaSource final : public media::MediaSource {
  private:
   struct Impl;
   std::unique_ptr<Impl> impl_;
+  media::AudioTrackRejections rejectedAudio_;
 };
 
 #if defined(WAM_AVFOUNDATION_MEDIA_SOURCE_TESTING)

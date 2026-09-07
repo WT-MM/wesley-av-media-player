@@ -1,3 +1,4 @@
+#include "media/audio_track_admission.hpp"
 #include "media/native_media_dispatcher.hpp"
 
 #include <array>
@@ -167,7 +168,7 @@ MediaSample sample(
   return result;
 }
 
-class FakeSource final : public MediaSource {
+class FakeSource final : public MediaSource, public AudioTrackRetrySource {
  public:
   FakeSource(std::shared_ptr<const MediaSourceDescriptor> descriptor,
              std::vector<MediaSourceReadResult> events)
@@ -256,6 +257,27 @@ class FakeSource final : public MediaSource {
       sourceOperationGeneration.store(0, std::memory_order_release);
     }
     return result;
+  }
+
+  std::vector<std::shared_ptr<const MediaSourceDescriptor>> retryDescriptors;
+  std::vector<MediaTrackId> rejectedTracks;
+  MediaSourceOpenOutcome retryAudioTrack(
+      const std::filesystem::path& path, const MediaSourceOpenOptions& options,
+      MediaGeneration generation, MediaTrackId rejected) override {
+    expect(!options.selection.preferredAudio, "explicit requests never retry source");
+    rejectedTracks.push_back(rejected);
+    close();
+    if (rejectedTracks.size() > retryDescriptors.size()) {
+      MediaSourceOpenOutcome out;
+      out.status = MediaSourceOpenStatus::Unsupported;
+      out.generation = generation;
+      out.error = "all candidates exhausted";
+      return out;
+    }
+    descriptor_ = retryDescriptors[rejectedTracks.size()-1];
+    armedGeneration = generation;
+    sourceOperationGeneration.store(generation, std::memory_order_release);
+    return openLocalFile(path, options, generation);
   }
 
   [[nodiscard]] MediaSourceSeekOutcome seek(
@@ -462,6 +484,8 @@ Result scripted(const std::vector<Result>& values, std::size_t& cursor,
 }
 
 struct FakeConsumerState {
+  bool allowOpenReset{false};
+  unsigned openResets{0};
   NativeMediaConsumeResult configureResult{NativeMediaConsumeResult::Accepted};
   NativeMediaConsumeResult capacityResult{NativeMediaConsumeResult::Accepted};
   NativeMediaConsumeResult discontinuityResult{
@@ -667,6 +691,12 @@ class FakeAudioConsumer final : public NativeAudioConsumer {
                                          timeline,
                                      std::string*) override {
     return configureConsumer(*state_, track, generation, timeline);
+  }
+  bool resetRejectedConfiguration(MediaGeneration generation) noexcept override {
+    expect(state_->configuredGeneration == generation, "retry retires exact configured generation");
+    if (!state_->allowOpenReset) return false;
+    ++state_->openResets;
+    return closeConsumer(*state_) == NativeMediaConsumerProgress::Done;
   }
   NativeMediaConsumeResult capacity(MediaGeneration) override {
     return capacityConsumer(*state_);
@@ -2043,7 +2073,52 @@ void checkFormatChangeFailsClosed() {
 
 }  // namespace
 
+void backendTrackRetry() {
+  const auto candidate = [](MediaTrackId id) {
+    auto d = std::make_shared<MediaSourceDescriptor>(*descriptor());
+    d->inventory.audio = 3;
+    d->inventory.total = 4;
+    d->selectedAudio = id;
+    for (auto& track : d->tracks)
+      if (track.kind == MediaTrackKind::Audio) track.id = id;
+    return d;
+  };
+  for (unsigned mode = 0; mode < 4; ++mode) {
+    auto rig = makeRigWithDescriptor(candidate(2), {});
+    rig.source->retryDescriptors = {candidate(3), candidate(4)};
+    rig.audio->allowOpenReset = true;
+    rig.audio->configureHook = [&] {
+      rig.audio->configureResult = rig.audio->configuredTrack == 4
+          ? NativeMediaConsumeResult::Accepted : NativeMediaConsumeResult::Failed;
+      if (mode != 1 && rig.audio->configuredTrack != 4)
+        expect(rig.video->configureCalls == 0, "video stays unexposed until audio admitted");
+      if (mode == 3) rig.dispatcher->requestCancel(1);
+    };
+    auto options = requiredAvOptions();
+    if (mode == 1) options.selection.preferredAudio = 2;
+    if (mode == 2) rig.audio->closeResults = {NativeMediaConsumerProgress::Quiescing};
+    const auto out = rig.dispatcher->openLocalFile("retry.mka", options, 1);
+    if (mode == 0) {
+      expect(out.status == NativeMediaDispatcherOpenStatus::Ready &&
+             rig.dispatcher->descriptor()->selectedAudio == 4 &&
+             rig.audio->configureCalls == 3 && rig.audio->openResets == 2 &&
+             rig.source->rejectedTracks == std::vector<MediaTrackId>{2,3} &&
+             rig.video->configureCalls == 1 && rig.audio->sampleCalls == 0,
+             "two backend refusals retire before third candidate admission");
+    } else if (mode == 3) {
+      expect(out.status == NativeMediaDispatcherOpenStatus::Cancelled &&
+             rig.audio->configureCalls == 1, "cancellation survives retry retirement");
+    } else {
+      expect(out.status == NativeMediaDispatcherOpenStatus::Failed &&
+             rig.source->rejectedTracks.empty() && rig.audio->configureCalls == 1 &&
+             rig.dispatcher->failureMessage().find("track 2") != std::string::npos,
+             "explicit track and pending close refuse by track without switching");
+    }
+  }
+}
+
 int main() {
+  backendTrackRetry();
   static_assert(
       noexcept(std::declval<const NativeMediaDispatcher&>().stats()));
   static_assert(std::is_trivially_copyable_v<NativeMediaDispatcherStep>);

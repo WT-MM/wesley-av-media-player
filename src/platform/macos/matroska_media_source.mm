@@ -110,6 +110,12 @@ MediaTime MatroskaSourceTraits::mergeOrderKey(
 struct MatroskaMediaSource::Impl final
     : NativeCustomSourceCore<Impl, MatroskaSourceTraits> {
   using Base = NativeCustomSourceCore<Impl, MatroskaSourceTraits>;
+  media::AudioTrackRejections rejectedAudio;
+  MatroskaSourceTraits::PrepareOutcome prepareAsset(
+      const std::filesystem::path& path, const media::MediaSourceOpenOptions& options,
+      MatroskaSourceTraits::CancellationToken token) noexcept {
+    return media::matroska::prepareMatroskaLocalFile(path, options, token, rejectedAudio);
+  }
   using typename Base::StagedSample;
   using Base::assetContext;
   using Base::audioDecodeStart;
@@ -306,7 +312,12 @@ MatroskaMediaSource::~MatroskaMediaSource() { close(); }
 
 bool MatroskaMediaSource::armOperation(
     media::MediaGeneration generation) noexcept {
-  return impl_ != nullptr && impl_->arm(generation);
+  const bool armed = impl_ != nullptr && impl_->arm(generation);
+  if (armed) {
+    rejectedAudio_ = {};
+    impl_->rejectedAudio = {};
+  }
+  return armed;
 }
 
 media::MediaSourceOpenOutcome MatroskaMediaSource::openLocalFile(
@@ -314,6 +325,31 @@ media::MediaSourceOpenOutcome MatroskaMediaSource::openLocalFile(
     const media::MediaSourceOpenOptions& options,
     media::MediaGeneration generation) {
   return impl_->openLocalFile(path, options, generation);
+}
+
+media::MediaSourceOpenOutcome MatroskaMediaSource::retryAudioTrack(
+    const std::filesystem::path& path, const media::MediaSourceOpenOptions& options,
+    media::MediaGeneration generation, media::MediaTrackId rejected) {
+  if (options.selection.preferredAudio || !impl_->descriptor ||
+      impl_->descriptor->selectedAudio != rejected || impl_->generation != generation ||
+      !rejectedAudio_.add(rejected)) {
+    media::MediaSourceOpenOutcome out;
+    out.generation = generation;
+    out.error = "AudioTrackRetryExhausted";
+    return out;
+  }
+  impl_->retireActive();
+  impl_->clearHeads();
+  impl_->descriptor.reset();
+  impl_->assetContext.reset();
+  impl_->open = false;
+  impl_->openSnapshot.store(false, std::memory_order_release);
+  impl_->rejectedAudio = rejectedAudio_;
+  // Retry is part of the same cold open; cancellation and its generation
+  // high-water survive source retirement and cannot be cleared by retry.
+  impl_->armedGeneration = generation;
+  impl_->operationGeneration.store(generation, std::memory_order_release);
+  return openLocalFile(path, options, generation);
 }
 
 media::MediaSourceSeekOutcome MatroskaMediaSource::seek(

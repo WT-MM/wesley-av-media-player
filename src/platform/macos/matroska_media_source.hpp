@@ -1,6 +1,7 @@
 #pragma once
 
 #include "media/native_media_source.hpp"
+#include "media/audio_track_admission.hpp"
 #include "platform/macos/matroska_asset_context.hpp"
 
 #include <CoreMedia/CoreMedia.h>
@@ -95,7 +96,7 @@ struct MatroskaSourceTraits {
 // this source publishes carries an invalid decodeTime and a CMSampleBuffer with
 // kCMTimeInvalid as its decode stamp. VideoToolbox then decodes in submission
 // order, which is exactly the storage order the cursors emit in.
-class MatroskaMediaSource final : public media::MediaSource {
+class MatroskaMediaSource final : public media::MediaSource, public media::AudioTrackRetrySource {
  public:
   MatroskaMediaSource();
   ~MatroskaMediaSource() override;
@@ -109,6 +110,9 @@ class MatroskaMediaSource final : public media::MediaSource {
       const std::filesystem::path& path,
       const media::MediaSourceOpenOptions& options,
       media::MediaGeneration generation) override;
+  media::MediaSourceOpenOutcome retryAudioTrack(
+      const std::filesystem::path&, const media::MediaSourceOpenOptions&,
+      media::MediaGeneration, media::MediaTrackId rejected) override;
   [[nodiscard]] media::MediaSourceSeekOutcome
   seek(const media::MediaSourceSeekRequest& request) override;
   [[nodiscard]] media::MediaSourceReadResult
@@ -125,6 +129,7 @@ class MatroskaMediaSource final : public media::MediaSource {
  private:
   struct Impl;
   std::unique_ptr<Impl> impl_;
+  media::AudioTrackRejections rejectedAudio_;
 };
 
 }  // namespace wam::macos

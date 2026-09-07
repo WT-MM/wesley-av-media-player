@@ -1,0 +1,235 @@
+[
+  {
+    "group": "u8",
+    "file": "src/media/matroska_apple_audio.hpp",
+    "original_sha256": "32a99d2fbf185afd2b42936ae44ed49c5161565a736c0f74e7c22f4a46fd362e",
+    "test": [
+      "/opt/anaconda3/bin/python3",
+      "tests/native_coverage_integration.py",
+      "--audio",
+      "build/wam_native_coverage_audio_probe",
+      "--source",
+      "build/wam_native_coverage_source_probe",
+      "--ffmpeg",
+      "/opt/homebrew/bin/ffmpeg",
+      "--case",
+      "pcm-u8"
+    ],
+    "mutated_exit": 1,
+    "restored_sha256": "32a99d2fbf185afd2b42936ae44ed49c5161565a736c0f74e7c22f4a46fd362e",
+    "restored_exit": 0,
+    "byte_identical_restore": true,
+    "restored_executable_sha256": "acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354"
+  },
+  {
+    "group": "rates",
+    "file": "src/media/matroska_demuxer.cpp",
+    "original_sha256": "ef0a78c7505340e332fefe4a97af38a8ae30f42d1623bdb4013591fd25dc9d1a",
+    "test": [
+      "/opt/anaconda3/bin/python3",
+      "tests/native_coverage_integration.py",
+      "--audio",
+      "build/wam_native_coverage_audio_probe",
+      "--source",
+      "build/wam_native_coverage_source_probe",
+      "--ffmpeg",
+      "/opt/homebrew/bin/ffmpeg",
+      "--case",
+      "matroska-rates"
+    ],
+    "mutated_exit": 1,
+    "restored_sha256": "ef0a78c7505340e332fefe4a97af38a8ae30f42d1623bdb4013591fd25dc9d1a",
+    "restored_exit": 0,
+    "byte_identical_restore": true,
+    "restored_executable_sha256": "acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354"
+  },
+  {
+    "group": "retry",
+    "file": "src/media/native_media_dispatcher.cpp",
+    "original_sha256": "3108369fa5c2b90c09c8e3c07a2b7572d33e9606d8da6e03dc6b1a38a990ecdb",
+    "test": [
+      "build/wam_native_media_dispatcher_test"
+    ],
+    "mutated_exit": 1,
+    "restored_sha256": "3108369fa5c2b90c09c8e3c07a2b7572d33e9606d8da6e03dc6b1a38a990ecdb",
+    "restored_exit": 0,
+    "byte_identical_restore": true,
+    "restored_executable_sha256": "acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354"
+  },
+  {
+    "group": "retry-retirement",
+    "file": "src/platform/macos/native_audio_session.mm",
+    "original_sha256": "908c9b6c95e519d79b14e539ef44b1d9f4fe48bc69846044f2ac75d082b6f9e3",
+    "test": [
+      "/opt/anaconda3/bin/python3",
+      "tests/native_coverage_wiring_test.py",
+      "--app",
+      "build/WAM.app/Contents/MacOS/WAM",
+      "--ffmpeg",
+      "/opt/homebrew/bin/ffmpeg",
+      "--slow-fixture",
+      "/private/tmp/wam-adversarial2/media/long70-4k.mp4",
+      "--case",
+      "retry"
+    ],
+    "mutated_exit": 1,
+    "restored_sha256": "908c9b6c95e519d79b14e539ef44b1d9f4fe48bc69846044f2ac75d082b6f9e3",
+    "restored_exit": 0,
+    "byte_identical_restore": true,
+    "restored_executable_sha256": "acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354"
+  },
+  {
+    "group": "retry-source",
+    "file": "src/media/matroska_demuxer.cpp",
+    "original_sha256": "ef0a78c7505340e332fefe4a97af38a8ae30f42d1623bdb4013591fd25dc9d1a",
+    "test": [
+      "/opt/anaconda3/bin/python3",
+      "tests/native_coverage_wiring_test.py",
+      "--app",
+      "build/WAM.app/Contents/MacOS/WAM",
+      "--ffmpeg",
+      "/opt/homebrew/bin/ffmpeg",
+      "--slow-fixture",
+      "/private/tmp/wam-adversarial2/media/long70-4k.mp4",
+      "--case",
+      "retry"
+    ],
+    "mutated_exit": 1,
+    "restored_sha256": "ef0a78c7505340e332fefe4a97af38a8ae30f42d1623bdb4013591fd25dc9d1a",
+    "restored_exit": 0,
+    "byte_identical_restore": true,
+    "restored_executable_sha256": "acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354"
+  },
+  {
+    "group": "he-aac",
+    "file": "src/media/matroska_demuxer.cpp",
+    "original_sha256": "ef0a78c7505340e332fefe4a97af38a8ae30f42d1623bdb4013591fd25dc9d1a",
+    "test": [
+      "/opt/anaconda3/bin/python3",
+      "tests/native_coverage_integration.py",
+      "--audio",
+      "build/wam_native_coverage_audio_probe",
+      "--source",
+      "build/wam_native_coverage_source_probe",
+      "--ffmpeg",
+      "/opt/homebrew/bin/ffmpeg",
+      "--case",
+      "he-aac"
+    ],
+    "mutated_exit": 1,
+    "restored_sha256": "ef0a78c7505340e332fefe4a97af38a8ae30f42d1623bdb4013591fd25dc9d1a",
+    "restored_exit": 0,
+    "byte_identical_restore": true,
+    "restored_executable_sha256": "acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354"
+  },
+  {
+    "group": "ebml",
+    "file": "tests/native_coverage_integration.py",
+    "original_sha256": "38f5351bd1fbffb3700d5d1d82eaf316f9089f9b8daf7f7ec753b5452c413f55",
+    "test": [
+      "/opt/anaconda3/bin/python3",
+      "tests/native_coverage_integration.py",
+      "--audio",
+      "build/wam_native_coverage_audio_probe",
+      "--source",
+      "build/wam_native_coverage_source_probe",
+      "--ffmpeg",
+      "/opt/homebrew/bin/ffmpeg",
+      "--case",
+      "opus"
+    ],
+    "mutated_exit": 1,
+    "restored_sha256": "38f5351bd1fbffb3700d5d1d82eaf316f9089f9b8daf7f7ec753b5452c413f55",
+    "restored_exit": 0,
+    "byte_identical_restore": true,
+    "restored_executable_sha256": "acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354"
+  },
+  {
+    "group": "opus",
+    "file": "src/media/matroska_demuxer.cpp",
+    "original_sha256": "ef0a78c7505340e332fefe4a97af38a8ae30f42d1623bdb4013591fd25dc9d1a",
+    "test": [
+      "/opt/anaconda3/bin/python3",
+      "tests/native_coverage_integration.py",
+      "--audio",
+      "build/wam_native_coverage_audio_probe",
+      "--source",
+      "build/wam_native_coverage_source_probe",
+      "--ffmpeg",
+      "/opt/homebrew/bin/ffmpeg",
+      "--case",
+      "opus"
+    ],
+    "mutated_exit": 1,
+    "restored_sha256": "ef0a78c7505340e332fefe4a97af38a8ae30f42d1623bdb4013591fd25dc9d1a",
+    "restored_exit": 0,
+    "byte_identical_restore": true,
+    "restored_executable_sha256": "acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354"
+  },
+  {
+    "group": "notice",
+    "file": "src/qt/native_playback_owner.mm",
+    "original_sha256": "d6d6bef2a62c65b7d520c6e0b30f824721b39a3d0d7ad6ee7c75aa97670af2ce",
+    "test": [
+      "/opt/anaconda3/bin/python3",
+      "tests/native_coverage_wiring_test.py",
+      "--app",
+      "build/WAM.app/Contents/MacOS/WAM",
+      "--ffmpeg",
+      "/opt/homebrew/bin/ffmpeg",
+      "--slow-fixture",
+      "/private/tmp/wam-adversarial2/media/long70-4k.mp4",
+      "--case",
+      "notice"
+    ],
+    "mutated_exit": 1,
+    "restored_sha256": "d6d6bef2a62c65b7d520c6e0b30f824721b39a3d0d7ad6ee7c75aa97670af2ce",
+    "restored_exit": 0,
+    "byte_identical_restore": true,
+    "restored_executable_sha256": "acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354"
+  },
+  {
+    "group": "progress",
+    "file": "src/qt/native_playback_owner.mm",
+    "original_sha256": "d6d6bef2a62c65b7d520c6e0b30f824721b39a3d0d7ad6ee7c75aa97670af2ce",
+    "test": [
+      "/opt/anaconda3/bin/python3",
+      "tests/native_coverage_wiring_test.py",
+      "--app",
+      "build/WAM.app/Contents/MacOS/WAM",
+      "--ffmpeg",
+      "/opt/homebrew/bin/ffmpeg",
+      "--slow-fixture",
+      "/private/tmp/wam-adversarial2/media/long70-4k.mp4",
+      "--case",
+      "progress"
+    ],
+    "mutated_exit": 1,
+    "restored_sha256": "d6d6bef2a62c65b7d520c6e0b30f824721b39a3d0d7ad6ee7c75aa97670af2ce",
+    "restored_exit": 0,
+    "byte_identical_restore": true,
+    "restored_executable_sha256": "acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354"
+  },
+  {
+    "group": "progress-publication",
+    "file": "src/platform/macos/native_media_session.mm",
+    "original_sha256": "ac5eba36e6a6dcd3bcb86044523b2e5cd6d8880a02a5930ed243d1fdf158914c",
+    "test": [
+      "/opt/anaconda3/bin/python3",
+      "tests/native_coverage_wiring_test.py",
+      "--app",
+      "build/WAM.app/Contents/MacOS/WAM",
+      "--ffmpeg",
+      "/opt/homebrew/bin/ffmpeg",
+      "--slow-fixture",
+      "/private/tmp/wam-adversarial2/media/long70-4k.mp4",
+      "--case",
+      "progress"
+    ],
+    "mutated_exit": 1,
+    "restored_sha256": "ac5eba36e6a6dcd3bcb86044523b2e5cd6d8880a02a5930ed243d1fdf158914c",
+    "restored_exit": 0,
+    "byte_identical_restore": true,
+    "restored_executable_sha256": "acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354"
+  }
+]

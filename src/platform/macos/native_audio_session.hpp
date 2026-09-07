@@ -187,6 +187,9 @@ class NativeAudioSession final : public media::NativeAudioConsumer {
   [[nodiscard]] static NativeAudioSessionQuarantineFacts
   quarantineFacts() noexcept;
 
+  [[nodiscard]] bool resetRejectedConfiguration(
+      media::MediaGeneration generation) noexcept override;
+
   [[nodiscard]] media::NativeMediaConsumeResult configure(
       const media::MediaTrackDescriptor& track,
       media::MediaGeneration generation,

@@ -1,0 +1,9 @@
+Traceback (most recent call last):
+  File "/Users/wesleymaa/Documents/WAM/tests/native_coverage_integration.py", line 211, in <module>
+    if __name__=='__main__': main()
+                             ^^^^^^
+  File "/Users/wesleymaa/Documents/WAM/tests/native_coverage_integration.py", line 178, in main
+    decode(path,48000,96000,bit_exact=True)
+  File "/Users/wesleymaa/Documents/WAM/tests/native_coverage_integration.py", line 119, in decode
+    assert maximum < (1e-12 if bit_exact else 0.004), (path, maximum)
+AssertionError: (PosixPath('/private/tmp/wam-native-coverage-b1egr8fr/pcm-u8-offset.mka'), 1.0)

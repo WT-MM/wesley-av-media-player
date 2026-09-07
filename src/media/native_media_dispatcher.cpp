@@ -1,5 +1,7 @@
 #include "media/native_media_dispatcher.hpp"
 
+#include "media/audio_track_admission.hpp"
+
 #include <variant>
 
 #include "media/audio_codec_timing.hpp"
@@ -473,279 +475,290 @@ NativeMediaDispatcherOpenOutcome NativeMediaDispatcher::openLocalFile(
     return result;
   }
 
-  if (opened.generation != generation) {
-    failure_message_ = "source open reported a foreign generation";
-    fail(NativeMediaDispatcherFailure::SourceOpen, generation);
-    result.status = NativeMediaDispatcherOpenStatus::Failed;
-    return result;
-  }
-  switch (opened.status) {
-  case MediaSourceOpenStatus::Unsupported:
-    operation_generation_.store(0, std::memory_order_release);
-    // The source's own text is the ONLY description of why the file was
-    // declined, and it used to be dropped on the floor here: the session's
-    // stderr line reads failureMessage(), found it empty, and printed "the
-    // session failed while the dispatcher reported no failure" -- an
-    // anonymous verdict for a refusal that the source had already named.
-    // Carry the text, and name the class, without moving the state: an
-    // envelope verdict must still fall back cleanly (see UnsupportedSource).
-    failure_message_ = opened.error;
-    stats_.failure = NativeMediaDispatcherFailure::UnsupportedSource;
-    stats_.state = NativeMediaDispatcherState::Unsupported;
-    stats_.lastWait = NativeMediaDispatcherWait::Terminal;
-    result.status = NativeMediaDispatcherOpenStatus::Unsupported;
-    return result;
-  case MediaSourceOpenStatus::Cancelled:
-    operation_generation_.store(0, std::memory_order_release);
-    stats_.state = NativeMediaDispatcherState::Cancelled;
-    stats_.lastAction = NativeMediaDispatcherAction::Cancelled;
-    stats_.lastWait = NativeMediaDispatcherWait::Terminal;
-    result.status = NativeMediaDispatcherOpenStatus::Cancelled;
-    return result;
-  case MediaSourceOpenStatus::Failed:
-    // The source's own text is the only description of what actually went
-    // wrong; every layer above this point collapses onto a generic enum.
-    failure_message_ = opened.error;
-    fail(NativeMediaDispatcherFailure::SourceOpen, generation);
-    result.status = NativeMediaDispatcherOpenStatus::Failed;
-    return result;
-  case MediaSourceOpenStatus::Ready:
-    break;
-  }
-
-  std::string validationError;
-  const bool invalidPreparedContext =
-      opened.preparedContext != nullptr &&
-      (opened.preparedContext->descriptor().get() !=
-           opened.descriptor.get() ||
-       !opened.preparedContext->matchesMainRequest(path, options,
-                                                   opened.descriptor));
-  if (opened.descriptor == nullptr || invalidPreparedContext ||
-      !opened.actualDecodeStart.valid() ||
-      !validateMediaSourceDescriptor(*opened.descriptor, limits_,
-                                     &validationError) ||
-      (options.selection.requireVideo &&
-       !opened.descriptor->selectedVideo.has_value()) ||
-      (options.selection.requireAudio &&
-       !opened.descriptor->selectedAudio.has_value()) ||
-      (!opened.descriptor->selectedVideo &&
-       !opened.descriptor->selectedAudio)) {
-    failure_message_ = validationError.empty()
-                           ? std::string("descriptor admission refused")
-                           : validationError;
-    fail(NativeMediaDispatcherFailure::InvalidDescriptor, generation);
-    result.status = NativeMediaDispatcherOpenStatus::Failed;
-    return result;
-  }
-
-  constexpr MediaTime kStreamOrigin{0, 1};
-  const MediaSeekMode requestedMode =
-      options.initialPosition ? options.initialPosition->mode
-                              : MediaSeekMode::Accurate;
-  const MediaTime requestedTarget =
-      options.initialPosition ? options.initialPosition->target
-                              : kStreamOrigin;
-  const char* timelineRefusal = nullptr;
-  const auto timeline =
-      deriveTimeline(
-          generation, requestedMode, requestedTarget,
-          opened.actualDecodeStart, opened.descriptor->duration,
-          opened.descriptor->selectedAudio
-              ? findMediaTrack(*opened.descriptor,
-                               *opened.descriptor->selectedAudio)
-              : nullptr,
-          opened.audioWindow, limits_.maximumAudioSeekPrerollSeconds,
-          &timelineRefusal);
-  if (!timeline) {
-    failure_message_ = timelineRefusal == nullptr
-                           ? std::string("generation timeline could not be "
-                                         "derived")
-                           : std::string("generation timeline could not be "
-                                         "derived: ") +
-                                 timelineRefusal;
-    fail(NativeMediaDispatcherFailure::InvalidTimeline, generation);
-    result.status = NativeMediaDispatcherOpenStatus::Failed;
-    return result;
-  }
-
-  descriptor_ = std::move(opened.descriptor);
-  prepared_context_ = std::move(opened.preparedContext);
-  stats_.selectedVideo = descriptor_->selectedVideo.value_or(0);
-  stats_.selectedAudio = descriptor_->selectedAudio.value_or(0);
-  consumer_generation_ = generation;
-
-  // Parallel port configuration.
-  //
-  // VTDecompressionSessionCreate and AudioUnitInitialize are both IPC-bound on
-  // their own daemons and share no state, so running them one after the other
-  // simply added their latencies (~69 ms + ~59 ms) to every open. Audio is
-  // therefore configured on a single worker thread while video is configured
-  // on the owner thread, and the open's verdict is decided only after that
-  // worker is joined.
-  //
-  // Exposure accounting is unchanged in intent and strengthened in mechanics.
-  // Both ports are marked configured and stamped with the exact generation
-  // here, on the owner thread, BEFORE either configure() runs: configure()
-  // exposes the generation even when the port rejects it, and under
-  // concurrency neither port may be observed as "called but unaccounted".
-  // Terminal retirement therefore names both ports precisely, so a port that
-  // configured successfully while its peer failed is still retired exactly
-  // once at this generation by the ordinary FailureCancel/retire() machinery.
-  //
-  // The worker writes nothing the dispatcher owns: it touches only its own
-  // verdict slot and the two const inputs (track descriptor and timeline).
-  // Every dispatcher-visible mutation happens on the owner thread after the
-  // join, so the staged/pending generation facts seam still observes the
-  // whole configure as one atomic owner transition and can never sample a
-  // half-exposed dispatcher.
-  const MediaTrackDescriptor* videoTrack =
-      descriptor_->selectedVideo
-          ? findMediaTrack(*descriptor_, *descriptor_->selectedVideo)
-          : nullptr;
-  const MediaTrackDescriptor* audioTrack =
-      descriptor_->selectedAudio
-          ? findMediaTrack(*descriptor_, *descriptor_->selectedAudio)
-          : nullptr;
-  if (descriptor_->selectedVideo) {
-    stats_.videoConfigured = true;
-    video_exposed_generation_ = generation;
-  }
-  if (descriptor_->selectedAudio) {
-    stats_.audioConfigured = true;
-    audio_exposed_generation_ = generation;
-  }
-
-  const NativeMediaGenerationTimeline& configureTimeline = *timeline;
-  OpenConfigureVerdict videoVerdict = OpenConfigureVerdict::Skipped;
-  OpenConfigureVerdict audioVerdict = OpenConfigureVerdict::Skipped;
-
-  // Each port stages its refusal text in its own string. The audio configure
-  // runs on a worker thread, so it must never touch a dispatcher member; both
-  // are folded into failure_message_ on the owner thread after the join.
-  std::string videoConfigureError;
-  std::string audioConfigureError;
-
-  const auto configureAudio = [this, audioTrack, generation,
-                               &configureTimeline, &audioConfigureError,
-                               &audioVerdict]() noexcept {
-    if (audioTrack == nullptr) {
-      audioVerdict = OpenConfigureVerdict::Rejected;
-      return;
+  auto* retrySource = dynamic_cast<AudioTrackRetrySource*>(source_.get());
+  std::string audioRefusals;
+  for (std::size_t attempt = 0; attempt < MediaSourceLimits::kHardMaximumTracks; ++attempt) {
+    if (opened.generation != generation) {
+      failure_message_ = "source open reported a foreign generation";
+      fail(NativeMediaDispatcherFailure::SourceOpen, generation);
+      result.status = NativeMediaDispatcherOpenStatus::Failed;
+      return result;
     }
-    try {
-      audioVerdict = audio_->configure(*audioTrack, generation,
-                                       configureTimeline,
-                                       &audioConfigureError) ==
-                             NativeMediaConsumeResult::Accepted
-                         ? OpenConfigureVerdict::Accepted
-                         : OpenConfigureVerdict::Rejected;
-    } catch (...) {
-      // An exception must never cross the thread boundary: it would bypass
-      // the join and terminate. Record it and let the owner thread decide.
-      audioVerdict = OpenConfigureVerdict::Threw;
+    switch (opened.status) {
+    case MediaSourceOpenStatus::Unsupported:
+      operation_generation_.store(0, std::memory_order_release);
+      // The source's own text is the ONLY description of why the file was
+      // declined, and it used to be dropped on the floor here: the session's
+      // stderr line reads failureMessage(), found it empty, and printed "the
+      // session failed while the dispatcher reported no failure" -- an
+      // anonymous verdict for a refusal that the source had already named.
+      // Carry the text, and name the class, without moving the state: an
+      // envelope verdict must still fall back cleanly (see UnsupportedSource).
+      failure_message_ = audioRefusals.empty() ? opened.error :
+          "AudioBackendConfigurationRefused: " + audioRefusals + "; " + opened.error;
+      stats_.failure = NativeMediaDispatcherFailure::UnsupportedSource;
+      stats_.state = NativeMediaDispatcherState::Unsupported;
+      stats_.lastWait = NativeMediaDispatcherWait::Terminal;
+      result.status = NativeMediaDispatcherOpenStatus::Unsupported;
+      return result;
+    case MediaSourceOpenStatus::Cancelled:
+      operation_generation_.store(0, std::memory_order_release);
+      stats_.state = NativeMediaDispatcherState::Cancelled;
+      stats_.lastAction = NativeMediaDispatcherAction::Cancelled;
+      stats_.lastWait = NativeMediaDispatcherWait::Terminal;
+      result.status = NativeMediaDispatcherOpenStatus::Cancelled;
+      return result;
+    case MediaSourceOpenStatus::Failed:
+      // The source's own text is the only description of what actually went
+      // wrong; every layer above this point collapses onto a generic enum.
+      failure_message_ = opened.error;
+      fail(NativeMediaDispatcherFailure::SourceOpen, generation);
+      result.status = NativeMediaDispatcherOpenStatus::Failed;
+      return result;
+    case MediaSourceOpenStatus::Ready:
+      break;
     }
-  };
 
-  // Structural join. The correctness argument for every shared write below is
-  // "the worker has already finished", so the join is performed explicitly at
-  // the join point, before any verdict is read. The destructor is the backstop
-  // that keeps that invariant true by SCOPE rather than by comment discipline:
-  // a future edit that adds an early return between the spawn and the verdict
-  // would otherwise destroy a joinable thread and terminate the process.
-  // join() itself can throw std::system_error and openLocalFile is noexcept,
-  // so the throw is swallowed in both places.
-  struct WorkerJoin {
-    std::thread worker;
-    void join() noexcept {
-      if (!worker.joinable()) {
+    std::string validationError;
+    const bool invalidPreparedContext =
+        opened.preparedContext != nullptr &&
+        (opened.preparedContext->descriptor().get() !=
+             opened.descriptor.get() ||
+         !opened.preparedContext->matchesMainRequest(path, options,
+                                                     opened.descriptor));
+    if (opened.descriptor == nullptr || invalidPreparedContext ||
+        !opened.actualDecodeStart.valid() ||
+        !validateMediaSourceDescriptor(*opened.descriptor, limits_,
+                                       &validationError) ||
+        (options.selection.requireVideo &&
+         !opened.descriptor->selectedVideo.has_value()) ||
+        (options.selection.requireAudio &&
+         !opened.descriptor->selectedAudio.has_value()) ||
+        (!opened.descriptor->selectedVideo &&
+         !opened.descriptor->selectedAudio)) {
+      failure_message_ = validationError.empty()
+                             ? std::string("descriptor admission refused")
+                             : validationError;
+      fail(NativeMediaDispatcherFailure::InvalidDescriptor, generation);
+      result.status = NativeMediaDispatcherOpenStatus::Failed;
+      return result;
+    }
+
+    constexpr MediaTime kStreamOrigin{0, 1};
+    const MediaSeekMode requestedMode =
+        options.initialPosition ? options.initialPosition->mode
+                                : MediaSeekMode::Accurate;
+    const MediaTime requestedTarget =
+        options.initialPosition ? options.initialPosition->target
+                                : kStreamOrigin;
+    const char* timelineRefusal = nullptr;
+    const auto timeline =
+        deriveTimeline(
+            generation, requestedMode, requestedTarget,
+            opened.actualDecodeStart, opened.descriptor->duration,
+            opened.descriptor->selectedAudio
+                ? findMediaTrack(*opened.descriptor,
+                                 *opened.descriptor->selectedAudio)
+                : nullptr,
+            opened.audioWindow, limits_.maximumAudioSeekPrerollSeconds,
+            &timelineRefusal);
+    if (!timeline) {
+      failure_message_ = timelineRefusal == nullptr
+                             ? std::string("generation timeline could not be "
+                                           "derived")
+                             : std::string("generation timeline could not be "
+                                           "derived: ") +
+                                   timelineRefusal;
+      fail(NativeMediaDispatcherFailure::InvalidTimeline, generation);
+      result.status = NativeMediaDispatcherOpenStatus::Failed;
+      return result;
+    }
+
+    descriptor_ = std::move(opened.descriptor);
+    prepared_context_ = std::move(opened.preparedContext);
+    stats_.selectedVideo = descriptor_->selectedVideo.value_or(0);
+    stats_.selectedAudio = descriptor_->selectedAudio.value_or(0);
+    consumer_generation_ = generation;
+
+    // Alternate candidates configure audio before exposing video. Single-track
+    // dual-lane opens configure concurrently, with both exposures accounted
+    // before either call and both verdicts joined before publication.
+    const MediaTrackDescriptor* videoTrack =
+        descriptor_->selectedVideo
+            ? findMediaTrack(*descriptor_, *descriptor_->selectedVideo)
+            : nullptr;
+    const MediaTrackDescriptor* audioTrack =
+        descriptor_->selectedAudio
+            ? findMediaTrack(*descriptor_, *descriptor_->selectedAudio)
+            : nullptr;
+    const bool mayRetryAudio = retrySource && !options.selection.preferredAudio &&
+                              descriptor_->inventory.audio > 1;
+    if (descriptor_->selectedVideo && !mayRetryAudio) {
+      stats_.videoConfigured = true;
+      video_exposed_generation_ = generation;
+    }
+    if (descriptor_->selectedAudio) {
+      stats_.audioConfigured = true;
+      audio_exposed_generation_ = generation;
+    }
+
+    const NativeMediaGenerationTimeline& configureTimeline = *timeline;
+    OpenConfigureVerdict videoVerdict = OpenConfigureVerdict::Skipped;
+    OpenConfigureVerdict audioVerdict = OpenConfigureVerdict::Skipped;
+
+    // Each port stages its refusal text in its own string. The audio configure
+    // runs on a worker thread, so it must never touch a dispatcher member; both
+    // are folded into failure_message_ on the owner thread after the join.
+    std::string videoConfigureError;
+    std::string audioConfigureError;
+
+    const auto configureAudio = [this, audioTrack, generation,
+                                 &configureTimeline, &audioConfigureError,
+                                 &audioVerdict]() noexcept {
+      if (audioTrack == nullptr) {
+        audioVerdict = OpenConfigureVerdict::Rejected;
         return;
       }
       try {
-        worker.join();
-      } catch (...) {
-        // Deliberately ignored: the worker lambda is noexcept and has already
-        // published its verdict, so a join that reports std::system_error
-        // costs only an unreclaimed thread handle. There is nothing to report
-        // and nothing a caller could do, and letting it escape a noexcept open
-        // would terminate the process instead.
-      }
-    }
-    ~WorkerJoin() { join(); }
-  };
-
-  // Only a dual-track open can win anything from a worker; a single-port open
-  // configures inline and never pays for thread creation.
-  WorkerJoin audioWorker;
-  if (descriptor_->selectedAudio && descriptor_->selectedVideo) {
-    try {
-      audioWorker.worker = std::thread(configureAudio);
-    } catch (...) {
-      // Thread creation is the only failure allowed to degrade this path, and
-      // it degrades to the previous serial behaviour rather than to an open
-      // failure. The handle stays non-joinable and audio is configured below.
-    }
-  }
-
-  if (descriptor_->selectedVideo) {
-    if (videoTrack == nullptr) {
-      videoVerdict = OpenConfigureVerdict::Rejected;
-    } else {
-      try {
-        videoVerdict = video_->configure(*videoTrack, generation,
+        audioVerdict = audio_->configure(*audioTrack, generation,
                                          configureTimeline,
-                                         &videoConfigureError) ==
+                                         &audioConfigureError) ==
                                NativeMediaConsumeResult::Accepted
                            ? OpenConfigureVerdict::Accepted
                            : OpenConfigureVerdict::Rejected;
       } catch (...) {
-        videoVerdict = OpenConfigureVerdict::Threw;
+        // An exception must never cross the thread boundary: it would bypass
+        // the join and terminate. Record it and let the owner thread decide.
+        audioVerdict = OpenConfigureVerdict::Threw;
+      }
+    };
+
+    // Structural join. The correctness argument for every shared write below is
+    // "the worker has already finished", so the join is performed explicitly at
+    // the join point, before any verdict is read. The destructor is the backstop
+    // that keeps that invariant true by SCOPE rather than by comment discipline:
+    // a future edit that adds an early return between the spawn and the verdict
+    // would otherwise destroy a joinable thread and terminate the process.
+    // join() itself can throw std::system_error and openLocalFile is noexcept,
+    // so the throw is swallowed in both places.
+    struct WorkerJoin {
+      std::thread worker;
+      void join() noexcept {
+        if (!worker.joinable()) {
+          return;
+        }
+        try {
+          worker.join();
+        } catch (...) {
+          // Deliberately ignored: the worker lambda is noexcept and has already
+          // published its verdict, so a join that reports std::system_error
+          // costs only an unreclaimed thread handle. There is nothing to report
+          // and nothing a caller could do, and letting it escape a noexcept open
+          // would terminate the process instead.
+        }
+      }
+      ~WorkerJoin() { join(); }
+    };
+
+    // Only a dual-track open can win anything from a worker; a single-port open
+    // configures inline and never pays for thread creation.
+    WorkerJoin audioWorker;
+    if (mayRetryAudio && descriptor_->selectedAudio) configureAudio();
+    if (!mayRetryAudio && descriptor_->selectedAudio && descriptor_->selectedVideo) {
+      try {
+        audioWorker.worker = std::thread(configureAudio);
+      } catch (...) {
+        // Thread creation is the only failure allowed to degrade this path, and
+        // it degrades to the previous serial behaviour rather than to an open
+        // failure. The handle stays non-joinable and audio is configured below.
       }
     }
-  }
 
-  const bool audioRanOnWorker = audioWorker.worker.joinable();
-  audioWorker.join();
-  if (!audioRanOnWorker && descriptor_->selectedAudio) {
-    // Video-free open, or a worker that could not be created.
-    configureAudio();
-  }
+    if (descriptor_->selectedVideo &&
+        (!mayRetryAudio || audioVerdict == OpenConfigureVerdict::Accepted)) {
+      stats_.videoConfigured = true;
+      video_exposed_generation_ = generation;
+      if (videoTrack == nullptr) {
+        videoVerdict = OpenConfigureVerdict::Rejected;
+      } else {
+        try {
+          videoVerdict = video_->configure(*videoTrack, generation,
+                                           configureTimeline,
+                                           &videoConfigureError) ==
+                                 NativeMediaConsumeResult::Accepted
+                             ? OpenConfigureVerdict::Accepted
+                             : OpenConfigureVerdict::Rejected;
+        } catch (...) {
+          videoVerdict = OpenConfigureVerdict::Threw;
+        }
+      }
+    }
 
-  // Verdict is decided only here, with both ports joined and both exposures
-  // already accounted.
-  if (videoVerdict != OpenConfigureVerdict::Skipped &&
-      videoVerdict != OpenConfigureVerdict::Accepted) {
-    failure_message_ =
-        videoVerdict == OpenConfigureVerdict::Threw
-            ? "video configure threw"
-            : (videoConfigureError.empty() ? "video configure refused"
-                                           : "video configure refused: " +
-                                                 videoConfigureError);
-    fail(NativeMediaDispatcherFailure::ConsumerConfiguration, generation);
-    result.status = NativeMediaDispatcherOpenStatus::Failed;
+    const bool audioRanOnWorker = audioWorker.worker.joinable();
+    audioWorker.join();
+    if (!mayRetryAudio && !audioRanOnWorker && descriptor_->selectedAudio) {
+      // Video-free open, or a worker that could not be created.
+      configureAudio();
+    }
+
+    // Verdict is decided only here, with both ports joined and both exposures
+    // already accounted.
+    if (videoVerdict != OpenConfigureVerdict::Skipped &&
+        videoVerdict != OpenConfigureVerdict::Accepted) {
+      failure_message_ =
+          videoVerdict == OpenConfigureVerdict::Threw
+              ? "video configure threw"
+              : (videoConfigureError.empty() ? "video configure refused"
+                                             : "video configure refused: " +
+                                                   videoConfigureError);
+      fail(NativeMediaDispatcherFailure::ConsumerConfiguration, generation);
+      result.status = NativeMediaDispatcherOpenStatus::Failed;
+      return result;
+    }
+    if (audioVerdict != OpenConfigureVerdict::Skipped &&
+        audioVerdict != OpenConfigureVerdict::Accepted) {
+      const auto rejectedTrack = descriptor_->selectedAudio.value_or(0);
+      const std::string reason = "track " + std::to_string(rejectedTrack) + ": " +
+          (audioConfigureError.empty() ? "AudioBackendConfigurationRefused" : audioConfigureError);
+      if (!audioRefusals.empty()) audioRefusals += "; ";
+      audioRefusals += reason;
+      if (mayRetryAudio && audioVerdict == OpenConfigureVerdict::Rejected &&
+          attempt + 1 < MediaSourceLimits::kHardMaximumTracks &&
+          audio_->resetRejectedConfiguration(generation)) {
+        stats_.audioConfigured = false;
+        audio_exposed_generation_ = 0;
+        try {
+          opened = retrySource->retryAudioTrack(path, options, generation, rejectedTrack);
+        } catch (...) {
+          failure_message_ = "AudioTrackRetryFailed: " + audioRefusals;
+          fail(NativeMediaDispatcherFailure::SourceOpen, generation);
+          result.status = NativeMediaDispatcherOpenStatus::Failed;
+          return result;
+        }
+        descriptor_.reset();
+        prepared_context_.reset();
+        continue;
+      }
+      failure_message_ = "AudioBackendConfigurationRefused: " + audioRefusals;
+      fail(NativeMediaDispatcherFailure::ConsumerConfiguration, generation);
+      result.status = NativeMediaDispatcherOpenStatus::Failed;
+      return result;
+    }
+
+    timeline_ = *timeline;
+    resetGenerationFacts();
+    stats_.state = NativeMediaDispatcherState::Ready;
+    stats_.failure = NativeMediaDispatcherFailure::None;
+    stats_.lastAction = NativeMediaDispatcherAction::Idle;
+    stats_.lastWait = NativeMediaDispatcherWait::CallAgain;
+    result.actualDecodeStart = timeline->actualDecodeStart;
+    result.timeline = *timeline;
+    result.status = NativeMediaDispatcherOpenStatus::Ready;
     return result;
   }
-  if (audioVerdict != OpenConfigureVerdict::Skipped &&
-      audioVerdict != OpenConfigureVerdict::Accepted) {
-    failure_message_ =
-        audioVerdict == OpenConfigureVerdict::Threw
-            ? "audio configure threw"
-            : (audioConfigureError.empty() ? "audio configure refused"
-                                           : "audio configure refused: " +
-                                                 audioConfigureError);
-    fail(NativeMediaDispatcherFailure::ConsumerConfiguration, generation);
-    result.status = NativeMediaDispatcherOpenStatus::Failed;
-    return result;
-  }
-
-  timeline_ = *timeline;
-  resetGenerationFacts();
-  stats_.state = NativeMediaDispatcherState::Ready;
-  stats_.failure = NativeMediaDispatcherFailure::None;
-  stats_.lastAction = NativeMediaDispatcherAction::Idle;
-  stats_.lastWait = NativeMediaDispatcherWait::CallAgain;
-  result.actualDecodeStart = timeline->actualDecodeStart;
-  result.timeline = *timeline;
-  result.status = NativeMediaDispatcherOpenStatus::Ready;
+  failure_message_ = "AudioTrackRetryExhausted: " + audioRefusals;
+  fail(NativeMediaDispatcherFailure::ConsumerConfiguration, generation);
+  result.status = NativeMediaDispatcherOpenStatus::Failed;
   return result;
 }
 

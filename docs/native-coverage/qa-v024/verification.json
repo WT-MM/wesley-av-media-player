@@ -1,0 +1,22 @@
+{
+  "build_command": "cmake --build build --parallel",
+  "build_exit": 0,
+  "executable_sha256": "acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354",
+  "ctest_passed": 92,
+  "ctest_total": 92,
+  "ctest_seconds": 123.0,
+  "ctest_reruns": 0,
+  "corpus": {
+    "executable_sha256": "acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354",
+    "total": 97,
+    "native": 78,
+    "baseline_native": 78,
+    "regressions": []
+  },
+  "corpus_raw_sha256": "c60999463e720a0f5ff8a1298a82176b2b05dbe1fe11dba8f82ee8c995f2e009",
+  "revert_groups": 11,
+  "revert_failures": 11,
+  "all_restored_byte_identically": true,
+  "frozen_files_unchanged": true,
+  "staged_diff_empty": true
+}
