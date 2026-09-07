@@ -1,0 +1,4 @@
+capturePermission true
+CGSSessionScreenIsLocked 1
+kCGSessionOnConsoleKey missing
+kCGSessionLoginDoneKey 1

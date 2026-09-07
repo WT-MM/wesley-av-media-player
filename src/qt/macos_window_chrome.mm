@@ -1120,6 +1120,12 @@ QSizeF videoNaturalSizeForSource(const QUrl &source) {
 bool captureWindowToFile(QWindow *window, const QString &path) {
   if (window == nullptr || path.isEmpty())
     return false;
+  // A locked display has no observable compositor output for qualification.
+  NSDictionary *session = CFBridgingRelease(CGSessionCopyCurrentDictionary());
+  if ([session[@"CGSSessionScreenIsLocked"] boolValue]) {
+    qWarning("WAM_TEST_CAPTURE_REFUSAL DisplayCaptureSessionLocked");
+    return false;
+  }
   NSWindow *nsWindow = nsWindowFor(window);
   if (nsWindow == nil)
     return false;

@@ -1,0 +1,22 @@
+{
+  "total": 97,
+  "native": 78,
+  "regressions": [],
+  "candidate_sha256": "50746f481f6dbdcf679c8bd8b890db9647008900905ee97da278cddf0d628266",
+  "baseline_native": 78,
+  "phase2c_native": 84,
+  "losses_vs_phase2c_opt_in": [
+    "/Users/wesleymaa/Movies/misty_mill_52.mp4",
+    "/Users/wesleymaa/Movies/lake_field_56.mp4",
+    "/Users/wesleymaa/Movies/west_canyon_55.mp4",
+    "/Users/wesleymaa/Movies/winter_river_53.mp4",
+    "/Users/wesleymaa/Movies/lunar_village_54.mp4",
+    "/Users/wesleymaa/Movies/azure_inlet_51.mp4"
+  ],
+  "changed_assets": [],
+  "required_84_gate_passed": false,
+  "configuration": {
+    "avformat": false,
+    "avcodec": false
+  }
+}
