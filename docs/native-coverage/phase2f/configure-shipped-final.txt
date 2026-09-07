@@ -1,0 +1,9 @@
+-- libvpx 1.17.0 found -- software VP8 decode is available
+CMake Warning at CMakeLists.txt:2216 (message):
+  Native VideoToolbox decoder test will run without real P010 decode
+  coverage; set WAM_NATIVE_VIDEO_10BIT_TEST_FIXTURE to enable it
+
+
+-- Configuring done (55.7s)
+-- Generating done (16.2s)
+-- Build files have been written to: /Users/wesleymaa/Documents/WAM/build

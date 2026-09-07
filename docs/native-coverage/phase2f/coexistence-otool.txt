@@ -1,0 +1,139 @@
+build/native-codecs/libavcodec-wamnative.63.dylib:
+	@rpath/libavcodec-wamnative.63.dylib (compatibility version 63.0.0, current version 63.1.101)
+	@rpath/libavutil-wamnative.61.dylib (compatibility version 61.0.0, current version 61.1.101)
+	/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1356.0.0)
+	/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation (compatibility version 150.0.0, current version 5026.5.4)
+	/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo (compatibility version 1.2.0, current version 734.4.0)
+	/System/Library/Frameworks/CoreMedia.framework/Versions/A/CoreMedia (compatibility version 1.0.0, current version 3320.8.5)
+
+build/native-codecs/libavcodec-wamnative.63.dylib:
+Mach header
+      magic cputype cpusubtype  caps    filetype ncmds sizeofcmds      flags
+MH_MAGIC_64   ARM64        ALL  0x00       DYLIB    20       1984   NOUNDEFS DYLDLINK TWOLEVEL NO_REEXPORTED_DYLIBS
+
+build/native-codecs/libavutil-wamnative.61.dylib:
+	@rpath/libavutil-wamnative.61.dylib (compatibility version 61.0.0, current version 61.1.101)
+	/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1356.0.0)
+	/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation (compatibility version 150.0.0, current version 5026.5.4)
+	/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo (compatibility version 1.2.0, current version 734.4.0)
+	/System/Library/Frameworks/CoreMedia.framework/Versions/A/CoreMedia (compatibility version 1.0.0, current version 3320.8.5)
+
+build/native-codecs/libavutil-wamnative.61.dylib:
+Mach header
+      magic cputype cpusubtype  caps    filetype ncmds sizeofcmds      flags
+MH_MAGIC_64   ARM64        ALL  0x00       DYLIB    19       1920   NOUNDEFS DYLDLINK TWOLEVEL NO_REEXPORTED_DYLIBS
+
+/private/tmp/wam-phase2f/package/WAM.app/Contents/Frameworks/WAMMpvFallback.dylib:
+	@rpath/WAMMpvFallback.dylib (compatibility version 2.0.0, current version 2.0.0)
+	@executable_path/../Frameworks/libass.9.dylib (compatibility version 14.0.0, current version 14.2.0)
+	@executable_path/../Frameworks/libavcodec.63.dylib (compatibility version 63.0.0, current version 63.1.101)
+	@executable_path/../Frameworks/libavfilter.12.dylib (compatibility version 12.0.0, current version 12.1.101)
+	@executable_path/../Frameworks/libavformat.63.dylib (compatibility version 63.0.0, current version 63.1.101)
+	@executable_path/../Frameworks/libavutil.61.dylib (compatibility version 61.0.0, current version 61.1.101)
+	@executable_path/../Frameworks/libplacebo.360.dylib (compatibility version 360.0.0, current version 360.0.0)
+	@executable_path/../Frameworks/libswresample.7.dylib (compatibility version 7.0.0, current version 7.1.101)
+	@executable_path/../Frameworks/libswscale.10.dylib (compatibility version 10.0.0, current version 10.1.101)
+	/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit (compatibility version 1.0.0, current version 275.0.0)
+	/System/Library/Frameworks/QuartzCore.framework/Versions/A/QuartzCore (compatibility version 1.2.0, current version 1195.14.4)
+	/usr/lib/libiconv.2.dylib (compatibility version 7.0.0, current version 7.0.0)
+	@executable_path/../Frameworks/libmujs.dylib (compatibility version 0.0.0, current version 0.0.0)
+	@executable_path/../Frameworks/liblcms2.2.dylib (compatibility version 3.0.0, current version 3.19.0)
+	@executable_path/../Frameworks/libarchive.13.dylib (compatibility version 22.0.0, current version 22.9.0)
+	@executable_path/../Frameworks/libavdevice.63.dylib (compatibility version 63.0.0, current version 63.1.101)
+	@executable_path/../Frameworks/libbluray.4.dylib (compatibility version 4.0.0, current version 4.0.0)
+	/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1356.0.0)
+	@executable_path/../Frameworks/libluajit-5.1.2.dylib (compatibility version 2.1.0, current version 2.1.255)
+	@executable_path/../Frameworks/librubberband.3.dylib (compatibility version 3.0.0, current version 3.0.0)
+	@executable_path/../Frameworks/libuchardet.0.dylib (compatibility version 0.0.0, current version 0.0.8)
+	@executable_path/../Frameworks/libzimg.2.dylib (compatibility version 3.0.0, current version 3.0.0)
+	/usr/lib/libz.1.dylib (compatibility version 1.0.0, current version 1.2.12)
+	/System/Library/Frameworks/CoreMedia.framework/Versions/A/CoreMedia (compatibility version 1.0.0, current version 3320.8.5)
+	/System/Library/Frameworks/AVFoundation.framework/Versions/A/AVFoundation (compatibility version 1.0.0, current version 2.0.0)
+	/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation (compatibility version 150.0.0, current version 5026.5.4)
+	/System/Library/Frameworks/CoreAudio.framework/Versions/A/CoreAudio (compatibility version 1.0.0, current version 1.0.0)
+	/System/Library/Frameworks/AudioUnit.framework/Versions/A/AudioUnit (compatibility version 1.0.0, current version 1.0.0)
+	/System/Library/Frameworks/AudioToolbox.framework/Versions/A/AudioToolbox (compatibility version 1.0.0, current version 1000.0.0)
+	@executable_path/../Frameworks/libjpeg.8.dylib (compatibility version 8.0.0, current version 8.3.2)
+	/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL (compatibility version 1.0.0, current version 1.0.0)
+	@executable_path/../Frameworks/libvulkan.1.dylib (compatibility version 1.0.0, current version 1.4.0)
+	/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo (compatibility version 1.2.0, current version 734.4.0)
+	/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit (compatibility version 45.0.0, current version 2685.60.104)
+	/System/Library/Frameworks/Carbon.framework/Versions/A/Carbon (compatibility version 2.0.0, current version 170.0.0)
+	/System/Library/Frameworks/CoreGraphics.framework/Versions/A/CoreGraphics (compatibility version 64.0.0, current version 1965.5.1)
+	/System/Library/Frameworks/CoreServices.framework/Versions/A/CoreServices (compatibility version 1.0.0, current version 1226.0.0)
+	/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation (compatibility version 300.0.0, current version 5026.5.4)
+	/System/Library/Frameworks/IOSurface.framework/Versions/A/IOSurface (compatibility version 1.0.0, current version 1.0.0)
+	/System/Library/Frameworks/MediaPlayer.framework/Versions/A/MediaPlayer (compatibility version 1.0.0, current version 1.0.0)
+	/System/Library/Frameworks/Metal.framework/Versions/A/Metal (compatibility version 1.0.0, current version 373.2.0)
+	/System/Library/Frameworks/QuickLookThumbnailing.framework/Versions/A/QuickLookThumbnailing (compatibility version 1.0.0, current version 0.0.0)
+	/usr/lib/libobjc.A.dylib (compatibility version 1.0.0, current version 228.0.0)
+	/usr/lib/swift/libswiftAVFoundation.dylib (compatibility version 1.0.0, current version 2420.7.1)
+	/usr/lib/swift/libswiftCore.dylib (compatibility version 0.0.0, current version 0.0.0)
+	/usr/lib/swift/libswiftCoreAudio.dylib (compatibility version 1.0.0, current version 411.255.0)
+	/usr/lib/swift/libswiftCoreFoundation.dylib (compatibility version 1.0.0, current version 120.100.0)
+	/usr/lib/swift/libswiftCoreImage.dylib (compatibility version 1.0.0, current version 2.2.0)
+	/usr/lib/swift/libswiftCoreMIDI.dylib (compatibility version 1.0.0, current version 6.0.0)
+	/usr/lib/swift/libswiftCoreMedia.dylib (compatibility version 1.0.0, current version 3320.8.5)
+	/usr/lib/swift/libswiftDispatch.dylib (compatibility version 1.0.0, current version 1542.100.32)
+	/usr/lib/swift/libswiftIOKit.dylib (compatibility version 1.0.0, current version 1.0.0)
+	/usr/lib/swift/libswiftMetal.dylib (compatibility version 1.0.0, current version 373.2.0)
+	/usr/lib/swift/libswiftOSLog.dylib (compatibility version 1.0.0, current version 10.0.0)
+	/usr/lib/swift/libswiftObjectiveC.dylib (compatibility version 1.0.0, current version 951.7.0)
+	/usr/lib/swift/libswiftQuartzCore.dylib (compatibility version 1.0.0, current version 5.0.0)
+	/usr/lib/swift/libswiftSpatial.dylib (compatibility version 1.0.0, current version 1.0.0)
+	/usr/lib/swift/libswiftUniformTypeIdentifiers.dylib (compatibility version 1.0.0, current version 877.5.1)
+	/usr/lib/swift/libswiftXPC.dylib (compatibility version 1.0.0, current version 128.120.2)
+	/usr/lib/swift/libswift_Builtin_float.dylib (compatibility version 0.0.0, current version 0.0.0)
+	/usr/lib/swift/libswiftos.dylib (compatibility version 1.0.0, current version 1082.0.0)
+	/usr/lib/swift/libswiftsimd.dylib (compatibility version 1.0.0, current version 23.0.0)
+
+/private/tmp/wam-phase2f/package/WAM.app/Contents/Frameworks/WAMMpvFallback.dylib:
+Mach header
+      magic cputype cpusubtype  caps    filetype ncmds sizeofcmds      flags
+MH_MAGIC_64   ARM64        ALL  0x00       DYLIB    76       8480   NOUNDEFS DYLDLINK TWOLEVEL NO_REEXPORTED_DYLIBS
+
+/private/tmp/wam-phase2f/package/WAM.app/Contents/Frameworks/libavcodec.63.dylib:
+	@rpath/libavcodec.63.dylib (compatibility version 63.0.0, current version 63.1.101)
+	@loader_path/libswresample.7.dylib (compatibility version 7.0.0, current version 7.1.101)
+	@loader_path/libavutil.61.dylib (compatibility version 61.0.0, current version 61.1.101)
+	@loader_path/libvpx.12.dylib (compatibility version 1.0.0, current version 1.0.0)
+	/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1356.0.0)
+	/usr/lib/libiconv.2.dylib (compatibility version 7.0.0, current version 7.0.0)
+	@loader_path/liblzma.5.dylib (compatibility version 14.0.0, current version 14.3.0)
+	@loader_path/libdav1d.7.dylib (compatibility version 7.0.0, current version 7.0.0)
+	/System/Library/Frameworks/AudioToolbox.framework/Versions/A/AudioToolbox (compatibility version 1.0.0, current version 1000.0.0)
+	@loader_path/libmp3lame.0.dylib (compatibility version 1.0.0, current version 1.0.0)
+	@loader_path/libopus.0.dylib (compatibility version 12.0.0, current version 12.1.0)
+	@loader_path/libSvtAv1Enc.4.dylib (compatibility version 4.0.0, current version 4.2.0)
+	@loader_path/libx264.165.dylib (compatibility version 0.0.0, current version 0.0.0)
+	@loader_path/libx265.217.dylib (compatibility version 217.0.0, current version 217.0.0)
+	/usr/lib/libz.1.dylib (compatibility version 1.0.0, current version 1.2.12)
+	/System/Library/Frameworks/VideoToolbox.framework/Versions/A/VideoToolbox (compatibility version 1.0.0, current version 3320.8.5)
+	/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation (compatibility version 150.0.0, current version 5026.5.4)
+	/System/Library/Frameworks/CoreMedia.framework/Versions/A/CoreMedia (compatibility version 1.0.0, current version 3320.8.5)
+	/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo (compatibility version 1.2.0, current version 734.4.0)
+	/System/Library/Frameworks/CoreServices.framework/Versions/A/CoreServices (compatibility version 1.0.0, current version 1226.0.0)
+	@loader_path/libssl.3.dylib (compatibility version 3.0.0, current version 3.0.0)
+	@loader_path/libcrypto.3.dylib (compatibility version 3.0.0, current version 3.0.0)
+
+/private/tmp/wam-phase2f/package/WAM.app/Contents/Frameworks/libavcodec.63.dylib:
+Mach header
+      magic cputype cpusubtype  caps    filetype ncmds sizeofcmds      flags
+MH_MAGIC_64   ARM64        ALL  0x00       DYLIB    36       3096   NOUNDEFS DYLDLINK TWOLEVEL NO_REEXPORTED_DYLIBS
+
+/private/tmp/wam-phase2f/package/WAM.app/Contents/Frameworks/libavutil.61.dylib:
+	@rpath/libavutil.61.dylib (compatibility version 61.0.0, current version 61.1.101)
+	/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1356.0.0)
+	/usr/lib/libz.1.dylib (compatibility version 1.0.0, current version 1.2.12)
+	@loader_path/libssl.3.dylib (compatibility version 3.0.0, current version 3.0.0)
+	@loader_path/libcrypto.3.dylib (compatibility version 3.0.0, current version 3.0.0)
+	/System/Library/Frameworks/VideoToolbox.framework/Versions/A/VideoToolbox (compatibility version 1.0.0, current version 3320.8.5)
+	/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation (compatibility version 150.0.0, current version 5026.5.4)
+	/System/Library/Frameworks/CoreMedia.framework/Versions/A/CoreMedia (compatibility version 1.0.0, current version 3320.8.5)
+	/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo (compatibility version 1.2.0, current version 734.4.0)
+	/System/Library/Frameworks/CoreServices.framework/Versions/A/CoreServices (compatibility version 1.0.0, current version 1226.0.0)
+
+/private/tmp/wam-phase2f/package/WAM.app/Contents/Frameworks/libavutil.61.dylib:
+Mach header
+      magic cputype cpusubtype  caps    filetype ncmds sizeofcmds      flags
+MH_MAGIC_64   ARM64        ALL  0x00       DYLIB    24       2200   NOUNDEFS DYLDLINK TWOLEVEL NO_REEXPORTED_DYLIBS

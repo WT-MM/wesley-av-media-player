@@ -1,0 +1,9 @@
+Test project /Users/wesleymaa/Documents/WAM/build
+    Start  91: avcodec_fixtures
+1/2 Test  #91: avcodec_fixtures .................   Passed    2.68 sec
+    Start 128: software_audio_production
+2/2 Test #128: software_audio_production ........   Passed    3.19 sec
+
+100% tests passed, 0 tests failed out of 2
+
+Total Test time (real) =   5.87 sec

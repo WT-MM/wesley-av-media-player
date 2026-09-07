@@ -1,0 +1,7 @@
+{
+  "candidate_sha256": "fbe7928d2adfa6f8ac086dabbe4034b09ab00ec61cc11c79fbf07d36990438f4",
+  "AVFORMAT": "ON",
+  "AVCODEC": "OFF",
+  "removed_dependency_files": [],
+  "build_log": "build-shipped-final-0.txt"
+}

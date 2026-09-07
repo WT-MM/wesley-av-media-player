@@ -1,0 +1,20 @@
+[cctools-port]: generating fake signature for '/private/tmp/wam-phase2f/package/WAM.app/Contents/MacOS/WAM'
+[cctools-port]: generating fake signature for '/private/tmp/wam-phase2f/package/WAM.app/Contents/MacOS/WAM'
+[cctools-port]: generating fake signature for '/private/tmp/wam-phase2f/package/WAM.app/Contents/MacOS/WAM'
+[cctools-port]: generating fake signature for '/private/tmp/wam-phase2f/package/WAM.app/Contents/MacOS/WAM'
+[cctools-port]: generating fake signature for '/private/tmp/wam-phase2f/package/WAM.app/Contents/MacOS/WAM'
+[cctools-port]: generating fake signature for '/private/tmp/wam-phase2f/package/WAM.app/Contents/MacOS/WAM'
+[cctools-port]: generating fake signature for '/private/tmp/wam-phase2f/package/WAM.app/Contents/MacOS/WAM'
+[cctools-port]: generating fake signature for '/private/tmp/wam-phase2f/package/WAM.app/Contents/MacOS/WAM'
+[cctools-port]: generating fake signature for '/private/tmp/wam-phase2f/package/WAM.app/Contents/MacOS/WAM'
+[cctools-port]: generating fake signature for '/private/tmp/wam-phase2f/package/WAM.app/Contents/MacOS/WAM'
+[cctools-port]: generating fake signature for '/private/tmp/wam-phase2f/package/WAM.app/Contents/MacOS/WAM'
+[cctools-port]: generating fake signature for '/private/tmp/wam-phase2f/package/WAM.app/Contents/MacOS/WAM'
+/private/tmp/wam-phase2f/package/WAM.app: replacing existing signature
+{
+  "clean_machine_ready": false,
+  "closure_relocatable": true,
+  "bundled_floor_13_3_pass": false,
+  "errors": []
+}
+NativeBundleNotRelocatable: see bundled closure and floor findings

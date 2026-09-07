@@ -1,0 +1,510 @@
+[1/501] Automatic MOC and UIC for target wam_export_integration_test
+[2/499] Automatic MOC and UIC for target wam_mpv_runtime
+[3/497] Automatic MOC and UIC for target wam_mpv_hwdec_interop_policy_test
+[4/495] Automatic MOC and UIC for target wam_native_surface_budget_test
+[5/493] Automatic MOC and UIC for target wam_caption_test
+[6/491] Automatic MOC and UIC for target wam_render_lifecycle_test
+[7/489] Automatic MOC and UIC for target wam_native_concurrency_limits_test
+[8/487] Automatic MOC and UIC for target wam_native_video_test
+[9/485] Automatic MOC and UIC for target wam_libavformat_allocation_hooks
+[10/483] Automatic MOC and UIC for target wam_native_media_clock_test
+[11/481] Automatic MOC and UIC for target wam_playback_policy_test
+[12/479] Automatic MOC and UIC for target wam_native_benchmark_telemetry_test
+[13/477] Automatic MOC and UIC for target wam_software_color_qualification_test
+[14/475] Automatic MOC and UIC for target wam_player_core_render_context_permission_test
+[15/473] Automatic MOC and UIC for target wam_scroll_gesture_test
+[16/471] Automatic MOC and UIC for target wam_coexistence_fake_mpv
+[17/469] Automatic MOC and UIC for target wam_jobs_test
+[18/467] Automatic MOC and UIC for target wam_native_apple_audio_probe
+[19/465] Automatic MOC and UIC for target wam_native_core
+[20/465] Building CXX object CMakeFiles/wam_native_core.dir/wam_native_core_autogen/mocs_compilation.cpp.o
+[21/465] Building CXX object CMakeFiles/wam_native_core.dir/src/media/matroska_flac.cpp.o
+[22/465] Building CXX object CMakeFiles/wam_native_core.dir/src/media/subtitle_vobsub.cpp.o
+[23/465] Building CXX object CMakeFiles/wam_native_core.dir/src/media/matroska_vorbis.cpp.o
+[24/465] Building CXX object CMakeFiles/wam_native_core.dir/src/media/matroska_opus.cpp.o
+[25/465] Building CXX object CMakeFiles/wam_native_core.dir/src/media/matroska_mpeg_audio.cpp.o
+[26/465] Building CXX object CMakeFiles/wam_native_core.dir/src/media/matroska_ac3.cpp.o
+[27/465] Building CXX object CMakeFiles/wam_native_core.dir/src/media/audio_downmix.cpp.o
+[28/465] Building CXX object CMakeFiles/wam_native_core.dir/src/media/tx3g_text.cpp.o
+[29/465] Building CXX object CMakeFiles/wam_native_core.dir/src/media/subtitle_bitmap.cpp.o
+[30/465] Building CXX object CMakeFiles/wam_native_core.dir/src/media/matroska_aac.cpp.o
+[31/465] Building CXX object CMakeFiles/wam_native_core.dir/src/media/subtitle_text.cpp.o
+[32/465] Building CXX object CMakeFiles/wam_native_core.dir/src/media/subtitle_pgs.cpp.o
+[33/465] Building CXX object CMakeFiles/wam_native_core.dir/src/media/matroska_subtitles.cpp.o
+[34/465] Building CXX object CMakeFiles/wam_native_core.dir/src/media/h264_caption_sei.cpp.o
+[35/465] Building CXX object CMakeFiles/wam_native_core.dir/src/media/cea608_decoder.cpp.o
+[36/465] Building CXX object CMakeFiles/wam_native_core.dir/src/media/playback_router.cpp.o
+[37/465] Building CXX object CMakeFiles/wam_native_core.dir/src/platform/macos/native_media_clock.cpp.o
+[38/465] Building CXX object CMakeFiles/wam_native_core.dir/src/media/live_caption_feed.cpp.o
+[39/465] Building CXX object CMakeFiles/wam_native_core.dir/src/media/native_media_backend.cpp.o
+[40/465] Building CXX object CMakeFiles/wam_native_core.dir/src/platform/macos/native_pcm_ring.cpp.o
+[41/465] Building CXX object CMakeFiles/wam_native_core.dir/src/media/native_media_source.cpp.o
+[42/465] Building CXX object CMakeFiles/wam_native_core.dir/src/media/mp4_subtitles.cpp.o
+[43/465] Building CXX object CMakeFiles/wam_native_core.dir/src/media/native_media_dispatcher.cpp.o
+[44/465] Building CXX object CMakeFiles/wam_native_core.dir/src/platform/macos/native_audio_render_core.cpp.o
+[45/465] Automatic MOC and UIC for target wam_player_controller_lazy_test
+[46/463] Building CXX object CMakeFiles/wam_native_core.dir/src/media/matroska_ebml.cpp.o
+[47/463] Automatic MOC and UIC for target wam_state_test
+[48/461] Building CXX object CMakeFiles/wam_native_core.dir/src/media/mpegts_demuxer.cpp.o
+[49/461] Building CXX object CMakeFiles/wam_avcodec_worker.dir/src/media/libavformat_cursor.cpp.o
+[50/461] Linking CXX static library libwam_avcodec_worker.a
+[51/461] Building CXX object CMakeFiles/wam_native_core.dir/src/media/mpegts_packet.cpp.o
+[52/461] Building CXX object CMakeFiles/wam_native_core.dir/src/media/video_codec_configuration.cpp.o
+[53/461] Automatic MOC and UIC for target wam_ffmpeg_coexistence_test
+[54/460] Linking CXX executable wam_ffmpeg_coexistence_test
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/qtbase/lib/QtCore.framework/Versions/A/QtCore' which was built for newer version 14.0
+[55/460] Building CXX object CMakeFiles/wam_native_core.dir/src/media/matroska_demuxer.cpp.o
+[56/460] Linking CXX static library libwam_native_core.a
+[57/460] Automatic MOC and UIC for target wam_libavformat_contract_test
+[58/460] Linking OBJCXX executable WAMThumbnail.appex/Contents/MacOS/WAMThumbnail
+[59/460] Linking OBJCXX executable wam_quicklook_thumbnail_frame_test
+[60/460] Automatic MOC and UIC for target wam_macos_native_video_core
+[61/460] Building CXX object CMakeFiles/wam_macos_native_video_core.dir/wam_macos_native_video_core_autogen/mocs_compilation.cpp.o
+[62/460] Automatic MOC and UIC for target wam_matroska_vorbis_test
+[63/459] Automatic MOC and UIC for target wam_matroska_ebml_test
+[64/458] Automatic MOC and UIC for target wam_matroska_opus_test
+[65/457] Automatic MOC and UIC for target wam_matroska_ac3_test
+[66/456] Automatic MOC and UIC for target wam_audio_downmix_test
+[67/455] Automatic MOC and UIC for target wam_audio_codec_timing_test
+[68/454] Automatic MOC and UIC for target wam_matroska_subtitles_test
+[69/453] Building OBJCXX object CMakeFiles/wam_macos_native_video_core.dir/src/platform/macos/native_surface_budget.mm.o
+[70/453] Building OBJCXX object CMakeFiles/wam_macos_native_video_core.dir/src/platform/macos/native_video_codec_capability.mm.o
+[71/453] Automatic MOC and UIC for target wam_matroska_aac_test
+[72/452] Automatic MOC and UIC for target wam_subtitle_bitmap_test
+[73/451] Linking CXX executable wam_matroska_opus_test
+[74/451] Automatic MOC and UIC for target wam_embedded_captions_test
+[75/450] Linking CXX executable wam_matroska_ebml_test
+[76/450] Building OBJCXX object CMakeFiles/wam_macos_native_video_core.dir/src/platform/macos/native_video_presenter.mm.o
+[77/450] Linking CXX executable wam_matroska_vorbis_test
+[78/450] Linking CXX executable wam_matroska_subtitles_test
+[79/450] Automatic MOC and UIC for target wam_subtitle_text_test
+[80/449] Automatic MOC and UIC for target wam_native_audio_sample_rates_test
+[81/448] Automatic MOC and UIC for target wam_native_media_backend_test
+[82/447] Automatic MOC and UIC for target wam_native_media_source_test
+[83/446] Automatic MOC and UIC for target wam_media_container_routing_test
+[84/445] Building OBJCXX object CMakeFiles/wam_macos_native_video_core.dir/src/platform/macos/software_vp8_decoder.mm.o
+[85/445] Linking CXX executable wam_matroska_aac_test
+[86/445] Automatic MOC and UIC for target wam_native_coverage_admission_test
+[87/444] Linking CXX executable wam_matroska_ac3_test
+[88/444] Linking CXX executable wam_embedded_captions_test
+[89/444] Linking CXX executable wam_audio_codec_timing_test
+[90/444] Linking CXX executable wam_audio_downmix_test
+[91/444] Linking CXX executable wam_subtitle_bitmap_test
+[92/444] Building OBJCXX object CMakeFiles/wam_macos_native_video_core.dir/src/platform/macos/video_toolbox_decoder.mm.o
+[93/444] Automatic MOC and UIC for target wam_media_codec_facts_test
+[94/443] Linking OBJCXX static library libwam_macos_native_video_core.a
+[95/443] Linking CXX executable wam_media_container_routing_test
+[96/443] Linking CXX executable wam_native_coverage_admission_test
+[97/443] Automatic MOC and UIC for target wam_matroska_demuxer_test
+[98/443] Building CXX object CMakeFiles/wam_matroska_demuxer_test.dir/wam_matroska_demuxer_test_autogen/mocs_compilation.cpp.o
+[99/443] Linking CXX executable wam_native_media_source_test
+[100/443] Linking CXX executable wam_native_media_backend_test
+[101/443] Linking CXX executable wam_native_audio_sample_rates_test
+[102/443] Linking CXX executable wam_subtitle_text_test
+[103/443] Linking CXX executable wam_media_codec_facts_test
+[104/443] Automatic MOC and UIC for target wam_macos_native_qt_tracked
+[105/443] Automatic MOC and UIC for target wam_mpegts_demuxer_test
+[106/442] Automatic MOC and UIC for target wam_native_audio_render_core_test
+[107/441] Automatic MOC and UIC for target wam_matroska_flac_test
+[108/440] Automatic MOC and UIC for target wam_video_codec_configuration_test
+[109/439] Automatic MOC and UIC for target wam_matroska_mpeg_audio_test
+[110/438] Automatic MOC and UIC for target wam_native_media_dispatcher_test
+[111/437] Automatic MOC and UIC for target wam_native_playback_contract_test
+[112/436] Automatic MOC and UIC for target wam_macos_native_video_metal_mapper
+[113/436] Building CXX object CMakeFiles/wam_macos_native_video_metal_mapper.dir/wam_macos_native_video_metal_mapper_autogen/mocs_compilation.cpp.o
+[114/436] Automatic MOC and UIC for target wam_native_pcm_ring_test
+[115/435] Automatic MOC and UIC for target wam_native_audio_converter_opus_test
+[116/434] Automatic MOC and UIC for target wam_playback_router_test
+[117/433] Building CXX object CMakeFiles/wam_macos_native_qt_tracked.dir/wam_macos_native_qt_tracked_autogen/mocs_compilation.cpp.o
+[118/433] Building CXX object CMakeFiles/wam_matroska_demuxer_test.dir/tests/matroska_demuxer_test.cpp.o
+/Users/wesleymaa/Documents/WAM/tests/matroska_demuxer_test.cpp:4737:50: warning: missing field 'value' initializer [-Wmissing-field-initializers]
+ 4737 |         kDvvC, record(8, 4, true, false, true, 4)};
+      |                                                  ^
+/Users/wesleymaa/Documents/WAM/tests/matroska_demuxer_test.cpp:4745:50: warning: missing field 'value' initializer [-Wmissing-field-initializers]
+ 4745 |         kDvcC, record(8, 5, true, false, true, 1)};
+      |                                                  ^
+/Users/wesleymaa/Documents/WAM/tests/matroska_demuxer_test.cpp:4752:50: warning: missing field 'value' initializer [-Wmissing-field-initializers]
+ 4752 |         kDvvC, record(5, 6, true, false, true, 0)};
+      |                                                  ^
+/Users/wesleymaa/Documents/WAM/tests/matroska_demuxer_test.cpp:4762:50: warning: missing field 'value' initializer [-Wmissing-field-initializers]
+ 4762 |         kDvvC, record(5, 6, true, false, true, 4)};
+      |                                                  ^
+/Users/wesleymaa/Documents/WAM/tests/matroska_demuxer_test.cpp:4769:49: warning: missing field 'value' initializer [-Wmissing-field-initializers]
+ 4769 |         kDvvC, record(7, 6, true, true, true, 6)};
+      |                                                 ^
+/Users/wesleymaa/Documents/WAM/tests/matroska_demuxer_test.cpp:4776:50: warning: missing field 'value' initializer [-Wmissing-field-initializers]
+ 4776 |         kDvvC, record(8, 4, true, false, true, 0)};
+      |                                                  ^
+/Users/wesleymaa/Documents/WAM/tests/matroska_demuxer_test.cpp:4786:49: warning: missing field 'value' initializer [-Wmissing-field-initializers]
+ 4786 |         kDvvC, record(8, 4, true, true, true, 4)};
+      |                                                 ^
+/Users/wesleymaa/Documents/WAM/tests/matroska_demuxer_test.cpp:4795:59: warning: missing field 'value' initializer [-Wmissing-field-initializers]
+ 4795 |         FixtureSpec::BlockAdditionMapping{kDvvC, truncated};
+      |                                                           ^
+8 warnings generated.
+[119/433] Linking CXX executable wam_matroska_demuxer_test
+[120/433] Building OBJCXX object CMakeFiles/wam_macos_native_video_metal_mapper.dir/src/platform/macos/native_video_metal_mapper.mm.o
+[121/433] Linking OBJCXX static library libwam_macos_native_video_metal_mapper.a
+[122/433] Building OBJCXX object CMakeFiles/wam_macos_native_qt_tracked.dir/src/platform/macos/qt_gl_video_item.mm.o
+[123/433] Automatic MOC and UIC for target wam_avfoundation_preview_source_test
+[124/432] Linking CXX executable wam_native_media_dispatcher_test
+[125/432] Linking CXX executable wam_native_audio_render_core_test
+[126/432] Linking CXX executable wam_native_pcm_ring_test
+[127/432] Linking CXX executable wam_native_audio_converter_opus_test
+[128/432] Linking CXX executable wam_playback_router_test
+[129/432] Linking CXX executable wam_native_playback_contract_test
+[130/432] Linking CXX executable wam_video_codec_configuration_test
+[131/432] Linking CXX executable wam_mpegts_demuxer_test
+[132/432] Linking CXX executable wam_matroska_mpeg_audio_test
+[133/432] Building OBJCXX object CMakeFiles/wam_macos_native_qt_tracked.dir/src/platform/macos/native_layer_video_output.mm.o
+[134/432] Automatic MOC and UIC for target wam_native_audio_channel_map_test
+[135/431] Linking OBJCXX executable wam_avfoundation_preview_source_test
+[136/431] Linking CXX executable wam_matroska_flac_test
+[137/431] Automatic MOC and UIC for target wam_native_audio_converter_test
+[138/430] Automatic MOC and UIC for target wam_macos_native_backend
+[139/430] Building CXX object CMakeFiles/wam_macos_native_backend.dir/wam_macos_native_backend_autogen/mocs_compilation.cpp.o
+[140/430] Automatic MOC and UIC for target wam_native_layer_video_output_test
+[141/430] Automatic MOC and UIC for target wam_avfoundation_media_source_test
+[142/429] Building OBJCXX object CMakeFiles/wam_macos_native_qt_tracked.dir/src/platform/macos/native_layer_host_view.mm.o
+[143/429] Building OBJCXX object CMakeFiles/wam_macos_native_qt_tracked.dir/src/platform/macos/native_qt_gl_output.mm.o
+[144/429] Linking CXX executable wam_native_audio_channel_map_test
+[145/429] Linking OBJCXX executable wam_native_audio_converter_test
+[146/429] Linking OBJCXX static library libwam_macos_native_qt_tracked.a
+[147/429] Building CXX object CMakeFiles/wam_macos_native_backend.dir/src/platform/macos/matroska_asset_context.cpp.o
+[148/429] Automatic MOC and UIC for target wam_mpegts_preview_source_test
+[149/429] Automatic MOC and UIC for target wam_mpegts_media_source_test
+[150/429] Automatic MOC and UIC for target wam_matroska_media_source_test
+[151/429] Building OBJCXX object CMakeFiles/wam_macos_native_backend.dir/src/platform/macos/avfoundation_asset_context.mm.o
+[152/429] Automatic MOC and UIC for target wam_matroska_preview_source_test
+[153/429] Building CXX object CMakeFiles/wam_macos_native_backend.dir/src/platform/macos/mpegts_asset_context.cpp.o
+[154/429] Building OBJCXX object CMakeFiles/wam_macos_native_backend.dir/src/platform/macos/avfoundation_preview_source.mm.o
+[155/429] Building OBJCXX object CMakeFiles/wam_macos_native_backend.dir/src/platform/macos/matroska_sample_builder.mm.o
+[156/429] Building OBJCXX object CMakeFiles/wam_macos_native_backend.dir/src/platform/macos/matroska_preview_source.mm.o
+[157/429] Building OBJCXX object CMakeFiles/wam_macos_native_backend.dir/src/platform/macos/matroska_media_source.mm.o
+[158/429] Building OBJCXX object CMakeFiles/wam_macos_native_backend.dir/src/platform/macos/native_preview_source.mm.o
+[159/429] Building OBJCXX object CMakeFiles/wam_macos_native_backend.dir/src/platform/macos/mpegts_sample_builder.mm.o
+[160/429] Building OBJCXX object CMakeFiles/wam_macos_native_backend.dir/src/platform/macos/mpegts_preview_source.mm.o
+[161/429] Building OBJCXX object CMakeFiles/wam_macos_native_backend.dir/src/platform/macos/mpegts_media_source.mm.o
+[162/429] Building OBJCXX object CMakeFiles/wam_macos_native_backend.dir/src/platform/macos/native_audio_converter.mm.o
+[163/429] Building OBJCXX object CMakeFiles/wam_macos_native_backend.dir/src/platform/macos/native_audio_stretch_stage.mm.o
+[164/429] Building OBJCXX object CMakeFiles/wam_macos_native_backend.dir/src/platform/macos/native_audio_output.mm.o
+[165/429] Building CXX object CMakeFiles/wam_macos_native_backend.dir/src/platform/macos/native_silent_timebase.cpp.o
+[166/429] Building CXX object CMakeFiles/wam_native_layer_video_output_test.dir/wam_native_layer_video_output_test_autogen/mocs_compilation.cpp.o
+[167/429] Automatic MOC and UIC for target wam_native_audio_stretch_stage_test
+[168/428] Building OBJCXX object CMakeFiles/wam_macos_native_backend.dir/src/platform/macos/native_audio_session.mm.o
+[169/428] Building OBJCXX object CMakeFiles/wam_macos_native_backend.dir/src/platform/macos/native_preview_frame_lane.mm.o
+[170/428] Building OBJCXX object CMakeFiles/wam_macos_native_backend.dir/src/platform/macos/native_tracked_video_arbiter.mm.o
+[171/428] Building CXX object CMakeFiles/wam_matroska_preview_source_test.dir/wam_matroska_preview_source_test_autogen/mocs_compilation.cpp.o
+[172/428] Automatic MOC and UIC for target wam_native_preview_frame_lane_test
+[173/428] Building OBJCXX object CMakeFiles/wam_macos_native_backend.dir/src/platform/macos/libavformat_media_source.mm.o
+[174/428] Automatic MOC and UIC for target wam_native_audio_output_test
+[175/427] Building OBJCXX object CMakeFiles/wam_native_layer_video_output_test.dir/tests/native_layer_video_output_test.mm.o
+[176/427] Building CXX object CMakeFiles/wam_matroska_preview_source_test.dir/src/platform/macos/matroska_asset_context.cpp.o
+[177/427] Building OBJCXX object CMakeFiles/wam_native_layer_video_output_test.dir/src/platform/macos/native_layer_video_output.mm.o
+[178/427] Automatic MOC and UIC for target wam_native_audio_output_converter_test
+[179/426] Building OBJCXX object CMakeFiles/wam_native_layer_video_output_test.dir/src/platform/macos/native_layer_host_view.mm.o
+[180/426] Linking OBJCXX executable wam_native_layer_video_output_test
+ld: warning: ignoring duplicate libraries: 'libwam_native_core.a'
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/libvpx/lib/libvpx.12.dylib' which was built for newer version 26.0
+[181/426] Linking OBJCXX executable wam_native_audio_stretch_stage_test
+[182/426] Linking OBJCXX executable wam_avfoundation_media_source_test
+[183/426] Building OBJCXX object CMakeFiles/wam_matroska_preview_source_test.dir/tests/matroska_preview_source_test.mm.o
+[184/426] Building CXX object CMakeFiles/wam_matroska_preview_source_test.dir/src/platform/macos/mpegts_asset_context.cpp.o
+[185/426] Automatic MOC and UIC for target wam_native_video_consumer_test
+[186/425] Automatic MOC and UIC for target wam_software_vp8_test
+[187/424] Automatic MOC and UIC for target wam_native_custom_source_traits_test
+[188/424] Building CXX object CMakeFiles/wam_matroska_media_source_test.dir/wam_matroska_media_source_test_autogen/mocs_compilation.cpp.o
+[189/424] Building OBJCXX object CMakeFiles/wam_macos_native_backend.dir/src/platform/macos/native_video_consumer.mm.o
+[190/424] Building OBJCXX object CMakeFiles/wam_matroska_preview_source_test.dir/src/platform/macos/matroska_preview_source.mm.o
+[191/424] Building OBJCXX object CMakeFiles/wam_matroska_preview_source_test.dir/src/platform/macos/matroska_media_source.mm.o
+[192/424] Building OBJCXX object CMakeFiles/wam_matroska_preview_source_test.dir/src/platform/macos/matroska_sample_builder.mm.o
+[193/424] Building CXX object CMakeFiles/wam_mpegts_media_source_test.dir/wam_mpegts_media_source_test_autogen/mocs_compilation.cpp.o
+[194/424] Building OBJCXX object CMakeFiles/wam_matroska_preview_source_test.dir/src/platform/macos/mpegts_sample_builder.mm.o
+[195/424] Building OBJCXX object CMakeFiles/wam_matroska_preview_source_test.dir/src/platform/macos/mpegts_preview_source.mm.o
+[196/424] Building OBJCXX object CMakeFiles/wam_matroska_preview_source_test.dir/src/platform/macos/native_preview_source.mm.o
+[197/424] Building CXX object CMakeFiles/wam_matroska_media_source_test.dir/src/platform/macos/matroska_asset_context.cpp.o
+[198/424] Building OBJCXX object CMakeFiles/wam_matroska_preview_source_test.dir/src/platform/macos/avfoundation_asset_context.mm.o
+[199/424] Building CXX object CMakeFiles/wam_mpegts_preview_source_test.dir/wam_mpegts_preview_source_test_autogen/mocs_compilation.cpp.o
+[200/424] Building OBJCXX object CMakeFiles/wam_macos_native_backend.dir/src/platform/macos/avfoundation_media_source.mm.o
+/Users/wesleymaa/Documents/WAM/src/platform/macos/avfoundation_media_source.mm:1629:11: warning: enumeration values 'Dts', 'TrueHd', and 'Mlp' not handled in switch [-Wswitch]
+ 1629 |   switch (codec) {
+      |           ^~~~~
+/Users/wesleymaa/Documents/WAM/src/platform/macos/avfoundation_media_source.mm:1629:11: note: add missing switch cases
+ 1629 |   switch (codec) {
+      |           ^
+/Users/wesleymaa/Documents/WAM/src/platform/macos/avfoundation_media_source.mm:2629:20: warning: unused function 'exactIdentityVideoTransform' [-Wunused-function]
+ 2629 | [[nodiscard]] bool exactIdentityVideoTransform(
+      |                    ^~~~~~~~~~~~~~~~~~~~~~~~~~~
+2 warnings generated.
+[201/424] Building CXX object CMakeFiles/wam_mpegts_media_source_test.dir/src/platform/macos/mpegts_asset_context.cpp.o
+[202/424] Building OBJCXX object CMakeFiles/wam_matroska_media_source_test.dir/src/platform/macos/matroska_sample_builder.mm.o
+[203/424] Building OBJCXX object CMakeFiles/wam_matroska_preview_source_test.dir/src/platform/macos/avfoundation_preview_source.mm.o
+[204/424] Linking OBJCXX executable wam_matroska_preview_source_test
+ld: warning: ignoring duplicate libraries: 'libwam_native_core.a'
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/libvpx/lib/libvpx.12.dylib' which was built for newer version 26.0
+[205/424] Building OBJCXX object CMakeFiles/wam_macos_native_backend.dir/src/platform/macos/native_media_session.mm.o
+[206/424] Building OBJCXX object CMakeFiles/wam_matroska_media_source_test.dir/src/platform/macos/matroska_media_source.mm.o
+[207/424] Building OBJCXX object CMakeFiles/wam_macos_native_backend.dir/src/platform/macos/routed_media_source.mm.o
+[208/424] Building OBJCXX object CMakeFiles/wam_matroska_media_source_test.dir/tests/matroska_media_source_test.mm.o
+[209/424] Linking OBJCXX static library libwam_macos_native_backend.a
+[210/424] Building CXX object CMakeFiles/wam_mpegts_preview_source_test.dir/src/platform/macos/mpegts_asset_context.cpp.o
+[211/424] Linking OBJCXX executable wam_matroska_media_source_test
+ld: warning: ignoring duplicate libraries: 'libwam_native_core.a'
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/libvpx/lib/libvpx.12.dylib' which was built for newer version 26.0
+[212/424] Building OBJCXX object CMakeFiles/wam_mpegts_media_source_test.dir/src/platform/macos/mpegts_sample_builder.mm.o
+[213/424] Building OBJCXX object CMakeFiles/wam_mpegts_media_source_test.dir/tests/mpegts_media_source_test.mm.o
+[214/424] Building OBJCXX object CMakeFiles/wam_mpegts_media_source_test.dir/src/platform/macos/mpegts_media_source.mm.o
+[215/424] Linking OBJCXX executable wam_mpegts_media_source_test
+ld: warning: ignoring duplicate libraries: 'libwam_native_core.a'
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/libvpx/lib/libvpx.12.dylib' which was built for newer version 26.0
+[216/424] Building CXX object CMakeFiles/wam_mpegts_preview_source_test.dir/src/platform/macos/matroska_asset_context.cpp.o
+[217/424] Building OBJCXX object CMakeFiles/wam_mpegts_preview_source_test.dir/src/platform/macos/mpegts_media_source.mm.o
+[218/424] Building OBJCXX object CMakeFiles/wam_mpegts_preview_source_test.dir/src/platform/macos/mpegts_sample_builder.mm.o
+[219/424] Building OBJCXX object CMakeFiles/wam_mpegts_preview_source_test.dir/src/platform/macos/mpegts_preview_source.mm.o
+[220/424] Building CXX object CMakeFiles/wam_native_custom_source_traits_test.dir/wam_native_custom_source_traits_test_autogen/mocs_compilation.cpp.o
+[221/424] Building OBJCXX object CMakeFiles/wam_mpegts_preview_source_test.dir/tests/mpegts_preview_source_test.mm.o
+[222/424] Building OBJCXX object CMakeFiles/wam_mpegts_preview_source_test.dir/src/platform/macos/matroska_sample_builder.mm.o
+[223/424] Building OBJCXX object CMakeFiles/wam_mpegts_preview_source_test.dir/src/platform/macos/matroska_preview_source.mm.o
+[224/424] Building OBJCXX object CMakeFiles/wam_mpegts_preview_source_test.dir/src/platform/macos/native_preview_source.mm.o
+[225/424] Building OBJCXX object CMakeFiles/wam_mpegts_preview_source_test.dir/src/platform/macos/avfoundation_asset_context.mm.o
+[226/424] Building CXX object CMakeFiles/wam_native_custom_source_traits_test.dir/src/platform/macos/matroska_asset_context.cpp.o
+[227/424] Building CXX object CMakeFiles/wam_native_preview_frame_lane_test.dir/wam_native_preview_frame_lane_test_autogen/mocs_compilation.cpp.o
+[228/424] Building OBJCXX object CMakeFiles/wam_mpegts_preview_source_test.dir/src/platform/macos/avfoundation_preview_source.mm.o
+[229/424] Building CXX object CMakeFiles/wam_native_custom_source_traits_test.dir/src/platform/macos/mpegts_asset_context.cpp.o
+[230/424] Linking OBJCXX executable wam_mpegts_preview_source_test
+ld: warning: ignoring duplicate libraries: 'libwam_native_core.a'
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/libvpx/lib/libvpx.12.dylib' which was built for newer version 26.0
+[231/424] Building OBJCXX object CMakeFiles/wam_native_custom_source_traits_test.dir/tests/native_custom_source_traits_test.mm.o
+[232/424] Building OBJCXX object CMakeFiles/wam_native_custom_source_traits_test.dir/src/platform/macos/matroska_sample_builder.mm.o
+[233/424] Building OBJCXX object CMakeFiles/wam_native_custom_source_traits_test.dir/src/platform/macos/matroska_media_source.mm.o
+[234/424] Building OBJCXX object CMakeFiles/wam_native_custom_source_traits_test.dir/src/platform/macos/mpegts_sample_builder.mm.o
+[235/424] Building OBJCXX object CMakeFiles/wam_native_custom_source_traits_test.dir/src/platform/macos/mpegts_media_source.mm.o
+[236/424] Linking OBJCXX executable wam_native_custom_source_traits_test
+ld: warning: ignoring duplicate libraries: 'libwam_native_core.a'
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/libvpx/lib/libvpx.12.dylib' which was built for newer version 26.0
+[237/424] Automatic MOC and UIC for target wam_native_media_session_test
+[238/424] Linking OBJCXX executable wam_software_vp8_test
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/libvpx/lib/libvpx.12.dylib' which was built for newer version 26.0
+[239/424] Building CXX object CMakeFiles/wam_native_media_session_test.dir/wam_native_media_session_test_autogen/mocs_compilation.cpp.o
+[240/424] Building OBJCXX object CMakeFiles/wam_native_preview_frame_lane_test.dir/src/platform/macos/avfoundation_asset_context.mm.o
+[241/424] Linking OBJCXX executable wam_native_video_consumer_test
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/libvpx/lib/libvpx.12.dylib' which was built for newer version 26.0
+[242/424] Linking OBJCXX executable wam_native_audio_output_test
+[243/424] Building OBJCXX object CMakeFiles/wam_native_preview_frame_lane_test.dir/tests/native_preview_frame_lane_test.mm.o
+[244/424] Building OBJCXX object CMakeFiles/wam_native_preview_frame_lane_test.dir/src/platform/macos/native_preview_frame_lane.mm.o
+[245/424] Building OBJCXX object CMakeFiles/wam_native_preview_frame_lane_test.dir/src/platform/macos/avfoundation_preview_source.mm.o
+[246/424] Linking OBJCXX executable wam_native_preview_frame_lane_test
+ld: warning: ignoring duplicate libraries: 'libwam_native_core.a'
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/libvpx/lib/libvpx.12.dylib' which was built for newer version 26.0
+[247/424] Linking OBJCXX executable wam_native_audio_output_converter_test
+[248/424] Building CXX object CMakeFiles/wam_native_media_session_test.dir/src/media/native_media_source.cpp.o
+[249/424] Building CXX object CMakeFiles/wam_native_media_session_test.dir/src/platform/macos/matroska_asset_context.cpp.o
+[250/424] Building CXX object CMakeFiles/wam_native_media_session_test.dir/src/media/native_media_dispatcher.cpp.o
+[251/424] Building OBJCXX object CMakeFiles/wam_native_media_session_test.dir/src/platform/macos/avfoundation_asset_context.mm.o
+[252/424] Building OBJCXX object CMakeFiles/wam_native_media_session_test.dir/src/platform/macos/mpegts_media_source.mm.o
+[253/424] Building CXX object CMakeFiles/wam_native_media_session_test.dir/src/platform/macos/mpegts_asset_context.cpp.o
+[254/424] Building CXX object CMakeFiles/wam_native_media_session_test.dir/src/platform/macos/native_media_clock.cpp.o
+[255/424] Building OBJCXX object CMakeFiles/wam_native_media_session_test.dir/src/platform/macos/matroska_preview_source.mm.o
+[256/424] Building OBJCXX object CMakeFiles/wam_native_media_session_test.dir/src/platform/macos/matroska_sample_builder.mm.o
+[257/424] Building OBJCXX object CMakeFiles/wam_native_media_session_test.dir/src/platform/macos/avfoundation_preview_source.mm.o
+[258/424] Building OBJCXX object CMakeFiles/wam_native_media_session_test.dir/src/platform/macos/mpegts_sample_builder.mm.o
+[259/424] Building OBJCXX object CMakeFiles/wam_native_media_session_test.dir/src/platform/macos/mpegts_preview_source.mm.o
+[260/424] Building OBJCXX object CMakeFiles/wam_native_media_session_test.dir/src/platform/macos/native_preview_source.mm.o
+[261/424] Automatic MOC and UIC for target wam_native_coverage_source_probe
+[262/424] Automatic MOC and UIC for target wam_native_coverage_audio_probe
+[263/424] Building CXX object CMakeFiles/wam_native_coverage_source_probe.dir/wam_native_coverage_source_probe_autogen/mocs_compilation.cpp.o
+[264/424] Building CXX object CMakeFiles/wam_native_coverage_audio_probe.dir/wam_native_coverage_audio_probe_autogen/mocs_compilation.cpp.o
+[265/424] Building CXX object CMakeFiles/wam_native_media_session_test.dir/src/platform/macos/native_silent_timebase.cpp.o
+[266/424] Building OBJCXX object CMakeFiles/wam_native_media_session_test.dir/tests/native_media_session_test.mm.o
+[267/424] Building CXX object CMakeFiles/wam_libavformat_contract_test.dir/wam_libavformat_contract_test_autogen/mocs_compilation.cpp.o
+[268/424] Linking CXX executable wam_libavformat_contract_test
+[269/424] Automatic MOC and UIC for target wam_native_apple_video_probe
+[270/424] Automatic MOC and UIC for target wam_macos_native_session_system
+[271/424] Building CXX object CMakeFiles/wam_native_apple_video_probe.dir/wam_native_apple_video_probe_autogen/mocs_compilation.cpp.o
+[272/424] Building CXX object CMakeFiles/wam_macos_native_session_system.dir/wam_macos_native_session_system_autogen/mocs_compilation.cpp.o
+[273/424] Building OBJCXX object CMakeFiles/wam_native_media_session_test.dir/src/platform/macos/native_preview_frame_lane.mm.o
+[274/424] Building OBJCXX object CMakeFiles/wam_native_media_session_test.dir/src/platform/macos/native_media_session.mm.o
+[275/424] Linking OBJCXX executable wam_native_media_session_test
+ld: warning: ignoring duplicate libraries: 'libwam_native_core.a'
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/libvpx/lib/libvpx.12.dylib' which was built for newer version 26.0
+[276/424] Automatic MOC and UIC for target wam_native_tracked_video_arbiter_test
+[277/424] Building CXX object CMakeFiles/wam_native_tracked_video_arbiter_test.dir/wam_native_tracked_video_arbiter_test_autogen/mocs_compilation.cpp.o
+[278/424] Building OBJCXX object CMakeFiles/wam_native_coverage_source_probe.dir/tests/native_coverage_source_probe.mm.o
+[279/424] Building OBJCXX object CMakeFiles/wam_native_coverage_audio_probe.dir/tests/native_coverage_audio_probe.mm.o
+[280/424] Linking CXX executable wam_native_coverage_source_probe
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/libvpx/lib/libvpx.12.dylib' which was built for newer version 26.0
+[281/424] Linking CXX executable wam_native_coverage_audio_probe
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/libvpx/lib/libvpx.12.dylib' which was built for newer version 26.0
+[282/424] Building OBJCXX object CMakeFiles/wam_native_apple_video_probe.dir/tests/native_apple_video_probe.mm.o
+[283/424] Automatic MOC and UIC for target wam_native_qt_gl_output_test
+[284/424] Linking CXX executable wam_native_apple_video_probe
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/libvpx/lib/libvpx.12.dylib' which was built for newer version 26.0
+[285/424] Building OBJCXX object CMakeFiles/wam_native_tracked_video_arbiter_test.dir/tests/native_tracked_video_arbiter_test.mm.o
+[286/424] Linking OBJCXX executable wam_native_tracked_video_arbiter_test
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/libvpx/lib/libvpx.12.dylib' which was built for newer version 26.0
+[287/424] Building OBJCXX object CMakeFiles/wam_macos_native_session_system.dir/src/platform/macos/native_media_session_system.mm.o
+[288/424] Linking OBJCXX static library libwam_macos_native_session_system.a
+[289/424] Building CXX object CMakeFiles/wam_native_qt_gl_output_test.dir/wam_native_qt_gl_output_test_autogen/mocs_compilation.cpp.o
+[290/424] Automatic MOC and UIC for target wam_native_playback_owner_contract_test
+[291/424] Automatic MOC and UIC for target wam_native_qt_gl_compositor_test
+[292/424] Building CXX object CMakeFiles/wam_native_playback_owner_contract_test.dir/wam_native_playback_owner_contract_test_autogen/mocs_compilation.cpp.o
+[293/424] Automatic MOC and UIC for target wam_native_headless_performance_test
+[294/424] Automatic MOC and UIC for target wam_libavformat_decode_test
+[295/424] Automatic MOC and UIC for target wam_libavformat_source_test
+[296/424] Building CXX object CMakeFiles/wam_native_headless_performance_test.dir/wam_native_headless_performance_test_autogen/mocs_compilation.cpp.o
+[297/424] Automatic MOC and UIC for target wam_native_open_preflight_test
+[298/424] Building CXX object CMakeFiles/wam_native_open_preflight_test.dir/wam_native_open_preflight_test_autogen/mocs_compilation.cpp.o
+[299/424] Building OBJCXX object CMakeFiles/wam_native_qt_gl_output_test.dir/tests/native_qt_gl_output_test.mm.o
+[300/424] Building CXX object CMakeFiles/wam_native_playback_owner_contract_test.dir/tests/native_playback_owner_contract_test.cpp.o
+[301/424] Linking OBJCXX executable wam_native_playback_owner_contract_test
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/libvpx/lib/libvpx.12.dylib' which was built for newer version 26.0
+[302/424] Building CXX object CMakeFiles/wam_libavformat_source_test.dir/wam_libavformat_source_test_autogen/mocs_compilation.cpp.o
+[303/424] Building OBJCXX object CMakeFiles/wam_native_qt_gl_output_test.dir/src/platform/macos/native_qt_gl_output.mm.o
+[304/424] Building CXX object CMakeFiles/wam_libavformat_decode_test.dir/wam_libavformat_decode_test_autogen/mocs_compilation.cpp.o
+[305/424] Building CXX object CMakeFiles/wam_native_qt_gl_compositor_test.dir/wam_native_qt_gl_compositor_test_autogen/mocs_compilation.cpp.o
+[306/424] Building OBJCXX object CMakeFiles/wam_native_headless_performance_test.dir/tests/native_headless_performance_test.mm.o
+[307/424] Automatic MOC and UIC for target wam_mpv_video_item_native_host_test
+[308/424] Linking OBJCXX executable wam_native_headless_performance_test
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/libvpx/lib/libvpx.12.dylib' which was built for newer version 26.0
+[309/424] Building OBJCXX object CMakeFiles/wam_native_qt_gl_output_test.dir/src/platform/macos/qt_gl_video_item.mm.o
+[310/424] Building OBJCXX object CMakeFiles/wam_libavformat_source_test.dir/tests/libavformat_source_test.mm.o
+[311/424] Building OBJCXX object CMakeFiles/wam_native_open_preflight_test.dir/tests/native_open_preflight_test.mm.o
+[312/424] Building OBJCXX object CMakeFiles/wam_native_open_preflight_test.dir/src/qt/native_open_preflight.mm.o
+[313/424] Building OBJCXX object CMakeFiles/wam_libavformat_decode_test.dir/tests/libavformat_decode_test.mm.o
+[314/424] Building OBJCXX object CMakeFiles/wam_native_qt_gl_compositor_test.dir/src/platform/macos/qt_gl_video_item.mm.o
+[315/424] Building OBJCXX object CMakeFiles/wam_native_qt_gl_compositor_test.dir/tests/native_qt_gl_compositor_test.mm.o
+[316/424] Building CXX object CMakeFiles/wam_mpv_video_item_native_host_test.dir/wam_mpv_video_item_native_host_test_autogen/mocs_compilation.cpp.o
+[317/424] Building CXX object CMakeFiles/wam_mpv_video_item_native_host_test.dir/src/media/tx3g_text.cpp.o
+[318/424] Automatic MOC and UIC for target wam_libavformat_mixed_decode_test
+[319/424] Building CXX object CMakeFiles/wam_mpv_video_item_native_host_test.dir/src/media/subtitle_text.cpp.o
+[320/424] Automatic MOC and UIC for target wam_libavformat_preview_decode_test
+[321/424] Building CXX object CMakeFiles/wam_mpv_video_item_native_host_test.dir/tests/mpv_video_item_native_host_test.cpp.o
+[322/424] Building CXX object CMakeFiles/wam_mpv_video_item_native_host_test.dir/src/media/matroska_subtitles.cpp.o
+[323/424] Automatic MOC and UIC for target wam_libavformat_mixed_source_test
+[324/424] Automatic MOC and UIC for target wam_libavformat_allocation_test
+[325/424] Automatic MOC and UIC for target wam_libavformat_mixed_audio_probe
+[326/424] Automatic MOC and UIC for target wam_video_toolbox_decoder_test
+[327/423] Building CXX object CMakeFiles/wam_mpv_video_item_native_host_test.dir/src/media/h264_caption_sei.cpp.o
+[328/423] Building CXX object CMakeFiles/wam_mpv_video_item_native_host_test.dir/src/qt/subtitle_bitmap_provider.cpp.o
+[329/423] Linking OBJCXX executable wam_native_open_preflight_test
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/qtbase/lib/QtCore.framework/Versions/A/QtCore' which was built for newer version 14.0
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/libvpx/lib/libvpx.12.dylib' which was built for newer version 26.0
+[330/423] Building CXX object CMakeFiles/wam_mpv_video_item_native_host_test.dir/src/qt/scroll_gesture.cpp.o
+[331/423] Building CXX object CMakeFiles/wam_mpv_video_item_native_host_test.dir/src/media/cea608_decoder.cpp.o
+[332/423] Linking OBJCXX executable wam_native_qt_gl_compositor_test
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/qtdeclarative/lib/QtQuick.framework/Versions/A/QtQuick' which was built for newer version 26.0
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/libvpx/lib/libvpx.12.dylib' which was built for newer version 26.0
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/qtbase/lib/QtOpenGL.framework/Versions/A/QtOpenGL' which was built for newer version 14.0
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/qtbase/lib/QtGui.framework/Versions/A/QtGui' which was built for newer version 14.0
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/qtdeclarative/lib/QtQml.framework/Versions/A/QtQml' which was built for newer version 26.0
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/qtbase/lib/QtNetwork.framework/Versions/A/QtNetwork' which was built for newer version 14.0
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/qtbase/lib/QtCore.framework/Versions/A/QtCore' which was built for newer version 14.0
+[333/423] Linking OBJCXX executable wam_native_qt_gl_output_test
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/qtdeclarative/lib/QtQuick.framework/Versions/A/QtQuick' which was built for newer version 26.0
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/libvpx/lib/libvpx.12.dylib' which was built for newer version 26.0
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/qtbase/lib/QtOpenGL.framework/Versions/A/QtOpenGL' which was built for newer version 14.0
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/qtbase/lib/QtGui.framework/Versions/A/QtGui' which was built for newer version 14.0
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/qtdeclarative/lib/QtQml.framework/Versions/A/QtQml' which was built for newer version 26.0
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/qtbase/lib/QtNetwork.framework/Versions/A/QtNetwork' which was built for newer version 14.0
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/qtbase/lib/QtCore.framework/Versions/A/QtCore' which was built for newer version 14.0
+[334/423] Linking CXX executable wam_libavformat_source_test
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/libvpx/lib/libvpx.12.dylib' which was built for newer version 26.0
+[335/423] Building CXX object CMakeFiles/wam_libavformat_allocation_test.dir/wam_libavformat_allocation_test_autogen/mocs_compilation.cpp.o
+[336/423] Linking CXX executable wam_libavformat_decode_test
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/libvpx/lib/libvpx.12.dylib' which was built for newer version 26.0
+[337/423] Building CXX object CMakeFiles/wam_libavformat_preview_decode_test.dir/wam_libavformat_preview_decode_test_autogen/mocs_compilation.cpp.o
+[338/423] Building CXX object CMakeFiles/wam_mpv_video_item_native_host_test.dir/src/media/mp4_subtitles.cpp.o
+[339/423] Building CXX object CMakeFiles/wam_libavformat_mixed_audio_probe.dir/wam_libavformat_mixed_audio_probe_autogen/mocs_compilation.cpp.o
+[340/423] Building CXX object CMakeFiles/wam_libavformat_mixed_decode_test.dir/wam_libavformat_mixed_decode_test_autogen/mocs_compilation.cpp.o
+[341/423] Building CXX object CMakeFiles/wam_mpv_video_item_native_host_test.dir/src/qt/subtitle_sources.cpp.o
+[342/423] Building CXX object CMakeFiles/wam_libavformat_mixed_source_test.dir/wam_libavformat_mixed_source_test_autogen/mocs_compilation.cpp.o
+[343/423] Building CXX object CMakeFiles/wam_mpv_video_item_native_host_test.dir/src/qt/mpv_video_item.cpp.o
+[344/423] Building CXX object CMakeFiles/wam_mpv_video_item_native_host_test.dir/src/media/live_caption_feed.cpp.o
+[345/423] Building CXX object CMakeFiles/wam_mpv_video_item_native_host_test.dir/src/media/subtitle_bitmap.cpp.o
+[346/423] Building CXX object CMakeFiles/wam_mpv_video_item_native_host_test.dir/src/media/subtitle_vobsub.cpp.o
+[347/423] Building CXX object CMakeFiles/wam_mpv_video_item_native_host_test.dir/src/media/subtitle_pgs.cpp.o
+[348/423] Building OBJCXX object CMakeFiles/wam_libavformat_allocation_test.dir/tests/libavformat_allocation_test.mm.o
+[349/423] Building OBJCXX object CMakeFiles/wam_libavformat_mixed_source_test.dir/tests/libavformat_mixed_source_test.mm.o
+[350/423] Building CXX object CMakeFiles/wam_mpv_video_item_native_host_test.dir/src/qt/player_controller.cpp.o
+[351/423] Linking CXX executable wam_libavformat_allocation_test
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/libvpx/lib/libvpx.12.dylib' which was built for newer version 26.0
+[352/423] Linking CXX executable wam_libavformat_mixed_source_test
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/libvpx/lib/libvpx.12.dylib' which was built for newer version 26.0
+[353/423] Building CXX object CMakeFiles/wam_mpv_video_item_native_host_test.dir/src/caption_service.cpp.o
+[354/423] Building CXX object CMakeFiles/wam_mpv_video_item_native_host_test.dir/src/jobs.cpp.o
+[355/423] Building OBJCXX object CMakeFiles/wam_libavformat_mixed_audio_probe.dir/tests/libavformat_mixed_audio_probe.mm.o
+[356/423] Building CXX object CMakeFiles/wam_mpv_video_item_native_host_test.dir/src/qt/player_core.cpp.o
+[357/423] Building OBJCXX object CMakeFiles/wam_libavformat_preview_decode_test.dir/tests/libavformat_preview_decode_test.mm.o
+[358/423] Linking CXX executable wam_libavformat_mixed_audio_probe
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/libvpx/lib/libvpx.12.dylib' which was built for newer version 26.0
+[359/423] Linking CXX executable wam_libavformat_preview_decode_test
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/libvpx/lib/libvpx.12.dylib' which was built for newer version 26.0
+[360/423] Building OBJCXX object CMakeFiles/wam_libavformat_mixed_decode_test.dir/tests/libavformat_mixed_decode_test.mm.o
+[361/423] Linking CXX executable wam_libavformat_mixed_decode_test
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/libvpx/lib/libvpx.12.dylib' which was built for newer version 26.0
+[362/423] Building CXX object CMakeFiles/wam_mpv_video_item_native_host_test.dir/src/media/matroska_ebml.cpp.o
+[363/423] Linking OBJCXX executable wam_mpv_video_item_native_host_test
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/qtdeclarative/lib/QtQuick.framework/Versions/A/QtQuick' which was built for newer version 26.0
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/qtbase/lib/QtOpenGL.framework/Versions/A/QtOpenGL' which was built for newer version 14.0
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/qtbase/lib/QtGui.framework/Versions/A/QtGui' which was built for newer version 14.0
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/qtdeclarative/lib/QtQml.framework/Versions/A/QtQml' which was built for newer version 26.0
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/qtbase/lib/QtNetwork.framework/Versions/A/QtNetwork' which was built for newer version 14.0
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/qtbase/lib/QtCore.framework/Versions/A/QtCore' which was built for newer version 14.0
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/libvpx/lib/libvpx.12.dylib' which was built for newer version 26.0
+[364/423] Linking OBJCXX executable wam_video_toolbox_decoder_test
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/libvpx/lib/libvpx.12.dylib' which was built for newer version 26.0
+[365/423] Automatic MOC and UIC for target wam_libavformat_differential_test
+[366/422] Automatic MOC and UIC for target wam
+[367/422] Running AUTOMOC file extraction for target wam
+[368/422] Running moc --collect-json for target wam
+[369/407] Building CXX object CMakeFiles/wam.dir/src/qt/scroll_gesture.cpp.o
+[370/407] Building CXX object CMakeFiles/wam_libavformat_differential_test.dir/tests/libavformat_differential_test.cpp.o
+[371/407] Building CXX object CMakeFiles/wam.dir/src/state_store.cpp.o
+[372/407] Building CXX object CMakeFiles/wam.dir/src/caption_service.cpp.o
+[373/407] Building CXX object CMakeFiles/wam.dir/src/jobs.cpp.o
+[374/407] Building CXX object CMakeFiles/wam.dir/src/qt/subtitle_bitmap_provider.cpp.o
+[375/407] Building CXX object CMakeFiles/wam.dir/src/qt/player_core.cpp.o
+[376/407] Building CXX object CMakeFiles/wam.dir/src/qt/window_manager.cpp.o
+[377/407] Building CXX object CMakeFiles/wam.dir/wam_autogen/mocs_compilation.cpp.o
+[378/407] Building CXX object CMakeFiles/wam.dir/src/qt/subtitle_sources.cpp.o
+[379/407] Building CXX object CMakeFiles/wam.dir/src/qt/mpv_video_item.cpp.o
+[380/407] Building CXX object CMakeFiles/wam.dir/src/qt/main.cpp.o
+[381/407] Building CXX object CMakeFiles/wam.dir/src/qt/player_controller.cpp.o
+[382/407] Building CXX object CMakeFiles/wam.dir/build/.rcc/qmlcache/wam_qml/AppPreferences_qml.cpp.o
+[383/407] Building CXX object CMakeFiles/wam.dir/build/.rcc/qmlcache/wam_qml/NoticeToast_qml.cpp.o
+[384/407] Building CXX object CMakeFiles/wam.dir/build/.rcc/qmlcache/wam_qml/QuietButton_qml.cpp.o
+[385/407] Building CXX object CMakeFiles/wam.dir/build/.rcc/qmlcache/wam_qml/ValueOsd_qml.cpp.o
+[386/407] Building CXX object CMakeFiles/wam.dir/build/.rcc/qmlcache/wam_qml/CropOverlay_qml.cpp.o
+[387/407] Building CXX object CMakeFiles/wam.dir/build/.rcc/qmlcache/wam_qmlcache_loader.cpp.o
+[388/407] Building CXX object CMakeFiles/wam.dir/build/.rcc/qmlcache/wam_qml/PreferencesWindow_qml.cpp.o
+[389/407] Linking CXX executable wam_libavformat_differential_test
+[390/407] Building CXX object CMakeFiles/wam.dir/build/.rcc/qmlcache/wam_qml/Scrubber_qml.cpp.o
+[391/407] Building CXX object CMakeFiles/wam.dir/build/.rcc/qmlcache/wam_qml/ChromeToolTip_qml.cpp.o
+[392/407] Building CXX object CMakeFiles/wam.dir/src/qt/native_playback_metrics.cpp.o
+[393/407] Building CXX object CMakeFiles/wam.dir/src/qt/native_benchmark_telemetry.cpp.o
+[394/407] Building CXX object CMakeFiles/wam.dir/build/.qt/rcc/qrc_wam_raw_qml_0.cpp.o
+[395/407] Building CXX object CMakeFiles/wam.dir/build/.rcc/qmlcache/wam_qml/IconButton_qml.cpp.o
+[396/407] Building CXX object CMakeFiles/wam.dir/build/.qt/rcc/qrc_wam_raw_qml_0_extra_qmldirs.cpp.o
+[397/407] Building CXX object CMakeFiles/wam.dir/build/.qt/rcc/qrc_qmake_Wam.cpp.o
+[398/407] Building CXX object CMakeFiles/wam.dir/build/.rcc/qmlcache/wam_qml/AppMenuBar_qml.cpp.o
+[399/407] Building CXX object CMakeFiles/wam.dir/build/.rcc/qmlcache/wam_qml/QuickEditSheet_qml.cpp.o
+[400/407] Building CXX object CMakeFiles/wam.dir/build/.rcc/qmlcache/wam_qml/AppMenu_qml.cpp.o
+[401/407] Building OBJCXX object CMakeFiles/wam.dir/src/qt/native_open_preflight.mm.o
+[402/407] Building OBJCXX object CMakeFiles/wam.dir/src/qt/macos_window_chrome.mm.o
+[403/407] Building CXX object CMakeFiles/wam.dir/wam_qmltyperegistrations.cpp.o
+[404/407] Building OBJCXX object CMakeFiles/wam.dir/src/qt/native_playback_owner.mm.o
+[405/407] Building CXX object CMakeFiles/wam.dir/build/.rcc/qmlcache/wam_qml/FloatingControls_qml.cpp.o
+[406/407] Building CXX object CMakeFiles/wam.dir/build/.rcc/qmlcache/wam_qml/Main_qml.cpp.o
+[407/407] Linking OBJCXX executable WAM.app/Contents/MacOS/WAM
+ld: warning: ignoring duplicate libraries: 'libwam_macos_native_qt_tracked.a'
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/qtdeclarative/lib/QtQuickControls2.framework/Versions/A/QtQuickControls2' which was built for newer version 26.0
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/qtdeclarative/lib/QtQuickDialogs2.framework/Versions/A/QtQuickDialogs2' which was built for newer version 26.0
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/qtdeclarative/lib/QtQuickLayouts.framework/Versions/A/QtQuickLayouts' which was built for newer version 26.0
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/qtdeclarative/lib/QtLabsPlatform.framework/Versions/A/QtLabsPlatform' which was built for newer version 26.0
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/qtdeclarative/lib/QtQuick.framework/Versions/A/QtQuick' which was built for newer version 26.0
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/qtbase/lib/QtOpenGL.framework/Versions/A/QtOpenGL' which was built for newer version 14.0
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/qtbase/lib/QtGui.framework/Versions/A/QtGui' which was built for newer version 14.0
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/qtdeclarative/lib/QtQml.framework/Versions/A/QtQml' which was built for newer version 26.0
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/qtbase/lib/QtNetwork.framework/Versions/A/QtNetwork' which was built for newer version 14.0
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/qtbase/lib/QtCore.framework/Versions/A/QtCore' which was built for newer version 14.0
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/libvpx/lib/libvpx.12.dylib' which was built for newer version 26.0

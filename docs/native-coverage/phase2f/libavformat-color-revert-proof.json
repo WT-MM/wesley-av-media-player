@@ -1,0 +1,23 @@
+[
+  {
+    "phase": "fixed",
+    "rc": 0,
+    "stdout": "status=1 error=SoftwareColorUnqualified: MPEG-4 full-range container signaling\n",
+    "stderr": "",
+    "source_sha256": "6645aa092a8fda8ee596f79ef3780d93e49aa171ef7d4bdf2e064850793da21b"
+  },
+  {
+    "phase": "reverted",
+    "rc": 1,
+    "stdout": "status=0 error=\n",
+    "stderr": "FAIL 39: opened.status == MediaSourceOpenStatus::Unsupported\n",
+    "source_sha256": "05216d82887d7471bc1f14bc5dd2a4f3116b712f5066eefac45717835827a576"
+  },
+  {
+    "phase": "restored",
+    "rc": 0,
+    "stdout": "status=1 error=SoftwareColorUnqualified: MPEG-4 full-range container signaling\n",
+    "stderr": "",
+    "source_sha256": "6645aa092a8fda8ee596f79ef3780d93e49aa171ef7d4bdf2e064850793da21b"
+  }
+]

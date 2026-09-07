@@ -122,6 +122,8 @@ struct GraphState {
   std::atomic<bool> clockRunning{false};
   std::atomic<std::uint64_t> lastOutputEventSequence{0};
   std::atomic<std::uint64_t> videoDueHostTicks{0};
+  bool expireVideoDeadline{false};
+  std::atomic<bool> videoDeadlineExpired{false};
   std::mutex videoEventMutex;
   std::optional<NativeTrackedVideoEvent> videoEvent;
   std::optional<NativeTrackedVideoEvent> pendingVideoEvent;
@@ -602,8 +604,15 @@ std::uint64_t lastOutputEventSequence(void* context) noexcept {
 }
 
 std::uint64_t nextVideoDueHostTicks(void* context) noexcept {
-  return static_cast<GraphState*>(context)->videoDueHostTicks.load(
-      std::memory_order_acquire);
+  auto& state = *static_cast<GraphState*>(context);
+  const auto due = state.videoDueHostTicks.load(std::memory_order_acquire);
+  const auto now = std::chrono::duration_cast<std::chrono::nanoseconds>(
+      std::chrono::steady_clock::now().time_since_epoch()).count();
+  if (state.expireVideoDeadline && due && std::uint64_t(now) >= due) {
+    state.videoDeadlineExpired.store(true, std::memory_order_release);
+    return 0;
+  }
+  return due;
 }
 
 std::optional<NativeTrackedVideoEvent> takeOutputEvent(
@@ -906,7 +915,7 @@ std::uint64_t ticks(void*) noexcept { return 1; }
 std::unique_ptr<NativeMediaSession> sessionFor(
     std::shared_ptr<GraphState>* state,
     std::shared_ptr<NativeMediaSessionWake>* wakeOut = nullptr,
-    bool bindObservations = true) {
+    bool bindObservations = true, bool realtimeDeadline = false) {
   auto wake = NativeMediaSessionWake::create();
   NativeMediaSessionDependencies dependencies;
   dependencies.externalLifetime = *state;
@@ -914,6 +923,11 @@ std::unique_ptr<NativeMediaSession> sessionFor(
   dependencies.videoOutput = std::make_shared<NullOutput>((*state)->directPresentation);
   dependencies.previewOutput = std::make_shared<NullPreviewOutput>();
   dependencies.hostClock = {&ticks, nullptr, 1'000};
+  if (realtimeDeadline) dependencies.hostClock = {
+      [](void*) noexcept -> std::uint64_t {
+        return std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+      }, nullptr, 1'000'000'000};
   auto result = NativeMediaSession::create(
       {{1}, (*state)->transportPath.empty()
                 ? std::filesystem::path("/tmp/native-session-test.mov")
@@ -2812,7 +2826,33 @@ void testWakeConsumeRaceAbsorbsRunIntoCurrentDrain() {
       waitFact<protocol::Stopped>(*session, "wake-consume Stopped"));
 }
 
-void testVideoDueHintArmsOnlyTheSharedAudioEdge() {
+void testVideoDeadlineDoesNotWaitForAudioCallback() {
+  auto state = std::make_shared<GraphState>();
+  state->descriptor = descriptor();
+  state->expireVideoDeadline = true;
+  std::shared_ptr<NativeMediaSessionWake> wake;
+  auto session = sessionFor(&state, &wake, true, true);
+  expect(prepare(*session, prepareCommand()) == NativeMediaSessionCommandStatus::Accepted,
+         "deadline fixture prepares");
+  static_cast<void>(waitFact<protocol::Prepared>(*session, "deadline Prepared"));
+  expect(session->start({{{1}, {2}}, {7}, true}) == NativeMediaSessionCommandStatus::Accepted,
+         "deadline fixture starts paused");
+  static_cast<void>(waitFact<protocol::Started>(*session, "deadline Started"));
+  expect(session->setRunState({{{1}, {3}}, {7}, false, 1.0}) == NativeMediaSessionCommandStatus::Accepted,
+         "deadline fixture runs");
+  static_cast<void>(waitFact<NativeMediaSessionRunStateApplied>(*session, "deadline running"));
+  const auto due = std::chrono::duration_cast<std::chrono::nanoseconds>(
+      (std::chrono::steady_clock::now() + std::chrono::milliseconds(100)).time_since_epoch()).count();
+  state->videoDueHostTicks.store(due, std::memory_order_release);
+  wake->video().signal(wake->video().context);
+  waitUntil([&] {return state->videoDeadlineExpired.load(std::memory_order_acquire);},
+            "video deadline wakes an audio-authoritative worker without an audio callback");
+  expect(session->stop(stopCommand(4)) == NativeMediaSessionCommandStatus::Accepted,
+         "deadline fixture stops");
+  static_cast<void>(waitFact<protocol::Stopped>(*session, "deadline Stopped"));
+}
+
+void testVideoDueHintPublishesSharedDeadline() {
   auto state = std::make_shared<GraphState>();
   state->descriptor = descriptor();
   std::shared_ptr<NativeMediaSessionWake> wake;
@@ -3635,7 +3675,8 @@ int main(int argc, char** argv) {
   testLateFailureCannotHideStop();
   testRunIntentCoalescesAcrossQuiescing();
   testWakeConsumeRaceAbsorbsRunIntoCurrentDrain();
-  testVideoDueHintArmsOnlyTheSharedAudioEdge();
+  testVideoDueHintPublishesSharedDeadline();
+  testVideoDeadlineDoesNotWaitForAudioCallback();
   testWakeClearBeforeDrainPreservesLateRun();
   testGainMuteAndExactProofObservations();
   testExhaustionStopsAudioBeforeOneEnded();

@@ -1,0 +1,4 @@
+PasteBoard: Error creating pasteboard: com.apple.pasteboard.clipboard [-4960]
+PasteBoard: Error creating pasteboard: com.apple.pasteboard.find [-4960]
+2026-09-07 12:48:09.440 WAM[94231:18215225] Connection Invalid error for service com.apple.hiservices-xpcservice.
+2026-09-07 12:48:09.440 WAM[94231:18215214] Error received in message reply handler: Connection invalid

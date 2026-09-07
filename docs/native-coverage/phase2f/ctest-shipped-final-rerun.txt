@@ -1,0 +1,7 @@
+Test project /Users/wesleymaa/Documents/WAM/build
+    Start 79: macos_native_qt_gl_output
+1/1 Test #79: macos_native_qt_gl_output ........   Passed    3.23 sec
+
+100% tests passed, 0 tests failed out of 1
+
+Total Test time (real) =   3.24 sec

@@ -507,10 +507,9 @@ struct NativeMediaSessionWake::Impl final {
   std::atomic<bool> workerPending{false};
   std::atomic<std::uint64_t> videoDueHostTicks{0};
   dispatch_semaphore_t semaphore{dispatch_semaphore_create(0)};
-  // Audio-less heartbeat. Both fields are written and read exclusively on the
-  // session worker thread (armed from progressPrepare, consumed by wait()),
-  // so they need no synchronization of their own.
+  // Deadline state is confined to the session worker.
   bool hostPaced{false};
+  bool heartbeat{true};
   NativeMediaHostClock hostPacedClock{};
 #if defined(WAM_NATIVE_MEDIA_SESSION_TESTING)
   std::atomic<std::uint64_t> consumedTokens{0};
@@ -561,14 +560,16 @@ namespace {
 constexpr std::uint64_t kHostPacedFloorNanos = 10ULL * 1000ULL * 1000ULL;
 
 [[nodiscard]] dispatch_time_t hostPacedDeadline(
-    bool hostPaced, NativeMediaHostClock hostClock,
+    bool hostPaced, bool heartbeat, NativeMediaHostClock hostClock,
     std::atomic<std::uint64_t>* dueSlot) noexcept {
   if (!hostPaced || hostClock.readTicks == nullptr ||
       hostClock.ticksPerSecond == 0 || dueSlot == nullptr) {
     return DISPATCH_TIME_FOREVER;
   }
-  std::uint64_t nanos = kHostPacedFloorNanos;
+  const std::uint64_t cap = heartbeat ? kHostPacedFloorNanos : std::uint64_t(INT64_MAX);
+  std::uint64_t nanos = cap;
   std::uint64_t due = dueSlot->load(std::memory_order_acquire);
+  if (due == 0 && !heartbeat) return DISPATCH_TIME_FOREVER;
   if (due != 0) {
     const std::uint64_t now = hostClock.readTicks(hostClock.context);
     if (due <= now) {
@@ -579,15 +580,10 @@ constexpr std::uint64_t kHostPacedFloorNanos = 10ULL * 1000ULL * 1000ULL;
           due, 0, std::memory_order_acq_rel, std::memory_order_relaxed));
       nanos = 0;
     } else {
-      // A far-future due tick would overflow a 64-bit nanosecond product, so
-      // the exact conversion is done in 128 bits and then clamped to the
-      // floor.
-      const auto exact = static_cast<__uint128_t>(due - now) *
-                         static_cast<__uint128_t>(1000000000ULL) /
-                         static_cast<__uint128_t>(hostClock.ticksPerSecond);
-      nanos = exact >= static_cast<__uint128_t>(kHostPacedFloorNanos)
-                  ? kHostPacedFloorNanos
-                  : static_cast<std::uint64_t>(exact);
+      const auto numerator = static_cast<__uint128_t>(due - now) * 1000000000ULL;
+      const auto exact = (numerator + hostClock.ticksPerSecond - 1) /
+                         hostClock.ticksPerSecond;
+      nanos = exact >= cap ? cap : static_cast<std::uint64_t>(exact);
     }
   }
   return dispatch_time(DISPATCH_TIME_NOW, static_cast<std::int64_t>(nanos));
@@ -596,11 +592,12 @@ constexpr std::uint64_t kHostPacedFloorNanos = 10ULL * 1000ULL * 1000ULL;
 }  // namespace
 
 void NativeMediaSessionWake::setHostPacedDeadlines(
-    NativeMediaHostClock hostClock) noexcept {
+    NativeMediaHostClock hostClock, bool heartbeat) noexcept {
   if (impl_ == nullptr) {
     return;
   }
   impl_->hostPacedClock = hostClock;
+  impl_->heartbeat = heartbeat;
   impl_->hostPaced =
       hostClock.readTicks != nullptr && hostClock.ticksPerSecond != 0;
 }
@@ -615,7 +612,7 @@ void NativeMediaSessionWake::wait() noexcept {
   // pass is idempotent, which is what makes the timed wait safe here.
   static_cast<void>(dispatch_semaphore_wait(
       impl_->semaphore,
-      hostPacedDeadline(impl_->hostPaced, impl_->hostPacedClock,
+      hostPacedDeadline(impl_->hostPaced, impl_->heartbeat, impl_->hostPacedClock,
                         &impl_->videoDueHostTicks)));
 #if defined(WAM_NATIVE_MEDIA_SESSION_TESTING)
   const std::uint64_t token =
@@ -2265,9 +2262,6 @@ if (descriptor == nullptr || !nativeV1Descriptor(*descriptor)) {
         return;
       }
       audioControl = silentTimebaseControl(silentTimebase.get());
-      // The audio render callback was the only periodic edge that woke this
-      // worker to draw a frame on time. With no output unit, the worker's own
-      // wait carries that deadline instead.
       dependencies.wake->setHostPacedDeadlines(dependencies.hostClock);
     }
     bool committed = false;
@@ -3314,20 +3308,13 @@ if (result != NativeAudioSessionProgress::Done) {
   };
 #endif
 
-  // Arms the audio-less heartbeat only for the states that actually need a
-  // periodic edge, so a silent generation that is paused, ended, stopped or
-  // failed sleeps exactly as an audio-authoritative one does once its output
-  // unit has stopped. Evaluated on the worker immediately before it blocks,
-  // so it always describes the state the previous pass left behind.
   void syncHostPacedDeadlines() noexcept {
-    if (silentTimebase == nullptr) {
-      return;
-    }
     const bool active = !endedPublished && !stopLatched && !liveFailed &&
                         !endingLatched &&
                         (commitInFlight() || previewPending || !appliedPaused);
     dependencies.wake->setHostPacedDeadlines(
-        active ? dependencies.hostClock : NativeMediaHostClock{});
+        active ? dependencies.hostClock : NativeMediaHostClock{},
+        silentTimebase != nullptr);
   }
 
   void work() noexcept {

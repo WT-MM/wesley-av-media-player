@@ -1,0 +1,14 @@
+Internal ctest changing into directory: /Users/wesleymaa/Documents/WAM/build
+Test project /Users/wesleymaa/Documents/WAM/build
+    Start  72: macos_native_media_session
+1/4 Test  #72: macos_native_media_session .......   Passed    0.68 sec
+    Start  97: avcodec_runtime
+2/4 Test  #97: avcodec_runtime ..................   Passed    0.25 sec
+    Start  98: avcodec_runtime_relocation
+3/4 Test  #98: avcodec_runtime_relocation .......   Passed    0.77 sec
+    Start 138: ffmpeg_coexistence
+4/4 Test #138: ffmpeg_coexistence ...............   Passed    0.30 sec
+
+100% tests passed, 0 tests failed out of 4
+
+Total Test time (real) =   2.00 sec

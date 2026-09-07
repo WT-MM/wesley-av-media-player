@@ -1,0 +1,23 @@
+[
+  {
+    "phase": "fixed",
+    "rc": 0,
+    "stdout": "Matroska demuxer tests passed\n",
+    "stderr": "",
+    "source_sha256": "cbecb7e225bdbdd803c5490d198381fbfee0d856d72c28326133dd05e88b0fd9"
+  },
+  {
+    "phase": "reverted",
+    "rc": 1,
+    "stdout": "",
+    "stderr": "FAIL: container-only MPEG-4 full range refuses before descriptor publication\n1 Matroska demuxer test(s) failed\n",
+    "source_sha256": "9e5e8c882d427322f5d4e9c62740dcd8e3d0d8d505370aa14e20c27c36d6c265"
+  },
+  {
+    "phase": "restored",
+    "rc": 0,
+    "stdout": "Matroska demuxer tests passed\n",
+    "stderr": "",
+    "source_sha256": "cbecb7e225bdbdd803c5490d198381fbfee0d856d72c28326133dd05e88b0fd9"
+  }
+]

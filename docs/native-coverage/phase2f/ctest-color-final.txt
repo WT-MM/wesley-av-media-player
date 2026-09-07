@@ -1,0 +1,23 @@
+Test project /Users/wesleymaa/Documents/WAM/build
+    Start  24: matroska_demuxer
+1/9 Test  #24: matroska_demuxer .......................   Passed    0.45 sec
+    Start  91: avcodec_fixtures
+2/9 Test  #91: avcodec_fixtures .......................   Passed    2.84 sec
+    Start  86: software_avcodec_video_hi10p
+3/9 Test  #86: software_avcodec_video_hi10p ...........   Passed    0.30 sec
+    Start  87: software_avcodec_video_h264422
+4/9 Test  #87: software_avcodec_video_h264422 .........   Passed    0.06 sec
+    Start  88: software_avcodec_video_asp
+5/9 Test  #88: software_avcodec_video_asp .............   Passed    0.04 sec
+    Start  89: software_avcodec_video_vp9
+6/9 Test  #89: software_avcodec_video_vp9 .............   Passed    0.05 sec
+    Start  90: software_avcodec_video_vp9p2
+7/9 Test  #90: software_avcodec_video_vp9p2 ...........   Passed    0.06 sec
+    Start 103: libavformat_mpeg4_full_range_refusal
+8/9 Test #103: libavformat_mpeg4_full_range_refusal ...   Passed    0.01 sec
+    Start 139: software_color_qualification
+9/9 Test #139: software_color_qualification ...........   Passed    0.22 sec
+
+100% tests passed, 0 tests failed out of 9
+
+Total Test time (real) =   4.04 sec

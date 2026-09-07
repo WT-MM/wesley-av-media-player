@@ -1,0 +1,112 @@
+[
+  {
+    "name": "limited-baseline",
+    "software": "/private/tmp/wam-phase2f/paired-software/limited-baseline/display.png",
+    "hardware": "/private/tmp/wam-phase2f/paired-hardware/limited-baseline/display.png",
+    "pixels": 90649,
+    "rms": 0.0,
+    "software_route": [
+      "WAM: native decoder stage=VideoToolboxSoftware codec=61766331"
+    ],
+    "failures": []
+  },
+  {
+    "name": "limited-vp9",
+    "software": "/private/tmp/wam-phase2f/paired-software/limited-vp9/display.png",
+    "hardware": "/private/tmp/wam-phase2f/paired-hardware/limited-vp9/display.png",
+    "pixels": 93166,
+    "rms": 0.0,
+    "software_route": [
+      "WAM: native decoder stage=Libavcodec codec=76703039"
+    ],
+    "failures": []
+  },
+  {
+    "name": "limited-vp9p2",
+    "software": "/private/tmp/wam-phase2f/paired-software/limited-vp9p2/display.png",
+    "hardware": "/private/tmp/wam-phase2f/paired-hardware/limited-vp9p2/display.png",
+    "pixels": 34935,
+    "rms": 0.0,
+    "software_route": [
+      "WAM: native decoder stage=Libavcodec codec=76703039"
+    ],
+    "failures": []
+  },
+  {
+    "name": "full-baseline",
+    "software": "/private/tmp/wam-phase2f/paired-software/full-baseline/display.png",
+    "hardware": "/private/tmp/wam-phase2f/paired-hardware/full-baseline/display.png",
+    "pixels": 92211,
+    "rms": 7.020016505644764,
+    "software_route": [
+      "WAM: native decoder stage=VideoToolboxSoftware codec=61766331"
+    ],
+    "failures": []
+  },
+  {
+    "name": "full-vp9",
+    "software": "/private/tmp/wam-phase2f/paired-software/full-vp9/display.png",
+    "hardware": "/private/tmp/wam-phase2f/paired-hardware/full-vp9/display.png",
+    "pixels": 93646,
+    "rms": 0.0,
+    "software_route": [
+      "WAM: native decoder stage=Libavcodec codec=76703039"
+    ],
+    "failures": []
+  },
+  {
+    "name": "full-vp9p2",
+    "software": "/private/tmp/wam-phase2f/paired-software/full-vp9p2/display.png",
+    "hardware": "/private/tmp/wam-phase2f/paired-hardware/full-vp9p2/display.png",
+    "pixels": 32511,
+    "rms": 0.0,
+    "software_route": [
+      "WAM: native decoder stage=Libavcodec codec=76703039"
+    ],
+    "failures": []
+  },
+  {
+    "name": "h264-smpte2084",
+    "software": "/private/tmp/wam-phase2f/paired-software/h264-smpte2084/display.png",
+    "hardware": "/private/tmp/wam-phase2f/paired-hdr-hardware/hevc-smpte2084/display.png",
+    "pixels": 74369,
+    "rms": 0.3868464396329358,
+    "software_route": [
+      "WAM: native decoder stage=Libavcodec codec=61766331"
+    ],
+    "failures": []
+  },
+  {
+    "name": "hevc-smpte2084",
+    "software": "/private/tmp/wam-phase2f/paired-software/hevc-smpte2084/display.png",
+    "hardware": "/private/tmp/wam-phase2f/paired-hardware/hevc-smpte2084/display.png",
+    "pixels": 56815,
+    "rms": 31.80229313756373,
+    "software_route": [
+      "WAM: native decoder stage=VideoToolboxSoftware codec=68766331"
+    ],
+    "failures": []
+  },
+  {
+    "name": "h264-arib-std-b67",
+    "software": "/private/tmp/wam-phase2f/paired-software/h264-arib-std-b67/display.png",
+    "hardware": "/private/tmp/wam-phase2f/paired-hdr-hardware/hevc-arib-std-b67/display.png",
+    "pixels": 89441,
+    "rms": 77.53340198876694,
+    "software_route": [
+      "WAM: native decoder stage=Libavcodec codec=61766331"
+    ],
+    "failures": []
+  },
+  {
+    "name": "hevc-arib-std-b67",
+    "software": "/private/tmp/wam-phase2f/paired-software/hevc-arib-std-b67/display.png",
+    "hardware": "/private/tmp/wam-phase2f/paired-hardware/hevc-arib-std-b67/display.png",
+    "pixels": 56815,
+    "rms": 25.093310915291433,
+    "software_route": [
+      "WAM: native decoder stage=VideoToolboxSoftware codec=68766331"
+    ],
+    "failures": []
+  }
+]

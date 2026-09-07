@@ -2409,6 +2409,9 @@ if(BUILD_TESTING AND WAM_ENABLE_AVFORMAT_STAGE)
   find_program(WAM_AVCODEC_FIXTURE_FFMPEG ffmpeg REQUIRED)
   add_executable(wam_libavformat_source_test tests/libavformat_source_test.mm)
   target_link_libraries(wam_libavformat_source_test PRIVATE wam_macos_native_backend)
+  add_test(NAME libavformat_mpeg4_full_range_refusal COMMAND wam_libavformat_source_test
+    "${CMAKE_SOURCE_DIR}/tests/fixtures/software-color/asp-full.mkv"
+    "SoftwareColorUnqualified: MPEG-4 full-range container signaling")
   set(WAM_AVFORMAT_FIXTURES "${CMAKE_SOURCE_DIR}/test-media/native-coverage/phase3")
   add_test(NAME libavformat_fixtures COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_SOURCE_DIR}/tests/libavformat_fixtures.py" --root "${WAM_AVFORMAT_FIXTURES}"

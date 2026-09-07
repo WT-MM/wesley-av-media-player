@@ -1,0 +1,181 @@
+[
+  {
+    "asset": "/private/tmp/wam-ffmpeg-phase2/long/baseline.mkv",
+    "asset_sha256": "99c9967d7c99c43671bc8ac78b8a130c39f46f136f488d2f806b1c30e89a25d0",
+    "candidate_sha256": "bdabf25cc7d52f0a99068d623a8672cce2b037a268e945f434d86a84d6d8f1fc",
+    "run_id": "20cfdb85-31e7-4435-b271-217142d61513",
+    "pid": 31878,
+    "rc": 0,
+    "first_frame": true,
+    "failures": [],
+    "routes": [],
+    "usage": {
+      "pid": 31878,
+      "seconds": 14.37144,
+      "cpu_percent_one_core": 5.297134,
+      "energy_joules_process": 1.415137977,
+      "peak_footprint_bytes": 472564696
+    },
+    "last_sample": {
+      "record": "playback_sample",
+      "session_epoch": 1788801954708842000,
+      "t_mono_ns": 501850024516833,
+      "media_seconds": 11.961477458333333,
+      "drawn_frames": 300,
+      "submitted_frames": 300,
+      "superseded_frames": 0,
+      "discarded_late_frames": 0,
+      "audio_underrun_callbacks": null,
+      "audio_clock_advanced_underruns": null,
+      "audio_retired_late_frames": null,
+      "audio_callbacks": null,
+      "audio_rendered_frames": null,
+      "clock_rate": 1,
+      "paused": false
+    }
+  },
+  {
+    "asset": "/private/tmp/wam-ffmpeg-phase2/long/hi10p.mkv",
+    "asset_sha256": "5cd8c4688b123cb0ed894da0e750e86110d869836d0e6342d6a66e56b4881771",
+    "candidate_sha256": "bdabf25cc7d52f0a99068d623a8672cce2b037a268e945f434d86a84d6d8f1fc",
+    "run_id": "9bbb931d-ed2f-476b-a051-05542fb63eff",
+    "pid": 32350,
+    "rc": 0,
+    "first_frame": false,
+    "failures": [
+      "WAM: native failure stage=open reason=Protocol class=ConsumerConfiguration error=\"video configure refused: could not derive a bounded presentation-reorder depth from the codec SPS\""
+    ],
+    "routes": [],
+    "usage": {
+      "pid": 32350,
+      "seconds": 13.820707,
+      "cpu_percent_one_core": 3.22036,
+      "energy_joules_process": 1.229664401,
+      "peak_footprint_bytes": 496862120
+    },
+    "last_sample": {
+      "record": "playback_sample",
+      "session_epoch": 0,
+      "t_mono_ns": 501863501097333,
+      "media_seconds": null,
+      "drawn_frames": null,
+      "submitted_frames": null,
+      "superseded_frames": null,
+      "discarded_late_frames": null,
+      "audio_underrun_callbacks": null,
+      "audio_clock_advanced_underruns": null,
+      "audio_retired_late_frames": null,
+      "audio_callbacks": null,
+      "audio_rendered_frames": null,
+      "clock_rate": null,
+      "paused": true
+    }
+  },
+  {
+    "asset": "/private/tmp/wam-ffmpeg-phase2/long/h264422.mkv",
+    "asset_sha256": "cae88080fc20c48b7ec1c707718cc501c1f06715526dac4d95671b74e3e29c5a",
+    "candidate_sha256": "bdabf25cc7d52f0a99068d623a8672cce2b037a268e945f434d86a84d6d8f1fc",
+    "run_id": "3ea96287-00f6-41b0-adb7-2d0a08fd3681",
+    "pid": 32412,
+    "rc": 0,
+    "first_frame": false,
+    "failures": [
+      "WAM: native failure stage=open reason=Protocol class=ConsumerConfiguration error=\"video configure refused: could not derive a bounded presentation-reorder depth from the codec SPS\""
+    ],
+    "routes": [],
+    "usage": {
+      "pid": 32412,
+      "seconds": 13.859469,
+      "cpu_percent_one_core": 3.039648,
+      "energy_joules_process": 1.234769623,
+      "peak_footprint_bytes": 497894336
+    },
+    "last_sample": {
+      "record": "playback_sample",
+      "session_epoch": 0,
+      "t_mono_ns": 501877501789875,
+      "media_seconds": null,
+      "drawn_frames": null,
+      "submitted_frames": null,
+      "superseded_frames": null,
+      "discarded_late_frames": null,
+      "audio_underrun_callbacks": null,
+      "audio_clock_advanced_underruns": null,
+      "audio_retired_late_frames": null,
+      "audio_callbacks": null,
+      "audio_rendered_frames": null,
+      "clock_rate": null,
+      "paused": true
+    }
+  },
+  {
+    "asset": "/private/tmp/wam-phase2c/playback-assets/vp9.mkv",
+    "asset_sha256": "4916c73e6c123cc9b52249120b406c432f8493447e1dfe65fed6b5c12a1c94fe",
+    "candidate_sha256": "bdabf25cc7d52f0a99068d623a8672cce2b037a268e945f434d86a84d6d8f1fc",
+    "run_id": "c8a1b379-ff24-45e6-96f4-49c9d87668b0",
+    "pid": 32525,
+    "rc": 0,
+    "first_frame": true,
+    "failures": [],
+    "routes": [],
+    "usage": {
+      "pid": 32525,
+      "seconds": 13.739438,
+      "cpu_percent_one_core": 6.782324,
+      "energy_joules_process": 1.276332042,
+      "peak_footprint_bytes": 474186760
+    },
+    "last_sample": {
+      "record": "playback_sample",
+      "session_epoch": 1788801997099496000,
+      "t_mono_ns": 501891501057625,
+      "media_seconds": 11.960469541666667,
+      "drawn_frames": 300,
+      "submitted_frames": 300,
+      "superseded_frames": 0,
+      "discarded_late_frames": 0,
+      "audio_underrun_callbacks": null,
+      "audio_clock_advanced_underruns": null,
+      "audio_retired_late_frames": null,
+      "audio_callbacks": null,
+      "audio_rendered_frames": null,
+      "clock_rate": 1,
+      "paused": false
+    }
+  },
+  {
+    "asset": "/private/tmp/wam-phase2c/playback-assets/vp9p2.mkv",
+    "asset_sha256": "f1c161b570d8608649584085a28e2939c04f34f1a1802cffaad4b557a1675a2f",
+    "candidate_sha256": "bdabf25cc7d52f0a99068d623a8672cce2b037a268e945f434d86a84d6d8f1fc",
+    "run_id": "f8877149-a91a-4e97-8ce1-a6f932880434",
+    "pid": 32733,
+    "rc": 0,
+    "first_frame": true,
+    "failures": [],
+    "routes": [],
+    "usage": {
+      "pid": 32733,
+      "seconds": 13.964326,
+      "cpu_percent_one_core": 7.018425,
+      "energy_joules_process": 1.268096694,
+      "peak_footprint_bytes": 475546632
+    },
+    "last_sample": {
+      "record": "playback_sample",
+      "session_epoch": 1788802011052838000,
+      "t_mono_ns": 501906028697125,
+      "media_seconds": 11.961601541666667,
+      "drawn_frames": 300,
+      "submitted_frames": 300,
+      "superseded_frames": 0,
+      "discarded_late_frames": 0,
+      "audio_underrun_callbacks": null,
+      "audio_clock_advanced_underruns": null,
+      "audio_retired_late_frames": null,
+      "audio_callbacks": null,
+      "audio_rendered_frames": null,
+      "clock_rate": 1,
+      "paused": false
+    }
+  }
+]

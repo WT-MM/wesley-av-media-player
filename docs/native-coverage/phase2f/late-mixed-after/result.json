@@ -1,0 +1,36 @@
+{
+  "asset": "/private/tmp/wam-phase2e/rustdesk-audio-celt/0-opus.mkv",
+  "pid": 46193,
+  "rc": 0,
+  "elapsed": 47.80246937501943,
+  "identities": {
+    "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+    "WAM_NATIVE_BENCHMARK_RUN_ID": "2303c6b8-bf8d-42d4-bf4d-08b337417bb5",
+    "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "4c923793f8a21118de99d11089bb98e42b2a681128996ac07eb001d994133d90",
+    "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "7c705dfb4560a16ce843e71230e41e1f11ac5fe114d3a9c882253fe05b0b77f0",
+    "WAM_TEST_BACKGROUND": "1",
+    "WAM_TEST_MUTED": "1",
+    "WAM_TEST_GEOMETRY": "480x270+2400+1000",
+    "WAM_PLAYBACK_METRICS_PATH": "/private/tmp/wam-phase2f/late-mixed-after/metrics.jsonl",
+    "WAM_PLAYBACK_METRICS_INTERVAL_MS": "100",
+    "WAM_TEST_QUIT_AFTER_MS": "47000"
+  },
+  "failures": [],
+  "last_sample": {
+    "record": "playback_sample",
+    "session_epoch": 1788803843443336000,
+    "t_mono_ns": 503772026620000,
+    "media_seconds": 41.560744125,
+    "drawn_frames": 979,
+    "submitted_frames": 979,
+    "superseded_frames": 0,
+    "discarded_late_frames": 8,
+    "audio_underrun_callbacks": 1,
+    "audio_clock_advanced_underruns": 0,
+    "audio_retired_late_frames": 0,
+    "audio_callbacks": 2080,
+    "audio_rendered_frames": 1995408,
+    "clock_rate": 0.9999999999996073,
+    "paused": false
+  }
+}

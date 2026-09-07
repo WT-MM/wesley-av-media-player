@@ -1,0 +1,23 @@
+[
+  {
+    "phase": "fixed",
+    "rc": 0,
+    "stdout": "software packet geometry and unqualified DTS extension refusal passed\n",
+    "stderr": "",
+    "source_sha256": "16fcf312122459dfe73a98ff3aac48f6856d18839aa0c9319347fe52a5ccf9db"
+  },
+  {
+    "phase": "core-only-mutant",
+    "rc": 7,
+    "stdout": "",
+    "stderr": "",
+    "source_sha256": "f27e1ed3dd56959b92c9c954abe0c9f37cf41cad46553b7047643041df83ed8f"
+  },
+  {
+    "phase": "restored",
+    "rc": 0,
+    "stdout": "software packet geometry and unqualified DTS extension refusal passed\n",
+    "stderr": "",
+    "source_sha256": "16fcf312122459dfe73a98ff3aac48f6856d18839aa0c9319347fe52a5ccf9db"
+  }
+]

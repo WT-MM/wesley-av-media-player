@@ -1,0 +1,685 @@
+{
+  "files": 845,
+  "roots": [
+    "/Users/wesleymaa/Movies",
+    "/Users/wesleymaa/Downloads"
+  ],
+  "extensions": {
+    ".mov": 154,
+    ".mkv": 5,
+    ".m4a": 2,
+    ".mp4": 679,
+    ".webm": 4,
+    ".m4v": 1
+  },
+  "probe_errors": [
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_mobile_cabinet/videos/observation.images.cam_high_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xc7cc3c000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_mobile_cabinet/videos/observation.images.cam_high_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_mobile_cabinet/videos/observation.images.cam_left_wrist_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xa74c3c000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_mobile_cabinet/videos/observation.images.cam_left_wrist_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_mobile_cabinet/videos/observation.images.cam_right_wrist_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x86cc3c000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_mobile_cabinet/videos/observation.images.cam_right_wrist_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_mobile_chair/videos/observation.images.cam_high_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x730c34000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_mobile_chair/videos/observation.images.cam_high_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_mobile_chair/videos/observation.images.cam_left_wrist_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xb22c3c000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_mobile_chair/videos/observation.images.cam_left_wrist_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_mobile_chair/videos/observation.images.cam_right_wrist_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xb97010000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_mobile_chair/videos/observation.images.cam_right_wrist_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_mobile_elevator/videos/observation.images.cam_high_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xaeec38000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_mobile_elevator/videos/observation.images.cam_high_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_mobile_elevator/videos/observation.images.cam_left_wrist_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x91ac3c000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_mobile_elevator/videos/observation.images.cam_left_wrist_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_mobile_elevator/videos/observation.images.cam_right_wrist_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x89ec34000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_mobile_elevator/videos/observation.images.cam_right_wrist_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_mobile_shrimp/videos/observation.images.cam_high_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x8fec38000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_mobile_shrimp/videos/observation.images.cam_high_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_mobile_shrimp/videos/observation.images.cam_left_wrist_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x9b8c38000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_mobile_shrimp/videos/observation.images.cam_left_wrist_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_mobile_shrimp/videos/observation.images.cam_right_wrist_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xb34c38000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_mobile_shrimp/videos/observation.images.cam_right_wrist_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_mobile_wash_pan/videos/observation.images.cam_high_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x7dcc34000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_mobile_wash_pan/videos/observation.images.cam_high_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_mobile_wash_pan/videos/observation.images.cam_left_wrist_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xa92c3c000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_mobile_wash_pan/videos/observation.images.cam_left_wrist_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_mobile_wash_pan/videos/observation.images.cam_right_wrist_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x72ec34000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_mobile_wash_pan/videos/observation.images.cam_right_wrist_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_mobile_wipe_wine/videos/observation.images.cam_high_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x72b010000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_mobile_wipe_wine/videos/observation.images.cam_high_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_mobile_wipe_wine/videos/observation.images.cam_left_wrist_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x70ac3c000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_mobile_wipe_wine/videos/observation.images.cam_left_wrist_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_mobile_wipe_wine/videos/observation.images.cam_right_wrist_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x9bb010000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_mobile_wipe_wine/videos/observation.images.cam_right_wrist_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_sim_insertion_human/videos/observation.images.top_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x7c6c3c000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_sim_insertion_human/videos/observation.images.top_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_sim_insertion_scripted/videos/observation.images.top_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xbc4c34000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_sim_insertion_scripted/videos/observation.images.top_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_sim_transfer_cube_human/videos/observation.images.top_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x9aac34000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_sim_transfer_cube_human/videos/observation.images.top_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_sim_transfer_cube_scripted/videos/observation.images.top_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xb11010000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_sim_transfer_cube_scripted/videos/observation.images.top_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_battery/videos/observation.images.cam_high_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x8b9010000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_battery/videos/observation.images.cam_high_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_battery/videos/observation.images.cam_left_wrist_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xa66c34000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_battery/videos/observation.images.cam_left_wrist_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_battery/videos/observation.images.cam_low_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x7bcc38000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_battery/videos/observation.images.cam_low_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_battery/videos/observation.images.cam_right_wrist_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xa21010000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_battery/videos/observation.images.cam_right_wrist_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_candy/videos/observation.images.cam_high_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x956c38000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_candy/videos/observation.images.cam_high_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_candy/videos/observation.images.cam_left_wrist_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xc2ec34000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_candy/videos/observation.images.cam_left_wrist_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_candy/videos/observation.images.cam_low_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x92ec3c000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_candy/videos/observation.images.cam_low_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_candy/videos/observation.images.cam_right_wrist_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x7f7010000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_candy/videos/observation.images.cam_right_wrist_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_coffee/videos/observation.images.cam_high_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xc5f010000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_coffee/videos/observation.images.cam_high_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_coffee/videos/observation.images.cam_left_wrist_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x84c82c000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_coffee/videos/observation.images.cam_left_wrist_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_coffee/videos/observation.images.cam_low_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xbe6c3c000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_coffee/videos/observation.images.cam_low_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_coffee/videos/observation.images.cam_right_wrist_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xc94c34000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_coffee/videos/observation.images.cam_right_wrist_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_coffee_new/videos/observation.images.cam_high_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xc5cc38000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_coffee_new/videos/observation.images.cam_high_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_coffee_new/videos/observation.images.cam_left_wrist_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xbd0c34000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_coffee_new/videos/observation.images.cam_left_wrist_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_coffee_new/videos/observation.images.cam_low_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x820c3c000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_coffee_new/videos/observation.images.cam_low_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_coffee_new/videos/observation.images.cam_right_wrist_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x712c3c000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_coffee_new/videos/observation.images.cam_right_wrist_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_cups_open/videos/observation.images.cam_high_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x72ac34000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_cups_open/videos/observation.images.cam_high_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_cups_open/videos/observation.images.cam_left_wrist_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x7b6c38000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_cups_open/videos/observation.images.cam_left_wrist_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_cups_open/videos/observation.images.cam_low_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xcbb010000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_cups_open/videos/observation.images.cam_low_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_cups_open/videos/observation.images.cam_right_wrist_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xc58c3c000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_cups_open/videos/observation.images.cam_right_wrist_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_fork_pick_up/videos/observation.images.cam_high_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xb3d010000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_fork_pick_up/videos/observation.images.cam_high_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_fork_pick_up/videos/observation.images.cam_left_wrist_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x966c34000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_fork_pick_up/videos/observation.images.cam_left_wrist_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_fork_pick_up/videos/observation.images.cam_low_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x99cc34000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_fork_pick_up/videos/observation.images.cam_low_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_fork_pick_up/videos/observation.images.cam_right_wrist_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xc91010000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_fork_pick_up/videos/observation.images.cam_right_wrist_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_pingpong_test/videos/observation.images.cam_high_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x839010000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_pingpong_test/videos/observation.images.cam_high_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_pingpong_test/videos/observation.images.cam_left_wrist_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x7e4c38000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_pingpong_test/videos/observation.images.cam_left_wrist_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_pingpong_test/videos/observation.images.cam_low_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x766c3c000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_pingpong_test/videos/observation.images.cam_low_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_pingpong_test/videos/observation.images.cam_right_wrist_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x893010000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_pingpong_test/videos/observation.images.cam_right_wrist_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_pro_pencil/videos/observation.images.cam_high_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x7d1010000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_pro_pencil/videos/observation.images.cam_high_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_pro_pencil/videos/observation.images.cam_left_wrist_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x9b8c38000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_pro_pencil/videos/observation.images.cam_left_wrist_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_pro_pencil/videos/observation.images.cam_low_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x7b9010000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_pro_pencil/videos/observation.images.cam_low_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_pro_pencil/videos/observation.images.cam_right_wrist_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x8e4c3c000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_pro_pencil/videos/observation.images.cam_right_wrist_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_screw_driver/videos/observation.images.cam_high_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xb5cc38000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_screw_driver/videos/observation.images.cam_high_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_screw_driver/videos/observation.images.cam_left_wrist_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x96d010000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_screw_driver/videos/observation.images.cam_left_wrist_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_screw_driver/videos/observation.images.cam_low_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x76ac3c000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_screw_driver/videos/observation.images.cam_low_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_screw_driver/videos/observation.images.cam_right_wrist_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xae3010000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_screw_driver/videos/observation.images.cam_right_wrist_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_tape/videos/observation.images.cam_high_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x708c3c000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_tape/videos/observation.images.cam_high_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_tape/videos/observation.images.cam_left_wrist_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x7c8c38000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_tape/videos/observation.images.cam_left_wrist_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_tape/videos/observation.images.cam_low_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x920c38000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_tape/videos/observation.images.cam_low_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_tape/videos/observation.images.cam_right_wrist_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xb94c34000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_tape/videos/observation.images.cam_right_wrist_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_thread_velcro/videos/observation.images.cam_high_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xc04c38000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_thread_velcro/videos/observation.images.cam_high_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_thread_velcro/videos/observation.images.cam_left_wrist_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xb34c3c000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_thread_velcro/videos/observation.images.cam_left_wrist_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_thread_velcro/videos/observation.images.cam_low_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x938c3c000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_thread_velcro/videos/observation.images.cam_low_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_thread_velcro/videos/observation.images.cam_right_wrist_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xb9cc38000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_thread_velcro/videos/observation.images.cam_right_wrist_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_towel/videos/observation.images.cam_high_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xaa2c3c000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_towel/videos/observation.images.cam_high_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_towel/videos/observation.images.cam_left_wrist_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x8f1010000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_towel/videos/observation.images.cam_left_wrist_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_towel/videos/observation.images.cam_low_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x70ac34000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_towel/videos/observation.images.cam_low_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_towel/videos/observation.images.cam_right_wrist_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x7e8c38000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_towel/videos/observation.images.cam_right_wrist_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_vinh_cup/videos/observation.images.cam_high_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x80b010000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_vinh_cup/videos/observation.images.cam_high_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_vinh_cup/videos/observation.images.cam_left_wrist_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x9fec34000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_vinh_cup/videos/observation.images.cam_left_wrist_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_vinh_cup/videos/observation.images.cam_low_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xbbac38000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_vinh_cup/videos/observation.images.cam_low_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_vinh_cup/videos/observation.images.cam_right_wrist_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xc8ac3c000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_vinh_cup/videos/observation.images.cam_right_wrist_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_vinh_cup_left/videos/observation.images.cam_high_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xa94c3c000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_vinh_cup_left/videos/observation.images.cam_high_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_vinh_cup_left/videos/observation.images.cam_left_wrist_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xb78c3c000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_vinh_cup_left/videos/observation.images.cam_left_wrist_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_vinh_cup_left/videos/observation.images.cam_low_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xb4ec34000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_vinh_cup_left/videos/observation.images.cam_low_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_vinh_cup_left/videos/observation.images.cam_right_wrist_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xaa4c38000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_vinh_cup_left/videos/observation.images.cam_right_wrist_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_ziploc_slide/videos/observation.images.cam_high_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xb69010000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_ziploc_slide/videos/observation.images.cam_high_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_ziploc_slide/videos/observation.images.cam_left_wrist_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xae4c38000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_ziploc_slide/videos/observation.images.cam_left_wrist_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_ziploc_slide/videos/observation.images.cam_low_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x823010000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_ziploc_slide/videos/observation.images.cam_low_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_ziploc_slide/videos/observation.images.cam_right_wrist_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xc38c38000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/aloha_static_ziploc_slide/videos/observation.images.cam_right_wrist_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/pusht/videos/observation.image_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x93cc38000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/pusht/videos/observation.image_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/umi_cup_in_the_wild/videos/observation.image_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x964c34000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/umi_cup_in_the_wild/videos/observation.image_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/unitreeh1_fold_clothes/videos/observation.images.cam_left_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xc88c38000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/unitreeh1_fold_clothes/videos/observation.images.cam_left_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/unitreeh1_fold_clothes/videos/observation.images.cam_right_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x972c38000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/unitreeh1_fold_clothes/videos/observation.images.cam_right_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/unitreeh1_rearrange_objects/videos/observation.images.cam_left_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xbcac3c000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/unitreeh1_rearrange_objects/videos/observation.images.cam_left_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/unitreeh1_rearrange_objects/videos/observation.images.cam_right_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xb22c38000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/unitreeh1_rearrange_objects/videos/observation.images.cam_right_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/unitreeh1_two_robot_greeting/videos/observation.images.cam_left_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x79cc38000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/unitreeh1_two_robot_greeting/videos/observation.images.cam_left_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/unitreeh1_two_robot_greeting/videos/observation.images.cam_right_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xcb4c3c000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/unitreeh1_two_robot_greeting/videos/observation.images.cam_right_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/unitreeh1_warehouse/videos/observation.images.cam_left_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xc28c38000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/unitreeh1_warehouse/videos/observation.images.cam_left_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/unitreeh1_warehouse/videos/observation.images.cam_right_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x7c2c38000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/unitreeh1_warehouse/videos/observation.images.cam_right_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/xarm_lift_medium/videos/observation.image_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xb7cc34000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/xarm_lift_medium/videos/observation.image_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/xarm_lift_medium_replay/videos/observation.image_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x7a3010000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/xarm_lift_medium_replay/videos/observation.image_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/xarm_push_medium/videos/observation.image_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x767010000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/xarm_push_medium/videos/observation.image_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/xarm_push_medium_replay/videos/observation.image_episode_000000.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x826c38000] moov atom not found\n/Users/wesleymaa/Downloads/K-Scale/reading/vla/data/lerobot/tests/data/lerobot/xarm_push_medium_replay/videos/observation.image_episode_000000.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/NUS2023/thisorthatai/thisorthatai/node_modules/shaka-player/test/test/assets/cea-segment.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x780c38000] trun track id unknown, no tfhd was found\n[mov,mp4,m4a,3gp,3g2,mj2 @ 0x780c38000] error reading header\n/Users/wesleymaa/Downloads/NUS2023/thisorthatai/thisorthatai/node_modules/shaka-player/test/test/assets/cea-segment.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/NUS2023/thisorthatai/thisorthatai/node_modules/shaka-player/test/test/assets/encrypted-sintel-audio-segment.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x904c38000] trun track id unknown, no tfhd was found\n[mov,mp4,m4a,3gp,3g2,mj2 @ 0x904c38000] error reading header\n/Users/wesleymaa/Downloads/NUS2023/thisorthatai/thisorthatai/node_modules/shaka-player/test/test/assets/encrypted-sintel-audio-segment.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/NUS2023/thisorthatai/thisorthatai/node_modules/shaka-player/test/test/assets/encrypted-sintel-video-segment.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x990c3c000] trun track id unknown, no tfhd was found\n[mov,mp4,m4a,3gp,3g2,mj2 @ 0x990c3c000] error reading header\n/Users/wesleymaa/Downloads/NUS2023/thisorthatai/thisorthatai/node_modules/shaka-player/test/test/assets/encrypted-sintel-video-segment.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/NUS2023/thisorthatai/thisorthatai/node_modules/shaka-player/test/test/assets/index-segment.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xc0ac38000] moov atom not found\n/Users/wesleymaa/Downloads/NUS2023/thisorthatai/thisorthatai/node_modules/shaka-player/test/test/assets/index-segment.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/NUS2023/thisorthatai/thisorthatai/node_modules/shaka-player/test/test/assets/index-segment.webm",
+      "rc": 1,
+      "facts": null,
+      "error": "[matroska,webm @ 0xc03010000] EBML header parsing failed\n/Users/wesleymaa/Downloads/NUS2023/thisorthatai/thisorthatai/node_modules/shaka-player/test/test/assets/index-segment.webm: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/NUS2023/thisorthatai/thisorthatai/node_modules/shaka-player/test/test/assets/multidrm-audio-segment.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xbe4c3c000] trun track id unknown, no tfhd was found\n[mov,mp4,m4a,3gp,3g2,mj2 @ 0xbe4c3c000] error reading header\n/Users/wesleymaa/Downloads/NUS2023/thisorthatai/thisorthatai/node_modules/shaka-player/test/test/assets/multidrm-audio-segment.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/NUS2023/thisorthatai/thisorthatai/node_modules/shaka-player/test/test/assets/multidrm-video-segment.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xc16c34000] trun track id unknown, no tfhd was found\n[mov,mp4,m4a,3gp,3g2,mj2 @ 0xc16c34000] error reading header\n/Users/wesleymaa/Downloads/NUS2023/thisorthatai/thisorthatai/node_modules/shaka-player/test/test/assets/multidrm-video-segment.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/NUS2023/thisorthatai/thisorthatai/node_modules/shaka-player/test/test/assets/sintel-audio-segment.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xbdcc38000] trun track id unknown, no tfhd was found\n[mov,mp4,m4a,3gp,3g2,mj2 @ 0xbdcc38000] error reading header\n/Users/wesleymaa/Downloads/NUS2023/thisorthatai/thisorthatai/node_modules/shaka-player/test/test/assets/sintel-audio-segment.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/NUS2023/thisorthatai/thisorthatai/node_modules/shaka-player/test/test/assets/sintel-video-segment.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xa59010000] trun track id unknown, no tfhd was found\n[mov,mp4,m4a,3gp,3g2,mj2 @ 0xa59010000] error reading header\n/Users/wesleymaa/Downloads/NUS2023/thisorthatai/thisorthatai/node_modules/shaka-player/test/test/assets/sintel-video-segment.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/NUS2023/thisorthatai/thisorthatai/node_modules/shaka-player/test/test/assets/ttml-segment-multiplemdat.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x71ec34000] trun track id unknown, no tfhd was found\n[mov,mp4,m4a,3gp,3g2,mj2 @ 0x71ec34000] error reading header\n/Users/wesleymaa/Downloads/NUS2023/thisorthatai/thisorthatai/node_modules/shaka-player/test/test/assets/ttml-segment-multiplemdat.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/NUS2023/thisorthatai/thisorthatai/node_modules/shaka-player/test/test/assets/ttml-segment.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xc5b010000] trun track id unknown, no tfhd was found\n[mov,mp4,m4a,3gp,3g2,mj2 @ 0xc5b010000] error reading header\n/Users/wesleymaa/Downloads/NUS2023/thisorthatai/thisorthatai/node_modules/shaka-player/test/test/assets/ttml-segment.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/NUS2023/thisorthatai/thisorthatai/node_modules/shaka-player/test/test/assets/vtt-segment-multi-payload.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x79d010000] trun track id unknown, no tfhd was found\n[mov,mp4,m4a,3gp,3g2,mj2 @ 0x79d010000] error reading header\n/Users/wesleymaa/Downloads/NUS2023/thisorthatai/thisorthatai/node_modules/shaka-player/test/test/assets/vtt-segment-multi-payload.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/NUS2023/thisorthatai/thisorthatai/node_modules/shaka-player/test/test/assets/vtt-segment-no-duration.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xa58c34000] trun track id unknown, no tfhd was found\n[mov,mp4,m4a,3gp,3g2,mj2 @ 0xa58c34000] error reading header\n/Users/wesleymaa/Downloads/NUS2023/thisorthatai/thisorthatai/node_modules/shaka-player/test/test/assets/vtt-segment-no-duration.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/NUS2023/thisorthatai/thisorthatai/node_modules/shaka-player/test/test/assets/vtt-segment-settings.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xbe8c3c000] trun track id unknown, no tfhd was found\n[mov,mp4,m4a,3gp,3g2,mj2 @ 0xbe8c3c000] error reading header\n/Users/wesleymaa/Downloads/NUS2023/thisorthatai/thisorthatai/node_modules/shaka-player/test/test/assets/vtt-segment-settings.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Downloads/NUS2023/thisorthatai/thisorthatai/node_modules/shaka-player/test/test/assets/vtt-segment.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x88cc34000] trun track id unknown, no tfhd was found\n[mov,mp4,m4a,3gp,3g2,mj2 @ 0x88cc34000] error reading header\n/Users/wesleymaa/Downloads/NUS2023/thisorthatai/thisorthatai/node_modules/shaka-player/test/test/assets/vtt-segment.mp4: Invalid data found when processing input\n"
+    }
+  ],
+  "dts_tracks": [],
+  "hd_ma_tracks": []
+}

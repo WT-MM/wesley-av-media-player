@@ -1,0 +1,482 @@
+[
+  {
+    "name": "limited-baseline",
+    "asset": "/private/tmp/wam-phase2f/capture-hardware-limited/baseline/bars.mkv",
+    "rc": 0,
+    "pid": 39456,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "28cc4086-193b-4d27-8d23-6b0fe16b9afe",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "e20c10eb47cd8b5e5260a3533aedfc8c4dc5eb74c1395767bd8c9e19c64d4d62",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "67999ffe77c1ebabe22a5b77310722a98046002545230856ee1a02acaff4e0a2",
+      "WAM_TEST_BACKGROUND": "1",
+      "WAM_TEST_MUTED": "1",
+      "WAM_TEST_GEOMETRY": "480x270+2400+1000",
+      "WAM_PLAYBACK_METRICS_PATH": "/private/tmp/wam-phase2f/paired-software/limited-baseline/metrics.jsonl",
+      "WAM_TEST_QUIT_AFTER_MS": "4000",
+      "WAM_TEST_WINDOW_SCRIPT": "pause:0@1300,report@200,grab:0:/private/tmp/wam-phase2f/paired-software/limited-baseline/scene.png@300,videograb:0:/private/tmp/wam-phase2f/paired-software/limited-baseline/display.png@300,report@400",
+      "WAM_TEST_NO_VIDEO_HARDWARE": "1"
+    },
+    "diagnostics": [
+      "WAM: native decoder stage=VideoToolboxSoftware codec=61766331",
+      "WAM_TEST_WINDOWS count=1",
+      "WAM_TEST_WINDOW idx=0 media=1 paused=1 playing=0 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=0.8901 dur=4.0000 chrome=0 vfeedback=0 vnat=640x360 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=0.000 nsfs=0 vivid=0 vboost=1.000 hdr=0 edr=2.667 theater=0 dims=0 source=bars.mkv",
+      "WAM_TEST_SUBTITLES idx=0 active=-1 visible=0 count=0 text=[] tracks=[] bitmap=0 bitmaprect=0.0000,0.0000,0.0000,0.0000",
+      "WAM_TEST_GRAB idx=0 size=960x540 saved=1 path=/private/tmp/wam-phase2f/paired-software/limited-baseline/scene.png",
+      "WAM_TEST_VIDEOGRAB idx=0 saved=1 path=/private/tmp/wam-phase2f/paired-software/limited-baseline/display.png",
+      "WAM_TEST_WINDOWS count=1",
+      "WAM_TEST_WINDOW idx=0 media=1 paused=1 playing=0 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=0.8901 dur=4.0000 chrome=0 vfeedback=0 vnat=640x360 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=0.000 nsfs=0 vivid=0 vboost=1.000 hdr=0 edr=2.667 theater=0 dims=0 source=bars.mkv",
+      "WAM_TEST_SUBTITLES idx=0 active=-1 visible=0 count=0 text=[] tracks=[] bitmap=0 bitmaprect=0.0000,0.0000,0.0000,0.0000"
+    ]
+  },
+  {
+    "name": "limited-asp",
+    "asset": "/private/tmp/wam-phase2f/capture-hardware-limited/asp/bars.mkv",
+    "rc": 0,
+    "pid": 40346,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "410b8f8d-b76b-4c0c-93f9-918cb6863038",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "f6549fe4c7aafa0703fd0d5841314d35fb21d7f3107bd39e26f0789dbf70a4cd",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "67999ffe77c1ebabe22a5b77310722a98046002545230856ee1a02acaff4e0a2",
+      "WAM_TEST_BACKGROUND": "1",
+      "WAM_TEST_MUTED": "1",
+      "WAM_TEST_GEOMETRY": "480x270+2400+1000",
+      "WAM_PLAYBACK_METRICS_PATH": "/private/tmp/wam-phase2f/paired-software/limited-asp/metrics.jsonl",
+      "WAM_TEST_QUIT_AFTER_MS": "4000",
+      "WAM_TEST_WINDOW_SCRIPT": "pause:0@1300,report@200,grab:0:/private/tmp/wam-phase2f/paired-software/limited-asp/scene.png@300,videograb:0:/private/tmp/wam-phase2f/paired-software/limited-asp/display.png@300,report@400",
+      "WAM_TEST_NO_VIDEO_HARDWARE": "1"
+    },
+    "diagnostics": [
+      "WAM: native decoder stage=Libavcodec codec=6d703476",
+      "WAM_TEST_WINDOWS count=1",
+      "WAM_TEST_WINDOW idx=0 media=1 paused=1 playing=0 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=0.9080 dur=4.0000 chrome=0 vfeedback=0 vnat=640x360 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=0.000 nsfs=0 vivid=0 vboost=1.000 hdr=0 edr=2.667 theater=0 dims=0 source=bars.mkv",
+      "WAM_TEST_SUBTITLES idx=0 active=-1 visible=0 count=0 text=[] tracks=[] bitmap=0 bitmaprect=0.0000,0.0000,0.0000,0.0000",
+      "WAM_TEST_GRAB idx=0 size=960x540 saved=1 path=/private/tmp/wam-phase2f/paired-software/limited-asp/scene.png",
+      "WAM_TEST_VIDEOGRAB idx=0 saved=1 path=/private/tmp/wam-phase2f/paired-software/limited-asp/display.png",
+      "WAM_TEST_WINDOWS count=1",
+      "WAM_TEST_WINDOW idx=0 media=1 paused=1 playing=0 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=0.9080 dur=4.0000 chrome=0 vfeedback=0 vnat=640x360 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=0.000 nsfs=0 vivid=0 vboost=1.000 hdr=0 edr=2.667 theater=0 dims=0 source=bars.mkv",
+      "WAM_TEST_SUBTITLES idx=0 active=-1 visible=0 count=0 text=[] tracks=[] bitmap=0 bitmaprect=0.0000,0.0000,0.0000,0.0000"
+    ]
+  },
+  {
+    "name": "limited-hi10p",
+    "asset": "/private/tmp/wam-phase2f/capture-hardware-limited/hi10p/bars.mkv",
+    "rc": 0,
+    "pid": 41076,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "2ee2d5e9-1ed0-4fbe-8856-85944a369f8b",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "838d8cb2f6906d7fa00a546f9c51acd6119f1d457de1a9b2d2306e20c999e707",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "67999ffe77c1ebabe22a5b77310722a98046002545230856ee1a02acaff4e0a2",
+      "WAM_TEST_BACKGROUND": "1",
+      "WAM_TEST_MUTED": "1",
+      "WAM_TEST_GEOMETRY": "480x270+2400+1000",
+      "WAM_PLAYBACK_METRICS_PATH": "/private/tmp/wam-phase2f/paired-software/limited-hi10p/metrics.jsonl",
+      "WAM_TEST_QUIT_AFTER_MS": "4000",
+      "WAM_TEST_WINDOW_SCRIPT": "pause:0@1300,report@200,grab:0:/private/tmp/wam-phase2f/paired-software/limited-hi10p/scene.png@300,videograb:0:/private/tmp/wam-phase2f/paired-software/limited-hi10p/display.png@300,report@400",
+      "WAM_TEST_NO_VIDEO_HARDWARE": "1"
+    },
+    "diagnostics": [
+      "WAM: native decoder stage=Libavcodec codec=61766331",
+      "WAM_TEST_WINDOWS count=1",
+      "WAM_TEST_WINDOW idx=0 media=1 paused=1 playing=0 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=1.0503 dur=4.0000 chrome=0 vfeedback=0 vnat=640x360 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=0.000 nsfs=0 vivid=0 vboost=1.000 hdr=0 edr=2.667 theater=0 dims=0 source=bars.mkv",
+      "WAM_TEST_SUBTITLES idx=0 active=-1 visible=0 count=0 text=[] tracks=[] bitmap=0 bitmaprect=0.0000,0.0000,0.0000,0.0000",
+      "WAM_TEST_GRAB idx=0 size=960x540 saved=1 path=/private/tmp/wam-phase2f/paired-software/limited-hi10p/scene.png",
+      "WAM_TEST_VIDEOGRAB idx=0 saved=1 path=/private/tmp/wam-phase2f/paired-software/limited-hi10p/display.png",
+      "WAM_TEST_WINDOWS count=1",
+      "WAM_TEST_WINDOW idx=0 media=1 paused=1 playing=0 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=1.0503 dur=4.0000 chrome=0 vfeedback=0 vnat=640x360 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=0.000 nsfs=0 vivid=0 vboost=1.000 hdr=0 edr=2.667 theater=0 dims=0 source=bars.mkv",
+      "WAM_TEST_SUBTITLES idx=0 active=-1 visible=0 count=0 text=[] tracks=[] bitmap=0 bitmaprect=0.0000,0.0000,0.0000,0.0000"
+    ]
+  },
+  {
+    "name": "limited-h264422",
+    "asset": "/private/tmp/wam-phase2f/capture-hardware-limited/h264422/bars.mkv",
+    "rc": 0,
+    "pid": 41928,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "f97bec0b-2ef8-4fcb-837a-5e566ddd2f4c",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "4411bf692b975581ce3b9bd8b4eab3d566b481575c1a22cbe68beda7f8cd89d2",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "67999ffe77c1ebabe22a5b77310722a98046002545230856ee1a02acaff4e0a2",
+      "WAM_TEST_BACKGROUND": "1",
+      "WAM_TEST_MUTED": "1",
+      "WAM_TEST_GEOMETRY": "480x270+2400+1000",
+      "WAM_PLAYBACK_METRICS_PATH": "/private/tmp/wam-phase2f/paired-software/limited-h264422/metrics.jsonl",
+      "WAM_TEST_QUIT_AFTER_MS": "4000",
+      "WAM_TEST_WINDOW_SCRIPT": "pause:0@1300,report@200,grab:0:/private/tmp/wam-phase2f/paired-software/limited-h264422/scene.png@300,videograb:0:/private/tmp/wam-phase2f/paired-software/limited-h264422/display.png@300,report@400",
+      "WAM_TEST_NO_VIDEO_HARDWARE": "1"
+    },
+    "diagnostics": [
+      "WAM: native decoder stage=Libavcodec codec=61766331",
+      "WAM_TEST_WINDOWS count=1",
+      "WAM_TEST_WINDOW idx=0 media=1 paused=1 playing=0 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=1.0601 dur=4.0000 chrome=0 vfeedback=0 vnat=640x360 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=0.000 nsfs=0 vivid=0 vboost=1.000 hdr=0 edr=2.667 theater=0 dims=0 source=bars.mkv",
+      "WAM_TEST_SUBTITLES idx=0 active=-1 visible=0 count=0 text=[] tracks=[] bitmap=0 bitmaprect=0.0000,0.0000,0.0000,0.0000",
+      "WAM_TEST_GRAB idx=0 size=960x540 saved=1 path=/private/tmp/wam-phase2f/paired-software/limited-h264422/scene.png",
+      "WAM_TEST_VIDEOGRAB idx=0 saved=1 path=/private/tmp/wam-phase2f/paired-software/limited-h264422/display.png",
+      "WAM_TEST_WINDOWS count=1",
+      "WAM_TEST_WINDOW idx=0 media=1 paused=1 playing=0 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=1.0601 dur=4.0000 chrome=0 vfeedback=0 vnat=640x360 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=0.000 nsfs=0 vivid=0 vboost=1.000 hdr=0 edr=2.667 theater=0 dims=0 source=bars.mkv",
+      "WAM_TEST_SUBTITLES idx=0 active=-1 visible=0 count=0 text=[] tracks=[] bitmap=0 bitmaprect=0.0000,0.0000,0.0000,0.0000"
+    ]
+  },
+  {
+    "name": "limited-vp9",
+    "asset": "/private/tmp/wam-phase2f/capture-hardware-limited/vp9/bars.mkv",
+    "rc": 0,
+    "pid": 42859,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "026f644c-0671-4b94-860b-9525363e0a64",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "63439129605b0e8904b2427dda17d5936fddd4ced380ea31af986b84ff41d673",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "67999ffe77c1ebabe22a5b77310722a98046002545230856ee1a02acaff4e0a2",
+      "WAM_TEST_BACKGROUND": "1",
+      "WAM_TEST_MUTED": "1",
+      "WAM_TEST_GEOMETRY": "480x270+2400+1000",
+      "WAM_PLAYBACK_METRICS_PATH": "/private/tmp/wam-phase2f/paired-software/limited-vp9/metrics.jsonl",
+      "WAM_TEST_QUIT_AFTER_MS": "4000",
+      "WAM_TEST_WINDOW_SCRIPT": "pause:0@1300,report@200,grab:0:/private/tmp/wam-phase2f/paired-software/limited-vp9/scene.png@300,videograb:0:/private/tmp/wam-phase2f/paired-software/limited-vp9/display.png@300,report@400",
+      "WAM_TEST_NO_VIDEO_HARDWARE": "1"
+    },
+    "diagnostics": [
+      "WAM: native decoder stage=Libavcodec codec=76703039",
+      "WAM_TEST_WINDOWS count=1",
+      "WAM_TEST_WINDOW idx=0 media=1 paused=1 playing=0 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=0.9695 dur=4.0000 chrome=0 vfeedback=0 vnat=640x360 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=0.000 nsfs=0 vivid=0 vboost=1.000 hdr=0 edr=2.667 theater=0 dims=0 source=bars.mkv",
+      "WAM_TEST_SUBTITLES idx=0 active=-1 visible=0 count=0 text=[] tracks=[] bitmap=0 bitmaprect=0.0000,0.0000,0.0000,0.0000",
+      "WAM_TEST_GRAB idx=0 size=960x540 saved=1 path=/private/tmp/wam-phase2f/paired-software/limited-vp9/scene.png",
+      "WAM_TEST_VIDEOGRAB idx=0 saved=1 path=/private/tmp/wam-phase2f/paired-software/limited-vp9/display.png",
+      "WAM_TEST_WINDOWS count=1",
+      "WAM_TEST_WINDOW idx=0 media=1 paused=1 playing=0 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=0.9695 dur=4.0000 chrome=0 vfeedback=0 vnat=640x360 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=0.000 nsfs=0 vivid=0 vboost=1.000 hdr=0 edr=2.667 theater=0 dims=0 source=bars.mkv",
+      "WAM_TEST_SUBTITLES idx=0 active=-1 visible=0 count=0 text=[] tracks=[] bitmap=0 bitmaprect=0.0000,0.0000,0.0000,0.0000"
+    ]
+  },
+  {
+    "name": "limited-vp9p2",
+    "asset": "/private/tmp/wam-phase2f/capture-hardware-limited/vp9p2/bars.mkv",
+    "rc": 0,
+    "pid": 43721,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "612b4466-cd22-4c21-90ca-910bacedcdef",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "042f3dccd5051193065c4e011923b037fad3a20e600b8ff0b1d73095011e7396",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "67999ffe77c1ebabe22a5b77310722a98046002545230856ee1a02acaff4e0a2",
+      "WAM_TEST_BACKGROUND": "1",
+      "WAM_TEST_MUTED": "1",
+      "WAM_TEST_GEOMETRY": "480x270+2400+1000",
+      "WAM_PLAYBACK_METRICS_PATH": "/private/tmp/wam-phase2f/paired-software/limited-vp9p2/metrics.jsonl",
+      "WAM_TEST_QUIT_AFTER_MS": "4000",
+      "WAM_TEST_WINDOW_SCRIPT": "pause:0@1300,report@200,grab:0:/private/tmp/wam-phase2f/paired-software/limited-vp9p2/scene.png@300,videograb:0:/private/tmp/wam-phase2f/paired-software/limited-vp9p2/display.png@300,report@400",
+      "WAM_TEST_NO_VIDEO_HARDWARE": "1"
+    },
+    "diagnostics": [
+      "WAM: native decoder stage=Libavcodec codec=76703039",
+      "WAM_TEST_WINDOWS count=1",
+      "WAM_TEST_WINDOW idx=0 media=1 paused=1 playing=0 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=1.0718 dur=4.0000 chrome=0 vfeedback=0 vnat=640x360 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=0.000 nsfs=0 vivid=0 vboost=1.000 hdr=0 edr=2.667 theater=0 dims=0 source=bars.mkv",
+      "WAM_TEST_SUBTITLES idx=0 active=-1 visible=0 count=0 text=[] tracks=[] bitmap=0 bitmaprect=0.0000,0.0000,0.0000,0.0000",
+      "WAM_TEST_GRAB idx=0 size=960x540 saved=1 path=/private/tmp/wam-phase2f/paired-software/limited-vp9p2/scene.png",
+      "WAM_TEST_VIDEOGRAB idx=0 saved=1 path=/private/tmp/wam-phase2f/paired-software/limited-vp9p2/display.png",
+      "WAM_TEST_WINDOWS count=1",
+      "WAM_TEST_WINDOW idx=0 media=1 paused=1 playing=0 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=1.0718 dur=4.0000 chrome=0 vfeedback=0 vnat=640x360 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=0.000 nsfs=0 vivid=0 vboost=1.000 hdr=0 edr=2.667 theater=0 dims=0 source=bars.mkv",
+      "WAM_TEST_SUBTITLES idx=0 active=-1 visible=0 count=0 text=[] tracks=[] bitmap=0 bitmaprect=0.0000,0.0000,0.0000,0.0000"
+    ]
+  },
+  {
+    "name": "full-baseline",
+    "asset": "/private/tmp/wam-phase2f/capture-hardware-full/baseline/bars.mkv",
+    "rc": 0,
+    "pid": 44724,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "76e46c8b-8127-4833-82c0-fd1013169649",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "a72cbbcd325902ededa144b192b2d41d9a74ac42081235391cd7e923a75e901f",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "67999ffe77c1ebabe22a5b77310722a98046002545230856ee1a02acaff4e0a2",
+      "WAM_TEST_BACKGROUND": "1",
+      "WAM_TEST_MUTED": "1",
+      "WAM_TEST_GEOMETRY": "480x270+2400+1000",
+      "WAM_PLAYBACK_METRICS_PATH": "/private/tmp/wam-phase2f/paired-software/full-baseline/metrics.jsonl",
+      "WAM_TEST_QUIT_AFTER_MS": "4000",
+      "WAM_TEST_WINDOW_SCRIPT": "pause:0@1300,report@200,grab:0:/private/tmp/wam-phase2f/paired-software/full-baseline/scene.png@300,videograb:0:/private/tmp/wam-phase2f/paired-software/full-baseline/display.png@300,report@400",
+      "WAM_TEST_NO_VIDEO_HARDWARE": "1"
+    },
+    "diagnostics": [
+      "WAM: native decoder stage=VideoToolboxSoftware codec=61766331",
+      "WAM_TEST_WINDOWS count=1",
+      "WAM_TEST_WINDOW idx=0 media=1 paused=1 playing=0 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=0.9416 dur=4.0000 chrome=0 vfeedback=0 vnat=640x360 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=0.000 nsfs=0 vivid=0 vboost=1.000 hdr=0 edr=2.667 theater=0 dims=0 source=bars.mkv",
+      "WAM_TEST_SUBTITLES idx=0 active=-1 visible=0 count=0 text=[] tracks=[] bitmap=0 bitmaprect=0.0000,0.0000,0.0000,0.0000",
+      "WAM_TEST_GRAB idx=0 size=960x540 saved=1 path=/private/tmp/wam-phase2f/paired-software/full-baseline/scene.png",
+      "WAM_TEST_VIDEOGRAB idx=0 saved=1 path=/private/tmp/wam-phase2f/paired-software/full-baseline/display.png",
+      "WAM_TEST_WINDOWS count=1",
+      "WAM_TEST_WINDOW idx=0 media=1 paused=1 playing=0 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=0.9416 dur=4.0000 chrome=0 vfeedback=0 vnat=640x360 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=0.000 nsfs=0 vivid=0 vboost=1.000 hdr=0 edr=2.667 theater=0 dims=0 source=bars.mkv",
+      "WAM_TEST_SUBTITLES idx=0 active=-1 visible=0 count=0 text=[] tracks=[] bitmap=0 bitmaprect=0.0000,0.0000,0.0000,0.0000"
+    ]
+  },
+  {
+    "name": "full-asp",
+    "asset": "/private/tmp/wam-phase2f/capture-hardware-full/asp/bars.mkv",
+    "rc": 0,
+    "pid": 45638,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "609f395a-8524-40f8-a28a-c45f834e3a0e",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "46012d0974e5766e1ac95c3c9f7403d15ec35e10c4b19017218bda73d3fd8108",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "67999ffe77c1ebabe22a5b77310722a98046002545230856ee1a02acaff4e0a2",
+      "WAM_TEST_BACKGROUND": "1",
+      "WAM_TEST_MUTED": "1",
+      "WAM_TEST_GEOMETRY": "480x270+2400+1000",
+      "WAM_PLAYBACK_METRICS_PATH": "/private/tmp/wam-phase2f/paired-software/full-asp/metrics.jsonl",
+      "WAM_TEST_QUIT_AFTER_MS": "4000",
+      "WAM_TEST_WINDOW_SCRIPT": "pause:0@1300,report@200,grab:0:/private/tmp/wam-phase2f/paired-software/full-asp/scene.png@300,videograb:0:/private/tmp/wam-phase2f/paired-software/full-asp/display.png@300,report@400",
+      "WAM_TEST_NO_VIDEO_HARDWARE": "1"
+    },
+    "diagnostics": [
+      "WAM: native decoder stage=Libavcodec codec=6d703476",
+      "WAM_TEST_WINDOWS count=1",
+      "WAM_TEST_WINDOW idx=0 media=1 paused=1 playing=0 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=1.0181 dur=4.0000 chrome=0 vfeedback=0 vnat=640x360 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=0.000 nsfs=0 vivid=0 vboost=1.000 hdr=0 edr=2.667 theater=0 dims=0 source=bars.mkv",
+      "WAM_TEST_SUBTITLES idx=0 active=-1 visible=0 count=0 text=[] tracks=[] bitmap=0 bitmaprect=0.0000,0.0000,0.0000,0.0000",
+      "WAM_TEST_GRAB idx=0 size=960x540 saved=1 path=/private/tmp/wam-phase2f/paired-software/full-asp/scene.png",
+      "WAM_TEST_VIDEOGRAB idx=0 saved=1 path=/private/tmp/wam-phase2f/paired-software/full-asp/display.png",
+      "WAM_TEST_WINDOWS count=1",
+      "WAM_TEST_WINDOW idx=0 media=1 paused=1 playing=0 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=1.0181 dur=4.0000 chrome=0 vfeedback=0 vnat=640x360 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=0.000 nsfs=0 vivid=0 vboost=1.000 hdr=0 edr=2.667 theater=0 dims=0 source=bars.mkv",
+      "WAM_TEST_SUBTITLES idx=0 active=-1 visible=0 count=0 text=[] tracks=[] bitmap=0 bitmaprect=0.0000,0.0000,0.0000,0.0000"
+    ]
+  },
+  {
+    "name": "full-hi10p",
+    "asset": "/private/tmp/wam-phase2f/capture-hardware-full/hi10p/bars.mkv",
+    "rc": 0,
+    "pid": 46582,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "212e7072-5179-490a-8e64-a6d573aac63e",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "384417999cb7decd0bd4ce61b120352b8f00d76cd98e738a15440c620a1f9922",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "67999ffe77c1ebabe22a5b77310722a98046002545230856ee1a02acaff4e0a2",
+      "WAM_TEST_BACKGROUND": "1",
+      "WAM_TEST_MUTED": "1",
+      "WAM_TEST_GEOMETRY": "480x270+2400+1000",
+      "WAM_PLAYBACK_METRICS_PATH": "/private/tmp/wam-phase2f/paired-software/full-hi10p/metrics.jsonl",
+      "WAM_TEST_QUIT_AFTER_MS": "4000",
+      "WAM_TEST_WINDOW_SCRIPT": "pause:0@1300,report@200,grab:0:/private/tmp/wam-phase2f/paired-software/full-hi10p/scene.png@300,videograb:0:/private/tmp/wam-phase2f/paired-software/full-hi10p/display.png@300,report@400",
+      "WAM_TEST_NO_VIDEO_HARDWARE": "1"
+    },
+    "diagnostics": [
+      "WAM: native decoder stage=Libavcodec codec=61766331",
+      "WAM_TEST_WINDOWS count=1",
+      "WAM_TEST_WINDOW idx=0 media=1 paused=1 playing=0 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=1.0088 dur=4.0000 chrome=0 vfeedback=0 vnat=640x360 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=0.000 nsfs=0 vivid=0 vboost=1.000 hdr=0 edr=2.667 theater=0 dims=0 source=bars.mkv",
+      "WAM_TEST_SUBTITLES idx=0 active=-1 visible=0 count=0 text=[] tracks=[] bitmap=0 bitmaprect=0.0000,0.0000,0.0000,0.0000",
+      "WAM_TEST_GRAB idx=0 size=960x540 saved=1 path=/private/tmp/wam-phase2f/paired-software/full-hi10p/scene.png",
+      "WAM_TEST_VIDEOGRAB idx=0 saved=1 path=/private/tmp/wam-phase2f/paired-software/full-hi10p/display.png",
+      "WAM_TEST_WINDOWS count=1",
+      "WAM_TEST_WINDOW idx=0 media=1 paused=1 playing=0 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=1.0088 dur=4.0000 chrome=0 vfeedback=0 vnat=640x360 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=0.000 nsfs=0 vivid=0 vboost=1.000 hdr=0 edr=2.667 theater=0 dims=0 source=bars.mkv",
+      "WAM_TEST_SUBTITLES idx=0 active=-1 visible=0 count=0 text=[] tracks=[] bitmap=0 bitmaprect=0.0000,0.0000,0.0000,0.0000"
+    ]
+  },
+  {
+    "name": "full-h264422",
+    "asset": "/private/tmp/wam-phase2f/capture-hardware-full/h264422/bars.mkv",
+    "rc": 0,
+    "pid": 47508,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "d8224a30-e8b3-48cd-97c0-ea2300ef4e6e",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "e6af34053264736ad5d6bbdadf04650e3e84681f679cd05893b8d07b0c561b36",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "67999ffe77c1ebabe22a5b77310722a98046002545230856ee1a02acaff4e0a2",
+      "WAM_TEST_BACKGROUND": "1",
+      "WAM_TEST_MUTED": "1",
+      "WAM_TEST_GEOMETRY": "480x270+2400+1000",
+      "WAM_PLAYBACK_METRICS_PATH": "/private/tmp/wam-phase2f/paired-software/full-h264422/metrics.jsonl",
+      "WAM_TEST_QUIT_AFTER_MS": "4000",
+      "WAM_TEST_WINDOW_SCRIPT": "pause:0@1300,report@200,grab:0:/private/tmp/wam-phase2f/paired-software/full-h264422/scene.png@300,videograb:0:/private/tmp/wam-phase2f/paired-software/full-h264422/display.png@300,report@400",
+      "WAM_TEST_NO_VIDEO_HARDWARE": "1"
+    },
+    "diagnostics": [
+      "WAM: native decoder stage=Libavcodec codec=61766331",
+      "WAM_TEST_WINDOWS count=1",
+      "WAM_TEST_WINDOW idx=0 media=1 paused=1 playing=0 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=0.9985 dur=4.0000 chrome=0 vfeedback=0 vnat=640x360 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=0.000 nsfs=0 vivid=0 vboost=1.000 hdr=0 edr=2.667 theater=0 dims=0 source=bars.mkv",
+      "WAM_TEST_SUBTITLES idx=0 active=-1 visible=0 count=0 text=[] tracks=[] bitmap=0 bitmaprect=0.0000,0.0000,0.0000,0.0000",
+      "WAM_TEST_GRAB idx=0 size=960x540 saved=1 path=/private/tmp/wam-phase2f/paired-software/full-h264422/scene.png",
+      "WAM_TEST_VIDEOGRAB idx=0 saved=1 path=/private/tmp/wam-phase2f/paired-software/full-h264422/display.png",
+      "WAM_TEST_WINDOWS count=1",
+      "WAM_TEST_WINDOW idx=0 media=1 paused=1 playing=0 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=0.9985 dur=4.0000 chrome=0 vfeedback=0 vnat=640x360 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=0.000 nsfs=0 vivid=0 vboost=1.000 hdr=0 edr=2.667 theater=0 dims=0 source=bars.mkv",
+      "WAM_TEST_SUBTITLES idx=0 active=-1 visible=0 count=0 text=[] tracks=[] bitmap=0 bitmaprect=0.0000,0.0000,0.0000,0.0000"
+    ]
+  },
+  {
+    "name": "full-vp9",
+    "asset": "/private/tmp/wam-phase2f/capture-hardware-full/vp9/bars.mkv",
+    "rc": 0,
+    "pid": 48500,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "e9a4fe19-2b55-4f16-8a3c-9ee5d7170bb3",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "bf162266b0993c07f2e6ae7763bf2f13abe09042dd04b072d60fc05071ad50cc",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "67999ffe77c1ebabe22a5b77310722a98046002545230856ee1a02acaff4e0a2",
+      "WAM_TEST_BACKGROUND": "1",
+      "WAM_TEST_MUTED": "1",
+      "WAM_TEST_GEOMETRY": "480x270+2400+1000",
+      "WAM_PLAYBACK_METRICS_PATH": "/private/tmp/wam-phase2f/paired-software/full-vp9/metrics.jsonl",
+      "WAM_TEST_QUIT_AFTER_MS": "4000",
+      "WAM_TEST_WINDOW_SCRIPT": "pause:0@1300,report@200,grab:0:/private/tmp/wam-phase2f/paired-software/full-vp9/scene.png@300,videograb:0:/private/tmp/wam-phase2f/paired-software/full-vp9/display.png@300,report@400",
+      "WAM_TEST_NO_VIDEO_HARDWARE": "1"
+    },
+    "diagnostics": [
+      "WAM: native decoder stage=Libavcodec codec=76703039",
+      "WAM_TEST_WINDOWS count=1",
+      "WAM_TEST_WINDOW idx=0 media=1 paused=1 playing=0 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=1.0492 dur=4.0000 chrome=0 vfeedback=0 vnat=640x360 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=0.000 nsfs=0 vivid=0 vboost=1.000 hdr=0 edr=2.667 theater=0 dims=0 source=bars.mkv",
+      "WAM_TEST_SUBTITLES idx=0 active=-1 visible=0 count=0 text=[] tracks=[] bitmap=0 bitmaprect=0.0000,0.0000,0.0000,0.0000",
+      "WAM_TEST_GRAB idx=0 size=960x540 saved=1 path=/private/tmp/wam-phase2f/paired-software/full-vp9/scene.png",
+      "WAM_TEST_VIDEOGRAB idx=0 saved=1 path=/private/tmp/wam-phase2f/paired-software/full-vp9/display.png",
+      "WAM_TEST_WINDOWS count=1",
+      "WAM_TEST_WINDOW idx=0 media=1 paused=1 playing=0 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=1.0492 dur=4.0000 chrome=0 vfeedback=0 vnat=640x360 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=0.000 nsfs=0 vivid=0 vboost=1.000 hdr=0 edr=2.667 theater=0 dims=0 source=bars.mkv",
+      "WAM_TEST_SUBTITLES idx=0 active=-1 visible=0 count=0 text=[] tracks=[] bitmap=0 bitmaprect=0.0000,0.0000,0.0000,0.0000"
+    ]
+  },
+  {
+    "name": "full-vp9p2",
+    "asset": "/private/tmp/wam-phase2f/capture-hardware-full/vp9p2/bars.mkv",
+    "rc": 0,
+    "pid": 49356,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "b69719de-7c22-4c9d-af6c-60757b833cdb",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "ab0465cdd29df86fe72f44b06080ec9f7804fcc6144390286be981e1e5d7ad35",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "67999ffe77c1ebabe22a5b77310722a98046002545230856ee1a02acaff4e0a2",
+      "WAM_TEST_BACKGROUND": "1",
+      "WAM_TEST_MUTED": "1",
+      "WAM_TEST_GEOMETRY": "480x270+2400+1000",
+      "WAM_PLAYBACK_METRICS_PATH": "/private/tmp/wam-phase2f/paired-software/full-vp9p2/metrics.jsonl",
+      "WAM_TEST_QUIT_AFTER_MS": "4000",
+      "WAM_TEST_WINDOW_SCRIPT": "pause:0@1300,report@200,grab:0:/private/tmp/wam-phase2f/paired-software/full-vp9p2/scene.png@300,videograb:0:/private/tmp/wam-phase2f/paired-software/full-vp9p2/display.png@300,report@400",
+      "WAM_TEST_NO_VIDEO_HARDWARE": "1"
+    },
+    "diagnostics": [
+      "WAM: native decoder stage=Libavcodec codec=76703039",
+      "WAM_TEST_WINDOWS count=1",
+      "WAM_TEST_WINDOW idx=0 media=1 paused=1 playing=0 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=1.1051 dur=4.0000 chrome=0 vfeedback=0 vnat=640x360 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=0.000 nsfs=0 vivid=0 vboost=1.000 hdr=0 edr=2.667 theater=0 dims=0 source=bars.mkv",
+      "WAM_TEST_SUBTITLES idx=0 active=-1 visible=0 count=0 text=[] tracks=[] bitmap=0 bitmaprect=0.0000,0.0000,0.0000,0.0000",
+      "WAM_TEST_GRAB idx=0 size=960x540 saved=1 path=/private/tmp/wam-phase2f/paired-software/full-vp9p2/scene.png",
+      "WAM_TEST_VIDEOGRAB idx=0 saved=1 path=/private/tmp/wam-phase2f/paired-software/full-vp9p2/display.png",
+      "WAM_TEST_WINDOWS count=1",
+      "WAM_TEST_WINDOW idx=0 media=1 paused=1 playing=0 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=1.1051 dur=4.0000 chrome=0 vfeedback=0 vnat=640x360 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=0.000 nsfs=0 vivid=0 vboost=1.000 hdr=0 edr=2.667 theater=0 dims=0 source=bars.mkv",
+      "WAM_TEST_SUBTITLES idx=0 active=-1 visible=0 count=0 text=[] tracks=[] bitmap=0 bitmaprect=0.0000,0.0000,0.0000,0.0000"
+    ]
+  },
+  {
+    "name": "h264-smpte2084",
+    "asset": "/private/tmp/wam-phase2f/h264-smpte2084.mkv",
+    "rc": 0,
+    "pid": 49724,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "e9b5dca4-0cd0-4d5a-8f6b-fb88a9145145",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "0a8c6cfa18b83f97b47f45edf1eaf66e31d2936e85367fa53aeb388ee4e29468",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "67999ffe77c1ebabe22a5b77310722a98046002545230856ee1a02acaff4e0a2",
+      "WAM_TEST_BACKGROUND": "1",
+      "WAM_TEST_MUTED": "1",
+      "WAM_TEST_GEOMETRY": "480x270+2400+1000",
+      "WAM_PLAYBACK_METRICS_PATH": "/private/tmp/wam-phase2f/paired-software/h264-smpte2084/metrics.jsonl",
+      "WAM_TEST_QUIT_AFTER_MS": "4000",
+      "WAM_TEST_WINDOW_SCRIPT": "pause:0@1300,report@200,grab:0:/private/tmp/wam-phase2f/paired-software/h264-smpte2084/scene.png@300,videograb:0:/private/tmp/wam-phase2f/paired-software/h264-smpte2084/display.png@300,report@400",
+      "WAM_TEST_NO_VIDEO_HARDWARE": "1"
+    },
+    "diagnostics": [
+      "WAM: native decoder stage=Libavcodec codec=61766331",
+      "WAM_TEST_WINDOWS count=1",
+      "WAM_TEST_WINDOW idx=0 media=1 paused=1 playing=0 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=1.1547 dur=4.0000 chrome=0 vfeedback=0 vnat=640x360 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=0.000 nsfs=0 vivid=0 vboost=1.000 hdr=0 edr=2.667 theater=0 dims=0 source=h264-smpte2084.mkv",
+      "WAM_TEST_SUBTITLES idx=0 active=-1 visible=0 count=0 text=[] tracks=[] bitmap=0 bitmaprect=0.0000,0.0000,0.0000,0.0000",
+      "WAM_TEST_GRAB idx=0 size=960x540 saved=1 path=/private/tmp/wam-phase2f/paired-software/h264-smpte2084/scene.png",
+      "WAM_TEST_VIDEOGRAB idx=0 saved=1 path=/private/tmp/wam-phase2f/paired-software/h264-smpte2084/display.png",
+      "WAM_TEST_WINDOWS count=1",
+      "WAM_TEST_WINDOW idx=0 media=1 paused=1 playing=0 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=1.1547 dur=4.0000 chrome=0 vfeedback=0 vnat=640x360 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=0.000 nsfs=0 vivid=0 vboost=1.000 hdr=0 edr=2.667 theater=0 dims=0 source=h264-smpte2084.mkv",
+      "WAM_TEST_SUBTITLES idx=0 active=-1 visible=0 count=0 text=[] tracks=[] bitmap=0 bitmaprect=0.0000,0.0000,0.0000,0.0000"
+    ]
+  },
+  {
+    "name": "hevc-smpte2084",
+    "asset": "/private/tmp/wam-phase2f/hevc-smpte2084.mkv",
+    "rc": 0,
+    "pid": 49814,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "27020e89-2bd7-4706-80ce-88bff19dcf57",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "8b46d9aca9e0bada2e3a66c852ef1e2983a9c9aafe18764ce0e414df5a5d11f2",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "67999ffe77c1ebabe22a5b77310722a98046002545230856ee1a02acaff4e0a2",
+      "WAM_TEST_BACKGROUND": "1",
+      "WAM_TEST_MUTED": "1",
+      "WAM_TEST_GEOMETRY": "480x270+2400+1000",
+      "WAM_PLAYBACK_METRICS_PATH": "/private/tmp/wam-phase2f/paired-software/hevc-smpte2084/metrics.jsonl",
+      "WAM_TEST_QUIT_AFTER_MS": "4000",
+      "WAM_TEST_WINDOW_SCRIPT": "pause:0@1300,report@200,grab:0:/private/tmp/wam-phase2f/paired-software/hevc-smpte2084/scene.png@300,videograb:0:/private/tmp/wam-phase2f/paired-software/hevc-smpte2084/display.png@300,report@400",
+      "WAM_TEST_NO_VIDEO_HARDWARE": "1"
+    },
+    "diagnostics": [
+      "WAM: native decoder stage=VideoToolboxSoftware codec=68766331",
+      "WAM_TEST_WINDOWS count=1",
+      "WAM_TEST_WINDOW idx=0 media=1 paused=1 playing=0 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=1.0955 dur=4.0000 chrome=0 vfeedback=0 vnat=640x360 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=0.000 nsfs=0 vivid=0 vboost=1.000 hdr=0 edr=2.667 theater=0 dims=0 source=hevc-smpte2084.mkv",
+      "WAM_TEST_SUBTITLES idx=0 active=-1 visible=0 count=0 text=[] tracks=[] bitmap=0 bitmaprect=0.0000,0.0000,0.0000,0.0000",
+      "WAM_TEST_GRAB idx=0 size=960x540 saved=1 path=/private/tmp/wam-phase2f/paired-software/hevc-smpte2084/scene.png",
+      "WAM_TEST_VIDEOGRAB idx=0 saved=1 path=/private/tmp/wam-phase2f/paired-software/hevc-smpte2084/display.png",
+      "WAM_TEST_WINDOWS count=1",
+      "WAM_TEST_WINDOW idx=0 media=1 paused=1 playing=0 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=1.0955 dur=4.0000 chrome=0 vfeedback=0 vnat=640x360 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=0.000 nsfs=0 vivid=0 vboost=1.000 hdr=0 edr=2.667 theater=0 dims=0 source=hevc-smpte2084.mkv",
+      "WAM_TEST_SUBTITLES idx=0 active=-1 visible=0 count=0 text=[] tracks=[] bitmap=0 bitmaprect=0.0000,0.0000,0.0000,0.0000"
+    ]
+  },
+  {
+    "name": "h264-arib-std-b67",
+    "asset": "/private/tmp/wam-phase2f/h264-arib-std-b67.mkv",
+    "rc": 0,
+    "pid": 49860,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "89da756c-9bd6-4c21-a31e-5761574bc8ef",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "41b447c6357db89051ea54aeb6e820ce9901495b16bd2a46d68a65a374436629",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "67999ffe77c1ebabe22a5b77310722a98046002545230856ee1a02acaff4e0a2",
+      "WAM_TEST_BACKGROUND": "1",
+      "WAM_TEST_MUTED": "1",
+      "WAM_TEST_GEOMETRY": "480x270+2400+1000",
+      "WAM_PLAYBACK_METRICS_PATH": "/private/tmp/wam-phase2f/paired-software/h264-arib-std-b67/metrics.jsonl",
+      "WAM_TEST_QUIT_AFTER_MS": "4000",
+      "WAM_TEST_WINDOW_SCRIPT": "pause:0@1300,report@200,grab:0:/private/tmp/wam-phase2f/paired-software/h264-arib-std-b67/scene.png@300,videograb:0:/private/tmp/wam-phase2f/paired-software/h264-arib-std-b67/display.png@300,report@400",
+      "WAM_TEST_NO_VIDEO_HARDWARE": "1"
+    },
+    "diagnostics": [
+      "WAM: native decoder stage=Libavcodec codec=61766331",
+      "WAM_TEST_WINDOWS count=1",
+      "WAM_TEST_WINDOW idx=0 media=1 paused=1 playing=0 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=1.1600 dur=4.0000 chrome=0 vfeedback=0 vnat=640x360 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=0.000 nsfs=0 vivid=0 vboost=1.000 hdr=0 edr=2.667 theater=0 dims=0 source=h264-arib-std-b67.mkv",
+      "WAM_TEST_SUBTITLES idx=0 active=-1 visible=0 count=0 text=[] tracks=[] bitmap=0 bitmaprect=0.0000,0.0000,0.0000,0.0000",
+      "WAM_TEST_GRAB idx=0 size=960x540 saved=1 path=/private/tmp/wam-phase2f/paired-software/h264-arib-std-b67/scene.png",
+      "WAM_TEST_VIDEOGRAB idx=0 saved=1 path=/private/tmp/wam-phase2f/paired-software/h264-arib-std-b67/display.png",
+      "WAM_TEST_WINDOWS count=1",
+      "WAM_TEST_WINDOW idx=0 media=1 paused=1 playing=0 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=1.1600 dur=4.0000 chrome=0 vfeedback=0 vnat=640x360 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=0.000 nsfs=0 vivid=0 vboost=1.000 hdr=0 edr=2.667 theater=0 dims=0 source=h264-arib-std-b67.mkv",
+      "WAM_TEST_SUBTITLES idx=0 active=-1 visible=0 count=0 text=[] tracks=[] bitmap=0 bitmaprect=0.0000,0.0000,0.0000,0.0000"
+    ]
+  },
+  {
+    "name": "hevc-arib-std-b67",
+    "asset": "/private/tmp/wam-phase2f/hevc-arib-std-b67.mkv",
+    "rc": 0,
+    "pid": 49877,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "de4613b1-99af-44d3-b583-27da9e186209",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "689231529e8bd40174246bce9f5d10c25ff8ee59bfbb4acd7706438a7f7ab652",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "67999ffe77c1ebabe22a5b77310722a98046002545230856ee1a02acaff4e0a2",
+      "WAM_TEST_BACKGROUND": "1",
+      "WAM_TEST_MUTED": "1",
+      "WAM_TEST_GEOMETRY": "480x270+2400+1000",
+      "WAM_PLAYBACK_METRICS_PATH": "/private/tmp/wam-phase2f/paired-software/hevc-arib-std-b67/metrics.jsonl",
+      "WAM_TEST_QUIT_AFTER_MS": "4000",
+      "WAM_TEST_WINDOW_SCRIPT": "pause:0@1300,report@200,grab:0:/private/tmp/wam-phase2f/paired-software/hevc-arib-std-b67/scene.png@300,videograb:0:/private/tmp/wam-phase2f/paired-software/hevc-arib-std-b67/display.png@300,report@400",
+      "WAM_TEST_NO_VIDEO_HARDWARE": "1"
+    },
+    "diagnostics": [
+      "WAM: native decoder stage=VideoToolboxSoftware codec=68766331",
+      "WAM_TEST_WINDOWS count=1",
+      "WAM_TEST_WINDOW idx=0 media=1 paused=1 playing=0 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=1.0398 dur=4.0000 chrome=0 vfeedback=0 vnat=640x360 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=0.000 nsfs=0 vivid=0 vboost=1.000 hdr=0 edr=2.667 theater=0 dims=0 source=hevc-arib-std-b67.mkv",
+      "WAM_TEST_SUBTITLES idx=0 active=-1 visible=0 count=0 text=[] tracks=[] bitmap=0 bitmaprect=0.0000,0.0000,0.0000,0.0000",
+      "WAM_TEST_GRAB idx=0 size=960x540 saved=1 path=/private/tmp/wam-phase2f/paired-software/hevc-arib-std-b67/scene.png",
+      "WAM_TEST_VIDEOGRAB idx=0 saved=1 path=/private/tmp/wam-phase2f/paired-software/hevc-arib-std-b67/display.png",
+      "WAM_TEST_WINDOWS count=1",
+      "WAM_TEST_WINDOW idx=0 media=1 paused=1 playing=0 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=1.0398 dur=4.0000 chrome=0 vfeedback=0 vnat=640x360 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=0.000 nsfs=0 vivid=0 vboost=1.000 hdr=0 edr=2.667 theater=0 dims=0 source=hevc-arib-std-b67.mkv",
+      "WAM_TEST_SUBTITLES idx=0 active=-1 visible=0 count=0 text=[] tracks=[] bitmap=0 bitmaprect=0.0000,0.0000,0.0000,0.0000"
+    ]
+  }
+]

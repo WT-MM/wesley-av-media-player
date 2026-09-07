@@ -507,6 +507,7 @@ LibavformatCursor::Stream LibavformatCursor::stream(unsigned i) const noexcept {
   out.primaries = p.color_primaries;
   out.transfer = p.color_trc;
   out.matrix = p.color_space;
+  out.fullRange = p.color_range == AVCOL_RANGE_JPEG;
   out.width = std::max(0, p.width);
   out.height = std::max(0, p.height);
   out.rate = std::max(0, p.sample_rate);

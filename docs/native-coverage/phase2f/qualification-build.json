@@ -1,0 +1,7 @@
+{
+  "purpose": "display qualification only; never shipped",
+  "temporary_change": "VideoDecodeLane Libavcodec color guard bypassed; codec stage enabled in build cache",
+  "restoration_source": "/private/tmp/wam-phase2f/video_decode_lane.original",
+  "frozen_files": "unchanged",
+  "hardware_capture_candidate": "fe0701859a9b9aa5341b97ef496235b108ed5df4cb4ae46709b4539fadd9a11d"
+}

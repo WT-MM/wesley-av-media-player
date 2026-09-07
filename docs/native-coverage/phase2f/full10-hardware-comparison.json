@@ -1,0 +1,26 @@
+[
+  {
+    "name": "full-hi10p",
+    "hardware": "/private/tmp/wam-phase2f/capture-hardware-full/vp9p2/display.png",
+    "software": "/private/tmp/wam-phase2f/paired-software/full-hi10p/display.png",
+    "same_source": "smptebars 640x360, tv-to-pc scaling; different codec encoding",
+    "rms": 0.18155771037945578,
+    "pixels": 32511
+  },
+  {
+    "name": "full-h264422",
+    "hardware": "/private/tmp/wam-phase2f/capture-hardware-full/vp9p2/display.png",
+    "software": "/private/tmp/wam-phase2f/paired-software/full-h264422/display.png",
+    "same_source": "smptebars 640x360, tv-to-pc scaling; different codec encoding",
+    "rms": 0.1825713779301955,
+    "pixels": 32511
+  },
+  {
+    "name": "full-vp9p2",
+    "hardware": "/private/tmp/wam-phase2f/capture-hardware-full/vp9p2/display.png",
+    "software": "/private/tmp/wam-phase2f/paired-software/full-vp9p2/display.png",
+    "same_source": "smptebars 640x360, tv-to-pc scaling; different codec encoding",
+    "rms": 0.0,
+    "pixels": 32511
+  }
+]

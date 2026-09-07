@@ -1,88 +1,57 @@
-# Phase 2e — metrics campaign; demux ON, codec OFF
+# Phase 2f — AVFORMAT ON; AVCODEC OFF
 
-The maintainer's locked-display ruling is applied. No fresh visual capture was attempted or required for these metrics proofs. The native order remains VideoToolbox hardware → VideoToolbox software → AudioToolbox → libvpx → libavcodec last. This is a partial campaign acceptance with explicit remaining gates, not a claim that every requested shape passed.
+Apple order remains VideoToolbox hardware → VideoToolbox software → AudioToolbox → libvpx → libavcodec last. Native admission remains fail-closed. Changes are uncommitted; no staging or prohibited Git mutation was performed. Frozen source/contract/audio-test files are byte-identical; SESSION_HANDOFF.md is untouched.
 
-## Ordered outcomes
+## Display qualification
 
-| Item | Final implementation and qualification |
-| --- | --- |
-| 1. Demux ON for proven shapes | macOS default **ON**, independently of codec OFF. Final shipped corpus **84/97**, zero regressions against 78/97. Six RustDesk hardware decodes: **49,832/49,832 exact PTS and durations**, EOS. Full quiet GUI soak: **49,827 drawn + 5 late + 0 superseded**, running clock **1.0000**. Strict all-frames-drawn gate remains short five. Native lazy closure relocates; complete 13.3 bundle gate remains blocked by local Qt/libvpx's 26.0 floor. [Proof](../phase2e/STEP1.md). |
-| 2. Sixteen-window software defect | **FIXED.** A contended nonblocking surface-registry insertion was treated as fatal. The worker now retains its output and returns backpressure. Original five drain failures → **zero** in both software reruns; hardware control zero. Seek/close storm: 19 committed/ready/drawn previews; 18 separate preview-budget failures remain disclosed. Windows retire 16 → 16 → 0; native images unload. [Root cause and tests](../phase2e/SOFTWARE_DRAIN.md). |
-| 3. Production audio / amendment 24 | **DTS core, TrueHD and MLP PASS for admitted 48 kHz profiles.** Stereo/5.1 × four exact seek windows × three codecs: **24 cases**, each full retained window **96,000 samples**, zero-frame alignment, max PCM error <2e-6, RMS <2e-7, \|V−A\|=0. First-frame channel roles feed the impulse downmix. Three apps: **50 drawn / 96,000 audio**, zero late/superseded and zero clock-advanced underruns. DTS-HD MA remains unqualified/refused. TrueHD/MLP seek preroll is from the original major sync, with O(target) work. [Details](../phase2e/PRODUCTION_AUDIO.md). |
-| 4. Decoder-private admission / amendment 25 | **IMPLEMENTED AND ENFORCED.** Codec/reference/bit-depth/chroma/alignment-derived plane capacity, separate packet/extradata/conversion charges, per-worker allocator domain and process reservations. **16 workers admitted; worker 17 refuses; cancellation retires charges to zero.** Combined software A/V reserves two workers, so eight consume all sixteen. 1920×1088 ASP: **32/32 exact frames**, above the removed blanket gate. Presentation remains ten surfaces / 384 MiB. [Derivation and limits](../phase2e/DECODER_RESERVATIONS.md), [larger-frame proof](../phase2e/above-1080-proof.json). |
-| 5. Mixed libavformat A/V | **PARTIAL; qualified shapes ON.** Fragmented MP4 and FLV H.264 + zero-origin 48 kHz AAC: **48 exact video frames / 92,160 samples**, equal 48/25 endpoints, exact seek slices and clean EOS; GUI draws every frame. Six RustDesk + CELT Opus: **49,832 exact frames / 95,290,656 samples**, zero alignment, equal endpoints and exact retained seek counts. AVI MP3, positive-origin FLV AAC, ASF WMA, Vorbis, MPEG-PS timing and Opus SILK/hybrid remain named refusals. [Shapes and evidence](../phase2e/MIXED_AV.md). |
-| 6. Coexistence | **BOUNDED POLICY VERIFIED.** Existing `PlaybackFfmpegClosureConflict` remains. Native symbol ownership and final unload pass; fallback is refused while two native leases survive. Cached fallback blocks later native FFmpeg until restart. The real build-app second-window refusal leaves its native neighbor playing. Real cached mpv media decoding is not newly qualified; the local seed has missing FFmpeg-62 dependencies. [Exact cost](../phase2e/COEXISTENCE.md). |
-| 7. Per-stage decision | **Demux ON / codec OFF.** Qualified demux shapes stay enabled. The codec stage remains opt-in because VP9 p0/p2, full-range and HDR software color coverage is incomplete. Even opt-in production routing now refuses those families as `SoftwareColorUnqualified`; isolated decoder tests remain available. Retained limited-range SDR ASP, Hi10P and 10-bit 4:2:2 captures keep their qualification. |
+Captures were performed first, before the long build/measurement work. Both in-process `grab` and composited `videograb` are retained; the QML-only grab excludes AVSampleBufferDisplayLayer and is not a video-color oracle. No failed/black capture was interpreted as color evidence. The temporary color bypass was removed byte-identically before acceptance builds.
 
-## Applied amendment ledger
+| Family | Display result | Final color admission |
+| --- | --- | --- |
+| Limited ASP / Hi10P / H.264 422 | RMS 2.020 / 2.371 / 2.394; projections within limits | Retained |
+| Limited VP9 p0 / p2 | RMS 2.092 / 2.366; exact hardware/software pixel matches | Qualified |
+| Full Hi10P / H.264 422 / VP9 p2 | RMS 2.375 / 2.141 / 2.258; range projections 0.1347 / 0.1067 / 0.1277 | Qualified |
+| Full 8-bit ASP | RMS 7.956; range projection 1.2506 | `SoftwareColorUnqualified` |
+| Full VP9 p0 | Range projection 0.2027; hardware also fails retained threshold | `SoftwareColorUnqualified` |
+| PQ software H.264 | RMS 0.387 versus hardware content oracle; HDR projection reference unqualified | `SoftwareColorUnqualified` |
+| HLG software H.264 | RMS 77.533 versus hardware content oracle; HDR reference unqualified | `SoftwareColorUnqualified` |
 
-The exact frozen-line patches are appended to local, gitignored `SESSION_HANDOFF.md` and mirrored in [amendment 24](../phase2e/amendment24-applied.md) and [amendment 25](../phase2e/amendment25-applied.md). Authorization and application are separate from the qualification outcomes above.
+No tolerance changed: RMS ≤6/255 and absolute matrix/range projections ≤0.15. [Full per-family table, controls and direct capture paths](../phase2f/COLOR.md); [retained PNG directory](../phase2f/captures/). The MPEG-4 full-range fixture exposed container-only signaling that bypassed the old codec-record guard. Both Matroska and libavformat now refuse it before descriptor publication with `SoftwareColorUnqualified: MPEG-4 full-range container signaling`.
 
-Amendment 24 enum before/after:
+## Stage decisions
 
-```diff
-   ProRes4444,
-+  Dts,
-+  TrueHd,
-+  Mlp,
-```
+| Stage | Final shipped state | Reason |
+| --- | --- | --- |
+| Apple VideoToolbox / AudioToolbox and libvpx | Available, existing priority retained | Apple-first route unchanged |
+| `WAM_ENABLE_AVFORMAT_STAGE` | ON | Existing demux expansion retained |
+| `WAM_ENABLE_AVCODEC_STAGE` | OFF | Incomplete 8-bit full-range/HDR qualification; software cancellation storm is not zero-failure |
 
-The same ledger records every scoped converter/session line: appended wake configuration, representation-aware raw extradata ingress, real software plan selection, first-frame roles, asynchronous wake/drain, retained-window semantics and cancellation. Existing Apple converter/session test files and the session header are [byte-identical to HEAD](../phase2e/frozen-invariants.json).
+The sixteen-window software storm has zero native session failures but **17 preview failures**, 17 submitted/ready/drawn commit chains, one preview draw and **16 → 16 → 1** windows. A live final window means its resident native images are not proof of a post-retirement leak. The matching hardware control has zero session/preview failures, 17 complete commit chains, 16 preview draws and **16 → 16 → 0** windows. Isolated allocator/worker tests preserve the derived reservations, sixteen-worker ceiling, seventeenth refusal and cancellation retirement. No cap or tolerance was increased. [Gate details](../phase2f/STAGES.md).
 
-Amendment 25 software-only frozen lines:
+The retained local package has a lazy native codec closure and no eager native FFmpeg load command. Its complete deployment floor remains 26.0; the native FFmpeg closure itself retains 13.3. Clean-machine 13.3 packaging qualification remains deferred. The final refresh audits 171 Mach-O files with zero external/unresolved dependencies, zero dependency errors, a relocatable closure and no eager native FFmpeg load. The complete 13.3 compatibility gate still fails; the generic audit exit label is not interpreted as a relocation failure. [Final audit](../phase2f/package-audit.json).
 
-```diff
--// Software staging is private to a bounded decoder worker, separate from
--// presentation leases. The picture-area admission is not a private-heap proof.
--inline constexpr std::uint64_t kNativeSoftwareMaximumPicturePixels = 1920ULL * 1080ULL;
-+// Decoder admission uses softwareDecoderReservation plus an enforced private allocator domain.
-+inline constexpr std::uint64_t kNativeSoftwareMaximumPicturePixels = media::MediaSourceLimits::kHardMaximumCodedPixels;
-```
+## DTS-HD MA
 
-```diff
- inline constexpr unsigned kNativeSoftwareProcessWorkers = kMaximumConcurrentPlayerWindows;
-+// A combined software audio/video session reserves two workers; eight consume all sixteen.
-+inline constexpr unsigned kNativeSoftwareCombinedAudioVideoWorkers = 2;
-```
+Read-only ffprobe search over Movies and Downloads inspected **845 candidates: 734 probeable, 111 malformed/fragment failures, zero DTS tracks found**. No HD-MA admission is made. Core-plus-extension and extension-only packet shapes remain refused before descriptor publication; a trailing-byte-acceptance mutant fails the existing test. The named opt-in refusal is `SoftwareAudioPacketTimelineUnqualified`; shipped software audio remains `SoftwareAudioStageNotBuilt`. [Search inventory, refusal proof and exact admission requirements](../phase2f/DTS_HD_MA.md).
 
-The presentation prefix is byte-identical. The local FFmpeg allocation patch, source archive hash, offline recipe and receipts are retained under `third_party/`, `scripts/` and the [source distribution notice](../phase3/SOURCE_DISTRIBUTION.md). The release-specific corresponding-source URL and About/download presentation remain existing release deferrals.
+## Late frames
 
-## Final measurements
+The historical full RustDesk run remains **49,832 = 49,827 drawn + 5 late**. These were mid-playback, not seek or first-frame losses; three fall in a shared host-second across concurrent players. Packet intervals include 7/9 ms, but one-second aggregate telemetry cannot determine each frame's exact scheduler/decode/output-credit delay. The five are not relabeled inherent or drawn.
 
-| Specimen / mode | Shipped outcome | CPU % one core | Process J | Peak MiB | Drawn / late / superseded |
-| --- | --- | ---: | ---: | ---: | ---: |
-| H.264 8-bit | VideoToolbox hardware | 7.61 | 1.342 | 460.0 | 300 / 0 / 0 |
-| MPEG-4 ASP | Refused: codec configuration | 2.77 | 1.238 | 469.4 | — |
-| H.264 Hi10P | Refused: SPS/reorder admission | 2.83 | 1.247 | 471.9 | — |
-| H.264 4:2:2 10-bit | Refused: SPS/reorder admission | 2.78 | 1.245 | 474.1 | — |
-| VP9 p0 | VideoToolbox hardware | 7.75 | 1.284 | 459.8 | 300 / 0 / 0 |
-| VP9 p2 | VideoToolbox hardware | 7.71 | 1.265 | 453.6 | 300 / 0 / 0 |
-| H.264 8-bit / no-hardware seam | VideoToolbox hardware | 7.88 | 1.329 | 453.7 | 300 / 0 / 0 |
-| H.264 Hi10P / no-hardware seam | Refused: SPS/reorder admission | 2.79 | 1.241 | 473.2 | — |
-| H.264 4:2:2 10-bit / no-hardware seam | Refused: SPS/reorder admission | 2.73 | 1.252 | 472.6 | — |
-| VP9 p0 / no-hardware seam | VideoToolbox hardware | 7.91 | 1.253 | 454.0 | 300 / 0 / 0 |
-| VP9 p2 / no-hardware seam | VideoToolbox hardware | 7.67 | 1.276 | 454.6 | 300 / 0 / 0 |
+A verified mixed-route limitation is fixed: video deadlines now wake independently of audio callbacks while retaining the audio clock and silent-only heartbeat. The 987-frame mixed remux improves in isolated repeats from **968 drawn + 19 late** to **979 drawn + 8 late**, with exactly **1,995,408 audio frames**, zero clock-advancing underruns and clock approximately 1.0000. This does not erase the historical 14 mixed late frames or establish an inherent residual bound. Exact historical attribution/all-drawn remains deferred. [Metrics and revert proof](../phase2f/LATE_FRAMES.md).
 
-All eleven runs use the same shipped candidate and 14-second quiet launches. Successful video-only playback has clock **1.0000**, 300 drawn, zero late and zero superseded frames. Refusal rows measure startup/error-window cost, not software decoding. The no-hardware seam is consumed by the opt-in plan; in the OFF build it does **not** remove the existing hardware path, so those rows are not software-fallback proofs.
+## Coexistence
 
-[Normal measurements](../phase2e/measure-shipped.json), [seam measurements](../phase2e/measure-shipped-no-hardware.json). Software hardware-absence qualification remains in the ON-build adapter tests; no new displayed-color evidence is claimed.
+Fixed. The observed conflict was WAM's blanket image-name exclusion. TWOLEVEL native imports target the suffixed utility image; real native/mpv symbols resolve to distinct images and independent `av_log` levels. Native table resolution now uses `RTLD_LOCAL | RTLD_FIRST`; both old loader exclusions are removed while validation and leases remain.
 
-The refreshed package has **171 Mach-O files**, a relocatable closure, no eager native FFmpeg load commands and no dependency-audit errors. Native libraries target 13.3; the complete bundle floor is **26.0**. Thus `clean_machine_ready=false`. [Full audit](../phase2e/bundle-final-audit.json), [bundler receipt](../phase2e/bundle-final.txt).
+Real fallback-first → native software ASP and native-first → fallback both pass in one process, with both closures in vmmap and native progress after fallback-window closure: **43 → 142** and **45 → 184** drawn frames respectively. The local retained packaged closure repaired the stale development fallback seed for these proofs. mpv remains cached for process lifetime, so dual-closure memory remains a cost; the native admission ban is gone. [Symbol checks, image maps, measured sequences and both revert proofs](../phase2f/COEXISTENCE.md).
 
+## Final validation
 
-The prescribed final corpus completed **84/97 native**, with **zero regressions against the original 78/97**, on unchanged candidate `fe0701859a9b9aa5341b97ef496235b108ed5df4cb4ae46709b4539fadd9a11d`. All 97 launches were quiet and six seconds. [Summary](../phase2e/corpus-final-summary.json), [all assets, identities and outcomes](../phase2e/corpus-final-results.json).
+Final shipped executable SHA-256: `fbe7928d2adfa6f8ac086dabbe4034b09ab00ec61cc11c79fbf07d36990438f4`.
 
-## Tests and revert proofs
+Final OFF CTest: all **112/112** pass across the full suite (111/112, 207.36 s) and the unchanged GL-output rerun (1/1, 3.24 s). [Full log](../phase2f/ctest-shipped-final.txt), [rerun](../phase2f/ctest-shipped-final-rerun.txt). All eleven resource launches exit 0; every successful native row draws 300 frames with zero late/superseded frames. [Final CPU / process J / peak MiB table](../phase2f/MEASUREMENTS.md). The prescribed quiet six-second corpus rerun finishes **84/97 native, zero regressions against phase 2e's 84/97**. Each native result requires native route/first-frame events, exit 0, no native failure and **drawn_frames > 0 in streamed metrics**. [Final summary](../phase2f/corpus-final-summary.json), [all 97 results](../phase2f/corpus-final-results.json), [retained logs/metrics](../phase2f/corpus-final/).
 
-The complete codec-enabled configuration passes **138/138** in **118.04 s**. [CTest](../phase2e/ctest-on.txt). The final shipped ON/OFF configuration passes **111/111** in **106.97 s**. [Shipped CTest](../phase2e/ctest-shipped.txt), [candidate and cache](../phase2e/final-build.json).
+All 139 opt-in tests passed across the complete suite and unchanged reruns; the first complete pass was 137/139. Original probe and GL render-wait failures are retained. Every behavior change has a fixed/reverted/restored failure proof; the existing DTS guard also has a 0/7/0 mutation proof. [Test details and receipts](../phase2f/TESTS.md).
 
-Behavioral failures with temporary production reverts, followed by byte-identical restoration and passing tests:
-
-- [CMake stage defaults](../phase2e/stage-revert-proof.json).
-- [Surface contention / cancellation](../phase2e/contention-revert-proof.json).
-- [Production audio identities, converter and session](../phase2e/audio-revert-proof.json).
-- [Private allocator cap and unload](../phase2e/allocator-revert-proof.json), [area admission and reservation retirement](../phase2e/reservation-revert-proof.json).
-- [Mixed source, fragmented routing and Opus mode admission](../phase2e/mixed-revert-proof.json).
-- [Software color refusal](../phase2e/color-revert-proof.json).
-
-All builds use `cmake --build build --parallel`, with reconfiguration after CMake edits. CTest never overlaps linking. macOS service tests run outside the filesystem sandbox; initial environmental startup failures are retained separately from regression results. GUI proofs launch only the build app, set all four identities plus quiet/background/muted/geometry seams, use scratch HOME, and control only their child PIDs. No network, visual capture, installed-app launch, staging, commit, stash, reset or checkout was used.
+Proposals: none; no frozen-file change is needed by this patch. Deferrals: failed/unqualified color families, zero-failure sixteen-window software storm, real HD-MA specimen/proof, individual historical late-frame attribution and all-drawn residual work, and complete 13.3 deployment qualification. Previous final report: [phase-2e history](../phase2f/PHASE2E_REPORT.md).
