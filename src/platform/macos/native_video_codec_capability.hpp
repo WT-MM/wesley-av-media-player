@@ -17,4 +17,19 @@ namespace wam::macos {
 [[nodiscard]] bool nativeVideoToolboxSupportsVp9() noexcept;
 [[nodiscard]] bool nativeVideoToolboxSupportsAv1() noexcept;
 
+void setNativeVideoHardwareDisabledForTesting(bool disabled) noexcept;
+[[nodiscard]] bool nativeVideoHardwareDisabledForTesting() noexcept;
+
+// Stream predicates and the decode plan still validate profiles and surfaces.
+[[nodiscard]] constexpr bool nativeVp9StageAdmitted(bool hardware, bool softwareBuilt) noexcept {
+  return hardware || softwareBuilt;
+}
+[[nodiscard]] inline bool nativeVp9StageAdmitted() noexcept {
+#if defined(WAM_ENABLE_AVCODEC_STAGE)
+  return nativeVp9StageAdmitted(nativeVideoToolboxSupportsVp9(), true);
+#else
+  return nativeVp9StageAdmitted(nativeVideoToolboxSupportsVp9(), false);
+#endif
+}
+
 }  // namespace wam::macos

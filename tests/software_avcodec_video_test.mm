@@ -56,7 +56,7 @@ struct TestDecoder {
   SoftwareAvcodecVideoDecoder software;
   VideoDecodeLane lane;
   bool configure(const VideoStreamConfiguration& c,DecodedFrameSink& sink,std::string* e) {
-    return productionLane?lane.configure(c,sink,e):software.configure(c,sink,e);
+    return productionLane?lane.configure(c,sink,e,false):software.configure(c,sink,e);
   }
   VideoDecodeSubmitResult submitCMSampleBuffer(CMSampleBufferRef sample,std::uint64_t g,std::string* e) {
     return productionLane?lane.submitCMSampleBuffer(sample,g,e):software.submitCMSampleBuffer(sample,g,e);
@@ -82,6 +82,8 @@ int main(int argc,char** argv) {
   auto extraSize=read<std::uint32_t>(file),packetCount=read<std::uint32_t>(file);
   std::vector<std::byte> extra(extraSize);file.read(reinterpret_cast<char*>(extra.data()),extraSize);
   bool asp=std::string(argv[2])=="asp";
+  bool vp9=std::string(argv[2]).starts_with("vp9");
+  bool eight=asp || std::string(argv[2])=="vp9";
   bool is422=std::string(argv[2])=="h264422";
   wam::media::VideoCodecConfigurationLimits limits;limits.admitSoftwareProfiles=true;
   if(asp) {
@@ -94,15 +96,28 @@ int main(int argc,char** argv) {
     p.pts=read<std::int64_t>(file);p.dts=read<std::int64_t>(file);p.duration=read<std::int64_t>(file);
     p.bytes.resize(size);file.read(reinterpret_cast<char*>(p.bytes.data()),size);CHECK(file.good());packets.push_back(std::move(p));
   }
-  Sink sink;sink.expected=asp?kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange:
+  if (vp9) {
+    auto parsed=wam::media::inspectVp9BitstreamKeyframe(packets.front().bytes,limits);
+    CHECK(parsed.admitted());
+    std::array<std::byte,wam::media::kVideoCodecVpcCBytes> record{};
+    CHECK(wam::media::buildVp9CodecConfiguration(*parsed.facts,record));
+    extra.assign(record.begin(),record.end());
+    CHECK(nativeVp9StageAdmitted(false,true));
+    CHECK(!nativeVp9StageAdmitted(false,false));
+  }
+  Sink sink;sink.expected=eight?kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange:
     is422?kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange:kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange;
   auto referencePath=std::filesystem::path(argv[1]);referencePath.replace_extension(".yuv");
   std::ifstream raw(referencePath,std::ios::binary|std::ios::ate);CHECK(raw.good());const auto rawSize=raw.tellg();CHECK(rawSize>0);
   sink.reference.resize(static_cast<std::size_t>(rawSize));raw.seekg(0);raw.read(reinterpret_cast<char*>(sink.reference.data()),rawSize);CHECK(raw.good());
-  TestDecoder decoder{asp};
-  VideoStreamConfiguration config;config.codec=asp?'mp4v':'avc1';config.codedSize={320,180};config.codecConfiguration=extra;config.generation=1;
+  TestDecoder decoder{true};
+  VideoStreamConfiguration config;config.codec=asp?'mp4v':vp9?'vp09':'avc1';config.codedSize={320,180};config.codecConfiguration=extra;config.generation=1;
+  const auto plan=nativeVideoDecodePlan(config,true,true,false);
+  CHECK(plan.implementation==wam::media::DecodeImplementation::Libavcodec);
+  const auto hardware=nativeVideoDecodePlan(config,true,true,true);
+  if (!asp) CHECK(hardware.implementation==wam::media::DecodeImplementation::VideoToolboxHardware);
   std::string error;
-  CHECK(decoder.configure(config,sink,&error));
+  if (!decoder.configure(config,sink,&error)) { std::fprintf(stderr,"configure: %s\n",error.c_str()); CHECK(false); }
   for(unsigned pass=0;pass<2;++pass) {
     if(pass)decoder.flush(2);
     const auto generation=pass+1;

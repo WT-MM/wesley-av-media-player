@@ -1,3 +1,4 @@
+#include "media/avcodec/closure.hpp"
 #include "playback/mpv/mpv_runtime.hpp"
 
 #include <QDir>
@@ -411,6 +412,12 @@ MpvRuntimeLoadResult MpvRuntime::load(
   if (unsafeDynamicLoaderEnvironment()) {
     return {{}, MpvRuntimeLoadError::UnsafeDynamicLoaderEnvironment,
             QStringLiteral("dynamic-loader environment overrides are forbidden")};
+  }
+
+  const std::lock_guard closureLock(media::avcodec::playbackClosureMutex());
+  if (media::avcodec::nativeClosurePresent()) {
+    return {{}, MpvRuntimeLoadError::DifferentRuntimeAlreadyLoaded,
+            QStringLiteral("DecoderUnavailable: PlaybackFfmpegClosureConflict")};
   }
 
   // Loading through the already-open descriptor closes the validation/load

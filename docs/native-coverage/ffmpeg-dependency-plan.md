@@ -36,8 +36,13 @@ float conversion need neither swscale nor swresample. libavformat is disabled.
 Libraries use the `-wamnative` suffix to prevent basename collisions with the
 export and mpv closure. Coexistence of both configurations in one process has
 not been accepted; the single-playback-closure requirement below remains a
-release blocker. The suffix alone is not that proof. The opt-in target currently links the
-libraries eagerly; lazy-stage binding remains required before release.
+release blocker. The suffix alone is not that proof. Phase 2b replaces eager linkage with worker-owned runtime leases and explicit
+API binding. Hardware-only playback maps no FFmpeg images; the last lease
+unloads both native libraries. Missing/corrupt libraries refuse by name.
+A serialized loader guard refuses simultaneous native/mpv FFmpeg closures;
+this is fail-closed exclusion, not a reconciled ABI/configuration closure.
+The local mpv fallback also references a missing Homebrew libavcodec.62.
+See the [phase 2b receipts](phase2b/runtime-app.json).
 
 The native AV1 decoder in this source requires a hardware accelerator
 (`libavcodec/av1dec.c`, get_pixel_format). Software AV1 requires a separately

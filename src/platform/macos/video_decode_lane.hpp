@@ -50,12 +50,13 @@ public:
   }
 
   [[nodiscard]] bool configure(const VideoStreamConfiguration &configuration,
-                               DecodedFrameSink &sink, std::string *error) {
+                               DecodedFrameSink &sink, std::string *error,
+                               std::optional<bool> hardwareCapability = {}) {
 #if defined(WAM_ENABLE_AVCODEC_STAGE)
     close();
     software_.reset();
     avcodec_.reset();
-    plan_ = nativeVideoDecodePlan(configuration, SoftwareVp8Decoder::available(), true);
+    plan_ = nativeVideoDecodePlan(configuration, SoftwareVp8Decoder::available(), true, hardwareCapability);
     for (auto& candidate : plan_.candidates) {
       if (candidate.refusal != media::DecodeRefusal::None) continue;
       auto configured = configuration;
@@ -95,6 +96,7 @@ public:
     if (error) *error = "NativeDecodePlanExhausted";
     return false;
 #else
+    static_cast<void>(hardwareCapability);
     if (configuration.codec == kWamVideoCodecTypeVp8) {
       if (!SoftwareVp8Decoder::available()) {
         if (error != nullptr) {
