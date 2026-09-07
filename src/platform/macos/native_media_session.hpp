@@ -261,6 +261,7 @@ using NativeMediaSessionFact =
 // independent capacity-one latest-value slots; replacing an older value is
 // intentional coalescing, never an inferred proof.
 struct NativeMediaSessionObservations {
+  bool admissionRouteChoice{false};
   std::optional<NativeMediaSessionFact> lifecycle;
   std::optional<NativeMediaSessionRunStateApplied> runStateApplied;
   std::optional<native_playback::AudioClockProof> audioClock;

@@ -903,6 +903,11 @@ if(BUILD_TESTING)
     add_test(NAME native_audio_sample_rates
       COMMAND wam_native_audio_sample_rates_test)
 
+    add_executable(wam_native_coverage_admission_test
+      tests/native_coverage_admission_test.cpp)
+    target_link_libraries(wam_native_coverage_admission_test PRIVATE wam_native_core)
+    add_test(NAME native_coverage_admission COMMAND wam_native_coverage_admission_test)
+
     add_executable(wam_media_codec_facts_test
       tests/media_codec_facts_test.cpp)
     target_link_libraries(wam_media_codec_facts_test PRIVATE wam_native_core)
@@ -1337,6 +1342,41 @@ if(BUILD_TESTING)
         COMMAND wam_avfoundation_preview_source_test)
       set_tests_properties(macos_avfoundation_preview_source PROPERTIES
         TIMEOUT 30)
+
+      add_executable(wam_native_apple_audio_probe tests/native_apple_audio_probe.mm)
+      target_link_libraries(wam_native_apple_audio_probe PRIVATE
+        "${WAM_FOUNDATION_FRAMEWORK}" "${WAM_AUDIOTOOLBOX_FRAMEWORK}")
+
+      add_executable(wam_native_apple_video_probe tests/native_apple_video_probe.mm)
+      target_link_libraries(wam_native_apple_video_probe PRIVATE
+        wam_macos_native_backend "-framework ImageIO")
+
+      add_executable(wam_native_coverage_source_probe
+        tests/native_coverage_source_probe.mm)
+      target_link_libraries(wam_native_coverage_source_probe PRIVATE
+        wam_macos_native_backend)
+
+      add_executable(wam_native_coverage_audio_probe
+        tests/native_coverage_audio_probe.mm)
+      target_link_libraries(wam_native_coverage_audio_probe PRIVATE
+        wam_macos_native_backend)
+
+      add_test(NAME native_coverage_wiring
+        COMMAND "${WAM_MPEGTS_PYTHON}"
+          "${CMAKE_SOURCE_DIR}/tests/native_coverage_wiring_test.py"
+          "${CMAKE_SOURCE_DIR}")
+
+      find_program(WAM_COVERAGE_FFMPEG NAMES ffmpeg
+        HINTS "${CMAKE_SOURCE_DIR}/build/runtime")
+      if(WAM_COVERAGE_FFMPEG)
+        add_test(NAME macos_native_coverage_integration
+          COMMAND "${WAM_MPEGTS_PYTHON}"
+            "${CMAKE_SOURCE_DIR}/tests/native_coverage_integration.py"
+            --audio "$<TARGET_FILE:wam_native_coverage_audio_probe>"
+            --source "$<TARGET_FILE:wam_native_coverage_source_probe>"
+            --ffmpeg "${WAM_COVERAGE_FFMPEG}")
+        set_tests_properties(macos_native_coverage_integration PROPERTIES TIMEOUT 90)
+      endif()
 
       add_executable(wam_native_audio_converter_test
         tests/native_audio_converter_test.mm

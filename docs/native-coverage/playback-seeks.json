@@ -1,0 +1,108 @@
+[
+  {
+    "run": "/private/tmp/wam-coverage/gui-aac.m4a-153808eb",
+    "events": [
+      {
+        "event": "commit_seek_submitted",
+        "target_seconds": 2,
+        "generation": 2
+      },
+      {
+        "event": "commit_ready",
+        "target_seconds": 2,
+        "generation": 2
+      },
+      {
+        "event": "commit_seek_submitted",
+        "target_seconds": 0.5,
+        "generation": 3
+      },
+      {
+        "event": "commit_ready",
+        "target_seconds": 0.5,
+        "generation": 3
+      },
+      {
+        "event": "commit_seek_submitted",
+        "target_seconds": 3.5,
+        "generation": 4
+      },
+      {
+        "event": "commit_ready",
+        "target_seconds": 3.5,
+        "generation": 4
+      }
+    ],
+    "failures": [],
+    "last_metrics": {
+      "record": "playback_sample",
+      "session_epoch": 1788741223315268000,
+      "t_mono_ns": 441110501576041,
+      "media_seconds": 3.9800684166666667,
+      "drawn_frames": 0,
+      "submitted_frames": 0,
+      "superseded_frames": 0,
+      "discarded_late_frames": 0,
+      "audio_underrun_callbacks": 0,
+      "audio_clock_advanced_underruns": 0,
+      "audio_retired_late_frames": 0,
+      "audio_callbacks": 109,
+      "audio_rendered_frames": 100800,
+      "clock_rate": 1.0000000000000009,
+      "paused": false
+    }
+  },
+  {
+    "run": "/private/tmp/wam-coverage/gui-mp3lsf.mp3-7df94f59",
+    "events": [
+      {
+        "event": "commit_seek_submitted",
+        "target_seconds": 2,
+        "generation": 2
+      },
+      {
+        "event": "commit_ready",
+        "target_seconds": 2,
+        "generation": 2
+      },
+      {
+        "event": "commit_seek_submitted",
+        "target_seconds": 0.5,
+        "generation": 3
+      },
+      {
+        "event": "commit_ready",
+        "target_seconds": 0.5,
+        "generation": 3
+      },
+      {
+        "event": "commit_seek_submitted",
+        "target_seconds": 3.5,
+        "generation": 4
+      },
+      {
+        "event": "commit_ready",
+        "target_seconds": 3.5,
+        "generation": 4
+      }
+    ],
+    "failures": [],
+    "last_metrics": {
+      "record": "playback_sample",
+      "session_epoch": 1788741229940120000,
+      "t_mono_ns": 441117012474041,
+      "media_seconds": 3.978602291666667,
+      "drawn_frames": 0,
+      "submitted_frames": 0,
+      "superseded_frames": 0,
+      "discarded_late_frames": 0,
+      "audio_underrun_callbacks": 0,
+      "audio_clock_advanced_underruns": 0,
+      "audio_retired_late_frames": 0,
+      "audio_callbacks": 110,
+      "audio_rendered_frames": 46746,
+      "clock_rate": 1.0000000000000009,
+      "paused": false
+    }
+  }
+]

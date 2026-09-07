@@ -1,0 +1,157 @@
+[
+  {
+    "name": "opus-input-rate-revert",
+    "file": "src/media/matroska_demuxer.cpp",
+    "test": [
+      "python3",
+      "tests/native_coverage_integration.py",
+      "--audio",
+      "build/wam_native_coverage_audio_probe",
+      "--source",
+      "build/wam_native_coverage_source_probe",
+      "--ffmpeg",
+      "/opt/homebrew/bin/ffmpeg",
+      "--case",
+      "opus"
+    ],
+    "returncode": 1,
+    "sha256": "8cbbf2774e56ce9d210507d5502d137f50fb468a48bb0a30e163694604aa1199"
+  },
+  {
+    "name": "matroska-complete-selection-revert",
+    "file": "src/media/matroska_demuxer.cpp",
+    "test": [
+      "python3",
+      "tests/native_coverage_integration.py",
+      "--audio",
+      "build/wam_native_coverage_audio_probe",
+      "--source",
+      "build/wam_native_coverage_source_probe",
+      "--ffmpeg",
+      "/opt/homebrew/bin/ffmpeg",
+      "--case",
+      "selection"
+    ],
+    "returncode": 1,
+    "sha256": "8cbbf2774e56ce9d210507d5502d137f50fb468a48bb0a30e163694604aa1199"
+  },
+  {
+    "name": "avfoundation-complete-selection-revert",
+    "file": "src/platform/macos/avfoundation_media_source.mm",
+    "test": [
+      "python3",
+      "tests/native_coverage_integration.py",
+      "--audio",
+      "build/wam_native_coverage_audio_probe",
+      "--source",
+      "build/wam_native_coverage_source_probe",
+      "--ffmpeg",
+      "/opt/homebrew/bin/ffmpeg",
+      "--case",
+      "selection"
+    ],
+    "returncode": 1,
+    "sha256": "5291962bce9d3901da13b4e6c1a2ffc749671ac1ae0d280ed834fa77277b0e19"
+  },
+  {
+    "name": "aac-tail-revert",
+    "file": "src/platform/macos/avfoundation_media_source.mm",
+    "test": [
+      "python3",
+      "tests/native_coverage_integration.py",
+      "--audio",
+      "build/wam_native_coverage_audio_probe",
+      "--source",
+      "build/wam_native_coverage_source_probe",
+      "--ffmpeg",
+      "/opt/homebrew/bin/ffmpeg",
+      "--case",
+      "aac"
+    ],
+    "returncode": 1,
+    "sha256": "5291962bce9d3901da13b4e6c1a2ffc749671ac1ae0d280ed834fa77277b0e19"
+  },
+  {
+    "name": "mp3-duration-revert",
+    "file": "src/platform/macos/avfoundation_media_source.mm",
+    "test": [
+      "python3",
+      "tests/native_coverage_integration.py",
+      "--audio",
+      "build/wam_native_coverage_audio_probe",
+      "--source",
+      "build/wam_native_coverage_source_probe",
+      "--ffmpeg",
+      "/opt/homebrew/bin/ffmpeg",
+      "--case",
+      "mp3"
+    ],
+    "returncode": 1,
+    "sha256": "5291962bce9d3901da13b4e6c1a2ffc749671ac1ae0d280ed834fa77277b0e19"
+  },
+  {
+    "name": "mp3-origin-revert",
+    "file": "src/platform/macos/avfoundation_media_source.mm",
+    "test": [
+      "python3",
+      "tests/native_coverage_integration.py",
+      "--audio",
+      "build/wam_native_coverage_audio_probe",
+      "--source",
+      "build/wam_native_coverage_source_probe",
+      "--ffmpeg",
+      "/opt/homebrew/bin/ffmpeg",
+      "--case",
+      "mp3"
+    ],
+    "returncode": 1,
+    "sha256": "5291962bce9d3901da13b4e6c1a2ffc749671ac1ae0d280ed834fa77277b0e19"
+  },
+  {
+    "name": "mjpeg-open-inspection-revert",
+    "file": "src/platform/macos/avfoundation_media_source.mm",
+    "test": [
+      "python3",
+      "tests/native_coverage_integration.py",
+      "--audio",
+      "build/wam_native_coverage_audio_probe",
+      "--source",
+      "build/wam_native_coverage_source_probe",
+      "--ffmpeg",
+      "/opt/homebrew/bin/ffmpeg",
+      "--case",
+      "mjpeg"
+    ],
+    "returncode": 1,
+    "sha256": "5291962bce9d3901da13b4e6c1a2ffc749671ac1ae0d280ed834fa77277b0e19"
+  },
+  {
+    "name": "mjpeg-codec-fact-revert",
+    "file": "src/media/media_codec_facts.hpp",
+    "test": [
+      "build/wam_native_coverage_admission_test"
+    ],
+    "returncode": 1,
+    "sha256": "f6dd6224928af090e63ff5250a3bc26acb2b6097d7eb25cc7482c6487e50b66e"
+  },
+  {
+    "name": "notice-source-classification-revert",
+    "file": "src/platform/macos/native_media_session.mm",
+    "test": [
+      "build/wam_native_media_session_test"
+    ],
+    "returncode": 1,
+    "sha256": "b2b404f68547a16e15e275421f5f198c756169b3b1aa271872e69fe188d858f9"
+  },
+  {
+    "name": "notice-owner-routing-revert",
+    "file": "src/qt/native_playback_owner.mm",
+    "test": [
+      "python3",
+      "tests/native_coverage_wiring_test.py",
+      "."
+    ],
+    "returncode": 1,
+    "sha256": "b40fd6a7ecbae40df18bda849e547975ec3335c6c7208bb241ff882e8f48547b"
+  }
+]

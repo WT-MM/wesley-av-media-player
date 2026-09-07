@@ -1,0 +1,32 @@
+{
+  "app_sha256": "9573d70f6f8b0b79a3e68e4c341d01699600c440129ea17464cc60db28b473e9",
+  "build_command": "cmake --build build --parallel",
+  "build_exit": 0,
+  "ctest_command": "ctest --output-on-failure",
+  "ctest_passed": 81,
+  "ctest_failed": 0,
+  "ctest_log": "/private/tmp/wam-coverage/ctest-stable.log",
+  "final_coverage_recheck_passed": 3,
+  "corpus_native": 78,
+  "corpus_total": 97,
+  "corpus_regressions": 0,
+  "corpus_app_identical_to_final_build": true,
+  "frozen_sha256_unchanged": {
+    "src/media/native_media_source.hpp": "8b7d93e7e468dcb7e31355a6dd96e2de70bd7255ce87a2fda3245ffa49962641",
+    "src/media/native_playback_contract.hpp": "f45fb6311766ecf1136a6cc07323fb7da7f431408e775f6786618ab4d36f4f38",
+    "tests/native_audio_converter_test.mm": "1fb62d1fb5a69db4999d350b2b8cdaa4b17762b7b47e23beaa07e2462ecdc18c",
+    "tests/native_audio_session_test.mm": "8ac89f540d5ddc339b4cc25301e62c64793ee3a38de3caa74ffd8b675f192783"
+  },
+  "mutation_checks_killed": 10,
+  "mutation_sources_restored_byte_identically": true,
+  "final_video_probe_recheck": {
+    "specimen": "prores4444.mov",
+    "hardware": true,
+    "frames": 60,
+    "packets": 60,
+    "status": 0,
+    "cpu_us": 17409,
+    "process_energy_nj": 43141796,
+    "note": "Thread-safe callback-counter recheck; the initial two-mode measurement campaign is retained separately."
+  }
+}

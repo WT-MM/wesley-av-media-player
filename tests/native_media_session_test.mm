@@ -934,7 +934,8 @@ std::unique_ptr<NativeMediaSession> sessionFor(
 }
 
 template <typename Fact>
-Fact waitFact(NativeMediaSession& session, const char* message) {
+Fact waitFact(NativeMediaSession& session, const char* message,
+              bool* admissionRouteChoice = nullptr) {
   const auto deadline =
       std::chrono::steady_clock::now() + std::chrono::seconds(5);
   while (std::chrono::steady_clock::now() < deadline) {
@@ -953,6 +954,7 @@ Fact waitFact(NativeMediaSession& session, const char* message) {
       continue;
     }
     NativeMediaSessionObservations observations = session.takeObservations();
+    if (admissionRouteChoice) *admissionRouteChoice = observations.admissionRouteChoice;
     if constexpr (std::is_same_v<Fact,
                                  NativeMediaSessionRunStateApplied>) {
       if (observations.runStateApplied.has_value()) {
@@ -2367,8 +2369,10 @@ void testUnobservedDirectRetireBarrier() {
   expect(prepare(*session, prepareCommand()) ==
              NativeMediaSessionCommandStatus::Accepted,
          "unsupported fixture accepts Prepare command");
+  bool admissionRouteChoice = false;
   const protocol::Failed failed =
-      waitFact<protocol::Failed>(*session, "expected post-prearm failure");
+      waitFact<protocol::Failed>(*session, "expected post-prearm failure", &admissionRouteChoice);
+  expect(admissionRouteChoice, "source refusal is an admission route choice after exact retirement");
   expect(failed.reason == protocol::FailureReason::Startup,
          "post-prearm Unsupported is Startup, never UnsupportedSource");
   expect(state->videoConfigures.load() == 0 &&
@@ -2469,8 +2473,10 @@ void testTerminalFailuresLatchAllLiveControls() {
   expect(prepare(*prepareSession, prepareCommand()) ==
              NativeMediaSessionCommandStatus::Accepted,
          "failure latch Prepare accepted");
+  bool admissionRouteChoice = true;
   static_cast<void>(waitFact<protocol::Failed>(
-      *prepareSession, "prepare failure publishes"));
+      *prepareSession, "prepare failure publishes", &admissionRouteChoice));
+  expect(!admissionRouteChoice, "genuine source failure keeps the diagnostic notice");
   expect(prepareSession->facts().liveFailed &&
              prepareSession->start({{{1}, {2}}, {7}, true}) ==
                  NativeMediaSessionCommandStatus::Ignored &&

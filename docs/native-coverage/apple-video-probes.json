@@ -1,0 +1,130 @@
+[
+  {
+    "file": "hevc422-hvc1.mov",
+    "mode": "1",
+    "rc": 0,
+    "stdout": "codec=68766331 create=0 using_hw=1 packets=60 frames=60 error=0 pixel=70343232 imageio=0 cpu_us=11428 energy_status=0/0 energy_nj=31968825",
+    "stderr": "",
+    "sha256": "3bff8e42b06a3be06ec4424f99dadf34ca7881bb9249fc194d0f71cc3c473989"
+  },
+  {
+    "file": "hevc422-hvc1.mov",
+    "mode": "2",
+    "rc": 0,
+    "stdout": "codec=68766331 create=0 using_hw=0 packets=60 frames=60 error=0 pixel=78343232 imageio=0 cpu_us=15561 energy_status=0/0 energy_nj=40802702",
+    "stderr": "",
+    "sha256": "3bff8e42b06a3be06ec4424f99dadf34ca7881bb9249fc194d0f71cc3c473989"
+  },
+  {
+    "file": "vp9.mp4",
+    "mode": "1",
+    "rc": 0,
+    "stdout": "codec=76703039 create=0 using_hw=1 packets=60 frames=60 error=0 pixel=34323076 imageio=0 cpu_us=10571 energy_status=0/0 energy_nj=30751345",
+    "stderr": "",
+    "sha256": "eaae3cdfcdf0432f9cac693c79dc3836dc27ba7acae3aa38c36b584ff24bb087"
+  },
+  {
+    "file": "vp9.mp4",
+    "mode": "2",
+    "rc": 1,
+    "stdout": "codec=76703039 create=-12906",
+    "stderr": "",
+    "sha256": "eaae3cdfcdf0432f9cac693c79dc3836dc27ba7acae3aa38c36b584ff24bb087"
+  },
+  {
+    "file": "av1.mp4",
+    "mode": "1",
+    "rc": 0,
+    "stdout": "codec=61763031 create=0 using_hw=1 packets=60 frames=60 error=0 pixel=34323076 imageio=0 cpu_us=10240 energy_status=0/0 energy_nj=29713849",
+    "stderr": "",
+    "sha256": "132292f8144e453927e05a21989e69126afe51bac4681ff380ee123a29afa5e7"
+  },
+  {
+    "file": "av1.mp4",
+    "mode": "2",
+    "rc": 1,
+    "stdout": "codec=61763031 create=-12906",
+    "stderr": "",
+    "sha256": "132292f8144e453927e05a21989e69126afe51bac4681ff380ee123a29afa5e7"
+  },
+  {
+    "file": "prores4444.mov",
+    "mode": "1",
+    "rc": 0,
+    "stdout": "codec=61703468 create=0 using_hw=1 packets=60 frames=60 error=0 pixel=79343136 imageio=0 cpu_us=12280 energy_status=0/0 energy_nj=35352482",
+    "stderr": "",
+    "sha256": "5a3cd71d154c7f86c8f22e8c4cc88bb0ec2f5e95ce8ad1287f78f6bf9f9e1d0d"
+  },
+  {
+    "file": "prores4444.mov",
+    "mode": "2",
+    "rc": 0,
+    "stdout": "codec=61703468 create=0 using_hw=0 packets=60 frames=60 error=0 pixel=79343136 imageio=0 cpu_us=13044 energy_status=0/0 energy_nj=40133944",
+    "stderr": "",
+    "sha256": "5a3cd71d154c7f86c8f22e8c4cc88bb0ec2f5e95ce8ad1287f78f6bf9f9e1d0d"
+  },
+  {
+    "file": "prores4444xq.mov",
+    "mode": "1",
+    "rc": 0,
+    "stdout": "codec=61703478 create=0 using_hw=1 packets=60 frames=60 error=0 pixel=79343136 imageio=0 cpu_us=12674 energy_status=0/0 energy_nj=35601601",
+    "stderr": "",
+    "sha256": "5155f8f3d787a14ad80a4af2418be63ba47fba4067856a305e5e9a9d4fc08af3"
+  },
+  {
+    "file": "prores4444xq.mov",
+    "mode": "2",
+    "rc": 0,
+    "stdout": "codec=61703478 create=0 using_hw=0 packets=60 frames=60 error=0 pixel=79343136 imageio=0 cpu_us=17099 energy_status=0/0 energy_nj=44137314",
+    "stderr": "",
+    "sha256": "5155f8f3d787a14ad80a4af2418be63ba47fba4067856a305e5e9a9d4fc08af3"
+  },
+  {
+    "file": "mjpeg420.mov",
+    "mode": "1",
+    "rc": 0,
+    "stdout": "codec=6a706567 create=0 using_hw=0 packets=60 frames=60 error=0 pixel=34323066 imageio=1 cpu_us=10156 energy_status=0/0 energy_nj=31301066",
+    "stderr": "",
+    "sha256": "e392135a79319cbad8f22dd1e7629c35b8bc84b8c1c158437ee16bd623b13dbf"
+  },
+  {
+    "file": "mjpeg420.mov",
+    "mode": "2",
+    "rc": 0,
+    "stdout": "codec=6a706567 create=0 using_hw=0 packets=60 frames=60 error=0 pixel=34323066 imageio=1 cpu_us=11677 energy_status=0/0 energy_nj=35600572",
+    "stderr": "",
+    "sha256": "e392135a79319cbad8f22dd1e7629c35b8bc84b8c1c158437ee16bd623b13dbf"
+  },
+  {
+    "file": "mjpeg422.mov",
+    "mode": "1",
+    "rc": 1,
+    "stdout": "codec=6a706567 create=0 using_hw=0 packets=60 frames=0 error=-12904 pixel=00000000 imageio=1 cpu_us=8425 energy_status=0/0 energy_nj=26908345",
+    "stderr": "",
+    "sha256": "e5a153f4dd1e836b022feb1dd3d434bd8b3b3dfba73a121378669cb5af72adc6"
+  },
+  {
+    "file": "mjpeg422.mov",
+    "mode": "2",
+    "rc": 1,
+    "stdout": "codec=6a706567 create=0 using_hw=0 packets=60 frames=0 error=-12904 pixel=00000000 imageio=1 cpu_us=9884 energy_status=0/0 energy_nj=30508124",
+    "stderr": "",
+    "sha256": "e5a153f4dd1e836b022feb1dd3d434bd8b3b3dfba73a121378669cb5af72adc6"
+  },
+  {
+    "file": "mjpeg444.mov",
+    "mode": "1",
+    "rc": 1,
+    "stdout": "codec=6a706567 create=0 using_hw=0 packets=60 frames=0 error=-12910 pixel=00000000 imageio=1 cpu_us=8719 energy_status=0/0 energy_nj=27417190",
+    "stderr": "",
+    "sha256": "8edb2580db5a6e030189f90afbcd761f479658b4b575446a9a7226d55b526ebd"
+  },
+  {
+    "file": "mjpeg444.mov",
+    "mode": "2",
+    "rc": 1,
+    "stdout": "codec=6a706567 create=0 using_hw=0 packets=60 frames=0 error=-12904 pixel=00000000 imageio=1 cpu_us=9950 energy_status=0/0 energy_nj=30958238",
+    "stderr": "",
+    "sha256": "8edb2580db5a6e030189f90afbcd761f479658b4b575446a9a7226d55b526ebd"
+  }
+]

@@ -1350,7 +1350,7 @@ void NativePlaybackOwner::consumeObservations(
     consumePreviewFailed(*observations.previewFailed);
   }
   if (observations.lifecycle.has_value()) {
-    consumeLifecycle(*observations.lifecycle);
+    consumeLifecycle(*observations.lifecycle, observations.admissionRouteChoice);
   }
   if (observations.runStateApplied.has_value()) {
     consumeRunState(*observations.runStateApplied);
@@ -1476,9 +1476,9 @@ void NativePlaybackOwner::consumeCommitReady(
 }
 
 void NativePlaybackOwner::consumeLifecycle(
-    const macos::NativeMediaSessionFact &fact) {
+    const macos::NativeMediaSessionFact &fact, bool admissionRouteChoice) {
   std::visit(
-      [this](const auto &event) {
+      [this, admissionRouteChoice](const auto &event) {
         using Event = std::decay_t<decltype(event)>;
         if constexpr (std::is_same_v<Event, native_protocol::Prepared>) {
           playback_router::Transition transition =
@@ -1556,7 +1556,9 @@ void NativePlaybackOwner::consumeLifecycle(
             return;
           }
           clearNativeCommit(true);
-          if (nativeFailureIsInformational(event.reason)) {
+          if (admissionRouteChoice) {
+            // Successful admission routing carries no playback-failure notice.
+          } else if (nativeFailureIsInformational(event.reason)) {
             controller_.setLastNotice(nativeFailureText(event.reason));
           } else {
             controller_.setLastError(nativeFailureText(event.reason));
