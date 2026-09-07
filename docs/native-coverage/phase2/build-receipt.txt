@@ -1,0 +1,50 @@
+version=9.0.1
+source_sha256=cf38e0e28c7e5605942c4a77755349b0145804a397af37eb1fb4c77cb237f635
+architecture=arm64
+deployment_target=13.3
+build_seconds=36
+Apple clang version 21.0.0 (clang-2100.1.1.101)
+Target: arm64-apple-darwin25.3.0
+Thread model: posix
+InstalledDir: /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin
+26.5
+ProductName:		macOS
+ProductVersion:		26.3.1
+ProductVersionExtra:	(a)
+BuildVersion:		25D771280a
+d9075d4dfba8fbcbf56d7a19855c06d3dddce8bc1af2a4a3cdf08b0fcd87ad92  /Users/wesleymaa/Documents/WAM/third_party/ffmpeg-lgpl/share/wam-ffmpeg/configure-command.txt
+f2bf42935e2d5963cbc2b7d8c3a20f592dfd55785ec64f9ed8a837c7239c20bc  /Users/wesleymaa/Documents/WAM/third_party/ffmpeg-lgpl/lib/libavcodec-wamnative.63.1.101.dylib
+/Users/wesleymaa/Documents/WAM/third_party/ffmpeg-lgpl/lib/libavcodec-wamnative.63.1.101.dylib:
+	@rpath/libavcodec-wamnative.63.dylib (compatibility version 63.0.0, current version 63.1.101)
+	@rpath/libavutil-wamnative.61.dylib (compatibility version 61.0.0, current version 61.1.101)
+	/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1356.0.0)
+	/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation (compatibility version 150.0.0, current version 5026.5.4)
+	/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo (compatibility version 1.2.0, current version 734.4.0)
+	/System/Library/Frameworks/CoreMedia.framework/Versions/A/CoreMedia (compatibility version 1.0.0, current version 3320.8.5)
+/Users/wesleymaa/Documents/WAM/third_party/ffmpeg-lgpl/lib/libavcodec-wamnative.63.1.101.dylib:
+Load command 10
+      cmd LC_BUILD_VERSION
+  cmdsize 32
+ platform MACOS
+    minos 13.3
+      sdk 26.5
+   ntools 1
+     tool LD
+  version 1267.0
+14f5de1aa4cfe3c19c57891a56b12379e3d64327e2167617482dd5df8d960a00  /Users/wesleymaa/Documents/WAM/third_party/ffmpeg-lgpl/lib/libavutil-wamnative.61.1.101.dylib
+/Users/wesleymaa/Documents/WAM/third_party/ffmpeg-lgpl/lib/libavutil-wamnative.61.1.101.dylib:
+	@rpath/libavutil-wamnative.61.dylib (compatibility version 61.0.0, current version 61.1.101)
+	/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1356.0.0)
+	/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation (compatibility version 150.0.0, current version 5026.5.4)
+	/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo (compatibility version 1.2.0, current version 734.4.0)
+	/System/Library/Frameworks/CoreMedia.framework/Versions/A/CoreMedia (compatibility version 1.0.0, current version 3320.8.5)
+/Users/wesleymaa/Documents/WAM/third_party/ffmpeg-lgpl/lib/libavutil-wamnative.61.1.101.dylib:
+Load command 10
+      cmd LC_BUILD_VERSION
+  cmdsize 32
+ platform MACOS
+    minos 13.3
+      sdk 26.5
+   ntools 1
+     tool LD
+  version 1267.0

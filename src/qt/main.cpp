@@ -1,3 +1,6 @@
+#if defined(WAM_ENABLE_AVCODEC_STAGE)
+#include "media/avcodec/runtime.hpp"
+#endif
 #include "mpv_video_item.hpp"
 #include "subtitle_bitmap_provider.hpp"
 #if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
@@ -1015,6 +1018,11 @@ int runtimeVerificationFailure(int exit_code, const QString &message) {
 }
 
 int verifyRuntime() {
+#if defined(WAM_ENABLE_AVCODEC_STAGE)
+  if (const char* failure = wam::media::avcodec::runtimeFailure())
+    return runtimeVerificationFailure(7, QString::fromLatin1(failure));
+  qInfo().noquote() << "native_codec_stages version=1 libavcodec=63 libavutil=61 license=LGPL-2.1-or-later required_decoders=present audio_routing=disabled";
+#endif
   const QUrl missing_relative =
       mediaUrlFromArgument(QStringLiteral("videos/definitely-missing.mp4"));
   const QUrl missing_filename =

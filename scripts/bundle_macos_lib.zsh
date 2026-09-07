@@ -854,6 +854,20 @@ mkdir -p "$FRAMEWORKS" "$PLUGINS" "$RESOURCES" "$TOOLS" "$MODELS" ||
   return 1
 /bin/rm -f -- "$TOOLS/ffmpeg" "$TOOLS/whisper-cli" || return 1
 cp -f README.md THIRD_PARTY_NOTICES.md "$RESOURCES/" || return 1
+WAM_NATIVE_AVCODEC_PRESENT=0
+if [[ "$(otool -L "$EXECUTABLE")" == *libavcodec-wamnative.* ]]; then
+  WAM_NATIVE_AVCODEC_PRESENT=1
+  native_notices="${WAM_NATIVE_FFMPEG_NOTICES:-docs/native-coverage/phase2}"
+  mkdir -p "$RESOURCES/native-ffmpeg" || return 1
+  for native_notice in FFMPEG_NOTICES.md COPYING.LGPLv2.1 LICENSE.md configure-command.txt build-receipt.txt; do
+    [[ -f "$native_notices/$native_notice" ]] || {
+      print -u2 "NativeFfmpegNoticeMissing: $native_notice"
+      return 1
+    }
+    cp -f "$native_notices/$native_notice" "$RESOURCES/native-ffmpeg/" || return 1
+  done
+fi
+
 
 if [[ ! -d "$FRAMEWORKS/QtCore.framework" ||
       ! -d "$FRAMEWORKS/QtQuick.framework" ||
@@ -1566,6 +1580,15 @@ fi
 # MpvRuntime validates this exact leaf before dlopen. Recheck the completed
 # package after every dependency rewrite and before any signature can bless it.
 validate_final_mpv_fallback || return 1
+if (( WAM_NATIVE_AVCODEC_PRESENT )); then
+  for native_library in libavcodec-wamnative.63.dylib libavutil-wamnative.61.dylib; do
+    [[ -f "$FRAMEWORKS/$native_library" ]] || {
+      print -u2 "NativeFfmpegLibraryMissing: $native_library"
+      return 1
+    }
+  done
+fi
+
 if [[ ! -x "$TOOLS/ffmpeg" || ! -x "$TOOLS/whisper-cli" ]]; then
   print -u2 "Packaging mutation removed a required tool's executable mode"
   return 1

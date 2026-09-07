@@ -1,0 +1,397 @@
+[
+  {
+    "path": "/Users/wesleymaa/Movies/bright_reef_74.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/dusk_arch_18.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/summer_canyon_12.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=68766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/wild_inlet_78.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/river_marsh_46.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/green_vista_85.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "REFUSED"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/sandy_ledge_67.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/stone_reef_11.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/urban_lagoon_34.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/west_pier_28.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/soft_coast_15.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/calm_harbor_49.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/timber_road_10.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/timber_canyon_59.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/coastal_pier_95.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/grey_woods_37.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/amber_bluff_76.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/violet_canyon_32.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/grey_meadow_10.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/late_mill_79.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/pale_crossing_48.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/maple_falls_77.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/calm_beach_97.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/quiet_meadow_23.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/rainy_ledge_94.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/copper_beach_70.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/warm_inlet_55.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/evening_pier_41.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/snowy_lane_40.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/shadow_street_42.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/dusk_bay_43.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/rustic_crossing_44.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/dawn_grove_45.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/hollow_fjord_10.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/olive_marsh_73.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/maple_mill_29.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/olive_valley_25.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/clear_reef_24.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/late_vista_31.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/amber_inlet_28.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/bright_bluff_26.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/wild_road_30.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/violet_inlet_31.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/indigo_village_57.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/azure_quay_50.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/high_vista_34.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/velvet_river_56.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/golden_pass_38.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/snowy_lake_15.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/rustic_lane_43.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/golden_forest_14.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/evening_path_16.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/spring_slope_62.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/misty_trail_51.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/grey_field_36.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/field_wharf_63.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/shadow_coast_41.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/west_hill_54.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/wild_bluff_29.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/evening_wharf_40.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/tidal_shore_11.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/grey_walk_12.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/stone_jetty_37.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/lake_mill_55.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/lunar_dune_53.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/island_mill_32.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/shadow_spring_17.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/dawn_peak_44.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/urban_river_33.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/high_orchard_10.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/late_dune_30.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/tidal_canyon_35.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/ocean_marsh_49.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/snowy_slope_39.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/dusk_garden_42.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/winter_bluff_52.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/twilight_brook_58.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/maple_cove_02.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/wild_gate_03.mp4",
+    "route": "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "status": "NATIVE_OK"
+  }
+]
