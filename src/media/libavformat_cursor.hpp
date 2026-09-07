@@ -30,6 +30,7 @@ public:
     int codecId{};
     bool green_mesa_11{}, audio{}, attached{}, unsupportedMetadata{};
     unsigned primaries{}, transfer{}, matrix{};
+    bool fullRange{};
     unsigned width{}, height{}, rate{}, channels{}, frameSize{};
     MediaTime timeBase{}, duration{}, start{};
     std::span<const std::byte> extradata{};

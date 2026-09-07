@@ -415,10 +415,6 @@ MpvRuntimeLoadResult MpvRuntime::load(
   }
 
   const std::lock_guard closureLock(media::avcodec::playbackClosureMutex());
-  if (media::avcodec::nativeClosurePresent()) {
-    return {{}, MpvRuntimeLoadError::DifferentRuntimeAlreadyLoaded,
-            QStringLiteral("DecoderUnavailable: PlaybackFfmpegClosureConflict")};
-  }
 
   // Loading through the already-open descriptor closes the validation/load
   // rename race. No pathname is reopened by dyld, and the numeric path has a

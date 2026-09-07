@@ -1,0 +1,50 @@
+{
+  "input_sha256": "fbe7928d2adfa6f8ac086dabbe4034b09ab00ec61cc11c79fbf07d36990438f4",
+  "output_sha256": "ace0323ce01a78fe35009f46664345e845b5a54d707a7baa73e475426509afe1",
+  "changes": [
+    [
+      "/opt/homebrew/opt/qtdeclarative/lib/QtQuickControls2.framework/Versions/A/QtQuickControls2",
+      "@executable_path/../Frameworks/QtQuickControls2.framework/Versions/A/QtQuickControls2"
+    ],
+    [
+      "/opt/homebrew/opt/qtdeclarative/lib/QtQuickDialogs2.framework/Versions/A/QtQuickDialogs2",
+      "@executable_path/../Frameworks/QtQuickDialogs2.framework/Versions/A/QtQuickDialogs2"
+    ],
+    [
+      "/opt/homebrew/opt/qtdeclarative/lib/QtQuickLayouts.framework/Versions/A/QtQuickLayouts",
+      "@executable_path/../Frameworks/QtQuickLayouts.framework/Versions/A/QtQuickLayouts"
+    ],
+    [
+      "/opt/homebrew/opt/qtdeclarative/lib/QtLabsPlatform.framework/Versions/A/QtLabsPlatform",
+      "@executable_path/../Frameworks/QtLabsPlatform.framework/Versions/A/QtLabsPlatform"
+    ],
+    [
+      "/opt/homebrew/opt/qtdeclarative/lib/QtQuick.framework/Versions/A/QtQuick",
+      "@executable_path/../Frameworks/QtQuick.framework/Versions/A/QtQuick"
+    ],
+    [
+      "/opt/homebrew/opt/qtbase/lib/QtOpenGL.framework/Versions/A/QtOpenGL",
+      "@executable_path/../Frameworks/QtOpenGL.framework/Versions/A/QtOpenGL"
+    ],
+    [
+      "/opt/homebrew/opt/qtbase/lib/QtGui.framework/Versions/A/QtGui",
+      "@executable_path/../Frameworks/QtGui.framework/Versions/A/QtGui"
+    ],
+    [
+      "/opt/homebrew/opt/qtdeclarative/lib/QtQml.framework/Versions/A/QtQml",
+      "@executable_path/../Frameworks/QtQml.framework/Versions/A/QtQml"
+    ],
+    [
+      "/opt/homebrew/opt/qtbase/lib/QtNetwork.framework/Versions/A/QtNetwork",
+      "@executable_path/../Frameworks/QtNetwork.framework/Versions/A/QtNetwork"
+    ],
+    [
+      "/opt/homebrew/opt/qtbase/lib/QtCore.framework/Versions/A/QtCore",
+      "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore"
+    ],
+    [
+      "/opt/homebrew/opt/libvpx/lib/libvpx.12.dylib",
+      "@executable_path/../Frameworks/libvpx.12.dylib"
+    ]
+  ]
+}

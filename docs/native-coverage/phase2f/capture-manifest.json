@@ -1,0 +1,902 @@
+[
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-limited/results.json",
+    "sha256": "eb17248ddfad1dc74fcc3abcdd651049fa83f9542baf422d754ef8fdc2bbd6c8"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-limited/h264422/bars.mkv",
+    "sha256": "fdc7c9dbb55393b6e9be5f30a7c968bc08496f0b4981abdbc813fcd9e5901e7e"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-limited/h264422/log.txt",
+    "sha256": "e02e5c4efe9b76b559b13709a314a5190636ede5e49916d8b2ca204026a24eed"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-limited/asp/bars.mkv",
+    "sha256": "a015b042dffa6f567415c5190cdb53e91e72d78f5cc3ef8a89188c4ca99dbf3e"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-limited/asp/log.txt",
+    "sha256": "babca4b7b033b466e9655b8252f72a2732d4c8af487e6fe04f1bd6dbcb9a945f"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-limited/vp9/bars.mkv",
+    "sha256": "a4012731e4ac3cf0c3919a30d8aa8914e7283098924e970490c97590ba896ebc"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-limited/vp9/log.txt",
+    "sha256": "640da57b6c4728b51f937f95a2a4db64aa3a173228dab6498cf80644ef963c1a"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-limited/baseline/bars.mkv",
+    "sha256": "aa291c09e6a0bf91200745653f23f3f680b089e7114914a1ef243d085630f488"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-limited/baseline/log.txt",
+    "sha256": "59a2d2d3a1ece8d80b1502c5bf311894a5badbd192b5ad9c3e78e82fbd72edc1"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-limited/vp9p2/bars.mkv",
+    "sha256": "7b15b2d2aef2b21b025f92e3352e110ede88252088fd32f8c9b1f5ef993f2d98"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-limited/vp9p2/log.txt",
+    "sha256": "5ada9f1ae8b68d623dd27afba0a4603e4181b5de0d41cc34d3db3aa461000eba"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-limited/hi10p/bars.mkv",
+    "sha256": "124a4984fc414f745814ea3606f677bd4be5a5781afae85d57751b48bc7ea115"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-limited/hi10p/log.txt",
+    "sha256": "87348d745ffcfae8a72b11948277ec5f7e935df5ae4e5835a80e20ddcbbe80d4"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-limited/results.json",
+    "sha256": "6351fbdbfaadb0c30054dd65e760b7269634c4d2cd0d55a423f8a430c9d0474f"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-limited/h264422/correct.png",
+    "sha256": "4067a0cdef37caec196486990ea28f61bdfa33ff5a58bef736e9867d9e885a57"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-limited/h264422/bars.mkv",
+    "sha256": "4411bf692b975581ce3b9bd8b4eab3d566b481575c1a22cbe68beda7f8cd89d2"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-limited/h264422/wrong_range.png",
+    "sha256": "4bc55881e7e26596fdb1e709f978d99afb27b5a82666743416914ea67575472e"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-limited/h264422/log.txt",
+    "sha256": "2b2ba1cb86a5bcf9bbb8cb60a7f0b8ea4963eebfb9e3c68c14071f89d8398c72"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-limited/h264422/display.png",
+    "sha256": "25a4781b41acd607918e035ce7f26f9aed918ab917ae28dac207bc395bf087f9"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-limited/h264422/wrong_matrix.png",
+    "sha256": "3f6d7e3cedc622837ababe2c5898f09d178879c0eed7bdc3b91a181fb6eb1938"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-limited/h264422/metrics.jsonl",
+    "sha256": "2021ae7c430a68d4f684f5ac94c5b3c8d64a438b80afe86696fe150ab657ccca"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-limited/h264422/scene.png",
+    "sha256": "d02b9c67920c0506ec3ac216bc5f9f42798c2558eae86c133df3f18d61cb3014"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-limited/asp/correct.png",
+    "sha256": "3f335ee2cb6b8f6e415b571c51aaf82d126202b2b4f34a79fbb2a99d06642f66"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-limited/asp/bars.mkv",
+    "sha256": "f6549fe4c7aafa0703fd0d5841314d35fb21d7f3107bd39e26f0789dbf70a4cd"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-limited/asp/wrong_range.png",
+    "sha256": "f84067ddc75ffb4089ba2155be8564c73a621bb878d50910679df642f18c61b0"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-limited/asp/log.txt",
+    "sha256": "f4c6cc1e5933e373eac54fbec32b40d4eed23a4854c5aa39aeac13ebb9883d00"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-limited/asp/display.png",
+    "sha256": "4143f3aa44265bd53fb9fceb816eccedbfd0a694facac8329621798c0b8c2781"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-limited/asp/wrong_matrix.png",
+    "sha256": "fcf82a3d3571131026184c750e90b8725bc26d005ec9cf484c78203cb88ebd15"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-limited/asp/metrics.jsonl",
+    "sha256": "c957fc981bc69db3689b6c65a004920059e88e127ae30b48dc95ba95becbf3eb"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-limited/asp/scene.png",
+    "sha256": "9f3e1528be8e2cc0e3819b92290291ce9ac6375bd6abf08481c80194236f1441"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-limited/vp9/correct.png",
+    "sha256": "c108bc2123e4856fa33fbaae779ab1e8bca95eb348529e815d68a9309833d21f"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-limited/vp9/bars.mkv",
+    "sha256": "63439129605b0e8904b2427dda17d5936fddd4ced380ea31af986b84ff41d673"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-limited/vp9/wrong_range.png",
+    "sha256": "939580472d424f1ebf52f93550d1341ceaf5dd6a103a76faf959c55c8e39565c"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-limited/vp9/log.txt",
+    "sha256": "1233436869a38923dabe99af3b345f8871bab8f3c56268c8d7eed743912d47ee"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-limited/vp9/display.png",
+    "sha256": "81da114bcc14b68046a60d5e7f8c4d89958b611356e06c374879281283084524"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-limited/vp9/wrong_matrix.png",
+    "sha256": "f4f158abc85de4113e6a7fe8ddd93c755e1c37261f853f079e1c127ec8ce4521"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-limited/vp9/metrics.jsonl",
+    "sha256": "97ec93de84e0aea28c809f51c3b85c67f6b98512d25b4874ee37ea7b0c83843c"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-limited/vp9/scene.png",
+    "sha256": "f71dd4004d637314af29ebdb9a5431e5093ac3602061e79d13b671ee4436bb7d"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-limited/baseline/correct.png",
+    "sha256": "674bebc9668d6778ffd3f6b51208f70cc7f73df32a0e677a6941a21b19cae553"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-limited/baseline/bars.mkv",
+    "sha256": "e20c10eb47cd8b5e5260a3533aedfc8c4dc5eb74c1395767bd8c9e19c64d4d62"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-limited/baseline/wrong_range.png",
+    "sha256": "2718041d8137af83b843708a82cfa024f82ce24ee4f56e7bc95ce55423411fb6"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-limited/baseline/log.txt",
+    "sha256": "c9acc6dd002a49ec3a8cd9a653b2674a806363371f54282ca92d69d80de79c4b"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-limited/baseline/display.png",
+    "sha256": "742cab1387cd9cd72b09c9c10a242505ce50da45a0903fddb9f2e5e428848b03"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-limited/baseline/wrong_matrix.png",
+    "sha256": "c3458f70cbdc4bd2fae0034630ee8eabf085d77a120920684e25b53e3e612080"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-limited/baseline/metrics.jsonl",
+    "sha256": "fc460ed2ca38bb0cf6ed66e6c4e8272b70993536bb688b4b43597089df55c2ba"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-limited/baseline/scene.png",
+    "sha256": "f71dd4004d637314af29ebdb9a5431e5093ac3602061e79d13b671ee4436bb7d"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-limited/vp9p2/correct.png",
+    "sha256": "dc56819cf89358945c68b9d576e0575c4e1909a86f2e60d24abdd6e63ad078d2"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-limited/vp9p2/bars.mkv",
+    "sha256": "042f3dccd5051193065c4e011923b037fad3a20e600b8ff0b1d73095011e7396"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-limited/vp9p2/wrong_range.png",
+    "sha256": "1c36bb4d68ca32b0be56fcff58fc2d80554412c1f15a9241cd007509b93dd25a"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-limited/vp9p2/log.txt",
+    "sha256": "dd54724346016fdf43b2f08177ecb84f75a0ce8f3c9db1de89787aa90a6c4555"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-limited/vp9p2/display.png",
+    "sha256": "125a2beb4504023592fc4ab886796402c5bad30d68f9b82c887633a9179feb01"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-limited/vp9p2/wrong_matrix.png",
+    "sha256": "a64a5efc070850fb225e746df9d98a50e38f7c1cf3ebef7e44bb42e0b6b4d191"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-limited/vp9p2/metrics.jsonl",
+    "sha256": "23f0c4755ffc0ae6f31c6f1d8ab385e99e6abb8e19905a903ae1d3c0dc16f755"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-limited/vp9p2/scene.png",
+    "sha256": "f71dd4004d637314af29ebdb9a5431e5093ac3602061e79d13b671ee4436bb7d"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-limited/hi10p/correct.png",
+    "sha256": "d1755bd5b5a59d02b90f75779436145704c5fb52aaf8e0deed877246507d0dd2"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-limited/hi10p/bars.mkv",
+    "sha256": "838d8cb2f6906d7fa00a546f9c51acd6119f1d457de1a9b2d2306e20c999e707"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-limited/hi10p/wrong_range.png",
+    "sha256": "b2efe8220d7742a2aabc36de41727c3a681f5c598a65a55967d409fed476098b"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-limited/hi10p/log.txt",
+    "sha256": "a1bb5a9988fcb5283239924f461a2a77d5d31a2ca111b8cbcd76ba5259864c91"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-limited/hi10p/display.png",
+    "sha256": "02427973918e6f01d949f8ba58be821cc2690d0ddb3f19cfef186a1225b2cc01"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-limited/hi10p/wrong_matrix.png",
+    "sha256": "0a5a92c72de1df4118c9aa900c9aa567bb95e0f2c2ce0971dd3976680faa5977"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-limited/hi10p/metrics.jsonl",
+    "sha256": "20a7dcdd198f1cec737c77df1af5905dad88816cd4e243fe4a406549292ae58f"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-limited/hi10p/scene.png",
+    "sha256": "484d0f494c9f67de47b2f4a335b8f28cce6715cf5f20dc5eb1bad945ee338408"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-hdr-hardware/results.json",
+    "sha256": "2bb2d6e815ecad665fc72d88def4d6d969e5ff043f7ce7c9240be21b54e758bd"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-hdr-hardware/h264-smpte2084/log.txt",
+    "sha256": "6d08d9aca125cf33f240a570aaba4c4816b348d96a3849d7ff847bb15b4a56bf"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-hdr-hardware/h264-smpte2084/display.png",
+    "sha256": "c8019ab2a5512b81f73f12065bb46ed3921c084de3d87e24743b46adcba7626b"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-hdr-hardware/h264-smpte2084/metrics.jsonl",
+    "sha256": "fc24980ac319e40a96c7a058ca0f80622522f8af847ab8405179e00267a99c69"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-hdr-hardware/h264-smpte2084/scene.png",
+    "sha256": "04a5bfe42668e2f9cc018fe6e6160e07efdd55314b75e97fc2436703e1a2869a"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-hdr-hardware/hevc-arib-std-b67/log.txt",
+    "sha256": "804a059ed0b0a5d95266b5a603e9619485def5c449799a78ffadf648237b9034"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-hdr-hardware/hevc-arib-std-b67/display.png",
+    "sha256": "42ec51ecb35f6769002d857a3854bec491d4ba46fbf1f542e1ef8cb1a741dc28"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-hdr-hardware/hevc-arib-std-b67/metrics.jsonl",
+    "sha256": "78e0048ca678cc50713d7fc886cbacd51d224e305f6c33eed98defc821ac74ee"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-hdr-hardware/hevc-arib-std-b67/scene.png",
+    "sha256": "f71dd4004d637314af29ebdb9a5431e5093ac3602061e79d13b671ee4436bb7d"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-hdr-hardware/hevc-smpte2084/log.txt",
+    "sha256": "038ff3271009a796c958816040c3ad2723d42720079818a2e96e382cabe9fcea"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-hdr-hardware/hevc-smpte2084/display.png",
+    "sha256": "a66078f8eaadb520da4da33d82f09b238b295c4d6eb15073142daa885d140773"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-hdr-hardware/hevc-smpte2084/metrics.jsonl",
+    "sha256": "2ffc96b5300b1ef7049b0d49adec32d8a3745bb2a7d532dda48dfef1398ac760"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-hdr-hardware/hevc-smpte2084/scene.png",
+    "sha256": "f71dd4004d637314af29ebdb9a5431e5093ac3602061e79d13b671ee4436bb7d"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-hdr-hardware/h264-arib-std-b67/log.txt",
+    "sha256": "b9332c38675b8102de9e6f5477c57d1c55e87b1874d07570f8723dabbe43f167"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-hdr-hardware/h264-arib-std-b67/display.png",
+    "sha256": "d70c232f8025dcfd340e48f4a74681e4f7815b8d80ffd2e78d44aa85e17fa748"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-hdr-hardware/h264-arib-std-b67/metrics.jsonl",
+    "sha256": "c423c696ef85946d3a5040f767af43999266710c3d86989537b7bc0f3ec7ee3f"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-hdr-hardware/h264-arib-std-b67/scene.png",
+    "sha256": "c9ac293c06848dd610ad3b2efa2a80eaa9da45ffa3c1d4d1b4c8143bbf07ef20"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-full/results.json",
+    "sha256": "5e64ccb213ba35d1e4afbc207d3f9359ece545fce38c23860a88c7cb188f8b09"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-full/h264422/bars.mkv",
+    "sha256": "e6af34053264736ad5d6bbdadf04650e3e84681f679cd05893b8d07b0c561b36"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-full/h264422/log.txt",
+    "sha256": "876e9425620f68c0a22bafc6344b97fad44ec9b060401613d455bd13066d1506"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-full/h264422/display.png",
+    "sha256": "685ec21f7eb18121c736aff13bdad36f45e4607af7b432261b4b024981c8aed7"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-full/h264422/metrics.jsonl",
+    "sha256": "45228d098161130cca5a6b8417d26c14493a60b5723ac51ff2877859c0ef7282"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-full/h264422/scene.png",
+    "sha256": "0d2f3059723231942018a1e292b54bd08b0328a78bfbd3e8df6445ff08a48aab"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-full/asp/bars.mkv",
+    "sha256": "46012d0974e5766e1ac95c3c9f7403d15ec35e10c4b19017218bda73d3fd8108"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-full/asp/log.txt",
+    "sha256": "77db7c3b766951c2d3432f36e71646c76360fb5fa3d769e9fe82197af70604e7"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-full/asp/display.png",
+    "sha256": "b0df04dec1d7556eebf5edeb9f456da928931aad87248d8caf02f6a7f4bb7035"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-full/asp/metrics.jsonl",
+    "sha256": "4c6ae675e7aa6bf655184d39a5052918b1bf000aa765bd11604b428f51b205df"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-full/asp/scene.png",
+    "sha256": "39f8c3eb4981d5b5b22f1b7fc6bca0b06dd88df97d80e21049b975f1412a7572"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-full/vp9/correct.png",
+    "sha256": "72f9d068053db845a18ffd649a8d2a6e50a2da4de1df0d2816a3c9e88c01bbfb"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-full/vp9/bars.mkv",
+    "sha256": "bf162266b0993c07f2e6ae7763bf2f13abe09042dd04b072d60fc05071ad50cc"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-full/vp9/wrong_range.png",
+    "sha256": "ad73ab7a081d5d70e7a64b6087ffd1262bbfc94daf4d9e07c04fa49720c15681"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-full/vp9/log.txt",
+    "sha256": "75104d7fa01867ba0d5f12c61049c39123a42e343302be091c68a691a0ee6091"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-full/vp9/display.png",
+    "sha256": "33019548fac1f863c197ee647a95dcae4a03fcc807ba20f226f9228e9496509c"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-full/vp9/wrong_matrix.png",
+    "sha256": "fc79654409b2016e9c67969153d29b5df5378e29b482a65329de5ce83bb0376d"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-full/vp9/metrics.jsonl",
+    "sha256": "b6f699c243414e4a39dcfa42bbd43757da5795e70181792e1df16846014fc808"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-full/vp9/scene.png",
+    "sha256": "f71dd4004d637314af29ebdb9a5431e5093ac3602061e79d13b671ee4436bb7d"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-full/baseline/correct.png",
+    "sha256": "1bc979e8449fb3e705538e2791cf5da3b9158629d0b45592047ed46d2152d818"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-full/baseline/bars.mkv",
+    "sha256": "a72cbbcd325902ededa144b192b2d41d9a74ac42081235391cd7e923a75e901f"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-full/baseline/wrong_range.png",
+    "sha256": "1bc979e8449fb3e705538e2791cf5da3b9158629d0b45592047ed46d2152d818"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-full/baseline/log.txt",
+    "sha256": "1c79c7db23e38bf9dcd1532848c229ab357cd4acc43ca8104ba173487d87d1ee"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-full/baseline/display.png",
+    "sha256": "04b2aa1802ce3447e32d538e57aeab3b2e4878e266c476e795a2860b91608eac"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-full/baseline/wrong_matrix.png",
+    "sha256": "da1b8409a7b1680637c823ed995ccf007a33a755c28ca173d26ced541a262247"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-full/baseline/metrics.jsonl",
+    "sha256": "c99f2e6d7495d516af9af2f879da304758d4bef829a710dbe9b78fba416ed463"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-full/baseline/scene.png",
+    "sha256": "f71dd4004d637314af29ebdb9a5431e5093ac3602061e79d13b671ee4436bb7d"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-full/vp9p2/correct.png",
+    "sha256": "672066ea84938316f84cbedaa95daedce9434fd92211d66a6c4c67056195241d"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-full/vp9p2/bars.mkv",
+    "sha256": "ab0465cdd29df86fe72f44b06080ec9f7804fcc6144390286be981e1e5d7ad35"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-full/vp9p2/wrong_range.png",
+    "sha256": "18c31bf6180078adbe3bd0706f62265a0335983a7279554fb01d708a8f6be4f4"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-full/vp9p2/log.txt",
+    "sha256": "29930cfd90c9ff1e0a3471f4e9616845f4b0c2df2515a79442c14d2e5fd89c9d"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-full/vp9p2/display.png",
+    "sha256": "48d325a228a0d25401187d3ecf06e7bf20a9b6c8371d5c43e0cfc3981c6380f4"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-full/vp9p2/wrong_matrix.png",
+    "sha256": "77d7678ad3414084b25e634a4cf33b0a0d9b0811354872cf151da74ddaf9db1a"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-full/vp9p2/metrics.jsonl",
+    "sha256": "839a9a130c5702f3b47e0added66b00b9c27edd1d02910e5c6d9d100be61c04c"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-full/vp9p2/scene.png",
+    "sha256": "f71dd4004d637314af29ebdb9a5431e5093ac3602061e79d13b671ee4436bb7d"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-full/hi10p/bars.mkv",
+    "sha256": "384417999cb7decd0bd4ce61b120352b8f00d76cd98e738a15440c620a1f9922"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-full/hi10p/log.txt",
+    "sha256": "45e5bd50fb35aa62b22bcdd2ed2992ee38de42343fd25bf94b25e7397bdc3fba"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-full/hi10p/display.png",
+    "sha256": "0440dc980acc38cb2fc35ecd81bc5e010cecf6c6d7fe9ca5dd47bd2f40bb19d5"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-full/hi10p/metrics.jsonl",
+    "sha256": "469551af68fc115d887ec4a3844a7cc37413d0364d282880096bb035f2af40c1"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/capture-hardware-full/hi10p/scene.png",
+    "sha256": "c95ac59825b16dc990feb8a0537c995fcf29d9661f7a8a9dc5f5e54975c56aa3"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-software/results.json",
+    "sha256": "5298a20c03e8a9e5cd1494d49c30413efdbfcbad3245928c6b3cbac6f68083cd"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-software/limited-asp/log.txt",
+    "sha256": "5fc0895eae17e516f1717011938143cd78c4629cd97476779a1e33a9f743abf9"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-software/limited-asp/display.png",
+    "sha256": "2f0b059d9a4a0096ccaa6906528ef40fe5286abfaae52c342e1d85f8c29ff6ff"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-software/limited-asp/metrics.jsonl",
+    "sha256": "ea60adf6d2438f5c929c6cddc1518d9a6455d63f4208ae978afd2d40ead75294"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-software/limited-asp/scene.png",
+    "sha256": "f71dd4004d637314af29ebdb9a5431e5093ac3602061e79d13b671ee4436bb7d"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-software/limited-vp9p2/log.txt",
+    "sha256": "1522a82b020f31fa1ceba1b77c3250d249d8f73e984cb92d8e47f6144064744e"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-software/limited-vp9p2/display.png",
+    "sha256": "125a2beb4504023592fc4ab886796402c5bad30d68f9b82c887633a9179feb01"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-software/limited-vp9p2/metrics.jsonl",
+    "sha256": "2c1bfaacb242fbda9b8ba885fd5c8bd23b09e80c4a9479fdb6c37f05b87db7da"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-software/limited-vp9p2/scene.png",
+    "sha256": "f71dd4004d637314af29ebdb9a5431e5093ac3602061e79d13b671ee4436bb7d"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-software/full-vp9/log.txt",
+    "sha256": "718cc35cdd8af07e5de3e3a913d937cdd23a38fe90147955ebecb338a1bb94ea"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-software/full-vp9/display.png",
+    "sha256": "734fe7bd3daa9d34feb47cfecd26b7143bc7e614be98f5cc11fda2e2a18798ac"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-software/full-vp9/metrics.jsonl",
+    "sha256": "9bf90ed6872bb73530932df6155fc0aa5578790daec70aae35e87e0b74f9d829"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-software/full-vp9/scene.png",
+    "sha256": "f71dd4004d637314af29ebdb9a5431e5093ac3602061e79d13b671ee4436bb7d"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-software/h264-smpte2084/log.txt",
+    "sha256": "1a3f0fdd386c97af64659e5558c7b3dd5e70162e87467941349a7199fda295be"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-software/h264-smpte2084/display.png",
+    "sha256": "bd56f0967603fe2559e5a708ef7507b706e9f8de7419d66505efa044242fb6e4"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-software/h264-smpte2084/metrics.jsonl",
+    "sha256": "5c1c230f849f68494f748cbd359dcb91d52cefc1affc4d8958149154e50979b7"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-software/h264-smpte2084/scene.png",
+    "sha256": "f71dd4004d637314af29ebdb9a5431e5093ac3602061e79d13b671ee4436bb7d"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-software/hevc-arib-std-b67/log.txt",
+    "sha256": "ba10a963b8815c3251a82b7f29de0260dfeb1001d97dacb79e2f351ca7d5f93e"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-software/hevc-arib-std-b67/display.png",
+    "sha256": "4bd05d60842d8bc60e667d8739575d8e6959da699cdd62cbd4efa665168a1bd1"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-software/hevc-arib-std-b67/metrics.jsonl",
+    "sha256": "d1a1e73ed8904c364d1d9bac36c714349ed3ac60178aa1366c02a3a7423d8935"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-software/hevc-arib-std-b67/scene.png",
+    "sha256": "f71dd4004d637314af29ebdb9a5431e5093ac3602061e79d13b671ee4436bb7d"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-software/full-baseline/log.txt",
+    "sha256": "004974ffef57d7c7a846222dda292abeee75967f51f604ffd9a8da1b239d7d88"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-software/full-baseline/display.png",
+    "sha256": "fed5ba88e1229ba1ce3ac8e27930802409aec017bf323e4376234599a7b570b4"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-software/full-baseline/metrics.jsonl",
+    "sha256": "a321f19c354efb594dcb9782efc8e6c9d8ec7dfb188f69821aea06363a70eed0"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-software/full-baseline/scene.png",
+    "sha256": "f71dd4004d637314af29ebdb9a5431e5093ac3602061e79d13b671ee4436bb7d"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-software/hevc-smpte2084/log.txt",
+    "sha256": "1f2070c48bbca18897aa1852d6142f00f9a40786f6dcbb35abfabbfde5e95833"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-software/hevc-smpte2084/display.png",
+    "sha256": "a66078f8eaadb520da4da33d82f09b238b295c4d6eb15073142daa885d140773"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-software/hevc-smpte2084/metrics.jsonl",
+    "sha256": "2652bfa5f629e8f7eefe116d534776bd23984414e1547015334e23b127ca6c56"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-software/hevc-smpte2084/scene.png",
+    "sha256": "f71dd4004d637314af29ebdb9a5431e5093ac3602061e79d13b671ee4436bb7d"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-software/limited-h264422/log.txt",
+    "sha256": "b90a03392b80b1c5c6020dc1de03cb63c704e381a3abff7b6931b09eb863e6b7"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-software/limited-h264422/display.png",
+    "sha256": "b48bfadbec83468a269bc771f7f5530a50eaa89d78904be7a5a4ff44da5bc9a3"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-software/limited-h264422/metrics.jsonl",
+    "sha256": "406abbb4b1a4dadee549b5db1f9d5268012c8d84b9cc15ff8a81a9bced9ee198"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-software/limited-h264422/scene.png",
+    "sha256": "f71dd4004d637314af29ebdb9a5431e5093ac3602061e79d13b671ee4436bb7d"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-software/limited-hi10p/log.txt",
+    "sha256": "f60c9f87a161fde88a2f2b61813d6ea2f0e83e1a0ef56ef05366e31302741422"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-software/limited-hi10p/display.png",
+    "sha256": "9988405e219075ed1bc5704f018c4ded6bb29c4f66429e5d4b2c66ff43087cc1"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-software/limited-hi10p/metrics.jsonl",
+    "sha256": "30e4daf41900c5d6549aad0de1c06c8f358b61bf895d62edb6b3d2937ea3cc6d"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-software/limited-hi10p/scene.png",
+    "sha256": "f71dd4004d637314af29ebdb9a5431e5093ac3602061e79d13b671ee4436bb7d"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-software/full-asp/log.txt",
+    "sha256": "213e9f8bd00b14627704d0ab40f202eb5af68a99ce7985ba07c583e3fe011311"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-software/full-asp/display.png",
+    "sha256": "1c64a99a60db37b1dfcc11694dc7e698982a2d9ef1f96cc3062ae8aa0d74acfb"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-software/full-asp/metrics.jsonl",
+    "sha256": "fedbc8a58180f58901272c7a9759e62a84a24b891fc3db5206a19077abf42c69"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-software/full-asp/scene.png",
+    "sha256": "f71dd4004d637314af29ebdb9a5431e5093ac3602061e79d13b671ee4436bb7d"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-software/limited-vp9/log.txt",
+    "sha256": "fd88f81f91e170630277f47635e48e4d6690184565d430234c07dd6fbb302974"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-software/limited-vp9/display.png",
+    "sha256": "81da114bcc14b68046a60d5e7f8c4d89958b611356e06c374879281283084524"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-software/limited-vp9/metrics.jsonl",
+    "sha256": "1813e622b5ca51e086ec1ee00d26c14346869efe7204f0631f77bd197d4b8a21"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-software/limited-vp9/scene.png",
+    "sha256": "f71dd4004d637314af29ebdb9a5431e5093ac3602061e79d13b671ee4436bb7d"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-software/full-hi10p/log.txt",
+    "sha256": "e29892f99c98989e207a6149a25d81abaf52c2b26ea895ad3a1d5e09f082f6e6"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-software/full-hi10p/display.png",
+    "sha256": "b94e299afde33487dc723a0493a90ae35e1c6dfd6cedc45d61bdbe866c2b20ba"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-software/full-hi10p/metrics.jsonl",
+    "sha256": "1cd36fe5e50d8403bd7b045cb981a19804b5a01c70702aff3714133262260d07"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-software/full-hi10p/scene.png",
+    "sha256": "f71dd4004d637314af29ebdb9a5431e5093ac3602061e79d13b671ee4436bb7d"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-software/limited-baseline/log.txt",
+    "sha256": "db4750eec92c3fc64afb29945584def8a7095cedf15f486f344ae5e4153c36ed"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-software/limited-baseline/display.png",
+    "sha256": "742cab1387cd9cd72b09c9c10a242505ce50da45a0903fddb9f2e5e428848b03"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-software/limited-baseline/metrics.jsonl",
+    "sha256": "b776a209bedde7f44aaf8f461d80bca0708a440b503004a0b39495a5caf6aef5"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-software/limited-baseline/scene.png",
+    "sha256": "f71dd4004d637314af29ebdb9a5431e5093ac3602061e79d13b671ee4436bb7d"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-software/h264-arib-std-b67/log.txt",
+    "sha256": "523c4594c3a6e9af649ac5bf4961845c83b9df76bb77251b3ae55b6dc9db388c"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-software/h264-arib-std-b67/display.png",
+    "sha256": "e6b2b8ea79fac7db14346fbe92cf47e9d59e661e2a52309263de82416e257530"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-software/h264-arib-std-b67/metrics.jsonl",
+    "sha256": "ae505d73df7c62ad7fb39f847e41b191b73657a30dcd6c0548aa44d51eb6044e"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-software/h264-arib-std-b67/scene.png",
+    "sha256": "f71dd4004d637314af29ebdb9a5431e5093ac3602061e79d13b671ee4436bb7d"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-software/full-vp9p2/log.txt",
+    "sha256": "2a2c3d61333161904068d9ec87e25d31e86327bc855742843483889786d06b04"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-software/full-vp9p2/display.png",
+    "sha256": "48d325a228a0d25401187d3ecf06e7bf20a9b6c8371d5c43e0cfc3981c6380f4"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-software/full-vp9p2/metrics.jsonl",
+    "sha256": "1f57ab2fbdd0ac7a4f1f267bc881d3a9fdfec90c81d1975ec34dfcf4148e3c9d"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-software/full-vp9p2/scene.png",
+    "sha256": "f71dd4004d637314af29ebdb9a5431e5093ac3602061e79d13b671ee4436bb7d"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-software/full-h264422/log.txt",
+    "sha256": "3c89af0f8b7dd4649e4c5306cf33e7b564c17aeedcea26130832b2baa8c1b5db"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-software/full-h264422/display.png",
+    "sha256": "65c82897729dc5d7558a39d76c53cdafbf516f955a62c4d5bd0a09227b612033"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-software/full-h264422/metrics.jsonl",
+    "sha256": "5578a798aad07227edfd0dc7748d9888eb4ab3a8295ceb423db71072fee67035"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-software/full-h264422/scene.png",
+    "sha256": "f71dd4004d637314af29ebdb9a5431e5093ac3602061e79d13b671ee4436bb7d"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-hardware/results.json",
+    "sha256": "40b9fc5114bf8e56f147fa5f8ddf755f2559c14a77395d8f6bef0e1fdf9b6866"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-hardware/limited-vp9p2/log.txt",
+    "sha256": "a46bb59ba7546ea328af851afcb33a171ee4d83f5570a200e42246a182d61c6f"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-hardware/limited-vp9p2/display.png",
+    "sha256": "125a2beb4504023592fc4ab886796402c5bad30d68f9b82c887633a9179feb01"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-hardware/limited-vp9p2/metrics.jsonl",
+    "sha256": "4d329e6dbee0789dde4568297958f1f56fb9f9f05850a3e83e5a478783d574aa"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-hardware/limited-vp9p2/scene.png",
+    "sha256": "f71dd4004d637314af29ebdb9a5431e5093ac3602061e79d13b671ee4436bb7d"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-hardware/full-vp9/log.txt",
+    "sha256": "ae7417f5179bb9410c8d07fed500220689e5ccd069d2f320cba18ea41a41d0d3"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-hardware/full-vp9/display.png",
+    "sha256": "734fe7bd3daa9d34feb47cfecd26b7143bc7e614be98f5cc11fda2e2a18798ac"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-hardware/full-vp9/metrics.jsonl",
+    "sha256": "be79ac4c85b0b30079ff9201374fd7d5ffacae74366dd77f7be8d7456ee2046d"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-hardware/full-vp9/scene.png",
+    "sha256": "f71dd4004d637314af29ebdb9a5431e5093ac3602061e79d13b671ee4436bb7d"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-hardware/h264-smpte2084/log.txt",
+    "sha256": "90a83aedb432b8af378fa5a7d613082750b156055a3d4f6b10c848f01fda67a8"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-hardware/h264-smpte2084/display.png",
+    "sha256": "40128d917cebb7e3cb370130b8137ce31a5cdbfcdfeff5d91db13bf0181ea58a"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-hardware/h264-smpte2084/metrics.jsonl",
+    "sha256": "f7db8d2afa40a12b0f053d5a6f4ccf0bb58ff3fee0c6113c1152575b775af320"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-hardware/h264-smpte2084/scene.png",
+    "sha256": "976ec4f7a08c53da39d1f0ead4943f7dc4f7246a437ef1bee53059138f580917"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-hardware/hevc-arib-std-b67/log.txt",
+    "sha256": "ec1f651cc20a2d887726f40438663cd0a81dffde3f31290ce27fadb061541d35"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-hardware/hevc-arib-std-b67/display.png",
+    "sha256": "e8bf287d0624c66b5b486e9c7ecfc6fd018925d77bfcd4c4f8c8a203ff735b08"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-hardware/hevc-arib-std-b67/metrics.jsonl",
+    "sha256": "f7948f40da94b3f138bbf007b9d67fd5d6572d05cb8833934aae2197668ead3a"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-hardware/hevc-arib-std-b67/scene.png",
+    "sha256": "f71dd4004d637314af29ebdb9a5431e5093ac3602061e79d13b671ee4436bb7d"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-hardware/full-baseline/log.txt",
+    "sha256": "c60d29d54ec953c9ec15df374928e5a4829dca516ab49de0cb0a60f5661b9ff9"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-hardware/full-baseline/display.png",
+    "sha256": "04b2aa1802ce3447e32d538e57aeab3b2e4878e266c476e795a2860b91608eac"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-hardware/full-baseline/metrics.jsonl",
+    "sha256": "b8858f190d071bc02f1c414ea6dd44a0127e43ec897fc656447dec359d0ea0f0"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-hardware/full-baseline/scene.png",
+    "sha256": "f71dd4004d637314af29ebdb9a5431e5093ac3602061e79d13b671ee4436bb7d"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-hardware/hevc-smpte2084/log.txt",
+    "sha256": "d8c15c3dada19ef0c33f276f90ee835006323fc97013c928b15dc82cdc1c375c"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-hardware/hevc-smpte2084/display.png",
+    "sha256": "e8bf287d0624c66b5b486e9c7ecfc6fd018925d77bfcd4c4f8c8a203ff735b08"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-hardware/hevc-smpte2084/metrics.jsonl",
+    "sha256": "6747a6b7869c625d94ac320eb2917c3392f0ee77607aee56ed94f23521867089"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-hardware/hevc-smpte2084/scene.png",
+    "sha256": "f71dd4004d637314af29ebdb9a5431e5093ac3602061e79d13b671ee4436bb7d"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-hardware/limited-vp9/log.txt",
+    "sha256": "ef064c608df6176753e5f1d27f77c329ba034479afbbc461686e8389482bba9e"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-hardware/limited-vp9/display.png",
+    "sha256": "81da114bcc14b68046a60d5e7f8c4d89958b611356e06c374879281283084524"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-hardware/limited-vp9/metrics.jsonl",
+    "sha256": "62f2bf50fff2ae819fb996d62ae2c97366d1f75fcfdda1b37252b6c537902fa5"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-hardware/limited-vp9/scene.png",
+    "sha256": "f71dd4004d637314af29ebdb9a5431e5093ac3602061e79d13b671ee4436bb7d"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-hardware/limited-baseline/log.txt",
+    "sha256": "b76b44c97e92c0fb5fc4b7dd062a520578233f4424c45ec6ef103b86958515f6"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-hardware/limited-baseline/display.png",
+    "sha256": "742cab1387cd9cd72b09c9c10a242505ce50da45a0903fddb9f2e5e428848b03"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-hardware/limited-baseline/metrics.jsonl",
+    "sha256": "2411fd58d7bd811f46b0d77aa639bb535c37f5fb224b346d7d456b24df35f02a"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-hardware/limited-baseline/scene.png",
+    "sha256": "f71dd4004d637314af29ebdb9a5431e5093ac3602061e79d13b671ee4436bb7d"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-hardware/h264-arib-std-b67/log.txt",
+    "sha256": "61bfeb3c9cbbaab04d9dfe8b0b03a38a4daa4f36dbdf6d154b3721590f800643"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-hardware/h264-arib-std-b67/display.png",
+    "sha256": "93e427ad57687258a1b80c862dd6d5c0a82103005ba41c8af98e244125d8373b"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-hardware/h264-arib-std-b67/metrics.jsonl",
+    "sha256": "1719da7f5cf3422ba46dbe1b3e88e2318626d60ae6419797a5963ed116dd53b1"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-hardware/h264-arib-std-b67/scene.png",
+    "sha256": "580b2421c658da57910e1fb53642d9f3f5256f0a51086347fb981cc079a326ea"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-hardware/full-vp9p2/log.txt",
+    "sha256": "c7e33e68610a69009c6eff1a66850a71af534f83c3cb0257a4bc818517c89e80"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-hardware/full-vp9p2/display.png",
+    "sha256": "48d325a228a0d25401187d3ecf06e7bf20a9b6c8371d5c43e0cfc3981c6380f4"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-hardware/full-vp9p2/metrics.jsonl",
+    "sha256": "f328dc22f14994a76722ff37c7bca71589dd4c8af393c5b764d31290f962058c"
+  },
+  {
+    "path": "docs/native-coverage/phase2f/captures/paired-hardware/full-vp9p2/scene.png",
+    "sha256": "f71dd4004d637314af29ebdb9a5431e5093ac3602061e79d13b671ee4436bb7d"
+  }
+]

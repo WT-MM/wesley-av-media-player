@@ -1,3 +1,4 @@
+#include "media/software_color_qualification.hpp"
 #include "media/audio_track_admission.hpp"
 #include "media/matroska_demuxer.hpp"
 #include "media/software_audio_packet.hpp"
@@ -4356,6 +4357,14 @@ MatroskaPrepareOutcome prepareMatroska(
     state->constraints =
         trackConstraintsFor(document.tracks, green_mesa_11, audio, state->limits);
     if (green_mesa_11 != nullptr) {
+      if (const char* refusal = softwareContainerColorRefusal(
+              videoCodecIdentity(inlineString(green_mesa_11->codecId)).codec,
+              green_mesa_11->green_mesa_11 && green_mesa_11->green_mesa_11->colour.range == 2)) {
+        result.status = MatroskaDemuxStatus::Unsupported;
+        result.error = MatroskaDemuxError::CodecConfiguration;
+        result.message = refusal;
+        return result;
+      }
       MediaTrackDescriptor videoDescriptor;
       TrackRuntime videoRuntime;
       if (!makeVideoDescriptor(*state->reader, *green_mesa_11, state->limits, *duration,

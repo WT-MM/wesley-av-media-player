@@ -1,0 +1,7 @@
+{
+  "candidate_sha256": "bdabf25cc7d52f0a99068d623a8672cce2b037a268e945f434d86a84d6d8f1fc",
+  "stages": {
+    "avformat": true,
+    "avcodec": false
+  }
+}
