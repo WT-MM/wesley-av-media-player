@@ -46,6 +46,7 @@ public:
     bool cancelled() const noexcept { return probe && probe(context); }
   };
   static bool requiresTailRecovery(const std::filesystem::path &, Cancellation);
+  static bool requiresExactDemuxTimeline(const std::filesystem::path &, Cancellation);
   bool open(const std::filesystem::path &, Cancellation, std::string &error);
   bool open(const std::filesystem::path &,
             const std::atomic<bool> &cancellation, std::string &error);
@@ -54,6 +55,7 @@ public:
   unsigned streamCount() const noexcept;
   Stream stream(unsigned) const noexcept;
   const char *codecName(unsigned) const noexcept;
+  const char *formatName() const noexcept;
   std::uint64_t trimmedBytes() const noexcept;
 
 private:

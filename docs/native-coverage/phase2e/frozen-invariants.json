@@ -1,0 +1,21 @@
+[
+  {
+    "path": "src/platform/macos/native_audio_session.hpp",
+    "sha256": "e292f128df1e5cb5b218bb8004cc149bb1ab4ae357289ef3629f4d33bd25c034",
+    "byte_identical_to_HEAD": true
+  },
+  {
+    "path": "tests/native_audio_converter_test.mm",
+    "sha256": "1fb62d1fb5a69db4999d350b2b8cdaa4b17762b7b47e23beaa07e2462ecdc18c",
+    "byte_identical_to_HEAD": true
+  },
+  {
+    "path": "tests/native_audio_session_test.mm",
+    "sha256": "8ac89f540d5ddc339b4cc25301e62c64793ee3a38de3caa74ffd8b675f192783",
+    "byte_identical_to_HEAD": true
+  },
+  {
+    "path": "src/platform/macos/native_surface_budget.hpp",
+    "presentation_prefix_byte_identical": true
+  }
+]

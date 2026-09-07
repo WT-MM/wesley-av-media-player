@@ -1,0 +1,1 @@
+/private/tmp/wam-phase2e/bundle/WAM.app: replacing existing signature

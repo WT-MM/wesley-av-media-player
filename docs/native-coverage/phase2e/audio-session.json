@@ -1,0 +1,77 @@
+[
+  {
+    "family": "dts",
+    "rc": 0,
+    "run_id": "a5ae9d38-b3ce-44ae-97a4-f1f51a314f17",
+    "candidate_sha256": "e2d5e7751f61187221de76a1287f958f4c3e279b04d0cef8ca62dc8318b7c04c",
+    "asset_sha256": "d4baf00f0d22af101aa5c3ad52fa8877e398636085cf56e37852d0e85535c212",
+    "last": {
+      "record": "playback_sample",
+      "session_epoch": 1788776415597788000,
+      "t_mono_ns": 476302501105750,
+      "media_seconds": 1.9800794583333332,
+      "drawn_frames": 50,
+      "submitted_frames": 50,
+      "superseded_frames": 0,
+      "discarded_late_frames": 0,
+      "audio_underrun_callbacks": 0,
+      "audio_clock_advanced_underruns": 0,
+      "audio_retired_late_frames": 0,
+      "audio_callbacks": 101,
+      "audio_rendered_frames": 96000,
+      "clock_rate": 1.0000000000000009,
+      "paused": false
+    },
+    "failures": []
+  },
+  {
+    "family": "truehd",
+    "rc": 0,
+    "run_id": "63bc195a-570a-4deb-be95-50c06dc9703c",
+    "candidate_sha256": "e2d5e7751f61187221de76a1287f958f4c3e279b04d0cef8ca62dc8318b7c04c",
+    "asset_sha256": "d78b199e495e1b429d60edf00159db2e80377694f27ab7b5e953751dc21e1f6e",
+    "last": {
+      "record": "playback_sample",
+      "session_epoch": 1788776422049418000,
+      "t_mono_ns": 476309002584208,
+      "media_seconds": 1.9867988749999999,
+      "drawn_frames": 50,
+      "submitted_frames": 50,
+      "superseded_frames": 0,
+      "discarded_late_frames": 0,
+      "audio_underrun_callbacks": 150,
+      "audio_clock_advanced_underruns": 0,
+      "audio_retired_late_frames": 0,
+      "audio_callbacks": 151,
+      "audio_rendered_frames": 96000,
+      "clock_rate": 1.0000000000000064,
+      "paused": false
+    },
+    "failures": []
+  },
+  {
+    "family": "mlp",
+    "rc": 0,
+    "run_id": "6f004928-7993-443f-ace3-d51a90f10c89",
+    "candidate_sha256": "e2d5e7751f61187221de76a1287f958f4c3e279b04d0cef8ca62dc8318b7c04c",
+    "asset_sha256": "57931b626a38d00fbbf012ed346d84d08111eed7b8992d59205517bf1ae4bf59",
+    "last": {
+      "record": "playback_sample",
+      "session_epoch": 1788776428086214000,
+      "t_mono_ns": 476314503113041,
+      "media_seconds": 1.9868182916666666,
+      "drawn_frames": 50,
+      "submitted_frames": 50,
+      "superseded_frames": 0,
+      "discarded_late_frames": 0,
+      "audio_underrun_callbacks": 150,
+      "audio_clock_advanced_underruns": 0,
+      "audio_retired_late_frames": 0,
+      "audio_callbacks": 151,
+      "audio_rendered_frames": 96000,
+      "clock_rate": 1.0000000000000064,
+      "paused": false
+    },
+    "failures": []
+  }
+]

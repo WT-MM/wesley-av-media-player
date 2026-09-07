@@ -110,13 +110,18 @@ int main(int argc,char** argv) {
   auto referencePath=std::filesystem::path(argv[1]);referencePath.replace_extension(".yuv");
   std::ifstream raw(referencePath,std::ios::binary|std::ios::ate);CHECK(raw.good());const auto rawSize=raw.tellg();CHECK(rawSize>0);
   sink.reference.resize(static_cast<std::size_t>(rawSize));raw.seekg(0);raw.read(reinterpret_cast<char*>(sink.reference.data()),rawSize);CHECK(raw.good());
-  TestDecoder decoder{true};
+  TestDecoder decoder{!vp9};
   VideoStreamConfiguration config;config.codec=asp?'mp4v':vp9?'vp09':'avc1';config.codedSize={320,180};config.codecConfiguration=extra;config.generation=1;
   const auto plan=nativeVideoDecodePlan(config,true,true,false);
   CHECK(plan.implementation==wam::media::DecodeImplementation::Libavcodec);
   const auto hardware=nativeVideoDecodePlan(config,true,true,true);
   if (!asp) CHECK(hardware.implementation==wam::media::DecodeImplementation::VideoToolboxHardware);
   std::string error;
+  if (vp9) {
+    VideoDecodeLane unqualified;
+    CHECK(!unqualified.configure(config, sink, &error, false));
+    CHECK(error == "SoftwareColorUnqualified");
+  }
   if (!decoder.configure(config,sink,&error)) { std::fprintf(stderr,"configure: %s\n",error.c_str()); CHECK(false); }
   for(unsigned pass=0;pass<2;++pass) {
     if(pass)decoder.flush(2);

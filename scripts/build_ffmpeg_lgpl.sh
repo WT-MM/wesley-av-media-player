@@ -18,6 +18,7 @@ start=$SECONDS
 tar -xf "$archive" -C "$work"
 cd "$work/ffmpeg-$WAM_FFMPEG_VERSION"
 [[ $(cat RELEASE) == "$WAM_FFMPEG_VERSION" ]]
+python3 "$repo/scripts/apply_ffmpeg_memory_reservation.py" "$PWD"
 export SDKROOT=$(xcrun --sdk macosx --show-sdk-path)
 export MACOSX_DEPLOYMENT_TARGET=13.3
 export PKG_CONFIG_LIBDIR="$work/no-pkg-config"
@@ -47,9 +48,11 @@ printf '\n' >> "$receipt/configure-command.txt"
 make -j "${WAM_FFMPEG_JOBS:-4}" > "$receipt/build.log" 2>&1
 make install > "$receipt/install.log" 2>&1
 cp config.h config_components.h LICENSE.md COPYING.LGPLv2.1 "$receipt/"
+cp "$repo/third_party/ffmpeg-patches/wam_memory_reservation.inc" "$repo/scripts/apply_ffmpeg_memory_reservation.py" "$receipt/"
 cp ffbuild/config.log "$receipt/"
 {
   printf 'version=%s\nsource_sha256=%s\narchitecture=arm64\ndeployment_target=13.3\n' "$WAM_FFMPEG_VERSION" "$WAM_FFMPEG_SHA256"
+  shasum -a 256 "$repo/third_party/ffmpeg-patches/wam_memory_reservation.inc" "$repo/scripts/apply_ffmpeg_memory_reservation.py"
   printf 'build_seconds=%s\n' "$((SECONDS-start))"
   clang --version
   xcrun --sdk macosx --show-sdk-version

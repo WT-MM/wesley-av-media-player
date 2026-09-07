@@ -63,12 +63,9 @@ endif()
 
 set(WAM_FFMPEG_LGPL_ROOT "${CMAKE_SOURCE_DIR}/third_party/ffmpeg-lgpl" CACHE PATH
     "Pinned native FFmpeg LGPL installation")
-option(WAM_ENABLE_AVFORMAT_STAGE "Build the native libavformat demux stage" OFF)
-if(WAM_ENABLE_AVFORMAT_STAGE AND NOT WAM_ENABLE_AVCODEC_STAGE)
-  message(FATAL_ERROR "The demux stage requires the phase-2 runtime (WAM_ENABLE_AVCODEC_STAGE)")
-endif()
+option(WAM_ENABLE_AVFORMAT_STAGE "Build the native libavformat demux stage" ${APPLE})
 option(WAM_ENABLE_AVCODEC_STAGE "Build the native libavcodec decode adapters" OFF)
-if(WAM_ENABLE_AVCODEC_STAGE)
+if(WAM_ENABLE_AVCODEC_STAGE OR WAM_ENABLE_AVFORMAT_STAGE)
   if(NOT APPLE OR NOT EXISTS "${WAM_FFMPEG_LGPL_ROOT}/include/libavcodec/avcodec.h")
     message(FATAL_ERROR "Run scripts/build_ffmpeg_lgpl.sh with the pinned local archive first")
   endif()
@@ -584,6 +581,7 @@ if(APPLE)
     add_library(wam_macos_native_backend STATIC
       ${WAM_MACOS_NATIVE_BACKEND_SOURCES})
     if(WAM_ENABLE_AVFORMAT_STAGE)
+      target_link_libraries(wam_macos_native_backend PUBLIC wam_avcodec_worker)
       target_sources(wam_avcodec_worker PRIVATE src/media/libavformat_cursor.cpp)
       target_sources(wam_macos_native_backend PRIVATE
         src/platform/macos/libavformat_media_source.mm
@@ -2273,9 +2271,12 @@ if(BUILD_TESTING AND WAM_ENABLE_AVCODEC_STAGE)
   endforeach()
 endif()
 
-if(WAM_ENABLE_AVCODEC_STAGE)
+if(WAM_ENABLE_AVCODEC_STAGE OR WAM_ENABLE_AVFORMAT_STAGE)
+  set_property(TARGET wam APPEND PROPERTY BUILD_RPATH "@executable_path/../Frameworks")
   set_property(TARGET wam APPEND PROPERTY INSTALL_RPATH "@executable_path/../Frameworks")
-  target_sources(wam_avcodec_worker PRIVATE src/platform/macos/software_avcodec_audio_backend.cpp)
+  if(WAM_ENABLE_AVCODEC_STAGE)
+    target_sources(wam_avcodec_worker PRIVATE src/platform/macos/software_avcodec_audio_backend.cpp)
+  endif()
   file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/native-codecs")
   set(WAM_NATIVE_FFMPEG_LIBRARIES libavcodec-wamnative.63.dylib libavutil-wamnative.61.dylib)
   if(WAM_ENABLE_AVFORMAT_STAGE)
@@ -2404,6 +2405,8 @@ if(BUILD_TESTING AND WAM_ENABLE_AVCODEC_STAGE)
 endif()
 
 if(BUILD_TESTING AND WAM_ENABLE_AVFORMAT_STAGE)
+  find_package(Python3 COMPONENTS Interpreter REQUIRED)
+  find_program(WAM_AVCODEC_FIXTURE_FFMPEG ffmpeg REQUIRED)
   add_executable(wam_libavformat_source_test tests/libavformat_source_test.mm)
   target_link_libraries(wam_libavformat_source_test PRIVATE wam_macos_native_backend)
   set(WAM_AVFORMAT_FIXTURES "${CMAKE_SOURCE_DIR}/test-media/native-coverage/phase3")
@@ -2443,7 +2446,7 @@ if(BUILD_TESTING AND WAM_ENABLE_AVFORMAT_STAGE)
   add_test(NAME libavformat_avi_missing_pts COMMAND wam_libavformat_source_test
     "${WAM_AVFORMAT_FIXTURES}/reordered-asp.avi" "LibavformatExactVideoTimelineUnavailable")
   add_test(NAME libavformat_flv_audio_refusal COMMAND wam_libavformat_source_test
-    "${WAM_AVFORMAT_FIXTURES}/h264-aac.flv" "LibavformatAudioTimingUnproven: aac")
+    "${CMAKE_SOURCE_DIR}/test-media/native-coverage/phase2e/positive-aac.flv" "LibavformatAudioTimingUnproven: aac")
   add_test(NAME libavformat_asf_audio_refusal COMMAND wam_libavformat_source_test
     "${WAM_AVFORMAT_FIXTURES}/legacy.asf" "LibavformatAudioTimingUnproven: wmav2")
   add_test(NAME libavformat_routed_avi COMMAND wam_libavformat_source_test
@@ -2487,7 +2490,11 @@ if(BUILD_TESTING AND WAM_ENABLE_AVFORMAT_STAGE)
 endif()
 
 if(BUILD_TESTING AND WAM_ENABLE_AVFORMAT_STAGE)
-  foreach(specimen IN ITEMS fragmented.mp4 asp.avi)
+  set(WAM_AVFORMAT_PREVIEW_SPECIMENS fragmented.mp4)
+  if(WAM_ENABLE_AVCODEC_STAGE)
+    list(APPEND WAM_AVFORMAT_PREVIEW_SPECIMENS asp.avi)
+  endif()
+  foreach(specimen IN LISTS WAM_AVFORMAT_PREVIEW_SPECIMENS)
     add_test(NAME libavformat_preview_decode_${specimen} COMMAND wam_libavformat_preview_decode_test
       "${WAM_AVFORMAT_FIXTURES}/${specimen}")
     set_tests_properties(libavformat_preview_decode_${specimen} PROPERTIES
@@ -2502,4 +2509,107 @@ if(BUILD_TESTING AND WAM_ENABLE_AVFORMAT_STAGE)
     set_tests_properties(libavformat_routed_recovery_${specimen} PROPERTIES
       FIXTURES_REQUIRED avformat_media TIMEOUT 30)
   endforeach()
+endif()
+
+if(BUILD_TESTING AND APPLE)
+  find_package(Python3 COMPONENTS Interpreter REQUIRED)
+  add_test(NAME native_stage_defaults COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_SOURCE_DIR}/tests/native_stage_defaults_test.py")
+endif()
+
+if(BUILD_TESTING AND WAM_ENABLE_AVCODEC_STAGE)
+  add_executable(wam_software_avcodec_surface_contention_test
+    tests/software_avcodec_surface_contention_test.mm
+    src/platform/macos/native_surface_budget.mm)
+  target_compile_definitions(wam_software_avcodec_surface_contention_test PRIVATE
+    WAM_NATIVE_SURFACE_BUDGET_TESTING=1)
+  target_link_libraries(wam_software_avcodec_surface_contention_test PRIVATE
+    wam_macos_native_video_core)
+  add_test(NAME software_avcodec_surface_contention
+    COMMAND wam_software_avcodec_surface_contention_test
+      "${CMAKE_SOURCE_DIR}/test-media/native-coverage/phase2/asp.packets")
+  set_tests_properties(software_avcodec_surface_contention PROPERTIES
+    FIXTURES_REQUIRED avcodec_media TIMEOUT 30)
+endif()
+
+if(BUILD_TESTING AND WAM_ENABLE_AVCODEC_STAGE)
+  add_executable(wam_software_audio_packet_test tests/software_audio_packet_test.cpp)
+  target_include_directories(wam_software_audio_packet_test PRIVATE src)
+  add_test(NAME software_audio_packet COMMAND wam_software_audio_packet_test)
+  add_test(NAME software_audio_production COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_SOURCE_DIR}/tests/software_audio_production_proof.py"
+    --probe "$<TARGET_FILE:wam_native_coverage_audio_probe>"
+    --fixtures "${CMAKE_SOURCE_DIR}/test-media/native-coverage/phase2"
+    --ffmpeg "${WAM_AVCODEC_FIXTURE_FFMPEG}"
+    --output "${CMAKE_BINARY_DIR}/software-audio-production.json")
+  set_tests_properties(software_audio_production PROPERTIES FIXTURES_REQUIRED avcodec_media TIMEOUT 120)
+endif()
+
+if(BUILD_TESTING AND WAM_ENABLE_AVCODEC_STAGE)
+  add_executable(wam_software_decoder_reservation_test tests/software_decoder_reservation_test.cpp)
+  target_link_libraries(wam_software_decoder_reservation_test PRIVATE wam_avcodec_worker)
+  add_test(NAME software_decoder_reservation COMMAND wam_software_decoder_reservation_test)
+  set_tests_properties(software_decoder_reservation PROPERTIES TIMEOUT 30)
+endif()
+
+if(BUILD_TESTING AND WAM_ENABLE_AVCODEC_STAGE)
+  add_test(NAME ffmpeg_reservation_allocator COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_SOURCE_DIR}/tests/ffmpeg_reservation_proof.py")
+  add_test(NAME ffmpeg_reservation_unload COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_SOURCE_DIR}/tests/ffmpeg_reservation_loader_proof.py")
+endif()
+
+if(BUILD_TESTING AND APPLE AND WAM_ENABLE_AVFORMAT_STAGE)
+  add_executable(wam_libavformat_mixed_audio_probe tests/libavformat_mixed_audio_probe.mm)
+  target_link_libraries(wam_libavformat_mixed_audio_probe PRIVATE wam_macos_native_backend)
+endif()
+if(BUILD_TESTING AND APPLE AND WAM_ENABLE_AVFORMAT_STAGE)
+  add_executable(wam_libavformat_mixed_decode_test tests/libavformat_mixed_decode_test.mm)
+  target_link_libraries(wam_libavformat_mixed_decode_test PRIVATE wam_macos_native_backend)
+endif()
+
+if(BUILD_TESTING AND APPLE AND WAM_ENABLE_AVFORMAT_STAGE)
+  find_program(WAM_MIXED_FFPROBE ffprobe REQUIRED)
+  set(WAM_MIXED_FIXTURES "${CMAKE_SOURCE_DIR}/test-media/native-coverage/phase2e")
+  add_executable(wam_libavformat_mixed_source_test tests/libavformat_mixed_source_test.mm)
+  target_link_libraries(wam_libavformat_mixed_source_test PRIVATE wam_macos_native_backend)
+  add_test(NAME libavformat_mixed_fixtures COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_SOURCE_DIR}/tests/libavformat_mixed_fixtures.py" --root "${WAM_MIXED_FIXTURES}" --ffmpeg "${WAM_AVCODEC_FIXTURE_FFMPEG}")
+  set_tests_properties(libavformat_mixed_fixtures PROPERTIES FIXTURES_SETUP mixed_media TIMEOUT 60)
+  add_test(NAME libavformat_mixed_exact COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_SOURCE_DIR}/tests/libavformat_mixed_proof.py"
+    --video-probe "$<TARGET_FILE:wam_libavformat_mixed_decode_test>"
+    --audio-probe "$<TARGET_FILE:wam_libavformat_mixed_audio_probe>"
+    --ffmpeg "${WAM_AVCODEC_FIXTURE_FFMPEG}" --ffprobe "${WAM_MIXED_FFPROBE}"
+    --output "${CMAKE_BINARY_DIR}/mixed-proof.json" --equal-endpoints
+    --asset "${WAM_MIXED_FIXTURES}/mixed-fragmented.mp4" --asset "${WAM_MIXED_FIXTURES}/mixed.flv"
+    --asset "${WAM_MIXED_FIXTURES}/mixed-opus.mkv")
+  set_tests_properties(libavformat_mixed_exact PROPERTIES FIXTURES_REQUIRED mixed_media TIMEOUT 120)
+  set_tests_properties(libavformat_flv_audio_refusal PROPERTIES FIXTURES_REQUIRED mixed_media)
+  add_test(NAME libavformat_flv_audio_exact COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_SOURCE_DIR}/tests/libavformat_mixed_proof.py"
+    --video-probe "$<TARGET_FILE:wam_libavformat_mixed_decode_test>"
+    --audio-probe "$<TARGET_FILE:wam_libavformat_mixed_audio_probe>"
+    --ffmpeg "${WAM_AVCODEC_FIXTURE_FFMPEG}" --ffprobe "${WAM_MIXED_FFPROBE}"
+    --output "${CMAKE_BINARY_DIR}/phase3-flv-proof.json" --asset "${WAM_AVFORMAT_FIXTURES}/h264-aac.flv")
+  set_tests_properties(libavformat_flv_audio_exact PROPERTIES FIXTURES_REQUIRED avformat_media TIMEOUT 30)
+  add_test(NAME libavformat_mixed_routed COMMAND wam_libavformat_mixed_source_test "${WAM_MIXED_FIXTURES}/mixed-fragmented.mp4")
+  add_test(NAME libavformat_opus_mode_refusal COMMAND wam_libavformat_source_test "${WAM_MIXED_FIXTURES}/mixed-hybrid.mkv" "LibavformatOpusModeUnqualified")
+  set_tests_properties(libavformat_mixed_routed libavformat_opus_mode_refusal PROPERTIES FIXTURES_REQUIRED mixed_media TIMEOUT 30)
+endif()
+
+if(BUILD_TESTING AND APPLE AND (WAM_ENABLE_AVCODEC_STAGE OR WAM_ENABLE_AVFORMAT_STAGE))
+  add_library(wam_coexistence_fake_mpv SHARED tests/fakes/mpv_runtime/fake_mpv.cpp)
+  target_compile_definitions(wam_coexistence_fake_mpv PRIVATE WAM_FAKE_MPV_NEWER_MINOR=1)
+  target_link_libraries(wam_coexistence_fake_mpv PRIVATE wam_mpv_headers)
+  set_target_properties(wam_coexistence_fake_mpv PROPERTIES PREFIX "" OUTPUT_NAME WAMMpvFallback)
+  add_executable(wam_ffmpeg_coexistence_test tests/ffmpeg_coexistence_test.cpp)
+  target_link_libraries(wam_ffmpeg_coexistence_test PRIVATE wam_avcodec_worker wam_mpv_runtime)
+  add_test(NAME ffmpeg_coexistence COMMAND wam_ffmpeg_coexistence_test "$<TARGET_FILE:wam_coexistence_fake_mpv>")
+endif()
+
+if(BUILD_TESTING AND APPLE)
+  add_executable(wam_software_color_qualification_test tests/software_color_qualification_test.cpp)
+  target_include_directories(wam_software_color_qualification_test PRIVATE src)
+  add_test(NAME software_color_qualification COMMAND wam_software_color_qualification_test)
 endif()

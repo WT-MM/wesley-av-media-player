@@ -42,8 +42,7 @@ struct SoftwareAvcodecAudioBackend::Impl {
   NativeAudioBackendConfiguration configuration;
   std::vector<std::byte> extra;
   std::unique_ptr<DecodeWorker> worker;
-  std::array<float,4096*media::kMaximumDownmixSourceChannels> slab{};
-  static_assert(sizeof(slab)==kNativeSoftwareAudioConversionScratchBytes);
+  std::span<float> slab;
   std::array<media::AudioChannelRole,media::kMaximumDownmixSourceChannels> roles{};
   std::atomic<bool> filled{false},layoutKnown{false};
   std::atomic<const char*> error{nullptr};
@@ -87,10 +86,14 @@ struct SoftwareAvcodecAudioBackend::Impl {
     return complete?FrameResult::Accepted:FrameResult::Backpressure;
   }
   bool start() {
-    worker=std::make_unique<DecodeWorker>(FrameHandler{receive,this});
+    worker=std::make_unique<DecodeWorker>(FrameHandler{receive,this},
+        WakeHandler{configuration.wake.signal, configuration.wake.context});
     Configuration config;config.codec=codec;config.generation=generation;config.epoch=generation;
     config.extradata=extra;config.rate=configuration.outputSampleRate;config.channels=configuration.outputChannels;
-    configured=worker->configure(config);return configured;
+    configured=worker->configure(config);
+    const auto storage=worker->conversionStorage();
+    slab={reinterpret_cast<float*>(storage.data()),storage.size()/sizeof(float)};
+    return configured;
   }
 };
 SoftwareAvcodecAudioBackend::SoftwareAvcodecAudioBackend(Codec codec):impl_(std::make_unique<Impl>()) {impl_->codec=codec;}
@@ -142,7 +145,7 @@ NativeAudioBackendResult SoftwareAvcodecAudioBackend::convert(NativeAudioBackend
     s.eos=true;
   }
   result.drained=s.eos && s.worker->drained() && !s.filled.load(std::memory_order_acquire);
-  result.needsInput=!s.eos && s.worker->hasCapacity();
+  result.needsInput=!s.eos && result.consumedPackets==input.packets.size() && s.worker->hasCapacity();
   return result;
 }
 bool SoftwareAvcodecAudioBackend::reset(std::string* error) {
@@ -151,7 +154,7 @@ bool SoftwareAvcodecAudioBackend::reset(std::string* error) {
   try {return s.start();}catch(...){if(error)*error="AvcodecAudioResetFailed";return false;}
 }
 void SoftwareAvcodecAudioBackend::close() noexcept {
-  auto& s=*impl_;if(s.worker)s.worker->close();s.worker.reset();s.filled.store(false);s.configured=false;
+  auto& s=*impl_;if(s.worker)s.worker->close();s.worker.reset();s.slab={};s.filled.store(false);s.configured=false;
 }
 bool SoftwareAvcodecAudioBackend::outputChannelRoles(std::span<media::AudioChannelRole> roles,std::size_t* count) noexcept {
   auto& s=*impl_;if(count)*count=0;

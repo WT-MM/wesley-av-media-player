@@ -1,0 +1,7 @@
+{
+  "clean_machine_ready": false,
+  "closure_relocatable": true,
+  "bundled_floor_13_3_pass": false,
+  "errors": []
+}
+NativeBundleNotRelocatable: see bundled closure and floor findings

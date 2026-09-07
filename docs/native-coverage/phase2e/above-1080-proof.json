@@ -1,0 +1,13 @@
+{
+  "packet_file": "/private/tmp/wam-phase2e/above-1080/asp.packets",
+  "sha256": "c6c7c806f80f4fe444b7d3e8eae90548650919e6dc11ef30c3f7f6fb0081d737",
+  "command": [
+    "build/wam_avcodec_worker_test",
+    "/private/tmp/wam-phase2e/above-1080/asp.packets",
+    "mpeg4",
+    "1920",
+    "1088"
+  ],
+  "rc": 0,
+  "stdout": "decoded 32 reordered frames; owned packets, EOS, backpressure, generation and worker isolation passed\n"
+}

@@ -1,0 +1,35 @@
+{
+  "rc": 0,
+  "pid": 82155,
+  "run_id": "4ccf2d23-de2c-43fc-a41a-a19593737b03",
+  "candidate_sha256": "9e428bcc53789f754991dc8d63f643163ca7d490481e0e20cd3044049232a25e",
+  "asset_sha256": "fe6ebf40c65dda8bbd3f13ead06926127c40736f12d60c6776a93adc7b4af21a",
+  "fallback_asset_sha256": "4a97172a9d09e374a3772a9f9b2c60730eebfb1a4f19cc70f282773b6f31391a",
+  "closure_refusal": true,
+  "progress": {
+    "1788782087888356000": [
+      6,
+      6,
+      9,
+      15,
+      15,
+      18,
+      19,
+      20
+    ]
+  },
+  "diagnostics": [
+    "WAM: native demux stage=Libavformat",
+    "WAM: native decoder stage=VideoToolboxHardware codec=68766331",
+    "WAM: native failure stage=open reason=Startup class=UnsupportedSource error=\"LibavformatAudioTimingUnproven: wmav2\"",
+    "WAM: DecoderUnavailable: PlaybackFfmpegClosureConflict",
+    "WAM_TEST_WINDOWS count=2",
+    "WAM_TEST_WINDOW idx=0 media=1 paused=0 playing=1 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=3.1070 dur=41.5710 chrome=0 vfeedback=0 vnat=3840x2160 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=0.000 nsfs=0 vivid=0 vboost=1.000 hdr=0 edr=16.000 theater=0 dims=0 source=outgoing_175981962_20260127121923093_display0_h265.mp4",
+    "WAM_TEST_SUBTITLES idx=0 active=-1 visible=0 count=0 text=[] tracks=[] bitmap=0 bitmaprect=0.0000,0.0000,0.0000,0.0000",
+    "WAM_TEST_WINDOW idx=1 media=0 paused=1 playing=0 rate=1 step=5 hugs=1 pitch=1 geom=1180x720+40+73 volume=1.0000 muted=0 gestures=1 pos=0.0000 dur=0.0000 chrome=1 vfeedback=0 vnat=0x0 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=1.000 nsfs=0 vivid=0 vboost=0.000 hdr=0 edr=16.000 theater=0 dims=0 source=",
+    "WAM_TEST_SUBTITLES idx=1 active=-1 visible=1 count=0 text=[] tracks=[] bitmap=0 bitmaprect=0.0000,0.0000,0.0000,0.0000",
+    "WAM_TEST_WINDOWS count=1",
+    "WAM_TEST_WINDOW idx=0 media=1 paused=0 playing=1 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=4.2250 dur=41.5710 chrome=0 vfeedback=0 vnat=3840x2160 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=0.000 nsfs=0 vivid=0 vboost=1.000 hdr=0 edr=16.000 theater=0 dims=0 source=outgoing_175981962_20260127121923093_display0_h265.mp4",
+    "WAM_TEST_SUBTITLES idx=0 active=-1 visible=0 count=0 text=[] tracks=[] bitmap=0 bitmaprect=0.0000,0.0000,0.0000,0.0000"
+  ]
+}

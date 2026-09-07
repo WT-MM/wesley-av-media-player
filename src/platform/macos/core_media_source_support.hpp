@@ -1,6 +1,7 @@
 #pragma once
 
 #include "media/native_media_source.hpp"
+#include "media/media_codec_facts.hpp"
 
 #include <CoreMedia/CoreMedia.h>
 
@@ -257,11 +258,13 @@ class CoreMediaSampleStorage final : public media::MediaPayloadStorage {
       track.codecConfigurationKind ==
           media::MediaCodecConfigurationKind::AudioMagicCookie &&
       !track.codecConfiguration.empty();
+  const bool raw = media::softwareAudioCodec(track.codec) &&
+      track.codecConfigurationKind == media::MediaCodecConfigurationKind::CodecPrivate;
   const bool cookieAbsent =
       track.codecConfigurationKind == media::MediaCodecConfigurationKind::None &&
       track.codecConfiguration.empty();
   if (!track.audio || track.kind != media::MediaTrackKind::Audio ||
-      (!cookiePresent && !cookieAbsent)) {
+      (!cookiePresent && !cookieAbsent && !raw)) {
     return nullptr;
   }
   const media::MediaAudioFormat& audio = *track.audio;
@@ -292,7 +295,7 @@ class CoreMediaSampleStorage final : public media::MediaPayloadStorage {
   CMAudioFormatDescriptionRef description = nullptr;
   const OSStatus status = CMAudioFormatDescriptionCreate(
       kCFAllocatorDefault, &asbd, layoutSize, layoutPointer,
-      track.codecConfiguration.size(),
+      cookiePresent ? track.codecConfiguration.size() : 0,
       cookiePresent ? track.codecConfiguration.data() : nullptr, nullptr,
       &description);
   if (status != noErr && description != nullptr) {

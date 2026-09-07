@@ -1,0 +1,21 @@
+{
+  "sha256": "45ba3f3578e9aa04f29092b379e8581414903ea89737d7e52d7a839aad82479e",
+  "cases": [
+    {
+      "case": "cap",
+      "reverted_rc": 1,
+      "reverted_log": "line 14: !av_malloc(512)\nTraceback (most recent call last):\n  File \"/Users/wesleymaa/Documents/WAM/tests/ffmpeg_reservation_proof.py\", line 7, in <module>\n    subprocess.run([binary],check=True)\n  File \"/opt/anaconda3/lib/python3.12/subprocess.py\", line 571, in run\n    raise CalledProcessError(retcode, process.args,\nsubprocess.CalledProcessError: Command '['/private/tmp/wam-allocator-proof-1a81rzml/test']' returned non-zero exit status 1.\n",
+      "restored_rc": 0,
+      "restored_log": "allocation cap, alignment, realloc peak and retirement passed\n",
+      "byte_identical_restore": true
+    },
+    {
+      "case": "unload",
+      "reverted_rc": 1,
+      "reverted_log": "DecoderReservationImagePinned\nTraceback (most recent call last):\n  File \"/Users/wesleymaa/Documents/WAM/tests/ffmpeg_reservation_loader_proof.py\", line 8, in <module>\n    subprocess.run([str(probe),str(lib)],check=True)\n  File \"/opt/anaconda3/lib/python3.12/subprocess.py\", line 571, in run\n    raise CalledProcessError(retcode, process.args,\nsubprocess.CalledProcessError: Command '['/private/tmp/wam-allocator-loader-z3pfwx82/probe', '/private/tmp/wam-allocator-loader-z3pfwx82/libavutil-wamnative.61.dylib']' returned non-zero exit status 1.\n",
+      "restored_rc": 0,
+      "restored_log": "allocator domain retired; zero native images\n",
+      "byte_identical_restore": true
+    }
+  ]
+}

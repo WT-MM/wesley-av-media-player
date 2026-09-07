@@ -1,0 +1,437 @@
+{
+  "probe_sha256": "809ae393721532bfb3a83e03bdd348e304f1949437d2571e031ba80947c5c80f",
+  "cases": [
+    {
+      "family": "dts",
+      "channels": 2,
+      "target": "0",
+      "first_frame": 0,
+      "frames": 96000,
+      "maximum_error": 0.0,
+      "rms": 0.0,
+      "zero_lag_error": 0.0,
+      "lag_errors": {
+        "-2": 0.00020065226999577135,
+        "-1": 5.0235008529853076e-05,
+        "0": 0.0,
+        "1": 5.0235008529853076e-05,
+        "2": 0.00020065226999577135
+      },
+      "log": "track=2 rate=48000 frames=96000 first=0 decoded=96256 trim=256 exact=1 drained=1 error=\n"
+    },
+    {
+      "family": "dts",
+      "channels": 2,
+      "target": "1",
+      "first_frame": 48000,
+      "frames": 48000,
+      "maximum_error": 0.0,
+      "rms": 0.0,
+      "zero_lag_error": 0.0,
+      "lag_errors": {
+        "-2": 0.0002556917897891253,
+        "-1": 6.401605787687004e-05,
+        "0": 0.0,
+        "1": 6.401605787687004e-05,
+        "2": 0.0002556917897891253
+      },
+      "log": "track=2 rate=48000 frames=48000 first=48000 decoded=96256 trim=48256 exact=1 drained=1 error=\n"
+    },
+    {
+      "family": "dts",
+      "channels": 2,
+      "target": "1/7",
+      "first_frame": 6858,
+      "frames": 89142,
+      "maximum_error": 0.0,
+      "rms": 0.0,
+      "zero_lag_error": 0.0,
+      "lag_errors": {
+        "-2": 0.00020790062262676656,
+        "-1": 5.2049439545953646e-05,
+        "0": 0.0,
+        "1": 5.2049439545953646e-05,
+        "2": 0.00020790062262676656
+      },
+      "log": "track=2 rate=48000 frames=89142 first=6858 decoded=96256 trim=7114 exact=1 drained=1 error=\n"
+    },
+    {
+      "family": "dts",
+      "channels": 2,
+      "target": "1999/1000",
+      "first_frame": 95952,
+      "frames": 48,
+      "maximum_error": 0.0,
+      "rms": 0.0,
+      "zero_lag_error": 0.0,
+      "lag_errors": {
+        "-2": 0.00036152362008579075,
+        "-1": 9.1343026724644e-05,
+        "0": 0.0,
+        "1": 9.1343026724644e-05,
+        "2": 0.00036152362008579075
+      },
+      "log": "track=2 rate=48000 frames=48 first=95952 decoded=96256 trim=96208 exact=1 drained=1 error=\n"
+    },
+    {
+      "family": "dts",
+      "channels": 6,
+      "target": "0",
+      "first_frame": 0,
+      "frames": 96000,
+      "maximum_error": 0.0,
+      "rms": 0.0,
+      "zero_lag_error": 0.0,
+      "lag_errors": {
+        "-2": 1.0417466000944842e-05,
+        "-1": 1.0128766007255763e-05,
+        "0": 0.0,
+        "1": 1.0128766007255763e-05,
+        "2": 1.0417466000944842e-05
+      },
+      "log": "track=2 rate=48000 frames=96000 first=0 decoded=96256 trim=256 exact=1 drained=1 error=\n"
+    },
+    {
+      "family": "dts",
+      "channels": 6,
+      "target": "1",
+      "first_frame": 48000,
+      "frames": 48000,
+      "maximum_error": 0.0,
+      "rms": 0.0,
+      "zero_lag_error": 0.0,
+      "lag_errors": {
+        "-2": 0.0,
+        "-1": 0.0,
+        "0": 0.0,
+        "1": 0.0,
+        "2": 0.0
+      },
+      "log": "track=2 rate=48000 frames=48000 first=48000 decoded=96256 trim=48256 exact=1 drained=1 error=\n"
+    },
+    {
+      "family": "dts",
+      "channels": 6,
+      "target": "1/7",
+      "first_frame": 6858,
+      "frames": 89142,
+      "maximum_error": 0.0,
+      "rms": 0.0,
+      "zero_lag_error": 0.0,
+      "lag_errors": {
+        "-2": 8.414384865318425e-06,
+        "-1": 8.212025022658054e-06,
+        "0": 0.0,
+        "1": 8.212025022658054e-06,
+        "2": 8.414384865318425e-06
+      },
+      "log": "track=2 rate=48000 frames=89142 first=6858 decoded=96256 trim=7114 exact=1 drained=1 error=\n"
+    },
+    {
+      "family": "dts",
+      "channels": 6,
+      "target": "1999/1000",
+      "first_frame": 95952,
+      "frames": 48,
+      "maximum_error": 0.0,
+      "rms": 0.0,
+      "zero_lag_error": 0.0,
+      "lag_errors": {
+        "-2": 0.0,
+        "-1": 0.0,
+        "0": 0.0,
+        "1": 0.0,
+        "2": 0.0
+      },
+      "log": "track=2 rate=48000 frames=48 first=95952 decoded=96256 trim=96208 exact=1 drained=1 error=\n"
+    },
+    {
+      "family": "truehd",
+      "channels": 2,
+      "target": "0",
+      "first_frame": 0,
+      "frames": 96000,
+      "maximum_error": 0.0,
+      "rms": 0.0,
+      "zero_lag_error": 0.0,
+      "lag_errors": {
+        "-2": 0.00020236759155523032,
+        "-1": 5.066489757155068e-05,
+        "0": 0.0,
+        "1": 5.066489757155068e-05,
+        "2": 0.00020236759155523032
+      },
+      "log": "track=2 rate=48000 frames=96000 first=0 decoded=96000 trim=0 exact=1 drained=1 error=\n"
+    },
+    {
+      "family": "truehd",
+      "channels": 2,
+      "target": "1",
+      "first_frame": 48000,
+      "frames": 48000,
+      "maximum_error": 0.0,
+      "rms": 0.0,
+      "zero_lag_error": 0.0,
+      "lag_errors": {
+        "-2": 0.00025707940221764147,
+        "-1": 6.436472904169932e-05,
+        "0": 0.0,
+        "1": 6.436472904169932e-05,
+        "2": 0.00025707940221764147
+      },
+      "log": "track=2 rate=48000 frames=48000 first=48000 decoded=96000 trim=48000 exact=1 drained=1 error=\n"
+    },
+    {
+      "family": "truehd",
+      "channels": 2,
+      "target": "1/7",
+      "first_frame": 6858,
+      "frames": 89142,
+      "maximum_error": 0.0,
+      "rms": 0.0,
+      "zero_lag_error": 0.0,
+      "lag_errors": {
+        "-2": 0.00020906365534756333,
+        "-1": 5.2340987167553976e-05,
+        "0": 0.0,
+        "1": 5.2340987167553976e-05,
+        "2": 0.00020906365534756333
+      },
+      "log": "track=2 rate=48000 frames=89142 first=6858 decoded=96000 trim=6858 exact=1 drained=1 error=\n"
+    },
+    {
+      "family": "truehd",
+      "channels": 2,
+      "target": "1999/1000",
+      "first_frame": 95952,
+      "frames": 48,
+      "maximum_error": 0.0,
+      "rms": 0.0,
+      "zero_lag_error": 0.0,
+      "lag_errors": {
+        "-2": 0.0003572601708583534,
+        "-1": 9.023379243444651e-05,
+        "0": 0.0,
+        "1": 9.023379243444651e-05,
+        "2": 0.0003572601708583534
+      },
+      "log": "track=2 rate=48000 frames=48 first=95952 decoded=96000 trim=95952 exact=1 drained=1 error=\n"
+    },
+    {
+      "family": "truehd",
+      "channels": 6,
+      "target": "0",
+      "first_frame": 0,
+      "frames": 96000,
+      "maximum_error": 0.0,
+      "rms": 0.0,
+      "zero_lag_error": 0.0,
+      "lag_errors": {
+        "-2": 1.0416883924335707e-05,
+        "-1": 1.0416774784971494e-05,
+        "0": 0.0,
+        "1": 1.0416774784971494e-05,
+        "2": 1.0416883924335707e-05
+      },
+      "log": "track=2 rate=48000 frames=96000 first=0 decoded=96000 trim=0 exact=1 drained=1 error=\n"
+    },
+    {
+      "family": "truehd",
+      "channels": 6,
+      "target": "1",
+      "first_frame": 48000,
+      "frames": 48000,
+      "maximum_error": 0.0,
+      "rms": 0.0,
+      "zero_lag_error": 0.0,
+      "lag_errors": {
+        "-2": 0.0,
+        "-1": 0.0,
+        "0": 0.0,
+        "1": 0.0,
+        "2": 0.0
+      },
+      "log": "track=2 rate=48000 frames=48000 first=48000 decoded=96000 trim=48000 exact=1 drained=1 error=\n"
+    },
+    {
+      "family": "truehd",
+      "channels": 6,
+      "target": "1/7",
+      "first_frame": 6858,
+      "frames": 89142,
+      "maximum_error": 0.0,
+      "rms": 0.0,
+      "zero_lag_error": 0.0,
+      "lag_errors": {
+        "-2": 8.41373093862785e-06,
+        "-1": 8.413637260673568e-06,
+        "0": 0.0,
+        "1": 8.413637260673568e-06,
+        "2": 8.41373093862785e-06
+      },
+      "log": "track=2 rate=48000 frames=89142 first=6858 decoded=96000 trim=6858 exact=1 drained=1 error=\n"
+    },
+    {
+      "family": "truehd",
+      "channels": 6,
+      "target": "1999/1000",
+      "first_frame": 95952,
+      "frames": 48,
+      "maximum_error": 0.0,
+      "rms": 0.0,
+      "zero_lag_error": 0.0,
+      "lag_errors": {
+        "-2": 0.0,
+        "-1": 0.0,
+        "0": 0.0,
+        "1": 0.0,
+        "2": 0.0
+      },
+      "log": "track=2 rate=48000 frames=48 first=95952 decoded=96000 trim=95952 exact=1 drained=1 error=\n"
+    },
+    {
+      "family": "mlp",
+      "channels": 2,
+      "target": "0",
+      "first_frame": 0,
+      "frames": 96000,
+      "maximum_error": 0.0,
+      "rms": 0.0,
+      "zero_lag_error": 0.0,
+      "lag_errors": {
+        "-2": 0.00020236759155523032,
+        "-1": 5.066489757155068e-05,
+        "0": 0.0,
+        "1": 5.066489757155068e-05,
+        "2": 0.00020236759155523032
+      },
+      "log": "track=2 rate=48000 frames=96000 first=0 decoded=96000 trim=0 exact=1 drained=1 error=\n"
+    },
+    {
+      "family": "mlp",
+      "channels": 2,
+      "target": "1",
+      "first_frame": 48000,
+      "frames": 48000,
+      "maximum_error": 0.0,
+      "rms": 0.0,
+      "zero_lag_error": 0.0,
+      "lag_errors": {
+        "-2": 0.00025707940221764147,
+        "-1": 6.436472904169932e-05,
+        "0": 0.0,
+        "1": 6.436472904169932e-05,
+        "2": 0.00025707940221764147
+      },
+      "log": "track=2 rate=48000 frames=48000 first=48000 decoded=96000 trim=48000 exact=1 drained=1 error=\n"
+    },
+    {
+      "family": "mlp",
+      "channels": 2,
+      "target": "1/7",
+      "first_frame": 6858,
+      "frames": 89142,
+      "maximum_error": 0.0,
+      "rms": 0.0,
+      "zero_lag_error": 0.0,
+      "lag_errors": {
+        "-2": 0.00020906365534756333,
+        "-1": 5.2340987167553976e-05,
+        "0": 0.0,
+        "1": 5.2340987167553976e-05,
+        "2": 0.00020906365534756333
+      },
+      "log": "track=2 rate=48000 frames=89142 first=6858 decoded=96000 trim=6858 exact=1 drained=1 error=\n"
+    },
+    {
+      "family": "mlp",
+      "channels": 2,
+      "target": "1999/1000",
+      "first_frame": 95952,
+      "frames": 48,
+      "maximum_error": 0.0,
+      "rms": 0.0,
+      "zero_lag_error": 0.0,
+      "lag_errors": {
+        "-2": 0.0003572601708583534,
+        "-1": 9.023379243444651e-05,
+        "0": 0.0,
+        "1": 9.023379243444651e-05,
+        "2": 0.0003572601708583534
+      },
+      "log": "track=2 rate=48000 frames=48 first=95952 decoded=96000 trim=95952 exact=1 drained=1 error=\n"
+    },
+    {
+      "family": "mlp",
+      "channels": 6,
+      "target": "0",
+      "first_frame": 0,
+      "frames": 96000,
+      "maximum_error": 0.0,
+      "rms": 0.0,
+      "zero_lag_error": 0.0,
+      "lag_errors": {
+        "-2": 1.0416883924335707e-05,
+        "-1": 1.0416774784971494e-05,
+        "0": 0.0,
+        "1": 1.0416774784971494e-05,
+        "2": 1.0416883924335707e-05
+      },
+      "log": "track=2 rate=48000 frames=96000 first=0 decoded=96000 trim=0 exact=1 drained=1 error=\n"
+    },
+    {
+      "family": "mlp",
+      "channels": 6,
+      "target": "1",
+      "first_frame": 48000,
+      "frames": 48000,
+      "maximum_error": 0.0,
+      "rms": 0.0,
+      "zero_lag_error": 0.0,
+      "lag_errors": {
+        "-2": 0.0,
+        "-1": 0.0,
+        "0": 0.0,
+        "1": 0.0,
+        "2": 0.0
+      },
+      "log": "track=2 rate=48000 frames=48000 first=48000 decoded=96000 trim=48000 exact=1 drained=1 error=\n"
+    },
+    {
+      "family": "mlp",
+      "channels": 6,
+      "target": "1/7",
+      "first_frame": 6858,
+      "frames": 89142,
+      "maximum_error": 0.0,
+      "rms": 0.0,
+      "zero_lag_error": 0.0,
+      "lag_errors": {
+        "-2": 8.41373093862785e-06,
+        "-1": 8.413637260673568e-06,
+        "0": 0.0,
+        "1": 8.413637260673568e-06,
+        "2": 8.41373093862785e-06
+      },
+      "log": "track=2 rate=48000 frames=89142 first=6858 decoded=96000 trim=6858 exact=1 drained=1 error=\n"
+    },
+    {
+      "family": "mlp",
+      "channels": 6,
+      "target": "1999/1000",
+      "first_frame": 95952,
+      "frames": 48,
+      "maximum_error": 0.0,
+      "rms": 0.0,
+      "zero_lag_error": 0.0,
+      "lag_errors": {
+        "-2": 0.0,
+        "-1": 0.0,
+        "0": 0.0,
+        "1": 0.0,
+        "2": 0.0
+      },
+      "log": "track=2 rate=48000 frames=48 first=95952 decoded=96000 trim=95952 exact=1 drained=1 error=\n"
+    }
+  ]
+}

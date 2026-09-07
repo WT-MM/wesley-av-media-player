@@ -2,7 +2,10 @@
 
 The exact local source archive is `third_party/ffmpeg-source/ffmpeg-9.0.1.tar.xz`.
 SHA-256: `cf38e0e28c7e5605942c4a77755349b0145804a397af37eb1fb4c77cb237f635`.
-No source patches are applied. Build it offline with
+The offline recipe applies `scripts/apply_ffmpeg_memory_reservation.py` and
+`third_party/ffmpeg-patches/wam_memory_reservation.inc`; both are required
+corresponding source for this build. The patch uses a pthread key and an
+allocator-enforced decoder domain, preserving library unload. Build it offline with
 `scripts/build_ffmpeg_lgpl.sh ARCHIVE PREFIX`; the recipe fixes arm64 and macOS
 13.3 and retains configure arguments, license text and compiler/SDK receipts.
 

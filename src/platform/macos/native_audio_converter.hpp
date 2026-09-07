@@ -20,6 +20,11 @@ struct NativeAudioPacketDescription {
   std::uint32_t variableFrames{0};
 };
 
+struct NativeAudioBackendWake {
+  void (*signal)(void*) noexcept{};
+  void* context{};
+};
+
 struct NativeAudioBackendConfiguration {
   media::MediaAudioFormat input;
   // Borrowed only for the duration of configure().
@@ -30,6 +35,7 @@ struct NativeAudioBackendConfiguration {
                               .configurationRepresentation = media::DecodeConfigurationRepresentation::AppleMagicCookie};
   // Raw decoder bytes are distinct from AudioToolbox cookies and ESDS wrappers.
   std::span<const std::byte> rawExtradata{};
+  NativeAudioBackendWake wake{};
 };
 
 struct NativeAudioBackendInput {
@@ -279,6 +285,7 @@ public:
       NativePcmRing &ring,
       std::unique_ptr<NativeAudioConverterBackend> backend = {});
   ~NativeAudioConverter();
+  void setBackendWake(NativeAudioBackendWake wake) noexcept;
 
   NativeAudioConverter(const NativeAudioConverter &) = delete;
   NativeAudioConverter &operator=(const NativeAudioConverter &) = delete;

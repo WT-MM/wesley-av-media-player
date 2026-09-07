@@ -181,16 +181,15 @@ inline constexpr std::array<AdmittedAudioFormatTag, 14> kAdmittedAudioFormatTags
 
 namespace detail {
 
-// Every audio codec in the facts table admits at least one tag and no video
-// codec admits any, so a codec cannot be routed to the converter without a
-// stated bitstream flavour.
+// Every Apple-routed audio codec admits a format tag; software ingress is raw.
 [[nodiscard]] constexpr bool admittedAudioFormatTagsCoverAudioCodecs() noexcept {
   for (const media::MediaCodecFacts &facts : media::kMediaCodecFacts) {
     bool admitted = false;
     for (const AdmittedAudioFormatTag &entry : kAdmittedAudioFormatTags) {
       admitted = admitted || entry.codec == facts.codec;
     }
-    if (admitted != (facts.kind == media::MediaCodecKind::Audio)) {
+    if (admitted != (facts.kind == media::MediaCodecKind::Audio &&
+                     !media::softwareAudioCodec(facts.codec))) {
       return false;
     }
   }
@@ -200,7 +199,7 @@ namespace detail {
 } // namespace detail
 
 static_assert(detail::admittedAudioFormatTagsCoverAudioCodecs(),
-              "each audio codec admits at least one AudioToolbox format tag "
+              "each Apple audio codec admits at least one AudioToolbox format tag "
               "and no video codec admits any");
 
 [[nodiscard]] constexpr bool audioCodecFormatTagAdmitted(

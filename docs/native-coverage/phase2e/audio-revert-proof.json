@@ -1,0 +1,31 @@
+{
+  "reverted": {
+    "rc": 1,
+    "log": "open: requested Matroska tracks are unavailable (TrackSelection); libavformat: LibavformatAudioTimingUnproven: unmapped codec\n"
+  },
+  "session_reverted": {
+    "rc": 1,
+    "log": "Traceback (most recent call last):\n  File \"/Users/wesleymaa/Documents/WAM/tests/software_audio_session_proof.py\", line 19, in <module>\n    assert rc==0 and not row['failures'] and samples and samples[-1]['drawn_frames']==50 and samples[-1]['audio_rendered_frames']==96000 and samples[-1]['discarded_late_frames']==0 and samples[-1]['superseded_frames']==0,row\nAssertionError: {'family': 'dts', 'rc': 0, 'run_id': '3e256233-30d5-42c5-a553-4b83f5a169bd', 'candidate_sha256': 'd32d07dfd7c20a1b26277caa25f55091504a0c52b0c1588fbda3c7e1ef8f24c1', 'asset_sha256': 'd4baf00f0d22af101aa5c3ad52fa8877e398636085cf56e37852d0e85535c212', 'last': None, 'failures': ['WAM: native failure stage=open reason=Startup class=UnsupportedSource error=\"requested Matroska tracks are unavailable (TrackSelection); libavformat: LibavformatAudioTimingUnproven: unmapped codec\"']}\n"
+  },
+  "byte_identical_restore": true,
+  "restored": {
+    "rc": 0,
+    "log": ""
+  },
+  "session_restored": {
+    "rc": 0,
+    "log": ""
+  },
+  "sha256": {
+    "src/media/native_media_source.hpp": "9fa2be3d040d3000ced962172d3ece0114bb4fccab2837b9f5fea29e3a85fdc0",
+    "src/media/native_media_source.cpp": "5bac3f5f4bf92d0fa540a129736ff04f7c08ecd67cb6b3ba22f3c41f24def911",
+    "src/media/media_codec_facts.hpp": "b9114d8d69d4c55dfe416c1a46b6ba46299f162f6e5e5e2ebe5a1229df47da24",
+    "src/media/matroska_demuxer.cpp": "39d5505a476b965ab210c499fa1894a1153cfc36abfe20d4b72ee4be3c7a3a24",
+    "src/platform/macos/core_media_codec_facts.hpp": "0bca8aa2280a861684e30221a7fcaee3ab039444627154579d90f15b4b9a5644",
+    "src/platform/macos/core_media_source_support.hpp": "58479325280791624f157413b39f302481edf7d96f256dc0aad664679da4cce2",
+    "src/platform/macos/native_audio_converter.hpp": "58082f180664bf46b9d52a5c46555bb5de720db70451834e94b10dd9ae582883",
+    "src/platform/macos/native_audio_converter.mm": "af1cdada0bf18ddfcfb19c2e56be810b9a05939590b36cd16e1454067c8bd2b1",
+    "src/platform/macos/native_audio_session.mm": "7d7b7255942be66f07e365cf03d6d3974fa77edd85633dd5dd60112086195dea",
+    "src/platform/macos/software_avcodec_audio_backend.cpp": "330578b71920f7432c52a78f87f70a58929150a1c6a4e7464c11d2a775902abe"
+  }
+}

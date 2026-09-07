@@ -5,6 +5,7 @@
 #if defined(WAM_ENABLE_AVCODEC_STAGE)
 #include "software_avcodec_video_decoder.hpp"
 #include "native_video_decode_plan.hpp"
+#include "media/software_color_qualification.hpp"
 #endif
 
 #include <cstdint>
@@ -75,13 +76,26 @@ public:
         videoToolbox_.close();
         candidate.refusal = media::DecodeRefusal::AppleCodecUnavailable;
         break;
-      case media::DecodeImplementation::Libavcodec:
+      case media::DecodeImplementation::Libavcodec: {
+        const auto codec = media::mediaCodecForCoreMediaType(configuration.codec);
+        const auto& facts = media::mediaCodecFacts(codec);
+        media::VideoCodecConfigurationLimits limits;
+        limits.admitSoftwareProfiles = true;
+        limits.admitHighDynamicRangeColor = true;
+        const auto inspected = media::inspectVideoCodecConfiguration(
+            codec, facts.configurationKind, configuration.codecConfiguration, limits);
+        if (!inspected.admitted() || !media::softwareColorQualified(
+                *inspected.facts, configuration.highDynamicRangeTransfer)) {
+          if (error) *error = "SoftwareColorUnqualified";
+          return false;
+        }
         avcodec_ = std::make_unique<SoftwareAvcodecVideoDecoder>(options_);
         if (!avcodec_->configure(configured, sink, error)) return false;
         plan_.implementation = candidate.implementation;
         std::fprintf(stderr, "WAM: native decoder stage=Libavcodec codec=%08x\n", configuration.codec);
         if (error) error->clear();
         return true;
+      }
       case media::DecodeImplementation::Libvpx:
         software_ = std::make_unique<SoftwareVp8Decoder>(options_);
         if (!software_->configure(configured, sink, error)) return false;

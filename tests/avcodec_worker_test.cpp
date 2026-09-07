@@ -32,6 +32,7 @@ struct Observer {
     }
     CHECK(timing.generation==7 && timing.epoch==3);
     CHECK(timing.pts.valid() && timing.duration.valid());
+    CHECK(__int128(timing.duration.value)*25==timing.duration.timescale);
     const auto time=__int128(timing.pts.value)*1000/timing.pts.timescale;
     CHECK(time==__int128(self.count.load())*40);
     CHECK(time>self.previous);

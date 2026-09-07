@@ -2251,13 +2251,9 @@ void testCodecAdmissionAndSelection() {
     // replaces the previous contract, which admitted video-only whenever
     // audio was optional.
     //
-    // The example used to be A_OPUS, then A_VORBIS, then A_FLAC; all three are
-    // now decoded natively. DTS is the current stand-in for "audio this source
-    // does not decode" -- Apple ships no DTS decoder at all, so it is a codec
-    // Matroska can carry that isAudioCodec() does not name, and the track is
-    // never selected in the first place.
+    // WMA has no admitted Matroska audio identity.
     FixtureSpec spec;
-    spec.audioCodecId = "A_DTS";
+    spec.audioCodecId = "A_WMA";
     expectPrepareError(
         spec, MatroskaDemuxError::TrackSelection,
         "a document whose only audio is undecodable falls back whole-file");
@@ -2276,7 +2272,7 @@ void testCodecAdmissionAndSelection() {
   }
   {
     FixtureSpec spec;
-    spec.audioCodecId = "A_DTS";
+    spec.audioCodecId = "A_WMA";
     MediaSourceOpenOptions options;
     options.selection.requireAudio = true;
     const PreparedFixture prepared = prepareFixture(spec, options);

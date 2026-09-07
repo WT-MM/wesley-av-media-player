@@ -1,0 +1,8 @@
+{
+  "reverted_rc": 1,
+  "reverted_output": "CMake Error at /tmp/wam-stage-options-zbmo5jrf/options.cmake:9 (message):\n  ShippedStageDefaultsMismatch\n\n\nTraceback (most recent call last):\n  File \"/Users/wesleymaa/Documents/WAM/tests/native_stage_defaults_test.py\", line 19, in <module>\n    subprocess.run(['cmake', '-P', str(script)], check=True)\n  File \"/opt/anaconda3/lib/python3.12/subprocess.py\", line 571, in run\n    raise CalledProcessError(retcode, process.args,\nsubprocess.CalledProcessError: Command '['cmake', '-P', '/private/tmp/wam-stage-options-zbmo5jrf/options.cmake']' returned non-zero exit status 1.\n",
+  "restored_rc": 0,
+  "restored_output": "PASS demux defaults ON independently of codec OFF\n",
+  "restored_sha256": "7c8323749ee40ff3a027547e234422decbdfa53446e3b092b5b2d44689675813",
+  "byte_identical": true
+}

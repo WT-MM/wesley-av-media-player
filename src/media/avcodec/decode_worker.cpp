@@ -19,6 +19,7 @@ namespace {
 constexpr std::array ids{AV_CODEC_ID_H264, AV_CODEC_ID_MPEG4, AV_CODEC_ID_VP9,
                         AV_CODEC_ID_DTS, AV_CODEC_ID_TRUEHD, AV_CODEC_ID_MLP};
 std::atomic<unsigned> activeWorkers{0};
+std::atomic<std::uint64_t> reservedBytes{0};
 constexpr unsigned kMaximumWorkers = macos::kNativeSoftwareProcessWorkers;
 static_assert(AV_INPUT_BUFFER_PADDING_SIZE == macos::kNativeSoftwarePacketPaddingBytes);
 struct Provenance { PacketTiming timing; AVBufferRef* reference{}; };
@@ -43,7 +44,7 @@ struct DecodeWorker::Impl {
   FrameHandler handler;
   WakeHandler wake;
   Configuration configuration;
-  std::unique_ptr<std::byte[]> extra;
+  std::unique_ptr<std::byte[]> extra, conversion;
   std::array<Slot, kPacketSlots> slots;
   std::array<Provenance, kProvenanceSlots> provenance;
   std::atomic<std::uint64_t> read{0}, write{0}, signal{0}, bytes{0}, peakBytes{0};
@@ -54,10 +55,17 @@ struct DecodeWorker::Impl {
   AVPacket* packet{};
   AVFrame* frame{};
   RuntimeLease runtime;
-  bool counted{};
+  bool counted{}, reservationRetired{true};
+  SoftwareDecoderReservation reservation;
+  std::uint64_t reserved{};
+  void* allocationDomain{};
   void notify() noexcept { signal.fetch_add(1, std::memory_order_release); signal.notify_one(); }
   void ownerWake() noexcept { if (wake.wake) wake.wake(wake.context); }
-  void fail(const char* reason) noexcept { error.store(reason, std::memory_order_release); ownerWake(); }
+  void fail(const char* reason) noexcept {
+    if (allocationDomain && api().av_wam_reservation_exhausted(allocationDomain))
+      reason = "AvcodecDecoderPrivateBudgetExceeded";
+    error.store(reason, std::memory_order_release); ownerWake();
+  }
   bool open() {
     const auto index = static_cast<std::size_t>(configuration.codec);
     const AVCodec* codec = index < ids.size() ? wam::media::avcodec::api().avcodec_find_decoder(ids[index]) : nullptr;
@@ -96,7 +104,9 @@ struct DecodeWorker::Impl {
 #if defined(WAM_AVCODEC_ALLOCATION_PROBE)
     AllocationProbe allocationProbe;
 #endif
-    const bool opened = open();
+    allocationDomain = api().av_wam_reservation_begin(reservation.privateBytes);
+    if (!allocationDomain) fail("AvcodecDecoderPrivateReservationFailed");
+    const bool opened = allocationDomain && open();
     ready.store(true, std::memory_order_release);
     ready.notify_one();
     bool retainedFrame = false, retainedPacket = false, sentEos = false;
@@ -193,6 +203,12 @@ struct DecodeWorker::Impl {
     wam::media::avcodec::api().av_packet_free(&packet);
     wam::media::avcodec::api().avcodec_free_context(&context);
     for (auto& record : provenance) wam::media::avcodec::api().av_buffer_unref(&record.reference);
+    if (allocationDomain) {
+      const auto remaining = api().av_wam_reservation_end(allocationDomain);
+      allocationDomain = nullptr;
+      reservationRetired = remaining == 0;
+      if (!reservationRetired) fail("AvcodecDecoderPrivateRetirementIncomplete");
+    }
   }
 };
 DecodeWorker::DecodeWorker(FrameHandler handler, WakeHandler wake) : impl_(std::make_unique<Impl>()) {
@@ -203,16 +219,31 @@ bool DecodeWorker::configure(const Configuration& configuration) {
   auto& s = *impl_;
   if (s.worker.joinable() || !s.handler.receive || !configuration.generation ||
       configuration.extradata.size() > MediaSourceLimits::kHardMaximumCodecConfigurationBytes) return false;
-  if (std::uint64_t(configuration.width) * configuration.height > kMaximumSoftwarePixels) {
-    s.fail("AvcodecSoftwareReferenceBudgetExceeded"); return false;
-  }
+  constexpr std::array mediaCodecs{MediaCodec::H264,MediaCodec::Mpeg4Visual,MediaCodec::Vp9,
+                                   MediaCodec::Dts,MediaCodec::TrueHd,MediaCodec::Mlp};
+  const auto index=static_cast<unsigned>(configuration.codec);
+  if(index>=mediaCodecs.size()) { s.fail("AvcodecDecoderUnavailable"); return false; }
+  const auto plan=softwareDecoderReservation(mediaCodecs[index], configuration.width, configuration.height,
+      configuration.codec==Codec::Mpeg4?8:configuration.bitDepth,
+      configuration.codec==Codec::Mpeg4?1:configuration.chroma, configuration.extradata.size());
+  if(!plan) { s.fail("AvcodecSoftwareReferenceBudgetExceeded"); return false; }
+  s.reservation=*plan;
+  auto used=reservedBytes.load(std::memory_order_relaxed);
+  do {
+    if(used>kSoftwareProcessReservationMaximumBytes-plan->totalBytes()) {
+      s.fail("AvcodecProcessReservationExceeded"); return false;
+    }
+  } while(!reservedBytes.compare_exchange_weak(used,used+plan->totalBytes(),std::memory_order_relaxed));
+  s.reserved=plan->totalBytes();
   if (activeWorkers.fetch_add(1) >= kMaximumWorkers) {
-    activeWorkers.fetch_sub(1); s.fail("AvcodecWorkerBudgetExceeded"); return false;
+    activeWorkers.fetch_sub(1); reservedBytes.fetch_sub(s.reserved); s.reserved=0;
+    s.fail("AvcodecWorkerBudgetExceeded"); return false;
   }
   s.counted = true;
   if (const char* failure = s.runtime.acquire()) { s.fail(failure); return false; }
   s.configuration = configuration;
   try {
+    s.conversion = std::make_unique<std::byte[]>(s.reservation.conversionBytes);
     s.extra = std::make_unique<std::byte[]>(configuration.extradata.size());
     if (!configuration.extradata.empty()) std::memcpy(s.extra.get(), configuration.extradata.data(), configuration.extradata.size());
     s.configuration.extradata = {s.extra.get(), configuration.extradata.size()};
@@ -250,7 +281,12 @@ void DecodeWorker::close() noexcept {
   s.stopping.store(true, std::memory_order_release); s.notify();
   if (s.worker.joinable()) s.worker.join();
   s.runtime.release();
-  if (s.counted) { activeWorkers.fetch_sub(1); s.counted = false; }
+  for(auto& slot:s.slots) { slot.bytes.reset(); slot.size=0; }
+  s.conversion.reset(); s.extra.reset(); s.configuration.extradata={}; s.bytes.store(0);
+  if (s.reservationRetired) {
+    if (s.counted) { activeWorkers.fetch_sub(1); s.counted = false; }
+    if (s.reserved) { reservedBytes.fetch_sub(s.reserved); s.reserved=0; }
+  }
 }
 bool DecodeWorker::hasCapacity() const noexcept {
   const auto& s = *impl_;
@@ -263,5 +299,10 @@ std::size_t DecodeWorker::queuedPackets() const noexcept {
 }
 std::uint64_t DecodeWorker::compressedBytes() const noexcept { return impl_->bytes.load(std::memory_order_relaxed); }
 std::uint64_t DecodeWorker::peakCompressedBytes() const noexcept { return impl_->peakBytes.load(std::memory_order_relaxed); }
+std::span<std::byte> DecodeWorker::conversionStorage() noexcept {
+  return {impl_->conversion.get(),impl_->conversion?impl_->reservation.conversionBytes:0};
+}
+std::uint64_t DecodeWorker::reservedProcessBytes() noexcept { return reservedBytes.load(); }
+unsigned DecodeWorker::reservedWorkers() noexcept { return activeWorkers.load(); }
 const char* DecodeWorker::failure() const noexcept { return impl_->error.load(std::memory_order_acquire); }
 }

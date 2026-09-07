@@ -1,0 +1,21 @@
+{
+  "command": [
+    "/opt/homebrew/bin/ffmpeg",
+    "-v",
+    "error",
+    "-y",
+    "-f",
+    "lavfi",
+    "-i",
+    "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.1*sin(2*PI*700*t):s=48000:d=2",
+    "-c:a",
+    "vorbis",
+    "-strict",
+    "-2",
+    "/private/tmp/wam-vorbis-refusal-gfxbou2k/uniform.ogg"
+  ],
+  "asset_sha256": "e753afe4541134de78a38028b67dd3f091555cd4a0af8372a07deb1855010fbc",
+  "rc": 1,
+  "stderr": "open: LibavformatAudioTimingUnproven: vorbis\n",
+  "pcm_bytes": 0
+}
