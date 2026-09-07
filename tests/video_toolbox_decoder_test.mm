@@ -3612,6 +3612,32 @@ void testUnpinnedDisplayLayerAdmitsFullRangeDecodedSurfaces() {
         actual, expected, interop);
   };
 
+  wam::macos::VideoStreamConfiguration configuration;
+  configuration.codec = kCMVideoCodecType_AppleProRes4444;
+  WAM_CHECK(VideoToolboxDecoderTestAccess::requestedOutputFormat(configuration) ==
+            kCVPixelFormatType_30RGBLEPackedWideGamut);
+  configuration.codec = kCMVideoCodecType_AppleProRes4444XQ;
+  WAM_CHECK(VideoToolboxDecoderTestAccess::requestedOutputFormat(configuration) ==
+            kCVPixelFormatType_30RGBLEPackedWideGamut);
+  configuration.codec = kCMVideoCodecType_HEVC;
+  std::array<std::byte, 23> record{};
+  record[16] = std::byte{2};
+  record[17] = std::byte{2};
+  configuration.codecConfiguration = record;
+  WAM_CHECK(VideoToolboxDecoderTestAccess::requestedOutputFormat(configuration) ==
+            kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange);
+  for (const OSType format : {kCVPixelFormatType_422YpCbCr8BiPlanarVideoRange,
+                             kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange,
+                             kCVPixelFormatType_30RGBLEPackedWideGamut}) {
+    WAM_CHECK(admits(format, format, VideoToolboxOutputInterop::DisplayLayer));
+    WAM_CHECK(!admits(format, format, VideoToolboxOutputInterop::OpenGL));
+    WAM_CHECK(!admits(format, format, VideoToolboxOutputInterop::Metal));
+  }
+  WAM_CHECK(!admits(0x70343232U, kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange,
+                    VideoToolboxOutputInterop::DisplayLayer));
+  WAM_CHECK(admits(kCVPixelFormatType_422YpCbCr10BiPlanarFullRange,
+                   kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange,
+                   VideoToolboxOutputInterop::DisplayLayer));
   constexpr OSType videoRange8 =
       kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange;
   constexpr OSType fullRange8 =

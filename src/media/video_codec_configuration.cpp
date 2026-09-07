@@ -1049,6 +1049,7 @@ void parseHevcVui(RbspBitReader &bits, std::uint32_t subLayers,
 [[nodiscard]] Error parseHevcSps(std::span<const std::uint8_t> nal,
                                  const HevcProfileTierLevel &expected,
                                  std::uint8_t expectedDepthMinusEight,
+                                 std::uint8_t expectedChroma,
                                  const VideoCodecConfigurationLimits &limits,
                                  ParsedSpsFacts &facts,
                                  std::uint32_t &subLayersOut) noexcept {
@@ -1068,7 +1069,7 @@ void parseHevcVui(RbspBitReader &bits, std::uint32_t subLayers,
   if (!bits.ok()) {
     return Error::MalformedRecord;
   }
-  if (chromaFormat != 1U) {
+  if (chromaFormat != expectedChroma) {
     return Error::UnsupportedChromaFormat;
   }
   const std::uint32_t pictureWidth = bits.readUnsignedExpGolomb();
@@ -1108,7 +1109,7 @@ void parseHevcVui(RbspBitReader &bits, std::uint32_t subLayers,
   const std::uint64_t cropWidth =
       (static_cast<std::uint64_t>(crop[0]) + crop[1]) * 2U;
   const std::uint64_t cropHeight =
-      (static_cast<std::uint64_t>(crop[2]) + crop[3]) * 2U;
+      (static_cast<std::uint64_t>(crop[2]) + crop[3]) * (chromaFormat == 1U ? 2U : 1U);
   if (cropWidth >= pictureWidth || cropHeight >= pictureHeight) {
     return Error::MalformedRecord;
   }
@@ -1303,7 +1304,7 @@ inspectHvcC(std::span<const std::uint8_t> bytes,
   if (bytes.size() < 23U || bytes[0] != 1U || (bytes[13] & 0xF0U) != 0xF0U ||
       (bytes[15] & 0xFCU) != 0xFCU || (bytes[16] & 0xFCU) != 0xFCU ||
       (bytes[17] & 0xF8U) != 0xF8U || (bytes[18] & 0xF8U) != 0xF8U ||
-      (bytes[16] & 0x03U) != 1U || (bytes[21] & 0x03U) != 3U) {
+      ((bytes[16] & 0x03U) != 1U && (bytes[16] & 0x03U) != 2U) || (bytes[21] & 0x03U) != 3U) {
     return rejected(Error::MalformedRecord);
   }
   const std::uint8_t lumaDepthMinusEight = bytes[17] & 0x07U;
@@ -1312,7 +1313,8 @@ inspectHvcC(std::span<const std::uint8_t> bytes,
       (lumaDepthMinusEight != 0U && lumaDepthMinusEight != 2U)) {
     return rejected(Error::UnsupportedBitDepth);
   }
-  const std::uint8_t expectedProfileId = lumaDepthMinusEight == 2U ? 2U : 1U;
+  const std::uint8_t chroma = bytes[16] & 3U;
+  const std::uint8_t expectedProfileId = chroma == 2U ? 4U : (lumaDepthMinusEight == 2U ? 2U : 1U);
   if ((bytes[1] & 0xC0U) != 0U || (bytes[1] & 0x1FU) != expectedProfileId) {
     return rejected(Error::UnsupportedProfile);
   }
@@ -1323,9 +1325,11 @@ inspectHvcC(std::span<const std::uint8_t> bytes,
   VideoCodecConfigurationFacts result;
   result.codec = MediaCodec::Hevc;
   result.kind = MediaCodecConfigurationKind::HvcC;
-  result.sampleFormat = lumaDepthMinusEight == 2U
-                            ? MediaVideoSampleFormat::Yuv420TenBit
-                            : MediaVideoSampleFormat::Yuv420EightBit;
+  result.sampleFormat = chroma == 2U
+      ? (lumaDepthMinusEight == 2U ? MediaVideoSampleFormat::Yuv422TenBit
+                                  : MediaVideoSampleFormat::Yuv422EightBit)
+      : (lumaDepthMinusEight == 2U ? MediaVideoSampleFormat::Yuv420TenBit
+                                  : MediaVideoSampleFormat::Yuv420EightBit);
   result.bitDepth = static_cast<std::uint8_t>(8U + lumaDepthMinusEight);
   result.nalLengthBytes = 4U;
 
@@ -1407,7 +1411,7 @@ inspectHvcC(std::span<const std::uint8_t> bytes,
       } else if (nalType == 33U) {
         ParsedSpsFacts parsed;
         std::uint32_t subLayers = 0;
-        const Error error = parseHevcSps(nal, expected, lumaDepthMinusEight,
+        const Error error = parseHevcSps(nal, expected, lumaDepthMinusEight, chroma,
                                          limits, parsed, subLayers);
         if (error != Error::None) {
           return rejected(error);

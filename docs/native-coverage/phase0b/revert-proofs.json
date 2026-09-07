@@ -1,0 +1,270 @@
+[
+  {
+    "group": "avfoundation-admission",
+    "file": "src/platform/macos/avfoundation_media_source.mm",
+    "sha256": "953effb7983792c3f22dedb0c1e46ab8d0e363b64575864ebd395c7a5ebeba69",
+    "tests": [
+      {
+        "name": "prores4444",
+        "reverted_rc": 1
+      },
+      {
+        "name": "prores4444xq",
+        "reverted_rc": 1
+      },
+      {
+        "name": "hevc422-hvc1",
+        "reverted_rc": 1
+      },
+      {
+        "name": "vp9p2",
+        "reverted_rc": 1
+      },
+      {
+        "name": "seek30",
+        "reverted_rc": 1
+      },
+      {
+        "name": "he-aac",
+        "reverted_rc": 1
+      },
+      {
+        "name": "he-aacv2",
+        "reverted_rc": 1
+      }
+    ],
+    "byte_identical_restore": true
+  },
+  {
+    "group": "matroska-admission",
+    "file": "src/media/matroska_demuxer.cpp",
+    "sha256": "16eb2c0c2b14d6d86e76e2f96a64084605e12fe94bd869535d0dfca1cb9ce434",
+    "tests": [
+      {
+        "name": "alac",
+        "reverted_rc": 1
+      },
+      {
+        "name": "pcm_s16le",
+        "reverted_rc": 1
+      },
+      {
+        "name": "pcm_f32le",
+        "reverted_rc": 1
+      },
+      {
+        "name": "adpcm_ima_wav",
+        "reverted_rc": 1
+      },
+      {
+        "name": "adpcm_ms",
+        "reverted_rc": 1
+      },
+      {
+        "name": "random-access",
+        "reverted_rc": 1
+      }
+    ],
+    "byte_identical_restore": true
+  },
+  {
+    "group": "slow-audio",
+    "file": "src/platform/macos/native_audio_converter.mm",
+    "sha256": "0d6954096c69651aa5cc07ae850be05cf825a37b656a62f4a957c0bc2cc46f4e",
+    "tests": [
+      {
+        "name": "origin30",
+        "reverted_rc": 1
+      }
+    ],
+    "byte_identical_restore": true
+  },
+  {
+    "group": "dispatcher",
+    "file": "src/media/native_media_dispatcher.cpp",
+    "sha256": "38b1540fa9351562c10b99eb1bd7f796cbfa8555d4623037d2a0c8bcb3aef09a",
+    "tests": [
+      {
+        "name": "dispatcher",
+        "reverted_rc": 1
+      }
+    ],
+    "byte_identical_restore": true
+  },
+  {
+    "group": "router",
+    "file": "src/media/playback_router.cpp",
+    "sha256": "08d45534a4cfc13b6a4b2232b71f2c05e95f20d836bc6e79ffbdf2ae4d1017f1",
+    "tests": [
+      {
+        "name": "router",
+        "reverted_rc": 1
+      }
+    ],
+    "byte_identical_restore": true
+  },
+  {
+    "group": "session",
+    "file": "src/platform/macos/native_media_session.mm",
+    "sha256": "8182e842cbbdea76fe121cc0dbfbdfa422f1e896b1e4515e15c5d9b20dcdf8a6",
+    "tests": [
+      {
+        "name": "session",
+        "reverted_rc": 1
+      }
+    ],
+    "byte_identical_restore": true
+  },
+  {
+    "group": "preview",
+    "file": "src/platform/macos/avfoundation_preview_source.mm",
+    "sha256": "62ceae3c433b06259171cdfb944e41a21ac59638f45cb58e388482b951de9e97",
+    "tests": [
+      {
+        "name": "preview30",
+        "reverted_rc": 1
+      }
+    ],
+    "byte_identical_restore": true
+  },
+  {
+    "group": "pixel-request",
+    "file": "src/platform/macos/video_toolbox_decoder.mm",
+    "sha256": "9e3334563394bcc8e56c86eb2b8add5367a624d3f72cdd276b5e349e079eaadc",
+    "tests": [
+      {
+        "name": "opaque4444",
+        "reverted_rc": 1
+      }
+    ],
+    "byte_identical_restore": true
+  },
+  {
+    "group": "scenegraph422",
+    "file": "src/platform/macos/native_presentation_admission.hpp",
+    "sha256": "b545a2a3af0554b14c1ed888a700a1d7f9b322e5089ccdba3c0672c301f705e9",
+    "tests": [
+      {
+        "name": "refusal",
+        "reverted_rc": 1
+      }
+    ],
+    "byte_identical_restore": true
+  },
+  {
+    "group": "scenegraph4444",
+    "file": "src/platform/macos/native_presentation_admission.hpp",
+    "sha256": "b545a2a3af0554b14c1ed888a700a1d7f9b322e5089ccdba3c0672c301f705e9",
+    "tests": [
+      {
+        "name": "refusal",
+        "reverted_rc": 1
+      }
+    ],
+    "byte_identical_restore": true
+  },
+  {
+    "group": "progress",
+    "file": "src/media/native_seek_progress.hpp",
+    "sha256": "179de8a85195663c0f12bf93bd123b29dcb26b92cc4340f70766831a7a4253f1",
+    "tests": [
+      {
+        "name": "inactivity",
+        "reverted_rc": 1
+      }
+    ],
+    "byte_identical_restore": true
+  },
+  {
+    "group": "surface-ceiling",
+    "file": "src/platform/macos/native_surface_budget.hpp",
+    "sha256": "57056f613af9f8b4f983699cd1f093d295e7114b7fb38cced4a987171a80ddd6",
+    "tests": [],
+    "compile_invariant_failed": true,
+    "byte_identical_restore": true
+  },
+  {
+    "group": "owner-progress",
+    "file": "src/qt/native_playback_owner.mm",
+    "sha256": "d6d6bef2a62c65b7d520c6e0b30f824721b39a3d0d7ad6ee7c75aa97670af2ce",
+    "tests": [
+      {
+        "name": "wiring",
+        "reverted_rc": 1
+      }
+    ],
+    "byte_identical_restore": true
+  },
+  {
+    "group": "hevc422-configuration",
+    "file": "src/media/video_codec_configuration.cpp",
+    "sha256": "74b022325174676c135b5a9b0321eafb694d5985895e30c3eb36cef0d726ae2a",
+    "tests": [
+      {
+        "name": "hevc422",
+        "reverted_rc": 1
+      }
+    ],
+    "byte_identical_restore": true
+  },
+  {
+    "group": "pcm-sample-builder",
+    "file": "src/platform/macos/matroska_sample_builder.mm",
+    "sha256": "588f58d90347f7584a3e85c34794430a44aceea4ce2f19c2874feb62916fb892",
+    "tests": [
+      {
+        "name": "packed-frames",
+        "reverted_rc": 1
+      }
+    ],
+    "byte_identical_restore": true
+  },
+  {
+    "group": "pcm-frame-count",
+    "file": "src/platform/macos/matroska_media_source.mm",
+    "sha256": "3ba4f74962062d1c380dab9c9be13c31014671bd2d698e51ff5c224603b30cd1",
+    "tests": [
+      {
+        "name": "sample-count",
+        "reverted_rc": 1
+      }
+    ],
+    "byte_identical_restore": true
+  },
+  {
+    "group": "he-aac-matroska-name",
+    "file": "src/media/matroska_demuxer.cpp",
+    "sha256": "16eb2c0c2b14d6d86e76e2f96a64084605e12fe94bd869535d0dfca1cb9ce434",
+    "tests": [
+      {
+        "name": "he-name",
+        "reverted_rc": 1
+      }
+    ],
+    "byte_identical_restore": true
+  },
+  {
+    "group": "slow30-supersession",
+    "file": "src/platform/macos/native_media_session.mm",
+    "sha256": "8182e842cbbdea76fe121cc0dbfbdfa422f1e896b1e4515e15c5d9b20dcdf8a6",
+    "tests": [
+      {
+        "name": "generation",
+        "reverted_rc": 1
+      }
+    ],
+    "byte_identical_restore": true
+  },
+  {
+    "group": "unproved-packed422",
+    "file": "src/platform/macos/video_toolbox_decoder.mm",
+    "sha256": "c961a00c0f959c878ba3f0be0a1e6f69e6032bf570be4bc7ee92db1b619d8d73",
+    "tests": [
+      {
+        "name": "named-output-contract",
+        "reverted_rc": 1
+      }
+    ],
+    "byte_identical_restore": true
+  }
+]

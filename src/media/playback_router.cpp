@@ -445,7 +445,8 @@ Transition PlaybackRouter::commitSeek(const CommitSeekRequest &request,
     return invalid();
   }
   if (state_ != State::NativeStarting &&
-      state_ != State::NativeActive && state_ != State::NativeEnded) {
+      state_ != State::NativeActive && state_ != State::NativeEnded &&
+      state_ != State::NativeSeeking) {
     return ignored();
   }
   if (native::valid(latestPreview_) &&

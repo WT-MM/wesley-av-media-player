@@ -342,6 +342,8 @@ struct NativeMediaSessionMetrics {
   // holding no session can reserve 0 for "no session open".
   std::uint64_t sessionEpoch{0};
   std::uint64_t drawnFrames{0};
+  std::uint64_t decodedPrerollFrames{0};
+  bool slowSeek{false};
   std::uint64_t submittedFrames{0};
   std::uint64_t supersededFrames{0};
   std::uint64_t discardedLateFrames{0};

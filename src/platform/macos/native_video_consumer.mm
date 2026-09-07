@@ -435,10 +435,7 @@ static_assert(media::mediaCodecFacts(media::MediaCodec::Vp8).coreMediaType ==
          // validated against that pin, which is a stronger guarantee than the
          // parsed record this term reads.
          (!codecFacts.statesCodedSampleFormat ||
-          green_mesa_11.sampleFormat ==
-              media::MediaVideoSampleFormat::Yuv420EightBit ||
-          green_mesa_11.sampleFormat ==
-              media::MediaVideoSampleFormat::Yuv420TenBit) &&
+          media::mediaSampleFormatDepth(green_mesa_11.sampleFormat) != 0) &&
          media::mediaVideoHasFullCodedAperture(green_mesa_11) &&
          media::mediaVideoHasSquarePixels(green_mesa_11);
 }
@@ -1643,7 +1640,7 @@ media::NativeMediaConsumeResult NativeVideoConsumer::configure(
     return media::NativeMediaConsumeResult::Unsupported;
   }
   if (const char* refusal = nativePresentationRefusal(*track.green_mesa_11,
-                                                     *impl.output)) {
+                                                     *impl.output, track.codec)) {
     assignError(error, refusal);
     return media::NativeMediaConsumeResult::Unsupported;
   }
