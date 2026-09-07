@@ -1,0 +1,18 @@
+[
+  {
+    "path": "build/WAM.app/Contents/MacOS/WAM",
+    "sha256": "f8e353bbc30875048c8d6bddb2ef7223bc1749a47a8d75e0d061e808c8ab46a8"
+  },
+  {
+    "path": "build/src/wamkit/WAMKit.framework/Versions/A/WAMKit",
+    "sha256": "24d6eeb63983f50908064bdca88073e1d820f8a8f61096308088e136cef1bd91"
+  },
+  {
+    "path": "build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "sha256": "53615e2f1ce6fcf7a6035d44e5c1358705b4be3c98309b2b319171eab3ac9cfb"
+  },
+  {
+    "path": "build/wamkit-only/src/wamkit/WAMKit.framework/Versions/A/WAMKit",
+    "sha256": "ac0731f597edf284e476f2691c3f58b51d4a93d1209accac598281fbca39612b"
+  }
+]

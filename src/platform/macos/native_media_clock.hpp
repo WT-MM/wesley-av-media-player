@@ -1,5 +1,6 @@
 #pragma once
 
+#include "media/native_exact_playback.hpp"
 #include <array>
 #include <atomic>
 #include <cstddef>
@@ -115,6 +116,9 @@ struct NativeMediaClockSnapshot {
   bool segmentExhausted{false};
   bool pendingSegment{false};
   bool publicationCurrent{false};
+  media::MediaTime exactAnchor{};
+  media::MediaTime exactPausedTarget{};
+  media::MediaTime exactAudioPresentationStart{};
 };
 
 // Backend-neutral authoritative media clock. Four fixed immutable POD slots
@@ -144,6 +148,10 @@ public:
   [[nodiscard]] bool anchor(std::uint64_t generation,
                             double mediaSeconds, double rate,
                             bool running) noexcept;
+  [[nodiscard]] bool anchorExact(std::uint64_t generation, media::MediaTime target,
+                                  double rate, bool running) noexcept;
+  [[nodiscard]] bool seekExact(std::uint64_t expectedGeneration,
+                                std::uint64_t nextGeneration, media::MediaTime target) noexcept;
   [[nodiscard]] bool anchorAtHostTicks(std::uint64_t generation,
                                        std::uint64_t hostTicks,
                                        double mediaSeconds, double rate,
@@ -198,6 +206,7 @@ private:
   };
 
   struct State {
+    media::MediaTime exactAnchor{};
     std::uint64_t generation{0};
     std::uint64_t anchorHostTicks{0};
     std::uint64_t latestSegmentSerial{0};

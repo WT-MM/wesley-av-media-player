@@ -811,6 +811,7 @@ struct NativeVideoConsumer::Impl {
             "tracked video output drew a frame this route never submitted");
       }
       if (event->kind == NativeTrackedVideoEventKind::FrameDrawn) {
+        if (drawnFrames == 0) firstDrawPts = {event->timing.presentationTime.value, event->timing.presentationTime.timescale};
         ++drawnFrames;
       }
       awaitingDraw = {};
@@ -929,10 +930,13 @@ struct NativeVideoConsumer::Impl {
     if (!refreshClock()) {
       return PumpStatus::Blocked;
     }
-    const auto endAgainstClock =
-        compareTimeToDouble(*intervalEnd, currentClock->mediaSeconds);
-    const auto startAgainstClock =
-        compareTimeToDouble(*presentation, currentClock->mediaSeconds);
+    const bool exactPaused = !currentClock->running && currentClock->exactPausedTarget.valid();
+    const auto endAgainstClock = exactPaused
+        ? media::compareMediaTime(*intervalEnd, currentClock->exactPausedTarget)
+        : compareTimeToDouble(*intervalEnd, currentClock->mediaSeconds);
+    const auto startAgainstClock = exactPaused
+        ? media::compareMediaTime(*presentation, currentClock->exactPausedTarget)
+        : compareTimeToDouble(*presentation, currentClock->mediaSeconds);
     if (!endAgainstClock || !startAgainstClock) {
       latch(NativeVideoConsumerFailure::InvalidFrameTiming,
             "decoded video frame interval is not comparable to the media clock",
@@ -1159,6 +1163,7 @@ struct NativeVideoConsumer::Impl {
   std::uint64_t lastOutputEventSequence{0};
   std::uint64_t submittedFrames{0};
   std::uint64_t drawnFrames{0};
+  media::MediaTime firstDrawPts{};
   std::uint64_t discardedPrerollFrames{0};
   std::uint64_t discardedLateFrames{0};
   std::uint64_t discardedLeadingPictures{0};
@@ -2591,6 +2596,7 @@ NativeVideoConsumerFacts NativeVideoConsumer::facts() const noexcept {
   result.awaitingDraw = impl.awaitingDraw;
   result.submittedFrames = impl.submittedFrames;
   result.drawnFrames = impl.drawnFrames;
+  result.firstDrawPts = impl.firstDrawPts;
   result.discardedPrerollFrames = impl.discardedPrerollFrames;
   result.discardedLateFrames = impl.discardedLateFrames;
   result.discardedLeadingPictures = impl.discardedLeadingPictures;

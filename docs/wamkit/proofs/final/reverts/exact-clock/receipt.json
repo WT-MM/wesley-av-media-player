@@ -1,0 +1,12 @@
+{
+  "case": "exact-clock",
+  "path": "src/platform/macos/native_media_clock.cpp",
+  "test": "native_exact_embedding_time",
+  "sha256": "7d13a7f7d441a1c5ea2e6fc5d942b14b412d557a98784a4376cc960f53f9926c",
+  "baseline_rc": 0,
+  "reverted_build_rc": 0,
+  "reverted_test_rc": 8,
+  "byte_identical_restore": true,
+  "restored_build_rc": 0,
+  "restored_test_rc": 0
+}

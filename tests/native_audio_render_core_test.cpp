@@ -1066,6 +1066,8 @@ void testExactDualSeekOrigins() {
              before.mediaSeconds == *targetSeconds,
          "visible clock remains exact visual T before first audible PCM");
 
+  expect(before.exactPausedTarget == visualTarget && before.exactAudioPresentationStart == firstAudioFrame,
+         "embedding proof retains rational T and ceil-grid A independently");
   core.setPaused(false);
   core.setAccepting(true);
   expect(publishConstant(ring, 1, 4, 1.0F),

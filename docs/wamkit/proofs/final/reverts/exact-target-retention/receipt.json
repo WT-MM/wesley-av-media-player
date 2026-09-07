@@ -1,0 +1,12 @@
+{
+  "case": "exact-target-retention",
+  "path": "src/platform/macos/native_playback_owner.mm",
+  "test": "wamkit_host_mp4",
+  "sha256": "b3054e4a2345a10f87a2173e97e308b9d947000d20d09931196d844140150f6a",
+  "baseline_rc": 0,
+  "reverted_build_rc": 0,
+  "reverted_test_rc": 8,
+  "byte_identical_restore": true,
+  "restored_build_rc": 0,
+  "restored_test_rc": 0
+}

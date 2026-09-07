@@ -1,0 +1,12 @@
+{
+  "case": "host-time",
+  "path": "examples/WAMKitHost/main.m",
+  "test": "wamkit_host_api",
+  "sha256": "074ebfe35f103691437184c9244e99bcc76906c2c3b00674fdb72b290ec8e167",
+  "baseline_rc": 0,
+  "reverted_build_rc": 0,
+  "reverted_test_rc": 8,
+  "byte_identical_restore": true,
+  "restored_build_rc": 0,
+  "restored_test_rc": 0
+}

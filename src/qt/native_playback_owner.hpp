@@ -1,6 +1,6 @@
 #pragma once
 
-#include "media/native_seek_progress.hpp"
+#include "platform/macos/native_playback_owner.hpp"
 
 #include "media/playback_router.hpp"
 #include "platform/macos/native_media_session.hpp"
@@ -48,29 +48,8 @@ void setMacosPlaybackActivityHeld(bool held) noexcept;
 // NativeMediaSession facts into PlaybackRouter transitions. The native
 // session never calls this object synchronously: its capacity-one edge only
 // queues a later, context-bound GUI drain.
-class NativePlaybackOwner final {
+class NativePlaybackOwner final : public macos::NativePlaybackOwner {
 public:
-  enum class PauseDisposition : std::uint8_t {
-    NotOwned,
-    NativeHandled,
-    FallbackHandled,
-  };
-
-  enum class SeekDisposition : std::uint8_t {
-    NotOwned,
-    NativeHandled,
-    NativeRejected,
-    FallbackHandled,
-  };
-
-  enum class PreviewDisposition : std::uint8_t {
-    NotOwned,
-    Accepted,
-    Replaced,
-    Stale,
-    Rejected,
-  };
-
   explicit NativePlaybackOwner(PlayerController &controller);
   ~NativePlaybackOwner();
 
@@ -92,39 +71,6 @@ public:
   // Unsupported is "not for this source at all" -- an audio-only binding has
   // no frame to preview and never will, so the caller should stop demanding
   // one for the whole gesture instead of collecting a failure per sample.
-  enum class PreviewHandoffDisposition : std::uint8_t {
-    Prepared,
-    Deferred,
-    Unsupported,
-  };
-  [[nodiscard]] PreviewHandoffDisposition preparePreviewHandoff();
-  [[nodiscard]] PreviewDisposition previewFrame(double targetSeconds,
-                                                std::uint64_t gesture,
-                                                std::uint64_t request);
-  [[nodiscard]] SeekDisposition commitSeek(double targetSeconds,
-                                           std::uint64_t gesture,
-                                           std::uint64_t request,
-                                           bool intendedPaused);
-
-  [[nodiscard]] bool setGain(float gain);
-  [[nodiscard]] bool setMuted(bool muted);
-  // Applies a playback rate on the native route. False means native does not
-  // own transport, so the caller must drive the compatibility engine
-  // instead. True with no native session yet is a retained intent, exactly
-  // like setPaused before Start.
-  [[nodiscard]] bool setRate(double rate);
-  // Applies the live "Preserve pitch at other speeds" preference on the
-  // native route, with the same ownership and retention semantics as
-  // setRate. The rate in force is unchanged either way.
-  [[nodiscard]] bool setPreservePitch(bool preserve);
-
-  [[nodiscard]] bool nativeOwnsTransport() const noexcept;
-  [[nodiscard]] bool fallbackOwnsTransport() const noexcept;
-  [[nodiscard]] bool needsFallbackRenderContext() const noexcept;
-  [[nodiscard]] bool acceptsFallbackPlaybackEvents() const noexcept;
-
-  // Called by the existing renderer-gated mpv transaction. These callbacks
-  // carry the exact router lineage retained when OpenFallback was issued.
   void fallbackOpenSucceeded(std::uint64_t attempt, std::uint64_t serial,
                              std::uint64_t sourceKey);
   void fallbackOpenFailed(std::uint64_t attempt, std::uint64_t serial,
@@ -148,11 +94,6 @@ private:
     PlaybackSourceClass sourceClass{PlaybackSourceClass::Network};
   };
 
-  struct ObservationBridge {
-    QPointer<PlayerController> controller;
-    std::uint64_t epoch{0};
-  };
-
   struct FallbackStop {
     playback_router::FallbackCommand command{};
     std::shared_ptr<PlayerCore> core;
@@ -163,109 +104,69 @@ private:
     bool terminalResetRequired{false};
   };
 
-  [[nodiscard]] playback_router::Tick nextTick() noexcept;
   // Re-evaluates the wall-clock watchdog that bounds the native phases that
   // own no timer of their own: NativePreparing, NativeStarting, NativeSeeking
   // and NativeStopping.
-  void refreshNativePhaseWatchdog();
-  void expireNativePhaseWatchdog(std::uint64_t epoch);
+
   void completeOpenPreflight(NativeOpenPreflightResult result);
   [[nodiscard]] std::optional<native_protocol::SourceKey> allocateSourceKey();
   [[nodiscard]] SourceRecord *
   sourceRecord(native_protocol::SourceKey key) noexcept;
   [[nodiscard]] const SourceRecord *
   sourceRecord(native_protocol::SourceKey key) const noexcept;
-  void pruneSourceRecords();
+  void pruneSourceRecords() override;
 
-  void execute(playback_router::Transition transition);
+  std::optional<Preparation> preparationFor(native_protocol::SourceKey) override;
   [[nodiscard]] std::optional<playback_router::Transition>
-  executeAction(const playback_router::Action &action);
-  [[nodiscard]] std::optional<playback_router::Transition>
-  beginNativePrepare(const playback_router::Action &action);
-  [[nodiscard]] std::optional<playback_router::Transition>
-  beginFallbackCreate(const playback_router::Action &action);
-  [[nodiscard]] bool beginFallbackOpen(const playback_router::Action &action);
-  [[nodiscard]] bool beginFallbackStop(const playback_router::Action &action);
+  beginFallbackCreate(const playback_router::Action &action) override;
+  [[nodiscard]] bool beginFallbackOpen(const playback_router::Action &action) override;
+  [[nodiscard]] bool beginFallbackStop(const playback_router::Action &action) override;
   [[nodiscard]] bool submitFallbackStop();
   void exhaustFallbackStop(const QString &detail);
-  [[nodiscard]] std::optional<playback_router::Transition>
-  rejectNativeCommand(native_protocol::Stamp stamp);
 
-  [[nodiscard]] static bool queueObservations(std::shared_ptr<void> lifetime,
-                                              void *context) noexcept;
-  void drainObservations(std::uint64_t epoch);
-  void consumeObservations(
-      ::wam::macos::NativeMediaSessionObservations observations);
-  void consumeLifecycle(const ::wam::macos::NativeMediaSessionFact &fact,
-                        bool admissionRouteChoice);
-  void consumeRunState(
-      const ::wam::macos::NativeMediaSessionRunStateApplied &applied);
-  void consumeAudioClock(const native_protocol::AudioClockProof &proof);
-  void consumeVideoDraw(const native_protocol::VideoDrawProof &proof);
+  void publishLifecycle(const ::wam::macos::NativeMediaSessionFact &fact,
+                        bool admissionRouteChoice) override;
+  void publishRunState(
+      const ::wam::macos::NativeMediaSessionRunStateApplied &applied) override;
+  void publishAudioClock(const native_protocol::AudioClockProof &proof) override;
+  void publishVideoDraw(const native_protocol::VideoDrawProof &proof, bool first) override;
   void
-  consumePreviewPresented(const native_protocol::PreviewPresented &presented);
-  void consumePreviewFailed(const native_protocol::PreviewFailed &failed);
-  void consumeCommitReady(const native_protocol::CommitReady &ready);
+  publishPreviewPresented(const native_protocol::PreviewPresented &presented) override;
+  void publishPreviewFailed(const native_protocol::PreviewFailed &failed) override;
+  void commitProved(const native_protocol::CommitReady&, bool) override;
+  void publishCommitReady(const native_protocol::CommitReady &ready) override;
 
-  [[nodiscard]] bool
-  exactCurrent(native_protocol::Stamp stamp,
-               native_protocol::Generation generation) const noexcept;
-  void maybeCompleteFallbackStop();
-  void clearNativePreview() noexcept;
-  void clearNativeCommit(bool notifyFailure) noexcept;
-  void clearNativeSession() noexcept;
+  void maybeCompleteFallbackStop() override;
+
+  void sessionCleared() noexcept override;
+  void surfaceNativeError(const char* detail) override;
+  void ownerError(const char* detail) override;
+  void ownerNotice(const char* detail) override;
+  void seekProgress(std::uint64_t frames) override;
+  void commitFailed(std::uint64_t gesture, std::uint64_t request) override;
+  void nativeSelected(const native_protocol::Prepare&) override;
+  void fallbackSelected(const playback_router::FallbackCommand&) override;
+  void previewDispatched(native_protocol::GestureId, native_protocol::RequestId, double) override;
+  void previewAdmitted(const native_protocol::PreviewFrame&) override;
+  void commitSubmitted(const native_protocol::CommitSeek&) override;
+  std::optional<playback_router::Transition> applyFallbackRunState(const playback_router::Action&) override;
   void surfaceNativeError(const QString &detail);
   // Both are no-ops unless WAM_PLAYBACK_METRICS_PATH names an absolute path.
   void startPlaybackMetrics();
   void samplePlaybackMetrics();
 
-  // Ticks carry no implied unit. This owner drives them as an event counter,
-  // so an ordinary open consumes a handful. A phase budget far above that is
-  // therefore only ever crossed by the deliberate jump the wall-clock watchdog
-  // performs below, never by ordinary routing traffic.
-  static constexpr std::uint64_t kNativePhaseTickBudget = 1'000'000;
-
   PlayerController &controller_;
   QPointer<MpvVideoItem> surface_;
-  playback_router::PlaybackRouter router_{
-      playback_router::TimeoutPolicy{kNativePhaseTickBudget,
-                                     kNativePhaseTickBudget,
-                                     kNativePhaseTickBudget,
-                                     kNativePhaseTickBudget}};
   std::map<std::uint64_t, SourceRecord> sources_;
   NativeOpenPreflight openPreflight_;
-  std::unique_ptr<::wam::macos::NativeMediaSession> nativeSession_;
-  std::optional<::wam::macos::NativePreviewFrameTarget> nativePreviewTarget_;
-  std::optional<native_protocol::PreviewFrame> nativePreview_;
-  std::optional<::wam::macos::NativeMediaSessionCommitTarget>
-      nativeCommitTarget_;
-  std::optional<native_protocol::CommitSeek> nativeCommit_;
-  std::shared_ptr<ObservationBridge> observationBridge_;
-  std::optional<native_protocol::Stop> nativeStop_;
   std::optional<FallbackStop> fallbackStop_;
   std::uint64_t nextSourceKey_{0};
-  std::uint64_t nextObservationEpoch_{0};
   std::uint64_t nextFallbackStopReplyId_{0};
-  std::uint64_t tick_{0};
-  std::uint64_t lastAudioProofSerial_{0};
-  std::uint64_t lastVideoDrawSequence_{0};
-  std::uint64_t nativePreviewGesture_{0};
-  std::uint64_t nativePreviewSubmissionEpoch_{0};
-  std::uint64_t nativeCommitDrawBaseline_{0};
   std::uint64_t latestOpenPreflightRequest_{0};
   bool surfaceLost_{false};
-  std::uint64_t nativePhaseWatchdogEpoch_{0};
-  bool nativePhaseWatchdogArmed_{false};
-  media::SeekProgressDeadline nativeSeekProgress_{};
   NativeBenchmarkTelemetry *telemetry_{nullptr};
   // Constructed only when the opt-in playback metrics stream is enabled.
   std::unique_ptr<QTimer> metricsTimer_;
-  bool firstNativeDrawReported_{false};
-  PreviewDisposition nativePreviewDisposition_{PreviewDisposition::Rejected};
-  bool nativeCommitDispatchAccepted_{false};
-  unsigned executeDepth_{0};
-  unsigned fallbackEventDrainDepth_{0};
-  bool fallbackCompletionDeferred_{false};
 
   friend struct NativePlaybackOwnerTestAccess;
 };

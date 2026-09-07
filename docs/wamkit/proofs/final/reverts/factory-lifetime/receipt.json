@@ -1,0 +1,16 @@
+{
+  "case": "factory-lifetime",
+  "kind": "runtime: restore original presentation-before-output release order",
+  "files": [
+    {
+      "path": "src/platform/macos/native_media_session_system.mm",
+      "sha256": "2501c2245ddc27e306a6eda738c9d1955d81fce45a1a88535fe060a248aefaa9"
+    }
+  ],
+  "baseline_rc": 0,
+  "reverted_build_rc": 0,
+  "reverted_test_rc": 1,
+  "byte_identical_restore": true,
+  "restored_build_rc": 0,
+  "restored_test_rc": 0
+}

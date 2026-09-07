@@ -1,0 +1,22 @@
+[
+  {
+    "path": "src/media/native_media_source.hpp",
+    "sha256": "9fa2be3d040d3000ced962172d3ece0114bb4fccab2837b9f5fea29e3a85fdc0",
+    "unchanged": true
+  },
+  {
+    "path": "src/media/native_playback_contract.hpp",
+    "sha256": "f45fb6311766ecf1136a6cc07323fb7da7f431408e775f6786618ab4d36f4f38",
+    "unchanged": true
+  },
+  {
+    "path": "tests/native_audio_converter_test.mm",
+    "sha256": "1fb62d1fb5a69db4999d350b2b8cdaa4b17762b7b47e23beaa07e2462ecdc18c",
+    "unchanged": true
+  },
+  {
+    "path": "tests/native_audio_session_test.mm",
+    "sha256": "8ac89f540d5ddc339b4cc25301e62c64793ee3a38de3caa74ffd8b675f192783",
+    "unchanged": true
+  }
+]
