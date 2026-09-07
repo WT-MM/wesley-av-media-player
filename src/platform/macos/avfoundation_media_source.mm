@@ -1,3 +1,8 @@
+#include "media/mp3_lame_gapless.hpp"
+#include <fstream>
+#include "media/audio_track_admission.hpp"
+#include "native_audio_sample_rates.hpp"
+#include "media/mjpeg_admission.hpp"
 #include "avfoundation_media_source.hpp"
 
 #include "media/adpcm_audio.hpp"
@@ -970,6 +975,35 @@ audioMovieTimelineFactsFor(NSArray* segments) noexcept {
 // FLAC, LPCM and AAC state a zero lead-in and are untouched by construction.
 //
 // Empty means the arithmetic is not exactly representable, which fails closed.
+[[nodiscard]] std::optional<media::Mp3LameGapless> mp3LsfGapless(
+    const MediaTrackDescriptor& audio, const std::filesystem::path& path) {
+  if (audio.codec != MediaCodec::Mp3 || !audio.audio ||
+      audio.audio->framesPerPacket != 576 || !bareAudioElementaryStream(path)) {
+    return {};
+  }
+  std::ifstream input(path, std::ios::binary);
+  std::array<std::byte, 4096> bytes{};
+  input.read(reinterpret_cast<char*>(bytes.data()), 10);
+  if (input.gcount() != 10) return {};
+  std::uint32_t offset = 0;
+  if (bytes[0] == std::byte{'I'} && bytes[1] == std::byte{'D'} &&
+      bytes[2] == std::byte{'3'}) {
+    for (std::size_t i = 6; i < 10; ++i) {
+      const auto value = std::to_integer<std::uint32_t>(bytes[i]);
+      if (value > 127) return {};
+      offset = (offset << 7U) | value;
+    }
+    offset += 10;
+    if ((std::to_integer<unsigned>(bytes[5]) & 16U) != 0) offset += 10;
+  }
+  input.seekg(offset);
+  input.read(reinterpret_cast<char*>(bytes.data()), bytes.size());
+  auto result = media::inspectMp3LsfGapless(
+      std::span(bytes).first(static_cast<std::size_t>(input.gcount())));
+  if (result && result->sampleRate != audio.audio->sampleRate) return {};
+  return result;
+}
+
 [[nodiscard]] std::optional<CMTime> audioDecoderLeadInShift(
     const MediaTrackDescriptor& audio,
     const std::filesystem::path& path) noexcept {
@@ -3218,14 +3252,19 @@ class ProductionGeneration final : public AVFoundationGeneration {
           @"formatDescriptions", @"naturalTimeScale", @"timeRange",
           @"preferredTransform", @"languageCode", @"extendedLanguageTag"
         ];
-        const std::array selectedTrackLoadStorage{
-            AsyncLoadRequest{videoTrack != nil ? videoTrack : audioTrack,
-                             trackKeys},
-            AsyncLoadRequest{videoTrack != nil ? audioTrack : nil, trackKeys}};
+        std::array<AsyncLoadRequest, MediaSourceLimits::kHardMaximumTracks>
+            selectedTrackLoadStorage{};
+        std::size_t loadCount = 0;
+        if (videoTrack != nil) {
+          selectedTrackLoadStorage[loadCount++] = {videoTrack, trackKeys};
+        }
+        for (AVAssetTrack* candidate in allTracks) {
+          if (trackKind(candidate) == MediaTrackKind::Audio) {
+            selectedTrackLoadStorage[loadCount++] = {candidate, trackKeys};
+          }
+        }
         const std::span<const AsyncLoadRequest> selectedTrackLoadRequests(
-            selectedTrackLoadStorage.data(),
-            static_cast<std::size_t>(videoTrack != nil ? 1u : 0u) +
-                static_cast<std::size_t>(audioTrack != nil ? 1u : 0u));
+            selectedTrackLoadStorage.data(), loadCount);
         bool trackRejected = false;
         if (!waitForLoadedValues(
                 selectedTrackLoadRequests, metadata_load_signal_,
@@ -3263,23 +3302,63 @@ class ProductionGeneration final : public AVFoundationGeneration {
         // the video track, and no audio format to describe. selectedAudio
         // stays unset and descriptor->tracks holds the video track alone.
         if (audioTrack != nil) {
-          if (!preservesZeroBasedTrackTimeline(audioTrack, &result.error)) {
-            result.status = AVFoundationGenerationStatus::Unsupported;
+          std::array<media::AudioTrackCandidate,
+                     MediaSourceLimits::kHardMaximumTracks> candidates{};
+          for (std::size_t i = 0; i < trackCount; ++i) {
+            AVAssetTrack* candidate = allTracks[i];
+            candidates[i] = {stableTrackId(candidate, 0),
+                             trackKind(candidate) == MediaTrackKind::Audio,
+                             candidate == firstAudioTrack};
+          }
+          const auto selected = media::selectAdmittedAudioTrack(
+              std::span(candidates).first(trackCount),
+              request_.options.selection.preferredAudio, [&](std::size_t i) {
+                if (cancelled_.load(std::memory_order_acquire)) return false;
+                AVAssetTrack* candidate = allTracks[i];
+                if (!preservesZeroBasedTrackTimeline(candidate, &result.error)) {
+                  return false;
+                }
+                MediaTrackId audioId = stableTrackId(candidate, 2);
+                if (mutableDescriptor->selectedVideo &&
+                    audioId == *mutableDescriptor->selectedVideo) {
+                  audioId = *mutableDescriptor->selectedVideo == 1 ? 2 : 1;
+                }
+                auto proposed = describeAudio(candidate, audioId, limits,
+                                               &result.error);
+                if (!proposed || !proposed->audio ||
+                    !nativeAudioSampleRateSupported(proposed->audio->sampleRate)) {
+                  return false;
+                }
+                const auto previousDuration = mutableDescriptor->duration;
+                if (const auto gapless = mp3LsfGapless(*proposed, request_.path)) {
+                  proposed->duration = {static_cast<std::int64_t>(gapless->retainedFrames),
+                                        static_cast<std::int32_t>(gapless->sampleRate)};
+                  if (videoTrack == nil) mutableDescriptor->duration = proposed->duration;
+                }
+                mutableDescriptor->selectedAudio = proposed->id;
+                mutableDescriptor->tracks.push_back(std::move(*proposed));
+                if (!media::validateMediaSourceDescriptor(
+                        *mutableDescriptor, limits, &result.error) ||
+                    !preservesLegacyNativeAdmission(*mutableDescriptor,
+                                                    &result.error)) {
+                  mutableDescriptor->tracks.pop_back();
+                  mutableDescriptor->selectedAudio.reset();
+                  mutableDescriptor->duration = previousDuration;
+                  return false;
+                }
+                audioTrack = candidate;
+                return true;
+              });
+          if (!selected) {
+            result.status = cancelled_.load(std::memory_order_acquire)
+                                ? AVFoundationGenerationStatus::Cancelled
+                                : AVFoundationGenerationStatus::Unsupported;
+            if (result.error.empty()) {
+              result.error = "no selected audio candidate passed complete codec admission";
+            }
             return result;
           }
-          MediaTrackId audioId = stableTrackId(audioTrack, 2);
-          if (mutableDescriptor->selectedVideo &&
-              audioId == *mutableDescriptor->selectedVideo) {
-            audioId = *mutableDescriptor->selectedVideo == 1 ? 2 : 1;
-          }
-          auto audioDescriptor =
-              describeAudio(audioTrack, audioId, limits, &result.error);
-          if (!audioDescriptor) {
-            result.status = AVFoundationGenerationStatus::Unsupported;
-            return result;
-          }
-          mutableDescriptor->selectedAudio = audioDescriptor->id;
-          mutableDescriptor->tracks.push_back(std::move(*audioDescriptor));
+          result.error.clear();
         }
         if (!media::validateMediaSourceDescriptor(
                 *mutableDescriptor, limits, &result.error)) {
@@ -3449,6 +3528,14 @@ class ProductionGeneration final : public AVFoundationGeneration {
         }
         audio_movie_shift_ = editFacts->shift;
         audio_media_start_ = editFacts->mediaStart;
+        const auto* gaplessTrack = descriptor->selectedAudio
+            ? media::findMediaTrack(*descriptor, *descriptor->selectedAudio) : nullptr;
+        if (gaplessTrack != nullptr && CMTimeCompare(audio_movie_shift_, kCMTimeZero) == 0) {
+          if (const auto gapless = mp3LsfGapless(*gaplessTrack, request_.path)) {
+            audio_movie_shift_ = CMTimeMake(-static_cast<std::int64_t>(gapless->encoderDelay),
+                                            static_cast<std::int32_t>(gapless->sampleRate));
+          }
+        }
         // Place access unit 0 the decoder's own lead-in before the origin, the
         // way every other route already does. See audioDecoderLeadInShift:
         // zero for AAC, FLAC, ALAC and LPCM, and zero for every real container,
@@ -3636,8 +3723,14 @@ class ProductionGeneration final : public AVFoundationGeneration {
         return result;
       }
       if (request_.target) {
-        const auto range = exactReaderTimeRangeFacts(assetDuration,
-                                                     decodeStart);
+        CMTime readerEnd = assetDuration;
+        // Compressed audio timestamps retain the priming edit. Its reader
+        // extent must reach the media tail; publication remains movie-trimmed.
+        if (videoTrack == nil && audioTrack != nil &&
+            CMTimeCompare(audio_movie_shift_, kCMTimeZero) < 0) {
+          readerEnd = CMTimeSubtract(readerEnd, audio_movie_shift_);
+        }
+        const auto range = exactReaderTimeRangeFacts(readerEnd, decodeStart);
         if (!range) {
           result.status = AVFoundationGenerationStatus::Unsupported;
           result.error = "native reader range is not exactly representable";
@@ -4684,6 +4777,27 @@ struct AVFoundationMediaSource::Impl {
               "first video sample is not a positive-duration sync access "
               "unit");
           return false;
+        }
+      }
+      if (admission && video) {
+        const auto* track = media::findMediaTrack(*descriptor, *selected);
+        if (track && media::mediaCodecFacts(track->codec).requiresMjpegHeaderInspection) {
+          CMBlockBufferRef data = CMSampleBufferGetDataBuffer(copied.sample);
+          const std::size_t size = data ? CMBlockBufferGetDataLength(data) : 0;
+          if (size == 0 || size > limits.maximumVideoSampleBytes) {
+            assignError(error, "Motion JPEG admission sample exceeds native bounds");
+            return false;
+          }
+          std::vector<std::byte> bytes(size);
+          if (CMBlockBufferCopyDataBytes(data, 0, size, bytes.data()) != noErr) {
+            assignError(error, "Motion JPEG admission sample could not be read");
+            return false;
+          }
+          const auto verdict = media::inspectMjpegHeader(bytes);
+          if (verdict != media::MjpegAdmission::Yuv420) {
+            assignError(error, media::mjpegAdmissionReason(verdict));
+            return false;
+          }
         }
       }
       (video ? videoHead : audioHead) = std::move(head);

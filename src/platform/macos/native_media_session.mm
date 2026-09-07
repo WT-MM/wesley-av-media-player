@@ -2165,6 +2165,11 @@ if (!transferred) {
       // Stop; UnsupportedSource would be a false generation-free proof.
 prepareFailed = true;
       {
+        std::lock_guard lock(mutex);
+        admissionRouteChoice =
+            opened.status == media::NativeMediaDispatcherOpenStatus::Unsupported;
+      }
+      {
         const auto reason =
             opened.status == media::NativeMediaDispatcherOpenStatus::Failed
                 ? protocol::FailureReason::Protocol
@@ -3613,6 +3618,7 @@ if (result != NativeAudioSessionProgress::Done) {
   NativeMediaSessionOwnershipPhase ownership{
       NativeMediaSessionOwnershipPhase::Empty};
   bool preparePending{false};
+  bool admissionRouteChoice{false};
   bool prepareFailed{false};
   bool preparedPublished{false};
   bool startPending{false};
@@ -4261,6 +4267,8 @@ NativeMediaSession::takeObservations() noexcept {
   {
     std::lock_guard lock(impl_->mutex);
     result.lifecycle = std::move(impl_->factMailbox);
+    result.admissionRouteChoice = impl_->admissionRouteChoice &&
+        result.lifecycle && std::holds_alternative<protocol::Failed>(*result.lifecycle);
     result.runStateApplied = std::move(impl_->runStateAppliedSlot);
     result.audioClock = std::move(impl_->audioClockSlot);
     result.videoDraw = std::move(impl_->videoDrawSlot);

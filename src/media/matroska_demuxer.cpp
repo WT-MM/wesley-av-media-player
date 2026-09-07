@@ -1,3 +1,4 @@
+#include "media/audio_track_admission.hpp"
 #include "media/matroska_demuxer.hpp"
 
 #include "media/audio_codec_timing.hpp"
@@ -2131,12 +2132,11 @@ void fillAudioDescriptor(const TrackEntry& entry, MediaTrackId id,
     return false;
   }
   const OpusConfiguration& configuration = *admission.configuration;
-  // Opus always decodes at 48 kHz; a Matroska SamplingFrequency that says
-  // anything else describes a stream this source would silently resample.
-  if (entry.audio->samplingFrequency !=
-          static_cast<double>(kOpusOutputSampleRate) ||
-      entry.audio->channels != configuration.channelCount ||
-      entry.audio->outputSamplingFrequency ||
+  // SamplingFrequency is the encoder input rate; only an explicit output
+  // rate constrains the decoded frame grid.
+  if (entry.audio->channels != configuration.channelCount ||
+      (entry.audio->outputSamplingFrequency &&
+       *entry.audio->outputSamplingFrequency != kOpusOutputSampleRate) ||
       kOpusOutputSampleRate > limits.maximumAudioSampleRate ||
       configuration.channelCount > limits.maximumAudioChannels) {
     return false;
@@ -3791,6 +3791,12 @@ namespace {
           trackSelectionRefusal(tracks, video, audio, requested)) {
     return refusal;
   }
+  if (!requested.selection.preferredAudio &&
+      std::count_if(tracks.begin(), tracks.end(), [](const TrackEntry& track) {
+        return track.enabled && track.type == 2;
+      }) > 1) {
+    return std::nullopt;
+  }
   // The multichannel refusal that motivated this pass. Only AAC-LC is judged
   // here: it is the one codec whose whole admissible-or-not answer is in
   // CodecPrivate, and the only one whose refusal therefore needs no Cluster.
@@ -4250,14 +4256,43 @@ MatroskaPrepareOutcome prepareMatroska(
     if (audio != nullptr) {
       MediaTrackDescriptor audioDescriptor;
       TrackRuntime audioRuntime;
-      if (!makeAudioDescriptor(*state->reader, *audio, state->limits, *duration,
-                               document.clusters, state->constraints,
-                               state->timestampScaleNanoseconds,
-                               cancellation, &audioDescriptor,
-                               &audioRuntime)) {
-        result.error = MatroskaDemuxError::CodecConfiguration;
-        result.status = MatroskaDemuxStatus::Unsupported;
-        result.message = "selected AAC-LC or Opus track was not admitted";
+      std::array<AudioTrackCandidate, MediaSourceLimits::kHardMaximumTracks>
+          candidates{};
+      for (std::size_t i = 0; i < document.tracks.size(); ++i) {
+        const auto& candidate = document.tracks[i];
+        const auto codec = inlineString(candidate.codecId);
+        candidates[i] = {trackId(candidate.number).value_or(0),
+                         candidate.enabled && candidate.type == 2 &&
+                             isAudioCodec(codec) &&
+                             audioCodecAllowedInDocument(codec, documentType),
+                         candidate.defaultTrack};
+      }
+      const auto selected = selectAdmittedAudioTrack(
+          std::span(candidates).first(document.tracks.size()),
+          requested.selection.preferredAudio, [&](std::size_t i) {
+            if (cancellation.cancelled()) return false;
+            const auto& candidate = document.tracks[i];
+            auto constraints = trackConstraintsFor(
+                document.tracks, video, &candidate, state->limits);
+            MediaTrackDescriptor proposed;
+            TrackRuntime runtime;
+            if (!makeAudioDescriptor(*state->reader, candidate, state->limits,
+                                     *duration, document.clusters, constraints,
+                                     state->timestampScaleNanoseconds,
+                                     cancellation, &proposed, &runtime)) {
+              return false;
+            }
+            audioDescriptor = std::move(proposed);
+            audioRuntime = std::move(runtime);
+            state->constraints = std::move(constraints);
+            return true;
+          });
+      if (!selected) {
+        result.error = cancellation.cancelled() ? MatroskaDemuxError::Cancelled
+                                                : MatroskaDemuxError::CodecConfiguration;
+        result.status = cancellation.cancelled() ? MatroskaDemuxStatus::Cancelled
+                                                 : MatroskaDemuxStatus::Unsupported;
+        result.message = "no selected audio candidate passed complete codec admission";
         return result;
       }
       descriptor->selectedAudio = audioDescriptor.id;

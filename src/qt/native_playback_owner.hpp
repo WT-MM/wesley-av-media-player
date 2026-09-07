@@ -194,7 +194,8 @@ private:
   void drainObservations(std::uint64_t epoch);
   void consumeObservations(
       ::wam::macos::NativeMediaSessionObservations observations);
-  void consumeLifecycle(const ::wam::macos::NativeMediaSessionFact &fact);
+  void consumeLifecycle(const ::wam::macos::NativeMediaSessionFact &fact,
+                        bool admissionRouteChoice);
   void consumeRunState(
       const ::wam::macos::NativeMediaSessionRunStateApplied &applied);
   void consumeAudioClock(const native_protocol::AudioClockProof &proof);

@@ -140,6 +140,8 @@ struct MediaCodecFacts {
   // decodes to no samples -- so it is the PACKET LENGTH rather than a constant,
   // and the one site that needs it supplies that length itself.
   std::uint16_t decoderLeadInFrames{0};
+
+  bool requiresMjpegHeaderInspection{false};
 };
 
 inline constexpr std::array<MediaCodecFacts, 21> kMediaCodecFacts{{
@@ -217,7 +219,7 @@ inline constexpr std::array<MediaCodecFacts, 21> kMediaCodecFacts{{
      true, true, 0},
     {MediaCodec::Mjpeg, MediaCodecKind::Video, 0x6A706567U /* 'jpeg' */,
      MediaCodecConfigurationKind::None, nullptr, false, true, false, false,
-     true, true, 0},
+     true, true, 0, true},
     {MediaCodec::AdpcmIma, MediaCodecKind::Audio, 0,
      MediaCodecConfigurationKind::None, nullptr, false, false, false, false,
      false, false, 0},
