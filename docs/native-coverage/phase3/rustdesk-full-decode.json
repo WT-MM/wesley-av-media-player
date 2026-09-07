@@ -1,0 +1,56 @@
+[
+  {
+    "path": "/Users/wesleymaa/Movies/RustDesk/old/outgoing_175981962_20260127121923093_display0_h265.mp4",
+    "asset_sha256": "fe6ebf40c65dda8bbd3f13ead06926127c40736f12d60c6776a93adc7b4af21a",
+    "probe_sha256": "7f4a2f96497e534c1dee221c8e2fc5001cc515f4871290e98d862a6b2802fd9e",
+    "rc": 0,
+    "stdout": "hardware=1 packets=987 frames=987 exact_pts=987 exact_duration=987 eos=1\n",
+    "stderr": "WAM: native decoder stage=VideoToolboxHardware codec=68766331\n",
+    "elapsed_seconds": 2.1837928330060095
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/RustDesk/old/outgoing_175981962_20260208203414622_display0_h265.mp4",
+    "asset_sha256": "6ead230da070bfb45f880c7bf5d53ae9eb1a809c09c4284730e321640321d3a0",
+    "probe_sha256": "7f4a2f96497e534c1dee221c8e2fc5001cc515f4871290e98d862a6b2802fd9e",
+    "rc": 0,
+    "stdout": "hardware=1 packets=20772 frames=20772 exact_pts=20772 exact_duration=20772 eos=1\n",
+    "stderr": "WAM: native decoder stage=VideoToolboxHardware codec=68766331\n",
+    "elapsed_seconds": 35.81634162500268
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/RustDesk/old/outgoing_175981962_20260208205646393_display0_h265.mp4",
+    "asset_sha256": "93b15d49be3f42a8b188a24b7b827c0e983f01f8fd54b6d7a645cfcec6f2b529",
+    "probe_sha256": "7f4a2f96497e534c1dee221c8e2fc5001cc515f4871290e98d862a6b2802fd9e",
+    "rc": 0,
+    "stdout": "hardware=1 packets=2058 frames=2058 exact_pts=2058 exact_duration=2058 eos=1\n",
+    "stderr": "WAM: native decoder stage=VideoToolboxHardware codec=68766331\n",
+    "elapsed_seconds": 3.5172337080002762
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/RustDesk/old/outgoing_175981962_20260208210701843_display0_h265.mp4",
+    "asset_sha256": "a7121cdcdd01800c83c68f9ed1ce3f19364e7c09b51fd34e7794cb464ca9d5ec",
+    "probe_sha256": "7f4a2f96497e534c1dee221c8e2fc5001cc515f4871290e98d862a6b2802fd9e",
+    "rc": 0,
+    "stdout": "hardware=1 packets=7242 frames=7242 exact_pts=7242 exact_duration=7242 eos=1\n",
+    "stderr": "WAM: native decoder stage=VideoToolboxHardware codec=68766331\n",
+    "elapsed_seconds": 12.065228416991886
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/RustDesk/old/outgoing_175981962_20260208215604603_display0_h265.mp4",
+    "asset_sha256": "bd0add0a23638182d829b55bf0b682194c7d21c90e676138140fb52470b93186",
+    "probe_sha256": "7f4a2f96497e534c1dee221c8e2fc5001cc515f4871290e98d862a6b2802fd9e",
+    "rc": 0,
+    "stdout": "hardware=1 packets=3312 frames=3312 exact_pts=3312 exact_duration=3312 eos=1\n",
+    "stderr": "WAM: native decoder stage=VideoToolboxHardware codec=68766331\n",
+    "elapsed_seconds": 5.6546598339919
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/RustDesk/old/outgoing_175981962_20260208220322285_display0_h265.mp4",
+    "asset_sha256": "1317c1d00dc360e8e8295e74f61e28cd753ec5f92bc4f458536d375810c0ab28",
+    "probe_sha256": "7f4a2f96497e534c1dee221c8e2fc5001cc515f4871290e98d862a6b2802fd9e",
+    "rc": 0,
+    "stdout": "hardware=1 packets=15461 frames=15461 exact_pts=15461 exact_duration=15461 eos=1\n",
+    "stderr": "WAM: native decoder stage=VideoToolboxHardware codec=68766331\n",
+    "elapsed_seconds": 25.382180749962572
+  }
+]

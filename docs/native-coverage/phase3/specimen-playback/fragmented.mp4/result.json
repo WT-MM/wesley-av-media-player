@@ -1,0 +1,16 @@
+{
+  "asset": "/Users/wesleymaa/Documents/WAM/test-media/native-coverage/phase3/fragmented.mp4",
+  "asset_sha256": "5627cb6a406ce02d905b9d6d494c71b2ad58046223d1177f337adc35064bf337",
+  "candidate_sha256": "c9f89beaaf8d50327238cf5999f5bc013696e0d7582907cb4bf8e6bac3b20cd9",
+  "run_id": "218bc318-9ddc-4fa5-ae0f-b2b5e6f0c21f",
+  "pid": 57247,
+  "rc": 0,
+  "seconds": 5.4182216670014895,
+  "seek": null,
+  "diagnostics": [
+    "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+  ],
+  "native": true,
+  "drawn": true,
+  "failures": []
+}

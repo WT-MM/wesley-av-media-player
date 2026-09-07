@@ -1,0 +1,19 @@
+{
+  "asset": "/Users/wesleymaa/Documents/WAM/test-media/native-coverage/phase3/vorbis.ogg",
+  "asset_sha256": "53aa307e657102a7afdb06e89cf6575ff3b61820864e50c483691325b5c8e55a",
+  "candidate_sha256": "c9f89beaaf8d50327238cf5999f5bc013696e0d7582907cb4bf8e6bac3b20cd9",
+  "run_id": "adc44a21-4a78-432d-bb0a-db69c3b2e429",
+  "pid": 57402,
+  "rc": 0,
+  "seconds": 5.5830963749904186,
+  "seek": null,
+  "diagnostics": [
+    "WAM: native failure stage=open reason=Startup class=UnsupportedSource error=\"LibavformatAudioTimingUnproven: vorbis\"",
+    "WAM: cannot load bundled fallback: Cannot load library /dev/fd/14: dlopen(/dev/fd/14, 0x0006): Library not loaded: /opt/homebrew/opt/ffmpeg/lib/libavcodec.62.dylib"
+  ],
+  "native": true,
+  "drawn": false,
+  "failures": [
+    "WAM: native failure stage=open reason=Startup class=UnsupportedSource error=\"LibavformatAudioTimingUnproven: vorbis\""
+  ]
+}

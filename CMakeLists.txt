@@ -63,6 +63,10 @@ endif()
 
 set(WAM_FFMPEG_LGPL_ROOT "${CMAKE_SOURCE_DIR}/third_party/ffmpeg-lgpl" CACHE PATH
     "Pinned native FFmpeg LGPL installation")
+option(WAM_ENABLE_AVFORMAT_STAGE "Build the native libavformat demux stage" OFF)
+if(WAM_ENABLE_AVFORMAT_STAGE AND NOT WAM_ENABLE_AVCODEC_STAGE)
+  message(FATAL_ERROR "The demux stage requires the phase-2 runtime (WAM_ENABLE_AVCODEC_STAGE)")
+endif()
 option(WAM_ENABLE_AVCODEC_STAGE "Build the native libavcodec decode adapters" OFF)
 if(WAM_ENABLE_AVCODEC_STAGE)
   if(NOT APPLE OR NOT EXISTS "${WAM_FFMPEG_LGPL_ROOT}/include/libavcodec/avcodec.h")
@@ -579,6 +583,13 @@ if(APPLE)
 
     add_library(wam_macos_native_backend STATIC
       ${WAM_MACOS_NATIVE_BACKEND_SOURCES})
+    if(WAM_ENABLE_AVFORMAT_STAGE)
+      target_sources(wam_avcodec_worker PRIVATE src/media/libavformat_cursor.cpp)
+      target_sources(wam_macos_native_backend PRIVATE
+        src/platform/macos/libavformat_media_source.mm
+        src/platform/macos/routed_media_source.mm)
+      target_compile_definitions(wam_macos_native_backend PUBLIC WAM_ENABLE_AVFORMAT_STAGE=1)
+    endif()
     target_include_directories(wam_macos_native_backend PUBLIC src)
     target_compile_features(wam_macos_native_backend PUBLIC cxx_std_20)
     target_compile_options(wam_macos_native_backend PRIVATE
@@ -2266,7 +2277,11 @@ if(WAM_ENABLE_AVCODEC_STAGE)
   set_property(TARGET wam APPEND PROPERTY INSTALL_RPATH "@executable_path/../Frameworks")
   target_sources(wam_avcodec_worker PRIVATE src/platform/macos/software_avcodec_audio_backend.cpp)
   file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/native-codecs")
-  foreach(native_library IN ITEMS libavcodec-wamnative.63.dylib libavutil-wamnative.61.dylib)
+  set(WAM_NATIVE_FFMPEG_LIBRARIES libavcodec-wamnative.63.dylib libavutil-wamnative.61.dylib)
+  if(WAM_ENABLE_AVFORMAT_STAGE)
+    list(APPEND WAM_NATIVE_FFMPEG_LIBRARIES libavformat-wamnative.63.dylib)
+  endif()
+  foreach(native_library IN LISTS WAM_NATIVE_FFMPEG_LIBRARIES)
     configure_file("${WAM_FFMPEG_LGPL_ROOT}/lib/${native_library}"
       "${CMAKE_BINARY_DIR}/native-codecs/${native_library}" COPYONLY)
     add_custom_command(TARGET wam POST_BUILD
@@ -2278,13 +2293,23 @@ if(WAM_ENABLE_AVCODEC_STAGE)
   add_custom_command(TARGET wam POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:wam>/Contents/Resources/native-ffmpeg"
     COMMAND ${CMAKE_COMMAND} -E touch "$<TARGET_BUNDLE_DIR:wam>/Contents/Resources/native-ffmpeg/stage-built")
+  set(WAM_NATIVE_FFMPEG_NOTICE_DIR "${CMAKE_SOURCE_DIR}/docs/native-coverage/phase2")
+  if(WAM_ENABLE_AVFORMAT_STAGE)
+    set(WAM_NATIVE_FFMPEG_NOTICE_DIR "${CMAKE_SOURCE_DIR}/docs/native-coverage/phase3")
+    add_custom_command(TARGET wam POST_BUILD COMMAND ${CMAKE_COMMAND} -E touch
+      "$<TARGET_BUNDLE_DIR:wam>/Contents/Resources/native-ffmpeg/demux-stage-built")
+  endif()
   foreach(notice IN ITEMS FFMPEG_NOTICES.md COPYING.LGPLv2.1 LICENSE.md configure-command.txt build-receipt.txt)
     add_custom_command(TARGET wam POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
-      "${CMAKE_SOURCE_DIR}/docs/native-coverage/phase2/${notice}"
+      "${WAM_NATIVE_FFMPEG_NOTICE_DIR}/${notice}"
       "$<TARGET_BUNDLE_DIR:wam>/Contents/Resources/native-ffmpeg/${notice}")
   endforeach()
+  set(WAM_NATIVE_FFMPEG_SOURCE_NOTICE "${CMAKE_SOURCE_DIR}/docs/native-coverage/phase2b/SOURCE_DISTRIBUTION.md")
+  if(WAM_ENABLE_AVFORMAT_STAGE)
+    set(WAM_NATIVE_FFMPEG_SOURCE_NOTICE "${WAM_NATIVE_FFMPEG_NOTICE_DIR}/SOURCE_DISTRIBUTION.md")
+  endif()
   add_custom_command(TARGET wam POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
-    "${CMAKE_SOURCE_DIR}/docs/native-coverage/phase2b/SOURCE_DISTRIBUTION.md"
+    "${WAM_NATIVE_FFMPEG_SOURCE_NOTICE}"
     "$<TARGET_BUNDLE_DIR:wam>/Contents/Resources/native-ffmpeg/SOURCE_DISTRIBUTION.md")
 endif()
 
@@ -2366,4 +2391,105 @@ if(BUILD_TESTING AND WAM_ENABLE_AVCODEC_STAGE)
   add_executable(wam_avcodec_worker_budget_test tests/avcodec_worker_budget_test.cpp)
   target_link_libraries(wam_avcodec_worker_budget_test PRIVATE wam_avcodec_worker)
   add_test(NAME avcodec_worker_budget COMMAND wam_avcodec_worker_budget_test)
+endif()
+
+if(BUILD_TESTING AND WAM_ENABLE_AVFORMAT_STAGE)
+  add_executable(wam_libavformat_source_test tests/libavformat_source_test.mm)
+  target_link_libraries(wam_libavformat_source_test PRIVATE wam_macos_native_backend)
+  set(WAM_AVFORMAT_FIXTURES "${CMAKE_SOURCE_DIR}/test-media/native-coverage/phase3")
+  add_test(NAME libavformat_fixtures COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_SOURCE_DIR}/tests/libavformat_fixtures.py" --root "${WAM_AVFORMAT_FIXTURES}"
+    --ffmpeg "${WAM_AVCODEC_FIXTURE_FFMPEG}")
+  set_tests_properties(libavformat_fixtures PROPERTIES FIXTURES_SETUP avformat_media TIMEOUT 120)
+  foreach(specimen IN ITEMS fragmented.mp4 boundary.mp4 mid-moof.mp4 mid-mdat.mp4 asp.avi)
+    add_test(NAME libavformat_source_${specimen} COMMAND wam_libavformat_source_test
+      "${WAM_AVFORMAT_FIXTURES}/${specimen}" ready)
+    set_tests_properties(libavformat_source_${specimen} PROPERTIES FIXTURES_REQUIRED avformat_media TIMEOUT 30)
+  endforeach()
+  add_test(NAME libavformat_missing_init COMMAND wam_libavformat_source_test
+    "${WAM_AVFORMAT_FIXTURES}/missing-init.mp4"
+    "this recording is incomplete: its initialization metadata is missing")
+  set_tests_properties(libavformat_missing_init PROPERTIES FIXTURES_REQUIRED avformat_media TIMEOUT 30)
+endif()
+if(BUILD_TESTING AND WAM_ENABLE_AVFORMAT_STAGE)
+  add_executable(wam_libavformat_differential_test tests/libavformat_differential_test.cpp)
+  target_link_libraries(wam_libavformat_differential_test PRIVATE wam_avcodec_worker wam_native_core)
+  foreach(container IN ITEMS mkv ts)
+    add_test(NAME libavformat_differential_${container} COMMAND wam_libavformat_differential_test
+      "${WAM_AVFORMAT_FIXTURES}/oracle.${container}" "${container}")
+    set_tests_properties(libavformat_differential_${container} PROPERTIES FIXTURES_REQUIRED avformat_media TIMEOUT 30)
+  endforeach()
+endif()
+if(BUILD_TESTING AND WAM_ENABLE_AVFORMAT_STAGE)
+  add_executable(wam_libavformat_decode_test tests/libavformat_decode_test.mm)
+  target_link_libraries(wam_libavformat_decode_test PRIVATE wam_macos_native_backend)
+endif()
+if(BUILD_TESTING AND WAM_ENABLE_AVFORMAT_STAGE)
+  add_executable(wam_libavformat_contract_test tests/libavformat_contract_test.cpp)
+  target_link_libraries(wam_libavformat_contract_test PRIVATE wam_avcodec_worker)
+  add_test(NAME libavformat_contract COMMAND wam_libavformat_contract_test)
+endif()
+if(BUILD_TESTING AND WAM_ENABLE_AVFORMAT_STAGE)
+  add_test(NAME libavformat_avi_missing_pts COMMAND wam_libavformat_source_test
+    "${WAM_AVFORMAT_FIXTURES}/reordered-asp.avi" "LibavformatExactVideoTimelineUnavailable")
+  add_test(NAME libavformat_flv_audio_refusal COMMAND wam_libavformat_source_test
+    "${WAM_AVFORMAT_FIXTURES}/h264-aac.flv" "LibavformatAudioTimingUnproven: aac")
+  add_test(NAME libavformat_asf_audio_refusal COMMAND wam_libavformat_source_test
+    "${WAM_AVFORMAT_FIXTURES}/legacy.asf" "LibavformatAudioTimingUnproven: wmav2")
+  add_test(NAME libavformat_routed_avi COMMAND wam_libavformat_source_test
+    "${WAM_AVFORMAT_FIXTURES}/asp.avi" ready routed)
+  set_tests_properties(libavformat_avi_missing_pts libavformat_flv_audio_refusal
+    libavformat_asf_audio_refusal libavformat_routed_avi PROPERTIES FIXTURES_REQUIRED avformat_media TIMEOUT 30)
+endif()
+if(BUILD_TESTING AND WAM_ENABLE_AVFORMAT_STAGE)
+  add_test(NAME libavformat_opus_audio_exact COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_SOURCE_DIR}/tests/libavformat_audio_proof.py"
+    --probe "$<TARGET_FILE:wam_native_coverage_audio_probe>"
+    --asset "${WAM_AVFORMAT_FIXTURES}/opus.ogg" --ffmpeg "${WAM_AVCODEC_FIXTURE_FFMPEG}"
+    --output "${CMAKE_BINARY_DIR}/libavformat-audio-proof.json")
+  set_tests_properties(libavformat_opus_audio_exact PROPERTIES FIXTURES_REQUIRED avformat_media TIMEOUT 60)
+endif()
+if(BUILD_TESTING AND WAM_ENABLE_AVFORMAT_STAGE)
+  add_test(NAME libavformat_routed_header_stripping COMMAND wam_libavformat_source_test
+    "${WAM_AVFORMAT_FIXTURES}/header-stripped.mkv" ready routed)
+  set_tests_properties(libavformat_routed_header_stripping PROPERTIES FIXTURES_REQUIRED avformat_media TIMEOUT 30)
+endif()
+
+if(BUILD_TESTING AND WAM_ENABLE_AVFORMAT_STAGE)
+  add_library(wam_libavformat_allocation_hooks SHARED tests/avcodec_allocation_probe.cpp)
+  target_include_directories(wam_libavformat_allocation_hooks PRIVATE src)
+  target_compile_definitions(wam_libavformat_allocation_hooks PRIVATE WAM_AVCODEC_ALLOCATION_PROBE=1)
+  add_executable(wam_libavformat_allocation_test tests/libavformat_allocation_test.mm)
+  target_compile_definitions(wam_libavformat_allocation_test PRIVATE WAM_AVCODEC_ALLOCATION_PROBE=1)
+  target_link_libraries(wam_libavformat_allocation_test PRIVATE
+    wam_macos_native_backend wam_libavformat_allocation_hooks)
+  add_test(NAME libavformat_vorbis_refusal COMMAND wam_libavformat_source_test
+    "${WAM_AVFORMAT_FIXTURES}/vorbis.ogg" "LibavformatAudioTimingUnproven: vorbis")
+  add_test(NAME libavformat_program_stream_refusal COMMAND wam_libavformat_source_test
+    "${WAM_AVFORMAT_FIXTURES}/program.vob" "LibavformatAudioTimingUnproven: unmapped codec")
+  set_tests_properties(libavformat_vorbis_refusal libavformat_program_stream_refusal
+    PROPERTIES FIXTURES_REQUIRED avformat_media TIMEOUT 30)
+endif()
+
+if(BUILD_TESTING AND WAM_ENABLE_AVFORMAT_STAGE)
+  add_executable(wam_libavformat_preview_decode_test tests/libavformat_preview_decode_test.mm)
+  target_link_libraries(wam_libavformat_preview_decode_test PRIVATE wam_macos_native_backend)
+endif()
+
+if(BUILD_TESTING AND WAM_ENABLE_AVFORMAT_STAGE)
+  foreach(specimen IN ITEMS fragmented.mp4 asp.avi)
+    add_test(NAME libavformat_preview_decode_${specimen} COMMAND wam_libavformat_preview_decode_test
+      "${WAM_AVFORMAT_FIXTURES}/${specimen}")
+    set_tests_properties(libavformat_preview_decode_${specimen} PROPERTIES
+      FIXTURES_REQUIRED avformat_media TIMEOUT 30)
+  endforeach()
+endif()
+
+if(BUILD_TESTING AND WAM_ENABLE_AVFORMAT_STAGE)
+  foreach(specimen IN ITEMS mid-moof.mp4 mid-mdat.mp4)
+    add_test(NAME libavformat_routed_recovery_${specimen} COMMAND wam_libavformat_source_test
+      "${WAM_AVFORMAT_FIXTURES}/${specimen}" ready routed)
+    set_tests_properties(libavformat_routed_recovery_${specimen} PROPERTIES
+      FIXTURES_REQUIRED avformat_media TIMEOUT 30)
+  endforeach()
 endif()

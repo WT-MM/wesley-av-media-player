@@ -9,7 +9,9 @@ def inspect(path):
     versions=re.findall(r'\bminos\s+(\d+(?:\.\d+)+)',commands)
     if not versions:versions=re.findall(r'\bversion\s+(\d+(?:\.\d+)+)',commands)
     return dict(path=str(path),loads=loads,minos=versions,at_or_below_13_3=bool(versions) and all(tuple(map(int,v.split('.'))) <= (13,3,0) for v in versions))
-native=[inspect(frameworks/name) for name in ['libavcodec-wamnative.63.dylib','libavutil-wamnative.61.dylib']]
+native_names=['libavcodec-wamnative.63.dylib','libavutil-wamnative.61.dylib']
+if (app/'Contents/Resources/native-ffmpeg/demux-stage-built').exists():native_names.append('libavformat-wamnative.63.dylib')
+native=[inspect(frameworks/name) for name in native_names]
 main=inspect(exe)
 direct=[]
 for line in main['loads'].splitlines()[1:]:

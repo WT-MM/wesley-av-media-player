@@ -289,9 +289,14 @@ void routeMappingIsExact() {
 
   NativeOpenPreflightResult buffered = submitAndTake(
       localRequest("/private/tmp/buffered-media.mp4", 0.0, false));
+#if defined(WAM_ENABLE_AVFORMAT_STAGE)
+  constexpr auto bufferedRoute = Route::NativeEligibleLocal;
+#else
+  constexpr auto bufferedRoute = Route::FallbackOnly;
+#endif
   expect(buffered.sourceClass == PlaybackSourceClass::BufferedLocal &&
-             buffered.route == Route::FallbackOnly,
-         "mounted/buffered local media maps to compatibility playback");
+             buffered.route == bufferedRoute,
+         "buffered local routing follows bounded demux stage availability");
 
   NativeOpenPreflightResult network =
       submitAndTake({{77},
@@ -353,11 +358,16 @@ void productionMountClassificationIsFailClosed() {
       executablePath + QStringLiteral("/missing-media.mp4");
   NativeOpenPreflightResult uninspectable = submitAndTake(localRequest(
       uninspectablePath.toUtf8().constData(), 0.0, true));
+#if defined(WAM_ENABLE_AVFORMAT_STAGE)
+  constexpr auto uninspectableRoute = Route::NativeEligibleLocal;
+#else
+  constexpr auto uninspectableRoute = Route::FallbackOnly;
+#endif
   expect(uninspectable.sourceClass == PlaybackSourceClass::BufferedLocal &&
-             uninspectable.route == Route::FallbackOnly &&
+             uninspectable.route == uninspectableRoute &&
              uninspectable.canonicalSource.isLocalFile() &&
              uninspectable.absoluteLocalPath.is_absolute(),
-         "an uninspectable local path fails closed to compatibility playback");
+         "an uninspectable local path retains its local classification for source admission");
 }
 
 void queuedResultSlotKeepsOnlyLatestIdentity() {

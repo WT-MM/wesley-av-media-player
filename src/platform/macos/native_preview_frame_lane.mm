@@ -3,6 +3,9 @@
 #include "media/media_codec_facts.hpp"
 #include "core_media_codec_facts.hpp"
 #include "native_video_limits.hpp"
+#if defined(WAM_ENABLE_AVFORMAT_STAGE)
+#include "video_decode_lane.hpp"
+#endif
 
 #include <CoreMedia/CoreMedia.h>
 
@@ -15,6 +18,11 @@
 
 namespace wam::macos {
 namespace {
+#if defined(WAM_ENABLE_AVFORMAT_STAGE)
+using PreviewDecoder = VideoDecodeLane;
+#else
+using PreviewDecoder = VideoToolboxDecoder;
+#endif
 
 using media::MediaSample;
 using media::MediaTime;
@@ -540,7 +548,7 @@ struct NativePreviewFrameLane::Impl final {
   const NativePreviewFrameLaneWakeSeam wake;
   std::unique_ptr<NativePreviewSource> source;
   PreviewFrameSink sink;
-  VideoToolboxDecoder decoder;
+  PreviewDecoder decoder;
   const bool bypassDecoder{false};
   bool decoderReady{false};
   preview_protocol::Stamp acceptedThrough{};

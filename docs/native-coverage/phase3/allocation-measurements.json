@@ -1,0 +1,164 @@
+[
+  {
+    "asset": "test-media/native-coverage/phase3/fragmented.mp4",
+    "mode": "cursor",
+    "argv": [
+      "build/wam_libavformat_allocation_test",
+      "test-media/native-coverage/phase3/fragmented.mp4",
+      "cursor"
+    ],
+    "rc": 0,
+    "stdout": "{\"probe\":\"worker_lifetime\",\"frames\":75,\"worker_allocations\":324,\"worker_locks\":0,\"worker_cpp_new\":0,\"adapter_allocations_including_frameworks\":0,\"adapter_locks_including_frameworks\":0,\"adapter_cpp_new\":0,\"peak_tracked_heap_bytes\":7264,\"remaining_tracked_heap_bytes\":0,\"table_overflow\":0}\n",
+    "stderr": "",
+    "measurements": [
+      {
+        "probe": "worker_lifetime",
+        "frames": 75,
+        "worker_allocations": 324,
+        "worker_locks": 0,
+        "worker_cpp_new": 0,
+        "adapter_allocations_including_frameworks": 0,
+        "adapter_locks_including_frameworks": 0,
+        "adapter_cpp_new": 0,
+        "peak_tracked_heap_bytes": 7264,
+        "remaining_tracked_heap_bytes": 0,
+        "table_overflow": 0
+      }
+    ]
+  },
+  {
+    "asset": "test-media/native-coverage/phase3/fragmented.mp4",
+    "mode": "source",
+    "argv": [
+      "build/wam_libavformat_allocation_test",
+      "test-media/native-coverage/phase3/fragmented.mp4",
+      "source"
+    ],
+    "rc": 0,
+    "stdout": "{\"probe\":\"worker_lifetime\",\"frames\":75,\"worker_allocations\":740,\"worker_locks\":5,\"worker_cpp_new\":0,\"adapter_allocations_including_frameworks\":0,\"adapter_locks_including_frameworks\":0,\"adapter_cpp_new\":0,\"peak_tracked_heap_bytes\":7360,\"remaining_tracked_heap_bytes\":0,\"table_overflow\":0}\n",
+    "stderr": "",
+    "measurements": [
+      {
+        "probe": "worker_lifetime",
+        "frames": 75,
+        "worker_allocations": 740,
+        "worker_locks": 5,
+        "worker_cpp_new": 0,
+        "adapter_allocations_including_frameworks": 0,
+        "adapter_locks_including_frameworks": 0,
+        "adapter_cpp_new": 0,
+        "peak_tracked_heap_bytes": 7360,
+        "remaining_tracked_heap_bytes": 0,
+        "table_overflow": 0
+      }
+    ]
+  },
+  {
+    "asset": "test-media/native-coverage/phase3/asp.avi",
+    "mode": "cursor",
+    "argv": [
+      "build/wam_libavformat_allocation_test",
+      "test-media/native-coverage/phase3/asp.avi",
+      "cursor"
+    ],
+    "rc": 0,
+    "stdout": "{\"probe\":\"worker_lifetime\",\"frames\":75,\"worker_allocations\":370,\"worker_locks\":0,\"worker_cpp_new\":0,\"adapter_allocations_including_frameworks\":0,\"adapter_locks_including_frameworks\":0,\"adapter_cpp_new\":0,\"peak_tracked_heap_bytes\":6384,\"remaining_tracked_heap_bytes\":0,\"table_overflow\":0}\n",
+    "stderr": "",
+    "measurements": [
+      {
+        "probe": "worker_lifetime",
+        "frames": 75,
+        "worker_allocations": 370,
+        "worker_locks": 0,
+        "worker_cpp_new": 0,
+        "adapter_allocations_including_frameworks": 0,
+        "adapter_locks_including_frameworks": 0,
+        "adapter_cpp_new": 0,
+        "peak_tracked_heap_bytes": 6384,
+        "remaining_tracked_heap_bytes": 0,
+        "table_overflow": 0
+      }
+    ]
+  },
+  {
+    "asset": "test-media/native-coverage/phase3/asp.avi",
+    "mode": "source",
+    "argv": [
+      "build/wam_libavformat_allocation_test",
+      "test-media/native-coverage/phase3/asp.avi",
+      "source"
+    ],
+    "rc": 0,
+    "stdout": "{\"probe\":\"worker_lifetime\",\"frames\":75,\"worker_allocations\":666,\"worker_locks\":5,\"worker_cpp_new\":0,\"adapter_allocations_including_frameworks\":0,\"adapter_locks_including_frameworks\":0,\"adapter_cpp_new\":0,\"peak_tracked_heap_bytes\":6480,\"remaining_tracked_heap_bytes\":0,\"table_overflow\":0}\n",
+    "stderr": "",
+    "measurements": [
+      {
+        "probe": "worker_lifetime",
+        "frames": 75,
+        "worker_allocations": 666,
+        "worker_locks": 5,
+        "worker_cpp_new": 0,
+        "adapter_allocations_including_frameworks": 0,
+        "adapter_locks_including_frameworks": 0,
+        "adapter_cpp_new": 0,
+        "peak_tracked_heap_bytes": 6480,
+        "remaining_tracked_heap_bytes": 0,
+        "table_overflow": 0
+      }
+    ]
+  },
+  {
+    "asset": "/Users/wesleymaa/Movies/RustDesk/old/outgoing_175981962_20260208203414622_display0_h265.mp4",
+    "mode": "cursor",
+    "argv": [
+      "build/wam_libavformat_allocation_test",
+      "/Users/wesleymaa/Movies/RustDesk/old/outgoing_175981962_20260208203414622_display0_h265.mp4",
+      "cursor"
+    ],
+    "rc": 0,
+    "stdout": "{\"probe\":\"worker_lifetime\",\"frames\":20772,\"worker_allocations\":62253,\"worker_locks\":0,\"worker_cpp_new\":0,\"adapter_allocations_including_frameworks\":0,\"adapter_locks_including_frameworks\":0,\"adapter_cpp_new\":0,\"peak_tracked_heap_bytes\":704608,\"remaining_tracked_heap_bytes\":0,\"table_overflow\":0}\n",
+    "stderr": "",
+    "measurements": [
+      {
+        "probe": "worker_lifetime",
+        "frames": 20772,
+        "worker_allocations": 62253,
+        "worker_locks": 0,
+        "worker_cpp_new": 0,
+        "adapter_allocations_including_frameworks": 0,
+        "adapter_locks_including_frameworks": 0,
+        "adapter_cpp_new": 0,
+        "peak_tracked_heap_bytes": 704608,
+        "remaining_tracked_heap_bytes": 0,
+        "table_overflow": 0
+      }
+    ]
+  },
+  {
+    "asset": "/Users/wesleymaa/Movies/RustDesk/old/outgoing_175981962_20260208203414622_display0_h265.mp4",
+    "mode": "source",
+    "argv": [
+      "build/wam_libavformat_allocation_test",
+      "/Users/wesleymaa/Movies/RustDesk/old/outgoing_175981962_20260208203414622_display0_h265.mp4",
+      "source"
+    ],
+    "rc": 0,
+    "stdout": "{\"probe\":\"worker_lifetime\",\"frames\":20772,\"worker_allocations\":145397,\"worker_locks\":5,\"worker_cpp_new\":0,\"adapter_allocations_including_frameworks\":0,\"adapter_locks_including_frameworks\":0,\"adapter_cpp_new\":0,\"peak_tracked_heap_bytes\":704704,\"remaining_tracked_heap_bytes\":0,\"table_overflow\":0}\n",
+    "stderr": "",
+    "measurements": [
+      {
+        "probe": "worker_lifetime",
+        "frames": 20772,
+        "worker_allocations": 145397,
+        "worker_locks": 5,
+        "worker_cpp_new": 0,
+        "adapter_allocations_including_frameworks": 0,
+        "adapter_locks_including_frameworks": 0,
+        "adapter_cpp_new": 0,
+        "peak_tracked_heap_bytes": 704704,
+        "remaining_tracked_heap_bytes": 0,
+        "table_overflow": 0
+      }
+    ]
+  }
+]

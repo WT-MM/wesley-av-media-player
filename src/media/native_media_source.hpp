@@ -737,6 +737,7 @@ enum class MediaSourceBackendKind : std::uint8_t {
   // carries an explicit PES DTS, which is why its media source keys the A/V
   // merge on real decode timestamps rather than on a synthetic ordering lead.
   MpegTs,
+  Libavformat,
 };
 
 class MediaSourcePreparedContext {

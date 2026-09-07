@@ -144,3 +144,32 @@ hardware query as a profile proof. Validate replaced LGPL libraries by ABI and
 behavior; do not require the distributor's signature as the only accepted
 replacement. Relocated signed app tests and an intentionally absent/corrupt
 library matrix must cover the new check before enabling it in release packaging.
+
+## Phase 3 demux-stage working tree — 2026-09-07
+
+The current offline recipe adds libavformat-wamnative.63.dylib to the same
+FFmpeg 9.0.1 arm64/macOS-13.3 LGPL closure. The archive hash, suffix, install
+root (`third_party/ffmpeg-lgpl`), dynamic replacement rules and runtime leases
+are unchanged. See [phase 3 report](phase3/REPORT.md) for acceptance limits.
+
+Enabled demuxers: mov (MP4/MOV/3GP), avi, flv, ogg, asf, rm, mpegps, mpegts
+and matroska. The latter two serve as differential oracles and admission
+alternatives; existing admitted WAM demux routes retain priority. Only the
+file protocol is enabled. Custom AVIO refuses secondary/external input opens.
+No muxers, encoders, network protocols, external dependencies, GPL, nonfree
+or version-3 components are added. The extraction bitstream filter and the
+explicit HEVC/audio/video parser additions are recorded in the executed recipe.
+
+`WAM_ENABLE_AVFORMAT_STAGE=ON` requires `WAM_ENABLE_AVCODEC_STAGE=ON`; both
+remain OFF by default. Main and preview readers load libavformat lazily while
+retaining a phase-2 runtime lease. The loader validates the exact library
+version, matching configure string, LGPL license, nine demuxers and file-only
+protocol inventory. Hardware video decoding remains in VideoToolbox.
+
+The demux-enabled bundle adds `native-ffmpeg/demux-stage-built`, which selects
+the phase-3 build receipts/notices and makes the packaging audit require
+libavformat. Historical phase-2 receipts continue to describe their earlier
+codec-only build. The current [configure command](phase3/configure-command.txt),
+[build receipt](phase3/build-receipt.txt), configuration headers and license
+texts accompany this implementation. The existing corresponding-source URL,
+application-license and deployment-floor release prerequisites remain open.

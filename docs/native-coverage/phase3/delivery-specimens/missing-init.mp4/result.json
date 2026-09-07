@@ -1,0 +1,21 @@
+{
+  "asset": "/Users/wesleymaa/Documents/WAM/test-media/native-coverage/phase3/missing-init.mp4",
+  "asset_sha256": "d4d7bd1b5f7b4582ab904af618ecde9458260b5f2053f594e955441d3ebf3330",
+  "candidate_sha256": "0ce0b2b8f7dfa45ce79706dc30eecab2dcc1567d3b1e2cdc69af4bfb0b77a2c0",
+  "run_id": "80f07f5d-d463-4e46-b6c2-9b3065160b3c",
+  "pid": 8463,
+  "rc": 0,
+  "seconds": 5.570258957974147,
+  "seek": null,
+  "diagnostics": [
+    "WAM: native failure stage=open reason=Startup class=UnsupportedSource error=\"this recording is incomplete: its initialization metadata is missing\"",
+    "WAM: cannot load bundled fallback: Cannot load library /dev/fd/18: dlopen(/dev/fd/18, 0x0006): Library not loaded: /opt/homebrew/opt/ffmpeg/lib/libavcodec.62.dylib"
+  ],
+  "native_selected": true,
+  "native": false,
+  "drawn": false,
+  "audio_frames": 0,
+  "failures": [
+    "WAM: native failure stage=open reason=Startup class=UnsupportedSource error=\"this recording is incomplete: its initialization metadata is missing\""
+  ]
+}

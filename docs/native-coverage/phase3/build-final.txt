@@ -1,0 +1,202 @@
+[1/334] Automatic MOC and UIC for target wam_native_benchmark_telemetry_test
+[2/332] Automatic MOC and UIC for target wam_mpv_runtime
+[3/330] Automatic MOC and UIC for target wam_native_core
+[4/326] Automatic MOC and UIC for target wam_native_media_clock_test
+[5/324] Automatic MOC and UIC for target wam_playback_policy_test
+[6/322] Automatic MOC and UIC for target wam_mpv_hwdec_interop_policy_test
+[7/320] Automatic MOC and UIC for target wam_jobs_test
+[8/318] Automatic MOC and UIC for target wam_state_test
+[9/316] Automatic MOC and UIC for target wam_caption_test
+[10/314] Automatic MOC and UIC for target wam_render_lifecycle_test
+[11/312] Automatic MOC and UIC for target wam_export_integration_test
+[12/310] Automatic MOC and UIC for target wam_native_apple_audio_probe
+[13/308] Automatic MOC and UIC for target wam_native_surface_budget_test
+[14/306] Automatic MOC and UIC for target wam_scroll_gesture_test
+[15/304] Automatic MOC and UIC for target wam_player_controller_lazy_test
+[16/302] Automatic MOC and UIC for target wam_player_core_render_context_permission_test
+[17/300] Automatic MOC and UIC for target wam_native_concurrency_limits_test
+[18/298] Automatic MOC and UIC for target wam_native_video_test
+[19/296] Automatic MOC and UIC for target wam_avcodec_probe_hooks
+[20/294] Automatic MOC and UIC for target wam_libavformat_allocation_hooks
+[21/292] Automatic MOC and UIC for target wam_native_media_source_test
+[22/290] Automatic MOC and UIC for target wam_native_media_backend_test
+[23/288] Automatic MOC and UIC for target wam_media_container_routing_test
+[24/286] Automatic MOC and UIC for target wam_matroska_ebml_test
+[25/284] Automatic MOC and UIC for target wam_subtitle_text_test
+[26/282] Automatic MOC and UIC for target wam_embedded_captions_test
+[27/280] Automatic MOC and UIC for target wam_subtitle_bitmap_test
+[28/278] Automatic MOC and UIC for target wam_matroska_subtitles_test
+[29/276] Automatic MOC and UIC for target wam_matroska_aac_test
+[30/274] Automatic MOC and UIC for target wam_matroska_opus_test
+[31/272] Automatic MOC and UIC for target wam_matroska_vorbis_test
+[32/270] Automatic MOC and UIC for target wam_matroska_ac3_test
+[33/268] Automatic MOC and UIC for target wam_audio_downmix_test
+[34/266] Automatic MOC and UIC for target wam_audio_codec_timing_test
+[35/264] Automatic MOC and UIC for target wam_native_audio_sample_rates_test
+[36/262] Automatic MOC and UIC for target wam_native_coverage_admission_test
+[37/260] Automatic MOC and UIC for target wam_media_codec_facts_test
+[38/258] Automatic MOC and UIC for target wam_matroska_flac_test
+[39/256] Automatic MOC and UIC for target wam_matroska_mpeg_audio_test
+[40/254] Automatic MOC and UIC for target wam_matroska_demuxer_test
+[41/252] Automatic MOC and UIC for target wam_mpegts_demuxer_test
+[42/250] Automatic MOC and UIC for target wam_video_codec_configuration_test
+[43/248] Automatic MOC and UIC for target wam_native_playback_contract_test
+[44/246] Automatic MOC and UIC for target wam_native_media_dispatcher_test
+[45/244] Automatic MOC and UIC for target wam_playback_router_test
+[46/242] Automatic MOC and UIC for target wam_native_pcm_ring_test
+[47/240] Automatic MOC and UIC for target wam_native_audio_render_core_test
+[48/238] Automatic MOC and UIC for target wam_avfoundation_media_source_test
+[49/236] Automatic MOC and UIC for target wam_avfoundation_preview_source_test
+[50/234] Automatic MOC and UIC for target wam_native_audio_converter_test
+[51/232] Automatic MOC and UIC for target wam_native_audio_converter_opus_test
+[52/230] Automatic MOC and UIC for target wam_native_audio_channel_map_test
+[53/228] Automatic MOC and UIC for target wam_native_audio_stretch_stage_test
+[54/226] Automatic MOC and UIC for target wam_native_audio_output_converter_test
+[55/224] Automatic MOC and UIC for target wam_native_audio_output_test
+[56/222] Automatic MOC and UIC for target wam_software_vp8_test
+[57/220] Automatic MOC and UIC for target wam_native_video_consumer_test
+[58/218] Automatic MOC and UIC for target wam_video_toolbox_decoder_test
+[59/216] Automatic MOC and UIC for target wam_avcodec_instrumented
+[60/214] Automatic MOC and UIC for target wam_avcodec_allocation_test
+[61/212] Automatic MOC and UIC for target wam_avcodec_audio_allocation_test
+[62/210] Building CXX object CMakeFiles/wam_avcodec_worker.dir/src/media/libavformat_cursor.cpp.o
+[63/210] Linking CXX static library libwam_avcodec_worker.a
+[64/210] Automatic MOC and UIC for target wam_software_avcodec_audio_test
+[65/209] Automatic MOC and UIC for target wam_macos_native_video_core
+[66/207] Automatic MOC and UIC for target wam_avcodec_worker_test
+[67/206] Automatic MOC and UIC for target wam_avcodec_runtime_test
+[68/205] Automatic MOC and UIC for target wam_avcodec_worker_budget_test
+[69/204] Automatic MOC and UIC for target wam_libavformat_differential_test
+[70/203] Automatic MOC and UIC for target wam_libavformat_contract_test
+[71/202] Linking CXX executable wam_software_avcodec_audio_test
+[72/202] Automatic MOC and UIC for target wam_native_custom_source_traits_test
+[73/201] Automatic MOC and UIC for target wam_macos_native_video_metal_mapper
+[74/199] Automatic MOC and UIC for target wam_macos_native_backend
+[75/198] Automatic MOC and UIC for target wam_native_layer_video_output_test
+[76/197] Automatic MOC and UIC for target wam_matroska_preview_source_test
+[77/196] Automatic MOC and UIC for target wam_matroska_media_source_test
+[78/195] Automatic MOC and UIC for target wam_mpegts_media_source_test
+[79/194] Automatic MOC and UIC for target wam_mpegts_preview_source_test
+[80/193] Automatic MOC and UIC for target wam_macos_native_qt_tracked
+[81/191] Automatic MOC and UIC for target wam_native_preview_frame_lane_test
+[82/190] Automatic MOC and UIC for target wam_native_media_session_test
+[83/189] Automatic MOC and UIC for target wam_native_qt_gl_compositor_test
+[84/188] Automatic MOC and UIC for target wam_native_qt_gl_output_test
+[85/187] Automatic MOC and UIC for target wam_software_avcodec_video_test
+[86/186] Automatic MOC and UIC for target wam_avcodec_video_allocation_test
+[87/185] Linking CXX executable wam_avcodec_worker_test
+[88/185] Linking CXX executable wam_avcodec_runtime_test
+[89/185] Linking CXX executable wam_avcodec_worker_budget_test
+[90/185] Linking OBJCXX executable wam_native_custom_source_traits_test
+ld: warning: ignoring duplicate libraries: 'libwam_native_core.a'
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/libvpx/lib/libvpx.12.dylib' which was built for newer version 26.0
+[91/185] Automatic MOC and UIC for target wam_mpv_video_item_native_host_test
+[92/184] Linking OBJCXX executable wam_matroska_media_source_test
+ld: warning: ignoring duplicate libraries: 'libwam_native_core.a'
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/libvpx/lib/libvpx.12.dylib' which was built for newer version 26.0
+[93/184] Linking OBJCXX executable wam_native_layer_video_output_test
+ld: warning: ignoring duplicate libraries: 'libwam_native_core.a'
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/libvpx/lib/libvpx.12.dylib' which was built for newer version 26.0
+[94/184] Linking OBJCXX executable wam_mpegts_media_source_test
+ld: warning: ignoring duplicate libraries: 'libwam_native_core.a'
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/libvpx/lib/libvpx.12.dylib' which was built for newer version 26.0
+[95/184] Linking OBJCXX executable wam_matroska_preview_source_test
+ld: warning: ignoring duplicate libraries: 'libwam_native_core.a'
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/libvpx/lib/libvpx.12.dylib' which was built for newer version 26.0
+[96/184] Linking OBJCXX executable wam_mpegts_preview_source_test
+ld: warning: ignoring duplicate libraries: 'libwam_native_core.a'
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/libvpx/lib/libvpx.12.dylib' which was built for newer version 26.0
+[97/184] Linking OBJCXX executable wam_native_media_session_test
+ld: warning: ignoring duplicate libraries: 'libwam_native_core.a'
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/libvpx/lib/libvpx.12.dylib' which was built for newer version 26.0
+[98/184] Linking OBJCXX executable wam_native_preview_frame_lane_test
+ld: warning: ignoring duplicate libraries: 'libwam_native_core.a'
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/libvpx/lib/libvpx.12.dylib' which was built for newer version 26.0
+[99/184] Linking CXX executable wam_avcodec_video_allocation_test
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/libvpx/lib/libvpx.12.dylib' which was built for newer version 26.0
+[100/184] Linking OBJCXX executable wam_native_qt_gl_compositor_test
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/qtdeclarative/lib/QtQuick.framework/Versions/A/QtQuick' which was built for newer version 26.0
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/libvpx/lib/libvpx.12.dylib' which was built for newer version 26.0
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/qtbase/lib/QtOpenGL.framework/Versions/A/QtOpenGL' which was built for newer version 14.0
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/qtbase/lib/QtGui.framework/Versions/A/QtGui' which was built for newer version 14.0
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/qtdeclarative/lib/QtQml.framework/Versions/A/QtQml' which was built for newer version 26.0
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/qtbase/lib/QtNetwork.framework/Versions/A/QtNetwork' which was built for newer version 14.0
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/qtbase/lib/QtCore.framework/Versions/A/QtCore' which was built for newer version 14.0
+[101/184] Linking OBJCXX executable wam_native_qt_gl_output_test
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/qtdeclarative/lib/QtQuick.framework/Versions/A/QtQuick' which was built for newer version 26.0
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/libvpx/lib/libvpx.12.dylib' which was built for newer version 26.0
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/qtbase/lib/QtOpenGL.framework/Versions/A/QtOpenGL' which was built for newer version 14.0
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/qtbase/lib/QtGui.framework/Versions/A/QtGui' which was built for newer version 14.0
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/qtdeclarative/lib/QtQml.framework/Versions/A/QtQml' which was built for newer version 26.0
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/qtbase/lib/QtNetwork.framework/Versions/A/QtNetwork' which was built for newer version 14.0
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/qtbase/lib/QtCore.framework/Versions/A/QtCore' which was built for newer version 14.0
+[102/184] Linking CXX executable wam_software_avcodec_video_test
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/libvpx/lib/libvpx.12.dylib' which was built for newer version 26.0
+[103/184] Linking OBJCXX executable wam_mpv_video_item_native_host_test
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/qtdeclarative/lib/QtQuick.framework/Versions/A/QtQuick' which was built for newer version 26.0
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/qtbase/lib/QtOpenGL.framework/Versions/A/QtOpenGL' which was built for newer version 14.0
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/qtbase/lib/QtGui.framework/Versions/A/QtGui' which was built for newer version 14.0
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/qtdeclarative/lib/QtQml.framework/Versions/A/QtQml' which was built for newer version 26.0
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/qtbase/lib/QtNetwork.framework/Versions/A/QtNetwork' which was built for newer version 14.0
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/qtbase/lib/QtCore.framework/Versions/A/QtCore' which was built for newer version 14.0
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/libvpx/lib/libvpx.12.dylib' which was built for newer version 26.0
+[104/184] Building CXX object CMakeFiles/wam_libavformat_differential_test.dir/tests/libavformat_differential_test.cpp.o
+[105/184] Building CXX object CMakeFiles/wam_libavformat_contract_test.dir/tests/libavformat_contract_test.cpp.o
+[106/184] Linking CXX executable wam_libavformat_differential_test
+[107/184] Linking CXX executable wam_libavformat_contract_test
+[108/184] Building OBJCXX object CMakeFiles/wam_macos_native_backend.dir/src/platform/macos/routed_media_source.mm.o
+[109/184] Building OBJCXX object CMakeFiles/wam_macos_native_backend.dir/src/platform/macos/libavformat_media_source.mm.o
+[110/184] Linking OBJCXX static library libwam_macos_native_backend.a
+[111/184] Automatic MOC and UIC for target wam_native_playback_owner_contract_test
+[112/183] Automatic MOC and UIC for target wam_macos_native_session_system
+[113/181] Automatic MOC and UIC for target wam_native_apple_video_probe
+[114/180] Automatic MOC and UIC for target wam_native_coverage_source_probe
+[115/179] Automatic MOC and UIC for target wam_native_coverage_audio_probe
+[116/178] Automatic MOC and UIC for target wam_native_tracked_video_arbiter_test
+[117/177] Automatic MOC and UIC for target wam_native_open_preflight_test
+[118/176] Automatic MOC and UIC for target wam_native_headless_performance_test
+[119/175] Automatic MOC and UIC for target wam_libavformat_source_test
+[120/174] Automatic MOC and UIC for target wam_libavformat_decode_test
+[121/173] Automatic MOC and UIC for target wam_libavformat_allocation_test
+[122/172] Automatic MOC and UIC for target wam_libavformat_preview_decode_test
+[123/171] Automatic MOC and UIC for target wam
+[124/170] Linking CXX executable wam_native_apple_video_probe
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/libvpx/lib/libvpx.12.dylib' which was built for newer version 26.0
+[125/170] Linking CXX executable wam_native_coverage_source_probe
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/libvpx/lib/libvpx.12.dylib' which was built for newer version 26.0
+[126/170] Linking OBJCXX executable wam_native_playback_owner_contract_test
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/libvpx/lib/libvpx.12.dylib' which was built for newer version 26.0
+[127/170] Linking CXX executable wam_native_coverage_audio_probe
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/libvpx/lib/libvpx.12.dylib' which was built for newer version 26.0
+[128/170] Running AUTOMOC file extraction for target wam
+[129/139] Linking OBJCXX executable wam_native_open_preflight_test
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/qtbase/lib/QtCore.framework/Versions/A/QtCore' which was built for newer version 14.0
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/libvpx/lib/libvpx.12.dylib' which was built for newer version 26.0
+[130/139] Linking OBJCXX executable wam_native_tracked_video_arbiter_test
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/libvpx/lib/libvpx.12.dylib' which was built for newer version 26.0
+[131/139] Linking OBJCXX executable wam_native_headless_performance_test
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/libvpx/lib/libvpx.12.dylib' which was built for newer version 26.0
+[132/139] Linking CXX executable wam_libavformat_decode_test
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/libvpx/lib/libvpx.12.dylib' which was built for newer version 26.0
+[133/139] Linking CXX executable wam_libavformat_preview_decode_test
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/libvpx/lib/libvpx.12.dylib' which was built for newer version 26.0
+[134/139] Building OBJCXX object CMakeFiles/wam_libavformat_allocation_test.dir/tests/libavformat_allocation_test.mm.o
+[135/139] Building OBJCXX object CMakeFiles/wam_libavformat_source_test.dir/tests/libavformat_source_test.mm.o
+[136/139] Linking CXX executable wam_libavformat_allocation_test
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/libvpx/lib/libvpx.12.dylib' which was built for newer version 26.0
+[137/139] Linking CXX executable wam_libavformat_source_test
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/libvpx/lib/libvpx.12.dylib' which was built for newer version 26.0
+[138/139] Building CXX object CMakeFiles/wam.dir/src/qt/main.cpp.o
+[139/139] Linking OBJCXX executable WAM.app/Contents/MacOS/WAM
+ld: warning: ignoring duplicate libraries: 'libwam_macos_native_qt_tracked.a'
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/qtdeclarative/lib/QtQuickControls2.framework/Versions/A/QtQuickControls2' which was built for newer version 26.0
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/qtdeclarative/lib/QtQuickDialogs2.framework/Versions/A/QtQuickDialogs2' which was built for newer version 26.0
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/qtdeclarative/lib/QtQuickLayouts.framework/Versions/A/QtQuickLayouts' which was built for newer version 26.0
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/qtdeclarative/lib/QtLabsPlatform.framework/Versions/A/QtLabsPlatform' which was built for newer version 26.0
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/qtdeclarative/lib/QtQuick.framework/Versions/A/QtQuick' which was built for newer version 26.0
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/qtbase/lib/QtOpenGL.framework/Versions/A/QtOpenGL' which was built for newer version 14.0
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/qtbase/lib/QtGui.framework/Versions/A/QtGui' which was built for newer version 14.0
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/qtdeclarative/lib/QtQml.framework/Versions/A/QtQml' which was built for newer version 26.0
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/qtbase/lib/QtNetwork.framework/Versions/A/QtNetwork' which was built for newer version 14.0
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/qtbase/lib/QtCore.framework/Versions/A/QtCore' which was built for newer version 14.0
+ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/libvpx/lib/libvpx.12.dylib' which was built for newer version 26.0

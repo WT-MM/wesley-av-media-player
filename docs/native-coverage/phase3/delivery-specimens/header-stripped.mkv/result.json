@@ -1,0 +1,20 @@
+{
+  "asset": "/Users/wesleymaa/Documents/WAM/test-media/native-coverage/phase3/header-stripped.mkv",
+  "asset_sha256": "623ed1c4a1b0438aadd61496df8ab15024d00b0ace727236f8e3cf9b229c6681",
+  "candidate_sha256": "0ce0b2b8f7dfa45ce79706dc30eecab2dcc1567d3b1e2cdc69af4bfb0b77a2c0",
+  "run_id": "e4d1c22c-033e-4e5e-86ba-a865901afe70",
+  "pid": 7434,
+  "rc": 0,
+  "seconds": 5.606296374986414,
+  "seek": "1.5@0.5",
+  "diagnostics": [
+    "WAM: native demux stage=Libavformat",
+    "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+  ],
+  "native_selected": true,
+  "native": true,
+  "drawn": true,
+  "audio_frames": 0,
+  "failures": []
+}

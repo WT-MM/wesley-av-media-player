@@ -1,3 +1,6 @@
+#if defined(WAM_ENABLE_AVFORMAT_STAGE)
+#include "media/libavformat_cursor.hpp"
+#endif
 #if defined(WAM_ENABLE_AVCODEC_STAGE)
 #include "media/avcodec/runtime.hpp"
 #include "platform/macos/native_video_codec_capability.hpp"
@@ -1021,6 +1024,11 @@ int runtimeVerificationFailure(int exit_code, const QString &message) {
 }
 
 int verifyRuntime() {
+#if defined(WAM_ENABLE_AVFORMAT_STAGE)
+  const auto demuxFailure = wam::media::LibavformatCursor::runtimeFailure();
+  if (!demuxFailure.empty()) return runtimeVerificationFailure(7, QString::fromStdString(demuxFailure));
+  qInfo().noquote() << "native_demux_stages version=1 libavformat=63.1.101 loading=lazy protocols=file demuxers=mov,avi,flv,ogg,asf,rm,mpeg,mpegts,matroska";
+#endif
 #if defined(WAM_ENABLE_AVCODEC_STAGE)
   if (const char* failure = wam::media::avcodec::runtimeFailure())
     return runtimeVerificationFailure(7, QString::fromLatin1(failure));

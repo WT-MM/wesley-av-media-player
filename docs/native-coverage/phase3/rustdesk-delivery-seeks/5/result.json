@@ -1,0 +1,21 @@
+{
+  "asset": "/Users/wesleymaa/Movies/RustDesk/old/outgoing_175981962_20260127121923093_display0_h265.mp4",
+  "asset_sha256": "fe6ebf40c65dda8bbd3f13ead06926127c40736f12d60c6776a93adc7b4af21a",
+  "candidate_sha256": "0ce0b2b8f7dfa45ce79706dc30eecab2dcc1567d3b1e2cdc69af4bfb0b77a2c0",
+  "run_id": "8f86e38a-4e86-42e2-933b-f066027ced9e",
+  "pid": 89306,
+  "rc": 0,
+  "seconds": 9.877479791990481,
+  "seek": "20@1,40.571@21",
+  "diagnostics": [
+    "WAM: native demux stage=Libavformat",
+    "WAM: native decoder stage=VideoToolboxHardware codec=68766331",
+    "WAM: native decoder stage=VideoToolboxHardware codec=68766331",
+    "WAM: native decoder stage=VideoToolboxHardware codec=68766331"
+  ],
+  "native_selected": true,
+  "native": true,
+  "drawn": true,
+  "audio_frames": 0,
+  "failures": []
+}

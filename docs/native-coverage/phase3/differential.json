@@ -1,0 +1,14 @@
+[
+  {
+    "asset": "oracle.mkv",
+    "sha256": "473cb9008885a9614d6a23849be243c49a1046c8fbe6d619664e9bbb4efef739",
+    "stdout": "agreement packets=75 bytes=50520 pts=75 dts=75 duration=75 key=75\n",
+    "rc": 0
+  },
+  {
+    "asset": "oracle.ts",
+    "sha256": "85849a717c8b355a9fd8b763843f3b411c95b547e1be130424a40070a847dba9",
+    "stdout": "agreement packets=75 bytes=51080 pts=75 dts=75 duration=75 key=75\n",
+    "rc": 0
+  }
+]

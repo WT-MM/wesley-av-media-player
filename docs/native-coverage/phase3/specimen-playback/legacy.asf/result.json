@@ -1,0 +1,19 @@
+{
+  "asset": "/Users/wesleymaa/Documents/WAM/test-media/native-coverage/phase3/legacy.asf",
+  "asset_sha256": "f9e872388ffef9c614c25afcf4bd0b4c989db059319212d6ed87e243d3c40245",
+  "candidate_sha256": "c9f89beaaf8d50327238cf5999f5bc013696e0d7582907cb4bf8e6bac3b20cd9",
+  "run_id": "a7819237-c4e9-4243-93c0-827240eea084",
+  "pid": 57385,
+  "rc": 0,
+  "seconds": 5.064030584006105,
+  "seek": null,
+  "diagnostics": [
+    "WAM: native failure stage=open reason=Startup class=UnsupportedSource error=\"LibavformatAudioTimingUnproven: wmav2\"",
+    "WAM: cannot load bundled fallback: Cannot load library /dev/fd/14: dlopen(/dev/fd/14, 0x0006): Library not loaded: /opt/homebrew/opt/ffmpeg/lib/libavcodec.62.dylib"
+  ],
+  "native": true,
+  "drawn": false,
+  "failures": [
+    "WAM: native failure stage=open reason=Startup class=UnsupportedSource error=\"LibavformatAudioTimingUnproven: wmav2\""
+  ]
+}

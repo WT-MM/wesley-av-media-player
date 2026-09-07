@@ -1,0 +1,16 @@
+{
+  "asset": "/Users/wesleymaa/Documents/WAM/test-media/native-coverage/phase3/opus.ogg",
+  "asset_sha256": "aeb1552feb418fa8a42b631db3a136cf347741c26ce81dc8e9ba7799ae5fca2d",
+  "candidate_sha256": "c9f89beaaf8d50327238cf5999f5bc013696e0d7582907cb4bf8e6bac3b20cd9",
+  "run_id": "ca681a19-7f63-4f93-9721-6feef0a8f8b9",
+  "pid": 57347,
+  "rc": 0,
+  "seconds": 5.611830374982674,
+  "seek": null,
+  "diagnostics": [
+    "WAM: native demux stage=Libavformat"
+  ],
+  "native": true,
+  "drawn": false,
+  "failures": []
+}

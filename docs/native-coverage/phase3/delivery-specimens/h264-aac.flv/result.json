@@ -1,0 +1,21 @@
+{
+  "asset": "/Users/wesleymaa/Documents/WAM/test-media/native-coverage/phase3/h264-aac.flv",
+  "asset_sha256": "89dab7e0a710ffb35f4e1d38c4d1fe904ada5a587832e0a58d48898c000348f5",
+  "candidate_sha256": "0ce0b2b8f7dfa45ce79706dc30eecab2dcc1567d3b1e2cdc69af4bfb0b77a2c0",
+  "run_id": "21d2d09e-36c0-4f24-9faf-ce792cbabfa7",
+  "pid": 8137,
+  "rc": 0,
+  "seconds": 5.085357375035528,
+  "seek": null,
+  "diagnostics": [
+    "WAM: native failure stage=open reason=Startup class=UnsupportedSource error=\"LibavformatAudioTimingUnproven: aac\"",
+    "WAM: cannot load bundled fallback: Cannot load library /dev/fd/18: dlopen(/dev/fd/18, 0x0006): Library not loaded: /opt/homebrew/opt/ffmpeg/lib/libavcodec.62.dylib"
+  ],
+  "native_selected": true,
+  "native": false,
+  "drawn": false,
+  "audio_frames": 0,
+  "failures": [
+    "WAM: native failure stage=open reason=Startup class=UnsupportedSource error=\"LibavformatAudioTimingUnproven: aac\""
+  ]
+}

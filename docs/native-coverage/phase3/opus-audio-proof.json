@@ -1,0 +1,71 @@
+{
+  "asset": "/Users/wesleymaa/Documents/WAM/test-media/native-coverage/phase3/opus.ogg",
+  "asset_sha256": "430ab4a6830e58d59224d4841810c786359b98e80d049ef857f9736743428198",
+  "probe_sha256": "0695a2f277cb222f8f206dd388fc0c44d0535c562071f1e6a787fe3182d58364",
+  "cases": [
+    {
+      "target": "0",
+      "first_frame": 0,
+      "frames": 144000,
+      "max_error": 7.450580596923828e-08,
+      "rms": 1.495113379453076e-08,
+      "best_lag": 0,
+      "lag_errors": {
+        "-2": 0.000383099919417873,
+        "-1": 9.59362369030714e-05,
+        "0": 2.2353638876382374e-16,
+        "1": 9.593619324732572e-05,
+        "2": 0.00038309983210638165
+      },
+      "log": "WAM: native demux stage=Libavformat\ntrack=1 rate=48000 frames=144000 first=0 decoded=144840 trim=840 exact=1 drained=1 error=\n"
+    },
+    {
+      "target": "1/7",
+      "first_frame": 6858,
+      "frames": 137142,
+      "max_error": 7.450580596923828e-08,
+      "rms": 1.5039034458070548e-08,
+      "best_lag": 0,
+      "lag_errors": {
+        "-2": 0.0003990930272266269,
+        "-1": 9.99423791654408e-05,
+        "0": 2.2617256705391594e-16,
+        "1": 9.994232095777988e-05,
+        "2": 0.0003990929399151355
+      },
+      "log": "WAM: native demux stage=Libavformat\ntrack=1 rate=48000 frames=137142 first=6858 decoded=144840 trim=7698 exact=1 drained=1 error=\n"
+    },
+    {
+      "target": "1",
+      "first_frame": 48000,
+      "frames": 96000,
+      "max_error": 7.450580596923828e-08,
+      "rms": 1.5348103169734304e-08,
+      "best_lag": 0,
+      "lag_errors": {
+        "-2": 0.0005107365432195365,
+        "-1": 0.0001279188581975177,
+        "0": 2.355642830846144e-16,
+        "1": 0.00012791878543794155,
+        "2": 0.0005107363685965538
+      },
+      "log": "WAM: native demux stage=Libavformat\ntrack=1 rate=48000 frames=96000 first=48000 decoded=144840 trim=48840 exact=1 drained=1 error=\n"
+    },
+    {
+      "target": "2999/1000",
+      "first_frame": 143952,
+      "frames": 48,
+      "max_error": 2.9802322387695312e-08,
+      "rms": 9.804722975538271e-09,
+      "best_lag": 0,
+      "lag_errors": {
+        "-2": 0.0008110440685413778,
+        "-1": 0.00020477239741012454,
+        "0": 9.613259483286303e-17,
+        "1": 0.0002047725283773616,
+        "2": 0.0008110443595796824
+      },
+      "log": "WAM: native demux stage=Libavformat\ntrack=1 rate=48000 frames=48 first=143952 decoded=144840 trim=144792 exact=1 drained=1 error=\n"
+    }
+  ]
+}

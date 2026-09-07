@@ -1,0 +1,20 @@
+{
+  "asset": "/Users/wesleymaa/Documents/WAM/test-media/native-coverage/phase3/asp.avi",
+  "asset_sha256": "e38fe58bfccd4bbd97311ac5065066d30ba340c5c88d4f5aeb8f6d39e1b36405",
+  "candidate_sha256": "0ce0b2b8f7dfa45ce79706dc30eecab2dcc1567d3b1e2cdc69af4bfb0b77a2c0",
+  "run_id": "46740933-44e0-45b4-a204-c2782106348c",
+  "pid": 7421,
+  "rc": 0,
+  "seconds": 5.08814445900498,
+  "seek": "1.5@0.5",
+  "diagnostics": [
+    "WAM: native demux stage=Libavformat",
+    "WAM: native decoder stage=Libavcodec codec=6d703476",
+    "WAM: native decoder stage=Libavcodec codec=6d703476"
+  ],
+  "native_selected": true,
+  "native": true,
+  "drawn": true,
+  "audio_frames": 0,
+  "failures": []
+}

@@ -1,0 +1,149 @@
+[
+  {
+    "asset": "fragmented.mp4",
+    "asset_sha256": "ed74c7dfe5810fdc927f92f200e2b4eaa80fc86f57827fff97ec43c50e2ec7ba",
+    "argv": [
+      "build/wam_libavformat_source_test",
+      "test-media/native-coverage/phase3/fragmented.mp4",
+      "ready"
+    ],
+    "rc": 0,
+    "stdout": "status=0 error=\npackets=75 bytes=50520 duration=3/1\nseek=1 error=\nretained lease limit, file growth, preview file replacement passed\n",
+    "stderr": ""
+  },
+  {
+    "asset": "boundary.mp4",
+    "asset_sha256": "4e18a761a82d77aba9505734404efa733411595cbf6d6bab812d081d11f70ad2",
+    "argv": [
+      "build/wam_libavformat_source_test",
+      "test-media/native-coverage/phase3/boundary.mp4",
+      "ready"
+    ],
+    "rc": 0,
+    "stdout": "status=0 error=\npackets=50 bytes=32932 duration=2/1\nseek=1 error=\n",
+    "stderr": ""
+  },
+  {
+    "asset": "mid-moof.mp4",
+    "asset_sha256": "97b6af7326c2294f6a4cf61c38ba4f7e9d407c1a075076af91a097cb4a8065c4",
+    "argv": [
+      "build/wam_libavformat_source_test",
+      "test-media/native-coverage/phase3/mid-moof.mp4",
+      "ready",
+      "routed"
+    ],
+    "rc": 0,
+    "stdout": "status=0 error=\npackets=50 bytes=32932 duration=2/1\nseek=1 error=\n",
+    "stderr": "WAM: native demux stage=Libavformat\n"
+  },
+  {
+    "asset": "mid-mdat.mp4",
+    "asset_sha256": "e16a7723d7246c2783ba58ae45a0497a8a3e0c82973beea3fd3cc5cf0b1efe7d",
+    "argv": [
+      "build/wam_libavformat_source_test",
+      "test-media/native-coverage/phase3/mid-mdat.mp4",
+      "ready",
+      "routed"
+    ],
+    "rc": 0,
+    "stdout": "status=0 error=\npackets=50 bytes=32932 duration=2/1\nseek=1 error=\n",
+    "stderr": "WAM: native demux stage=Libavformat\n"
+  },
+  {
+    "asset": "missing-init.mp4",
+    "asset_sha256": "d4d7bd1b5f7b4582ab904af618ecde9458260b5f2053f594e955441d3ebf3330",
+    "argv": [
+      "build/wam_libavformat_source_test",
+      "test-media/native-coverage/phase3/missing-init.mp4",
+      "this recording is incomplete: its initialization metadata is missing"
+    ],
+    "rc": 0,
+    "stdout": "status=1 error=this recording is incomplete: its initialization metadata is missing\n",
+    "stderr": ""
+  },
+  {
+    "asset": "asp.avi",
+    "asset_sha256": "e38fe58bfccd4bbd97311ac5065066d30ba340c5c88d4f5aeb8f6d39e1b36405",
+    "argv": [
+      "build/wam_libavformat_source_test",
+      "test-media/native-coverage/phase3/asp.avi",
+      "ready"
+    ],
+    "rc": 0,
+    "stdout": "status=0 error=\npackets=75 bytes=172019 duration=3/1\nseek=1 error=\n",
+    "stderr": ""
+  },
+  {
+    "asset": "reordered-asp.avi",
+    "asset_sha256": "f93d707573f900eb49018cb3d50629987a5a57848608e780c116bda44e721f40",
+    "argv": [
+      "build/wam_libavformat_source_test",
+      "test-media/native-coverage/phase3/reordered-asp.avi",
+      "LibavformatExactVideoTimelineUnavailable"
+    ],
+    "rc": 0,
+    "stdout": "status=1 error=LibavformatExactVideoTimelineUnavailable\n",
+    "stderr": ""
+  },
+  {
+    "asset": "header-stripped.mkv",
+    "asset_sha256": "623ed1c4a1b0438aadd61496df8ab15024d00b0ace727236f8e3cf9b229c6681",
+    "argv": [
+      "build/wam_libavformat_source_test",
+      "test-media/native-coverage/phase3/header-stripped.mkv",
+      "ready",
+      "routed"
+    ],
+    "rc": 0,
+    "stdout": "status=0 error=\npackets=75 bytes=50520 duration=3/1\nseek=1 error=\n",
+    "stderr": "WAM: native demux stage=Libavformat\n"
+  },
+  {
+    "asset": "h264-aac.flv",
+    "asset_sha256": "89dab7e0a710ffb35f4e1d38c4d1fe904ada5a587832e0a58d48898c000348f5",
+    "argv": [
+      "build/wam_libavformat_source_test",
+      "test-media/native-coverage/phase3/h264-aac.flv",
+      "LibavformatAudioTimingUnproven: aac"
+    ],
+    "rc": 0,
+    "stdout": "status=1 error=LibavformatAudioTimingUnproven: aac\n",
+    "stderr": ""
+  },
+  {
+    "asset": "legacy.asf",
+    "asset_sha256": "4a97172a9d09e374a3772a9f9b2c60730eebfb1a4f19cc70f282773b6f31391a",
+    "argv": [
+      "build/wam_libavformat_source_test",
+      "test-media/native-coverage/phase3/legacy.asf",
+      "LibavformatAudioTimingUnproven: wmav2"
+    ],
+    "rc": 0,
+    "stdout": "status=1 error=LibavformatAudioTimingUnproven: wmav2\n",
+    "stderr": ""
+  },
+  {
+    "asset": "vorbis.ogg",
+    "asset_sha256": "0a0ab7378d87bd968819c68b7baf49a1c8c4d37159e2e9343b057ee0cbcf6132",
+    "argv": [
+      "build/wam_libavformat_source_test",
+      "test-media/native-coverage/phase3/vorbis.ogg",
+      "LibavformatAudioTimingUnproven: vorbis"
+    ],
+    "rc": 0,
+    "stdout": "status=1 error=LibavformatAudioTimingUnproven: vorbis\n",
+    "stderr": ""
+  },
+  {
+    "asset": "program.vob",
+    "asset_sha256": "d4a11788a7cb7bad6b8c21efeea79e75b2b45485d0a6aca8b6f4a3a33c1143ca",
+    "argv": [
+      "build/wam_libavformat_source_test",
+      "test-media/native-coverage/phase3/program.vob",
+      "LibavformatAudioTimingUnproven: unmapped codec"
+    ],
+    "rc": 0,
+    "stdout": "status=1 error=LibavformatAudioTimingUnproven: unmapped codec\n",
+    "stderr": "[mpeg @ 0xb67018000] probed stream 0 failed\n[mpeg @ 0xb67018000] Could not find codec parameters for stream 0 (Video: none, none): unknown codec\nConsider increasing the value for the 'analyzeduration' (2000000) and 'probesize' (8388608) options\n"
+  }
+]

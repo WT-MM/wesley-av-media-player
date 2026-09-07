@@ -78,6 +78,8 @@ const char* load() {
   if (!table.av_channel_layout_default) return "DecoderUnavailable: missing av_channel_layout_default";
   table.av_mallocz = reinterpret_cast<decltype(table.av_mallocz)>(dlsym(utilHandle, "av_mallocz"));
   if (!table.av_mallocz) return "DecoderUnavailable: missing av_mallocz";
+  table.av_free = reinterpret_cast<decltype(table.av_free)>(dlsym(utilHandle, "av_free"));
+  if (!table.av_free) return "DecoderUnavailable: missing av_free";
   table.av_buffer_create = reinterpret_cast<decltype(table.av_buffer_create)>(dlsym(utilHandle, "av_buffer_create"));
   if (!table.av_buffer_create) return "DecoderUnavailable: missing av_buffer_create";
   table.avcodec_open2 = reinterpret_cast<decltype(table.avcodec_open2)>(dlsym(codecHandle, "avcodec_open2"));

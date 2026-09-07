@@ -1,0 +1,460 @@
+[
+  {
+    "asset": "asp.avi",
+    "sha256": "e38fe58bfccd4bbd97311ac5065066d30ba340c5c88d4f5aeb8f6d39e1b36405",
+    "rc": 0,
+    "facts": {
+      "programs": [],
+      "stream_groups": [],
+      "streams": [
+        {
+          "index": 0,
+          "codec_name": "mpeg4",
+          "profile": "Advanced Simple Profile",
+          "codec_type": "video",
+          "width": 160,
+          "height": 96,
+          "pix_fmt": "yuv420p",
+          "time_base": "1/25",
+          "start_pts": 0,
+          "duration_ts": 75,
+          "extradata_size": 47
+        }
+      ],
+      "format": {
+        "format_name": "avi",
+        "duration": "3.000000"
+      }
+    },
+    "stderr": ""
+  },
+  {
+    "asset": "boundary.mp4",
+    "sha256": "4e18a761a82d77aba9505734404efa733411595cbf6d6bab812d081d11f70ad2",
+    "rc": 0,
+    "facts": {
+      "programs": [],
+      "stream_groups": [],
+      "streams": [
+        {
+          "index": 0,
+          "codec_name": "h264",
+          "profile": "High",
+          "codec_type": "video",
+          "width": 160,
+          "height": 96,
+          "pix_fmt": "yuv420p",
+          "time_base": "1/12800",
+          "start_pts": 0,
+          "duration_ts": 25600,
+          "extradata_size": 45
+        }
+      ],
+      "format": {
+        "format_name": "mov,mp4,m4a,3gp,3g2,mj2",
+        "duration": "2.000000"
+      }
+    },
+    "stderr": ""
+  },
+  {
+    "asset": "fragmented.mp4",
+    "sha256": "ed74c7dfe5810fdc927f92f200e2b4eaa80fc86f57827fff97ec43c50e2ec7ba",
+    "rc": 0,
+    "facts": {
+      "programs": [],
+      "stream_groups": [],
+      "streams": [
+        {
+          "index": 0,
+          "codec_name": "h264",
+          "profile": "High",
+          "codec_type": "video",
+          "width": 160,
+          "height": 96,
+          "pix_fmt": "yuv420p",
+          "time_base": "1/12800",
+          "start_pts": 0,
+          "duration_ts": 38400,
+          "extradata_size": 45
+        }
+      ],
+      "format": {
+        "format_name": "mov,mp4,m4a,3gp,3g2,mj2",
+        "duration": "3.000000"
+      }
+    },
+    "stderr": ""
+  },
+  {
+    "asset": "h264-aac.flv",
+    "sha256": "89dab7e0a710ffb35f4e1d38c4d1fe904ada5a587832e0a58d48898c000348f5",
+    "rc": 0,
+    "facts": {
+      "programs": [],
+      "stream_groups": [],
+      "streams": [
+        {
+          "index": 0,
+          "codec_name": "h264",
+          "profile": "High",
+          "codec_type": "video",
+          "width": 160,
+          "height": 96,
+          "pix_fmt": "yuv420p",
+          "time_base": "1/1000",
+          "start_pts": 21,
+          "extradata_size": 45
+        },
+        {
+          "index": 1,
+          "codec_name": "aac",
+          "profile": "LC",
+          "codec_type": "audio",
+          "sample_rate": "48000",
+          "channels": 1,
+          "time_base": "1/1000",
+          "start_pts": 0,
+          "extradata_size": 5
+        }
+      ],
+      "format": {
+        "format_name": "flv",
+        "duration": "3.021000"
+      }
+    },
+    "stderr": ""
+  },
+  {
+    "asset": "header-stripped.mkv",
+    "sha256": "623ed1c4a1b0438aadd61496df8ab15024d00b0ace727236f8e3cf9b229c6681",
+    "rc": 0,
+    "facts": {
+      "programs": [],
+      "stream_groups": [],
+      "streams": [
+        {
+          "index": 0,
+          "codec_name": "h264",
+          "profile": "High",
+          "codec_type": "video",
+          "width": 160,
+          "height": 96,
+          "pix_fmt": "yuv420p",
+          "time_base": "1/1000",
+          "start_pts": 0,
+          "extradata_size": 45
+        }
+      ],
+      "format": {
+        "format_name": "matroska,webm",
+        "duration": "3.000000"
+      }
+    },
+    "stderr": ""
+  },
+  {
+    "asset": "legacy.asf",
+    "sha256": "4a97172a9d09e374a3772a9f9b2c60730eebfb1a4f19cc70f282773b6f31391a",
+    "rc": 0,
+    "facts": {
+      "programs": [],
+      "stream_groups": [],
+      "streams": [
+        {
+          "index": 0,
+          "codec_name": "wmv2",
+          "codec_type": "video",
+          "width": 160,
+          "height": 96,
+          "pix_fmt": "yuv420p",
+          "time_base": "1/1000",
+          "start_pts": 43,
+          "duration_ts": 3043,
+          "extradata_size": 4
+        },
+        {
+          "index": 1,
+          "codec_name": "wmav2",
+          "codec_type": "audio",
+          "sample_rate": "48000",
+          "channels": 1,
+          "time_base": "1/1000",
+          "start_pts": 0,
+          "duration_ts": 3043,
+          "extradata_size": 10
+        }
+      ],
+      "format": {
+        "format_name": "asf",
+        "duration": "3.086000"
+      }
+    },
+    "stderr": ""
+  },
+  {
+    "asset": "mid-mdat.mp4",
+    "sha256": "e16a7723d7246c2783ba58ae45a0497a8a3e0c82973beea3fd3cc5cf0b1efe7d",
+    "rc": 0,
+    "facts": {
+      "programs": [],
+      "stream_groups": [],
+      "streams": [
+        {
+          "index": 0,
+          "codec_name": "h264",
+          "profile": "High",
+          "codec_type": "video",
+          "width": 160,
+          "height": 96,
+          "pix_fmt": "yuv420p",
+          "time_base": "1/12800",
+          "start_pts": 0,
+          "duration_ts": 38400,
+          "extradata_size": 45
+        }
+      ],
+      "format": {
+        "format_name": "mov,mp4,m4a,3gp,3g2,mj2",
+        "duration": "3.000000"
+      }
+    },
+    "stderr": ""
+  },
+  {
+    "asset": "mid-moof.mp4",
+    "sha256": "97b6af7326c2294f6a4cf61c38ba4f7e9d407c1a075076af91a097cb4a8065c4",
+    "rc": 0,
+    "facts": {
+      "programs": [],
+      "stream_groups": [],
+      "streams": [
+        {
+          "index": 0,
+          "codec_name": "h264",
+          "profile": "High",
+          "codec_type": "video",
+          "width": 160,
+          "height": 96,
+          "pix_fmt": "yuv420p",
+          "time_base": "1/12800",
+          "start_pts": 0,
+          "duration_ts": 25600,
+          "extradata_size": 45
+        }
+      ],
+      "format": {
+        "format_name": "mov,mp4,m4a,3gp,3g2,mj2",
+        "duration": "2.000000"
+      }
+    },
+    "stderr": ""
+  },
+  {
+    "asset": "missing-init.mp4",
+    "sha256": "d4d7bd1b5f7b4582ab904af618ecde9458260b5f2053f594e955441d3ebf3330",
+    "rc": 1,
+    "facts": {},
+    "stderr": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xa34c3c000] trun track id unknown, no tfhd was found\n[mov,mp4,m4a,3gp,3g2,mj2 @ 0xa34c3c000] error reading header\ntest-media/native-coverage/phase3/missing-init.mp4: Invalid data found when processing input\n"
+  },
+  {
+    "asset": "opus.ogg",
+    "sha256": "430ab4a6830e58d59224d4841810c786359b98e80d049ef857f9736743428198",
+    "rc": 0,
+    "facts": {
+      "programs": [],
+      "stream_groups": [],
+      "streams": [
+        {
+          "index": 0,
+          "codec_name": "opus",
+          "codec_type": "audio",
+          "sample_rate": "48000",
+          "channels": 1,
+          "time_base": "1/48000",
+          "start_pts": 0,
+          "duration_ts": 144312,
+          "extradata_size": 19
+        }
+      ],
+      "format": {
+        "format_name": "ogg",
+        "duration": "3.006500"
+      }
+    },
+    "stderr": ""
+  },
+  {
+    "asset": "oracle.mkv",
+    "sha256": "473cb9008885a9614d6a23849be243c49a1046c8fbe6d619664e9bbb4efef739",
+    "rc": 0,
+    "facts": {
+      "programs": [],
+      "stream_groups": [],
+      "streams": [
+        {
+          "index": 0,
+          "codec_name": "h264",
+          "profile": "High",
+          "codec_type": "video",
+          "width": 160,
+          "height": 96,
+          "pix_fmt": "yuv420p",
+          "time_base": "1/1000",
+          "start_pts": 0,
+          "extradata_size": 45
+        }
+      ],
+      "format": {
+        "format_name": "matroska,webm",
+        "duration": "3.000000"
+      }
+    },
+    "stderr": ""
+  },
+  {
+    "asset": "oracle.ts",
+    "sha256": "85849a717c8b355a9fd8b763843f3b411c95b547e1be130424a40070a847dba9",
+    "rc": 0,
+    "facts": {
+      "programs": [
+        {
+          "streams": [
+            {
+              "index": 0,
+              "codec_name": "h264",
+              "profile": "High",
+              "codec_type": "video",
+              "width": 160,
+              "height": 96,
+              "pix_fmt": "yuv420p",
+              "time_base": "1/90000",
+              "start_pts": 0,
+              "duration_ts": 270000,
+              "extradata_size": 39
+            }
+          ]
+        }
+      ],
+      "stream_groups": [],
+      "streams": [
+        {
+          "index": 0,
+          "codec_name": "h264",
+          "profile": "High",
+          "codec_type": "video",
+          "width": 160,
+          "height": 96,
+          "pix_fmt": "yuv420p",
+          "time_base": "1/90000",
+          "start_pts": 0,
+          "duration_ts": 270000,
+          "extradata_size": 39
+        }
+      ],
+      "format": {
+        "format_name": "mpegts",
+        "duration": "3.000000"
+      }
+    },
+    "stderr": ""
+  },
+  {
+    "asset": "program.vob",
+    "sha256": "d4a11788a7cb7bad6b8c21efeea79e75b2b45485d0a6aca8b6f4a3a33c1143ca",
+    "rc": 0,
+    "facts": {
+      "programs": [],
+      "stream_groups": [],
+      "streams": [
+        {
+          "index": 0,
+          "codec_name": "mpeg2video",
+          "profile": "Main",
+          "codec_type": "video",
+          "width": 160,
+          "height": 96,
+          "pix_fmt": "yuv420p",
+          "time_base": "1/90000",
+          "start_pts": 48600,
+          "duration_ts": 270000,
+          "extradata_size": 22,
+          "side_data_list": [
+            {}
+          ]
+        },
+        {
+          "index": 1,
+          "codec_name": "ac3",
+          "codec_type": "audio",
+          "sample_rate": "48000",
+          "channels": 1,
+          "time_base": "1/90000",
+          "start_pts": 48120,
+          "duration_ts": 262080
+        }
+      ],
+      "format": {
+        "format_name": "mpeg",
+        "duration": "3.005333"
+      }
+    },
+    "stderr": ""
+  },
+  {
+    "asset": "reordered-asp.avi",
+    "sha256": "f93d707573f900eb49018cb3d50629987a5a57848608e780c116bda44e721f40",
+    "rc": 0,
+    "facts": {
+      "programs": [],
+      "stream_groups": [],
+      "streams": [
+        {
+          "index": 0,
+          "codec_name": "mpeg4",
+          "profile": "Advanced Simple Profile",
+          "codec_type": "video",
+          "width": 160,
+          "height": 96,
+          "pix_fmt": "yuv420p",
+          "time_base": "1/25",
+          "start_pts": 0,
+          "duration_ts": 75,
+          "extradata_size": 47
+        }
+      ],
+      "format": {
+        "format_name": "avi",
+        "duration": "3.000000"
+      }
+    },
+    "stderr": ""
+  },
+  {
+    "asset": "vorbis.ogg",
+    "sha256": "0a0ab7378d87bd968819c68b7baf49a1c8c4d37159e2e9343b057ee0cbcf6132",
+    "rc": 0,
+    "facts": {
+      "programs": [],
+      "stream_groups": [],
+      "streams": [
+        {
+          "index": 0,
+          "codec_name": "vorbis",
+          "codec_type": "audio",
+          "sample_rate": "48000",
+          "channels": 2,
+          "time_base": "1/48000",
+          "start_pts": 0,
+          "duration_ts": 144000,
+          "extradata_size": 3302
+        }
+      ],
+      "format": {
+        "format_name": "ogg",
+        "duration": "3.000000"
+      }
+    },
+    "stderr": ""
+  }
+]

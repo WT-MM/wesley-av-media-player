@@ -1,0 +1,38 @@
+[
+  {
+    "argv": [
+      "build/wam_libavformat_preview_decode_test",
+      "test-media/native-coverage/phase3/fragmented.mp4",
+      "0.5"
+    ],
+    "asset_sha256": "ed74c7dfe5810fdc927f92f200e2b4eaa80fc86f57827fff97ec43c50e2ec7ba",
+    "probe_sha256": "583a44b280ad111c00a9e69ab40ae45c332d00329fd9a37d6383664e72d7cece",
+    "rc": 0,
+    "stdout": "decoded=1 hardware=1 samples=13 pts=12/25 duration=1/25 covers=1 error=\n",
+    "stderr": "WAM: native decoder stage=VideoToolboxHardware codec=61766331\n"
+  },
+  {
+    "argv": [
+      "build/wam_libavformat_preview_decode_test",
+      "test-media/native-coverage/phase3/asp.avi",
+      "0.5"
+    ],
+    "asset_sha256": "e38fe58bfccd4bbd97311ac5065066d30ba340c5c88d4f5aeb8f6d39e1b36405",
+    "probe_sha256": "583a44b280ad111c00a9e69ab40ae45c332d00329fd9a37d6383664e72d7cece",
+    "rc": 0,
+    "stdout": "decoded=1 hardware=0 samples=1 pts=12/25 duration=1/25 covers=1 error=\n",
+    "stderr": "WAM: native decoder stage=Libavcodec codec=6d703476\n"
+  },
+  {
+    "argv": [
+      "build/wam_libavformat_preview_decode_test",
+      "/Users/wesleymaa/Movies/RustDesk/old/outgoing_175981962_20260127121923093_display0_h265.mp4",
+      "20"
+    ],
+    "asset_sha256": "fe6ebf40c65dda8bbd3f13ead06926127c40736f12d60c6776a93adc7b4af21a",
+    "probe_sha256": "583a44b280ad111c00a9e69ab40ae45c332d00329fd9a37d6383664e72d7cece",
+    "rc": 0,
+    "stdout": "decoded=1 hardware=1 samples=102 pts=3997/200 duration=1/25 covers=1 error=\n",
+    "stderr": "WAM: native decoder stage=VideoToolboxHardware codec=68766331\n"
+  }
+]

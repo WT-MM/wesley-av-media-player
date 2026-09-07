@@ -1,0 +1,74 @@
+[
+  {
+    "asset": "/Users/wesleymaa/Movies/RustDesk/old/outgoing_175981962_20260208203414622_display0_h265.mp4",
+    "candidate_sha256": "0ce0b2b8f7dfa45ce79706dc30eecab2dcc1567d3b1e2cdc69af4bfb0b77a2c0",
+    "asset_sha256": "6ead230da070bfb45f880c7bf5d53ae9eb1a809c09c4284730e321640321d3a0",
+    "events": {
+      "commit_seek_submitted": 2,
+      "commit_ready": 2,
+      "commit_frame_drawn": 2,
+      "preview_frame_drawn": 2
+    },
+    "receipt": "docs/native-coverage/phase3/rustdesk-delivery-seeks/0/result.json"
+  },
+  {
+    "asset": "/Users/wesleymaa/Movies/RustDesk/old/outgoing_175981962_20260208220322285_display0_h265.mp4",
+    "candidate_sha256": "0ce0b2b8f7dfa45ce79706dc30eecab2dcc1567d3b1e2cdc69af4bfb0b77a2c0",
+    "asset_sha256": "1317c1d00dc360e8e8295e74f61e28cd753ec5f92bc4f458536d375810c0ab28",
+    "events": {
+      "commit_seek_submitted": 2,
+      "commit_ready": 2,
+      "commit_frame_drawn": 2,
+      "preview_frame_drawn": 1
+    },
+    "receipt": "docs/native-coverage/phase3/rustdesk-delivery-seeks/1/result.json"
+  },
+  {
+    "asset": "/Users/wesleymaa/Movies/RustDesk/old/outgoing_175981962_20260208215604603_display0_h265.mp4",
+    "candidate_sha256": "0ce0b2b8f7dfa45ce79706dc30eecab2dcc1567d3b1e2cdc69af4bfb0b77a2c0",
+    "asset_sha256": "bd0add0a23638182d829b55bf0b682194c7d21c90e676138140fb52470b93186",
+    "events": {
+      "commit_seek_submitted": 2,
+      "commit_ready": 2,
+      "commit_frame_drawn": 2,
+      "preview_frame_drawn": 0
+    },
+    "receipt": "docs/native-coverage/phase3/rustdesk-delivery-seeks/2/result.json"
+  },
+  {
+    "asset": "/Users/wesleymaa/Movies/RustDesk/old/outgoing_175981962_20260208205646393_display0_h265.mp4",
+    "candidate_sha256": "0ce0b2b8f7dfa45ce79706dc30eecab2dcc1567d3b1e2cdc69af4bfb0b77a2c0",
+    "asset_sha256": "93b15d49be3f42a8b188a24b7b827c0e983f01f8fd54b6d7a645cfcec6f2b529",
+    "events": {
+      "commit_seek_submitted": 2,
+      "commit_ready": 2,
+      "commit_frame_drawn": 2,
+      "preview_frame_drawn": 1
+    },
+    "receipt": "docs/native-coverage/phase3/rustdesk-delivery-seeks/3/result.json"
+  },
+  {
+    "asset": "/Users/wesleymaa/Movies/RustDesk/old/outgoing_175981962_20260208210701843_display0_h265.mp4",
+    "candidate_sha256": "0ce0b2b8f7dfa45ce79706dc30eecab2dcc1567d3b1e2cdc69af4bfb0b77a2c0",
+    "asset_sha256": "a7121cdcdd01800c83c68f9ed1ce3f19364e7c09b51fd34e7794cb464ca9d5ec",
+    "events": {
+      "commit_seek_submitted": 2,
+      "commit_ready": 2,
+      "commit_frame_drawn": 2,
+      "preview_frame_drawn": 3
+    },
+    "receipt": "docs/native-coverage/phase3/rustdesk-delivery-seeks/4/result.json"
+  },
+  {
+    "asset": "/Users/wesleymaa/Movies/RustDesk/old/outgoing_175981962_20260127121923093_display0_h265.mp4",
+    "candidate_sha256": "0ce0b2b8f7dfa45ce79706dc30eecab2dcc1567d3b1e2cdc69af4bfb0b77a2c0",
+    "asset_sha256": "fe6ebf40c65dda8bbd3f13ead06926127c40736f12d60c6776a93adc7b4af21a",
+    "events": {
+      "commit_seek_submitted": 2,
+      "commit_ready": 2,
+      "commit_frame_drawn": 2,
+      "preview_frame_drawn": 0
+    },
+    "receipt": "docs/native-coverage/phase3/rustdesk-delivery-seeks/5/result.json"
+  }
+]
