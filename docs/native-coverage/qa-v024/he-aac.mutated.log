@@ -1,0 +1,9 @@
+Traceback (most recent call last):
+  File "/Users/wesleymaa/Documents/WAM/tests/native_coverage_integration.py", line 211, in <module>
+    if __name__=='__main__': main()
+                             ^^^^^^
+  File "/Users/wesleymaa/Documents/WAM/tests/native_coverage_integration.py", line 205, in main
+    assert 'error=HeAacSbrDecoderDelayUnproven' in result.stdout and '; candidates:' in result.stdout, result.stdout
+AssertionError: status=1 error=no selected audio candidate passed complete codec admission (CodecConfiguration)
+decode_start=0/0
+

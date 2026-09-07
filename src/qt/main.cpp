@@ -30,6 +30,8 @@
 #include <QQmlEngine>
 #include <QQuickStyle>
 #include <QImage>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QQuickWindow>
 #include <QRect>
 #include <QPointF>
@@ -1330,6 +1332,23 @@ int main(int argc, char *argv[]) {
     if (!first->controller()->available())
       return 3;
     wam::qt::PlayerController *first_player = first->controller();
+#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+    if (wam::qt::NativeBenchmarkTelemetry::instance().enabled() &&
+        qEnvironmentVariableIsSet("WAM_TEST_NOTICE_TRACE")) {
+      const auto reportNotice = [first_player] {
+        const QJsonObject record{{"record", "notice_state"},
+                                 {"notice", first_player->lastNotice()},
+                                 {"error", first_player->lastError()}};
+        qInfo().noquote() << QJsonDocument(record).toJson(QJsonDocument::Compact);
+      };
+      QObject::connect(first_player, &wam::qt::PlayerController::lastNoticeChanged,
+                       first_player, reportNotice);
+      QObject::connect(first_player, &wam::qt::PlayerController::lastErrorChanged,
+                       first_player, reportNotice);
+      reportNotice();
+    }
+#endif
+
 
     if (const auto rate = initialPlaybackRate(app))
       first_player->setRate(*rate);
