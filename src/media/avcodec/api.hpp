@@ -19,6 +19,7 @@ struct Api {
   decltype(&::av_frame_alloc) av_frame_alloc{};
   decltype(&::av_channel_layout_default) av_channel_layout_default{};
   decltype(&::av_mallocz) av_mallocz{};
+  decltype(&::av_free) av_free{};
   decltype(&::av_buffer_create) av_buffer_create{};
   decltype(&::avcodec_open2) avcodec_open2{};
   decltype(&::av_frame_unref) av_frame_unref{};

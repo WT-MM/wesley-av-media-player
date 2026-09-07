@@ -30,11 +30,13 @@ args=(
   --disable-autodetect --disable-programs --disable-doc --disable-debug
   --disable-network --disable-protocols --disable-encoders --disable-muxers
   --disable-devices --disable-filters --disable-avdevice --disable-avfilter
-  --disable-avformat --disable-swscale --disable-swresample
+  --enable-avformat --disable-demuxers --enable-demuxer=mov,avi,flv,ogg,asf,rm,mpegps,mpegts,matroska
+  --enable-protocol=file --disable-swscale --disable-swresample
   --disable-hwaccels --disable-videotoolbox --disable-audiotoolbox
   --disable-x86asm --enable-pthreads --disable-decoders --disable-parsers --disable-bsfs
   --enable-decoder=h264,mpeg4,vp9,dca,truehd,mlp,theora,wmav1,wmav2,wmapro,wmalossless,wmavoice,ra_144,ra_288,cook,sipr
-  --enable-parser=h264,mpeg4video,vp9,dca,mlp
+  --enable-parser=h264,hevc,mpeg4video,vp9,dca,mlp,aac,ac3,mpegaudio,mpegvideo,opus,vorbis
+  --enable-bsf=extract_extradata
 )
 mkdir -p "$prefix/share/wam-ffmpeg"
 receipt="$prefix/share/wam-ffmpeg"

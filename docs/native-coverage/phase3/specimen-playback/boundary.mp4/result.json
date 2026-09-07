@@ -1,0 +1,16 @@
+{
+  "asset": "/Users/wesleymaa/Documents/WAM/test-media/native-coverage/phase3/boundary.mp4",
+  "asset_sha256": "76339bf42ba71a25894c250d108f6b902b615bb92984610e5256538e205dab91",
+  "candidate_sha256": "c9f89beaaf8d50327238cf5999f5bc013696e0d7582907cb4bf8e6bac3b20cd9",
+  "run_id": "3fcef6e0-b5c8-42f6-ba62-9829ede91eed",
+  "pid": 57279,
+  "rc": 0,
+  "seconds": 5.064414499967825,
+  "seek": null,
+  "diagnostics": [
+    "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+  ],
+  "native": true,
+  "drawn": true,
+  "failures": []
+}

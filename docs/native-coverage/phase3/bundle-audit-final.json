@@ -1,0 +1,47 @@
+{
+  "native": [
+    {
+      "path": "/private/tmp/wam-phase3-installed/WAM.app/Contents/Frameworks/libavcodec-wamnative.63.dylib",
+      "loads": "/private/tmp/wam-phase3-installed/WAM.app/Contents/Frameworks/libavcodec-wamnative.63.dylib:\n\t@rpath/libavcodec-wamnative.63.dylib (compatibility version 63.0.0, current version 63.1.101)\n\t@rpath/libavutil-wamnative.61.dylib (compatibility version 61.0.0, current version 61.1.101)\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1356.0.0)\n\t/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation (compatibility version 150.0.0, current version 5026.5.4)\n\t/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo (compatibility version 1.2.0, current version 734.4.0)\n\t/System/Library/Frameworks/CoreMedia.framework/Versions/A/CoreMedia (compatibility version 1.0.0, current version 3320.8.5)\n",
+      "minos": [
+        "13.3"
+      ],
+      "at_or_below_13_3": true
+    },
+    {
+      "path": "/private/tmp/wam-phase3-installed/WAM.app/Contents/Frameworks/libavutil-wamnative.61.dylib",
+      "loads": "/private/tmp/wam-phase3-installed/WAM.app/Contents/Frameworks/libavutil-wamnative.61.dylib:\n\t@rpath/libavutil-wamnative.61.dylib (compatibility version 61.0.0, current version 61.1.101)\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1356.0.0)\n\t/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation (compatibility version 150.0.0, current version 5026.5.4)\n\t/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo (compatibility version 1.2.0, current version 734.4.0)\n\t/System/Library/Frameworks/CoreMedia.framework/Versions/A/CoreMedia (compatibility version 1.0.0, current version 3320.8.5)\n",
+      "minos": [
+        "13.3"
+      ],
+      "at_or_below_13_3": true
+    },
+    {
+      "path": "/private/tmp/wam-phase3-installed/WAM.app/Contents/Frameworks/libavformat-wamnative.63.dylib",
+      "loads": "/private/tmp/wam-phase3-installed/WAM.app/Contents/Frameworks/libavformat-wamnative.63.dylib:\n\t@rpath/libavformat-wamnative.63.dylib (compatibility version 63.0.0, current version 63.1.101)\n\t@rpath/libavcodec-wamnative.63.dylib (compatibility version 63.0.0, current version 63.1.101)\n\t@rpath/libavutil-wamnative.61.dylib (compatibility version 61.0.0, current version 61.1.101)\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1356.0.0)\n\t/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation (compatibility version 150.0.0, current version 5026.5.4)\n\t/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo (compatibility version 1.2.0, current version 734.4.0)\n\t/System/Library/Frameworks/CoreMedia.framework/Versions/A/CoreMedia (compatibility version 1.0.0, current version 3320.8.5)\n",
+      "minos": [
+        "13.3"
+      ],
+      "at_or_below_13_3": true
+    }
+  ],
+  "main": {
+    "path": "/private/tmp/wam-phase3-installed/WAM.app/Contents/MacOS/WAM",
+    "loads": "/private/tmp/wam-phase3-installed/WAM.app/Contents/MacOS/WAM:\n\t@executable_path/../Frameworks/QtQuickControls2.framework/Versions/A/QtQuickControls2 (compatibility version 6.0.0, current version 6.11.1)\n\t@executable_path/../Frameworks/QtQuickDialogs2.framework/Versions/A/QtQuickDialogs2 (compatibility version 6.0.0, current version 6.11.1)\n\t@executable_path/../Frameworks/QtQuickLayouts.framework/Versions/A/QtQuickLayouts (compatibility version 6.0.0, current version 6.11.1)\n\t@executable_path/../Frameworks/QtLabsPlatform.framework/Versions/A/QtLabsPlatform (compatibility version 6.0.0, current version 6.11.1)\n\t/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit (compatibility version 45.0.0, current version 2685.60.104)\n\t/System/Library/Frameworks/QuartzCore.framework/Versions/A/QuartzCore (compatibility version 1.2.0, current version 1195.14.4)\n\t/System/Library/Frameworks/AVFoundation.framework/Versions/A/AVFoundation (compatibility version 1.0.0, current version 2.0.0)\n\t@executable_path/../Frameworks/QtQuick.framework/Versions/A/QtQuick (compatibility version 6.0.0, current version 6.11.1)\n\t@executable_path/../Frameworks/QtOpenGL.framework/Versions/A/QtOpenGL (compatibility version 6.0.0, current version 6.11.1)\n\t@executable_path/../Frameworks/QtGui.framework/Versions/A/QtGui (compatibility version 6.0.0, current version 6.11.1)\n\t/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL (compatibility version 1.0.0, current version 1.0.0)\n\t/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO (compatibility version 1.0.0, current version 1.0.0)\n\t/System/Library/Frameworks/Metal.framework/Versions/A/Metal (compatibility version 1.0.0, current version 373.2.0)\n\t@executable_path/../Frameworks/QtQml.framework/Versions/A/QtQml (compatibility version 6.0.0, current version 6.11.1)\n\t@executable_path/../Frameworks/QtNetwork.framework/Versions/A/QtNetwork (compatibility version 6.0.0, current version 6.11.1)\n\t@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore (compatibility version 6.0.0, current version 6.11.1)\n\t/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit (compatibility version 1.0.0, current version 275.0.0)\n\t/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration (compatibility version 1.0.0, current version 1.0.0)\n\t/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers (compatibility version 1.0.0, current version 709.0.0)\n\t/System/Library/Frameworks/CoreImage.framework/Versions/A/CoreImage (compatibility version 1.0.1, current version 7.0.0)\n\t@executable_path/../Frameworks/libvpx.12.dylib (compatibility version 1.0.0, current version 1.0.0)\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1356.0.0)\n\t/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation (compatibility version 150.0.0, current version 5026.5.4)\n\t/System/Library/Frameworks/CoreGraphics.framework/Versions/A/CoreGraphics (compatibility version 64.0.0, current version 1965.5.1)\n\t/System/Library/Frameworks/CoreMedia.framework/Versions/A/CoreMedia (compatibility version 1.0.0, current version 3320.8.5)\n\t/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo (compatibility version 1.2.0, current version 734.4.0)\n\t/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation (compatibility version 300.0.0, current version 5026.5.4)\n\t/System/Library/Frameworks/IOSurface.framework/Versions/A/IOSurface (compatibility version 1.0.0, current version 1.0.0)\n\t/System/Library/Frameworks/AudioToolbox.framework/Versions/A/AudioToolbox (compatibility version 1.0.0, current version 1000.0.0)\n\t/System/Library/Frameworks/CoreAudio.framework/Versions/A/CoreAudio (compatibility version 1.0.0, current version 1.0.0)\n\t/System/Library/Frameworks/VideoToolbox.framework/Versions/A/VideoToolbox (compatibility version 1.0.0, current version 3320.8.5)\n\t/usr/lib/libc++.1.dylib (compatibility version 1.0.0, current version 2100.43.0)\n\t/usr/lib/libobjc.A.dylib (compatibility version 1.0.0, current version 228.0.0)\n",
+    "minos": [
+      "13.3"
+    ],
+    "at_or_below_13_3": true
+  },
+  "direct_external_dependencies": [],
+  "eager_native_ffmpeg": false,
+  "notices": {
+    "FFMPEG_NOTICES.md": true,
+    "COPYING.LGPLv2.1": true,
+    "LICENSE.md": true,
+    "configure-command.txt": true,
+    "build-receipt.txt": true,
+    "SOURCE_DISTRIBUTION.md": true
+  },
+  "clean_machine_ready": true
+}

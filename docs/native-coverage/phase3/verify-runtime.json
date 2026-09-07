@@ -1,0 +1,11 @@
+{
+  "rc": 0,
+  "stdout": "",
+  "stderr": "native_demux_stages version=1 libavformat=63.1.101 loading=lazy protocols=file demuxers=mov,avi,flv,ogg,asf,rm,mpeg,mpegts,matroska\nnative_codec_stages version=2 present=true libavcodec=63.1.101 libavutil=61.1.101 loading=lazy lease_retirement=unload license=LGPL-2.1-or-later required_decoders=present audio_routing=disabled\nnative_hardware_capabilities av1= true vp9= true\nWAM runtime verification passed.\n{\"schema\":\"wam.native.benchmark.v2\",\"record\":\"stream_header\",\"format_version\":2,\"run_id\":\"14afb63a-10c6-4114-81ad-e019d07d5eb7\",\"process_id\":89920,\"process_start_abstime\":10240898047157,\"asset_sha256\":\"5627cb6a406ce02d905b9d6d494c71b2ad58046223d1177f337adc35064bf337\",\"candidate_id\":\"0ce0b2b8f7dfa45ce79706dc30eecab2dcc1567d3b1e2cdc69af4bfb0b77a2c0\"}\n{\"schema\":\"wam.native.benchmark.v2\",\"record\":\"stream_commit\",\"batch_count\":0,\"event_count\":0,\"first_sequence\":0,\"last_sequence\":0,\"chain_sha256\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"run_id\":\"14afb63a-10c6-4114-81ad-e019d07d5eb7\",\"process_id\":89920,\"process_start_abstime\":10240898047157,\"asset_sha256\":\"5627cb6a406ce02d905b9d6d494c71b2ad58046223d1177f337adc35064bf337\",\"candidate_id\":\"0ce0b2b8f7dfa45ce79706dc30eecab2dcc1567d3b1e2cdc69af4bfb0b77a2c0\"}\n",
+  "identity": {
+    "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+    "WAM_NATIVE_BENCHMARK_RUN_ID": "14afb63a-10c6-4114-81ad-e019d07d5eb7",
+    "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "5627cb6a406ce02d905b9d6d494c71b2ad58046223d1177f337adc35064bf337",
+    "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "0ce0b2b8f7dfa45ce79706dc30eecab2dcc1567d3b1e2cdc69af4bfb0b77a2c0"
+  }
+}

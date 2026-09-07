@@ -1,3 +1,6 @@
+The opt-in [phase 3 demux-stage implementation and acceptance report](phase3/REPORT.md)
+records the current libavformat work. The measurements below are historical.
+
 # Native coverage — phase 0b, 2026-09-06
 
 The [v0.4.24 QA correction report](qa-v024/REPORT.md) supersedes the unsigned

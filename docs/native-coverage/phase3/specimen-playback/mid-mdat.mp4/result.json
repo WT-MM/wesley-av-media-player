@@ -1,0 +1,21 @@
+{
+  "asset": "/Users/wesleymaa/Documents/WAM/test-media/native-coverage/phase3/mid-mdat.mp4",
+  "asset_sha256": "97be87dde8e6077978fffceac77925041bff5c83805044e3017510a05fc2e608",
+  "candidate_sha256": "c9f89beaaf8d50327238cf5999f5bc013696e0d7582907cb4bf8e6bac3b20cd9",
+  "run_id": "7e88f577-fd10-4ce2-aa8b-76de95fb942a",
+  "pid": 57300,
+  "rc": 0,
+  "seconds": 5.653790874988772,
+  "seek": null,
+  "diagnostics": [
+    "WAM: native decoder stage=VideoToolboxHardware codec=61766331",
+    "WAM: native failure stage=steady reason=Decode class=SourceRead error=\"Invalid sample cursor\"",
+    "WAM: Native decoding failed; using compatibility playback.",
+    "WAM: cannot load bundled fallback: Cannot load library /dev/fd/14: dlopen(/dev/fd/14, 0x0006): Library not loaded: /opt/homebrew/opt/ffmpeg/lib/libavcodec.62.dylib"
+  ],
+  "native": true,
+  "drawn": true,
+  "failures": [
+    "WAM: native failure stage=steady reason=Decode class=SourceRead error=\"Invalid sample cursor\""
+  ]
+}
