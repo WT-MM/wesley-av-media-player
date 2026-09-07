@@ -1,0 +1,12 @@
+{
+  "case": "backpressure",
+  "path": "src/wamkit/wamkit.mm",
+  "test": "wamkit_host_api",
+  "sha256": "1307aa4a1297f992db9b0b425b4f7c1c6168c9d749f9b766177b1b73276202c7",
+  "baseline_rc": 0,
+  "reverted_build_rc": 0,
+  "reverted_test_rc": 8,
+  "byte_identical_restore": true,
+  "restored_build_rc": 0,
+  "restored_test_rc": 0
+}

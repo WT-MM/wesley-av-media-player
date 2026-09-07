@@ -2,6 +2,7 @@
 
 #include "media/live_caption_feed.hpp"
 #include "media/native_playback_contract.hpp"
+#include "media/native_exact_playback.hpp"
 #include "avfoundation_asset_context.hpp"
 #include "native_audio_session.hpp"
 #include "native_preview_frame_lane.hpp"
@@ -185,9 +186,10 @@ class NativeMediaSessionInitialPosition final {
 
  private:
   constexpr NativeMediaSessionInitialPosition(
-      double seconds, media::MediaTime exact) noexcept
-      : seconds_(seconds), exact_(exact) {}
+      double seconds, media::MediaTime exact, bool rational = false) noexcept
+      : rational_(rational), seconds_(seconds), exact_(exact) {}
 
+  bool rational_{false};
   double seconds_{0.0};
   media::MediaTime exact_{};
 
@@ -210,10 +212,11 @@ class NativeMediaSessionCommitTarget final {
                                             media::MediaTime exact,
                                             std::uint64_t drawBaseline,
                                             media::MediaGeneration
-                                                sourceGeneration) noexcept
-      : seconds_(seconds), exact_(exact), drawBaseline_(drawBaseline),
+                                                sourceGeneration, bool rational = false) noexcept
+      : rational_(rational), seconds_(seconds), exact_(exact), drawBaseline_(drawBaseline),
         sourceGeneration_(sourceGeneration) {}
 
+  bool rational_{false};
   double seconds_{0.0};
   media::MediaTime exact_{};
   std::uint64_t drawBaseline_{0};
@@ -254,7 +257,22 @@ using NativeMediaSessionFact =
 // worker lifecycle progress until consumed. Clock and draw proofs are
 // independent capacity-one latest-value slots; replacing an older value is
 // intentional coalescing, never an inferred proof.
+struct NativeMediaSessionExactDraw {
+  native_playback::Stamp stamp{};
+  native_playback::Generation generation{};
+  std::uint64_t sequence{0};
+  media::MediaTime start{}, duration{};
+};
+struct NativeMediaSessionDiagnostic {
+  native_playback::Stamp stamp{};
+  native_playback::FailureReason reason{};
+  std::array<char, 128> name{};
+  std::array<char, 768> detail{};
+};
+
 struct NativeMediaSessionObservations {
+  std::optional<NativeMediaSessionDiagnostic> diagnostic;
+  std::optional<NativeMediaSessionExactDraw> exactDraw;
   bool admissionRouteChoice{false};
   std::optional<NativeMediaSessionFact> lifecycle;
   std::optional<NativeMediaSessionRunStateApplied> runStateApplied;
@@ -263,12 +281,13 @@ struct NativeMediaSessionObservations {
   std::optional<native_playback::PreviewPresented> previewPresented;
   std::optional<native_playback::PreviewFailed> previewFailed;
   std::optional<native_playback::CommitReady> commitReady;
+  std::optional<native_playback::ExactCommitReady> exactCommitReady;
 
   [[nodiscard]] bool empty() const noexcept {
-    return !lifecycle.has_value() && !runStateApplied.has_value() &&
+    return !exactDraw.has_value() && !diagnostic.has_value() && !lifecycle.has_value() && !runStateApplied.has_value() &&
            !audioClock.has_value() && !videoDraw.has_value() &&
            !previewPresented.has_value() && !previewFailed.has_value() &&
-           !commitReady.has_value();
+           !commitReady.has_value() && !exactCommitReady.has_value();
   }
 };
 
@@ -336,6 +355,7 @@ struct NativeMediaSessionMetrics {
   // holding no session can reserve 0 for "no session open".
   std::uint64_t sessionEpoch{0};
   std::uint64_t drawnFrames{0};
+  media::MediaTime firstDrawPts{};
   std::uint64_t decodedPrerollFrames{0};
   bool slowSeek{false};
   std::uint64_t submittedFrames{0};
@@ -378,11 +398,15 @@ class NativeMediaSession final {
   // the source; no second conversion or rounded timescale is permitted.
   [[nodiscard]] static std::optional<NativeMediaSessionInitialPosition>
   preflightInitialPosition(double seconds) noexcept;
+  [[nodiscard]] static std::optional<NativeMediaSessionInitialPosition>
+  preflightInitialPosition(media::MediaTime target) noexcept;
   // Reserves a session-owned physical draw baseline before the Router creates
   // CommitSeek. The returned token is bound to the then-active generation;
   // commitSeek() rejects it after any intervening generation change.
   [[nodiscard]] std::optional<NativeMediaSessionCommitTarget>
   preflightCommitTarget(double seconds) noexcept;
+  [[nodiscard]] std::optional<NativeMediaSessionCommitTarget>
+  preflightCommitTarget(media::MediaTime target) noexcept;
   [[nodiscard]] std::optional<NativePreviewFrameTarget>
   preflightPreviewTarget(double seconds) noexcept;
   // The bound both preflights hold a target strictly below, as seconds --
@@ -429,6 +453,8 @@ class NativeMediaSession final {
   // any thread. The first call arms worker-side publication; until the worker
   // has completed one pass afterwards the returned validity flags are false.
   [[nodiscard]] NativeMediaSessionMetrics metrics() const noexcept;
+  void setMetricsEnabled(bool) noexcept;
+  [[nodiscard]] std::shared_ptr<const media::MediaSourceDescriptor> descriptor() const noexcept;
 
  private:
   struct Impl;

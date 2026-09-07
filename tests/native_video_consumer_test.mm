@@ -292,7 +292,7 @@ media::NativeMediaGenerationTimeline timeline(std::uint64_t generation,
 }
 
 FrameLease frame(std::uint64_t generation, std::int64_t pts,
-                 std::int64_t duration, std::vector<std::byte>* pixels) {
+                 std::int64_t duration, std::vector<std::byte>* pixels, std::int32_t scale = 1000) {
   constexpr std::size_t kWidth = 4;
   constexpr std::size_t kHeight = 4;
   constexpr std::size_t kBytesPerRow = kWidth * 4;
@@ -304,7 +304,7 @@ FrameLease frame(std::uint64_t generation, std::int64_t pts,
   expect(created == kCVReturnSuccess && buffer != nullptr,
          "CPU-backed pixel buffer creation succeeds");
   FrameLease result(buffer,
-                    {CMTimeMake(pts, 1000), CMTimeMake(duration, 1000),
+                    {CMTimeMake(pts, scale), CMTimeMake(duration, scale),
                      generation, true});
   CVPixelBufferRelease(buffer);
   expect(static_cast<bool>(result), "CPU-backed frame lease succeeds");
@@ -799,6 +799,18 @@ void testSelectedDurationAdmission() {
          "a negative selected duration fails native admission");
 }
 
+void testRationalPausedBoundary() {
+  Fixture fixture;
+  fixture.clock.snapshot.mediaSeconds = *media::mediaTimeSeconds({1,3});
+  fixture.clock.snapshot.exactPausedTarget = {1,3};
+  expect(fixture.consumer->armFirstGeneration(7) == NativeVideoConsumerArmProgress::Done, "exact paused scheduler arms");
+  expect(NativeVideoConsumerTestAccess::installSchedulerGeneration(*fixture.consumer, timeline(7,{1,3})), "exact scheduler installs");
+  std::vector<std::byte> pixels;
+  expect(NativeVideoConsumerTestAccess::injectDecodedFrame(*fixture.consumer, frame(7,1,1,&pixels,3)), "rational boundary frame queues");
+  static_cast<void>(NativeVideoConsumerTestAccess::pumpScheduler(*fixture.consumer));
+  expect(fixture.consumer->facts().submittedFrames == 1, "exact paused T admits a frame whose start rounds above display seconds");
+}
+
 void testDrawAckGatesNextFrame() {
   Fixture fixture;
   expect(fixture.consumer->armFirstGeneration(7) ==
@@ -828,6 +840,8 @@ void testDrawAckGatesNextFrame() {
              NativeTrackedVideoCapacity::Available,
          "owner-pumped real draw rearms the tracked output lane");
   facts = fixture.consumer->facts();
+  expect(wam::media::compareMediaTime(facts.firstDrawPts, {1,1}) == wam::media::MediaTimeOrder::Equal,
+         "first physical draw retains its exact timestamp before observation coalescing");
   expect(facts.drawnFrames == 1 && !facts.awaitingDraw.valid() &&
              facts.submittedFrames == 1,
          "draw proof retires only the matching first delivery");
@@ -1255,6 +1269,7 @@ void testDoneOutputMayNotStillClaimAnAdmittedFrame() {
 }  // namespace
 
 int main() {
+  testRationalPausedBoundary();
   testPresentationBackstop();
   testArmContract();
   testDelayedLifecycleDiagnostic();

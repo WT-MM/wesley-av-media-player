@@ -148,6 +148,7 @@ void PlaybackRouter::clearCurrent() noexcept {
   start_ = {};
   latestPreview_ = {};
   commitSeek_ = {};
+  exactCommitTarget_.reset();
   commitDrawBaseline_ = 0;
   stop_ = {};
   fallbackReservationExhausted_ = false;
@@ -482,6 +483,7 @@ Transition PlaybackRouter::commitSeek(const CommitSeekRequest &request,
   }
   latestPreview_ = {};
   commitSeek_ = command;
+  exactCommitTarget_.reset();
   commitDrawBaseline_ = request.drawBaseline;
   initialPositionSeconds_ = request.targetSeconds;
   state_ = State::NativeSeeking;
@@ -654,6 +656,7 @@ Transition PlaybackRouter::onNativeCommitReady(
     return invalid();
   }
   if (state_ != State::NativeSeeking ||
+      exactCommitTarget_.has_value() ||
       !native::commitReadyMatches(commitSeek_, commitDrawBaseline_, event)) {
     return ignored();
   }
@@ -663,11 +666,40 @@ Transition PlaybackRouter::onNativeCommitReady(
     return beginNativeStop(true, now);
   }
   commitSeek_ = {};
+  exactCommitTarget_.reset();
   commitDrawBaseline_ = 0;
   state_ = State::NativeActive;
   native::SetRunState command{{attempt_, serial}, generation_,
                               intendedPaused_, intendedRate_,
                               intendedPreservePitch_};
+  return applied(nativeRunAction(command));
+}
+
+Transition PlaybackRouter::commitSeekExact(const CommitSeekRequest& request,
+    MediaTime target, Tick now) noexcept {
+  const auto exact = canonicalNonnegativeTime(target);
+  if (!exact || mediaTimeSeconds(*exact) != request.targetSeconds) return invalid();
+  auto result = commitSeek(request, now);
+  if (result.action && result.action->kind == ActionKind::NativeCommitSeek)
+    exactCommitTarget_ = *exact;
+  return result;
+}
+
+Transition PlaybackRouter::onNativeExactCommitReady(const native::ExactCommitReady& event,
+    Tick now) noexcept {
+  if (!acceptTick(now)) return invalid();
+  if (state_ != State::NativeSeeking || !exactCommitTarget_ ||
+      !native::exactCommitReadyMatches(commitSeek_, *exactCommitTarget_, commitDrawBaseline_, event))
+    return ignored();
+  generation_ = commitSeek_.targetGeneration;
+  native::Serial serial;
+  if (!reserveLiveSerial(serial)) return beginNativeStop(true, now);
+  commitSeek_ = {};
+  exactCommitTarget_.reset();
+  commitDrawBaseline_ = 0;
+  state_ = State::NativeActive;
+  native::SetRunState command{{attempt_, serial}, generation_,
+      intendedPaused_, intendedRate_, intendedPreservePitch_};
   return applied(nativeRunAction(command));
 }
 

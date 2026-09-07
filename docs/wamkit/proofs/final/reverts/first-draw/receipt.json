@@ -1,0 +1,12 @@
+{
+  "case": "first-draw",
+  "path": "src/platform/macos/native_video_consumer.mm",
+  "test": "macos_native_video_consumer",
+  "sha256": "bc82c72a2433411c5ced1452eb0d6ccbddd1677ee9e5204a3b453eee03a4db91",
+  "baseline_rc": 0,
+  "reverted_build_rc": 0,
+  "reverted_test_rc": 8,
+  "byte_identical_restore": true,
+  "restored_build_rc": 0,
+  "restored_test_rc": 0
+}

@@ -470,6 +470,54 @@ std::shared_ptr<NativeLayerHostView> NativeLayerHostView::create(
       return {};
     }
 
+    auto result = createDetached(sibling.frame.size.width, sibling.frame.size.height, error);
+    if (!result) return {};
+    NSView* hostView = result->impl_->hostView;
+    AVSampleBufferDisplayLayer* layer = result->impl_->layer;
+    hostView.frame = sibling.frame;
+    [siblingParent addSubview:hostView
+                   positioned:NSWindowBelow
+                   relativeTo:sibling];
+
+    // The whole route depends on this one ordering fact, and AppKit is free to
+    // decline a requested position (NSThemeFrame manages its own children), so
+    // it is asserted rather than assumed. Failing here falls back to the GL
+    // route, which is correct-but-slower -- strictly better than shipping a
+    // window whose chrome is invisible.
+    const NSUInteger hostIndex = [siblingParent.subviews indexOfObject:hostView];
+    const NSUInteger qtIndex = [siblingParent.subviews indexOfObject:sibling];
+    if (hostIndex == NSNotFound || qtIndex == NSNotFound ||
+        hostIndex >= qtIndex) {
+      [hostView removeFromSuperview];
+      assignError(error,
+                  "layer host view could not be ordered beneath Qt's view");
+      return {};
+    }
+
+    // A new file rebuilds this layer from scratch, so the window's Vivid boost
+    // has to be re-applied here or the mode would silently switch itself off
+    // on every open while its toggle still read as on.
+    applyVividBoostToLayer(layer, vividBoostForWindow(window));
+
+    // Unrotated until a track says otherwise, but placed now: the container
+    // has just been sized and the video layer is still at its default zero
+    // bounds, so without this first call nothing would be drawn until the
+    // first resize.
+    layoutVideoLayer(layer);
+
+    return result;
+  }
+}
+
+std::shared_ptr<NativeLayerHostView> NativeLayerHostView::createDetached(
+    double width, double height, std::string* error) {
+  if (error) error->clear();
+  if (![NSThread isMainThread] || !std::isfinite(width) || !std::isfinite(height) ||
+      width < 0 || height < 0) {
+    assignError(error, "PresentationUnavailable");
+    return {};
+  }
+  @autoreleasepool {
     AVSampleBufferDisplayLayer* layer =
         [[AVSampleBufferDisplayLayer alloc] init];
     if (layer == nil) {
@@ -514,7 +562,7 @@ std::shared_ptr<NativeLayerHostView> NativeLayerHostView::create(
     // sibling.frame is already in siblingParent's coordinates, so this covers
     // exactly the area Qt covers whichever level the insertion landed on.
     NSView* hostView =
-        [[WAMNativeVideoHostView alloc] initWithFrame:sibling.frame];
+        [[WAMNativeVideoHostView alloc] initWithFrame:NSMakeRect(0, 0, width, height)];
     // Layer-HOSTED, not layer-backed: the layer must be assigned before
     // wantsLayer, or AppKit creates its own backing layer and ignores this one.
     hostView.layer = container;
@@ -522,42 +570,17 @@ std::shared_ptr<NativeLayerHostView> NativeLayerHostView::create(
     hostView.layerContentsRedrawPolicy = NSViewLayerContentsRedrawNever;
     hostView.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
 
-    [siblingParent addSubview:hostView
-                   positioned:NSWindowBelow
-                   relativeTo:sibling];
-
-    // The whole route depends on this one ordering fact, and AppKit is free to
-    // decline a requested position (NSThemeFrame manages its own children), so
-    // it is asserted rather than assumed. Failing here falls back to the GL
-    // route, which is correct-but-slower -- strictly better than shipping a
-    // window whose chrome is invisible.
-    const NSUInteger hostIndex = [siblingParent.subviews indexOfObject:hostView];
-    const NSUInteger qtIndex = [siblingParent.subviews indexOfObject:sibling];
-    if (hostIndex == NSNotFound || qtIndex == NSNotFound ||
-        hostIndex >= qtIndex) {
-      [hostView removeFromSuperview];
-      assignError(error,
-                  "layer host view could not be ordered beneath Qt's view");
-      return {};
-    }
-
-    // A new file rebuilds this layer from scratch, so the window's Vivid boost
-    // has to be re-applied here or the mode would silently switch itself off
-    // on every open while its toggle still read as on.
-    applyVividBoostToLayer(layer, vividBoostForWindow(window));
-
-    // Unrotated until a track says otherwise, but placed now: the container
-    // has just been sized and the video layer is still at its default zero
-    // bounds, so without this first call nothing would be drawn until the
-    // first resize.
     layoutVideoLayer(layer);
-
     auto impl = std::make_unique<Impl>();
     impl->hostView = hostView;
     impl->layer = layer;
     return std::shared_ptr<NativeLayerHostView>(
         new NativeLayerHostView(std::move(impl)));
   }
+}
+
+void* NativeLayerHostView::view() const noexcept {
+  return impl_ ? (__bridge void*)impl_->hostView : nullptr;
 }
 
 void* NativeLayerHostView::displayLayer() const noexcept {
