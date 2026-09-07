@@ -1,0 +1,22 @@
+{
+  "total": 97,
+  "native": 78,
+  "regressions": [],
+  "candidate_sha256": "50746f481f6dbdcf679c8bd8b890db9647008900905ee97da278cddf0d628266",
+  "baseline_native": 78,
+  "phase2c_native": 84,
+  "losses_vs_phase2c_opt_in": [
+    "/Users/wesleymaa/Movies/RustDesk/old/outgoing_175981962_20260208203414622_display0_h265.mp4",
+    "/Users/wesleymaa/Movies/RustDesk/old/outgoing_175981962_20260208220322285_display0_h265.mp4",
+    "/Users/wesleymaa/Movies/RustDesk/old/outgoing_175981962_20260208215604603_display0_h265.mp4",
+    "/Users/wesleymaa/Movies/RustDesk/old/outgoing_175981962_20260208205646393_display0_h265.mp4",
+    "/Users/wesleymaa/Movies/RustDesk/old/outgoing_175981962_20260208210701843_display0_h265.mp4",
+    "/Users/wesleymaa/Movies/RustDesk/old/outgoing_175981962_20260127121923093_display0_h265.mp4"
+  ],
+  "changed_assets": [],
+  "required_84_gate_passed": false,
+  "configuration": {
+    "avformat": false,
+    "avcodec": false
+  }
+}

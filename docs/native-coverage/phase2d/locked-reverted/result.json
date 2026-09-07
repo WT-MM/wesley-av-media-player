@@ -1,0 +1,20 @@
+{
+  "pid": 92801,
+  "rc": 0,
+  "identities": {
+    "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+    "WAM_NATIVE_BENCHMARK_RUN_ID": "2246f352-a986-4493-9dc8-3d00d8415e4d",
+    "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "8250854d2416b7a11cceeb5a9c0ce56318f69b6e476345a1cfd785e201505778",
+    "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "39649d0454e49ac226244e6e87a44de2d5e0810ebe0a08fd7e4f7f446afe4c94"
+  },
+  "expected_session_locked": true,
+  "captures": [
+    "WAM_TEST_WINDOWS count=1",
+    "WAM_TEST_WINDOW idx=0 media=1 paused=0 playing=1 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=1.6400 dur=4.0000 chrome=0 vfeedback=0 vnat=480x270 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=0.000 nsfs=0 vivid=0 vboost=1.000 hdr=0 edr=16.000 theater=0 dims=0 source=red.mp4",
+    "WAM_TEST_SUBTITLES idx=0 active=-1 visible=0 count=0 text=[] tracks=[] bitmap=0 bitmaprect=0.0000,0.0000,0.0000,0.0000",
+    "WAM_TEST_VIDEOGRAB idx=0 saved=1 path=/private/tmp/wam-phase2d/locked-reverted/display.png",
+    "WAM_TEST_WINDOWS count=1",
+    "WAM_TEST_WINDOW idx=0 media=1 paused=0 playing=1 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=2.8000 dur=4.0000 chrome=0 vfeedback=0 vnat=480x270 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=0.000 nsfs=0 vivid=0 vboost=1.000 hdr=0 edr=16.000 theater=0 dims=0 source=red.mp4",
+    "WAM_TEST_SUBTITLES idx=0 active=-1 visible=0 count=0 text=[] tracks=[] bitmap=0 bitmaprect=0.0000,0.0000,0.0000,0.0000"
+  ]
+}
