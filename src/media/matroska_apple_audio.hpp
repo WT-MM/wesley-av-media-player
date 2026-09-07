@@ -51,7 +51,8 @@ struct AppleAudioPacketFormat {
         (depth != 8 && depth != 16 && depth != 24 && depth != 32))) return {};
     out.codec = MediaCodec::Pcm;
     f.formatTag = 0x6c70636dU;
-    f.formatFlags = 8U | (floating ? 1U : 4U);
+    // Matroska integer PCM is unsigned at 8 bits and signed above 8 bits.
+    f.formatFlags = 8U | (floating ? 1U : depth == 8 ? 0U : 4U);
     f.framesPerPacket = 1;
     f.bitsPerChannel = depth;
     f.bytesPerFrame = channels * (depth / 8U);

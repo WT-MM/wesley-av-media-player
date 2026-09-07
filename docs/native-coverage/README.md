@@ -1,5 +1,13 @@
 # Native coverage — phase 0b, 2026-09-06
 
+The [v0.4.24 QA correction report](qa-v024/REPORT.md) supersedes the unsigned
+8-bit PCM and generic Matroska rate claims below. Historical phase-0b JSON
+receipts remain measurements of their recorded candidate, not of QA's
+v0.4.24 executable. The three previously missing `.log` receipts are regenerated
+for the QA correction candidate and identify that candidate explicitly.
+New campaigns use the [report template](REPORT-TEMPLATE.md), recording both
+shipped and measured executable SHA-256 values.
+
 Phase 0b adds hardware ProRes 4444/XQ and HEVC 4:2:2 presentation,
 Matroska Apple audio carriage, and bounded, supersedable long-GOP seeks.
 HE-AAC/v2 and HEVC 4:4:4 remain explicitly refused for the reasons below.
@@ -31,8 +39,9 @@ Compressed specimens are retained locally under `test-media/native-phase0b/`
 are in the [video](phase0b/video-proof.json), [audio](phase0b/audio-proof.json),
 and [HE-AAC refusal](phase0b/he-aac-refusals.json) receipts. The integration tests
 regenerate their own specimens under `/private/tmp`; they do not depend on
-ignored local media. PCM admission also validates 8/24/32-bit packed integer
-layouts; those depths do not have full decoded chirp specimens in this run.
+ignored local media. The original run validated descriptors for 8/24/32-bit packed integer
+layouts without full decoded specimens. QA subsequently confirmed and fixed an
+8-bit signedness defect; the correction report contains decoded sample proof.
 Float64, nonstandard MS coefficients, discontinuous packet grids and unsupported
 packet sizes remain closed.
 
@@ -147,15 +156,19 @@ bytes. Opaque single-plane RGB10 fits below that bound. The ten-surface count
 and derived 16-window process count are unchanged. Every original budget
 assertion remains, with explicit exact-number assertions added for both families.
 
-## Verification
+## Historical verification
 
 - Reconfigured after CMake changes; `cmake --build build --parallel` passes.
-- First full suite: **82/82**. Final restored build: **82/82**, 94.43 s;
-  [final log](phase0b/ctest-final.log). No ctest run overlapped our linker.
+- The original campaign reported **82/82** for both full runs, with the final
+  run taking 94.43 s. Its original log was missing. The [regenerated log](phase0b/ctest-final.log)
+  instead records **92/92** for the QA correction candidate. No ctest run
+  overlapped our linker.
 - **19 temporary-revert groups**, **29 test failures** and one compile-time
   budget-invariant failure; each original working-tree file was restored
   byte-for-byte and the passing test repeated. [Receipts](phase0b/revert-proofs.json)
-  and [executed procedure](phase0b/revert-proofs.py). That procedure records this
+  and [executed procedure](phase0b/revert-proofs.py). Some historical groups
+  pinned helpers or source text; the correction report separately identifies
+  runtime proofs. That procedure records this
   campaign's scratch paths and skips groups already present in its results file;
   use a fresh results file for a new campaign. A failed decoder-harness
   invocation without its required mode was corrected before counting that proof.
@@ -165,7 +178,7 @@ assertion remains, with explicit exact-number assertions added for both families
   supersession, packed-RGB requests, scene-graph refusals, progress and budget.
 - Final quiet corpus: **78/97 native**, baseline **78/97**, **zero regressions**.
   [Per-file results](phase0b/corpus-results.json), [TSV](phase0b/corpus-results.tsv),
-  [campaign log](phase0b/corpus.log). Every launch used the final candidate hash
+  [regenerated campaign log](phase0b/corpus.log). The original campaign used the candidate hash
   recorded in [verification](phase0b/verification.json), all four identity
   variables, scratch HOME, muted/background geometry and a six-second dwell.
 - No git staging, commits, stash, reset or checkout. The maintainer owns acceptance.

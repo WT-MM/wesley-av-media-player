@@ -1,0 +1,7 @@
+{
+  "executable_sha256": "acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354",
+  "total": 97,
+  "native": 78,
+  "baseline_native": 78,
+  "regressions": []
+}

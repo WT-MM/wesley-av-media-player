@@ -1,0 +1,13 @@
+{
+  "source_revision": "bba70600648a3852b6c3c6e16f31cd6f1bb4c028",
+  "source_description": "v0.4.25-1-gbba7060",
+  "shipped_executable": "/Applications/WAM.app/Contents/MacOS/WAM",
+  "shipped_executable_sha256": "6f04ca2a1c8f5bbab993a2ecd0f92f08aed1d7b3aafe43d6691891e19c1f4507",
+  "shipped_executable_launched": false,
+  "historical_phase0b_executable_sha256": "6ef3943586cf398251825bf6d43537aa5e4c87cf3383d19142bbabd475b503da",
+  "qa_report_executable_sha256": "89f06305b733e6f390e7d86d848001dbd18eb734bbce3cd4f180d87160f75fdd",
+  "qa_report_source_revision": "b026a48",
+  "measured_executable": "/Users/wesleymaa/Documents/WAM/build/WAM.app/Contents/MacOS/WAM",
+  "measured_executable_sha256": "acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354",
+  "measured_executable_matches_current_installed": false
+}

@@ -1,3 +1,4 @@
+#include "media/audio_track_admission.hpp"
 #include "media/native_seek_progress.hpp"
 #include "native_media_session.hpp"
 
@@ -251,7 +252,7 @@ struct NativeMediaSessionCancellation final {
   std::atomic<MediaGeneration> generation{0};
 };
 
-class NativeV1AdmissionSource final : public media::MediaSource {
+class NativeV1AdmissionSource final : public media::MediaSource, public media::AudioTrackRetrySource {
  public:
   explicit NativeV1AdmissionSource(
       std::unique_ptr<media::MediaSource> source,
@@ -285,6 +286,28 @@ class NativeV1AdmissionSource final : public media::MediaSource {
       MediaGeneration generation) override {
     media::MediaSourceOpenOutcome result =
         source_->openLocalFile(path, options, generation);
+    return admit(std::move(result));
+  }
+
+  media::MediaSourceOpenOutcome retryAudioTrack(
+      const std::filesystem::path& path, const media::MediaSourceOpenOptions& options,
+      MediaGeneration generation, media::MediaTrackId rejected) override {
+    media::MediaSourceOpenOutcome result;
+    result.generation = generation;
+    if (cancellation_->generation.load(std::memory_order_acquire) == generation) {
+      result.status = media::MediaSourceOpenStatus::Cancelled;
+      return result;
+    }
+    auto* retry = dynamic_cast<media::AudioTrackRetrySource*>(source_.get());
+    if (!retry) {
+      result.status = media::MediaSourceOpenStatus::Unsupported;
+      result.error = "AudioTrackRetryUnavailable";
+      return result;
+    }
+    return admit(retry->retryAudioTrack(path, options, generation, rejected));
+  }
+
+  media::MediaSourceOpenOutcome admit(media::MediaSourceOpenOutcome result) {
     if (result.status != media::MediaSourceOpenStatus::Ready) {
       return result;
     }
@@ -3345,6 +3368,7 @@ if (result != NativeAudioSessionProgress::Done) {
         }
         if (commitInFlight()) {
           progressCommitSeek();
+          publishMetrics();
           if (stopLatched) {
             progressStop();
           }
@@ -3365,6 +3389,7 @@ if (result != NativeAudioSessionProgress::Done) {
         }
         if (commitInFlight()) {
           progressCommitSeek();
+          publishMetrics();
           continue;
         }
         progressAudioControls();

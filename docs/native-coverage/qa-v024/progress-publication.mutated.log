@@ -1,0 +1,6 @@
+Traceback (most recent call last):
+  File "/Users/wesleymaa/Documents/WAM/tests/native_coverage_wiring_test.py", line 130, in <module>
+    main()
+  File "/Users/wesleymaa/Documents/WAM/tests/native_coverage_wiring_test.py", line 123, in main
+    assert any(x['notice'].startswith('Seeking: decoded ') for x in receipt['notices']), receipt['notices']
+AssertionError: [{'error': '', 'notice': '', 'record': 'notice_state'}]

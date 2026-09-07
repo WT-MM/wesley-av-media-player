@@ -1562,6 +1562,32 @@ NativeAudioSession::quarantineFacts() noexcept {
   return result;
 }
 
+bool NativeAudioSession::resetRejectedConfiguration(
+    media::MediaGeneration generation) noexcept {
+  if (!control_ || control_->generation != generation || control_->configured ||
+      (control_->state != NativeAudioSessionState::Failed &&
+       control_->state != NativeAudioSessionState::Unsupported)) return false;
+  NativeAudioSessionDependencies dependencies;
+  dependencies.externalLifetime = control_->externalLifetime;
+  dependencies.hostClock = control_->hostClock;
+  dependencies.outputCalls = control_->outputCalls;
+  dependencies.outputWake = control_->outputWake;
+  const auto gain = control_->requestedGain;
+  const auto muted = control_->requestedMuted;
+  const auto rate = control_->requestedRate;
+  const auto preservePitch = control_->requestedPreservePitch;
+  // No successful configure, sample submission or output start precedes this
+  // replacement. A quiescing close keeps its graph for terminal retirement.
+  if (close() != media::NativeMediaConsumerProgress::Done) return false;
+  auto replacement = create(generation, std::move(dependencies));
+  if (!replacement) return false;
+  control_.swap(replacement->control_);
+  static_cast<void>(setGain(gain));
+  static_cast<void>(setMuted(muted));
+  static_cast<void>(setRate(rate, preservePitch));
+  return true;
+}
+
 media::NativeMediaConsumeResult NativeAudioSession::configure(
     const media::MediaTrackDescriptor& track,
     media::MediaGeneration generation,

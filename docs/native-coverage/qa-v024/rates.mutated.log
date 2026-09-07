@@ -1,0 +1,16 @@
+Traceback (most recent call last):
+  File "/Users/wesleymaa/Documents/WAM/tests/native_coverage_integration.py", line 211, in <module>
+    if __name__=='__main__': main()
+                             ^^^^^^
+  File "/Users/wesleymaa/Documents/WAM/tests/native_coverage_integration.py", line 188, in main
+    decode(path,rate,rate*2,bit_exact=True)
+  File "/Users/wesleymaa/Documents/WAM/tests/native_coverage_integration.py", line 105, in decode
+    result = run([a.audio, path, pcm, target, *(["origin"] if origin else [])])
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/wesleymaa/Documents/WAM/tests/native_coverage_integration.py", line 18, in run
+    raise AssertionError(f'{argv}\nrc={result.returncode}\n{result.stdout}\n{result.stderr}')
+AssertionError: ['build/wam_native_coverage_audio_probe', PosixPath('/private/tmp/wam-native-coverage-_d3ejy64/pcm_s16le-8000.mka'), PosixPath('/private/tmp/wam-native-coverage-_d3ejy64/pcm_s16le-8000.mka-0.f32'), 0]
+rc=1
+
+open: AudioCodecConfigurationRefused; candidates: [track 1 (A_PCM/INT/LIT): AudioCodecConfigurationRefused] (CodecConfiguration)
+

@@ -1,0 +1,13 @@
+{"file": "opus-8000.webm", "asset_sha256": "d88df0f9bb7d2dcf953a61e665bcd80127f2a24ac92ae1ea9d327647a09db2ea", "target": 0, "frames": 192000, "rms": 1.685805284790849e-08, "maximum": 1.043081283569336e-07, "best_lag": 0, "diagnostic": "track=1 rate=48000 frames=192000 first=0 decoded=192840 trim=840 exact=1 drained=1 error="}
+{"file": "opus-24000.webm", "asset_sha256": "6b282bb8803bce2ef6e55195aa98bc26790d8b56018f008f3bb45d52448da4f6", "target": 0, "frames": 192000, "rms": 1.7221881479933962e-08, "maximum": 1.043081283569336e-07, "best_lag": 0, "diagnostic": "track=1 rate=48000 frames=192000 first=0 decoded=192840 trim=840 exact=1 drained=1 error="}
+{"file": "opus-48000.webm", "asset_sha256": "c2381386e67aeafd28240d0424c1698f4aded0401971a339e46e45b7ed426d62", "target": 0, "frames": 192000, "rms": 1.9558430914306465e-08, "maximum": 1.430511474609375e-06, "best_lag": 0, "diagnostic": "track=1 rate=48000 frames=192000 first=0 decoded=192840 trim=840 exact=1 drained=1 error="}
+{"file": "opus-output-48000.webm", "asset_sha256": "559123326dfa70052bd7790abe35be7cd4e4f9b871c342c0b88b05afe11dcc52", "target": 0, "frames": 192000, "rms": 1.9558430914306465e-08, "maximum": 1.430511474609375e-06, "best_lag": 0, "diagnostic": "track=1 rate=48000 frames=192000 first=0 decoded=192840 trim=840 exact=1 drained=1 error="}
+Traceback (most recent call last):
+  File "/Users/wesleymaa/Documents/WAM/tests/native_coverage_integration.py", line 211, in <module>
+    if __name__=='__main__': main()
+                             ^^^^^^
+  File "/Users/wesleymaa/Documents/WAM/tests/native_coverage_integration.py", line 152, in main
+    assert 'OpusOutputSampleRateUnsupported' in result.stdout, result.stdout
+AssertionError: status=1 error=AudioCodecConfigurationRefused (CodecConfiguration)
+decode_start=0/0
+

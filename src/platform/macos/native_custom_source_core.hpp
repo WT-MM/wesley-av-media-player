@@ -501,7 +501,15 @@ class NativeCustomSourceCore {
     std::shared_ptr<const AssetContext> context = existingContext;
     if (context == nullptr) {
       const typename Traits::PrepareOutcome prepared =
-          Traits::prepare(requestedPath, requestedOptions, cancellation());
+          [&] {
+            if constexpr (requires { static_cast<Derived*>(this)->prepareAsset(
+                requestedPath, requestedOptions, cancellation()); }) {
+              return static_cast<Derived*>(this)->prepareAsset(
+                  requestedPath, requestedOptions, cancellation());
+            } else {
+              return Traits::prepare(requestedPath, requestedOptions, cancellation());
+            }
+          }();
       started.status = preparedStatus(prepared.status);
       if (prepared.status != DemuxStatus::Ready || prepared.asset == nullptr) {
         started.error = Traits::demuxErrorMessage(

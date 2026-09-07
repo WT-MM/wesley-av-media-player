@@ -336,8 +336,9 @@ buildAacLcEsDescriptorCookie(const AacLcConfiguration &configuration) noexcept {
 }
 
 std::optional<MediaTime>
-aacAccessUnitGridTime(AacFrameGridPosition position) noexcept {
-  if (!position.origin.valid() || !supportedSampleRate(position.sampleRate) ||
+audioPacketGridTime(AacFrameGridPosition position) noexcept {
+  if (!position.origin.valid() || position.sampleRate == 0 ||
+      position.sampleRate > MediaSourceLimits::kHardMaximumAudioSampleRate ||
       position.samplesPerAccessUnit == 0U) {
     return std::nullopt;
   }
@@ -350,7 +351,8 @@ aacAccessUnitGridTime(AacFrameGridPosition position) noexcept {
       static_cast<WideUnsigned>(position.samplesPerAccessUnit) *
       static_cast<WideUnsigned>(
           static_cast<std::uint32_t>(position.origin.timescale));
-  // The largest supported operands require at most 106 signed bits.
+  // The ordinal product is below 2^127 by more than 2^95; the origin
+  // term is below 2^82 at the source sample-rate ceiling.
   const WideSigned numerator =
       originNumerator + static_cast<WideSigned>(ordinalNumerator);
   const WideUnsigned denominator =
@@ -385,7 +387,7 @@ nearestMatroskaTick(AacFrameGridPosition position,
   if (timestampScaleNanoseconds == 0U) {
     return std::nullopt;
   }
-  const auto exactTime = aacAccessUnitGridTime(position);
+  const auto exactTime = audioPacketGridTime(position);
   if (!exactTime) {
     return std::nullopt;
   }
@@ -433,11 +435,12 @@ bool matroskaTickMatchesAacAccessUnit(
   return expected.has_value() && *expected == observedTick;
 }
 
-std::optional<AacTickGridProjection> nearestAacAccessUnitForMatroskaTick(
+std::optional<AacTickGridProjection> nearestAudioPacketForMatroskaTick(
     std::int64_t observedTick, MediaTime origin, std::uint32_t sampleRate,
     std::uint64_t timestampScaleNanoseconds,
     std::uint32_t samplesPerAccessUnitValue) noexcept {
-  if (!origin.valid() || !supportedSampleRate(sampleRate) ||
+  if (!origin.valid() || sampleRate == 0 ||
+      sampleRate > MediaSourceLimits::kHardMaximumAudioSampleRate ||
       timestampScaleNanoseconds == 0U || samplesPerAccessUnitValue == 0U) {
     return std::nullopt;
   }
@@ -511,7 +514,7 @@ std::optional<AacTickGridProjection> nearestAacAccessUnitForMatroskaTick(
   const auto ordinal = static_cast<std::uint64_t>(roundedOrdinal->magnitude);
   const AacFrameGridPosition grid{origin, ordinal, sampleRate,
                                   samplesPerAccessUnitValue};
-  const auto exactPresentationTime = aacAccessUnitGridTime(grid);
+  const auto exactPresentationTime = audioPacketGridTime(grid);
   const auto quantizedGridTick =
       nearestMatroskaTick(grid, timestampScaleNanoseconds);
   if (!exactPresentationTime || !quantizedGridTick) {
@@ -530,6 +533,21 @@ std::optional<AacTickGridProjection> nearestAacAccessUnitForMatroskaTick(
   return AacTickGridProjection{ordinal, *exactPresentationTime,
                                *quantizedGridTick, signedResidual,
                                signedResidual == 0};
+}
+
+std::optional<MediaTime>
+aacAccessUnitGridTime(AacFrameGridPosition position) noexcept {
+  if (!supportedSampleRate(position.sampleRate)) return std::nullopt;
+  return audioPacketGridTime(position);
+}
+
+std::optional<AacTickGridProjection> nearestAacAccessUnitForMatroskaTick(
+    std::int64_t observedTick, MediaTime origin, std::uint32_t sampleRate,
+    std::uint64_t timestampScaleNanoseconds,
+    std::uint32_t samplesPerAccessUnitValue) noexcept {
+  if (!supportedSampleRate(sampleRate)) return std::nullopt;
+  return nearestAudioPacketForMatroskaTick(observedTick, origin, sampleRate,
+      timestampScaleNanoseconds, samplesPerAccessUnitValue);
 }
 
 } // namespace wam::media::matroska

@@ -3095,7 +3095,8 @@ class ProductionGeneration final : public AVFoundationGeneration {
           for (std::size_t i = 0; i < trackCount; ++i) {
             AVAssetTrack* candidate = allTracks[i];
             candidates[i] = {stableTrackId(candidate, 0),
-                             trackKind(candidate) == MediaTrackKind::Audio,
+                             trackKind(candidate) == MediaTrackKind::Audio &&
+                                 !request_.rejectedAudio.contains(stableTrackId(candidate, 0)),
                              candidate == firstAudioTrack};
           }
           const auto selected = media::selectAdmittedAudioTrack(
@@ -4881,7 +4882,11 @@ AVFoundationMediaSource::~AVFoundationMediaSource() { close(); }
 
 bool AVFoundationMediaSource::armOperation(
     MediaGeneration generation) noexcept {
-  return impl_ != nullptr && impl_->arm(generation);
+  const bool armed = impl_ != nullptr && impl_->arm(generation);
+  if (armed) {
+    rejectedAudio_ = {};
+  }
+  return armed;
 }
 
 media::MediaSourceOpenOutcome AVFoundationMediaSource::openLocalFile(
@@ -4916,6 +4921,7 @@ media::MediaSourceOpenOutcome AVFoundationMediaSource::openLocalFile(
     AVFoundationGenerationRequest request;
     request.path = path;
     request.options = options;
+    request.rejectedAudio = rejectedAudio_;
     request.generation = generation;
     if (options.initialPosition) {
       request.target = options.initialPosition->target;
@@ -4951,6 +4957,30 @@ media::MediaSourceOpenOutcome AVFoundationMediaSource::openLocalFile(
     outcome.error = "AVFoundation open raised an unknown exception";
   }
   return outcome;
+}
+
+media::MediaSourceOpenOutcome AVFoundationMediaSource::retryAudioTrack(
+    const std::filesystem::path& path, const media::MediaSourceOpenOptions& options,
+    media::MediaGeneration generation, media::MediaTrackId rejected) {
+  if (options.selection.preferredAudio || !impl_->descriptor ||
+      impl_->descriptor->selectedAudio != rejected || impl_->generation != generation ||
+      !rejectedAudio_.add(rejected)) {
+    media::MediaSourceOpenOutcome out;
+    out.generation = generation;
+    out.error = "AudioTrackRetryExhausted";
+    return out;
+  }
+  impl_->retireActive();
+  impl_->clearHeads();
+  impl_->descriptor.reset();
+  impl_->assetContext.reset();
+  impl_->open = false;
+  impl_->openSnapshot.store(false, std::memory_order_release);
+  // Retry is part of the same cold open; cancellation and its generation
+  // high-water survive source retirement and cannot be cleared by retry.
+  impl_->armedGeneration = generation;
+  impl_->operationGeneration.store(generation, std::memory_order_release);
+  return openLocalFile(path, options, generation);
 }
 
 media::MediaSourceSeekOutcome AVFoundationMediaSource::seek(

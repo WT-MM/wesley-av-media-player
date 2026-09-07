@@ -1,0 +1,851 @@
+[
+  {
+    "argv": [
+      "/Users/wesleymaa/Documents/WAM/build/WAM.app/Contents/MacOS/WAM",
+      "/private/tmp/wam-adversarial2/media/retry-backend-three.mka"
+    ],
+    "env": {
+      "HOME": "/private/tmp/wam-qa-fixes/final-gui/runs/retry-backend-three.mka/home",
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "99b5ade4-fd23-4511-914f-13dcb3091507",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "36ce39eddecbfa9ca113b93d7be7f4b848dd7719405493d08eb8e5d96ac6814e",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354",
+      "WAM_TEST_BACKGROUND": "1",
+      "WAM_TEST_MUTED": "1",
+      "WAM_TEST_GEOMETRY": "480x270+2400+1000",
+      "WAM_PLAYBACK_METRICS_PATH": "/private/tmp/wam-qa-fixes/final-gui/runs/retry-backend-three.mka/metrics.jsonl",
+      "WAM_TEST_QUIT_AFTER_MS": "5000",
+      "WAM_TEST_WINDOW_SCRIPT": "report@1500,report@2500"
+    },
+    "pid": 92260,
+    "name": "retry-backend-three.mka",
+    "asset_sha256": "36ce39eddecbfa9ca113b93d7be7f4b848dd7719405493d08eb8e5d96ac6814e",
+    "executable_sha256": "acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354",
+    "summary": {
+      "name": "retry-backend-three.mka",
+      "pid": 92260,
+      "rc": 0,
+      "rss_max_kib": 139872,
+      "events": [
+        {
+          "event": "open_requested",
+          "generation": 0,
+          "target": null,
+          "ns": 456038393841125
+        },
+        {
+          "event": "native_selected",
+          "generation": 1,
+          "target": 0,
+          "ns": 456038507378833
+        },
+        {
+          "event": "prepared",
+          "generation": 1,
+          "target": null,
+          "ns": 456038611468750
+        },
+        {
+          "event": "started",
+          "generation": 1,
+          "target": null,
+          "ns": 456038645832708
+        }
+      ],
+      "diagnostics": [
+        "WAM_TEST_WINDOW idx=0 media=1 paused=0 playing=1 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=1.1947 dur=2.0010 chrome=0 vfeedback=0 vnat=0x0 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=0.000 nsfs=0 vivid=0 vboost=1.000 hdr=0 edr=1.000 theater=0 dims=0 source=retry-backend-three.mka",
+        "WAM_TEST_WINDOW idx=0 media=1 paused=1 playing=0 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=2.0000 dur=2.0010 chrome=0 vfeedback=0 vnat=0x0 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=0.000 nsfs=0 vivid=0 vboost=1.000 hdr=0 edr=1.000 theater=0 dims=0 source=retry-backend-three.mka"
+      ]
+    },
+    "stderr": "WAM_TEST_WINDOWS count=1\nWAM_TEST_WINDOW idx=0 media=1 paused=0 playing=1 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=1.1947 dur=2.0010 chrome=0 vfeedback=0 vnat=0x0 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=0.000 nsfs=0 vivid=0 vboost=1.000 hdr=0 edr=1.000 theater=0 dims=0 source=retry-backend-three.mka\nWAM_TEST_SUBTITLES idx=0 active=-1 visible=0 count=0 text=[] tracks=[] bitmap=0 bitmaprect=0.0000,0.0000,0.0000,0.0000\nWAM_TEST_WINDOWS count=1\nWAM_TEST_WINDOW idx=0 media=1 paused=1 playing=0 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=2.0000 dur=2.0010 chrome=0 vfeedback=0 vnat=0x0 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=0.000 nsfs=0 vivid=0 vboost=1.000 hdr=0 edr=1.000 theater=0 dims=0 source=retry-backend-three.mka\nWAM_TEST_SUBTITLES idx=0 active=-1 visible=0 count=0 text=[] tracks=[] bitmap=0 bitmaprect=0.0000,0.0000,0.0000,0.0000\n{\"schema\":\"wam.native.benchmark.v2\",\"record\":\"stream_header\",\"format_version\":2,\"run_id\":\"99b5ade4-fd23-4511-914f-13dcb3091507\",\"process_id\":92260,\"process_start_abstime\":9983284008423,\"asset_sha256\":\"36ce39eddecbfa9ca113b93d7be7f4b848dd7719405493d08eb8e5d96ac6814e\",\"candidate_id\":\"acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354\"}\n{\"schema\":\"wam.native.benchmark.v2\",\"record\":\"batch_begin\",\"batch\":1,\"event_count\":4,\"first_sequence\":1,\"last_sequence\":4,\"previous_chain_sha256\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"run_id\":\"99b5ade4-fd23-4511-914f-13dcb3091507\",\"process_id\":92260,\"process_start_abstime\":9983284008423,\"asset_sha256\":\"36ce39eddecbfa9ca113b93d7be7f4b848dd7719405493d08eb8e5d96ac6814e\",\"candidate_id\":\"acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354\"}\n{\"schema\":\"wam.native.benchmark.v2\",\"record\":\"event\",\"batch\":1,\"event_sequence\":1,\"event\":\"open_requested\",\"monotonic_ns\":456038393841125,\"run_id\":\"99b5ade4-fd23-4511-914f-13dcb3091507\",\"process_id\":92260,\"process_start_abstime\":9983284008423,\"asset_sha256\":\"36ce39eddecbfa9ca113b93d7be7f4b848dd7719405493d08eb8e5d96ac6814e\",\"candidate_id\":\"acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354\",\"route\":\"undecided\",\"route_proof\":false,\"source_key\":1,\"attempt\":0,\"serial\":0,\"generation\":0,\"gesture\":0,\"request\":0,\"draw_sequence\":0,\"target_seconds\":null,\"libmpv_initialized\":false}\n{\"schema\":\"wam.native.benchmark.v2\",\"record\":\"event\",\"batch\":1,\"event_sequence\":2,\"event\":\"native_selected\",\"monotonic_ns\":456038507378833,\"run_id\":\"99b5ade4-fd23-4511-914f-13dcb3091507\",\"process_id\":92260,\"process_start_abstime\":9983284008423,\"asset_sha256\":\"36ce39eddecbfa9ca113b93d7be7f4b848dd7719405493d08eb8e5d96ac6814e\",\"candidate_id\":\"acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354\",\"route\":\"native\",\"route_proof\":true,\"source_key\":1,\"attempt\":1,\"serial\":1,\"generation\":1,\"gesture\":0,\"request\":0,\"draw_sequence\":0,\"target_seconds\":0,\"libmpv_initialized\":false}\n{\"schema\":\"wam.native.benchmark.v2\",\"record\":\"event\",\"batch\":1,\"event_sequence\":3,\"event\":\"prepared\",\"monotonic_ns\":456038611468750,\"run_id\":\"99b5ade4-fd23-4511-914f-13dcb3091507\",\"process_id\":92260,\"process_start_abstime\":9983284008423,\"asset_sha256\":\"36ce39eddecbfa9ca113b93d7be7f4b848dd7719405493d08eb8e5d96ac6814e\",\"candidate_id\":\"acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354\",\"route\":\"native\",\"route_proof\":false,\"source_key\":1,\"attempt\":1,\"serial\":1,\"generation\":1,\"gesture\":0,\"request\":0,\"draw_sequence\":0,\"target_seconds\":null,\"libmpv_initialized\":false}\n{\"schema\":\"wam.native.benchmark.v2\",\"record\":\"event\",\"batch\":1,\"event_sequence\":4,\"event\":\"started\",\"monotonic_ns\":456038645832708,\"run_id\":\"99b5ade4-fd23-4511-914f-13dcb3091507\",\"process_id\":92260,\"process_start_abstime\":9983284008423,\"asset_sha256\":\"36ce39eddecbfa9ca113b93d7be7f4b848dd7719405493d08eb8e5d96ac6814e\",\"candidate_id\":\"acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354\",\"route\":\"native\",\"route_proof\":false,\"source_key\":0,\"attempt\":1,\"serial\":2,\"generation\":1,\"gesture\":0,\"request\":0,\"draw_sequence\":0,\"target_seconds\":null,\"libmpv_initialized\":false}\n{\"schema\":\"wam.native.benchmark.v2\",\"record\":\"batch_commit\",\"batch\":1,\"event_count\":4,\"first_sequence\":1,\"last_sequence\":4,\"payload_sha256\":\"9ef81f8fcac24a6bda269412d076baf8137133a200b74143c70cdb8a8c01d5a6\",\"chain_sha256\":\"5c72c6d6f828769a5d4803a1255ea55922663414da62cbfd850f9765bf2cebee\",\"run_id\":\"99b5ade4-fd23-4511-914f-13dcb3091507\",\"process_id\":92260,\"process_start_abstime\":9983284008423,\"asset_sha256\":\"36ce39eddecbfa9ca113b93d7be7f4b848dd7719405493d08eb8e5d96ac6814e\",\"candidate_id\":\"acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354\"}\n{\"schema\":\"wam.native.benchmark.v2\",\"record\":\"stream_commit\",\"batch_count\":1,\"event_count\":4,\"first_sequence\":1,\"last_sequence\":4,\"chain_sha256\":\"5c72c6d6f828769a5d4803a1255ea55922663414da62cbfd850f9765bf2cebee\",\"run_id\":\"99b5ade4-fd23-4511-914f-13dcb3091507\",\"process_id\":92260,\"process_start_abstime\":9983284008423,\"asset_sha256\":\"36ce39eddecbfa9ca113b93d7be7f4b848dd7719405493d08eb8e5d96ac6814e\",\"candidate_id\":\"acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354\"}\n",
+    "metrics": [
+      {
+        "record": "playback_sample",
+        "session_epoch": 1788756157135919000,
+        "t_mono_ns": 456039312977125,
+        "media_seconds": null,
+        "drawn_frames": null,
+        "submitted_frames": null,
+        "superseded_frames": null,
+        "discarded_late_frames": null,
+        "audio_underrun_callbacks": null,
+        "audio_clock_advanced_underruns": null,
+        "audio_retired_late_frames": null,
+        "audio_callbacks": null,
+        "audio_rendered_frames": null,
+        "clock_rate": null,
+        "paused": false
+      },
+      {
+        "record": "playback_sample",
+        "session_epoch": 1788756157135919000,
+        "t_mono_ns": 456040362502291,
+        "media_seconds": 1.677631067344548,
+        "drawn_frames": 0,
+        "submitted_frames": 0,
+        "superseded_frames": 0,
+        "discarded_late_frames": 0,
+        "audio_underrun_callbacks": 0,
+        "audio_clock_advanced_underruns": 0,
+        "audio_retired_late_frames": 0,
+        "audio_callbacks": 80,
+        "audio_rendered_frames": 75264,
+        "clock_rate": 1.0001012456375258,
+        "paused": false
+      },
+      {
+        "record": "playback_sample",
+        "session_epoch": 1788756157135919000,
+        "t_mono_ns": 456041413052875,
+        "media_seconds": 1.9817992189252867,
+        "drawn_frames": 0,
+        "submitted_frames": 0,
+        "superseded_frames": 0,
+        "discarded_late_frames": 0,
+        "audio_underrun_callbacks": 1,
+        "audio_clock_advanced_underruns": 0,
+        "audio_retired_late_frames": 0,
+        "audio_callbacks": 95,
+        "audio_rendered_frames": 88200,
+        "clock_rate": 1.0000992925360304,
+        "paused": false
+      },
+      {
+        "record": "playback_sample",
+        "session_epoch": 1788756157135919000,
+        "t_mono_ns": 456042462978333,
+        "media_seconds": 1.9817992189252867,
+        "drawn_frames": 0,
+        "submitted_frames": 0,
+        "superseded_frames": 0,
+        "discarded_late_frames": 0,
+        "audio_underrun_callbacks": 1,
+        "audio_clock_advanced_underruns": 0,
+        "audio_retired_late_frames": 0,
+        "audio_callbacks": 95,
+        "audio_rendered_frames": 88200,
+        "clock_rate": 1.0000992925360304,
+        "paused": false
+      }
+    ],
+    "rendered_frames": 88200
+  },
+  {
+    "argv": [
+      "/Users/wesleymaa/Documents/WAM/build/WAM.app/Contents/MacOS/WAM",
+      "/private/tmp/wam-adversarial2/media/pcm_s16le-32000.mka"
+    ],
+    "env": {
+      "HOME": "/private/tmp/wam-qa-fixes/final-gui/runs/pcm_s16le-32000.mka/home",
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "27f7e928-ddcd-49f2-a7db-d76a46a35af8",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "41c45f4dd5579beabf85b46fa53431d10798662be1d9844cf947816fb2f93ad2",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354",
+      "WAM_TEST_BACKGROUND": "1",
+      "WAM_TEST_MUTED": "1",
+      "WAM_TEST_GEOMETRY": "480x270+2400+1000",
+      "WAM_PLAYBACK_METRICS_PATH": "/private/tmp/wam-qa-fixes/final-gui/runs/pcm_s16le-32000.mka/metrics.jsonl",
+      "WAM_TEST_QUIT_AFTER_MS": "5000",
+      "WAM_TEST_WINDOW_SCRIPT": "report@1500,report@2500"
+    },
+    "pid": 92325,
+    "name": "pcm_s16le-32000.mka",
+    "asset_sha256": "41c45f4dd5579beabf85b46fa53431d10798662be1d9844cf947816fb2f93ad2",
+    "executable_sha256": "acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354",
+    "summary": {
+      "name": "pcm_s16le-32000.mka",
+      "pid": 92325,
+      "rc": 0,
+      "rss_max_kib": 138624,
+      "events": [
+        {
+          "event": "open_requested",
+          "generation": 0,
+          "target": null,
+          "ns": 456043636686458
+        },
+        {
+          "event": "native_selected",
+          "generation": 1,
+          "target": 0,
+          "ns": 456043638237833
+        },
+        {
+          "event": "prepared",
+          "generation": 1,
+          "target": null,
+          "ns": 456043794674166
+        },
+        {
+          "event": "started",
+          "generation": 1,
+          "target": null,
+          "ns": 456043827425083
+        }
+      ],
+      "diagnostics": [
+        "WAM_TEST_WINDOW idx=0 media=1 paused=0 playing=1 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=1.2535 dur=2.0000 chrome=0 vfeedback=0 vnat=0x0 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=0.000 nsfs=0 vivid=0 vboost=1.000 hdr=0 edr=1.000 theater=0 dims=0 source=pcm_s16le-32000.mka",
+        "WAM_TEST_WINDOW idx=0 media=1 paused=1 playing=0 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=2.0000 dur=2.0000 chrome=0 vfeedback=0 vnat=0x0 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=0.000 nsfs=0 vivid=0 vboost=1.000 hdr=0 edr=1.000 theater=0 dims=0 source=pcm_s16le-32000.mka"
+      ]
+    },
+    "stderr": "WAM_TEST_WINDOWS count=1\nWAM_TEST_WINDOW idx=0 media=1 paused=0 playing=1 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=1.2535 dur=2.0000 chrome=0 vfeedback=0 vnat=0x0 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=0.000 nsfs=0 vivid=0 vboost=1.000 hdr=0 edr=1.000 theater=0 dims=0 source=pcm_s16le-32000.mka\nWAM_TEST_SUBTITLES idx=0 active=-1 visible=0 count=0 text=[] tracks=[] bitmap=0 bitmaprect=0.0000,0.0000,0.0000,0.0000\nWAM_TEST_WINDOWS count=1\nWAM_TEST_WINDOW idx=0 media=1 paused=1 playing=0 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=2.0000 dur=2.0000 chrome=0 vfeedback=0 vnat=0x0 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=0.000 nsfs=0 vivid=0 vboost=1.000 hdr=0 edr=1.000 theater=0 dims=0 source=pcm_s16le-32000.mka\nWAM_TEST_SUBTITLES idx=0 active=-1 visible=0 count=0 text=[] tracks=[] bitmap=0 bitmaprect=0.0000,0.0000,0.0000,0.0000\n{\"schema\":\"wam.native.benchmark.v2\",\"record\":\"stream_header\",\"format_version\":2,\"run_id\":\"27f7e928-ddcd-49f2-a7db-d76a46a35af8\",\"process_id\":92325,\"process_start_abstime\":9983409724210,\"asset_sha256\":\"41c45f4dd5579beabf85b46fa53431d10798662be1d9844cf947816fb2f93ad2\",\"candidate_id\":\"acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354\"}\n{\"schema\":\"wam.native.benchmark.v2\",\"record\":\"batch_begin\",\"batch\":1,\"event_count\":4,\"first_sequence\":1,\"last_sequence\":4,\"previous_chain_sha256\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"run_id\":\"27f7e928-ddcd-49f2-a7db-d76a46a35af8\",\"process_id\":92325,\"process_start_abstime\":9983409724210,\"asset_sha256\":\"41c45f4dd5579beabf85b46fa53431d10798662be1d9844cf947816fb2f93ad2\",\"candidate_id\":\"acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354\"}\n{\"schema\":\"wam.native.benchmark.v2\",\"record\":\"event\",\"batch\":1,\"event_sequence\":1,\"event\":\"open_requested\",\"monotonic_ns\":456043636686458,\"run_id\":\"27f7e928-ddcd-49f2-a7db-d76a46a35af8\",\"process_id\":92325,\"process_start_abstime\":9983409724210,\"asset_sha256\":\"41c45f4dd5579beabf85b46fa53431d10798662be1d9844cf947816fb2f93ad2\",\"candidate_id\":\"acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354\",\"route\":\"undecided\",\"route_proof\":false,\"source_key\":1,\"attempt\":0,\"serial\":0,\"generation\":0,\"gesture\":0,\"request\":0,\"draw_sequence\":0,\"target_seconds\":null,\"libmpv_initialized\":false}\n{\"schema\":\"wam.native.benchmark.v2\",\"record\":\"event\",\"batch\":1,\"event_sequence\":2,\"event\":\"native_selected\",\"monotonic_ns\":456043638237833,\"run_id\":\"27f7e928-ddcd-49f2-a7db-d76a46a35af8\",\"process_id\":92325,\"process_start_abstime\":9983409724210,\"asset_sha256\":\"41c45f4dd5579beabf85b46fa53431d10798662be1d9844cf947816fb2f93ad2\",\"candidate_id\":\"acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354\",\"route\":\"native\",\"route_proof\":true,\"source_key\":1,\"attempt\":1,\"serial\":1,\"generation\":1,\"gesture\":0,\"request\":0,\"draw_sequence\":0,\"target_seconds\":0,\"libmpv_initialized\":false}\n{\"schema\":\"wam.native.benchmark.v2\",\"record\":\"event\",\"batch\":1,\"event_sequence\":3,\"event\":\"prepared\",\"monotonic_ns\":456043794674166,\"run_id\":\"27f7e928-ddcd-49f2-a7db-d76a46a35af8\",\"process_id\":92325,\"process_start_abstime\":9983409724210,\"asset_sha256\":\"41c45f4dd5579beabf85b46fa53431d10798662be1d9844cf947816fb2f93ad2\",\"candidate_id\":\"acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354\",\"route\":\"native\",\"route_proof\":false,\"source_key\":1,\"attempt\":1,\"serial\":1,\"generation\":1,\"gesture\":0,\"request\":0,\"draw_sequence\":0,\"target_seconds\":null,\"libmpv_initialized\":false}\n{\"schema\":\"wam.native.benchmark.v2\",\"record\":\"event\",\"batch\":1,\"event_sequence\":4,\"event\":\"started\",\"monotonic_ns\":456043827425083,\"run_id\":\"27f7e928-ddcd-49f2-a7db-d76a46a35af8\",\"process_id\":92325,\"process_start_abstime\":9983409724210,\"asset_sha256\":\"41c45f4dd5579beabf85b46fa53431d10798662be1d9844cf947816fb2f93ad2\",\"candidate_id\":\"acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354\",\"route\":\"native\",\"route_proof\":false,\"source_key\":0,\"attempt\":1,\"serial\":2,\"generation\":1,\"gesture\":0,\"request\":0,\"draw_sequence\":0,\"target_seconds\":null,\"libmpv_initialized\":false}\n{\"schema\":\"wam.native.benchmark.v2\",\"record\":\"batch_commit\",\"batch\":1,\"event_count\":4,\"first_sequence\":1,\"last_sequence\":4,\"payload_sha256\":\"0523db18e20897f855855b90548344c92e48bc822bd96afd1fd0c387c98cbd98\",\"chain_sha256\":\"0a8020004e74fc1e02f4d02cc77f773f8214eb2a7cd2b5bebb2616862a80e6be\",\"run_id\":\"27f7e928-ddcd-49f2-a7db-d76a46a35af8\",\"process_id\":92325,\"process_start_abstime\":9983409724210,\"asset_sha256\":\"41c45f4dd5579beabf85b46fa53431d10798662be1d9844cf947816fb2f93ad2\",\"candidate_id\":\"acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354\"}\n{\"schema\":\"wam.native.benchmark.v2\",\"record\":\"stream_commit\",\"batch_count\":1,\"event_count\":4,\"first_sequence\":1,\"last_sequence\":4,\"chain_sha256\":\"0a8020004e74fc1e02f4d02cc77f773f8214eb2a7cd2b5bebb2616862a80e6be\",\"run_id\":\"27f7e928-ddcd-49f2-a7db-d76a46a35af8\",\"process_id\":92325,\"process_start_abstime\":9983409724210,\"asset_sha256\":\"41c45f4dd5579beabf85b46fa53431d10798662be1d9844cf947816fb2f93ad2\",\"candidate_id\":\"acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354\"}\n",
+    "metrics": [
+      {
+        "record": "playback_sample",
+        "session_epoch": 1788756162268481000,
+        "t_mono_ns": 456044501151791,
+        "media_seconds": null,
+        "drawn_frames": null,
+        "submitted_frames": null,
+        "superseded_frames": null,
+        "discarded_late_frames": null,
+        "audio_underrun_callbacks": null,
+        "audio_clock_advanced_underruns": null,
+        "audio_retired_late_frames": null,
+        "audio_callbacks": null,
+        "audio_rendered_frames": null,
+        "clock_rate": null,
+        "paused": false
+      },
+      {
+        "record": "playback_sample",
+        "session_epoch": 1788756162268481000,
+        "t_mono_ns": 456045501027416,
+        "media_seconds": 1.633925321270094,
+        "drawn_frames": 0,
+        "submitted_frames": 0,
+        "superseded_frames": 0,
+        "discarded_late_frames": 0,
+        "audio_underrun_callbacks": 0,
+        "audio_clock_advanced_underruns": 0,
+        "audio_retired_late_frames": 0,
+        "audio_callbacks": 78,
+        "audio_rendered_frames": 53248,
+        "clock_rate": 1.0002391982465302,
+        "paused": false
+      },
+      {
+        "record": "playback_sample",
+        "session_epoch": 1788756162268481000,
+        "t_mono_ns": 456046501031041,
+        "media_seconds": 1.9815621249102349,
+        "drawn_frames": 0,
+        "submitted_frames": 0,
+        "superseded_frames": 0,
+        "discarded_late_frames": 0,
+        "audio_underrun_callbacks": 1,
+        "audio_clock_advanced_underruns": 0,
+        "audio_retired_late_frames": 0,
+        "audio_callbacks": 95,
+        "audio_rendered_frames": 64000,
+        "clock_rate": 1.0002393735252895,
+        "paused": false
+      },
+      {
+        "record": "playback_sample",
+        "session_epoch": 1788756162268481000,
+        "t_mono_ns": 456047501258583,
+        "media_seconds": 1.9815621249102349,
+        "drawn_frames": 0,
+        "submitted_frames": 0,
+        "superseded_frames": 0,
+        "discarded_late_frames": 0,
+        "audio_underrun_callbacks": 1,
+        "audio_clock_advanced_underruns": 0,
+        "audio_retired_late_frames": 0,
+        "audio_callbacks": 95,
+        "audio_rendered_frames": 64000,
+        "clock_rate": 1.0002393735252895,
+        "paused": false
+      },
+      {
+        "record": "playback_sample",
+        "session_epoch": 1788756162268481000,
+        "t_mono_ns": 456048501039500,
+        "media_seconds": 1.9815621249102349,
+        "drawn_frames": 0,
+        "submitted_frames": 0,
+        "superseded_frames": 0,
+        "discarded_late_frames": 0,
+        "audio_underrun_callbacks": 1,
+        "audio_clock_advanced_underruns": 0,
+        "audio_retired_late_frames": 0,
+        "audio_callbacks": 95,
+        "audio_rendered_frames": 64000,
+        "clock_rate": 1.0002393735252895,
+        "paused": false
+      }
+    ],
+    "rendered_frames": 64000
+  },
+  {
+    "argv": [
+      "/Users/wesleymaa/Documents/WAM/build/WAM.app/Contents/MacOS/WAM",
+      "/private/tmp/wam-adversarial2/media/alac-32000.mka"
+    ],
+    "env": {
+      "HOME": "/private/tmp/wam-qa-fixes/final-gui/runs/alac-32000.mka/home",
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "360971d1-ed91-4b76-a300-87893836736d",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "71d92f0d43251853d87d47d70bf1b586898cfef3e27ddbb8c04979d70df7f9d6",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354",
+      "WAM_TEST_BACKGROUND": "1",
+      "WAM_TEST_MUTED": "1",
+      "WAM_TEST_GEOMETRY": "480x270+2400+1000",
+      "WAM_PLAYBACK_METRICS_PATH": "/private/tmp/wam-qa-fixes/final-gui/runs/alac-32000.mka/metrics.jsonl",
+      "WAM_TEST_QUIT_AFTER_MS": "5000",
+      "WAM_TEST_WINDOW_SCRIPT": "report@1500,report@2500"
+    },
+    "pid": 92485,
+    "name": "alac-32000.mka",
+    "asset_sha256": "71d92f0d43251853d87d47d70bf1b586898cfef3e27ddbb8c04979d70df7f9d6",
+    "executable_sha256": "acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354",
+    "summary": {
+      "name": "alac-32000.mka",
+      "pid": 92485,
+      "rc": 0,
+      "rss_max_kib": 139104,
+      "events": [
+        {
+          "event": "open_requested",
+          "generation": 0,
+          "target": null,
+          "ns": 456049361696166
+        },
+        {
+          "event": "native_selected",
+          "generation": 1,
+          "target": 0,
+          "ns": 456049363247291
+        },
+        {
+          "event": "prepared",
+          "generation": 1,
+          "target": null,
+          "ns": 456049489029291
+        },
+        {
+          "event": "started",
+          "generation": 1,
+          "target": null,
+          "ns": 456049527490125
+        }
+      ],
+      "diagnostics": [
+        "WAM_TEST_WINDOW idx=0 media=1 paused=0 playing=1 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=1.2833 dur=2.0000 chrome=0 vfeedback=0 vnat=0x0 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=0.000 nsfs=0 vivid=0 vboost=1.000 hdr=0 edr=1.000 theater=0 dims=0 source=alac-32000.mka",
+        "WAM_TEST_WINDOW idx=0 media=1 paused=1 playing=0 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=2.0000 dur=2.0000 chrome=0 vfeedback=0 vnat=0x0 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=0.000 nsfs=0 vivid=0 vboost=1.000 hdr=0 edr=1.000 theater=0 dims=0 source=alac-32000.mka"
+      ]
+    },
+    "stderr": "WAM_TEST_WINDOWS count=1\nWAM_TEST_WINDOW idx=0 media=1 paused=0 playing=1 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=1.2833 dur=2.0000 chrome=0 vfeedback=0 vnat=0x0 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=0.000 nsfs=0 vivid=0 vboost=1.000 hdr=0 edr=1.000 theater=0 dims=0 source=alac-32000.mka\nWAM_TEST_SUBTITLES idx=0 active=-1 visible=0 count=0 text=[] tracks=[] bitmap=0 bitmaprect=0.0000,0.0000,0.0000,0.0000\nWAM_TEST_WINDOWS count=1\nWAM_TEST_WINDOW idx=0 media=1 paused=1 playing=0 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=2.0000 dur=2.0000 chrome=0 vfeedback=0 vnat=0x0 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=0.000 nsfs=0 vivid=0 vboost=1.000 hdr=0 edr=1.000 theater=0 dims=0 source=alac-32000.mka\nWAM_TEST_SUBTITLES idx=0 active=-1 visible=0 count=0 text=[] tracks=[] bitmap=0 bitmaprect=0.0000,0.0000,0.0000,0.0000\n{\"schema\":\"wam.native.benchmark.v2\",\"record\":\"stream_header\",\"format_version\":2,\"run_id\":\"360971d1-ed91-4b76-a300-87893836736d\",\"process_id\":92485,\"process_start_abstime\":9983547242997,\"asset_sha256\":\"71d92f0d43251853d87d47d70bf1b586898cfef3e27ddbb8c04979d70df7f9d6\",\"candidate_id\":\"acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354\"}\n{\"schema\":\"wam.native.benchmark.v2\",\"record\":\"batch_begin\",\"batch\":1,\"event_count\":4,\"first_sequence\":1,\"last_sequence\":4,\"previous_chain_sha256\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"run_id\":\"360971d1-ed91-4b76-a300-87893836736d\",\"process_id\":92485,\"process_start_abstime\":9983547242997,\"asset_sha256\":\"71d92f0d43251853d87d47d70bf1b586898cfef3e27ddbb8c04979d70df7f9d6\",\"candidate_id\":\"acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354\"}\n{\"schema\":\"wam.native.benchmark.v2\",\"record\":\"event\",\"batch\":1,\"event_sequence\":1,\"event\":\"open_requested\",\"monotonic_ns\":456049361696166,\"run_id\":\"360971d1-ed91-4b76-a300-87893836736d\",\"process_id\":92485,\"process_start_abstime\":9983547242997,\"asset_sha256\":\"71d92f0d43251853d87d47d70bf1b586898cfef3e27ddbb8c04979d70df7f9d6\",\"candidate_id\":\"acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354\",\"route\":\"undecided\",\"route_proof\":false,\"source_key\":1,\"attempt\":0,\"serial\":0,\"generation\":0,\"gesture\":0,\"request\":0,\"draw_sequence\":0,\"target_seconds\":null,\"libmpv_initialized\":false}\n{\"schema\":\"wam.native.benchmark.v2\",\"record\":\"event\",\"batch\":1,\"event_sequence\":2,\"event\":\"native_selected\",\"monotonic_ns\":456049363247291,\"run_id\":\"360971d1-ed91-4b76-a300-87893836736d\",\"process_id\":92485,\"process_start_abstime\":9983547242997,\"asset_sha256\":\"71d92f0d43251853d87d47d70bf1b586898cfef3e27ddbb8c04979d70df7f9d6\",\"candidate_id\":\"acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354\",\"route\":\"native\",\"route_proof\":true,\"source_key\":1,\"attempt\":1,\"serial\":1,\"generation\":1,\"gesture\":0,\"request\":0,\"draw_sequence\":0,\"target_seconds\":0,\"libmpv_initialized\":false}\n{\"schema\":\"wam.native.benchmark.v2\",\"record\":\"event\",\"batch\":1,\"event_sequence\":3,\"event\":\"prepared\",\"monotonic_ns\":456049489029291,\"run_id\":\"360971d1-ed91-4b76-a300-87893836736d\",\"process_id\":92485,\"process_start_abstime\":9983547242997,\"asset_sha256\":\"71d92f0d43251853d87d47d70bf1b586898cfef3e27ddbb8c04979d70df7f9d6\",\"candidate_id\":\"acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354\",\"route\":\"native\",\"route_proof\":false,\"source_key\":1,\"attempt\":1,\"serial\":1,\"generation\":1,\"gesture\":0,\"request\":0,\"draw_sequence\":0,\"target_seconds\":null,\"libmpv_initialized\":false}\n{\"schema\":\"wam.native.benchmark.v2\",\"record\":\"event\",\"batch\":1,\"event_sequence\":4,\"event\":\"started\",\"monotonic_ns\":456049527490125,\"run_id\":\"360971d1-ed91-4b76-a300-87893836736d\",\"process_id\":92485,\"process_start_abstime\":9983547242997,\"asset_sha256\":\"71d92f0d43251853d87d47d70bf1b586898cfef3e27ddbb8c04979d70df7f9d6\",\"candidate_id\":\"acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354\",\"route\":\"native\",\"route_proof\":false,\"source_key\":0,\"attempt\":1,\"serial\":2,\"generation\":1,\"gesture\":0,\"request\":0,\"draw_sequence\":0,\"target_seconds\":null,\"libmpv_initialized\":false}\n{\"schema\":\"wam.native.benchmark.v2\",\"record\":\"batch_commit\",\"batch\":1,\"event_count\":4,\"first_sequence\":1,\"last_sequence\":4,\"payload_sha256\":\"44695a9af6111a28ef741fcd842fd245f86b31f0ed98fa2a008ee2cb09b54035\",\"chain_sha256\":\"155c5466f349132b16d089d06fa11db0711dc60a8a9d20e76e803a4f0db45a51\",\"run_id\":\"360971d1-ed91-4b76-a300-87893836736d\",\"process_id\":92485,\"process_start_abstime\":9983547242997,\"asset_sha256\":\"71d92f0d43251853d87d47d70bf1b586898cfef3e27ddbb8c04979d70df7f9d6\",\"candidate_id\":\"acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354\"}\n{\"schema\":\"wam.native.benchmark.v2\",\"record\":\"stream_commit\",\"batch_count\":1,\"event_count\":4,\"first_sequence\":1,\"last_sequence\":4,\"chain_sha256\":\"155c5466f349132b16d089d06fa11db0711dc60a8a9d20e76e803a4f0db45a51\",\"run_id\":\"360971d1-ed91-4b76-a300-87893836736d\",\"process_id\":92485,\"process_start_abstime\":9983547242997,\"asset_sha256\":\"71d92f0d43251853d87d47d70bf1b586898cfef3e27ddbb8c04979d70df7f9d6\",\"candidate_id\":\"acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354\"}\n",
+    "metrics": [
+      {
+        "record": "playback_sample",
+        "session_epoch": 1788756167992824000,
+        "t_mono_ns": 456050169237625,
+        "media_seconds": null,
+        "drawn_frames": null,
+        "submitted_frames": null,
+        "superseded_frames": null,
+        "discarded_late_frames": null,
+        "audio_underrun_callbacks": null,
+        "audio_clock_advanced_underruns": null,
+        "audio_retired_late_frames": null,
+        "audio_callbacks": null,
+        "audio_rendered_frames": null,
+        "clock_rate": null,
+        "paused": false
+      },
+      {
+        "record": "playback_sample",
+        "session_epoch": 1788756167992824000,
+        "t_mono_ns": 456051119217875,
+        "media_seconds": 1.5564105853156684,
+        "drawn_frames": 0,
+        "submitted_frames": 0,
+        "superseded_frames": 0,
+        "discarded_late_frames": 0,
+        "audio_underrun_callbacks": 0,
+        "audio_clock_advanced_underruns": 0,
+        "audio_retired_late_frames": 0,
+        "audio_callbacks": 75,
+        "audio_rendered_frames": 51200,
+        "clock_rate": 0.9995069587163368,
+        "paused": false
+      },
+      {
+        "record": "playback_sample",
+        "session_epoch": 1788756167992824000,
+        "t_mono_ns": 456052070510291,
+        "media_seconds": 1.9815416248069138,
+        "drawn_frames": 0,
+        "submitted_frames": 0,
+        "superseded_frames": 0,
+        "discarded_late_frames": 0,
+        "audio_underrun_callbacks": 1,
+        "audio_clock_advanced_underruns": 0,
+        "audio_retired_late_frames": 0,
+        "audio_callbacks": 95,
+        "audio_rendered_frames": 64000,
+        "clock_rate": 1.0002374189917622,
+        "paused": false
+      },
+      {
+        "record": "playback_sample",
+        "session_epoch": 1788756167992824000,
+        "t_mono_ns": 456053020581250,
+        "media_seconds": 1.9815416248069138,
+        "drawn_frames": 0,
+        "submitted_frames": 0,
+        "superseded_frames": 0,
+        "discarded_late_frames": 0,
+        "audio_underrun_callbacks": 1,
+        "audio_clock_advanced_underruns": 0,
+        "audio_retired_late_frames": 0,
+        "audio_callbacks": 95,
+        "audio_rendered_frames": 64000,
+        "clock_rate": 1.0002374189917622,
+        "paused": false
+      },
+      {
+        "record": "playback_sample",
+        "session_epoch": 1788756167992824000,
+        "t_mono_ns": 456054001151708,
+        "media_seconds": 1.9815416248069138,
+        "drawn_frames": 0,
+        "submitted_frames": 0,
+        "superseded_frames": 0,
+        "discarded_late_frames": 0,
+        "audio_underrun_callbacks": 1,
+        "audio_clock_advanced_underruns": 0,
+        "audio_retired_late_frames": 0,
+        "audio_callbacks": 95,
+        "audio_rendered_frames": 64000,
+        "clock_rate": 1.0002374189917622,
+        "paused": false
+      }
+    ],
+    "rendered_frames": 64000
+  },
+  {
+    "argv": [
+      "/Users/wesleymaa/Documents/WAM/build/WAM.app/Contents/MacOS/WAM",
+      "/private/tmp/wam-adversarial2/media/pcm_s16le-32000.wav"
+    ],
+    "env": {
+      "HOME": "/private/tmp/wam-qa-fixes/final-gui/runs/pcm_s16le-32000.wav/home",
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "e42cf44d-1411-4331-a829-25c75ceadf41",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "89f1d1017584ad629be337bf86bc16dbba36d23600bf85fc9b3ad4175167f984",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354",
+      "WAM_TEST_BACKGROUND": "1",
+      "WAM_TEST_MUTED": "1",
+      "WAM_TEST_GEOMETRY": "480x270+2400+1000",
+      "WAM_PLAYBACK_METRICS_PATH": "/private/tmp/wam-qa-fixes/final-gui/runs/pcm_s16le-32000.wav/metrics.jsonl",
+      "WAM_TEST_QUIT_AFTER_MS": "5000",
+      "WAM_TEST_WINDOW_SCRIPT": "report@1500,report@2500"
+    },
+    "pid": 92526,
+    "name": "pcm_s16le-32000.wav",
+    "asset_sha256": "89f1d1017584ad629be337bf86bc16dbba36d23600bf85fc9b3ad4175167f984",
+    "executable_sha256": "acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354",
+    "summary": {
+      "name": "pcm_s16le-32000.wav",
+      "pid": 92526,
+      "rc": 0,
+      "rss_max_kib": 139680,
+      "events": [
+        {
+          "event": "open_requested",
+          "generation": 0,
+          "target": null,
+          "ns": 456054662077166
+        },
+        {
+          "event": "native_selected",
+          "generation": 1,
+          "target": 0,
+          "ns": 456054663721708
+        },
+        {
+          "event": "prepared",
+          "generation": 1,
+          "target": null,
+          "ns": 456054805467583
+        },
+        {
+          "event": "started",
+          "generation": 1,
+          "target": null,
+          "ns": 456054837455625
+        }
+      ],
+      "diagnostics": [
+        "WAM_TEST_WINDOW idx=0 media=1 paused=0 playing=1 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=1.2675 dur=2.0000 chrome=0 vfeedback=0 vnat=0x0 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=0.000 nsfs=0 vivid=0 vboost=1.000 hdr=0 edr=1.000 theater=0 dims=0 source=pcm_s16le-32000.wav",
+        "WAM_TEST_WINDOW idx=0 media=1 paused=1 playing=0 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=2.0000 dur=2.0000 chrome=0 vfeedback=0 vnat=0x0 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=0.000 nsfs=0 vivid=0 vboost=1.000 hdr=0 edr=1.000 theater=0 dims=0 source=pcm_s16le-32000.wav"
+      ]
+    },
+    "stderr": "WAM_TEST_WINDOWS count=1\nWAM_TEST_WINDOW idx=0 media=1 paused=0 playing=1 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=1.2675 dur=2.0000 chrome=0 vfeedback=0 vnat=0x0 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=0.000 nsfs=0 vivid=0 vboost=1.000 hdr=0 edr=1.000 theater=0 dims=0 source=pcm_s16le-32000.wav\nWAM_TEST_SUBTITLES idx=0 active=-1 visible=0 count=0 text=[] tracks=[] bitmap=0 bitmaprect=0.0000,0.0000,0.0000,0.0000\nWAM_TEST_WINDOWS count=1\nWAM_TEST_WINDOW idx=0 media=1 paused=1 playing=0 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=2.0000 dur=2.0000 chrome=0 vfeedback=0 vnat=0x0 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=0.000 nsfs=0 vivid=0 vboost=1.000 hdr=0 edr=1.000 theater=0 dims=0 source=pcm_s16le-32000.wav\nWAM_TEST_SUBTITLES idx=0 active=-1 visible=0 count=0 text=[] tracks=[] bitmap=0 bitmaprect=0.0000,0.0000,0.0000,0.0000\n{\"schema\":\"wam.native.benchmark.v2\",\"record\":\"stream_header\",\"format_version\":2,\"run_id\":\"e42cf44d-1411-4331-a829-25c75ceadf41\",\"process_id\":92526,\"process_start_abstime\":9983674768960,\"asset_sha256\":\"89f1d1017584ad629be337bf86bc16dbba36d23600bf85fc9b3ad4175167f984\",\"candidate_id\":\"acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354\"}\n{\"schema\":\"wam.native.benchmark.v2\",\"record\":\"batch_begin\",\"batch\":1,\"event_count\":4,\"first_sequence\":1,\"last_sequence\":4,\"previous_chain_sha256\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"run_id\":\"e42cf44d-1411-4331-a829-25c75ceadf41\",\"process_id\":92526,\"process_start_abstime\":9983674768960,\"asset_sha256\":\"89f1d1017584ad629be337bf86bc16dbba36d23600bf85fc9b3ad4175167f984\",\"candidate_id\":\"acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354\"}\n{\"schema\":\"wam.native.benchmark.v2\",\"record\":\"event\",\"batch\":1,\"event_sequence\":1,\"event\":\"open_requested\",\"monotonic_ns\":456054662077166,\"run_id\":\"e42cf44d-1411-4331-a829-25c75ceadf41\",\"process_id\":92526,\"process_start_abstime\":9983674768960,\"asset_sha256\":\"89f1d1017584ad629be337bf86bc16dbba36d23600bf85fc9b3ad4175167f984\",\"candidate_id\":\"acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354\",\"route\":\"undecided\",\"route_proof\":false,\"source_key\":1,\"attempt\":0,\"serial\":0,\"generation\":0,\"gesture\":0,\"request\":0,\"draw_sequence\":0,\"target_seconds\":null,\"libmpv_initialized\":false}\n{\"schema\":\"wam.native.benchmark.v2\",\"record\":\"event\",\"batch\":1,\"event_sequence\":2,\"event\":\"native_selected\",\"monotonic_ns\":456054663721708,\"run_id\":\"e42cf44d-1411-4331-a829-25c75ceadf41\",\"process_id\":92526,\"process_start_abstime\":9983674768960,\"asset_sha256\":\"89f1d1017584ad629be337bf86bc16dbba36d23600bf85fc9b3ad4175167f984\",\"candidate_id\":\"acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354\",\"route\":\"native\",\"route_proof\":true,\"source_key\":1,\"attempt\":1,\"serial\":1,\"generation\":1,\"gesture\":0,\"request\":0,\"draw_sequence\":0,\"target_seconds\":0,\"libmpv_initialized\":false}\n{\"schema\":\"wam.native.benchmark.v2\",\"record\":\"event\",\"batch\":1,\"event_sequence\":3,\"event\":\"prepared\",\"monotonic_ns\":456054805467583,\"run_id\":\"e42cf44d-1411-4331-a829-25c75ceadf41\",\"process_id\":92526,\"process_start_abstime\":9983674768960,\"asset_sha256\":\"89f1d1017584ad629be337bf86bc16dbba36d23600bf85fc9b3ad4175167f984\",\"candidate_id\":\"acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354\",\"route\":\"native\",\"route_proof\":false,\"source_key\":1,\"attempt\":1,\"serial\":1,\"generation\":1,\"gesture\":0,\"request\":0,\"draw_sequence\":0,\"target_seconds\":null,\"libmpv_initialized\":false}\n{\"schema\":\"wam.native.benchmark.v2\",\"record\":\"event\",\"batch\":1,\"event_sequence\":4,\"event\":\"started\",\"monotonic_ns\":456054837455625,\"run_id\":\"e42cf44d-1411-4331-a829-25c75ceadf41\",\"process_id\":92526,\"process_start_abstime\":9983674768960,\"asset_sha256\":\"89f1d1017584ad629be337bf86bc16dbba36d23600bf85fc9b3ad4175167f984\",\"candidate_id\":\"acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354\",\"route\":\"native\",\"route_proof\":false,\"source_key\":0,\"attempt\":1,\"serial\":2,\"generation\":1,\"gesture\":0,\"request\":0,\"draw_sequence\":0,\"target_seconds\":null,\"libmpv_initialized\":false}\n{\"schema\":\"wam.native.benchmark.v2\",\"record\":\"batch_commit\",\"batch\":1,\"event_count\":4,\"first_sequence\":1,\"last_sequence\":4,\"payload_sha256\":\"ab49eaa973a258fe318f61c78a38214d21082b2ff7c612ecccaf93534db5e1fd\",\"chain_sha256\":\"155ce23bd0b3f12a5069cdf52697d1d3d4fed99144f02b265651271521406609\",\"run_id\":\"e42cf44d-1411-4331-a829-25c75ceadf41\",\"process_id\":92526,\"process_start_abstime\":9983674768960,\"asset_sha256\":\"89f1d1017584ad629be337bf86bc16dbba36d23600bf85fc9b3ad4175167f984\",\"candidate_id\":\"acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354\"}\n{\"schema\":\"wam.native.benchmark.v2\",\"record\":\"stream_commit\",\"batch_count\":1,\"event_count\":4,\"first_sequence\":1,\"last_sequence\":4,\"chain_sha256\":\"155ce23bd0b3f12a5069cdf52697d1d3d4fed99144f02b265651271521406609\",\"run_id\":\"e42cf44d-1411-4331-a829-25c75ceadf41\",\"process_id\":92526,\"process_start_abstime\":9983674768960,\"asset_sha256\":\"89f1d1017584ad629be337bf86bc16dbba36d23600bf85fc9b3ad4175167f984\",\"candidate_id\":\"acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354\"}\n",
+    "metrics": [
+      {
+        "record": "playback_sample",
+        "session_epoch": 1788756173293042000,
+        "t_mono_ns": 456055501072375,
+        "media_seconds": null,
+        "drawn_frames": null,
+        "submitted_frames": null,
+        "superseded_frames": null,
+        "discarded_late_frames": null,
+        "audio_underrun_callbacks": null,
+        "audio_clock_advanced_underruns": null,
+        "audio_retired_late_frames": null,
+        "audio_callbacks": null,
+        "audio_rendered_frames": null,
+        "clock_rate": null,
+        "paused": false
+      },
+      {
+        "record": "playback_sample",
+        "session_epoch": 1788756173293042000,
+        "t_mono_ns": 456056501066041,
+        "media_seconds": 1.6226619193950726,
+        "drawn_frames": 0,
+        "submitted_frames": 0,
+        "superseded_frames": 0,
+        "discarded_late_frames": 0,
+        "audio_underrun_callbacks": 0,
+        "audio_clock_advanced_underruns": 0,
+        "audio_retired_late_frames": 0,
+        "audio_callbacks": 78,
+        "audio_rendered_frames": 53248,
+        "clock_rate": 1.0002391982465302,
+        "paused": false
+      },
+      {
+        "record": "playback_sample",
+        "session_epoch": 1788756173293042000,
+        "t_mono_ns": 456057501128541,
+        "media_seconds": 1.981535591337074,
+        "drawn_frames": 0,
+        "submitted_frames": 0,
+        "superseded_frames": 0,
+        "discarded_late_frames": 0,
+        "audio_underrun_callbacks": 1,
+        "audio_clock_advanced_underruns": 0,
+        "audio_retired_late_frames": 0,
+        "audio_callbacks": 95,
+        "audio_rendered_frames": 64000,
+        "clock_rate": 1.000233509947623,
+        "paused": false
+      },
+      {
+        "record": "playback_sample",
+        "session_epoch": 1788756173293042000,
+        "t_mono_ns": 456058501998000,
+        "media_seconds": 1.981535591337074,
+        "drawn_frames": 0,
+        "submitted_frames": 0,
+        "superseded_frames": 0,
+        "discarded_late_frames": 0,
+        "audio_underrun_callbacks": 1,
+        "audio_clock_advanced_underruns": 0,
+        "audio_retired_late_frames": 0,
+        "audio_callbacks": 95,
+        "audio_rendered_frames": 64000,
+        "clock_rate": 1.000233509947623,
+        "paused": false
+      },
+      {
+        "record": "playback_sample",
+        "session_epoch": 1788756173293042000,
+        "t_mono_ns": 456059501138041,
+        "media_seconds": 1.981535591337074,
+        "drawn_frames": 0,
+        "submitted_frames": 0,
+        "superseded_frames": 0,
+        "discarded_late_frames": 0,
+        "audio_underrun_callbacks": 1,
+        "audio_clock_advanced_underruns": 0,
+        "audio_retired_late_frames": 0,
+        "audio_callbacks": 95,
+        "audio_rendered_frames": 64000,
+        "clock_rate": 1.000233509947623,
+        "paused": false
+      }
+    ],
+    "rendered_frames": 64000
+  },
+  {
+    "argv": [
+      "/Users/wesleymaa/Documents/WAM/build/WAM.app/Contents/MacOS/WAM",
+      "/private/tmp/wam-adversarial2/media/alac-32000.m4a"
+    ],
+    "env": {
+      "HOME": "/private/tmp/wam-qa-fixes/final-gui/runs/alac-32000.m4a/home",
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "84071443-953d-49b5-96b3-cf6ff425c544",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "353e698ce64841fc87ad2bb64f3ad58981c0163b3a949b0f55ee9bd24552aa51",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354",
+      "WAM_TEST_BACKGROUND": "1",
+      "WAM_TEST_MUTED": "1",
+      "WAM_TEST_GEOMETRY": "480x270+2400+1000",
+      "WAM_PLAYBACK_METRICS_PATH": "/private/tmp/wam-qa-fixes/final-gui/runs/alac-32000.m4a/metrics.jsonl",
+      "WAM_TEST_QUIT_AFTER_MS": "5000",
+      "WAM_TEST_WINDOW_SCRIPT": "report@1500,report@2500"
+    },
+    "pid": 92556,
+    "name": "alac-32000.m4a",
+    "asset_sha256": "353e698ce64841fc87ad2bb64f3ad58981c0163b3a949b0f55ee9bd24552aa51",
+    "executable_sha256": "acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354",
+    "summary": {
+      "name": "alac-32000.m4a",
+      "pid": 92556,
+      "rc": 0,
+      "rss_max_kib": 138896,
+      "events": [
+        {
+          "event": "open_requested",
+          "generation": 0,
+          "target": null,
+          "ns": 456060486298041
+        },
+        {
+          "event": "native_selected",
+          "generation": 1,
+          "target": 0,
+          "ns": 456060488067416
+        },
+        {
+          "event": "prepared",
+          "generation": 1,
+          "target": null,
+          "ns": 456060614964708
+        },
+        {
+          "event": "started",
+          "generation": 1,
+          "target": null,
+          "ns": 456060667535041
+        }
+      ],
+      "diagnostics": [
+        "WAM_TEST_WINDOW idx=0 media=1 paused=0 playing=1 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=1.2692 dur=2.0000 chrome=0 vfeedback=0 vnat=0x0 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=0.000 nsfs=0 vivid=0 vboost=1.000 hdr=0 edr=1.000 theater=0 dims=0 source=alac-32000.m4a",
+        "WAM_TEST_WINDOW idx=0 media=1 paused=1 playing=0 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=2.0000 dur=2.0000 chrome=0 vfeedback=0 vnat=0x0 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=0.000 nsfs=0 vivid=0 vboost=1.000 hdr=0 edr=1.000 theater=0 dims=0 source=alac-32000.m4a"
+      ]
+    },
+    "stderr": "WAM_TEST_WINDOWS count=1\nWAM_TEST_WINDOW idx=0 media=1 paused=0 playing=1 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=1.2692 dur=2.0000 chrome=0 vfeedback=0 vnat=0x0 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=0.000 nsfs=0 vivid=0 vboost=1.000 hdr=0 edr=1.000 theater=0 dims=0 source=alac-32000.m4a\nWAM_TEST_SUBTITLES idx=0 active=-1 visible=0 count=0 text=[] tracks=[] bitmap=0 bitmaprect=0.0000,0.0000,0.0000,0.0000\nWAM_TEST_WINDOWS count=1\nWAM_TEST_WINDOW idx=0 media=1 paused=1 playing=0 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=2.0000 dur=2.0000 chrome=0 vfeedback=0 vnat=0x0 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=0.000 nsfs=0 vivid=0 vboost=1.000 hdr=0 edr=1.000 theater=0 dims=0 source=alac-32000.m4a\nWAM_TEST_SUBTITLES idx=0 active=-1 visible=0 count=0 text=[] tracks=[] bitmap=0 bitmaprect=0.0000,0.0000,0.0000,0.0000\n{\"schema\":\"wam.native.benchmark.v2\",\"record\":\"stream_header\",\"format_version\":2,\"run_id\":\"84071443-953d-49b5-96b3-cf6ff425c544\",\"process_id\":92556,\"process_start_abstime\":9983814292527,\"asset_sha256\":\"353e698ce64841fc87ad2bb64f3ad58981c0163b3a949b0f55ee9bd24552aa51\",\"candidate_id\":\"acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354\"}\n{\"schema\":\"wam.native.benchmark.v2\",\"record\":\"batch_begin\",\"batch\":1,\"event_count\":4,\"first_sequence\":1,\"last_sequence\":4,\"previous_chain_sha256\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"run_id\":\"84071443-953d-49b5-96b3-cf6ff425c544\",\"process_id\":92556,\"process_start_abstime\":9983814292527,\"asset_sha256\":\"353e698ce64841fc87ad2bb64f3ad58981c0163b3a949b0f55ee9bd24552aa51\",\"candidate_id\":\"acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354\"}\n{\"schema\":\"wam.native.benchmark.v2\",\"record\":\"event\",\"batch\":1,\"event_sequence\":1,\"event\":\"open_requested\",\"monotonic_ns\":456060486298041,\"run_id\":\"84071443-953d-49b5-96b3-cf6ff425c544\",\"process_id\":92556,\"process_start_abstime\":9983814292527,\"asset_sha256\":\"353e698ce64841fc87ad2bb64f3ad58981c0163b3a949b0f55ee9bd24552aa51\",\"candidate_id\":\"acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354\",\"route\":\"undecided\",\"route_proof\":false,\"source_key\":1,\"attempt\":0,\"serial\":0,\"generation\":0,\"gesture\":0,\"request\":0,\"draw_sequence\":0,\"target_seconds\":null,\"libmpv_initialized\":false}\n{\"schema\":\"wam.native.benchmark.v2\",\"record\":\"event\",\"batch\":1,\"event_sequence\":2,\"event\":\"native_selected\",\"monotonic_ns\":456060488067416,\"run_id\":\"84071443-953d-49b5-96b3-cf6ff425c544\",\"process_id\":92556,\"process_start_abstime\":9983814292527,\"asset_sha256\":\"353e698ce64841fc87ad2bb64f3ad58981c0163b3a949b0f55ee9bd24552aa51\",\"candidate_id\":\"acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354\",\"route\":\"native\",\"route_proof\":true,\"source_key\":1,\"attempt\":1,\"serial\":1,\"generation\":1,\"gesture\":0,\"request\":0,\"draw_sequence\":0,\"target_seconds\":0,\"libmpv_initialized\":false}\n{\"schema\":\"wam.native.benchmark.v2\",\"record\":\"event\",\"batch\":1,\"event_sequence\":3,\"event\":\"prepared\",\"monotonic_ns\":456060614964708,\"run_id\":\"84071443-953d-49b5-96b3-cf6ff425c544\",\"process_id\":92556,\"process_start_abstime\":9983814292527,\"asset_sha256\":\"353e698ce64841fc87ad2bb64f3ad58981c0163b3a949b0f55ee9bd24552aa51\",\"candidate_id\":\"acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354\",\"route\":\"native\",\"route_proof\":false,\"source_key\":1,\"attempt\":1,\"serial\":1,\"generation\":1,\"gesture\":0,\"request\":0,\"draw_sequence\":0,\"target_seconds\":null,\"libmpv_initialized\":false}\n{\"schema\":\"wam.native.benchmark.v2\",\"record\":\"event\",\"batch\":1,\"event_sequence\":4,\"event\":\"started\",\"monotonic_ns\":456060667535041,\"run_id\":\"84071443-953d-49b5-96b3-cf6ff425c544\",\"process_id\":92556,\"process_start_abstime\":9983814292527,\"asset_sha256\":\"353e698ce64841fc87ad2bb64f3ad58981c0163b3a949b0f55ee9bd24552aa51\",\"candidate_id\":\"acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354\",\"route\":\"native\",\"route_proof\":false,\"source_key\":0,\"attempt\":1,\"serial\":2,\"generation\":1,\"gesture\":0,\"request\":0,\"draw_sequence\":0,\"target_seconds\":null,\"libmpv_initialized\":false}\n{\"schema\":\"wam.native.benchmark.v2\",\"record\":\"batch_commit\",\"batch\":1,\"event_count\":4,\"first_sequence\":1,\"last_sequence\":4,\"payload_sha256\":\"2572254ad5ae86a87d6d3c7a66463ae2f0470b6e30ff35923d061b32c4a3459f\",\"chain_sha256\":\"2da78b4782c50455fab32ee148a4c9a26ca2062b7bc702b9dffafa28f72c7359\",\"run_id\":\"84071443-953d-49b5-96b3-cf6ff425c544\",\"process_id\":92556,\"process_start_abstime\":9983814292527,\"asset_sha256\":\"353e698ce64841fc87ad2bb64f3ad58981c0163b3a949b0f55ee9bd24552aa51\",\"candidate_id\":\"acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354\"}\n{\"schema\":\"wam.native.benchmark.v2\",\"record\":\"stream_commit\",\"batch_count\":1,\"event_count\":4,\"first_sequence\":1,\"last_sequence\":4,\"chain_sha256\":\"2da78b4782c50455fab32ee148a4c9a26ca2062b7bc702b9dffafa28f72c7359\",\"run_id\":\"84071443-953d-49b5-96b3-cf6ff425c544\",\"process_id\":92556,\"process_start_abstime\":9983814292527,\"asset_sha256\":\"353e698ce64841fc87ad2bb64f3ad58981c0163b3a949b0f55ee9bd24552aa51\",\"candidate_id\":\"acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354\"}\n",
+    "metrics": [
+      {
+        "record": "playback_sample",
+        "session_epoch": 1788756179118276000,
+        "t_mono_ns": 456061395598791,
+        "media_seconds": null,
+        "drawn_frames": null,
+        "submitted_frames": null,
+        "superseded_frames": null,
+        "discarded_late_frames": null,
+        "audio_underrun_callbacks": null,
+        "audio_clock_advanced_underruns": null,
+        "audio_retired_late_frames": null,
+        "audio_callbacks": null,
+        "audio_rendered_frames": null,
+        "clock_rate": null,
+        "paused": false
+      },
+      {
+        "record": "playback_sample",
+        "session_epoch": 1788756179118276000,
+        "t_mono_ns": 456062444228166,
+        "media_seconds": 1.742699515257431,
+        "drawn_frames": 0,
+        "submitted_frames": 0,
+        "superseded_frames": 0,
+        "discarded_late_frames": 0,
+        "audio_underrun_callbacks": 0,
+        "audio_clock_advanced_underruns": 0,
+        "audio_retired_late_frames": 0,
+        "audio_callbacks": 83,
+        "audio_rendered_frames": 56662,
+        "clock_rate": 1.0002391982465302,
+        "paused": false
+      },
+      {
+        "record": "playback_sample",
+        "session_epoch": 1788756179118276000,
+        "t_mono_ns": 456063495882291,
+        "media_seconds": 1.981546162756899,
+        "drawn_frames": 0,
+        "submitted_frames": 0,
+        "superseded_frames": 0,
+        "discarded_late_frames": 0,
+        "audio_underrun_callbacks": 1,
+        "audio_clock_advanced_underruns": 0,
+        "audio_retired_late_frames": 0,
+        "audio_callbacks": 95,
+        "audio_rendered_frames": 64000,
+        "clock_rate": 1.0002393735252895,
+        "paused": false
+      },
+      {
+        "record": "playback_sample",
+        "session_epoch": 1788756179118276000,
+        "t_mono_ns": 456064502023833,
+        "media_seconds": 1.981546162756899,
+        "drawn_frames": 0,
+        "submitted_frames": 0,
+        "superseded_frames": 0,
+        "discarded_late_frames": 0,
+        "audio_underrun_callbacks": 1,
+        "audio_clock_advanced_underruns": 0,
+        "audio_retired_late_frames": 0,
+        "audio_callbacks": 95,
+        "audio_rendered_frames": 64000,
+        "clock_rate": 1.0002393735252895,
+        "paused": false
+      }
+    ],
+    "rendered_frames": 64000
+  },
+  {
+    "argv": [
+      "/Users/wesleymaa/Documents/WAM/build/WAM.app/Contents/MacOS/WAM",
+      "/private/tmp/wam-adversarial2/media/two-he.mka"
+    ],
+    "env": {
+      "HOME": "/private/tmp/wam-qa-fixes/final-gui/runs/two-he.mka/home",
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "341be8a9-0d9b-4ba9-bd67-0df1df11ce97",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "58496dda15447742bc36a5955e51aa27191d67b625d3f6f1baac655afa2856c4",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354",
+      "WAM_TEST_BACKGROUND": "1",
+      "WAM_TEST_MUTED": "1",
+      "WAM_TEST_GEOMETRY": "480x270+2400+1000",
+      "WAM_PLAYBACK_METRICS_PATH": "/private/tmp/wam-qa-fixes/final-gui/runs/two-he.mka/metrics.jsonl",
+      "WAM_TEST_QUIT_AFTER_MS": "5000",
+      "WAM_TEST_WINDOW_SCRIPT": "report@1500,report@2500"
+    },
+    "pid": 92590,
+    "name": "two-he.mka",
+    "asset_sha256": "58496dda15447742bc36a5955e51aa27191d67b625d3f6f1baac655afa2856c4",
+    "executable_sha256": "acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354",
+    "summary": {
+      "name": "two-he.mka",
+      "pid": 92590,
+      "rc": 0,
+      "rss_max_kib": 136112,
+      "events": [
+        {
+          "event": "open_requested",
+          "generation": 0,
+          "target": null,
+          "ns": 456065795909833
+        },
+        {
+          "event": "native_selected",
+          "generation": 1,
+          "target": 0,
+          "ns": 456065932975625
+        },
+        {
+          "event": "fallback_selected",
+          "generation": 0,
+          "target": null,
+          "ns": 456065945393291
+        }
+      ],
+      "diagnostics": [
+        "WAM: native failure stage=open reason=Startup class=UnsupportedSource error=\"HeAacSbrDecoderDelayUnproven: doubled-rate delay and tail lack an exact ownership proof; candidates: [track 1 (A_AAC): HeAacSbrDecoderDelayUnproven: doubled-rate delay and tail lack an exact ownership proof; track 2 (A_AAC): HeAacSbrDecoderDelayUnproven: doubled-rate delay and tail lack an exact ownership proof] (CodecConfiguration)\"",
+        "WAM_TEST_WINDOW idx=0 media=0 paused=1 playing=0 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=0.0000 dur=0.0000 chrome=1 vfeedback=0 vnat=0x0 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=1.000 nsfs=0 vivid=0 vboost=0.000 hdr=0 edr=1.000 theater=0 dims=0 source=",
+        "WAM_TEST_WINDOW idx=0 media=0 paused=1 playing=0 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=0.0000 dur=0.0000 chrome=1 vfeedback=0 vnat=0x0 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=1.000 nsfs=0 vivid=0 vboost=0.000 hdr=0 edr=1.000 theater=0 dims=0 source="
+      ]
+    },
+    "stderr": "WAM: native failure stage=open reason=Startup class=UnsupportedSource error=\"HeAacSbrDecoderDelayUnproven: doubled-rate delay and tail lack an exact ownership proof; candidates: [track 1 (A_AAC): HeAacSbrDecoderDelayUnproven: doubled-rate delay and tail lack an exact ownership proof; track 2 (A_AAC): HeAacSbrDecoderDelayUnproven: doubled-rate delay and tail lack an exact ownership proof] (CodecConfiguration)\"\nWAM: cannot load bundled fallback: Cannot load library /dev/fd/14: dlopen(/dev/fd/14, 0x0006): Library not loaded: /opt/homebrew/opt/ffmpeg/lib/libavcodec.62.dylib\n  Referenced from: <687401F1-C6EA-3BBA-8374-81EA35E1F137> /Users/wesleymaa/Documents/WAM/build/WAM.app/Contents/Frameworks/WAMMpvFallback.dylib\n  Reason: tried: '/opt/homebrew/opt/ffmpeg/lib/libavcodec.62.dylib' (no such file), '/System/Volumes/Preboot/Cryptexes/OS/opt/homebrew/opt/ffmpeg/lib/libavcodec.62.dylib' (no such file), '/opt/homebrew/opt/ffmpeg/lib/libavcodec.62.dylib' (no such file), '/opt/homebrew/Cellar/ffmpeg/9.0.1_1/lib/libavcodec.62.dylib' (no such file), '/System/Volumes/Preboot/Cryptexes/OS/opt/homebrew/Cellar/ffmpeg/9.0.1_1/lib/libavcodec.62.dylib' (no such file), '/opt/homebrew/Cellar/ffmpeg/9.0.1_1/lib/libavcodec.62.dylib' (no such file)\nWAM_TEST_WINDOWS count=1\nWAM_TEST_WINDOW idx=0 media=0 paused=1 playing=0 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=0.0000 dur=0.0000 chrome=1 vfeedback=0 vnat=0x0 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=1.000 nsfs=0 vivid=0 vboost=0.000 hdr=0 edr=1.000 theater=0 dims=0 source=\nWAM_TEST_SUBTITLES idx=0 active=-1 visible=1 count=0 text=[] tracks=[] bitmap=0 bitmaprect=0.0000,0.0000,0.0000,0.0000\nWAM_TEST_WINDOWS count=1\nWAM_TEST_WINDOW idx=0 media=0 paused=1 playing=0 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=0.0000 dur=0.0000 chrome=1 vfeedback=0 vnat=0x0 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=1.000 nsfs=0 vivid=0 vboost=0.000 hdr=0 edr=1.000 theater=0 dims=0 source=\nWAM_TEST_SUBTITLES idx=0 active=-1 visible=1 count=0 text=[] tracks=[] bitmap=0 bitmaprect=0.0000,0.0000,0.0000,0.0000\n{\"schema\":\"wam.native.benchmark.v2\",\"record\":\"stream_header\",\"format_version\":2,\"run_id\":\"341be8a9-0d9b-4ba9-bd67-0df1df11ce97\",\"process_id\":92590,\"process_start_abstime\":9983941770119,\"asset_sha256\":\"58496dda15447742bc36a5955e51aa27191d67b625d3f6f1baac655afa2856c4\",\"candidate_id\":\"acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354\"}\n{\"schema\":\"wam.native.benchmark.v2\",\"record\":\"batch_begin\",\"batch\":1,\"event_count\":3,\"first_sequence\":1,\"last_sequence\":3,\"previous_chain_sha256\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"run_id\":\"341be8a9-0d9b-4ba9-bd67-0df1df11ce97\",\"process_id\":92590,\"process_start_abstime\":9983941770119,\"asset_sha256\":\"58496dda15447742bc36a5955e51aa27191d67b625d3f6f1baac655afa2856c4\",\"candidate_id\":\"acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354\"}\n{\"schema\":\"wam.native.benchmark.v2\",\"record\":\"event\",\"batch\":1,\"event_sequence\":1,\"event\":\"open_requested\",\"monotonic_ns\":456065795909833,\"run_id\":\"341be8a9-0d9b-4ba9-bd67-0df1df11ce97\",\"process_id\":92590,\"process_start_abstime\":9983941770119,\"asset_sha256\":\"58496dda15447742bc36a5955e51aa27191d67b625d3f6f1baac655afa2856c4\",\"candidate_id\":\"acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354\",\"route\":\"undecided\",\"route_proof\":false,\"source_key\":1,\"attempt\":0,\"serial\":0,\"generation\":0,\"gesture\":0,\"request\":0,\"draw_sequence\":0,\"target_seconds\":null,\"libmpv_initialized\":false}\n{\"schema\":\"wam.native.benchmark.v2\",\"record\":\"event\",\"batch\":1,\"event_sequence\":2,\"event\":\"native_selected\",\"monotonic_ns\":456065932975625,\"run_id\":\"341be8a9-0d9b-4ba9-bd67-0df1df11ce97\",\"process_id\":92590,\"process_start_abstime\":9983941770119,\"asset_sha256\":\"58496dda15447742bc36a5955e51aa27191d67b625d3f6f1baac655afa2856c4\",\"candidate_id\":\"acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354\",\"route\":\"native\",\"route_proof\":true,\"source_key\":1,\"attempt\":1,\"serial\":1,\"generation\":1,\"gesture\":0,\"request\":0,\"draw_sequence\":0,\"target_seconds\":0,\"libmpv_initialized\":false}\n{\"schema\":\"wam.native.benchmark.v2\",\"record\":\"event\",\"batch\":1,\"event_sequence\":3,\"event\":\"fallback_selected\",\"monotonic_ns\":456065945393291,\"run_id\":\"341be8a9-0d9b-4ba9-bd67-0df1df11ce97\",\"process_id\":92590,\"process_start_abstime\":9983941770119,\"asset_sha256\":\"58496dda15447742bc36a5955e51aa27191d67b625d3f6f1baac655afa2856c4\",\"candidate_id\":\"acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354\",\"route\":\"fallback\",\"route_proof\":true,\"source_key\":1,\"attempt\":2,\"serial\":1,\"generation\":0,\"gesture\":0,\"request\":0,\"draw_sequence\":0,\"target_seconds\":null,\"libmpv_initialized\":false}\n{\"schema\":\"wam.native.benchmark.v2\",\"record\":\"batch_commit\",\"batch\":1,\"event_count\":3,\"first_sequence\":1,\"last_sequence\":3,\"payload_sha256\":\"21f4d2baaa5c1b467687207ada210f706777b9da54b48d4f0f46bc892a8ecfd3\",\"chain_sha256\":\"4a638006ef53764dcbf17e947b0268e6f1b1b26a4e7ce75cdc295a6343dadc06\",\"run_id\":\"341be8a9-0d9b-4ba9-bd67-0df1df11ce97\",\"process_id\":92590,\"process_start_abstime\":9983941770119,\"asset_sha256\":\"58496dda15447742bc36a5955e51aa27191d67b625d3f6f1baac655afa2856c4\",\"candidate_id\":\"acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354\"}\n{\"schema\":\"wam.native.benchmark.v2\",\"record\":\"stream_commit\",\"batch_count\":1,\"event_count\":3,\"first_sequence\":1,\"last_sequence\":3,\"chain_sha256\":\"4a638006ef53764dcbf17e947b0268e6f1b1b26a4e7ce75cdc295a6343dadc06\",\"run_id\":\"341be8a9-0d9b-4ba9-bd67-0df1df11ce97\",\"process_id\":92590,\"process_start_abstime\":9983941770119,\"asset_sha256\":\"58496dda15447742bc36a5955e51aa27191d67b625d3f6f1baac655afa2856c4\",\"candidate_id\":\"acd79b81617bd844ee89c49632a5cbb4edb971ccfe9052d7f197d5ac1df40354\"}\n",
+    "metrics": [
+      {
+        "record": "playback_sample",
+        "session_epoch": 0,
+        "t_mono_ns": 456066607752083,
+        "media_seconds": null,
+        "drawn_frames": null,
+        "submitted_frames": null,
+        "superseded_frames": null,
+        "discarded_late_frames": null,
+        "audio_underrun_callbacks": null,
+        "audio_clock_advanced_underruns": null,
+        "audio_retired_late_frames": null,
+        "audio_callbacks": null,
+        "audio_rendered_frames": null,
+        "clock_rate": null,
+        "paused": true
+      },
+      {
+        "record": "playback_sample",
+        "session_epoch": 0,
+        "t_mono_ns": 456067557164458,
+        "media_seconds": null,
+        "drawn_frames": null,
+        "submitted_frames": null,
+        "superseded_frames": null,
+        "discarded_late_frames": null,
+        "audio_underrun_callbacks": null,
+        "audio_clock_advanced_underruns": null,
+        "audio_retired_late_frames": null,
+        "audio_callbacks": null,
+        "audio_rendered_frames": null,
+        "clock_rate": null,
+        "paused": true
+      },
+      {
+        "record": "playback_sample",
+        "session_epoch": 0,
+        "t_mono_ns": 456068507392958,
+        "media_seconds": null,
+        "drawn_frames": null,
+        "submitted_frames": null,
+        "superseded_frames": null,
+        "discarded_late_frames": null,
+        "audio_underrun_callbacks": null,
+        "audio_clock_advanced_underruns": null,
+        "audio_retired_late_frames": null,
+        "audio_callbacks": null,
+        "audio_rendered_frames": null,
+        "clock_rate": null,
+        "paused": true
+      },
+      {
+        "record": "playback_sample",
+        "session_epoch": 0,
+        "t_mono_ns": 456069501209916,
+        "media_seconds": null,
+        "drawn_frames": null,
+        "submitted_frames": null,
+        "superseded_frames": null,
+        "discarded_late_frames": null,
+        "audio_underrun_callbacks": null,
+        "audio_clock_advanced_underruns": null,
+        "audio_retired_late_frames": null,
+        "audio_callbacks": null,
+        "audio_rendered_frames": null,
+        "clock_rate": null,
+        "paused": true
+      },
+      {
+        "record": "playback_sample",
+        "session_epoch": 0,
+        "t_mono_ns": 456070501150916,
+        "media_seconds": null,
+        "drawn_frames": null,
+        "submitted_frames": null,
+        "superseded_frames": null,
+        "discarded_late_frames": null,
+        "audio_underrun_callbacks": null,
+        "audio_clock_advanced_underruns": null,
+        "audio_retired_late_frames": null,
+        "audio_callbacks": null,
+        "audio_rendered_frames": null,
+        "clock_rate": null,
+        "paused": true
+      }
+    ],
+    "rendered_frames": 0
+  }
+]

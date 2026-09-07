@@ -1,0 +1,1 @@
+{"file": "pcm-u8-offset.mka", "asset_sha256": "098bf2d30cbc434e75fe5a1cbc8937e04eab86e891e0a18912f0142406ab08bc", "target": 0, "frames": 96000, "rms": 0.0, "maximum": 0.0, "best_lag": 0, "diagnostic": "track=1 rate=48000 frames=96000 first=0 decoded=96000 trim=0 exact=1 drained=1 error="}

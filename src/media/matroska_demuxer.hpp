@@ -1,6 +1,7 @@
 #pragma once
 
 #include "media/matroska_ebml.hpp"
+#include "media/audio_track_admission.hpp"
 #include "media/native_media_source.hpp"
 
 #include <array>
@@ -254,10 +255,10 @@ class MatroskaPreparedAsset final
   friend struct MatroskaPrepareOutcome;
   friend MatroskaPrepareOutcome prepareMatroska(
       std::shared_ptr<SeekableByteReader>, std::filesystem::path,
-      const MediaSourceOpenOptions&, CancellationToken) noexcept;
+      const MediaSourceOpenOptions&, CancellationToken, const AudioTrackRejections&) noexcept;
   friend MatroskaPrepareOutcome prepareMatroskaLocalFile(
       const std::filesystem::path&, const MediaSourceOpenOptions&,
-      CancellationToken) noexcept;
+      CancellationToken, const AudioTrackRejections&) noexcept;
 };
 
 struct MatroskaPrepareOutcome {
@@ -272,12 +273,14 @@ struct MatroskaPrepareOutcome {
 [[nodiscard]] MatroskaPrepareOutcome prepareMatroska(
     std::shared_ptr<SeekableByteReader> reader, std::filesystem::path path,
     const MediaSourceOpenOptions& options,
-    CancellationToken cancellation = {}) noexcept;
+    CancellationToken cancellation = {},
+    const AudioTrackRejections& rejectedAudio = {}) noexcept;
 
 // Opens once with O_RDONLY|O_CLOEXEC and retains that descriptor. No cursor or
 // payload copy reopens the path.
 [[nodiscard]] MatroskaPrepareOutcome prepareMatroskaLocalFile(
     const std::filesystem::path& path, const MediaSourceOpenOptions& options,
-    CancellationToken cancellation = {}) noexcept;
+    CancellationToken cancellation = {},
+    const AudioTrackRejections& rejectedAudio = {}) noexcept;
 
 }  // namespace wam::media::matroska

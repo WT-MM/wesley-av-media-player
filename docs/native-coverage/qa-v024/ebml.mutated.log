@@ -1,0 +1,9 @@
+Traceback (most recent call last):
+  File "/Users/wesleymaa/Documents/WAM/tests/native_coverage_integration.py", line 208, in <module>
+    if __name__=='__main__': main()
+                             ^^^^^^
+  File "/Users/wesleymaa/Documents/WAM/tests/native_coverage_integration.py", line 73, in main
+    test_ebml_size_growth()
+  File "/Users/wesleymaa/Documents/WAM/tests/native_coverage_integration.py", line 66, in test_ebml_size_growth
+    assert rewritten[4:6] == b'\x40\x8d'
+AssertionError

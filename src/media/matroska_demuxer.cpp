@@ -1495,7 +1495,7 @@ struct ExactAudioDuration {
   if (sampleRate == 0U || samplesPerAccessUnit == 0U) {
     return false;
   }
-  const auto tailProjection = nearestAacAccessUnitForMatroskaTick(
+  const auto tailProjection = nearestAudioPacketForMatroskaTick(
       probe.tailBlockTick, MediaTime{0, 1}, sampleRate,
       timestampScaleNanoseconds, samplesPerAccessUnit);
   if (!aacProjectionOnGrid(tailProjection, tickTolerance)) {
@@ -1910,7 +1910,7 @@ void fillAudioDescriptor(const TrackEntry& entry, MediaTrackId id,
   if (probe.tailDiscardPaddingNanoseconds != 0) {
     return false;
   }
-  const auto tailProjection = nearestAacAccessUnitForMatroskaTick(
+  const auto tailProjection = nearestAudioPacketForMatroskaTick(
       probe.tailBlockTick, MediaTime{0, 1}, configuration.sampleRate,
       timestampScaleNanoseconds, configuration.blockSize);
   if (!aacProjectionOnGrid(tailProjection, kMaximumOpusGridTickResidual)) {
@@ -2048,7 +2048,7 @@ void fillAudioDescriptor(const TrackEntry& entry, MediaTrackId id,
   // Exact end of the decoded stream, in track-rate frames from media zero:
   //   (lastOrdinal + lacedFrames) * samplesPerAccessUnit
   //     - samplesPerAccessUnit - discardPadding
-  const auto tailProjection = nearestAacAccessUnitForMatroskaTick(
+  const auto tailProjection = nearestAudioPacketForMatroskaTick(
       probe.tailBlockTick, MediaTime{0, 1}, sampleRate,
       timestampScaleNanoseconds, samplesPerAccessUnit);
   if (!aacProjectionOnGrid(tailProjection, kMaximumOpusGridTickResidual)) {
@@ -2204,7 +2204,7 @@ void fillAudioDescriptor(const TrackEntry& entry, MediaTrackId id,
   // Exact end of the decoded stream, in 48 kHz frames from media time zero:
   //   (lastOrdinal + lacedFrames) * samplesPerAccessUnit
   //     - preSkip - discardPadding
-  const auto tailProjection = nearestAacAccessUnitForMatroskaTick(
+  const auto tailProjection = nearestAudioPacketForMatroskaTick(
       probe.tailBlockTick, MediaTime{0, 1}, kOpusOutputSampleRate,
       timestampScaleNanoseconds, probe.samplesPerAccessUnit);
   if (!aacProjectionOnGrid(tailProjection, kMaximumOpusGridTickResidual)) {
@@ -2350,7 +2350,7 @@ void fillAudioDescriptor(const TrackEntry& entry, MediaTrackId id,
             } else if (bytes.size != format.format.bytesPerPacket) { valid = false; return false; }
             if (count == 0 || count > format.blockFrames || shortTail) { valid = false; return false; }
             if (i == 0) {
-              const auto projected = nearestAacAccessUnitForMatroskaTick(*tick, {0,1},
+              const auto projected = nearestAudioPacketForMatroskaTick(*tick, {0,1},
                   static_cast<std::uint32_t>(rate), tickScale, format.blockFrames);
               if (!aacProjectionOnGrid(projected, kMaximumOpusGridTickResidual) ||
                   projected->accessUnitOrdinal != ordinal) { valid = false; return false; }
@@ -3032,7 +3032,7 @@ MatroskaCursor::readNextRaw(CancellationToken cancellation) noexcept {
           }
           const std::uint32_t samplesPerAccessUnit =
               state.audio->audioSamplesPerAccessUnit;
-          const auto projection = nearestAacAccessUnitForMatroskaTick(
+          const auto projection = nearestAudioPacketForMatroskaTick(
               *tick, MediaTime{0, 1}, state.audio->audioSampleRate,
               state.timestampScaleNanoseconds, samplesPerAccessUnit);
           if (!aacProjectionOnGrid(projection,
@@ -3137,7 +3137,7 @@ MatroskaCursor::readNextRaw(CancellationToken cancellation) noexcept {
             bytes += static_cast<std::size_t>(frameBytes);
           }
           sample.aggregateBytes = bytes;
-          const auto presentation = aacAccessUnitGridTime(
+          const auto presentation = audioPacketGridTime(
               {state.audio->audioPresentationOrigin,
                impl_->expectedAudioOrdinal, state.audio->audioSampleRate,
                samplesPerAccessUnit});
@@ -3493,7 +3493,7 @@ MatroskaPlanOutcome MatroskaPreparedAsset::planGeneration(
             if (!tick) {
               return false;
             }
-            const auto projection = nearestAacAccessUnitForMatroskaTick(
+            const auto projection = nearestAudioPacketForMatroskaTick(
                 *tick, MediaTime{0, 1}, state.audio->audioSampleRate,
                 state.timestampScaleNanoseconds, samplesPerAccessUnit);
             return aacProjectionOnGrid(projection, tickTolerance) &&
@@ -3512,7 +3512,7 @@ MatroskaPlanOutcome MatroskaPreparedAsset::planGeneration(
       const auto audioTick = signedBlockTick(
           state.clusters[audioBlock.clusterIndex].timestampTick,
           audioBlock.block->header.relativeTimestamp);
-      const auto projection = nearestAacAccessUnitForMatroskaTick(
+      const auto projection = nearestAudioPacketForMatroskaTick(
           *audioTick, MediaTime{0, 1}, state.audio->audioSampleRate,
           state.timestampScaleNanoseconds, samplesPerAccessUnit);
       plan.audioClusterIndex = audioBlock.clusterIndex;
@@ -3524,7 +3524,7 @@ MatroskaPlanOutcome MatroskaPreparedAsset::planGeneration(
       // emits, which is startOrdinal -- not the first AU of the Block that
       // contains it. Naming the Block's first AU disagreed with the cursor
       // whenever the seek landed mid-Block.
-      const auto decode = aacAccessUnitGridTime(
+      const auto decode = audioPacketGridTime(
           {presentationOrigin, startOrdinal, state.audio->audioSampleRate,
            samplesPerAccessUnit});
       if (!decode) {
@@ -3820,6 +3820,13 @@ namespace {
   // CodecPrivate, and the only one whose refusal therefore needs no Cluster.
   // AC-3, MP3, FLAC, Opus and Vorbis all probe a Block, so they keep waiting
   // for the authoritative pass rather than being second-guessed here.
+  if (audio && inlineString(audio->codecId) == "A_OPUS" && audio->audio &&
+      audio->audio->outputSamplingFrequency &&
+      *audio->audio->outputSamplingFrequency != kOpusOutputSampleRate) {
+    return MatroskaPrepareOutcome{MatroskaDemuxStatus::Unsupported,
+        MatroskaDemuxError::CodecConfiguration, nullptr,
+        "OpusOutputSampleRateUnsupported"};
+  }
   if (audio == nullptr || inlineString(audio->codecId) != "A_AAC" ||
       !audio->audio || !audio->codecPrivate) {
     return std::nullopt;
@@ -4047,7 +4054,7 @@ namespace {
 MatroskaPrepareOutcome prepareMatroska(
     std::shared_ptr<SeekableByteReader> reader, std::filesystem::path path,
     const MediaSourceOpenOptions& requested,
-    CancellationToken cancellation) noexcept {
+    CancellationToken cancellation, const AudioTrackRejections& rejectedAudio) noexcept {
   MatroskaPrepareOutcome result;
   try {
     if (reader == nullptr || reader->size() == 0 || path.empty()) {
@@ -4283,10 +4290,14 @@ MatroskaPrepareOutcome prepareMatroska(
         const auto codec = inlineString(candidate.codecId);
         candidates[i] = {trackId(candidate.number).value_or(0),
                          candidate.enabled && candidate.type == 2 &&
+                             !rejectedAudio.contains(trackId(candidate.number).value_or(0)) &&
                              isAudioCodec(codec) &&
                              audioCodecAllowedInDocument(codec, documentType),
                          candidate.defaultTrack};
       }
+      std::string candidateRefusals;
+      std::string bestRefusal = "AudioCodecConfigurationRefused";
+      bool specificRefusal = false;
       const auto selected = selectAdmittedAudioTrack(
           std::span(candidates).first(document.tracks.size()),
           requested.selection.preferredAudio, [&](std::size_t i) {
@@ -4300,6 +4311,18 @@ MatroskaPrepareOutcome prepareMatroska(
                                      *duration, document.clusters, constraints,
                                      state->timestampScaleNanoseconds,
                                      cancellation, &proposed, &runtime)) {
+              auto exactRequest = requested;
+              exactRequest.selection.preferredAudio = candidates[i].id;
+              const auto header = matroskaHeaderRefusal(*state->reader,
+                  document.tracks, documentType, exactRequest, state->limits, cancellation);
+              const std::string reason = header ? header->message : "AudioCodecConfigurationRefused";
+              const bool named = reason == kHeAacDecoderDelayRefusal ||
+                                 reason == "OpusOutputSampleRateUnsupported";
+              if (named || (!specificRefusal && header)) bestRefusal = reason;
+              specificRefusal = specificRefusal || named;
+              if (!candidateRefusals.empty()) candidateRefusals += "; ";
+              candidateRefusals += "track " + std::to_string(candidates[i].id) +
+                  " (" + std::string(inlineString(candidate.codecId)) + "): " + reason;
               return false;
             }
             audioDescriptor = std::move(proposed);
@@ -4312,7 +4335,7 @@ MatroskaPrepareOutcome prepareMatroska(
                                                 : MatroskaDemuxError::CodecConfiguration;
         result.status = cancellation.cancelled() ? MatroskaDemuxStatus::Cancelled
                                                  : MatroskaDemuxStatus::Unsupported;
-        result.message = "no selected audio candidate passed complete codec admission";
+        result.message = bestRefusal + "; candidates: [" + candidateRefusals + "]";
         return result;
       }
       descriptor->selectedAudio = audioDescriptor.id;
@@ -4511,7 +4534,7 @@ MatroskaPrepareOutcome prepareMatroska(
 
 MatroskaPrepareOutcome prepareMatroskaLocalFile(
     const std::filesystem::path& path, const MediaSourceOpenOptions& options,
-    CancellationToken cancellation) noexcept {
+    CancellationToken cancellation, const AudioTrackRejections& rejectedAudio) noexcept {
   if (cancellation.cancelled()) {
     return {MatroskaDemuxStatus::Cancelled, MatroskaDemuxError::Cancelled,
             nullptr, {}};
@@ -4522,7 +4545,7 @@ MatroskaPrepareOutcome prepareMatroskaLocalFile(
             "could not open the local Matroska file"};
   }
   MatroskaPrepareOutcome outcome =
-      prepareMatroska(reader, path, options, cancellation);
+      prepareMatroska(reader, path, options, cancellation, rejectedAudio);
   if (outcome.asset) {
     const_cast<AssetState*>(outcome.asset->impl_->state.get())->localReader =
         std::move(reader);

@@ -1391,14 +1391,14 @@ if(BUILD_TESTING)
       target_link_libraries(wam_native_coverage_audio_probe PRIVATE
         wam_macos_native_backend)
 
-      add_test(NAME native_coverage_wiring
-        COMMAND "${WAM_MPEGTS_PYTHON}"
-          "${CMAKE_SOURCE_DIR}/tests/native_coverage_wiring_test.py"
-          "${CMAKE_SOURCE_DIR}")
-
       find_program(WAM_COVERAGE_FFMPEG NAMES ffmpeg
         HINTS "${CMAKE_SOURCE_DIR}/build/runtime")
       if(WAM_COVERAGE_FFMPEG)
+        add_test(NAME native_coverage_wiring
+          COMMAND "${WAM_MPEGTS_PYTHON}"
+            "${CMAKE_SOURCE_DIR}/tests/native_coverage_wiring_test.py"
+            --app "$<TARGET_FILE:wam>" --ffmpeg "${WAM_COVERAGE_FFMPEG}")
+        set_tests_properties(native_coverage_wiring PROPERTIES TIMEOUT 180)
         add_test(NAME macos_native_coverage_integration
           COMMAND "${WAM_MPEGTS_PYTHON}"
             "${CMAKE_SOURCE_DIR}/tests/native_coverage_integration.py"

@@ -49,6 +49,9 @@ def opus_output_rate(data, rate):
                 if identity == 0xE1:
                     payload += bytes([0x78, 0xB5, 0x88]) + struct.pack('>d', rate)
             out += blob[start:start+iw]
+            while len(payload) >= (1 << (7*sw))-1:
+                sw += 1
+                assert sw <= 8, 'EBML payload exceeds finite size envelope'
             out += ((1 << (7*sw)) | len(payload)).to_bytes(sw, 'big')
             out += payload
             offset = end
@@ -56,7 +59,21 @@ def opus_output_rate(data, rate):
     return rewrite(data)
 
 
+def test_ebml_size_growth():
+    # The added Audio child crosses the one-byte finite-size boundary in
+    # Audio, TrackEntry and Tracks, and must not encode the unknown-size value.
+    audio = b'\xe1\xfc' + b'\xec\xfa' + bytes(122)
+    track = b'\xae\xfe' + audio
+    tracks = b'\x16\x54\xae\x6b\x40\x80' + track
+    rewritten = opus_output_rate(tracks,48000.0)
+    assert rewritten[4:6] == b'\x40\x8d'
+    assert rewritten[7:9] == b'\x40\x8a'
+    assert rewritten[10:12] == b'\x40\x87'
+    assert len(rewritten) == 147
+
+
 def main():
+    test_ebml_size_growth()
     args = argparse.ArgumentParser()
     args.add_argument('--audio', required=True)
     args.add_argument('--source', required=True)
@@ -67,12 +84,16 @@ def main():
     temporary = tempfile.TemporaryDirectory(prefix='wam-native-coverage-', dir='/private/tmp')
     root = Path(a.artifacts or temporary.name)
     root.mkdir(parents=True, exist_ok=True)
-    manifest = {'version': 1, 'ffmpeg': run([a.ffmpeg, '-version']).stdout,
+    manifest = {'version': 2,
+                'audio_probe_sha256': hashlib.sha256(Path(a.audio).read_bytes()).hexdigest(),
+                'source_probe_sha256': hashlib.sha256(Path(a.source).read_bytes()).hexdigest(),
+                'ffmpeg': run([a.ffmpeg, '-version']).stdout,
                 'specimens': [], 'proofs': []}
 
-    def generate(name, rate=48000, codec='aac', extra=(), seconds=4):
+    def generate(name, rate=48000, codec='aac', extra=(), seconds=4, offset=False):
         argv = [a.ffmpeg, '-v', 'error', '-y', '-f', 'lavfi', '-i',
-                f'aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s={rate}',
+                (f'aevalsrc=0.375+0.03*sin(2*PI*(200*t+100*t*t))|-0.25+0.02*sin(2*PI*(300*t+130*t*t)):s={rate}' if offset else
+                 f'aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s={rate}'),
                 '-t', str(seconds), '-c:a', codec, *extra, root/name]
         run(argv)
         manifest['specimens'].append({'file': name, 'argv': [str(x) for x in argv],
@@ -102,7 +123,8 @@ def main():
             lags[lag] = sum((output[i]-expected[i+lag*2])**2
                             for i in range(4096, len(output)-4096, 16))
         assert min(lags, key=lags.get) == 0, (path, lags)
-        proof = dict(file=path.name, target=target, frames=len(output)//2,
+        proof = dict(file=path.name, asset_sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
+                     target=target, frames=len(output)//2,
                      rms=rms, maximum=maximum, best_lag=0, diagnostic=result.stderr.strip())
         manifest['proofs'].append(proof)
         print(json.dumps(proof), flush=True)
@@ -123,9 +145,12 @@ def main():
         explicit = root/'opus-output-48000.webm'
         explicit.write_bytes(opus_output_rate(path.read_bytes(),48000.0))
         decode(explicit,48000,192000)
-        invalid = root/'opus-output-24000.webm'
-        invalid.write_bytes(opus_output_rate(path.read_bytes(),24000.0))
-        run([a.source,invalid],expected=1)
+        for rate in (24000,96000):
+            invalid = root/f'opus-output-{rate}.webm'
+            invalid.write_bytes(opus_output_rate(path.read_bytes(),float(rate)))
+            result=run([a.source,invalid],expected=1)
+            assert 'OpusOutputSampleRateUnsupported' in result.stdout, result.stdout
+            manifest['proofs'].append(dict(file=invalid.name,asset_sha256=hashlib.sha256(invalid.read_bytes()).hexdigest(),diagnostic=result.stdout.strip()))
     if a.case in ('all','selection'):
         bad=generate('bad.m4a',88200)
         good=generate('good.m4a')
@@ -148,11 +173,19 @@ def main():
             ref=root/(codec+'.count.f32')
             run([a.ffmpeg,'-v','error','-y','-i',path,'-ac','2','-c:a','pcm_f32le','-f','f32le',ref])
             decode(path,48000,ref.stat().st_size//8,bit_exact=True)
+    if a.case in ('all','pcm-u8'):
+        path=generate('pcm-u8-offset.mka',48000,'pcm_u8',seconds=2,offset=True)
+        decode(path,48000,96000,bit_exact=True)
     if a.case in ('all','matroska-apple'):
         for codec in ('alac','pcm_s16le','pcm_f32le','adpcm_ima_wav','adpcm_ms'):
             path=generate(codec+'.mka',48000,codec)
             decode(path,48000,192000,bit_exact=True)
             decode(path,48000,192000,2,bit_exact=True)
+    if a.case in ('all','matroska-rates'):
+        for rate in (8000,11025,12000,16000,22050,24000,32000,44100,48000,96000,192000):
+            for codec in ('pcm_s16le','alac'):
+                path=generate(f'{codec}-{rate}.mka',rate,codec,seconds=2)
+                decode(path,rate,rate*2,bit_exact=True)
     if a.case in ('all','slow-audio'):
         path=generate('slow-audio.wav',48000,'pcm_s16le',seconds=32)
         decode(path,48000,1536000,30,bit_exact=True,origin=True)
@@ -165,6 +198,14 @@ def main():
                 result=run([a.source,container],expected=1)
                 assert 'HeAacSbrDecoderDelayUnproven' in result.stdout, result.stdout
                 manifest['proofs'].append(dict(file=container.name,diagnostic=result.stdout.strip()))
+        combined=root/'two-he.mka'
+        run([a.ffmpeg,'-v','error','-y','-i',root/'he-aac-4.m4a.mka',
+             '-i',root/'he-aac-28.m4a.mka','-map','0:a','-map','1:a','-c','copy',combined])
+        result=run([a.source,combined],expected=1)
+        assert 'error=HeAacSbrDecoderDelayUnproven' in result.stdout and '; candidates:' in result.stdout, result.stdout
+        assert 'track 1 (A_AAC): HeAacSbrDecoderDelayUnproven' in result.stdout, result.stdout
+        assert 'track 2 (A_AAC): HeAacSbrDecoderDelayUnproven' in result.stdout, result.stdout
+        manifest['proofs'].append(dict(file=combined.name,asset_sha256=hashlib.sha256(combined.read_bytes()).hexdigest(),diagnostic=result.stdout.strip()))
     (root/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
 
 if __name__=='__main__': main()
