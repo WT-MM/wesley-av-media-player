@@ -1,0 +1,18 @@
+{
+  "candidate_sha256": "50746f481f6dbdcf679c8bd8b890db9647008900905ee97da278cddf0d628266",
+  "configuration": [
+    "WAM_ENABLE_AVCODEC_STAGE:BOOL=OFF",
+    "WAM_ENABLE_AVFORMAT_STAGE:BOOL=OFF"
+  ],
+  "build_command": "cmake --build build --parallel",
+  "acceptance_ctest": {
+    "passed": 124,
+    "total": 124,
+    "seconds": 43.36
+  },
+  "shipped_ctest": {
+    "passed": 82,
+    "total": 82,
+    "seconds": 39.68
+  }
+}
