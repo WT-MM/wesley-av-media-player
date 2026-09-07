@@ -53,6 +53,9 @@ class NativeSilentTimebase final {
   [[nodiscard]] bool activate(media::MediaGeneration generation,
                               double positionSeconds) noexcept;
 
+  [[nodiscard]] bool activateExact(media::MediaGeneration generation,
+                                   media::MediaTime target) noexcept;
+
   // Opens transport admission for the activated generation. The clock is
   // already anchored paused at its commit position, so unlike an audio start
   // there is nothing to prebuffer and this never reports WaitingForData.

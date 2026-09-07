@@ -1,0 +1,16 @@
+{
+  "case": "retirement",
+  "kind": "runtime: restore graph destruction on the calling main thread",
+  "files": [
+    {
+      "path": "src/platform/macos/native_retirement.mm",
+      "sha256": "50c04135615fdfdd3ce9b8886615f7ff728bc47765addeb2896d8db2675b81d9"
+    }
+  ],
+  "baseline_rc": 0,
+  "reverted_build_rc": 0,
+  "reverted_test_rc": 1,
+  "byte_identical_restore": true,
+  "restored_build_rc": 0,
+  "restored_test_rc": 0
+}

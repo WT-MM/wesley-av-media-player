@@ -1040,9 +1040,32 @@ void naturalEndRetainsNativeUntilExactStop() {
          "exact Stop releases ended ownership to queued source");
 }
 
+void rationalCommitRequiresCompanionProof() {
+  router::PlaybackRouter owner;
+  const auto prepare = owner.open(nativeOpen(1), {1}).action->prepare;
+  const auto start = owner.onNativePrepared(preparedFor(prepare), {2}).action->start;
+  static_cast<void>(owner.onNativeStarted({start.stamp,start.preparedGeneration,0}, {3}));
+  const wam::media::MediaTime target{1001,30000};
+  const auto command = action(owner.commitSeekExact({{1},{1},*wam::media::mediaTimeSeconds(target),0},target,{4}),
+      router::ActionKind::NativeCommitSeek,"rational seek reserved").commitSeek;
+  expect(owner.onNativeCommitReady(readyFor(command,1),{5}).status == router::Status::Ignored,
+      "binary64 proof cannot promote a rational request");
+  native::ExactCommitReady ready;
+  ready.stamp = command.stamp; ready.generation = command.targetGeneration;
+  ready.gesture = command.gesture; ready.request = command.request;
+  ready.requestedTarget = target; ready.audioPresentationStart = {267,8000};
+  ready.actualDecodeStart = {0,1}; ready.videoStart = {0,25}; ready.videoDuration = {1,25};
+  ready.clockPublication = 1; ready.drawSequence = 1;
+  auto wrong = ready; wrong.requestedTarget = {1002,30000};
+  expect(owner.onNativeExactCommitReady(wrong,{6}).status == router::Status::Ignored,"wrong rational target is rejected");
+  expect(owner.onNativeExactCommitReady(ready,{7}).status == router::Status::Applied,"exact companion promotes generation");
+  expect(owner.onNativeExactCommitReady(ready,{8}).status == router::Status::Ignored,"completion is consumed once");
+}
+
 } // namespace
 
 int main() {
+  rationalCommitRequiresCompanionProof();
   nativeSuccessHasZeroFallback();
   runStateCarriesRateAndPitchTogether();
   unsupportedIsTheOnlyImmediateFallback();

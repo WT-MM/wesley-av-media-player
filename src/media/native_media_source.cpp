@@ -1,5 +1,6 @@
 #include "media/native_media_source.hpp"
 #include "media/media_codec_facts.hpp"
+#include "media/native_exact_playback.hpp"
 
 #include <algorithm>
 #include <array>
@@ -58,12 +59,9 @@ unsigned bitWidth(__uint128_t value) noexcept {
 // Converts an unsigned 128-bit rational to binary64 with exact round-to-
 // nearest, ties-to-even semantics. Integer-only normalization and rounding
 // make the result independent of the process floating-point environment.
-// The two callers below admit only a MediaTime magnitude or the checked
-// MediaTime-plus-frame expression: numerator < 2^96 and denominator < 2^63.
-// Their nonzero exponent is therefore in [-63, 64], so every scaling shift
-// fits uint128 and every result is a normal finite binary64 value. Defensive
-// shift checks fail closed if this private helper is ever reused outside that
-// domain; subnormal and overflow encodings are unreachable for current calls.
+// Callers supply checked unsigned 128-bit rational operands.
+// Scaling shifts are checked; operands outside the representable intermediate
+// domain fail closed. Nonzero uint128 ratios produce normal finite binary64.
 std::optional<double> correctlyRoundedPositiveRational(
     __uint128_t numerator, __uint128_t denominator) noexcept {
   if (denominator == 0) {
@@ -367,6 +365,25 @@ std::optional<double> mediaTimeSeconds(MediaTime time) noexcept {
       std::bit_cast<std::uint64_t>(*magnitude) |
       (std::uint64_t{1} << 63U);
   return std::bit_cast<double>(bits);
+}
+
+std::optional<double> mediaTimeSecondsAtHostTicks(MediaTime origin,
+    std::uint64_t ticks, std::uint64_t frequency, std::uint32_t units) noexcept {
+  if (!origin.valid() || origin.value < 0 || frequency == 0 || units < 16 || units > 256)
+    return {};
+  const auto rateDivisor = std::gcd(units, std::uint32_t{64});
+  const auto tickDivisor = std::gcd(ticks, frequency);
+  const __uint128_t hostDenominator = __uint128_t(frequency / tickDivisor) * (64 / rateDivisor);
+  __uint128_t numerator = 0;
+  if (__builtin_mul_overflow(__uint128_t(origin.value), hostDenominator, &numerator)) return {};
+  const __uint128_t elapsed = __uint128_t(ticks / tickDivisor) * (units / rateDivisor) * static_cast<std::uint32_t>(origin.timescale);
+  if (__builtin_add_overflow(numerator, elapsed, &numerator)) return {};
+  __uint128_t denominator = hostDenominator * static_cast<std::uint32_t>(origin.timescale);
+  auto left = numerator;
+  auto right = denominator;
+  while (right) { const auto remainder = left % right; left = right; right = remainder; }
+  if (left) { numerator /= left; denominator /= left; }
+  return correctlyRoundedPositiveRational(numerator, denominator);
 }
 
 std::optional<double> mediaTimeSecondsAtFrame(

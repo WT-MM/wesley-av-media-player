@@ -1,0 +1,12 @@
+{
+  "case": "relocation",
+  "path": "src/media/avcodec/library_directory.hpp",
+  "test": "wamkit_host_refusal",
+  "sha256": "f06eedec8ea358664e21468ab2bd3528ec3a646464ebe27100feb052a101eec4",
+  "baseline_rc": 0,
+  "reverted_build_rc": 0,
+  "reverted_test_rc": 8,
+  "byte_identical_restore": true,
+  "restored_build_rc": 0,
+  "restored_test_rc": 0
+}

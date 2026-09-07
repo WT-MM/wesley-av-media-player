@@ -1,0 +1,12 @@
+{
+  "case": "framework-copy",
+  "path": "examples/WAMKitHost/CMakeLists.txt",
+  "test": "wamkit_host_packaging",
+  "sha256": "02ad359df265a2525a7faa3016c32eb0bf0d681ccea0a751d30c9fe0fd1162ba",
+  "baseline_rc": 0,
+  "reverted_build_rc": 0,
+  "reverted_test_rc": 8,
+  "byte_identical_restore": true,
+  "restored_build_rc": 0,
+  "restored_test_rc": 0
+}

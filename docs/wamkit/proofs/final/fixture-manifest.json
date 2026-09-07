@@ -1,0 +1,58 @@
+{
+  "commands": [
+    [
+      "-f",
+      "lavfi",
+      "-i",
+      "testsrc2=size=320x180:rate=25:duration=6",
+      "-f",
+      "lavfi",
+      "-i",
+      "sine=frequency=440:sample_rate=48000:duration=6",
+      "-c:v",
+      "libx264",
+      "-preset",
+      "ultrafast",
+      "-pix_fmt",
+      "yuv420p",
+      "-g",
+      "25",
+      "-bf",
+      "2",
+      "-c:a",
+      "aac",
+      "-b:a",
+      "96k",
+      "/private/tmp/wam-wamkit-scratch/fixtures-8lh62ttz/av.mp4"
+    ],
+    [
+      "-i",
+      "/private/tmp/wam-wamkit-scratch/fixtures-8lh62ttz/av.mp4",
+      "-c:v",
+      "copy",
+      "-c:a",
+      "pcm_s16le",
+      "/private/tmp/wam-wamkit-scratch/fixtures-8lh62ttz/av.mkv"
+    ],
+    [
+      "-f",
+      "lavfi",
+      "-i",
+      "sine=frequency=440:sample_rate=48000:duration=2",
+      "-ac",
+      "2",
+      "-c:a",
+      "aac_at",
+      "-profile:a",
+      "4",
+      "-b:a",
+      "48k",
+      "/private/tmp/wam-wamkit-scratch/fixtures-8lh62ttz/refused.m4a"
+    ]
+  ],
+  "assets": {
+    "refused.m4a": "b8b9defaddeb76f47ffb962d2589ff250dfcbc07fc59249358fdc273c7a8ca5b",
+    "av.mkv": "97f60e69934b63189a4bfb9c33a91faad452c89c0b2a132107fe6946ae3c23ae",
+    "av.mp4": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213"
+  }
+}

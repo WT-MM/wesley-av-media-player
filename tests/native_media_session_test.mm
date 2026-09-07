@@ -117,6 +117,8 @@ struct GraphState {
   std::atomic<std::uint64_t> clockPublication{0};
   std::atomic<media::MediaGeneration> clockGeneration{0};
   std::atomic<double> clockPosition{0.0};
+  media::MediaTime exactTarget{};
+  media::MediaTime exactAudioStart{};
   std::atomic<bool> clockValid{false};
   std::atomic<bool> clockCurrent{false};
   std::atomic<bool> clockRunning{false};
@@ -314,6 +316,8 @@ class FakeSource final : public media::MediaSource {
     generation_ = request.generation;
     state_->clockGeneration.store(request.generation,
                                   std::memory_order_release);
+    state_->exactTarget = request.target;
+    state_->exactAudioStart = media::audioFrameAtOrAfter(request.target, 48000).value_or(media::MediaTime{});
     state_->clockPosition.store(
         media::mediaTimeSeconds(request.target).value_or(-1.0),
         std::memory_order_release);
@@ -815,6 +819,8 @@ NativeMediaClockSnapshot testClock(void* context) noexcept {
       state.clockGeneration.load(std::memory_order_acquire);
   result.mediaSeconds =
       state.clockPosition.load(std::memory_order_acquire);
+  result.exactPausedTarget = state.exactTarget;
+  result.exactAudioPresentationStart = state.exactAudioStart;
   result.rate = 1.0;
   result.valid = state.clockValid.load(std::memory_order_acquire);
   result.running = state.clockRunning.load(std::memory_order_acquire);
@@ -3598,6 +3604,45 @@ void testSeekAdmissionStopsAtThePresentableCeiling() {
          "the last grid point below the video's end previews");
 }
 
+void testRationalEmbeddingCommit() {
+  auto state = std::make_shared<GraphState>();
+  state->descriptor = descriptor();
+  state->blockCapacity.store(true);
+  std::shared_ptr<NativeMediaSessionWake> wake;
+  auto session = sessionFor(&state, &wake);
+  prepareStartedPausedForPreview(*session);
+  const media::MediaTime requested{1001, 30000};
+  const auto target = session->preflightCommitTarget(requested);
+  expect(target && target->exact() == requested, "rational preflight preserves off-grid input");
+  expect(!session->preflightCommitTarget(media::MediaTime{10,1}), "exact ceiling remains half-open");
+  const auto command = commitCommand(4,8,target->seconds());
+  expect(session->commitSeek(command, *target) == NativeMediaSessionCommandStatus::Accepted,
+         "rational commit is admitted");
+  waitUntil([&]{return NativeMediaSessionTestAccess::commitPhase(*session) == CommitPhase::AwaitingProofs;},
+            "rational commit reaches proof phase");
+  {
+    std::lock_guard lock(state->videoEventMutex);
+    NativeTrackedVideoEvent event;
+    event.kind = NativeTrackedVideoEventKind::FrameDrawn;
+    event.generation = 8; event.eventSequence = 1; event.timing.generation = 8;
+    state->videoEvent = event;
+    state->videoEvent->timing.presentationTime = CMTimeMake(0,25);
+    state->videoEvent->timing.duration = CMTimeMake(1,25);
+  }
+  wake->video().signal(wake->video().context);
+  const auto observations = waitObservations(*session, [](const auto& facts){return facts.exactCommitReady.has_value();},
+                                             "rational commit produces companion proof");
+  const auto& ready = *observations.exactCommitReady;
+  expect(!observations.commitReady && protocol::exactCommitReadyMatches(command, requested, target->drawBaseline(), ready),
+         "exact request emits only an exact validated completion");
+  expect(ready.requestedTarget == requested &&
+         media::compareMediaTime(ready.audioPresentationStart, {267,8000}) == media::MediaTimeOrder::Equal &&
+         ready.videoStart == media::MediaTime{0,25} && ready.videoDuration == media::MediaTime{1,25},
+         "seek completion preserves source T, A and covering CMTime interval");
+  expect(session->stop({{{1},{5}},{9}}) == NativeMediaSessionCommandStatus::Accepted, "rational epoch stops");
+  static_cast<void>(waitFact<protocol::Stopped>(*session, "rational epoch retires"));
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -3605,6 +3650,7 @@ int main(int argc, char** argv) {
     testMpegTsRefusalFallback();
     return EXIT_SUCCESS;
   }
+  testRationalEmbeddingCommit();
   testEveryWorkerWakeOwnsOneDrainedAutoreleasePool();
   testObservationQueueRejectionRetriesWithoutPolling();
   testStopWinsEveryPreviewChildCompletion();

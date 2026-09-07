@@ -1,4 +1,5 @@
 #pragma once
+#include "native_exact_playback.hpp"
 
 #include "media/native_playback_contract.hpp"
 
@@ -216,6 +217,8 @@ public:
                                         Tick now) noexcept;
   [[nodiscard]] Transition commitSeek(const CommitSeekRequest &request,
                                       Tick now) noexcept;
+  [[nodiscard]] Transition commitSeekExact(const CommitSeekRequest&, MediaTime, Tick) noexcept;
+  [[nodiscard]] Transition onNativeExactCommitReady(const native::ExactCommitReady&, Tick) noexcept;
   [[nodiscard]] Transition advance(Tick now) noexcept;
 
   [[nodiscard]] Transition onNativePrepared(const native::Prepared &event,
@@ -298,6 +301,7 @@ private:
   native::Start start_{};
   native::PreviewFrame latestPreview_{};
   native::CommitSeek commitSeek_{};
+  std::optional<MediaTime> exactCommitTarget_;
   std::uint64_t commitDrawBaseline_{0};
   native::Stop stop_{};
   std::optional<PendingOpen> pending_;

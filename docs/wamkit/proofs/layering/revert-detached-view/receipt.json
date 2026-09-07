@@ -1,0 +1,20 @@
+{
+  "case": "detached-view",
+  "kind": "structural: restore original window-dependent host-view interface",
+  "files": [
+    {
+      "path": "src/platform/macos/native_layer_host_view.hpp",
+      "sha256": "d4d3080734c05baacac71f3023149cc39c5c2607a78dd2df477a78f0f3178831"
+    },
+    {
+      "path": "src/platform/macos/native_layer_host_view.mm",
+      "sha256": "d800d8f87bf8f0c8020fd18db4c7385ba986f556a36aa3b6240fadf7dee56f83"
+    }
+  ],
+  "baseline_rc": 0,
+  "reverted_build_rc": 1,
+  "reverted_test_rc": null,
+  "byte_identical_restore": true,
+  "restored_build_rc": 0,
+  "restored_test_rc": 0
+}

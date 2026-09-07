@@ -270,6 +270,7 @@ struct NativeLayerVideoOutput::State
   }
 
   void maybeLoadMetricsLocked() noexcept {
+#if !defined(WAM_PUBLIC_PRESENTATION_API)
     if (renderer == nil) {
       return;
     }
@@ -317,6 +318,7 @@ struct NativeLayerVideoOutput::State
     } else {
       metricsLoadInFlight.store(false, std::memory_order_release);
     }
+#endif
   }
 
   // ----------------------------------------------------------- sample buffers
