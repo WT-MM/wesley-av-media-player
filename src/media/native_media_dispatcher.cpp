@@ -1018,6 +1018,12 @@ NativeMediaDispatcherSeekOutcome NativeMediaDispatcher::seek(
   return result;
 }
 
+void NativeMediaDispatcher::requestRetirementCancellation(MediaGeneration generation) noexcept {
+  if (generation == 0) return;
+  retirement_cancellation_.store(generation, std::memory_order_release);
+  requestCancel(generation);
+}
+
 void NativeMediaDispatcher::requestCancel(MediaGeneration generation) noexcept {
   if (generation == 0 || source_ == nullptr) {
     return;
@@ -1324,6 +1330,9 @@ NativeMediaDispatcher::queueBehindLane(bool isVideo, bool isAudio,
 }
 
 NativeMediaDispatcherStep NativeMediaDispatcher::routePending() noexcept {
+  if (retirement_cancellation_.load(std::memory_order_acquire) != 0) {
+    return makeStep(NativeMediaDispatcherAction::Idle, NativeMediaDispatcherWait::Command);
+  }
   // Every alternative of the frozen read-result variant is routed by the
   // get_if chain below. The contract allows append-only additions; a new
   // alternative that is not handled here falls silently through to the

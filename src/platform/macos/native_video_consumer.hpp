@@ -108,6 +108,7 @@ struct NativeVideoConsumerFacts {
   std::uint64_t decodedFrames{0};
   std::uint64_t submittedFrames{0};
   std::uint64_t drawnFrames{0};
+  media::MediaTime firstDrawPts{};
   // Output-owned sequence high-water, including an event still pending in the
   // output mailbox. Started uses this as its linearized baseline and
   // VideoDrawProof echoes a later real FrameDrawn in the same domain.

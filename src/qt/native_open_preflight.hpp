@@ -1,6 +1,7 @@
 #pragma once
 
 #include "media/playback_router.hpp"
+#include "platform/macos/native_open_preflight.hpp"
 #include "platform/macos/native_media_session.hpp"
 #include "qt/playback_policy.hpp"
 
@@ -99,7 +100,7 @@ public:
   void stop() noexcept;
 
 private:
-  std::shared_ptr<NativeOpenPreflightState> state_;
+  std::unique_ptr<macos::NativeOpenPreflight> native_;
 };
 
 } // namespace wam::qt

@@ -110,13 +110,18 @@ struct GraphState {
   std::atomic<bool> blockFirstAudioStop{false};
   std::atomic<bool> releaseFirstAudioStop{false};
   std::atomic<bool> failFirstRead{false};
+  std::atomic<bool> interruptRead{false}, readEntered{false};
+  std::atomic<unsigned> consumerCancels{0};
   std::atomic<bool> blockCapacity{true};
   std::atomic<bool> failCapacity{false};
   std::atomic<float> lastGain{1.0F};
   std::atomic<bool> lastMuted{false};
   std::atomic<std::uint64_t> clockPublication{0};
+  std::atomic<double> sampledClockRate{1.0};
   std::atomic<media::MediaGeneration> clockGeneration{0};
   std::atomic<double> clockPosition{0.0};
+  media::MediaTime exactTarget{};
+  media::MediaTime exactAudioStart{};
   std::atomic<bool> clockValid{false};
   std::atomic<bool> clockCurrent{false};
   std::atomic<bool> clockRunning{false};
@@ -316,6 +321,8 @@ class FakeSource final : public media::MediaSource {
     generation_ = request.generation;
     state_->clockGeneration.store(request.generation,
                                   std::memory_order_release);
+    state_->exactTarget = request.target;
+    state_->exactAudioStart = media::audioFrameAtOrAfter(request.target, 48000).value_or(media::MediaTime{});
     state_->clockPosition.store(
         media::mediaTimeSeconds(request.target).value_or(-1.0),
         std::memory_order_release);
@@ -341,6 +348,12 @@ class FakeSource final : public media::MediaSource {
 
   media::MediaSourceReadResult readNext(
       media::MediaGeneration generation) override {
+    if (state_->interruptRead.load()) {
+      operation_.store(generation);
+      state_->readEntered.store(true);
+      while (state_->cancelledGeneration.load() != generation) std::this_thread::yield();
+      return media::MediaSourceCancelled{generation};
+    }
     const std::uint64_t index = read_++;
     if (index == 0 &&
         state_->failFirstRead.load(std::memory_order_acquire)) {
@@ -440,6 +453,7 @@ class FakeConsumer : public Base {
 
   media::NativeMediaConsumerProgress cancel(
       media::MediaGeneration) noexcept override {
+    state_->consumerCancels.fetch_add(1);
     return media::NativeMediaConsumerProgress::Done;
   }
 
@@ -824,7 +838,10 @@ NativeMediaClockSnapshot testClock(void* context) noexcept {
       state.clockGeneration.load(std::memory_order_acquire);
   result.mediaSeconds =
       state.clockPosition.load(std::memory_order_acquire);
-  result.rate = 1.0;
+  result.exactPausedTarget = state.exactTarget;
+  result.exactAudioPresentationStart = state.exactAudioStart;
+  result.rate = state.sampledClockRate.load();
+  result.requestedRate = 1.0;
   result.valid = state.clockValid.load(std::memory_order_acquire);
   result.running = state.clockRunning.load(std::memory_order_acquire);
   result.publicationCurrent =
@@ -2891,6 +2908,31 @@ void testVideoDueHintPublishesSharedDeadline() {
       *session, "video-due fixture Stopped"));
 }
 
+void testMetricsReportRequestedRate() {
+  auto state = std::make_shared<GraphState>();
+  state->descriptor = descriptor();
+  state->sampledClockRate.store(1.0001);
+  std::shared_ptr<NativeMediaSessionWake> wake;
+  auto session = sessionFor(&state, &wake);
+  session->setMetricsEnabled(true);
+  expect(prepare(*session, prepareCommand()) == NativeMediaSessionCommandStatus::Accepted,
+         "metrics fixture prepares");
+  static_cast<void>(waitFact<protocol::Prepared>(*session, "metrics Prepared"));
+  expect(session->start({{{1}, {2}}, {7}, true}) == NativeMediaSessionCommandStatus::Accepted,
+         "metrics fixture starts");
+  static_cast<void>(waitFact<protocol::Started>(*session, "metrics Started"));
+  expect(session->setRunState({{{1}, {3}}, {7}, true, 1.0}) == NativeMediaSessionCommandStatus::Accepted,
+         "metrics applies a valid paused clock");
+  waitUntil([&] { return state->clockCurrent.load(); }, "metrics run state applies");
+  wake->video().signal(wake->video().context);
+  waitUntil([&] { return session->metrics().clockValid; }, "metrics publishes a clock");
+  expect(session->metrics().clockRate == 1.0,
+         "metrics reports the requested rate, preserving drift in the scheduling clock");
+  expect(session->stop(stopCommand(4)) == NativeMediaSessionCommandStatus::Accepted,
+         "metrics fixture stops");
+  static_cast<void>(waitFact<protocol::Stopped>(*session, "metrics Stopped"));
+}
+
 void testGainMuteAndExactProofObservations() {
   auto state = std::make_shared<GraphState>();
   state->descriptor = descriptor();
@@ -3577,6 +3619,28 @@ void testDispatcherFailureUsesLatestQueuedStamp() {
       *session, "queued dispatcher failure retires"));
 }
 
+void testStopInterruptsReadWithoutConsumerCancel() {
+  auto state = std::make_shared<GraphState>();
+  state->descriptor = descriptor();
+  state->interruptRead.store(true);
+  std::shared_ptr<NativeMediaSessionWake> wake;
+  auto session = sessionFor(&state, &wake);
+  expect(prepare(*session, prepareCommand()) == NativeMediaSessionCommandStatus::Accepted,
+         "interrupted-read Prepare accepted");
+  static_cast<void>(waitFact<protocol::Prepared>(*session, "interrupted-read Prepared"));
+  expect(session->start({{{1}, {2}}, {7}, true}) == NativeMediaSessionCommandStatus::Accepted,
+         "interrupted-read Start accepted");
+  static_cast<void>(waitFact<protocol::Started>(*session, "interrupted-read Started"));
+  state->blockCapacity.store(false);
+  wake->video().signal(wake->video().context);
+  waitUntil([&] { return state->readEntered.load(); }, "worker enters source read");
+  expect(session->stop(stopCommand(3)) == NativeMediaSessionCommandStatus::Accepted,
+         "Stop interrupts the in-flight source read");
+  static_cast<void>(waitFact<protocol::Stopped>(*session, "interrupted-read exact Stopped"));
+  expect(state->consumerCancels.load() == 0,
+         "interrupted read cannot preempt exact retirement with ordinary Cancel");
+}
+
 void testStopWinsDispatcherFailurePublication() {
   auto state = std::make_shared<GraphState>();
   state->descriptor = descriptor();
@@ -3638,6 +3702,45 @@ void testSeekAdmissionStopsAtThePresentableCeiling() {
          "the last grid point below the video's end previews");
 }
 
+void testRationalEmbeddingCommit() {
+  auto state = std::make_shared<GraphState>();
+  state->descriptor = descriptor();
+  state->blockCapacity.store(true);
+  std::shared_ptr<NativeMediaSessionWake> wake;
+  auto session = sessionFor(&state, &wake);
+  prepareStartedPausedForPreview(*session);
+  const media::MediaTime requested{1001, 30000};
+  const auto target = session->preflightCommitTarget(requested);
+  expect(target && target->exact() == requested, "rational preflight preserves off-grid input");
+  expect(!session->preflightCommitTarget(media::MediaTime{10,1}), "exact ceiling remains half-open");
+  const auto command = commitCommand(4,8,target->seconds());
+  expect(session->commitSeek(command, *target) == NativeMediaSessionCommandStatus::Accepted,
+         "rational commit is admitted");
+  waitUntil([&]{return NativeMediaSessionTestAccess::commitPhase(*session) == CommitPhase::AwaitingProofs;},
+            "rational commit reaches proof phase");
+  {
+    std::lock_guard lock(state->videoEventMutex);
+    NativeTrackedVideoEvent event;
+    event.kind = NativeTrackedVideoEventKind::FrameDrawn;
+    event.generation = 8; event.eventSequence = 1; event.timing.generation = 8;
+    state->videoEvent = event;
+    state->videoEvent->timing.presentationTime = CMTimeMake(0,25);
+    state->videoEvent->timing.duration = CMTimeMake(1,25);
+  }
+  wake->video().signal(wake->video().context);
+  const auto observations = waitObservations(*session, [](const auto& facts){return facts.exactCommitReady.has_value();},
+                                             "rational commit produces companion proof");
+  const auto& ready = *observations.exactCommitReady;
+  expect(!observations.commitReady && protocol::exactCommitReadyMatches(command, requested, target->drawBaseline(), ready),
+         "exact request emits only an exact validated completion");
+  expect(ready.requestedTarget == requested &&
+         media::compareMediaTime(ready.audioPresentationStart, {267,8000}) == media::MediaTimeOrder::Equal &&
+         ready.videoStart == media::MediaTime{0,25} && ready.videoDuration == media::MediaTime{1,25},
+         "seek completion preserves source T, A and covering CMTime interval");
+  expect(session->stop({{{1},{5}},{9}}) == NativeMediaSessionCommandStatus::Accepted, "rational epoch stops");
+  static_cast<void>(waitFact<protocol::Stopped>(*session, "rational epoch retires"));
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -3645,6 +3748,7 @@ int main(int argc, char** argv) {
     testMpegTsRefusalFallback();
     return EXIT_SUCCESS;
   }
+  testRationalEmbeddingCommit();
   testEveryWorkerWakeOwnsOneDrainedAutoreleasePool();
   testObservationQueueRejectionRetriesWithoutPolling();
   testStopWinsEveryPreviewChildCompletion();
@@ -3678,6 +3782,7 @@ int main(int argc, char** argv) {
   testVideoDueHintPublishesSharedDeadline();
   testVideoDeadlineDoesNotWaitForAudioCallback();
   testWakeClearBeforeDrainPreservesLateRun();
+  testMetricsReportRequestedRate();
   testGainMuteAndExactProofObservations();
   testExhaustionStopsAudioBeforeOneEnded();
   testNearEndCommitHoldsEndingUntilItsRunStateLands();
@@ -3687,6 +3792,7 @@ int main(int argc, char** argv) {
   testPendingAtStartSetsBaselineAndPreRunDrawRetains();
   testDispatcherFailureIsPublished();
   testDispatcherFailureUsesLatestQueuedStamp();
+  testStopInterruptsReadWithoutConsumerCancel();
   testStopWinsDispatcherFailurePublication();
   testSeekAdmissionStopsAtThePresentableCeiling();
   std::cout << "native media session tests passed\n";

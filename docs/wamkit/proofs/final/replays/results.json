@@ -1,0 +1,154 @@
+[
+  {
+    "asset": "/Users/wesleymaa/Movies/RustDesk/old/outgoing_175981962_20260127121923093_display0_h265.mp4",
+    "candidate_sha256": "f8e353bbc30875048c8d6bddb2ef7223bc1749a47a8d75e0d061e808c8ab46a8",
+    "asset_sha256": "fe6ebf40c65dda8bbd3f13ead06926127c40736f12d60c6776a93adc7b4af21a",
+    "run_id": "3667c4ad-906b-484f-9af2-bc81cef81f00",
+    "pid": 96134,
+    "rc": 0,
+    "seconds": 8.588804541970603,
+    "native": true,
+    "first_frame_drawn": true,
+    "drawn_frames": 19,
+    "clock_rates": [
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1
+    ],
+    "passed": true
+  },
+  {
+    "asset": "/Users/wesleymaa/Movies/RustDesk/old/outgoing_175981962_20260208203414622_display0_h265.mp4",
+    "candidate_sha256": "f8e353bbc30875048c8d6bddb2ef7223bc1749a47a8d75e0d061e808c8ab46a8",
+    "asset_sha256": "6ead230da070bfb45f880c7bf5d53ae9eb1a809c09c4284730e321640321d3a0",
+    "run_id": "bffa7f72-2d40-4570-ac2f-92d946465032",
+    "pid": 96176,
+    "rc": 0,
+    "seconds": 8.742413375002798,
+    "native": true,
+    "first_frame_drawn": true,
+    "drawn_frames": 208,
+    "clock_rates": [
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1
+    ],
+    "passed": true
+  },
+  {
+    "asset": "/Users/wesleymaa/Movies/RustDesk/old/outgoing_175981962_20260208205646393_display0_h265.mp4",
+    "candidate_sha256": "f8e353bbc30875048c8d6bddb2ef7223bc1749a47a8d75e0d061e808c8ab46a8",
+    "asset_sha256": "93b15d49be3f42a8b188a24b7b827c0e983f01f8fd54b6d7a645cfcec6f2b529",
+    "run_id": "31938711-be0e-4c46-b640-58a1884d45c8",
+    "pid": 96223,
+    "rc": 0,
+    "seconds": 8.781929916003719,
+    "native": true,
+    "first_frame_drawn": true,
+    "drawn_frames": 216,
+    "clock_rates": [
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1
+    ],
+    "passed": true
+  },
+  {
+    "asset": "/Users/wesleymaa/Movies/RustDesk/old/outgoing_175981962_20260208210701843_display0_h265.mp4",
+    "candidate_sha256": "f8e353bbc30875048c8d6bddb2ef7223bc1749a47a8d75e0d061e808c8ab46a8",
+    "asset_sha256": "a7121cdcdd01800c83c68f9ed1ce3f19364e7c09b51fd34e7794cb464ca9d5ec",
+    "run_id": "7cbb3378-0841-4ca2-a871-5a428594485b",
+    "pid": 96263,
+    "rc": 0,
+    "seconds": 7.901337624993175,
+    "native": true,
+    "first_frame_drawn": true,
+    "drawn_frames": 189,
+    "clock_rates": [
+      1,
+      1,
+      1,
+      1,
+      1,
+      1
+    ],
+    "passed": true
+  },
+  {
+    "asset": "/Users/wesleymaa/Movies/RustDesk/old/outgoing_175981962_20260208215604603_display0_h265.mp4",
+    "candidate_sha256": "f8e353bbc30875048c8d6bddb2ef7223bc1749a47a8d75e0d061e808c8ab46a8",
+    "asset_sha256": "bd0add0a23638182d829b55bf0b682194c7d21c90e676138140fb52470b93186",
+    "run_id": "b3c2c2c2-1d3f-4ef0-bac4-94dec8871b78",
+    "pid": 96297,
+    "rc": 0,
+    "seconds": 8.02633533300832,
+    "native": true,
+    "first_frame_drawn": true,
+    "drawn_frames": 183,
+    "clock_rates": [
+      1,
+      1,
+      1,
+      1,
+      1,
+      1
+    ],
+    "passed": true
+  },
+  {
+    "asset": "/Users/wesleymaa/Movies/RustDesk/old/outgoing_175981962_20260208220322285_display0_h265.mp4",
+    "candidate_sha256": "f8e353bbc30875048c8d6bddb2ef7223bc1749a47a8d75e0d061e808c8ab46a8",
+    "asset_sha256": "1317c1d00dc360e8e8295e74f61e28cd753ec5f92bc4f458536d375810c0ab28",
+    "run_id": "cd292d7d-890e-4180-b225-6e8d62335b87",
+    "pid": 96333,
+    "rc": 0,
+    "seconds": 8.745787583000492,
+    "native": true,
+    "first_frame_drawn": true,
+    "drawn_frames": 195,
+    "clock_rates": [
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1
+    ],
+    "passed": true
+  },
+  {
+    "asset": "/Users/wesleymaa/Downloads/appleads.mp4",
+    "candidate_sha256": "f8e353bbc30875048c8d6bddb2ef7223bc1749a47a8d75e0d061e808c8ab46a8",
+    "asset_sha256": "51893850955e9f6089ea856df1844416c28be3c2e105c850cc64189be7a0866a",
+    "run_id": "006e6799-f65e-45cf-8d3f-528a506bc5f9",
+    "pid": 96379,
+    "rc": 0,
+    "seconds": 8.80466195900226,
+    "native": true,
+    "first_frame_drawn": true,
+    "drawn_frames": 227,
+    "clock_rates": [
+      1.0000000000000009,
+      1.0000000000000009,
+      1.0000000000000009,
+      1.000000000000023,
+      1.000000000000023,
+      1.000000000000023,
+      1.000000000000023
+    ],
+    "passed": true
+  }
+]

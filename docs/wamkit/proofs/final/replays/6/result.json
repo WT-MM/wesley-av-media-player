@@ -1,0 +1,22 @@
+{
+  "asset": "/Users/wesleymaa/Downloads/appleads.mp4",
+  "candidate_sha256": "f8e353bbc30875048c8d6bddb2ef7223bc1749a47a8d75e0d061e808c8ab46a8",
+  "asset_sha256": "51893850955e9f6089ea856df1844416c28be3c2e105c850cc64189be7a0866a",
+  "run_id": "006e6799-f65e-45cf-8d3f-528a506bc5f9",
+  "pid": 96379,
+  "rc": 0,
+  "seconds": 8.80466195900226,
+  "native": true,
+  "first_frame_drawn": true,
+  "drawn_frames": 227,
+  "clock_rates": [
+    1.0000000000000009,
+    1.0000000000000009,
+    1.0000000000000009,
+    1.000000000000023,
+    1.000000000000023,
+    1.000000000000023,
+    1.000000000000023
+  ],
+  "passed": true
+}

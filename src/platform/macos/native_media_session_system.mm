@@ -1,14 +1,8 @@
 #include "native_media_session_system.hpp"
 
 #include "native_audio_output.hpp"
-#include "native_layer_host_view.hpp"
-#include "native_layer_presentation_state.hpp"
-#include "native_layer_video_output.hpp"
-#include "native_qt_gl_output.hpp"
 #include "native_tracked_video_arbiter.hpp"
 
-#include <QQuickItem>
-#include <QQuickWindow>
 
 #include <CoreAudio/HostTime.h>
 
@@ -28,11 +22,10 @@ constexpr std::uint64_t kMaximumExactDoubleInteger =
 
 struct NativeMediaSessionSystemLifetime final {
   std::shared_ptr<void> caller;
+  // Presenter destruction precedes release of its view and wake dependencies.
+  std::shared_ptr<void> presentation;
   std::shared_ptr<NativeMediaSessionWake> wake;
   std::shared_ptr<NativeTrackedVideoArbiter> videoArbiter;
-  // Non-null only on the layer route. Outlives the output it feeds, so the
-  // host view is removed from the window after the presenter has closed.
-  std::shared_ptr<NativeLayerHostView> layerHost;
 };
 
 void assignError(std::string* error, const char* message) noexcept {
@@ -53,32 +46,6 @@ void assignError(std::string* error, const char* message) noexcept {
   } catch (...) {
     return false;
   }
-}
-
-// Runtime presentation selection. The decision itself lives in
-// native_layer_presentation_state.hpp so this factory and main.cpp's QML
-// transparency flag cannot disagree; see the rationale and the default there.
-// The GL path stays a full implementation behind WAM_PRESENTATION=scenegraph.
-enum class PresentationRoute : std::uint8_t { SceneGraph, Layer };
-
-[[nodiscard]] PresentationRoute selectedPresentationRoute() noexcept {
-  return layerPresentationRouteSelected() ? PresentationRoute::Layer
-                                          : PresentationRoute::SceneGraph;
-}
-
-// The Qt view handle the layer must be installed beneath. Derived from the
-// video item's own window, so no change to main.cpp's window plumbing is
-// needed: the item already lives in the window whose content view hosts the
-// scene.
-[[nodiscard]] void* qtViewHandleForItem(QtGlVideoItem* videoItem) noexcept {
-  if (videoItem == nullptr) {
-    return nullptr;
-  }
-  QQuickWindow* window = videoItem->window();
-  if (window == nullptr) {
-    return nullptr;
-  }
-  return reinterpret_cast<void*>(window->winId());
 }
 
 [[nodiscard]] std::uint64_t readSystemHostTicks(void*) noexcept {
@@ -110,7 +77,7 @@ enum class PresentationRoute : std::uint8_t { SceneGraph, Layer };
 std::unique_ptr<NativeMediaSession> createNativeMediaSessionSystem(
     NativeMediaSessionSourceBinding binding,
     std::shared_ptr<void> externalLifetime,
-    QtGlVideoItem* videoItem,
+    NativeMediaSessionPresentationFactory factory,
     std::string* error,
     std::shared_ptr<media::captions::LiveCaptionFeed> captionFeed) noexcept {
   if (error != nullptr) {
@@ -127,9 +94,9 @@ std::unique_ptr<NativeMediaSession> createNativeMediaSessionSystem(
                 "system native media session requires an external lifetime");
     return {};
   }
-  if (videoItem == nullptr) {
+  if (factory.create == nullptr) {
     assignError(error,
-                "system native media session requires a Qt video item");
+                "system native media session requires a presentation factory");
     return {};
   }
 
@@ -148,39 +115,14 @@ std::unique_ptr<NativeMediaSession> createNativeMediaSessionSystem(
       return {};
     }
 
-    std::shared_ptr<NativeTrackedVideoOutput> trackedOutput;
-    std::shared_ptr<NativeLayerHostView> layerHost;
-    if (selectedPresentationRoute() == PresentationRoute::Layer) {
-      // The layer presenter issues no in-process render pass, which is the
-      // whole objective (DESIGN.md section 6). Everything downstream of this
-      // pointer -- consumer, arbiter, session, owner, telemetry, commit-seek,
-      // preview -- is typed on the interface and is unchanged by the choice.
-      std::string layerError;
-      layerHost = NativeLayerHostView::create(qtViewHandleForItem(videoItem),
-                                              &layerError);
-      if (layerHost != nullptr) {
-        trackedOutput = NativeLayerVideoOutput::createTracked(
-            layerHost->displayLayer(), wake->trackedVideo(), &layerError);
-      }
-      if (trackedOutput == nullptr) {
-        // A layer route that cannot be installed is not a session failure: the
-        // GL path is a full implementation and stays the fallback.
-        layerHost.reset();
-      }
-    }
-    if (trackedOutput == nullptr) {
-      std::shared_ptr<NativeQtGlOutput> concreteOutput =
-          NativeQtGlOutput::createTracked(videoItem, wake->trackedVideo(),
-                                          error);
-      if (concreteOutput == nullptr) {
-        assignError(error,
-                    "system tracked native video output creation failed");
-        return {};
-      }
-      trackedOutput = concreteOutput;
+    NativeMediaSessionPresentation presentation = factory.create(
+        factory.context, wake->trackedVideo(), error);
+    if (!presentation.output) {
+      assignError(error, "PresentationUnavailable");
+      return {};
     }
     std::shared_ptr<NativeTrackedVideoArbiter> videoArbiter =
-        NativeTrackedVideoArbiter::create(std::move(trackedOutput), error);
+        NativeTrackedVideoArbiter::create(std::move(presentation.output), error);
     if (videoArbiter == nullptr) {
       assignError(error,
                   "system tracked native video arbiter creation failed");
@@ -197,8 +139,9 @@ std::unique_ptr<NativeMediaSession> createNativeMediaSessionSystem(
     }
 
     auto retained = std::make_shared<NativeMediaSessionSystemLifetime>(
-        NativeMediaSessionSystemLifetime{std::move(externalLifetime), wake,
-                                         videoArbiter, std::move(layerHost)});
+        NativeMediaSessionSystemLifetime{std::move(externalLifetime),
+                                         std::move(presentation.lifetime), wake,
+                                         videoArbiter});
 
     NativeMediaSessionDependencies dependencies;
     dependencies.externalLifetime = std::move(retained);

@@ -1,0 +1,12 @@
+{
+  "case": "audio-proof",
+  "path": "src/platform/macos/native_audio_render_core.cpp",
+  "test": "native_audio_render_core",
+  "sha256": "f8033c93a7c0d384ef1305739dd09a175df824f51778575a060fb468cbe7c610",
+  "baseline_rc": 0,
+  "reverted_build_rc": 0,
+  "reverted_test_rc": 8,
+  "byte_identical_restore": true,
+  "restored_build_rc": 0,
+  "restored_test_rc": 0
+}

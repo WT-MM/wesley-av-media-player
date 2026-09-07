@@ -1,4 +1,5 @@
 #include "runtime.hpp"
+#include "library_directory.hpp"
 #include "api.hpp"
 #include "closure.hpp"
 #include <array>
@@ -36,12 +37,7 @@ const char* validate() noexcept {
   return nullptr;
 }
 const char* load() {
-  std::array<char, PATH_MAX> executable{};
-  std::uint32_t size = executable.size();
-  if (_NSGetExecutablePath(executable.data(), &size)) return "DecoderUnavailable: ExecutablePath";
-  const auto directory = std::filesystem::canonical(executable.data()).parent_path();
-  const auto libraries = directory.filename() == "MacOS"
-      ? directory.parent_path() / "Frameworks" : directory / "native-codecs";
+  const auto libraries = libraryDirectory(reinterpret_cast<const void*>(&load));
   const auto util = libraries / "libavutil-wamnative.61.dylib";
   const auto codec = libraries / "libavcodec-wamnative.63.dylib";
   if (!std::filesystem::is_regular_file(util) || !std::filesystem::is_regular_file(codec))

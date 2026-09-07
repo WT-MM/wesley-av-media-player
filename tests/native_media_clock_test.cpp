@@ -177,6 +177,20 @@ void testRunningRatesAndExactFutureResume() {
              "a running rate change preserves continuity");
 }
 
+void testRequestedRateSurvivesSegmentSlope() {
+  FakeHostClock host;
+  NativeMediaClock clock(host.seam(1'000'000));
+  expect(clock.anchorAtHostTicks(1, 0, 0.0, 2.0, true), "rate fixture anchors");
+  expect(clock.observeSegment(1, segment(1, 0, 1'000'000, 0.0, 2.0002)) ==
+             NativeMediaSegmentAdmission::Current, "rate fixture admits drift");
+  host.ticks.store(500'000);
+  const auto sample = clock.sample();
+  expect(sample.requestedRate == 2.0 && sample.rate == 2.0002,
+         "requested rate and audio interval slope are distinct observations");
+  expectNear(sample.mediaSeconds, 1.0001, 1e-12,
+             "requested-rate telemetry cannot change authoritative interpolation");
+}
+
 void testSegmentsFutureAdjacencyGapAndSerials() {
   FakeHostClock host;
   host.ticks.store(100, std::memory_order_relaxed);
@@ -624,6 +638,7 @@ void testConcurrentReaderConsistency() {
 int main() {
   static_assert(noexcept(
       std::declval<const NativeMediaClock &>().ticksPerSecond()));
+  testRequestedRateSurvivesSegmentSlope();
   testConfigurationPausedAndInvalidation();
   testRunningRatesAndExactFutureResume();
   testSegmentsFutureAdjacencyGapAndSerials();

@@ -1,0 +1,214 @@
+[
+  {
+    "case": "exact-clock",
+    "path": "src/platform/macos/native_media_clock.cpp",
+    "test": "native_exact_embedding_time",
+    "sha256": "7d13a7f7d441a1c5ea2e6fc5d942b14b412d557a98784a4376cc960f53f9926c",
+    "baseline_rc": 0,
+    "reverted_build_rc": 0,
+    "reverted_test_rc": 8,
+    "byte_identical_restore": true,
+    "restored_build_rc": 0,
+    "restored_test_rc": 0
+  },
+  {
+    "case": "refusal",
+    "path": "src/wamkit/wamkit.mm",
+    "test": "wamkit_host_refusal",
+    "sha256": "1307aa4a1297f992db9b0b425b4f7c1c6168c9d749f9b766177b1b73276202c7",
+    "baseline_rc": 0,
+    "reverted_build_rc": 0,
+    "reverted_test_rc": 8,
+    "byte_identical_restore": true,
+    "restored_build_rc": 0,
+    "restored_test_rc": 0
+  },
+  {
+    "case": "rational-router",
+    "path": "src/media/playback_router.cpp",
+    "test": "playback_router",
+    "sha256": "59c423eed049cceee4b3af824a910340408e10c624815d009ce879ce2ca78154",
+    "baseline_rc": 0,
+    "reverted_build_rc": 0,
+    "reverted_test_rc": 8,
+    "byte_identical_restore": true,
+    "restored_build_rc": 0,
+    "restored_test_rc": 0
+  },
+  {
+    "case": "backpressure",
+    "path": "src/wamkit/wamkit.mm",
+    "test": "wamkit_host_api",
+    "sha256": "1307aa4a1297f992db9b0b425b4f7c1c6168c9d749f9b766177b1b73276202c7",
+    "baseline_rc": 0,
+    "reverted_build_rc": 0,
+    "reverted_test_rc": 8,
+    "byte_identical_restore": true,
+    "restored_build_rc": 0,
+    "restored_test_rc": 0
+  },
+  {
+    "case": "first-draw",
+    "path": "src/platform/macos/native_video_consumer.mm",
+    "test": "macos_native_video_consumer",
+    "sha256": "bc82c72a2433411c5ced1452eb0d6ccbddd1677ee9e5204a3b453eee03a4db91",
+    "baseline_rc": 0,
+    "reverted_build_rc": 0,
+    "reverted_test_rc": 8,
+    "byte_identical_restore": true,
+    "restored_build_rc": 0,
+    "restored_test_rc": 0
+  },
+  {
+    "case": "exact-target-retention",
+    "path": "src/platform/macos/native_playback_owner.mm",
+    "test": "wamkit_host_mp4",
+    "sha256": "b3054e4a2345a10f87a2173e97e308b9d947000d20d09931196d844140150f6a",
+    "baseline_rc": 0,
+    "reverted_build_rc": 0,
+    "reverted_test_rc": 8,
+    "byte_identical_restore": true,
+    "restored_build_rc": 0,
+    "restored_test_rc": 0
+  },
+  {
+    "case": "audio-proof",
+    "path": "src/platform/macos/native_audio_render_core.cpp",
+    "test": "native_audio_render_core",
+    "sha256": "f8033c93a7c0d384ef1305739dd09a175df824f51778575a060fb468cbe7c610",
+    "baseline_rc": 0,
+    "reverted_build_rc": 0,
+    "reverted_test_rc": 8,
+    "byte_identical_restore": true,
+    "restored_build_rc": 0,
+    "restored_test_rc": 0
+  },
+  {
+    "case": "paused-scheduler",
+    "path": "src/platform/macos/native_video_consumer.mm",
+    "test": "macos_native_video_consumer",
+    "sha256": "bc82c72a2433411c5ced1452eb0d6ccbddd1677ee9e5204a3b453eee03a4db91",
+    "baseline_rc": 0,
+    "reverted_build_rc": 0,
+    "reverted_test_rc": 8,
+    "byte_identical_restore": true,
+    "restored_build_rc": 0,
+    "restored_test_rc": 0
+  },
+  {
+    "case": "rational-session",
+    "path": "src/platform/macos/native_media_session.mm",
+    "test": "macos_native_media_session",
+    "sha256": "fa128eabce2ad8ead4bc980183ce71cd4f1137ee6c6738ba8c8c4129bd22633f",
+    "baseline_rc": 0,
+    "reverted_build_rc": 0,
+    "reverted_test_rc": 8,
+    "byte_identical_restore": true,
+    "restored_build_rc": 0,
+    "restored_test_rc": 0
+  },
+  {
+    "case": "relocation",
+    "path": "src/media/avcodec/library_directory.hpp",
+    "test": "wamkit_host_refusal",
+    "sha256": "f06eedec8ea358664e21468ab2bd3528ec3a646464ebe27100feb052a101eec4",
+    "baseline_rc": 0,
+    "reverted_build_rc": 0,
+    "reverted_test_rc": 8,
+    "byte_identical_restore": true,
+    "restored_build_rc": 0,
+    "restored_test_rc": 0
+  },
+  {
+    "case": "view",
+    "path": "src/platform/macos/native_layer_host_view.mm",
+    "test": "native_layer_embedding",
+    "sha256": "d800d8f87bf8f0c8020fd18db4c7385ba986f556a36aa3b6240fadf7dee56f83",
+    "baseline_rc": 0,
+    "reverted_build_rc": 0,
+    "reverted_test_rc": 8,
+    "byte_identical_restore": true,
+    "restored_build_rc": 0,
+    "restored_test_rc": 0
+  },
+  {
+    "case": "retirement",
+    "kind": "runtime: restore graph destruction on the calling main thread",
+    "files": [
+      {
+        "path": "src/platform/macos/native_retirement.mm",
+        "sha256": "1675f8d6f650c21592803649cc9e0b62a0f9863504dc20c1f8e2c72317dc7719"
+      }
+    ],
+    "baseline_rc": 0,
+    "reverted_build_rc": 0,
+    "reverted_test_rc": 1,
+    "byte_identical_restore": true,
+    "restored_build_rc": 0,
+    "restored_test_rc": 0
+  },
+  {
+    "case": "factory-lifetime",
+    "kind": "runtime: restore original presentation-before-output release order",
+    "files": [
+      {
+        "path": "src/platform/macos/native_media_session_system.mm",
+        "sha256": "2501c2245ddc27e306a6eda738c9d1955d81fce45a1a88535fe060a248aefaa9"
+      }
+    ],
+    "baseline_rc": 0,
+    "reverted_build_rc": 0,
+    "reverted_test_rc": 1,
+    "byte_identical_restore": true,
+    "restored_build_rc": 0,
+    "restored_test_rc": 0
+  },
+  {
+    "case": "host-time",
+    "path": "examples/WAMKitHost/main.m",
+    "test": "wamkit_host_api",
+    "sha256": "074ebfe35f103691437184c9244e99bcc76906c2c3b00674fdb72b290ec8e167",
+    "baseline_rc": 0,
+    "reverted_build_rc": 0,
+    "reverted_test_rc": 8,
+    "byte_identical_restore": true,
+    "restored_build_rc": 0,
+    "restored_test_rc": 0
+  },
+  {
+    "case": "quarantine",
+    "path": "src/wamkit/wamkit.mm",
+    "test": "wamkit_host_quarantine",
+    "sha256": "e6001926c9c360f4082ac5379e2104853850128e801fd97d99ad1ed22d08fe05",
+    "baseline_rc": 0,
+    "reverted_build_rc": 0,
+    "reverted_test_rc": 8,
+    "byte_identical_restore": true,
+    "restored_build_rc": 0,
+    "restored_test_rc": 0
+  },
+  {
+    "case": "replacement",
+    "path": "src/wamkit/wamkit.mm",
+    "test": "wamkit_host_replace",
+    "sha256": "d6194df2777f20d93f0b56e5db5cc5bfb19e486affae2c589a1f31617268d798",
+    "baseline_rc": 0,
+    "reverted_build_rc": 0,
+    "reverted_test_rc": 8,
+    "byte_identical_restore": true,
+    "restored_build_rc": 0,
+    "restored_test_rc": 0
+  },
+  {
+    "case": "framework-copy",
+    "path": "examples/WAMKitHost/CMakeLists.txt",
+    "test": "wamkit_host_packaging",
+    "sha256": "02ad359df265a2525a7faa3016c32eb0bf0d681ccea0a751d30c9fe0fd1162ba",
+    "baseline_rc": 0,
+    "reverted_build_rc": 0,
+    "reverted_test_rc": 8,
+    "byte_identical_restore": true,
+    "restored_build_rc": 0,
+    "restored_test_rc": 0
+  }
+]

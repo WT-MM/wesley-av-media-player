@@ -1,0 +1,12 @@
+{
+  "case": "replacement",
+  "path": "src/wamkit/wamkit.mm",
+  "test": "wamkit_host_replace",
+  "sha256": "d6194df2777f20d93f0b56e5db5cc5bfb19e486affae2c589a1f31617268d798",
+  "baseline_rc": 0,
+  "reverted_build_rc": 0,
+  "reverted_test_rc": 8,
+  "byte_identical_restore": true,
+  "restored_build_rc": 0,
+  "restored_test_rc": 0
+}

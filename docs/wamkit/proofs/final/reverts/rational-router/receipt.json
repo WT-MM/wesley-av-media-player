@@ -1,0 +1,12 @@
+{
+  "case": "rational-router",
+  "path": "src/media/playback_router.cpp",
+  "test": "playback_router",
+  "sha256": "59c423eed049cceee4b3af824a910340408e10c624815d009ce879ce2ca78154",
+  "baseline_rc": 0,
+  "reverted_build_rc": 0,
+  "reverted_test_rc": 8,
+  "byte_identical_restore": true,
+  "restored_build_rc": 0,
+  "restored_test_rc": 0
+}

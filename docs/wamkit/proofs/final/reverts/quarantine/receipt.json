@@ -1,0 +1,12 @@
+{
+  "case": "quarantine",
+  "path": "src/wamkit/wamkit.mm",
+  "test": "wamkit_host_quarantine",
+  "sha256": "e6001926c9c360f4082ac5379e2104853850128e801fd97d99ad1ed22d08fe05",
+  "baseline_rc": 0,
+  "reverted_build_rc": 0,
+  "reverted_test_rc": 8,
+  "byte_identical_restore": true,
+  "restored_build_rc": 0,
+  "restored_test_rc": 0
+}
