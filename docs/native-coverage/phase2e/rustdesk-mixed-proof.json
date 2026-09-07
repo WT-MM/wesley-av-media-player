@@ -1,0 +1,498 @@
+{
+  "video_probe_sha256": "13a70279a752a69572c049bd8ed955107f08c92d937809dab3817001dbb1e2a8",
+  "audio_probe_sha256": "e1a8eabf7639c17a73295234e778a99e842b24467c4b7b464e5dce5085f5d7b0",
+  "assets": [
+    {
+      "asset": "/private/tmp/wam-phase2e/rustdesk-audio-celt/0-opus.mkv",
+      "asset_sha256": "4c923793f8a21118de99d11089bb98e42b2a681128996ac07eb001d994133d90",
+      "video_frames": 987,
+      "exact_pts": 987,
+      "exact_durations": 987,
+      "video_log": "hardware=1 packets=987 frames=987 exact_pts=987 exact_duration=987 eos=1\nWAM: native decoder stage=VideoToolboxHardware codec=68766331\n",
+      "audio_frames": 1995408,
+      "cases": [
+        {
+          "target": "0",
+          "first_frame": 0,
+          "frames": 1995408,
+          "max_error": 5.21540641784668e-08,
+          "rms": 8.943492701152546e-09,
+          "alignment_frames": 0,
+          "exact_baseline_slice": true,
+          "reference_lag_errors": {
+            "-2": 0.0001407318195560947,
+            "-1": 3.522326369420625e-05,
+            "0": 7.96268078968533e-17,
+            "1": 3.522325278026983e-05,
+            "2": 0.00014073180500417948
+          },
+          "log": "track=2 rate=48000 frames=1995408 first=0 decoded=1995720 trim=312 exact=1 drained=1 error=\n"
+        },
+        {
+          "target": "1",
+          "first_frame": 48000,
+          "frames": 1947408,
+          "max_error": 5.21540641784668e-08,
+          "rms": 8.943987736776809e-09,
+          "alignment_frames": 0,
+          "exact_baseline_slice": true,
+          "reference_lag_errors": {
+            "-2": 0.00014084069698583335,
+            "-1": 3.525072679622099e-05,
+            "0": 8.008629018351425e-17,
+            "1": 3.525071224430576e-05,
+            "2": 0.00014084068243391812
+          },
+          "log": "track=2 rate=48000 frames=1947408 first=48000 decoded=1995720 trim=48312 exact=1 drained=1 error=\n"
+        },
+        {
+          "target": "1/7",
+          "first_frame": 6858,
+          "frames": 1988550,
+          "max_error": 5.21540641784668e-08,
+          "rms": 8.946112734172772e-09,
+          "alignment_frames": 0,
+          "exact_baseline_slice": true,
+          "reference_lag_errors": {
+            "-2": 0.00014082191046327353,
+            "-1": 3.524465864757076e-05,
+            "0": 7.863890278255877e-17,
+            "1": 3.524464773363434e-05,
+            "2": 0.0001408218959113583
+          },
+          "log": "track=2 rate=48000 frames=1988550 first=6858 decoded=1995720 trim=7170 exact=1 drained=1 error=\n"
+        },
+        {
+          "target": "4157/100",
+          "first_frame": 1995360,
+          "frames": 48,
+          "max_error": 1.4901161193847656e-08,
+          "rms": 8.690438212870478e-09,
+          "alignment_frames": 0,
+          "exact_baseline_slice": true,
+          "reference_lag_errors": {
+            "-2": 0.0001367398363072425,
+            "-1": 3.834516246570274e-05,
+            "0": 7.552371412590446e-17,
+            "1": 3.834512972389348e-05,
+            "2": 0.00013673976354766637
+          },
+          "log": "track=2 rate=48000 frames=48 first=1995360 decoded=1995720 trim=1995672 exact=1 drained=1 error=\n"
+        }
+      ],
+      "video_end": "41571/1000",
+      "audio_end": "41571/1000",
+      "endpoint_difference": "0"
+    },
+    {
+      "asset": "/private/tmp/wam-phase2e/rustdesk-audio-celt/1-opus.mkv",
+      "asset_sha256": "35ed536beb8467824a636e732526a82cef79307bb03730a8fd4524c7e5e45a49",
+      "video_frames": 20772,
+      "exact_pts": 20772,
+      "exact_durations": 20772,
+      "video_log": "hardware=1 packets=20772 frames=20772 exact_pts=20772 exact_duration=20772 eos=1\nWAM: native decoder stage=VideoToolboxHardware codec=68766331\n",
+      "audio_frames": 41612976,
+      "cases": [
+        {
+          "target": "0",
+          "first_frame": 0,
+          "frames": 41612976,
+          "max_error": 5.21540641784668e-08,
+          "rms": 8.943249867635099e-09,
+          "alignment_frames": 0,
+          "exact_baseline_slice": true,
+          "reference_lag_errors": {
+            "-2": 0.0001407318195560947,
+            "-1": 3.522326369420625e-05,
+            "0": 7.96268078968533e-17,
+            "1": 3.522325278026983e-05,
+            "2": 0.00014073180500417948
+          },
+          "log": "track=2 rate=48000 frames=41612976 first=0 decoded=41613000 trim=24 exact=1 drained=1 error=\n"
+        },
+        {
+          "target": "1",
+          "first_frame": 48000,
+          "frames": 41564976,
+          "max_error": 5.21540641784668e-08,
+          "rms": 8.943272781922481e-09,
+          "alignment_frames": 0,
+          "exact_baseline_slice": true,
+          "reference_lag_errors": {
+            "-2": 0.00014084069698583335,
+            "-1": 3.525072679622099e-05,
+            "0": 8.008629018351425e-17,
+            "1": 3.525071224430576e-05,
+            "2": 0.00014084068243391812
+          },
+          "log": "track=2 rate=48000 frames=41564976 first=48000 decoded=41613000 trim=48024 exact=1 drained=1 error=\n"
+        },
+        {
+          "target": "1/7",
+          "first_frame": 6858,
+          "frames": 41606118,
+          "max_error": 5.21540641784668e-08,
+          "rms": 8.943375072045333e-09,
+          "alignment_frames": 0,
+          "exact_baseline_slice": true,
+          "reference_lag_errors": {
+            "-2": 0.00014082191046327353,
+            "-1": 3.524465864757076e-05,
+            "0": 7.863890278255877e-17,
+            "1": 3.524464773363434e-05,
+            "2": 0.0001408218959113583
+          },
+          "log": "track=2 rate=48000 frames=41606118 first=6858 decoded=41613000 trim=6882 exact=1 drained=1 error=\n"
+        },
+        {
+          "target": "108367/125",
+          "first_frame": 41612928,
+          "frames": 48,
+          "max_error": 1.4901161193847656e-08,
+          "rms": 6.7977643452198755e-09,
+          "alignment_frames": 0,
+          "exact_baseline_slice": true,
+          "reference_lag_errors": {
+            "-2": 0.00018114513659384102,
+            "-1": 0.00011958628601860255,
+            "0": 4.620960119605009e-17,
+            "1": 0.00011958619143115357,
+            "2": 0.00018114488921128213
+          },
+          "log": "track=2 rate=48000 frames=48 first=41612928 decoded=41613000 trim=41612952 exact=1 drained=1 error=\n"
+        }
+      ],
+      "video_end": "866937/1000",
+      "audio_end": "866937/1000",
+      "endpoint_difference": "0"
+    },
+    {
+      "asset": "/private/tmp/wam-phase2e/rustdesk-audio-celt/2-opus.mkv",
+      "asset_sha256": "d440f7c888a913d41878a818ba85021930f864100db0f5e5f7db647746ec9a8a",
+      "video_frames": 2058,
+      "exact_pts": 2058,
+      "exact_durations": 2058,
+      "video_log": "hardware=1 packets=2058 frames=2058 exact_pts=2058 exact_duration=2058 eos=1\nWAM: native decoder stage=VideoToolboxHardware codec=68766331\n",
+      "audio_frames": 3688656,
+      "cases": [
+        {
+          "target": "0",
+          "first_frame": 0,
+          "frames": 3688656,
+          "max_error": 5.21540641784668e-08,
+          "rms": 8.942488234533012e-09,
+          "alignment_frames": 0,
+          "exact_baseline_slice": true,
+          "reference_lag_errors": {
+            "-2": 0.0001407318195560947,
+            "-1": 3.522326369420625e-05,
+            "0": 7.96268078968533e-17,
+            "1": 3.522325278026983e-05,
+            "2": 0.00014073180500417948
+          },
+          "log": "track=2 rate=48000 frames=3688656 first=0 decoded=3689160 trim=504 exact=1 drained=1 error=\n"
+        },
+        {
+          "target": "1",
+          "first_frame": 48000,
+          "frames": 3640656,
+          "max_error": 5.21540641784668e-08,
+          "rms": 8.942739821421165e-09,
+          "alignment_frames": 0,
+          "exact_baseline_slice": true,
+          "reference_lag_errors": {
+            "-2": 0.00014084069698583335,
+            "-1": 3.525072679622099e-05,
+            "0": 8.008629018351425e-17,
+            "1": 3.525071224430576e-05,
+            "2": 0.00014084068243391812
+          },
+          "log": "track=2 rate=48000 frames=3640656 first=48000 decoded=3689160 trim=48504 exact=1 drained=1 error=\n"
+        },
+        {
+          "target": "1/7",
+          "first_frame": 6858,
+          "frames": 3681798,
+          "max_error": 5.21540641784668e-08,
+          "rms": 8.943901705565007e-09,
+          "alignment_frames": 0,
+          "exact_baseline_slice": true,
+          "reference_lag_errors": {
+            "-2": 0.00014082191046327353,
+            "-1": 3.524465864757076e-05,
+            "0": 7.863890278255877e-17,
+            "1": 3.524464773363434e-05,
+            "2": 0.0001408218959113583
+          },
+          "log": "track=2 rate=48000 frames=3681798 first=6858 decoded=3689160 trim=7362 exact=1 drained=1 error=\n"
+        },
+        {
+          "target": "38423/500",
+          "first_frame": 3688608,
+          "frames": 48,
+          "max_error": 1.4901161193847656e-08,
+          "rms": 6.562101692918083e-09,
+          "alignment_frames": 0,
+          "exact_baseline_slice": true,
+          "reference_lag_errors": {
+            "-2": 0.0001432555727660656,
+            "-1": 3.648045094450936e-05,
+            "0": 4.306117973110585e-17,
+            "1": 3.6480414564721286e-05,
+            "2": 0.00014325548545457423
+          },
+          "log": "track=2 rate=48000 frames=48 first=3688608 decoded=3689160 trim=3689112 exact=1 drained=1 error=\n"
+        }
+      ],
+      "video_end": "76847/1000",
+      "audio_end": "76847/1000",
+      "endpoint_difference": "0"
+    },
+    {
+      "asset": "/private/tmp/wam-phase2e/rustdesk-audio-celt/3-opus.mkv",
+      "asset_sha256": "95cf0d26ea37b498067887e8e6322b95379442d0ba1aace897b1797e5e730d78",
+      "video_frames": 7242,
+      "exact_pts": 7242,
+      "exact_durations": 7242,
+      "video_log": "hardware=1 packets=7242 frames=7242 exact_pts=7242 exact_duration=7242 eos=1\nWAM: native decoder stage=VideoToolboxHardware codec=68766331\n",
+      "audio_frames": 13223328,
+      "cases": [
+        {
+          "target": "0",
+          "first_frame": 0,
+          "frames": 13223328,
+          "max_error": 5.21540641784668e-08,
+          "rms": 8.943807175269732e-09,
+          "alignment_frames": 0,
+          "exact_baseline_slice": true,
+          "reference_lag_errors": {
+            "-2": 0.0001407318195560947,
+            "-1": 3.522326369420625e-05,
+            "0": 7.96268078968533e-17,
+            "1": 3.522325278026983e-05,
+            "2": 0.00014073180500417948
+          },
+          "log": "track=2 rate=48000 frames=13223328 first=0 decoded=13223880 trim=552 exact=1 drained=1 error=\n"
+        },
+        {
+          "target": "1",
+          "first_frame": 48000,
+          "frames": 13175328,
+          "max_error": 5.21540641784668e-08,
+          "rms": 8.943881489893425e-09,
+          "alignment_frames": 0,
+          "exact_baseline_slice": true,
+          "reference_lag_errors": {
+            "-2": 0.00014084069698583335,
+            "-1": 3.525072679622099e-05,
+            "0": 8.008629018351425e-17,
+            "1": 3.525071224430576e-05,
+            "2": 0.00014084068243391812
+          },
+          "log": "track=2 rate=48000 frames=13175328 first=48000 decoded=13223880 trim=48552 exact=1 drained=1 error=\n"
+        },
+        {
+          "target": "1/7",
+          "first_frame": 6858,
+          "frames": 13216470,
+          "max_error": 5.21540641784668e-08,
+          "rms": 8.944201583783412e-09,
+          "alignment_frames": 0,
+          "exact_baseline_slice": true,
+          "reference_lag_errors": {
+            "-2": 0.00014082191046327353,
+            "-1": 3.524465864757076e-05,
+            "0": 7.863890278255877e-17,
+            "1": 3.524464773363434e-05,
+            "2": 0.0001408218959113583
+          },
+          "log": "track=2 rate=48000 frames=13216470 first=6858 decoded=13223880 trim=7410 exact=1 drained=1 error=\n"
+        },
+        {
+          "target": "55097/200",
+          "first_frame": 13223280,
+          "frames": 48,
+          "max_error": 1.4901161193847656e-08,
+          "rms": 6.0959846999431244e-09,
+          "alignment_frames": 0,
+          "exact_baseline_slice": true,
+          "reference_lag_errors": {
+            "-2": 0.0001476850884500891,
+            "-1": 4.594339043251239e-05,
+            "0": 3.7161029461940664e-17,
+            "1": 4.5943357690703124e-05,
+            "2": 0.00014768503024242818
+          },
+          "log": "track=2 rate=48000 frames=48 first=13223280 decoded=13223880 trim=13223832 exact=1 drained=1 error=\n"
+        }
+      ],
+      "video_end": "137743/500",
+      "audio_end": "137743/500",
+      "endpoint_difference": "0"
+    },
+    {
+      "asset": "/private/tmp/wam-phase2e/rustdesk-audio-celt/4-opus.mkv",
+      "asset_sha256": "2161aaa0667d97c314f145bcede96b95f82307e32e8c7eba2592699474d963e8",
+      "video_frames": 3312,
+      "exact_pts": 3312,
+      "exact_durations": 3312,
+      "video_log": "hardware=1 packets=3312 frames=3312 exact_pts=3312 exact_duration=3312 eos=1\nWAM: native decoder stage=VideoToolboxHardware codec=68766331\n",
+      "audio_frames": 6430608,
+      "cases": [
+        {
+          "target": "0",
+          "first_frame": 0,
+          "frames": 6430608,
+          "max_error": 5.21540641784668e-08,
+          "rms": 8.943512024197214e-09,
+          "alignment_frames": 0,
+          "exact_baseline_slice": true,
+          "reference_lag_errors": {
+            "-2": 0.0001407318195560947,
+            "-1": 3.522326369420625e-05,
+            "0": 7.96268078968533e-17,
+            "1": 3.522325278026983e-05,
+            "2": 0.00014073180500417948
+          },
+          "log": "track=2 rate=48000 frames=6430608 first=0 decoded=6430920 trim=312 exact=1 drained=1 error=\n"
+        },
+        {
+          "target": "1",
+          "first_frame": 48000,
+          "frames": 6382608,
+          "max_error": 5.21540641784668e-08,
+          "rms": 8.943663213222324e-09,
+          "alignment_frames": 0,
+          "exact_baseline_slice": true,
+          "reference_lag_errors": {
+            "-2": 0.00014084069698583335,
+            "-1": 3.525072679622099e-05,
+            "0": 8.008629018351425e-17,
+            "1": 3.525071224430576e-05,
+            "2": 0.00014084068243391812
+          },
+          "log": "track=2 rate=48000 frames=6382608 first=48000 decoded=6430920 trim=48312 exact=1 drained=1 error=\n"
+        },
+        {
+          "target": "1/7",
+          "first_frame": 6858,
+          "frames": 6423750,
+          "max_error": 5.21540641784668e-08,
+          "rms": 8.944323188201777e-09,
+          "alignment_frames": 0,
+          "exact_baseline_slice": true,
+          "reference_lag_errors": {
+            "-2": 0.00014082191046327353,
+            "-1": 3.524465864757076e-05,
+            "0": 7.863890278255877e-17,
+            "1": 3.524464773363434e-05,
+            "2": 0.0001408218959113583
+          },
+          "log": "track=2 rate=48000 frames=6423750 first=6858 decoded=6430920 trim=7170 exact=1 drained=1 error=\n"
+        },
+        {
+          "target": "13397/100",
+          "first_frame": 6430560,
+          "frames": 48,
+          "max_error": 2.2351741790771484e-08,
+          "rms": 8.405852668390681e-09,
+          "alignment_frames": 0,
+          "exact_baseline_slice": true,
+          "reference_lag_errors": {
+            "-2": 0.000140621981699951,
+            "-1": 3.8836937164887786e-05,
+            "0": 7.065835687687576e-17,
+            "1": 3.883701720042154e-05,
+            "2": 0.00014062215632293373
+          },
+          "log": "track=2 rate=48000 frames=48 first=6430560 decoded=6430920 trim=6430872 exact=1 drained=1 error=\n"
+        }
+      ],
+      "video_end": "133971/1000",
+      "audio_end": "133971/1000",
+      "endpoint_difference": "0"
+    },
+    {
+      "asset": "/private/tmp/wam-phase2e/rustdesk-audio-celt/5-opus.mkv",
+      "asset_sha256": "8ab82876eadc57be957536dfaa166cd30ba62fba8e6c46bc4368699a19ef90ed",
+      "video_frames": 15461,
+      "exact_pts": 15461,
+      "exact_durations": 15461,
+      "video_log": "hardware=1 packets=15461 frames=15461 exact_pts=15461 exact_duration=15461 eos=1\nWAM: native decoder stage=VideoToolboxHardware codec=68766331\n",
+      "audio_frames": 28339680,
+      "cases": [
+        {
+          "target": "0",
+          "first_frame": 0,
+          "frames": 28339680,
+          "max_error": 5.21540641784668e-08,
+          "rms": 8.9434396255326e-09,
+          "alignment_frames": 0,
+          "exact_baseline_slice": true,
+          "reference_lag_errors": {
+            "-2": 0.0001407318195560947,
+            "-1": 3.522326369420625e-05,
+            "0": 7.96268078968533e-17,
+            "1": 3.522325278026983e-05,
+            "2": 0.00014073180500417948
+          },
+          "log": "track=2 rate=48000 frames=28339680 first=0 decoded=28340040 trim=360 exact=1 drained=1 error=\n"
+        },
+        {
+          "target": "1",
+          "first_frame": 48000,
+          "frames": 28291680,
+          "max_error": 5.21540641784668e-08,
+          "rms": 8.94347361147025e-09,
+          "alignment_frames": 0,
+          "exact_baseline_slice": true,
+          "reference_lag_errors": {
+            "-2": 0.00014084069698583335,
+            "-1": 3.525072679622099e-05,
+            "0": 8.008629018351425e-17,
+            "1": 3.525071224430576e-05,
+            "2": 0.00014084068243391812
+          },
+          "log": "track=2 rate=48000 frames=28291680 first=48000 decoded=28340040 trim=48360 exact=1 drained=1 error=\n"
+        },
+        {
+          "target": "1/7",
+          "first_frame": 6858,
+          "frames": 28332822,
+          "max_error": 5.21540641784668e-08,
+          "rms": 8.943623526845984e-09,
+          "alignment_frames": 0,
+          "exact_baseline_slice": true,
+          "reference_lag_errors": {
+            "-2": 0.00014082191046327353,
+            "-1": 3.524465864757076e-05,
+            "0": 7.863890278255877e-17,
+            "1": 3.524464773363434e-05,
+            "2": 0.0001408218959113583
+          },
+          "log": "track=2 rate=48000 frames=28332822 first=6858 decoded=28340040 trim=7218 exact=1 drained=1 error=\n"
+        },
+        {
+          "target": "590409/1000",
+          "first_frame": 28339632,
+          "frames": 48,
+          "max_error": 2.2351741790771484e-08,
+          "rms": 1.116454700215897e-08,
+          "alignment_frames": 0,
+          "exact_baseline_slice": true,
+          "reference_lag_errors": {
+            "-2": 0.00020671702804975212,
+            "-1": 0.00011105876183137298,
+            "0": 1.246471053517869e-16,
+            "1": 0.0001110585653805174,
+            "2": 0.0002067166060442105
+          },
+          "log": "track=2 rate=48000 frames=48 first=28339632 decoded=28340040 trim=28339992 exact=1 drained=1 error=\n"
+        }
+      ],
+      "video_end": "59041/100",
+      "audio_end": "59041/100",
+      "endpoint_difference": "0"
+    }
+  ]
+}

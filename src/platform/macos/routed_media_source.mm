@@ -55,7 +55,7 @@ public:
         }};
     const bool recovery =
         backend == media::MediaSourceBackendKind::AVFoundation &&
-        media::LibavformatCursor::requiresTailRecovery(path, cancellation);
+        media::LibavformatCursor::requiresExactDemuxTimeline(path, cancellation);
     const auto selected =
         buffered || recovery ? 3U : static_cast<std::size_t>(backend);
     auto outcome = sources_[selected]->openLocalFile(path, options, generation);

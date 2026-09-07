@@ -1,0 +1,3851 @@
+{
+  "native": [
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libavcodec-wamnative.63.dylib",
+      "loads": [
+        "@rpath/libavutil-wamnative.61.dylib",
+        "/usr/lib/libSystem.B.dylib",
+        "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+        "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "/System/Library/Frameworks/CoreMedia.framework/Versions/A/CoreMedia"
+      ],
+      "rpaths": [],
+      "minos": [
+        "13.3"
+      ],
+      "at_or_below_13_3": true
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libavutil-wamnative.61.dylib",
+      "loads": [
+        "/usr/lib/libSystem.B.dylib",
+        "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+        "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "/System/Library/Frameworks/CoreMedia.framework/Versions/A/CoreMedia"
+      ],
+      "rpaths": [],
+      "minos": [
+        "13.3"
+      ],
+      "at_or_below_13_3": true
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libavformat-wamnative.63.dylib",
+      "loads": [
+        "@rpath/libavcodec-wamnative.63.dylib",
+        "@rpath/libavutil-wamnative.61.dylib",
+        "/usr/lib/libSystem.B.dylib",
+        "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+        "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "/System/Library/Frameworks/CoreMedia.framework/Versions/A/CoreMedia"
+      ],
+      "rpaths": [],
+      "minos": [
+        "13.3"
+      ],
+      "at_or_below_13_3": true
+    }
+  ],
+  "main": {
+    "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/MacOS/WAM",
+    "loads": [
+      "@executable_path/../Frameworks/QtQuickControls2.framework/Versions/A/QtQuickControls2",
+      "@executable_path/../Frameworks/QtQuickDialogs2.framework/Versions/A/QtQuickDialogs2",
+      "@executable_path/../Frameworks/QtQuickLayouts.framework/Versions/A/QtQuickLayouts",
+      "@executable_path/../Frameworks/QtLabsPlatform.framework/Versions/A/QtLabsPlatform",
+      "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+      "/System/Library/Frameworks/QuartzCore.framework/Versions/A/QuartzCore",
+      "/System/Library/Frameworks/AVFoundation.framework/Versions/A/AVFoundation",
+      "@executable_path/../Frameworks/QtQuick.framework/Versions/A/QtQuick",
+      "@executable_path/../Frameworks/QtOpenGL.framework/Versions/A/QtOpenGL",
+      "@executable_path/../Frameworks/QtGui.framework/Versions/A/QtGui",
+      "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+      "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+      "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+      "@executable_path/../Frameworks/QtQml.framework/Versions/A/QtQml",
+      "@executable_path/../Frameworks/QtNetwork.framework/Versions/A/QtNetwork",
+      "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+      "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+      "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+      "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+      "/System/Library/Frameworks/CoreImage.framework/Versions/A/CoreImage",
+      "@executable_path/../Frameworks/libvpx.12.dylib",
+      "/usr/lib/libSystem.B.dylib",
+      "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+      "/System/Library/Frameworks/CoreGraphics.framework/Versions/A/CoreGraphics",
+      "/System/Library/Frameworks/CoreMedia.framework/Versions/A/CoreMedia",
+      "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+      "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+      "/System/Library/Frameworks/IOSurface.framework/Versions/A/IOSurface",
+      "/System/Library/Frameworks/AudioToolbox.framework/Versions/A/AudioToolbox",
+      "/System/Library/Frameworks/CoreAudio.framework/Versions/A/CoreAudio",
+      "/System/Library/Frameworks/VideoToolbox.framework/Versions/A/VideoToolbox",
+      "/usr/lib/libc++.1.dylib",
+      "/usr/lib/libobjc.A.dylib"
+    ],
+    "rpaths": [
+      "@executable_path/../Frameworks"
+    ],
+    "minos": [
+      "13.3"
+    ],
+    "at_or_below_13_3": true
+  },
+  "bundled_machos": [
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/QtCore.framework/Versions/A/QtCore",
+      "loads": [
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+        "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/ApplicationServices.framework/Versions/A/ApplicationServices",
+        "/System/Library/Frameworks/CoreServices.framework/Versions/A/CoreServices",
+        "/System/Library/Frameworks/Security.framework/Versions/A/Security",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "@loader_path/../../../libicui18n.78.dylib",
+        "@loader_path/../../../libicuuc.78.dylib",
+        "@loader_path/../../../libicudata.78.dylib",
+        "@loader_path/../../../libglib-2.0.0.dylib",
+        "/usr/lib/libz.1.dylib",
+        "@loader_path/../../../libdouble-conversion.3.dylib",
+        "@loader_path/../../../libb2.1.dylib",
+        "@loader_path/../../../libpcre2-16.0.dylib",
+        "@loader_path/../../../libzstd.1.dylib",
+        "@loader_path/../../../libgthread-2.0.0.dylib",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib",
+        "/usr/lib/libobjc.A.dylib"
+      ],
+      "rpaths": [
+        "@loader_path/../../../"
+      ],
+      "minos": [
+        "14.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/QtDBus.framework/Versions/A/QtDBus",
+      "loads": [
+        "@loader_path/../../../libdbus-1.3.dylib",
+        "@loader_path/../../../QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [
+        "@loader_path/../../../"
+      ],
+      "minos": [
+        "14.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/QtGui.framework/Versions/A/QtGui",
+      "loads": [
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/Carbon.framework/Versions/A/Carbon",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+        "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+        "/System/Library/Frameworks/CoreGraphics.framework/Versions/A/CoreGraphics",
+        "/System/Library/Frameworks/CoreText.framework/Versions/A/CoreText",
+        "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+        "@loader_path/../../../libglib-2.0.0.dylib",
+        "@loader_path/../../../QtDBus.framework/Versions/A/QtDBus",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "/System/Library/Frameworks/Accelerate.framework/Versions/A/Accelerate",
+        "/System/Library/Frameworks/QuartzCore.framework/Versions/A/QuartzCore",
+        "@loader_path/../../../libpng16.16.dylib",
+        "/usr/lib/libz.1.dylib",
+        "@loader_path/../../../libharfbuzz.0.dylib",
+        "@loader_path/../../../libmd4c.0.dylib",
+        "@loader_path/../../../libfreetype.6.dylib",
+        "@loader_path/../../../libgthread-2.0.0.dylib",
+        "@loader_path/../../../QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib",
+        "/System/Library/Frameworks/CoreServices.framework/Versions/A/CoreServices",
+        "/usr/lib/libobjc.A.dylib"
+      ],
+      "rpaths": [
+        "@loader_path/../../../"
+      ],
+      "minos": [
+        "14.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/QtLabsFolderListModel.framework/Versions/A/QtLabsFolderListModel",
+      "loads": [
+        "@rpath/QtQmlModels.framework/Versions/A/QtQmlModels",
+        "@rpath/QtQml.framework/Versions/A/QtQml",
+        "@executable_path/../Frameworks/QtNetwork.framework/Versions/A/QtNetwork",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [
+        "@loader_path/../../../"
+      ],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/QtLabsPlatform.framework/Versions/A/QtLabsPlatform",
+      "loads": [
+        "@loader_path/../../../QtWidgets.framework/Versions/A/QtWidgets",
+        "@loader_path/../../../QtQuickTemplates2.framework/Versions/A/QtQuickTemplates2",
+        "@loader_path/../../../QtQuick.framework/Versions/A/QtQuick",
+        "@loader_path/../../../QtOpenGL.framework/Versions/A/QtOpenGL",
+        "@loader_path/../../../QtQmlMeta.framework/Versions/A/QtQmlMeta",
+        "@loader_path/../../../QtQmlWorkerScript.framework/Versions/A/QtQmlWorkerScript",
+        "@loader_path/../../../QtQmlModels.framework/Versions/A/QtQmlModels",
+        "@loader_path/../../../QtQml.framework/Versions/A/QtQml",
+        "@loader_path/../../../QtNetwork.framework/Versions/A/QtNetwork",
+        "@loader_path/../../../QtGui.framework/Versions/A/QtGui",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "@loader_path/../../../QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [
+        "@loader_path/../../../"
+      ],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/QtNetwork.framework/Versions/A/QtNetwork",
+      "loads": [
+        "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+        "/System/Library/Frameworks/Security.framework/Versions/A/Security",
+        "/System/Library/Frameworks/CoreServices.framework/Versions/A/CoreServices",
+        "/System/Library/Frameworks/SystemConfiguration.framework/Versions/A/SystemConfiguration",
+        "/System/Library/Frameworks/CFNetwork.framework/Versions/A/CFNetwork",
+        "/System/Library/Frameworks/Network.framework/Versions/A/Network",
+        "@loader_path/../../../QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "@loader_path/../../../libbrotlidec.1.dylib",
+        "@loader_path/../../../libzstd.1.dylib",
+        "/usr/lib/libz.1.dylib",
+        "/usr/lib/libresolv.9.dylib",
+        "/System/Library/Frameworks/GSS.framework/Versions/A/GSS",
+        "@loader_path/../../../libssl.3.dylib",
+        "@loader_path/../../../libcrypto.3.dylib",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [
+        "@loader_path/../../../"
+      ],
+      "minos": [
+        "14.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/QtOpenGL.framework/Versions/A/QtOpenGL",
+      "loads": [
+        "@loader_path/../../../QtGui.framework/Versions/A/QtGui",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "@loader_path/../../../QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [
+        "@loader_path/../../../"
+      ],
+      "minos": [
+        "14.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/QtPdf.framework/Versions/A/QtPdf",
+      "loads": [
+        "@executable_path/../Frameworks/libpng16.16.dylib",
+        "/usr/lib/libz.1.dylib",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+        "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+        "/System/Library/Frameworks/Security.framework/Versions/A/Security",
+        "/System/Library/Frameworks/CoreGraphics.framework/Versions/A/CoreGraphics",
+        "@executable_path/../Frameworks/QtGui.framework/Versions/A/QtGui",
+        "@executable_path/../Frameworks/QtNetwork.framework/Versions/A/QtNetwork",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib",
+        "/usr/lib/libobjc.A.dylib"
+      ],
+      "rpaths": [
+        "@loader_path/../../../"
+      ],
+      "minos": [
+        "14.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/QtQml.framework/Versions/A/QtQml",
+      "loads": [
+        "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+        "@loader_path/../../../QtNetwork.framework/Versions/A/QtNetwork",
+        "@loader_path/../../../QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [
+        "@loader_path/../../../"
+      ],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/QtQmlMeta.framework/Versions/A/QtQmlMeta",
+      "loads": [
+        "@loader_path/../../../QtQmlModels.framework/Versions/A/QtQmlModels",
+        "@loader_path/../../../QtQmlWorkerScript.framework/Versions/A/QtQmlWorkerScript",
+        "@loader_path/../../../QtQml.framework/Versions/A/QtQml",
+        "@loader_path/../../../QtNetwork.framework/Versions/A/QtNetwork",
+        "@loader_path/../../../QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [
+        "@loader_path/../../../"
+      ],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/QtQmlModels.framework/Versions/A/QtQmlModels",
+      "loads": [
+        "@loader_path/../../../QtQml.framework/Versions/A/QtQml",
+        "@loader_path/../../../QtNetwork.framework/Versions/A/QtNetwork",
+        "@loader_path/../../../QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [
+        "@loader_path/../../../"
+      ],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/QtQmlWorkerScript.framework/Versions/A/QtQmlWorkerScript",
+      "loads": [
+        "@loader_path/../../../QtQml.framework/Versions/A/QtQml",
+        "@loader_path/../../../QtNetwork.framework/Versions/A/QtNetwork",
+        "@loader_path/../../../QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [
+        "@loader_path/../../../"
+      ],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/QtQuick.framework/Versions/A/QtQuick",
+      "loads": [
+        "@loader_path/../../../QtQmlMeta.framework/Versions/A/QtQmlMeta",
+        "@loader_path/../../../QtQmlModels.framework/Versions/A/QtQmlModels",
+        "@loader_path/../../../QtQmlWorkerScript.framework/Versions/A/QtQmlWorkerScript",
+        "@loader_path/../../../QtQml.framework/Versions/A/QtQml",
+        "@loader_path/../../../QtNetwork.framework/Versions/A/QtNetwork",
+        "@loader_path/../../../QtOpenGL.framework/Versions/A/QtOpenGL",
+        "@loader_path/../../../QtGui.framework/Versions/A/QtGui",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "@loader_path/../../../QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [
+        "@loader_path/../../../"
+      ],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/QtQuickControls2.framework/Versions/A/QtQuickControls2",
+      "loads": [
+        "@loader_path/../../../QtQuickTemplates2.framework/Versions/A/QtQuickTemplates2",
+        "@loader_path/../../../QtQuick.framework/Versions/A/QtQuick",
+        "@loader_path/../../../QtOpenGL.framework/Versions/A/QtOpenGL",
+        "@loader_path/../../../QtGui.framework/Versions/A/QtGui",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "@loader_path/../../../QtQmlMeta.framework/Versions/A/QtQmlMeta",
+        "@loader_path/../../../QtQmlWorkerScript.framework/Versions/A/QtQmlWorkerScript",
+        "@loader_path/../../../QtQmlModels.framework/Versions/A/QtQmlModels",
+        "@loader_path/../../../QtQml.framework/Versions/A/QtQml",
+        "@loader_path/../../../QtNetwork.framework/Versions/A/QtNetwork",
+        "@loader_path/../../../QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [
+        "@loader_path/../../../"
+      ],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/QtQuickControls2Basic.framework/Versions/A/QtQuickControls2Basic",
+      "loads": [
+        "@rpath/QtQuickControls2BasicStyleImpl.framework/Versions/A/QtQuickControls2BasicStyleImpl",
+        "@rpath/QtQuickControls2.framework/Versions/A/QtQuickControls2",
+        "@rpath/QtQuickTemplates2.framework/Versions/A/QtQuickTemplates2",
+        "@rpath/QtQuick.framework/Versions/A/QtQuick",
+        "@executable_path/../Frameworks/QtOpenGL.framework/Versions/A/QtOpenGL",
+        "@executable_path/../Frameworks/QtGui.framework/Versions/A/QtGui",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "@rpath/QtQmlMeta.framework/Versions/A/QtQmlMeta",
+        "@rpath/QtQmlWorkerScript.framework/Versions/A/QtQmlWorkerScript",
+        "@rpath/QtQmlModels.framework/Versions/A/QtQmlModels",
+        "@rpath/QtQml.framework/Versions/A/QtQml",
+        "@executable_path/../Frameworks/QtNetwork.framework/Versions/A/QtNetwork",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [
+        "@loader_path/../../../"
+      ],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/QtQuickControls2BasicStyleImpl.framework/Versions/A/QtQuickControls2BasicStyleImpl",
+      "loads": [
+        "@rpath/QtQuickControls2Impl.framework/Versions/A/QtQuickControls2Impl",
+        "@rpath/QtQuickTemplates2.framework/Versions/A/QtQuickTemplates2",
+        "@rpath/QtQuick.framework/Versions/A/QtQuick",
+        "@executable_path/../Frameworks/QtOpenGL.framework/Versions/A/QtOpenGL",
+        "@executable_path/../Frameworks/QtGui.framework/Versions/A/QtGui",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "@rpath/QtQmlMeta.framework/Versions/A/QtQmlMeta",
+        "@rpath/QtQmlWorkerScript.framework/Versions/A/QtQmlWorkerScript",
+        "@rpath/QtQmlModels.framework/Versions/A/QtQmlModels",
+        "@rpath/QtQml.framework/Versions/A/QtQml",
+        "@executable_path/../Frameworks/QtNetwork.framework/Versions/A/QtNetwork",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [
+        "@loader_path/../../../"
+      ],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/QtQuickControls2FluentWinUI3StyleImpl.framework/Versions/A/QtQuickControls2FluentWinUI3StyleImpl",
+      "loads": [
+        "@rpath/QtQuickTemplates2.framework/Versions/A/QtQuickTemplates2",
+        "@rpath/QtQuick.framework/Versions/A/QtQuick",
+        "@executable_path/../Frameworks/QtOpenGL.framework/Versions/A/QtOpenGL",
+        "@executable_path/../Frameworks/QtGui.framework/Versions/A/QtGui",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "@rpath/QtQmlMeta.framework/Versions/A/QtQmlMeta",
+        "@rpath/QtQmlWorkerScript.framework/Versions/A/QtQmlWorkerScript",
+        "@rpath/QtQmlModels.framework/Versions/A/QtQmlModels",
+        "@rpath/QtQml.framework/Versions/A/QtQml",
+        "@executable_path/../Frameworks/QtNetwork.framework/Versions/A/QtNetwork",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [
+        "@loader_path/../../../"
+      ],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/QtQuickControls2Fusion.framework/Versions/A/QtQuickControls2Fusion",
+      "loads": [
+        "@rpath/QtQuickControls2FusionStyleImpl.framework/Versions/A/QtQuickControls2FusionStyleImpl",
+        "@rpath/QtQuickControls2Basic.framework/Versions/A/QtQuickControls2Basic",
+        "@rpath/QtQuickControls2.framework/Versions/A/QtQuickControls2",
+        "@rpath/QtQuickTemplates2.framework/Versions/A/QtQuickTemplates2",
+        "@rpath/QtQuick.framework/Versions/A/QtQuick",
+        "@executable_path/../Frameworks/QtOpenGL.framework/Versions/A/QtOpenGL",
+        "@executable_path/../Frameworks/QtGui.framework/Versions/A/QtGui",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "@rpath/QtQmlMeta.framework/Versions/A/QtQmlMeta",
+        "@rpath/QtQmlWorkerScript.framework/Versions/A/QtQmlWorkerScript",
+        "@rpath/QtQmlModels.framework/Versions/A/QtQmlModels",
+        "@rpath/QtQml.framework/Versions/A/QtQml",
+        "@executable_path/../Frameworks/QtNetwork.framework/Versions/A/QtNetwork",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [
+        "@loader_path/../../../"
+      ],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/QtQuickControls2FusionStyleImpl.framework/Versions/A/QtQuickControls2FusionStyleImpl",
+      "loads": [
+        "@rpath/QtQuickControls2Impl.framework/Versions/A/QtQuickControls2Impl",
+        "@rpath/QtQuickTemplates2.framework/Versions/A/QtQuickTemplates2",
+        "@rpath/QtQuick.framework/Versions/A/QtQuick",
+        "@executable_path/../Frameworks/QtOpenGL.framework/Versions/A/QtOpenGL",
+        "@executable_path/../Frameworks/QtGui.framework/Versions/A/QtGui",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "@rpath/QtQmlMeta.framework/Versions/A/QtQmlMeta",
+        "@rpath/QtQmlWorkerScript.framework/Versions/A/QtQmlWorkerScript",
+        "@rpath/QtQmlModels.framework/Versions/A/QtQmlModels",
+        "@rpath/QtQml.framework/Versions/A/QtQml",
+        "@executable_path/../Frameworks/QtNetwork.framework/Versions/A/QtNetwork",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [
+        "@loader_path/../../../"
+      ],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/QtQuickControls2IOSStyleImpl.framework/Versions/A/QtQuickControls2IOSStyleImpl",
+      "loads": [
+        "@rpath/QtQuick.framework/Versions/A/QtQuick",
+        "@executable_path/../Frameworks/QtOpenGL.framework/Versions/A/QtOpenGL",
+        "@executable_path/../Frameworks/QtGui.framework/Versions/A/QtGui",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "@rpath/QtQmlMeta.framework/Versions/A/QtQmlMeta",
+        "@rpath/QtQmlModels.framework/Versions/A/QtQmlModels",
+        "@rpath/QtQmlWorkerScript.framework/Versions/A/QtQmlWorkerScript",
+        "@rpath/QtQml.framework/Versions/A/QtQml",
+        "@executable_path/../Frameworks/QtNetwork.framework/Versions/A/QtNetwork",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [
+        "@loader_path/../../../"
+      ],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/QtQuickControls2Imagine.framework/Versions/A/QtQuickControls2Imagine",
+      "loads": [
+        "@rpath/QtQuickControls2ImagineStyleImpl.framework/Versions/A/QtQuickControls2ImagineStyleImpl",
+        "@rpath/QtQuickControls2Basic.framework/Versions/A/QtQuickControls2Basic",
+        "@rpath/QtQuickControls2.framework/Versions/A/QtQuickControls2",
+        "@rpath/QtQuickControls2Impl.framework/Versions/A/QtQuickControls2Impl",
+        "@rpath/QtQuickTemplates2.framework/Versions/A/QtQuickTemplates2",
+        "@rpath/QtQuick.framework/Versions/A/QtQuick",
+        "@executable_path/../Frameworks/QtOpenGL.framework/Versions/A/QtOpenGL",
+        "@executable_path/../Frameworks/QtGui.framework/Versions/A/QtGui",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "@rpath/QtQmlMeta.framework/Versions/A/QtQmlMeta",
+        "@rpath/QtQmlWorkerScript.framework/Versions/A/QtQmlWorkerScript",
+        "@rpath/QtQmlModels.framework/Versions/A/QtQmlModels",
+        "@rpath/QtQml.framework/Versions/A/QtQml",
+        "@executable_path/../Frameworks/QtNetwork.framework/Versions/A/QtNetwork",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [
+        "@loader_path/../../../"
+      ],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/QtQuickControls2ImagineStyleImpl.framework/Versions/A/QtQuickControls2ImagineStyleImpl",
+      "loads": [
+        "@rpath/QtQuickControls2Impl.framework/Versions/A/QtQuickControls2Impl",
+        "@rpath/QtQuickTemplates2.framework/Versions/A/QtQuickTemplates2",
+        "@rpath/QtQuick.framework/Versions/A/QtQuick",
+        "@executable_path/../Frameworks/QtOpenGL.framework/Versions/A/QtOpenGL",
+        "@executable_path/../Frameworks/QtGui.framework/Versions/A/QtGui",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "@rpath/QtQmlMeta.framework/Versions/A/QtQmlMeta",
+        "@rpath/QtQmlWorkerScript.framework/Versions/A/QtQmlWorkerScript",
+        "@rpath/QtQmlModels.framework/Versions/A/QtQmlModels",
+        "@rpath/QtQml.framework/Versions/A/QtQml",
+        "@executable_path/../Frameworks/QtNetwork.framework/Versions/A/QtNetwork",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [
+        "@loader_path/../../../"
+      ],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/QtQuickControls2Impl.framework/Versions/A/QtQuickControls2Impl",
+      "loads": [
+        "@loader_path/../../../QtQuickTemplates2.framework/Versions/A/QtQuickTemplates2",
+        "@loader_path/../../../QtQuick.framework/Versions/A/QtQuick",
+        "@loader_path/../../../QtOpenGL.framework/Versions/A/QtOpenGL",
+        "@loader_path/../../../QtGui.framework/Versions/A/QtGui",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "@loader_path/../../../QtQmlMeta.framework/Versions/A/QtQmlMeta",
+        "@loader_path/../../../QtQmlWorkerScript.framework/Versions/A/QtQmlWorkerScript",
+        "@loader_path/../../../QtQmlModels.framework/Versions/A/QtQmlModels",
+        "@loader_path/../../../QtQml.framework/Versions/A/QtQml",
+        "@loader_path/../../../QtNetwork.framework/Versions/A/QtNetwork",
+        "@loader_path/../../../QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [
+        "@loader_path/../../../"
+      ],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/QtQuickControls2MacOSStyleImpl.framework/Versions/A/QtQuickControls2MacOSStyleImpl",
+      "loads": [
+        "@rpath/QtQml.framework/Versions/A/QtQml",
+        "@executable_path/../Frameworks/QtNetwork.framework/Versions/A/QtNetwork",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [
+        "@loader_path/../../../"
+      ],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/QtQuickControls2Material.framework/Versions/A/QtQuickControls2Material",
+      "loads": [
+        "@rpath/QtQuickControls2MaterialStyleImpl.framework/Versions/A/QtQuickControls2MaterialStyleImpl",
+        "@rpath/QtQuickControls2Basic.framework/Versions/A/QtQuickControls2Basic",
+        "@rpath/QtQuickControls2.framework/Versions/A/QtQuickControls2",
+        "@rpath/QtQuickControls2Impl.framework/Versions/A/QtQuickControls2Impl",
+        "@rpath/QtQuickTemplates2.framework/Versions/A/QtQuickTemplates2",
+        "@rpath/QtQuick.framework/Versions/A/QtQuick",
+        "@executable_path/../Frameworks/QtOpenGL.framework/Versions/A/QtOpenGL",
+        "@executable_path/../Frameworks/QtGui.framework/Versions/A/QtGui",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "@rpath/QtQmlMeta.framework/Versions/A/QtQmlMeta",
+        "@rpath/QtQmlWorkerScript.framework/Versions/A/QtQmlWorkerScript",
+        "@rpath/QtQmlModels.framework/Versions/A/QtQmlModels",
+        "@rpath/QtQml.framework/Versions/A/QtQml",
+        "@executable_path/../Frameworks/QtNetwork.framework/Versions/A/QtNetwork",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [
+        "@loader_path/../../../"
+      ],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/QtQuickControls2MaterialStyleImpl.framework/Versions/A/QtQuickControls2MaterialStyleImpl",
+      "loads": [
+        "@rpath/QtQuickControls2Impl.framework/Versions/A/QtQuickControls2Impl",
+        "@rpath/QtQuickTemplates2.framework/Versions/A/QtQuickTemplates2",
+        "@rpath/QtQuick.framework/Versions/A/QtQuick",
+        "@executable_path/../Frameworks/QtOpenGL.framework/Versions/A/QtOpenGL",
+        "@executable_path/../Frameworks/QtGui.framework/Versions/A/QtGui",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "@rpath/QtQmlMeta.framework/Versions/A/QtQmlMeta",
+        "@rpath/QtQmlWorkerScript.framework/Versions/A/QtQmlWorkerScript",
+        "@rpath/QtQmlModels.framework/Versions/A/QtQmlModels",
+        "@rpath/QtQml.framework/Versions/A/QtQml",
+        "@executable_path/../Frameworks/QtNetwork.framework/Versions/A/QtNetwork",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [
+        "@loader_path/../../../"
+      ],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/QtQuickControls2Universal.framework/Versions/A/QtQuickControls2Universal",
+      "loads": [
+        "@rpath/QtQuickControls2UniversalStyleImpl.framework/Versions/A/QtQuickControls2UniversalStyleImpl",
+        "@rpath/QtQuickControls2Basic.framework/Versions/A/QtQuickControls2Basic",
+        "@rpath/QtQuickControls2.framework/Versions/A/QtQuickControls2",
+        "@rpath/QtQuickControls2Impl.framework/Versions/A/QtQuickControls2Impl",
+        "@rpath/QtQuickTemplates2.framework/Versions/A/QtQuickTemplates2",
+        "@rpath/QtQuick.framework/Versions/A/QtQuick",
+        "@executable_path/../Frameworks/QtOpenGL.framework/Versions/A/QtOpenGL",
+        "@executable_path/../Frameworks/QtGui.framework/Versions/A/QtGui",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "@rpath/QtQmlMeta.framework/Versions/A/QtQmlMeta",
+        "@rpath/QtQmlWorkerScript.framework/Versions/A/QtQmlWorkerScript",
+        "@rpath/QtQmlModels.framework/Versions/A/QtQmlModels",
+        "@rpath/QtQml.framework/Versions/A/QtQml",
+        "@executable_path/../Frameworks/QtNetwork.framework/Versions/A/QtNetwork",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [
+        "@loader_path/../../../"
+      ],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/QtQuickControls2UniversalStyleImpl.framework/Versions/A/QtQuickControls2UniversalStyleImpl",
+      "loads": [
+        "@rpath/QtQuickControls2Impl.framework/Versions/A/QtQuickControls2Impl",
+        "@rpath/QtQuickTemplates2.framework/Versions/A/QtQuickTemplates2",
+        "@rpath/QtQuick.framework/Versions/A/QtQuick",
+        "@executable_path/../Frameworks/QtOpenGL.framework/Versions/A/QtOpenGL",
+        "@executable_path/../Frameworks/QtGui.framework/Versions/A/QtGui",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "@rpath/QtQmlMeta.framework/Versions/A/QtQmlMeta",
+        "@rpath/QtQmlWorkerScript.framework/Versions/A/QtQmlWorkerScript",
+        "@rpath/QtQmlModels.framework/Versions/A/QtQmlModels",
+        "@rpath/QtQml.framework/Versions/A/QtQml",
+        "@executable_path/../Frameworks/QtNetwork.framework/Versions/A/QtNetwork",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [
+        "@loader_path/../../../"
+      ],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/QtQuickDialogs2.framework/Versions/A/QtQuickDialogs2",
+      "loads": [
+        "@loader_path/../../../QtQuickDialogs2QuickImpl.framework/Versions/A/QtQuickDialogs2QuickImpl",
+        "@loader_path/../../../QtQuickControls2Impl.framework/Versions/A/QtQuickControls2Impl",
+        "@loader_path/../../../QtQuickDialogs2Utils.framework/Versions/A/QtQuickDialogs2Utils",
+        "@loader_path/../../../QtQuickTemplates2.framework/Versions/A/QtQuickTemplates2",
+        "@loader_path/../../../QtQuick.framework/Versions/A/QtQuick",
+        "@loader_path/../../../QtOpenGL.framework/Versions/A/QtOpenGL",
+        "@loader_path/../../../QtGui.framework/Versions/A/QtGui",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "@loader_path/../../../QtQmlMeta.framework/Versions/A/QtQmlMeta",
+        "@loader_path/../../../QtQmlWorkerScript.framework/Versions/A/QtQmlWorkerScript",
+        "@loader_path/../../../QtQmlModels.framework/Versions/A/QtQmlModels",
+        "@loader_path/../../../QtQml.framework/Versions/A/QtQml",
+        "@loader_path/../../../QtNetwork.framework/Versions/A/QtNetwork",
+        "@loader_path/../../../QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [
+        "@loader_path/../../../"
+      ],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/QtQuickDialogs2QuickImpl.framework/Versions/A/QtQuickDialogs2QuickImpl",
+      "loads": [
+        "@loader_path/../../../QtQuickControls2Impl.framework/Versions/A/QtQuickControls2Impl",
+        "@loader_path/../../../QtQuickDialogs2Utils.framework/Versions/A/QtQuickDialogs2Utils",
+        "@loader_path/../../../QtQuickTemplates2.framework/Versions/A/QtQuickTemplates2",
+        "@loader_path/../../../QtQuick.framework/Versions/A/QtQuick",
+        "@loader_path/../../../QtOpenGL.framework/Versions/A/QtOpenGL",
+        "@loader_path/../../../QtGui.framework/Versions/A/QtGui",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "@loader_path/../../../QtQmlMeta.framework/Versions/A/QtQmlMeta",
+        "@loader_path/../../../QtQmlWorkerScript.framework/Versions/A/QtQmlWorkerScript",
+        "@loader_path/../../../QtQmlModels.framework/Versions/A/QtQmlModels",
+        "@loader_path/../../../QtQml.framework/Versions/A/QtQml",
+        "@loader_path/../../../QtNetwork.framework/Versions/A/QtNetwork",
+        "@loader_path/../../../QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [
+        "@loader_path/../../../"
+      ],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/QtQuickDialogs2Utils.framework/Versions/A/QtQuickDialogs2Utils",
+      "loads": [
+        "@loader_path/../../../QtGui.framework/Versions/A/QtGui",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "@loader_path/../../../QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [
+        "@loader_path/../../../"
+      ],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/QtQuickEffects.framework/Versions/A/QtQuickEffects",
+      "loads": [
+        "@rpath/QtQuick.framework/Versions/A/QtQuick",
+        "@executable_path/../Frameworks/QtOpenGL.framework/Versions/A/QtOpenGL",
+        "@executable_path/../Frameworks/QtGui.framework/Versions/A/QtGui",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "@rpath/QtQmlMeta.framework/Versions/A/QtQmlMeta",
+        "@rpath/QtQmlModels.framework/Versions/A/QtQmlModels",
+        "@rpath/QtQmlWorkerScript.framework/Versions/A/QtQmlWorkerScript",
+        "@rpath/QtQml.framework/Versions/A/QtQml",
+        "@executable_path/../Frameworks/QtNetwork.framework/Versions/A/QtNetwork",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [
+        "@loader_path/../../../"
+      ],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/QtQuickLayouts.framework/Versions/A/QtQuickLayouts",
+      "loads": [
+        "@loader_path/../../../QtQuick.framework/Versions/A/QtQuick",
+        "@loader_path/../../../QtOpenGL.framework/Versions/A/QtOpenGL",
+        "@loader_path/../../../QtGui.framework/Versions/A/QtGui",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "@loader_path/../../../QtQmlMeta.framework/Versions/A/QtQmlMeta",
+        "@loader_path/../../../QtQmlModels.framework/Versions/A/QtQmlModels",
+        "@loader_path/../../../QtQmlWorkerScript.framework/Versions/A/QtQmlWorkerScript",
+        "@loader_path/../../../QtQml.framework/Versions/A/QtQml",
+        "@loader_path/../../../QtNetwork.framework/Versions/A/QtNetwork",
+        "@loader_path/../../../QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [
+        "@loader_path/../../../"
+      ],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/QtQuickShapes.framework/Versions/A/QtQuickShapes",
+      "loads": [
+        "@rpath/QtQuick.framework/Versions/A/QtQuick",
+        "@executable_path/../Frameworks/QtOpenGL.framework/Versions/A/QtOpenGL",
+        "@executable_path/../Frameworks/QtGui.framework/Versions/A/QtGui",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "@rpath/QtQmlMeta.framework/Versions/A/QtQmlMeta",
+        "@rpath/QtQmlModels.framework/Versions/A/QtQmlModels",
+        "@rpath/QtQmlWorkerScript.framework/Versions/A/QtQmlWorkerScript",
+        "@rpath/QtQml.framework/Versions/A/QtQml",
+        "@executable_path/../Frameworks/QtNetwork.framework/Versions/A/QtNetwork",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [
+        "@loader_path/../../../"
+      ],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/QtQuickTemplates2.framework/Versions/A/QtQuickTemplates2",
+      "loads": [
+        "@loader_path/../../../QtQuick.framework/Versions/A/QtQuick",
+        "@loader_path/../../../QtOpenGL.framework/Versions/A/QtOpenGL",
+        "@loader_path/../../../QtGui.framework/Versions/A/QtGui",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "@loader_path/../../../QtQmlMeta.framework/Versions/A/QtQmlMeta",
+        "@loader_path/../../../QtQmlModels.framework/Versions/A/QtQmlModels",
+        "@loader_path/../../../QtQmlWorkerScript.framework/Versions/A/QtQmlWorkerScript",
+        "@loader_path/../../../QtQml.framework/Versions/A/QtQml",
+        "@loader_path/../../../QtNetwork.framework/Versions/A/QtNetwork",
+        "@loader_path/../../../QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [
+        "@loader_path/../../../"
+      ],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/QtQuickTest.framework/Versions/A/QtQuickTest",
+      "loads": [
+        "@rpath/QtQuick.framework/Versions/A/QtQuick",
+        "@executable_path/../Frameworks/QtOpenGL.framework/Versions/A/QtOpenGL",
+        "@executable_path/../Frameworks/QtGui.framework/Versions/A/QtGui",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "@rpath/QtQmlMeta.framework/Versions/A/QtQmlMeta",
+        "@rpath/QtQmlModels.framework/Versions/A/QtQmlModels",
+        "@rpath/QtQmlWorkerScript.framework/Versions/A/QtQmlWorkerScript",
+        "@rpath/QtQml.framework/Versions/A/QtQml",
+        "@executable_path/../Frameworks/QtNetwork.framework/Versions/A/QtNetwork",
+        "@executable_path/../Frameworks/QtTest.framework/Versions/A/QtTest",
+        "/System/Library/Frameworks/Security.framework/Versions/A/Security",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/ApplicationServices.framework/Versions/A/ApplicationServices",
+        "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [
+        "@loader_path/../../../"
+      ],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/QtSvg.framework/Versions/A/QtSvg",
+      "loads": [
+        "@executable_path/../Frameworks/QtGui.framework/Versions/A/QtGui",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libz.1.dylib",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [
+        "@loader_path/../../../"
+      ],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/QtTest.framework/Versions/A/QtTest",
+      "loads": [
+        "/System/Library/Frameworks/Security.framework/Versions/A/Security",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/ApplicationServices.framework/Versions/A/ApplicationServices",
+        "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+        "@rpath/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib",
+        "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+        "/usr/lib/libobjc.A.dylib"
+      ],
+      "rpaths": [
+        "@loader_path/../../../"
+      ],
+      "minos": [
+        "14.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/QtVirtualKeyboard.framework/Versions/A/QtVirtualKeyboard",
+      "loads": [
+        "@executable_path/../Frameworks/QtQuick.framework/Versions/A/QtQuick",
+        "@executable_path/../Frameworks/QtOpenGL.framework/Versions/A/QtOpenGL",
+        "@executable_path/../Frameworks/QtQml.framework/Versions/A/QtQml",
+        "@executable_path/../Frameworks/QtNetwork.framework/Versions/A/QtNetwork",
+        "@executable_path/../Frameworks/QtGui.framework/Versions/A/QtGui",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [
+        "@loader_path/../../../"
+      ],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/QtVirtualKeyboardQml.framework/Versions/A/QtVirtualKeyboardQml",
+      "loads": [
+        "@rpath/QtVirtualKeyboard.framework/Versions/A/QtVirtualKeyboard",
+        "@executable_path/../Frameworks/QtQuick.framework/Versions/A/QtQuick",
+        "@executable_path/../Frameworks/QtOpenGL.framework/Versions/A/QtOpenGL",
+        "@executable_path/../Frameworks/QtGui.framework/Versions/A/QtGui",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "@executable_path/../Frameworks/QtQml.framework/Versions/A/QtQml",
+        "@executable_path/../Frameworks/QtNetwork.framework/Versions/A/QtNetwork",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [
+        "@loader_path/../../../"
+      ],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/QtWidgets.framework/Versions/A/QtWidgets",
+      "loads": [
+        "/usr/lib/libz.1.dylib",
+        "@loader_path/../../../QtGui.framework/Versions/A/QtGui",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "@loader_path/../../../QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib",
+        "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+        "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+        "/usr/lib/libobjc.A.dylib"
+      ],
+      "rpaths": [
+        "@loader_path/../../../"
+      ],
+      "minos": [
+        "14.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/WAMMpvFallback.dylib",
+      "loads": [
+        "@executable_path/../Frameworks/libass.9.dylib",
+        "@executable_path/../Frameworks/libavcodec.63.dylib",
+        "@executable_path/../Frameworks/libavfilter.12.dylib",
+        "@executable_path/../Frameworks/libavformat.63.dylib",
+        "@executable_path/../Frameworks/libavutil.61.dylib",
+        "@executable_path/../Frameworks/libplacebo.360.dylib",
+        "@executable_path/../Frameworks/libswresample.7.dylib",
+        "@executable_path/../Frameworks/libswscale.10.dylib",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/QuartzCore.framework/Versions/A/QuartzCore",
+        "/usr/lib/libiconv.2.dylib",
+        "@executable_path/../Frameworks/libmujs.dylib",
+        "@executable_path/../Frameworks/liblcms2.2.dylib",
+        "@executable_path/../Frameworks/libarchive.13.dylib",
+        "@executable_path/../Frameworks/libavdevice.63.dylib",
+        "@executable_path/../Frameworks/libbluray.4.dylib",
+        "/usr/lib/libSystem.B.dylib",
+        "@executable_path/../Frameworks/libluajit-5.1.2.dylib",
+        "@executable_path/../Frameworks/librubberband.3.dylib",
+        "@executable_path/../Frameworks/libuchardet.0.dylib",
+        "@executable_path/../Frameworks/libzimg.2.dylib",
+        "/usr/lib/libz.1.dylib",
+        "/System/Library/Frameworks/CoreMedia.framework/Versions/A/CoreMedia",
+        "/System/Library/Frameworks/AVFoundation.framework/Versions/A/AVFoundation",
+        "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+        "/System/Library/Frameworks/CoreAudio.framework/Versions/A/CoreAudio",
+        "/System/Library/Frameworks/AudioUnit.framework/Versions/A/AudioUnit",
+        "/System/Library/Frameworks/AudioToolbox.framework/Versions/A/AudioToolbox",
+        "@executable_path/../Frameworks/libjpeg.8.dylib",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "@executable_path/../Frameworks/libvulkan.1.dylib",
+        "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/Carbon.framework/Versions/A/Carbon",
+        "/System/Library/Frameworks/CoreGraphics.framework/Versions/A/CoreGraphics",
+        "/System/Library/Frameworks/CoreServices.framework/Versions/A/CoreServices",
+        "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+        "/System/Library/Frameworks/IOSurface.framework/Versions/A/IOSurface",
+        "/System/Library/Frameworks/MediaPlayer.framework/Versions/A/MediaPlayer",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "/System/Library/Frameworks/QuickLookThumbnailing.framework/Versions/A/QuickLookThumbnailing",
+        "/usr/lib/libobjc.A.dylib",
+        "/usr/lib/swift/libswiftAVFoundation.dylib",
+        "/usr/lib/swift/libswiftCore.dylib",
+        "/usr/lib/swift/libswiftCoreAudio.dylib",
+        "/usr/lib/swift/libswiftCoreFoundation.dylib",
+        "/usr/lib/swift/libswiftCoreImage.dylib",
+        "/usr/lib/swift/libswiftCoreMIDI.dylib",
+        "/usr/lib/swift/libswiftCoreMedia.dylib",
+        "/usr/lib/swift/libswiftDispatch.dylib",
+        "/usr/lib/swift/libswiftIOKit.dylib",
+        "/usr/lib/swift/libswiftMetal.dylib",
+        "/usr/lib/swift/libswiftOSLog.dylib",
+        "/usr/lib/swift/libswiftObjectiveC.dylib",
+        "/usr/lib/swift/libswiftQuartzCore.dylib",
+        "/usr/lib/swift/libswiftSpatial.dylib",
+        "/usr/lib/swift/libswiftUniformTypeIdentifiers.dylib",
+        "/usr/lib/swift/libswiftXPC.dylib",
+        "/usr/lib/swift/libswift_Builtin_float.dylib",
+        "/usr/lib/swift/libswiftos.dylib",
+        "/usr/lib/swift/libswiftsimd.dylib"
+      ],
+      "rpaths": [
+        "/usr/lib/swift"
+      ],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libSvtAv1Enc.4.dylib",
+      "loads": [
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libarchive.13.dylib",
+      "loads": [
+        "/usr/lib/libexpat.1.dylib",
+        "@loader_path/liblzma.5.dylib",
+        "@loader_path/libzstd.1.dylib",
+        "@loader_path/liblz4.1.dylib",
+        "@loader_path/libb2.1.dylib",
+        "/usr/lib/libbz2.1.0.dylib",
+        "/usr/lib/libz.1.dylib",
+        "/usr/lib/libiconv.2.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libass.9.dylib",
+      "loads": [
+        "/usr/lib/libiconv.2.dylib",
+        "@loader_path/libfreetype.6.dylib",
+        "@loader_path/libfribidi.0.dylib",
+        "@loader_path/libharfbuzz.0.dylib",
+        "@loader_path/libunibreak.7.dylib",
+        "/System/Library/Frameworks/ApplicationServices.framework/Versions/A/ApplicationServices",
+        "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+        "/usr/lib/libSystem.B.dylib",
+        "/System/Library/Frameworks/CoreText.framework/Versions/A/CoreText"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libavcodec-wamnative.63.dylib",
+      "loads": [
+        "@rpath/libavutil-wamnative.61.dylib",
+        "/usr/lib/libSystem.B.dylib",
+        "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+        "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "/System/Library/Frameworks/CoreMedia.framework/Versions/A/CoreMedia"
+      ],
+      "rpaths": [],
+      "minos": [
+        "13.3"
+      ],
+      "at_or_below_13_3": true
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libavcodec.63.dylib",
+      "loads": [
+        "@loader_path/libswresample.7.dylib",
+        "@loader_path/libavutil.61.dylib",
+        "@loader_path/libvpx.12.dylib",
+        "/usr/lib/libSystem.B.dylib",
+        "/usr/lib/libiconv.2.dylib",
+        "@loader_path/liblzma.5.dylib",
+        "@loader_path/libdav1d.7.dylib",
+        "/System/Library/Frameworks/AudioToolbox.framework/Versions/A/AudioToolbox",
+        "@loader_path/libmp3lame.0.dylib",
+        "@loader_path/libopus.0.dylib",
+        "@loader_path/libSvtAv1Enc.4.dylib",
+        "@loader_path/libx264.165.dylib",
+        "@loader_path/libx265.217.dylib",
+        "/usr/lib/libz.1.dylib",
+        "/System/Library/Frameworks/VideoToolbox.framework/Versions/A/VideoToolbox",
+        "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+        "/System/Library/Frameworks/CoreMedia.framework/Versions/A/CoreMedia",
+        "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "/System/Library/Frameworks/CoreServices.framework/Versions/A/CoreServices",
+        "@loader_path/libssl.3.dylib",
+        "@loader_path/libcrypto.3.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libavdevice.63.dylib",
+      "loads": [
+        "@loader_path/libavfilter.12.dylib",
+        "@loader_path/libswscale.10.dylib",
+        "@loader_path/libavformat.63.dylib",
+        "@loader_path/libavcodec.63.dylib",
+        "@loader_path/libswresample.7.dylib",
+        "@loader_path/libavutil.61.dylib",
+        "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+        "/System/Library/Frameworks/AudioToolbox.framework/Versions/A/AudioToolbox",
+        "/System/Library/Frameworks/CoreAudio.framework/Versions/A/CoreAudio",
+        "/usr/lib/libSystem.B.dylib",
+        "/System/Library/Frameworks/AVFoundation.framework/Versions/A/AVFoundation",
+        "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "/System/Library/Frameworks/CoreMedia.framework/Versions/A/CoreMedia",
+        "/System/Library/Frameworks/CoreGraphics.framework/Versions/A/CoreGraphics",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/usr/lib/libz.1.dylib",
+        "@loader_path/libvmaf.3.dylib",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "/System/Library/Frameworks/VideoToolbox.framework/Versions/A/VideoToolbox",
+        "/System/Library/Frameworks/CoreImage.framework/Versions/A/CoreImage",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+        "/System/Library/Frameworks/CoreServices.framework/Versions/A/CoreServices",
+        "/usr/lib/libbz2.1.0.dylib",
+        "@loader_path/libssl.3.dylib",
+        "@loader_path/libcrypto.3.dylib",
+        "@loader_path/libvpx.12.dylib",
+        "/usr/lib/libiconv.2.dylib",
+        "@loader_path/liblzma.5.dylib",
+        "@loader_path/libdav1d.7.dylib",
+        "@loader_path/libmp3lame.0.dylib",
+        "@loader_path/libopus.0.dylib",
+        "@loader_path/libSvtAv1Enc.4.dylib",
+        "@loader_path/libx264.165.dylib",
+        "@loader_path/libx265.217.dylib",
+        "/usr/lib/libobjc.A.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libavfilter.12.dylib",
+      "loads": [
+        "@loader_path/libswscale.10.dylib",
+        "@loader_path/libavformat.63.dylib",
+        "@loader_path/libavcodec.63.dylib",
+        "@loader_path/libswresample.7.dylib",
+        "@loader_path/libavutil.61.dylib",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/usr/lib/libSystem.B.dylib",
+        "/usr/lib/libz.1.dylib",
+        "@loader_path/libvmaf.3.dylib",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "/System/Library/Frameworks/VideoToolbox.framework/Versions/A/VideoToolbox",
+        "/System/Library/Frameworks/CoreImage.framework/Versions/A/CoreImage",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+        "/System/Library/Frameworks/CoreMedia.framework/Versions/A/CoreMedia",
+        "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "/System/Library/Frameworks/CoreServices.framework/Versions/A/CoreServices",
+        "/usr/lib/libbz2.1.0.dylib",
+        "@loader_path/libssl.3.dylib",
+        "@loader_path/libcrypto.3.dylib",
+        "@loader_path/libvpx.12.dylib",
+        "/usr/lib/libiconv.2.dylib",
+        "@loader_path/liblzma.5.dylib",
+        "@loader_path/libdav1d.7.dylib",
+        "/System/Library/Frameworks/AudioToolbox.framework/Versions/A/AudioToolbox",
+        "@loader_path/libmp3lame.0.dylib",
+        "@loader_path/libopus.0.dylib",
+        "@loader_path/libSvtAv1Enc.4.dylib",
+        "@loader_path/libx264.165.dylib",
+        "@loader_path/libx265.217.dylib",
+        "/System/Library/Frameworks/CoreGraphics.framework/Versions/A/CoreGraphics",
+        "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+        "/usr/lib/libobjc.A.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libavformat-wamnative.63.dylib",
+      "loads": [
+        "@rpath/libavcodec-wamnative.63.dylib",
+        "@rpath/libavutil-wamnative.61.dylib",
+        "/usr/lib/libSystem.B.dylib",
+        "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+        "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "/System/Library/Frameworks/CoreMedia.framework/Versions/A/CoreMedia"
+      ],
+      "rpaths": [],
+      "minos": [
+        "13.3"
+      ],
+      "at_or_below_13_3": true
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libavformat.63.dylib",
+      "loads": [
+        "@loader_path/libavcodec.63.dylib",
+        "@loader_path/libswresample.7.dylib",
+        "@loader_path/libavutil.61.dylib",
+        "/usr/lib/libSystem.B.dylib",
+        "/usr/lib/libbz2.1.0.dylib",
+        "/usr/lib/libz.1.dylib",
+        "@loader_path/libssl.3.dylib",
+        "@loader_path/libcrypto.3.dylib",
+        "@loader_path/libvpx.12.dylib",
+        "/usr/lib/libiconv.2.dylib",
+        "@loader_path/liblzma.5.dylib",
+        "@loader_path/libdav1d.7.dylib",
+        "/System/Library/Frameworks/AudioToolbox.framework/Versions/A/AudioToolbox",
+        "@loader_path/libmp3lame.0.dylib",
+        "@loader_path/libopus.0.dylib",
+        "@loader_path/libSvtAv1Enc.4.dylib",
+        "@loader_path/libx264.165.dylib",
+        "@loader_path/libx265.217.dylib",
+        "/System/Library/Frameworks/VideoToolbox.framework/Versions/A/VideoToolbox",
+        "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+        "/System/Library/Frameworks/CoreMedia.framework/Versions/A/CoreMedia",
+        "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "/System/Library/Frameworks/CoreServices.framework/Versions/A/CoreServices"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libavutil-wamnative.61.dylib",
+      "loads": [
+        "/usr/lib/libSystem.B.dylib",
+        "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+        "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "/System/Library/Frameworks/CoreMedia.framework/Versions/A/CoreMedia"
+      ],
+      "rpaths": [],
+      "minos": [
+        "13.3"
+      ],
+      "at_or_below_13_3": true
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libavutil.61.dylib",
+      "loads": [
+        "/usr/lib/libSystem.B.dylib",
+        "/usr/lib/libz.1.dylib",
+        "@loader_path/libssl.3.dylib",
+        "@loader_path/libcrypto.3.dylib",
+        "/System/Library/Frameworks/VideoToolbox.framework/Versions/A/VideoToolbox",
+        "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+        "/System/Library/Frameworks/CoreMedia.framework/Versions/A/CoreMedia",
+        "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "/System/Library/Frameworks/CoreServices.framework/Versions/A/CoreServices"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libb2.1.dylib",
+      "loads": [
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "14.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libbluray.4.dylib",
+      "loads": [
+        "@loader_path/libfontconfig.1.dylib",
+        "@loader_path/libfreetype.6.dylib",
+        "@loader_path/libudfread.3.dylib",
+        "/usr/lib/libxml2.2.dylib",
+        "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libbrotlicommon.1.dylib",
+      "loads": [
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libbrotlidec.1.dylib",
+      "loads": [
+        "/usr/lib/libSystem.B.dylib",
+        "@loader_path/libbrotlicommon.1.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libcrypto.3.dylib",
+      "loads": [
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libdav1d.7.dylib",
+      "loads": [
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libdbus-1.3.dylib",
+      "loads": [
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libdouble-conversion.3.dylib",
+      "loads": [
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libfontconfig.1.dylib",
+      "loads": [
+        "@loader_path/libfreetype.6.dylib",
+        "/usr/lib/libexpat.1.dylib",
+        "@loader_path/libintl.8.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libfreetype.6.dylib",
+      "loads": [
+        "/usr/lib/libz.1.dylib",
+        "/usr/lib/libbz2.1.0.dylib",
+        "@loader_path/libpng16.16.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libfribidi.0.dylib",
+      "loads": [
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "14.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libgio-2.0.0.dylib",
+      "loads": [
+        "@executable_path/../Frameworks/libglib-2.0.0.dylib",
+        "@executable_path/../Frameworks/libgobject-2.0.0.dylib",
+        "@executable_path/../Frameworks/libgmodule-2.0.0.dylib",
+        "/usr/lib/libz.1.dylib",
+        "@executable_path/../Frameworks/libintl.8.dylib",
+        "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+        "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/usr/lib/libresolv.9.dylib",
+        "/usr/lib/libSystem.B.dylib",
+        "/System/Library/Frameworks/CoreServices.framework/Versions/A/CoreServices",
+        "/usr/lib/libobjc.A.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libglib-2.0.0.dylib",
+      "loads": [
+        "/usr/lib/libiconv.2.dylib",
+        "@loader_path/libintl.8.dylib",
+        "/usr/lib/libSystem.B.dylib",
+        "@loader_path/libpcre2-8.0.dylib",
+        "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+        "/System/Library/Frameworks/CoreServices.framework/Versions/A/CoreServices",
+        "/usr/lib/libobjc.A.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libgmodule-2.0.0.dylib",
+      "loads": [
+        "@executable_path/../Frameworks/libglib-2.0.0.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libgobject-2.0.0.dylib",
+      "loads": [
+        "@executable_path/../Frameworks/libglib-2.0.0.dylib",
+        "/usr/lib/libffi.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libgraphite2.3.dylib",
+      "loads": [
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libgthread-2.0.0.dylib",
+      "loads": [
+        "@loader_path/libglib-2.0.0.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libharfbuzz.0.dylib",
+      "loads": [
+        "/usr/lib/libSystem.B.dylib",
+        "@loader_path/libfreetype.6.dylib",
+        "@loader_path/libglib-2.0.0.dylib",
+        "@loader_path/libgraphite2.3.dylib",
+        "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+        "/System/Library/Frameworks/CoreGraphics.framework/Versions/A/CoreGraphics",
+        "/System/Library/Frameworks/CoreText.framework/Versions/A/CoreText"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libicudata.78.dylib",
+      "loads": [
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libicui18n.78.dylib",
+      "loads": [
+        "@loader_path/libicuuc.78.dylib",
+        "@loader_path/libicudata.78.dylib",
+        "/usr/lib/libSystem.B.dylib",
+        "/usr/lib/libc++.1.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libicuuc.78.dylib",
+      "loads": [
+        "@loader_path/libicudata.78.dylib",
+        "/usr/lib/libSystem.B.dylib",
+        "/usr/lib/libc++.1.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libintl.8.dylib",
+      "loads": [
+        "/usr/lib/libiconv.2.dylib",
+        "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+        "/System/Library/Frameworks/CoreServices.framework/Versions/A/CoreServices",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libjasper.7.dylib",
+      "loads": [
+        "@executable_path/../Frameworks/libjpeg.8.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libjpeg.8.dylib",
+      "loads": [
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/liblcms2.2.dylib",
+      "loads": [
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libluajit-5.1.2.dylib",
+      "loads": [
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/liblz4.1.dylib",
+      "loads": [
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "14.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/liblzma.5.dylib",
+      "loads": [
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libmd4c.0.dylib",
+      "loads": [
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libmng.2.dylib",
+      "loads": [
+        "/usr/lib/libz.1.dylib",
+        "@executable_path/../Frameworks/libjpeg.8.dylib",
+        "@executable_path/../Frameworks/liblcms2.2.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libmp3lame.0.dylib",
+      "loads": [
+        "@loader_path/libmpg123.0.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libmpg123.0.dylib",
+      "loads": [
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libmpv.2.dylib",
+      "loads": [
+        "@executable_path/../Frameworks/libass.9.dylib",
+        "@executable_path/../Frameworks/libavcodec.63.dylib",
+        "@executable_path/../Frameworks/libavfilter.12.dylib",
+        "@executable_path/../Frameworks/libavformat.63.dylib",
+        "@executable_path/../Frameworks/libavutil.61.dylib",
+        "@executable_path/../Frameworks/libplacebo.360.dylib",
+        "@executable_path/../Frameworks/libswresample.7.dylib",
+        "@executable_path/../Frameworks/libswscale.10.dylib",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/QuartzCore.framework/Versions/A/QuartzCore",
+        "/usr/lib/libiconv.2.dylib",
+        "@executable_path/../Frameworks/libmujs.dylib",
+        "@executable_path/../Frameworks/liblcms2.2.dylib",
+        "@executable_path/../Frameworks/libarchive.13.dylib",
+        "@executable_path/../Frameworks/libavdevice.63.dylib",
+        "@executable_path/../Frameworks/libbluray.4.dylib",
+        "/usr/lib/libSystem.B.dylib",
+        "@executable_path/../Frameworks/libluajit-5.1.2.dylib",
+        "@executable_path/../Frameworks/librubberband.3.dylib",
+        "@executable_path/../Frameworks/libuchardet.0.dylib",
+        "@executable_path/../Frameworks/libzimg.2.dylib",
+        "/usr/lib/libz.1.dylib",
+        "/System/Library/Frameworks/CoreMedia.framework/Versions/A/CoreMedia",
+        "/System/Library/Frameworks/AVFoundation.framework/Versions/A/AVFoundation",
+        "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+        "/System/Library/Frameworks/CoreAudio.framework/Versions/A/CoreAudio",
+        "/System/Library/Frameworks/AudioUnit.framework/Versions/A/AudioUnit",
+        "/System/Library/Frameworks/AudioToolbox.framework/Versions/A/AudioToolbox",
+        "@executable_path/../Frameworks/libjpeg.8.dylib",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "@executable_path/../Frameworks/libvulkan.1.dylib",
+        "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/Carbon.framework/Versions/A/Carbon",
+        "/System/Library/Frameworks/CoreGraphics.framework/Versions/A/CoreGraphics",
+        "/System/Library/Frameworks/CoreServices.framework/Versions/A/CoreServices",
+        "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+        "/System/Library/Frameworks/IOSurface.framework/Versions/A/IOSurface",
+        "/System/Library/Frameworks/MediaPlayer.framework/Versions/A/MediaPlayer",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "/System/Library/Frameworks/QuickLookThumbnailing.framework/Versions/A/QuickLookThumbnailing",
+        "/usr/lib/libobjc.A.dylib",
+        "/usr/lib/swift/libswiftAVFoundation.dylib",
+        "/usr/lib/swift/libswiftCore.dylib",
+        "/usr/lib/swift/libswiftCoreAudio.dylib",
+        "/usr/lib/swift/libswiftCoreFoundation.dylib",
+        "/usr/lib/swift/libswiftCoreImage.dylib",
+        "/usr/lib/swift/libswiftCoreMIDI.dylib",
+        "/usr/lib/swift/libswiftCoreMedia.dylib",
+        "/usr/lib/swift/libswiftDispatch.dylib",
+        "/usr/lib/swift/libswiftIOKit.dylib",
+        "/usr/lib/swift/libswiftMetal.dylib",
+        "/usr/lib/swift/libswiftOSLog.dylib",
+        "/usr/lib/swift/libswiftObjectiveC.dylib",
+        "/usr/lib/swift/libswiftQuartzCore.dylib",
+        "/usr/lib/swift/libswiftSpatial.dylib",
+        "/usr/lib/swift/libswiftUniformTypeIdentifiers.dylib",
+        "/usr/lib/swift/libswiftXPC.dylib",
+        "/usr/lib/swift/libswift_Builtin_float.dylib",
+        "/usr/lib/swift/libswiftos.dylib",
+        "/usr/lib/swift/libswiftsimd.dylib"
+      ],
+      "rpaths": [
+        "@executable_path/../Frameworks"
+      ],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libmujs.dylib",
+      "loads": [
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libopus.0.dylib",
+      "loads": [
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libpcre2-16.0.dylib",
+      "loads": [
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libpcre2-8.0.dylib",
+      "loads": [
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libplacebo.360.dylib",
+      "loads": [
+        "/usr/lib/libSystem.B.dylib",
+        "@loader_path/libshaderc_shared.1.dylib",
+        "@loader_path/libvulkan.1.dylib",
+        "@loader_path/liblcms2.2.dylib",
+        "/usr/lib/libc++.1.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libpng16.16.dylib",
+      "loads": [
+        "/usr/lib/libz.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/librubberband.3.dylib",
+      "loads": [
+        "/System/Library/Frameworks/Accelerate.framework/Versions/A/Accelerate",
+        "@loader_path/libsamplerate.0.dylib",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "11.0"
+      ],
+      "at_or_below_13_3": true
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libsamplerate.0.dylib",
+      "loads": [
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "14.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libshaderc_shared.1.dylib",
+      "loads": [
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libsharpyuv.0.dylib",
+      "loads": [
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libssl.3.dylib",
+      "loads": [
+        "@loader_path/libcrypto.3.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libswresample.7.dylib",
+      "loads": [
+        "@loader_path/libavutil.61.dylib",
+        "/usr/lib/libSystem.B.dylib",
+        "/usr/lib/libz.1.dylib",
+        "@loader_path/libssl.3.dylib",
+        "@loader_path/libcrypto.3.dylib",
+        "/System/Library/Frameworks/VideoToolbox.framework/Versions/A/VideoToolbox",
+        "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+        "/System/Library/Frameworks/CoreMedia.framework/Versions/A/CoreMedia",
+        "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "/System/Library/Frameworks/CoreServices.framework/Versions/A/CoreServices"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libswscale.10.dylib",
+      "loads": [
+        "@loader_path/libavutil.61.dylib",
+        "/usr/lib/libSystem.B.dylib",
+        "/usr/lib/libz.1.dylib",
+        "@loader_path/libssl.3.dylib",
+        "@loader_path/libcrypto.3.dylib",
+        "/System/Library/Frameworks/VideoToolbox.framework/Versions/A/VideoToolbox",
+        "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+        "/System/Library/Frameworks/CoreMedia.framework/Versions/A/CoreMedia",
+        "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "/System/Library/Frameworks/CoreServices.framework/Versions/A/CoreServices"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libtiff.6.dylib",
+      "loads": [
+        "@executable_path/../Frameworks/libwebp.7.dylib",
+        "@executable_path/../Frameworks/libzstd.1.dylib",
+        "@executable_path/../Frameworks/liblzma.5.dylib",
+        "@executable_path/../Frameworks/libjpeg.8.dylib",
+        "/usr/lib/libz.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libuchardet.0.dylib",
+      "loads": [
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libudfread.3.dylib",
+      "loads": [
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libunibreak.7.dylib",
+      "loads": [
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libvmaf.3.dylib",
+      "loads": [
+        "/usr/lib/libSystem.B.dylib",
+        "/usr/lib/libc++.1.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libvpx.12.dylib",
+      "loads": [
+        "/usr/lib/libSystem.B.dylib",
+        "/usr/lib/libc++.1.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libvulkan.1.dylib",
+      "loads": [
+        "/usr/lib/libSystem.B.dylib",
+        "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libwebp.7.dylib",
+      "loads": [
+        "@rpath/libsharpyuv.0.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libwebpdemux.2.dylib",
+      "loads": [
+        "@rpath/libwebp.7.dylib",
+        "@rpath/libsharpyuv.0.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libwebpmux.3.dylib",
+      "loads": [
+        "@rpath/libwebp.7.dylib",
+        "@rpath/libsharpyuv.0.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libx264.165.dylib",
+      "loads": [
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libx265.217.dylib",
+      "loads": [
+        "/usr/lib/libSystem.B.dylib",
+        "/usr/lib/libc++.1.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libzimg.2.dylib",
+      "loads": [
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Frameworks/libzstd.1.dylib",
+      "loads": [
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/MacOS/WAM",
+      "loads": [
+        "@executable_path/../Frameworks/QtQuickControls2.framework/Versions/A/QtQuickControls2",
+        "@executable_path/../Frameworks/QtQuickDialogs2.framework/Versions/A/QtQuickDialogs2",
+        "@executable_path/../Frameworks/QtQuickLayouts.framework/Versions/A/QtQuickLayouts",
+        "@executable_path/../Frameworks/QtLabsPlatform.framework/Versions/A/QtLabsPlatform",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/QuartzCore.framework/Versions/A/QuartzCore",
+        "/System/Library/Frameworks/AVFoundation.framework/Versions/A/AVFoundation",
+        "@executable_path/../Frameworks/QtQuick.framework/Versions/A/QtQuick",
+        "@executable_path/../Frameworks/QtOpenGL.framework/Versions/A/QtOpenGL",
+        "@executable_path/../Frameworks/QtGui.framework/Versions/A/QtGui",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "@executable_path/../Frameworks/QtQml.framework/Versions/A/QtQml",
+        "@executable_path/../Frameworks/QtNetwork.framework/Versions/A/QtNetwork",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/System/Library/Frameworks/CoreImage.framework/Versions/A/CoreImage",
+        "@executable_path/../Frameworks/libvpx.12.dylib",
+        "/usr/lib/libSystem.B.dylib",
+        "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+        "/System/Library/Frameworks/CoreGraphics.framework/Versions/A/CoreGraphics",
+        "/System/Library/Frameworks/CoreMedia.framework/Versions/A/CoreMedia",
+        "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+        "/System/Library/Frameworks/IOSurface.framework/Versions/A/IOSurface",
+        "/System/Library/Frameworks/AudioToolbox.framework/Versions/A/AudioToolbox",
+        "/System/Library/Frameworks/CoreAudio.framework/Versions/A/CoreAudio",
+        "/System/Library/Frameworks/VideoToolbox.framework/Versions/A/VideoToolbox",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libobjc.A.dylib"
+      ],
+      "rpaths": [
+        "@executable_path/../Frameworks"
+      ],
+      "minos": [
+        "13.3"
+      ],
+      "at_or_below_13_3": true
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/PlugIns/WAMThumbnail.appex/Contents/MacOS/WAMThumbnail",
+      "loads": [
+        "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+        "/System/Library/Frameworks/CoreGraphics.framework/Versions/A/CoreGraphics",
+        "/System/Library/Frameworks/CoreMedia.framework/Versions/A/CoreMedia",
+        "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+        "/System/Library/Frameworks/QuickLookThumbnailing.framework/Versions/A/QuickLookThumbnailing",
+        "/System/Library/Frameworks/VideoToolbox.framework/Versions/A/VideoToolbox",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib",
+        "/usr/lib/libobjc.A.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "13.3"
+      ],
+      "at_or_below_13_3": true
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/PlugIns/iconengines/libqsvgicon.dylib",
+      "loads": [
+        "@executable_path/../Frameworks/QtSvg.framework/Versions/A/QtSvg",
+        "@executable_path/../Frameworks/QtGui.framework/Versions/A/QtGui",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/PlugIns/imageformats/libqgif.dylib",
+      "loads": [
+        "@executable_path/../Frameworks/QtGui.framework/Versions/A/QtGui",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "14.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/PlugIns/imageformats/libqicns.dylib",
+      "loads": [
+        "@executable_path/../Frameworks/QtGui.framework/Versions/A/QtGui",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/PlugIns/imageformats/libqico.dylib",
+      "loads": [
+        "@executable_path/../Frameworks/QtGui.framework/Versions/A/QtGui",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "14.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/PlugIns/imageformats/libqjp2.dylib",
+      "loads": [
+        "@executable_path/../Frameworks/QtGui.framework/Versions/A/QtGui",
+        "@executable_path/../Frameworks/libjasper.7.dylib",
+        "@executable_path/../Frameworks/libjpeg.8.dylib",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/PlugIns/imageformats/libqjpeg.dylib",
+      "loads": [
+        "@executable_path/../Frameworks/QtGui.framework/Versions/A/QtGui",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "@executable_path/../Frameworks/libjpeg.8.dylib",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "14.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/PlugIns/imageformats/libqmacheif.dylib",
+      "loads": [
+        "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+        "/System/Library/Frameworks/CoreGraphics.framework/Versions/A/CoreGraphics",
+        "@executable_path/../Frameworks/QtGui.framework/Versions/A/QtGui",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/PlugIns/imageformats/libqmng.dylib",
+      "loads": [
+        "@executable_path/../Frameworks/libmng.2.dylib",
+        "@executable_path/../Frameworks/QtGui.framework/Versions/A/QtGui",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/PlugIns/imageformats/libqpdf.dylib",
+      "loads": [
+        "@executable_path/../Frameworks/QtPdf.framework/Versions/A/QtPdf",
+        "@executable_path/../Frameworks/QtGui.framework/Versions/A/QtGui",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "14.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/PlugIns/imageformats/libqtga.dylib",
+      "loads": [
+        "@executable_path/../Frameworks/QtGui.framework/Versions/A/QtGui",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/PlugIns/imageformats/libqtiff.dylib",
+      "loads": [
+        "@executable_path/../Frameworks/QtGui.framework/Versions/A/QtGui",
+        "@executable_path/../Frameworks/libtiff.6.dylib",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/PlugIns/imageformats/libqwbmp.dylib",
+      "loads": [
+        "@executable_path/../Frameworks/QtGui.framework/Versions/A/QtGui",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/PlugIns/imageformats/libqwebp.dylib",
+      "loads": [
+        "@executable_path/../Frameworks/QtGui.framework/Versions/A/QtGui",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "@executable_path/../Frameworks/libwebpdemux.2.dylib",
+        "@executable_path/../Frameworks/libwebpmux.3.dylib",
+        "@executable_path/../Frameworks/libwebp.7.dylib",
+        "@executable_path/../Frameworks/libsharpyuv.0.dylib",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/PlugIns/libeffectsplugin.dylib",
+      "loads": [
+        "@executable_path/../Frameworks/QtQuickEffects.framework/Versions/A/QtQuickEffects",
+        "@executable_path/../Frameworks/QtQuick.framework/Versions/A/QtQuick",
+        "@executable_path/../Frameworks/QtOpenGL.framework/Versions/A/QtOpenGL",
+        "@executable_path/../Frameworks/QtGui.framework/Versions/A/QtGui",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "@executable_path/../Frameworks/QtQml.framework/Versions/A/QtQml",
+        "@executable_path/../Frameworks/QtNetwork.framework/Versions/A/QtNetwork",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/PlugIns/liblabsplatformplugin.dylib",
+      "loads": [
+        "@executable_path/../Frameworks/QtLabsPlatform.framework/Versions/A/QtLabsPlatform",
+        "@executable_path/../Frameworks/QtQml.framework/Versions/A/QtQml",
+        "@executable_path/../Frameworks/QtNetwork.framework/Versions/A/QtNetwork",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/PlugIns/libmodelsplugin.dylib",
+      "loads": [
+        "@executable_path/../Frameworks/QtQmlModels.framework/Versions/A/QtQmlModels",
+        "@executable_path/../Frameworks/QtQml.framework/Versions/A/QtQml",
+        "@executable_path/../Frameworks/QtNetwork.framework/Versions/A/QtNetwork",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/PlugIns/libqmlfolderlistmodelplugin.dylib",
+      "loads": [
+        "@executable_path/../Frameworks/QtLabsFolderListModel.framework/Versions/A/QtLabsFolderListModel",
+        "@executable_path/../Frameworks/QtQml.framework/Versions/A/QtQml",
+        "@executable_path/../Frameworks/QtNetwork.framework/Versions/A/QtNetwork",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/PlugIns/libqmlplugin.dylib",
+      "loads": [
+        "@executable_path/../Frameworks/QtQmlMeta.framework/Versions/A/QtQmlMeta",
+        "@executable_path/../Frameworks/QtQmlModels.framework/Versions/A/QtQmlModels",
+        "@executable_path/../Frameworks/QtQmlWorkerScript.framework/Versions/A/QtQmlWorkerScript",
+        "@executable_path/../Frameworks/QtQml.framework/Versions/A/QtQml",
+        "@executable_path/../Frameworks/QtNetwork.framework/Versions/A/QtNetwork",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/PlugIns/libqmlshapesplugin.dylib",
+      "loads": [
+        "@executable_path/../Frameworks/QtQuickShapes.framework/Versions/A/QtQuickShapes",
+        "@executable_path/../Frameworks/QtQuick.framework/Versions/A/QtQuick",
+        "@executable_path/../Frameworks/QtQmlMeta.framework/Versions/A/QtQmlMeta",
+        "@executable_path/../Frameworks/QtQmlModels.framework/Versions/A/QtQmlModels",
+        "@executable_path/../Frameworks/QtQmlWorkerScript.framework/Versions/A/QtQmlWorkerScript",
+        "@executable_path/../Frameworks/QtQml.framework/Versions/A/QtQml",
+        "@executable_path/../Frameworks/QtNetwork.framework/Versions/A/QtNetwork",
+        "@executable_path/../Frameworks/QtOpenGL.framework/Versions/A/QtOpenGL",
+        "@executable_path/../Frameworks/QtGui.framework/Versions/A/QtGui",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/PlugIns/libqquicklayoutsplugin.dylib",
+      "loads": [
+        "@executable_path/../Frameworks/QtQuickLayouts.framework/Versions/A/QtQuickLayouts",
+        "@executable_path/../Frameworks/QtQml.framework/Versions/A/QtQml",
+        "@executable_path/../Frameworks/QtNetwork.framework/Versions/A/QtNetwork",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/PlugIns/libqtquick2plugin.dylib",
+      "loads": [
+        "@executable_path/../Frameworks/QtQuick.framework/Versions/A/QtQuick",
+        "@executable_path/../Frameworks/QtOpenGL.framework/Versions/A/QtOpenGL",
+        "@executable_path/../Frameworks/QtGui.framework/Versions/A/QtGui",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "@executable_path/../Frameworks/QtQmlMeta.framework/Versions/A/QtQmlMeta",
+        "@executable_path/../Frameworks/QtQmlModels.framework/Versions/A/QtQmlModels",
+        "@executable_path/../Frameworks/QtQmlWorkerScript.framework/Versions/A/QtQmlWorkerScript",
+        "@executable_path/../Frameworks/QtQml.framework/Versions/A/QtQml",
+        "@executable_path/../Frameworks/QtNetwork.framework/Versions/A/QtNetwork",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/PlugIns/libqtquickcontrols2basicstyleimplplugin.dylib",
+      "loads": [
+        "@executable_path/../Frameworks/QtQuickControls2BasicStyleImpl.framework/Versions/A/QtQuickControls2BasicStyleImpl",
+        "@executable_path/../Frameworks/QtQml.framework/Versions/A/QtQml",
+        "@executable_path/../Frameworks/QtNetwork.framework/Versions/A/QtNetwork",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/PlugIns/libqtquickcontrols2basicstyleplugin.dylib",
+      "loads": [
+        "@executable_path/../Frameworks/QtQuickControls2Basic.framework/Versions/A/QtQuickControls2Basic",
+        "@executable_path/../Frameworks/QtQuickControls2.framework/Versions/A/QtQuickControls2",
+        "@executable_path/../Frameworks/QtQuick.framework/Versions/A/QtQuick",
+        "@executable_path/../Frameworks/QtOpenGL.framework/Versions/A/QtOpenGL",
+        "@executable_path/../Frameworks/QtGui.framework/Versions/A/QtGui",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "@executable_path/../Frameworks/QtQml.framework/Versions/A/QtQml",
+        "@executable_path/../Frameworks/QtNetwork.framework/Versions/A/QtNetwork",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/PlugIns/libqtquickcontrols2fluentwinui3styleimplplugin.dylib",
+      "loads": [
+        "@executable_path/../Frameworks/QtQuickControls2FluentWinUI3StyleImpl.framework/Versions/A/QtQuickControls2FluentWinUI3StyleImpl",
+        "@executable_path/../Frameworks/QtQml.framework/Versions/A/QtQml",
+        "@executable_path/../Frameworks/QtNetwork.framework/Versions/A/QtNetwork",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/PlugIns/libqtquickcontrols2fluentwinui3styleplugin.dylib",
+      "loads": [
+        "@executable_path/../Frameworks/QtQuickControls2FluentWinUI3StyleImpl.framework/Versions/A/QtQuickControls2FluentWinUI3StyleImpl",
+        "@executable_path/../Frameworks/QtQuickControls2Fusion.framework/Versions/A/QtQuickControls2Fusion",
+        "@executable_path/../Frameworks/QtQuickControls2.framework/Versions/A/QtQuickControls2",
+        "@executable_path/../Frameworks/QtQuickControls2Impl.framework/Versions/A/QtQuickControls2Impl",
+        "@executable_path/../Frameworks/QtQuickTemplates2.framework/Versions/A/QtQuickTemplates2",
+        "@executable_path/../Frameworks/QtQuick.framework/Versions/A/QtQuick",
+        "@executable_path/../Frameworks/QtOpenGL.framework/Versions/A/QtOpenGL",
+        "@executable_path/../Frameworks/QtGui.framework/Versions/A/QtGui",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "@executable_path/../Frameworks/QtQmlMeta.framework/Versions/A/QtQmlMeta",
+        "@executable_path/../Frameworks/QtQmlWorkerScript.framework/Versions/A/QtQmlWorkerScript",
+        "@executable_path/../Frameworks/QtQmlModels.framework/Versions/A/QtQmlModels",
+        "@executable_path/../Frameworks/QtQml.framework/Versions/A/QtQml",
+        "@executable_path/../Frameworks/QtNetwork.framework/Versions/A/QtNetwork",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/PlugIns/libqtquickcontrols2fusionstyleimplplugin.dylib",
+      "loads": [
+        "@executable_path/../Frameworks/QtQuickControls2FusionStyleImpl.framework/Versions/A/QtQuickControls2FusionStyleImpl",
+        "@executable_path/../Frameworks/QtQml.framework/Versions/A/QtQml",
+        "@executable_path/../Frameworks/QtNetwork.framework/Versions/A/QtNetwork",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/PlugIns/libqtquickcontrols2fusionstyleplugin.dylib",
+      "loads": [
+        "@executable_path/../Frameworks/QtQuickControls2Fusion.framework/Versions/A/QtQuickControls2Fusion",
+        "@executable_path/../Frameworks/QtQuickControls2.framework/Versions/A/QtQuickControls2",
+        "@executable_path/../Frameworks/QtQuick.framework/Versions/A/QtQuick",
+        "@executable_path/../Frameworks/QtOpenGL.framework/Versions/A/QtOpenGL",
+        "@executable_path/../Frameworks/QtGui.framework/Versions/A/QtGui",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "@executable_path/../Frameworks/QtQml.framework/Versions/A/QtQml",
+        "@executable_path/../Frameworks/QtNetwork.framework/Versions/A/QtNetwork",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/PlugIns/libqtquickcontrols2imaginestyleimplplugin.dylib",
+      "loads": [
+        "@executable_path/../Frameworks/QtQuickControls2ImagineStyleImpl.framework/Versions/A/QtQuickControls2ImagineStyleImpl",
+        "@executable_path/../Frameworks/QtQml.framework/Versions/A/QtQml",
+        "@executable_path/../Frameworks/QtNetwork.framework/Versions/A/QtNetwork",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/PlugIns/libqtquickcontrols2imaginestyleplugin.dylib",
+      "loads": [
+        "@executable_path/../Frameworks/QtQuickControls2Imagine.framework/Versions/A/QtQuickControls2Imagine",
+        "@executable_path/../Frameworks/QtQuickControls2.framework/Versions/A/QtQuickControls2",
+        "@executable_path/../Frameworks/QtQuick.framework/Versions/A/QtQuick",
+        "@executable_path/../Frameworks/QtOpenGL.framework/Versions/A/QtOpenGL",
+        "@executable_path/../Frameworks/QtGui.framework/Versions/A/QtGui",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "@executable_path/../Frameworks/QtQml.framework/Versions/A/QtQml",
+        "@executable_path/../Frameworks/QtNetwork.framework/Versions/A/QtNetwork",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/PlugIns/libqtquickcontrols2implplugin.dylib",
+      "loads": [
+        "@executable_path/../Frameworks/QtQuickControls2Impl.framework/Versions/A/QtQuickControls2Impl",
+        "@executable_path/../Frameworks/QtQuick.framework/Versions/A/QtQuick",
+        "@executable_path/../Frameworks/QtOpenGL.framework/Versions/A/QtOpenGL",
+        "@executable_path/../Frameworks/QtGui.framework/Versions/A/QtGui",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "@executable_path/../Frameworks/QtQml.framework/Versions/A/QtQml",
+        "@executable_path/../Frameworks/QtNetwork.framework/Versions/A/QtNetwork",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/PlugIns/libqtquickcontrols2iosstyleimplplugin.dylib",
+      "loads": [
+        "@executable_path/../Frameworks/QtQuickControls2IOSStyleImpl.framework/Versions/A/QtQuickControls2IOSStyleImpl",
+        "@executable_path/../Frameworks/QtQml.framework/Versions/A/QtQml",
+        "@executable_path/../Frameworks/QtNetwork.framework/Versions/A/QtNetwork",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/PlugIns/libqtquickcontrols2iosstyleplugin.dylib",
+      "loads": [
+        "@executable_path/../Frameworks/QtQuickControls2IOSStyleImpl.framework/Versions/A/QtQuickControls2IOSStyleImpl",
+        "@executable_path/../Frameworks/QtQuickControls2Basic.framework/Versions/A/QtQuickControls2Basic",
+        "@executable_path/../Frameworks/QtQuickControls2.framework/Versions/A/QtQuickControls2",
+        "@executable_path/../Frameworks/QtQuickControls2Impl.framework/Versions/A/QtQuickControls2Impl",
+        "@executable_path/../Frameworks/QtQuickTemplates2.framework/Versions/A/QtQuickTemplates2",
+        "@executable_path/../Frameworks/QtQuick.framework/Versions/A/QtQuick",
+        "@executable_path/../Frameworks/QtOpenGL.framework/Versions/A/QtOpenGL",
+        "@executable_path/../Frameworks/QtGui.framework/Versions/A/QtGui",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "@executable_path/../Frameworks/QtQmlMeta.framework/Versions/A/QtQmlMeta",
+        "@executable_path/../Frameworks/QtQmlWorkerScript.framework/Versions/A/QtQmlWorkerScript",
+        "@executable_path/../Frameworks/QtQmlModels.framework/Versions/A/QtQmlModels",
+        "@executable_path/../Frameworks/QtQml.framework/Versions/A/QtQml",
+        "@executable_path/../Frameworks/QtNetwork.framework/Versions/A/QtNetwork",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/PlugIns/libqtquickcontrols2macosstyleimplplugin.dylib",
+      "loads": [
+        "@executable_path/../Frameworks/QtQuickControls2MacOSStyleImpl.framework/Versions/A/QtQuickControls2MacOSStyleImpl",
+        "@executable_path/../Frameworks/QtQml.framework/Versions/A/QtQml",
+        "@executable_path/../Frameworks/QtNetwork.framework/Versions/A/QtNetwork",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/PlugIns/libqtquickcontrols2macosstyleplugin.dylib",
+      "loads": [
+        "@executable_path/../Frameworks/QtQuickControls2MacOSStyleImpl.framework/Versions/A/QtQuickControls2MacOSStyleImpl",
+        "@executable_path/../Frameworks/QtQuickControls2Fusion.framework/Versions/A/QtQuickControls2Fusion",
+        "@executable_path/../Frameworks/QtQuickControls2.framework/Versions/A/QtQuickControls2",
+        "@executable_path/../Frameworks/QtQuickTemplates2.framework/Versions/A/QtQuickTemplates2",
+        "@executable_path/../Frameworks/QtQuick.framework/Versions/A/QtQuick",
+        "@executable_path/../Frameworks/QtOpenGL.framework/Versions/A/QtOpenGL",
+        "@executable_path/../Frameworks/QtGui.framework/Versions/A/QtGui",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "@executable_path/../Frameworks/QtQmlMeta.framework/Versions/A/QtQmlMeta",
+        "@executable_path/../Frameworks/QtQmlWorkerScript.framework/Versions/A/QtQmlWorkerScript",
+        "@executable_path/../Frameworks/QtQmlModels.framework/Versions/A/QtQmlModels",
+        "@executable_path/../Frameworks/QtQml.framework/Versions/A/QtQml",
+        "@executable_path/../Frameworks/QtNetwork.framework/Versions/A/QtNetwork",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/PlugIns/libqtquickcontrols2materialstyleimplplugin.dylib",
+      "loads": [
+        "@executable_path/../Frameworks/QtQuickControls2MaterialStyleImpl.framework/Versions/A/QtQuickControls2MaterialStyleImpl",
+        "@executable_path/../Frameworks/QtQml.framework/Versions/A/QtQml",
+        "@executable_path/../Frameworks/QtNetwork.framework/Versions/A/QtNetwork",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/PlugIns/libqtquickcontrols2materialstyleplugin.dylib",
+      "loads": [
+        "@executable_path/../Frameworks/QtQuickControls2Material.framework/Versions/A/QtQuickControls2Material",
+        "@executable_path/../Frameworks/QtQuickControls2.framework/Versions/A/QtQuickControls2",
+        "@executable_path/../Frameworks/QtQuick.framework/Versions/A/QtQuick",
+        "@executable_path/../Frameworks/QtOpenGL.framework/Versions/A/QtOpenGL",
+        "@executable_path/../Frameworks/QtGui.framework/Versions/A/QtGui",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "@executable_path/../Frameworks/QtQml.framework/Versions/A/QtQml",
+        "@executable_path/../Frameworks/QtNetwork.framework/Versions/A/QtNetwork",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/PlugIns/libqtquickcontrols2nativestyleplugin.dylib",
+      "loads": [
+        "@executable_path/../Frameworks/QtQuickControls2.framework/Versions/A/QtQuickControls2",
+        "@executable_path/../Frameworks/QtQuickTemplates2.framework/Versions/A/QtQuickTemplates2",
+        "@executable_path/../Frameworks/QtQuick.framework/Versions/A/QtQuick",
+        "@executable_path/../Frameworks/QtOpenGL.framework/Versions/A/QtOpenGL",
+        "@executable_path/../Frameworks/QtGui.framework/Versions/A/QtGui",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "@executable_path/../Frameworks/QtQmlMeta.framework/Versions/A/QtQmlMeta",
+        "@executable_path/../Frameworks/QtQmlWorkerScript.framework/Versions/A/QtQmlWorkerScript",
+        "@executable_path/../Frameworks/QtQmlModels.framework/Versions/A/QtQmlModels",
+        "@executable_path/../Frameworks/QtQml.framework/Versions/A/QtQml",
+        "@executable_path/../Frameworks/QtNetwork.framework/Versions/A/QtNetwork",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib",
+        "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+        "/System/Library/Frameworks/CoreGraphics.framework/Versions/A/CoreGraphics",
+        "/System/Library/Frameworks/CoreText.framework/Versions/A/CoreText",
+        "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+        "/usr/lib/libobjc.A.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/PlugIns/libqtquickcontrols2plugin.dylib",
+      "loads": [
+        "@executable_path/../Frameworks/QtQuickControls2Impl.framework/Versions/A/QtQuickControls2Impl",
+        "@executable_path/../Frameworks/QtQuickControls2.framework/Versions/A/QtQuickControls2",
+        "@executable_path/../Frameworks/QtQuickTemplates2.framework/Versions/A/QtQuickTemplates2",
+        "@executable_path/../Frameworks/QtQuick.framework/Versions/A/QtQuick",
+        "@executable_path/../Frameworks/QtOpenGL.framework/Versions/A/QtOpenGL",
+        "@executable_path/../Frameworks/QtGui.framework/Versions/A/QtGui",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "@executable_path/../Frameworks/QtQmlModels.framework/Versions/A/QtQmlModels",
+        "@executable_path/../Frameworks/QtQml.framework/Versions/A/QtQml",
+        "@executable_path/../Frameworks/QtNetwork.framework/Versions/A/QtNetwork",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/PlugIns/libqtquickcontrols2universalstyleimplplugin.dylib",
+      "loads": [
+        "@executable_path/../Frameworks/QtQuickControls2UniversalStyleImpl.framework/Versions/A/QtQuickControls2UniversalStyleImpl",
+        "@executable_path/../Frameworks/QtQml.framework/Versions/A/QtQml",
+        "@executable_path/../Frameworks/QtNetwork.framework/Versions/A/QtNetwork",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/PlugIns/libqtquickcontrols2universalstyleplugin.dylib",
+      "loads": [
+        "@executable_path/../Frameworks/QtQuickControls2Universal.framework/Versions/A/QtQuickControls2Universal",
+        "@executable_path/../Frameworks/QtQuickControls2.framework/Versions/A/QtQuickControls2",
+        "@executable_path/../Frameworks/QtQuick.framework/Versions/A/QtQuick",
+        "@executable_path/../Frameworks/QtOpenGL.framework/Versions/A/QtOpenGL",
+        "@executable_path/../Frameworks/QtGui.framework/Versions/A/QtGui",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "@executable_path/../Frameworks/QtQml.framework/Versions/A/QtQml",
+        "@executable_path/../Frameworks/QtNetwork.framework/Versions/A/QtNetwork",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/PlugIns/libqtquickdialogs2quickimplplugin.dylib",
+      "loads": [
+        "@executable_path/../Frameworks/QtQuickDialogs2QuickImpl.framework/Versions/A/QtQuickDialogs2QuickImpl",
+        "@executable_path/../Frameworks/QtQuick.framework/Versions/A/QtQuick",
+        "@executable_path/../Frameworks/QtOpenGL.framework/Versions/A/QtOpenGL",
+        "@executable_path/../Frameworks/QtGui.framework/Versions/A/QtGui",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "@executable_path/../Frameworks/QtQml.framework/Versions/A/QtQml",
+        "@executable_path/../Frameworks/QtNetwork.framework/Versions/A/QtNetwork",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/PlugIns/libqtquickdialogsplugin.dylib",
+      "loads": [
+        "@executable_path/../Frameworks/QtQuickDialogs2.framework/Versions/A/QtQuickDialogs2",
+        "@executable_path/../Frameworks/QtQuick.framework/Versions/A/QtQuick",
+        "@executable_path/../Frameworks/QtOpenGL.framework/Versions/A/QtOpenGL",
+        "@executable_path/../Frameworks/QtGui.framework/Versions/A/QtGui",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "@executable_path/../Frameworks/QtQml.framework/Versions/A/QtQml",
+        "@executable_path/../Frameworks/QtNetwork.framework/Versions/A/QtNetwork",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/PlugIns/libqtquicktemplates2plugin.dylib",
+      "loads": [
+        "@executable_path/../Frameworks/QtQuickTemplates2.framework/Versions/A/QtQuickTemplates2",
+        "@executable_path/../Frameworks/QtQuick.framework/Versions/A/QtQuick",
+        "@executable_path/../Frameworks/QtOpenGL.framework/Versions/A/QtOpenGL",
+        "@executable_path/../Frameworks/QtGui.framework/Versions/A/QtGui",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "@executable_path/../Frameworks/QtQmlModels.framework/Versions/A/QtQmlModels",
+        "@executable_path/../Frameworks/QtQml.framework/Versions/A/QtQml",
+        "@executable_path/../Frameworks/QtNetwork.framework/Versions/A/QtNetwork",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/PlugIns/libquicktestplugin.dylib",
+      "loads": [
+        "@executable_path/../Frameworks/QtQuickTest.framework/Versions/A/QtQuickTest",
+        "@executable_path/../Frameworks/QtTest.framework/Versions/A/QtTest",
+        "/System/Library/Frameworks/Security.framework/Versions/A/Security",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/ApplicationServices.framework/Versions/A/ApplicationServices",
+        "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+        "@executable_path/../Frameworks/QtQml.framework/Versions/A/QtQml",
+        "@executable_path/../Frameworks/QtNetwork.framework/Versions/A/QtNetwork",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/PlugIns/libquickwindowplugin.dylib",
+      "loads": [
+        "@executable_path/../Frameworks/QtQml.framework/Versions/A/QtQml",
+        "@executable_path/../Frameworks/QtNetwork.framework/Versions/A/QtNetwork",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/PlugIns/libworkerscriptplugin.dylib",
+      "loads": [
+        "@executable_path/../Frameworks/QtQmlWorkerScript.framework/Versions/A/QtQmlWorkerScript",
+        "@executable_path/../Frameworks/QtQml.framework/Versions/A/QtQml",
+        "@executable_path/../Frameworks/QtNetwork.framework/Versions/A/QtNetwork",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/PlugIns/networkinformation/libqapplenetworkinformation.dylib",
+      "loads": [
+        "/System/Library/Frameworks/Network.framework/Versions/A/Network",
+        "@executable_path/../Frameworks/QtNetwork.framework/Versions/A/QtNetwork",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "14.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/PlugIns/networkinformation/libqglib.dylib",
+      "loads": [
+        "@executable_path/../Frameworks/libgobject-2.0.0.dylib",
+        "@executable_path/../Frameworks/libgio-2.0.0.dylib",
+        "@executable_path/../Frameworks/QtNetwork.framework/Versions/A/QtNetwork",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "14.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/PlugIns/platforminputcontexts/libqtvirtualkeyboardplugin.dylib",
+      "loads": [
+        "@executable_path/../Frameworks/QtVirtualKeyboardQml.framework/Versions/A/QtVirtualKeyboardQml",
+        "@executable_path/../Frameworks/QtVirtualKeyboard.framework/Versions/A/QtVirtualKeyboard",
+        "@executable_path/../Frameworks/QtQuick.framework/Versions/A/QtQuick",
+        "@executable_path/../Frameworks/QtOpenGL.framework/Versions/A/QtOpenGL",
+        "@executable_path/../Frameworks/QtGui.framework/Versions/A/QtGui",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "@executable_path/../Frameworks/QtQml.framework/Versions/A/QtQml",
+        "@executable_path/../Frameworks/QtNetwork.framework/Versions/A/QtNetwork",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/PlugIns/platforms/libqcocoa.dylib",
+      "loads": [
+        "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+        "/System/Library/Frameworks/Carbon.framework/Versions/A/Carbon",
+        "/System/Library/Frameworks/CoreServices.framework/Versions/A/CoreServices",
+        "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "/System/Library/Frameworks/IOSurface.framework/Versions/A/IOSurface",
+        "/System/Library/Frameworks/QuartzCore.framework/Versions/A/QuartzCore",
+        "@executable_path/../Frameworks/QtGui.framework/Versions/A/QtGui",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib",
+        "/System/Library/Frameworks/ApplicationServices.framework/Versions/A/ApplicationServices",
+        "/System/Library/Frameworks/ColorSync.framework/Versions/A/ColorSync",
+        "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+        "/System/Library/Frameworks/CoreGraphics.framework/Versions/A/CoreGraphics",
+        "/System/Library/Frameworks/CoreText.framework/Versions/A/CoreText",
+        "/usr/lib/libobjc.A.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "14.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/PlugIns/styles/libqmacstyle.dylib",
+      "loads": [
+        "@executable_path/../Frameworks/QtWidgets.framework/Versions/A/QtWidgets",
+        "@executable_path/../Frameworks/QtGui.framework/Versions/A/QtGui",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/System/Library/Frameworks/ImageIO.framework/Versions/A/ImageIO",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib",
+        "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+        "/System/Library/Frameworks/CoreGraphics.framework/Versions/A/CoreGraphics",
+        "/System/Library/Frameworks/CoreText.framework/Versions/A/CoreText",
+        "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+        "/usr/lib/libobjc.A.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "14.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/PlugIns/tls/libqcertonlybackend.dylib",
+      "loads": [
+        "@executable_path/../Frameworks/QtNetwork.framework/Versions/A/QtNetwork",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "14.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/PlugIns/tls/libqopensslbackend.dylib",
+      "loads": [
+        "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+        "/System/Library/Frameworks/Security.framework/Versions/A/Security",
+        "@executable_path/../Frameworks/QtNetwork.framework/Versions/A/QtNetwork",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "@executable_path/../Frameworks/libssl.3.dylib",
+        "@executable_path/../Frameworks/libcrypto.3.dylib",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "14.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/PlugIns/tls/libqsecuretransportbackend.dylib",
+      "loads": [
+        "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+        "/System/Library/Frameworks/Security.framework/Versions/A/Security",
+        "@executable_path/../Frameworks/QtNetwork.framework/Versions/A/QtNetwork",
+        "@executable_path/../Frameworks/QtCore.framework/Versions/A/QtCore",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "14.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Resources/tools/ffmpeg",
+      "loads": [
+        "@loader_path/../../Frameworks/libavdevice.63.dylib",
+        "@loader_path/../../Frameworks/libavfilter.12.dylib",
+        "@loader_path/../../Frameworks/libavformat.63.dylib",
+        "@loader_path/../../Frameworks/libavcodec.63.dylib",
+        "@loader_path/../../Frameworks/libswresample.7.dylib",
+        "@loader_path/../../Frameworks/libswscale.10.dylib",
+        "@loader_path/../../Frameworks/libavutil.61.dylib",
+        "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+        "/System/Library/Frameworks/AudioToolbox.framework/Versions/A/AudioToolbox",
+        "/System/Library/Frameworks/CoreAudio.framework/Versions/A/CoreAudio",
+        "/usr/lib/libSystem.B.dylib",
+        "/System/Library/Frameworks/AVFoundation.framework/Versions/A/AVFoundation",
+        "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo",
+        "/System/Library/Frameworks/CoreMedia.framework/Versions/A/CoreMedia",
+        "/System/Library/Frameworks/CoreGraphics.framework/Versions/A/CoreGraphics",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL",
+        "/usr/lib/libz.1.dylib",
+        "@loader_path/../../Frameworks/libvmaf.3.dylib",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "/System/Library/Frameworks/VideoToolbox.framework/Versions/A/VideoToolbox",
+        "/System/Library/Frameworks/CoreImage.framework/Versions/A/CoreImage",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+        "/System/Library/Frameworks/CoreServices.framework/Versions/A/CoreServices",
+        "/usr/lib/libbz2.1.0.dylib",
+        "@loader_path/../../Frameworks/libssl.3.dylib",
+        "@loader_path/../../Frameworks/libcrypto.3.dylib",
+        "@loader_path/../../Frameworks/libvpx.12.dylib",
+        "/usr/lib/libiconv.2.dylib",
+        "@loader_path/../../Frameworks/liblzma.5.dylib",
+        "@loader_path/../../Frameworks/libdav1d.7.dylib",
+        "@loader_path/../../Frameworks/libmp3lame.0.dylib",
+        "@loader_path/../../Frameworks/libopus.0.dylib",
+        "@loader_path/../../Frameworks/libSvtAv1Enc.4.dylib",
+        "@loader_path/../../Frameworks/libx264.165.dylib",
+        "@loader_path/../../Frameworks/libx265.217.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "26.0"
+      ],
+      "at_or_below_13_3": false
+    },
+    {
+      "path": "/private/tmp/wam-phase2e/bundle/WAM.app/Contents/Resources/tools/whisper-cli",
+      "loads": [
+        "/System/Library/Frameworks/Accelerate.framework/Versions/A/Accelerate",
+        "/usr/lib/libSystem.B.dylib",
+        "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+        "/System/Library/Frameworks/MetalKit.framework/Versions/A/MetalKit",
+        "/usr/lib/libc++.1.dylib",
+        "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+        "/usr/lib/libobjc.A.dylib"
+      ],
+      "rpaths": [],
+      "minos": [
+        "13.3"
+      ],
+      "at_or_below_13_3": true
+    }
+  ],
+  "direct_external_dependencies": [],
+  "unresolved_dependencies": [],
+  "errors": [],
+  "eager_native_ffmpeg": false,
+  "notices": {
+    "FFMPEG_NOTICES.md": true,
+    "COPYING.LGPLv2.1": true,
+    "LICENSE.md": true,
+    "configure-command.txt": true,
+    "build-receipt.txt": true,
+    "SOURCE_DISTRIBUTION.md": true
+  },
+  "bundled_floor_13_3_pass": false,
+  "closure_relocatable": true,
+  "clean_machine_ready": false
+}

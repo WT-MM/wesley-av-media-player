@@ -1,5 +1,6 @@
 #pragma once
 #include "media/native_media_source.hpp"
+#include "media/software_decoder_reservation.hpp"
 #include "platform/macos/native_surface_budget.hpp"
 #include <cstddef>
 #include <cstdint>
@@ -26,6 +27,7 @@ struct Configuration {
   std::span<const std::byte> extradata{};
   std::uint64_t generation{1}, epoch{1};
   std::uint32_t width{}, height{}, rate{}, channels{};
+  unsigned bitDepth{10}, chroma{2};
 };
 class DecodeWorker final {
 public:
@@ -33,7 +35,7 @@ public:
   static constexpr std::size_t kPacketBytes = macos::kNativeSoftwarePacketBytes;
   static constexpr std::size_t kPacketSlots = macos::kNativeSoftwarePacketSlots;
   static constexpr std::size_t kProvenanceSlots = 32;
-  // The software tier bounds picture area independently of the hardware tier.
+  // Coded geometry remains bounded before private byte reservation.
   static constexpr std::uint64_t kMaximumSoftwarePixels = macos::kNativeSoftwareMaximumPicturePixels;
   explicit DecodeWorker(FrameHandler handler, WakeHandler wake = {});
   ~DecodeWorker();
@@ -50,6 +52,9 @@ public:
   [[nodiscard]] std::uint64_t compressedBytes() const noexcept;
   [[nodiscard]] std::uint64_t peakCompressedBytes() const noexcept;
   [[nodiscard]] const char* failure() const noexcept;
+  [[nodiscard]] static std::uint64_t reservedProcessBytes() noexcept;
+  [[nodiscard]] static unsigned reservedWorkers() noexcept;
+  [[nodiscard]] std::span<std::byte> conversionStorage() noexcept;
 private:
   struct Impl;
   std::unique_ptr<Impl> impl_;

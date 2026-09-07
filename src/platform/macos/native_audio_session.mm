@@ -191,8 +191,15 @@ void assignError(std::string* error, const char* message) noexcept {
 // failure part-way through graph construction.
 [[nodiscard]] bool supportedCodec(const media::MediaTrackDescriptor& track)
     noexcept {
-  return track.audio &&
-         audioCodecFormatTagAdmitted(track.codec, track.audio->formatTag);
+  if (track.audio && media::softwareAudioCodec(track.codec)) {
+#if defined(WAM_ENABLE_AVCODEC_STAGE)
+    return track.audio->formatTag == 0 &&
+        track.codecConfigurationKind == media::MediaCodecConfigurationKind::CodecPrivate;
+#else
+    return false;
+#endif
+  }
+  return track.audio && audioCodecFormatTagAdmitted(track.codec, track.audio->formatTag);
 }
 
 // Whether this track's first access unit legitimately presents before media
@@ -227,7 +234,7 @@ void assignError(std::string* error, const char* message) noexcept {
 [[nodiscard]] bool codecStatesExactDecodedDuration(
     const media::MediaTrackDescriptor& track, std::uint32_t sampleRate) noexcept {
   if (!media::audioCodecStatesExactDecodedDuration(track.codec)) {
-    if (track.codec != media::MediaCodec::Aac) {
+    if (track.codec != media::MediaCodec::Aac && !media::softwareAudioCodec(track.codec)) {
       return false;
     }
   }
@@ -484,12 +491,12 @@ void assignError(std::string* error, const char* message) noexcept {
       !supportedRate(track.audio->sampleRate, &sampleRate) ||
       track.codecConfiguration.size() >
           media::MediaSourceLimits::kHardMaximumCodecConfigurationBytes ||
-      (!track.codecConfiguration.empty() &&
-       track.codecConfigurationKind !=
-           media::MediaCodecConfigurationKind::AudioMagicCookie) ||
-      (track.codecConfiguration.empty() &&
-       track.codecConfigurationKind !=
-           media::MediaCodecConfigurationKind::None)) {
+      (media::softwareAudioCodec(track.codec)
+           ? track.codecConfigurationKind != media::MediaCodecConfigurationKind::CodecPrivate
+           : ((!track.codecConfiguration.empty() &&
+               track.codecConfigurationKind != media::MediaCodecConfigurationKind::AudioMagicCookie) ||
+              (track.codecConfiguration.empty() &&
+               track.codecConfigurationKind != media::MediaCodecConfigurationKind::None)))) {
     return std::nullopt;
   }
   return timelinePlanFor(generation, timeline, sampleRate,
@@ -562,7 +569,15 @@ struct NativeAudioSessionControl final {
         clock(this->hostClock),
         renderCore(ring, clock, this->hostClock.ticksPerSecond),
         converter(ring, std::move(backend)),
-        generation(initialGeneration) {}
+        generation(initialGeneration) {
+    converter.setBackendWake({[](void* context) noexcept {
+      auto& control = *static_cast<NativeAudioSessionControl*>(context);
+      bool expected = false;
+      if (control.outputWake.pending->compare_exchange_strong(expected, true,
+          std::memory_order_acq_rel, std::memory_order_acquire))
+        control.outputWake.signal(control.outputWake.context);
+    }, this});
+  }
 
   void latch(NativeAudioSessionFailure value) noexcept {
     if (failure == NativeAudioSessionFailure::None) {

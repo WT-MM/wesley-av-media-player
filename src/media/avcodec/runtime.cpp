@@ -76,6 +76,14 @@ const char* load() {
   if (!table.av_frame_alloc) return "DecoderUnavailable: missing av_frame_alloc";
   table.av_channel_layout_default = reinterpret_cast<decltype(table.av_channel_layout_default)>(dlsym(utilHandle, "av_channel_layout_default"));
   if (!table.av_channel_layout_default) return "DecoderUnavailable: missing av_channel_layout_default";
+  table.av_wam_reservation_begin = reinterpret_cast<decltype(table.av_wam_reservation_begin)>(dlsym(utilHandle, "av_wam_reservation_begin"));
+  if (!table.av_wam_reservation_begin) return "DecoderUnavailable: missing av_wam_reservation_begin";
+  table.av_wam_reservation_used = reinterpret_cast<decltype(table.av_wam_reservation_used)>(dlsym(utilHandle, "av_wam_reservation_used"));
+  if (!table.av_wam_reservation_used) return "DecoderUnavailable: missing av_wam_reservation_used";
+  table.av_wam_reservation_exhausted = reinterpret_cast<decltype(table.av_wam_reservation_exhausted)>(dlsym(utilHandle, "av_wam_reservation_exhausted"));
+  if (!table.av_wam_reservation_exhausted) return "DecoderUnavailable: missing av_wam_reservation_exhausted";
+  table.av_wam_reservation_end = reinterpret_cast<decltype(table.av_wam_reservation_end)>(dlsym(utilHandle, "av_wam_reservation_end"));
+  if (!table.av_wam_reservation_end) return "DecoderUnavailable: missing av_wam_reservation_end";
   table.av_mallocz = reinterpret_cast<decltype(table.av_mallocz)>(dlsym(utilHandle, "av_mallocz"));
   if (!table.av_mallocz) return "DecoderUnavailable: missing av_mallocz";
   table.av_free = reinterpret_cast<decltype(table.av_free)>(dlsym(utilHandle, "av_free"));
