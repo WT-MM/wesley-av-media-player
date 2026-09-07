@@ -1,0 +1,685 @@
+{
+  "files": 845,
+  "roots": [
+    "/Users/wesleymaa/Movies",
+    "/Users/wesleymaa/Movies"
+  ],
+  "extensions": {
+    ".mov": 154,
+    ".mkv": 5,
+    ".m4a": 2,
+    ".mp4": 679,
+    ".webm": 4,
+    ".m4v": 1
+  },
+  "probe_errors": [
+    {
+      "path": "/Users/wesleymaa/Movies/misty_summit_26.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xc7cc3c000] moov atom not found\n/Users/wesleymaa/Movies/misty_summit_26.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/winter_beach_27.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xa74c3c000] moov atom not found\n/Users/wesleymaa/Movies/winter_beach_27.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/lunar_crossing_28.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x86cc3c000] moov atom not found\n/Users/wesleymaa/Movies/lunar_crossing_28.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/west_harbor_29.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x730c34000] moov atom not found\n/Users/wesleymaa/Movies/west_harbor_29.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/lake_meadow_30.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xb22c3c000] moov atom not found\n/Users/wesleymaa/Movies/lake_meadow_30.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/velvet_reef_31.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xb97010000] moov atom not found\n/Users/wesleymaa/Movies/velvet_reef_31.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/indigo_view_32.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xaeec38000] moov atom not found\n/Users/wesleymaa/Movies/indigo_view_32.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/twilight_bridge_33.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x91ac3c000] moov atom not found\n/Users/wesleymaa/Movies/twilight_bridge_33.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/hazel_falls_34.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x89ec34000] moov atom not found\n/Users/wesleymaa/Movies/hazel_falls_34.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/sunny_inlet_35.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x8fec38000] moov atom not found\n/Users/wesleymaa/Movies/sunny_inlet_35.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/green_orchard_36.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x9b8c38000] moov atom not found\n/Users/wesleymaa/Movies/green_orchard_36.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/spring_road_37.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xb34c38000] moov atom not found\n/Users/wesleymaa/Movies/spring_road_37.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/field_vista_38.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x7dcc34000] moov atom not found\n/Users/wesleymaa/Movies/field_vista_38.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/slate_cape_39.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xa92c3c000] moov atom not found\n/Users/wesleymaa/Movies/slate_cape_39.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/emerald_fjord_40.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x72ec34000] moov atom not found\n/Users/wesleymaa/Movies/emerald_fjord_40.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/scarlet_lagoon_41.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x72b010000] moov atom not found\n/Users/wesleymaa/Movies/scarlet_lagoon_41.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/distant_pass_42.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x70ac3c000] moov atom not found\n/Users/wesleymaa/Movies/distant_pass_42.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/rose_spring_43.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x9bb010000] moov atom not found\n/Users/wesleymaa/Movies/rose_spring_43.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/crisp_woods_44.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x7c6c3c000] moov atom not found\n/Users/wesleymaa/Movies/crisp_woods_44.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/rainy_coast_45.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xbc4c34000] moov atom not found\n/Users/wesleymaa/Movies/rainy_coast_45.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/coastal_gate_46.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x9aac34000] moov atom not found\n/Users/wesleymaa/Movies/coastal_gate_46.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/pale_ledge_47.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xb11010000] moov atom not found\n/Users/wesleymaa/Movies/pale_ledge_47.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/calm_pier_48.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x8b9010000] moov atom not found\n/Users/wesleymaa/Movies/calm_pier_48.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/north_street_49.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xa66c34000] moov atom not found\n/Users/wesleymaa/Movies/north_street_49.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/autumn_beach_50.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x7bcc38000] moov atom not found\n/Users/wesleymaa/Movies/autumn_beach_50.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/meadow_crossing_51.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xa21010000] moov atom not found\n/Users/wesleymaa/Movies/meadow_crossing_51.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/willow_grove_52.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x956c38000] moov atom not found\n/Users/wesleymaa/Movies/willow_grove_52.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/linen_meadow_53.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xc2ec34000] moov atom not found\n/Users/wesleymaa/Movies/linen_meadow_53.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/warm_reef_54.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x92ec3c000] moov atom not found\n/Users/wesleymaa/Movies/warm_reef_54.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/ivory_valley_55.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x7f7010000] moov atom not found\n/Users/wesleymaa/Movies/ivory_valley_55.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/valley_bluff_56.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xc5f010000] moov atom not found\n/Users/wesleymaa/Movies/valley_bluff_56.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/hollow_falls_57.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x84c82c000] moov atom not found\n/Users/wesleymaa/Movies/hollow_falls_57.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/timber_inlet_58.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xbe6c3c000] moov atom not found\n/Users/wesleymaa/Movies/timber_inlet_58.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/harbor_mill_59.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xc94c34000] moov atom not found\n/Users/wesleymaa/Movies/harbor_mill_59.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/summer_road_60.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xc5cc38000] moov atom not found\n/Users/wesleymaa/Movies/summer_road_60.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/granite_vista_61.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xbd0c34000] moov atom not found\n/Users/wesleymaa/Movies/granite_vista_61.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/soft_canyon_62.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x820c3c000] moov atom not found\n/Users/wesleymaa/Movies/soft_canyon_62.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/faded_field_63.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x712c3c000] moov atom not found\n/Users/wesleymaa/Movies/faded_field_63.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/silver_lagoon_64.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x72ac34000] moov atom not found\n/Users/wesleymaa/Movies/silver_lagoon_64.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/early_pass_65.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x7b6c38000] moov atom not found\n/Users/wesleymaa/Movies/early_pass_65.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/sandy_slope_66.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xcbb010000] moov atom not found\n/Users/wesleymaa/Movies/sandy_slope_66.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/desert_woods_67.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xc58c3c000] moov atom not found\n/Users/wesleymaa/Movies/desert_woods_67.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/rocky_coast_68.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xb3d010000] moov atom not found\n/Users/wesleymaa/Movies/rocky_coast_68.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/copper_garden_69.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x966c34000] moov atom not found\n/Users/wesleymaa/Movies/copper_garden_69.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/quiet_lane_70.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x99cc34000] moov atom not found\n/Users/wesleymaa/Movies/quiet_lane_70.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/clear_pier_71.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xc91010000] moov atom not found\n/Users/wesleymaa/Movies/clear_pier_71.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/olive_street_72.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x839010000] moov atom not found\n/Users/wesleymaa/Movies/olive_street_72.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/bright_bay_73.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x7e4c38000] moov atom not found\n/Users/wesleymaa/Movies/bright_bay_73.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/morning_crossing_74.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x766c3c000] moov atom not found\n/Users/wesleymaa/Movies/morning_crossing_74.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/amber_grove_75.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x893010000] moov atom not found\n/Users/wesleymaa/Movies/amber_grove_75.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/maple_marsh_76.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x7d1010000] moov atom not found\n/Users/wesleymaa/Movies/maple_marsh_76.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/wild_quay_77.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x9b8c38000] moov atom not found\n/Users/wesleymaa/Movies/wild_quay_77.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/late_valley_78.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x7b9010000] moov atom not found\n/Users/wesleymaa/Movies/late_valley_78.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/violet_bluff_79.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x8e4c3c000] moov atom not found\n/Users/wesleymaa/Movies/violet_bluff_79.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/island_dune_80.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xb5cc38000] moov atom not found\n/Users/wesleymaa/Movies/island_dune_80.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/urban_inlet_81.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x96d010000] moov atom not found\n/Users/wesleymaa/Movies/urban_inlet_81.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/high_mill_82.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x76ac3c000] moov atom not found\n/Users/wesleymaa/Movies/high_mill_82.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/tidal_river_83.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xae3010000] moov atom not found\n/Users/wesleymaa/Movies/tidal_river_83.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/grey_village_84.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x708c3c000] moov atom not found\n/Users/wesleymaa/Movies/grey_village_84.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/stone_canyon_85.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x7c8c38000] moov atom not found\n/Users/wesleymaa/Movies/stone_canyon_85.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/golden_field_86.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x920c38000] moov atom not found\n/Users/wesleymaa/Movies/golden_field_86.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/snowy_jetty_87.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xb94c34000] moov atom not found\n/Users/wesleymaa/Movies/snowy_jetty_87.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/evening_pass_88.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xc04c38000] moov atom not found\n/Users/wesleymaa/Movies/evening_pass_88.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/shadow_slope_89.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xb34c3c000] moov atom not found\n/Users/wesleymaa/Movies/shadow_slope_89.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/dusk_wharf_90.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x938c3c000] moov atom not found\n/Users/wesleymaa/Movies/dusk_wharf_90.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/rustic_cliff_91.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xb9cc38000] moov atom not found\n/Users/wesleymaa/Movies/rustic_cliff_91.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/dawn_garden_92.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xaa2c3c000] moov atom not found\n/Users/wesleymaa/Movies/dawn_garden_92.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/river_lane_93.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x8f1010000] moov atom not found\n/Users/wesleymaa/Movies/river_lane_93.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/cobalt_peak_94.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x70ac34000] moov atom not found\n/Users/wesleymaa/Movies/cobalt_peak_94.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/pine_street_95.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x7e8c38000] moov atom not found\n/Users/wesleymaa/Movies/pine_street_95.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/cedar_bay_96.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x80b010000] moov atom not found\n/Users/wesleymaa/Movies/cedar_bay_96.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/ocean_creek_97.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x9fec34000] moov atom not found\n/Users/wesleymaa/Movies/ocean_creek_97.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/azure_glade_01.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xbbac38000] moov atom not found\n/Users/wesleymaa/Movies/azure_glade_01.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/misty_marsh_02.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xc8ac3c000] moov atom not found\n/Users/wesleymaa/Movies/misty_marsh_02.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/winter_quay_03.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xa94c3c000] moov atom not found\n/Users/wesleymaa/Movies/winter_quay_03.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/lunar_trail_04.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xb78c3c000] moov atom not found\n/Users/wesleymaa/Movies/lunar_trail_04.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/west_bluff_05.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xb4ec34000] moov atom not found\n/Users/wesleymaa/Movies/west_bluff_05.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/lake_dune_06.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xaa4c38000] moov atom not found\n/Users/wesleymaa/Movies/lake_dune_06.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/velvet_hill_07.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xb69010000] moov atom not found\n/Users/wesleymaa/Movies/velvet_hill_07.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/indigo_mesa_08.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xae4c38000] moov atom not found\n/Users/wesleymaa/Movies/indigo_mesa_08.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/twilight_river_09.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x823010000] moov atom not found\n/Users/wesleymaa/Movies/twilight_river_09.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/hazel_village_10.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xc38c38000] moov atom not found\n/Users/wesleymaa/Movies/hazel_village_10.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/sunny_brook_11.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x93cc38000] moov atom not found\n/Users/wesleymaa/Movies/sunny_brook_11.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/green_field_12.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x964c34000] moov atom not found\n/Users/wesleymaa/Movies/green_field_12.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/spring_jetty_13.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xc88c38000] moov atom not found\n/Users/wesleymaa/Movies/spring_jetty_13.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/field_park_14.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x972c38000] moov atom not found\n/Users/wesleymaa/Movies/field_park_14.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/slate_shore_15.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xbcac3c000] moov atom not found\n/Users/wesleymaa/Movies/slate_shore_15.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/emerald_wharf_16.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xb22c38000] moov atom not found\n/Users/wesleymaa/Movies/emerald_wharf_16.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/scarlet_cliff_17.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x79cc38000] moov atom not found\n/Users/wesleymaa/Movies/scarlet_cliff_17.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/distant_forest_18.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xcb4c3c000] moov atom not found\n/Users/wesleymaa/Movies/distant_forest_18.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/rose_lane_19.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xc28c38000] moov atom not found\n/Users/wesleymaa/Movies/rose_lane_19.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/crisp_peak_20.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x7c2c38000] moov atom not found\n/Users/wesleymaa/Movies/crisp_peak_20.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/rainy_station_21.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xb7cc34000] moov atom not found\n/Users/wesleymaa/Movies/rainy_station_21.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/coastal_arch_22.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x7a3010000] moov atom not found\n/Users/wesleymaa/Movies/coastal_arch_22.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/pale_creek_23.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x767010000] moov atom not found\n/Users/wesleymaa/Movies/pale_creek_23.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/calm_glade_24.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x826c38000] moov atom not found\n/Users/wesleymaa/Movies/calm_glade_24.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/grey_orchard_60.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x780c38000] trun track id unknown, no tfhd was found\n[mov,mp4,m4a,3gp,3g2,mj2 @ 0x780c38000] error reading header\n/Users/wesleymaa/Movies/grey_orchard_60.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/golden_walk_62.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x904c38000] trun track id unknown, no tfhd was found\n[mov,mp4,m4a,3gp,3g2,mj2 @ 0x904c38000] error reading header\n/Users/wesleymaa/Movies/golden_walk_62.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/evening_fjord_64.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x990c3c000] trun track id unknown, no tfhd was found\n[mov,mp4,m4a,3gp,3g2,mj2 @ 0x990c3c000] error reading header\n/Users/wesleymaa/Movies/evening_fjord_64.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/shadow_lake_65.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xc0ac38000] moov atom not found\n/Users/wesleymaa/Movies/shadow_lake_65.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/dusk_path_66.webm",
+      "rc": 1,
+      "facts": null,
+      "error": "[matroska,webm @ 0xc03010000] EBML header parsing failed\n/Users/wesleymaa/Movies/dusk_path_66.webm: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/river_cove_69.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xbe4c3c000] trun track id unknown, no tfhd was found\n[mov,mp4,m4a,3gp,3g2,mj2 @ 0xbe4c3c000] error reading header\n/Users/wesleymaa/Movies/river_cove_69.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/pine_ledge_71.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xc16c34000] trun track id unknown, no tfhd was found\n[mov,mp4,m4a,3gp,3g2,mj2 @ 0xc16c34000] error reading header\n/Users/wesleymaa/Movies/pine_ledge_71.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/ocean_summit_73.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xbdcc38000] trun track id unknown, no tfhd was found\n[mov,mp4,m4a,3gp,3g2,mj2 @ 0xbdcc38000] error reading header\n/Users/wesleymaa/Movies/ocean_summit_73.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/misty_dock_75.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xa59010000] trun track id unknown, no tfhd was found\n[mov,mp4,m4a,3gp,3g2,mj2 @ 0xa59010000] error reading header\n/Users/wesleymaa/Movies/misty_dock_75.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/west_reef_78.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x71ec34000] trun track id unknown, no tfhd was found\n[mov,mp4,m4a,3gp,3g2,mj2 @ 0x71ec34000] error reading header\n/Users/wesleymaa/Movies/west_reef_78.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/lake_view_79.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xc5b010000] trun track id unknown, no tfhd was found\n[mov,mp4,m4a,3gp,3g2,mj2 @ 0xc5b010000] error reading header\n/Users/wesleymaa/Movies/lake_view_79.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/indigo_falls_81.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x79d010000] trun track id unknown, no tfhd was found\n[mov,mp4,m4a,3gp,3g2,mj2 @ 0x79d010000] error reading header\n/Users/wesleymaa/Movies/indigo_falls_81.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/twilight_island_82.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xa58c34000] trun track id unknown, no tfhd was found\n[mov,mp4,m4a,3gp,3g2,mj2 @ 0xa58c34000] error reading header\n/Users/wesleymaa/Movies/twilight_island_82.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/hazel_orchard_83.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xbe8c3c000] trun track id unknown, no tfhd was found\n[mov,mp4,m4a,3gp,3g2,mj2 @ 0xbe8c3c000] error reading header\n/Users/wesleymaa/Movies/hazel_orchard_83.mp4: Invalid data found when processing input\n"
+    },
+    {
+      "path": "/Users/wesleymaa/Movies/sunny_road_84.mp4",
+      "rc": 1,
+      "facts": null,
+      "error": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x88cc34000] trun track id unknown, no tfhd was found\n[mov,mp4,m4a,3gp,3g2,mj2 @ 0x88cc34000] error reading header\n/Users/wesleymaa/Movies/sunny_road_84.mp4: Invalid data found when processing input\n"
+    }
+  ],
+  "dts_tracks": [],
+  "hd_ma_tracks": []
+}

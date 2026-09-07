@@ -1,0 +1,7 @@
+mpv_client_api_version 0x104f0f6e8 /private/tmp/wam-phase2f/package/WAM.app/Contents/Frameworks/WAMMpvFallback.dylib
+avcodec_version 0x1098a4c50 /Users/wesleymaa/Documents/WAM/build/native-codecs/libavcodec-wamnative.63.dylib
+av_log_get_level 0x104b18eb4 /private/tmp/wam-phase2f/package/WAM.app/Contents/Frameworks/libavutil.61.dylib
+av_log_set_level 0x104b18ec0 /private/tmp/wam-phase2f/package/WAM.app/Contents/Frameworks/libavutil.61.dylib
+av_log_get_level 0x108091b40 /Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib
+av_log_set_level 0x108091b4c /Users/wesleymaa/Documents/WAM/build/native-codecs/libavutil-wamnative.61.dylib
+isolated_log_levels foreign=17 native=29

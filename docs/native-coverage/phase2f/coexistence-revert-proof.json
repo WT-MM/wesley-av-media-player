@@ -1,0 +1,50 @@
+[
+  {
+    "phase": "fixed",
+    "rc": 0,
+    "stdout": "both load orders preserve native symbol ownership and leases; cached fallback permits later native sessions\n",
+    "stderr": "",
+    "source": "src/media/avcodec/runtime.cpp",
+    "source_sha256": "7197e53a9b7ba7cd134e73015e8a95fa35bc2aa0f72e76683399322443cbdc53"
+  },
+  {
+    "phase": "reverted",
+    "rc": 1,
+    "stdout": "",
+    "stderr": "line 40: !first.acquire()\n",
+    "source": "src/media/avcodec/runtime.cpp",
+    "source_sha256": "796ed7964ef4e154827b55db97868b37a9131ae4957219cd5a901fc076190ed5"
+  },
+  {
+    "phase": "restored",
+    "rc": 0,
+    "stdout": "both load orders preserve native symbol ownership and leases; cached fallback permits later native sessions\n",
+    "stderr": "",
+    "source": "src/media/avcodec/runtime.cpp",
+    "source_sha256": "7197e53a9b7ba7cd134e73015e8a95fa35bc2aa0f72e76683399322443cbdc53"
+  },
+  {
+    "phase": "fixed",
+    "rc": 0,
+    "stdout": "both load orders preserve native symbol ownership and leases; cached fallback permits later native sessions\n",
+    "stderr": "",
+    "source": "src/playback/mpv/mpv_runtime.cpp",
+    "source_sha256": "5de6c3c12adb183f9576fbbc65ee38ebe539da6fce61745110bafd289741310e"
+  },
+  {
+    "phase": "reverted",
+    "rc": 1,
+    "stdout": "",
+    "stderr": "line 32: fallback\n",
+    "source": "src/playback/mpv/mpv_runtime.cpp",
+    "source_sha256": "de967411ed9f5700a15815e626cef5e40143cf074d59c9dc474a0d2e63b01b9e"
+  },
+  {
+    "phase": "restored",
+    "rc": 0,
+    "stdout": "both load orders preserve native symbol ownership and leases; cached fallback permits later native sessions\n",
+    "stderr": "",
+    "source": "src/playback/mpv/mpv_runtime.cpp",
+    "source_sha256": "5de6c3c12adb183f9576fbbc65ee38ebe539da6fce61745110bafd289741310e"
+  }
+]

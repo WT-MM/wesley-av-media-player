@@ -1,0 +1,232 @@
+Test project /Users/wesleymaa/Documents/WAM/build
+        Start   1: macos_quicklook_thumbnail_frame
+  1/112 Test   #1: macos_quicklook_thumbnail_frame .............   Passed    0.48 sec
+        Start   2: macos_bundle_lazy_mpv_transaction
+  2/112 Test   #2: macos_bundle_lazy_mpv_transaction ...........   Passed   55.26 sec
+        Start   3: macos_release_notarize_transaction
+  3/112 Test   #3: macos_release_notarize_transaction ..........   Passed    3.15 sec
+        Start   4: msys2_pkgconfig_paths
+  4/112 Test   #4: msys2_pkgconfig_paths .......................   Passed    0.02 sec
+        Start   5: native_media_source
+  5/112 Test   #5: native_media_source .........................   Passed    0.17 sec
+        Start   6: native_media_backend
+  6/112 Test   #6: native_media_backend ........................   Passed    0.13 sec
+        Start   7: media_container_routing
+  7/112 Test   #7: media_container_routing .....................   Passed    0.13 sec
+        Start   8: matroska_ebml
+  8/112 Test   #8: matroska_ebml ...............................   Passed    0.24 sec
+        Start   9: subtitle_text
+  9/112 Test   #9: subtitle_text ...............................   Passed    0.16 sec
+        Start  10: embedded_captions
+ 10/112 Test  #10: embedded_captions ...........................   Passed    0.16 sec
+        Start  11: subtitle_bitmap
+ 11/112 Test  #11: subtitle_bitmap .............................   Passed    0.20 sec
+        Start  12: matroska_subtitles
+ 12/112 Test  #12: matroska_subtitles ..........................   Passed    0.14 sec
+        Start  13: matroska_aac
+ 13/112 Test  #13: matroska_aac ................................   Passed    0.21 sec
+        Start  14: matroska_opus
+ 14/112 Test  #14: matroska_opus ...............................   Passed    0.15 sec
+        Start  15: matroska_vorbis
+ 15/112 Test  #15: matroska_vorbis .............................   Passed    0.14 sec
+        Start  16: matroska_ac3
+ 16/112 Test  #16: matroska_ac3 ................................   Passed    0.14 sec
+        Start  17: audio_downmix
+ 17/112 Test  #17: audio_downmix ...............................   Passed    0.24 sec
+        Start  18: audio_codec_timing
+ 18/112 Test  #18: audio_codec_timing ..........................   Passed    0.15 sec
+        Start  19: native_audio_sample_rates
+ 19/112 Test  #19: native_audio_sample_rates ...................   Passed    0.14 sec
+        Start  20: native_coverage_admission
+ 20/112 Test  #20: native_coverage_admission ...................   Passed    0.24 sec
+        Start  21: media_codec_facts
+ 21/112 Test  #21: media_codec_facts ...........................   Passed    0.17 sec
+        Start  22: matroska_flac
+ 22/112 Test  #22: matroska_flac ...............................   Passed    0.16 sec
+        Start  23: matroska_mpeg_audio
+ 23/112 Test  #23: matroska_mpeg_audio .........................   Passed    0.19 sec
+        Start  24: matroska_demuxer
+ 24/112 Test  #24: matroska_demuxer ............................   Passed    0.42 sec
+        Start  25: mpegts_demuxer
+ 25/112 Test  #25: mpegts_demuxer ..............................   Passed    0.23 sec
+        Start  26: mpegts_fixture_setup
+ 26/112 Test  #26: mpegts_fixture_setup ........................   Passed    0.06 sec
+        Start  27: mpegts_demuxer_integration
+ 27/112 Test  #27: mpegts_demuxer_integration ..................   Passed    0.02 sec
+        Start  28: matroska_demuxer_bench
+ 28/112 Test  #28: matroska_demuxer_bench ......................   Passed    0.72 sec
+        Start  29: video_codec_configuration
+ 29/112 Test  #29: video_codec_configuration ...................   Passed    0.21 sec
+        Start  30: native_playback_contract
+ 30/112 Test  #30: native_playback_contract ....................   Passed    0.15 sec
+        Start  31: native_media_dispatcher
+ 31/112 Test  #31: native_media_dispatcher .....................   Passed    0.15 sec
+        Start  32: playback_router
+ 32/112 Test  #32: playback_router .............................   Passed    0.15 sec
+        Start  33: native_media_clock
+ 33/112 Test  #33: native_media_clock ..........................   Passed    0.01 sec
+        Start  34: native_pcm_ring
+ 34/112 Test  #34: native_pcm_ring .............................   Passed    0.27 sec
+        Start  35: native_audio_render_core
+ 35/112 Test  #35: native_audio_render_core ....................   Passed    0.39 sec
+        Start  36: playback_policy
+ 36/112 Test  #36: playback_policy .............................   Passed    0.00 sec
+        Start  37: mpv_hwdec_interop_policy
+ 37/112 Test  #37: mpv_hwdec_interop_policy ....................   Passed    0.00 sec
+        Start  38: jobs
+ 38/112 Test  #38: jobs ........................................   Passed    4.92 sec
+        Start  39: state_store
+ 39/112 Test  #39: state_store .................................   Passed    0.01 sec
+        Start  40: scroll_gesture
+ 40/112 Test  #40: scroll_gesture ..............................   Passed    0.00 sec
+        Start  41: caption_service
+ 41/112 Test  #41: caption_service .............................   Passed    2.00 sec
+        Start  42: player_controller_lazy
+ 42/112 Test  #42: player_controller_lazy ......................   Passed    0.18 sec
+        Start  43: player_core_render_context_permission
+ 43/112 Test  #43: player_core_render_context_permission .......   Passed    0.35 sec
+        Start  44: render_lifecycle
+ 44/112 Test  #44: render_lifecycle ............................   Passed    0.00 sec
+        Start  45: export_duration
+ 45/112 Test  #45: export_duration .............................   Passed    0.63 sec
+        Start  46: macos_deployment_target
+ 46/112 Test  #46: macos_deployment_target .....................   Passed    0.02 sec
+        Start  47: macos_mpv_video_item_native_host
+ 47/112 Test  #47: macos_mpv_video_item_native_host ............   Passed    0.36 sec
+        Start  48: macos_avfoundation_media_source
+ 48/112 Test  #48: macos_avfoundation_media_source .............   Passed    0.31 sec
+        Start  49: macos_avfoundation_preview_source
+ 49/112 Test  #49: macos_avfoundation_preview_source ...........   Passed    0.19 sec
+        Start  50: native_coverage_wiring
+ 50/112 Test  #50: native_coverage_wiring ......................   Passed   25.72 sec
+        Start  51: macos_native_coverage_integration
+ 51/112 Test  #51: macos_native_coverage_integration ...........   Passed    8.01 sec
+        Start  52: macos_native_phase0b_integration
+ 52/112 Test  #52: macos_native_phase0b_integration ............   Passed    1.97 sec
+        Start  53: macos_native_audio_converter
+ 53/112 Test  #53: macos_native_audio_converter ................   Passed    0.26 sec
+        Start  54: macos_native_audio_session
+ 54/112 Test  #54: macos_native_audio_session ..................   Passed    7.89 sec
+        Start  55: macos_native_audio_converter_opus
+ 55/112 Test  #55: macos_native_audio_converter_opus ...........   Passed    0.16 sec
+        Start  56: macos_native_audio_channel_map
+ 56/112 Test  #56: macos_native_audio_channel_map ..............   Passed    0.14 sec
+        Start  57: macos_native_audio_stretch_stage
+ 57/112 Test  #57: macos_native_audio_stretch_stage ............   Passed    0.55 sec
+        Start  58: macos_native_audio_output_converter
+ 58/112 Test  #58: macos_native_audio_output_converter .........   Passed    2.30 sec
+        Start  59: macos_native_audio_output
+ 59/112 Test  #59: macos_native_audio_output ...................   Passed    0.25 sec
+        Start  60: macos_native_surface_budget
+ 60/112 Test  #60: macos_native_surface_budget .................   Passed    0.04 sec
+        Start  61: macos_native_concurrency_limits
+ 61/112 Test  #61: macos_native_concurrency_limits .............   Passed    0.03 sec
+        Start  62: macos_software_vp8
+ 62/112 Test  #62: macos_software_vp8 ..........................   Passed    0.39 sec
+        Start  63: macos_native_video_consumer
+ 63/112 Test  #63: macos_native_video_consumer .................   Passed    0.58 sec
+        Start  64: macos_native_layer_video_output
+ 64/112 Test  #64: macos_native_layer_video_output .............   Passed    1.09 sec
+        Start  65: macos_native_tracked_video_arbiter
+ 65/112 Test  #65: macos_native_tracked_video_arbiter ..........   Passed    0.51 sec
+        Start  66: macos_matroska_preview_source
+ 66/112 Test  #66: macos_matroska_preview_source ...............   Passed    0.45 sec
+        Start  67: macos_matroska_media_source
+ 67/112 Test  #67: macos_matroska_media_source .................   Passed    1.64 sec
+        Start  68: macos_mpegts_media_source
+ 68/112 Test  #68: macos_mpegts_media_source ...................   Passed    0.37 sec
+        Start  69: macos_mpegts_preview_source
+ 69/112 Test  #69: macos_mpegts_preview_source .................   Passed    0.48 sec
+        Start  70: macos_native_custom_source_traits
+ 70/112 Test  #70: macos_native_custom_source_traits ...........   Passed    0.25 sec
+        Start  71: macos_native_preview_frame_lane
+ 71/112 Test  #71: macos_native_preview_frame_lane .............   Passed    0.26 sec
+        Start  72: macos_native_media_session
+ 72/112 Test  #72: macos_native_media_session ..................   Passed    0.64 sec
+        Start  73: macos_mpegts_session_fallback
+ 73/112 Test  #73: macos_mpegts_session_fallback ...............   Passed    0.08 sec
+        Start  74: macos_native_playback_owner_contract
+ 74/112 Test  #74: macos_native_playback_owner_contract ........   Passed    0.28 sec
+        Start  75: macos_native_open_preflight
+ 75/112 Test  #75: macos_native_open_preflight .................   Passed    0.31 sec
+        Start  76: macos_native_benchmark_telemetry
+ 76/112 Test  #76: macos_native_benchmark_telemetry ............   Passed    0.01 sec
+        Start  77: macos_native_video
+ 77/112 Test  #77: macos_native_video ..........................   Passed    0.06 sec
+        Start  78: macos_native_qt_gl_compositor
+ 78/112 Test  #78: macos_native_qt_gl_compositor ...............   Passed    3.84 sec
+        Start  79: macos_native_qt_gl_output
+ 79/112 Test  #79: macos_native_qt_gl_output ...................   Passed    2.55 sec
+        Start  80: macos_video_toolbox_decoder_limits
+ 80/112 Test  #80: macos_video_toolbox_decoder_limits ..........   Passed    0.28 sec
+        Start  81: macos_native_headless_performance
+ 81/112 Test  #81: macos_native_headless_performance ...........   Passed    1.82 sec
+        Start  82: macos_video_toolbox_decoder
+ 82/112 Test  #82: macos_video_toolbox_decoder .................   Passed    0.36 sec
+        Start  83: libavformat_mpeg4_full_range_refusal
+ 83/112 Test  #83: libavformat_mpeg4_full_range_refusal ........   Passed    0.24 sec
+        Start  84: libavformat_fixtures
+ 84/112 Test  #84: libavformat_fixtures ........................   Passed    0.78 sec
+        Start  85: libavformat_source_fragmented.mp4
+ 85/112 Test  #85: libavformat_source_fragmented.mp4 ...........   Passed    0.02 sec
+        Start  86: libavformat_source_boundary.mp4
+ 86/112 Test  #86: libavformat_source_boundary.mp4 .............   Passed    0.01 sec
+        Start  87: libavformat_source_mid-moof.mp4
+ 87/112 Test  #87: libavformat_source_mid-moof.mp4 .............   Passed    0.01 sec
+        Start  88: libavformat_source_mid-mdat.mp4
+ 88/112 Test  #88: libavformat_source_mid-mdat.mp4 .............   Passed    0.01 sec
+        Start  89: libavformat_source_asp.avi
+ 89/112 Test  #89: libavformat_source_asp.avi ..................   Passed    0.01 sec
+        Start  90: libavformat_missing_init
+ 90/112 Test  #90: libavformat_missing_init ....................   Passed    0.00 sec
+        Start  91: libavformat_differential_mkv
+ 91/112 Test  #91: libavformat_differential_mkv ................   Passed    0.18 sec
+        Start  92: libavformat_differential_ts
+ 92/112 Test  #92: libavformat_differential_ts .................   Passed    0.01 sec
+        Start  93: libavformat_contract
+ 93/112 Test  #93: libavformat_contract ........................   Passed    0.14 sec
+        Start  94: libavformat_avi_missing_pts
+ 94/112 Test  #94: libavformat_avi_missing_pts .................   Passed    0.01 sec
+        Start 106: libavformat_mixed_fixtures
+ 95/112 Test #106: libavformat_mixed_fixtures ..................   Passed    0.43 sec
+        Start  95: libavformat_flv_audio_refusal
+ 96/112 Test  #95: libavformat_flv_audio_refusal ...............   Passed    0.01 sec
+        Start  96: libavformat_asf_audio_refusal
+ 97/112 Test  #96: libavformat_asf_audio_refusal ...............   Passed    0.01 sec
+        Start  97: libavformat_routed_avi
+ 98/112 Test  #97: libavformat_routed_avi ......................   Passed    0.01 sec
+        Start  98: libavformat_opus_audio_exact
+ 99/112 Test  #98: libavformat_opus_audio_exact ................   Passed    0.33 sec
+        Start  99: libavformat_routed_header_stripping
+100/112 Test  #99: libavformat_routed_header_stripping .........   Passed    0.01 sec
+        Start 100: libavformat_vorbis_refusal
+101/112 Test #100: libavformat_vorbis_refusal ..................   Passed    0.01 sec
+        Start 101: libavformat_program_stream_refusal
+102/112 Test #101: libavformat_program_stream_refusal ..........   Passed    0.01 sec
+        Start 102: libavformat_preview_decode_fragmented.mp4
+103/112 Test #102: libavformat_preview_decode_fragmented.mp4 ...   Passed    0.34 sec
+        Start 103: libavformat_routed_recovery_mid-moof.mp4
+104/112 Test #103: libavformat_routed_recovery_mid-moof.mp4 ....   Passed    0.01 sec
+        Start 104: libavformat_routed_recovery_mid-mdat.mp4
+105/112 Test #104: libavformat_routed_recovery_mid-mdat.mp4 ....   Passed    0.01 sec
+        Start 105: native_stage_defaults
+106/112 Test #105: native_stage_defaults .......................   Passed    0.07 sec
+        Start 107: libavformat_mixed_exact
+107/112 Test #107: libavformat_mixed_exact .....................   Passed    1.56 sec
+        Start 108: libavformat_flv_audio_exact
+108/112 Test #108: libavformat_flv_audio_exact .................   Passed    0.45 sec
+        Start 109: libavformat_mixed_routed
+109/112 Test #109: libavformat_mixed_routed ....................   Passed    0.21 sec
+        Start 110: libavformat_opus_mode_refusal
+110/112 Test #110: libavformat_opus_mode_refusal ...............   Passed    0.01 sec
+        Start 111: ffmpeg_coexistence
+111/112 Test #111: ffmpeg_coexistence ..........................   Passed    0.26 sec
+        Start 112: software_color_qualification
+112/112 Test #112: software_color_qualification ................   Passed    0.00 sec
+
+100% tests passed, 0 tests failed out of 112
+
+Label Time Summary:
+benchmark    =   0.72 sec*proc (1 test)
+
+Total Test time (real) = 142.74 sec

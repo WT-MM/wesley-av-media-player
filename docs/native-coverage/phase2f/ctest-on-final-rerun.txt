@@ -1,0 +1,15 @@
+Test project /Users/wesleymaa/Documents/WAM/build
+    Start  79: macos_native_qt_gl_output
+1/2 Test  #79: macos_native_qt_gl_output ..............***Failed    6.22 sec
+CHECK failed at line 1446: spinUntil([&] { const auto stats = output->stats(); return stats.deliveredFrames == 1 && stats.actuallyRenderedFrames >= 1 && stats.lastRenderedGeneration == 1; })
+
+    Start 103: libavformat_mpeg4_full_range_refusal
+2/2 Test #103: libavformat_mpeg4_full_range_refusal ...   Passed    0.01 sec
+
+50% tests passed, 1 tests failed out of 2
+
+Total Test time (real) =   6.24 sec
+
+The following tests FAILED:
+	 79 - macos_native_qt_gl_output (Failed)
+Errors while running CTest

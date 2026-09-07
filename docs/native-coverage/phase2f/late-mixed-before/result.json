@@ -1,0 +1,36 @@
+{
+  "asset": "/private/tmp/wam-phase2e/rustdesk-audio-celt/0-opus.mkv",
+  "pid": 40379,
+  "rc": 0,
+  "elapsed": 47.14621866703965,
+  "identities": {
+    "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+    "WAM_NATIVE_BENCHMARK_RUN_ID": "55d7cf79-0a61-4afd-98a2-802c7c540896",
+    "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "4c923793f8a21118de99d11089bb98e42b2a681128996ac07eb001d994133d90",
+    "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "bdabf25cc7d52f0a99068d623a8672cce2b037a268e945f434d86a84d6d8f1fc",
+    "WAM_TEST_BACKGROUND": "1",
+    "WAM_TEST_MUTED": "1",
+    "WAM_TEST_GEOMETRY": "480x270+2400+1000",
+    "WAM_PLAYBACK_METRICS_PATH": "/private/tmp/wam-phase2f/late-mixed-before/metrics.jsonl",
+    "WAM_PLAYBACK_METRICS_INTERVAL_MS": "100",
+    "WAM_TEST_QUIT_AFTER_MS": "47000"
+  },
+  "failures": [],
+  "last_sample": {
+    "record": "playback_sample",
+    "session_epoch": 1788803193929760000,
+    "t_mono_ns": 503122023698916,
+    "media_seconds": 41.560053208333336,
+    "drawn_frames": 968,
+    "submitted_frames": 968,
+    "superseded_frames": 0,
+    "discarded_late_frames": 19,
+    "audio_underrun_callbacks": 1,
+    "audio_clock_advanced_underruns": 0,
+    "audio_retired_late_frames": 0,
+    "audio_callbacks": 2080,
+    "audio_rendered_frames": 1995408,
+    "clock_rate": 0.9999999999996073,
+    "paused": false
+  }
+}

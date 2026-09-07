@@ -663,6 +663,7 @@ struct FixtureSpec {
   // element entirely, which is the shape a muxer that writes no colour uses.
   std::optional<std::array<std::uint64_t, 3>> videoColour{
       std::array<std::uint64_t, 3>{1, 1, 1}};
+  std::optional<std::uint64_t> videoRange;
   bool videoMasteringMetadata{false};
   std::optional<std::uint64_t> videoMaxCll;
   std::optional<std::uint64_t> videoMaxFall;
@@ -753,8 +754,9 @@ Bytes videoTrackEntry(const FixtureSpec& spec) {
     append(videoPayload, uintElement(kDisplayUnitId, *spec.videoDisplayUnit));
   }
   if (spec.videoColour || spec.videoMasteringMetadata || spec.videoMaxCll ||
-      spec.videoMaxFall) {
+      spec.videoMaxFall || spec.videoRange) {
     Bytes colourPayload;
+    if (spec.videoRange) append(colourPayload, uintElement(0x55B9, *spec.videoRange));
     if (spec.videoColour) {
       append(colourPayload,
              uintElement(kMatrixCoefficientsId, (*spec.videoColour)[0]));
@@ -4890,6 +4892,15 @@ void testVariableFrameRateDurationLookahead() {
 }
 
 int main() {
+  {
+    FixtureSpec spec;
+    spec.videoCodecId = "V_MPEG4/ISO/ASP";
+    spec.videoRange = 2;
+    const auto prepared = prepareFixture(spec);
+    expect(prepared.outcome.status == MatroskaDemuxStatus::Unsupported &&
+               prepared.outcome.message == "SoftwareColorUnqualified: MPEG-4 full-range container signaling",
+           "container-only MPEG-4 full range refuses before descriptor publication");
+  }
   testCompleteDocumentPreparation();
   testVariableFrameRateDurationLookahead();
   testContainerColourMapping();

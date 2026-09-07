@@ -1,0 +1,122 @@
+[
+  {
+    "name": "h264-smpte2084",
+    "asset": "/private/tmp/wam-phase2f/h264-smpte2084.mkv",
+    "rc": 0,
+    "pid": 30552,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "c8ecc0da-7d0b-45b1-b15d-09d5fc10381a",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "0a8c6cfa18b83f97b47f45edf1eaf66e31d2936e85367fa53aeb388ee4e29468",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "fe0701859a9b9aa5341b97ef496235b108ed5df4cb4ae46709b4539fadd9a11d",
+      "WAM_TEST_BACKGROUND": "1",
+      "WAM_TEST_MUTED": "1",
+      "WAM_TEST_GEOMETRY": "480x270+2400+1000",
+      "WAM_PLAYBACK_METRICS_PATH": "/private/tmp/wam-phase2f/paired-hdr-hardware/h264-smpte2084/metrics.jsonl",
+      "WAM_TEST_QUIT_AFTER_MS": "4000",
+      "WAM_TEST_WINDOW_SCRIPT": "pause:0@1300,report@200,grab:0:/private/tmp/wam-phase2f/paired-hdr-hardware/h264-smpte2084/scene.png@300,videograb:0:/private/tmp/wam-phase2f/paired-hdr-hardware/h264-smpte2084/display.png@300,report@400"
+    },
+    "diagnostics": [
+      "WAM: native demux stage=Libavformat",
+      "WAM: native failure stage=open reason=Protocol class=ConsumerConfiguration error=\"video configure refused: could not derive a bounded presentation-reorder depth from the codec SPS\"",
+      "WAM: Native playback rejected an internal command and was stopped.",
+      "WAM: cannot load bundled fallback: Cannot load library /dev/fd/18: dlopen(/dev/fd/18, 0x0006): Library not loaded: /opt/homebrew/opt/ffmpeg/lib/libavcodec.62.dylib",
+      "WAM_TEST_WINDOWS count=1",
+      "WAM_TEST_WINDOW idx=0 media=0 paused=1 playing=0 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=0.0000 dur=0.0000 chrome=1 vfeedback=0 vnat=0x0 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=1.000 nsfs=0 vivid=0 vboost=0.000 hdr=0 edr=2.667 theater=0 dims=0 source=",
+      "WAM_TEST_SUBTITLES idx=0 active=-1 visible=1 count=0 text=[] tracks=[] bitmap=0 bitmaprect=0.0000,0.0000,0.0000,0.0000",
+      "WAM_TEST_GRAB idx=0 size=960x540 saved=1 path=/private/tmp/wam-phase2f/paired-hdr-hardware/h264-smpte2084/scene.png",
+      "WAM_TEST_VIDEOGRAB idx=0 saved=1 path=/private/tmp/wam-phase2f/paired-hdr-hardware/h264-smpte2084/display.png",
+      "WAM_TEST_WINDOWS count=1",
+      "WAM_TEST_WINDOW idx=0 media=0 paused=1 playing=0 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=0.0000 dur=0.0000 chrome=1 vfeedback=0 vnat=0x0 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=1.000 nsfs=0 vivid=0 vboost=0.000 hdr=0 edr=2.667 theater=0 dims=0 source=",
+      "WAM_TEST_SUBTITLES idx=0 active=-1 visible=1 count=0 text=[] tracks=[] bitmap=0 bitmaprect=0.0000,0.0000,0.0000,0.0000"
+    ]
+  },
+  {
+    "name": "hevc-smpte2084",
+    "asset": "/private/tmp/wam-phase2f/hevc-smpte2084.mkv",
+    "rc": 0,
+    "pid": 30693,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "09963524-8442-4526-99e6-4316443c1c78",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "8b46d9aca9e0bada2e3a66c852ef1e2983a9c9aafe18764ce0e414df5a5d11f2",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "fe0701859a9b9aa5341b97ef496235b108ed5df4cb4ae46709b4539fadd9a11d",
+      "WAM_TEST_BACKGROUND": "1",
+      "WAM_TEST_MUTED": "1",
+      "WAM_TEST_GEOMETRY": "480x270+2400+1000",
+      "WAM_PLAYBACK_METRICS_PATH": "/private/tmp/wam-phase2f/paired-hdr-hardware/hevc-smpte2084/metrics.jsonl",
+      "WAM_TEST_QUIT_AFTER_MS": "4000",
+      "WAM_TEST_WINDOW_SCRIPT": "pause:0@1300,report@200,grab:0:/private/tmp/wam-phase2f/paired-hdr-hardware/hevc-smpte2084/scene.png@300,videograb:0:/private/tmp/wam-phase2f/paired-hdr-hardware/hevc-smpte2084/display.png@300,report@400"
+    },
+    "diagnostics": [
+      "WAM_TEST_WINDOWS count=1",
+      "WAM_TEST_WINDOW idx=0 media=1 paused=1 playing=0 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=1.1235 dur=4.0000 chrome=0 vfeedback=0 vnat=640x360 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=0.000 nsfs=0 vivid=0 vboost=1.000 hdr=0 edr=2.667 theater=0 dims=0 source=hevc-smpte2084.mkv",
+      "WAM_TEST_SUBTITLES idx=0 active=-1 visible=0 count=0 text=[] tracks=[] bitmap=0 bitmaprect=0.0000,0.0000,0.0000,0.0000",
+      "WAM_TEST_GRAB idx=0 size=960x540 saved=1 path=/private/tmp/wam-phase2f/paired-hdr-hardware/hevc-smpte2084/scene.png",
+      "WAM_TEST_VIDEOGRAB idx=0 saved=1 path=/private/tmp/wam-phase2f/paired-hdr-hardware/hevc-smpte2084/display.png",
+      "WAM_TEST_WINDOWS count=1",
+      "WAM_TEST_WINDOW idx=0 media=1 paused=1 playing=0 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=1.1235 dur=4.0000 chrome=0 vfeedback=0 vnat=640x360 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=0.000 nsfs=0 vivid=0 vboost=1.000 hdr=0 edr=2.667 theater=0 dims=0 source=hevc-smpte2084.mkv",
+      "WAM_TEST_SUBTITLES idx=0 active=-1 visible=0 count=0 text=[] tracks=[] bitmap=0 bitmaprect=0.0000,0.0000,0.0000,0.0000"
+    ]
+  },
+  {
+    "name": "h264-arib-std-b67",
+    "asset": "/private/tmp/wam-phase2f/h264-arib-std-b67.mkv",
+    "rc": 0,
+    "pid": 30905,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "5a872bab-63fb-45c8-8a89-ad839c8084bd",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "41b447c6357db89051ea54aeb6e820ce9901495b16bd2a46d68a65a374436629",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "fe0701859a9b9aa5341b97ef496235b108ed5df4cb4ae46709b4539fadd9a11d",
+      "WAM_TEST_BACKGROUND": "1",
+      "WAM_TEST_MUTED": "1",
+      "WAM_TEST_GEOMETRY": "480x270+2400+1000",
+      "WAM_PLAYBACK_METRICS_PATH": "/private/tmp/wam-phase2f/paired-hdr-hardware/h264-arib-std-b67/metrics.jsonl",
+      "WAM_TEST_QUIT_AFTER_MS": "4000",
+      "WAM_TEST_WINDOW_SCRIPT": "pause:0@1300,report@200,grab:0:/private/tmp/wam-phase2f/paired-hdr-hardware/h264-arib-std-b67/scene.png@300,videograb:0:/private/tmp/wam-phase2f/paired-hdr-hardware/h264-arib-std-b67/display.png@300,report@400"
+    },
+    "diagnostics": [
+      "WAM: native demux stage=Libavformat",
+      "WAM: native failure stage=open reason=Protocol class=ConsumerConfiguration error=\"video configure refused: could not derive a bounded presentation-reorder depth from the codec SPS\"",
+      "WAM: Native playback rejected an internal command and was stopped.",
+      "WAM: cannot load bundled fallback: Cannot load library /dev/fd/18: dlopen(/dev/fd/18, 0x0006): Library not loaded: /opt/homebrew/opt/ffmpeg/lib/libavcodec.62.dylib",
+      "WAM_TEST_WINDOWS count=1",
+      "WAM_TEST_WINDOW idx=0 media=0 paused=1 playing=0 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=0.0000 dur=0.0000 chrome=1 vfeedback=0 vnat=0x0 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=1.000 nsfs=0 vivid=0 vboost=0.000 hdr=0 edr=2.667 theater=0 dims=0 source=",
+      "WAM_TEST_SUBTITLES idx=0 active=-1 visible=1 count=0 text=[] tracks=[] bitmap=0 bitmaprect=0.0000,0.0000,0.0000,0.0000",
+      "WAM_TEST_GRAB idx=0 size=960x540 saved=1 path=/private/tmp/wam-phase2f/paired-hdr-hardware/h264-arib-std-b67/scene.png",
+      "WAM_TEST_VIDEOGRAB idx=0 saved=1 path=/private/tmp/wam-phase2f/paired-hdr-hardware/h264-arib-std-b67/display.png",
+      "WAM_TEST_WINDOWS count=1",
+      "WAM_TEST_WINDOW idx=0 media=0 paused=1 playing=0 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=0.0000 dur=0.0000 chrome=1 vfeedback=0 vnat=0x0 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=1.000 nsfs=0 vivid=0 vboost=0.000 hdr=0 edr=2.667 theater=0 dims=0 source=",
+      "WAM_TEST_SUBTITLES idx=0 active=-1 visible=1 count=0 text=[] tracks=[] bitmap=0 bitmaprect=0.0000,0.0000,0.0000,0.0000"
+    ]
+  },
+  {
+    "name": "hevc-arib-std-b67",
+    "asset": "/private/tmp/wam-phase2f/hevc-arib-std-b67.mkv",
+    "rc": 0,
+    "pid": 31029,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "4be6268b-bc47-41bf-9cb4-e34129f7740f",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "689231529e8bd40174246bce9f5d10c25ff8ee59bfbb4acd7706438a7f7ab652",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "fe0701859a9b9aa5341b97ef496235b108ed5df4cb4ae46709b4539fadd9a11d",
+      "WAM_TEST_BACKGROUND": "1",
+      "WAM_TEST_MUTED": "1",
+      "WAM_TEST_GEOMETRY": "480x270+2400+1000",
+      "WAM_PLAYBACK_METRICS_PATH": "/private/tmp/wam-phase2f/paired-hdr-hardware/hevc-arib-std-b67/metrics.jsonl",
+      "WAM_TEST_QUIT_AFTER_MS": "4000",
+      "WAM_TEST_WINDOW_SCRIPT": "pause:0@1300,report@200,grab:0:/private/tmp/wam-phase2f/paired-hdr-hardware/hevc-arib-std-b67/scene.png@300,videograb:0:/private/tmp/wam-phase2f/paired-hdr-hardware/hevc-arib-std-b67/display.png@300,report@400"
+    },
+    "diagnostics": [
+      "WAM_TEST_WINDOWS count=1",
+      "WAM_TEST_WINDOW idx=0 media=1 paused=1 playing=0 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=1.0592 dur=4.0000 chrome=0 vfeedback=0 vnat=640x360 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=0.000 nsfs=0 vivid=0 vboost=1.000 hdr=0 edr=2.667 theater=0 dims=0 source=hevc-arib-std-b67.mkv",
+      "WAM_TEST_SUBTITLES idx=0 active=-1 visible=0 count=0 text=[] tracks=[] bitmap=0 bitmaprect=0.0000,0.0000,0.0000,0.0000",
+      "WAM_TEST_GRAB idx=0 size=960x540 saved=1 path=/private/tmp/wam-phase2f/paired-hdr-hardware/hevc-arib-std-b67/scene.png",
+      "WAM_TEST_VIDEOGRAB idx=0 saved=1 path=/private/tmp/wam-phase2f/paired-hdr-hardware/hevc-arib-std-b67/display.png",
+      "WAM_TEST_WINDOWS count=1",
+      "WAM_TEST_WINDOW idx=0 media=1 paused=1 playing=0 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=1.0592 dur=4.0000 chrome=0 vfeedback=0 vnat=640x360 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=0.000 nsfs=0 vivid=0 vboost=1.000 hdr=0 edr=2.667 theater=0 dims=0 source=hevc-arib-std-b67.mkv",
+      "WAM_TEST_SUBTITLES idx=0 active=-1 visible=0 count=0 text=[] tracks=[] bitmap=0 bitmaprect=0.0000,0.0000,0.0000,0.0000"
+    ]
+  }
+]

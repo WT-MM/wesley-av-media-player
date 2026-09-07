@@ -1,0 +1,32 @@
+{
+  "rc": 0,
+  "pid": 51942,
+  "run_id": "d682dacd-99b7-47b1-9896-a61b4259e4c0",
+  "candidate_sha256": "2aad484110bc0c92cfa66e3e19095c7431fcaa464380f89bab59bbea13fc01f2",
+  "asset_sha256": "cb64159e9180709af8a3b33bc4330eec61771cc2205c489acdb7fe09e758cf1b",
+  "fallback_asset_sha256": "4a97172a9d09e374a3772a9f9b2c60730eebfb1a4f19cc70f282773b6f31391a",
+  "closure_refusal": false,
+  "progress": {
+    "1788804345431269001": [
+      43,
+      57,
+      64,
+      89,
+      114,
+      139,
+      142
+    ]
+  },
+  "diagnostics": [
+    "WAM: native failure stage=open reason=Startup class=UnsupportedSource error=\"LibavformatAudioTimingUnproven: wmav2\"",
+    "WAM: native decoder stage=Libavcodec codec=6d703476",
+    "WAM_TEST_WINDOWS count=2",
+    "WAM_TEST_WINDOW idx=0 media=1 paused=0 playing=1 rate=1 step=5 hugs=1 pitch=1 geom=480x270+2400+1000 volume=1.0000 muted=0 gestures=1 pos=2.6030 dur=3.0430 chrome=0 vfeedback=0 vnat=160x96 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=0.000 nsfs=0 vivid=0 vboost=0.000 hdr=0 edr=2.667 theater=0 dims=0 source=legacy.asf",
+    "WAM_TEST_SUBTITLES idx=0 active=-1 visible=0 count=0 text=[] tracks=[] bitmap=0 bitmaprect=0.0000,0.0000,0.0000,0.0000",
+    "WAM_TEST_WINDOW idx=1 media=1 paused=0 playing=1 rate=1 step=5 hugs=1 pitch=1 geom=1180x720+40+73 volume=1.0000 muted=0 gestures=1 pos=1.2400 dur=12.0400 chrome=0 vfeedback=0 vnat=1280x720 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=0.000 nsfs=0 vivid=0 vboost=1.000 hdr=0 edr=2.667 theater=0 dims=0 source=asp.mkv",
+    "WAM_TEST_SUBTITLES idx=1 active=-1 visible=0 count=0 text=[] tracks=[] bitmap=0 bitmaprect=0.0000,0.0000,0.0000,0.0000",
+    "WAM_TEST_WINDOWS count=1",
+    "WAM_TEST_WINDOW idx=0 media=1 paused=0 playing=1 rate=1 step=5 hugs=1 pitch=1 geom=1180x720+40+73 volume=1.0000 muted=0 gestures=1 pos=4.2000 dur=12.0400 chrome=0 vfeedback=0 vnat=1280x720 vmax=2.0000 padded=0 fullscreen=0 osd=0 tlalpha=0.000 nsfs=0 vivid=0 vboost=1.000 hdr=0 edr=2.667 theater=0 dims=0 source=asp.mkv",
+    "WAM_TEST_SUBTITLES idx=0 active=-1 visible=0 count=0 text=[] tracks=[] bitmap=0 bitmaprect=0.0000,0.0000,0.0000,0.0000"
+  ]
+}

@@ -29,17 +29,20 @@ int main(int argc,char** argv) {
   Dl_info symbol{};CHECK(dladdr(reinterpret_cast<void*>(api().avcodec_version),&symbol));
   CHECK(symbol.dli_fname && std::strstr(symbol.dli_fname,"libavcodec-wamnative."));
   const auto before=api().avcodec_version();
-  auto refused=MpvRuntimeTestAccess::load(contents+"/MacOS");
-  CHECK(!refused);CHECK(refused.detail=="DecoderUnavailable: PlaybackFfmpegClosureConflict");
-  CHECK(nativeClosurePresent() && !foreignClosurePresent());CHECK(api().avcodec_version()==before);
+  auto fallback=MpvRuntimeTestAccess::load(contents+"/MacOS");CHECK(fallback);
+  CHECK(nativeClosurePresent() && foreignClosurePresent());CHECK(api().avcodec_version()==before);
   first.release();CHECK(nativeClosurePresent());CHECK(api().avcodec_version()==before);
   second.release();CHECK(!nativeClosurePresent());
-  auto fallback=MpvRuntimeTestAccess::load(contents+"/MacOS");CHECK(fallback);
   CHECK(foreignClosurePresent() && !nativeClosurePresent());
   CHECK(dladdr(reinterpret_cast<void*>(fallback.runtime->api().mpv_client_api_version),&symbol));
   CHECK(symbol.dli_fname);
   fallback.runtime.reset();CHECK(foreignClosurePresent());
-  const char* reason=first.acquire();CHECK(reason && std::strstr(reason,"PlaybackFfmpegClosureConflict"));
+  CHECK(!first.acquire());CHECK(!second.acquire());
+  CHECK(nativeClosurePresent() && foreignClosurePresent());
+  CHECK(api().avcodec_version()==before);
+  CHECK(dladdr(reinterpret_cast<void*>(api().avcodec_version),&symbol));
+  CHECK(symbol.dli_fname && std::strstr(symbol.dli_fname,"libavcodec-wamnative."));
+  first.release();CHECK(nativeClosurePresent());second.release();
   CHECK(!nativeClosurePresent() && api().avcodec_version==nullptr);
-  std::puts("native symbol owner verified; fallback refused with two native leases alive; native retirement zero images; cached fake fallback blocks later native by name; no duplicate codec images");
+  std::puts("both load orders preserve native symbol ownership and leases; cached fallback permits later native sessions");
 }

@@ -36,7 +36,6 @@ const char* validate() noexcept {
   return nullptr;
 }
 const char* load() {
-  if (foreignClosurePresent()) return "DecoderUnavailable: PlaybackFfmpegClosureConflict";
   std::array<char, PATH_MAX> executable{};
   std::uint32_t size = executable.size();
   if (_NSGetExecutablePath(executable.data(), &size)) return "DecoderUnavailable: ExecutablePath";
@@ -50,9 +49,9 @@ const char* load() {
   if (std::filesystem::canonical(util).parent_path()!=std::filesystem::canonical(libraries) ||
       std::filesystem::canonical(codec).parent_path()!=std::filesystem::canonical(libraries))
     return "DecoderUnavailable: native FFmpeg library outside bundle";
-  utilHandle = dlopen(util.c_str(), RTLD_NOW | RTLD_LOCAL);
+  utilHandle = dlopen(util.c_str(), RTLD_NOW | RTLD_LOCAL | RTLD_FIRST);
   if (!utilHandle) return "DecoderUnavailable: libavutil-wamnative.61.dylib";
-  codecHandle = dlopen(codec.c_str(), RTLD_NOW | RTLD_LOCAL);
+  codecHandle = dlopen(codec.c_str(), RTLD_NOW | RTLD_LOCAL | RTLD_FIRST);
   if (!codecHandle) return "DecoderUnavailable: libavcodec-wamnative.63.dylib";
   table.avcodec_version = reinterpret_cast<decltype(table.avcodec_version)>(dlsym(codecHandle, "avcodec_version"));
   if (!table.avcodec_version) return "DecoderUnavailable: missing avcodec_version";
@@ -122,7 +121,6 @@ const char* load() {
   if (!table.av_sample_fmt_is_planar) return "DecoderUnavailable: missing av_sample_fmt_is_planar";
   table.av_frame_get_buffer = reinterpret_cast<decltype(table.av_frame_get_buffer)>(dlsym(utilHandle, "av_frame_get_buffer"));
   if (!table.av_frame_get_buffer) return "DecoderUnavailable: missing av_frame_get_buffer";
-  if (foreignClosurePresent()) return "DecoderUnavailable: PlaybackFfmpegClosureConflict";
   return validate();
 }
 }

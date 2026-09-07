@@ -1,3 +1,4 @@
+#include "media/software_color_qualification.hpp"
 #include "platform/macos/libavformat_media_source.hpp"
 #include "media/libavformat_cursor.hpp"
 #include "media/matroska_opus.hpp"
@@ -265,6 +266,10 @@ bool videoDescriptor(const LibavformatCursor::Stream &stream,
     track.codecConfigurationKind = MediaCodecConfigurationKind::CodecPrivate;
   } else {
     error = "LibavformatVideoCodecNotAdmitted";
+    return false;
+  }
+  if (const char* refusal = softwareContainerColorRefusal(track.codec, stream.fullRange)) {
+    error = refusal;
     return false;
   }
   if (stream.extradata.size() > limits.maximumCodecConfigurationBytes) {

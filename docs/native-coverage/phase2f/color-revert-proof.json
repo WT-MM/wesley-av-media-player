@@ -1,0 +1,26 @@
+[
+  {
+    "phase": "fixed",
+    "compile_rc": 0,
+    "rc": 0,
+    "stdout": "captured SDR VP9 and ten-bit full range admitted; HDR and eight-bit full range refused\n",
+    "stderr": "",
+    "source_sha256": "97cebc1db3608fdebee3a90a7c2c66c2265c7697309a00832f008d9dcd5bcfe0"
+  },
+  {
+    "phase": "reverted",
+    "compile_rc": 0,
+    "rc": 1,
+    "stdout": "",
+    "stderr": "line 12: softwareColorQualified(f,false)\n",
+    "source_sha256": "e3b3de150ffd282f50b29c542f3dfc35cf0fb44830e2e2fa6ed8152c2ddae413"
+  },
+  {
+    "phase": "restored",
+    "compile_rc": 0,
+    "rc": 0,
+    "stdout": "captured SDR VP9 and ten-bit full range admitted; HDR and eight-bit full range refused\n",
+    "stderr": "",
+    "source_sha256": "97cebc1db3608fdebee3a90a7c2c66c2265c7697309a00832f008d9dcd5bcfe0"
+  }
+]

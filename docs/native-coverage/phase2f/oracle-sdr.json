@@ -1,0 +1,80 @@
+[
+  {
+    "name": "baseline",
+    "measurement_valid": true,
+    "source_range": "tv",
+    "icc_profile": "Display",
+    "pixels": 84813,
+    "tolerance": {
+      "max_abs_projection": 0.15,
+      "max_rms_8bit": 6.0
+    },
+    "encoded": {
+      "rms": 35.25069221627489,
+      "projections": {
+        "wrong_matrix": 0.6583657375676659,
+        "wrong_range": 1.6457305873523516
+      }
+    },
+    "srgb": {
+      "rms": 2.0875853019189927,
+      "projections": {
+        "wrong_matrix": -0.0029127048793205395,
+        "wrong_range": -0.04303391906266391
+      }
+    },
+    "matrix_range_projection_pass": true
+  },
+  {
+    "name": "vp9",
+    "measurement_valid": true,
+    "source_range": "tv",
+    "icc_profile": "Display",
+    "pixels": 86856,
+    "tolerance": {
+      "max_abs_projection": 0.15,
+      "max_rms_8bit": 6.0
+    },
+    "encoded": {
+      "rms": 34.93208606810916,
+      "projections": {
+        "wrong_matrix": 0.6726161382545138,
+        "wrong_range": 1.6080939679514439
+      }
+    },
+    "srgb": {
+      "rms": 2.0921303240497386,
+      "projections": {
+        "wrong_matrix": -0.002074547304610806,
+        "wrong_range": -0.04409308453660244
+      }
+    },
+    "matrix_range_projection_pass": true
+  },
+  {
+    "name": "vp9p2",
+    "measurement_valid": true,
+    "source_range": "tv",
+    "icc_profile": "Display",
+    "pixels": 86899,
+    "tolerance": {
+      "max_abs_projection": 0.15,
+      "max_rms_8bit": 6.0
+    },
+    "encoded": {
+      "rms": 35.16718278292623,
+      "projections": {
+        "wrong_matrix": 0.6699863828290515,
+        "wrong_range": 1.622464653988733
+      }
+    },
+    "srgb": {
+      "rms": 2.3659603602245753,
+      "projections": {
+        "wrong_matrix": 0.0020963941646303928,
+        "wrong_range": -0.04584592104739714
+      }
+    },
+    "matrix_range_projection_pass": true
+  }
+]
