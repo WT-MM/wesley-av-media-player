@@ -60,9 +60,9 @@ attempt to prepare, run, or retire; frontend churn therefore cannot accumulate
 stuck AVFoundation/VideoToolbox sessions. Asset and track keys load on a private
 serial queue; the caller only starts work and polls one generation-tagged
 terminal result, so no Apple callback can invoke client code after destruction.
-Runtime activation remains blocked on connecting the native pipeline to a Qt
-render node, an authoritative audio clock, atomic libmpv fallback, subtitle
-behavior, and full-sync/open-GOP seek coverage.
+The native pipeline is connected end to end: an authoritative audio clock,
+atomic libmpv fallback, native subtitle/caption tracks, and long-GOP seek
+coverage are all live on the default route.
 See `docs/NATIVE_MACOS_VIDEO.md` for scope and rollout gates.
 
 ## Editing and captions
