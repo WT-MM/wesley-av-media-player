@@ -1,0 +1,56 @@
+AT format=2e6d7031
+AT format=2e6d7032
+AT format=2e6d7033
+AT format=61616320
+AT format=61616365
+AT format=61616366
+AT format=61616367
+AT format=61616368
+AT format=6161636c
+AT format=61616370
+AT format=61632d33
+AT format=616c6163
+AT format=616c6177
+AT format=61706163
+AT format=64766938
+AT format=65632d33
+AT format=666c6163
+AT format=696c6263
+AT format=696d6134
+AT format=6c70636d
+AT format=6d730002
+AT format=6d730011
+AT format=6d730031
+AT format=6f707573
+AT format=70616163
+AT format=70616333
+AT format=70616368
+AT format=70616370
+AT format=70656333
+AT format=70757361
+AT format=71616163
+AT format=71616333
+AT format=71616368
+AT format=71616370
+AT format=71617063
+AT format=71656333
+AT format=71666c63
+AT format=716c6163
+AT format=71757361
+AT format=73616d72
+AT format=73617762
+AT format=756c6177
+AT format=75736163
+AT format=766f7262
+AT format=7a616163
+AT format=7a616333
+AT format=7a616368
+AT format=7a616370
+AT format=7a656333
+AT format=7a6c6163
+HW codec=61766331 verdict=1
+HW codec=68766331 verdict=1
+HW codec=61703468 verdict=1
+HW codec=61703478 verdict=1
+HW codec=76703039 verdict=1
+HW codec=61763031 verdict=1

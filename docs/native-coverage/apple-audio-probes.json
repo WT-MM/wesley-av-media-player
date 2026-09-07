@@ -1,0 +1,216 @@
+[
+  {
+    "file": "he-aac.m4a",
+    "rc": 0,
+    "diagnostic": "format=61616368 rate=48000 channels=2 declared=196544 frames=196544 error=0 cpu_us=2788 energy_status=0/0 energy_nj=0",
+    "sha256": "b630eab8e05459bd7b6eb415da0c6143534c4315daae8882dd43adef81cae866",
+    "samples": 393088,
+    "reference_samples": 393088,
+    "maximum": 0.39976710081100464,
+    "rms": 0.17294052243232727
+  },
+  {
+    "file": "he-aacv2.m4a",
+    "rc": 0,
+    "diagnostic": "format=61616370 rate=48000 channels=2 declared=196544 frames=196544 error=0 cpu_us=2939 energy_status=0/0 energy_nj=13297671",
+    "sha256": "29dd1219c9b0f5909c44ed5d24472a9ddb27e485b6d4de99e8bbf8ed7b6f0ce5",
+    "samples": 393088,
+    "reference_samples": 393088,
+    "maximum": 0.47187840938568115,
+    "rms": 0.1646241992712021
+  },
+  {
+    "file": "alac.m4a",
+    "rc": 0,
+    "diagnostic": "format=616c6163 rate=48000 channels=2 declared=192000 frames=192000 error=0 cpu_us=5980 energy_status=0/0 energy_nj=6071966",
+    "sha256": "5af318c89ad18e0a57b4574ae2444f63da289e0554ac204acf06c62acfcc1685",
+    "samples": 384000,
+    "reference_samples": 384000,
+    "maximum": 0.0,
+    "rms": 0.0
+  },
+  {
+    "file": "pcm.wav",
+    "rc": 0,
+    "diagnostic": "format=6c70636d rate=48000 channels=2 declared=192000 frames=192000 error=0 cpu_us=685 energy_status=0/0 energy_nj=3222891",
+    "sha256": "71500c5505aae330dbc0d83fc9a10a41e8ce8765d19d26c3b65771ce284700c6",
+    "samples": 384000,
+    "reference_samples": 384000,
+    "maximum": 0.0,
+    "rms": 0.0
+  },
+  {
+    "file": "ima.wav",
+    "rc": 0,
+    "diagnostic": "format=6d730011 rate=48000 channels=2 declared=192213 frames=192213 error=0 cpu_us=1479 energy_status=0/0 energy_nj=3704868",
+    "sha256": "0acf780dd304e4b3a65f8dfa5fac5be9f2bfdab114ea9da2bc7deee72af1cc03",
+    "samples": 384426,
+    "reference_samples": 384426,
+    "maximum": 0.0,
+    "rms": 0.0
+  },
+  {
+    "file": "ms.wav",
+    "rc": 0,
+    "diagnostic": "format=6d730002 rate=48000 channels=2 declared=192280 frames=192280 error=0 cpu_us=2520 energy_status=0/0 energy_nj=9113828",
+    "sha256": "01f7765a9d3e80ceffbb5d2a72ede9c0466cb42859f1adbb1543ec5c31bc4351",
+    "samples": 384560,
+    "reference_samples": 384560,
+    "maximum": 0.0,
+    "rms": 0.0
+  },
+  {
+    "file": "alaw.wav",
+    "rc": 0,
+    "diagnostic": "format=616c6177 rate=48000 channels=2 declared=192000 frames=192000 error=0 cpu_us=627 energy_status=0/0 energy_nj=1504674",
+    "sha256": "037d6457451767241036d28c706c144abc60bcb2ba417966a5b15b1065887cf5",
+    "samples": 384000,
+    "reference_samples": 384000,
+    "maximum": 0.0,
+    "rms": 0.0
+  },
+  {
+    "file": "mulaw.wav",
+    "rc": 0,
+    "diagnostic": "format=756c6177 rate=48000 channels=2 declared=192000 frames=192000 error=0 cpu_us=777 energy_status=0/0 energy_nj=1654867",
+    "sha256": "890efa7afa02c3db3a70b26072ff72b47828d848fb29f2a19be30f38f4739462",
+    "samples": 384000,
+    "reference_samples": 384000,
+    "maximum": 0.0,
+    "rms": 0.0
+  },
+  {
+    "file": "ima4.caf",
+    "rc": 0,
+    "diagnostic": "format=696d6134 rate=48000 channels=2 declared=192000 frames=192000 error=0 cpu_us=1301 energy_status=0/0 energy_nj=3654078",
+    "sha256": "39bc93c1937c22e6703d37ad314551e046b1ce6956a3ccd59a229e248f37f73b",
+    "samples": 384000,
+    "reference_samples": 384000,
+    "maximum": 0.0,
+    "rms": 0.0
+  },
+  {
+    "file": "mp2.mp2",
+    "rc": 0,
+    "diagnostic": "format=2e6d7032 rate=48000 channels=2 declared=192384 frames=192384 error=0 cpu_us=4009 energy_status=0/0 energy_nj=0",
+    "sha256": "78945761827011b47f5a0034a7abfee3380468f2291398ca37734063ac5e6fa0",
+    "samples": 384768,
+    "reference_samples": 384768,
+    "maximum": 0.4027099609375,
+    "rms": 0.17727801203727722
+  },
+  {
+    "file": "he-aac.m4a.mka",
+    "argv": [
+      "ffmpeg",
+      "-v",
+      "error",
+      "-y",
+      "-i",
+      "/private/tmp/wam-coverage/he-aac.m4a",
+      "-c",
+      "copy",
+      "/private/tmp/wam-coverage/he-aac.m4a.mka"
+    ],
+    "mux_rc": 0,
+    "mux_error": "",
+    "native_rc": 1,
+    "native": "status=1 error=selected AAC-LC or Opus track was not admitted (CodecConfiguration)\n",
+    "sha256": "789eb485435f3f4036f1f9828e750ea49dc18d9028a84a90ec8ad993f56aa228"
+  },
+  {
+    "file": "he-aacv2.m4a.mka",
+    "argv": [
+      "ffmpeg",
+      "-v",
+      "error",
+      "-y",
+      "-i",
+      "/private/tmp/wam-coverage/he-aacv2.m4a",
+      "-c",
+      "copy",
+      "/private/tmp/wam-coverage/he-aacv2.m4a.mka"
+    ],
+    "mux_rc": 0,
+    "mux_error": "",
+    "native_rc": 1,
+    "native": "status=1 error=selected AAC-LC or Opus track was not admitted (CodecConfiguration)\n",
+    "sha256": "37be1045d58f9771187145c9b2cdc8679355c036fa5d3edf44a6582e6539c117"
+  },
+  {
+    "file": "alac.m4a.mka",
+    "argv": [
+      "ffmpeg",
+      "-v",
+      "error",
+      "-y",
+      "-i",
+      "/private/tmp/wam-coverage/alac.m4a",
+      "-c",
+      "copy",
+      "/private/tmp/wam-coverage/alac.m4a.mka"
+    ],
+    "mux_rc": 0,
+    "mux_error": "",
+    "native_rc": 1,
+    "native": "status=1 error=requested Matroska tracks are unavailable (TrackSelection)\n",
+    "sha256": "9ac6765208bda8f6dfea6eddcc9cd87d2001992c8836222b423d7654bdc8d280"
+  },
+  {
+    "file": "pcm.wav.mka",
+    "argv": [
+      "ffmpeg",
+      "-v",
+      "error",
+      "-y",
+      "-i",
+      "/private/tmp/wam-coverage/pcm.wav",
+      "-c",
+      "copy",
+      "/private/tmp/wam-coverage/pcm.wav.mka"
+    ],
+    "mux_rc": 0,
+    "mux_error": "",
+    "native_rc": 1,
+    "native": "status=1 error=requested Matroska tracks are unavailable (TrackSelection)\n",
+    "sha256": "c280323eabcce434ecd602fadaab9def3434a3b890805c42a3ccb1e388ad70b7"
+  },
+  {
+    "file": "ima.wav.mka",
+    "argv": [
+      "ffmpeg",
+      "-v",
+      "error",
+      "-y",
+      "-i",
+      "/private/tmp/wam-coverage/ima.wav",
+      "-c",
+      "copy",
+      "/private/tmp/wam-coverage/ima.wav.mka"
+    ],
+    "mux_rc": 0,
+    "mux_error": "",
+    "native_rc": 1,
+    "native": "status=1 error=requested Matroska tracks are unavailable (TrackSelection)\n",
+    "sha256": "098228dbaf2100ba4cc3314904665833eaabb27aa48d2b93154fc1566a373e52"
+  },
+  {
+    "file": "ms.wav.mka",
+    "argv": [
+      "ffmpeg",
+      "-v",
+      "error",
+      "-y",
+      "-i",
+      "/private/tmp/wam-coverage/ms.wav",
+      "-c",
+      "copy",
+      "/private/tmp/wam-coverage/ms.wav.mka"
+    ],
+    "mux_rc": 0,
+    "mux_error": "",
+    "native_rc": 1,
+    "native": "status=1 error=requested Matroska tracks are unavailable (TrackSelection)\n",
+    "sha256": "3066bc9f872b50f941352f908779ef052d9b20dc562a55e91de7b93491275bc7"
+  }
+]
