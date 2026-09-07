@@ -342,7 +342,7 @@ void assignError(std::string* error, const char* message) {
   }
   switch (codec) {
     case media::MediaCodec::Vp9:
-      return nativeVideoToolboxSupportsVp9();
+      return nativeVp9StageAdmitted();
     case media::MediaCodec::Av1:
       return nativeVideoToolboxSupportsAv1();
     // No Apple silicon has ever had a VP8 block and none ever will, so VP8 is

@@ -1,0 +1,12 @@
+[
+  {
+    "name": "hi10p",
+    "software_vs_hardware_rms": 3.367775543930531,
+    "maximum": 46.0
+  },
+  {
+    "name": "h264422",
+    "software_vs_hardware_rms": 3.412461188232668,
+    "maximum": 50.0
+  }
+]

@@ -1,0 +1,102 @@
+[
+  {
+    "name": "asp-1080",
+    "argv": [
+      "ffmpeg",
+      "-v",
+      "error",
+      "-y",
+      "-f",
+      "lavfi",
+      "-i",
+      "testsrc2=size=1920x1080:rate=25",
+      "-frames:v",
+      "10",
+      "-c:v",
+      "mpeg4",
+      "-bf",
+      "2",
+      "/private/tmp/wam-phase2b/resource-fixtures/asp-1080.mkv"
+    ],
+    "rc": 0,
+    "stdout": "{\"probe\":\"worker_lifetime\",\"frames\":10,\"worker_allocations\":309,\"worker_locks\":229,\"worker_cpp_new\":0,\"adapter_allocations_including_frameworks\":0,\"adapter_locks_including_frameworks\":0,\"adapter_cpp_new\":0,\"peak_tracked_heap_bytes\":13914368,\"remaining_tracked_heap_bytes\":0,\"table_overflow\":0}\ndecoded 10 reordered frames; owned packets, EOS, backpressure, generation and worker isolation passed\n",
+    "stderr": ""
+  },
+  {
+    "name": "asp-2160",
+    "argv": [
+      "ffmpeg",
+      "-v",
+      "error",
+      "-y",
+      "-f",
+      "lavfi",
+      "-i",
+      "testsrc2=size=3840x2160:rate=25",
+      "-frames:v",
+      "10",
+      "-c:v",
+      "mpeg4",
+      "-bf",
+      "2",
+      "/private/tmp/wam-phase2b/resource-fixtures/asp-2160.mkv"
+    ],
+    "rc": 0,
+    "stdout": "AvcodecSoftwareReferenceBudgetExceeded\n",
+    "stderr": ""
+  },
+  {
+    "name": "hi10p-1080",
+    "argv": [
+      "ffmpeg",
+      "-v",
+      "error",
+      "-y",
+      "-f",
+      "lavfi",
+      "-i",
+      "testsrc2=size=1920x1080:rate=25",
+      "-frames:v",
+      "10",
+      "-c:v",
+      "libx264",
+      "-profile:v",
+      "high10",
+      "-pix_fmt",
+      "yuv420p10le",
+      "-bf",
+      "2",
+      "/private/tmp/wam-phase2b/resource-fixtures/hi10p-1080.mkv"
+    ],
+    "rc": 0,
+    "stdout": "{\"probe\":\"worker_lifetime\",\"frames\":10,\"worker_allocations\":498,\"worker_locks\":187,\"worker_cpp_new\":0,\"adapter_allocations_including_frameworks\":0,\"adapter_locks_including_frameworks\":0,\"adapter_cpp_new\":0,\"peak_tracked_heap_bytes\":39784272,\"remaining_tracked_heap_bytes\":0,\"table_overflow\":0}\ndecoded 10 reordered frames; owned packets, EOS, backpressure, generation and worker isolation passed\n",
+    "stderr": ""
+  },
+  {
+    "name": "hi10p-2160",
+    "argv": [
+      "ffmpeg",
+      "-v",
+      "error",
+      "-y",
+      "-f",
+      "lavfi",
+      "-i",
+      "testsrc2=size=3840x2160:rate=25",
+      "-frames:v",
+      "10",
+      "-c:v",
+      "libx264",
+      "-profile:v",
+      "high10",
+      "-pix_fmt",
+      "yuv420p10le",
+      "-bf",
+      "2",
+      "/private/tmp/wam-phase2b/resource-fixtures/hi10p-2160.mkv"
+    ],
+    "rc": 0,
+    "stdout": "AvcodecSoftwareReferenceBudgetExceeded\n",
+    "stderr": ""
+  }
+]

@@ -1570,7 +1570,7 @@ class CodecRbspBitReader final {
   if (named == MediaCodec::Av1 && !nativeVideoToolboxSupportsAv1()) {
     return MediaCodec::Unknown;
   }
-  if (named == MediaCodec::Vp9 && !nativeVideoToolboxSupportsVp9()) {
+  if (named == MediaCodec::Vp9 && !nativeVp9StageAdmitted()) {
     return MediaCodec::Unknown;
   }
   return named;

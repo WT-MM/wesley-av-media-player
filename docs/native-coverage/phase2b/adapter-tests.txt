@@ -1,0 +1,38 @@
+Internal ctest changing into directory: /Users/wesleymaa/Documents/WAM/build
+Test project /Users/wesleymaa/Documents/WAM/build
+      Start 91: avcodec_fixtures
+ 1/16 Test #91: avcodec_fixtures ..................   Passed    2.56 sec
+      Start 83: avcodec_worker_hi10p
+ 2/16 Test #83: avcodec_worker_hi10p ..............   Passed    0.22 sec
+      Start 84: avcodec_worker_h264422
+ 3/16 Test #84: avcodec_worker_h264422 ............   Passed    0.02 sec
+      Start 85: avcodec_worker_asp
+ 4/16 Test #85: avcodec_worker_asp ................   Passed    0.01 sec
+      Start 86: software_avcodec_video_hi10p
+ 5/16 Test #86: software_avcodec_video_hi10p ......   Passed    0.06 sec
+      Start 87: software_avcodec_video_h264422
+ 6/16 Test #87: software_avcodec_video_h264422 ....   Passed    0.06 sec
+      Start 88: software_avcodec_video_asp
+ 7/16 Test #88: software_avcodec_video_asp ........   Passed    0.04 sec
+      Start 89: software_avcodec_video_vp9
+ 8/16 Test #89: software_avcodec_video_vp9 ........   Passed    0.05 sec
+      Start 90: software_avcodec_video_vp9p2
+ 9/16 Test #90: software_avcodec_video_vp9p2 ......   Passed    0.05 sec
+      Start 92: software_avcodec_audio_dts
+10/16 Test #92: software_avcodec_audio_dts ........   Passed    0.19 sec
+      Start 93: software_avcodec_audio_truehd
+11/16 Test #93: software_avcodec_audio_truehd .....   Passed    0.02 sec
+      Start 94: software_avcodec_audio_mlp
+12/16 Test #94: software_avcodec_audio_mlp ........   Passed    0.02 sec
+      Start 95: avcodec_runtime
+13/16 Test #95: avcodec_runtime ...................   Passed    0.01 sec
+      Start 96: avcodec_runtime_relocation
+14/16 Test #96: avcodec_runtime_relocation ........   Passed    0.49 sec
+      Start 97: software_avcodec_audio_dts51
+15/16 Test #97: software_avcodec_audio_dts51 ......   Passed    0.02 sec
+      Start 98: software_avcodec_audio_truehd51
+16/16 Test #98: software_avcodec_audio_truehd51 ...   Passed    0.02 sec
+
+100% tests passed, 0 tests failed out of 16
+
+Total Test time (real) =   3.85 sec

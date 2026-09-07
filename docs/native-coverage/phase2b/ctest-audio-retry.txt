@@ -1,0 +1,7 @@
+Test project /Users/wesleymaa/Documents/WAM/build
+    Start 54: macos_native_audio_session
+1/1 Test #54: macos_native_audio_session .......   Passed    7.87 sec
+
+100% tests passed, 0 tests failed out of 1
+
+Total Test time (real) =   7.87 sec

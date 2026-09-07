@@ -1,6 +1,7 @@
 #pragma once
 
 #include "media/audio_downmix.hpp"
+#include "media/native_decode_plan.hpp"
 #include "media/native_media_source.hpp"
 #include "native_pcm_ring.hpp"
 
@@ -25,6 +26,10 @@ struct NativeAudioBackendConfiguration {
   std::span<const std::byte> magicCookie;
   std::uint32_t outputChannels{0};
   std::uint32_t outputSampleRate{0};
+  media::DecodePlan decodePlan{.implementation = media::DecodeImplementation::AudioToolbox,
+                              .configurationRepresentation = media::DecodeConfigurationRepresentation::AppleMagicCookie};
+  // Raw decoder bytes are distinct from AudioToolbox cookies and ESDS wrappers.
+  std::span<const std::byte> rawExtradata{};
 };
 
 struct NativeAudioBackendInput {
@@ -36,9 +41,9 @@ struct NativeAudioBackendInput {
 struct NativeAudioBackendResult {
   std::size_t consumedPackets{0};
   std::size_t producedFrames{0};
-  // True only when the input proc was invoked after the final nonempty packet
-  // handoff. At that documented callback boundary, the wrapper may reuse the
-  // prior byte and packet-description storage.
+  // True only when the backend no longer borrows the final input bytes or
+  // packet descriptions. An owned copy satisfies this; AudioToolbox proves it
+  // at the input-proc invocation after the final nonempty handoff.
   bool finalInputReleased{false};
   bool needsInput{false};
   bool drained{false};

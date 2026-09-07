@@ -1,0 +1,150 @@
+[
+  {
+    "asset": "/private/tmp/wam-ffmpeg-phase2/long/hi10p.mkv",
+    "asset_sha256": "5cd8c4688b123cb0ed894da0e750e86110d869836d0e6342d6a66e56b4881771",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "ff69104e-bfd9-4a23-ab5f-6f7c00d99cb5",
+    "pid": 39507,
+    "rc": 0,
+    "first_frame": true,
+    "failures": [],
+    "routes": [
+      "WAM: native decoder stage=Libavcodec codec=61766331"
+    ],
+    "usage": {
+      "pid": 39507,
+      "seconds": 13.81969,
+      "cpu_percent_one_core": 18.791432,
+      "energy_joules_process": 2.282619536,
+      "peak_footprint_bytes": 519095304
+    },
+    "last_sample": {
+      "record": "playback_sample",
+      "session_epoch": 1788759296174730000,
+      "t_mono_ns": 459190502044125,
+      "media_seconds": 11.960797375,
+      "drawn_frames": 246,
+      "submitted_frames": 246,
+      "superseded_frames": 0,
+      "discarded_late_frames": 0,
+      "audio_underrun_callbacks": null,
+      "audio_clock_advanced_underruns": null,
+      "audio_retired_late_frames": null,
+      "audio_callbacks": null,
+      "audio_rendered_frames": null,
+      "clock_rate": 1,
+      "paused": false
+    }
+  },
+  {
+    "asset": "/private/tmp/wam-ffmpeg-phase2/long/h264422.mkv",
+    "asset_sha256": "cae88080fc20c48b7ec1c707718cc501c1f06715526dac4d95671b74e3e29c5a",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "fc75e3e3-6ed3-4bdb-9fea-b9b9ee9bbab1",
+    "pid": 39537,
+    "rc": 0,
+    "first_frame": true,
+    "failures": [],
+    "routes": [
+      "WAM: native decoder stage=Libavcodec codec=61766331"
+    ],
+    "usage": {
+      "pid": 39537,
+      "seconds": 13.9282,
+      "cpu_percent_one_core": 20.246117,
+      "energy_joules_process": 2.570576267,
+      "peak_footprint_bytes": 527762464
+    },
+    "last_sample": {
+      "record": "playback_sample",
+      "session_epoch": 1788759310116227000,
+      "t_mono_ns": 459205021783375,
+      "media_seconds": 11.96349975,
+      "drawn_frames": 246,
+      "submitted_frames": 246,
+      "superseded_frames": 0,
+      "discarded_late_frames": 0,
+      "audio_underrun_callbacks": null,
+      "audio_clock_advanced_underruns": null,
+      "audio_retired_late_frames": null,
+      "audio_callbacks": null,
+      "audio_rendered_frames": null,
+      "clock_rate": 1,
+      "paused": false
+    }
+  },
+  {
+    "asset": "/Users/wesleymaa/Documents/WAM/test-media/native-coverage/phase2b/vp9.mkv",
+    "asset_sha256": "21a93d016a3e31cee2fcdc3f0bf80ef59cbc57bf6ebe9dd5a902fea5e187f17a",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "fe178767-09fe-4132-a07d-a2a4a1c809c7",
+    "pid": 39572,
+    "rc": 0,
+    "first_frame": true,
+    "failures": [],
+    "routes": [
+      "WAM: native decoder stage=Libavcodec codec=76703039"
+    ],
+    "usage": {
+      "pid": 39572,
+      "seconds": 13.768127,
+      "cpu_percent_one_core": 17.741327,
+      "energy_joules_process": 2.594562924,
+      "peak_footprint_bytes": 500990984
+    },
+    "last_sample": {
+      "record": "playback_sample",
+      "session_epoch": 1788759324241292000,
+      "t_mono_ns": 459218502186000,
+      "media_seconds": 11.961141416666667,
+      "drawn_frames": 246,
+      "submitted_frames": 246,
+      "superseded_frames": 0,
+      "discarded_late_frames": 0,
+      "audio_underrun_callbacks": null,
+      "audio_clock_advanced_underruns": null,
+      "audio_retired_late_frames": null,
+      "audio_callbacks": null,
+      "audio_rendered_frames": null,
+      "clock_rate": 1,
+      "paused": false
+    }
+  },
+  {
+    "asset": "/Users/wesleymaa/Documents/WAM/test-media/native-coverage/phase2b/vp9p2.mkv",
+    "asset_sha256": "5b4ab5090319d3a83586743f3c9b656345fdc53a923665f22d8c8d681005df2f",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "ebe36842-3d2e-4b71-bfab-1be2bc832b9d",
+    "pid": 39600,
+    "rc": 0,
+    "first_frame": true,
+    "failures": [],
+    "routes": [
+      "WAM: native decoder stage=Libavcodec codec=76703039"
+    ],
+    "usage": {
+      "pid": 39600,
+      "seconds": 13.891947,
+      "cpu_percent_one_core": 19.038095,
+      "energy_joules_process": 2.852468593,
+      "peak_footprint_bytes": 512345096
+    },
+    "last_sample": {
+      "record": "playback_sample",
+      "session_epoch": 1788759338108547000,
+      "t_mono_ns": 459233017051125,
+      "media_seconds": 11.961512,
+      "drawn_frames": 246,
+      "submitted_frames": 246,
+      "superseded_frames": 0,
+      "discarded_late_frames": 0,
+      "audio_underrun_callbacks": null,
+      "audio_clock_advanced_underruns": null,
+      "audio_retired_late_frames": null,
+      "audio_callbacks": null,
+      "audio_rendered_frames": null,
+      "clock_rate": 1,
+      "paused": false
+    }
+  }
+]

@@ -1,0 +1,126 @@
+[
+  {
+    "name": "asp",
+    "argv": [
+      "ffmpeg",
+      "-v",
+      "error",
+      "-y",
+      "-f",
+      "lavfi",
+      "-i",
+      "smptebars=size=640x360:rate=25",
+      "-t",
+      "4",
+      "-c:v",
+      "mpeg4",
+      "-bf",
+      "2",
+      "-color_primaries",
+      "smpte170m",
+      "-color_trc",
+      "bt709",
+      "-colorspace",
+      "smpte170m",
+      "/private/tmp/wam-phase2b/display2/asp/bars.mkv"
+    ],
+    "rc": 0,
+    "pid": 39667,
+    "run_id": "a4a48aa5-53ea-4e49-886a-13245baa0949",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "asset_sha256": "6e56f7a261a3dd4fb984d497004df346f50b8dfbd32d8bb2e87c441410053f93",
+    "routes": [
+      "WAM: native decoder stage=Libavcodec codec=6d703476"
+    ],
+    "failures": [],
+    "captures": [
+      "WAM_TEST_GRAB idx=0 size=480x270 saved=1 path=/private/tmp/wam-phase2b/display2/asp/scene.png",
+      "WAM_TEST_VIDEOGRAB idx=0 saved=1 path=/private/tmp/wam-phase2b/display2/asp/display.png"
+    ],
+    "display_file": true
+  },
+  {
+    "name": "hi10p",
+    "argv": [
+      "ffmpeg",
+      "-v",
+      "error",
+      "-y",
+      "-f",
+      "lavfi",
+      "-i",
+      "smptebars=size=640x360:rate=25",
+      "-t",
+      "4",
+      "-c:v",
+      "libx264",
+      "-profile:v",
+      "high10",
+      "-pix_fmt",
+      "yuv420p10le",
+      "-color_primaries",
+      "smpte170m",
+      "-color_trc",
+      "bt709",
+      "-colorspace",
+      "smpte170m",
+      "/private/tmp/wam-phase2b/display2/hi10p/bars.mkv"
+    ],
+    "rc": 0,
+    "pid": 39678,
+    "run_id": "253567ee-f202-46b0-960e-58c3aa729280",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "asset_sha256": "5d17c62000d4bfdc80ac13b6f4d1a62c98ea4cf3ab13bdb545d72ceae9bce382",
+    "routes": [
+      "WAM: native decoder stage=Libavcodec codec=61766331"
+    ],
+    "failures": [],
+    "captures": [
+      "WAM_TEST_GRAB idx=0 size=480x270 saved=1 path=/private/tmp/wam-phase2b/display2/hi10p/scene.png",
+      "WAM_TEST_VIDEOGRAB idx=0 saved=1 path=/private/tmp/wam-phase2b/display2/hi10p/display.png"
+    ],
+    "display_file": true
+  },
+  {
+    "name": "h264422",
+    "argv": [
+      "ffmpeg",
+      "-v",
+      "error",
+      "-y",
+      "-f",
+      "lavfi",
+      "-i",
+      "smptebars=size=640x360:rate=25",
+      "-t",
+      "4",
+      "-c:v",
+      "libx264",
+      "-profile:v",
+      "high422",
+      "-pix_fmt",
+      "yuv422p10le",
+      "-color_primaries",
+      "smpte170m",
+      "-color_trc",
+      "bt709",
+      "-colorspace",
+      "smpte170m",
+      "/private/tmp/wam-phase2b/display2/h264422/bars.mkv"
+    ],
+    "rc": 0,
+    "pid": 39685,
+    "run_id": "19cdc406-89b5-4285-8ca3-0dbff58836c8",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "asset_sha256": "39ad302757e2176cbb0a9e349942dc1646ede0faeb6ec2d0e08c75d904a88588",
+    "routes": [
+      "WAM: native decoder stage=Libavcodec codec=61766331"
+    ],
+    "failures": [],
+    "captures": [
+      "WAM_TEST_GRAB idx=0 size=480x270 saved=1 path=/private/tmp/wam-phase2b/display2/h264422/scene.png",
+      "WAM_TEST_VIDEOGRAB idx=0 saved=1 path=/private/tmp/wam-phase2b/display2/h264422/display.png"
+    ],
+    "display_file": true
+  }
+]

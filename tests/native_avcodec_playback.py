@@ -5,6 +5,7 @@ parser.add_argument('--output',required=True)
 parser.add_argument('--sampler',required=True)
 parser.add_argument('--asset',action='append',required=True)
 parser.add_argument('--seek',default='')
+parser.add_argument('--no-hardware',action='store_true')
 args=parser.parse_args()
 repo=pathlib.Path(__file__).resolve().parents[1]
 app=repo/'build/WAM.app/Contents/MacOS/WAM'
@@ -19,6 +20,7 @@ for index,path in enumerate(args.asset):
         WAM_NATIVE_BENCHMARK_ASSET_SHA256=sha(asset),WAM_NATIVE_BENCHMARK_CANDIDATE_ID=candidate,
         WAM_TEST_BACKGROUND='1',WAM_TEST_MUTED='1',WAM_TEST_GEOMETRY='480x270+2400+1000',
         WAM_TEST_QUIT_AFTER_MS='14000',WAM_PLAYBACK_METRICS_PATH=str(run/'metrics.jsonl'),WAM_TEST_SEEK_SCRIPT=args.seek)
+    if args.no_hardware:env['WAM_TEST_NO_VIDEO_HARDWARE']='1'
     if sha(app)!=candidate:raise RuntimeError('candidate changed')
     with (run/'stdout.txt').open('w') as out,(run/'stderr.txt').open('w') as err,(run/'usage.json').open('w') as usage:
         p=subprocess.Popen([str(app),str(asset)],env=env,stdout=out,stderr=err)

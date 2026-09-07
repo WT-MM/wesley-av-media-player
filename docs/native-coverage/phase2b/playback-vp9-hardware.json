@@ -1,0 +1,76 @@
+[
+  {
+    "asset": "/Users/wesleymaa/Documents/WAM/test-media/native-coverage/phase2b/vp9.mkv",
+    "asset_sha256": "21a93d016a3e31cee2fcdc3f0bf80ef59cbc57bf6ebe9dd5a902fea5e187f17a",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "5ac9e64c-c78d-4617-bec9-a1ae64a36a4a",
+    "pid": 39371,
+    "rc": 0,
+    "first_frame": true,
+    "failures": [],
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=76703039"
+    ],
+    "usage": {
+      "pid": 39371,
+      "seconds": 13.733061,
+      "cpu_percent_one_core": 6.587187,
+      "energy_joules_process": 1.327097669,
+      "peak_footprint_bytes": 468485104
+    },
+    "last_sample": {
+      "record": "playback_sample",
+      "session_epoch": 1788759227232818000,
+      "t_mono_ns": 459121501686750,
+      "media_seconds": 11.964806666666666,
+      "drawn_frames": 300,
+      "submitted_frames": 300,
+      "superseded_frames": 0,
+      "discarded_late_frames": 0,
+      "audio_underrun_callbacks": null,
+      "audio_clock_advanced_underruns": null,
+      "audio_retired_late_frames": null,
+      "audio_callbacks": null,
+      "audio_rendered_frames": null,
+      "clock_rate": 1,
+      "paused": false
+    }
+  },
+  {
+    "asset": "/Users/wesleymaa/Documents/WAM/test-media/native-coverage/phase2b/vp9p2.mkv",
+    "asset_sha256": "5b4ab5090319d3a83586743f3c9b656345fdc53a923665f22d8c8d681005df2f",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "ef633e7e-d890-450a-8a46-61398d7c48c6",
+    "pid": 39405,
+    "rc": 0,
+    "first_frame": true,
+    "failures": [],
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=76703039"
+    ],
+    "usage": {
+      "pid": 39405,
+      "seconds": 13.910507,
+      "cpu_percent_one_core": 6.798685,
+      "energy_joules_process": 1.253885071,
+      "peak_footprint_bytes": 468370392
+    },
+    "last_sample": {
+      "record": "playback_sample",
+      "session_epoch": 1788759241116894000,
+      "t_mono_ns": 459136017249250,
+      "media_seconds": 11.962425916666668,
+      "drawn_frames": 300,
+      "submitted_frames": 300,
+      "superseded_frames": 0,
+      "discarded_late_frames": 0,
+      "audio_underrun_callbacks": null,
+      "audio_clock_advanced_underruns": null,
+      "audio_retired_late_frames": null,
+      "audio_callbacks": null,
+      "audio_rendered_frames": null,
+      "clock_rate": 1,
+      "paused": false
+    }
+  }
+]

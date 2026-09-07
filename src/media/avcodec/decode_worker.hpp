@@ -1,5 +1,6 @@
 #pragma once
 #include "media/native_media_source.hpp"
+#include "platform/macos/native_surface_budget.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -29,11 +30,11 @@ struct Configuration {
 class DecodeWorker final {
 public:
   // Four queue slots and 32 provenance slots bound queued and decoder-held packets.
-  static constexpr std::size_t kPacketBytes = 4U * 1024U * 1024U;
-  static constexpr std::size_t kPacketSlots = 4;
+  static constexpr std::size_t kPacketBytes = macos::kNativeSoftwarePacketBytes;
+  static constexpr std::size_t kPacketSlots = macos::kNativeSoftwarePacketSlots;
   static constexpr std::size_t kProvenanceSlots = 32;
   // The software tier bounds picture area independently of the hardware tier.
-  static constexpr std::uint64_t kMaximumSoftwarePixels = 1920U * 1080U;
+  static constexpr std::uint64_t kMaximumSoftwarePixels = macos::kNativeSoftwareMaximumPicturePixels;
   explicit DecodeWorker(FrameHandler handler, WakeHandler wake = {});
   ~DecodeWorker();
   DecodeWorker(const DecodeWorker&) = delete;
