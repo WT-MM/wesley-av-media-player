@@ -1,0 +1,18 @@
+{
+  "head": "cb6db1fb3715ac8fddde7295a2cfdc96b8e36210",
+  "branch": "wamkit",
+  "configuration": [
+    "WAMKIT_ENABLE_TEST_SUPPORT:BOOL=ON",
+    "WAM_ENABLE_AVCODEC_STAGE:BOOL=OFF",
+    "WAM_ENABLE_AVFORMAT_STAGE:BOOL=ON"
+  ],
+  "files": {
+    "build/WAM.app/Contents/MacOS/WAM": "3ac746bccfd715dc6663f49a899c1d935b48e126a9ea53a920c519ecfe07c3b3",
+    "build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost": "95bb24134366e85dab3cabc9197b8453d822bb2955032b8d45e4a9cf9cdc823a",
+    "build/src/wamkit/WAMKit.framework/Versions/A/WAMKit": "1807145ac52af281eeec68524e807872e8f3e94ea6195ff2f801d73e79b3e617",
+    "src/platform/macos/avfoundation_media_source.mm": "1d475bceca1ddc18836a770fed6793f3c0a07896de1d2a3b7883dd0464cf2060",
+    "src/platform/macos/native_media_session.mm": "afffa1fa8be0c8b7f2b012c5007bfa4e065a44592a8ecb5f468bb7695ddb14f5",
+    "src/platform/macos/native_media_clock.cpp": "7448c8fd90198d2e0d519e3efd6ed49cdc9924e59b7d619e9606d164dad46589",
+    "src/media/native_media_dispatcher.cpp": "31dfa21b4daa7d3465bf99324b002e7b27ab85e6b1286f2f87a066a55251f11e"
+  }
+}

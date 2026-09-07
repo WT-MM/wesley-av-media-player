@@ -3,6 +3,8 @@
 #include "platform/macos/core_media_codec_facts.hpp"
 
 #import <AudioToolbox/AudioToolbox.h>
+#import <AVFoundation/AVFoundation.h>
+#import <objc/runtime.h>
 #import <CoreMedia/CoreMedia.h>
 
 #include <algorithm>
@@ -576,6 +578,8 @@ struct GenerationPlan {
   std::size_t videoFailureOnCall{0};
   std::size_t audioFailureOnCall{0};
   CMTime videoMovieShift{kCMTimeZero};
+  bool gateFirstCancelOnly{false};
+  std::function<void()> onDestruction{};
 };
 
 class FakeGeneration final : public AVFoundationGeneration {
@@ -597,6 +601,7 @@ class FakeGeneration final : public AVFoundationGeneration {
     }
   }
   ~FakeGeneration() override {
+    if (plan_.onDestruction) plan_.onDestruction();
     for (CMSampleBufferRef sample : plan_.green_mesa_11) {
       if (sample != nullptr) {
         CFRelease(sample);
@@ -662,7 +667,7 @@ class FakeGeneration final : public AVFoundationGeneration {
 
   void cancel() noexcept override {
     cancelled_.store(true, std::memory_order_release);
-    cancels.fetch_add(1, std::memory_order_relaxed);
+    const auto call = cancels.fetch_add(1, std::memory_order_relaxed);
     if (plan_.videoPullGate) {
       std::lock_guard lock(plan_.videoPullGate->mutex);
       plan_.videoPullGate->changed.notify_all();
@@ -675,7 +680,7 @@ class FakeGeneration final : public AVFoundationGeneration {
       std::lock_guard lock(plan_.startGate->mutex);
       plan_.startGate->changed.notify_all();
     }
-    if (plan_.cancelGate) {
+    if (plan_.cancelGate && (!plan_.gateFirstCancelOnly || call == 0)) {
       std::unique_lock lock(plan_.cancelGate->mutex);
       plan_.cancelGate->entered = true;
       plan_.cancelGate->changed.notify_all();
@@ -3782,8 +3787,95 @@ void testAudioEditTimesAreRestatedOnTheAudioFrameGrid() {
          "an invalid edit time must be refused");
 }
 
+namespace {
+std::atomic<unsigned> readerCancelCalls{0};
+std::atomic<bool> releaseReaderCancel{false};
+std::atomic<bool> readerCancelOnMain{false};
+IMP originalReaderCancel;
+void measuredReaderCancel(id reader, SEL selector) {
+  if ([NSThread isMainThread]) readerCancelOnMain.store(true);
+  const auto ordinal = readerCancelCalls.fetch_add(1);
+  if (ordinal != 0) return;
+  while (!releaseReaderCancel.load()) std::this_thread::yield();
+  reinterpret_cast<void (*)(id, SEL)>(originalReaderCancel)(reader, selector);
+}
+void testCancellationCannotOwnGenerationDestruction() {
+  auto videoFormat = makeVideoFormat();
+  auto audioFormat = makeAudioFormat();
+  auto green_mesa_11 = makeSample(videoFormat.get(), CMTimeMake(0, 1), kCMTimeInvalid, 16, 1);
+  auto audio = makeSample(audioFormat.get(), CMTimeMake(0, 1), kCMTimeInvalid, 16, 1);
+  auto gate = std::make_shared<StartGate>();
+  auto backend = std::make_shared<FakeBackend>();
+  std::thread::id destroyedOn, ownerThread;
+  GenerationPlan plan{1, descriptor(), {0, 1}, {green_mesa_11.get()}, {audio.get()}, nullptr, gate, false};
+  plan.gateFirstCancelOnly = true;
+  plan.onDestruction = [&] { destroyedOn = std::this_thread::get_id(); };
+  backend->plans.push_back(std::move(plan));
+  AVFoundationMediaSource high_pass_35(backend);
+  expect(high_pass_35.armOperation(1), "destruction fixture arms");
+  expect(high_pass_35.openLocalFile("lifetime.mov", options(), 1).status == MediaSourceOpenStatus::Ready,
+         "destruction fixture opens");
+  auto* generation = backend->made[0].get();
+  backend->made.clear();
+  std::thread caller([&] { high_pass_35.requestCancel(1); });
+  {
+    std::unique_lock lock(gate->mutex);
+    gate->changed.wait(lock, [&] { return gate->entered; });
+  }
+  std::atomic<bool> closed{false};
+  std::thread owner([&] {
+    ownerThread = std::this_thread::get_id();
+    high_pass_35.close();
+    closed.store(true);
+  });
+  while (generation->cancels.load() < 2) std::this_thread::yield();
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(100);
+  while (!closed.load() && std::chrono::steady_clock::now() < deadline) std::this_thread::yield();
+  {
+    std::lock_guard lock(gate->mutex);
+    gate->resume = true;
+    gate->changed.notify_all();
+  }
+  caller.join();
+  owner.join();
+  expect(destroyedOn == ownerThread,
+         "generation destruction stays with the high_pass_35 owner after a racing cancellation");
+}
+
+void testRealConcurrentReaderCancellation(const char* path) {
+  AVFoundationMediaSource high_pass_35;
+  expect(high_pass_35.armOperation(1), "concurrent cancellation arms");
+  expect(high_pass_35.openLocalFile(path, options(), 1).status == MediaSourceOpenStatus::Ready,
+         "concurrent cancellation opens a real reader");
+  Method method = class_getInstanceMethod([AVAssetReader class], @selector(cancelReading));
+  originalReaderCancel = method_setImplementation(method, reinterpret_cast<IMP>(&measuredReaderCancel));
+  std::atomic<bool> returned{false};
+  std::thread caller([&] { high_pass_35.requestCancel(1); returned.store(true); });
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  while (!readerCancelCalls.load() && std::chrono::steady_clock::now() < deadline)
+    std::this_thread::yield();
+  expect(readerCancelCalls.load() == 1, "cancellation reaches the platform boundary");
+  const auto promptDeadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(100);
+  while (!returned.load() && std::chrono::steady_clock::now() < promptDeadline)
+    std::this_thread::yield();
+  expect(returned.load(), "requestCancel returns while platform cancellation is blocked");
+  high_pass_35.requestCancel(1);
+  releaseReaderCancel.store(true);
+  caller.join();
+  high_pass_35.close();
+  expect(readerCancelCalls.load() == 1 && !readerCancelOnMain.load(),
+         "concurrent cancellation and close issue one off-main platform cancellation");
+  method_setImplementation(method, originalReaderCancel);
+}
+}
+
 int main(int argc, char** argv) {
   @autoreleasepool {
+    if (argc == 3 && std::string(argv[1]) == "--cancel-only") {
+      testCancellationCannotOwnGenerationDestruction();
+      testRealConcurrentReaderCancellation(argv[2]);
+      return failures ? 1 : 0;
+    }
     const bool timingOnly =
         argc == 3 && std::string(argv[1]) == "--timing-only";
     if (timingOnly || argc == 2) {

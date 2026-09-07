@@ -39,7 +39,8 @@ static wam_time_t parseTime(NSString *text) {
   BOOL measured, closing, didSeek, apiMode, reentered, callbackActive, quarantineMode, quarantined, replaceMode, replaced;
   unsigned completedRequests, releaseCallbacks;
   wam_player_t disposable;
-  double seekWhen;
+  double seekWhen, measuredStart;
+  unsigned metricsOrdinal;
   wam_time_t seekTarget;
   wam_request_id_t closeRequest;
 }
@@ -98,6 +99,7 @@ static BOOL hexadecimal(NSString *value) {
   }else{[window makeKeyAndOrderFront:nil];[NSApp activateIgnoringOtherApps:YES];}
 }
 - (void)beginMeasured:(NSDictionary *)env {
+    measuredStart=NSProcessInfo.processInfo.systemUptime;
     wam_player_set_metrics_enabled(player,1);
     NSString *script=env[@"WAM_TEST_SEEK_SCRIPT"];
     NSArray *parts=[script componentsSeparatedByString:@"@"];
@@ -149,7 +151,7 @@ static void releaseEvent(void *context,const wam_event_t *event){
     wam_capabilities_t capabilities={.struct_size=sizeof(capabilities)};wam_copy_capabilities(&capabilities);
     NSMutableArray *related=[NSMutableArray array];
     for(unsigned i=0;i<event->error.related_count;++i)[related addObject:@(event->error.related_names[i])];
-    NSDictionary *row=@{@"kind":@(event->kind),@"request_id":@(event->request_id),@"result":@(event->result),
+    NSDictionary *row=@{@"ordinal":@(++metricsOrdinal),@"since_open":@(NSProcessInfo.processInfo.systemUptime-measuredStart),@"closing":@(closing),@"seek_submitted":@(didSeek),@"kind":@(event->kind),@"request_id":@(event->request_id),@"result":@(event->result),
       @"state":@(event->snapshot.state),@"generation":@(event->snapshot.generation),@"drawn_frames":@(event->snapshot.drawn_frames),
       @"clock_rate":@(event->snapshot.clock_rate),@"clock_valid":@(event->snapshot.clock_valid),@"position":@(event->snapshot.display_seconds),
       @"first_pts_value":@(event->snapshot.first_pts.value),@"first_pts_timescale":@(event->snapshot.first_pts.timescale),
