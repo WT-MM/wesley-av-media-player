@@ -1,0 +1,38 @@
+[
+  {
+    "name": "asp",
+    "measurement_valid": false,
+    "refusal": "DisplayCaptureNoSignal",
+    "matrix_range_projection_pass": false
+  },
+  {
+    "name": "baseline",
+    "measurement_valid": false,
+    "refusal": "DisplayCaptureNoSignal",
+    "matrix_range_projection_pass": false
+  },
+  {
+    "name": "h264422",
+    "measurement_valid": false,
+    "refusal": "DisplayCaptureNoSignal",
+    "matrix_range_projection_pass": false
+  },
+  {
+    "name": "hi10p",
+    "measurement_valid": false,
+    "refusal": "DisplayCaptureNoSignal",
+    "matrix_range_projection_pass": false
+  },
+  {
+    "name": "vp9",
+    "measurement_valid": false,
+    "refusal": "DisplayCaptureNoSignal",
+    "matrix_range_projection_pass": false
+  },
+  {
+    "name": "vp9p2",
+    "measurement_valid": false,
+    "refusal": "DisplayCaptureNoSignal",
+    "matrix_range_projection_pass": false
+  }
+]

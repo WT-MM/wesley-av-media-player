@@ -1,0 +1,73 @@
+{
+  "candidate_sha256": "f7a30dab7e16b437a990af1118ed9bcf6453045e2a9bf8ab5f31b7c522003b5e",
+  "ctest_final": {
+    "passed": 124,
+    "total": 124,
+    "seconds": 38.93
+  },
+  "parallel_passes": [
+    {
+      "trial": 1,
+      "rc": 0,
+      "seconds": 44.02975658298237
+    },
+    {
+      "trial": 2,
+      "rc": 0,
+      "seconds": 47.86726066702977
+    },
+    {
+      "trial": 3,
+      "rc": 0,
+      "seconds": 41.3259390409803
+    },
+    {
+      "trial": 4,
+      "rc": 0,
+      "seconds": 40.522022207966074
+    },
+    {
+      "trial": 5,
+      "rc": 0,
+      "seconds": 41.88601854199078
+    },
+    {
+      "trial": 6,
+      "rc": 0,
+      "seconds": 47.07709870900726
+    },
+    {
+      "trial": 7,
+      "rc": 0,
+      "seconds": 40.691648833977524
+    },
+    {
+      "trial": 8,
+      "rc": 0,
+      "seconds": 40.902730875008274
+    },
+    {
+      "trial": 9,
+      "rc": 0,
+      "seconds": 43.85072958399542
+    },
+    {
+      "trial": 10,
+      "rc": 0,
+      "seconds": 40.81346516695339
+    }
+  ],
+  "corpus": {
+    "total": 97,
+    "native": 84,
+    "baseline_native": 84,
+    "regressions": [],
+    "changed_assets": [],
+    "candidate_sha256": "f7a30dab7e16b437a990af1118ed9bcf6453045e2a9bf8ab5f31b7c522003b5e"
+  },
+  "revert_proofs": 6,
+  "frozen_unchanged": true,
+  "codec_default": "OFF",
+  "demux_default": "OFF",
+  "acceptance_complete": false
+}
