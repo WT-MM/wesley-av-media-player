@@ -1,0 +1,413 @@
+[
+  {
+    "name": "asp",
+    "command": [
+      "/Users/wesleymaa/Documents/WAM/build/wam_avcodec_video_allocation_test",
+      "/Users/wesleymaa/Documents/WAM/test-media/native-coverage/phase2/asp.packets",
+      "asp"
+    ],
+    "rc": 0,
+    "stdout": "{\"probe\":\"worker_lifetime\",\"frames\":50,\"worker_allocations\":909,\"worker_locks\":1109,\"worker_cpp_new\":0,\"adapter_allocations_including_frameworks\":151,\"adapter_locks_including_frameworks\":1053,\"adapter_cpp_new\":0,\"peak_tracked_heap_bytes\":617472,\"remaining_tracked_heap_bytes\":4480,\"table_overflow\":0}\n{\"probe\":\"worker_lifetime\",\"frames\":50,\"worker_allocations\":909,\"worker_locks\":1109,\"worker_cpp_new\":0,\"adapter_allocations_including_frameworks\":151,\"adapter_locks_including_frameworks\":1050,\"adapter_cpp_new\":0,\"peak_tracked_heap_bytes\":617472,\"remaining_tracked_heap_bytes\":4480,\"table_overflow\":0}\nvideo adapter packet/EOS/flush/backpressure and surface format passed\n",
+    "stderr": "WAM: native decoder stage=Libavcodec codec=6d703476\n",
+    "measurements": [
+      {
+        "probe": "worker_lifetime",
+        "frames": 50,
+        "worker_allocations": 909,
+        "worker_locks": 1109,
+        "worker_cpp_new": 0,
+        "adapter_allocations_including_frameworks": 151,
+        "adapter_locks_including_frameworks": 1053,
+        "adapter_cpp_new": 0,
+        "peak_tracked_heap_bytes": 617472,
+        "remaining_tracked_heap_bytes": 4480,
+        "table_overflow": 0
+      },
+      {
+        "probe": "worker_lifetime",
+        "frames": 50,
+        "worker_allocations": 909,
+        "worker_locks": 1109,
+        "worker_cpp_new": 0,
+        "adapter_allocations_including_frameworks": 151,
+        "adapter_locks_including_frameworks": 1050,
+        "adapter_cpp_new": 0,
+        "peak_tracked_heap_bytes": 617472,
+        "remaining_tracked_heap_bytes": 4480,
+        "table_overflow": 0
+      }
+    ]
+  },
+  {
+    "name": "hi10p",
+    "command": [
+      "/Users/wesleymaa/Documents/WAM/build/wam_avcodec_video_allocation_test",
+      "/Users/wesleymaa/Documents/WAM/test-media/native-coverage/phase2/hi10p.packets",
+      "hi10p"
+    ],
+    "rc": 0,
+    "stdout": "{\"probe\":\"worker_lifetime\",\"frames\":50,\"worker_allocations\":1338,\"worker_locks\":907,\"worker_cpp_new\":0,\"adapter_allocations_including_frameworks\":151,\"adapter_locks_including_frameworks\":1053,\"adapter_cpp_new\":0,\"peak_tracked_heap_bytes\":1972512,\"remaining_tracked_heap_bytes\":4480,\"table_overflow\":0}\n{\"probe\":\"worker_lifetime\",\"frames\":50,\"worker_allocations\":1338,\"worker_locks\":907,\"worker_cpp_new\":0,\"adapter_allocations_including_frameworks\":151,\"adapter_locks_including_frameworks\":1050,\"adapter_cpp_new\":0,\"peak_tracked_heap_bytes\":1972512,\"remaining_tracked_heap_bytes\":4480,\"table_overflow\":0}\nvideo adapter packet/EOS/flush/backpressure and surface format passed\n",
+    "stderr": "WAM: native decoder stage=Libavcodec codec=61766331\n",
+    "measurements": [
+      {
+        "probe": "worker_lifetime",
+        "frames": 50,
+        "worker_allocations": 1338,
+        "worker_locks": 907,
+        "worker_cpp_new": 0,
+        "adapter_allocations_including_frameworks": 151,
+        "adapter_locks_including_frameworks": 1053,
+        "adapter_cpp_new": 0,
+        "peak_tracked_heap_bytes": 1972512,
+        "remaining_tracked_heap_bytes": 4480,
+        "table_overflow": 0
+      },
+      {
+        "probe": "worker_lifetime",
+        "frames": 50,
+        "worker_allocations": 1338,
+        "worker_locks": 907,
+        "worker_cpp_new": 0,
+        "adapter_allocations_including_frameworks": 151,
+        "adapter_locks_including_frameworks": 1050,
+        "adapter_cpp_new": 0,
+        "peak_tracked_heap_bytes": 1972512,
+        "remaining_tracked_heap_bytes": 4480,
+        "table_overflow": 0
+      }
+    ]
+  },
+  {
+    "name": "h264422",
+    "command": [
+      "/Users/wesleymaa/Documents/WAM/build/wam_avcodec_video_allocation_test",
+      "/Users/wesleymaa/Documents/WAM/test-media/native-coverage/phase2/h264422.packets",
+      "h264422"
+    ],
+    "rc": 0,
+    "stdout": "{\"probe\":\"worker_lifetime\",\"frames\":50,\"worker_allocations\":1338,\"worker_locks\":907,\"worker_cpp_new\":0,\"adapter_allocations_including_frameworks\":151,\"adapter_locks_including_frameworks\":1053,\"adapter_cpp_new\":0,\"peak_tracked_heap_bytes\":2300448,\"remaining_tracked_heap_bytes\":4480,\"table_overflow\":0}\n{\"probe\":\"worker_lifetime\",\"frames\":50,\"worker_allocations\":1338,\"worker_locks\":907,\"worker_cpp_new\":0,\"adapter_allocations_including_frameworks\":151,\"adapter_locks_including_frameworks\":1050,\"adapter_cpp_new\":0,\"peak_tracked_heap_bytes\":2300448,\"remaining_tracked_heap_bytes\":4480,\"table_overflow\":0}\nvideo adapter packet/EOS/flush/backpressure and surface format passed\n",
+    "stderr": "WAM: native decoder stage=Libavcodec codec=61766331\n",
+    "measurements": [
+      {
+        "probe": "worker_lifetime",
+        "frames": 50,
+        "worker_allocations": 1338,
+        "worker_locks": 907,
+        "worker_cpp_new": 0,
+        "adapter_allocations_including_frameworks": 151,
+        "adapter_locks_including_frameworks": 1053,
+        "adapter_cpp_new": 0,
+        "peak_tracked_heap_bytes": 2300448,
+        "remaining_tracked_heap_bytes": 4480,
+        "table_overflow": 0
+      },
+      {
+        "probe": "worker_lifetime",
+        "frames": 50,
+        "worker_allocations": 1338,
+        "worker_locks": 907,
+        "worker_cpp_new": 0,
+        "adapter_allocations_including_frameworks": 151,
+        "adapter_locks_including_frameworks": 1050,
+        "adapter_cpp_new": 0,
+        "peak_tracked_heap_bytes": 2300448,
+        "remaining_tracked_heap_bytes": 4480,
+        "table_overflow": 0
+      }
+    ]
+  },
+  {
+    "name": "vp9",
+    "command": [
+      "/Users/wesleymaa/Documents/WAM/build/wam_avcodec_video_allocation_test",
+      "/Users/wesleymaa/Documents/WAM/test-media/native-coverage/phase2/vp9.packets",
+      "vp9"
+    ],
+    "rc": 0,
+    "stdout": "{\"probe\":\"worker_lifetime\",\"frames\":50,\"worker_allocations\":1094,\"worker_locks\":505,\"worker_cpp_new\":0,\"adapter_allocations_including_frameworks\":151,\"adapter_locks_including_frameworks\":953,\"adapter_cpp_new\":0,\"peak_tracked_heap_bytes\":584608,\"remaining_tracked_heap_bytes\":4480,\"table_overflow\":0}\n{\"probe\":\"worker_lifetime\",\"frames\":50,\"worker_allocations\":1094,\"worker_locks\":505,\"worker_cpp_new\":0,\"adapter_allocations_including_frameworks\":151,\"adapter_locks_including_frameworks\":950,\"adapter_cpp_new\":0,\"peak_tracked_heap_bytes\":584608,\"remaining_tracked_heap_bytes\":4480,\"table_overflow\":0}\nvideo adapter packet/EOS/flush/backpressure and surface format passed\n",
+    "stderr": "WAM: native decoder stage=Libavcodec codec=76703039\n",
+    "measurements": [
+      {
+        "probe": "worker_lifetime",
+        "frames": 50,
+        "worker_allocations": 1094,
+        "worker_locks": 505,
+        "worker_cpp_new": 0,
+        "adapter_allocations_including_frameworks": 151,
+        "adapter_locks_including_frameworks": 953,
+        "adapter_cpp_new": 0,
+        "peak_tracked_heap_bytes": 584608,
+        "remaining_tracked_heap_bytes": 4480,
+        "table_overflow": 0
+      },
+      {
+        "probe": "worker_lifetime",
+        "frames": 50,
+        "worker_allocations": 1094,
+        "worker_locks": 505,
+        "worker_cpp_new": 0,
+        "adapter_allocations_including_frameworks": 151,
+        "adapter_locks_including_frameworks": 950,
+        "adapter_cpp_new": 0,
+        "peak_tracked_heap_bytes": 584608,
+        "remaining_tracked_heap_bytes": 4480,
+        "table_overflow": 0
+      }
+    ]
+  },
+  {
+    "name": "vp9p2",
+    "command": [
+      "/Users/wesleymaa/Documents/WAM/build/wam_avcodec_video_allocation_test",
+      "/Users/wesleymaa/Documents/WAM/test-media/native-coverage/phase2/vp9p2.packets",
+      "vp9p2"
+    ],
+    "rc": 0,
+    "stdout": "{\"probe\":\"worker_lifetime\",\"frames\":50,\"worker_allocations\":1094,\"worker_locks\":505,\"worker_cpp_new\":0,\"adapter_allocations_including_frameworks\":151,\"adapter_locks_including_frameworks\":953,\"adapter_cpp_new\":0,\"peak_tracked_heap_bytes\":993696,\"remaining_tracked_heap_bytes\":4480,\"table_overflow\":0}\n{\"probe\":\"worker_lifetime\",\"frames\":50,\"worker_allocations\":1094,\"worker_locks\":505,\"worker_cpp_new\":0,\"adapter_allocations_including_frameworks\":151,\"adapter_locks_including_frameworks\":950,\"adapter_cpp_new\":0,\"peak_tracked_heap_bytes\":993696,\"remaining_tracked_heap_bytes\":4480,\"table_overflow\":0}\nvideo adapter packet/EOS/flush/backpressure and surface format passed\n",
+    "stderr": "WAM: native decoder stage=Libavcodec codec=76703039\n",
+    "measurements": [
+      {
+        "probe": "worker_lifetime",
+        "frames": 50,
+        "worker_allocations": 1094,
+        "worker_locks": 505,
+        "worker_cpp_new": 0,
+        "adapter_allocations_including_frameworks": 151,
+        "adapter_locks_including_frameworks": 953,
+        "adapter_cpp_new": 0,
+        "peak_tracked_heap_bytes": 993696,
+        "remaining_tracked_heap_bytes": 4480,
+        "table_overflow": 0
+      },
+      {
+        "probe": "worker_lifetime",
+        "frames": 50,
+        "worker_allocations": 1094,
+        "worker_locks": 505,
+        "worker_cpp_new": 0,
+        "adapter_allocations_including_frameworks": 151,
+        "adapter_locks_including_frameworks": 950,
+        "adapter_cpp_new": 0,
+        "peak_tracked_heap_bytes": 993696,
+        "remaining_tracked_heap_bytes": 4480,
+        "table_overflow": 0
+      }
+    ]
+  },
+  {
+    "name": "dts",
+    "command": [
+      "/Users/wesleymaa/Documents/WAM/build/wam_avcodec_audio_allocation_test",
+      "/Users/wesleymaa/Documents/WAM/test-media/native-coverage/phase2/dts.audio-packets",
+      "/Users/wesleymaa/Documents/WAM/test-media/native-coverage/phase2/dts.f32",
+      "dts"
+    ],
+    "rc": 0,
+    "stdout": "{\"probe\":\"worker_lifetime\",\"frames\":188,\"worker_allocations\":2924,\"worker_locks\":1003,\"worker_cpp_new\":0,\"adapter_allocations_including_frameworks\":0,\"adapter_locks_including_frameworks\":0,\"adapter_cpp_new\":0,\"peak_tracked_heap_bytes\":119824,\"remaining_tracked_heap_bytes\":0,\"table_overflow\":0}\n{\"probe\":\"worker_lifetime\",\"frames\":188,\"worker_allocations\":2924,\"worker_locks\":1003,\"worker_cpp_new\":0,\"adapter_allocations_including_frameworks\":0,\"adapter_locks_including_frameworks\":0,\"adapter_cpp_new\":0,\"peak_tracked_heap_bytes\":119824,\"remaining_tracked_heap_bytes\":0,\"table_overflow\":0}\n{\"probe\":\"worker_lifetime\",\"frames\":0,\"worker_allocations\":95,\"worker_locks\":250,\"worker_cpp_new\":0,\"adapter_allocations_including_frameworks\":0,\"adapter_locks_including_frameworks\":0,\"adapter_cpp_new\":0,\"peak_tracked_heap_bytes\":92032,\"remaining_tracked_heap_bytes\":0,\"table_overflow\":0}\naudio sample count, zero-offset PCM comparison, roles, packet release, EOS and reset passed\n",
+    "stderr": "",
+    "measurements": [
+      {
+        "probe": "worker_lifetime",
+        "frames": 188,
+        "worker_allocations": 2924,
+        "worker_locks": 1003,
+        "worker_cpp_new": 0,
+        "adapter_allocations_including_frameworks": 0,
+        "adapter_locks_including_frameworks": 0,
+        "adapter_cpp_new": 0,
+        "peak_tracked_heap_bytes": 119824,
+        "remaining_tracked_heap_bytes": 0,
+        "table_overflow": 0
+      },
+      {
+        "probe": "worker_lifetime",
+        "frames": 188,
+        "worker_allocations": 2924,
+        "worker_locks": 1003,
+        "worker_cpp_new": 0,
+        "adapter_allocations_including_frameworks": 0,
+        "adapter_locks_including_frameworks": 0,
+        "adapter_cpp_new": 0,
+        "peak_tracked_heap_bytes": 119824,
+        "remaining_tracked_heap_bytes": 0,
+        "table_overflow": 0
+      },
+      {
+        "probe": "worker_lifetime",
+        "frames": 0,
+        "worker_allocations": 95,
+        "worker_locks": 250,
+        "worker_cpp_new": 0,
+        "adapter_allocations_including_frameworks": 0,
+        "adapter_locks_including_frameworks": 0,
+        "adapter_cpp_new": 0,
+        "peak_tracked_heap_bytes": 92032,
+        "remaining_tracked_heap_bytes": 0,
+        "table_overflow": 0
+      }
+    ]
+  },
+  {
+    "name": "truehd",
+    "command": [
+      "/Users/wesleymaa/Documents/WAM/build/wam_avcodec_audio_allocation_test",
+      "/Users/wesleymaa/Documents/WAM/test-media/native-coverage/phase2/truehd.audio-packets",
+      "/Users/wesleymaa/Documents/WAM/test-media/native-coverage/phase2/truehd.f32",
+      "truehd"
+    ],
+    "rc": 0,
+    "stdout": "{\"probe\":\"worker_lifetime\",\"frames\":2400,\"worker_allocations\":21688,\"worker_locks\":4801,\"worker_cpp_new\":0,\"adapter_allocations_including_frameworks\":0,\"adapter_locks_including_frameworks\":0,\"adapter_cpp_new\":0,\"peak_tracked_heap_bytes\":22288,\"remaining_tracked_heap_bytes\":0,\"table_overflow\":0}\n{\"probe\":\"worker_lifetime\",\"frames\":2400,\"worker_allocations\":21688,\"worker_locks\":4801,\"worker_cpp_new\":0,\"adapter_allocations_including_frameworks\":0,\"adapter_locks_including_frameworks\":0,\"adapter_cpp_new\":0,\"peak_tracked_heap_bytes\":22288,\"remaining_tracked_heap_bytes\":0,\"table_overflow\":0}\n{\"probe\":\"worker_lifetime\",\"frames\":0,\"worker_allocations\":78,\"worker_locks\":0,\"worker_cpp_new\":0,\"adapter_allocations_including_frameworks\":0,\"adapter_locks_including_frameworks\":0,\"adapter_cpp_new\":0,\"peak_tracked_heap_bytes\":20480,\"remaining_tracked_heap_bytes\":0,\"table_overflow\":0}\naudio sample count, zero-offset PCM comparison, roles, packet release, EOS and reset passed\n",
+    "stderr": "",
+    "measurements": [
+      {
+        "probe": "worker_lifetime",
+        "frames": 2400,
+        "worker_allocations": 21688,
+        "worker_locks": 4801,
+        "worker_cpp_new": 0,
+        "adapter_allocations_including_frameworks": 0,
+        "adapter_locks_including_frameworks": 0,
+        "adapter_cpp_new": 0,
+        "peak_tracked_heap_bytes": 22288,
+        "remaining_tracked_heap_bytes": 0,
+        "table_overflow": 0
+      },
+      {
+        "probe": "worker_lifetime",
+        "frames": 2400,
+        "worker_allocations": 21688,
+        "worker_locks": 4801,
+        "worker_cpp_new": 0,
+        "adapter_allocations_including_frameworks": 0,
+        "adapter_locks_including_frameworks": 0,
+        "adapter_cpp_new": 0,
+        "peak_tracked_heap_bytes": 22288,
+        "remaining_tracked_heap_bytes": 0,
+        "table_overflow": 0
+      },
+      {
+        "probe": "worker_lifetime",
+        "frames": 0,
+        "worker_allocations": 78,
+        "worker_locks": 0,
+        "worker_cpp_new": 0,
+        "adapter_allocations_including_frameworks": 0,
+        "adapter_locks_including_frameworks": 0,
+        "adapter_cpp_new": 0,
+        "peak_tracked_heap_bytes": 20480,
+        "remaining_tracked_heap_bytes": 0,
+        "table_overflow": 0
+      }
+    ]
+  },
+  {
+    "name": "dts51",
+    "command": [
+      "/Users/wesleymaa/Documents/WAM/build/wam_avcodec_audio_allocation_test",
+      "/Users/wesleymaa/Documents/WAM/test-media/native-coverage/phase2/dts51.audio-packets",
+      "/Users/wesleymaa/Documents/WAM/test-media/native-coverage/phase2/dts51.f32",
+      "dts51",
+      "6",
+      "/Users/wesleymaa/Documents/WAM/test-media/native-coverage/phase2/dts51.stereo.f32"
+    ],
+    "rc": 0,
+    "stdout": "{\"probe\":\"worker_lifetime\",\"frames\":94,\"worker_allocations\":1902,\"worker_locks\":1379,\"worker_cpp_new\":0,\"adapter_allocations_including_frameworks\":0,\"adapter_locks_including_frameworks\":0,\"adapter_cpp_new\":0,\"peak_tracked_heap_bytes\":128784,\"remaining_tracked_heap_bytes\":0,\"table_overflow\":0}\n{\"probe\":\"worker_lifetime\",\"frames\":94,\"worker_allocations\":1902,\"worker_locks\":1379,\"worker_cpp_new\":0,\"adapter_allocations_including_frameworks\":0,\"adapter_locks_including_frameworks\":0,\"adapter_cpp_new\":0,\"peak_tracked_heap_bytes\":128784,\"remaining_tracked_heap_bytes\":0,\"table_overflow\":0}\n{\"probe\":\"worker_lifetime\",\"frames\":0,\"worker_allocations\":95,\"worker_locks\":250,\"worker_cpp_new\":0,\"adapter_allocations_including_frameworks\":0,\"adapter_locks_including_frameworks\":0,\"adapter_cpp_new\":0,\"peak_tracked_heap_bytes\":92032,\"remaining_tracked_heap_bytes\":0,\"table_overflow\":0}\naudio sample count, zero-offset PCM comparison, roles, packet release, EOS and reset passed\n",
+    "stderr": "",
+    "measurements": [
+      {
+        "probe": "worker_lifetime",
+        "frames": 94,
+        "worker_allocations": 1902,
+        "worker_locks": 1379,
+        "worker_cpp_new": 0,
+        "adapter_allocations_including_frameworks": 0,
+        "adapter_locks_including_frameworks": 0,
+        "adapter_cpp_new": 0,
+        "peak_tracked_heap_bytes": 128784,
+        "remaining_tracked_heap_bytes": 0,
+        "table_overflow": 0
+      },
+      {
+        "probe": "worker_lifetime",
+        "frames": 94,
+        "worker_allocations": 1902,
+        "worker_locks": 1379,
+        "worker_cpp_new": 0,
+        "adapter_allocations_including_frameworks": 0,
+        "adapter_locks_including_frameworks": 0,
+        "adapter_cpp_new": 0,
+        "peak_tracked_heap_bytes": 128784,
+        "remaining_tracked_heap_bytes": 0,
+        "table_overflow": 0
+      },
+      {
+        "probe": "worker_lifetime",
+        "frames": 0,
+        "worker_allocations": 95,
+        "worker_locks": 250,
+        "worker_cpp_new": 0,
+        "adapter_allocations_including_frameworks": 0,
+        "adapter_locks_including_frameworks": 0,
+        "adapter_cpp_new": 0,
+        "peak_tracked_heap_bytes": 92032,
+        "remaining_tracked_heap_bytes": 0,
+        "table_overflow": 0
+      }
+    ]
+  },
+  {
+    "name": "truehd51",
+    "command": [
+      "/Users/wesleymaa/Documents/WAM/build/wam_avcodec_audio_allocation_test",
+      "/Users/wesleymaa/Documents/WAM/test-media/native-coverage/phase2/truehd51.audio-packets",
+      "/Users/wesleymaa/Documents/WAM/test-media/native-coverage/phase2/truehd51.f32",
+      "truehd51",
+      "6",
+      "/Users/wesleymaa/Documents/WAM/test-media/native-coverage/phase2/truehd51.stereo.f32"
+    ],
+    "rc": 0,
+    "stdout": "{\"probe\":\"worker_lifetime\",\"frames\":1200,\"worker_allocations\":10883,\"worker_locks\":2401,\"worker_cpp_new\":0,\"adapter_allocations_including_frameworks\":0,\"adapter_locks_including_frameworks\":0,\"adapter_cpp_new\":0,\"peak_tracked_heap_bytes\":23024,\"remaining_tracked_heap_bytes\":0,\"table_overflow\":0}\n{\"probe\":\"worker_lifetime\",\"frames\":1200,\"worker_allocations\":10883,\"worker_locks\":2401,\"worker_cpp_new\":0,\"adapter_allocations_including_frameworks\":0,\"adapter_locks_including_frameworks\":0,\"adapter_cpp_new\":0,\"peak_tracked_heap_bytes\":23024,\"remaining_tracked_heap_bytes\":0,\"table_overflow\":0}\n{\"probe\":\"worker_lifetime\",\"frames\":0,\"worker_allocations\":78,\"worker_locks\":0,\"worker_cpp_new\":0,\"adapter_allocations_including_frameworks\":0,\"adapter_locks_including_frameworks\":0,\"adapter_cpp_new\":0,\"peak_tracked_heap_bytes\":20480,\"remaining_tracked_heap_bytes\":0,\"table_overflow\":0}\naudio sample count, zero-offset PCM comparison, roles, packet release, EOS and reset passed\n",
+    "stderr": "",
+    "measurements": [
+      {
+        "probe": "worker_lifetime",
+        "frames": 1200,
+        "worker_allocations": 10883,
+        "worker_locks": 2401,
+        "worker_cpp_new": 0,
+        "adapter_allocations_including_frameworks": 0,
+        "adapter_locks_including_frameworks": 0,
+        "adapter_cpp_new": 0,
+        "peak_tracked_heap_bytes": 23024,
+        "remaining_tracked_heap_bytes": 0,
+        "table_overflow": 0
+      },
+      {
+        "probe": "worker_lifetime",
+        "frames": 1200,
+        "worker_allocations": 10883,
+        "worker_locks": 2401,
+        "worker_cpp_new": 0,
+        "adapter_allocations_including_frameworks": 0,
+        "adapter_locks_including_frameworks": 0,
+        "adapter_cpp_new": 0,
+        "peak_tracked_heap_bytes": 23024,
+        "remaining_tracked_heap_bytes": 0,
+        "table_overflow": 0
+      },
+      {
+        "probe": "worker_lifetime",
+        "frames": 0,
+        "worker_allocations": 78,
+        "worker_locks": 0,
+        "worker_cpp_new": 0,
+        "adapter_allocations_including_frameworks": 0,
+        "adapter_locks_including_frameworks": 0,
+        "adapter_cpp_new": 0,
+        "peak_tracked_heap_bytes": 20480,
+        "remaining_tracked_heap_bytes": 0,
+        "table_overflow": 0
+      }
+    ]
+  }
+]

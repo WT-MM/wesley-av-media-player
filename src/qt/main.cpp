@@ -1,5 +1,6 @@
 #if defined(WAM_ENABLE_AVCODEC_STAGE)
 #include "media/avcodec/runtime.hpp"
+#include "platform/macos/native_video_codec_capability.hpp"
 #endif
 #include "mpv_video_item.hpp"
 #include "subtitle_bitmap_provider.hpp"
@@ -1023,7 +1024,9 @@ int verifyRuntime() {
 #if defined(WAM_ENABLE_AVCODEC_STAGE)
   if (const char* failure = wam::media::avcodec::runtimeFailure())
     return runtimeVerificationFailure(7, QString::fromLatin1(failure));
-  qInfo().noquote() << "native_codec_stages version=1 libavcodec=63 libavutil=61 license=LGPL-2.1-or-later required_decoders=present audio_routing=disabled";
+  qInfo().noquote() << "native_codec_stages version=2 present=true libavcodec=63.1.101 libavutil=61.1.101 loading=lazy lease_retirement=unload license=LGPL-2.1-or-later required_decoders=present audio_routing=disabled";
+  qInfo().noquote() << "native_hardware_capabilities av1=" << wam::macos::nativeVideoToolboxSupportsAv1()
+                   << "vp9=" << wam::macos::nativeVideoToolboxSupportsVp9();
 #endif
   const QUrl missing_relative =
       mediaUrlFromArgument(QStringLiteral("videos/definitely-missing.mp4"));
@@ -1156,6 +1159,10 @@ int main(int argc, char *argv[]) {
   // NativeAudioOutput this process builds snapshots it at construction.
   const bool test_seams_admitted =
       wam::qt::NativeBenchmarkTelemetry::instance().enabled();
+#if defined(WAM_ENABLE_AVCODEC_STAGE)
+  if (test_seams_admitted && wam::qt::wamEnvironmentTruth("WAM_TEST_NO_VIDEO_HARDWARE"))
+    wam::macos::setNativeVideoHardwareDisabledForTesting(true);
+#endif
   const bool background_launch =
       test_seams_admitted &&
       wam::qt::wamEnvironmentTruth("WAM_TEST_BACKGROUND");

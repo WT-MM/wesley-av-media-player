@@ -4,6 +4,7 @@
 #import <VideoToolbox/VideoToolbox.h>
 
 #include <mutex>
+#include <atomic>
 
 namespace wam::macos {
 namespace {
@@ -14,6 +15,7 @@ struct SupplementalDecoderCapability {
 };
 
 SupplementalDecoderCapability gCapability{};
+std::atomic<bool> hardwareDisabledForTesting{false};
 std::once_flag gCapabilityOnce;
 
 // VTRegisterSupplementalVideoDecoderIfAvailable must run before the first
@@ -36,8 +38,13 @@ const SupplementalDecoderCapability& capability() noexcept {
 
 }  // namespace
 
-bool nativeVideoToolboxSupportsVp9() noexcept { return capability().vp9; }
+void setNativeVideoHardwareDisabledForTesting(bool disabled) noexcept {
+  hardwareDisabledForTesting.store(disabled);
+}
+bool nativeVideoHardwareDisabledForTesting() noexcept { return hardwareDisabledForTesting.load(); }
 
-bool nativeVideoToolboxSupportsAv1() noexcept { return capability().av1; }
+bool nativeVideoToolboxSupportsVp9() noexcept { return !nativeVideoHardwareDisabledForTesting() && capability().vp9; }
+
+bool nativeVideoToolboxSupportsAv1() noexcept { return !nativeVideoHardwareDisabledForTesting() && capability().av1; }
 
 }  // namespace wam::macos

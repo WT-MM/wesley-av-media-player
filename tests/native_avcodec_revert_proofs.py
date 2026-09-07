@@ -1,15 +1,18 @@
 """Temporary production mutations with byte-identical restoration and retained receipts."""
-import argparse,hashlib,json,pathlib,subprocess,tempfile
+import argparse,hashlib,json,pathlib,subprocess,tempfile,shutil
 parser=argparse.ArgumentParser();parser.add_argument('--output',required=True);args=parser.parse_args()
 repo=pathlib.Path(__file__).resolve().parents[1];root=pathlib.Path(args.output);root.mkdir(parents=True,exist_ok=True)
 prefix=repo/'third_party/ffmpeg-lgpl'
 common=['clang++','-std=c++20','-O2','-I'+str(repo/'src'),'-I'+str(prefix/'include')]
-link=['-L'+str(prefix/'lib'),'-lavcodec-wamnative','-lavutil-wamnative','-Wl,-rpath,'+str(prefix/'lib')]
+link=[]
+(root/'native-codecs').mkdir(exist_ok=True)
+for name in ['libavcodec-wamnative.63.dylib','libavutil-wamnative.61.dylib']:
+    shutil.copy2(prefix/'lib'/name,root/'native-codecs'/name)
 worker='src/media/avcodec/decode_worker.cpp';audio='src/platform/macos/software_avcodec_audio_backend.cpp'
 def build(kind):
     sources=[worker,'src/media/avcodec/runtime.cpp']
     flags=[]
-    if kind=='audio':sources+=[audio,'tests/software_avcodec_audio_test.cpp'];flags=['-DWAM_AVCODEC_AUDIO_TESTING=1']
+    if kind=='audio':sources+=[audio,'src/media/audio_downmix.cpp','tests/software_avcodec_audio_test.cpp'];flags=['-DWAM_AVCODEC_AUDIO_TESTING=1']
     elif kind=='worker':sources+=['tests/avcodec_worker_test.cpp']
     else:
         sources+=['src/media/video_codec_configuration.cpp','src/platform/macos/software_presentation_pool.mm',
@@ -39,8 +42,8 @@ mutants=[
  ('owned_packet',worker,'std::memcpy(slot.bytes.get(), bytes.data(), bytes.size());','std::memset(slot.bytes.get(), 0, bytes.size());','worker'),
  ('frame_pts',worker,'timing.pts = *exact;','timing.pts = MediaTime{0,1};','worker'),
  ('generation',worker,'timing.generation != s.configuration.generation || timing.epoch != s.configuration.epoch','false','worker'),
- ('drain',worker,'if (avcodec_send_packet(context, nullptr) < 0)','if (0 < 0)','worker'),
- ('frame_preservation',worker,'if (result == FrameResult::Backpressure) { signal.wait(observed); continue; }','if (result == FrameResult::Backpressure) { av_frame_unref(frame); retainedFrame=false; continue; }','worker'),
+ ('drain',worker,'if (wam::media::avcodec::api().avcodec_send_packet(context, nullptr) < 0)','if (0 < 0)','worker'),
+ ('frame_preservation',worker,'if (result == FrameResult::Backpressure) { signal.wait(observed); continue; }','if (result == FrameResult::Backpressure) { wam::media::avcodec::api().av_frame_unref(frame); retainedFrame=false; continue; }','worker'),
  ('planar_float',audio,'s.slab[f*channels+c]=sample(source,packed);','s.slab[f*channels+c]=0;','audio'),
  ('packet_release',audio,'result.finalInputReleased=!input.packets.empty() && result.consumedPackets==input.packets.size();','result.finalInputReleased=false;','audio'),
  ('audio_piece_offset',audio,'s.slabFrames=count;s.offset+=count;','s.slabFrames=count;s.offset=0;','audio'),

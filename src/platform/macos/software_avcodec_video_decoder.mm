@@ -119,6 +119,10 @@ SoftwareAvcodecVideoDecoder::SoftwareAvcodecVideoDecoder(VideoToolboxDecoderOpti
 SoftwareAvcodecVideoDecoder::~SoftwareAvcodecVideoDecoder() { close(); }
 bool SoftwareAvcodecVideoDecoder::configure(const VideoStreamConfiguration& configuration,DecodedFrameSink& sink,std::string* error) {
   close(); auto& s=*impl_;
+  if (configuration.codedSize.width<=0 || configuration.codedSize.height<=0 ||
+      std::uint64_t(configuration.codedSize.width)*configuration.codedSize.height>DecodeWorker::kMaximumSoftwarePixels) {
+    if(error)*error="AvcodecSoftwareReferenceBudgetExceeded";return false;
+  }
   media::VideoCodecConfigurationLimits limits; limits.admitHighDynamicRangeColor=true; limits.admitSoftwareProfiles=true;
   const auto codec=media::mediaCodecForCoreMediaType(configuration.codec);
   const auto facts=media::inspectVideoCodecConfiguration(codec,media::mediaCodecFacts(codec).configurationKind,configuration.codecConfiguration,limits);

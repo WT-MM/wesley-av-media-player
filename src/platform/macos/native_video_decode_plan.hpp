@@ -4,9 +4,10 @@
 #include "native_video_presenter.hpp"
 #include "native_video_codec_capability.hpp"
 #include <VideoToolbox/VideoToolbox.h>
+#include <optional>
 namespace wam::macos {
 [[nodiscard]] inline media::DecodePlan nativeVideoDecodePlan(
-    const VideoStreamConfiguration& configuration,bool libvpxAvailable,bool avcodecAvailable) noexcept {
+    const VideoStreamConfiguration& configuration,bool libvpxAvailable,bool avcodecAvailable, std::optional<bool> hardwareCapability = {}) noexcept {
   using namespace media;
   const auto codec=mediaCodecForCoreMediaType(configuration.codec);
   const auto& facts=mediaCodecFacts(codec);
@@ -22,8 +23,9 @@ namespace wam::macos {
     appleSoftwareProfile=appleProfile && !(codec==MediaCodec::H264 && parsed.facts->profile!=0);
     softwareMapped=codec==MediaCodec::H264 || codec==MediaCodec::Mpeg4Visual || codec==MediaCodec::Vp9;
   }
-  const bool supplemental=codec==MediaCodec::Vp9?nativeVideoToolboxSupportsVp9():
-    codec==MediaCodec::Av1?nativeVideoToolboxSupportsAv1():VTIsHardwareDecodeSupported(configuration.codec);
+  const bool supplemental=!nativeVideoHardwareDisabledForTesting() && hardwareCapability.value_or(codec==MediaCodec::Vp9?nativeVideoToolboxSupportsVp9():
+    codec==MediaCodec::Av1?nativeVideoToolboxSupportsAv1():VTIsHardwareDecodeSupported(configuration.codec));
+  if (!supplemental && (codec==MediaCodec::Vp9 || codec==MediaCodec::Av1)) appleSoftwareProfile=false;
   const bool appleCodec=facts.kind==MediaCodecKind::Video && codec!=MediaCodec::Vp8;
   const auto appleRefusal=!appleCodec?DecodeRefusal::AppleCodecUnavailable:
     !appleProfile?DecodeRefusal::AppleProfileUnsupported:DecodeRefusal::None;

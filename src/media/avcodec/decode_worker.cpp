@@ -1,3 +1,6 @@
+#include "allocation_probe.hpp"
+#include "runtime.hpp"
+#include "media/avcodec/api.hpp"
 #include "decode_worker.hpp"
 #include "media/avcodec_time.hpp"
 extern "C" {
@@ -16,7 +19,8 @@ namespace {
 constexpr std::array ids{AV_CODEC_ID_H264, AV_CODEC_ID_MPEG4, AV_CODEC_ID_VP9,
                         AV_CODEC_ID_DTS, AV_CODEC_ID_TRUEHD, AV_CODEC_ID_MLP};
 std::atomic<unsigned> activeWorkers{0};
-constexpr unsigned kMaximumWorkers = 16;
+constexpr unsigned kMaximumWorkers = macos::kNativeSoftwareProcessWorkers;
+static_assert(AV_INPUT_BUFFER_PADDING_SIZE == macos::kNativeSoftwarePacketPaddingBytes);
 struct Provenance { PacketTiming timing; AVBufferRef* reference{}; };
 void releaseProvenance(void*, std::uint8_t*) {}
 bool timestampTicks(MediaTime time, std::int32_t scale, std::int64_t& result) {
@@ -49,19 +53,20 @@ struct DecodeWorker::Impl {
   AVCodecContext* context{};
   AVPacket* packet{};
   AVFrame* frame{};
+  RuntimeLease runtime;
   bool counted{};
   void notify() noexcept { signal.fetch_add(1, std::memory_order_release); signal.notify_one(); }
   void ownerWake() noexcept { if (wake.wake) wake.wake(wake.context); }
   void fail(const char* reason) noexcept { error.store(reason, std::memory_order_release); ownerWake(); }
   bool open() {
     const auto index = static_cast<std::size_t>(configuration.codec);
-    const AVCodec* codec = index < ids.size() ? avcodec_find_decoder(ids[index]) : nullptr;
+    const AVCodec* codec = index < ids.size() ? wam::media::avcodec::api().avcodec_find_decoder(ids[index]) : nullptr;
     if (!codec) { fail("AvcodecDecoderUnavailable"); return false; }
-    context = avcodec_alloc_context3(codec);
-    packet = av_packet_alloc();
-    frame = av_frame_alloc();
+    context = wam::media::avcodec::api().avcodec_alloc_context3(codec);
+    packet = wam::media::avcodec::api().av_packet_alloc();
+    frame = wam::media::avcodec::api().av_frame_alloc();
     if (!context || !packet || !frame) { fail("AvcodecAllocationFailed"); return false; }
-    context->thread_count = 1;
+    context->thread_count = macos::kNativeSoftwareDecoderThreads;
     context->thread_type = 0;
     context->err_recognition = AV_EF_BITSTREAM | AV_EF_BUFFER | AV_EF_EXPLODE;
     context->flags |= AV_CODEC_FLAG_COPY_OPAQUE;
@@ -72,22 +77,25 @@ struct DecodeWorker::Impl {
     context->width = static_cast<int>(configuration.width);
     context->height = static_cast<int>(configuration.height);
     context->sample_rate = static_cast<int>(configuration.rate);
-    av_channel_layout_default(&context->ch_layout, static_cast<int>(configuration.channels));
+    wam::media::avcodec::api().av_channel_layout_default(&context->ch_layout, static_cast<int>(configuration.channels));
     if (!configuration.extradata.empty()) {
-      context->extradata = static_cast<std::uint8_t*>(av_mallocz(configuration.extradata.size() + AV_INPUT_BUFFER_PADDING_SIZE));
+      context->extradata = static_cast<std::uint8_t*>(wam::media::avcodec::api().av_mallocz(configuration.extradata.size() + AV_INPUT_BUFFER_PADDING_SIZE));
       if (!context->extradata) { fail("AvcodecExtradataAllocationFailed"); return false; }
       context->extradata_size = static_cast<int>(configuration.extradata.size());
       std::memcpy(context->extradata, configuration.extradata.data(), configuration.extradata.size());
     }
     for (auto& record : provenance) {
-      record.reference = av_buffer_create(reinterpret_cast<std::uint8_t*>(&record),
+      record.reference = wam::media::avcodec::api().av_buffer_create(reinterpret_cast<std::uint8_t*>(&record),
           sizeof(Provenance), releaseProvenance, nullptr, 0);
       if (!record.reference) { fail("AvcodecProvenanceAllocationFailed"); return false; }
     }
-    if (avcodec_open2(context, codec, nullptr) < 0) { fail("AvcodecOpenFailed"); return false; }
+    if (wam::media::avcodec::api().avcodec_open2(context, codec, nullptr) < 0) { fail("AvcodecOpenFailed"); return false; }
     return true;
   }
   void run() noexcept {
+#if defined(WAM_AVCODEC_ALLOCATION_PROBE)
+    AllocationProbe allocationProbe;
+#endif
     const bool opened = open();
     ready.store(true, std::memory_order_release);
     ready.notify_one();
@@ -110,15 +118,25 @@ struct DecodeWorker::Impl {
           if (!exact) { fail("AvcodecDurationUnrepresentable"); break; }
           timing.duration = *exact;
         }
-        const auto result = handler.receive(handler.context, *frame, timing);
+        const auto result = [&] {
+#if defined(WAM_AVCODEC_ALLOCATION_PROBE)
+          AdapterProbe adapterProbe;
+#endif
+          return handler.receive(handler.context, *frame, timing);
+        }();
         if (result == FrameResult::Failed) { fail("AvcodecFrameRefused"); break; }
         if (result == FrameResult::Backpressure) { signal.wait(observed); continue; }
-        av_frame_unref(frame);
+        wam::media::avcodec::api().av_frame_unref(frame);
         retainedFrame = false;
         ownerWake();
       }
-      const int received = avcodec_receive_frame(context, frame);
-      if (received == 0) { retainedFrame = true; continue; }
+      const int received = wam::media::avcodec::api().avcodec_receive_frame(context, frame);
+      if (received == 0) {
+#if defined(WAM_AVCODEC_ALLOCATION_PROBE)
+        allocationProbeFrame();
+#endif
+        retainedFrame = true; continue;
+      }
       if (received == AVERROR_EOF) { done.store(true, std::memory_order_release); ownerWake(); break; }
       if (received != AVERROR(EAGAIN)) { fail("AvcodecReceiveFailed"); break; }
       const auto head = read.load(std::memory_order_relaxed);
@@ -136,12 +154,12 @@ struct DecodeWorker::Impl {
           }
           Provenance* record = nullptr;
           for (auto& candidate : provenance) {
-            if (av_buffer_get_ref_count(candidate.reference) == 1) { record = &candidate; break; }
+            if (wam::media::avcodec::api().av_buffer_get_ref_count(candidate.reference) == 1) { record = &candidate; break; }
           }
           if (!record) { fail("AvcodecProvenanceBudgetExceeded"); break; }
           record->timing = slot.timing;
           // Refcount metadata and decoder-owned packet copies stay on this worker.
-          packet->opaque_ref = av_buffer_ref(record->reference);
+          packet->opaque_ref = wam::media::avcodec::api().av_buffer_ref(record->reference);
           if (!packet->opaque_ref) { fail("AvcodecPacketReferenceFailed"); break; }
           packet->data = reinterpret_cast<std::uint8_t*>(slot.bytes.get());
           packet->size = static_cast<int>(slot.size);
@@ -153,10 +171,10 @@ struct DecodeWorker::Impl {
           packet->time_base = context->pkt_timebase;
           retainedPacket = true;
         }
-        const int sent = avcodec_send_packet(context, packet);
+        const int sent = wam::media::avcodec::api().avcodec_send_packet(context, packet);
         // receive EAGAIN followed by send EAGAIN violates the codec API contract.
         if (sent < 0) { fail(sent == AVERROR(EAGAIN) ? "AvcodecSendReceiveDeadlock" : "AvcodecPacketRefused"); break; }
-        av_packet_unref(packet);
+        wam::media::avcodec::api().av_packet_unref(packet);
         retainedPacket = false;
         bytes.fetch_sub(slot.size, std::memory_order_relaxed);
         read.store(head + 1, std::memory_order_release);
@@ -164,17 +182,17 @@ struct DecodeWorker::Impl {
         continue;
       }
       if (eos.load(std::memory_order_acquire) && !sentEos) {
-        if (avcodec_send_packet(context, nullptr) < 0) { fail("AvcodecDrainRefused"); break; }
+        if (wam::media::avcodec::api().avcodec_send_packet(context, nullptr) < 0) { fail("AvcodecDrainRefused"); break; }
         sentEos = true;
         continue;
       }
       if (sentEos) { fail("AvcodecDrainNeedsInput"); break; }
       signal.wait(observed);
     }
-    av_frame_free(&frame);
-    av_packet_free(&packet);
-    avcodec_free_context(&context);
-    for (auto& record : provenance) av_buffer_unref(&record.reference);
+    wam::media::avcodec::api().av_frame_free(&frame);
+    wam::media::avcodec::api().av_packet_free(&packet);
+    wam::media::avcodec::api().avcodec_free_context(&context);
+    for (auto& record : provenance) wam::media::avcodec::api().av_buffer_unref(&record.reference);
   }
 };
 DecodeWorker::DecodeWorker(FrameHandler handler, WakeHandler wake) : impl_(std::make_unique<Impl>()) {
@@ -192,6 +210,7 @@ bool DecodeWorker::configure(const Configuration& configuration) {
     activeWorkers.fetch_sub(1); s.fail("AvcodecWorkerBudgetExceeded"); return false;
   }
   s.counted = true;
+  if (const char* failure = s.runtime.acquire()) { s.fail(failure); return false; }
   s.configuration = configuration;
   try {
     s.extra = std::make_unique<std::byte[]>(configuration.extradata.size());
@@ -230,6 +249,7 @@ void DecodeWorker::close() noexcept {
   auto& s = *impl_;
   s.stopping.store(true, std::memory_order_release); s.notify();
   if (s.worker.joinable()) s.worker.join();
+  s.runtime.release();
   if (s.counted) { activeWorkers.fetch_sub(1); s.counted = false; }
 }
 bool DecodeWorker::hasCapacity() const noexcept {

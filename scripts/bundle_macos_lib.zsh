@@ -855,7 +855,7 @@ mkdir -p "$FRAMEWORKS" "$PLUGINS" "$RESOURCES" "$TOOLS" "$MODELS" ||
 /bin/rm -f -- "$TOOLS/ffmpeg" "$TOOLS/whisper-cli" || return 1
 cp -f README.md THIRD_PARTY_NOTICES.md "$RESOURCES/" || return 1
 WAM_NATIVE_AVCODEC_PRESENT=0
-if [[ "$(otool -L "$EXECUTABLE")" == *libavcodec-wamnative.* ]]; then
+if [[ -f "$RESOURCES/native-ffmpeg/stage-built" ]]; then
   WAM_NATIVE_AVCODEC_PRESENT=1
   native_notices="${WAM_NATIVE_FFMPEG_NOTICES:-docs/native-coverage/phase2}"
   mkdir -p "$RESOURCES/native-ffmpeg" || return 1

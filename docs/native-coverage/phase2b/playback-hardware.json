@@ -1,0 +1,187 @@
+[
+  {
+    "asset": "/private/tmp/wam-ffmpeg-phase2/long/baseline.mkv",
+    "asset_sha256": "99c9967d7c99c43671bc8ac78b8a130c39f46f136f488d2f806b1c30e89a25d0",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "45f92347-638b-4dae-9714-415089a6cd24",
+    "pid": 38904,
+    "rc": 0,
+    "first_frame": true,
+    "failures": [],
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ],
+    "usage": {
+      "pid": 38904,
+      "seconds": 14.409261,
+      "cpu_percent_one_core": 6.516725,
+      "energy_joules_process": 1.24580823,
+      "peak_footprint_bytes": 463684592
+    },
+    "last_sample": {
+      "record": "playback_sample",
+      "session_epoch": 1788759010690862000,
+      "t_mono_ns": 458906021265916,
+      "media_seconds": 11.96004475,
+      "drawn_frames": 300,
+      "submitted_frames": 300,
+      "superseded_frames": 0,
+      "discarded_late_frames": 0,
+      "audio_underrun_callbacks": null,
+      "audio_clock_advanced_underruns": null,
+      "audio_retired_late_frames": null,
+      "audio_callbacks": null,
+      "audio_rendered_frames": null,
+      "clock_rate": 1,
+      "paused": false
+    }
+  },
+  {
+    "asset": "/private/tmp/wam-ffmpeg-phase2/long/asp.mkv",
+    "asset_sha256": "cb64159e9180709af8a3b33bc4330eec61771cc2205c489acdb7fe09e758cf1b",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "2ad4f2a9-9530-4bb0-bc5b-a75c2e04ec34",
+    "pid": 38943,
+    "rc": 0,
+    "first_frame": true,
+    "failures": [],
+    "routes": [
+      "WAM: native decoder stage=Libavcodec codec=6d703476"
+    ],
+    "usage": {
+      "pid": 38943,
+      "seconds": 13.935703,
+      "cpu_percent_one_core": 14.498869,
+      "energy_joules_process": 1.55676735,
+      "peak_footprint_bytes": 497746976
+    },
+    "last_sample": {
+      "record": "playback_sample",
+      "session_epoch": 1788759025145627000,
+      "t_mono_ns": 458919500649666,
+      "media_seconds": 12.004474375,
+      "drawn_frames": 300,
+      "submitted_frames": 300,
+      "superseded_frames": 0,
+      "discarded_late_frames": 0,
+      "audio_underrun_callbacks": null,
+      "audio_clock_advanced_underruns": null,
+      "audio_retired_late_frames": null,
+      "audio_callbacks": null,
+      "audio_rendered_frames": null,
+      "clock_rate": 1,
+      "paused": false
+    }
+  },
+  {
+    "asset": "/private/tmp/wam-ffmpeg-phase2/long/hi10p.mkv",
+    "asset_sha256": "5cd8c4688b123cb0ed894da0e750e86110d869836d0e6342d6a66e56b4881771",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "466ed811-018f-4c17-a624-36ec66950230",
+    "pid": 38973,
+    "rc": 0,
+    "first_frame": true,
+    "failures": [],
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ],
+    "usage": {
+      "pid": 38973,
+      "seconds": 13.765218,
+      "cpu_percent_one_core": 7.136921,
+      "energy_joules_process": 1.236157565,
+      "peak_footprint_bytes": 463487984
+    },
+    "last_sample": {
+      "record": "playback_sample",
+      "session_epoch": 1788759039278641000,
+      "t_mono_ns": 458933500724791,
+      "media_seconds": 11.960564333333334,
+      "drawn_frames": 300,
+      "submitted_frames": 300,
+      "superseded_frames": 0,
+      "discarded_late_frames": 0,
+      "audio_underrun_callbacks": null,
+      "audio_clock_advanced_underruns": null,
+      "audio_retired_late_frames": null,
+      "audio_callbacks": null,
+      "audio_rendered_frames": null,
+      "clock_rate": 1,
+      "paused": false
+    }
+  },
+  {
+    "asset": "/private/tmp/wam-ffmpeg-phase2/long/h264422.mkv",
+    "asset_sha256": "cae88080fc20c48b7ec1c707718cc501c1f06715526dac4d95671b74e3e29c5a",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "bc55c7aa-ac48-40e3-8164-2c6be5c60378",
+    "pid": 38995,
+    "rc": 0,
+    "first_frame": true,
+    "failures": [],
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ],
+    "usage": {
+      "pid": 38995,
+      "seconds": 13.957363,
+      "cpu_percent_one_core": 7.031241,
+      "energy_joules_process": 1.292071877,
+      "peak_footprint_bytes": 463930376
+    },
+    "last_sample": {
+      "record": "playback_sample",
+      "session_epoch": 1788759053165754000,
+      "t_mono_ns": 458947502937708,
+      "media_seconds": 11.960478875,
+      "drawn_frames": 300,
+      "submitted_frames": 300,
+      "superseded_frames": 0,
+      "discarded_late_frames": 0,
+      "audio_underrun_callbacks": null,
+      "audio_clock_advanced_underruns": null,
+      "audio_retired_late_frames": null,
+      "audio_callbacks": null,
+      "audio_rendered_frames": null,
+      "clock_rate": 1,
+      "paused": false
+    }
+  },
+  {
+    "asset": "/private/tmp/wam-ffmpeg-phase2/long/baseline.mkv",
+    "asset_sha256": "99c9967d7c99c43671bc8ac78b8a130c39f46f136f488d2f806b1c30e89a25d0",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "0685c99a-eb68-49c2-9c9c-96766a3122cb",
+    "pid": 39036,
+    "rc": 0,
+    "first_frame": true,
+    "failures": [],
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ],
+    "usage": {
+      "pid": 39036,
+      "seconds": 13.758006,
+      "cpu_percent_one_core": 6.86071,
+      "energy_joules_process": 1.285006546,
+      "peak_footprint_bytes": 463061976
+    },
+    "last_sample": {
+      "record": "playback_sample",
+      "session_epoch": 1788759067307800000,
+      "t_mono_ns": 458961500835416,
+      "media_seconds": 11.960437291666667,
+      "drawn_frames": 300,
+      "submitted_frames": 300,
+      "superseded_frames": 0,
+      "discarded_late_frames": 0,
+      "audio_underrun_callbacks": null,
+      "audio_clock_advanced_underruns": null,
+      "audio_retired_late_frames": null,
+      "audio_callbacks": null,
+      "audio_rendered_frames": null,
+      "clock_rate": 1,
+      "paused": false
+    }
+  }
+]

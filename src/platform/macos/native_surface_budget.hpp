@@ -150,6 +150,26 @@ static_assert(kNativeSurfaceBudgetProcessMaximumBytes <
               "the process byte pool must stay within one window's headroom "
               "of the complement it exists to bound");
 
+// Software staging is private to a bounded decoder worker, separate from
+// presentation leases. The picture-area admission is not a private-heap proof.
+inline constexpr std::uint64_t kNativeSoftwareMaximumPicturePixels = 1920ULL * 1080ULL;
+inline constexpr std::size_t kNativeSoftwarePacketSlots = 4;
+inline constexpr std::size_t kNativeSoftwarePacketBytes = 4U * 1024U * 1024U;
+inline constexpr std::size_t kNativeSoftwarePacketPaddingBytes = 64;
+inline constexpr std::size_t kNativeSoftwareWorkerPacketStorageBytes =
+    kNativeSoftwarePacketSlots * (kNativeSoftwarePacketBytes + kNativeSoftwarePacketPaddingBytes);
+inline constexpr unsigned kNativeSoftwareDecoderThreads = 1;
+inline constexpr unsigned kNativeSoftwareProcessWorkers = kMaximumConcurrentPlayerWindows;
+inline constexpr std::size_t kNativeSoftwareAudioConversionScratchBytes = 4096U * 8U * sizeof(float);
+inline constexpr std::size_t kNativeSoftwareSessionConversionScratchBytes =
+    kNativeSoftwarePacketBytes + kNativeSoftwareAudioConversionScratchBytes;
+inline constexpr std::size_t kNativeSoftwareProcessPacketStorageBytes =
+    kNativeSoftwareProcessWorkers * kNativeSoftwareWorkerPacketStorageBytes;
+static_assert(kNativeSoftwareWorkerPacketStorageBytes == 16'777'472);
+static_assert(kNativeSoftwareSessionConversionScratchBytes == 4'325'376);
+static_assert(kNativeSoftwareProcessPacketStorageBytes == 268'439'552);
+static_assert(kNativeSoftwareProcessWorkers * kNativeSoftwareDecoderThreads == 16);
+
 struct NativeSurfaceBudgetStats {
   std::uint64_t currentSurfaces{0};
   std::uint64_t peakSurfaces{0};

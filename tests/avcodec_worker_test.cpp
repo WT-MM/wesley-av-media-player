@@ -20,6 +20,7 @@ using namespace wam::media::avcodec;
 struct Observer {
   std::atomic<bool> blocked{true};
   std::atomic<unsigned> calls{0}, count{0};
+  unsigned width{320},height{180};
   std::int64_t previous{-1};
   std::thread::id owner{std::this_thread::get_id()};
   static FrameResult receive(void* opaque,const AVFrame& frame,const PacketTiming& timing) noexcept {
@@ -35,7 +36,7 @@ struct Observer {
     CHECK(time==__int128(self.count.load())*40);
     CHECK(time>self.previous);
     self.previous=static_cast<std::int64_t>(time);
-    CHECK(frame.width==320 && frame.height==180);
+    CHECK(frame.width==int(self.width) && frame.height==int(self.height));
     self.count.fetch_add(1);
     return FrameResult::Accepted;
   }
@@ -46,7 +47,9 @@ template<class F> void until(F predicate) {
 }
 template<class T> T read(std::ifstream& stream) { T v; stream.read(reinterpret_cast<char*>(&v),sizeof(v)); CHECK(stream.good()); return v; }
 int main(int argc,char** argv) {
-  CHECK(argc==3);
+  CHECK(argc==3 || argc==5);
+  const unsigned width=argc==5?std::atoi(argv[3]):320;
+  const unsigned height=argc==5?std::atoi(argv[4]):180;
   CHECK(runtimeFailure()==nullptr);
   CHECK(!avcodecExactTime(INT64_MIN,1,1000));
   CHECK(!avcodecExactTime(INT64_MAX,2,1));
@@ -60,10 +63,15 @@ int main(int argc,char** argv) {
   std::ifstream file(argv[1],std::ios::binary);
   const auto extraSize=read<std::uint32_t>(file), packets=read<std::uint32_t>(file);
   std::vector<std::byte> extra(extraSize); file.read(reinterpret_cast<char*>(extra.data()),extraSize);
-  Observer observer;
+  Observer observer;observer.width=width;observer.height=height;
   DecodeWorker worker({Observer::receive,&observer});
   Configuration config; config.codec=std::strcmp(argv[2],"h264")==0?Codec::H264:Codec::Mpeg4;
-  config.extradata=extra; config.generation=7; config.epoch=3; config.width=320; config.height=180;
+  config.extradata=extra; config.generation=7; config.epoch=3; config.width=width; config.height=height;
+  if (std::uint64_t(width)*height>DecodeWorker::kMaximumSoftwarePixels) {
+    CHECK(!worker.configure(config));
+    CHECK(worker.failure() && std::strcmp(worker.failure(),"AvcodecSoftwareReferenceBudgetExceeded")==0);
+    std::puts(worker.failure());return 0;
+  }
   CHECK(worker.configure(config));
   bool pressure=false;
   for(unsigned i=0;i<packets;++i) {

@@ -98,7 +98,7 @@ fi
 "$MACDEPLOYQT" "${deploy_arguments[@]}" > /dev/null
 
 # Native FFmpeg uses distinct install names from the export/compatibility closure.
-if [[ "$(otool -L "$APP_PATH/Contents/MacOS/WAM")" == *libavcodec-wamnative.* ]]; then
+if [[ -f "$APP_PATH/Contents/Resources/native-ffmpeg/stage-built" ]]; then
   native_prefix="${WAM_FFMPEG_LGPL_ROOT:-${0:A:h:h}/third_party/ffmpeg-lgpl}"
   for native_library in libavcodec-wamnative.63.dylib libavutil-wamnative.61.dylib; do
     native_destination="$APP_PATH/Contents/Frameworks/$native_library"

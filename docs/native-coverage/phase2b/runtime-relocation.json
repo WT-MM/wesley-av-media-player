@@ -1,0 +1,32 @@
+[
+  {
+    "case": "missing",
+    "rc": 0,
+    "stdout": "DecoderStageNotBuilt: native FFmpeg libraries missing\n",
+    "stderr": ""
+  },
+  {
+    "case": "relocated",
+    "rc": 0,
+    "stdout": "cold: zero images/symbols; leased: codec=63.1.101 util=61.1.101; retirement: zero images/symbols\n",
+    "stderr": ""
+  },
+  {
+    "case": "bundle-layout-relocation",
+    "rc": 0,
+    "stdout": "cold: zero images/symbols; leased: codec=63.1.101 util=61.1.101; retirement: zero images/symbols\n",
+    "stderr": ""
+  },
+  {
+    "case": "external-symlink",
+    "rc": 0,
+    "stdout": "DecoderUnavailable: native FFmpeg library outside bundle\n",
+    "stderr": ""
+  },
+  {
+    "case": "replaced",
+    "rc": 0,
+    "stdout": "DecoderUnavailable: libavcodec-wamnative.63.dylib\n",
+    "stderr": ""
+  }
+]

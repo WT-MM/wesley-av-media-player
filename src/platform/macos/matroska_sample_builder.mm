@@ -137,7 +137,7 @@ CMVideoFormatDescriptionRef createMatroskaVideoFormatDescription(
   } else if (track.codec == MediaCodec::Vp9 &&
              track.codecConfigurationKind ==
                  MediaCodecConfigurationKind::VpcC &&
-             nativeVideoToolboxSupportsVp9()) {
+             nativeVp9StageAdmitted()) {
     // Matroska rarely carries VP9 CodecPrivate, so the demuxer synthesizes the
     // 12-byte vpcC from the keyframe bitstream. The non-empty guard above
     // therefore still holds for VP9, and the record is handed to CoreMedia

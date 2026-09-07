@@ -1,0 +1,38 @@
+[
+  {
+    "path": "src/platform/macos/native_audio_converter.hpp",
+    "before_sha256": "347f517ee0a2d4ed023272e32f50e1ca11a5ed4a1f5688770d0e9adc8d3ddf89",
+    "after_sha256": "ce28047e722a91987a4b8a32841ace29723a47989d5b10cb6db0cf8fd61f0df6",
+    "unchanged": false
+  },
+  {
+    "path": "src/platform/macos/native_surface_budget.hpp",
+    "before_sha256": "57056f613af9f8b4f983699cd1f093d295e7114b7fb38cced4a987171a80ddd6",
+    "after_sha256": "69cb4a16f0bcf194b07ad6b6fdf5b41ffe6bdf65ba196285170821288a075fec",
+    "unchanged": false
+  },
+  {
+    "path": "src/media/native_media_source.hpp",
+    "before_sha256": "c62420ae0908e987d8b82000daf7bb4f82e0bcfed4e99edf201936d522e53ea2",
+    "after_sha256": "c62420ae0908e987d8b82000daf7bb4f82e0bcfed4e99edf201936d522e53ea2",
+    "unchanged": true
+  },
+  {
+    "path": "src/media/native_playback_contract.hpp",
+    "before_sha256": "f45fb6311766ecf1136a6cc07323fb7da7f431408e775f6786618ab4d36f4f38",
+    "after_sha256": "f45fb6311766ecf1136a6cc07323fb7da7f431408e775f6786618ab4d36f4f38",
+    "unchanged": true
+  },
+  {
+    "path": "tests/native_audio_converter_test.mm",
+    "before_sha256": "1fb62d1fb5a69db4999d350b2b8cdaa4b17762b7b47e23beaa07e2462ecdc18c",
+    "after_sha256": "1fb62d1fb5a69db4999d350b2b8cdaa4b17762b7b47e23beaa07e2462ecdc18c",
+    "unchanged": true
+  },
+  {
+    "path": "tests/native_audio_session_test.mm",
+    "before_sha256": "8ac89f540d5ddc339b4cc25301e62c64793ee3a38de3caa74ffd8b675f192783",
+    "after_sha256": "8ac89f540d5ddc339b4cc25301e62c64793ee3a38de3caa74ffd8b675f192783",
+    "unchanged": true
+  }
+]

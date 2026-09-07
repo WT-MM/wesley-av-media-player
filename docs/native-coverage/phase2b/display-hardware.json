@@ -1,0 +1,166 @@
+[
+  {
+    "name": "baseline",
+    "argv": [
+      "ffmpeg",
+      "-v",
+      "error",
+      "-y",
+      "-f",
+      "lavfi",
+      "-i",
+      "smptebars=size=640x360:rate=25",
+      "-t",
+      "4",
+      "-c:v",
+      "libx264",
+      "-pix_fmt",
+      "yuv420p",
+      "-color_primaries",
+      "smpte170m",
+      "-color_trc",
+      "bt709",
+      "-colorspace",
+      "smpte170m",
+      "/private/tmp/wam-phase2b/display-hardware/baseline/bars.mkv"
+    ],
+    "rc": 0,
+    "pid": 40460,
+    "run_id": "ee5bae9d-d0a0-4a5b-b435-1922718eca6a",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "asset_sha256": "1228fe46a29a10a76e0efa9505e60aae5a86d483610f9d95102a7d1c2e564f0b",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ],
+    "failures": [],
+    "captures": [
+      "WAM_TEST_GRAB idx=0 size=480x270 saved=1 path=/private/tmp/wam-phase2b/display-hardware/baseline/scene.png",
+      "WAM_TEST_VIDEOGRAB idx=0 saved=1 path=/private/tmp/wam-phase2b/display-hardware/baseline/display.png"
+    ],
+    "display_file": true
+  },
+  {
+    "name": "asp",
+    "argv": [
+      "ffmpeg",
+      "-v",
+      "error",
+      "-y",
+      "-f",
+      "lavfi",
+      "-i",
+      "smptebars=size=640x360:rate=25",
+      "-t",
+      "4",
+      "-c:v",
+      "mpeg4",
+      "-bf",
+      "2",
+      "-color_primaries",
+      "smpte170m",
+      "-color_trc",
+      "bt709",
+      "-colorspace",
+      "smpte170m",
+      "/private/tmp/wam-phase2b/display-hardware/asp/bars.mkv"
+    ],
+    "rc": 0,
+    "pid": 40469,
+    "run_id": "b9f21218-b0bc-4e73-890a-17b2f0d2e490",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "asset_sha256": "01bb81390d2e59aa5acb6d97236eb2c531f96d5a535c5cddbec30db60fa8f571",
+    "routes": [
+      "WAM: native decoder stage=Libavcodec codec=6d703476"
+    ],
+    "failures": [],
+    "captures": [
+      "WAM_TEST_GRAB idx=0 size=480x270 saved=1 path=/private/tmp/wam-phase2b/display-hardware/asp/scene.png",
+      "WAM_TEST_VIDEOGRAB idx=0 saved=1 path=/private/tmp/wam-phase2b/display-hardware/asp/display.png"
+    ],
+    "display_file": true
+  },
+  {
+    "name": "hi10p",
+    "argv": [
+      "ffmpeg",
+      "-v",
+      "error",
+      "-y",
+      "-f",
+      "lavfi",
+      "-i",
+      "smptebars=size=640x360:rate=25",
+      "-t",
+      "4",
+      "-c:v",
+      "libx264",
+      "-profile:v",
+      "high10",
+      "-pix_fmt",
+      "yuv420p10le",
+      "-color_primaries",
+      "smpte170m",
+      "-color_trc",
+      "bt709",
+      "-colorspace",
+      "smpte170m",
+      "/private/tmp/wam-phase2b/display-hardware/hi10p/bars.mkv"
+    ],
+    "rc": 0,
+    "pid": 40479,
+    "run_id": "7d224fef-955c-47b5-8df1-44be196bedd3",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "asset_sha256": "d295c4a77f84608ab70422af6cdaab76991a355afd265d5b24c909e22de94793",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ],
+    "failures": [],
+    "captures": [
+      "WAM_TEST_GRAB idx=0 size=480x270 saved=1 path=/private/tmp/wam-phase2b/display-hardware/hi10p/scene.png",
+      "WAM_TEST_VIDEOGRAB idx=0 saved=1 path=/private/tmp/wam-phase2b/display-hardware/hi10p/display.png"
+    ],
+    "display_file": true
+  },
+  {
+    "name": "h264422",
+    "argv": [
+      "ffmpeg",
+      "-v",
+      "error",
+      "-y",
+      "-f",
+      "lavfi",
+      "-i",
+      "smptebars=size=640x360:rate=25",
+      "-t",
+      "4",
+      "-c:v",
+      "libx264",
+      "-profile:v",
+      "high422",
+      "-pix_fmt",
+      "yuv422p10le",
+      "-color_primaries",
+      "smpte170m",
+      "-color_trc",
+      "bt709",
+      "-colorspace",
+      "smpte170m",
+      "/private/tmp/wam-phase2b/display-hardware/h264422/bars.mkv"
+    ],
+    "rc": 0,
+    "pid": 40487,
+    "run_id": "0167127e-4b8f-49d9-a4eb-e0e6ff6e60f0",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "asset_sha256": "761472f461cce03bc53801da95f72cd3ba6c80031daee837e0677871e20fb062",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ],
+    "failures": [],
+    "captures": [
+      "WAM_TEST_GRAB idx=0 size=480x270 saved=1 path=/private/tmp/wam-phase2b/display-hardware/h264422/scene.png",
+      "WAM_TEST_VIDEOGRAB idx=0 saved=1 path=/private/tmp/wam-phase2b/display-hardware/h264422/display.png"
+    ],
+    "display_file": true
+  }
+]

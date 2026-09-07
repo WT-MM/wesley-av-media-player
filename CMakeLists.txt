@@ -69,11 +69,7 @@ if(WAM_ENABLE_AVCODEC_STAGE)
     message(FATAL_ERROR "Run scripts/build_ffmpeg_lgpl.sh with the pinned local archive first")
   endif()
   add_library(wam_ffmpeg_lgpl INTERFACE)
-  target_link_options(wam_ffmpeg_lgpl INTERFACE "LINKER:-rpath,${WAM_FFMPEG_LGPL_ROOT}/lib")
   target_include_directories(wam_ffmpeg_lgpl INTERFACE "${WAM_FFMPEG_LGPL_ROOT}/include")
-  target_link_libraries(wam_ffmpeg_lgpl INTERFACE
-    "${WAM_FFMPEG_LGPL_ROOT}/lib/libavcodec-wamnative.dylib"
-    "${WAM_FFMPEG_LGPL_ROOT}/lib/libavutil-wamnative.dylib")
   add_library(wam_avcodec_worker STATIC src/media/avcodec/decode_worker.cpp src/media/avcodec/runtime.cpp)
   target_include_directories(wam_avcodec_worker PUBLIC src)
   target_compile_features(wam_avcodec_worker PUBLIC cxx_std_20)
@@ -2259,7 +2255,7 @@ endif()
 if(BUILD_TESTING AND WAM_ENABLE_AVCODEC_STAGE)
   add_executable(wam_software_avcodec_video_test tests/software_avcodec_video_test.mm)
   target_link_libraries(wam_software_avcodec_video_test PRIVATE wam_macos_native_video_core)
-  foreach(specimen IN ITEMS hi10p h264422 asp)
+  foreach(specimen IN ITEMS hi10p h264422 asp vp9 vp9p2)
     add_test(NAME software_avcodec_video_${specimen} COMMAND wam_software_avcodec_video_test
       "${CMAKE_SOURCE_DIR}/test-media/native-coverage/phase2/${specimen}.packets" "${specimen}")
     set_tests_properties(software_avcodec_video_${specimen} PROPERTIES TIMEOUT 30)
@@ -2267,9 +2263,29 @@ if(BUILD_TESTING AND WAM_ENABLE_AVCODEC_STAGE)
 endif()
 
 if(WAM_ENABLE_AVCODEC_STAGE)
-  set_property(TARGET wam APPEND PROPERTY BUILD_RPATH "${WAM_FFMPEG_LGPL_ROOT}/lib")
   set_property(TARGET wam APPEND PROPERTY INSTALL_RPATH "@executable_path/../Frameworks")
   target_sources(wam_avcodec_worker PRIVATE src/platform/macos/software_avcodec_audio_backend.cpp)
+  file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/native-codecs")
+  foreach(native_library IN ITEMS libavcodec-wamnative.63.dylib libavutil-wamnative.61.dylib)
+    configure_file("${WAM_FFMPEG_LGPL_ROOT}/lib/${native_library}"
+      "${CMAKE_BINARY_DIR}/native-codecs/${native_library}" COPYONLY)
+    add_custom_command(TARGET wam POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:wam>/Contents/Frameworks"
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${WAM_FFMPEG_LGPL_ROOT}/lib/${native_library}"
+        "$<TARGET_BUNDLE_DIR:wam>/Contents/Frameworks/${native_library}")
+  endforeach()
+  add_custom_command(TARGET wam POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:wam>/Contents/Resources/native-ffmpeg"
+    COMMAND ${CMAKE_COMMAND} -E touch "$<TARGET_BUNDLE_DIR:wam>/Contents/Resources/native-ffmpeg/stage-built")
+  foreach(notice IN ITEMS FFMPEG_NOTICES.md COPYING.LGPLv2.1 LICENSE.md configure-command.txt build-receipt.txt)
+    add_custom_command(TARGET wam POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "${CMAKE_SOURCE_DIR}/docs/native-coverage/phase2/${notice}"
+      "$<TARGET_BUNDLE_DIR:wam>/Contents/Resources/native-ffmpeg/${notice}")
+  endforeach()
+  add_custom_command(TARGET wam POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    "${CMAKE_SOURCE_DIR}/docs/native-coverage/phase2b/SOURCE_DISTRIBUTION.md"
+    "$<TARGET_BUNDLE_DIR:wam>/Contents/Resources/native-ffmpeg/SOURCE_DISTRIBUTION.md")
 endif()
 
 if(BUILD_TESTING AND WAM_ENABLE_AVCODEC_STAGE)
@@ -2283,15 +2299,71 @@ if(BUILD_TESTING AND WAM_ENABLE_AVCODEC_STAGE)
   set_tests_properties(avcodec_fixtures PROPERTIES FIXTURES_SETUP avcodec_media TIMEOUT 60)
   set_tests_properties(avcodec_worker_hi10p avcodec_worker_h264422 avcodec_worker_asp
     software_avcodec_video_hi10p software_avcodec_video_h264422 software_avcodec_video_asp
+    software_avcodec_video_vp9 software_avcodec_video_vp9p2
     PROPERTIES FIXTURES_REQUIRED avcodec_media)
   add_executable(wam_software_avcodec_audio_test tests/software_avcodec_audio_test.cpp
     src/platform/macos/software_avcodec_audio_backend.cpp)
   target_compile_definitions(wam_software_avcodec_audio_test PRIVATE WAM_AVCODEC_AUDIO_TESTING=1)
   target_link_libraries(wam_software_avcodec_audio_test PRIVATE wam_avcodec_worker)
+  target_sources(wam_software_avcodec_audio_test PRIVATE src/media/audio_downmix.cpp)
   foreach(specimen IN ITEMS dts truehd mlp)
     add_test(NAME software_avcodec_audio_${specimen} COMMAND wam_software_avcodec_audio_test
       "${CMAKE_SOURCE_DIR}/test-media/native-coverage/phase2/${specimen}.audio-packets"
       "${CMAKE_SOURCE_DIR}/test-media/native-coverage/phase2/${specimen}.f32" "${specimen}")
     set_tests_properties(software_avcodec_audio_${specimen} PROPERTIES FIXTURES_REQUIRED avcodec_media TIMEOUT 30)
   endforeach()
+endif()
+
+if(BUILD_TESTING AND WAM_ENABLE_AVCODEC_STAGE)
+  add_executable(wam_avcodec_runtime_test tests/avcodec_runtime_test.cpp)
+  target_link_libraries(wam_avcodec_runtime_test PRIVATE wam_avcodec_worker)
+  add_test(NAME avcodec_runtime COMMAND wam_avcodec_runtime_test)
+  add_test(NAME avcodec_runtime_relocation COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_SOURCE_DIR}/tests/avcodec_runtime_relocation.py"
+    --binary "$<TARGET_FILE:wam_avcodec_runtime_test>"
+    --libraries "${CMAKE_BINARY_DIR}/native-codecs")
+endif()
+
+if(BUILD_TESTING AND WAM_ENABLE_AVCODEC_STAGE)
+  add_library(wam_avcodec_instrumented STATIC
+    src/media/avcodec/decode_worker.cpp src/media/avcodec/runtime.cpp)
+  target_include_directories(wam_avcodec_instrumented PUBLIC src)
+  target_compile_features(wam_avcodec_instrumented PUBLIC cxx_std_20)
+  target_compile_definitions(wam_avcodec_instrumented PRIVATE WAM_AVCODEC_ALLOCATION_PROBE=1)
+  target_link_libraries(wam_avcodec_instrumented PUBLIC wam_ffmpeg_lgpl)
+  add_library(wam_avcodec_probe_hooks SHARED tests/avcodec_allocation_probe.cpp)
+  target_include_directories(wam_avcodec_probe_hooks PRIVATE src)
+  target_compile_definitions(wam_avcodec_probe_hooks PRIVATE WAM_AVCODEC_ALLOCATION_PROBE=1)
+  target_link_libraries(wam_avcodec_instrumented PUBLIC wam_avcodec_probe_hooks)
+  add_executable(wam_avcodec_allocation_test tests/avcodec_worker_test.cpp)
+  target_compile_definitions(wam_avcodec_allocation_test PRIVATE WAM_AVCODEC_ALLOCATION_PROBE=1)
+  target_link_libraries(wam_avcodec_allocation_test PRIVATE wam_avcodec_instrumented)
+  add_executable(wam_avcodec_audio_allocation_test tests/software_avcodec_audio_test.cpp
+    src/platform/macos/software_avcodec_audio_backend.cpp)
+  target_compile_definitions(wam_avcodec_audio_allocation_test PRIVATE
+    WAM_AVCODEC_ALLOCATION_PROBE=1 WAM_AVCODEC_AUDIO_TESTING=1)
+  target_link_libraries(wam_avcodec_audio_allocation_test PRIVATE wam_avcodec_instrumented)
+  target_sources(wam_avcodec_audio_allocation_test PRIVATE src/media/audio_downmix.cpp)
+endif()
+
+if(BUILD_TESTING AND WAM_ENABLE_AVCODEC_STAGE)
+  foreach(specimen IN ITEMS dts51 truehd51)
+    add_test(NAME software_avcodec_audio_${specimen} COMMAND wam_software_avcodec_audio_test
+      "${CMAKE_SOURCE_DIR}/test-media/native-coverage/phase2/${specimen}.audio-packets"
+      "${CMAKE_SOURCE_DIR}/test-media/native-coverage/phase2/${specimen}.f32" "${specimen}" 6
+      "${CMAKE_SOURCE_DIR}/test-media/native-coverage/phase2/${specimen}.stereo.f32")
+    set_tests_properties(software_avcodec_audio_${specimen} PROPERTIES FIXTURES_REQUIRED avcodec_media TIMEOUT 30)
+  endforeach()
+endif()
+
+if(BUILD_TESTING AND WAM_ENABLE_AVCODEC_STAGE)
+  add_executable(wam_avcodec_video_allocation_test tests/software_avcodec_video_test.mm)
+  target_link_libraries(wam_avcodec_video_allocation_test PRIVATE
+    wam_avcodec_instrumented wam_macos_native_video_core)
+endif()
+
+if(BUILD_TESTING AND WAM_ENABLE_AVCODEC_STAGE)
+  add_executable(wam_avcodec_worker_budget_test tests/avcodec_worker_budget_test.cpp)
+  target_link_libraries(wam_avcodec_worker_budget_test PRIVATE wam_avcodec_worker)
+  add_test(NAME avcodec_worker_budget COMMAND wam_avcodec_worker_budget_test)
 endif()

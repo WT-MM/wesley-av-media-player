@@ -1,0 +1,74 @@
+[
+  {
+    "name": "asp",
+    "icc_profile": "DELL S2725HS",
+    "pixels": 80359,
+    "tolerance": {
+      "max_abs_projection": 0.15,
+      "max_rms_8bit": 6.0
+    },
+    "encoded": {
+      "rms": 20.669187023430386,
+      "projections": {
+        "wrong_matrix": 0.6183106800173613,
+        "wrong_range": 1.142133944245097
+      }
+    },
+    "srgb": {
+      "rms": 18.147850423721344,
+      "projections": {
+        "wrong_matrix": 0.5270285699551873,
+        "wrong_range": 0.5977124873312218
+      }
+    },
+    "matrix_range_projection_pass": false
+  },
+  {
+    "name": "hi10p",
+    "icc_profile": "DELL S2725HS",
+    "pixels": 84569,
+    "tolerance": {
+      "max_abs_projection": 0.15,
+      "max_rms_8bit": 6.0
+    },
+    "encoded": {
+      "rms": 20.54021644267319,
+      "projections": {
+        "wrong_matrix": 0.6319623870504999,
+        "wrong_range": 1.1238985142710118
+      }
+    },
+    "srgb": {
+      "rms": 18.072090865660503,
+      "projections": {
+        "wrong_matrix": 0.547586817822142,
+        "wrong_range": 0.5865409329257751
+      }
+    },
+    "matrix_range_projection_pass": false
+  },
+  {
+    "name": "h264422",
+    "icc_profile": "DELL S2725HS",
+    "pixels": 82255,
+    "tolerance": {
+      "max_abs_projection": 0.15,
+      "max_rms_8bit": 6.0
+    },
+    "encoded": {
+      "rms": 20.533455110066527,
+      "projections": {
+        "wrong_matrix": 0.6497311559063793,
+        "wrong_range": 1.1340303262086844
+      }
+    },
+    "srgb": {
+      "rms": 18.026149627440066,
+      "projections": {
+        "wrong_matrix": 0.5731628866128834,
+        "wrong_range": 0.5945450578865757
+      }
+    },
+    "matrix_range_projection_pass": false
+  }
+]

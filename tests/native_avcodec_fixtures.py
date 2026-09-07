@@ -20,7 +20,9 @@ def run(argv):
 def packet_bytes(dump):
     return bytes.fromhex(''.join(line.split(':', 1)[1].split('  ')[0].strip().replace(' ', '')
                                 for line in dump.splitlines() if ':' in line))
-for name, options in [('hi10p', ['-c:v','libx264','-profile:v','high10','-pix_fmt','yuv420p10le','-bf','2']),
+for name, options in [('vp9', ['-c:v','libvpx-vp9','-pix_fmt','yuv420p','-threads','1','-row-mt','0']),
+                      ('vp9p2', ['-c:v','libvpx-vp9','-pix_fmt','yuv420p10le','-profile:v','2','-threads','1','-row-mt','0']),
+                      ('hi10p', ['-c:v','libx264','-profile:v','high10','-pix_fmt','yuv420p10le','-bf','2']),
                       ('asp', ['-c:v','mpeg4','-bf','2','-q:v','4']),
                       ('h264422', ['-c:v','libx264','-profile:v','high422','-pix_fmt','yuv422p10le','-bf','2'])]:
     asset = root / (name + '.mkv')
@@ -54,6 +56,27 @@ for name, codec in [('dts','dca'),('truehd','truehd'),('mlp','mlp')]:
         reference_asset = root / 'dts.dts'
         run([args.ffmpeg,'-v','error','-y','-i',str(asset),'-c','copy','-f','dts',str(reference_asset)])
     run([args.ffmpeg,'-v','error','-y','-i',str(reference_asset),'-c:a','pcm_f32le','-f','f32le',str(root/(name+'.f32'))])
+for name, codec in [('dts51','dca'),('truehd51','truehd')]:
+    asset = root / (name + '.mka')
+    impulses = '|'.join('0.5*eq(n,' + str(1000+c*6000) + ')' for c in range(6))
+    run([args.ffmpeg,'-v','error','-y','-f','lavfi','-i',
+         "aevalsrc='"+impulses+"':s=48000:c=5.1(side)",
+         '-t','1','-c:a',codec,'-strict','-2',str(asset)])
+    info = json.loads(run([args.ffprobe,'-v','error','-show_packets','-show_data',
+                          '-show_streams','-of','json',str(asset)]))
+    assert info['streams'][0]['channels'] == 6
+    archive = bytearray(struct.pack('<I', len(info['packets'])))
+    for packet in info['packets']:
+        data = packet_bytes(packet['data'])
+        archive += struct.pack('<I',len(data)) + data
+    (root / (name + '.audio-packets')).write_bytes(archive)
+    reference_asset = asset
+    if codec == 'dca':
+        reference_asset = root / (name + '.dts')
+        run([args.ffmpeg,'-v','error','-y','-i',str(asset),'-c','copy','-f','dts',str(reference_asset)])
+    for suffix, options in [('.f32', []), ('.stereo.f32', ['-ac','2'])]:
+        run([args.ffmpeg,'-v','error','-y','-i',str(reference_asset),*options,
+             '-c:a','pcm_f32le','-f','f32le',str(root/(name+suffix))])
 manifest = dict(ffmpeg_version=run([args.ffmpeg,'-version']).decode(), argv=commands,
                 artifacts={p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in root.iterdir()
                            if p.is_file() and p.name != 'manifest.json'})

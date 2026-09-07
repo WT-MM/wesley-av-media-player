@@ -6,6 +6,9 @@ namespace wam::media {
 enum class DecodeImplementation : std::uint8_t {
   None, VideoToolboxHardware, VideoToolboxSoftware, AudioToolbox, Libvpx, Libavcodec
 };
+enum class DecodeConfigurationRepresentation : std::uint8_t {
+  None, RawExtradata, AppleMagicCookie, Esds
+};
 enum class DecodeRefusal : std::uint8_t {
   None, NotApplicable, HardwareUnavailable, AppleProfileUnsupported,
   AppleCodecUnavailable, StageNotBuilt, PresentationUnsupported
@@ -25,6 +28,7 @@ inline constexpr std::array kNativeDecodeLadder{
 struct DecodePlan {
   std::array<DecodeCandidate, kNativeDecodeLadder.size()> candidates{};
   DecodeImplementation implementation{DecodeImplementation::None};
+  DecodeConfigurationRepresentation configurationRepresentation{DecodeConfigurationRepresentation::None};
   [[nodiscard]] constexpr bool admitted() const noexcept {
     return implementation != DecodeImplementation::None;
   }

@@ -1,0 +1,89 @@
+[
+  {
+    "name": "consumer",
+    "path": "src/platform/macos/native_video_consumer.mm",
+    "before_sha256": "1e85961c290608ea0ab5b3bfaeef11eed602f1e7b4d70b936e61e65fe031ca21",
+    "restored_sha256": "1e85961c290608ea0ab5b3bfaeef11eed602f1e7b4d70b936e61e65fe031ca21",
+    "baseline": {
+      "label": "consumer-baseline",
+      "passed": true,
+      "rc": 0,
+      "pid": 40768,
+      "run_id": "22d3c4ef-df0e-406f-a3dd-87ae06fe0563",
+      "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+      "asset_sha256": "21a93d016a3e31cee2fcdc3f0bf80ef59cbc57bf6ebe9dd5a902fea5e187f17a",
+      "diagnostics": [
+        "WAM: native decoder stage=Libavcodec codec=76703039"
+      ]
+    },
+    "reverted": {
+      "label": "consumer-reverted",
+      "passed": false,
+      "rc": 0,
+      "pid": 40851,
+      "run_id": "375122de-7ec3-41a8-8ae4-795ea486f437",
+      "candidate_sha256": "773e6a4e5200cd168c0e5ffbd6d51134898f9a4bccb6fa83656dbd652cec9d5d",
+      "asset_sha256": "21a93d016a3e31cee2fcdc3f0bf80ef59cbc57bf6ebe9dd5a902fea5e187f17a",
+      "diagnostics": [
+        "WAM: native failure stage=open reason=Protocol class=ConsumerConfiguration error=\"video configure refused: video track is outside native SDR v1\"",
+        "WAM: Native playback rejected an internal command and was stopped.",
+        "WAM: cannot load bundled fallback: Cannot load library /dev/fd/14: dlopen(/dev/fd/14, 0x0006): Library not loaded: /opt/homebrew/opt/ffmpeg/lib/libavcodec.62.dylib"
+      ]
+    },
+    "restored": {
+      "label": "consumer-restored",
+      "passed": true,
+      "rc": 0,
+      "pid": 40937,
+      "run_id": "1719dd34-1310-4297-bd5c-6ccc4688885e",
+      "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+      "asset_sha256": "21a93d016a3e31cee2fcdc3f0bf80ef59cbc57bf6ebe9dd5a902fea5e187f17a",
+      "diagnostics": [
+        "WAM: native decoder stage=Libavcodec codec=76703039"
+      ]
+    }
+  },
+  {
+    "name": "sample_builder",
+    "path": "src/platform/macos/matroska_sample_builder.mm",
+    "before_sha256": "2b201e49eedba317659a7bcb3621b336f88e7423c63215a6fb3d719bea71adaa",
+    "restored_sha256": "2b201e49eedba317659a7bcb3621b336f88e7423c63215a6fb3d719bea71adaa",
+    "baseline": {
+      "label": "sample_builder-baseline",
+      "passed": true,
+      "rc": 0,
+      "pid": 40956,
+      "run_id": "88e5222e-bb38-4284-aacd-ef2315a2bbbe",
+      "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+      "asset_sha256": "21a93d016a3e31cee2fcdc3f0bf80ef59cbc57bf6ebe9dd5a902fea5e187f17a",
+      "diagnostics": [
+        "WAM: native decoder stage=Libavcodec codec=76703039"
+      ]
+    },
+    "reverted": {
+      "label": "sample_builder-reverted",
+      "passed": false,
+      "rc": 0,
+      "pid": 41088,
+      "run_id": "1fc4d127-0e6d-4753-bc5d-2bc395a0902a",
+      "candidate_sha256": "2ab7ded1ce5f95389e6e46a3ae7ea926859041c1b4617dd086b759e515ecc8d0",
+      "asset_sha256": "21a93d016a3e31cee2fcdc3f0bf80ef59cbc57bf6ebe9dd5a902fea5e187f17a",
+      "diagnostics": [
+        "WAM: native failure stage=open reason=Startup class=UnsupportedSource error=\"matroska video track has no admissible CoreMedia format description\"",
+        "WAM: cannot load bundled fallback: Cannot load library /dev/fd/14: dlopen(/dev/fd/14, 0x0006): Library not loaded: /opt/homebrew/opt/ffmpeg/lib/libavcodec.62.dylib"
+      ]
+    },
+    "restored": {
+      "label": "sample_builder-restored",
+      "passed": true,
+      "rc": 0,
+      "pid": 41212,
+      "run_id": "b0cb9ac2-b9b0-4608-86f3-a9879008f648",
+      "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+      "asset_sha256": "21a93d016a3e31cee2fcdc3f0bf80ef59cbc57bf6ebe9dd5a902fea5e187f17a",
+      "diagnostics": [
+        "WAM: native decoder stage=Libavcodec codec=76703039"
+      ]
+    }
+  }
+]

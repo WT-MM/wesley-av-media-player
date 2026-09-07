@@ -1,0 +1,20 @@
+99/99 Testing: avcodec_worker_budget
+99/99 Test: avcodec_worker_budget
+Command: "/Users/wesleymaa/Documents/WAM/build/wam_avcodec_worker_budget_test"
+Directory: /Users/wesleymaa/Documents/WAM/build
+"avcodec_worker_budget" start time: Sep 07 02:01 EDT
+Output:
+----------------------------------------------------------
+threads before=1 during=17 after=1; worker 17 refused by budget
+<end of output>
+Test time =   0.18 sec
+----------------------------------------------------------
+Test Passed.
+"avcodec_worker_budget" end time: Sep 07 02:01 EDT
+"avcodec_worker_budget" time elapsed: 00:00:00
+----------------------------------------------------------
+
+End testing: Sep 07 02:01 EDT
+
+benchmark =   0.71 sec*proc
+

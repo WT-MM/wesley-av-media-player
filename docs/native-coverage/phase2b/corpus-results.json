@@ -1,0 +1,1556 @@
+[
+  {
+    "path": "/Users/wesleymaa/Downloads/kbot-pushing.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "08dd2e85e8c8c096bc19e329c4f3fe2d10914ef8d522c6e47629b09a4e3ca55d",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "6c2a7ea4-1249-4a48-807e-5ff8f1871f46",
+    "pid": 41429,
+    "wall_seconds": 6.472154707997106,
+    "metrics": "/private/tmp/wam-phase2b/corpus/000/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/appleads.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "51893850955e9f6089ea856df1844416c28be3c2e105c850cc64189be7a0866a",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "281b1bab-b283-42bd-a916-824d48400764",
+    "pid": 42046,
+    "wall_seconds": 6.07787095796084,
+    "metrics": "/private/tmp/wam-phase2b/corpus/001/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/Untitled.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "81abd208b8848eaf5f046538163362185e0a5e9bcb5b3c72253386423cc7e84a",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "e2b56f5e-7440-41ea-9d5f-d63b4800c77f",
+    "pid": 43994,
+    "wall_seconds": 6.023719374963548,
+    "metrics": "/private/tmp/wam-phase2b/corpus/002/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=68766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/leflexitac_assembly_edited_compressed.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "cf6ff88754e86d4f2ddd59d5e0937b22c64b59322925e627e03717b1c0f0dd60",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "2a3edfc5-c739-4a73-aa9f-5f05af85f467",
+    "pid": 45807,
+    "wall_seconds": 6.072033291973639,
+    "metrics": "/private/tmp/wam-phase2b/corpus/003/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/vidya.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "5bfc96ac46188ae0ff106b13a901c0e224a378a5f51b0d16a32502a69e235b58",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "9cff3f43-78a7-41c8-8ffe-a9fc05c01e33",
+    "pid": 47743,
+    "wall_seconds": 6.71737425000174,
+    "metrics": "/private/tmp/wam-phase2b/corpus/004/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/Screencast from 01-28-2026 04:53:24 PM.mp4",
+    "status": "REFUSED",
+    "baseline": "REFUSED",
+    "failures": [
+      "WAM: native failure stage=open reason=Startup class=UnsupportedSource error=\"selected video has non-square pixels (anamorphic)\""
+    ],
+    "rc": 0,
+    "asset_sha256": "35d3befcef8d57d9a73c39a3a90b26ced4eca644b29cbbed5851b0c7f06bfb79",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "c2a0d0f3-3263-4fc4-9434-5b4bc67417ca",
+    "pid": 50067,
+    "wall_seconds": 6.005798833037261,
+    "metrics": "/private/tmp/wam-phase2b/corpus/005/metrics.jsonl",
+    "routes": []
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/visual_hand_data_trimmed.mp4",
+    "status": "REFUSED",
+    "baseline": "REFUSED",
+    "failures": [
+      "WAM: native failure stage=open reason=Startup class=UnsupportedSource error=\"selected video has non-square pixels (anamorphic)\""
+    ],
+    "rc": 0,
+    "asset_sha256": "88e02c3fda66ec28bb7c511e2e116261914bbd392d5a2d093fd0244c078af380",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "d41401a1-8558-4a24-98a6-46be35641801",
+    "pid": 52221,
+    "wall_seconds": 6.0369852089788765,
+    "metrics": "/private/tmp/wam-phase2b/corpus/006/metrics.jsonl",
+    "routes": []
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/PXL_20250729_045448421.mp4",
+    "status": "REFUSED",
+    "baseline": "REFUSED",
+    "failures": [
+      "WAM: native failure stage=steady reason=Decode class=Consumer error=\"CoreMedia audio input/output timing contains an edit\""
+    ],
+    "rc": 0,
+    "asset_sha256": "4dfc9263d13db33c748fc3e40506d672115c5940922fefc55f14c3ba3269ad4d",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "95c2a0be-6b41-482d-b9b8-57d38c10eb49",
+    "pid": 54380,
+    "wall_seconds": 6.058073499996681,
+    "metrics": "/private/tmp/wam-phase2b/corpus/007/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/human_teleop.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "0cf56b8e334c5b31916c62e397e66304facc90ab19de1a5b26c6dc8a9475a83d",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "5e302364-14f3-4188-9d48-0fcd0eca78e9",
+    "pid": 56097,
+    "wall_seconds": 6.077291499997955,
+    "metrics": "/private/tmp/wam-phase2b/corpus/008/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/C0478_1.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "4f4904e16b7403ca5d311c120025396ebdb1d2419aa7902cc4b0055794c0dd81",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "8d5878b5-7868-4d9b-9d91-bc658cf0710f",
+    "pid": 56209,
+    "wall_seconds": 6.532673666952178,
+    "metrics": "/private/tmp/wam-phase2b/corpus/009/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/teleop.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "7dff6e9093c8fc7a311ebefbb6301016a3374f50da9c6b7e5ba0dde9fd7c2029",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "cd25a724-ee36-41bb-9586-c3d28b033f11",
+    "pid": 56306,
+    "wall_seconds": 6.10037158295745,
+    "metrics": "/private/tmp/wam-phase2b/corpus/010/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/IMG_6793.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "70f7b94625ab34a863a96c83b39551598b12af81feea77f2fe76ecda5472683a",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "6133b85f-6f2f-4aae-92e8-e0d5ed900fff",
+    "pid": 56336,
+    "wall_seconds": 6.1155320829711854,
+    "metrics": "/private/tmp/wam-phase2b/corpus/011/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/pyflexitac_tutorial_compressed.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "175d236e46fa7269c44f6c706f8d07e142eb458e153f681138439213104004ce",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "b98769f5-706a-4ab5-b764-e710d29aafc5",
+    "pid": 56357,
+    "wall_seconds": 6.723543916014023,
+    "metrics": "/private/tmp/wam-phase2b/corpus/012/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/boxing_trimmed.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "f987b6e4bf9b2b85c7532bcdb311ae1af9ceaaea4de45bc30c72ef702c2dad4c",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "a14b0662-4875-4b9c-86cb-6e93300693cb",
+    "pid": 56374,
+    "wall_seconds": 6.074782333977055,
+    "metrics": "/private/tmp/wam-phase2b/corpus/013/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/IMG_7267.mp4",
+    "status": "REFUSED",
+    "baseline": "REFUSED",
+    "failures": [
+      "WAM: native failure stage=open reason=Startup class=UnsupportedSource error=\"selected video color is outside the native v1 presentation contract\""
+    ],
+    "rc": 0,
+    "asset_sha256": "623f1a667212c2b79ec8e03e7c6a262b6970a3d312e12234761c9f3a7cbf4a66",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "345142e6-0df8-4f34-9b77-37495621b5be",
+    "pid": 56386,
+    "wall_seconds": 5.999354625004344,
+    "metrics": "/private/tmp/wam-phase2b/corpus/014/metrics.jsonl",
+    "routes": []
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/Untitled-wam.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "97a93ef01efe13f2e3ae29153756510feb5dbb1f6445fff30603b5a82813d99d",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "2c8cb070-87d0-4baa-bf3a-c19574de85d6",
+    "pid": 56499,
+    "wall_seconds": 6.0483306249952875,
+    "metrics": "/private/tmp/wam-phase2b/corpus/015/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/fasterkick.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "6f5403f3bc42909624e576459fa5d76a29fdcc9a42e99c880a281faf04b986ac",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "29b891bf-114f-442e-834e-4cd40c85cdd5",
+    "pid": 56627,
+    "wall_seconds": 6.680566583003383,
+    "metrics": "/private/tmp/wam-phase2b/corpus/016/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/SLOWMOTION.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "08dd2e85e8c8c096bc19e329c4f3fe2d10914ef8d522c6e47629b09a4e3ca55d",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "94b06733-d7c9-4eec-a06b-08a42bbf4ad4",
+    "pid": 56662,
+    "wall_seconds": 6.7006345829577185,
+    "metrics": "/private/tmp/wam-phase2b/corpus/017/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/trimmed_handpose_test.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "685765c2817e411b4affa713ede0f43ac770aeb0190da7eac511613a78f65e3f",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "469f86b1-927a-4485-81aa-3b2b24e67ddc",
+    "pid": 56701,
+    "wall_seconds": 6.097279666981194,
+    "metrics": "/private/tmp/wam-phase2b/corpus/018/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/leflexitac_assembly.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "911876d4da9a34ec41a0982ae54442bae0c9fb088e2c0b365d154dcfb2e92a44",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "ba3c2512-da5c-483a-bf09-006e6f1d78c7",
+    "pid": 56758,
+    "wall_seconds": 6.0892179580405354,
+    "metrics": "/private/tmp/wam-phase2b/corpus/019/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/stand_jun2.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "8cde09d9689b9c565bfe463aef79b49faf7c8a5b6055834c76053d6052075fd9",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "3238f942-9582-4742-97a4-754b910e3a83",
+    "pid": 56796,
+    "wall_seconds": 6.620498124975711,
+    "metrics": "/private/tmp/wam-phase2b/corpus/020/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/C0478.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "39168de2f2e2d59fdd15674635d47ac3321cd46c8b963d55213580b5eaedd501",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "c2589abc-ca67-45e6-958d-48587a1f13d9",
+    "pid": 56813,
+    "wall_seconds": 6.6786713330075145,
+    "metrics": "/private/tmp/wam-phase2b/corpus/021/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/leflexitac_assembly_light.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "1caed58000900e6ff2c7c7ab18183ab7d66be78c320a160333db398a99a5bab8",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "c27c37e0-98d2-4577-95fb-25a97bdc637a",
+    "pid": 56827,
+    "wall_seconds": 6.082001916947775,
+    "metrics": "/private/tmp/wam-phase2b/corpus/022/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/boxing_trimed.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "d7774299a6e83d85451311b4d060597b10363168367bcb0de1a6cb9f75d0b2f2",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "f54912b3-93b1-4cad-b749-be64a2cd5969",
+    "pid": 56840,
+    "wall_seconds": 6.080198334006127,
+    "metrics": "/private/tmp/wam-phase2b/corpus/023/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/leflexitac_assembly_edited.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "08b8e2b9ce1e57a0c583c86a2bf92746c5c1d2f99146ae747f77ec4fb48a7ee6",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "336cd2a3-6e22-4cf3-9e3c-88016397de05",
+    "pid": 56849,
+    "wall_seconds": 6.682511207996868,
+    "metrics": "/private/tmp/wam-phase2b/corpus/024/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/Screen Recording 2024-10-16 at 6.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "39fb6ba6cbff5be3ae6036732b9818a7b8a85d6243dd48c71e8a67f665a0b61e",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "d9294ebe-855e-4358-98a6-d3d06bfc771e",
+    "pid": 56860,
+    "wall_seconds": 6.077075042005163,
+    "metrics": "/private/tmp/wam-phase2b/corpus/025/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/side_cam.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "4fa6b507a45d2b32363d20a688dfc9d513cca164808c24a7ee8eb97c1b566968",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "720efe1a-41a4-42da-882d-410b1f9c0dad",
+    "pid": 56870,
+    "wall_seconds": 6.289258208009414,
+    "metrics": "/private/tmp/wam-phase2b/corpus/026/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/RobstrideOfficeSmall.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "574898c843fdabe2c24589d1b708350b0c317f4a04802aead4a5736586141335",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "1d3139e3-ff98-44cc-bbac-e48eed35280a",
+    "pid": 56886,
+    "wall_seconds": 6.46157383301761,
+    "metrics": "/private/tmp/wam-phase2b/corpus/027/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/il_rollout.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "031d3dddd21f6ebb2784b576ff185ab81dc17df5667bf31413b99ff05f4e0514",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "1d488160-62c5-40e9-b2ca-03604664e7b9",
+    "pid": 56903,
+    "wall_seconds": 6.073054999986198,
+    "metrics": "/private/tmp/wam-phase2b/corpus/028/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/embedded.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "ae1a4d37993fc16dcf6f01af35aeffefd99785c850133cee2577fee4c945f7a9",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "b221955c-c956-41ad-b9a1-7fede90b152e",
+    "pid": 56926,
+    "wall_seconds": 6.651495208032429,
+    "metrics": "/private/tmp/wam-phase2b/corpus/029/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/vids/left_1.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "3a3eb245694edcfce52bfb36ac1fb888fc0c4bcc4d4eb6b56fba4edbb7c8b051",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "02378bb1-f46d-4f6c-a5d4-8c7b352c3b31",
+    "pid": 56944,
+    "wall_seconds": 6.148573499987833,
+    "metrics": "/private/tmp/wam-phase2b/corpus/030/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/vids/left_0.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "b15082fcc9d23d964d24475e43df864a5b5490716f25c78f94762cf2ad0c6799",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "bf0c9a20-d6ba-41fe-8e75-deb41c541920",
+    "pid": 56959,
+    "wall_seconds": 6.0585049169603735,
+    "metrics": "/private/tmp/wam-phase2b/corpus/031/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/vids/left_2.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "617ee2564cd8aae9847fca320cb49bad50aa98b91578e4e962eb514b8a5fe4df",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "f444c114-bec7-46d0-b3bc-ecd461913f09",
+    "pid": 56970,
+    "wall_seconds": 6.04960237495834,
+    "metrics": "/private/tmp/wam-phase2b/corpus/032/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/vids/left_3.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "20fa2b082e418ae0b4a1aee376a40c20e9dd4d2d27bb4e76a2d0ac1bc9424044",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "aaee0872-8ae0-4646-a602-1c609ac237cf",
+    "pid": 56981,
+    "wall_seconds": 6.670780208951328,
+    "metrics": "/private/tmp/wam-phase2b/corpus/033/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/vids/left_4.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "4c35f9cb2a6af1dfe1fdd6015e93ce5fd14ccf922148bbfb6a64006980518ab5",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "e678c8d8-cc38-4041-afb2-9c4cb2e209f6",
+    "pid": 56998,
+    "wall_seconds": 6.150861583009828,
+    "metrics": "/private/tmp/wam-phase2b/corpus/034/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/vids/left_5.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "46aaa895c05a032f54cd4f6d750f08f7c65d70bf784e700435ec5fa9c327865d",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "799a43a1-183e-4314-9d21-b7e58c757724",
+    "pid": 57006,
+    "wall_seconds": 6.075965458992869,
+    "metrics": "/private/tmp/wam-phase2b/corpus/035/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/mujoco_scripts/force_test_20250206_100039.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "1a761dc2743e22256eea7045863d5e6e0e9a509dc33e66c60a7c6a05d8e84703",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "16da659c-6e89-43f2-86fd-c2ac4e70a90c",
+    "pid": 57019,
+    "wall_seconds": 6.042630125011783,
+    "metrics": "/private/tmp/wam-phase2b/corpus/036/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/insta_2025/kbot-pushing-short.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "1f779cc6de1be09e785bc22b2caeec8921fb3d626a2bfec61077abaec4c6d695",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "755b8b67-fa80-4ec9-946c-6e85946ddefb",
+    "pid": 57036,
+    "wall_seconds": 6.699978834018111,
+    "metrics": "/private/tmp/wam-phase2b/corpus/037/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/slide_assets/pizza.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "05386f00030b7ad898e463932ff3f4ea8742abc18ddaac6f3481a58e6d597f75",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "553b0aab-a51a-4d9a-bc57-6f7c7c1dd074",
+    "pid": 57052,
+    "wall_seconds": 6.127139333053492,
+    "metrics": "/private/tmp/wam-phase2b/corpus/038/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/slide_assets/diffusion_yep.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "053a454e3b61fea36be18e7e4200231ab8ce940f0e6fbc876135d0929279a03b",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "50d789a2-f63b-4e98-968a-97136e9dd517",
+    "pid": 57063,
+    "wall_seconds": 6.057908000017051,
+    "metrics": "/private/tmp/wam-phase2b/corpus/039/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/slide_assets/diffusion_example.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "a454ba1d70e1ccb85f2a5e31a3f2f5cf3b09c64a902eb15a7f5960483fe317c6",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "eee57409-f86e-48cc-a983-2a2f56bf87be",
+    "pid": 57078,
+    "wall_seconds": 6.0349754160270095,
+    "metrics": "/private/tmp/wam-phase2b/corpus/040/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/slide_assets/wipe_ood_4x.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "1ef3e0878d8d6ed3f9fa0445426ea3cd5faaa86e96b5d20e8a5a7fdc3508e027",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "92800566-9694-4df2-9ca3-cf7e19dd5238",
+    "pid": 57096,
+    "wall_seconds": 6.055600374995265,
+    "metrics": "/private/tmp/wam-phase2b/corpus/041/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/slide_assets/lstm_example.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "80849a76e7364ee2943cbe8e552339a0252306f302f1fe35b3e718126742e3f7",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "222ea41d-635e-458d-8024-f4afafdb8504",
+    "pid": 57104,
+    "wall_seconds": 6.6664498330210336,
+    "metrics": "/private/tmp/wam-phase2b/corpus/042/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/slide_assets/franka_pour_corn.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "ef006694b92d6c108a58af3397bafc41582ff1cb32ba5ccec0ff9ae6b571e8e6",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "5859e023-1943-443f-ac14-d80fc01bdca5",
+    "pid": 57116,
+    "wall_seconds": 6.131537124980241,
+    "metrics": "/private/tmp/wam-phase2b/corpus/043/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/slide_assets/trimmed_autorollout.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "a0735a91a293900af25b7ea86e1e2c1fe9a2b909a6179ef862d7b02cd593d4ac",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "4d0142cd-84d8-4a4a-9da9-6aeea146bbbf",
+    "pid": 57129,
+    "wall_seconds": 6.0674611670547165,
+    "metrics": "/private/tmp/wam-phase2b/corpus/044/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/angel_clip2.mp4",
+    "status": "REFUSED",
+    "baseline": "REFUSED",
+    "failures": [
+      "WAM: native failure stage=open reason=Startup class=UnsupportedSource error=\"selected video color is outside the native v1 presentation contract\""
+    ],
+    "rc": 0,
+    "asset_sha256": "f4b9a828d548090ec4bab481c15ed05bb7f7f6d7b845a7c4b1bae96c4f40e401",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "213e7a10-e256-4b84-ab12-7635e6eb8529",
+    "pid": 57176,
+    "wall_seconds": 6.055526041018311,
+    "metrics": "/private/tmp/wam-phase2b/corpus/045/metrics.jsonl",
+    "routes": []
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/_part1_5x_6x.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "ef8341ee5bad5dd4a5283629c0e613c7e333576df769cfd42a3cc53dc463b5e9",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "7b112587-fdc7-4be2-a0d0-a3ce96c60964",
+    "pid": 57190,
+    "wall_seconds": 6.685213417047635,
+    "metrics": "/private/tmp/wam-phase2b/corpus/046/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/angel_bamboo_6x_8x.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "36f5a4775306aa09bac4dac977d4fa8913bc5f425605cdccbe50a5a3bcf2cb18",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "dd8e0336-dcc0-4960-835a-044f414a9610",
+    "pid": 57203,
+    "wall_seconds": 6.169113417039625,
+    "metrics": "/private/tmp/wam-phase2b/corpus/047/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/angel_bamboo_20s.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "63bd963b732b1edcf4b7e49f339b8e6623a1405d8c31284cbea7b022d5e6b8ff",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "539b2457-44de-4295-98ab-788862533fc4",
+    "pid": 57214,
+    "wall_seconds": 6.087671582994517,
+    "metrics": "/private/tmp/wam-phase2b/corpus/048/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/_part2_4x_5x.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "2f5e7e48938ff30ee8dbe201ba4be4e472b22241dc31299999e43177079a20ba",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "c46a3388-676c-4a1c-b98d-e9defe982897",
+    "pid": 57226,
+    "wall_seconds": 6.660663583024871,
+    "metrics": "/private/tmp/wam-phase2b/corpus/049/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/angel_bamboo_60s.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "73484193372a2de8d1dcf2fc82a73c7dc658b4e826979267bd127c22aace923b",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "3836e6e2-d851-4998-9edf-fb7204292a6c",
+    "pid": 57244,
+    "wall_seconds": 6.1737800420378335,
+    "metrics": "/private/tmp/wam-phase2b/corpus/050/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/angel1_prep.mp4",
+    "status": "REFUSED",
+    "baseline": "REFUSED",
+    "failures": [
+      "WAM: native failure stage=open reason=Startup class=UnsupportedSource error=\"selected video color is outside the native v1 presentation contract\""
+    ],
+    "rc": 0,
+    "asset_sha256": "2aa673425ad6b3c1e431f7990b742f3f43c8e4aaf5aecefb4b1cdea6d73c5597",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "a4ec7892-0b6f-4aef-9b8c-45e13ad6db2d",
+    "pid": 57253,
+    "wall_seconds": 6.061245165998116,
+    "metrics": "/private/tmp/wam-phase2b/corpus/051/metrics.jsonl",
+    "routes": []
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/_shishi1_4x_5x.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "1751aff69825169f5d0f615e0f1bc0404f81b91002370d444af4ed4b8ca20679",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "3bd40c84-4f84-45ef-8963-5dba7e5d2d19",
+    "pid": 57262,
+    "wall_seconds": 6.091972250025719,
+    "metrics": "/private/tmp/wam-phase2b/corpus/052/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/shishi_prep.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "371f61b431528c3b4c64d86fecbc9d69bd13fd4a6619ad7ea2222c6cba7ba4c9",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "cbe09e41-b3c0-421b-8d2f-f5ba767a061f",
+    "pid": 57283,
+    "wall_seconds": 6.657428042031825,
+    "metrics": "/private/tmp/wam-phase2b/corpus/053/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/_shishi2_5x_6x.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "399261e47c8c45bf49c21f4f7804b0e646432d78931f8d54772e7559607fa6f9",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "d9a03509-d5e0-495d-9b59-11fe7c44494b",
+    "pid": 57298,
+    "wall_seconds": 6.110311333963182,
+    "metrics": "/private/tmp/wam-phase2b/corpus/054/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/shishi_odoshi.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "25fe5fd5516cb8b5eab94c99fb16239bf082961fdeca282381aff0cd57631b64",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "2ef5cbb0-a6c5-49ed-a586-c58a1d908871",
+    "pid": 57308,
+    "wall_seconds": 6.0639998750411905,
+    "metrics": "/private/tmp/wam-phase2b/corpus/055/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/shishi_video.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "7425f382c38e063475980b520987cb5fed80ee2824b2c3b702d97161e6c95eeb",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "3b0cc8e4-d96d-4ca5-9fd7-0d32ad78018e",
+    "pid": 57318,
+    "wall_seconds": 6.071536207979079,
+    "metrics": "/private/tmp/wam-phase2b/corpus/056/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/part1.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "72e7632cbc481b6f352d72eed5b44c161ad5074e68be528da955ca2078b9aea6",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "a107fec1-3c29-49fd-82a4-7732e00d117a",
+    "pid": 57328,
+    "wall_seconds": 6.665820583002642,
+    "metrics": "/private/tmp/wam-phase2b/corpus/057/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/angel_bamboo_30s.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "8f1fc07bcab7a32466e4c9beec22b1c640e1528afa27f6597fed2ef014e0134c",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "1502777c-ac07-4e71-a9b8-2380e9293d95",
+    "pid": 57343,
+    "wall_seconds": 6.1074077090015635,
+    "metrics": "/private/tmp/wam-phase2b/corpus/058/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/_part2_6x_8x.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "661a8b0bf0876b19fd914dddc0f54a4f0b0d5b3cddf281b5721766a2eda43f76",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "cf3986d5-84d5-42be-ae37-2471634ca668",
+    "pid": 57355,
+    "wall_seconds": 6.04576733300928,
+    "metrics": "/private/tmp/wam-phase2b/corpus/059/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/part2.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "06fcfece5239e863f609a39d756cc8504191ea1e3a77a0701499a1f4b7989275",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "09cc4f25-10c8-4d7a-a168-d9c482329dda",
+    "pid": 57370,
+    "wall_seconds": 6.101330958015751,
+    "metrics": "/private/tmp/wam-phase2b/corpus/060/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/_shishi2_3x_4x.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "134de9d2b87530ed4b7d07035f657f5504187ba7cfc6ebf9a4b0eca8d5c2f9d6",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "582ad565-fe89-4b3d-9d5b-791bcb39f54f",
+    "pid": 57379,
+    "wall_seconds": 6.67724237497896,
+    "metrics": "/private/tmp/wam-phase2b/corpus/061/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/angel_bamboo_4x_5x.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "bc8e09c205667f6cbd3fd2cd1735b6dcaae7f063d9aa30e3187c4dd65d83521e",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "b229e4f7-090f-40c4-a19f-eead1da30cc0",
+    "pid": 57402,
+    "wall_seconds": 6.106405165977776,
+    "metrics": "/private/tmp/wam-phase2b/corpus/062/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/_part1_3x_4x.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "2ea33b446db8a17f7111606fced7f7febc10e16e0df29e0c45d88075283ebd39",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "29e73d7e-e270-49ee-865d-1fdadeed6618",
+    "pid": 57414,
+    "wall_seconds": 6.087358082993887,
+    "metrics": "/private/tmp/wam-phase2b/corpus/063/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/_shishi1_6x_8x.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "2d6b7bbdd2f061d7ca280118eb690d57eed6bfba3667570812f66044436fe298",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "d0245cbd-ba6d-4076-9a5d-0f72c8a30b22",
+    "pid": 57425,
+    "wall_seconds": 6.6889071249752305,
+    "metrics": "/private/tmp/wam-phase2b/corpus/064/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/shishi2_raw.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "447852fedfac8591697685bbcfb16abb56943ba2c3c0e8a1739a71c03511caf2",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "ecd846cf-b3f6-470e-b591-6fdf7852cb21",
+    "pid": 57438,
+    "wall_seconds": 6.1674016659962945,
+    "metrics": "/private/tmp/wam-phase2b/corpus/065/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/shishi2_v.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "bf5d2e9cbbd7404038573756769b7f091c848b322ba8db77a02de7aa8d8f8f88",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "1638c61f-069b-457e-96f4-500ca6a69493",
+    "pid": 57452,
+    "wall_seconds": 6.103605542040896,
+    "metrics": "/private/tmp/wam-phase2b/corpus/066/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/_shishi1_3x_4x.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "447852fedfac8591697685bbcfb16abb56943ba2c3c0e8a1739a71c03511caf2",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "a2934d22-9ed1-4bd3-a1a1-fcd16fb7404b",
+    "pid": 57468,
+    "wall_seconds": 6.648926249996293,
+    "metrics": "/private/tmp/wam-phase2b/corpus/067/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/angel_bamboo_5x_6x.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "a6a291f4512f2eeb14126d37964a70a2d12fad9d1b7f9416202e50797918d9a5",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "cbc5b719-9b69-4f88-9679-e5fce285bd41",
+    "pid": 57477,
+    "wall_seconds": 6.168891792010982,
+    "metrics": "/private/tmp/wam-phase2b/corpus/068/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/angel_bamboo_45s.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "a764f06534f39822085eb2c19153148ec5383353b52b9fa60f1fded9015f421b",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "f8173827-f7e7-4174-b99f-10fa058ae3ec",
+    "pid": 57497,
+    "wall_seconds": 6.126072459039278,
+    "metrics": "/private/tmp/wam-phase2b/corpus/069/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/_part1_6x_8x.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "258da7ba026c298d839a701aed09474826978fa3b6f2a46397723a1474a16ab1",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "1a0bb626-4904-4262-a397-6cd757725724",
+    "pid": 57511,
+    "wall_seconds": 6.735500084003434,
+    "metrics": "/private/tmp/wam-phase2b/corpus/070/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/angel2_prep.mp4",
+    "status": "REFUSED",
+    "baseline": "REFUSED",
+    "failures": [
+      "WAM: native failure stage=open reason=Startup class=UnsupportedSource error=\"selected video color is outside the native v1 presentation contract\""
+    ],
+    "rc": 0,
+    "asset_sha256": "23a0ea0b1b00e076e46ba88f58cc74c90c820f9525d073f4e0eb6e7f62cd75c0",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "f8df4c0c-0112-482a-86a3-e26ed7725d07",
+    "pid": 57523,
+    "wall_seconds": 6.012652333010919,
+    "metrics": "/private/tmp/wam-phase2b/corpus/071/metrics.jsonl",
+    "routes": []
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/video_no_audio.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "c097a2c6a0bb95ab6ffd73d1990a3d5f65a030dd9492e282ec4ff9d48353468a",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "ebd13675-473f-45e8-ad40-67d477a523fb",
+    "pid": 57535,
+    "wall_seconds": 6.072493084007874,
+    "metrics": "/private/tmp/wam-phase2b/corpus/072/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/_shishi2_6x_8x.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "4805b8c66553761f86150c4a8e6868bd03a2409624efd44b8d0ab0255da10ca1",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "184dcc19-4cba-4dcc-ac61-b6eee17bdb2e",
+    "pid": 57546,
+    "wall_seconds": 6.087459124973975,
+    "metrics": "/private/tmp/wam-phase2b/corpus/073/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/_part2_3x_4x.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "4c380bcb94749b31392a167901d9cd8bff7a31b6cca80303d44306b1409d7576",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "92b8ee81-0fc1-4927-9b59-909bd6707cce",
+    "pid": 57557,
+    "wall_seconds": 6.674199290981051,
+    "metrics": "/private/tmp/wam-phase2b/corpus/074/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/angel2_v.mp4",
+    "status": "REFUSED",
+    "baseline": "REFUSED",
+    "failures": [
+      "WAM: native failure stage=open reason=Startup class=UnsupportedSource error=\"selected video color is outside the native v1 presentation contract\""
+    ],
+    "rc": 0,
+    "asset_sha256": "facaad7e4f0f0d895aed5e34fc77f1ce2fc1e00c2073c648302a2099e08638af",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "3530bd8d-897e-4194-bda3-c11bb12cdd9a",
+    "pid": 57567,
+    "wall_seconds": 6.114774832967669,
+    "metrics": "/private/tmp/wam-phase2b/corpus/075/metrics.jsonl",
+    "routes": []
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/shishi1_v.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "be76f9612d637bb91d1f2602067d46c61b28081fce634052e80afd2756e78bbb",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "97a76aab-0a11-4cce-8ac3-477ad8bbe862",
+    "pid": 57576,
+    "wall_seconds": 6.09213704202557,
+    "metrics": "/private/tmp/wam-phase2b/corpus/076/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/_part1_4x_5x.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "b3b3a4634bce556c421d7eb75d46b33941dadebfa6a06adebf51f89972e0ac3f",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "30935f54-30cb-4a89-96e6-e1e14d2945a5",
+    "pid": 57590,
+    "wall_seconds": 6.100503207999282,
+    "metrics": "/private/tmp/wam-phase2b/corpus/077/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/_part2_5x_6x.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "76e5a8cf3c0e925a9882890626f520b58fdcb4a7f6d7dc4de864e8553c2f82be",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "068a2958-0b34-4e43-9f8e-1a93970b3e5c",
+    "pid": 57603,
+    "wall_seconds": 6.675890500016976,
+    "metrics": "/private/tmp/wam-phase2b/corpus/078/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/angel_bamboo_15s.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "409a3b07ba3c9ce7b6ae571c89affae12633bc145f8b36473318cbe1217ffb65",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "c836476e-9425-4c57-b12f-46f9119cf67a",
+    "pid": 57617,
+    "wall_seconds": 6.08238033298403,
+    "metrics": "/private/tmp/wam-phase2b/corpus/079/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/angel1_v.mp4",
+    "status": "REFUSED",
+    "baseline": "REFUSED",
+    "failures": [
+      "WAM: native failure stage=open reason=Startup class=UnsupportedSource error=\"selected video color is outside the native v1 presentation contract\""
+    ],
+    "rc": 0,
+    "asset_sha256": "b31a3996fee9664929b6485c9f354c9f965f3a0e95283f08fb23760e0b118498",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "5b4c1571-cb33-40fb-aa54-f394db533e23",
+    "pid": 57627,
+    "wall_seconds": 6.0307802080060355,
+    "metrics": "/private/tmp/wam-phase2b/corpus/080/metrics.jsonl",
+    "routes": []
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/_shishi1_5x_6x.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "bd67fa9801a3edf947e51529e075b91083df61abc1a8041e57103b295fbbbb42",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "e654acc7-5701-400b-b92c-f92221d7dd24",
+    "pid": 57637,
+    "wall_seconds": 6.106941708014347,
+    "metrics": "/private/tmp/wam-phase2b/corpus/081/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/_shishi2_4x_5x.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "f5dcc9765fdfcec1b7c33237e7fd16d4004dc9b9542f8659f3d2796d1f623398",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "f1f4becc-c14d-494d-8010-2dca1ed04abd",
+    "pid": 57650,
+    "wall_seconds": 6.677334374981001,
+    "metrics": "/private/tmp/wam-phase2b/corpus/082/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/angel_combined.mp4",
+    "status": "REFUSED",
+    "baseline": "REFUSED",
+    "failures": [
+      "WAM: native failure stage=open reason=Startup class=UnsupportedSource error=\"selected video color is outside the native v1 presentation contract\""
+    ],
+    "rc": 0,
+    "asset_sha256": "64f0153cd18e86fab9f01a42c310876f91c01c03474b46399bf6624441d4e4e7",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "ad732d08-426b-4276-967b-e4ccba117c7c",
+    "pid": 57660,
+    "wall_seconds": 6.119802707980853,
+    "metrics": "/private/tmp/wam-phase2b/corpus/083/metrics.jsonl",
+    "routes": []
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/angel_bamboo_3x_4x.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "4a601bac80805c1fde821e41f818cfb1afcabd181c113b17a605c2296d08c41b",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "a70b5cdd-8eff-4877-b26d-10cef3459d2b",
+    "pid": 57676,
+    "wall_seconds": 6.06286441598786,
+    "metrics": "/private/tmp/wam-phase2b/corpus/084/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/angel-bamboo/angel_bamboo_final.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "7526d0a09deac4ec6eae8f390ad2068b963de0a7a54bb4900474e9850241ed33",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "2a4c344f-d6db-4b56-af83-6ad89353e3eb",
+    "pid": 57687,
+    "wall_seconds": 6.082563167030457,
+    "metrics": "/private/tmp/wam-phase2b/corpus/085/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Desktop/Audio Files/POW #4 Oral Presentation.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "95d24238511d6217b1a089e078a5a0c709d0d38973218466d34746a8ee5fed2b",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "9205b188-6625-4a1f-b355-4fbd911d5699",
+    "pid": 57704,
+    "wall_seconds": 6.68615983298514,
+    "metrics": "/private/tmp/wam-phase2b/corpus/086/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Desktop/Audio Files/\u841d\u535c\u7cd5.mp4",
+    "status": "NATIVE_OK",
+    "baseline": "NATIVE_OK",
+    "failures": [],
+    "rc": 0,
+    "asset_sha256": "78897c93e84b20bbf99134e6fd363b51d46afcd2681d88c6774020f4a07a3a50",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "0318ac08-fd3c-49b4-afe9-5e0afb38a700",
+    "pid": 57713,
+    "wall_seconds": 6.683066457975656,
+    "metrics": "/private/tmp/wam-phase2b/corpus/087/metrics.jsonl",
+    "routes": [
+      "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+    ]
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/Weekly Updates/2025-08-01/zbot33.mp4",
+    "status": "REFUSED",
+    "baseline": "REFUSED",
+    "failures": [
+      "WAM: native failure stage=open reason=Startup class=UnsupportedSource error=\"selected video sample format is outside native v1\""
+    ],
+    "rc": 0,
+    "asset_sha256": "5692f9ab75f078369a932fdede8bbbe9b9c021a1ec116d133ad972e1a74c3fd9",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "30258b8f-8a1f-4acb-87a8-12b3513aa25d",
+    "pid": 57728,
+    "wall_seconds": 6.118570709018968,
+    "metrics": "/private/tmp/wam-phase2b/corpus/088/metrics.jsonl",
+    "routes": []
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/Weekly Updates/2025-08-01/495_2.mp4",
+    "status": "REFUSED",
+    "baseline": "REFUSED",
+    "failures": [
+      "WAM: native failure stage=open reason=Startup class=UnsupportedSource error=\"selected video sample format is outside native v1\""
+    ],
+    "rc": 0,
+    "asset_sha256": "8657a396ae4988180a8859f18505eb64afdae3733fbfa37a956ae6374589139a",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "607ba91b-6c4a-47db-9ae2-6c0138d62e12",
+    "pid": 57741,
+    "wall_seconds": 6.0633004999835975,
+    "metrics": "/private/tmp/wam-phase2b/corpus/089/metrics.jsonl",
+    "routes": []
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/Weekly Updates/2025-07-11/amp6.mp4",
+    "status": "REFUSED",
+    "baseline": "REFUSED",
+    "failures": [
+      "WAM: native failure stage=open reason=Startup class=UnsupportedSource error=\"selected video sample format is outside native v1\""
+    ],
+    "rc": 0,
+    "asset_sha256": "8633b4d1c0ce7cb83afa9e5963c26ed66476c8fe10303fc55958af57d90a8a56",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "5330753b-fc37-4639-9a22-cea029ccba58",
+    "pid": 57752,
+    "wall_seconds": 6.075515792006627,
+    "metrics": "/private/tmp/wam-phase2b/corpus/090/metrics.jsonl",
+    "routes": []
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/RustDesk/old/outgoing_175981962_20260208203414622_display0_h265.mp4",
+    "status": "REFUSED",
+    "baseline": "REFUSED",
+    "failures": [
+      "WAM: native failure stage=open reason=Startup class=UnsupportedSource error=\"protected or unplayable media is not native-admissible\""
+    ],
+    "rc": 0,
+    "asset_sha256": "6ead230da070bfb45f880c7bf5d53ae9eb1a809c09c4284730e321640321d3a0",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "1a7da2b3-4da5-4e71-a4e5-10de42cebadb",
+    "pid": 57765,
+    "wall_seconds": 6.533702542015817,
+    "metrics": "/private/tmp/wam-phase2b/corpus/091/metrics.jsonl",
+    "routes": []
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/RustDesk/old/outgoing_175981962_20260208220322285_display0_h265.mp4",
+    "status": "REFUSED",
+    "baseline": "REFUSED",
+    "failures": [
+      "WAM: native failure stage=open reason=Startup class=UnsupportedSource error=\"protected or unplayable media is not native-admissible\""
+    ],
+    "rc": 0,
+    "asset_sha256": "1317c1d00dc360e8e8295e74f61e28cd753ec5f92bc4f458536d375810c0ab28",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "cd512d4f-82f3-471a-a8cb-ec5855559478",
+    "pid": 57776,
+    "wall_seconds": 6.034661750018131,
+    "metrics": "/private/tmp/wam-phase2b/corpus/092/metrics.jsonl",
+    "routes": []
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/RustDesk/old/outgoing_175981962_20260208215604603_display0_h265.mp4",
+    "status": "REFUSED",
+    "baseline": "REFUSED",
+    "failures": [
+      "WAM: native failure stage=open reason=Startup class=UnsupportedSource error=\"protected or unplayable media is not native-admissible\""
+    ],
+    "rc": 0,
+    "asset_sha256": "bd0add0a23638182d829b55bf0b682194c7d21c90e676138140fb52470b93186",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "a1335e7a-02f5-4ada-a05f-415ad0b726e6",
+    "pid": 57788,
+    "wall_seconds": 6.6301226249779575,
+    "metrics": "/private/tmp/wam-phase2b/corpus/093/metrics.jsonl",
+    "routes": []
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/RustDesk/old/outgoing_175981962_20260208205646393_display0_h265.mp4",
+    "status": "REFUSED",
+    "baseline": "REFUSED",
+    "failures": [
+      "WAM: native failure stage=open reason=Startup class=UnsupportedSource error=\"protected or unplayable media is not native-admissible\""
+    ],
+    "rc": 0,
+    "asset_sha256": "93b15d49be3f42a8b188a24b7b827c0e983f01f8fd54b6d7a645cfcec6f2b529",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "37ee4107-cbd4-4840-b320-11e2e4035a84",
+    "pid": 57797,
+    "wall_seconds": 6.178638332989067,
+    "metrics": "/private/tmp/wam-phase2b/corpus/094/metrics.jsonl",
+    "routes": []
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/RustDesk/old/outgoing_175981962_20260208210701843_display0_h265.mp4",
+    "status": "REFUSED",
+    "baseline": "REFUSED",
+    "failures": [
+      "WAM: native failure stage=open reason=Startup class=UnsupportedSource error=\"protected or unplayable media is not native-admissible\""
+    ],
+    "rc": 0,
+    "asset_sha256": "a7121cdcdd01800c83c68f9ed1ce3f19364e7c09b51fd34e7794cb464ca9d5ec",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "a3052b19-e3d2-443a-8614-9719b7b1964c",
+    "pid": 57809,
+    "wall_seconds": 6.045759083004668,
+    "metrics": "/private/tmp/wam-phase2b/corpus/095/metrics.jsonl",
+    "routes": []
+  },
+  {
+    "path": "/Users/wesleymaa/Movies/RustDesk/old/outgoing_175981962_20260127121923093_display0_h265.mp4",
+    "status": "REFUSED",
+    "baseline": "REFUSED",
+    "failures": [
+      "WAM: native failure stage=open reason=Startup class=UnsupportedSource error=\"protected or unplayable media is not native-admissible\""
+    ],
+    "rc": 0,
+    "asset_sha256": "fe6ebf40c65dda8bbd3f13ead06926127c40736f12d60c6776a93adc7b4af21a",
+    "candidate_sha256": "693dc1f6dbfd763d0f3b2e80797ec1a5c3ce3bdffbc09870637944c29dbf65c1",
+    "run_id": "3a40ef12-d3f4-4aa5-9408-1e41f9d5ce1a",
+    "pid": 57818,
+    "wall_seconds": 5.998173791973386,
+    "metrics": "/private/tmp/wam-phase2b/corpus/096/metrics.jsonl",
+    "routes": []
+  }
+]

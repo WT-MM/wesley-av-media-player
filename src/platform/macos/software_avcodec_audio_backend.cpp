@@ -1,3 +1,4 @@
+#include "media/avcodec/api.hpp"
 #include "software_avcodec_audio_backend.hpp"
 extern "C" {
 #include <libavutil/frame.h>
@@ -42,6 +43,7 @@ struct SoftwareAvcodecAudioBackend::Impl {
   std::vector<std::byte> extra;
   std::unique_ptr<DecodeWorker> worker;
   std::array<float,4096*media::kMaximumDownmixSourceChannels> slab{};
+  static_assert(sizeof(slab)==kNativeSoftwareAudioConversionScratchBytes);
   std::array<media::AudioChannelRole,media::kMaximumDownmixSourceChannels> roles{};
   std::atomic<bool> filled{false},layoutKnown{false};
   std::atomic<const char*> error{nullptr};
@@ -59,20 +61,20 @@ struct SoftwareAvcodecAudioBackend::Impl {
     const unsigned channels=s.configuration.outputChannels;
     std::array<media::AudioChannelRole,media::kMaximumDownmixSourceChannels> actual{};
     for(unsigned i=0;i<channels;++i) {
-      actual[i]=role(av_channel_layout_channel_from_index(&frame.ch_layout,i));
+      actual[i]=role(wam::media::avcodec::api().av_channel_layout_channel_from_index(&frame.ch_layout,i));
       if(actual[i]==media::AudioChannelRole::Unmapped) {s.error.store("AvcodecAudioChannelRoleUnsupported");return FrameResult::Failed;}
     }
     if(s.layoutKnown.load(std::memory_order_acquire)) {
       if(actual!=s.roles) {s.error.store("AvcodecAudioChannelLayoutChanged");return FrameResult::Failed;}
     } else {s.roles=actual;s.layoutKnown.store(true,std::memory_order_release);}
     const auto format=static_cast<AVSampleFormat>(frame.format);
-    const auto packed=av_get_packed_sample_fmt(format);
+    const auto packed=wam::media::avcodec::api().av_get_packed_sample_fmt(format);
     if(packed!=AV_SAMPLE_FMT_U8 && packed!=AV_SAMPLE_FMT_S16 && packed!=AV_SAMPLE_FMT_S32 &&
        packed!=AV_SAMPLE_FMT_FLT && packed!=AV_SAMPLE_FMT_DBL) {
       s.error.store("AvcodecAudioSampleFormatUnsupported");return FrameResult::Failed;
     }
-    const auto bytes=static_cast<std::size_t>(av_get_bytes_per_sample(format));
-    const bool planar=av_sample_fmt_is_planar(format);
+    const auto bytes=static_cast<std::size_t>(wam::media::avcodec::api().av_get_bytes_per_sample(format));
+    const bool planar=wam::media::avcodec::api().av_sample_fmt_is_planar(format);
     const auto count=std::min<std::size_t>(4096,static_cast<std::size_t>(frame.nb_samples)-s.offset);
     for(std::size_t f=0;f<count;++f)for(unsigned c=0;c<channels;++c) {
       const auto* source=frame.extended_data[planar?c:0]+((s.offset+f)*(planar?1:channels)+(planar?0:c))*bytes;
@@ -95,12 +97,18 @@ SoftwareAvcodecAudioBackend::SoftwareAvcodecAudioBackend(Codec codec):impl_(std:
 SoftwareAvcodecAudioBackend::~SoftwareAvcodecAudioBackend(){close();}
 bool SoftwareAvcodecAudioBackend::configure(const NativeAudioBackendConfiguration& config,std::string* error) {
   close();auto& s=*impl_;
+  if (config.decodePlan.implementation != media::DecodeImplementation::Libavcodec ||
+      config.decodePlan.configurationRepresentation != media::DecodeConfigurationRepresentation::RawExtradata ||
+      !config.magicCookie.empty() ||
+      config.rawExtradata.size()>media::MediaSourceLimits::kHardMaximumCodecConfigurationBytes) {
+    if (error) *error="AvcodecAudioConfigurationRepresentationUnsupported";return false;
+  }
   if(!config.outputSampleRate || config.outputSampleRate!=config.input.sampleRate ||
      !config.outputChannels || config.outputChannels>media::kMaximumDownmixSourceChannels ||
      config.outputChannels!=config.input.channels || !config.input.framesPerPacket) {
     if(error)*error="AvcodecAudioResamplingUnsupported";return false;
   }
-  s.configuration=config;s.extra.assign(config.magicCookie.begin(),config.magicCookie.end());s.configuration.magicCookie=s.extra;
+  s.configuration=config;s.extra.assign(config.rawExtradata.begin(),config.rawExtradata.end());s.configuration.rawExtradata=s.extra;
   s.nextFrame=0;s.eos=false;s.offset=0;s.error.store(nullptr);s.layoutKnown.store(false);
   if(!s.start()) {if(error)*error=s.worker->failure()?s.worker->failure():"AvcodecAudioConfigureFailed";return false;}
   return true;
