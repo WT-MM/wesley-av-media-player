@@ -1,0 +1,14 @@
+{
+  "reverted": {
+    "rc": -6,
+    "stdout": "",
+    "stderr": "WAM: native decoder stage=Libavcodec codec=76703039\nline 122: !unqualified.configure(config, sink, &error, false)\n"
+  },
+  "restored": {
+    "rc": 0,
+    "stdout": "video adapter packet/EOS/flush/backpressure and surface format passed\n",
+    "stderr": ""
+  },
+  "byte_identical": true,
+  "sha256": "3aef9a8e32e4e7da9f34b814a9c81d4b6db1125fc93e2e106724c4eec14e8fc2"
+}

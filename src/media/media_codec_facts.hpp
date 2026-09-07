@@ -144,7 +144,7 @@ struct MediaCodecFacts {
   bool requiresMjpegHeaderInspection{false};
 };
 
-inline constexpr std::array<MediaCodecFacts, 22> kMediaCodecFacts{{
+inline constexpr std::array<MediaCodecFacts, 25> kMediaCodecFacts{{
     {MediaCodec::Unknown, MediaCodecKind::Unknown, 0,
      MediaCodecConfigurationKind::None, nullptr, false, false, false, false,
      false, false, 0},
@@ -230,7 +230,14 @@ inline constexpr std::array<MediaCodecFacts, 22> kMediaCodecFacts{{
     {MediaCodec::ProRes4444, MediaCodecKind::Video, 0x61703468U,
      MediaCodecConfigurationKind::None, nullptr, false, true, true, false,
      false, true, 0},
+    {MediaCodec::Dts, MediaCodecKind::Audio},
+    {MediaCodec::TrueHd, MediaCodecKind::Audio},
+    {MediaCodec::Mlp, MediaCodecKind::Audio},
 }};
+
+[[nodiscard]] constexpr bool softwareAudioCodec(MediaCodec codec) noexcept {
+  return codec == MediaCodec::Dts || codec == MediaCodec::TrueHd || codec == MediaCodec::Mlp;
+}
 
 inline constexpr std::uint32_t kHeAacImplicitDecoderDelayFrames = 962;
 inline constexpr const char* kHeAacDecoderDelayRefusal =
@@ -274,7 +281,7 @@ mediaCodecFacts(MediaCodec codec) noexcept {
 
 // The last enumerator of the frozen, append-only MediaCodec. Appending one
 // without adding its row fails the coverage assertion below.
-inline constexpr MediaCodec kLastMediaCodec = MediaCodec::ProRes4444;
+inline constexpr MediaCodec kLastMediaCodec = MediaCodec::Mlp;
 inline constexpr std::size_t kMediaCodecCount =
     static_cast<std::size_t>(kLastMediaCodec) + 1U;
 

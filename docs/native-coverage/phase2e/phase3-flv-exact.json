@@ -1,0 +1,88 @@
+{
+  "video_probe_sha256": "277e25400753a1ac2aef4522f8cd1f5176218b3fab774a4deefd6d4209d23ab1",
+  "audio_probe_sha256": "e1a8eabf7639c17a73295234e778a99e842b24467c4b7b464e5dce5085f5d7b0",
+  "assets": [
+    {
+      "asset": "test-media/native-coverage/phase3/h264-aac.flv",
+      "asset_sha256": "89dab7e0a710ffb35f4e1d38c4d1fe904ada5a587832e0a58d48898c000348f5",
+      "video_end": "3021/1000",
+      "audio_end": "1136/375",
+      "endpoint_difference": "-1/120",
+      "video_frames": 75,
+      "exact_pts": 75,
+      "exact_durations": 75,
+      "video_log": "hardware=1 packets=75 frames=75 exact_pts=75 exact_duration=75 eos=1\nWAM: native decoder stage=VideoToolboxHardware codec=61766331\n",
+      "audio_frames": 145408,
+      "cases": [
+        {
+          "target": "0",
+          "first_frame": 0,
+          "frames": 145408,
+          "max_error": 0.0001621246337890625,
+          "rms": 4.832669954973883e-06,
+          "alignment_frames": 0,
+          "exact_baseline_slice": true,
+          "reference_lag_errors": {
+            "-2": 0.00012355000944808125,
+            "-1": 3.0901835998520255e-05,
+            "0": 7.018997189023324e-11,
+            "1": 3.090183236054145e-05,
+            "2": 0.00012354999489616603
+          },
+          "log": "track=2 rate=48000 frames=145408 first=0 decoded=145408 trim=0 exact=1 drained=1 error=\n"
+        },
+        {
+          "target": "1",
+          "first_frame": 48000,
+          "frames": 97408,
+          "max_error": 8.165836334228516e-06,
+          "rms": 5.249301565118342e-07,
+          "alignment_frames": 0,
+          "exact_baseline_slice": true,
+          "reference_lag_errors": {
+            "-2": 0.0003390517958905548,
+            "-1": 8.485760190524161e-05,
+            "0": 2.2214855280831836e-13,
+            "1": 8.485760190524161e-05,
+            "2": 0.0003390517958905548
+          },
+          "log": "track=2 rate=48000 frames=97408 first=48000 decoded=145408 trim=48000 exact=1 drained=1 error=\n"
+        },
+        {
+          "target": "1/7",
+          "first_frame": 6858,
+          "frames": 138550,
+          "max_error": 8.165836334228516e-06,
+          "rms": 5.672459627006422e-07,
+          "alignment_frames": 0,
+          "exact_baseline_slice": true,
+          "reference_lag_errors": {
+            "-2": 0.00014791113790124655,
+            "-1": 3.6997287679696456e-05,
+            "0": 3.8320586395919343e-13,
+            "1": 3.6997276765760034e-05,
+            "2": 0.00014791113790124655
+          },
+          "log": "track=2 rate=48000 frames=138550 first=6858 decoded=145408 trim=6858 exact=1 drained=1 error=\n"
+        },
+        {
+          "target": "1817/600",
+          "first_frame": 145360,
+          "frames": 48,
+          "max_error": 1.5599653124809265e-08,
+          "rms": 5.60500975702155e-09,
+          "alignment_frames": 0,
+          "exact_baseline_slice": true,
+          "reference_lag_errors": {
+            "-2": 1.0915410086909105e-07,
+            "-1": 2.8700595677833007e-08,
+            "0": 3.141613437630678e-17,
+            "1": 2.8700805287940057e-08,
+            "2": 1.0915452719473251e-07
+          },
+          "log": "track=2 rate=48000 frames=48 first=145360 decoded=145408 trim=145360 exact=1 drained=1 error=\n"
+        }
+      ]
+    }
+  ]
+}

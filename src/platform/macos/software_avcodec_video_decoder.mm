@@ -25,7 +25,7 @@ CMTime cm(media::MediaTime t) noexcept { return t.valid()?CMTimeMake(t.value,t.t
 struct SoftwareAvcodecVideoDecoder::Impl {
   VideoToolboxDecoderOptions options;
   VideoStreamConfiguration configuration;
-  std::vector<std::byte> configurationBytes, scratch;
+  std::vector<std::byte> configurationBytes;
   std::unique_ptr<DecodeWorker> worker;
   SoftwarePresentationPool pool;
   DecodedFrameSink* sink{};
@@ -95,7 +95,8 @@ struct SoftwareAvcodecVideoDecoder::Impl {
     FrameTiming timing{cm(provenance.pts),cm(provenance.duration),provenance.generation,(frame.flags&AV_FRAME_FLAG_KEY)!=0};
     FrameLease lease(destination,timing);
     CVPixelBufferRelease(destination);
-    if(!lease) { s.fail("AvcodecPresentationSurfaceBudgetExceeded"); return FrameResult::Failed; }
+    // Registry insertion contention retains this decoded frame for the next owner wake.
+    if(!lease) return FrameResult::Backpressure;
     s.pending=std::move(lease);
     s.published.store(true,std::memory_order_release);
     if(s.options.progressHandler.function) s.options.progressHandler.function(s.options.progressHandler.context);
@@ -112,6 +113,7 @@ struct SoftwareAvcodecVideoDecoder::Impl {
     } else if(codec==Codec::Vp9) extra={};
     Configuration config{codec,extra,generation,generation,
       static_cast<unsigned>(configuration.codedSize.width),static_cast<unsigned>(configuration.codedSize.height)};
+    config.bitDepth=depth; config.chroma=chroma422?2:1;
     return worker->configure(config);
   }
 };
@@ -133,7 +135,6 @@ bool SoftwareAvcodecVideoDecoder::configure(const VideoStreamConfiguration& conf
   s.configuration=configuration;
   s.configurationBytes.assign(configuration.codecConfiguration.begin(),configuration.codecConfiguration.end());
   s.configuration.codecConfiguration=s.configurationBytes;
-  s.scratch.resize(DecodeWorker::kPacketBytes);
   s.generation=configuration.generation; s.sink=&sink;
   s.depth=facts.facts->bitDepth;
   if(configuration.highDynamicRangeTransfer && s.depth<10) {
@@ -160,12 +161,13 @@ VideoDecodeSubmitResult SoftwareAvcodecVideoDecoder::submitCMSampleBuffer(CMSamp
   }
   auto block=CMSampleBufferGetDataBuffer(sample);
   const auto bytes=block?CMBlockBufferGetDataLength(block):0;
-  if(!bytes || bytes>s.scratch.size() || CMBlockBufferCopyDataBytes(block,0,bytes,s.scratch.data())!=noErr) {
+  const auto scratch=s.worker->conversionStorage();
+  if(!bytes || bytes>scratch.size() || CMBlockBufferCopyDataBytes(block,0,bytes,scratch.data())!=noErr) {
     if(error)*error="AvcodecPacketStorageInvalid"; return VideoDecodeSubmitResult::Rejected;
   }
   PacketTiming timing{exact(CMSampleBufferGetPresentationTimeStamp(sample)),exact(CMSampleBufferGetDecodeTimeStamp(sample)),
     exact(CMSampleBufferGetDuration(sample)),generation,generation};
-  switch(s.worker->submit(std::span<const std::byte>(s.scratch).first(bytes),timing)) {
+  switch(s.worker->submit(scratch.first(bytes),timing)) {
   case WorkerResult::Accepted: ++s.submitted; return VideoDecodeSubmitResult::Accepted;
   case WorkerResult::Backpressure: ++s.pressure; return VideoDecodeSubmitResult::Backpressure;
   default: if(error)*error="AvcodecPacketSubmissionRefused"; return VideoDecodeSubmitResult::Rejected;
@@ -210,6 +212,7 @@ VideoDecoderRetireProgress SoftwareAvcodecVideoDecoder::retire(std::uint64_t ret
 void SoftwareAvcodecVideoDecoder::close() noexcept {
   auto& s=*impl_; if(s.worker) s.worker->close(); s.worker.reset();
   s.pending.reset(); s.published.store(false); s.pool.close();
+  std::vector<std::byte>().swap(s.configurationBytes); s.configuration.codecConfiguration={};
   if(s.sink) s.sink->flush(s.generation+1); s.sink=nullptr;
 }
 VideoToolboxDecoderStats SoftwareAvcodecVideoDecoder::stats() const noexcept {

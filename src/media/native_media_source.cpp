@@ -1,4 +1,5 @@
 #include "media/native_media_source.hpp"
+#include "media/media_codec_facts.hpp"
 
 #include <algorithm>
 #include <array>
@@ -176,11 +177,11 @@ bool validVideoFormat(const MediaVideoFormat& video,
 }
 
 bool validAudioFormat(const MediaAudioFormat& audio,
-                      const MediaSourceLimits& limits) noexcept {
+                      const MediaSourceLimits& limits, bool software = false) noexcept {
   if (!std::isfinite(audio.sampleRate) || audio.sampleRate <= 0.0 ||
       audio.sampleRate > limits.maximumAudioSampleRate ||
       audio.channels == 0 ||
-      audio.channels > limits.maximumAudioChannels || audio.formatTag == 0 ||
+      audio.channels > limits.maximumAudioChannels || (!software && audio.formatTag == 0) ||
       (!audio.channelLayoutPresent && audio.channelLayoutTag != 0)) {
     return false;
   }
@@ -816,6 +817,8 @@ bool validateMediaSourceDescriptor(const MediaSourceDescriptor& descriptor,
     aggregateConfigurationBytes += track.codecConfiguration.size();
 
     if ((track.codecConfiguration.empty() &&
+         !(softwareAudioCodec(track.codec) && track.codecConfigurationKind ==
+             MediaCodecConfigurationKind::CodecPrivate) &&
          track.codecConfigurationKind !=
              MediaCodecConfigurationKind::None) ||
         (!track.codecConfiguration.empty() &&
@@ -840,7 +843,7 @@ bool validateMediaSourceDescriptor(const MediaSourceDescriptor& descriptor,
     case MediaTrackKind::Audio: {
       const bool selected = descriptor.selectedAudio == track.id;
       if (track.video || (selected && !track.audio) ||
-          (track.audio && !validAudioFormat(*track.audio, effective))) {
+          (track.audio && !validAudioFormat(*track.audio, effective, softwareAudioCodec(track.codec)))) {
         assignError(error, "media source contains an invalid audio format");
         return false;
       }

@@ -1,0 +1,14 @@
+{
+  "reverted": {
+    "rc": 1,
+    "stdout": "",
+    "stderr": "FAIL 69: progress != VideoDecodeDrainProgress::Failed (AvcodecPresentationSurfaceBudgetExceeded)\n"
+  },
+  "restored": {
+    "rc": 0,
+    "stdout": "PASS insertion contention retains exact frame; cancellation retires every lease\n",
+    "stderr": ""
+  },
+  "byte_identical": true,
+  "sha256": "e1bfdda8af80ee546da2c4ef466b774835dca513d58c04fb79dbd5f7821bb4f9"
+}

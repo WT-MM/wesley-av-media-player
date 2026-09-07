@@ -5,8 +5,13 @@ extern "C" {
 #include <libavutil/mem.h>
 #include <libavutil/samplefmt.h>
 }
+#include <cstddef>
 namespace wam::media::avcodec {
 struct Api {
+  void* (*av_wam_reservation_begin)(std::size_t){};
+  std::size_t (*av_wam_reservation_used)(void*){};
+  int (*av_wam_reservation_exhausted)(void*){};
+  std::size_t (*av_wam_reservation_end)(void*){};
   decltype(&::avcodec_version) avcodec_version{};
   decltype(&::avutil_version) avutil_version{};
   decltype(&::avcodec_license) avcodec_license{};

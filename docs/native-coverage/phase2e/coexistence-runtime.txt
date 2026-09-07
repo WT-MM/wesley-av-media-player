@@ -1,0 +1,8 @@
+Internal ctest changing into directory: /Users/wesleymaa/Documents/WAM/build
+Test project /Users/wesleymaa/Documents/WAM/build
+    Start 136: ffmpeg_coexistence
+1/1 Test #136: ffmpeg_coexistence ...............   Passed    0.28 sec
+
+100% tests passed, 0 tests failed out of 1
+
+Total Test time (real) =   0.29 sec

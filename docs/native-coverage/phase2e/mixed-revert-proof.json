@@ -1,0 +1,70 @@
+[
+  {
+    "case": "mixed-original",
+    "reverted": {
+      "command": [
+        "build/wam_libavformat_mixed_source_test",
+        "test-media/native-coverage/phase2e/mixed-fragmented.mp4"
+      ],
+      "rc": 1,
+      "stdout": "",
+      "stderr": "line 15: opened.preparedContext->backendKind()==MediaSourceBackendKind::Libavformat\n"
+    },
+    "restored": {
+      "command": [
+        "build/wam_libavformat_mixed_source_test",
+        "test-media/native-coverage/phase2e/mixed-fragmented.mp4"
+      ],
+      "rc": 0,
+      "stdout": "routed mixed: video=48 audio=90 EOS=2; exact seeks, cancellation, zero staged payload\n",
+      "stderr": "WAM: native demux stage=Libavformat\n"
+    },
+    "byte_identical": true
+  },
+  {
+    "case": "mixed-route",
+    "reverted": {
+      "command": [
+        "build/wam_libavformat_mixed_source_test",
+        "test-media/native-coverage/phase2e/mixed-fragmented.mp4"
+      ],
+      "rc": 1,
+      "stdout": "",
+      "stderr": "line 15: opened.preparedContext->backendKind()==MediaSourceBackendKind::Libavformat\n"
+    },
+    "restored": {
+      "command": [
+        "build/wam_libavformat_mixed_source_test",
+        "test-media/native-coverage/phase2e/mixed-fragmented.mp4"
+      ],
+      "rc": 0,
+      "stdout": "routed mixed: video=48 audio=90 EOS=2; exact seeks, cancellation, zero staged payload\n",
+      "stderr": "WAM: native demux stage=Libavformat\n"
+    },
+    "byte_identical": true
+  },
+  {
+    "case": "opus-mode",
+    "reverted": {
+      "command": [
+        "build/wam_libavformat_source_test",
+        "test-media/native-coverage/phase2e/mixed-hybrid.mkv",
+        "LibavformatOpusModeUnqualified"
+      ],
+      "rc": 1,
+      "stdout": "status=0 error=\n",
+      "stderr": "FAIL 39: opened.status == MediaSourceOpenStatus::Unsupported\n"
+    },
+    "restored": {
+      "command": [
+        "build/wam_libavformat_source_test",
+        "test-media/native-coverage/phase2e/mixed-hybrid.mkv",
+        "LibavformatOpusModeUnqualified"
+      ],
+      "rc": 0,
+      "stdout": "status=1 error=LibavformatOpusModeUnqualified\n",
+      "stderr": ""
+    },
+    "byte_identical": true
+  }
+]

@@ -6,10 +6,13 @@ GNU Lesser General Public License, version 2.1 or later. The complete license
 is in COPYING.LGPLv2.1; upstream's license inventory is in LICENSE.md. Individual
 source headers retain additional permissive-license notices.
 
-Corresponding source is the unmodified, hash-pinned archive at
+Corresponding source starts with the hash-pinned archive at
 third_party/ffmpeg-source/ffmpeg-9.0.1.tar.xz in the same WAM source revision.
 SHA-256: cf38e0e28c7e5605942c4a77755349b0145804a397af37eb1fb4c77cb237f635.
-No FFmpeg source patches are applied. Build with scripts/build_ffmpeg_lgpl.sh.
+This build applies third_party/ffmpeg-patches/wam_memory_reservation.inc via
+scripts/apply_ffmpeg_memory_reservation.py. Distribute both with the archive and
+scripts/build_ffmpeg_lgpl.sh; all are required corresponding source. The local
+patch adds bounded decoder allocation domains and preserves lazy library unload.
 No warranty is provided by the FFmpeg authors; see the license text.
 
 Replacement: rebuild the matching library ABI using that script and a local

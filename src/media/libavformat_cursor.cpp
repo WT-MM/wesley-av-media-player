@@ -49,7 +49,7 @@ struct LibavformatCursor::Impl {
   Cancellation cancellation{};
   std::int64_t position{}, extent{};
   std::uint64_t ioBudget{};
-  bool ioLimit{}, changed{};
+  bool ioLimit{}, changed{}, fragmented{};
   ~Impl() {
     if (packet)
       avcodec::api().av_packet_free(&packet);
@@ -201,6 +201,17 @@ struct LibavformatCursor::Impl {
     }
     return true;
   }
+  static bool needsRouting(const std::filesystem::path& path, Cancellation cancellation, bool complete) {
+  Impl probe;
+  probe.cancellation = cancellation;
+  probe.fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NONBLOCK);
+  if (probe.fd < 0 || ::fstat(probe.fd, &probe.identity) ||
+      !S_ISREG(probe.identity.st_mode))
+    return false;
+  probe.extent = probe.identity.st_size;
+  std::string error;
+  return probe.inspectTail(error) && (probe.extent < probe.identity.st_size || (complete && probe.fragmented));
+  }
   bool inspectTail(std::string &error) {
     std::array<unsigned char, 16> box{};
     if (::pread(fd, box.data(), box.size(), 0) < 8)
@@ -244,8 +255,9 @@ struct LibavformatCursor::Impl {
         error = "LibavformatInvalidBoxLength";
         return false;
       }
-      if (!std::memcmp(box.data() + 4, "moof", 4))
-        fragment = offset;
+      if (!std::memcmp(box.data() + 4, "moof", 4)) {
+        fragment = offset; fragmented = true;
+      }
       if (length > std::uint64_t(extent - offset)) {
         extent = fragment >= 0 ? fragment : offset;
         break;
@@ -272,17 +284,11 @@ std::string LibavformatCursor::runtimeFailure() {
   runtime.load(error);
   return error;
 }
-bool LibavformatCursor::requiresTailRecovery(const std::filesystem::path &path,
-                                             Cancellation cancellation) {
-  Impl probe;
-  probe.cancellation = cancellation;
-  probe.fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NONBLOCK);
-  if (probe.fd < 0 || ::fstat(probe.fd, &probe.identity) ||
-      !S_ISREG(probe.identity.st_mode))
-    return false;
-  probe.extent = probe.identity.st_size;
-  std::string error;
-  return probe.inspectTail(error) && probe.extent < probe.identity.st_size;
+bool LibavformatCursor::requiresTailRecovery(const std::filesystem::path& path, Cancellation cancellation) {
+  return Impl::needsRouting(path,cancellation,false);
+}
+bool LibavformatCursor::requiresExactDemuxTimeline(const std::filesystem::path& path, Cancellation cancellation) {
+  return Impl::needsRouting(path,cancellation,true);
 }
 LibavformatCursor::LibavformatCursor() = default;
 LibavformatCursor::~LibavformatCursor() = default;
@@ -431,6 +437,9 @@ LibavformatCursor::Read LibavformatCursor::read(Packet &out,
     }
   }
   return Read::Packet;
+}
+const char* LibavformatCursor::formatName() const noexcept {
+  return impl_ && impl_->format && impl_->format->iformat ? impl_->format->iformat->name : "";
 }
 bool LibavformatCursor::seek(unsigned stream, MediaTime target,
                              std::string &error) {

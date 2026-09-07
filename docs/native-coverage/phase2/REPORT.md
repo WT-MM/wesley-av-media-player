@@ -1,108 +1,88 @@
-# Phase 2d — incomplete; capture prerequisite blocked by locked display
+# Phase 2e — metrics campaign; demux ON, codec OFF
 
-**This is not phase-2d acceptance.** The ordered campaign is paused at item 1
-awaiting an unlocked display. The only implementation change makes the
-in-process compositor capture refuse `DisplayCaptureSessionLocked` instead of
-saving a misleading black PNG. A known-color hardware capture has not passed.
-The original [phase-2c report](../phase2d/PHASE2C_REPORT.md) and its measurements
-remain historical evidence, not newly qualified results.
-
-Both source defaults remain **OFF**. The local build has also been restored to
-`WAM_ENABLE_AVFORMAT_STAGE=OFF`, `WAM_ENABLE_AVCODEC_STAGE=OFF`. The requested
-demux-default change has not been implemented because item 1 has not cleared.
-No claim is made that the current configuration meets the requested 84/97 gate.
+The maintainer's locked-display ruling is applied. No fresh visual capture was attempted or required for these metrics proofs. The native order remains VideoToolbox hardware → VideoToolbox software → AudioToolbox → libvpx → libavcodec last. This is a partial campaign acceptance with explicit remaining gates, not a claim that every requested shape passed.
 
 ## Ordered outcomes
 
-| Item | Current outcome and proof |
+| Item | Final implementation and qualification |
 | --- | --- |
-| 1. Capture regression / software display color | **PARTIAL, BLOCKED.** Current hardware playback reaches first-frame presentation, but composited captures are black. Read-only observation confirms the display is locked despite capture permission. The new named refusal passes a hardware-backed negative test and fails with the change reverted. Known-color positive and all software/range color qualifications await unlock. |
-| 2. Demux ON, proven single-stream shapes | **NOT STARTED.** Default remains OFF. The existing mixed-stream refusal remains intact. |
-| 3. Software sixteen-window drain / cancellation storm | **NOT STARTED.** Phase 2c's five ASP failures remain unresolved; its hardware control had zero. |
-| 4. Production DTS / TrueHD / MLP audio | **NOT STARTED.** Amendment 24 is ratified and recorded, but no production or frozen implementation change is applied. Existing isolated decoder proofs do not establish production retained counts, seeks, downmix or exact A/V. |
-| 5. Libavformat mixed A/V | **NOT STARTED.** No mixed-stream shape newly admitted; exact audio timing remains unqualified. |
-| 6. Native/mpv coexistence | **UNCHANGED.** Existing `PlaybackFfmpegClosureConflict` remains. Cached mpv can prevent later native FFmpeg sessions until restart; no new coordinator/UI qualification is claimed. |
-| 7. Stage decisions / amendment-25 admission | **NO ENABLEMENT.** Both defaults OFF. Amendment 25 is ratified but unapplied; derived private-byte admission and combined audio/video worker reservations remain absent. |
+| 1. Demux ON for proven shapes | macOS default **ON**, independently of codec OFF. Final shipped corpus **84/97**, zero regressions against 78/97. Six RustDesk hardware decodes: **49,832/49,832 exact PTS and durations**, EOS. Full quiet GUI soak: **49,827 drawn + 5 late + 0 superseded**, running clock **1.0000**. Strict all-frames-drawn gate remains short five. Native lazy closure relocates; complete 13.3 bundle gate remains blocked by local Qt/libvpx's 26.0 floor. [Proof](../phase2e/STEP1.md). |
+| 2. Sixteen-window software defect | **FIXED.** A contended nonblocking surface-registry insertion was treated as fatal. The worker now retains its output and returns backpressure. Original five drain failures → **zero** in both software reruns; hardware control zero. Seek/close storm: 19 committed/ready/drawn previews; 18 separate preview-budget failures remain disclosed. Windows retire 16 → 16 → 0; native images unload. [Root cause and tests](../phase2e/SOFTWARE_DRAIN.md). |
+| 3. Production audio / amendment 24 | **DTS core, TrueHD and MLP PASS for admitted 48 kHz profiles.** Stereo/5.1 × four exact seek windows × three codecs: **24 cases**, each full retained window **96,000 samples**, zero-frame alignment, max PCM error <2e-6, RMS <2e-7, \|V−A\|=0. First-frame channel roles feed the impulse downmix. Three apps: **50 drawn / 96,000 audio**, zero late/superseded and zero clock-advanced underruns. DTS-HD MA remains unqualified/refused. TrueHD/MLP seek preroll is from the original major sync, with O(target) work. [Details](../phase2e/PRODUCTION_AUDIO.md). |
+| 4. Decoder-private admission / amendment 25 | **IMPLEMENTED AND ENFORCED.** Codec/reference/bit-depth/chroma/alignment-derived plane capacity, separate packet/extradata/conversion charges, per-worker allocator domain and process reservations. **16 workers admitted; worker 17 refuses; cancellation retires charges to zero.** Combined software A/V reserves two workers, so eight consume all sixteen. 1920×1088 ASP: **32/32 exact frames**, above the removed blanket gate. Presentation remains ten surfaces / 384 MiB. [Derivation and limits](../phase2e/DECODER_RESERVATIONS.md), [larger-frame proof](../phase2e/above-1080-proof.json). |
+| 5. Mixed libavformat A/V | **PARTIAL; qualified shapes ON.** Fragmented MP4 and FLV H.264 + zero-origin 48 kHz AAC: **48 exact video frames / 92,160 samples**, equal 48/25 endpoints, exact seek slices and clean EOS; GUI draws every frame. Six RustDesk + CELT Opus: **49,832 exact frames / 95,290,656 samples**, zero alignment, equal endpoints and exact retained seek counts. AVI MP3, positive-origin FLV AAC, ASF WMA, Vorbis, MPEG-PS timing and Opus SILK/hybrid remain named refusals. [Shapes and evidence](../phase2e/MIXED_AV.md). |
+| 6. Coexistence | **BOUNDED POLICY VERIFIED.** Existing `PlaybackFfmpegClosureConflict` remains. Native symbol ownership and final unload pass; fallback is refused while two native leases survive. Cached fallback blocks later native FFmpeg until restart. The real build-app second-window refusal leaves its native neighbor playing. Real cached mpv media decoding is not newly qualified; the local seed has missing FFmpeg-62 dependencies. [Exact cost](../phase2e/COEXISTENCE.md). |
+| 7. Per-stage decision | **Demux ON / codec OFF.** Qualified demux shapes stay enabled. The codec stage remains opt-in because VP9 p0/p2, full-range and HDR software color coverage is incomplete. Even opt-in production routing now refuses those families as `SoftwareColorUnqualified`; isolated decoder tests remain available. Retained limited-range SDR ASP, Hi10P and 10-bit 4:2:2 captures keep their qualification. |
 
-## Capture investigation and test
+## Applied amendment ledger
 
-The current session reports capture permission true and
-`CGSSessionScreenIsLocked=1`. Only a 1512×982 built-in display is active; the
-required `480x270+2400+1000` benchmark rectangle is entirely outside it.
-[Session receipt](../phase2d/session-state.txt).
+The exact frozen-line patches are appended to local, gitignored `SESSION_HANDOFF.md` and mirrored in [amendment 24](../phase2e/amendment24-applied.md) and [amendment 25](../phase2e/amendment25-applied.md). Authorization and application are separate from the qualification outcomes above.
 
-The hardware control selected VideoToolbox hardware and drew frames before
-capture. Capturing before the Qt `grabWindow()` call and omitting that call
-still yielded black. An experimental capture-only relocation into the display
-with a 350 ms event-loop delay also remained black while locked; that change
-was removed byte-identically. The retained change does not reposition windows.
+Amendment 24 enum before/after:
 
-The lock is a confirmed present qualification blocker, not a retrospective
-proof of the precise environment during phase 2c. An unlocked A/B is still
-needed to resolve placement and establish valid displayed pixels. `grab`
-contains only Qt's scene; `videograb` reads the composited native layer.
+```diff
+   ProRes4444,
++  Dts,
++  TrueHd,
++  Mlp,
+```
 
-The new [hardware capture test](../../../tests/native_display_capture_test.py)
-generates red H.264 and requires hardware selection plus first-frame
-presentation. Its positive mode then checks red pixels; its locked-session
-mode requires the named refusal and no PNG. The latter passes on the
-[fixed](../phase2d/locked-fixed/result.json) and
-[restored](../phase2d/locked-restored/result.json) candidates.
-With the original implementation temporarily restored, it fails exactly at
-`locked compositor must refuse by name`; the original also writes a black PNG.
-[Failure](../phase2d/capture-reverted.log),
-[byte-identical restoration hashes](../phase2d/revert-proof.json).
+The same ledger records every scoped converter/session line: appended wake configuration, representation-aware raw extradata ingress, real software plan selection, first-frame roles, asynchronous wake/drain, retained-window semantics and cancellation. Existing Apple converter/session test files and the session header are [byte-identical to HEAD](../phase2e/frozen-invariants.json).
 
-## Amendments and frozen lines
+Amendment 25 software-only frozen lines:
 
-The handoff ledger now records **AMENDMENT 24** and **AMENDMENT 25** as ratified
-by the maintainer's phase-2d directive. The full appended
-[ledger text](../phase2d/amendments-ratified.md) preserves the authorized scope.
-For each amendment, the application entry states:
+```diff
+-// Software staging is private to a bounded decoder worker, separate from
+-// presentation leases. The picture-area admission is not a private-heap proof.
+-inline constexpr std::uint64_t kNativeSoftwareMaximumPicturePixels = 1920ULL * 1080ULL;
++// Decoder admission uses softwareDecoderReservation plus an enforced private allocator domain.
++inline constexpr std::uint64_t kNativeSoftwareMaximumPicturePixels = media::MediaSourceLimits::kHardMaximumCodedPixels;
+```
 
-> Application status at ratification: no frozen line touched. Exact before/after patches will be appended here for each applied change; authorization alone is not acceptance.
+```diff
+ inline constexpr unsigned kNativeSoftwareProcessWorkers = kMaximumConcurrentPlayerWindows;
++// A combined software audio/video session reserves two workers; eight consume all sixteen.
++inline constexpr unsigned kNativeSoftwareCombinedAudioVideoWorkers = 2;
+```
 
-Thus the exact set of frozen before/after changes in this run is empty.
-All frozen source/test bytes checked against the starting snapshot are
-[unchanged](../phase2d/frozen-hashes.json). SESSION_HANDOFF.md changed append-only
-and remains gitignored. Existing Apple test expectations were not edited.
+The presentation prefix is byte-identical. The local FFmpeg allocation patch, source archive hash, offline recipe and receipts are retained under `third_party/`, `scripts/` and the [source distribution notice](../phase3/SOURCE_DISTRIBUTION.md). The release-specific corresponding-source URL and About/download presentation remain existing release deferrals.
 
-## Re-run measurements and verification
+## Final measurements
 
-| Measurement | Phase-2d result |
-| --- | --- |
-| Known-red hardware capture | Locked-session refusal PASS; displayed-color positive pending |
-| Software display matrix/range/RMS, limited and full range | Not qualified; unlocked hardware oracle required first |
-| CPU / process energy / footprint hardware/software table | Not re-run; prior phase-2c table remains historical |
-| Sixteen-window hardware/software soak and storm | Not re-run; prior ASP failure remains open |
-| Full CTest, acceptance ON/ON build | **124/124**, 43.36 seconds |
-| Full CTest, restored shipped OFF/OFF build | **82/82**, 39.68 seconds |
-| Capture behavioral revert proof | Original FAIL, fixed/restored PASS, source restored byte-identically |
-| Existing six-family capture launch-policy test | PASS |
-| Final shipped corpus | **78/97**; zero losses vs the original shipped 78/97; six losses vs phase 2c/3 opt-in 84/97; required gate NOT MET |
+| Specimen / mode | Shipped outcome | CPU % one core | Process J | Peak MiB | Drawn / late / superseded |
+| --- | --- | ---: | ---: | ---: | ---: |
+| H.264 8-bit | VideoToolbox hardware | 7.61 | 1.342 | 460.0 | 300 / 0 / 0 |
+| MPEG-4 ASP | Refused: codec configuration | 2.77 | 1.238 | 469.4 | — |
+| H.264 Hi10P | Refused: SPS/reorder admission | 2.83 | 1.247 | 471.9 | — |
+| H.264 4:2:2 10-bit | Refused: SPS/reorder admission | 2.78 | 1.245 | 474.1 | — |
+| VP9 p0 | VideoToolbox hardware | 7.75 | 1.284 | 459.8 | 300 / 0 / 0 |
+| VP9 p2 | VideoToolbox hardware | 7.71 | 1.265 | 453.6 | 300 / 0 / 0 |
+| H.264 8-bit / no-hardware seam | VideoToolbox hardware | 7.88 | 1.329 | 453.7 | 300 / 0 / 0 |
+| H.264 Hi10P / no-hardware seam | Refused: SPS/reorder admission | 2.79 | 1.241 | 473.2 | — |
+| H.264 4:2:2 10-bit / no-hardware seam | Refused: SPS/reorder admission | 2.73 | 1.252 | 472.6 | — |
+| VP9 p0 / no-hardware seam | VideoToolbox hardware | 7.91 | 1.253 | 454.0 | 300 / 0 / 0 |
+| VP9 p2 / no-hardware seam | VideoToolbox hardware | 7.67 | 1.276 | 454.6 | 300 / 0 / 0 |
 
-[ON/ON CTest](../phase2d/ctest-on.log),
-[OFF/OFF CTest](../phase2d/ctest-shipped.log),
-[final build identity and options](../phase2d/build-receipt.json).
-Builds used `cmake --build build --parallel`, with reconfiguration for option
-changes. CTest never ran during a build. No Git staging/commit/reset/checkout/
-stash operation, network access, installed-app launch, or name-based process
-termination was used. Every GUI launch was identity-bound, background/muted,
-used scratch HOME and the prescribed geometry, and launched only build/WAM.app.
+All eleven runs use the same shipped candidate and 14-second quiet launches. Successful video-only playback has clock **1.0000**, 300 drawn, zero late and zero superseded frames. Refusal rows measure startup/error-window cost, not software decoding. The no-hardware seam is consumed by the opt-in plan; in the OFF build it does **not** remove the existing hardware path, so those rows are not software-fallback proofs.
 
-The final corpus used the specified list and quiet six-second launches of one
-unchanged OFF/OFF executable. All asset hashes match phase 2c. The six losses
-against its opt-in 84/97 are the RustDesk recordings; restoring the original
-shipped OFF defaults leaves their demux recovery disabled. Thus the requested
-84/97 and zero-loss acceptance against phase 3 is **not met**.
-[Corpus summary](../phase2d/corpus-summary.json),
-[all identities and outcomes](../phase2d/corpus-results.json).
+[Normal measurements](../phase2e/measure-shipped.json), [seam measurements](../phase2e/measure-shipped-no-hardware.json). Software hardware-absence qualification remains in the ON-build adapter tests; no new displayed-color evidence is claimed.
 
-## Continuation
+The refreshed package has **171 Mach-O files**, a relocatable closure, no eager native FFmpeg load commands and no dependency-audit errors. Native libraries target 13.3; the complete bundle floor is **26.0**. Thus `clean_machine_ready=false`. [Full audit](../phase2e/bundle-final-audit.json), [bundler receipt](../phase2e/bundle-final.txt).
 
-Unlock the macOS display, rerun the known-color hardware test, then establish
-whether the required rectangle has an active display. Resume the owner's
-ordered items only after display qualification passes. Production audio,
-private admission, software resource stress, mixed A/V, coexistence improvement,
-per-stage enablement and the hardware/software measurement table remain
-explicit deferrals. [Reproduction and failed experiments](../phase2d/REPRODUCE.md).
+
+The prescribed final corpus completed **84/97 native**, with **zero regressions against the original 78/97**, on unchanged candidate `fe0701859a9b9aa5341b97ef496235b108ed5df4cb4ae46709b4539fadd9a11d`. All 97 launches were quiet and six seconds. [Summary](../phase2e/corpus-final-summary.json), [all assets, identities and outcomes](../phase2e/corpus-final-results.json).
+
+## Tests and revert proofs
+
+The complete codec-enabled configuration passes **138/138** in **118.04 s**. [CTest](../phase2e/ctest-on.txt). The final shipped ON/OFF configuration passes **111/111** in **106.97 s**. [Shipped CTest](../phase2e/ctest-shipped.txt), [candidate and cache](../phase2e/final-build.json).
+
+Behavioral failures with temporary production reverts, followed by byte-identical restoration and passing tests:
+
+- [CMake stage defaults](../phase2e/stage-revert-proof.json).
+- [Surface contention / cancellation](../phase2e/contention-revert-proof.json).
+- [Production audio identities, converter and session](../phase2e/audio-revert-proof.json).
+- [Private allocator cap and unload](../phase2e/allocator-revert-proof.json), [area admission and reservation retirement](../phase2e/reservation-revert-proof.json).
+- [Mixed source, fragmented routing and Opus mode admission](../phase2e/mixed-revert-proof.json).
+- [Software color refusal](../phase2e/color-revert-proof.json).
+
+All builds use `cmake --build build --parallel`, with reconfiguration after CMake edits. CTest never overlaps linking. macOS service tests run outside the filesystem sandbox; initial environmental startup failures are retained separately from regression results. GUI proofs launch only the build app, set all four identities plus quiet/background/muted/geometry seams, use scratch HOME, and control only their child PIDs. No network, visual capture, installed-app launch, staging, commit, stash, reset or checkout was used.

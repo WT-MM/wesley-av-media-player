@@ -60,7 +60,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: third_party/ffmpeg-lgpl
-          key: ffmpeg-lgpl-${{ runner.os }}-${{ runner.arch }}-13.3-${{ hashFiles('scripts/build_ffmpeg_lgpl.sh', 'third_party/ffmpeg-source/ffmpeg-9.0.1.tar.xz') }}
+          key: ffmpeg-lgpl-${{ runner.os }}-${{ runner.arch }}-13.3-${{ hashFiles('scripts/build_ffmpeg_lgpl.sh', 'scripts/apply_ffmpeg_memory_reservation.py', 'third_party/ffmpeg-patches/wam_memory_reservation.inc', 'third_party/ffmpeg-source/ffmpeg-9.0.1.tar.xz') }}
 
       - name: Build the native LGPL decoder SDK
         run: |

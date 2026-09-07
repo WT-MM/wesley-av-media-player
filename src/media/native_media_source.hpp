@@ -195,6 +195,9 @@ enum class MediaCodec : std::uint8_t {
   AdpcmIma,
   AdpcmMs,
   ProRes4444,
+  Dts,
+  TrueHd,
+  Mlp,
 };
 
 enum class MediaCodecConfigurationKind : std::uint8_t {

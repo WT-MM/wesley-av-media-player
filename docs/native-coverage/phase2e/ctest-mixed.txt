@@ -1,0 +1,14 @@
+Internal ctest changing into directory: /Users/wesleymaa/Documents/WAM/build
+Test project /Users/wesleymaa/Documents/WAM/build
+    Start 132: libavformat_mixed_fixtures
+1/4 Test #132: libavformat_mixed_fixtures .......   Passed    0.33 sec
+    Start 133: libavformat_mixed_exact
+2/4 Test #133: libavformat_mixed_exact ..........   Passed    0.87 sec
+    Start 134: libavformat_mixed_routed
+3/4 Test #134: libavformat_mixed_routed .........   Passed    0.35 sec
+    Start 135: libavformat_opus_mode_refusal
+4/4 Test #135: libavformat_opus_mode_refusal ....   Passed    0.01 sec
+
+100% tests passed, 0 tests failed out of 4
+
+Total Test time (real) =   1.56 sec

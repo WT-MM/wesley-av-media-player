@@ -1,5 +1,6 @@
 #include "media/audio_track_admission.hpp"
 #include "media/matroska_demuxer.hpp"
+#include "media/software_audio_packet.hpp"
 
 #include "media/audio_codec_timing.hpp"
 #include "media/matroska_aac.hpp"
@@ -406,6 +407,7 @@ struct TrackRuntime {
   MediaTrackKind kind{MediaTrackKind::Metadata};
   MediaCodec codec{MediaCodec::Unknown};
   std::uint32_t audioSampleRate{0};
+  std::uint16_t audioMinorSyncOrigin{0};
   // Two grids, deliberately separate.
   //
   // Container ticks always live on the CODEC grid: Matroska defines a Block's
@@ -594,7 +596,7 @@ inline constexpr std::size_t kOpusTailProbeClusters{8};
   return id == "A_ALAC" || id == "A_PCM/INT/LIT" ||
          id == "A_PCM/FLOAT/IEEE" || id == "A_MS/ACM" || id == "A_AAC" || id == "A_OPUS" || id == "A_VORBIS" ||
          id == "A_AC3" || id == "A_EAC3" || id == "A_FLAC" ||
-         id == "A_MPEG/L3";
+         id == "A_MPEG/L3" || id == "A_DTS" || id == "A_TRUEHD" || id == "A_MLP";
 }
 
 // WebM's audio codec set is Vorbis and Opus. AC-3, E-AC-3, FLAC and MP3 are
@@ -617,7 +619,7 @@ audioCodecAllowedInDocument(std::string_view codecId,
   if (documentType != EbmlDocumentType::Webm) {
     return true;
   }
-  return codecId != "A_AC3" && codecId != "A_EAC3" && codecId != "A_FLAC" &&
+  return codecId != "A_DTS" && codecId != "A_TRUEHD" && codecId != "A_MLP" && codecId != "A_AC3" && codecId != "A_EAC3" && codecId != "A_FLAC" &&
          codecId != "A_MPEG/L3" && codecId != "A_ALAC" &&
          codecId != "A_PCM/INT/LIT" && codecId != "A_PCM/FLOAT/IEEE" &&
          codecId != "A_MS/ACM";
@@ -2392,6 +2394,81 @@ void fillAudioDescriptor(const TrackEntry& entry, MediaTrackId id,
   return true;
 }
 
+[[nodiscard]] MediaCodec softwareAudioCodecId(std::string_view id) noexcept {
+  return id == "A_DTS" ? MediaCodec::Dts : id == "A_TRUEHD" ? MediaCodec::TrueHd
+      : id == "A_MLP" ? MediaCodec::Mlp : MediaCodec::Unknown;
+}
+
+[[nodiscard]] bool makeSoftwareAudioDescriptor(
+    SeekableByteReader& reader, const TrackEntry& entry,
+    const MediaSourceLimits& limits, std::span<const Cluster> clusters,
+    std::span<const TrackConstraint> constraints, std::uint64_t tickScale,
+    CancellationToken cancellation, MediaTrackDescriptor* result,
+    TrackRuntime* runtime) {
+#if !defined(WAM_ENABLE_AVCODEC_STAGE)
+  return false;
+#endif
+  const auto codec = softwareAudioCodecId(inlineString(entry.codecId));
+  if (!sweepTrackFeaturesSupported(entry) || entry.codecDelayNanoseconds || !entry.audio ||
+      entry.audio->samplingFrequency != 48000 || entry.audio->channels == 0 ||
+      entry.audio->channels > limits.maximumAudioChannels || !trackId(entry.number)) return false;
+  const unsigned frames = codec == MediaCodec::Dts ? 512 : 40;
+  const auto options = parserOptions(limits, constraints);
+  std::uint64_t ordinal{}, tailOffset{};
+  std::int64_t padding{};
+  std::uint16_t inputOrigin{};
+  bool valid = true, tail = false;
+  for (std::size_t ci = 0; ci < clusters.size(); ++ci) {
+    if (cancellation.cancelled() || !clusters[ci].timestamp) return false;
+    if (!visitTrackBlocksInCluster(reader, clusters[ci], options, entry.number, cancellation, ci,
+        [&](std::size_t, const CapturedBlockVisitor& block) {
+          const auto tick = signedBlockTick(*clusters[ci].timestamp, block.header.relativeTimestamp);
+          if (!tick || !block.frameCount || tail || !softwareAudioTickAdmitted(*tick, ordinal, frames, tickScale)) {
+            valid = false; return false;
+          }
+          for (unsigned i = 0; i < block.frameCount; ++i) {
+            const auto range = block.frames[i].bytes;
+            std::array<std::byte, 32> header{};
+            const auto size = static_cast<std::size_t>(std::min<std::uint64_t>(range.size, header.size()));
+            if (!reader.readAt(range.offset, std::span(header).first(size))) { valid = false; return false; }
+            const auto facts = inspectSoftwareAudioPacket(codec, std::span(header).first(size), range.size);
+            if (!facts || facts->frames != frames || (!ordinal && !facts->majorSync)) { valid = false; return false; }
+            if (!ordinal) inputOrigin = facts->inputTiming;
+            if (codec != MediaCodec::Dts && facts->inputTiming != std::uint16_t(inputOrigin + ordinal * frames)) {
+              valid = false; return false;
+            }
+            if (ordinal >= std::uint64_t(INT64_MAX) / frames) { valid = false; return false; }
+            ++ordinal;
+          }
+          if (block.group.discardPaddingNanoseconds) {
+            padding = *block.group.discardPaddingNanoseconds;
+            tailOffset = block.header.containerEncoded.offset;
+            tail = true;
+          }
+          return true;
+        }) || !valid) return false;
+  }
+  const auto trim = padding ? matroskaFramesFromNanoseconds(padding, 48000, frames - 1U)
+                            : std::optional<std::uint32_t>(0);
+  if (!ordinal || !trim || *trim >= ordinal * frames) return false;
+  const auto total = ordinal * frames - *trim;
+  const auto divisor = std::gcd(total, std::uint64_t(48000));
+  std::vector<std::byte> privateBytes;
+  if (entry.codecPrivate && !readRange(reader, *entry.codecPrivate, &privateBytes, cancellation)) return false;
+  AudioDescriptorFields fields;
+  fields.codec = codec; fields.sampleRate = 48000;
+  fields.channelCount = static_cast<std::uint8_t>(entry.audio->channels);
+  fields.samplesPerAccessUnit = frames;
+  fields.duration = {static_cast<std::int64_t>(total / divisor), static_cast<std::int32_t>(48000 / divisor)};
+  fields.tailBlockKnown = tail; fields.tailBlockOffset = tailOffset;
+  fields.tailDiscardPaddingNanoseconds = padding;
+  fillAudioDescriptor(entry, *trackId(entry.number), fields, result, runtime);
+  result->codecConfigurationKind = MediaCodecConfigurationKind::CodecPrivate;
+  result->codecConfiguration = std::move(privateBytes);
+  runtime->audioMinorSyncOrigin = inputOrigin;
+  return true;
+}
+
 [[nodiscard]] bool makeAudioDescriptor(
     SeekableByteReader& reader, const TrackEntry& entry,
     const MediaSourceLimits& limits, MediaTime duration,
@@ -2400,6 +2477,9 @@ void fillAudioDescriptor(const TrackEntry& entry, MediaTrackId id,
     std::uint64_t timestampScaleNanoseconds,
     CancellationToken cancellation, MediaTrackDescriptor* result,
     TrackRuntime* runtime) {
+  if (softwareAudioCodecId(inlineString(entry.codecId)) != MediaCodec::Unknown)
+    return makeSoftwareAudioDescriptor(reader, entry, limits, clusters, constraints,
+        timestampScaleNanoseconds, cancellation, result, runtime);
   const auto appleId = inlineString(entry.codecId);
   if (appleId == "A_ALAC" || appleId == "A_PCM/INT/LIT" ||
       appleId == "A_PCM/FLOAT/IEEE" || appleId == "A_MS/ACM") {
@@ -3032,9 +3112,14 @@ MatroskaCursor::readNextRaw(CancellationToken cancellation) noexcept {
           }
           const std::uint32_t samplesPerAccessUnit =
               state.audio->audioSamplesPerAccessUnit;
-          const auto projection = nearestAudioPacketForMatroskaTick(
-              *tick, MediaTime{0, 1}, state.audio->audioSampleRate,
-              state.timestampScaleNanoseconds, samplesPerAccessUnit);
+          const bool softwareAudio = softwareAudioCodec(state.audio->codec);
+          const auto projection = softwareAudio
+              ? (softwareAudioTickAdmitted(*tick, impl_->expectedAudioOrdinal, samplesPerAccessUnit,
+                                   state.timestampScaleNanoseconds)
+                  ? std::optional<AacTickGridProjection>(AacTickGridProjection{impl_->expectedAudioOrdinal})
+                  : std::nullopt)
+              : nearestAudioPacketForMatroskaTick(*tick, MediaTime{0, 1}, state.audio->audioSampleRate,
+                  state.timestampScaleNanoseconds, samplesPerAccessUnit);
           if (!aacProjectionOnGrid(projection,
                                    state.audio->audioTickResidualTolerance)) {
             return MatroskaCursorFailure{MatroskaDemuxError::InvalidTimeline,
@@ -3112,6 +3197,21 @@ MatroskaCursor::readNextRaw(CancellationToken cancellation) noexcept {
                     MatroskaDemuxError::UnsupportedTrack,
                     "audio frame header does not match the admitted stream"};
               }
+            }
+          }
+          if (softwareAudio) {
+            for (unsigned index = 0; index < visitor.frameCount; ++index) {
+              const auto range = visitor.frames[index].bytes;
+              std::array<std::byte, 32> header{};
+              const auto size = static_cast<std::size_t>(std::min<std::uint64_t>(range.size, header.size()));
+              if (!state.reader->readAt(range.offset, std::span(header).first(size)))
+                return MatroskaCursorFailure{MatroskaDemuxError::Io, "SoftwareAudioPacketUnreadable"};
+              const auto facts = inspectSoftwareAudioPacket(state.audio->codec, std::span(header).first(size), range.size);
+              const auto ordinal = impl_->expectedAudioOrdinal + index;
+              if (!facts || facts->frames != samplesPerAccessUnit || (!ordinal && !facts->majorSync) ||
+                  (state.audio->codec != MediaCodec::Dts &&
+                   facts->inputTiming != std::uint16_t(state.audio->audioMinorSyncOrigin + ordinal * samplesPerAccessUnit)))
+                return MatroskaCursorFailure{MatroskaDemuxError::InvalidTimeline, "SoftwareAudioPacketOrdinalMismatch"};
             }
           }
           std::uint16_t firstFrame = 0;
@@ -3472,8 +3572,10 @@ MatroskaPlanOutcome MatroskaPreparedAsset::planGeneration(
       // non-origin seek would be refused downstream. Opus states the warm-up
       // it needs as SeekPreRoll and gets that many access units instead.
       const std::uint64_t priming = state.audio->audioPrimingAccessUnits;
-      const std::uint64_t startOrdinal =
-          desiredOrdinal >= priming ? desiredOrdinal - priming : 0;
+      // Software audio starts at the proven origin major sync; preroll is streamed.
+      const bool softwareAudio = softwareAudioCodec(state.audio->codec);
+      const std::uint64_t startOrdinal = softwareAudio ? 0 :
+          (desiredOrdinal >= priming ? desiredOrdinal - priming : 0);
       // One Cluster of backoff covers the priming access units, which are tens
       // of milliseconds against Clusters that are whole seconds long. An
       // audio-only generation backs off two, because its seed is the Cluster
@@ -3481,7 +3583,7 @@ MatroskaPlanOutcome MatroskaPreparedAsset::planGeneration(
       // video RAP to anchor the lower bound.
       const std::size_t backoff = state.video ? 1U : 2U;
       const std::size_t searchStart =
-          seedCluster > backoff ? seedCluster - backoff : 0;
+          softwareAudio ? 0 : (seedCluster > backoff ? seedCluster - backoff : 0);
       const ScanResult audioBlock = scanTrack(
           state, state.audio->id, static_cast<std::uint32_t>(searchStart),
           kMaximumMatroskaSeekClusters,
@@ -3820,6 +3922,11 @@ namespace {
   // CodecPrivate, and the only one whose refusal therefore needs no Cluster.
   // AC-3, MP3, FLAC, Opus and Vorbis all probe a Block, so they keep waiting
   // for the authoritative pass rather than being second-guessed here.
+#if !defined(WAM_ENABLE_AVCODEC_STAGE)
+  if (audio && softwareAudioCodecId(inlineString(audio->codecId)) != MediaCodec::Unknown)
+    return MatroskaPrepareOutcome{MatroskaDemuxStatus::Unsupported,
+        MatroskaDemuxError::CodecConfiguration, nullptr, "SoftwareAudioStageNotBuilt"};
+#endif
   if (audio && inlineString(audio->codecId) == "A_OPUS" && audio->audio &&
       audio->audio->outputSamplingFrequency &&
       *audio->audio->outputSamplingFrequency != kOpusOutputSampleRate) {
@@ -4315,7 +4422,9 @@ MatroskaPrepareOutcome prepareMatroska(
               exactRequest.selection.preferredAudio = candidates[i].id;
               const auto header = matroskaHeaderRefusal(*state->reader,
                   document.tracks, documentType, exactRequest, state->limits, cancellation);
-              const std::string reason = header ? header->message : "AudioCodecConfigurationRefused";
+              const bool software = softwareAudioCodecId(inlineString(candidate.codecId)) != MediaCodec::Unknown;
+              const std::string reason = header ? header->message : software
+                  ? "SoftwareAudioPacketTimelineUnqualified" : "AudioCodecConfigurationRefused";
               const bool named = reason == kHeAacDecoderDelayRefusal ||
                                  reason == "OpusOutputSampleRateUnsupported";
               if (named || (!specificRefusal && header)) bestRefusal = reason;

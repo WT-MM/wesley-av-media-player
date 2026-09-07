@@ -1,4 +1,7 @@
 #include "native_audio_converter.hpp"
+#if defined(WAM_ENABLE_AVCODEC_STAGE)
+#include "software_avcodec_audio_backend.hpp"
+#endif
 #include "native_audio_sample_rates.hpp"
 
 #include "media/adpcm_audio.hpp"
@@ -816,6 +819,7 @@ struct NativeAudioConverter::Impl {
        std::unique_ptr<NativeAudioConverterBackend> injected)
       : instance_identity(std::make_shared<const std::byte>(std::byte{})),
         ring(target),
+        injected_backend(bool(injected)),
         backend(injected ? std::move(injected)
                          : std::make_unique<CoreAudioConverterBackend>()) {}
 
@@ -1398,6 +1402,9 @@ struct NativeAudioConverter::Impl {
 
   std::shared_ptr<const void> instance_identity;
   NativePcmRing &ring;
+  const bool injected_backend;
+  bool software_backend{};
+  NativeAudioBackendWake backend_wake{};
   std::unique_ptr<NativeAudioConverterBackend> backend;
   std::array<std::byte, NativeAudioConverter::kMaximumEncodedBytes>
       encoded_storage{};
@@ -1481,6 +1488,9 @@ NativeAudioConverter::NativeAudioConverter(
     : impl_(std::make_unique<Impl>(ring, std::move(backend))) {}
 
 NativeAudioConverter::~NativeAudioConverter() { close(); }
+void NativeAudioConverter::setBackendWake(NativeAudioBackendWake wake) noexcept {
+  impl_->backend_wake = wake;
+}
 
 namespace {
 
@@ -1520,13 +1530,18 @@ bool NativeAudioConverter::configure(const media::MediaTrackDescriptor &track,
                                      NativeAudioGenerationTimeline timeline,
                                      std::string *error) {
   auto &state = *impl_;
+  const bool software = media::softwareAudioCodec(track.codec);
+#if !defined(WAM_ENABLE_AVCODEC_STAGE)
+  if (software) return state.fail(error, "SoftwareAudioStageNotBuilt");
+#endif
   std::uint32_t candidateSampleRate = 0;
   std::int64_t candidateFloorFrame = 0;
   std::int64_t candidateCeilingFrame = 0;
   bool candidateCeilingKnown = false;
   if (generation == 0 || state.ring.generation() != generation ||
       track.id == 0 || track.kind != media::MediaTrackKind::Audio ||
-      !track.audio || !supportedCodec(track.codec, track.audio->formatTag) ||
+      !track.audio || (!software && !supportedCodec(track.codec, track.audio->formatTag)) ||
+      (software && track.audio->formatTag != 0) ||
       track.audio->channels == 0 ||
       track.audio->channels > media::kMaximumDownmixSourceChannels ||
       !track.audio->interleaved || track.audio->framesPerPacket == 0 ||
@@ -1537,15 +1552,24 @@ bool NativeAudioConverter::configure(const media::MediaTrackDescriptor &track,
       !resolveCeiling(timeline, candidateSampleRate, candidateFloorFrame,
                       &candidateCeilingFrame, &candidateCeilingKnown) ||
       track.codecConfiguration.size() > state.cookie_storage.size() ||
-      (!track.codecConfiguration.empty() &&
-       track.codecConfigurationKind !=
-           media::MediaCodecConfigurationKind::AudioMagicCookie) ||
-      (track.codecConfiguration.empty() &&
-       track.codecConfigurationKind !=
-           media::MediaCodecConfigurationKind::None)) {
+      (software ? track.codecConfigurationKind != media::MediaCodecConfigurationKind::CodecPrivate
+       : ((!track.codecConfiguration.empty() &&
+           track.codecConfigurationKind != media::MediaCodecConfigurationKind::AudioMagicCookie) ||
+          (track.codecConfiguration.empty() &&
+           track.codecConfigurationKind != media::MediaCodecConfigurationKind::None)))) {
     return state.fail(error, "audio track is outside native converter v1");
   }
   state.backend->close();
+#if defined(WAM_ENABLE_AVCODEC_STAGE)
+  if (!state.injected_backend) {
+    if (software) {
+      const auto codec = track.codec == media::MediaCodec::Dts ? media::avcodec::Codec::Dts
+          : track.codec == media::MediaCodec::TrueHd ? media::avcodec::Codec::TrueHd : media::avcodec::Codec::Mlp;
+      state.backend = std::make_unique<SoftwareAvcodecAudioBackend>(codec);
+    } else state.backend = std::make_unique<CoreAudioConverterBackend>();
+  }
+#endif
+  state.software_backend = software;
   state.clearFlow();
   state.configured = false;
   state.cancelled = false;
@@ -1555,9 +1579,18 @@ bool NativeAudioConverter::configure(const media::MediaTrackDescriptor &track,
   // instead is what produced Apple's normalised Lt/Rt matrix for AC-3 and the
   // silently dropped centre/LFE/surrounds for FLAC; the fold happens here,
   // after a complete decode, or not at all.
-  NativeAudioBackendConfiguration configuration{
-      *track.audio, track.codecConfiguration, track.audio->channels,
-      candidateSampleRate};
+  NativeAudioBackendConfiguration configuration;
+  configuration.input = *track.audio;
+  configuration.outputChannels = track.audio->channels;
+  configuration.outputSampleRate = candidateSampleRate;
+  configuration.wake = state.backend_wake;
+  if (software) {
+    using R = media::DecodeRefusal;
+    configuration.decodePlan = media::chooseDecodePlan({R::NotApplicable, R::NotApplicable,
+        R::AppleCodecUnavailable, R::NotApplicable, R::None});
+    configuration.decodePlan.configurationRepresentation = media::DecodeConfigurationRepresentation::RawExtradata;
+    configuration.rawExtradata = track.codecConfiguration;
+  } else configuration.magicCookie = track.codecConfiguration;
   try {
     if (!state.backend->configure(configuration, error)) {
       state.backend->close();
@@ -1577,7 +1610,7 @@ bool NativeAudioConverter::configure(const media::MediaTrackDescriptor &track,
     state.statistics.configured = false;
     return state.fail(error, "native audio backend configuration threw");
   }
-  if (track.audio->channels > NativePcmRing::kChannels) {
+  if (!software && track.audio->channels > NativePcmRing::kChannels) {
     // Build the fold from the labels the backend itself reports, never from
     // an index convention: the four codecs measured here emit three different
     // 5.1 orders (AAC C L R Ls Rs LFE, AC-3/E-AC-3 L C R Ls Rs LFE, FLAC
@@ -1611,7 +1644,7 @@ bool NativeAudioConverter::configure(const media::MediaTrackDescriptor &track,
   }
   state.audio = *track.audio;
   state.track = track.id;
-  state.cookie_size = track.codecConfiguration.size();
+  state.cookie_size = software ? 0 : track.codecConfiguration.size();
   state.sample_rate = candidateSampleRate;
   std::copy(track.codecConfiguration.begin(), track.codecConfiguration.end(),
             state.cookie_storage.begin());
@@ -1625,11 +1658,11 @@ bool NativeAudioConverter::configure(const media::MediaTrackDescriptor &track,
   state.statistics.sourceChannels = state.audio.channels;
   state.statistics.downmixApplied = state.downmix.admitted();
   state.lead_in_frames =
-      decoderLeadInFrames(track.codec, state.audio.framesPerPacket);
+      software ? 0 : decoderLeadInFrames(track.codec, state.audio.framesPerPacket);
   state.frame_deficit_frames =
-      decoderFrameDeficitFrames(track.codec, state.audio.framesPerPacket);
+      software ? 0 : decoderFrameDeficitFrames(track.codec, state.audio.framesPerPacket);
   state.tail_shortfall_bound_frames =
-      decoderTailShortfallBoundFrames(track.codec, state.audio.framesPerPacket);
+      software ? 0 : decoderTailShortfallBoundFrames(track.codec, state.audio.framesPerPacket);
   state.resetExactTimeline(timeline, candidateFloorFrame, candidateCeilingFrame,
                            candidateCeilingKnown);
   return true;
@@ -1948,6 +1981,17 @@ NativeAudioPumpResult NativeAudioConverter::pump(std::string *error) {
     state.releaseSample();
   }
   if (converted.producedFrames != 0) {
+    if (state.software_backend && state.audio.channels > NativePcmRing::kChannels && !state.downmix.admitted()) {
+      std::array<media::AudioChannelRole, media::kMaximumDownmixSourceChannels> roles{};
+      std::size_t count{};
+      if (state.backend->outputChannelRoles(roles, &count))
+        state.downmix = media::buildStereoDownmixMatrix({roles.data(), count});
+      if (!state.downmix.admitted() || state.downmix.sourceChannels != state.audio.channels) {
+        state.failPump(error, "SoftwareAudioDecodedChannelLayoutUnqualified");
+        return NativeAudioPumpResult::Failed;
+      }
+      state.statistics.downmixApplied = true;
+    }
     Impl::PcmTrimPlan plan;
     if (const char *refusal =
             state.planTrim(converted.producedFrames, cursorAfter, &plan)) {
@@ -2023,6 +2067,7 @@ NativeAudioPumpResult NativeAudioConverter::pump(std::string *error) {
   if (converted.needsInput && !state.eof_requested) {
     return NativeAudioPumpResult::NeedsInput;
   }
+  if (state.software_backend) return NativeAudioPumpResult::Backpressure;
   state.describeStall(converted, sendingEof, hasInput, error);
   return NativeAudioPumpResult::Failed;
 }
@@ -2057,7 +2102,8 @@ void NativeAudioConverter::cancel(media::MediaGeneration generation) noexcept {
   state.cancelled = true;
   state.statistics.cancelled = true;
   try {
-    if (!state.backend->reset(nullptr)) {
+    if (state.software_backend) state.backend->close();
+    else if (!state.backend->reset(nullptr)) {
       saturatingAdd(state.statistics.failures, 1);
       state.backend->close();
       state.configured = false;

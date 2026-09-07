@@ -1,0 +1,21 @@
+{
+  "cases": [
+    {
+      "case": "area",
+      "reverted_rc": 1,
+      "reverted_log": "line 44: large.configure(config)\n",
+      "restored_rc": 0,
+      "restored_log": "derived planes, enforced allocator, cross-thread retirement, 16-worker admission and cancellation passed\n",
+      "byte_identical_restore": true
+    },
+    {
+      "case": "retirement",
+      "reverted_rc": 1,
+      "reverted_log": "line 42: DecodeWorker::reservedProcessBytes()==0 && DecodeWorker::reservedWorkers()==0\n",
+      "restored_rc": 0,
+      "restored_log": "derived planes, enforced allocator, cross-thread retirement, 16-worker admission and cancellation passed\n",
+      "byte_identical_restore": true
+    }
+  ],
+  "sha256": "bbb941dbf844cff85e73cbd4a52db32f0ac8ab7936ee52ad1c0ea84853c93a74"
+}
