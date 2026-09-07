@@ -6,20 +6,27 @@ Everything build-, benchmark-, and release-related lives here; the
 ## Architecture in one paragraph
 
 WAM is a Qt Quick shell. On macOS, playback runs on a native engine:
-AVFoundation demux (plus a custom Matroska demuxer for MKV) feeds VideoToolbox
-hardware decode, an audio-authoritative clock built on exact rational
+AVFoundation demux for MP4/MOV, plus WAM's own Matroska and MPEG-TS demuxers,
+feed a per-stream decode ladder stated once in `native_decode_plan.hpp`
+(VideoToolbox hardware, then VideoToolbox software, then AudioToolbox, then
+libvpx, then libavcodec last, each stage tried only after the one before it
+refuses by name). An audio-authoritative clock built on exact rational
 arithmetic drives scheduling, and decoded frames are handed to an
 `AVSampleBufferDisplayLayer` that WindowServer composites beneath the Qt-drawn
 chrome — so during steady playback the app issues zero GPU render passes of
-its own. H.264, HEVC (8/10-bit), VP9, and AV1 play natively across MP4, MOV,
-MKV, and WebM; Opus and (uniform-blocksize) Vorbis audio decode natively via
-AudioToolbox, and VP8 decodes through an in-pipeline libvpx stage
-(`WAM_ENABLE_SOFTWARE_VP8`, on when libvpx is present — release packaging
-must carry libvpx in the pinned closure before enabling it in bundled
-builds). Anything the native engine declines falls back seamlessly to
-libmpv/FFmpeg, which also provides playback on other platforms, broad
-container/subtitle/network-stream support, background exports, and — via
-whisper.cpp — private, on-device captions. Deeper reading:
+its own. H.264 (including High 10 and 4:2:2), HEVC (8/10-bit, including
+4:2:2), VP9, and AV1 (including 10-bit) play natively across MP4, MOV, MKV,
+WebM, and MPEG-TS; so do ProRes (422 and 4444/XQ) and Motion JPEG. AAC,
+AC-3/E-AC-3, ALAC, PCM, ADPCM, FLAC, MP3, Opus, and (uniform-blocksize)
+Vorbis audio decode natively via AudioToolbox, and VP8 decodes through an
+in-pipeline libvpx stage (`WAM_ENABLE_SOFTWARE_VP8`, on when libvpx is
+present — release packaging must carry libvpx in the pinned closure before
+enabling it in bundled builds). PGS, VobSub, MP4 timed-text (tx3g), and
+CEA-608 subtitle tracks demux and render natively as well. Anything the
+native engine declines falls back seamlessly to libmpv/FFmpeg, which also
+provides playback on other platforms, broad container/subtitle/network-stream
+support, background exports, and — via whisper.cpp — private, on-device
+captions. Deeper reading:
 [ARCHITECTURE.md](ARCHITECTURE.md), [PRODUCT.md](PRODUCT.md),
 [QT_QUICK_MIGRATION.md](QT_QUICK_MIGRATION.md),
 [AGENT_PERFORMANCE_PRINCIPLES.md](AGENT_PERFORMANCE_PRINCIPLES.md).
@@ -28,6 +35,24 @@ The presentation route is runtime-selectable: the CALayer presenter is the
 default; `WAM_PRESENTATION=scenegraph` opts back to the Qt OpenGL route with a
 relaunch. The GL route remains a full implementation but retires most
 post-seek frames late; the CALayer route is both cheaper and more correct.
+HDR, Dolby Vision, and 4:2:2 surfaces are admitted only on the CALayer route
+and refused by name on the GL route.
+
+An additional native decode stage sits behind `WAM_ENABLE_AVCODEC_STAGE`
+(default OFF): a pinned, offline-built LGPL-only FFmpeg 9.0.1 (libavcodec and
+libavutil only — GPL, nonfree, programs, encoders, muxers, filters, and
+devices all disabled) that decodes MPEG-4 Part 2 ASP video and DTS/TrueHD
+audio, neither of which Apple's stack decodes. The stage compiles and its
+decoders are individually tested, but production audio routing and the
+allocation/resource budget qualification are unfinished, so nothing reaches
+it at runtime even when the flag is on in a local build; it must stay off in
+anything bundled and released. See
+[docs/native-coverage/phase2/REPORT.md](native-coverage/phase2/REPORT.md) for
+the current state and remaining gaps, and
+[docs/native-coverage/README.md](native-coverage/README.md) for the rest of
+the native-coverage evidence (per-format specimens, CPU/energy comparisons
+against software decode, and the corpus regression results each phase is
+checked against).
 
 ## Build on macOS
 
