@@ -1,0 +1,1 @@
+WAM: native failure stage=open reason=Startup class=UnsupportedSource error="HeAacSbrDecoderDelayUnproven: doubled-rate delay and tail lack an exact ownership proof; libavformat: LibavformatAudioTimingUnproven: aac"

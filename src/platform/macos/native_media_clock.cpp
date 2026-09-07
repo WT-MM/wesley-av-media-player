@@ -303,6 +303,7 @@ NativeMediaClockSnapshot NativeMediaClock::sample() const noexcept {
     snapshot.anchorMediaSeconds = state.anchorMediaSeconds;
     snapshot.mediaSeconds = state.anchorMediaSeconds;
     snapshot.rate = state.rate;
+    snapshot.requestedRate = state.rate;
     snapshot.exactAnchor = state.exactAnchor;
     if (!state.running) {
       snapshot.exactPausedTarget = state.exactAnchor;
