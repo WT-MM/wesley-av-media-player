@@ -1,0 +1,19 @@
+{
+  "asset": "/Users/wesleymaa/Documents/WAM/test-media/native-coverage/phase3/mid-mdat.mp4",
+  "asset_sha256": "e16a7723d7246c2783ba58ae45a0497a8a3e0c82973beea3fd3cc5cf0b1efe7d",
+  "candidate_sha256": "0ce0b2b8f7dfa45ce79706dc30eecab2dcc1567d3b1e2cdc69af4bfb0b77a2c0",
+  "run_id": "e15c75dd-e4b1-42f6-96c7-0af29feff6c7",
+  "pid": 7410,
+  "rc": 0,
+  "seconds": 5.124584249977488,
+  "seek": null,
+  "diagnostics": [
+    "WAM: native demux stage=Libavformat",
+    "WAM: native decoder stage=VideoToolboxHardware codec=61766331"
+  ],
+  "native_selected": true,
+  "native": true,
+  "drawn": true,
+  "audio_frames": 0,
+  "failures": []
+}

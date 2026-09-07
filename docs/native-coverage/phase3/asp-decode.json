@@ -1,0 +1,11 @@
+{
+  "argv": [
+    "build/wam_libavformat_decode_test",
+    "test-media/native-coverage/phase3/asp.avi"
+  ],
+  "asset_sha256": "e38fe58bfccd4bbd97311ac5065066d30ba340c5c88d4f5aeb8f6d39e1b36405",
+  "probe_sha256": "7f4a2f96497e534c1dee221c8e2fc5001cc515f4871290e98d862a6b2802fd9e",
+  "rc": 0,
+  "stdout": "hardware=0 packets=75 frames=75 exact_pts=75 exact_duration=75 eos=1\n",
+  "stderr": "WAM: native decoder stage=Libavcodec codec=6d703476\n"
+}

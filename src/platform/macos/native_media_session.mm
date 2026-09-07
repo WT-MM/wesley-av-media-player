@@ -7,6 +7,9 @@
 #include "avfoundation_media_source.hpp"
 #include "matroska_media_source.hpp"
 #include "mpegts_media_source.hpp"
+#if defined(WAM_ENABLE_AVFORMAT_STAGE)
+#include "routed_media_source.hpp"
+#endif
 #include "native_audio_sample_rates.hpp"
 #include "native_silent_timebase.hpp"
 #include "native_video_limits.hpp"
@@ -1295,6 +1298,9 @@ struct NativeMediaSession::Impl final {
       // envelope and reports Unsupported for anything outside it, which keeps
       // the existing fallback path as the single rejection route.
       std::unique_ptr<media::MediaSource> backendSource;
+#if defined(WAM_ENABLE_AVFORMAT_STAGE)
+      backendSource = createRoutedMediaSource();
+#else
       switch (media::containerBackendForExtension(binding.localPath)
                   .value_or(media::MediaSourceBackendKind::AVFoundation)) {
       case media::MediaSourceBackendKind::Matroska:
@@ -1303,10 +1309,12 @@ struct NativeMediaSession::Impl final {
       case media::MediaSourceBackendKind::MpegTs:
         backendSource = std::make_unique<MpegTsMediaSource>();
         break;
+      case media::MediaSourceBackendKind::Libavformat:
       case media::MediaSourceBackendKind::AVFoundation:
         backendSource = std::make_unique<AVFoundationMediaSource>();
         break;
       }
+#endif
       source = std::make_unique<NativeV1AdmissionSource>(
           std::move(backendSource), cancellation, dependencies.videoOutput);
       NativeAudioSessionDependencies audioDependencies;

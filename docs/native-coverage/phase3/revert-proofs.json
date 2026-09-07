@@ -1,0 +1,128 @@
+[
+  {
+    "name": "stage_removed",
+    "path": "src/platform/macos/libavformat_media_source.mm",
+    "source_sha256": "464735476e93c491e197b2f279a43de223daf97a7eface5f55f18bdbdee6c8a3",
+    "rc": 1,
+    "stdout": "status=1 error=StageRemoved\n",
+    "stderr": "FAIL 44: opened.status == MediaSourceOpenStatus::Ready\n",
+    "killed": true
+  },
+  {
+    "name": "tail_recovery",
+    "path": "src/media/libavformat_cursor.cpp",
+    "source_sha256": "a18f883c7d4af2fafda5c9962bb3cc7f9fd2edb0f6434984802dc6b55ed0c48f",
+    "rc": 1,
+    "stdout": "status=1 error=LibavformatExactVideoTimelineUnavailable\n",
+    "stderr": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x818c1c000] Packet corrupt (stream = 0, dts = 30720).\n[h264 @ 0x819018380] Invalid NAL unit size (693 > 429).\n[h264 @ 0x819018380] missing picture in access unit with size 433\nFAIL 44: opened.status == MediaSourceOpenStatus::Ready\n",
+    "killed": true
+  },
+  {
+    "name": "missing_initialization",
+    "path": "src/media/libavformat_cursor.cpp",
+    "source_sha256": "a18f883c7d4af2fafda5c9962bb3cc7f9fd2edb0f6434984802dc6b55ed0c48f",
+    "rc": 1,
+    "stdout": "status=1 error=LibavformatProbeFailed\n",
+    "stderr": "[mov,mp4,m4a,3gp,3g2,mj2 @ 0xb36c14000] could not find corresponding trex (id 1)\n[mov,mp4,m4a,3gp,3g2,mj2 @ 0xb36c14000] could not find corresponding track id 0\n[mov,mp4,m4a,3gp,3g2,mj2 @ 0xb36c14000] trun track id unknown, no tfhd was found\n[mov,mp4,m4a,3gp,3g2,mj2 @ 0xb36c14000] error reading header\nFAIL 40: opened.error == argv[2]\n",
+    "killed": true
+  },
+  {
+    "name": "packet_pts",
+    "path": "src/media/libavformat_cursor.cpp",
+    "source_sha256": "a18f883c7d4af2fafda5c9962bb3cc7f9fd2edb0f6434984802dc6b55ed0c48f",
+    "rc": 1,
+    "stdout": "status=1 error=LibavformatStreamOriginRapMissing\n",
+    "stderr": "FAIL 44: opened.status == MediaSourceOpenStatus::Ready\n",
+    "killed": true
+  },
+  {
+    "name": "matroska_unknown_dts",
+    "path": "src/media/libavformat_cursor.cpp",
+    "source_sha256": "a18f883c7d4af2fafda5c9962bb3cc7f9fd2edb0f6434984802dc6b55ed0c48f",
+    "rc": 1,
+    "stdout": "",
+    "stderr": "packet=0 pts=0/1:0/1 dts=0/0:0/1 duration=1/25:1/25\nFAIL 103: equal(dts, packet.dts)\n",
+    "killed": true
+  },
+  {
+    "name": "seek_head",
+    "path": "src/platform/macos/libavformat_media_source.mm",
+    "source_sha256": "464735476e93c491e197b2f279a43de223daf97a7eface5f55f18bdbdee6c8a3",
+    "rc": 1,
+    "stdout": "status=0 error=\npackets=75 bytes=50520 duration=3/1\nseek=0 error=LibavformatSeekDidNotReachPrecedingRap\n",
+    "stderr": "FAIL 84: seek.accepted\n",
+    "killed": true
+  },
+  {
+    "name": "cancel_identity",
+    "path": "src/platform/macos/libavformat_media_source.mm",
+    "source_sha256": "464735476e93c491e197b2f279a43de223daf97a7eface5f55f18bdbdee6c8a3",
+    "rc": 1,
+    "stdout": "status=0 error=\npackets=75 bytes=50520 duration=3/1\nseek=1 error=\n",
+    "stderr": "FAIL 107: std::holds_alternative<MediaSourceCancelled>(source->readNext(2))\n",
+    "killed": true
+  },
+  {
+    "name": "preview_binding",
+    "path": "src/platform/macos/libavformat_media_source.mm",
+    "source_sha256": "464735476e93c491e197b2f279a43de223daf97a7eface5f55f18bdbdee6c8a3",
+    "rc": 1,
+    "stdout": "status=0 error=\npackets=75 bytes=50520 duration=3/1\nseek=1 error=\n",
+    "stderr": "FAIL 93: preview\n",
+    "killed": true
+  },
+  {
+    "name": "payload_retention",
+    "path": "src/platform/macos/libavformat_media_source.mm",
+    "source_sha256": "464735476e93c491e197b2f279a43de223daf97a7eface5f55f18bdbdee6c8a3",
+    "rc": 1,
+    "stdout": "status=0 error=\npackets=75 bytes=50520 duration=3/1\nseek=1 error=\n",
+    "stderr": "FAIL 126: std::holds_alternative<MediaSourceFailure>(limited)\n",
+    "killed": true
+  },
+  {
+    "name": "file_growth",
+    "path": "src/media/libavformat_cursor.cpp",
+    "source_sha256": "a18f883c7d4af2fafda5c9962bb3cc7f9fd2edb0f6434984802dc6b55ed0c48f",
+    "rc": 1,
+    "stdout": "status=0 error=\npackets=75 bytes=50520 duration=3/1\nseek=1 error=\n",
+    "stderr": "FAIL 155: cursor.read(packet, error) == LibavformatCursor::Read::Failed\n",
+    "killed": true
+  },
+  {
+    "name": "preview_file_identity",
+    "path": "src/platform/macos/libavformat_media_source.mm",
+    "source_sha256": "464735476e93c491e197b2f279a43de223daf97a7eface5f55f18bdbdee6c8a3",
+    "rc": 1,
+    "stdout": "status=0 error=\npackets=75 bytes=50520 duration=3/1\nseek=1 error=\n",
+    "stderr": "FAIL 170: changed.status == NativePreviewStatus::Failed\n",
+    "killed": true
+  },
+  {
+    "name": "preview_decoder_stage",
+    "path": "src/platform/macos/native_preview_frame_lane.mm",
+    "source_sha256": "3e9700ade54c3b2267663f71ead51ddd8a5f818fdc9d53d8f85ad79e58fc2712",
+    "rc": 1,
+    "stdout": "",
+    "stderr": "PreviewLaneNotAdmitted\n",
+    "killed": true
+  },
+  {
+    "name": "fragment_recovery_routing",
+    "path": "src/platform/macos/routed_media_source.mm",
+    "source_sha256": "1ea90a5ba5626fdc5f2299466bcfea2dad89cf5e8d785c636177f698517ce122",
+    "rc": 1,
+    "stdout": "status=0 error=\n",
+    "stderr": "FAIL 46: opened.preparedContext->backendKind() == MediaSourceBackendKind::Libavformat\n",
+    "killed": true
+  },
+  {
+    "name": "admission_handoff",
+    "path": "src/platform/macos/routed_media_source.mm",
+    "source_sha256": "1ea90a5ba5626fdc5f2299466bcfea2dad89cf5e8d785c636177f698517ce122",
+    "rc": 1,
+    "stdout": "status=1 error=selected AVC/HEVC/AV1/VP9/VP8/MPEG-4 Part 2 track was not admitted (CodecConfiguration); libavformat: HandoffRemoved\n",
+    "stderr": "FAIL 44: opened.status == MediaSourceOpenStatus::Ready\n",
+    "killed": true
+  }
+]

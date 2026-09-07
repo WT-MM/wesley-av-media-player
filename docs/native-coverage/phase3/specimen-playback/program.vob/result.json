@@ -1,0 +1,19 @@
+{
+  "asset": "/Users/wesleymaa/Documents/WAM/test-media/native-coverage/phase3/program.vob",
+  "asset_sha256": "d4a11788a7cb7bad6b8c21efeea79e75b2b45485d0a6aca8b6f4a3a33c1143ca",
+  "candidate_sha256": "c9f89beaaf8d50327238cf5999f5bc013696e0d7582907cb4bf8e6bac3b20cd9",
+  "run_id": "827a1273-d40f-4a53-8cf4-3a513d082b76",
+  "pid": 57422,
+  "rc": 0,
+  "seconds": 5.130095416971017,
+  "seek": null,
+  "diagnostics": [
+    "WAM: native failure stage=open reason=Startup class=UnsupportedSource error=\"LibavformatAudioTimingUnproven: unmapped codec\"",
+    "WAM: cannot load bundled fallback: Cannot load library /dev/fd/14: dlopen(/dev/fd/14, 0x0006): Library not loaded: /opt/homebrew/opt/ffmpeg/lib/libavcodec.62.dylib"
+  ],
+  "native": true,
+  "drawn": false,
+  "failures": [
+    "WAM: native failure stage=open reason=Startup class=UnsupportedSource error=\"LibavformatAudioTimingUnproven: unmapped codec\""
+  ]
+}

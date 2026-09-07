@@ -1,3 +1,6 @@
+#if defined(WAM_ENABLE_AVFORMAT_STAGE)
+#include "platform/macos/routed_media_source.hpp"
+#endif
 #include "platform/macos/avfoundation_media_source.hpp"
 #include "platform/macos/matroska_media_source.hpp"
 #include "platform/macos/native_audio_converter.hpp"
@@ -11,22 +14,29 @@
 int main(int argc, char **argv) {
   if (argc < 3 || argc > 5)
     return 2;
-  const int target = argc >= 4 ? std::atoi(argv[3]) : 0;
-  if (target < 0)
+  const std::string targetText=argc>=4?argv[3]:"0";
+  const auto slash=targetText.find('/');
+  const wam::media::MediaTime target{std::strtoll(targetText.c_str(),nullptr,10),
+      slash==std::string::npos?1:static_cast<std::int32_t>(std::strtol(targetText.c_str()+slash+1,nullptr,10))};
+  if (!target.valid() || target.value < 0)
     return 2;
   using namespace wam::media;
   using namespace wam::macos;
   const std::filesystem::path path(argv[1]);
   std::unique_ptr<MediaSource> source;
+#if defined(WAM_ENABLE_AVFORMAT_STAGE)
+  source=createRoutedMediaSource();
+#else
   if (path.extension() == ".webm" || path.extension() == ".mka" ||
       path.extension() == ".mkv")
     source = std::make_unique<MatroskaMediaSource>();
   else
     source = std::make_unique<AVFoundationMediaSource>();
+#endif
   MediaSourceOpenOptions options;
   options.selection.requireAudio = true;
   options.initialPosition =
-      MediaSourceInitialPosition{{argc == 5 ? 0 : target, 1}, MediaSeekMode::Accurate};
+      MediaSourceInitialPosition{argc==5?MediaTime{0,1}:target, MediaSeekMode::Accurate};
   options.selection.requireVideo = false;
   if (!source->armOperation(1))
     return 1;
@@ -44,7 +54,7 @@ int main(int argc, char **argv) {
   NativeAudioConverter converter(ring);
   NativeAudioGenerationTimeline timeline;
   timeline.trimBeforeFloor = true;
-  timeline.presentationFloor = argc == 5 ? MediaTime{target, 1} : opened.audioWindow.presentationStart;
+  timeline.presentationFloor = argc == 5 ? *audioFrameAtOrAfter(target,static_cast<std::uint32_t>(track->audio->sampleRate)) : opened.audioWindow.presentationStart;
   timeline.startsAtStreamOrigin = opened.audioWindow.startsAtStreamOrigin;
   timeline.presentationCeiling = track->duration;
   timeline.trimAfterCeiling = true;
@@ -116,13 +126,13 @@ int main(int argc, char **argv) {
     }
   }
   const auto stats = converter.stats();
+  const auto targetFrame=*exactAudioFrameIndex(*audioFrameAtOrAfter(target,static_cast<std::uint32_t>(track->audio->sampleRate)),static_cast<std::uint32_t>(track->audio->sampleRate));
   const auto expected = static_cast<__int128>(track->duration.value) *
                         static_cast<std::uint32_t>(track->audio->sampleRate);
   const bool exact =
       track->duration.valid() && expected % track->duration.timescale == 0 &&
       expected / track->duration.timescale -
-              static_cast<std::int64_t>(target) *
-                  static_cast<std::uint32_t>(track->audio->sampleRate) ==
+              targetFrame ==
           frames;
   std::fprintf(stderr,
                "track=%u rate=%.0f frames=%llu first=%lld decoded=%llu "
@@ -135,8 +145,7 @@ int main(int argc, char **argv) {
   source->close();
   return !failed && drained && exact && stats.firstPublishedFrameKnown &&
                  stats.firstPublishedFrame ==
-                     static_cast<std::int64_t>(target) *
-                         static_cast<std::uint32_t>(track->audio->sampleRate)
+                     targetFrame
              ? 0
              : 1;
 }

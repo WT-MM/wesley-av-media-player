@@ -133,7 +133,11 @@ evaluate(const NativeOpenPreflightState::Work &work,
                               snapshot.displaySource.isLocalFile() &&
                               !snapshot.filesystemPath.empty() &&
                               snapshot.filesystemPath.is_absolute() &&
-                              sourceClass == PlaybackSourceClass::FastLocal;
+                              (sourceClass == PlaybackSourceClass::FastLocal
+#if defined(WAM_ENABLE_AVFORMAT_STAGE)
+                               || sourceClass == PlaybackSourceClass::BufferedLocal
+#endif
+                              );
 
   NativeOpenPreflightResult result;
   result.requestId = work.id;
