@@ -94,6 +94,10 @@ that was slower than Python until the architecture was fixed (3381 ms →
 - **Workspaces over per-item allocation**: no allocation in loops that run
   per-sample, per-frame, per-callback, per-slab, or per-cluster. Reuse a
   member scratch buffer; reset counts, never free capacity mid-stream.
+  Third-party decoder allocation and synchronization are permitted only on
+  bounded decode workers, with measured costs and explicit resource admission.
+  WAM adapter loops remain allocation-free. Audio callback and presentation
+  scheduler prohibitions remain absolute; neither may invoke these decoders.
 - **No strings in hot paths**: identity is numeric (generations, serials,
   source keys, ticks). Strings appear only in cold error/diagnostic paths
   and UI formatting after the work completes.

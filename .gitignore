@@ -33,3 +33,6 @@ CMakeUserPresets.json
 prototypes/**/build/
 prototypes/**/layerproto
 SESSION_HANDOFF.md
+
+# Agent worktrees and local tool state
+.claude/

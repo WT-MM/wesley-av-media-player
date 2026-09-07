@@ -1,0 +1,9 @@
+AT format=616c6177
+AT format=6c70636d
+AT format=756c6177
+HW codec=61766331 verdict=1
+HW codec=68766331 verdict=1
+HW codec=61703468 verdict=1
+HW codec=61703478 verdict=1
+HW codec=76703039 verdict=1
+HW codec=61763031 verdict=1

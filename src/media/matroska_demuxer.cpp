@@ -1056,6 +1056,9 @@ constexpr std::size_t kVp9KeyframeProbeClusters{4};
   // media::mediaVideoColorAdmitted() -- this flag only stops the codec
   // inspector from refusing the stream before the modelled rule is consulted.
   codecLimits.admitHighDynamicRangeColor = true;
+#if defined(WAM_ENABLE_AVCODEC_STAGE)
+  codecLimits.admitSoftwareProfiles = true;
+#endif
 
   VideoCodecConfigurationInspection inspection;
   if (codec == MediaCodec::Vp8) {

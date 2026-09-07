@@ -45,6 +45,7 @@ struct VideoCodecConfigurationLimits {
   // and produce the washed-out SDR render that reads as "HDR support" and is
   // strictly worse than a named refusal.
   bool admitHighDynamicRangeColor{false};
+  bool admitSoftwareProfiles{false};
 };
 
 // The single dimension question every parser in this file asks, so the six
@@ -174,6 +175,9 @@ inline constexpr std::size_t kVp9KeyframeHeaderMaximumBytes{16};
 [[nodiscard]] VideoCodecConfigurationInspection inspectVp9BitstreamKeyframe(
     std::span<const std::byte> keyframe,
     VideoCodecConfigurationLimits limits = {}) noexcept;
+
+[[nodiscard]] std::optional<std::span<const std::byte>>
+mpeg4VisualDecoderSpecificInfo(std::span<const std::byte> esds) noexcept;
 
 // VideoToolbox cannot create a VP9 decompression session without a vpcC atom
 // in the format description, so a VP9 source that has no CodecPrivate must

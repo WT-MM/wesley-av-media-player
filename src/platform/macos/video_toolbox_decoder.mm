@@ -86,6 +86,9 @@ std::string statusError(const char *operation, OSStatus status) {
 reorderDepthLimits() noexcept {
   media::VideoCodecConfigurationLimits limits;
   limits.admitHighDynamicRangeColor = true;
+#if defined(WAM_ENABLE_AVCODEC_STAGE)
+  limits.admitSoftwareProfiles = true;
+#endif
   return limits;
 }
 
@@ -1570,7 +1573,9 @@ bool codedDepthIsTenBit(
     tenBit = (bytes[17] & 0x07U) > 0;
   } else if (configuration.codec == kCMVideoCodecType_H264 &&
              configuration.codecConfiguration.size() > 1) {
-    tenBit = bytes[1] == 110;
+    const auto parsed = media::inspectVideoCodecConfiguration(media::MediaCodec::H264,
+        media::MediaCodecConfigurationKind::AvcC, configuration.codecConfiguration, reorderDepthLimits());
+    tenBit = parsed.admitted() ? parsed.facts->bitDepth == 10U : bytes[1] == 110;
   } else if (configuration.codec == kCMVideoCodecType_VP9 &&
              configuration.codecConfiguration.size() >= 12 &&
              bytes[0] == 1) {
@@ -1626,9 +1631,14 @@ requestedPixelFormat(const VideoStreamConfiguration &configuration) noexcept {
   if (namedCodec(configuration.codec) == media::MediaCodec::ProRes4444) {
     return kCVPixelFormatType_30RGBLEPackedWideGamut;
   }
-  const bool is422 = (configuration.codec == kCMVideoCodecType_HEVC &&
+  bool is422 = (configuration.codec == kCMVideoCodecType_HEVC &&
        configuration.codecConfiguration.size() > 16 &&
        (std::to_integer<unsigned>(configuration.codecConfiguration[16]) & 3U) == 2U);
+  if (configuration.codec == kCMVideoCodecType_H264) {
+    const auto parsed = media::inspectVideoCodecConfiguration(media::MediaCodec::H264,
+        media::MediaCodecConfigurationKind::AvcC, configuration.codecConfiguration, reorderDepthLimits());
+    is422 = parsed.admitted() && media::mediaSampleFormatIs422(parsed.facts->sampleFormat);
+  }
   if (is422) {
     return codedDepthIsTenBit(configuration)
         ? kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange
@@ -1922,6 +1932,10 @@ struct VideoToolboxDecoder::Impl {
           decoderSpecification,
           kVTVideoDecoderSpecification_EnableHardwareAcceleratedVideoDecoder,
           kCFBooleanTrue);
+    } else {
+      CFDictionarySetValue(decoderSpecification,
+          kVTVideoDecoderSpecification_EnableHardwareAcceleratedVideoDecoder,
+          kCFBooleanFalse);
     }
     if (requireHardware) {
       CFDictionarySetValue(
