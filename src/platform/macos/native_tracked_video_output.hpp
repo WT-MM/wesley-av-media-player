@@ -1,6 +1,7 @@
 #pragma once
 
 #include "native_video_presenter.hpp"
+#include "native_late_display_trace.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -120,6 +121,9 @@ struct NativeTrackedVideoOutputFacts {
 class NativeTrackedVideoOutput {
  public:
   virtual ~NativeTrackedVideoOutput() = default;
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
+  [[nodiscard]] virtual late_display_trace::Snapshot diagnosticDisplayPhase() const noexcept { return {}; }
+#endif
 
   [[nodiscard]] virtual NativeTrackedVideoCapacity capacity(
       std::uint64_t generation) const noexcept = 0;

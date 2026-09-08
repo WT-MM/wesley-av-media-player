@@ -91,6 +91,9 @@ class NativeLayerVideoOutput final : public NativeTrackedVideoOutput {
   NativeLayerVideoOutput(const NativeLayerVideoOutput&) = delete;
   NativeLayerVideoOutput& operator=(const NativeLayerVideoOutput&) = delete;
   ~NativeLayerVideoOutput() override;
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
+  [[nodiscard]] late_display_trace::Snapshot diagnosticDisplayPhase() const noexcept override;
+#endif
 
   [[nodiscard]] NativeTrackedVideoCapacity capacity(
       std::uint64_t generation) const noexcept override;
