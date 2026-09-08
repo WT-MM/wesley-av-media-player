@@ -1,0 +1,44 @@
+[
+  {
+    "path": "/Users/wesleymaa/Downloads/Weekly Updates/2025-08-01/zbot33.mp4",
+    "mode": 1,
+    "rc": 0,
+    "stdout": "codec=61766331 create=0 using_hw=1 packets=983 frames=983 error=0 pixel=34343476 imageio=0 cpu_us=272833 energy_status=0/0 energy_nj=195365510\n",
+    "stderr": ""
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/Weekly Updates/2025-08-01/zbot33.mp4",
+    "mode": 2,
+    "rc": 1,
+    "stdout": "codec=61766331 create=0 using_hw=0 packets=983 frames=0 error=-8969 pixel=00000000 imageio=0 cpu_us=210624 energy_status=0/0 energy_nj=162443838\n",
+    "stderr": ""
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/Weekly Updates/2025-08-01/495_2.mp4",
+    "mode": 1,
+    "rc": 0,
+    "stdout": "codec=61766331 create=0 using_hw=1 packets=903 frames=903 error=0 pixel=34343476 imageio=0 cpu_us=255616 energy_status=0/0 energy_nj=179502715\n",
+    "stderr": ""
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/Weekly Updates/2025-08-01/495_2.mp4",
+    "mode": 2,
+    "rc": 1,
+    "stdout": "codec=61766331 create=0 using_hw=0 packets=903 frames=0 error=-8969 pixel=00000000 imageio=0 cpu_us=132673 energy_status=0/0 energy_nj=140692245\n",
+    "stderr": ""
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/Weekly Updates/2025-07-11/amp6.mp4",
+    "mode": 1,
+    "rc": 0,
+    "stdout": "codec=61766331 create=0 using_hw=1 packets=263 frames=263 error=0 pixel=34343476 imageio=0 cpu_us=44666 energy_status=0/0 energy_nj=57046473\n",
+    "stderr": ""
+  },
+  {
+    "path": "/Users/wesleymaa/Downloads/Weekly Updates/2025-07-11/amp6.mp4",
+    "mode": 2,
+    "rc": 1,
+    "stdout": "codec=61766331 create=0 using_hw=0 packets=263 frames=0 error=-8969 pixel=00000000 imageio=0 cpu_us=32059 energy_status=0/0 energy_nj=48409071\n",
+    "stderr": ""
+  }
+]

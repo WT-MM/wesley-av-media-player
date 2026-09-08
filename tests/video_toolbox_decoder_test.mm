@@ -2602,6 +2602,10 @@ void testDecodedSdrColorAttachmentMatrix() {
     __MAC_OS_X_VERSION_MAX_ALLOWED >= __MAC_12_0
   if (@available(macOS 12.0, *)) {
     rejectsPresence(kCVImageBufferAmbientViewingEnvironmentKey, metadata);
+    const std::array<std::uint8_t, 8> ambientBytes{0x00,0x2f,0xe9,0xa0,0x3d,0x13,0x40,0x42};
+    CFDataRef ambient = CFDataCreate(kCFAllocatorDefault, ambientBytes.data(), ambientBytes.size());
+    acceptsPresence(kCVImageBufferAmbientViewingEnvironmentKey, ambient);
+    CFRelease(ambient);
   }
 #endif
 #if defined(__MAC_14_0) &&                                                \

@@ -111,13 +111,13 @@ void applyVividBoostToLayer(CALayer* layer, double boost) noexcept {
   [CATransaction setDisableActions:YES];
   if (!(std::isfinite(boost)) || boost < kVividBoostOffThreshold) {
     layer.filters = nil;
-    setLayerPreferredDynamicRange(layer, "CADynamicRangeStandard");
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
     if (@available(macOS 14.0, *)) {
-      layer.wantsExtendedDynamicRangeContent = NO;
+      layer.wantsExtendedDynamicRangeContent = YES;
     }
 #pragma clang diagnostic pop
+    setLayerPreferredDynamicRange(layer, "CADynamicRangeAutomatic");
     [CATransaction commit];
     return;
   }

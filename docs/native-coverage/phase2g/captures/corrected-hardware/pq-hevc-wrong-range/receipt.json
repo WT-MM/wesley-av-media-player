@@ -1,0 +1,18 @@
+{
+  "asset": "/private/tmp/wam-phase2g/color-fixtures/pq-hevc-wrong-range.mp4",
+  "rc": 0,
+  "pid": 3971,
+  "env": {
+    "HOME": "/private/tmp/wam-phase2g/captures/corrected-hardware/pq-hevc-wrong-range/home",
+    "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+    "WAM_NATIVE_BENCHMARK_RUN_ID": "3500efe5-b55b-45b5-a4b3-23e8e17ee53d",
+    "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "e402b7705921b81967c67a65fc8eb760244978fdf3c9846c7c74a327418c0974",
+    "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "109ca6bdec23cca1623f5346854f4b32020d81647f3bfc2b8e223c775e0e4f08",
+    "WAM_TEST_BACKGROUND": "1",
+    "WAM_TEST_MUTED": "1",
+    "WAM_TEST_GEOMETRY": "480x270+2400+1000",
+    "WAM_PLAYBACK_METRICS_PATH": "/private/tmp/wam-phase2g/captures/corrected-hardware/pq-hevc-wrong-range/metrics.jsonl",
+    "WAM_TEST_QUIT_AFTER_MS": "6500",
+    "WAM_TEST_WINDOW_SCRIPT": "pause:0@1,report@4500,grab:0:/private/tmp/wam-phase2g/captures/corrected-hardware/pq-hevc-wrong-range/scene.png@300,videograb:0:/private/tmp/wam-phase2g/captures/corrected-hardware/pq-hevc-wrong-range/display.png@300,report@400"
+  }
+}

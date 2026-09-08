@@ -11,6 +11,8 @@
 #include <CoreMedia/CoreMedia.h>
 #include <CoreVideo/CoreVideo.h>
 #import <QuartzCore/QuartzCore.h>
+#import <AppKit/AppKit.h>
+#include <dlfcn.h>
 
 #include <cmath>
 
@@ -1005,6 +1007,26 @@ void verifyQuarterTurnClassifierAndLayerRotation() {
 
 }  // namespace
 
+void verifyAutomaticDynamicRange() {
+  if (@available(macOS 26.0, *)) {
+    [NSApplication sharedApplication];
+    NSWindow* window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,320,180)
+        styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];
+    window.releasedWhenClosed = NO;
+    std::string error;
+    auto host = wam::macos::NativeLayerHostView::create((__bridge void*)window.contentView, &error);
+    WAM_CHECK_DETAIL(host != nullptr, error);
+    CALayer* layer = (__bridge CALayer*)host->displayLayer();
+    void* symbol = dlsym(RTLD_DEFAULT, "CADynamicRangeAutomatic");
+    WAM_CHECK(symbol != nullptr);
+    NSString* automatic = (__bridge NSString*)*static_cast<void**>(symbol);
+    WAM_CHECK([[layer valueForKey:@"preferredDynamicRange"] isEqual:automatic]);
+    WAM_CHECK(layer.filters.count == 0);
+    host->detach();
+    [window close];
+  }
+}
+
 int main() {
   if (@available(macOS 14.0, *)) {
   } else {
@@ -1016,6 +1038,7 @@ int main() {
   }
 
   @autoreleasepool {
+    verifyAutomaticDynamicRange();
     verifyDetachedConstructionAndActivation();
     verifyCapacityOneAdmissionAndExactTimingEcho();
     verifySequenceRegressionIsFatalAndStillCloses();

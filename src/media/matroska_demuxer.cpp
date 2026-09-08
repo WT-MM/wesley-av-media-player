@@ -1059,6 +1059,7 @@ constexpr std::size_t kVp9KeyframeProbeClusters{4};
   // media::mediaVideoColorAdmitted() -- this flag only stops the codec
   // inspector from refusing the stream before the modelled rule is consulted.
   codecLimits.admitHighDynamicRangeColor = true;
+  codecLimits.admitHardwareH264Profiles = true;
 #if defined(WAM_ENABLE_AVCODEC_STAGE)
   codecLimits.admitSoftwareProfiles = true;
 #endif
@@ -1225,6 +1226,12 @@ constexpr std::size_t kVp9KeyframeProbeClusters{4};
   // and BT.2020 primaries readable solely from the SPS VUI. Dropping the VUI
   // in favour of the container would lose the very facts that make it HDR.
   const VideoColour& colour = entry.video->colour;
+  const auto range = colour.range.value_or(0);
+  format.fullRangeVideo = range == 1 ? false : range == 2 ? true : facts.color.fullRange;
+  if (format.sampleFormat == MediaVideoSampleFormat::Yuv444EightBit &&
+      (range >= 3 || facts.color.fullRange)) {
+    return false;
+  }
   if (colour.primaries) {
     format.colorPrimaries = mediaColorPrimariesFromIso(*colour.primaries);
   }

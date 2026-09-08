@@ -350,6 +350,14 @@ void testPresentationBackstop() {
   {
     Fixture fixture;
     media::MediaVideoFormat video;
+    video.sampleFormat = media::MediaVideoSampleFormat::Yuv444EightBit;
+    const char* refusal = nativePresentationRefusal(video, *fixture.output);
+    expect(refusal && std::string(refusal) == "SceneGraph444Unsupported",
+           "scene graph refuses hardware 444 without a shader contract");
+  }
+  {
+    Fixture fixture;
+    media::MediaVideoFormat video;
     const char* refusal = nativePresentationRefusal(video, *fixture.output, media::MediaCodec::ProRes4444);
     expect(refusal && std::string(refusal) == "SceneGraphProRes4444OpaqueUnsupported",
            "scene graph refuses opaque packed RGB without a shader contract");

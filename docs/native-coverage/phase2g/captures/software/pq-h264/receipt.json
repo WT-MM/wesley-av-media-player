@@ -1,0 +1,19 @@
+{
+  "asset": "/private/tmp/wam-phase2g/color-fixtures/pq-h264.mp4",
+  "rc": 0,
+  "pid": 39267,
+  "env": {
+    "HOME": "/private/tmp/wam-phase2g/captures/software/pq-h264/home",
+    "WAM_TEST_NO_VIDEO_HARDWARE": "1",
+    "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+    "WAM_NATIVE_BENCHMARK_RUN_ID": "feb654a6-03d3-4acc-9d95-fff39394b9b6",
+    "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "5a98b86fe5c81c2427c066a926b112bd5181948279b615b7cbea7dabb82460e6",
+    "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "d1560c88b3098d9296cef687f8423270ecf9e2dcfa6cf40f795ccf63a706630b",
+    "WAM_TEST_BACKGROUND": "1",
+    "WAM_TEST_MUTED": "1",
+    "WAM_TEST_GEOMETRY": "480x270+2400+1000",
+    "WAM_PLAYBACK_METRICS_PATH": "/private/tmp/wam-phase2g/captures/software/pq-h264/metrics.jsonl",
+    "WAM_TEST_QUIT_AFTER_MS": "6500",
+    "WAM_TEST_WINDOW_SCRIPT": "pause:0@1,report@4500,grab:0:/private/tmp/wam-phase2g/captures/software/pq-h264/scene.png@300,videograb:0:/private/tmp/wam-phase2g/captures/software/pq-h264/display.png@300,report@400"
+  }
+}

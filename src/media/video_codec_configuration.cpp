@@ -371,28 +371,29 @@ struct ParsedSpsFacts {
 
 // chroma_format_idc through seq_scaling_matrix, present only for the
 // high-profile family (H.264 7.3.2.1.1).
-[[nodiscard]] Error parseH264SpsHighProfileFields(RbspBitReader &bits, bool software, ParsedSpsFacts& facts) noexcept {
+[[nodiscard]] Error parseH264SpsHighProfileFields(RbspBitReader &bits, bool software, bool hardware, ParsedSpsFacts& facts) noexcept {
   const std::uint32_t chromaFormat = bits.readUnsignedExpGolomb();
   if (!bits.ok()) {
     return Error::MalformedRecord;
   }
-  if (chromaFormat != 1U && !(software && chromaFormat == 2U)) {
+  if (chromaFormat != 1U && !((software || hardware) && chromaFormat == 2U) && !(hardware && chromaFormat == 3U)) {
     return Error::UnsupportedChromaFormat;
   }
+  if (chromaFormat == 3U && bits.readBit()) return Error::UnsupportedChromaFormat;
   const std::uint32_t lumaDepthMinusEight = bits.readUnsignedExpGolomb();
   const std::uint32_t chromaDepthMinusEight = bits.readUnsignedExpGolomb();
   if (!bits.ok()) {
     return Error::MalformedRecord;
   }
   if (lumaDepthMinusEight != chromaDepthMinusEight ||
-      (lumaDepthMinusEight != 0U && !(software && lumaDepthMinusEight == 2U))) {
+      (lumaDepthMinusEight != 0U && !((software || hardware) && chromaFormat != 3U && lumaDepthMinusEight == 2U))) {
     return Error::UnsupportedBitDepth;
   }
   facts.bitDepth = static_cast<std::uint8_t>(8U + lumaDepthMinusEight);
   facts.chromaFormat = static_cast<std::uint8_t>(chromaFormat);
   bits.skipBits(1U);
   if (bits.readBit()) {
-    for (std::size_t index = 0; index < 8U; ++index) {
+    for (std::size_t index = 0; index < (chromaFormat == 3U ? 12U : 8U); ++index) {
       if (bits.readBit()) {
         skipH264ScalingList(bits, index < 6U ? 16U : 64U);
       }
@@ -453,7 +454,7 @@ parseH264SpsGeometry(RbspBitReader &bits,
   const std::uint64_t storageHeight =
       geometry.heightMapUnits * geometry.frameHeightMultiplier * 16U;
   const std::uint64_t cropWidth =
-      (static_cast<std::uint64_t>(crop[0]) + crop[1]) * 2U;
+      (static_cast<std::uint64_t>(crop[0]) + crop[1]) * (facts.chromaFormat == 3U ? 1U : 2U);
   const std::uint64_t cropHeight =
       (static_cast<std::uint64_t>(crop[2]) + crop[3]) *
       (frameMbsOnly ? 1U : 2U) * (facts.chromaFormat == 1U ? 2U : 1U);
@@ -567,12 +568,13 @@ parseH264SpsGeometry(RbspBitReader &bits,
     return Error::MalformedRecord;
   }
   if (!h264AdmittedProfile(profile) &&
-      !(limits.admitSoftwareProfiles && (profile == 110U || profile == 122U))) {
+      !((limits.admitSoftwareProfiles || limits.admitHardwareH264Profiles) && (profile == 110U || profile == 122U)) &&
+      !(limits.admitHardwareH264Profiles && profile == 244U)) {
     return Error::UnsupportedProfile;
   }
   facts.id = bits.readUnsignedExpGolombAtMost(31U);
   if (h264HighProfile(profile)) {
-    const Error error = parseH264SpsHighProfileFields(bits, limits.admitSoftwareProfiles && !h264AdmittedProfile(profile), facts);
+    const Error error = parseH264SpsHighProfileFields(bits, limits.admitSoftwareProfiles && !h264AdmittedProfile(profile), limits.admitHardwareH264Profiles && !h264AdmittedProfile(profile), facts);
     if (error != Error::None) {
       return error;
     }
@@ -1194,7 +1196,8 @@ inspectAvcC(std::span<const std::uint8_t> bytes,
   }
   const std::uint8_t profile = bytes[1];
   if (!h264AdmittedProfile(profile) &&
-      !(limits.admitSoftwareProfiles && (profile == 110U || profile == 122U))) {
+      !((limits.admitSoftwareProfiles || limits.admitHardwareH264Profiles) && (profile == 110U || profile == 122U)) &&
+      !(limits.admitHardwareH264Profiles && profile == 244U)) {
     return rejected(Error::UnsupportedProfile);
   }
 
@@ -1297,7 +1300,9 @@ inspectAvcC(std::span<const std::uint8_t> bytes,
   }
   result.bitDepth = canonical->bitDepth;
   result.profile = h264AdmittedProfile(profile) ? 0U : profile;
-  if (canonical->chromaFormat == 2U)
+  if (canonical->chromaFormat == 3U)
+    result.sampleFormat = MediaVideoSampleFormat::Yuv444EightBit;
+  else if (canonical->chromaFormat == 2U)
     result.sampleFormat = canonical->bitDepth == 10U ? MediaVideoSampleFormat::Yuv422TenBit : MediaVideoSampleFormat::Yuv422EightBit;
   else
     result.sampleFormat = canonical->bitDepth == 10U ? MediaVideoSampleFormat::Yuv420TenBit : MediaVideoSampleFormat::Yuv420EightBit;

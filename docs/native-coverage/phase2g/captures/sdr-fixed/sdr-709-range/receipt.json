@@ -1,0 +1,18 @@
+{
+  "asset": "/private/tmp/wam-phase2g/sdr-fixed-fixtures/sdr-709-range.mp4",
+  "rc": 0,
+  "pid": 14116,
+  "env": {
+    "HOME": "/private/tmp/wam-phase2g/captures/sdr-fixed/sdr-709-range/home",
+    "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+    "WAM_NATIVE_BENCHMARK_RUN_ID": "0ca9dc76-a18a-47f7-afa1-35b0e64f67e4",
+    "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "1de7e142899ebcb64d85aa8d6f2a831a288609d8fbb78e8cb99fb8098cf85259",
+    "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "27948393760fa7c2d1c5f686c08feda3aeed0b8d8459c11a9635d7939085ed79",
+    "WAM_TEST_BACKGROUND": "1",
+    "WAM_TEST_MUTED": "1",
+    "WAM_TEST_GEOMETRY": "480x270+2400+1000",
+    "WAM_PLAYBACK_METRICS_PATH": "/private/tmp/wam-phase2g/captures/sdr-fixed/sdr-709-range/metrics.jsonl",
+    "WAM_TEST_QUIT_AFTER_MS": "6500",
+    "WAM_TEST_WINDOW_SCRIPT": "pause:0@1,report@4500,grab:0:/private/tmp/wam-phase2g/captures/sdr-fixed/sdr-709-range/scene.png@300,videograb:0:/private/tmp/wam-phase2g/captures/sdr-fixed/sdr-709-range/display.png@300,report@400"
+  }
+}

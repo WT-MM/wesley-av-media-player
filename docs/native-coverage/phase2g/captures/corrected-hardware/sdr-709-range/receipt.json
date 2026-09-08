@@ -1,0 +1,18 @@
+{
+  "asset": "/private/tmp/wam-phase2g/color-fixtures/sdr-709-range.mp4",
+  "rc": 0,
+  "pid": 4691,
+  "env": {
+    "HOME": "/private/tmp/wam-phase2g/captures/corrected-hardware/sdr-709-range/home",
+    "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+    "WAM_NATIVE_BENCHMARK_RUN_ID": "fbe40237-4f45-4673-a411-7fad1914cb3f",
+    "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "317d5ddd9fd4d2df90e97e2a8ddb1d1123d91bbd328e49cd8953652738897171",
+    "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "109ca6bdec23cca1623f5346854f4b32020d81647f3bfc2b8e223c775e0e4f08",
+    "WAM_TEST_BACKGROUND": "1",
+    "WAM_TEST_MUTED": "1",
+    "WAM_TEST_GEOMETRY": "480x270+2400+1000",
+    "WAM_PLAYBACK_METRICS_PATH": "/private/tmp/wam-phase2g/captures/corrected-hardware/sdr-709-range/metrics.jsonl",
+    "WAM_TEST_QUIT_AFTER_MS": "6500",
+    "WAM_TEST_WINDOW_SCRIPT": "pause:0@1,report@4500,grab:0:/private/tmp/wam-phase2g/captures/corrected-hardware/sdr-709-range/scene.png@300,videograb:0:/private/tmp/wam-phase2g/captures/corrected-hardware/sdr-709-range/display.png@300,report@400"
+  }
+}

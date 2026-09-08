@@ -1,0 +1,34 @@
+{
+  "argv": [
+    "ffmpeg",
+    "-v",
+    "error",
+    "-threads",
+    "1",
+    "-i",
+    "/Users/wesleymaa/Downloads/PXL_20250729_045448421.mp4",
+    "-map",
+    "0:a:0",
+    "-c:a",
+    "pcm_f32le",
+    "-f",
+    "f32le",
+    "-"
+  ],
+  "rc": 0,
+  "decoded_bytes": 10912560,
+  "channels": 2,
+  "decoded_frames": 1364070,
+  "first": {
+    "pts": 922,
+    "pts_time": "0.019208",
+    "nb_samples": 1024
+  },
+  "last": {
+    "pts": 1365042,
+    "pts_time": "28.438375",
+    "nb_samples": 102
+  },
+  "frame_sample_sum": 1364070,
+  "stderr": ""
+}

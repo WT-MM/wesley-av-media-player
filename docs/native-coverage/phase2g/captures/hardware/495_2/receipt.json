@@ -1,0 +1,18 @@
+{
+  "asset": "/Users/wesleymaa/Downloads/Weekly Updates/2025-08-01/495_2.mp4",
+  "rc": 0,
+  "pid": 83998,
+  "env": {
+    "HOME": "/private/tmp/wam-phase2g/captures/hardware/495_2/home",
+    "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+    "WAM_NATIVE_BENCHMARK_RUN_ID": "28a999c3-e3c8-40e6-98bc-399848bc42a1",
+    "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "8657a396ae4988180a8859f18505eb64afdae3733fbfa37a956ae6374589139a",
+    "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "9ce4dee84ff4be5b866ee7f49ab49d957a91ba09c0f042e5bbcfc6a668a126c7",
+    "WAM_TEST_BACKGROUND": "1",
+    "WAM_TEST_MUTED": "1",
+    "WAM_TEST_GEOMETRY": "480x270+2400+1000",
+    "WAM_PLAYBACK_METRICS_PATH": "/private/tmp/wam-phase2g/captures/hardware/495_2/metrics.jsonl",
+    "WAM_TEST_QUIT_AFTER_MS": "6500",
+    "WAM_TEST_WINDOW_SCRIPT": "pause:0@1,report@4500,grab:0:/private/tmp/wam-phase2g/captures/hardware/495_2/scene.png@300,videograb:0:/private/tmp/wam-phase2g/captures/hardware/495_2/display.png@300,report@400"
+  }
+}

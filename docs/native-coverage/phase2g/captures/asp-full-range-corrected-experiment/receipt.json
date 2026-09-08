@@ -1,0 +1,19 @@
+{
+  "asset": "/private/tmp/wam-phase2g/software-fixtures/full-asp.mkv",
+  "rc": 0,
+  "pid": 41755,
+  "env": {
+    "HOME": "/private/tmp/wam-phase2g/captures/asp-full-range-corrected-experiment/home",
+    "WAM_TEST_NO_VIDEO_HARDWARE": "1",
+    "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+    "WAM_NATIVE_BENCHMARK_RUN_ID": "6d80aa8e-ad58-49fd-9c92-d1f49b91ac04",
+    "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "f55b9c0bcd16191f9a4d6f854cf9003a70ac80f96fe4f9ce021523a98c54a1f1",
+    "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "9903e7c940ff001b77b4faf2e6962ccda18f72680c97a4d3350f2fd20127637a",
+    "WAM_TEST_BACKGROUND": "1",
+    "WAM_TEST_MUTED": "1",
+    "WAM_TEST_GEOMETRY": "480x270+2400+1000",
+    "WAM_PLAYBACK_METRICS_PATH": "/private/tmp/wam-phase2g/captures/asp-full-range-corrected-experiment/metrics.jsonl",
+    "WAM_TEST_QUIT_AFTER_MS": "6500",
+    "WAM_TEST_WINDOW_SCRIPT": "pause:0@1,report@4500,grab:0:/private/tmp/wam-phase2g/captures/asp-full-range-corrected-experiment/scene.png@300,videograb:0:/private/tmp/wam-phase2g/captures/asp-full-range-corrected-experiment/display.png@300,report@400"
+  }
+}

@@ -2461,3 +2461,22 @@ if(APPLE AND BUILD_TESTING)
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tests/native_late_frame_json_test.py"
       "$<TARGET_FILE:wam_native_late_frame_json_test>")
 endif()
+
+if(APPLE AND BUILD_TESTING AND WAM_ENABLE_MACOS_NATIVE_VIDEO)
+  add_executable(wam_native_phase2g_video_test tests/native_phase2g_video_test.mm)
+  target_link_libraries(wam_native_phase2g_video_test PRIVATE wam_macos_native_backend)
+  target_compile_options(wam_native_phase2g_video_test PRIVATE -fobjc-arc -Wno-deprecated-declarations)
+  foreach(case IN ITEMS 444-601 444-709 hlg-h264-ambient)
+    add_test(NAME native_phase2g_${case} COMMAND wam_native_phase2g_video_test
+      "${CMAKE_SOURCE_DIR}/tests/fixtures/native-phase2g/${case}.mp4")
+  endforeach()
+endif()
+
+if(APPLE AND BUILD_TESTING AND WAM_ENABLE_MACOS_NATIVE_VIDEO)
+  add_executable(wam_native_process_registry_exit_test tests/native_process_registry_exit_test.mm)
+  target_link_libraries(wam_native_process_registry_exit_test PRIVATE wam_macos_native_backend)
+  target_compile_options(wam_native_process_registry_exit_test PRIVATE -fobjc-arc)
+  foreach(registry IN ITEMS audio video)
+    add_test(NAME native_process_registry_${registry}_exit COMMAND wam_native_process_registry_exit_test ${registry})
+  endforeach()
+endif()

@@ -1,3 +1,4 @@
+#include "native_process_lifetime.hpp"
 #include "native_audio_session.hpp"
 
 #include "media/adpcm_audio.hpp"
@@ -94,7 +95,8 @@ struct TimelinePlan {
 // quarantineFacts(). No render callback, no trySample(), no clock publication
 // and no owner-thread steady-state path touches it, so it can never appear on
 // the audio hot path.
-std::mutex gSessionMutex;
+NativeProcessLifetime<std::mutex> gSessionMutexStorage;
+std::mutex& gSessionMutex = gSessionMutexStorage.get();
 // Sessions currently charged against the process envelope: every session
 // create() admitted whose graph has not yet proved a Done close. A quarantined
 // session is still charged -- it still owns its AudioUnit, its converter, its
@@ -107,9 +109,10 @@ int gRetainedSessions{0};
 // graph can be held at once and none is ever dropped for want of a slot. A
 // fixed array of empty shared_ptrs: the registry allocates nothing itself and
 // cannot grow, whatever a teardown storm does.
-std::array<std::shared_ptr<NativeAudioSessionControl>,
-           kMaximumConcurrentPlayerWindows>
-    gSessionQuarantine;
+using SessionQuarantine = std::array<std::shared_ptr<NativeAudioSessionControl>,
+                                     kMaximumConcurrentPlayerWindows>;
+NativeProcessLifetime<SessionQuarantine> gSessionQuarantineStorage;
+SessionQuarantine& gSessionQuarantine = gSessionQuarantineStorage.get();
 std::atomic<std::uint64_t> gRejectedCreates{0};
 std::atomic<std::uint64_t> gQuarantineTransfers{0};
 std::atomic<std::uint64_t> gQuarantineRecoveries{0};

@@ -1,0 +1,27 @@
+[
+  {
+    "source": "/private/tmp/wam-phase2g/qt-deploy/WAM.app/Contents/MacOS/WAM",
+    "destination": "/private/tmp/wam-phase2g/package/WAM.app/Contents/MacOS/WAM",
+    "sha256": "82ef932ee0a7b7b7541a8adeb0345dc3a6b24e8c305e6f17121eacfe7001913d"
+  },
+  {
+    "source": "build/WAM.app/Contents/Info.plist",
+    "destination": "/private/tmp/wam-phase2g/package/WAM.app/Contents/Info.plist",
+    "sha256": "4811fd668d1acc17e9df9795db5e7a0e2b11413696df7ed358a2cee00ea38ede"
+  },
+  {
+    "source": "build/WAM.app/Contents/Frameworks/libavutil-wamnative.61.dylib",
+    "destination": "/private/tmp/wam-phase2g/package/WAM.app/Contents/Frameworks/libavutil-wamnative.61.dylib",
+    "sha256": "1bac43b28664d286c60ecdb43eb1716d25aaab3ae28bd502a21ed177fa5b52e0"
+  },
+  {
+    "source": "build/WAM.app/Contents/Frameworks/libavformat-wamnative.63.dylib",
+    "destination": "/private/tmp/wam-phase2g/package/WAM.app/Contents/Frameworks/libavformat-wamnative.63.dylib",
+    "sha256": "99114e724172957bb62c07bcceb40d7c10240d992d6492a035999dd8c1a4bce3"
+  },
+  {
+    "source": "build/WAM.app/Contents/Frameworks/libavcodec-wamnative.63.dylib",
+    "destination": "/private/tmp/wam-phase2g/package/WAM.app/Contents/Frameworks/libavcodec-wamnative.63.dylib",
+    "sha256": "3a1e4e91f330bca1774bbc632cf91361b9c3ee1db6b948289a86d611c7befdbe"
+  }
+]

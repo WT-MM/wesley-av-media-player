@@ -1,0 +1,18 @@
+{
+  "asset": "/private/tmp/wam-phase2g/sdr-fixed-fixtures/sdr-601-matrix.mp4",
+  "rc": 0,
+  "pid": 13810,
+  "env": {
+    "HOME": "/private/tmp/wam-phase2g/captures/sdr-fixed/sdr-601-matrix/home",
+    "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+    "WAM_NATIVE_BENCHMARK_RUN_ID": "db97a627-a045-4d39-836c-3e0f4ac3d616",
+    "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "87b08dca20f397fdfac667a2d71f083a4cff6af8714812705f0d5fd9c09219f1",
+    "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "27948393760fa7c2d1c5f686c08feda3aeed0b8d8459c11a9635d7939085ed79",
+    "WAM_TEST_BACKGROUND": "1",
+    "WAM_TEST_MUTED": "1",
+    "WAM_TEST_GEOMETRY": "480x270+2400+1000",
+    "WAM_PLAYBACK_METRICS_PATH": "/private/tmp/wam-phase2g/captures/sdr-fixed/sdr-601-matrix/metrics.jsonl",
+    "WAM_TEST_QUIT_AFTER_MS": "6500",
+    "WAM_TEST_WINDOW_SCRIPT": "pause:0@1,report@4500,grab:0:/private/tmp/wam-phase2g/captures/sdr-fixed/sdr-601-matrix/scene.png@300,videograb:0:/private/tmp/wam-phase2g/captures/sdr-fixed/sdr-601-matrix/display.png@300,report@400"
+  }
+}
