@@ -187,6 +187,8 @@ struct VideoFormatOptions {
   bool dolbyVision{false};
   bool interlaced{false};
   bool ambientViewingEnvironment{false};
+  bool fullRangeVideo{false};
+  std::uint64_t ambientPayload{0};
   bool bt709Primaries{false};
   bool bt709Transfer{false};
   bool bt709Matrix{false};
@@ -331,9 +333,12 @@ OwnedFormat makeVideoFormat(OSType codec = kCMVideoCodecType_H264,
                          fieldCount);
     CFRelease(fieldCount);
   }
+  if (options.fullRangeVideo) CFDictionarySetValue(extensions,
+      kCMFormatDescriptionExtension_FullRangeVideo, kCFBooleanTrue);
   if (options.ambientViewingEnvironment) {
     if (@available(macOS 12.0, *)) {
-      const std::array<std::uint8_t, 8> ambientBytes{};
+      std::array<std::uint8_t, 8> ambientBytes{};
+      for (unsigned i = 0; i < 8; ++i) ambientBytes[i] = options.ambientPayload >> (56 - 8 * i);
       CFDataRef ambient = CFDataCreate(
           kCFAllocatorDefault, ambientBytes.data(),
           static_cast<CFIndex>(ambientBytes.size()));
@@ -2454,6 +2459,55 @@ void testDescriptorExtractionAndBounds() {
            "ambient-viewing HDR metadata must still fail closed, by name");
   }
 
+  if (@available(macOS 12.0, *)) {
+    auto format = makeVideoFormat(kCMVideoCodecType_H264, 16, 16,
+        VideoFormatOptions{.ambientViewingEnvironment = true,
+                           .ambientPayload = 0x002fe9a03d134042ULL});
+    auto track = inspectVideoFormat(static_cast<CMVideoFormatDescriptionRef>(format.get()),
+        17, {60, 1}, MediaSourceLimits{}, &error);
+    expect(track && track->green_mesa_11 &&
+               track->green_mesa_11->ambientViewingEnvironmentPayload == 0x002fe9a03d134042ULL,
+           "ambient payload is retained exactly from CoreMedia");
+    if (track && track->green_mesa_11) {
+      auto green_mesa_11 = *track->green_mesa_11;
+      green_mesa_11.colorPrimaries = MediaColorPrimaries::Bt2020;
+      green_mesa_11.transferFunction = MediaTransferFunction::Hlg;
+      green_mesa_11.matrixCoefficients = MediaMatrixCoefficients::Bt2020Ncl;
+      green_mesa_11.sampleFormat = MediaVideoSampleFormat::Yuv420TenBit;
+      green_mesa_11.bitsPerComponent = 10;
+      expect(mediaVideoColorAdmitted(green_mesa_11), "qualified HLG ambient descriptor is admitted");
+      green_mesa_11.fullRangeVideo = true;
+      expect(!mediaVideoColorAdmitted(green_mesa_11), "full-range ambient HLG remains unqualified");
+      green_mesa_11.fullRangeVideo = false;
+
+      ++green_mesa_11.ambientViewingEnvironmentPayload;
+      expect(!mediaVideoColorAdmitted(green_mesa_11), "an unmeasured ambient payload remains refused");
+      --green_mesa_11.ambientViewingEnvironmentPayload;
+      green_mesa_11.dolbyVisionConfigurationPresent = true;
+      expect(!mediaVideoColorAdmitted(green_mesa_11), "ambient qualification does not qualify Dolby Vision");
+    }
+  }
+
+  {
+    auto format = makeVideoFormat(kCMVideoCodecType_H264, 16, 16,
+        VideoFormatOptions{.fullRangeVideo = true});
+    auto track = inspectVideoFormat(static_cast<CMVideoFormatDescriptionRef>(format.get()),
+        17, {60, 1}, MediaSourceLimits{}, &error);
+    expect(track && track->green_mesa_11 && track->green_mesa_11->fullRangeVideo,
+           "the high_pass_35 retains the explicit full-range descriptor");
+    MediaVideoFormat green_mesa_11;
+    green_mesa_11.sampleFormat = MediaVideoSampleFormat::Yuv444EightBit;
+    green_mesa_11.colorPrimaries = MediaColorPrimaries::Bt709;
+    green_mesa_11.transferFunction = MediaTransferFunction::Bt709;
+    green_mesa_11.matrixCoefficients = MediaMatrixCoefficients::Bt709;
+    expect(mediaVideoColorAdmitted(green_mesa_11), "limited 709 444 is qualified");
+    green_mesa_11.fullRangeVideo = true;
+    expect(!mediaVideoColorAdmitted(green_mesa_11), "full-range 444 lacks a display proof");
+    green_mesa_11.fullRangeVideo = false;
+    green_mesa_11.transferFunction = MediaTransferFunction::Pq;
+    expect(!mediaVideoColorAdmitted(green_mesa_11), "HDR 444 lacks a display proof");
+  }
+
   MediaSourceDescriptor admitted = *descriptor();
   expect(preservesLegacyNativeAdmission(admitted, &error),
          "selected A/V inventory should preserve legacy native admission");
@@ -2531,6 +2585,8 @@ void testDescriptorExtractionAndBounds() {
   dolbyVision.tracks[0].green_mesa_11->dolbyVisionConfigurationPresent = true;
   expect(!preservesLegacyNativeAdmission(dolbyVision, &error),
          "Dolby Vision configuration must preserve fallback behavior");
+  expect(error == "DolbyVisionDisplayOracleProofMissing",
+         "Dolby Vision refusal names its missing display proof");
 
   MediaSourceDescriptor describedAudioDescriptor = admitted;
   describedAudioDescriptor.tracks[1].audio->channelLayoutPresent = true;

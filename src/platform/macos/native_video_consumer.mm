@@ -2,6 +2,7 @@
 #if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
 #include <mach/mach_time.h>
 #endif
+#include "native_process_lifetime.hpp"
 #include "native_video_consumer.hpp"
 
 #include "native_presentation_admission.hpp"
@@ -86,7 +87,8 @@ static_assert(kMaximumPresentationReorderFrames + 1 <=
 // quarantine transfer, on the Done-close release, on recoverQuarantined() and
 // on quarantineFacts() -- never on a decode, submit, draw or callback path, so
 // no hot path can ever block on it.
-std::mutex gQuarantineMutex;
+NativeProcessLifetime<std::mutex> gQuarantineMutexStorage;
+std::mutex& gQuarantineMutex = gQuarantineMutexStorage.get();
 // Graphs currently charged against the process envelope: every graph that
 // create() admitted and that has not yet proved a Done close. A quarantined
 // graph is still charged, because it still owns its decoder, its IOSurface
@@ -1342,9 +1344,9 @@ NativeVideoConsumer::quarantineSlots() noexcept {
   // kMaximumConcurrentPlayerWindows pointers: the registry never allocates and
   // never grows, so a pathological teardown storm costs the same memory as an
   // idle process.
-  static std::array<std::unique_ptr<Impl>, kMaximumConcurrentPlayerWindows>
-      slots;
-  return slots;
+  using Slots = std::array<std::unique_ptr<Impl>, kMaximumConcurrentPlayerWindows>;
+  static NativeProcessLifetime<Slots> slots;
+  return slots.get();
 }
 
 std::unique_ptr<NativeVideoConsumer> NativeVideoConsumer::create(

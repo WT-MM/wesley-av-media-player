@@ -249,6 +249,7 @@ enum class MediaVideoSampleFormat : std::uint8_t {
   Unsupported,
   Yuv422EightBit,
   Yuv422TenBit,
+  Yuv444EightBit,
 };
 
 // Exact bounded scalar used for container display geometry. Values are always
@@ -335,6 +336,8 @@ struct MediaVideoFormat {
   // Modelled separately from unsupportedColorMetadataPresent so that a later
   // session can admit it without re-deriving the whole opaque bit.
   bool ambientViewingEnvironmentPresent{false};
+  std::uint64_t ambientViewingEnvironmentPayload{0};
+  bool fullRangeVideo{false};
 
   friend bool operator==(const MediaVideoFormat&, const MediaVideoFormat&) =
       default;

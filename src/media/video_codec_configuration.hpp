@@ -46,6 +46,7 @@ struct VideoCodecConfigurationLimits {
   // strictly worse than a named refusal.
   bool admitHighDynamicRangeColor{false};
   bool admitSoftwareProfiles{false};
+  bool admitHardwareH264Profiles{false};
 };
 
 // The single dimension question every parser in this file asks, so the six

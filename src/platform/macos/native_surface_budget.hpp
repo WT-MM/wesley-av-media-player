@@ -73,6 +73,12 @@ inline constexpr std::uint64_t kNativeSurfaceBudget422AlignmentSlackBytes =
 inline constexpr std::uint64_t kNativeSurfaceBudgetWorstCaseSurfaceBytes =
     kNativeSurfaceBudget422PayloadBytes + kNativeSurfaceBudget422AlignmentSlackBytes;
 
+inline constexpr std::uint64_t kNativeSurfaceBudget444EightBitBytes =
+    media::MediaSourceLimits::kHardMaximumCodedPixels * 3ULL +
+    kNativeSurfaceBudget422AlignmentSlackBytes;
+static_assert(kNativeSurfaceBudget444EightBitBytes == 30'629'888);
+static_assert(kNativeSurfaceBudget444EightBitBytes <= kNativeSurfaceBudgetWorstCaseSurfaceBytes);
+
 static_assert(kNativeSurfaceBudgetWorstCaseSurfacePayloadBytes == 28'508'160);
 static_assert(kNativeSurfaceBudgetSurfaceAlignmentSlackBytes == 1'599'488);
 static_assert(kNativeSurfaceBudget420SurfaceBytes == 30'107'648);
