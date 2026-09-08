@@ -1,0 +1,108 @@
+[
+  {
+    "run": 1,
+    "candidate": "251cdf9f2c54b2de2e20f28371e97356e29d016ea4e0e9b2e8c6df94b014f687",
+    "events": {
+      "open_requested": 16,
+      "native_selected": 16,
+      "prepared": 16,
+      "started": 16,
+      "first_frame_drawn": 16,
+      "preview_demanded": 101,
+      "preview_dispatched": 34,
+      "preview_admitted": 17,
+      "preview_failed": 17,
+      "commit_seek_submitted": 18,
+      "commit_ready": 18,
+      "commit_frame_drawn": 18
+    },
+    "session_failures": 0,
+    "windows": [
+      "WAM_TEST_WINDOWS count=16",
+      "WAM_TEST_WINDOWS count=16",
+      "WAM_TEST_WINDOWS count=0"
+    ],
+    "inventories": [
+      {
+        "phase": "active",
+        "rc": 0,
+        "native_images": [
+          "/tmp/wam-cov/build/WAM.app/Contents/Frameworks/libavcodec-wamnative.63.dylib",
+          "/tmp/wam-cov/build/WAM.app/Contents/Frameworks/libavutil-wamnative.61.dylib"
+        ]
+      },
+      {
+        "phase": "closed",
+        "rc": 0,
+        "native_images": []
+      }
+    ]
+  },
+  {
+    "run": 2,
+    "candidate": "a791fd316612c95d75c9e17a7dd88488e633bf4c51beb69a6e80907f4bed1498",
+    "events": {
+      "open_requested": 16,
+      "native_selected": 4,
+      "prepared": 4,
+      "started": 1,
+      "preview_demanded": 6,
+      "preview_dispatched": 1,
+      "preview_admitted": 1,
+      "preview_frame_drawn": 1
+    },
+    "session_failures": 0,
+    "windows": [
+      "WAM_TEST_WINDOWS count=16",
+      "WAM_TEST_WINDOWS count=16",
+      "WAM_TEST_WINDOWS count=0"
+    ],
+    "inventories": [
+      {
+        "phase": "active",
+        "rc": 0,
+        "native_images": [
+          "/tmp/wam-cov/build/WAM.app/Contents/Frameworks/libavcodec-wamnative.63.dylib",
+          "/tmp/wam-cov/build/WAM.app/Contents/Frameworks/libavutil-wamnative.61.dylib"
+        ]
+      },
+      {
+        "phase": "closed",
+        "rc": 0,
+        "native_images": []
+      }
+    ]
+  },
+  {
+    "run": 3,
+    "candidate": "a791fd316612c95d75c9e17a7dd88488e633bf4c51beb69a6e80907f4bed1498",
+    "events": {
+      "open_requested": 16,
+      "native_selected": 1,
+      "prepared": 1,
+      "started": 1,
+      "first_frame_drawn": 1
+    },
+    "session_failures": 0,
+    "windows": [
+      "WAM_TEST_WINDOWS count=16",
+      "WAM_TEST_WINDOWS count=16",
+      "WAM_TEST_WINDOWS count=1"
+    ],
+    "inventories": [
+      {
+        "phase": "active",
+        "rc": 0,
+        "native_images": []
+      },
+      {
+        "phase": "closed",
+        "rc": 0,
+        "native_images": [
+          "/tmp/wam-cov/build/WAM.app/Contents/Frameworks/libavcodec-wamnative.63.dylib",
+          "/tmp/wam-cov/build/WAM.app/Contents/Frameworks/libavutil-wamnative.61.dylib"
+        ]
+      }
+    ]
+  }
+]

@@ -1,0 +1,55 @@
+{
+  "candidate_sha256": "a1c2238a282c6206e2a1aacf15741d501dee6968010f0d5e4aafd9780de379f0",
+  "deep_strict_signature_verification": true,
+  "relocated_loads": [
+    [
+      "/opt/homebrew/opt/qtdeclarative/lib/QtQuickControls2.framework/Versions/A/QtQuickControls2",
+      "@loader_path/../Frameworks/QtQuickControls2.framework/Versions/A/QtQuickControls2"
+    ],
+    [
+      "/opt/homebrew/opt/qtdeclarative/lib/QtQuickDialogs2.framework/Versions/A/QtQuickDialogs2",
+      "@loader_path/../Frameworks/QtQuickDialogs2.framework/Versions/A/QtQuickDialogs2"
+    ],
+    [
+      "/opt/homebrew/opt/qtdeclarative/lib/QtQuickLayouts.framework/Versions/A/QtQuickLayouts",
+      "@loader_path/../Frameworks/QtQuickLayouts.framework/Versions/A/QtQuickLayouts"
+    ],
+    [
+      "/opt/homebrew/opt/qtdeclarative/lib/QtLabsPlatform.framework/Versions/A/QtLabsPlatform",
+      "@loader_path/../Frameworks/QtLabsPlatform.framework/Versions/A/QtLabsPlatform"
+    ],
+    [
+      "/opt/homebrew/opt/qtdeclarative/lib/QtQuick.framework/Versions/A/QtQuick",
+      "@loader_path/../Frameworks/QtQuick.framework/Versions/A/QtQuick"
+    ],
+    [
+      "/opt/homebrew/opt/qtbase/lib/QtOpenGL.framework/Versions/A/QtOpenGL",
+      "@loader_path/../Frameworks/QtOpenGL.framework/Versions/A/QtOpenGL"
+    ],
+    [
+      "/opt/homebrew/opt/qtbase/lib/QtGui.framework/Versions/A/QtGui",
+      "@loader_path/../Frameworks/QtGui.framework/Versions/A/QtGui"
+    ],
+    [
+      "/opt/homebrew/opt/qtdeclarative/lib/QtQml.framework/Versions/A/QtQml",
+      "@loader_path/../Frameworks/QtQml.framework/Versions/A/QtQml"
+    ],
+    [
+      "/opt/homebrew/opt/qtbase/lib/QtNetwork.framework/Versions/A/QtNetwork",
+      "@loader_path/../Frameworks/QtNetwork.framework/Versions/A/QtNetwork"
+    ],
+    [
+      "/opt/homebrew/opt/qtbase/lib/QtCore.framework/Versions/A/QtCore",
+      "@loader_path/../Frameworks/QtCore.framework/Versions/A/QtCore"
+    ],
+    [
+      "/opt/homebrew/opt/libvpx/lib/libvpx.12.dylib",
+      "@loader_path/../Frameworks/libvpx.12.dylib"
+    ]
+  ],
+  "native_libraries": {
+    "libavutil-wamnative.61.dylib": "f227ccc890de8c80de173ae4d9375052c2931cbc4649b29c68d2895704285255",
+    "libavformat-wamnative.63.dylib": "7117205646c2cf5978ec8aeb283d4a92d43b0a95020a42bc3c556e6929be8daf",
+    "libavcodec-wamnative.63.dylib": "be4ebdc19e908de8784c9f5e3c0e15b73935ab89d469cfe11103b4127dc53254"
+  }
+}

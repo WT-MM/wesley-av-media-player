@@ -1,6 +1,7 @@
 #pragma once
 
 #include "media/native_media_source.hpp"
+#include "media/native_qualified_color.hpp"
 
 #include <CoreMedia/CoreMedia.h>
 #include <CoreVideo/CoreVideo.h>
@@ -9,6 +10,16 @@
 #include <cstddef>
 
 namespace wam::macos {
+
+inline std::uint64_t ambientViewingEnvironmentPayload(CFTypeRef value) noexcept {
+  if (!value || CFGetTypeID(value) != CFDataGetTypeID()) return 0;
+  const auto data = static_cast<CFDataRef>(value);
+  if (CFDataGetLength(data) != 8) return 0;
+  std::uint64_t payload = 0;
+  const auto* bytes = CFDataGetBytePtr(data);
+  for (unsigned i = 0; i < 8; ++i) payload = (payload << 8) | bytes[i];
+  return payload;
+}
 
 inline OSType losslessCounterpartFormat(OSType pixelFormat) noexcept {
   switch (pixelFormat) {

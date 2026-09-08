@@ -1,0 +1,18 @@
+{
+  "asset": "/private/tmp/wam-phase2g/color-fixtures/pq-hevc.mp4",
+  "rc": 0,
+  "pid": 96279,
+  "env": {
+    "HOME": "/private/tmp/wam-phase2g/captures/color-hardware/pq-hevc/home",
+    "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+    "WAM_NATIVE_BENCHMARK_RUN_ID": "62d48cc3-359d-448e-b3f8-7df8c4c2b075",
+    "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "e5ebc47e0698d5a0ac6b1c38418ce033972bcf9ad8a00941032b2f1657aad0d9",
+    "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "4df37357629a467624f9ea1db7d9a40b61e38dd1c4834f98eec2b972ff7cfa65",
+    "WAM_TEST_BACKGROUND": "1",
+    "WAM_TEST_MUTED": "1",
+    "WAM_TEST_GEOMETRY": "480x270+2400+1000",
+    "WAM_PLAYBACK_METRICS_PATH": "/private/tmp/wam-phase2g/captures/color-hardware/pq-hevc/metrics.jsonl",
+    "WAM_TEST_QUIT_AFTER_MS": "6500",
+    "WAM_TEST_WINDOW_SCRIPT": "pause:0@1,report@4500,grab:0:/private/tmp/wam-phase2g/captures/color-hardware/pq-hevc/scene.png@300,videograb:0:/private/tmp/wam-phase2g/captures/color-hardware/pq-hevc/display.png@300,report@400"
+  }
+}

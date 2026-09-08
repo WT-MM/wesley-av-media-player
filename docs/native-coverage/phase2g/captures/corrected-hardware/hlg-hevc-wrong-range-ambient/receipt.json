@@ -1,0 +1,18 @@
+{
+  "asset": "/private/tmp/wam-phase2g/color-fixtures/hlg-hevc-wrong-range-ambient.mp4",
+  "rc": 0,
+  "pid": 3767,
+  "env": {
+    "HOME": "/private/tmp/wam-phase2g/captures/corrected-hardware/hlg-hevc-wrong-range-ambient/home",
+    "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+    "WAM_NATIVE_BENCHMARK_RUN_ID": "0f5245ef-e47d-4d95-bc73-c584b1109aa1",
+    "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "185a75a6cf9cf069a4e148939a39727d8daad1a99dffbbcfcdb801a91be2cc51",
+    "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "109ca6bdec23cca1623f5346854f4b32020d81647f3bfc2b8e223c775e0e4f08",
+    "WAM_TEST_BACKGROUND": "1",
+    "WAM_TEST_MUTED": "1",
+    "WAM_TEST_GEOMETRY": "480x270+2400+1000",
+    "WAM_PLAYBACK_METRICS_PATH": "/private/tmp/wam-phase2g/captures/corrected-hardware/hlg-hevc-wrong-range-ambient/metrics.jsonl",
+    "WAM_TEST_QUIT_AFTER_MS": "6500",
+    "WAM_TEST_WINDOW_SCRIPT": "pause:0@1,report@4500,grab:0:/private/tmp/wam-phase2g/captures/corrected-hardware/hlg-hevc-wrong-range-ambient/scene.png@300,videograb:0:/private/tmp/wam-phase2g/captures/corrected-hardware/hlg-hevc-wrong-range-ambient/display.png@300,report@400"
+  }
+}

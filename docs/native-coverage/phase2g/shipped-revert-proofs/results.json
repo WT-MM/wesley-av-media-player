@@ -1,0 +1,34 @@
+[
+  {
+    "name": "shipped-matroska-hardware",
+    "before": {
+      "src/media/matroska_demuxer.cpp": "491ef98b6413eb56e34f0ac314e567cb8e9c032b4bc0ad7b16db2a180553a3ff"
+    },
+    "reverted_build": 0,
+    "reverted_tests": {
+      "hi10": 1,
+      "422": 1
+    },
+    "restored_identically": true,
+    "restored_build": 0,
+    "restored_tests": {
+      "hi10": 0,
+      "422": 0
+    }
+  },
+  {
+    "name": "hardware-decode-plan",
+    "before": {
+      "src/platform/macos/native_video_decode_plan.hpp": "e95f8a41cb3f3ebce7a1b06f91dc44ea42eeb309c95cc0f98d1a40f4459a4bab"
+    },
+    "reverted_build": 0,
+    "reverted_tests": {
+      "444": 8
+    },
+    "restored_identically": true,
+    "restored_build": 0,
+    "restored_tests": {
+      "444": 0
+    }
+  }
+]

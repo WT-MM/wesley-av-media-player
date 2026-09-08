@@ -1,0 +1,18 @@
+{
+  "asset": "/Users/wesleymaa/Downloads/appleads.mp4",
+  "rc": 0,
+  "pid": 59021,
+  "env": {
+    "HOME": "/private/tmp/wam-phase2g/captures/control/home",
+    "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+    "WAM_NATIVE_BENCHMARK_RUN_ID": "e957950c-f8d9-449c-beb6-564cf05f1844",
+    "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "51893850955e9f6089ea856df1844416c28be3c2e105c850cc64189be7a0866a",
+    "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "82e58bbc447e8948af25a10d481b4327d57e7d3ac09cc502643af34191a1505f",
+    "WAM_TEST_BACKGROUND": "1",
+    "WAM_TEST_MUTED": "1",
+    "WAM_TEST_GEOMETRY": "480x270+2400+1000",
+    "WAM_PLAYBACK_METRICS_PATH": "/private/tmp/wam-phase2g/captures/control/metrics.jsonl",
+    "WAM_TEST_QUIT_AFTER_MS": "4000",
+    "WAM_TEST_WINDOW_SCRIPT": "pause:0@1300,report@200,grab:0:/private/tmp/wam-phase2g/captures/control/scene.png@300,videograb:0:/private/tmp/wam-phase2g/captures/control/display.png@300,report@400"
+  }
+}

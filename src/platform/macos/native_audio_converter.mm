@@ -1323,7 +1323,7 @@ struct NativeAudioConverter::Impl {
           (inputDecode && *inputDecode != inputPresentation)) {
         if (error != nullptr && error->empty()) {
           assignError(error,
-                      "CoreMedia audio input/output timing contains an edit");
+                      "CoreMediaAudioEditExactTimelineProofMissing: input/output timing contains an edit");
         }
         return false;
       }

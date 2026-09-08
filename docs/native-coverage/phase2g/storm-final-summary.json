@@ -1,0 +1,134 @@
+[
+  {
+    "run": 1,
+    "candidate": "5b481a01a6006282d220243a4d265a7a0737d766d74162ea31848a2bd661a574",
+    "events": {
+      "open_requested": 16,
+      "native_selected": 16,
+      "prepared": 16,
+      "started": 16,
+      "first_frame_drawn": 16,
+      "preview_demanded": 105,
+      "preview_dispatched": 39,
+      "preview_admitted": 22,
+      "preview_frame_drawn": 4,
+      "commit_seek_submitted": 19,
+      "commit_ready": 18,
+      "commit_frame_drawn": 18,
+      "preview_failed": 16,
+      "fallback_selected": 1
+    },
+    "refusals": {
+      "AvcodecWorkerBudgetExceeded": 15
+    },
+    "session_failures": [
+      "WAM: native failure stage=commit-seek/proof reason=CommitSeek class=Consumer error=\"video decoder presentation drain failed\""
+    ],
+    "windows": [
+      "WAM_TEST_WINDOWS count=16",
+      "WAM_TEST_WINDOWS count=16",
+      "WAM_TEST_WINDOWS count=0"
+    ],
+    "inventories": [
+      {
+        "phase": "active",
+        "rc": 0,
+        "native_images": [
+          "/tmp/wam-cov/build/WAM.app/Contents/Frameworks/libavcodec-wamnative.63.dylib",
+          "/tmp/wam-cov/build/WAM.app/Contents/Frameworks/libavutil-wamnative.61.dylib"
+        ]
+      },
+      {
+        "phase": "closed",
+        "rc": 0,
+        "native_images": []
+      }
+    ]
+  },
+  {
+    "run": 2,
+    "candidate": "5b481a01a6006282d220243a4d265a7a0737d766d74162ea31848a2bd661a574",
+    "events": {
+      "open_requested": 16,
+      "native_selected": 16,
+      "prepared": 16,
+      "started": 16,
+      "first_frame_drawn": 16,
+      "preview_demanded": 105,
+      "preview_dispatched": 31,
+      "preview_admitted": 22,
+      "preview_frame_drawn": 5,
+      "commit_seek_submitted": 19,
+      "commit_ready": 19,
+      "commit_frame_drawn": 19,
+      "preview_failed": 17
+    },
+    "refusals": {
+      "AvcodecWorkerBudgetExceeded": 16
+    },
+    "session_failures": [],
+    "windows": [
+      "WAM_TEST_WINDOWS count=16",
+      "WAM_TEST_WINDOWS count=16",
+      "WAM_TEST_WINDOWS count=0"
+    ],
+    "inventories": [
+      {
+        "phase": "active",
+        "rc": 0,
+        "native_images": [
+          "/tmp/wam-cov/build/WAM.app/Contents/Frameworks/libavcodec-wamnative.63.dylib",
+          "/tmp/wam-cov/build/WAM.app/Contents/Frameworks/libavutil-wamnative.61.dylib"
+        ]
+      },
+      {
+        "phase": "closed",
+        "rc": 0,
+        "native_images": []
+      }
+    ]
+  },
+  {
+    "run": 3,
+    "candidate": "5b481a01a6006282d220243a4d265a7a0737d766d74162ea31848a2bd661a574",
+    "events": {
+      "open_requested": 16,
+      "native_selected": 16,
+      "prepared": 16,
+      "started": 16,
+      "first_frame_drawn": 16,
+      "preview_demanded": 105,
+      "preview_dispatched": 26,
+      "preview_admitted": 21,
+      "preview_frame_drawn": 3,
+      "commit_seek_submitted": 19,
+      "commit_ready": 19,
+      "commit_frame_drawn": 19,
+      "preview_failed": 17
+    },
+    "refusals": {
+      "AvcodecWorkerBudgetExceeded": 17
+    },
+    "session_failures": [],
+    "windows": [
+      "WAM_TEST_WINDOWS count=16",
+      "WAM_TEST_WINDOWS count=16",
+      "WAM_TEST_WINDOWS count=0"
+    ],
+    "inventories": [
+      {
+        "phase": "active",
+        "rc": 0,
+        "native_images": [
+          "/tmp/wam-cov/build/WAM.app/Contents/Frameworks/libavcodec-wamnative.63.dylib",
+          "/tmp/wam-cov/build/WAM.app/Contents/Frameworks/libavutil-wamnative.61.dylib"
+        ]
+      },
+      {
+        "phase": "closed",
+        "rc": 0,
+        "native_images": []
+      }
+    ]
+  }
+]

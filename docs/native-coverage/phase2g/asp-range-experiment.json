@@ -1,0 +1,28 @@
+[
+  {
+    "name": "full-asp",
+    "measurement_valid": true,
+    "source_range": "pc",
+    "icc_profile": "Display",
+    "pixels": 81226,
+    "tolerance": {
+      "max_abs_projection": 0.15,
+      "max_rms_8bit": 6.0
+    },
+    "encoded": {
+      "rms": 34.95850351674215,
+      "projections": {
+        "wrong_matrix": 0.62467046815467,
+        "wrong_range": 0.016599157425504014
+      }
+    },
+    "srgb": {
+      "rms": 2.1465593043952316,
+      "projections": {
+        "wrong_matrix": -0.01689666000096954,
+        "wrong_range": 0.1983515307115552
+      }
+    },
+    "matrix_range_projection_pass": false
+  }
+]

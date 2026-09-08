@@ -1,0 +1,18 @@
+{
+  "asset": "/private/tmp/wam-phase2g/color-fixtures/444-709.mp4",
+  "rc": 0,
+  "pid": 87727,
+  "env": {
+    "HOME": "/private/tmp/wam-phase2g/captures/color-hardware/444-709/home",
+    "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+    "WAM_NATIVE_BENCHMARK_RUN_ID": "91404349-d8d8-45eb-bf1f-7b9b532ee498",
+    "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "9a9f0545c844082145a75cfbc81e5257d63efd29fc1ce5462b29d7ef77ad5ff3",
+    "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "4df37357629a467624f9ea1db7d9a40b61e38dd1c4834f98eec2b972ff7cfa65",
+    "WAM_TEST_BACKGROUND": "1",
+    "WAM_TEST_MUTED": "1",
+    "WAM_TEST_GEOMETRY": "480x270+2400+1000",
+    "WAM_PLAYBACK_METRICS_PATH": "/private/tmp/wam-phase2g/captures/color-hardware/444-709/metrics.jsonl",
+    "WAM_TEST_QUIT_AFTER_MS": "6500",
+    "WAM_TEST_WINDOW_SCRIPT": "pause:0@1,report@4500,grab:0:/private/tmp/wam-phase2g/captures/color-hardware/444-709/scene.png@300,videograb:0:/private/tmp/wam-phase2g/captures/color-hardware/444-709/display.png@300,report@400"
+  }
+}

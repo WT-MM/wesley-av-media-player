@@ -1,0 +1,18 @@
+{
+  "asset": "/private/tmp/wam-phase2g/color-fixtures/hlg-hevc-wrong-range.mp4",
+  "rc": 0,
+  "pid": 3815,
+  "env": {
+    "HOME": "/private/tmp/wam-phase2g/captures/corrected-hardware/hlg-hevc-wrong-range/home",
+    "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+    "WAM_NATIVE_BENCHMARK_RUN_ID": "be487537-d994-4934-8e8d-cdaad85a4906",
+    "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "64b6b3352e7f43276c61f5ca14fd835f96ba8dea2c8f5219574a9b4104725f24",
+    "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "109ca6bdec23cca1623f5346854f4b32020d81647f3bfc2b8e223c775e0e4f08",
+    "WAM_TEST_BACKGROUND": "1",
+    "WAM_TEST_MUTED": "1",
+    "WAM_TEST_GEOMETRY": "480x270+2400+1000",
+    "WAM_PLAYBACK_METRICS_PATH": "/private/tmp/wam-phase2g/captures/corrected-hardware/hlg-hevc-wrong-range/metrics.jsonl",
+    "WAM_TEST_QUIT_AFTER_MS": "6500",
+    "WAM_TEST_WINDOW_SCRIPT": "pause:0@1,report@4500,grab:0:/private/tmp/wam-phase2g/captures/corrected-hardware/hlg-hevc-wrong-range/scene.png@300,videograb:0:/private/tmp/wam-phase2g/captures/corrected-hardware/hlg-hevc-wrong-range/display.png@300,report@400"
+  }
+}

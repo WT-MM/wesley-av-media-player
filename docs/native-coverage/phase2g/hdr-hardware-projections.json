@@ -1,0 +1,50 @@
+[
+  {
+    "name": "hlg",
+    "names": [
+      "hlg-hevc",
+      "hlg-h264",
+      "hlg-hevc-wrong-matrix",
+      "hlg-hevc-wrong-range"
+    ],
+    "pixels": 80720,
+    "rms": 0.07711343375194017,
+    "projections": {
+      "matrix": -9.70871496490903e-05,
+      "range": -0.00022770182539941155
+    },
+    "pass_": true
+  },
+  {
+    "name": "hlg-ambient",
+    "names": [
+      "hlg-hevc-ambient",
+      "hlg-h264-ambient",
+      "hlg-hevc-wrong-matrix-ambient",
+      "hlg-hevc-wrong-range-ambient"
+    ],
+    "pixels": 61333,
+    "rms": 0.36805995101908523,
+    "projections": {
+      "matrix": 0.02137395271180346,
+      "range": -0.015268084692977042
+    },
+    "pass_": true
+  },
+  {
+    "name": "pq",
+    "names": [
+      "pq-hevc",
+      "pq-h264",
+      "pq-hevc-wrong-matrix",
+      "pq-hevc-wrong-range"
+    ],
+    "pixels": 82493,
+    "rms": 0.030352764145913355,
+    "projections": {
+      "matrix": 0.0004969216799544987,
+      "range": 0.00041777440182301555
+    },
+    "pass_": true
+  }
+]

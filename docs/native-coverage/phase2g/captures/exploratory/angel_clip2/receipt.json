@@ -1,0 +1,18 @@
+{
+  "asset": "/Users/wesleymaa/Downloads/angel-bamboo/angel_clip2.mp4",
+  "rc": 0,
+  "pid": 64967,
+  "env": {
+    "HOME": "/private/tmp/wam-phase2g/captures/exploratory/angel_clip2/home",
+    "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+    "WAM_NATIVE_BENCHMARK_RUN_ID": "499f8f11-964f-4d65-8156-af8f59b49b4d",
+    "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "f4b9a828d548090ec4bab481c15ed05bb7f7f6d7b845a7c4b1bae96c4f40e401",
+    "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "ed58af8617188957fb5ce7a345593d694f64b2c3f2eed9ce843cfb6f645a1fcb",
+    "WAM_TEST_BACKGROUND": "1",
+    "WAM_TEST_MUTED": "1",
+    "WAM_TEST_GEOMETRY": "480x270+2400+1000",
+    "WAM_PLAYBACK_METRICS_PATH": "/private/tmp/wam-phase2g/captures/exploratory/angel_clip2/metrics.jsonl",
+    "WAM_TEST_QUIT_AFTER_MS": "6500",
+    "WAM_TEST_WINDOW_SCRIPT": "pause:0@3500,report@200,grab:0:/private/tmp/wam-phase2g/captures/exploratory/angel_clip2/scene.png@300,videograb:0:/private/tmp/wam-phase2g/captures/exploratory/angel_clip2/display.png@300,report@400"
+  }
+}

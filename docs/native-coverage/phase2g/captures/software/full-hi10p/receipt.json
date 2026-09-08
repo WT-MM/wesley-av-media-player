@@ -1,0 +1,19 @@
+{
+  "asset": "/private/tmp/wam-phase2g/software-fixtures/full-hi10p.mkv",
+  "rc": 0,
+  "pid": 26770,
+  "env": {
+    "HOME": "/private/tmp/wam-phase2g/captures/software/full-hi10p/home",
+    "WAM_TEST_NO_VIDEO_HARDWARE": "1",
+    "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+    "WAM_NATIVE_BENCHMARK_RUN_ID": "d9d1b1d6-0f30-420c-a319-ce84249f1734",
+    "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "61c5e654e64e2bb7026e284398be3b72f82f4a69b0cd96884867274dc4eb904f",
+    "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "d1560c88b3098d9296cef687f8423270ecf9e2dcfa6cf40f795ccf63a706630b",
+    "WAM_TEST_BACKGROUND": "1",
+    "WAM_TEST_MUTED": "1",
+    "WAM_TEST_GEOMETRY": "480x270+2400+1000",
+    "WAM_PLAYBACK_METRICS_PATH": "/private/tmp/wam-phase2g/captures/software/full-hi10p/metrics.jsonl",
+    "WAM_TEST_QUIT_AFTER_MS": "6500",
+    "WAM_TEST_WINDOW_SCRIPT": "pause:0@1,report@4500,grab:0:/private/tmp/wam-phase2g/captures/software/full-hi10p/scene.png@300,videograb:0:/private/tmp/wam-phase2g/captures/software/full-hi10p/display.png@300,report@400"
+  }
+}

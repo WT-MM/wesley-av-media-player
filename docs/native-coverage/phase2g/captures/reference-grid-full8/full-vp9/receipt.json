@@ -1,0 +1,19 @@
+{
+  "asset": "/private/tmp/wam-phase2g/software-fixtures/full-vp9.mkv",
+  "rc": 0,
+  "pid": 63109,
+  "env": {
+    "HOME": "/private/tmp/wam-phase2g/captures/reference-grid-full8/full-vp9/home",
+    "WAM_TEST_NO_VIDEO_HARDWARE": "1",
+    "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+    "WAM_NATIVE_BENCHMARK_RUN_ID": "7c2af14a-0506-4f09-939e-41575b5a8409",
+    "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "a05daaa2c3bba8146886fead6a109a60aef8b18ca39a0e42b03704637d0be631",
+    "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "6a71ff178b211cc1271e63ad2a75c5dd61888d2c3bd7177c220d547cff7c3c6f",
+    "WAM_TEST_BACKGROUND": "1",
+    "WAM_TEST_MUTED": "1",
+    "WAM_TEST_GEOMETRY": "480x270+2400+1000",
+    "WAM_PLAYBACK_METRICS_PATH": "/private/tmp/wam-phase2g/captures/reference-grid-full8/full-vp9/metrics.jsonl",
+    "WAM_TEST_QUIT_AFTER_MS": "6500",
+    "WAM_TEST_WINDOW_SCRIPT": "pause:0@1,report@4500,grab:0:/private/tmp/wam-phase2g/captures/reference-grid-full8/full-vp9/scene.png@300,videograb:0:/private/tmp/wam-phase2g/captures/reference-grid-full8/full-vp9/display.png@300,report@400"
+  }
+}
