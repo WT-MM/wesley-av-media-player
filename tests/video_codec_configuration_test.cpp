@@ -367,16 +367,17 @@ struct H264SpsSpec {
 [[nodiscard]] std::vector<std::uint8_t> makeH264Sps(const H264SpsSpec &spec) {
   const std::uint32_t storageWidth = (spec.width + 15U) & ~15U;
   const std::uint32_t storageHeight = (spec.height + 15U) & ~15U;
-  const std::uint32_t cropRight = (storageWidth - spec.width) / 2U;
-  const std::uint32_t cropBottom = (storageHeight - spec.height) / 2U;
+  const std::uint32_t cropRight = (storageWidth - spec.width) / (spec.chromaFormat == 3U ? 1U : 2U);
+  const std::uint32_t cropBottom = (storageHeight - spec.height) / (spec.chromaFormat == 1U ? 2U : 1U);
 
   BitWriter bits;
   bits.bits(spec.profile, 8U);
   bits.bits(0U, 8U);  // constraint flags
   bits.bits(spec.level, 8U);
   bits.unsignedExpGolomb(spec.id);
-  if (spec.profile == 100U) {
+  if (spec.profile == 100U || spec.profile == 110U || spec.profile == 122U || spec.profile == 244U) {
     bits.unsignedExpGolomb(spec.chromaFormat);
+    if (spec.chromaFormat == 3U) bits.bit(false);
     bits.unsignedExpGolomb(spec.lumaDepthMinusEight);
     bits.unsignedExpGolomb(spec.chromaDepthMinusEight);
     bits.bit(false); // qpprime_y_zero_transform_bypass_flag
@@ -863,6 +864,27 @@ void testApiAndHardBounds() {
                   MediaCodec::H264, MediaCodecConfigurationKind::AvcC, {}),
               VideoCodecConfigurationError::EmptyConfiguration,
               "empty configuration is rejected exactly");
+}
+
+void testHardwareH264Formats() {
+  VideoCodecConfigurationLimits limits;
+  limits.admitHardwareH264Profiles = true;
+  const auto record = makeAvcC(std::array{H264SpsSpec{
+      .width = 1194, .height = 814, .profile = 244, .chromaFormat = 3}});
+  const auto parsed = inspectAvc(record, limits);
+  expect(parsed.admitted() && parsed.facts->width == 1194 &&
+             parsed.facts->height == 814 && parsed.facts->bitDepth == 8 &&
+             parsed.facts->sampleFormat == MediaVideoSampleFormat::Yuv444EightBit,
+         "hardware 4:4:4 preserves coded chroma, depth and single-pixel crop units");
+  expect(!inspectAvc(record).admitted(), "unqualified routes still refuse 4:4:4");
+  auto ten = H264SpsSpec{.profile = 110, .lumaDepthMinusEight = 2,
+                       .chromaDepthMinusEight = 2};
+  const auto hi10 = inspectAvc(makeAvcC(std::array{ten}), limits);
+  expect(hi10.admitted() && hi10.facts->sampleFormat == MediaVideoSampleFormat::Yuv420TenBit,
+         "Apple Hi10P admission does not depend on the libavcodec build option");
+  ten.profile = 244; ten.chromaFormat = 3;
+  expect(!inspectAvc(makeAvcC(std::array{ten}), limits).admitted(),
+         "ten-bit 4:4:4 remains outside the qualified surface bound");
 }
 
 void testCompactH264() {
@@ -2593,6 +2615,7 @@ void testMpeg4Visual() {
 int main() {
   testApiAndHardBounds();
   testCompactH264();
+  testHardwareH264Formats();
   testH264Rejections();
   testCompactHevcMainAndMain10();
   testHevcRejections();

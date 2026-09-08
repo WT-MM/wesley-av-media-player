@@ -19,5 +19,7 @@ int main() {
   auto dts=inspectSoftwareAudioPacket(MediaCodec::Dts,h,1024);
   if(!dts || dts->frames!=512 || !dts->majorSync)return 6;
   if(inspectSoftwareAudioPacket(MediaCodec::Dts,h,2048))return 7;
+  h={};put(0,0x64);put(1,0x58);put(2,0x20);put(3,0x25);
+  if(inspectSoftwareAudioPacket(MediaCodec::Dts,h,2048))return 9;
   std::puts("software packet geometry and unqualified DTS extension refusal passed");
 }

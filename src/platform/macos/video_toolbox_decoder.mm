@@ -86,6 +86,7 @@ std::string statusError(const char *operation, OSStatus status) {
 reorderDepthLimits() noexcept {
   media::VideoCodecConfigurationLimits limits;
   limits.admitHighDynamicRangeColor = true;
+  limits.admitHardwareH264Profiles = true;
 #if defined(WAM_ENABLE_AVCODEC_STAGE)
   limits.admitSoftwareProfiles = true;
 #endif
@@ -620,7 +621,8 @@ biPlanarSurfaceLayout(OSType pixelFormat) noexcept {
 bool admitsOutputPixelFormat(OSType pixelFormat, OSType expectedPixelFormat,
                              VideoToolboxOutputInterop outputInterop) noexcept {
   if (outputInterop != VideoToolboxOutputInterop::DisplayLayer &&
-      (expectedPixelFormat == kCVPixelFormatType_30RGBLEPackedWideGamut ||
+      (expectedPixelFormat == kCVPixelFormatType_444YpCbCr8BiPlanarVideoRange ||
+       expectedPixelFormat == kCVPixelFormatType_30RGBLEPackedWideGamut ||
        expectedPixelFormat == kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange ||
        expectedPixelFormat == kCVPixelFormatType_422YpCbCr8BiPlanarVideoRange)) {
     return false;
@@ -915,9 +917,13 @@ bool validateDecodedSdrColorAttachments(CVPixelBufferRef pixelBuffer,
 #if defined(__MAC_12_0) &&                                                \
     __MAC_OS_X_VERSION_MAX_ALLOWED >= __MAC_12_0
   if (@available(macOS 12.0, *)) {
-    if (!rejectPresentAttachment(
-            pixelBuffer, kCVImageBufferAmbientViewingEnvironmentKey,
-            "decoded frame carries ambient-viewing metadata", error)) {
+    CFTypeRef ambient = CVBufferCopyAttachment(
+        pixelBuffer, kCVImageBufferAmbientViewingEnvironmentKey, nullptr);
+    const bool admitted = !ambient || ambientViewingEnvironmentPayload(ambient) ==
+        media::kQualifiedHlgAmbientViewingEnvironment;
+    if (ambient) CFRelease(ambient);
+    if (!admitted) {
+      assignError(error, "AmbientViewingEnvironmentDisplayProofMissing");
       return false;
     }
   }
@@ -1637,6 +1643,8 @@ requestedPixelFormat(const VideoStreamConfiguration &configuration) noexcept {
   if (configuration.codec == kCMVideoCodecType_H264) {
     const auto parsed = media::inspectVideoCodecConfiguration(media::MediaCodec::H264,
         media::MediaCodecConfigurationKind::AvcC, configuration.codecConfiguration, reorderDepthLimits());
+    if (parsed.admitted() && parsed.facts->sampleFormat == media::MediaVideoSampleFormat::Yuv444EightBit)
+      return kCVPixelFormatType_444YpCbCr8BiPlanarVideoRange;
     is422 = parsed.admitted() && media::mediaSampleFormatIs422(parsed.facts->sampleFormat);
   }
   if (is422) {
@@ -2024,6 +2032,7 @@ struct VideoToolboxDecoder::Impl {
     const bool pinOutputPixelFormat =
         options.outputInterop != VideoToolboxOutputInterop::DisplayLayer ||
         codecNeedsPinnedOutputPixelFormat(sessionCodec) ||
+        outputPixelFormat == kCVPixelFormatType_444YpCbCr8BiPlanarVideoRange ||
         outputPixelFormat == kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange ||
         outputPixelFormat == kCVPixelFormatType_422YpCbCr8BiPlanarVideoRange ||
         hdrOutputSurfaceRequired;

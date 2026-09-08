@@ -1387,6 +1387,18 @@ class CodecRbspBitReader final {
 
 [[nodiscard]] media::MediaVideoSampleFormat parseH264SampleFormat(
     std::span<const std::byte> configuration) noexcept {
+  if (configuration.size() > 1 &&
+      (configuration[1] == std::byte{110} || configuration[1] == std::byte{122} ||
+       configuration[1] == std::byte{244})) {
+    media::VideoCodecConfigurationLimits limits;
+    limits.admitHighDynamicRangeColor = true;
+    limits.admitHardwareH264Profiles = true;
+    const auto result = media::inspectVideoCodecConfiguration(
+        MediaCodec::H264, media::MediaCodecConfigurationKind::AvcC,
+        configuration, limits);
+    return result.admitted() ? result.facts->sampleFormat
+                            : media::MediaVideoSampleFormat::Unsupported;
+  }
   const auto bytes = std::span<const std::uint8_t>(
       reinterpret_cast<const std::uint8_t*>(configuration.data()),
       configuration.size());
@@ -1859,9 +1871,16 @@ inspectVideoFormatFacts(
   video.topFieldChromaLocation = topFieldChroma;
   video.bottomFieldChromaLocation = bottomFieldChroma;
   video.unsupportedColorMetadataPresent = unsupportedColorMetadata;
+  CFTypeRef range = CMFormatDescriptionGetExtension(format, kCMFormatDescriptionExtension_FullRangeVideo);
+  video.fullRangeVideo = range && CFEqual(range, kCFBooleanTrue);
+
   video.masteringDisplayColorVolumePresent = masteringDisplayPresent;
   video.contentLightLevelInfoPresent = contentLightPresent;
   video.ambientViewingEnvironmentPresent = ambientViewingPresent;
+  if (@available(macOS 12.0, *)) {
+    video.ambientViewingEnvironmentPayload = ambientViewingEnvironmentPayload(
+        CMFormatDescriptionGetExtension(format, kCMFormatDescriptionExtension_AmbientViewingEnvironment));
+  }
   video.dolbyVisionConfigurationPresent =
       hasDolbyVisionConfiguration(format);
   video.sampleFormat = sampleFormat;
@@ -2579,8 +2598,11 @@ void incrementInventory(media::MediaTrackInventory* inventory,
   } else if (!video.progressive) {
     geometryRefusal = "interlaced video is outside native v1";
   } else if (!supportedModeledColor) {
-    geometryRefusal =
-        "selected video color is outside the native v1 presentation contract";
+    geometryRefusal = video.dolbyVisionConfigurationPresent
+        ? "DolbyVisionDisplayOracleProofMissing"
+        : video.ambientViewingEnvironmentPresent
+            ? "AmbientViewingEnvironmentDisplayProofMissing"
+            : "VideoColorDescriptorDisplayProofMissing";
   } else if (!hevcDepthMatches) {
     geometryRefusal =
         "HEVC bit depth disagrees with the decoded sample format";
@@ -2604,7 +2626,7 @@ void incrementInventory(media::MediaTrackInventory* inventory,
     geometryRefusal =
         "selected video has a clean aperture smaller than its coded frame";
   } else if (!media::mediaVideoHasSquarePixels(video)) {
-    geometryRefusal = "selected video has non-square pixels (anamorphic)";
+    geometryRefusal = "AnamorphicExactRationalDisplaySizeProofMissing";
   }
   if (geometryRefusal != nullptr) {
     assignError(error, geometryRefusal);

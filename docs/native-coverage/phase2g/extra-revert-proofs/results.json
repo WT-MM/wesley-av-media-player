@@ -1,0 +1,65 @@
+[
+  {
+    "name": "qualified-tuple-boundary",
+    "before": {
+      "src/media/native_media_source.cpp": "00650efc753d217213ccb5b1fc07fe1a4acae01690bad4ccd5c5bb76ec80a8d6"
+    },
+    "reverted_build": 0,
+    "reverted_tests": {
+      "source": 8
+    },
+    "restored_identically": true,
+    "restored_build": 0,
+    "restored_tests": {
+      "source": 0
+    }
+  },
+  {
+    "name": "range-source",
+    "before": {
+      "src/platform/macos/avfoundation_media_source.mm": "115f98779cdd2d18c6f2480505a4433dce1c55a5c79c5009fd1990a8254ee822",
+      "src/media/matroska_demuxer.cpp": "491ef98b6413eb56e34f0ac314e567cb8e9c032b4bc0ad7b16db2a180553a3ff"
+    },
+    "reverted_build": 0,
+    "reverted_tests": {
+      "source": 8,
+      "matroska": 8
+    },
+    "restored_identically": true,
+    "restored_build": 0,
+    "restored_tests": {
+      "source": 0,
+      "matroska": 0
+    }
+  },
+  {
+    "name": "audio-edit-refusal-corrected",
+    "before": {
+      "src/platform/macos/native_audio_converter.mm": "95118980bc56f76a919bd2bfec5ca7f8ef81d431dd35d655641b8781c7fd01d4"
+    },
+    "reverted_build": 0,
+    "reverted_tests": {
+      "refusal": 1
+    },
+    "restored_identically": true,
+    "restored_build": 0,
+    "restored_tests": {
+      "refusal": 0
+    }
+  },
+  {
+    "name": "dts-core-extension",
+    "before": {
+      "src/media/software_audio_packet.hpp": "16fcf312122459dfe73a98ff3aac48f6856d18839aa0c9319347fe52a5ccf9db"
+    },
+    "reverted_build": 0,
+    "reverted_tests": {
+      "packet": 8
+    },
+    "restored_identically": true,
+    "restored_build": 0,
+    "restored_tests": {
+      "packet": 0
+    }
+  }
+]

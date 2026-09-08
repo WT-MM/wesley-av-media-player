@@ -1,0 +1,19 @@
+{
+  "asset": "/private/tmp/wam-phase2g/software-fixtures/full-h264422.mkv",
+  "rc": 0,
+  "pid": 24785,
+  "env": {
+    "HOME": "/private/tmp/wam-phase2g/captures/software/full-h264422/home",
+    "WAM_TEST_NO_VIDEO_HARDWARE": "1",
+    "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+    "WAM_NATIVE_BENCHMARK_RUN_ID": "67f65693-e3ef-4ab6-ab3b-ea0493f430a9",
+    "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "9f241c5d47a1aca92216d671d90694c4b0bcbde0621d1de93775870e96aa916d",
+    "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "d1560c88b3098d9296cef687f8423270ecf9e2dcfa6cf40f795ccf63a706630b",
+    "WAM_TEST_BACKGROUND": "1",
+    "WAM_TEST_MUTED": "1",
+    "WAM_TEST_GEOMETRY": "480x270+2400+1000",
+    "WAM_PLAYBACK_METRICS_PATH": "/private/tmp/wam-phase2g/captures/software/full-h264422/metrics.jsonl",
+    "WAM_TEST_QUIT_AFTER_MS": "6500",
+    "WAM_TEST_WINDOW_SCRIPT": "pause:0@1,report@4500,grab:0:/private/tmp/wam-phase2g/captures/software/full-h264422/scene.png@300,videograb:0:/private/tmp/wam-phase2g/captures/software/full-h264422/display.png@300,report@400"
+  }
+}

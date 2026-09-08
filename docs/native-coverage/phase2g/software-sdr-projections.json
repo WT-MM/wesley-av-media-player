@@ -1,0 +1,262 @@
+[
+  {
+    "name": "full-asp",
+    "measurement_valid": true,
+    "source_range": "pc",
+    "icc_profile": "Display",
+    "pixels": 81226,
+    "tolerance": {
+      "max_abs_projection": 0.15,
+      "max_rms_8bit": 6.0
+    },
+    "encoded": {
+      "rms": 37.567907746460804,
+      "projections": {
+        "wrong_matrix": 0.5820055379315415,
+        "wrong_range": 1.0477499103747678
+      }
+    },
+    "srgb": {
+      "rms": 7.95587780312446,
+      "projections": {
+        "wrong_matrix": -0.1006669197789983,
+        "wrong_range": 1.2505842804626364
+      }
+    },
+    "matrix_range_projection_pass": false
+  },
+  {
+    "name": "full-h264422",
+    "measurement_valid": true,
+    "source_range": "pc",
+    "icc_profile": "Display",
+    "pixels": 79396,
+    "tolerance": {
+      "max_abs_projection": 0.15,
+      "max_rms_8bit": 6.0
+    },
+    "encoded": {
+      "rms": 35.015242561124076,
+      "projections": {
+        "wrong_matrix": 0.6267900808923184,
+        "wrong_range": -0.0671468397494241
+      }
+    },
+    "srgb": {
+      "rms": 2.1413966528902004,
+      "projections": {
+        "wrong_matrix": -0.033124731174222245,
+        "wrong_range": 0.10673927850508397
+      }
+    },
+    "matrix_range_projection_pass": true
+  },
+  {
+    "name": "full-hi10p",
+    "measurement_valid": true,
+    "source_range": "pc",
+    "icc_profile": "Display",
+    "pixels": 82622,
+    "tolerance": {
+      "max_abs_projection": 0.15,
+      "max_rms_8bit": 6.0
+    },
+    "encoded": {
+      "rms": 34.47781576669906,
+      "projections": {
+        "wrong_matrix": 0.6417949645672154,
+        "wrong_range": -0.06807749074120907
+      }
+    },
+    "srgb": {
+      "rms": 2.3745989335776843,
+      "projections": {
+        "wrong_matrix": -0.03326861596983344,
+        "wrong_range": 0.13470974807336536
+      }
+    },
+    "matrix_range_projection_pass": true
+  },
+  {
+    "name": "full-vp9",
+    "measurement_valid": true,
+    "source_range": "pc",
+    "icc_profile": "Display",
+    "pixels": 86387,
+    "tolerance": {
+      "max_abs_projection": 0.15,
+      "max_rms_8bit": 6.0
+    },
+    "encoded": {
+      "rms": 34.81918260126272,
+      "projections": {
+        "wrong_matrix": 0.6347848933971512,
+        "wrong_range": 0.026783803796937424
+      }
+    },
+    "srgb": {
+      "rms": 2.2079990123603306,
+      "projections": {
+        "wrong_matrix": -0.01824148000750385,
+        "wrong_range": 0.20272750699643366
+      }
+    },
+    "matrix_range_projection_pass": false
+  },
+  {
+    "name": "full-vp9p2",
+    "measurement_valid": true,
+    "source_range": "pc",
+    "icc_profile": "Display",
+    "pixels": 79318,
+    "tolerance": {
+      "max_abs_projection": 0.15,
+      "max_rms_8bit": 6.0
+    },
+    "encoded": {
+      "rms": 35.78392857411855,
+      "projections": {
+        "wrong_matrix": 0.6158766826732548,
+        "wrong_range": -0.11705227966381673
+      }
+    },
+    "srgb": {
+      "rms": 2.2581195751649377,
+      "projections": {
+        "wrong_matrix": -0.03300085631028552,
+        "wrong_range": 0.12774614568313888
+      }
+    },
+    "matrix_range_projection_pass": true
+  },
+  {
+    "name": "limited-asp",
+    "measurement_valid": true,
+    "source_range": "tv",
+    "icc_profile": "Display",
+    "pixels": 80359,
+    "tolerance": {
+      "max_abs_projection": 0.15,
+      "max_rms_8bit": 6.0
+    },
+    "encoded": {
+      "rms": 35.54201913295731,
+      "projections": {
+        "wrong_matrix": 0.6453068715099611,
+        "wrong_range": 1.67376026764472
+      }
+    },
+    "srgb": {
+      "rms": 2.0198135749400663,
+      "projections": {
+        "wrong_matrix": -0.003473847107810217,
+        "wrong_range": -0.04082047578358737
+      }
+    },
+    "matrix_range_projection_pass": true
+  },
+  {
+    "name": "limited-h264422",
+    "measurement_valid": true,
+    "source_range": "tv",
+    "icc_profile": "Display",
+    "pixels": 82255,
+    "tolerance": {
+      "max_abs_projection": 0.15,
+      "max_rms_8bit": 6.0
+    },
+    "encoded": {
+      "rms": 34.8419257749146,
+      "projections": {
+        "wrong_matrix": 0.6921512601387348,
+        "wrong_range": 1.6266320515315036
+      }
+    },
+    "srgb": {
+      "rms": 2.393928218776429,
+      "projections": {
+        "wrong_matrix": 0.00453341116014775,
+        "wrong_range": -0.04458330265796305
+      }
+    },
+    "matrix_range_projection_pass": true
+  },
+  {
+    "name": "limited-hi10p",
+    "measurement_valid": true,
+    "source_range": "tv",
+    "icc_profile": "Display",
+    "pixels": 84569,
+    "tolerance": {
+      "max_abs_projection": 0.15,
+      "max_rms_8bit": 6.0
+    },
+    "encoded": {
+      "rms": 35.16452945250927,
+      "projections": {
+        "wrong_matrix": 0.6664886965994982,
+        "wrong_range": 1.628992124443706
+      }
+    },
+    "srgb": {
+      "rms": 2.371256512788631,
+      "projections": {
+        "wrong_matrix": 0.00166215265727111,
+        "wrong_range": -0.04535825201390462
+      }
+    },
+    "matrix_range_projection_pass": true
+  },
+  {
+    "name": "limited-vp9",
+    "measurement_valid": true,
+    "source_range": "tv",
+    "icc_profile": "Display",
+    "pixels": 86856,
+    "tolerance": {
+      "max_abs_projection": 0.15,
+      "max_rms_8bit": 6.0
+    },
+    "encoded": {
+      "rms": 34.93208606810916,
+      "projections": {
+        "wrong_matrix": 0.6726161382545138,
+        "wrong_range": 1.6080939679514439
+      }
+    },
+    "srgb": {
+      "rms": 2.0921303240497386,
+      "projections": {
+        "wrong_matrix": -0.002074547304610806,
+        "wrong_range": -0.04409308453660244
+      }
+    },
+    "matrix_range_projection_pass": true
+  },
+  {
+    "name": "limited-vp9p2",
+    "measurement_valid": true,
+    "source_range": "tv",
+    "icc_profile": "Display",
+    "pixels": 86899,
+    "tolerance": {
+      "max_abs_projection": 0.15,
+      "max_rms_8bit": 6.0
+    },
+    "encoded": {
+      "rms": 35.16718278292623,
+      "projections": {
+        "wrong_matrix": 0.6699863828290515,
+        "wrong_range": 1.622464653988733
+      }
+    },
+    "srgb": {
+      "rms": 2.3659603602245753,
+      "projections": {
+        "wrong_matrix": 0.0020963941646303928,
+        "wrong_range": -0.04584592104739714
+      }
+    },
+    "matrix_range_projection_pass": true
+  }
+]

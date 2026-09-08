@@ -259,7 +259,8 @@ inline constexpr const char* kHeAacDecoderDelayRefusal =
 [[nodiscard]] constexpr unsigned mediaSampleFormatDepth(MediaVideoSampleFormat format) noexcept {
   switch (format) {
   case MediaVideoSampleFormat::Yuv420EightBit:
-  case MediaVideoSampleFormat::Yuv422EightBit: return 8;
+  case MediaVideoSampleFormat::Yuv422EightBit:
+  case MediaVideoSampleFormat::Yuv444EightBit: return 8;
   case MediaVideoSampleFormat::Yuv420TenBit:
   case MediaVideoSampleFormat::Yuv422TenBit: return 10;
   default: return 0;
