@@ -1,0 +1,8 @@
+{
+  "video_end": "854297/30000",
+  "coremedia_target_end": "284157/10000",
+  "coremedia_source_end": "56881/2000",
+  "ffmpeg_end": "56881/2000",
+  "ffmpeg_v_minus_a": "541/15000",
+  "coremedia_target_v_minus_a": "913/15000"
+}

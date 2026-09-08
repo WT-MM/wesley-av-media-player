@@ -1,0 +1,128 @@
+[
+  {
+    "name": "hardware-parser",
+    "before": {
+      "src/media/video_codec_configuration.cpp": "75ae7ca689e7d665693f7e18086d4188af62798df392689b766638b266f89522"
+    },
+    "reverted_build": 0,
+    "reverted_tests": {
+      "parser": 8,
+      "444": 8
+    },
+    "restored_identically": true,
+    "restored_build": 0,
+    "restored_tests": {
+      "parser": 0,
+      "444": 0
+    }
+  },
+  {
+    "name": "ambient-admission",
+    "before": {
+      "src/media/native_media_source.cpp": "992ff352e6c8f34dbb6e12c7b6c44745590e871b71517d5935b46ab1ebec7efa"
+    },
+    "reverted_build": 0,
+    "reverted_tests": {
+      "source": 8
+    },
+    "restored_identically": true,
+    "restored_build": 0,
+    "restored_tests": {
+      "source": 0
+    }
+  },
+  {
+    "name": "source-metadata",
+    "before": {
+      "src/platform/macos/avfoundation_media_source.mm": "e9029c86e36f82ccd42780a2c8be4646c3c8273b4410c7ab0fdef55bfbebd0d2"
+    },
+    "reverted_build": 0,
+    "reverted_tests": {
+      "source": 8,
+      "444-source": 1
+    },
+    "restored_identically": true,
+    "restored_build": 0,
+    "restored_tests": {
+      "source": 0,
+      "444-source": 0
+    }
+  },
+  {
+    "name": "decoder-output",
+    "before": {
+      "src/platform/macos/video_toolbox_decoder.mm": "74229a19e5bdda6bfb9bc16533330ac2ae1d0b8e69ec7e8aa390146c6386e3df"
+    },
+    "reverted_build": 0,
+    "reverted_tests": {
+      "444": 8,
+      "ambient": 8
+    },
+    "restored_identically": true,
+    "restored_build": 0,
+    "restored_tests": {
+      "444": 0,
+      "ambient": 0
+    }
+  },
+  {
+    "name": "display-range",
+    "before": {
+      "src/platform/macos/native_layer_host_view.mm": "3ff4e74b4124fad4e918ad60153c47c551f498bd0c1300795a47fe23bdbddf59"
+    },
+    "reverted_build": 0,
+    "reverted_tests": {
+      "layer": 8
+    },
+    "restored_identically": true,
+    "restored_build": 0,
+    "restored_tests": {
+      "layer": 0
+    }
+  },
+  {
+    "name": "software-hdr",
+    "before": {
+      "src/media/software_color_qualification.hpp": "d3a941f7f86b6aadb58822400449d9aaec6b069dcc01d766f611850474a23d69"
+    },
+    "reverted_build": 0,
+    "reverted_tests": {
+      "color": 8
+    },
+    "restored_identically": true,
+    "restored_build": 0,
+    "restored_tests": {
+      "color": 0
+    }
+  },
+  {
+    "name": "scenegraph-refusal",
+    "before": {
+      "src/platform/macos/native_presentation_admission.hpp": "97901003be63118afb3332506e3ede36acdc47620bd553cc2c17f775b6b4d64e"
+    },
+    "reverted_build": 0,
+    "reverted_tests": {
+      "consumer": 8
+    },
+    "restored_identically": true,
+    "restored_build": 0,
+    "restored_tests": {
+      "consumer": 0
+    }
+  },
+  {
+    "name": "audio-edit-refusal",
+    "before": {
+      "src/platform/macos/native_audio_converter.mm": "95118980bc56f76a919bd2bfec5ca7f8ef81d431dd35d655641b8781c7fd01d4"
+    },
+    "reverted_build": 0,
+    "reverted_tests": {
+      "refusal": 1
+    },
+    "restored_identically": true,
+    "restored_build": 0,
+    "restored_tests": {
+      "refusal": 1
+    }
+  }
+]

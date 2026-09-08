@@ -1,0 +1,20 @@
+[
+  {
+    "name": "registry-lifetime",
+    "before": {
+      "src/platform/macos/native_audio_session.mm": "0cbe7b85cb2d3fe4ba6aafdbd98a1906943c3992e9f00592a570206cf9d8745c",
+      "src/platform/macos/native_video_consumer.mm": "593948bcab50be035c61b38808cfdd03bb5add8974748968890fd1c832d99c06"
+    },
+    "reverted_build": 0,
+    "reverted_tests": {
+      "audio": 8,
+      "video": 8
+    },
+    "restored_identically": true,
+    "restored_build": 0,
+    "restored_tests": {
+      "audio": 0,
+      "video": 0
+    }
+  }
+]

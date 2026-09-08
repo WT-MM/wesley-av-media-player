@@ -1,0 +1,19 @@
+{
+  "asset": "/private/tmp/wam-phase2g/software-fixtures/limited-baseline.mkv",
+  "rc": 0,
+  "pid": 34059,
+  "env": {
+    "HOME": "/private/tmp/wam-phase2g/captures/software/limited-baseline/home",
+    "WAM_TEST_NO_VIDEO_HARDWARE": "1",
+    "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+    "WAM_NATIVE_BENCHMARK_RUN_ID": "8cd8f1e3-6755-44f4-a415-3e5a8fc2830b",
+    "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "743847e6a9f35b4bbc5af4f55d37df37aee66d408f397040da0a977d9e7c28ad",
+    "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "d1560c88b3098d9296cef687f8423270ecf9e2dcfa6cf40f795ccf63a706630b",
+    "WAM_TEST_BACKGROUND": "1",
+    "WAM_TEST_MUTED": "1",
+    "WAM_TEST_GEOMETRY": "480x270+2400+1000",
+    "WAM_PLAYBACK_METRICS_PATH": "/private/tmp/wam-phase2g/captures/software/limited-baseline/metrics.jsonl",
+    "WAM_TEST_QUIT_AFTER_MS": "6500",
+    "WAM_TEST_WINDOW_SCRIPT": "pause:0@1,report@4500,grab:0:/private/tmp/wam-phase2g/captures/software/limited-baseline/scene.png@300,videograb:0:/private/tmp/wam-phase2g/captures/software/limited-baseline/display.png@300,report@400"
+  }
+}

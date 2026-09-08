@@ -1,0 +1,18 @@
+{
+  "asset": "/private/tmp/wam-phase2g/color-fixtures/hlg-hevc.mp4",
+  "rc": 0,
+  "pid": 92591,
+  "env": {
+    "HOME": "/private/tmp/wam-phase2g/captures/color-hardware/hlg-hevc/home",
+    "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+    "WAM_NATIVE_BENCHMARK_RUN_ID": "65f1700c-f2fb-435f-86b5-b88b780a3fba",
+    "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "a56602611683e97a5cb20689c4d18fc7a70213f72c5a0eef1fe848533dac79d4",
+    "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "4df37357629a467624f9ea1db7d9a40b61e38dd1c4834f98eec2b972ff7cfa65",
+    "WAM_TEST_BACKGROUND": "1",
+    "WAM_TEST_MUTED": "1",
+    "WAM_TEST_GEOMETRY": "480x270+2400+1000",
+    "WAM_PLAYBACK_METRICS_PATH": "/private/tmp/wam-phase2g/captures/color-hardware/hlg-hevc/metrics.jsonl",
+    "WAM_TEST_QUIT_AFTER_MS": "6500",
+    "WAM_TEST_WINDOW_SCRIPT": "pause:0@1,report@4500,grab:0:/private/tmp/wam-phase2g/captures/color-hardware/hlg-hevc/scene.png@300,videograb:0:/private/tmp/wam-phase2g/captures/color-hardware/hlg-hevc/display.png@300,report@400"
+  }
+}

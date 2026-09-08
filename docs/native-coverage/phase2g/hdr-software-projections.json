@@ -1,0 +1,34 @@
+[
+  {
+    "name": "hlg",
+    "names": [
+      "hlg-hevc",
+      "hlg-h264",
+      "hlg-hevc-wrong-matrix",
+      "hlg-hevc-wrong-range"
+    ],
+    "pixels": 80720,
+    "rms": 2.13914987174097,
+    "projections": {
+      "matrix": -0.08312590782655715,
+      "range": 0.1284647046639661
+    },
+    "pass_": true
+  },
+  {
+    "name": "pq",
+    "names": [
+      "pq-hevc",
+      "pq-h264",
+      "pq-hevc-wrong-matrix",
+      "pq-hevc-wrong-range"
+    ],
+    "pixels": 82493,
+    "rms": 0.5146679327378868,
+    "projections": {
+      "matrix": 0.04256762824670465,
+      "range": -0.005161126969930861
+    },
+    "pass_": true
+  }
+]

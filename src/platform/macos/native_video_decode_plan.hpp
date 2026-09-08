@@ -15,13 +15,13 @@ namespace wam::macos {
   bool softwareMapped=false;
   bool appleSoftwareProfile=true;
   if(facts.carriesConfigurationRecord && codec!=MediaCodec::Vp8) {
-    VideoCodecConfigurationLimits limits; limits.admitHighDynamicRangeColor=true; limits.admitSoftwareProfiles=true;
+    VideoCodecConfigurationLimits limits; limits.admitHighDynamicRangeColor=true; limits.admitSoftwareProfiles=true; limits.admitHardwareH264Profiles=true;
     const auto parsed=inspectVideoCodecConfiguration(codec,facts.configurationKind,configuration.codecConfiguration,limits);
     if(!parsed.admitted())return chooseDecodePlan({DecodeRefusal::PresentationUnsupported,DecodeRefusal::PresentationUnsupported,
       DecodeRefusal::NotApplicable,DecodeRefusal::NotApplicable,DecodeRefusal::PresentationUnsupported});
     appleProfile=codec!=MediaCodec::Mpeg4Visual || (parsed.facts->profile&0xF0U)!=0xF0U;
     appleSoftwareProfile=appleProfile && !(codec==MediaCodec::H264 && parsed.facts->profile!=0);
-    softwareMapped=codec==MediaCodec::H264 || codec==MediaCodec::Mpeg4Visual || codec==MediaCodec::Vp9;
+    softwareMapped=(codec==MediaCodec::H264 && parsed.facts->sampleFormat!=MediaVideoSampleFormat::Yuv444EightBit) || codec==MediaCodec::Mpeg4Visual || codec==MediaCodec::Vp9;
   }
   const bool supplemental=!nativeVideoHardwareDisabledForTesting() && hardwareCapability.value_or(codec==MediaCodec::Vp9?nativeVideoToolboxSupportsVp9():
     codec==MediaCodec::Av1?nativeVideoToolboxSupportsAv1():VTIsHardwareDecodeSupported(configuration.codec));

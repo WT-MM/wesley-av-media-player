@@ -1,0 +1,18 @@
+{
+  "asset": "/private/tmp/wam-phase2g/software-fixtures/full-vp9p2.mkv",
+  "rc": 0,
+  "pid": 63684,
+  "env": {
+    "HOME": "/private/tmp/wam-phase2g/captures/vp9-hardware/full-vp9p2/home",
+    "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+    "WAM_NATIVE_BENCHMARK_RUN_ID": "6bc325e3-e5fe-48e5-9d76-e6e598e1250a",
+    "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "b1500825b3996de753163f4f5b68a43d03b6b6eef139d70c11ca33eb34239e23",
+    "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "6a71ff178b211cc1271e63ad2a75c5dd61888d2c3bd7177c220d547cff7c3c6f",
+    "WAM_TEST_BACKGROUND": "1",
+    "WAM_TEST_MUTED": "1",
+    "WAM_TEST_GEOMETRY": "480x270+2400+1000",
+    "WAM_PLAYBACK_METRICS_PATH": "/private/tmp/wam-phase2g/captures/vp9-hardware/full-vp9p2/metrics.jsonl",
+    "WAM_TEST_QUIT_AFTER_MS": "6500",
+    "WAM_TEST_WINDOW_SCRIPT": "pause:0@1,report@4500,grab:0:/private/tmp/wam-phase2g/captures/vp9-hardware/full-vp9p2/scene.png@300,videograb:0:/private/tmp/wam-phase2g/captures/vp9-hardware/full-vp9p2/display.png@300,report@400"
+  }
+}

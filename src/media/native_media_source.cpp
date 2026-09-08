@@ -1,4 +1,5 @@
 #include "media/native_media_source.hpp"
+#include "media/native_qualified_color.hpp"
 #include "media/media_codec_facts.hpp"
 #include "media/native_exact_playback.hpp"
 
@@ -727,10 +728,19 @@ bool mediaVideoColorAdmitted(const MediaVideoFormat& video) noexcept {
   const bool depth = video.bitsPerComponent == 0 ||
                      video.bitsPerComponent == 8 ||
                      video.bitsPerComponent == 10;
-  return primaries && transfer && matrix && chroma && depth &&
+  const bool qualified444 = video.sampleFormat != MediaVideoSampleFormat::Yuv444EightBit ||
+      (!video.fullRangeVideo && video.transferFunction == MediaTransferFunction::Bt709 &&
+       ((video.colorPrimaries == MediaColorPrimaries::Bt709 && video.matrixCoefficients == MediaMatrixCoefficients::Bt709) ||
+        (video.colorPrimaries == MediaColorPrimaries::Bt601 && video.matrixCoefficients == MediaMatrixCoefficients::Bt601)));
+  return qualified444 && primaries && transfer && matrix && chroma && depth &&
          !video.unsupportedColorMetadataPresent &&
          !video.dolbyVisionConfigurationPresent &&
-         !video.ambientViewingEnvironmentPresent;
+         (!video.ambientViewingEnvironmentPresent ||
+          (!video.fullRangeVideo && video.ambientViewingEnvironmentPayload == kQualifiedHlgAmbientViewingEnvironment &&
+           video.colorPrimaries == MediaColorPrimaries::Bt2020 &&
+           video.transferFunction == MediaTransferFunction::Hlg &&
+           video.matrixCoefficients == MediaMatrixCoefficients::Bt2020Ncl &&
+           video.sampleFormat == MediaVideoSampleFormat::Yuv420TenBit));
 }
 
 MediaDisplaySize mediaVideoDisplaySize(const MediaVideoFormat& video) noexcept {
