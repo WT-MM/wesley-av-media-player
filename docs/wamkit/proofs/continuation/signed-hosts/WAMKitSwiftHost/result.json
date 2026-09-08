@@ -1,0 +1,21 @@
+{
+  "host": "/private/tmp/wam-wamkit/build/wamkit-signing-final/payload/WAMKitSwiftHost.app/Contents/MacOS/WAMKitSwiftHost",
+  "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+  "pid": 16539,
+  "rc": -6,
+  "identities": {
+    "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+    "WAM_NATIVE_BENCHMARK_RUN_ID": "da7770fe-b8f6-4d16-a506-dcb5e3cc95df",
+    "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+    "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "393e3eb9fe7bd5c9eb1f1b8a77f667602cf0dad39de7d79975200f1507eb4c8e"
+  },
+  "errors": [
+    "host rc=-6",
+    "no clean close completion",
+    "no drawn frames",
+    "no exact first PTS zero",
+    "clock is not 1.0000",
+    "missing exact off-grid seek completion"
+  ],
+  "passed": false
+}

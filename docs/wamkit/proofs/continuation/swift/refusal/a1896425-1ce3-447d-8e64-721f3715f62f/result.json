@@ -1,0 +1,19 @@
+{
+  "host": "/private/tmp/wam-wamkit/build/examples/WAMKitSwiftHost/WAMKitSwiftHost.app/Contents/MacOS/WAMKitSwiftHost",
+  "asset": "/private/tmp/wam-wamkit/test-media/wamkit/refused.m4a",
+  "pid": 24083,
+  "rc": -15,
+  "identities": {
+    "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+    "WAM_NATIVE_BENCHMARK_RUN_ID": "646b949d-9604-4b3c-89cb-fef7638d28b8",
+    "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "b8b9defaddeb76f47ffb962d2589ff250dfcbc07fc59249358fdc273c7a8ca5b",
+    "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c6dca190181172e7f0f9870d2cecfe41c3fd28dd4ef84cf09205535318fdcf6e"
+  },
+  "errors": [
+    "host rc=-15",
+    "no clean close completion",
+    "missing named refusal HeAacSbrDecoderDelayUnproven",
+    "missing structured secondary refusal"
+  ],
+  "passed": false
+}

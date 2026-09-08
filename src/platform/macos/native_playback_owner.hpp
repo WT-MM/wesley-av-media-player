@@ -61,6 +61,12 @@ public:
   [[nodiscard]] bool needsFallbackRenderContext() const noexcept;
   [[nodiscard]] bool acceptsFallbackPlaybackEvents() const noexcept;
 protected:
+  bool hasNativeSession() const noexcept;
+  NativeMediaSessionMetrics nativeMetrics() const noexcept;
+  void setNativeMetricsEnabled(bool) noexcept;
+  std::shared_ptr<const media::MediaSourceDescriptor> nativeDescriptor() const noexcept;
+  double nativeSeekCeilingSeconds() const noexcept;
+  void drainCurrentObservations();
   struct ObservationBridge {
     NativePlaybackOwner* owner{nullptr};
     std::uint64_t epoch{0};
@@ -134,13 +140,11 @@ protected:
   playback_router::PlaybackRouter router_{
       playback_router::TimeoutPolicy{kNativePhaseTickBudget, kNativePhaseTickBudget,
                                      kNativePhaseTickBudget, kNativePhaseTickBudget}};
-  std::shared_ptr<NativeMediaSession> nativeSession_;
   std::optional<NativePreviewFrameTarget> nativePreviewTarget_;
   std::optional<native_protocol::PreviewFrame> nativePreview_;
   std::optional<NativeMediaSessionCommitTarget> nativeCommitTarget_;
   std::optional<media::MediaTime> nativeExactCommitTarget_;
   std::optional<native_protocol::CommitSeek> nativeCommit_;
-  std::shared_ptr<ObservationBridge> observationBridge_;
   std::optional<native_protocol::Stop> nativeStop_;
   std::uint64_t nextObservationEpoch_{0};
   std::uint64_t tick_{0};
@@ -159,6 +163,8 @@ protected:
   unsigned fallbackEventDrainDepth_{0};
   bool fallbackCompletionDeferred_{false};
 private:
+  std::shared_ptr<NativeMediaSession> nativeSession_;
+  std::shared_ptr<ObservationBridge> observationBridge_;
   SeekDisposition commitSeekImpl(double, std::optional<media::MediaTime>, std::uint64_t, std::uint64_t, bool);
   std::shared_ptr<ObservationBridge> ownerLifetime_;
   std::shared_ptr<NativeRetirement> retirement_;

@@ -1,0 +1,14 @@
+{
+  "host": "/private/tmp/wam-wamkit/build/examples/WAMKitSwiftHost/WAMKitSwiftHost.app/Contents/MacOS/WAMKitSwiftHost",
+  "asset": "/private/tmp/wam-wamkit/test-media/wamkit/refused.m4a",
+  "pid": 38670,
+  "rc": 0,
+  "identities": {
+    "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+    "WAM_NATIVE_BENCHMARK_RUN_ID": "07c4e301-9b6f-4f05-aa3f-d2b1b77f746d",
+    "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "b8b9defaddeb76f47ffb962d2589ff250dfcbc07fc59249358fdc273c7a8ca5b",
+    "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "ecf3f96b6169101aca524dafe6016d751a13acf414d0746573aff1ecd355c8b3"
+  },
+  "errors": [],
+  "passed": true
+}

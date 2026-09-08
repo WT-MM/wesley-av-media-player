@@ -1,0 +1,20 @@
+{
+  "head_baseline_rc": 1,
+  "public_owner": {
+    "rc": 0,
+    "output": "Qt reaches native playback only through the shared owner, preflight and host policy boundary\n"
+  },
+  "internal_include": {
+    "rc": 1,
+    "output": "src/qt/probe.cpp: unexposed native include platform/macos/native_audio_session.hpp\n"
+  },
+  "relative_include": {
+    "rc": 1,
+    "output": "src/qt/probe.cpp: unexposed native include ../platform/macos/native_media_session.hpp\n"
+  },
+  "session_access": {
+    "rc": 1,
+    "output": "src/qt/probe.cpp: bypasses the shared native owner\n"
+  },
+  "current_rc": 0
+}

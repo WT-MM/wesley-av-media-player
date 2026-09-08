@@ -1,0 +1,15 @@
+{
+  "AvailableLibraries": [
+    {
+      "BinaryPath": "WAMKit.framework/Versions/A/WAMKit",
+      "LibraryIdentifier": "macos-arm64",
+      "LibraryPath": "WAMKit.framework",
+      "SupportedArchitectures": [
+        "arm64"
+      ],
+      "SupportedPlatform": "macos"
+    }
+  ],
+  "CFBundlePackageType": "XFWK",
+  "XCFrameworkFormatVersion": "1.0"
+}

@@ -36,6 +36,52 @@ Copy the complete framework into the host's `Contents/Frameworks` before signing
 
 The display route requires macOS 14+. This local arm64 package includes a libvpx binary whose load floor is macOS 26.0; its effective deployment floor is therefore 26.0. Rebuild that dependency at the intended floor and validate on that OS before advertising macOS 14 support. See the packaged `Resources/PackagingAudit.json` for every image's architecture and build-version commands.
 
+## Swift Package and SwiftUI sample
+
+The root [Package.swift](../../Package.swift) vends `WAMKit` as a local binary target. First build the framework, then assemble the arm64 XCFramework and build the sample:
+
+```sh
+cmake --build build --parallel
+cmake --build build --target WAMKitSwiftHost --parallel
+```
+
+[build_wamkit_swift.py](../../scripts/build_wamkit_swift.py) invokes `xcodebuild -create-xcframework` on the CMake-built framework, writes `build/WAMKit.xcframework`, and invokes `swift build` with local caches and no remote dependencies. It packages the executable at `build/examples/WAMKitSwiftHost/WAMKitSwiftHost.app`, preserving and signing the embedded framework closure. This first package is arm64 only and declares the actual macOS 26 deployment floor of the supplied libvpx binary.
+
+Add this checkout as a local Swift package after assembly:
+
+```swift
+// In your Package.swift:
+dependencies: [.package(path: "/path/to/wam")],
+// In your target:
+dependencies: [.product(name: "WAMKit", package: "wam")]
+```
+
+The package identity in the product dependency is the checkout directory's lowercased basename; adjust `wam` to that name. An Xcode app can add the checkout with **Add Local Package** and select the WAMKit library product. Preserve the whole embedded framework and its notices when packaging your consumer.
+
+[WAMKitSwiftHost.swift](../../examples/WAMKitSwiftHost/WAMKitSwiftHost.swift) is a SwiftUI consumer with an AppKit-owned window. `NSHostingView` hosts the controls; `NSViewRepresentable` embeds `WAMPresentationView`. Its `@MainActor` observable model uses the public C API for open/play/pause/rational seek/close, ordered state events and metrics. The presentation view remains retained through close. The host owns file panels and reports named refusals directly. A measured background launch constructs its window explicitly, avoiding SwiftUI's automatic scene-opening behavior for direct executable launches.
+
+CTest registers `wamkit_swift_build` when Swift and a working full Xcode toolchain are present on arm64. With private test support enabled, MP4, Matroska and refusal tests depend on that build and run the same embedding checker as the Objective-C host. The generated XCFramework is local build output, not checked-in binary content.
+
+## Offline signing preparation
+
+[sign_release.sh](../../scripts/sign_release.sh) signs fresh copies of the framework, both sample hosts and WAM.app inside-out. It signs all nested Mach-O images, including the dynamically loaded FFmpeg closure, then nested bundles and their enclosing applications, with hardened runtime. It verifies each top-level input using `codesign --verify --deep --strict`, records `spctl --assess` results, and creates `WAM-notarization-input.zip` with a SHA-256 receipt.
+
+```sh
+# Local verification without a Developer ID identity:
+sh scripts/sign_release.sh --ad-hoc --output build/signing-local
+
+# Offline preparation with an installed identity and a fully bundled app:
+sh scripts/sign_release.sh --identity YOUR_CERTIFICATE_SHA1 --app stage/WAM.app
+```
+
+Output must be a new directory under `build/` or the dedicated WAMKit scratch directory. Source bundles are not re-signed in place. `--app` should select the fully deployed Qt app for distribution; the default build app is suitable for local signature verification but may still reference development-machine Qt libraries.
+
+The entitlement policy is unchanged: WAM, WAMKit and the sample hosts receive no hardened-runtime exceptions. Playback does not request microphone access. Quick Look extensions retain the existing `com.apple.security.app-sandbox=true` entitlement required by their sandboxed extension execution. Library validation remains enabled; distribution must include and sign the complete non-system closure with the host's team identity. No JIT, unsigned-executable-memory, debugging or library-validation exception is added.
+
+The script performs no network operation and never submits notarization. It explicitly uses `--timestamp=none`; its archive is preparation material, **not a notarized distribution**. Gatekeeper rejection is retained in `signing-report.json`, and `distribution_ready` remains false. On this machine the hardened ad-hoc sample copies also fail before startup with dyld’s different-Team-IDs library-validation rejection. Their strict signatures are valid, but they are not runnable distribution proofs; no library-validation exception is used to bypass this. The owner must obtain Apple Developer Program membership and a **Developer ID Application certificate with its matching private key**, install them in an unlocked signing keychain, then arrange an authorized online release pass for trusted timestamps, notarization credentials/submission and stapling. Developer ID identity and Gatekeeper validation remain unproven on this machine, which has zero valid signing identities.
+
+The macOS CI workflow invokes `--if-identity` after app deployment. It is a no-op without the `WAM_MACOS_CODESIGN_IDENTITY` secret. When supplied, that secret selects an identity whose certificate/private key must already be provisioned in the runner keychain; a certificate fingerprint alone cannot sign. The existing protected release workflow remains responsible for online notarization.
+
 ## Embed a player
 
 ```objc
@@ -126,4 +172,4 @@ WAM's own redistribution/license grant remains a maintainer decision. The FFmpeg
 
 [REPORT.md](REPORT.md) links the test, revert, replay and packaging receipts. `WAMKIT_ENABLE_TEST_SUPPORT=ON` enables private identity-gated quiet/stall seams for those tests; it defaults OFF and is not part of the public ABI. Normal events require no environment variables. The sample's measured harness streams `WAM_PLAYBACK_METRICS_PATH` on a bounded file-writing queue and uses the required benchmark identities, background geometry and output-copy mute. Fixtures are synthetic and reproducible with [generate_wamkit_fixtures.py](../../scripts/generate_wamkit_fixtures.py).
 
-Deliberately absent: Qt types, STL types, source-contract headers, decoder handles, mpv fallback, external frame access, preview scrubbing, mirroring, live track switching, subtitle overlays, export/caption generation, network playback, file panels/bookmark persistence in the SDK, host activation/menu/preferences and power-activity policy, and a Swift concurrency convenience layer beyond the Objective-C MainActor facade. The app currently consumes the extracted native owner through static archives; migration to dynamic WAMKit dogfooding is separate from this Qt-free host path.
+Deliberately absent: Qt types, STL types, source-contract headers, decoder handles, mpv fallback, external frame access, preview scrubbing, mirroring, live track switching, subtitle overlays, export/caption generation, network playback, file panels/bookmark persistence in the SDK, host activation/menu/preferences and power-activity policy, and a Swift concurrency convenience layer beyond the Objective-C MainActor facade. The app consumes the extracted native owner through static archives. The `wamkit_dogfooding` audit restricts Qt to that shared owner, preflight and host-policy interface; session ownership and observation-bridge storage are private. Qt-specific presentation construction remains in the platform adapter. Migration to a single dynamic WAMKit image remains separate work.

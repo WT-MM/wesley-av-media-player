@@ -3,8 +3,6 @@
 #include "platform/macos/native_playback_owner.hpp"
 
 #include "media/playback_router.hpp"
-#include "platform/macos/native_media_session.hpp"
-#include "platform/macos/native_preview_frame_lane.hpp"
 #include "qt/native_open_preflight.hpp"
 
 #include <QPointer>
