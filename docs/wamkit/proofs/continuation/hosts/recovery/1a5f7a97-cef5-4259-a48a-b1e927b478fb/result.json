@@ -1,0 +1,17 @@
+{
+  "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+  "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+  "pid": 67265,
+  "rc": 0,
+  "identities": {
+    "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+    "WAM_NATIVE_BENCHMARK_RUN_ID": "2770256b-85f0-4d45-a57a-a2b15a060f4a",
+    "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+    "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "1ba14a4e03d401a3dbe40dbe2b5251cac3c407ad7ecd0c1f619cdd0ba319c003"
+  },
+  "errors": [
+    "unexpected native refusal",
+    "missing exact off-grid seek completion"
+  ],
+  "passed": false
+}

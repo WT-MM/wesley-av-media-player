@@ -139,7 +139,8 @@ find_library(WAM_COREIMAGE_FRAMEWORK CoreImage REQUIRED)
     src/platform/macos/native_layer_video_output.hpp
     src/platform/macos/native_layer_video_output.mm
     src/platform/macos/native_layer_host_view.hpp
-    src/platform/macos/native_layer_host_view.mm)
+    src/platform/macos/native_layer_host_view.mm
+    src/platform/macos/native_embedding_support.mm)
   target_include_directories(wam_macos_native_layer PUBLIC src)
   target_compile_features(wam_macos_native_layer PUBLIC cxx_std_20)
   target_compile_options(wam_macos_native_layer PRIVATE
