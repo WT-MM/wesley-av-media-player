@@ -9,7 +9,7 @@
 #if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
 #include "native_benchmark_telemetry.hpp"
 #include "native_playback_owner.hpp"
-#include "platform/macos/native_layer_presentation_state.hpp"
+#include "platform/macos/native_embedding_support.hpp"
 #endif
 
 #include <QByteArray>
@@ -3765,7 +3765,7 @@ void PlayerController::requestVideoUpdate() {
   // painting through the scene graph -- and suppressing that window's updates
   // because some OTHER window is on the layer route would freeze its video on
   // its first frame. Both halves of the test are therefore required.
-  if (wam::macos::nativeLayerPresentationActive() && native_playback_ &&
+  if (wam::macos::NativeEmbeddingSupport::layerActive() && native_playback_ &&
       native_playback_->nativeOwnsTransport())
     return;
 #endif

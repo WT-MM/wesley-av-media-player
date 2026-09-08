@@ -1,0 +1,4055 @@
+[
+  {
+    "kind": "mp4",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mp4/ae9606ed-5d03-4fb7-a7a3-d06e3e74f83b/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 13546,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "67811ecd-5edb-43f4-9e00-b4f779a503af",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mp4",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mp4/31f30361-d398-48bd-b02a-88343397b915/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 75023,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "a63b1852-bda2-4458-be6a-b7470d9f7269",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mp4",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mp4/71d74d63-d1db-4188-b9dc-688088898132/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 69442,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "8d817647-a0fe-450f-91c4-77b497f96dca",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mp4",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mp4/2eff80a0-e6f2-42a9-a4e9-4ca7f620edd3/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 911,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "3af61de0-8cb1-4a72-b70a-c56a80c8d868",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "41610edb3c0ff5d540616aae8f04d6d0127e429c2bc9f5512e9f05601e2722f5"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mp4",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mp4/2f604bf9-6245-40c2-b05d-ecc9049a56c2/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 13254,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "73d46535-d476-4f6a-908d-7dee519a5df5",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mp4",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mp4/caa95ba0-2aa5-4f69-ba44-f099bdc97fb5/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 11988,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "2e6fa971-2f41-4d52-8a76-97957ebdbdcb",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mp4",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mp4/86b756a1-6473-475a-b1af-55561855a795/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 13302,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "9851b30d-9093-44f1-a30f-c9691a70e19a",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mp4",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mp4/06a291f6-2ef9-4ca1-8566-25a4734b49ad/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 71586,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "1148e03d-2d03-4315-a350-c22275a56be0",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mp4",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mp4/5279ccb9-c3ae-419e-9eec-bf956eb90809/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 75679,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "f516ac58-2dba-44da-95c2-45b48ca9b232",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [
+      "missing exact off-grid seek completion"
+    ],
+    "passed": false
+  },
+  {
+    "kind": "mp4",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mp4/f084c1a1-1ee5-4af1-849a-b22b533afcb5/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 70449,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "aea65cef-cb08-4cd9-8db3-839cc20e47a7",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mp4",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mp4/b8a32c7a-e7fe-4a82-acb0-70d30778a4bd/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 12878,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "098aea67-0b3d-4e9f-bd3d-ce73745c8e2f",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mp4",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mp4/6add81d7-d50d-473e-ab6a-0310cbaec87d/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 13635,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "de66cd34-7472-477e-9db7-28fd9533c4d8",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mp4",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mp4/91e85a2e-6d75-4a3e-ae75-2b338f2a4aef/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 69183,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "17f0fef5-dbce-4b57-a27e-5d8982c2d3d6",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mp4",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mp4/4097455d-8134-470e-aaec-2929163cf042/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 69276,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "be66d320-6c75-4bb6-8825-b2bf15353926",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mp4",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mp4/57b84b64-a786-4bff-a238-97ad2304e073/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 13750,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "d966bf55-dc81-43b4-8ce7-129a490f31b1",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mp4",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mp4/799ffe77-1bd0-4f64-8c52-62bc252c7152/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 83110,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "760ff5a0-f3a1-4b7e-87d6-332c2413826f",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "41610edb3c0ff5d540616aae8f04d6d0127e429c2bc9f5512e9f05601e2722f5"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mp4",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mp4/e0b1ed9f-a8cc-4cc3-984b-f26f7e823f8e/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 13476,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "cbeeeb79-e2fa-4247-ace4-63e2c55e0583",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mp4",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mp4/6cd186d5-4a10-43cb-b4a7-59b471f527b4/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 70004,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "1f59d0be-6c52-4439-a66c-1a84c33fafc7",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mp4",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mp4/8685f839-789f-4b3f-a9a3-e3ce9c8ae9a6/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 12561,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "45a7c25a-dde6-4b14-8142-1d4b6e41b91f",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mp4",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mp4/de8c0d9a-e956-47f9-a822-4ffd6b5c5fb7/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 73482,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "e4b9287d-3255-4317-9a6d-3cd733390727",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mp4",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mp4/12b46452-4b3a-47c3-a5ae-be557fa59cc4/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 61105,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "8473c407-dc85-4f27-b001-962a552cadcf",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "41610edb3c0ff5d540616aae8f04d6d0127e429c2bc9f5512e9f05601e2722f5"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mp4",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mp4/21222b7b-9a14-45a8-b1e0-7dc39771fada/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 13202,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "756843b5-d121-4b4b-bc3d-6f3398a775f2",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mp4",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mp4/f64522c0-cdb5-4a05-b8dd-a882dca3e18f/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 69381,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "82134548-80ab-45c5-b68d-925b55a3561e",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mp4",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mp4/b21bf8d2-5b95-41de-afff-0e95bec87745/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 12681,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "d1435202-adfb-4066-bfac-13fa58fb81c6",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mp4",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mp4/23e7ffdb-0734-4711-bf41-86db6a0a8929/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 12400,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "091d348d-f774-400b-833e-db23b137ceef",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mp4",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mp4/9e3caff3-8316-4cb9-b6a4-473767847cfe/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 74146,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "4c1c1f02-28ac-4916-858c-df70f8d4fb41",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mp4",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mp4/2a7cdf57-d42c-40b2-b5ba-e4f392824986/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 13132,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "d7fafc28-9301-4e9f-8260-8afbf62af837",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mp4",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mp4/9892246a-427c-47a3-8fe4-4aae86ff6e67/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 13281,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "e6f55745-14e2-44bd-8796-298c0c794ae7",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mp4",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mp4/53498776-bb6f-44ed-8a85-5d1ec0d3491c/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 13232,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "610dfb25-5fee-4eac-b6bc-ef38d52c4dce",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mp4",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mp4/78a873c6-8a0f-491f-a5d7-9761ba8e229a/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 13514,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "2902b3ee-5e98-4d0a-8fcb-c69026b651a5",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mp4",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mp4/1fc61ad1-41c8-40ec-9e1e-fdd18b637f60/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 12764,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "6f4b7891-558d-4656-ba61-f7ec452cd47c",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mp4",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mp4/3ce75960-55dd-42c1-aad8-ef9b4422affb/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 13267,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "1ab51e88-d5a4-487d-ad4e-47dc8e5cd4b9",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mp4",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mp4/bfd8266b-d8a0-4cc7-b3e0-7d3528ebd381/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 12141,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "1067d7ad-9d65-4bde-b5df-eb1ff70a4127",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mp4",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mp4/e5319c5e-7bb8-4fb4-b8cb-700d8f952435/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 69350,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "2e280b2a-f464-48a5-94dc-e607d3d8150a",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mp4",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mp4/a1ca132e-996f-431b-817b-63dcbd3dc480/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 13330,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "00ad8697-01d4-43b5-accf-e95419d2fe32",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mp4",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mp4/eecb1f54-ef48-4a43-824d-cd00a58d0333/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 13720,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "f3cce925-3e35-422d-ab78-ddae2cddb886",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mp4",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mp4/1515fc0b-44d2-4bcd-9669-568614a798e0/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 12266,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "12a515e9-c1cd-4089-ae38-643603b3dc13",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mp4",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mp4/64171d6d-e103-4349-ac30-d27cbcfd9d8a/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 13600,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "5ace899b-78bd-4b1c-a996-62e09115512b",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mp4",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mp4/d8d7cb5a-100f-4f8e-8ac9-603acdfccc9b/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 75328,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "15bad501-bd61-40c2-bf59-76c29e02ea06",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mp4",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mp4/c21260a8-d8a5-4c36-8e69-90d765fb7b0a/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 13017,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "2f736300-747d-452a-aa74-454d4f94f4df",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mp4",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mp4/2cdbb1c8-e5e4-4ca6-b64a-c74f1ccab3f6/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 13679,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "6f92fba8-0d65-4885-8c87-4822ed87384d",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mp4",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mp4/38de23e4-6c56-41fc-8c73-e4286a9d39fb/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 11923,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "704e7e78-bfe0-43fa-8c11-e571f03c710f",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mp4",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mp4/fd3f7418-5d60-4ab3-9cac-de2bf1c50b3b/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 72892,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "5d8a07a8-52d5-41b6-bb9a-24558714912d",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mp4",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mp4/ef39bf57-f52e-47b4-ba90-5bd5f1abe2c8/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 11828,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "e9e6f325-f7d1-4ea0-8650-12e64d27b78c",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mp4",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mp4/f4a01599-8863-4fa8-ae50-4eb2ba4cf129/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 70973,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "ec678404-f290-4157-97d7-31fce5ac82ab",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mp4",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mp4/248262f5-2d25-470e-9a14-99a4913e33b6/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 69298,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "77f90787-8a18-4e49-804d-fea5ceac79d3",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mp4",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mp4/012915a1-bc95-434d-a406-27d723e78e53/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 13392,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "70a1e39a-56e4-4924-9aca-f2b57528cd62",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mp4",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mp4/85201c13-5308-4f43-b319-d7569e359bf9/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 74709,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "2db07932-809f-4c46-bdc7-cc243fb37ef1",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mp4",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mp4/f2b4318b-b63c-4e80-88bf-e9677d840787/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 12059,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "ae85b1bd-fbd4-4a1a-a78f-d79d740555e3",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mp4",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mp4/1cfb9892-a7bd-4596-9252-dcc0847155b6/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 13441,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "fefbeedf-650f-4c79-b4e6-179a36f060ff",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mp4",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mp4/327990b2-2312-4ece-a70b-93126def51a5/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 69322,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "5ffecfa7-9b42-4a9b-8ed1-f9d17b4667a5",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mp4",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mp4/11e9ad73-661c-4cfc-83e2-359fa28adc54/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 72253,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "bc2cb1a1-593a-4386-8352-d7a443f05ec0",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mkv",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mkv/dbd77e57-6886-4c42-a1bc-14d111c21554/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 75763,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "5234bd1e-3a25-40d1-beb7-206f0149664e",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mkv",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mkv/ed0d4dce-206a-4a5d-8fae-640943004a7f/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 83750,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "9109caf2-c124-494c-8063-ef3c7610caae",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mkv",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mkv/f658a0a9-db57-4512-abaf-064f548c59b8/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 84858,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "e04ab270-49d3-4e90-b581-487c0b3a1265",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mkv",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mkv/a589ebcc-fdf0-4cf4-83a9-5c8b0eac9fe7/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 80494,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "ec900bda-ad22-47dd-b706-7b90882eae4f",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mkv",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mkv/bc16a19e-20ac-4770-8540-c3d796a230e3/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 81352,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "bc646841-7db8-474c-a1c8-c47424e7db3a",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mkv",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mkv/34a0b897-8049-4097-99b0-4e262f217385/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 946,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "8fad257b-0414-47fc-b74b-f2647b1e7bce",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "41610edb3c0ff5d540616aae8f04d6d0127e429c2bc9f5512e9f05601e2722f5"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mkv",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mkv/b356f601-614f-4921-9e4c-d1c58788d061/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 84796,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "ba9cd65d-f0fc-4895-a762-b19e3a420de4",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mkv",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mkv/37c2d24d-a6a2-4ad1-8d09-c0493e823501/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 85472,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "938bf6e2-3c2c-4a08-a245-2c076f40b2e1",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mkv",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mkv/a5ca20e1-fa84-4ef2-8850-13b258554a93/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 77223,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "28bd9e04-de03-415d-a917-06cd5ca2f6ce",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mkv",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mkv/ce14202d-245f-4619-be80-eef49f9e4798/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 83937,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "e839ab18-7c46-43a5-8535-2da4f1fefa3e",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mkv",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mkv/86739317-b4f4-4775-b4dd-37c4f228c7a0/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 61137,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "f205b8ec-ee4a-438e-9961-029814bf8d3a",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "41610edb3c0ff5d540616aae8f04d6d0127e429c2bc9f5512e9f05601e2722f5"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mkv",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mkv/533333e2-60d3-4f67-9c99-ebafbbfe2100/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 85317,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "882a4d43-a7fc-49b1-88bb-34d0cc5cb59e",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mkv",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mkv/a55c19f5-72ce-4c91-a292-2adea2b68a10/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 85264,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "b208f078-21fb-44b2-824d-2496e92ca280",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mkv",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mkv/2f554892-47b7-4933-9efb-24eafbda0ec7/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 84888,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "1684513b-2ab0-4b54-8766-723b2f8396bf",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mkv",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mkv/008e9b83-bb00-46b8-a0ad-0ae272863784/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 85020,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "ebe27df8-7b0a-4ce3-88fd-4aa8a8cc1826",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mkv",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mkv/1be21700-c144-4e85-83d4-e309a842dbed/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 85405,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "d25b2ca4-9674-4309-9107-4a30d082f993",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mkv",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mkv/3dc9a123-30e5-4bce-ad44-a3ee67c87b76/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 79633,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "d0c1d76b-6799-4219-98b3-3a35b578a999",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mkv",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mkv/695486d1-517a-4d98-bd84-882a3449a13f/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 83311,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "526e3860-0317-48bb-84ab-5f748412d798",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mkv",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mkv/9c247b36-f353-4d43-9c03-6bbbd6db12a4/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 82970,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "edd60edd-595b-48b8-8829-acc6d826dc6d",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mkv",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mkv/0ff3ed4b-999c-4ef6-b004-cb48ae063a60/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 83827,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "45414fd8-ea9c-492f-ac58-35b9bd356c99",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mkv",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mkv/ea6f9828-53ac-46e6-9e38-6c89896e70ce/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 83876,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "ea14a916-b4de-4aec-bfa6-b52e7ee38772",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mkv",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mkv/1a776b3c-7198-4c54-b951-5a4f9b511e0d/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 82482,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "4f0f2199-cd2e-4354-a469-99e29bbfc903",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mkv",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mkv/5d7be8ed-9717-4f36-9002-146f3d18ba2e/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 83132,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "26f9472d-35da-40a7-bc9d-eca082e90942",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "41610edb3c0ff5d540616aae8f04d6d0127e429c2bc9f5512e9f05601e2722f5"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mkv",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mkv/c616133a-5a57-407c-b9dd-603d0386caae/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 76418,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "23957da9-8d02-4691-b443-5b9415335e63",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mkv",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mkv/62915fcc-14b4-48cb-af00-cd17cddc01ca/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 85149,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "bb8fc0f3-e1d1-4948-b463-fc8ed3f0304c",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mkv",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mkv/0e7136f8-2b4b-4078-af64-475ced598e81/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 85348,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "21c9b8f1-2fab-43c7-a113-e396bdc02119",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mkv",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mkv/98dbce83-1202-4ead-b78c-f8466488983d/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 81983,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "566edde9-0524-4e6b-b9cf-b0e4d1df5426",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mkv",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mkv/56d11a7d-a81e-4d5c-bdd2-1d3e5a415b8b/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 78923,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "45a85a5e-a065-443b-822d-a6776e1a7abe",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mkv",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mkv/9181eddf-1a8f-4ac4-acc2-3e9562de7778/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 80878,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "a3f6b014-c60f-44af-8395-7d15adbb5991",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mkv",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mkv/35f0938c-4332-4261-8768-fe4f2af6505b/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 84949,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "6f8026d4-83cd-4ae4-bb25-1ebf90e5a221",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mkv",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mkv/35f7fc56-7b00-4534-9634-ba49b47034e1/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 83973,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "3fb83f27-e7ae-4d7e-94b8-7a0728e40ee5",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mkv",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mkv/f83e23a8-db2a-4f74-b550-f4dee24c34b8/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 84709,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "a511277a-c5c2-42ea-9fea-1500d0f13429",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "mkv",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/mkv/dbf5684b-2d99-4150-828a-e3e3316028fc/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 78120,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "5d91d6c5-c0a3-4065-bdf0-00f5207fcc64",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "refusal",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/refusal/3975af4e-2777-4931-b64a-d8bbf844b5d5/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/refused.m4a",
+    "pid": 61160,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "758ad00d-5b31-47f7-b515-a11f5d23f84d",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "b8b9defaddeb76f47ffb962d2589ff250dfcbc07fc59249358fdc273c7a8ca5b",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "41610edb3c0ff5d540616aae8f04d6d0127e429c2bc9f5512e9f05601e2722f5"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "refusal",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/refusal/e4b0fdf5-35b5-4156-a8e3-72fc7a85979f/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/refused.m4a",
+    "pid": 87724,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "fd246147-91c4-4d67-a6c2-68dd2e1c9551",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "b8b9defaddeb76f47ffb962d2589ff250dfcbc07fc59249358fdc273c7a8ca5b",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "refusal",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/refusal/7d10063d-2504-42b2-9ee7-04aa11e5e40a/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/refused.m4a",
+    "pid": 85989,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "e3bb6199-f1fb-42ce-9a70-74914965a289",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "b8b9defaddeb76f47ffb962d2589ff250dfcbc07fc59249358fdc273c7a8ca5b",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "refusal",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/refusal/22f173b1-ae44-417d-8fd8-39a847ca90c1/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/refused.m4a",
+    "pid": 86532,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "27bb18f3-008b-4f37-b8d8-2ad338c940ed",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "b8b9defaddeb76f47ffb962d2589ff250dfcbc07fc59249358fdc273c7a8ca5b",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "refusal",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/refusal/3614b8be-4517-4fe2-8bda-25fb897cc466/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/refused.m4a",
+    "pid": 87917,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "35206851-d7f0-4464-b906-6824f01d15c4",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "b8b9defaddeb76f47ffb962d2589ff250dfcbc07fc59249358fdc273c7a8ca5b",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "refusal",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/refusal/312f866c-3132-4992-9bf7-ac6c8725aa64/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/refused.m4a",
+    "pid": 87593,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "4b57af4e-9236-4154-882e-fab22fdf0335",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "b8b9defaddeb76f47ffb962d2589ff250dfcbc07fc59249358fdc273c7a8ca5b",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "refusal",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/refusal/b44f78af-8236-445e-874e-ed7f6f332062/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/refused.m4a",
+    "pid": 87744,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "fc3bbed3-425a-4a32-a90b-e81ffbf2d7b7",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "b8b9defaddeb76f47ffb962d2589ff250dfcbc07fc59249358fdc273c7a8ca5b",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "refusal",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/refusal/29478ae3-d78c-4abe-bf57-f590f325324f/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/refused.m4a",
+    "pid": 85497,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "566be96c-1ce5-491d-a3a5-bb22f8c32f53",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "b8b9defaddeb76f47ffb962d2589ff250dfcbc07fc59249358fdc273c7a8ca5b",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "refusal",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/refusal/e0568efe-8fab-47cc-8c30-b5374584f889/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/refused.m4a",
+    "pid": 96667,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "23e0af00-6d31-48ac-8972-84480a81c798",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "b8b9defaddeb76f47ffb962d2589ff250dfcbc07fc59249358fdc273c7a8ca5b",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "refusal",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/refusal/486fa48a-e4ff-45ed-a09f-741bdb375285/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/refused.m4a",
+    "pid": 86100,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "0a21ccde-f6a1-41de-b740-d8877969f2b0",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "b8b9defaddeb76f47ffb962d2589ff250dfcbc07fc59249358fdc273c7a8ca5b",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "refusal",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/refusal/be0dace3-baf7-4d6b-bf49-b35442b2e6b8/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/refused.m4a",
+    "pid": 88820,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "6c124b62-ba41-4683-9fd4-bd15e8fab377",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "b8b9defaddeb76f47ffb962d2589ff250dfcbc07fc59249358fdc273c7a8ca5b",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "refusal",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/refusal/128dbdb5-dc28-498c-b63d-05a57c4539b5/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/refused.m4a",
+    "pid": 99044,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "6ceeb2d2-44a1-4a13-bce1-93f717620773",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "b8b9defaddeb76f47ffb962d2589ff250dfcbc07fc59249358fdc273c7a8ca5b",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "refusal",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/refusal/d1b5d3ce-2a97-4da6-bfd3-73a081726bb7/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/refused.m4a",
+    "pid": 86025,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "e66f45ad-05ec-444e-a9a3-16e3dea13440",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "b8b9defaddeb76f47ffb962d2589ff250dfcbc07fc59249358fdc273c7a8ca5b",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "refusal",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/refusal/16ed2e30-843e-448f-bc86-d54416036aeb/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/refused.m4a",
+    "pid": 93172,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "d086ed78-18f7-4ab8-a6dd-8993412dbf6f",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "b8b9defaddeb76f47ffb962d2589ff250dfcbc07fc59249358fdc273c7a8ca5b",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "refusal",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/refusal/a5d5ae80-0ace-4a04-b616-530ad74acb4b/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/refused.m4a",
+    "pid": 91990,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "6d5323af-db6f-43af-8968-306e3bc53c27",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "b8b9defaddeb76f47ffb962d2589ff250dfcbc07fc59249358fdc273c7a8ca5b",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "refusal",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/refusal/4eb97ba3-142f-406a-aa2b-9f7f744a82cd/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/refused.m4a",
+    "pid": 1127,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "878f2643-21e1-49ec-a8d4-76fce148f780",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "b8b9defaddeb76f47ffb962d2589ff250dfcbc07fc59249358fdc273c7a8ca5b",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "41610edb3c0ff5d540616aae8f04d6d0127e429c2bc9f5512e9f05601e2722f5"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "refusal",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/refusal/1c569e56-8f65-44a8-8ae2-d2a2c4c3fec1/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/refused.m4a",
+    "pid": 86156,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "f426b7cd-9a8a-48b5-82b7-cb5398b082ac",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "b8b9defaddeb76f47ffb962d2589ff250dfcbc07fc59249358fdc273c7a8ca5b",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "refusal",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/refusal/d89ed607-452a-4282-ab42-14d37069f637/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/refused.m4a",
+    "pid": 87616,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "3461ae63-1f2d-4906-bb09-e6810fa9b8ed",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "b8b9defaddeb76f47ffb962d2589ff250dfcbc07fc59249358fdc273c7a8ca5b",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "refusal",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/refusal/9833a2ac-d558-482c-8130-9743ca23b166/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/refused.m4a",
+    "pid": 97929,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "b84e8682-b0d6-428b-9278-bb6d50007dde",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "b8b9defaddeb76f47ffb962d2589ff250dfcbc07fc59249358fdc273c7a8ca5b",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "refusal",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/refusal/810538af-9505-499c-845c-e38955297597/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/refused.m4a",
+    "pid": 94347,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "14cb099b-9881-4ed0-9875-8ca4bc30b45a",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "b8b9defaddeb76f47ffb962d2589ff250dfcbc07fc59249358fdc273c7a8ca5b",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "refusal",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/refusal/c2fc1a23-88c9-4331-a9b6-19c0602110e9/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/refused.m4a",
+    "pid": 85659,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "72f0f5a9-f7a4-45e0-8303-5da0e152ce4a",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "b8b9defaddeb76f47ffb962d2589ff250dfcbc07fc59249358fdc273c7a8ca5b",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "refusal",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/refusal/caae825f-c811-4a8c-a2e2-3780e63f12ff/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/refused.m4a",
+    "pid": 85802,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "af3278e6-8a6d-4675-9490-f0dda6766da9",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "b8b9defaddeb76f47ffb962d2589ff250dfcbc07fc59249358fdc273c7a8ca5b",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "refusal",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/refusal/77474f65-4bab-445f-9e35-d32fdc7b7219/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/refused.m4a",
+    "pid": 85711,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "d11bceb5-799b-4dad-8821-0d281da88947",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "b8b9defaddeb76f47ffb962d2589ff250dfcbc07fc59249358fdc273c7a8ca5b",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "refusal",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/refusal/936eaea5-6ca3-4be5-acb3-b1b01b8a9071/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/refused.m4a",
+    "pid": 85564,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "e1007029-56b7-4cac-8e60-c8071b882c5b",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "b8b9defaddeb76f47ffb962d2589ff250dfcbc07fc59249358fdc273c7a8ca5b",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "refusal",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/refusal/b3b2fa41-d90d-4938-b5c2-ae700bc51a5d/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/refused.m4a",
+    "pid": 83165,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "4aefe0e0-5201-4c30-9ec2-fbb6875b1020",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "b8b9defaddeb76f47ffb962d2589ff250dfcbc07fc59249358fdc273c7a8ca5b",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "41610edb3c0ff5d540616aae8f04d6d0127e429c2bc9f5512e9f05601e2722f5"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "refusal",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/refusal/f335d874-a32b-4e73-b109-6e220200f482/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/refused.m4a",
+    "pid": 86179,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "411daeea-5054-4fa6-b41e-0e946ec3defb",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "b8b9defaddeb76f47ffb962d2589ff250dfcbc07fc59249358fdc273c7a8ca5b",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "refusal",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/refusal/b3568a85-b9da-4245-a21e-615eeb963131/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/refused.m4a",
+    "pid": 89952,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "ff8f8ab7-429a-4e1b-9aa4-5525367be238",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "b8b9defaddeb76f47ffb962d2589ff250dfcbc07fc59249358fdc273c7a8ca5b",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "refusal",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/refusal/cb3abc3d-d74b-426e-bd64-efc4e7aeb447/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/refused.m4a",
+    "pid": 95538,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "cd0f558b-314e-4036-8762-56cf27ecfd19",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "b8b9defaddeb76f47ffb962d2589ff250dfcbc07fc59249358fdc273c7a8ca5b",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "refusal",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/refusal/9a73a399-2f15-4141-bc1b-9f2a00a45f9d/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/refused.m4a",
+    "pid": 86072,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "6a2fe6a9-8c0b-418f-bffe-3fab177d2dc1",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "b8b9defaddeb76f47ffb962d2589ff250dfcbc07fc59249358fdc273c7a8ca5b",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "refusal",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/refusal/b67afdf2-0ad6-483f-94cc-d33453089baa/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/refused.m4a",
+    "pid": 86134,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "b3061b9f-28e7-4935-b636-c3cac51d1725",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "b8b9defaddeb76f47ffb962d2589ff250dfcbc07fc59249358fdc273c7a8ca5b",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "refusal",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/refusal/01eb1b5a-e53a-4346-aa12-90d299d79e8b/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/refused.m4a",
+    "pid": 90895,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "806d1556-24f4-4099-96b1-d3b7fd0af43b",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "b8b9defaddeb76f47ffb962d2589ff250dfcbc07fc59249358fdc273c7a8ca5b",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "refusal",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/refusal/2c301903-7b6a-4138-bade-2b9cef58b7d3/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/refused.m4a",
+    "pid": 87664,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "91b4ba7e-2f6c-4f39-ae2e-19cef9836798",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "b8b9defaddeb76f47ffb962d2589ff250dfcbc07fc59249358fdc273c7a8ca5b",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "refusal",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/refusal/33ca4803-fb0e-4c7f-b1d1-96e65b107449/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/refused.m4a",
+    "pid": 86195,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "3aff88f0-d790-494d-ac78-bda351119a3c",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "b8b9defaddeb76f47ffb962d2589ff250dfcbc07fc59249358fdc273c7a8ca5b",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "api",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/api/740a9590-c970-4f3b-b13f-0f75577f4c05/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 3446,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "520aa125-d6d7-47ec-8ec6-9ebc83c9aeac",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "api",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/api/f15dc217-1ff3-4af9-8b1c-abdcc2478075/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 3169,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "c871c9be-c948-41f7-993e-3cd0259d8a08",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "api",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/api/40bbbf8e-e869-40ed-b380-17a724acda40/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 3463,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "3a5bf5a6-3d09-4166-bd3c-3cfa852eac76",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "api",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/api/22d29ab3-8f98-456d-9d82-fc5d8828aebe/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 2786,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "d344a113-8c24-4f9f-9d66-1915557df511",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "api",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/api/794f97fa-ecc0-4348-b128-141d7fe7cf01/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 1924,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "fc131e22-51a1-4e97-8a27-638180499296",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "api",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/api/0c750749-1e83-4b65-8bb5-81e2f7d50818/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 83210,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "9abf3995-726c-458b-b35a-d5c3b723928f",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "41610edb3c0ff5d540616aae8f04d6d0127e429c2bc9f5512e9f05601e2722f5"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "api",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/api/8a53af70-e846-4c1b-8485-27589dbcf09a/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 3385,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "40b56da3-f9b3-4c8c-b9af-9e7af24905b6",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "api",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/api/79d2495d-9b38-46fc-9dd2-29d820c0d1eb/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 2684,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "e16f58f0-c052-448c-9814-523137bb2d3c",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "api",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/api/d96adf72-6d95-491f-8f85-942ca468946d/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 497,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "d171d58e-b1f5-47e3-8e1d-dafaf3e3bb51",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "api",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/api/60d61fb0-5311-49fb-b230-f6b62c970a0b/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 61175,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "2eb07ab9-6f1f-44fd-b6e5-72578f728d79",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "41610edb3c0ff5d540616aae8f04d6d0127e429c2bc9f5512e9f05601e2722f5"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "api",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/api/5e1e76f7-133f-474d-88dd-002e5ef895ee/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 2529,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "39b26f00-ad74-47ef-8950-a296cf6bd116",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "api",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/api/9e6c5924-61b7-46d2-84b3-2b857160736a/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 2619,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "f178cc58-6176-4f77-b32f-b4807f8a7dd8",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "api",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/api/09d6a91a-c2ac-4f08-823e-c2fb16948cc9/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 2830,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "70e146d2-fe2e-4c7c-85ca-6fe0eba3bb2c",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "api",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/api/64adbd39-1cc7-40cf-8616-7f614b66e2df/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 2667,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "6e6869f2-f3f1-43c4-b0ce-6d49fabc8de1",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "api",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/api/a0246199-94c7-49a4-80c6-b53e1a068db8/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 3575,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "f79a8598-6302-4218-b6b5-2a7e81c041dd",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "api",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/api/dca3484d-f830-4031-9cfe-5002f4b98804/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 3238,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "12cd5491-f7f3-4ada-98c4-db67df805dc4",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "api",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/api/f3d6c031-534d-4d5e-b225-1733d8811b5a/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 1772,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "8a7b21a9-0769-4a4a-83a2-d79bc0ab2e35",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "41610edb3c0ff5d540616aae8f04d6d0127e429c2bc9f5512e9f05601e2722f5"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "api",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/api/5dc021e5-31b3-49e3-a2c1-f36d8a7f9b5a/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 2445,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "ca983df7-d5a4-4960-9070-885340c51a48",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "api",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/api/6087d05a-767c-4368-8e06-2c1ad12f318f/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 3203,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "eb4b3d1c-9be4-4795-ad46-bdab6efa7e7c",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "api",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/api/275dbda0-2870-421b-b63b-a12fd5b6550f/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 3345,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "63903600-2dd6-4673-b4d2-217528d14982",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "api",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/api/2dfa0595-df36-4e2c-902a-746eba5cea8b/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 3415,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "81b0d98b-a201-4780-b682-131b544636d4",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "api",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/api/6d0c90fd-4431-401b-80ab-75419ce30bb8/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 3069,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "12fbce9c-c86c-45a8-ba51-47bdbd30721d",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "api",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/api/7f5f467d-577b-45e5-825b-b307a907808e/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 3277,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "1f0a7d9a-28d8-4e7b-98a8-bd135d6b91b5",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "api",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/api/78c04b40-fe14-4f33-beb3-0fffc64b28ac/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 2765,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "62a55c4b-3245-4b7b-9423-f443e1d52ed0",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "api",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/api/1b046013-4314-4829-a26d-a8e2a385e0ee/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 3589,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "404f2bf6-d306-4bbe-b6aa-251323c49f8f",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "api",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/api/b3a232ab-fc61-4568-9aa5-360ca231748e/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 2496,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "a05dda32-3ba7-4996-9e13-040f74a42621",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "api",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/api/dc71f32a-69b1-4eef-bc41-ef4d8ea0e81f/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 3321,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "5b50a276-0e45-412f-b641-bb090d55c10b",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "api",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/api/b0555a69-8e93-4363-ba2a-4112af6b5ed8/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 3293,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "c7435b62-5f3c-4c98-bf3e-2fe26eb7bc23",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "api",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/api/03c607d4-1fb1-4f3b-8586-c36d5a44b8e7/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 3124,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "488443ca-873e-43e2-b81e-583c7c52e8a2",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "api",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/api/c3958165-527d-4b66-921b-d7a04690663d/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 3510,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "5d941350-78d2-46a9-a100-157a09a19293",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "api",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/api/1350bfd5-63e2-4ab4-88ef-d10c43ec7ede/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 3153,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "69e55444-d385-4d3a-b499-99566046a7dc",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "api",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/api/5caee59a-fb52-4812-9ed2-25e006ae55f0/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 2709,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "2ede1a6d-de91-4dab-99b0-c6d0ac427309",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "api",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/api/5f3adc5f-4eb4-4a36-b76e-27321d930591/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 2574,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "87b34a21-6b49-4406-bded-69f0eb6eda45",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "quarantine",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/quarantine/4ea08ea4-b17a-43e3-8b63-14dee095567c/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 6096,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "fb784ecd-96b3-48a4-ae05-4f7104f61cad",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "quarantine",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/quarantine/a998c9ed-e05c-4aba-8763-1922467fe114/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 5475,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "110c3dd2-07e7-4a0f-83c3-693ec8131b60",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "quarantine",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/quarantine/fa04d44b-5170-4388-afa4-e14e8d08a541/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 6003,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "030c4426-f8e9-4b87-ba53-8f6472bb427f",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "quarantine",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/quarantine/afd944bb-013f-47c4-ae0c-e68cca318b84/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 83236,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "b7ae63d3-9f97-4784-8b16-9f6772e873db",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "41610edb3c0ff5d540616aae8f04d6d0127e429c2bc9f5512e9f05601e2722f5"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "quarantine",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/quarantine/4ed53e57-786f-4d9d-9d39-f4b2fa8d371f/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 4646,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "a25dfcc7-6861-492a-ad82-f4b7405256c8",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "quarantine",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/quarantine/8a700e5c-e918-458d-b29c-25e1e3af310d/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 4371,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "2f32d291-8726-4c88-87ab-85e5a6a94d39",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "quarantine",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/quarantine/fb348611-f75b-4132-a9e0-591f78a9ab53/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 6636,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "78bc74b4-2847-4f36-adac-d7d8933fea0c",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "quarantine",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/quarantine/eb843c9b-deaf-4e20-bd46-8e833e87c12b/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 5738,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "9f5aca80-0266-4e89-ad81-412b1a483553",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "quarantine",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/quarantine/d5c72b0c-72c2-476b-90c7-33fbc4dcf421/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 3829,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "a595b20a-e548-498b-adb2-fc101debbae2",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "quarantine",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/quarantine/166952b6-3fda-410e-bbd0-9ac56dbd93a0/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 3954,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "a139cefc-1df8-438e-9409-4b35af991270",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "quarantine",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/quarantine/b2341cab-fa93-4ce7-92ad-a35599217233/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 4240,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "3ca28e5e-a51b-447c-837d-ccb0e8f83662",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "quarantine",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/quarantine/66120e3a-7518-4afc-9f1a-efd7a15a7ddf/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 61208,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "72d8bca8-9fc9-4552-8232-0ff2e9ea99ac",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "41610edb3c0ff5d540616aae8f04d6d0127e429c2bc9f5512e9f05601e2722f5"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "quarantine",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/quarantine/0de76942-1930-4e2a-b5c0-fbd2d2806a8c/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 3701,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "51bb93d2-6206-4e43-a2d5-b2e7ac328f7a",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "quarantine",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/quarantine/262a7f48-24e1-4893-8a33-f1f828df386b/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 4191,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "b90da40f-4d76-4ce2-8968-80be03b09956",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "quarantine",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/quarantine/b7ea7469-92ef-4136-add4-d7ba2ea0d957/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 5796,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "9434e9df-28e4-426a-a268-50929a0539bb",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "quarantine",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/quarantine/bcac2913-03a5-475d-bee3-eba4562369fb/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 4011,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "6f7a45d6-5fae-4c59-a1ed-cc4acede3139",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "quarantine",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/quarantine/5a05742a-ff37-4cd8-a89f-6eb25434a800/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 5400,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "a7f3c867-05c1-4269-81b9-1782a673d3d9",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "quarantine",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/quarantine/cc789056-197c-4cc8-8a01-2bb46b0eb18d/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 4505,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "2eaedfd1-7082-479b-ad38-aa0732ca121d",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "quarantine",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/quarantine/36c67278-362c-45f0-a32d-438d4c60b7ba/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 3886,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "78ffd045-09a4-4696-b01d-6a6119e8ba10",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "quarantine",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/quarantine/903a3094-937c-40c2-ab35-914502e6f750/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 5257,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "3771c4cd-7e90-4863-b741-2f1be767332c",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "quarantine",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/quarantine/a1114eda-78f2-4b5e-8a17-79bf0da057e8/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 4132,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "d2546984-cb19-4152-b954-5a321ba2d2cc",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "quarantine",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/quarantine/96958225-8179-4835-87d7-2a56d3d32f0a/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 4444,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "f4f0b396-13c5-443e-97a3-b5a95eb4532f",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "quarantine",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/quarantine/357fd41a-30e7-4d1f-9aa9-dbfa755c175e/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 5188,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "95a83b21-e200-4347-8b72-02d325dd1b0d",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "quarantine",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/quarantine/00f4115e-99a2-40d8-b0e1-5afda95ada0f/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 5925,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "15c47af3-bc46-44ff-9041-4dede50585b4",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "quarantine",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/quarantine/e71abf49-1ff2-4833-a238-43e3157248d1/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 4302,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "fd6e8046-de90-431b-adde-370081354675",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "quarantine",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/quarantine/b94412b1-eb1a-426c-8ac1-4563eb14c836/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 5636,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "c7ac86ac-6d69-471a-a2de-87b6a42673e8",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "quarantine",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/quarantine/fb2e5669-f84a-45e2-b3be-e4ae1bd8da63/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 6313,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "863442fd-3163-43ad-9479-19db8b147135",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "quarantine",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/quarantine/03b8b076-f9d6-414b-82c9-f84c268e5399/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 3623,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "165ca80c-74f9-417f-aa7a-aabf78a1b1fd",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "quarantine",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/quarantine/a1df7311-faa2-4025-9f44-55080d144b03/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 5867,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "b0cde930-8582-4c63-905c-c5a65482e6ea",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "quarantine",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/quarantine/d9f33e29-f269-4dbc-af79-7b62e5913dbd/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 2649,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "44c35ca9-57ed-4160-90f1-152bd10ff2bb",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "41610edb3c0ff5d540616aae8f04d6d0127e429c2bc9f5512e9f05601e2722f5"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "quarantine",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/quarantine/57414629-4360-40ba-94b3-b603d8500510/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 3754,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "8d01689f-8745-44c8-8f97-c9d999043551",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "quarantine",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/quarantine/b6f25216-cd43-43b9-9a2e-262a4a2f9088/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 5053,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "098b97bd-f650-4c24-82ad-c12119e1f668",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "quarantine",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/quarantine/d9f9999d-ef1f-440d-babe-091c7b0ae875/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 4078,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "1d3d7043-ad11-4ff3-b87d-9503937b374a",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "replace",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/replace/bfcb9f5f-27fd-44a3-a78c-b8b155262c05/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 8403,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "b846370e-1a8b-4d83-89c4-82026a275b57",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "replace",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/replace/ef812c74-ce58-40f1-b037-2e11271e9646/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 8157,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "6ce6e464-cd7e-41c5-9102-e3f4dfd60f9d",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "replace",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/replace/6a5b19b8-174b-451e-8364-54801a2e7c2e/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 8276,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "a4645d34-a931-47b2-816c-4eb853363418",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "replace",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/replace/9cc284c0-9549-400f-94ba-883d440c58c3/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 7214,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "739047a4-be38-4e5b-9569-9f5503a62752",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "replace",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/replace/e0a6c08b-6a90-4462-8034-709ca5a90e76/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 7915,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "333f1365-1115-48c5-835a-cc5a7322dc6a",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "replace",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/replace/ff79a9e7-46a7-4e45-87f4-89de14877f12/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 8235,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "04c0f425-e142-4a3d-ab8b-61b8964b5bb0",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "replace",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/replace/a1fe87b5-3611-47e9-bd4e-2a59ef61656d/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 8008,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "5e4d9463-554d-49cb-b131-4cb72d984b43",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "replace",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/replace/87a32e3d-8bea-4543-8bbb-01286a830976/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 61373,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "9d3fdd73-05af-485f-858b-f63d4d9c7964",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "41610edb3c0ff5d540616aae8f04d6d0127e429c2bc9f5512e9f05601e2722f5"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "replace",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/replace/764a3d67-4061-4673-8c88-6672434bf951/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 7142,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "8d4d4c73-04a5-45fc-8718-3d8c77299eeb",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "replace",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/replace/0118e882-5fad-4768-bf37-16c5c98c1540/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 8518,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "9bc19c4f-c349-45f8-9393-94fd3e6ea394",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "replace",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/replace/78788b4a-8ed1-4c2c-ad15-a502bfe48372/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 83289,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "c682c193-2f1c-49b3-895c-298f1eb04a30",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "41610edb3c0ff5d540616aae8f04d6d0127e429c2bc9f5512e9f05601e2722f5"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "replace",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/replace/18c3ab6f-cd65-42a1-a91d-94a076939985/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 8198,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "cb88289c-c297-4525-9f6a-7ddb5c1eb744",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "replace",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/replace/477a9c02-595b-4d6a-aebc-e5432d527196/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 7412,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "3f056403-b273-4747-9f2b-66ebf09963d0",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "replace",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/replace/82f0d2d3-e2f2-435e-8dd2-1cb80ad75754/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 7879,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "89c6a37b-6efe-4d43-8e68-132333b64fb3",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "replace",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/replace/9424cdeb-fdce-4b41-a03a-43da8c13c1d7/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 7017,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "85029418-cf47-44cf-ac93-26a19207d90c",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "replace",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/replace/c9ec3329-8de8-40bf-b5d1-13e2c21473cc/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 7844,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "b1c53c1f-84d0-42c1-bd68-8e7d814153f8",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "replace",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/replace/5dd8874a-c523-422e-abcf-df2ddab0e4ee/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 7965,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "a5145c61-416e-4305-91af-38f454465ecf",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "replace",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/replace/bc9da200-fc8c-468c-ae42-3374787d5ba7/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 7745,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "88fb81da-fae2-45fc-b49c-b4569fc6b1cb",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "replace",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/replace/f773ba31-523c-4946-a702-419c209ade7c/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 8342,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "07bf916a-632c-413c-b3d0-ce5ceed05a16",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "replace",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/replace/d4b18f14-4499-43ca-aa3f-0b5fd92f8cfd/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 8423,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "d4ee8f95-1f65-48a8-b4b3-a5e9ac8a9204",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "replace",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/replace/0b635073-a363-4e7e-a1a5-1129f1ca117d/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 8130,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "b06d909f-37ab-4db1-b407-4fb02fcdbe2e",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "replace",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/replace/54dc0087-7e68-4af4-b365-d6bc7c233b4d/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 8369,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "0a6e09fa-a39c-4b49-9142-82573f2185a5",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "replace",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/replace/20193d06-8b1d-4f4e-92bf-7d5c14fa09ce/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 7635,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "060a43be-c8ee-412b-83cf-55d50cb197c7",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "replace",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/replace/25565659-9b85-4246-be7f-e409a58a6f45/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 4668,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "e1e33e1d-699f-4a54-9e5d-2892f3f8d665",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "41610edb3c0ff5d540616aae8f04d6d0127e429c2bc9f5512e9f05601e2722f5"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "replace",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/replace/f8fd4fb1-0341-4604-ba02-26e88011cfd0/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 8467,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "002a242e-090f-42b1-b4c3-0f7a9089caa6",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "replace",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/replace/953c9de0-a7ad-4dd5-a86f-6674a62ba81d/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 8091,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "7bd05893-46fc-42f2-b641-04c7044bf1bf",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "replace",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/replace/35e0f343-6af9-4d65-ab72-300feb62a3aa/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 7531,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "03504253-db45-4279-a7f4-044c26c27387",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "replace",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/replace/3cec3e23-1663-4ed6-bd7d-e26a97910ae3/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 7327,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "4180e965-3c3c-400d-9157-ab4de253b8ab",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "replace",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/replace/90fc4568-0ea7-48d9-9a79-0c8c070d237a/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 6805,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "af7e3284-d0e7-4ad1-9630-3bfcf4928304",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "replace",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/replace/dd59eacc-2824-4be5-829e-850dbc1a142b/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 6868,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "e5d1b194-87ad-486c-a0d1-45d125664538",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "replace",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/replace/a7280a2d-e544-4f3d-aa3b-376aac85b5c6/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 8051,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "f5d560e8-83f1-4d04-9471-c41260625b87",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "replace",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/replace/0d5c20e3-838e-4bda-8486-b41a8ceedf51/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 8306,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "ca63d502-fb01-4cb0-9641-80d792742033",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "replace",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/replace/97f7f171-9ec5-4af8-ab0d-a28ee64b0280/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mp4",
+    "pid": 8488,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "cf454e77-3cfe-4488-8272-e7315be9fc2c",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "3f51745b44b6a8c04ebd421b5d3bba7de78ac815529964b441f289e3ca19a213",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "recovery",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/recovery/5022e64d-c181-4186-b295-adf06d7b2a42/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 68280,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "a8757435-f0be-4b4d-beff-4b48eeaae490",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "recovery",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/recovery/91adba43-4ab9-4829-8f1e-b5637b0988df/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 5498,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "71bfce6a-7591-43d5-81c7-812d2efc82ea",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "41610edb3c0ff5d540616aae8f04d6d0127e429c2bc9f5512e9f05601e2722f5"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "recovery",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/recovery/f19447d7-ec0c-4703-9c85-ad819663867f/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 8734,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "7f14b735-cea5-4d6f-8ed5-f16c4f6fc40e",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "recovery",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/recovery/e66a81cd-6928-491c-89ef-a1fc6374a160/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 9504,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "5120d4c1-bc6e-4324-8824-802047f8b336",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "recovery",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/recovery/a3956f46-5341-49b5-9781-eef7260bef49/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 9320,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "32f0d710-a923-44d5-8160-8aa48e52b28f",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "recovery",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/recovery/5656eebc-b7c8-4288-a331-11af7ac792d0/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 9343,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "b24b291a-7087-4031-9a76-1d02213db4f1",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "recovery",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/recovery/98ec52d5-ab66-4342-b59d-b2083161e84f/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 9067,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "88e91397-217c-411e-a3b6-b8b173ffaac7",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "recovery",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/recovery/aaf4da67-693d-4d95-a0ff-87bae0d7691f/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 9365,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "30f51564-6cfb-4672-8db0-cd73c91974a2",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "recovery",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/recovery/4b28400e-7a89-479a-a29e-348a1898c3f9/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 9381,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "3cb95263-98db-4090-aabf-2a6bf5558402",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "recovery",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/recovery/4cd9738d-bc2d-47d7-abd7-4a014e72f18f/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 9530,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "b50dc728-e9e1-49e5-b5d1-1576e8bb532d",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "recovery",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/recovery/2582cbef-67ce-49d4-b6fe-8068bba414ea/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 8673,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "214d913a-07ea-4284-be65-4109d1bef160",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "recovery",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/recovery/2ae0196c-e1ad-465e-aac3-6de26a2ee35d/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 9176,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "56f02205-0b44-451f-8ad8-b6f1c72f801a",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "recovery",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/recovery/4286b095-76cf-4a28-a9fc-afb13960c441/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 8690,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "e1809f9a-f223-4324-b562-4db8975f251b",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "recovery",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/recovery/76c9c218-47b4-4381-8af7-bf4b27a1b28f/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 9299,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "6267ccf4-bcf6-4fa8-abab-7659a4df88c6",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "recovery",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/recovery/e9a6320e-4675-408f-8b18-8be0a9de5b9c/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 9258,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "2d11c474-eac9-43fa-822b-b8542eff184d",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "recovery",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/recovery/863ee8c6-021c-4f45-9ca5-8768fbc4f7e6/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 8542,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "998276d7-b27f-4cb1-982c-d5e0f60c0040",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "recovery",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/recovery/2c9c65fd-dec4-4c5d-af76-9442d2899ef2/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 64859,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "4e774a4b-77fe-418d-92c7-7643c4f73e20",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "recovery",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/recovery/da948732-870e-4780-a1e2-c0d79e84ed6e/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 8862,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "0e71fbdf-25df-407f-a137-3d5612aa011b",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "recovery",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/recovery/d051880f-8244-4bdb-84bf-28811672a946/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 9427,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "618f099d-5679-4809-9a33-e58450dc5992",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "recovery",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/recovery/64d0033b-5975-448b-93bf-b71438e5b881/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 8823,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "5ea39589-57d4-44f1-86ae-a512c40f2230",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "recovery",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/recovery/182ecab7-7c33-48aa-8aea-9031fae3e85b/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 8767,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "dd57fe72-1ea9-42ee-bcd6-3f63003053ae",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "recovery",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/recovery/ebe2cb08-69d3-41ef-aaf2-06e49ab41aec/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 61476,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "16c8f943-9356-4f72-88e0-ca271a794fba",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "41610edb3c0ff5d540616aae8f04d6d0127e429c2bc9f5512e9f05601e2722f5"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "recovery",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/recovery/1a5f7a97-cef5-4259-a48a-b1e927b478fb/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 67265,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "2770256b-85f0-4d45-a57a-a2b15a060f4a",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "1ba14a4e03d401a3dbe40dbe2b5251cac3c407ad7ecd0c1f619cdd0ba319c003"
+    },
+    "errors": [
+      "unexpected native refusal",
+      "missing exact off-grid seek completion"
+    ],
+    "passed": false
+  },
+  {
+    "kind": "recovery",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/recovery/dece2925-1576-42a0-97de-6935fe1ff334/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 9403,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "41be91e3-61b6-4d36-aa9f-e283b9be4dbf",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "recovery",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/recovery/2120752b-26db-443d-8165-3cb82cbb4c98/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 9487,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "25f5772a-4d68-40d1-beeb-670c0b494739",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "recovery",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/recovery/ef29726d-14de-417d-95a1-28199d4f7172/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 9096,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "23f4800c-b640-436c-bb57-30310cab87c4",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "recovery",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/recovery/363b546a-edbc-4648-875e-3cdcda5d0a13/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 9142,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "12ce5995-d2bf-4358-85da-924035a8beca",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "recovery",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/recovery/2b0f3021-0a51-47f7-84c2-72b13e5340f8/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 83315,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "7b7f9b77-dcd5-4c4e-afff-722a9b176acd",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "41610edb3c0ff5d540616aae8f04d6d0127e429c2bc9f5512e9f05601e2722f5"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "recovery",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/recovery/3b5a2d34-41b9-462d-9994-24a476e72458/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 9030,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "317776c1-682b-4e8e-a872-3488b6b9cdaf",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "recovery",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/recovery/dfc5e879-05a3-4018-a9a7-f90202e137c7/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 9227,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "611b5dd9-8437-48b4-b5bc-aa3ca5775ff3",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "recovery",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/recovery/d4f5483f-83ef-49a9-bead-7efd5d163c36/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 8631,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "3fc8fe48-328d-4838-a11c-fcee0709c01d",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "recovery",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/recovery/2aa5284a-25bc-4cdf-9067-cabc20a7466a/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 8652,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "9fdc1ea8-f3f5-4e45-80f9-5176afbe6c4e",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "recovery",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/recovery/ebdb6d67-e237-44d1-9aaa-1c407f9bc9b5/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 8566,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "e8f914e8-0590-454b-b6e5-17ee7eeb0670",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "recovery",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/recovery/d12cbbfe-534c-4d87-bd8d-88cf4220c1b5/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 9558,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "3894dc0d-5089-4af7-a12c-c6d8d88f3832",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "recovery",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/recovery/abd89f85-820c-421c-a847-f825c1e40653/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 9282,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "ca6dfd18-19f8-4134-9301-144baccc9906",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  },
+  {
+    "kind": "recovery",
+    "receipt": "docs/wamkit/proofs/continuation/hosts/recovery/965d8430-e8cf-4b8b-b3ba-5e01105a48f7/result.json",
+    "host": "/private/tmp/wam-wamkit/build/examples/WAMKitHost/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+    "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+    "pid": 9451,
+    "rc": 0,
+    "identities": {
+      "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+      "WAM_NATIVE_BENCHMARK_RUN_ID": "6c61cffc-5cfd-482e-ae68-454fa3e95f26",
+      "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+      "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "c000c4748441f25c251a58bb5c33979f5cd741ec637f3ce7a33e0da3bf312c00"
+    },
+    "errors": [],
+    "passed": true
+  }
+]

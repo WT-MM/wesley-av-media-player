@@ -2,7 +2,6 @@
 
 #include "media/playback_router.hpp"
 #include "platform/macos/native_open_preflight.hpp"
-#include "platform/macos/native_media_session.hpp"
 #include "qt/playback_policy.hpp"
 
 #include <QString>

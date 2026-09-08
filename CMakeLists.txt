@@ -446,7 +446,7 @@ if(APPLE)
       src/qt/native_playback_owner.hpp
       src/qt/native_playback_owner.mm
       src/qt/native_media_session_adapter.hpp
-      src/qt/native_media_session_adapter.mm)
+      src/platform/macos/qt_native_presentation_adapter.mm)
     target_compile_definitions(wam PRIVATE
       WAM_HAS_MACOS_NATIVE_PLAYBACK=1)
     target_compile_options(wam PRIVATE

@@ -1,0 +1,27 @@
+[
+  {
+    "path": "WAMKit.framework",
+    "details": "Executable=/private/tmp/wam-wamkit/build/wamkit-signing-final/payload/WAMKit.framework/Versions/Current/WAMKit\nIdentifier=org.wam.WAMKit\nFormat=bundle with Mach-O thin (arm64)\nCodeDirectory v=20500 size=3151 flags=0x10002(adhoc,runtime) hashes=92+3 location=embedded\nVersionPlatform=1\nVersionMin=852736\nVersionSDK=1705216\nHash type=sha256 size=32\nCandidateCDHash sha256=a65d3c2068556f2d7fd9ed27243f6771f35b9a65\nCandidateCDHashFull sha256=a65d3c2068556f2d7fd9ed27243f6771f35b9a65e4af809895bcbfb16c31441e\nHash choices=sha256\nCMSDigest=a65d3c2068556f2d7fd9ed27243f6771f35b9a65e4af809895bcbfb16c31441e\nCMSDigestType=2\nExecutable Segment base=0\nExecutable Segment limit=1032192\nExecutable Segment flags=0x0\nPage size=16384\nCDHash=a65d3c2068556f2d7fd9ed27243f6771f35b9a65\nSignature=adhoc\nInfo.plist entries=10\nTeamIdentifier=not set\nRuntime Version=26.5.0\nSealed Resources version=2 rules=13 files=28\nInternal requirements count=0 size=12\n",
+    "entitlements": ""
+  },
+  {
+    "path": "WAMKitHost.app",
+    "details": "Executable=/private/tmp/wam-wamkit/build/wamkit-signing-final/payload/WAMKitHost.app/Contents/MacOS/WAMKitHost\nIdentifier=org.wam.WAMKitHost\nFormat=app bundle with Mach-O thin (arm64)\nCodeDirectory v=20500 size=371 flags=0x10002(adhoc,runtime) hashes=5+3 location=embedded\nVersionPlatform=1\nVersionMin=852736\nVersionSDK=1705216\nHash type=sha256 size=32\nCandidateCDHash sha256=615cc146907a5d58f059a0536f65ed14f5c44e22\nCandidateCDHashFull sha256=615cc146907a5d58f059a0536f65ed14f5c44e22b9180ba4c067cb3d2a40852a\nHash choices=sha256\nCMSDigest=615cc146907a5d58f059a0536f65ed14f5c44e22b9180ba4c067cb3d2a40852a\nCMSDigestType=2\nExecutable Segment base=0\nExecutable Segment limit=32768\nExecutable Segment flags=0x1\nPage size=16384\nCDHash=615cc146907a5d58f059a0536f65ed14f5c44e22\nSignature=adhoc\nInfo.plist entries=14\nTeamIdentifier=not set\nRuntime Version=26.5.0\nSealed Resources version=2 rules=13 files=1\nInternal requirements count=0 size=12\n",
+    "entitlements": ""
+  },
+  {
+    "path": "WAMKitSwiftHost.app",
+    "details": "Executable=/private/tmp/wam-wamkit/build/wamkit-signing-final/payload/WAMKitSwiftHost.app/Contents/MacOS/WAMKitSwiftHost\nIdentifier=org.wam.WAMKitSwiftHost\nFormat=app bundle with Mach-O thin (arm64)\nCodeDirectory v=20500 size=632 flags=0x10002(adhoc,runtime) hashes=13+3 location=embedded\nVersionPlatform=1\nVersionMin=1703936\nVersionSDK=1705216\nHash type=sha256 size=32\nCandidateCDHash sha256=f5e2e524d301a6a0c21916825a8661c5b5906abb\nCandidateCDHashFull sha256=f5e2e524d301a6a0c21916825a8661c5b5906abb82f518b24634ad7f6fe46eb2\nHash choices=sha256\nCMSDigest=f5e2e524d301a6a0c21916825a8661c5b5906abb82f518b24634ad7f6fe46eb2\nCMSDigestType=2\nExecutable Segment base=0\nExecutable Segment limit=65536\nExecutable Segment flags=0x1\nPage size=16384\nCDHash=f5e2e524d301a6a0c21916825a8661c5b5906abb\nSignature=adhoc\nInfo.plist entries=8\nTeamIdentifier=not set\nRuntime Version=26.5.0\nSealed Resources version=2 rules=13 files=1\nInternal requirements count=0 size=12\n",
+    "entitlements": ""
+  },
+  {
+    "path": "WAM.app",
+    "details": "Executable=/private/tmp/wam-wamkit/build/wamkit-signing-final/payload/WAM.app/Contents/MacOS/WAM\nIdentifier=com.wesleymaa.wam\nFormat=app bundle with Mach-O thin (arm64)\nCodeDirectory v=20500 size=8850 flags=0x10002(adhoc,runtime) hashes=270+3 location=embedded\nVersionPlatform=1\nVersionMin=852736\nVersionSDK=1705216\nHash type=sha256 size=32\nCandidateCDHash sha256=dbe0614702ce29dc866e0bd034c331783a3f8cd9\nCandidateCDHashFull sha256=dbe0614702ce29dc866e0bd034c331783a3f8cd92b40a1bb3af4eb40bd12c73d\nHash choices=sha256\nCMSDigest=dbe0614702ce29dc866e0bd034c331783a3f8cd92b40a1bb3af4eb40bd12c73d\nCMSDigestType=2\nExecutable Segment base=0\nExecutable Segment limit=2785280\nExecutable Segment flags=0x1\nPage size=16384\nCDHash=dbe0614702ce29dc866e0bd034c331783a3f8cd9\nSignature=adhoc\nInfo.plist entries=16\nTeamIdentifier=not set\nRuntime Version=26.5.0\nSealed Resources version=2 rules=13 files=14\nInternal requirements count=0 size=12\n",
+    "entitlements": ""
+  },
+  {
+    "path": "WAM.app/Contents/PlugIns/WAMThumbnail.appex",
+    "details": "Executable=/private/tmp/wam-wamkit/build/wamkit-signing-final/payload/WAM.app/Contents/PlugIns/WAMThumbnail.appex/Contents/MacOS/WAMThumbnail\nIdentifier=com.wesleymaa.wam.quicklook.thumbnail\nFormat=bundle with Mach-O thin (arm64)\nCodeDirectory v=20500 size=1350 flags=0x10002(adhoc,runtime) hashes=31+7 location=embedded\nVersionPlatform=1\nVersionMin=852736\nVersionSDK=1705216\nHash type=sha256 size=32\nCandidateCDHash sha256=945629e9e9994e70411d25797c20343d8a7e05a5\nCandidateCDHashFull sha256=945629e9e9994e70411d25797c20343d8a7e05a5e737dd952449616ce511c4b2\nHash choices=sha256\nCMSDigest=945629e9e9994e70411d25797c20343d8a7e05a5e737dd952449616ce511c4b2\nCMSDigestType=2\nExecutable Segment base=0\nExecutable Segment limit=360448\nExecutable Segment flags=0x1\nPage size=16384\nCDHash=945629e9e9994e70411d25797c20343d8a7e05a5\nSignature=adhoc\nInfo.plist entries=12\nTeamIdentifier=not set\nRuntime Version=26.5.0\nSealed Resources version=2 rules=13 files=0\nInternal requirements count=0 size=12\n",
+    "entitlements": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"https://www.apple.com/DTDs/PropertyList-1.0.dtd\"><plist version=\"1.0\"><dict><key>com.apple.security.app-sandbox</key><true/></dict></plist>\n"
+  }
+]
