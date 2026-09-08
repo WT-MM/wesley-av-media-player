@@ -1,3 +1,4 @@
+#include "media/native_late_frame_trace.hpp"
 #include "platform/macos/native_presentation_admission.hpp"
 #include "platform/macos/native_video_consumer.hpp"
 
@@ -959,8 +960,44 @@ void testHalfOpenFloorAndProvenLateDrop() {
            "covering frame is scheduled");
     expect(fixture.consumer->facts().submittedFrames == 1,
            "frame covering the floor remains presentable");
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
+    if (wam::media::late_trace::enabled) {
+      fixture.clock.snapshot.mediaSeconds = 2.0;
+      std::vector<std::byte> followingPixels;
+      expect(NativeVideoConsumerTestAccess::injectDecodedFrame(
+                 *fixture.consumer, frame(7, 1100, 40, &followingPixels)),
+             "following late frame enters sink");
+      expect(NativeVideoConsumerTestAccess::pumpScheduler(*fixture.consumer),
+             "following late frame retires");
+      wam::media::late_trace::Record point;
+      bool context = false, retired = false;
+      for (auto& slot : wam::media::late_trace::traceSlots) {
+        while (slot.ring.pop(point)) {
+          if (point.pts == 980 && point.ptsScale == 1000) {
+            context = !point.late;
+            expect(point.outputTicks[0] != 0 &&
+                       point.outputTicks[0] <= point.outputTicks[1] &&
+                       point.outputTicks[1] <= point.outputTicks[2] &&
+                       point.outputTicks[2] <= point.outputTicks[9] &&
+                       point.outputTicks[9] <= point.commit,
+                   "preceding output stages retain causal host-tick order");
+          }
+          if (point.pts == 1100 && point.ptsScale == 1000)
+            retired = point.late && point.commit == 0;
+        }
+      }
+      expect(context && retired, "late trace includes the preceding output interval");
+    }
+#endif
+
+
   }
 
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
+  wam::media::late_trace::Record trace;
+  for (auto& slot : wam::media::late_trace::traceSlots)
+    while (slot.ring.pop(trace)) {}
+#endif
   Fixture late;
   late.clock.snapshot.mediaSeconds = 1.1;
   expect(late.consumer->armFirstGeneration(7) ==
@@ -978,6 +1015,21 @@ void testHalfOpenFloorAndProvenLateDrop() {
   expect(late.consumer->facts().discardedLateFrames == 1 &&
              late.consumer->facts().submittedFrames == 0,
          "only an interval proven ended at the clock is dropped late");
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
+  if (wam::media::late_trace::enabled) {
+    unsigned records = 0;
+    for (auto& slot : wam::media::late_trace::traceSlots) {
+      while (slot.ring.pop(trace)) {
+        ++records;
+        expect(trace.late && trace.ordinal == 1 && trace.pts == 1000 &&
+                   trace.ptsScale == 1000 && trace.duration == 100 &&
+                   trace.commit == 0 && trace.generation == 7,
+               "late telemetry preserves exact retired frame with no fabricated commit");
+      }
+    }
+    expect(records == 1, "every late retirement emits exactly one trace");
+  }
+#endif
 }
 
 void testPreviewQuiesceGatesAndRequiresKeyFrameRelease() {

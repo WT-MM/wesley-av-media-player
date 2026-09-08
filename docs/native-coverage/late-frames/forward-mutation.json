@@ -1,0 +1,20 @@
+[
+  {
+    "phase": "fixed",
+    "rc": 0,
+    "stdout": "native tracked video arbiter tests passed\n",
+    "stderr": "sysctlbyname for kern.hv_vmm_present failed with status -1kIOSurfaceMethodSetCoreVideoBridgedKeys failed: 10000003\n"
+  },
+  {
+    "phase": "forwarding-removed",
+    "rc": 1,
+    "stdout": "",
+    "stderr": "FAIL: main port preserves the wrapped display refresh reference\nsysctlbyname for kern.hv_vmm_present failed with status -1kIOSurfaceMethodSetCoreVideoBridgedKeys failed: 10000003\nFAIL: main port preserves the wrapped display refresh reference\nFAIL: main port preserves the wrapped display refresh reference\nFAIL: main port preserves the wrapped display refresh reference\nFAIL: main port preserves the wrapped display refresh reference\n"
+  },
+  {
+    "phase": "restored",
+    "rc": 0,
+    "stdout": "native tracked video arbiter tests passed\n",
+    "stderr": "sysctlbyname for kern.hv_vmm_present failed with status -1kIOSurfaceMethodSetCoreVideoBridgedKeys failed: 10000003\n"
+  }
+]

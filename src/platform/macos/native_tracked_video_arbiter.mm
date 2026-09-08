@@ -390,6 +390,12 @@ class NativeTrackedVideoArbiter::MainOutput final
     return state_->output->setPresentationRotation(degrees);
   }
 
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
+  [[nodiscard]] late_display_trace::Snapshot diagnosticDisplayPhase() const noexcept override {
+    return state_->output->diagnosticDisplayPhase();
+  }
+#endif
+
   [[nodiscard]] NativeTrackedVideoOutputFacts facts()
       const noexcept override {
     state_->pumpEvent();

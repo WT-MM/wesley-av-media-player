@@ -1,3 +1,7 @@
+#include "media/native_late_frame_trace.hpp"
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
+#include <mach/mach_time.h>
+#endif
 #include "native_video_presenter.hpp"
 
 #include <deque>
@@ -36,6 +40,9 @@ FrameLease::FrameLease(CVPixelBufferRef pixelBuffer,
   CVPixelBufferRetain(pixelBuffer);
   pixelBuffer_ = pixelBuffer;
   timing_ = timing;
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
+  if (media::late_trace::enabled) timing_.surfaceLeaseHostTicks = mach_absolute_time();
+#endif
   surface_budget_token_ = std::move(surfaceBudgetToken);
 }
 

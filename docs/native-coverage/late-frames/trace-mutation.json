@@ -1,0 +1,20 @@
+[
+  {
+    "phase": "fixed",
+    "rc": 0,
+    "stdout": "native video consumer fixture-free checks passed\n",
+    "stderr": "sysctlbyname for kern.hv_vmm_present failed with status -1kIOSurfaceMethodSetCoreVideoBridgedKeys failed: 10000003\n"
+  },
+  {
+    "phase": "emission-removed",
+    "rc": 1,
+    "stdout": "",
+    "stderr": "sysctlbyname for kern.hv_vmm_present failed with status -1kIOSurfaceMethodSetCoreVideoBridgedKeys failed: 10000003\nFAIL: late trace includes the preceding output interval\n"
+  },
+  {
+    "phase": "restored",
+    "rc": 0,
+    "stdout": "native video consumer fixture-free checks passed\n",
+    "stderr": "sysctlbyname for kern.hv_vmm_present failed with status -1kIOSurfaceMethodSetCoreVideoBridgedKeys failed: 10000003\n"
+  }
+]
