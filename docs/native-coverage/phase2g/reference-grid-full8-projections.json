@@ -1,0 +1,54 @@
+[
+  {
+    "name": "full-asp",
+    "measurement_valid": true,
+    "source_range": "pc",
+    "icc_profile": "Display",
+    "pixels": 81226,
+    "tolerance": {
+      "max_abs_projection": 0.15,
+      "max_rms_8bit": 6.0
+    },
+    "encoded": {
+      "rms": 34.81849597433085,
+      "projections": {
+        "wrong_matrix": 0.6253366703563386,
+        "wrong_range": -0.015958156986038703
+      }
+    },
+    "srgb": {
+      "rms": 2.240686861673581,
+      "projections": {
+        "wrong_matrix": -0.026111547615217733,
+        "wrong_range": 0.1662798584603278
+      }
+    },
+    "matrix_range_projection_pass": false
+  },
+  {
+    "name": "full-vp9",
+    "measurement_valid": true,
+    "source_range": "pc",
+    "icc_profile": "Display",
+    "pixels": 86387,
+    "tolerance": {
+      "max_abs_projection": 0.15,
+      "max_rms_8bit": 6.0
+    },
+    "encoded": {
+      "rms": 34.681709088237255,
+      "projections": {
+        "wrong_matrix": 0.6349402826290433,
+        "wrong_range": -0.005938297366190143
+      }
+    },
+    "srgb": {
+      "rms": 2.2864639107606703,
+      "projections": {
+        "wrong_matrix": -0.02819524646692834,
+        "wrong_range": 0.17012085605760083
+      }
+    },
+    "matrix_range_projection_pass": false
+  }
+]

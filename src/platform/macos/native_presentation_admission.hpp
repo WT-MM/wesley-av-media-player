@@ -20,6 +20,7 @@ namespace wam::macos {
       return "ProRes4444OpaqueRgbHdrUnsupported";
   }
   if (!output.presentsDecodedSurfacesDirectly()) {
+    if (green_mesa_11.sampleFormat == media::MediaVideoSampleFormat::Yuv444EightBit) return "SceneGraph444Unsupported";
     if (media::mediaSampleFormatIs422(green_mesa_11.sampleFormat)) {
       return "SceneGraph422Unsupported";
     }

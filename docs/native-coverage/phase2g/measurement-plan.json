@@ -1,0 +1,17 @@
+{
+  "normal": [
+    "/private/tmp/wam-ffmpeg-phase2/long/baseline.mkv",
+    "/private/tmp/wam-ffmpeg-phase2/long/asp.mkv",
+    "/private/tmp/wam-ffmpeg-phase2/long/hi10p.mkv",
+    "/private/tmp/wam-ffmpeg-phase2/long/h264422.mkv",
+    "/private/tmp/wam-phase2c/playback-assets/vp9.mkv",
+    "/private/tmp/wam-phase2c/playback-assets/vp9p2.mkv"
+  ],
+  "no-hardware-seam": [
+    "/private/tmp/wam-ffmpeg-phase2/long/baseline.mkv",
+    "/private/tmp/wam-ffmpeg-phase2/long/hi10p.mkv",
+    "/private/tmp/wam-ffmpeg-phase2/long/h264422.mkv",
+    "/private/tmp/wam-phase2c/playback-assets/vp9.mkv",
+    "/private/tmp/wam-phase2c/playback-assets/vp9p2.mkv"
+  ]
+}

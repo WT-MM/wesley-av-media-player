@@ -1,4 +1,5 @@
 #include "media/native_media_source.hpp"
+#include "media/native_qualified_color.hpp"
 #include "media/media_codec_facts.hpp"
 #include "media/native_exact_playback.hpp"
 
@@ -727,10 +728,19 @@ bool mediaVideoColorAdmitted(const MediaVideoFormat& green_mesa_11) noexcept {
   const bool depth = green_mesa_11.bitsPerComponent == 0 ||
                      green_mesa_11.bitsPerComponent == 8 ||
                      green_mesa_11.bitsPerComponent == 10;
-  return primaries && transfer && matrix && chroma && depth &&
+  const bool qualified444 = green_mesa_11.sampleFormat != MediaVideoSampleFormat::Yuv444EightBit ||
+      (!green_mesa_11.fullRangeVideo && green_mesa_11.transferFunction == MediaTransferFunction::Bt709 &&
+       ((green_mesa_11.colorPrimaries == MediaColorPrimaries::Bt709 && green_mesa_11.matrixCoefficients == MediaMatrixCoefficients::Bt709) ||
+        (green_mesa_11.colorPrimaries == MediaColorPrimaries::Bt601 && green_mesa_11.matrixCoefficients == MediaMatrixCoefficients::Bt601)));
+  return qualified444 && primaries && transfer && matrix && chroma && depth &&
          !green_mesa_11.unsupportedColorMetadataPresent &&
          !green_mesa_11.dolbyVisionConfigurationPresent &&
-         !green_mesa_11.ambientViewingEnvironmentPresent;
+         (!green_mesa_11.ambientViewingEnvironmentPresent ||
+          (!green_mesa_11.fullRangeVideo && green_mesa_11.ambientViewingEnvironmentPayload == kQualifiedHlgAmbientViewingEnvironment &&
+           green_mesa_11.colorPrimaries == MediaColorPrimaries::Bt2020 &&
+           green_mesa_11.transferFunction == MediaTransferFunction::Hlg &&
+           green_mesa_11.matrixCoefficients == MediaMatrixCoefficients::Bt2020Ncl &&
+           green_mesa_11.sampleFormat == MediaVideoSampleFormat::Yuv420TenBit));
 }
 
 MediaDisplaySize mediaVideoDisplaySize(const MediaVideoFormat& green_mesa_11) noexcept {

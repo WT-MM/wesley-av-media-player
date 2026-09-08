@@ -1,0 +1,27 @@
+[
+  {
+    "path": "src/platform/macos/video_decode_lane.hpp",
+    "sha256": "3aef9a8e32e4e7da9f34b814a9c81d4b6db1125fc93e2e106724c4eec14e8fc2",
+    "byte_identical": true
+  },
+  {
+    "path": "src/platform/macos/software_avcodec_video_decoder.mm",
+    "sha256": "2543a671bc427b1d0bd197fd7879b48a853cb2fd5d5de98f720eac2649726c16",
+    "byte_identical": true
+  },
+  {
+    "path": "src/platform/macos/software_presentation_pool.hpp",
+    "sha256": "01f28ef248b442c36d8652cfa17308d780d60305a7506e43768d5cea6b7b6567",
+    "byte_identical": true
+  },
+  {
+    "path": "src/platform/macos/software_presentation_pool.mm",
+    "sha256": "526e691cbb4d70047c6d8317d5664fa53aad9c65d88fb5738f099294314e123f",
+    "byte_identical": true
+  },
+  {
+    "path": "src/platform/macos/native_video_consumer.mm",
+    "sha256": "bc82c72a2433411c5ced1452eb0d6ccbddd1677ee9e5204a3b453eee03a4db91",
+    "byte_identical": true
+  }
+]

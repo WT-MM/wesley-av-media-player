@@ -1,0 +1,18 @@
+{
+  "asset": "/private/tmp/wam-phase2g/color-fixtures/hlg-hevc-wrong-matrix-ambient.mp4",
+  "rc": 0,
+  "pid": 3697,
+  "env": {
+    "HOME": "/private/tmp/wam-phase2g/captures/corrected-hardware/hlg-hevc-wrong-matrix-ambient/home",
+    "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+    "WAM_NATIVE_BENCHMARK_RUN_ID": "83d67922-03ea-4a7d-b084-f72f37d007c8",
+    "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "01d9e6d3599e41583fbd186f9094a8f1af82abf65ffd3783a475747f2723f90e",
+    "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "109ca6bdec23cca1623f5346854f4b32020d81647f3bfc2b8e223c775e0e4f08",
+    "WAM_TEST_BACKGROUND": "1",
+    "WAM_TEST_MUTED": "1",
+    "WAM_TEST_GEOMETRY": "480x270+2400+1000",
+    "WAM_PLAYBACK_METRICS_PATH": "/private/tmp/wam-phase2g/captures/corrected-hardware/hlg-hevc-wrong-matrix-ambient/metrics.jsonl",
+    "WAM_TEST_QUIT_AFTER_MS": "6500",
+    "WAM_TEST_WINDOW_SCRIPT": "pause:0@1,report@4500,grab:0:/private/tmp/wam-phase2g/captures/corrected-hardware/hlg-hevc-wrong-matrix-ambient/scene.png@300,videograb:0:/private/tmp/wam-phase2g/captures/corrected-hardware/hlg-hevc-wrong-matrix-ambient/display.png@300,report@400"
+  }
+}

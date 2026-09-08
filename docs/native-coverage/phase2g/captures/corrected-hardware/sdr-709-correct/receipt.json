@@ -1,0 +1,18 @@
+{
+  "asset": "/private/tmp/wam-phase2g/color-fixtures/sdr-709-correct.mp4",
+  "rc": 0,
+  "pid": 4578,
+  "env": {
+    "HOME": "/private/tmp/wam-phase2g/captures/corrected-hardware/sdr-709-correct/home",
+    "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+    "WAM_NATIVE_BENCHMARK_RUN_ID": "c11bda5b-c737-4882-841a-7207d0fb1418",
+    "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "0453c3b8846fbdccf317997c72a08b9d689a2e4e6534282c9968fb2bb7da6626",
+    "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "109ca6bdec23cca1623f5346854f4b32020d81647f3bfc2b8e223c775e0e4f08",
+    "WAM_TEST_BACKGROUND": "1",
+    "WAM_TEST_MUTED": "1",
+    "WAM_TEST_GEOMETRY": "480x270+2400+1000",
+    "WAM_PLAYBACK_METRICS_PATH": "/private/tmp/wam-phase2g/captures/corrected-hardware/sdr-709-correct/metrics.jsonl",
+    "WAM_TEST_QUIT_AFTER_MS": "6500",
+    "WAM_TEST_WINDOW_SCRIPT": "pause:0@1,report@4500,grab:0:/private/tmp/wam-phase2g/captures/corrected-hardware/sdr-709-correct/scene.png@300,videograb:0:/private/tmp/wam-phase2g/captures/corrected-hardware/sdr-709-correct/display.png@300,report@400"
+  }
+}

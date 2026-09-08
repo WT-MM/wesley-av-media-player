@@ -1,0 +1,54 @@
+[
+  {
+    "name": "444-601",
+    "measurement_valid": true,
+    "source_range": "tv",
+    "icc_profile": "Display",
+    "pixels": 85192,
+    "tolerance": {
+      "max_abs_projection": 0.15,
+      "max_rms_8bit": 6.0
+    },
+    "encoded": {
+      "rms": 35.06552100865573,
+      "projections": {
+        "wrong_matrix": 0.6543584367623659,
+        "wrong_range": 1.5131632713229843
+      }
+    },
+    "srgb": {
+      "rms": 1.9453881689348935,
+      "projections": {
+        "wrong_matrix": -0.012263620235931477,
+        "wrong_range": -0.03476335676810282
+      }
+    },
+    "matrix_range_projection_pass": true
+  },
+  {
+    "name": "444-709",
+    "measurement_valid": true,
+    "source_range": "tv",
+    "icc_profile": "Display",
+    "pixels": 85677,
+    "tolerance": {
+      "max_abs_projection": 0.15,
+      "max_rms_8bit": 6.0
+    },
+    "encoded": {
+      "rms": 28.195493571438053,
+      "projections": {
+        "wrong_matrix": -0.0988811664840576,
+        "wrong_range": 0.5069080402469281
+      }
+    },
+    "srgb": {
+      "rms": 5.929536565580732,
+      "projections": {
+        "wrong_matrix": 0.30978738427333763,
+        "wrong_range": -0.13363747157167843
+      }
+    },
+    "matrix_range_projection_pass": false
+  }
+]
