@@ -9,6 +9,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -85,6 +86,11 @@ FrameLease makeFrame(std::uint64_t generation, std::int64_t value) {
 
 class FakeTrackedOutput final : public NativeTrackedVideoOutput {
  public:
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
+  [[nodiscard]] wam::macos::late_display_trace::Snapshot diagnosticDisplayPhase() const noexcept override {
+    return {7, 123456789, 1001, 60000};
+  }
+#endif
   explicit FakeTrackedOutput(std::uint64_t generation) noexcept
       : generation_(generation) {}
 
@@ -281,6 +287,14 @@ struct Fixture {
         preview(arbiter == nullptr ? nullptr : arbiter->previewPort()) {
     expect(arbiter != nullptr && main != nullptr && preview != nullptr,
            "fresh output creates both arbiter ports");
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
+    if (main) {
+      const auto phase = main->diagnosticDisplayPhase();
+      expect(phase.display == 7 && phase.host == 123456789 &&
+                 phase.period == 1001 && phase.scale == 60000,
+             "main port preserves the wrapped display refresh reference");
+    }
+#endif
   }
 
   std::shared_ptr<FakeTrackedOutput> output;
@@ -459,6 +473,40 @@ void portsOwnTheWrappedLifetime() {
 }  // namespace
 
 int main() {
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
+  {
+    namespace trace = wam::macos::late_display_trace;
+    auto& display = trace::displays[0];
+    auto& binding = trace::bindings[0];
+    int layer = 0;
+    display.id = 1;
+    binding.display.store(&display, std::memory_order_release);
+    binding.layer.store(reinterpret_cast<std::uintptr_t>(&layer), std::memory_order_release);
+    std::atomic<bool> done{false};
+    std::thread writer([&] {
+      for (std::uint64_t i = 1; i <= 100000; ++i) {
+        CVTimeStamp target{};
+        target.flags = kCVTimeStampHostTimeValid | kCVTimeStampVideoRefreshPeriodValid;
+        target.hostTime = i;
+        target.videoRefreshPeriod = static_cast<std::int64_t>(2 * i);
+        target.videoTimeScale = static_cast<std::int32_t>(3 * i);
+        trace::refresh(nullptr, nullptr, &target, 0, nullptr, &display);
+      }
+      done.store(true, std::memory_order_release);
+    });
+    bool coherent = true;
+    while (!done.load(std::memory_order_acquire)) {
+      const auto phase = trace::sample(&layer);
+      coherent = coherent && (!phase.host ||
+          (phase.period == 2 * phase.host && phase.scale == 3 * phase.host));
+    }
+    writer.join();
+    const auto phase = trace::sample(&layer);
+    expect(coherent && phase.host == 100000 && phase.period == 200000 && phase.scale == 300000,
+           "refresh callback publishes one coherent rational reference");
+    trace::unbind(&layer);
+  }
+#endif
   creationRequiresFreshOutput();
   previewEventNeverAppearsAsMain();
   mainEventNeverAppearsAsPreview();
