@@ -1093,6 +1093,15 @@ NativeAudioOutputProgress NativeAudioOutput::activate(
     media::MediaTime mediaOrigin,
     media::MediaTime pausedClockPosition,
     NativeAudioDeclaredSilence declaredSilence) noexcept {
+  if (nativeAudioDeviceRecoverySeekTestGate().exchange(false, std::memory_order_acq_rel)) {
+    devicePropertyChanged(&gSlots[slot_index_].deviceListener, unit_,
+                          kAudioUnitProperty_StreamFormat, kAudioUnitScope_Output, 0);
+  }
+  // Generation activation must reconcile pending format invalidation on its owner.
+  if ((admission_gate_.load(std::memory_order_acquire) & kAdmissionDeviceInvalid) != 0) {
+    const auto reconciled = reconcileDeviceChange();
+    if (reconciled != NativeAudioOutputProgress::Done) return reconciled;
+  }
   if (!configured_.load(std::memory_order_acquire) ||
       state_.load(std::memory_order_acquire) !=
           static_cast<std::uint8_t>(NativeAudioOutputState::Stopped) ||
@@ -1100,12 +1109,12 @@ NativeAudioOutputProgress NativeAudioOutput::activate(
       streamFrameCursor > kMaximumExactDoubleInteger ||
       !mediaOrigin.valid() || mediaOrigin.value < 0 ||
       !pausedClockPosition.valid() || pausedClockPosition.value < 0 ||
-      (admission_gate_.load(std::memory_order_acquire) &
-       kAdmissionDeviceInvalid) != 0 ||
       failure_.load(std::memory_order_acquire) !=
           static_cast<std::uint8_t>(NativeAudioOutputFailure::None)) {
+    if ((admission_gate_.load(std::memory_order_acquire) & kAdmissionDeviceInvalid) != 0) return quiescing();
     return NativeAudioOutputProgress::Invalid;
   }
+  if ((admission_gate_.load(std::memory_order_acquire) & kAdmissionDeviceInvalid) != 0) return quiescing();
   CallbackBridge &renderBridge = gSlots[slot_index_].render;
   const std::uint64_t bridge = renderBridge.gate.fetch_or(
       kBridgePaused, std::memory_order_acq_rel);
