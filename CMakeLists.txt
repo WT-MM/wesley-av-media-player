@@ -85,6 +85,12 @@ option(WAM_REQUIRE_NATIVE_VIDEO_TEST_HARDWARE
   "Require hardware H.264/Main 10 decoding in the macOS VideoToolbox test"
   OFF)
 
+option(WAM_NATIVE_BENCHMARK_TELEMETRY
+  "Compile per-frame deadline diagnostics (also requires runtime opt-in)" OFF)
+if(WAM_NATIVE_BENCHMARK_TELEMETRY)
+  add_compile_definitions(WAM_NATIVE_BENCHMARK_TELEMETRY=1)
+endif()
+
 include(CTest)
 if(WAM_REQUIRE_NATIVE_VIDEO_TEST_HARDWARE AND
     (NOT APPLE OR NOT BUILD_TESTING OR
@@ -2434,4 +2440,24 @@ endif()
 
 if(WAM_BUILD_WAMKIT)
   add_subdirectory(src/wamkit)
+endif()
+
+if(BUILD_TESTING)
+  add_executable(wam_native_late_frame_trace_test tests/native_late_frame_trace_test.cpp)
+  target_include_directories(wam_native_late_frame_trace_test PRIVATE src)
+  add_test(NAME native_late_frame_trace COMMAND wam_native_late_frame_trace_test)
+  if(WAM_NATIVE_BENCHMARK_TELEMETRY AND TARGET wam_native_video_consumer_test)
+    set_tests_properties(macos_native_video_consumer PROPERTIES
+      ENVIRONMENT "WAM_NATIVE_BENCHMARK_TELEMETRY=1")
+  endif()
+endif()
+
+if(APPLE AND BUILD_TESTING)
+  add_executable(wam_native_late_frame_json_test
+    tests/native_late_frame_json_test.cpp src/qt/native_playback_metrics.cpp)
+  target_include_directories(wam_native_late_frame_json_test PRIVATE src)
+  target_compile_definitions(wam_native_late_frame_json_test PRIVATE WAM_NATIVE_BENCHMARK_TELEMETRY=1)
+  add_test(NAME native_late_frame_json
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tests/native_late_frame_json_test.py"
+      "$<TARGET_FILE:wam_native_late_frame_json_test>")
 endif()

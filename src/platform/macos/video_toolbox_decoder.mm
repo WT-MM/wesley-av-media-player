@@ -1,3 +1,7 @@
+#include "media/native_late_frame_trace.hpp"
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
+#include <mach/mach_time.h>
+#endif
 #include "video_toolbox_decoder.hpp"
 
 #include "media/media_codec_facts.hpp"
@@ -998,6 +1002,9 @@ void deliverDecodedFrameImpl(const std::shared_ptr<AsyncDecodeState> &state,
                              CVImageBufferRef imageBuffer,
                              CMTime presentationTime,
                              CMTime presentationDuration) {
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
+  if (media::late_trace::enabled) timing.decodeCompleteHostTicks = mach_absolute_time();
+#endif
   // Async callbacks are not assumed to arrive in submission or presentation
   // order. Serialize the callback boundary, restore submission order by the
   // captured sequence, then apply the SPS-derived PTS reorder bound.

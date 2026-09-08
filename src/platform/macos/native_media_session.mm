@@ -1,3 +1,7 @@
+#include "media/native_late_frame_trace.hpp"
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
+#include <mach/mach_time.h>
+#endif
 #include "media/audio_track_admission.hpp"
 #include "media/native_seek_progress.hpp"
 #include "native_media_session.hpp"
@@ -569,6 +573,9 @@ constexpr std::uint64_t kHostPacedFloorNanos = 10ULL * 1000ULL * 1000ULL;
   const std::uint64_t cap = heartbeat ? kHostPacedFloorNanos : std::uint64_t(INT64_MAX);
   std::uint64_t nanos = cap;
   std::uint64_t due = dueSlot->load(std::memory_order_acquire);
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
+  if (media::late_trace::enabled) media::late_trace::worker.waitDue = due;
+#endif
   if (due == 0 && !heartbeat) return DISPATCH_TIME_FOREVER;
   if (due != 0) {
     const std::uint64_t now = hostClock.readTicks(hostClock.context);
@@ -610,10 +617,34 @@ void NativeMediaSessionWake::wait() noexcept {
   // races the timeout is not lost: its token stays queued and is consumed by
   // the next wait, costing at most one redundant worker pass. Every worker
   // pass is idempotent, which is what makes the timed wait safe here.
-  static_cast<void>(dispatch_semaphore_wait(
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
+  if (media::late_trace::enabled) {
+    auto& trace = media::late_trace::worker;
+    trace.waitBegin = mach_absolute_time();
+    trace.waitDue = 0;
+    trace.waitHostPaced = impl_->hostPaced;
+  }
+#endif
+  const auto waitResult = dispatch_semaphore_wait(
       impl_->semaphore,
       hostPacedDeadline(impl_->hostPaced, impl_->heartbeat, impl_->hostPacedClock,
-                        &impl_->videoDueHostTicks)));
+                        &impl_->videoDueHostTicks));
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
+  if (media::late_trace::enabled) {
+    media::late_trace::worker.waitEnd = mach_absolute_time();
+    media::late_trace::worker.waitTimedOut = waitResult != 0;
+    auto& trace = media::late_trace::worker;
+    if (trace.waitDue && trace.waitEnd > trace.waitDue &&
+        trace.waitEnd - trace.waitDue > trace.slowWaitEnd - trace.slowWaitDue) {
+      trace.slowWaitBegin = trace.waitBegin;
+      trace.slowWaitEnd = trace.waitEnd;
+      trace.slowWaitDue = trace.waitDue;
+      trace.slowWaitTimedOut = trace.waitTimedOut;
+    }
+  }
+#else
+  static_cast<void>(waitResult);
+#endif
 #if defined(WAM_NATIVE_MEDIA_SESSION_TESTING)
   const std::uint64_t token =
       impl_->consumedTokens.fetch_add(1, std::memory_order_acq_rel) + 1;
@@ -1007,6 +1038,10 @@ struct NativeMediaSession::Impl final {
       if (rationalCommit) exactCommitReadySlot = exactCommitProof;
       else commitReadySlot = ready;
     }
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
+    if (media::late_trace::enabled)
+      media::late_trace::worker.lastSeekLanding = mach_absolute_time();
+#endif
     queueObservations();
     return true;
   }
@@ -3378,6 +3413,10 @@ if (result != NativeAudioSessionProgress::Done) {
   }
 
   void work() noexcept {
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
+    // Materialize diagnostic TLS before any presentation deadline can be armed.
+    if (media::late_trace::enabled) media::late_trace::worker = {};
+#endif
     while (true) {
       syncHostPacedDeadlines();
       dependencies.wake->wait();

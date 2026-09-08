@@ -1,0 +1,154 @@
+{
+  "head": "85471b49806322e2f3f4cf3a54ad57ced9a79a74",
+  "candidate_sha256": "2f3d90ac75ba4e7e4f5a7a39743cead542bd1e93ca746de45248b35d9ecf8cae",
+  "source": [
+    {
+      "path": "CMakeLists.txt",
+      "sha256": "7f8617fbf1683536486687de766f3038e34d1b9fb7ba61b86e6e17a7855c3c87"
+    },
+    {
+      "path": "scripts/late_frame_packet_map.py",
+      "sha256": "b69dd8c68bcdb10e3881364471f66cd29efdc4f86c18e68c9619ae6ac74fb1ea"
+    },
+    {
+      "path": "scripts/measure_late_frames.py",
+      "sha256": "a541a86998aaf66ef11a76ff146ab6cda33429a3f3a9b506a7626e75969dbc2e"
+    },
+    {
+      "path": "src/media/native_late_frame_trace.hpp",
+      "sha256": "33e35f8a196574e85a394c544a93e20a4049fec245ffc50e12342456f7cc92ae"
+    },
+    {
+      "path": "src/media/native_media_dispatcher.cpp",
+      "sha256": "23122cc20796960a06fd1885f9939c0d519d246ebfa90d6fa07f0380c0c6d98a"
+    },
+    {
+      "path": "src/platform/macos/native_late_display_trace.hpp",
+      "sha256": "24c587a45a0c57cf0e8121101ab8621b9de3fff0073aefa9e92b967161c88539"
+    },
+    {
+      "path": "src/platform/macos/native_layer_host_view.mm",
+      "sha256": "e391edda439977bad71e63b73a1db1216ada5c440fcb602918700d0dc588dfad"
+    },
+    {
+      "path": "src/platform/macos/native_layer_video_output.hpp",
+      "sha256": "7a487cf2738f01ed7a1d34892bede67bf652c86853cbd93e31a4ef884ab861c7"
+    },
+    {
+      "path": "src/platform/macos/native_layer_video_output.mm",
+      "sha256": "dca5b06367e7a3c7163e843a2806520321d13435144f35c09922b81a5a0c72d0"
+    },
+    {
+      "path": "src/platform/macos/native_media_session.mm",
+      "sha256": "1064082ed9d081f58c58abb81413c4b73c71619e916c42addf66c89090ee3683"
+    },
+    {
+      "path": "src/platform/macos/native_tracked_video_arbiter.mm",
+      "sha256": "9d3e8f23db2255d1b7a5c8d17e6ebebfd035d15f700cc0b8ca56f71f240e3976"
+    },
+    {
+      "path": "src/platform/macos/native_tracked_video_output.hpp",
+      "sha256": "c5de964215e6ecadc533af2e09024d48187812a1dd750d4ad5296fafa65d8cd4"
+    },
+    {
+      "path": "src/platform/macos/native_video_consumer.mm",
+      "sha256": "59b5fbd4395e398a306ef0451cf6e7ecc811ccaa0ec595af9fae3594672345f6"
+    },
+    {
+      "path": "src/platform/macos/native_video_presenter.hpp",
+      "sha256": "c4d423c8ac3bfb68be9835fdaed886fcf2fe9fc25eedfff124a6e6ec323b1014"
+    },
+    {
+      "path": "src/platform/macos/native_video_presenter.mm",
+      "sha256": "06d68eeae068414757b742a717e97c070c8d1c70019f573b6f2f528dfaaf271e"
+    },
+    {
+      "path": "src/platform/macos/video_toolbox_decoder.mm",
+      "sha256": "433351d06001fa11e28d1e405aa9c4d98aa8481eeb77be3d5b3543cb25717c9e"
+    },
+    {
+      "path": "src/qt/native_playback_metrics.cpp",
+      "sha256": "11047bdb34d70928b46ce8c39ddc2b3c351a99f1834cdaf996de783b266426bd"
+    },
+    {
+      "path": "tests/native_late_frame_json_test.cpp",
+      "sha256": "f66a8e260254014a260824f92309a001fb3257609d987093458a59635f9ec629"
+    },
+    {
+      "path": "tests/native_late_frame_json_test.py",
+      "sha256": "90f2d94fa7824f1a1bb99dac6d9e0a16b10f6096e0c9534b33d3a153a3a1dca2"
+    },
+    {
+      "path": "tests/native_late_frame_trace_test.cpp",
+      "sha256": "03de6e8005c05f997a16434b75e8437720b421ea0f21a62317912ebfbb3e029e"
+    },
+    {
+      "path": "tests/native_tracked_video_arbiter_test.mm",
+      "sha256": "3e8755bf581933ddf267419412a7373d05cf70ef54e0b05fe27017ef50bb2180"
+    },
+    {
+      "path": "tests/native_video_consumer_test.mm",
+      "sha256": "1fcddf8226d6c0bb76ba3095277540d0b8a3225ff525deaf74fe5902a240e8a0"
+    }
+  ],
+  "proofs": [
+    {
+      "proof": "trace",
+      "files": [
+        {
+          "path": "/private/tmp/wam-late/src/platform/macos/native_video_consumer.mm",
+          "sha256": "59b5fbd4395e398a306ef0451cf6e7ecc811ccaa0ec595af9fae3594672345f6"
+        },
+        {
+          "path": "/private/tmp/wam-late/tests/native_video_consumer_test.mm",
+          "sha256": "1fcddf8226d6c0bb76ba3095277540d0b8a3225ff525deaf74fe5902a240e8a0"
+        },
+        {
+          "path": "/private/tmp/wam-late/build/wam_native_video_consumer_test",
+          "sha256": "215c00f8f12d7f1d1af8897b7a6fb37af814fae7f9261df209cd32838b677abc"
+        },
+        {
+          "path": "/private/tmp/wam-late-scratch/trace-mutant",
+          "sha256": "904da6643e199d5c3b2f384614a9e639788b73f74e4079851313cc954c08b131"
+        },
+        {
+          "path": "/private/tmp/wam-late-scratch/native_video_consumer_mutant.mm",
+          "sha256": "a41515a44301121e019a7bedd9a2bebbd544eb7be2b858c9dfbfc1fb58a42ad0"
+        },
+        {
+          "path": "/private/tmp/wam-late-scratch/trace-mutation.py",
+          "sha256": "96879b350990bb4e53cdd28c272bc27d22af40a1e8ce026dd7f3579d5a102770"
+        }
+      ]
+    },
+    {
+      "proof": "forward",
+      "files": [
+        {
+          "path": "/private/tmp/wam-late/src/platform/macos/native_tracked_video_arbiter.mm",
+          "sha256": "9d3e8f23db2255d1b7a5c8d17e6ebebfd035d15f700cc0b8ca56f71f240e3976"
+        },
+        {
+          "path": "/private/tmp/wam-late/tests/native_tracked_video_arbiter_test.mm",
+          "sha256": "3e8755bf581933ddf267419412a7373d05cf70ef54e0b05fe27017ef50bb2180"
+        },
+        {
+          "path": "/private/tmp/wam-late/build/wam_native_tracked_video_arbiter_test",
+          "sha256": "465426544a235601b46537e1dadf386216cf0334e9635e4307768576c39e89b3"
+        },
+        {
+          "path": "/private/tmp/wam-late-scratch/forward-mutant",
+          "sha256": "98bd8f5da5bcedb8dbc1ef281a4dbe24db9e6233b1b1ffe053d9624bd34d0a8f"
+        },
+        {
+          "path": "/private/tmp/wam-late-scratch/native_tracked_video_arbiter_mutant.mm",
+          "sha256": "aae7ec3f532ac05de6ecd96811b848f33edfeeea9d43f205469aefcfd6606fd6"
+        },
+        {
+          "path": "/private/tmp/wam-late-scratch/forward-mutation.py",
+          "sha256": "30f92e3d5ac4493443d4f23edb2c753d4bebea6c3cdb051aa74dbe486a2cdf29"
+        }
+      ]
+    }
+  ]
+}
