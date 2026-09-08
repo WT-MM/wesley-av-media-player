@@ -1,3 +1,4 @@
+#include "media/native_late_frame_trace.hpp"
 #include "native_playback_metrics.hpp"
 
 #include <charconv>
@@ -216,6 +217,79 @@ bool NativePlaybackMetrics::write(
   if (!enabled_ || failed_ || line_ == nullptr) {
     return false;
   }
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
+  if (media::late_trace::enabled) {
+    char traceLine[4096];
+    media::late_trace::Record r;
+    for (auto& slot : media::late_trace::traceSlots) {
+      while (slot.ring.pop(r)) {
+        const auto u = [](std::uint64_t n) { return static_cast<unsigned long long>(n); };
+        char deadline[32], commit[32], seek[32];
+        std::snprintf(deadline, sizeof deadline, "%llu", u(r.deadline));
+        std::snprintf(commit, sizeof commit, "%llu", u(r.commit));
+        std::snprintf(seek, sizeof seek, "%llu", u(r.sinceSeek));
+        char phase[256];
+        const int phaseSize = std::snprintf(phase, sizeof phase,
+            "{\"display_id\":%llu,\"reference_host_ticks\":%llu,\"period_value\":%llu,\"period_scale\":%llu}",
+            u(r.display), u(r.refreshHost), u(r.refreshPeriod), u(r.refreshScale));
+        if (phaseSize <= 0 || static_cast<std::size_t>(phaseSize) >= sizeof phase) {
+          failed_ = true;
+          return false;
+        }
+        const int n = std::snprintf(traceLine, sizeof traceLine,
+          "{\"record\":\"video_frame_trace\",\"consumer\":%llu,\"generation\":%llu,"
+          "\"ordinal\":%llu,\"pts_value\":%lld,\"pts_scale\":%d,"
+          "\"duration_value\":%lld,\"duration_scale\":%d,\"late\":%s,"
+          "\"deadline_ticks\":%s,\"decode_complete_ticks\":%llu,\"surface_lease_ticks\":%llu,"
+          "\"observed_ticks\":%llu,\"enqueue_return_ticks\":%s,\"draw_ticks\":null,"
+          "\"display_refresh_phase\":%s,\"fragment_boundary\":null,"
+          "\"previous_enqueue_return_ticks\":%llu,\"since_consumer_open_ticks\":%llu,"
+          "\"since_seek_flush_ticks\":%s,\"ticks_per_second\":%llu,"
+          "\"pool_surfaces\":%llu,\"pool_rejections\":%llu,\"decoded_queue_depth\":%llu,"
+          "\"video_queue_depth_at_step\":%llu,\"audio_queue_depth_at_step\":%llu,"
+          "\"worker_step_ticks\":%llu,\"previous_worker_step_ticks\":%llu,"
+          "\"clock_sample_ticks\":%llu,\"clock_anchor_ticks\":%llu,"
+          "\"clock_media_seconds\":%.17g,\"clock_anchor_media_seconds\":%.17g,"
+          "\"awaiting_output\":%s,\"since_open_request_ticks\":%llu,"
+          "\"since_seek_landing_ticks\":%llu,\"seek_landed_within_2s\":%s,"
+          "\"worker_wait_begin_ticks\":%llu,\"worker_wait_end_ticks\":%llu,"
+          "\"worker_wait_due_ticks\":%llu,\"worker_wait_timed_out\":%s,\"worker_wait_host_paced\":%s,"
+          "\"slow_wait_since_submission\":{\"begin_ticks\":%llu,\"end_ticks\":%llu,\"due_ticks\":%llu,\"timed_out\":%s},"
+          "\"output_path_ticks\":[%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu]}\n",
+          u(r.consumer), u(r.generation), u(r.ordinal), static_cast<long long>(r.pts), r.ptsScale,
+          static_cast<long long>(r.duration), r.durationScale, r.late ? "true" : "false",
+          r.deadline ? deadline : "null", u(r.decodeComplete), u(r.lease), u(r.observed),
+          r.commit ? commit : "null",
+          r.display && r.refreshHost && r.refreshPeriod && r.refreshScale ? phase : "null", u(r.previousCommit), u(r.sinceOpen),
+          r.seekKnown ? seek : "null", u(r.ticksPerSecond), u(r.surfaces), u(r.surfaceRejections),
+          u(r.decodedDepth), u(r.videoDepth), u(r.audioDepth), u(r.workerStep), u(r.previousWorkerStep),
+          u(r.clockSample), u(r.clockAnchor), r.clockMedia, r.clockAnchorMedia,
+          r.awaitingOutput ? "true" : "false", u(r.sinceOpenRequest), u(r.sinceSeekLanding),
+          r.seekWithinTwoSeconds ? "true" : "false", u(r.waitBegin), u(r.waitEnd), u(r.waitDue),
+          r.waitTimedOut ? "true" : "false", r.waitHostPaced ? "true" : "false",
+          u(r.slowWaitBegin), u(r.slowWaitEnd), u(r.slowWaitDue), r.slowWaitTimedOut ? "true" : "false",
+          u(r.outputTicks[0]), u(r.outputTicks[1]),
+          u(r.outputTicks[2]), u(r.outputTicks[3]), u(r.outputTicks[4]), u(r.outputTicks[5]),
+          u(r.outputTicks[6]), u(r.outputTicks[7]), u(r.outputTicks[8]), u(r.outputTicks[9]));
+        if (n <= 0 || static_cast<std::size_t>(n) >= sizeof traceLine ||
+            !sink_(traceLine, static_cast<std::size_t>(n), sinkContext_)) {
+          failed_ = true;
+          return false;
+        }
+      }
+    }
+    std::uint64_t lost = media::late_trace::unavailable.load(std::memory_order_relaxed);
+    for (auto& slot : media::late_trace::traceSlots)
+      lost += slot.ring.lost.load(std::memory_order_relaxed);
+    const int n = std::snprintf(traceLine, sizeof traceLine,
+        "{\"record\":\"video_trace_health\",\"lost_or_unavailable\":%llu}\n",
+        static_cast<unsigned long long>(lost));
+    if (n <= 0 || !sink_(traceLine, static_cast<std::size_t>(n), sinkContext_)) {
+      failed_ = true;
+      return false;
+    }
+  }
+#endif
   JsonLine line(line_, kMaximumJsonLineBytes);
   line.text("{\"record\":\"playback_sample\",\"session_epoch\":");
   // Never null: 0 stands for "no session open", which is the only case in

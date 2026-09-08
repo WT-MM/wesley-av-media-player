@@ -1,3 +1,7 @@
+#include "media/native_late_frame_trace.hpp"
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
+#include <mach/mach_time.h>
+#endif
 #include "native_layer_video_output.hpp"
 
 #include "native_layer_host_view.hpp"
@@ -606,6 +610,12 @@ NativeTrackedVideoCapacity NativeLayerVideoOutput::capacity(
              : NativeTrackedVideoCapacity::Available;
 }
 
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
+late_display_trace::Snapshot NativeLayerVideoOutput::diagnosticDisplayPhase() const noexcept {
+  return state_ ? late_display_trace::sample((__bridge void*)state_->layer) : late_display_trace::Snapshot{};
+}
+#endif
+
 NativeTrackedVideoSubmitStatus NativeLayerVideoOutput::submit(
     const FrameLease& frame, NativeTrackedFrameSequence sequence,
     std::string* error) noexcept {
@@ -638,7 +648,15 @@ NativeTrackedVideoSubmitStatus NativeLayerVideoOutput::submit(
   NativeTrackedVideoSubmitStatus result =
       NativeTrackedVideoSubmitStatus::Accepted;
   {
+
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
+    if (media::late_trace::enabled) media::late_trace::worker.outputTicks[3] = mach_absolute_time();
+#endif
     std::lock_guard lock(state->mutex);
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
+    if (media::late_trace::enabled) media::late_trace::worker.outputTicks[4] = mach_absolute_time();
+#endif
+
     if (state->failureLatched || state->fatal || state->closed ||
         state->closePending) {
       assignErrorNoexcept(error, state->failureMessage.empty()
@@ -677,6 +695,10 @@ NativeTrackedVideoSubmitStatus NativeLayerVideoOutput::submit(
         assignErrorNoexcept(error, state->failureMessage);
         return NativeTrackedVideoSubmitStatus::Failed;
       }
+
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
+    if (media::late_trace::enabled) media::late_trace::worker.outputTicks[5] = mach_absolute_time();
+#endif
       CMSampleBufferRef sampleBuffer = state->makeSampleBufferLocked(
           frame.pixelBuffer(), timing, error);
       if (sampleBuffer == nullptr) {
@@ -685,7 +707,15 @@ NativeTrackedVideoSubmitStatus NativeLayerVideoOutput::submit(
         return NativeTrackedVideoSubmitStatus::Failed;
       }
       @try {
+
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
+    if (media::late_trace::enabled) media::late_trace::worker.outputTicks[6] = mach_absolute_time();
+#endif
         [renderer enqueueSampleBuffer:sampleBuffer];
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
+    if (media::late_trace::enabled) media::late_trace::worker.outputTicks[7] = mach_absolute_time();
+#endif
+
       } @catch (NSException*) {
         CFRelease(sampleBuffer);
         state->latchFailureLocked("layer video renderer rejected the frame");
@@ -740,6 +770,10 @@ NativeTrackedVideoSubmitStatus NativeLayerVideoOutput::submit(
       assignErrorNoexcept(error, state->failureMessage);
       result = NativeTrackedVideoSubmitStatus::Failed;
     }
+
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
+    if (media::late_trace::enabled) media::late_trace::worker.outputTicks[8] = mach_absolute_time();
+#endif
     state->maybeLoadMetricsLocked();
   }
   if (signal) {
