@@ -1,0 +1,33 @@
+{
+  "host_consecutive_passes": {
+    "mp4": 30,
+    "mkv": 30,
+    "refusal": 30,
+    "api": 30,
+    "quarantine": 30,
+    "replace": 30,
+    "recovery": 30,
+    "packaging": 30
+  },
+  "ctest": {
+    "passed": 132,
+    "total": 132,
+    "seconds": 212.21,
+    "mode": "serial, until-pass:3",
+    "retried": [
+      "macos_native_qt_gl_compositor"
+    ]
+  },
+  "replays": {
+    "passed": 7,
+    "total": 7
+  },
+  "signing": {
+    "valid_identities": 0,
+    "strict_verification": true,
+    "gatekeeper_accepted": false,
+    "hardened_ad_hoc_runtime": false,
+    "notarization_submitted": false
+  },
+  "frozen_proposals": []
+}

@@ -4,7 +4,7 @@
 #include "platform/macos/native_layer_host_view.hpp"
 #include "platform/macos/native_layer_video_output.hpp"
 #include "platform/macos/native_audio_test_mute.hpp"
-#include "platform/macos/native_concurrency_limits.hpp"
+#include "platform/macos/native_embedding_support.hpp"
 #include "platform/macos/native_surface_budget.hpp"
 #include <array>
 #include <cassert>
@@ -76,7 +76,7 @@ public:
        run && [[NSUUID alloc] initWithUUIDString:@(run)] &&
        hex(std::getenv("WAM_NATIVE_BENCHMARK_ASSET_SHA256"),64) &&
        hex(std::getenv("WAM_NATIVE_BENCHMARK_CANDIDATE_ID"),64)){
-      setNativeAudioOutputTestMuted(true);
+      NativeEmbeddingSupport::setTestMuted(true);
       const char* stall=std::getenv("WAM_TEST_RETIRE_STALL");
       if(stall && !std::strcmp(stall,"1"))NativeRetirement::setTestPaused(true);
     }
@@ -96,6 +96,12 @@ public:
     if (outstanding>=32 || nextRequest==UINT64_MAX) return WAM_BACKPRESSURE;
     command.id=++nextRequest; ++outstanding; if(request)*request=command.id;
     if(command.operation==Operation::Close) closed=true;
+#if defined(WAMKIT_ENABLE_TEST_SUPPORT)
+    if(command.operation==Operation::Seek && NativeEmbeddingSupport::testMuted()) {
+      const char* recovery=std::getenv("WAM_TEST_DEVICE_RECOVERY_SEEK");
+      if(recovery && !std::strcmp(recovery,"1")) nativeAudioDeviceRecoverySeekTestGate().store(true);
+    }
+#endif
     auto self=shared_from_this();
     dispatch_async(dispatch_get_main_queue(), ^{ self->perform(command); });
     if(error) *error={};
@@ -108,7 +114,7 @@ public:
   }
   void enableMetrics(bool enabled) {
     metricsEnabled=enabled;
-    if(nativeSession_)nativeSession_->setMetricsEnabled(enabled);
+    setNativeMetricsEnabled(enabled);
     if(timer){dispatch_source_cancel(timer);timer=nullptr;}
     if(!enabled || disposed)return;
     timer=dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER,0,0,dispatch_get_main_queue());
@@ -119,8 +125,8 @@ public:
   }
   void sample() {
     snapshot.retiring=retirementPending(); snapshot.generation=router_.snapshot().generation.value;
-    if(nativeSession_ && metricsEnabled){
-      const auto metrics=nativeSession_->metrics(); snapshot.session_epoch=metrics.sessionEpoch;
+    if(hasNativeSession() && metricsEnabled){
+      const auto metrics=nativeMetrics(); snapshot.session_epoch=metrics.sessionEpoch;
       snapshot.drawn_frames=metrics.drawnFrames; snapshot.audio_rendered_frames=metrics.audioRenderedFrames;
       snapshot.display_seconds=metrics.mediaSeconds; snapshot.clock_rate=metrics.clockRate;
       snapshot.clock_valid=metrics.clockValid;
@@ -271,7 +277,7 @@ private:
         snapshot.first_pts={};snapshot.drawn_frames=0;snapshot.audio_rendered_frames=0;
         snapshot.session_epoch=0;snapshot.clock_valid=0;
         snapshot.generation=router_.snapshot().generation.value;
-        if(nativeSession_){auto descriptor=nativeSession_->descriptor();if(descriptor)snapshot.duration=timeValue(descriptor->duration);}
+        if(hasNativeSession()){auto descriptor=nativeDescriptor();if(descriptor)snapshot.duration=timeValue(descriptor->duration);}
         state(WAM_READY);finish(opening,WAM_COMPLETED);
       }else if constexpr(std::is_same_v<T,protocol::Ended>)state(WAM_ENDED);
       else if constexpr(std::is_same_v<T,protocol::Failed>){state(WAM_FAILED);}
@@ -319,7 +325,7 @@ wam_status_t wam_copy_capabilities(wam_capabilities_t* capabilities){
 #if defined(WAM_ENABLE_SOFTWARE_VP8)
   capabilities->software_vp8=1;
 #endif
-  capabilities->maximum_sessions=kMaximumConcurrentPlayerWindows;capabilities->charged_sessions=NativeRetirement::charged();
+  capabilities->maximum_sessions=NativeEmbeddingSupport::maximumWindows;capabilities->charged_sessions=NativeRetirement::charged();
   capabilities->maximum_session_surfaces=kNativeSurfaceBudgetMaximumSurfaces;
   capabilities->maximum_session_surface_bytes=kNativeSurfaceBudgetMaximumBytes;
   capabilities->maximum_process_surfaces=kNativeSurfaceBudgetProcessMaximumSurfaces;

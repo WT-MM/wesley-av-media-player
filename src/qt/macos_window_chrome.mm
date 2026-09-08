@@ -14,8 +14,8 @@
 #import <QuartzCore/QuartzCore.h>
 
 #include "native_benchmark_telemetry.hpp"
-#include "platform/macos/native_concurrency_limits.hpp"
-#include "platform/macos/native_layer_host_view.hpp"
+#include "platform/macos/native_embedding_support.hpp"
+
 
 #include <algorithm>
 #include <array>
@@ -140,10 +140,10 @@ struct AspectRatioEntry {
   NSSize ratio = NSZeroSize;
 };
 
-std::array<AspectRatioEntry, wam::macos::kMaximumConcurrentPlayerWindows> &
+std::array<AspectRatioEntry, wam::macos::NativeEmbeddingSupport::maximumWindows> &
 aspectRatios() {
   static std::array<AspectRatioEntry,
-                    wam::macos::kMaximumConcurrentPlayerWindows>
+                    wam::macos::NativeEmbeddingSupport::maximumWindows>
       ratios;
   return ratios;
 }
@@ -288,10 +288,10 @@ struct FitToScreenState {
 // zoom toggle's "put it back where it was" memory belongs to the window that
 // was zoomed. A single shared row meant fitting a second window silently threw
 // away the first window's restore frame.
-std::array<FitToScreenState, wam::macos::kMaximumConcurrentPlayerWindows> &
+std::array<FitToScreenState, wam::macos::NativeEmbeddingSupport::maximumWindows> &
 fitStates() {
   static std::array<FitToScreenState,
-                    wam::macos::kMaximumConcurrentPlayerWindows>
+                    wam::macos::NativeEmbeddingSupport::maximumWindows>
       states;
   return states;
 }
@@ -328,10 +328,10 @@ struct PaddedFillState {
   bool valid = false;
 };
 
-std::array<PaddedFillState, wam::macos::kMaximumConcurrentPlayerWindows> &
+std::array<PaddedFillState, wam::macos::NativeEmbeddingSupport::maximumWindows> &
 paddedFillStates() {
   static std::array<PaddedFillState,
-                    wam::macos::kMaximumConcurrentPlayerWindows>
+                    wam::macos::NativeEmbeddingSupport::maximumWindows>
       states;
   return states;
 }
@@ -1197,7 +1197,7 @@ qreal setVividBoost(QWindow *window, qreal boost) {
     if (!(applied > 1.0))
       applied = 1.0;
   }
-  wam::macos::setNativeLayerVividBoost((__bridge void *)nsWindow,
+  wam::macos::NativeEmbeddingSupport::setVividBoost((__bridge void *)nsWindow,
                                        static_cast<double>(applied));
   return applied;
 }
@@ -1207,7 +1207,7 @@ qreal vividBoost(QWindow *window) {
   if (nsWindow == nil)
     return 1.0;
   return static_cast<qreal>(
-      wam::macos::nativeLayerVividBoost((__bridge void *)nsWindow));
+      wam::macos::NativeEmbeddingSupport::vividBoost((__bridge void *)nsWindow));
 }
 
 qreal appliedVividBoost(QWindow *window) {
@@ -1215,7 +1215,7 @@ qreal appliedVividBoost(QWindow *window) {
   if (nsWindow == nil)
     return 0.0;
   return static_cast<qreal>(
-      wam::macos::nativeLayerAppliedVividBoost((__bridge void *)nsWindow));
+      wam::macos::NativeEmbeddingSupport::appliedVividBoost((__bridge void *)nsWindow));
 }
 
 } // namespace wam::macos_window_chrome

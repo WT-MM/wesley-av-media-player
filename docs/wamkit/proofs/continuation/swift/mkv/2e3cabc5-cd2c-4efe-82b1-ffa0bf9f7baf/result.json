@@ -1,0 +1,14 @@
+{
+  "host": "/private/tmp/wam-wamkit/build/examples/WAMKitSwiftHost/WAMKitSwiftHost.app/Contents/MacOS/WAMKitSwiftHost",
+  "asset": "/private/tmp/wam-wamkit/test-media/wamkit/av.mkv",
+  "pid": 10651,
+  "rc": 0,
+  "identities": {
+    "WAM_NATIVE_BENCHMARK_TELEMETRY": "1",
+    "WAM_NATIVE_BENCHMARK_RUN_ID": "29e71010-926b-4aae-8cc7-a77a1ec404d1",
+    "WAM_NATIVE_BENCHMARK_ASSET_SHA256": "acbd77c69d134e1b100f830e93593fbab5d0da364d04d7c532393d1c59959d8d",
+    "WAM_NATIVE_BENCHMARK_CANDIDATE_ID": "90a41ae438794843f849bd683e1fdf4faff9a6caa5e5f3831e434953fa20bc89"
+  },
+  "errors": [],
+  "passed": true
+}

@@ -88,6 +88,23 @@ NativePlaybackOwner::~NativePlaybackOwner() {
     retirement_->retire(std::move(nativeSession_), {}, nullptr);
 }
 
+bool NativePlaybackOwner::hasNativeSession() const noexcept { return nativeSession_ != nullptr; }
+NativeMediaSessionMetrics NativePlaybackOwner::nativeMetrics() const noexcept {
+  return nativeSession_ ? nativeSession_->metrics() : NativeMediaSessionMetrics{};
+}
+void NativePlaybackOwner::setNativeMetricsEnabled(bool enabled) noexcept {
+  if (nativeSession_) nativeSession_->setMetricsEnabled(enabled);
+}
+std::shared_ptr<const media::MediaSourceDescriptor> NativePlaybackOwner::nativeDescriptor() const noexcept {
+  return nativeSession_ ? nativeSession_->descriptor() : nullptr;
+}
+double NativePlaybackOwner::nativeSeekCeilingSeconds() const noexcept {
+  return nativeSession_ ? nativeSession_->seekCeilingSeconds() : 0.0;
+}
+void NativePlaybackOwner::drainCurrentObservations() {
+  if (nativeSession_) drainObservations(observationBridge_ ? observationBridge_->epoch : 0);
+}
+
 playback_router::Tick NativePlaybackOwner::nextTick() noexcept {
   if (tick_ != std::numeric_limits<std::uint64_t>::max()) {
     ++tick_;

@@ -128,6 +128,11 @@ jobs:
               codesign --verify --strict "$candidate"
             fi
           done < <(find stage/WAM.app/Contents -type f -print0)
+      - name: Prepare offline WAMKit signing bundle when configured
+        if: matrix.architecture == 'arm64'
+        env:
+          WAM_MACOS_CODESIGN_IDENTITY: ${{ secrets.WAM_MACOS_CODESIGN_IDENTITY }}
+        run: sh scripts/sign_release.sh --if-identity --app stage/WAM.app
       - run: >-
           ditto -c -k --sequesterRsrc --keepParent
           stage/WAM.app WAM-macOS-${{ matrix.architecture }}.zip

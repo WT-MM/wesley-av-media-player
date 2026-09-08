@@ -1,0 +1,22 @@
+{
+  "asset": "/Users/wesleymaa/Movies/RustDesk/old/outgoing_175981962_20260208203414622_display0_h265.mp4",
+  "candidate_sha256": "32cd77748b73da5f3e09795a48e013a1d6b3190297e3a93c2c67b120895b50ce",
+  "asset_sha256": "6ead230da070bfb45f880c7bf5d53ae9eb1a809c09c4284730e321640321d3a0",
+  "run_id": "1de8f8ef-9a49-4c2b-b1fc-45aa8d1d8b11",
+  "pid": 65258,
+  "rc": 0,
+  "seconds": 8.924951167020481,
+  "native": true,
+  "first_frame_drawn": true,
+  "drawn_frames": 170,
+  "clock_rates": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+  ],
+  "passed": true
+}

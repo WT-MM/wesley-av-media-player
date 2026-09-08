@@ -1,12 +1,13 @@
 """Measured AppKit/C-ABI playback, exact seek, refusal, and retirement proof."""
 import argparse,hashlib,json,os,pathlib,subprocess,time
-p=argparse.ArgumentParser();p.add_argument('--host',type=pathlib.Path,required=True);p.add_argument('--asset',type=pathlib.Path,required=True);p.add_argument('--output',type=pathlib.Path,required=True);p.add_argument('--refusal');p.add_argument('--seek',action='store_true');p.add_argument('--api',action='store_true');p.add_argument('--replace',action='store_true');p.add_argument('--quarantine',action='store_true');p.add_argument('--unique',action='store_true');a=p.parse_args()
+p=argparse.ArgumentParser();p.add_argument('--host',type=pathlib.Path,required=True);p.add_argument('--asset',type=pathlib.Path,required=True);p.add_argument('--output',type=pathlib.Path,required=True);p.add_argument('--refusal');p.add_argument('--seek',action='store_true');p.add_argument('--api',action='store_true');p.add_argument('--replace',action='store_true');p.add_argument('--quarantine',action='store_true');p.add_argument('--device-recovery',action='store_true');p.add_argument('--unique',action='store_true');a=p.parse_args()
 host=a.host.resolve();asset=a.asset.resolve();assert '/build/' in str(host)
 def sha(path):return hashlib.sha256(path.read_bytes()).hexdigest()
 if a.unique:a.output=a.output/subprocess.check_output(['uuidgen'],text=True).strip().lower()
 a.output.mkdir(parents=True,exist_ok=False);home=a.output/'home';home.mkdir();metrics=a.output/'metrics.jsonl'
 env={k:v for k,v in os.environ.items() if not k.startswith('WAM_')}
 env.update(HOME=str(home),WAM_NATIVE_BENCHMARK_TELEMETRY='1',WAM_NATIVE_BENCHMARK_RUN_ID=subprocess.check_output(['uuidgen'],text=True).strip().lower(),WAM_NATIVE_BENCHMARK_ASSET_SHA256=sha(asset),WAM_NATIVE_BENCHMARK_CANDIDATE_ID=sha(host),WAM_TEST_BACKGROUND='1',WAM_TEST_MUTED='1',WAM_TEST_GEOMETRY='480x270+2400+1000',WAM_PLAYBACK_METRICS_PATH=str(metrics),WAM_TEST_QUIT_AFTER_MS='4000')
+if a.device_recovery:env['WAM_TEST_DEVICE_RECOVERY_SEEK']='1'
 if a.quarantine:env.update(WAM_TEST_RETIRE_STALL='1',WAM_TEST_QUIT_AFTER_MS='1000')
 if a.replace:env['WAM_TEST_REPLACE']='1'
 if a.api:env['WAM_TEST_API']='1'

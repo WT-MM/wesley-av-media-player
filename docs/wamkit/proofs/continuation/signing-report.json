@@ -1,0 +1,148 @@
+{
+  "mode": "ad-hoc",
+  "identity": "-",
+  "timestamp": "none (offline)",
+  "notarization_submitted": false,
+  "signed": [
+    {
+      "path": "payload/WAMKit.framework/Versions/A/Frameworks/libavutil-wamnative.61.dylib",
+      "entitlements": null
+    },
+    {
+      "path": "payload/WAMKit.framework/Versions/A/Frameworks/libavformat-wamnative.63.dylib",
+      "entitlements": null
+    },
+    {
+      "path": "payload/WAMKit.framework/Versions/A/Frameworks/libavcodec-wamnative.63.dylib",
+      "entitlements": null
+    },
+    {
+      "path": "payload/WAMKit.framework/Versions/A/Frameworks/libvpx.12.dylib",
+      "entitlements": null
+    },
+    {
+      "path": "payload/WAMKit.framework/Versions/A/WAMKit",
+      "entitlements": null
+    },
+    {
+      "path": "payload/WAMKit.framework",
+      "entitlements": null
+    },
+    {
+      "path": "payload/WAMKitHost.app/Contents/Frameworks/WAMKit.framework/Versions/A/Frameworks/libavutil-wamnative.61.dylib",
+      "entitlements": null
+    },
+    {
+      "path": "payload/WAMKitHost.app/Contents/Frameworks/WAMKit.framework/Versions/A/Frameworks/libavformat-wamnative.63.dylib",
+      "entitlements": null
+    },
+    {
+      "path": "payload/WAMKitHost.app/Contents/Frameworks/WAMKit.framework/Versions/A/Frameworks/libavcodec-wamnative.63.dylib",
+      "entitlements": null
+    },
+    {
+      "path": "payload/WAMKitHost.app/Contents/Frameworks/WAMKit.framework/Versions/A/Frameworks/libvpx.12.dylib",
+      "entitlements": null
+    },
+    {
+      "path": "payload/WAMKitHost.app/Contents/Frameworks/WAMKit.framework/Versions/A/WAMKit",
+      "entitlements": null
+    },
+    {
+      "path": "payload/WAMKitHost.app/Contents/MacOS/WAMKitHost",
+      "entitlements": null
+    },
+    {
+      "path": "payload/WAMKitHost.app/Contents/Frameworks/WAMKit.framework",
+      "entitlements": null
+    },
+    {
+      "path": "payload/WAMKitHost.app",
+      "entitlements": null
+    },
+    {
+      "path": "payload/WAMKitSwiftHost.app/Contents/Frameworks/WAMKit.framework/Versions/A/Frameworks/libavutil-wamnative.61.dylib",
+      "entitlements": null
+    },
+    {
+      "path": "payload/WAMKitSwiftHost.app/Contents/Frameworks/WAMKit.framework/Versions/A/Frameworks/libavformat-wamnative.63.dylib",
+      "entitlements": null
+    },
+    {
+      "path": "payload/WAMKitSwiftHost.app/Contents/Frameworks/WAMKit.framework/Versions/A/Frameworks/libavcodec-wamnative.63.dylib",
+      "entitlements": null
+    },
+    {
+      "path": "payload/WAMKitSwiftHost.app/Contents/Frameworks/WAMKit.framework/Versions/A/Frameworks/libvpx.12.dylib",
+      "entitlements": null
+    },
+    {
+      "path": "payload/WAMKitSwiftHost.app/Contents/Frameworks/WAMKit.framework/Versions/A/WAMKit",
+      "entitlements": null
+    },
+    {
+      "path": "payload/WAMKitSwiftHost.app/Contents/MacOS/WAMKitSwiftHost",
+      "entitlements": null
+    },
+    {
+      "path": "payload/WAMKitSwiftHost.app/Contents/Frameworks/WAMKit.framework",
+      "entitlements": null
+    },
+    {
+      "path": "payload/WAMKitSwiftHost.app",
+      "entitlements": null
+    },
+    {
+      "path": "payload/WAM.app/Contents/PlugIns/WAMThumbnail.appex/Contents/MacOS/WAMThumbnail",
+      "entitlements": "/private/tmp/wam-wamkit/packaging/quicklook/WAMThumbnail.entitlements"
+    },
+    {
+      "path": "payload/WAM.app/Contents/MacOS/WAM",
+      "entitlements": null
+    },
+    {
+      "path": "payload/WAM.app/Contents/Frameworks/libavutil-wamnative.61.dylib",
+      "entitlements": null
+    },
+    {
+      "path": "payload/WAM.app/Contents/Frameworks/WAMMpvFallback.dylib",
+      "entitlements": null
+    },
+    {
+      "path": "payload/WAM.app/Contents/Frameworks/libavformat-wamnative.63.dylib",
+      "entitlements": null
+    },
+    {
+      "path": "payload/WAM.app/Contents/Frameworks/libavcodec-wamnative.63.dylib",
+      "entitlements": null
+    },
+    {
+      "path": "payload/WAM.app/Contents/PlugIns/WAMThumbnail.appex",
+      "entitlements": "/private/tmp/wam-wamkit/packaging/quicklook/WAMThumbnail.entitlements"
+    },
+    {
+      "path": "payload/WAM.app",
+      "entitlements": null
+    }
+  ],
+  "assessments": [
+    {
+      "bundle": "WAMKitHost.app",
+      "rc": 3,
+      "output": "/private/tmp/wam-wamkit/build/wamkit-signing-proof/payload/WAMKitHost.app: rejected\n"
+    },
+    {
+      "bundle": "WAMKitSwiftHost.app",
+      "rc": 3,
+      "output": "/private/tmp/wam-wamkit/build/wamkit-signing-proof/payload/WAMKitSwiftHost.app: rejected\n"
+    },
+    {
+      "bundle": "WAM.app",
+      "rc": 3,
+      "output": "/private/tmp/wam-wamkit/build/wamkit-signing-proof/payload/WAM.app: rejected\n"
+    }
+  ],
+  "archive_sha256": "40bff768a93bc37a6103db5e94999a4db52e642e6e40ef02a04961c9115f8a67",
+  "distribution_ready": false,
+  "remaining": "Developer ID identity, trusted timestamp, notarization and stapling"
+}

@@ -194,9 +194,9 @@ void NativePlaybackOwner::startPlaybackMetrics() {
 void NativePlaybackOwner::samplePlaybackMetrics() {
   NativePlaybackMetrics &metrics = NativePlaybackMetrics::instance();
   NativePlaybackMetricsSample sample;
-  if (nativeSession_ != nullptr) {
+  if (hasNativeSession()) {
     const ::wam::macos::NativeMediaSessionMetrics sampled =
-        nativeSession_->metrics();
+        nativeMetrics();
     sample.sessionEpoch = sampled.sessionEpoch;
     sample.drawnFrames = sampled.drawnFrames;
     sample.submittedFrames = sampled.submittedFrames;
@@ -340,9 +340,7 @@ void NativePlaybackOwner::completeOpenPreflight(
     return;
   }
   if (deferOwnerCommand([this, result] { completeOpenPreflight(result); })) return;
-  if (nativeSession_ != nullptr) {
-    drainObservations(observationBridge_ ? observationBridge_->epoch : 0);
-  }
+  drainCurrentObservations();
   if (result.requestId != latestOpenPreflightRequest_) {
     return;
   }
@@ -384,9 +382,7 @@ bool NativePlaybackOwner::stop(bool preserveVisibleState) {
   latestOpenPreflightRequest_ = 0;
   if (deferOwnerCommand([this, preserveVisibleState] { static_cast<void>(stop(preserveVisibleState)); }))
     return true;
-  if (nativeSession_ != nullptr) {
-    drainObservations(observationBridge_ ? observationBridge_->epoch : 0);
-  }
+  drainCurrentObservations();
   const playback_router::Transition transition = router_.stop(nextTick());
   if (!applied(transition)) {
     controller_.setLastError(
@@ -403,9 +399,7 @@ bool NativePlaybackOwner::stop(bool preserveVisibleState) {
 NativePlaybackOwner::PauseDisposition
 NativePlaybackOwner::setPaused(bool paused) {
   Q_ASSERT(QThread::currentThread() == controller_.thread());
-  if (nativeSession_ != nullptr) {
-    drainObservations(observationBridge_ ? observationBridge_->epoch : 0);
-  }
+  drainCurrentObservations();
 
   const playback_router::State before = router_.snapshot().state;
   if (before == playback_router::State::Idle) {
@@ -444,7 +438,7 @@ NativePlaybackOwner::preparationFor(native_protocol::SourceKey sourceKey) {
 std::optional<playback_router::Transition>
 NativePlaybackOwner::beginFallbackCreate(
     const playback_router::Action &action) {
-  if (nativeSession_ != nullptr) {
+  if (hasNativeSession()) {
     controller_.setLastError(QStringLiteral(
         "Compatibility playback was blocked until native retirement."));
     return std::nullopt;
@@ -620,8 +614,7 @@ void NativePlaybackOwner::publishLifecycle(
           // Before the duration: durationChanged may issue the resume seek,
           // and that target must already be snapped under the ceiling.
           controller_.updateNativeSeekCeiling(
-              nativeSession_ != nullptr ? nativeSession_->seekCeilingSeconds()
-                                        : 0.0);
+              nativeSeekCeilingSeconds());
           controller_.updateDuration(event.descriptor.durationSeconds);
           // The container's own display geometry, from the backend that
           // actually demuxed it. This is the only path by which a Matroska,
@@ -859,7 +852,7 @@ void NativePlaybackOwner::detachSurface(MpvVideoItem *item) noexcept {
   }
   surface_.clear();
   surfaceLost_ = true;
-  if (nativeSession_ != nullptr) abandonNativeSession();
+  if (hasNativeSession()) abandonNativeSession();
 }
 
 void NativePlaybackOwner::sessionCleared() noexcept {
