@@ -1,3 +1,7 @@
+#include "media/native_late_frame_trace.hpp"
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
+#include <mach/mach_time.h>
+#endif
 #include "native_video_consumer.hpp"
 
 #include "native_presentation_admission.hpp"
@@ -732,6 +736,88 @@ struct NativeVideoConsumer::Impl {
            currentClock->generation == generation;
   }
 
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
+  media::late_trace::Producer traceProducer;
+  std::uint64_t traceOpen{media::late_trace::enabled ? mach_absolute_time() : 0};
+  std::uint64_t traceSeek{}, traceOrdinal{}, traceDeadline{}, tracePreviousCommit{};
+  media::late_trace::Record tracePreviousSubmission{};
+  std::uint64_t tracePublishedContextOrdinal{};
+  void traceFrame(bool late, std::uint64_t commit = 0) noexcept {
+    if (!traceProducer.slot || !heldFrame || !currentClock) return;
+    const auto now = mach_absolute_time();
+    const auto& timing = heldFrame->timing();
+    const auto pool = NativeSurfaceBudget::stats();
+    const auto& worker = media::late_trace::worker;
+    media::late_trace::Record record;
+    record.generation = generation;
+    record.ordinal = traceOrdinal;
+    record.pts = timing.presentationTime.value;
+    record.ptsScale = timing.presentationTime.timescale;
+    record.duration = timing.duration.value;
+    record.durationScale = timing.duration.timescale;
+    record.deadline = traceDeadline;
+    record.decodeComplete = timing.decodeCompleteHostTicks;
+    record.lease = timing.surfaceLeaseHostTicks;
+    record.observed = now;
+    record.commit = commit;
+    record.previousCommit = tracePreviousCommit;
+    record.sinceOpen = now - traceOpen;
+    record.seekKnown = traceSeek != 0;
+    record.sinceSeek = traceSeek ? now - traceSeek : 0;
+    record.ticksPerSecond = clock.ticksPerSecond;
+    record.surfaces = pool.currentSurfaces;
+    record.surfaceRejections = pool.rejections;
+    record.decodedDepth = sink.size();
+    record.videoDepth = worker.videoDepth;
+    record.audioDepth = worker.audioDepth;
+    record.workerStep = worker.stepTicks;
+    record.previousWorkerStep = worker.previousStepTicks;
+    record.clockSample = currentClock->sampledHostTicks;
+    record.clockAnchor = currentClock->anchorHostTicks;
+    record.clockMedia = currentClock->mediaSeconds;
+    record.clockAnchorMedia = currentClock->anchorMediaSeconds;
+    const auto phase = output->diagnosticDisplayPhase();
+    record.display = phase.display;
+    record.refreshHost = phase.host;
+    record.refreshPeriod = phase.period;
+    record.refreshScale = phase.scale;
+    record.outputTicks = worker.outputTicks;
+    record.waitBegin = worker.waitBegin;
+    record.waitEnd = worker.waitEnd;
+    record.waitDue = worker.waitDue;
+    record.waitTimedOut = worker.waitTimedOut;
+    record.waitHostPaced = worker.waitHostPaced;
+    record.slowWaitBegin = worker.slowWaitBegin;
+    record.slowWaitEnd = worker.slowWaitEnd;
+    record.slowWaitDue = worker.slowWaitDue;
+    record.slowWaitTimedOut = worker.slowWaitTimedOut;
+    record.sinceOpenRequest = worker.openTicks ? now - worker.openTicks : 0;
+    record.sinceSeekLanding = worker.lastSeekLanding ? now - worker.lastSeekLanding : 0;
+    record.seekWithinTwoSeconds = worker.lastSeekLanding &&
+        static_cast<__uint128_t>(record.sinceSeekLanding) <
+            static_cast<__uint128_t>(clock.ticksPerSecond) * 2;
+    record.late = late;
+    record.awaitingOutput = awaitingDraw.valid();
+    // Only late retirements and their preceding submission reach the GUI ring.
+    if (late) {
+      if (tracePreviousSubmission.commit &&
+          tracePreviousSubmission.generation == generation &&
+          tracePreviousSubmission.ordinal != tracePublishedContextOrdinal) {
+        traceProducer.push(tracePreviousSubmission);
+        tracePublishedContextOrdinal = tracePreviousSubmission.ordinal;
+      }
+      traceProducer.push(record);
+    } else {
+      tracePreviousSubmission = record;
+      media::late_trace::worker.slowWaitBegin = 0;
+      media::late_trace::worker.slowWaitEnd = 0;
+      media::late_trace::worker.slowWaitDue = 0;
+      media::late_trace::worker.slowWaitTimedOut = false;
+    }
+    if (commit) tracePreviousCommit = commit;
+  }
+#endif
+
   void clearDueHint() noexcept {
     nextDueMediaTime = {};
     nextDueHostTicks = 0;
@@ -778,6 +864,9 @@ struct NativeVideoConsumer::Impl {
     nextDueMediaTime = presentation;
     nextDueHostTicks = currentClock->sampledHostTicks + delta;
     nextDueKnown = true;
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
+    if (traceProducer.slot) traceDeadline = nextDueHostTicks;
+#endif
   }
 
   [[nodiscard]] PumpStatus consumeOutputEvent() noexcept {
@@ -885,6 +974,13 @@ struct NativeVideoConsumer::Impl {
         return PumpStatus::Blocked;
       }
       heldFrame = sink.take();
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
+      if (traceProducer.slot && heldFrame) {
+        ++traceOrdinal;
+        traceDeadline = 0;
+        media::late_trace::worker.outputTicks = {};
+      }
+#endif
       if (!heldFrame) {
         return submissionBlocked ? PumpStatus::Blocked : PumpStatus::Idle;
       }
@@ -944,6 +1040,9 @@ struct NativeVideoConsumer::Impl {
       return PumpStatus::Failed;
     }
     if (*endAgainstClock != MediaTimeOrder::Greater) {
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
+      traceFrame(true);
+#endif
       heldFrame.reset();
       ++discardedLateFrames;
       return PumpStatus::Progress;
@@ -958,7 +1057,14 @@ struct NativeVideoConsumer::Impl {
       return PumpStatus::Blocked;
     }
 
-    switch (output->capacity(generation)) {
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
+    if (traceProducer.slot) media::late_trace::worker.outputTicks[0] = mach_absolute_time();
+#endif
+    const auto outputCapacity = output->capacity(generation);
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
+    if (traceProducer.slot) media::late_trace::worker.outputTicks[1] = mach_absolute_time();
+#endif
+    switch (outputCapacity) {
     case NativeTrackedVideoCapacity::Backpressure:
       return PumpStatus::Blocked;
     case NativeTrackedVideoCapacity::StaleGeneration:
@@ -976,7 +1082,14 @@ struct NativeVideoConsumer::Impl {
       return PumpStatus::Failed;
     }
     const NativeTrackedFrameSequence submittedSequence = nextFrameSequence;
-    switch (output->submit(*heldFrame, submittedSequence, error)) {
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
+    if (traceProducer.slot) media::late_trace::worker.outputTicks[2] = mach_absolute_time();
+#endif
+    const auto submitted = output->submit(*heldFrame, submittedSequence, error);
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
+    if (traceProducer.slot) media::late_trace::worker.outputTicks[9] = mach_absolute_time();
+#endif
+    switch (submitted) {
     case NativeTrackedVideoSubmitStatus::Backpressure:
       return PumpStatus::Blocked;
     case NativeTrackedVideoSubmitStatus::StaleGeneration:
@@ -988,6 +1101,9 @@ struct NativeVideoConsumer::Impl {
     case NativeTrackedVideoSubmitStatus::Accepted:
       break;
     }
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
+    if (traceProducer.slot) traceFrame(false, mach_absolute_time());
+#endif
     noteCaptionPresented(timing.presentationTime);
     awaitingDraw = submittedSequence;
     awaitingTiming = timing;
@@ -1376,6 +1492,9 @@ bool NativeVideoConsumer::selectedTrackDurationsSupported(
 
 NativeVideoConsumerArmProgress NativeVideoConsumer::armFirstGeneration(
     MediaGeneration generation) noexcept {
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
+  if (media::late_trace::enabled) media::late_trace::worker.outputTicks = {};
+#endif
   if (impl_ == nullptr || impl_->output == nullptr || generation == 0 ||
       generation == std::numeric_limits<MediaGeneration>::max()) {
     if (impl_ != nullptr) {
@@ -1716,6 +1835,10 @@ media::NativeMediaConsumeResult NativeVideoConsumer::configure(
   impl.track = track.id;
   impl.trackDuration = track.duration;
   impl.timeline = timeline;
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
+  if (impl.traceProducer.slot && timeline.requestedTarget.value != 0)
+    impl.traceSeek = mach_absolute_time();
+#endif
   impl.captionTap =
       impl.captionFeed != nullptr && track.codec == media::MediaCodec::H264;
   impl.captionLengthSize = 0;
@@ -2201,6 +2324,10 @@ media::NativeMediaConsumerProgress NativeVideoConsumer::flush(
   impl.completedFlush = true;
   impl.generation = nextGeneration;
   impl.timeline = timeline;
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
+  if (impl.traceProducer.slot && timeline.requestedTarget.value != 0)
+    impl.traceSeek = mach_absolute_time();
+#endif
   impl.lifecycle = Lifecycle::None;
   impl.clearFlushState();
   return media::NativeMediaConsumerProgress::Done;

@@ -1,3 +1,4 @@
+#include "native_late_display_trace.hpp"
 #include "native_layer_host_view.hpp"
 #include "video_quarter_turn.hpp"
 
@@ -504,6 +505,11 @@ std::shared_ptr<NativeLayerHostView> NativeLayerHostView::create(
     // bounds, so without this first call nothing would be drawn until the
     // first resize.
     layoutVideoLayer(layer);
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
+    if (media::late_trace::enabled)
+      late_display_trace::bind((__bridge void*)layer,
+          [window.screen.deviceDescription[@"NSScreenNumber"] unsignedIntValue]);
+#endif
 
     return result;
   }
@@ -595,6 +601,9 @@ void NativeLayerHostView::detach() noexcept {
     return;
   }
   @autoreleasepool {
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
+    if (media::late_trace::enabled) late_display_trace::unbind((__bridge void*)impl_->layer);
+#endif
     NSView* hostView = impl_->hostView;
     if (hostView != nil) {
       if ([NSThread isMainThread]) {
@@ -624,6 +633,11 @@ void NativeLayerHostView::detach() noexcept {
 // backing store without changing the view's frame.
 - (void)viewDidChangeBackingProperties {
   [super viewDidChangeBackingProperties];
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
+  if (wam::media::late_trace::enabled)
+    wam::macos::late_display_trace::bind((__bridge void*)self.layer.sublayers.firstObject,
+        [self.window.screen.deviceDescription[@"NSScreenNumber"] unsignedIntValue], false);
+#endif
   wam::macos::layoutVideoLayer(self.layer.sublayers.firstObject);
 }
 

@@ -1,3 +1,7 @@
+#include "media/native_late_frame_trace.hpp"
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
+#include <mach/mach_time.h>
+#endif
 #include "media/native_media_dispatcher.hpp"
 
 #include "media/audio_track_admission.hpp"
@@ -436,6 +440,13 @@ NativeMediaDispatcherOpenOutcome NativeMediaDispatcher::openLocalFile(
     const std::filesystem::path& path,
     const MediaSourceOpenOptions& options,
     MediaGeneration generation) noexcept {
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
+  if (late_trace::enabled) {
+    late_trace::worker.openTicks = mach_absolute_time();
+    late_trace::worker.lastSeekLanding = 0;
+  }
+#endif
+
   NativeMediaDispatcherOpenOutcome result;
   result.generation = generation;
   if (stats_.state != NativeMediaDispatcherState::Fresh || source_ == nullptr ||
@@ -763,6 +774,15 @@ NativeMediaDispatcherOpenOutcome NativeMediaDispatcher::openLocalFile(
 }
 
 NativeMediaDispatcherStep NativeMediaDispatcher::step() noexcept {
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
+  if (late_trace::enabled) {
+    auto& trace = late_trace::worker;
+    trace.previousStepTicks = trace.stepTicks;
+    trace.stepTicks = mach_absolute_time();
+    trace.videoDepth = video_lane_.size;
+    trace.audioDepth = audio_lane_.size;
+  }
+#endif
   if (stats_.lifecycle != NativeMediaDispatcherLifecycleKind::None) {
     return advanceLifecycle();
   }
