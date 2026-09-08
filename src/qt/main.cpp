@@ -3,14 +3,12 @@
 #endif
 #if defined(WAM_ENABLE_AVCODEC_STAGE)
 #include "media/avcodec/runtime.hpp"
-#include "platform/macos/native_video_codec_capability.hpp"
 #endif
 #include "mpv_video_item.hpp"
 #include "subtitle_bitmap_provider.hpp"
 #if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
 #include "native_benchmark_telemetry.hpp"
-#include "platform/macos/native_audio_test_mute.hpp"
-#include "platform/macos/native_layer_presentation_state.hpp"
+#include "platform/macos/native_embedding_support.hpp"
 #endif
 #if defined(Q_OS_MACOS)
 #include "macos_window_chrome.hpp"
@@ -1033,8 +1031,8 @@ int verifyRuntime() {
   if (const char* failure = wam::media::avcodec::runtimeFailure())
     return runtimeVerificationFailure(7, QString::fromLatin1(failure));
   qInfo().noquote() << "native_codec_stages version=2 present=true libavcodec=63.1.101 libavutil=61.1.101 loading=lazy lease_retirement=unload license=LGPL-2.1-or-later required_decoders=present audio_routing=disabled";
-  qInfo().noquote() << "native_hardware_capabilities av1=" << wam::macos::nativeVideoToolboxSupportsAv1()
-                   << "vp9=" << wam::macos::nativeVideoToolboxSupportsVp9();
+  qInfo().noquote() << "native_hardware_capabilities av1=" << wam::macos::NativeEmbeddingSupport::supportsAv1()
+                   << "vp9=" << wam::macos::NativeEmbeddingSupport::supportsVp9();
 #endif
   const QUrl missing_relative =
       mediaUrlFromArgument(QStringLiteral("videos/definitely-missing.mp4"));
@@ -1178,7 +1176,7 @@ int main(int argc, char *argv[]) {
       !qEnvironmentVariableIsSet("QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM"))
     qputenv("QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM", "1");
   if (test_seams_admitted && wam::qt::wamEnvironmentTruth("WAM_TEST_MUTED"))
-    wam::macos::setNativeAudioOutputTestMuted(true);
+    wam::macos::NativeEmbeddingSupport::setTestMuted(true);
 #endif
 
   QGuiApplication app(argc, argv);
@@ -1249,7 +1247,7 @@ int main(int argc, char *argv[]) {
     // own child context.
     engine.rootContext()->setContextProperty(
         QStringLiteral("layerPresentation"),
-        wam::macos::layerPresentationRouteSelected());
+        wam::macos::NativeEmbeddingSupport::layerRouteSelected());
 #else
     engine.rootContext()->setContextProperty(
         QStringLiteral("layerPresentation"), false);

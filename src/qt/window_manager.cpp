@@ -11,7 +11,7 @@
 #include "macos_window_chrome.hpp"
 #endif
 #if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
-#include "platform/macos/native_concurrency_limits.hpp"
+#include "platform/macos/native_embedding_support.hpp"
 #endif
 
 #include <QFileInfo>
@@ -40,7 +40,7 @@
 // presentation retains, and every one of those tables is sized from the
 // platform constant.
 static_assert(wam::qt::kMaximumPlayerWindows ==
-                  wam::macos::kMaximumConcurrentPlayerWindows,
+                  wam::macos::NativeEmbeddingSupport::maximumWindows,
               "the window cap and the native per-session resource envelope "
               "must be the same number");
 #endif
