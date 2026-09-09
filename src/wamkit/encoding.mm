@@ -69,6 +69,7 @@ struct wam_video_encoder {
 struct wam_audio_encoder {
   ExtAudioFileRef file = nullptr;
   uint32_t channels = 0;
+  uint32_t codec = WAM_AUDIO_AAC;
   uint64_t inputFrames = 0;
   bool failed = false;
   ~wam_audio_encoder() {
@@ -222,17 +223,38 @@ wam_status_t wam_audio_encoder_create(const wam_audio_encoder_config_t *c,
                                       const char *path,
                                       wam_audio_encoder_t *out,
                                       wam_error_t *error) {
+  if (!c || c->struct_size != sizeof(*c)) {
+    if (out)
+      *out = nullptr;
+    return fail(error, WAM_INVALID_ARGUMENT,
+                "InvalidAudioEncoderConfiguration");
+  }
+  wam_audio_file_config_t config{
+      sizeof(config),      c->sample_rate, c->channels, WAM_AUDIO_AAC, 0,
+      c->require_hardware, c->reserved};
+  return wam_audio_encoder_create_file(&config, path, out, error);
+}
+wam_status_t wam_audio_encoder_create_file(const wam_audio_file_config_t *c,
+                                           const char *path,
+                                           wam_audio_encoder_t *out,
+                                           wam_error_t *error) {
   clear(error);
   if (out)
     *out = nullptr;
   if (!c || !path || path[0] != '/' || !out || c->struct_size != sizeof(*c) ||
       c->reserved || c->require_hardware > 1 ||
       (c->sample_rate != 44100 && c->sample_rate != 48000) ||
-      (c->channels != 1 && c->channels != 2))
+      (c->channels != 1 && c->channels != 2) || c->codec < WAM_AUDIO_AAC ||
+      c->codec > WAM_AUDIO_FLOAT32 ||
+      (c->bitrate && (c->codec != WAM_AUDIO_AAC || c->bitrate < 32000 ||
+                      c->bitrate > 320000)))
     return fail(error, WAM_INVALID_ARGUMENT,
                 "InvalidAudioEncoderConfiguration");
   if (c->require_hardware)
-    return fail(error, WAM_REFUSED, "HardwareAACEncoderUnavailableOnMacOS");
+    return fail(error, WAM_REFUSED,
+                c->codec == WAM_AUDIO_AAC
+                    ? "HardwareAACEncoderUnavailableOnMacOS"
+                    : "HardwareAudioEncoderUnavailableOnMacOS");
   if (!admit())
     return fail(error, WAM_BACKPRESSURE, "EncoderCapacityExceeded");
   std::unique_ptr<wam_audio_encoder> e(new (std::nothrow) wam_audio_encoder);
@@ -241,30 +263,12 @@ wam_status_t wam_audio_encoder_create(const wam_audio_encoder_config_t *c,
     return fail(error, WAM_REFUSED, "EncoderAllocationFailed");
   }
   e->channels = c->channels;
+  e->codec = c->codec;
   @autoreleasepool {
     NSString *string = [NSString stringWithUTF8String:path];
     if (!string)
       return fail(error, WAM_INVALID_ARGUMENT, "InvalidOutputPath");
     NSURL *url = [NSURL fileURLWithPath:string];
-    AudioStreamBasicDescription output{};
-    output.mSampleRate = c->sample_rate;
-    output.mFormatID = kAudioFormatMPEG4AAC;
-    output.mChannelsPerFrame = c->channels;
-    UInt32 size = sizeof(output);
-    OSStatus s = AudioFormatGetProperty(kAudioFormatProperty_FormatInfo, 0,
-                                        nullptr, &size, &output);
-    if (s)
-      return fail(error, WAM_REFUSED, "AACEncoderUnavailable", s);
-    s = ExtAudioFileCreateWithURL((__bridge CFURLRef)url, kAudioFileM4AType,
-                                  &output, nullptr, 0, &e->file);
-    if (s)
-      return fail(error, WAM_REFUSED, "AudioOutputFileCreationFailed", s);
-    // AudioFormat.h exposes the symbolic name only on iOS. 'appl' is the
-    // AudioComponent manufacturer returned by macOS's AAC encoder enumeration.
-    UInt32 manufacturer = 0x6170706c;
-    s = ExtAudioFileSetProperty(e->file,
-                                kExtAudioFileProperty_CodecManufacturer,
-                                sizeof(manufacturer), &manufacturer);
     AudioStreamBasicDescription input{};
     input.mSampleRate = c->sample_rate;
     input.mFormatID = kAudioFormatLinearPCM;
@@ -273,12 +277,61 @@ wam_status_t wam_audio_encoder_create(const wam_audio_encoder_config_t *c,
     input.mFramesPerPacket = 1;
     input.mChannelsPerFrame = c->channels;
     input.mBitsPerChannel = 32;
+    AudioStreamBasicDescription output = input;
+    AudioFileTypeID fileType = kAudioFileCAFType;
+    if (c->codec == WAM_AUDIO_PCM16) {
+      output.mFormatFlags =
+          kAudioFormatFlagIsSignedInteger | kAudioFormatFlagIsPacked;
+      output.mBitsPerChannel = 16;
+      output.mBytesPerPacket = output.mBytesPerFrame = c->channels * 2;
+    } else if (c->codec == WAM_AUDIO_AAC || c->codec == WAM_AUDIO_ALAC) {
+      output = {};
+      output.mSampleRate = c->sample_rate;
+      output.mChannelsPerFrame = c->channels;
+      output.mFormatID = c->codec == WAM_AUDIO_AAC ? kAudioFormatMPEG4AAC
+                                                   : kAudioFormatAppleLossless;
+      if (c->codec == WAM_AUDIO_ALAC)
+        output.mFormatFlags = kAppleLosslessFormatFlag_16BitSourceData;
+      UInt32 size = sizeof(output);
+      OSStatus s = AudioFormatGetProperty(kAudioFormatProperty_FormatInfo, 0,
+                                          nullptr, &size, &output);
+      if (s)
+        return fail(error, WAM_REFUSED, "AudioEncoderUnavailable", s);
+      fileType = kAudioFileM4AType;
+    }
+    OSStatus s = ExtAudioFileCreateWithURL((__bridge CFURLRef)url, fileType,
+                                           &output, nullptr, 0, &e->file);
+    if (s)
+      return fail(error, WAM_REFUSED, "AudioOutputFileCreationFailed", s);
+    if (c->codec == WAM_AUDIO_AAC || c->codec == WAM_AUDIO_ALAC) {
+      UInt32 manufacturer =
+          0x6170706c; // 'appl', Apple software codec manufacturer.
+      s = ExtAudioFileSetProperty(e->file,
+                                  kExtAudioFileProperty_CodecManufacturer,
+                                  sizeof(manufacturer), &manufacturer);
+    }
     if (!s)
       s = ExtAudioFileSetProperty(e->file,
                                   kExtAudioFileProperty_ClientDataFormat,
                                   sizeof(input), &input);
+    if (!s && c->bitrate) {
+      AudioConverterRef converter = nullptr;
+      UInt32 size = sizeof(converter);
+      s = ExtAudioFileGetProperty(e->file, kExtAudioFileProperty_AudioConverter,
+                                  &size, &converter);
+      if (!s && !converter)
+        s = kAudio_ParamError;
+      if (!s)
+        s = AudioConverterSetProperty(converter, kAudioConverterEncodeBitRate,
+                                      sizeof(c->bitrate), &c->bitrate);
+      CFArrayRef config = nullptr;
+      if (!s)
+        s = ExtAudioFileSetProperty(e->file,
+                                    kExtAudioFileProperty_ConverterConfig,
+                                    sizeof(config), &config);
+    }
     if (s)
-      return fail(error, WAM_REFUSED, "AACEncoderConfigurationFailed", s);
+      return fail(error, WAM_REFUSED, "AudioEncoderConfigurationFailed", s);
   }
   *out = e.release();
   return WAM_OK;
@@ -292,7 +345,8 @@ wam_status_t wam_audio_encoder_write(wam_audio_encoder_t e,
   if (e->failed || !e->file)
     return fail(error, WAM_CLOSED, "AudioEncoderClosed");
   for (size_t i = 0; i < size_t(frames) * e->channels; ++i)
-    if (!std::isfinite(samples[i]) || std::fabs(samples[i]) > 1.0f)
+    if (!std::isfinite(samples[i]) ||
+        (e->codec != WAM_AUDIO_FLOAT32 && std::fabs(samples[i]) > 1.0f))
       return fail(error, WAM_INVALID_ARGUMENT, "InvalidPCMSample");
   AudioBufferList buffers{};
   buffers.mNumberBuffers = 1;
@@ -347,7 +401,10 @@ wam_status_t wam_audio_encoder_copy_info(wam_audio_encoder_t e,
   info->struct_size = sizeof(*info);
   info->hardware_accelerated = 0;
   info->input_frames = e->inputFrames;
-  snprintf(info->implementation, sizeof(info->implementation),
-           "AudioToolbox software AAC");
+  snprintf(info->implementation, sizeof(info->implementation), "%s",
+           e->codec == WAM_AUDIO_AAC     ? "AudioToolbox software AAC"
+           : e->codec == WAM_AUDIO_ALAC  ? "AudioToolbox software ALAC"
+           : e->codec == WAM_AUDIO_PCM16 ? "Uncompressed PCM16"
+                                         : "Uncompressed Float32 PCM");
   return WAM_OK;
 }
