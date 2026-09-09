@@ -55,3 +55,40 @@ energy by 0.9. Report a conditional estimate, never a guaranteed battery lifetim
 Sources: [Apple model identification](https://support.apple.com/en-gb/108052),
 [14-inch M3 Pro/Max battery specification](https://support.apple.com/en-au/117736),
 local macOS SDK `sys/resource.h` and `powermetrics --help` (estimated power caveats).
+
+## Writer optimization regression benchmark
+
+`writer_bench.swift` feeds 300 seconds of precomputed mono Float32 CMSampleBuffers
+through the production writer in 1024-frame callbacks. Signal generation is outside
+timing; creation/finalization and quality reporting are inside. This is accelerated
+throughput/CPU testing, not real-time energy or battery testing. Matching 48 kHz and
+44.1→48 kHz conversion are measured separately. The harness verifies frame counts
+and removes only its generated temporary directory.
+
+To reproduce old/new binaries (from the repository root):
+
+```sh
+git show e8f60fd:examples/WAMRecorder/RecordingWriter.swift > /tmp/wam-writer-before.swift
+xcrun swiftc -swift-version 5 -O -target arm64-apple-macos15.0 \
+  -module-cache-path build-encoding/recorder-modules -F build-encoding/src/wamkit \
+  -framework WAMKit -framework AVFoundation -framework Accelerate \
+  -Xlinker -rpath -Xlinker "$PWD/build-encoding/src/wamkit" \
+  /tmp/wam-writer-before.swift benchmarks/audio-energy/writer_bench.swift \
+  -o build-encoding/writer-bench-before
+xcrun swiftc -swift-version 5 -O -target arm64-apple-macos15.0 \
+  -module-cache-path build-encoding/recorder-modules -F build-encoding/src/wamkit \
+  -framework WAMKit -framework AVFoundation -framework Accelerate \
+  -Xlinker -rpath -Xlinker "$PWD/build-encoding/src/wamkit" \
+  examples/WAMRecorder/RecordingWriter.swift benchmarks/audio-energy/writer_bench.swift \
+  -o build-encoding/writer-bench-after
+python3 benchmarks/audio-energy/compare_writer.py \
+  --before build-encoding/writer-bench-before --after build-encoding/writer-bench-after \
+  --output /absolute/new-writer-comparison.jsonl
+```
+
+Six rounds per input rate alternate before/after order. Build first; do not compile
+while measuring. CPU placement, thermal state and background load can change the
+absolute values even when process CPU time is used. Report both medians and ranges.
+For actual whole-battery and fidelity comparison with Voice Memos, follow
+[COMPARISON.md](COMPARISON.md). Run its analysis tests with
+`python3 -m unittest discover -s benchmarks/audio-energy -p 'test_compare_capture.py'`.

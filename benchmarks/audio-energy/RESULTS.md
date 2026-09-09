@@ -117,3 +117,50 @@ storage and input needs can be changed without rebuilding.
 See [method and reproduction](README.md), [app guide](../../examples/WAMRecorder/README.md),
 and [WAMKit encoding contract](../../docs/wamkit/ENCODING.md). Raw battery/capture
 telemetry is local and gitignored; only aggregate measurements are included here.
+
+## Writer improvements and fidelity verification — follow-up
+
+The writer now bypasses conversion for matching Float32 buffers (including mono
+planar input), reuses the conversion output buffer otherwise, and supports retaining
+captured rates per source. The default remains fixed 48 kHz; existing settings are
+not silently migrated. PCM supports 8–192 kHz; AAC/ALAC retain 44.1/48 kHz support.
+Reports record actual input/output format, conversion, peak limiting and timing events.
+
+An alternating six-round comparison with the previous writer (`e8f60fd`) fed
+300 seconds of precomputed mono audio in 1024-frame callbacks. The same current
+WAMKit backend was used for both binaries. Signal generation was excluded;
+writer creation/finalization and the new quality report were included.
+
+| Input → output | Old median CPU seconds (range) | New median CPU seconds (range) | Reduction |
+| --- | ---: | ---: | ---: |
+| 48 → 48 kHz | 0.511 (0.366–0.654) | 0.241 (0.182–0.341) | **53%** |
+| 44.1 → 48 kHz | 0.571 (0.438–0.619) | 0.265 (0.202–0.323) | **54%** |
+
+Each output contains 14,400,000 frames and 57,604,096 bytes of audio/container.
+An earlier exploratory batch observed reductions of 55% and 41%, with lower
+absolute CPU times. Background workload and core placement were not controlled;
+the confirmation batch had no overlapping agent builds. This is evidence of less
+writer CPU work, **not a measurement of lower total recording power**, and not a
+Voice Memos comparison. Accelerated throughput must not be converted into runtime
+watts or a battery percentage. Raw results are gitignored under
+`results/writer-optimization/` and reproduction is documented in README.
+
+Bit-exact Float32 tests now cover 16/44.1/48/96 kHz, mono/stereo, interleaved/planar
+input and finite over-range peaks. PCM16 boundary-rate files at 8/192 kHz are also
+checked. Format changes and 50 ms gaps/20 ms overlaps are retained in session
+metadata and split files. This establishes preservation from tested capture buffers
+to decoded files; microphone/OS processing before those buffers remains unverified.
+
+**No head-to-head Voice Memos energy or acoustic fidelity results exist yet.**
+The previously discussed under-1-percentage-point additional 90-minute drain is
+an unverified planning estimate, not a measured upper bound. The new comparison
+analyzer rejects charging/stale/incomplete telemetry and requires independent
+bracketed repetitions. Live app opening/recording still awaits explicit approval
+following the earlier computer-control rejection. See COMPARISON.md for the
+controlled comparison and real 90-minute endurance acceptance criteria.
+
+Post-change validation: all 7 CTests pass (21.36 seconds), all 3 comparison-analysis
+tests pass, and the app passes strict ad-hoc signature verification. The new writer
+again passed three accelerated 90-minute two-source runs with 36 playable files
+and 3,110,547,456 audio/container bytes each; peak writer-test RSS was 15.27, 15.33,
+and 15.41 MiB. These remain accelerated integrity tests, not live endurance tests.

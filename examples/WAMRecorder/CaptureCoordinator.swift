@@ -11,7 +11,7 @@ final class CaptureCoordinator: NSObject, AVCaptureAudioDataOutputSampleBufferDe
     private var failed = false
     private var lastUpdate = Date.distantPast
     var onFailure: ((String) -> Void)?
-    var onProgress: (([String: UInt64]) -> Void)?
+    var onProgress: (([String: UInt64], [String: Double]) -> Void)?
     private(set) var directory: URL?
 
     func start(settings: RecordingSettings) async throws {
@@ -63,7 +63,7 @@ final class CaptureCoordinator: NSObject, AVCaptureAudioDataOutputSampleBufferDe
                 let filter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
                 let config = SCStreamConfiguration()
                 config.capturesAudio = true; config.excludesCurrentProcessAudio = true
-                config.sampleRate = settings.sampleRate; config.channelCount = settings.systemChannels
+                config.sampleRate = settings.sampleRate == 0 ? 48000 : settings.sampleRate; config.channelCount = settings.systemChannels
                 // Only audio output is registered. Minimize unused visual work; no video is saved.
                 config.width = 2; config.height = 2; config.minimumFrameInterval = CMTime(value: 1, timescale: 1); config.queueDepth = 3
                 let stream = SCStream(filter: filter, configuration: config, delegate: self)
@@ -106,8 +106,8 @@ final class CaptureCoordinator: NSObject, AVCaptureAudioDataOutputSampleBufferDe
         do {
             try writer.consume(buffer, source: source)
             if Date().timeIntervalSince(lastUpdate) >= 1 {
-                lastUpdate = Date(); let frames = writer.lanes.mapValues { $0.totalFrames }
-                DispatchQueue.main.async { self.onProgress?(frames) }
+                lastUpdate = Date(); let frames = writer.lanes.mapValues { $0.totalFrames }; let durations = writer.lanes.mapValues { $0.totalSeconds }
+                DispatchQueue.main.async { self.onProgress?(frames, durations) }
             }
         } catch { fail(error.localizedDescription) }
     }

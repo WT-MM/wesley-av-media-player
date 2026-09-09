@@ -74,7 +74,7 @@ enum {
 };
 typedef struct {
   uint32_t struct_size;
-  uint32_t sample_rate; /* 44100 or 48000 */
+  uint32_t sample_rate; /* PCM: 8000–192000; AAC/ALAC: 44100 or 48000 */
   uint32_t channels;    /* 1 or 2 */
   uint32_t codec;
   uint32_t bitrate; /* AAC total bits/sec: 32000..320000, or 0 for Apple

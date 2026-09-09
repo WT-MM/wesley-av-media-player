@@ -243,7 +243,9 @@ wam_status_t wam_audio_encoder_create_file(const wam_audio_file_config_t *c,
     *out = nullptr;
   if (!c || !path || path[0] != '/' || !out || c->struct_size != sizeof(*c) ||
       c->reserved || c->require_hardware > 1 ||
-      (c->sample_rate != 44100 && c->sample_rate != 48000) ||
+      ((c->codec == WAM_AUDIO_PCM16 || c->codec == WAM_AUDIO_FLOAT32)
+           ? (c->sample_rate < 8000 || c->sample_rate > 192000)
+           : (c->sample_rate != 44100 && c->sample_rate != 48000)) ||
       (c->channels != 1 && c->channels != 2) || c->codec < WAM_AUDIO_AAC ||
       c->codec > WAM_AUDIO_FLOAT32 ||
       (c->bitrate && (c->codec != WAM_AUDIO_AAC || c->bitrate < 32000 ||

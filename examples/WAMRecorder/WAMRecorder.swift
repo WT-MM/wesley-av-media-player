@@ -15,6 +15,7 @@ final class RecorderModel: ObservableObject {
     @Published var devices: [AVCaptureDevice] = []
     @Published var startDate: Date?
     @Published var lastFolder: URL?
+    @Published var capturedSeconds: [String: Double] = [:]
     @Published var frames: [String: UInt64] = [:]
     private var startupTask: Task<Void, Never>?
     private var generation = UUID()
@@ -23,6 +24,7 @@ final class RecorderModel: ObservableObject {
     private var observers: [NSObjectProtocol] = []
     var busy: Bool { state != .idle }
     var storageEstimate: String {
+        if settings.sampleRate == 0 && settings.scheme.bitrate == 0 { return "Storage depends on the captured sample rate. Each file records its actual format." }
         let channels = (settings.microphone ? settings.microphoneChannels : 0) + (settings.systemAudio ? settings.systemChannels : 0)
         let bytes: Double
         switch settings.scheme {
@@ -59,10 +61,10 @@ final class RecorderModel: ObservableObject {
     func refreshDevices() { devices = AVCaptureDevice.DiscoverySession(deviceTypes: [.microphone, .external], mediaType: .audio, position: .unspecified).devices }
     func start() {
         guard !busy, settings.microphone || settings.systemAudio else { return }
-        state = .starting; failure = nil; message = "Preparing recording…"; frames = [:]
+        state = .starting; failure = nil; message = "Preparing recording…"; frames = [:]; capturedSeconds = [:]
         let coordinator = CaptureCoordinator(); self.coordinator = coordinator
         coordinator.onFailure = { [weak self] message in Task { @MainActor in await self?.stop(reason: message) } }
-        coordinator.onProgress = { [weak self] frames in self?.frames = frames }
+        coordinator.onProgress = { [weak self] frames, durations in self?.frames = frames; self?.capturedSeconds = durations }
         let chosen = settings
         let run = UUID(); generation = run
         startupTask = Task {
@@ -97,6 +99,7 @@ final class RecorderModel: ObservableObject {
         NSApp.activate(ignoringOtherApps: true)
         if panel.runModal() == .OK, let url = panel.url { settings.folderPath = url.path }
     }
+    func showReport() { if let lastFolder { NSWorkspace.shared.open(lastFolder.appendingPathComponent("Recording report.txt")) } }
     func reveal() { if let lastFolder { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: lastFolder.path) } }
 }
 @MainActor
@@ -143,7 +146,7 @@ struct RecorderPanel: View {
             if model.state == .recording {
                 VStack(alignment: .leading, spacing: 4) {
                     ForEach(model.frames.keys.sorted(), id: \.self) { source in
-                        Text("\(source): \(duration(Double(model.frames[source] ?? 0) / Double(model.settings.sampleRate))) captured")
+                        Text("\(source): \(duration(model.capturedSeconds[source] ?? 0)) captured")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }
@@ -160,7 +163,8 @@ struct RecorderPanel: View {
                 VStack(alignment: .leading, spacing: 12) {
                     Picker("Format", selection: $model.settings.scheme) { ForEach(AudioScheme.allCases) { Text($0.title).tag($0) } }
                     Text(model.storageEstimate).font(.caption).foregroundStyle(.secondary)
-                    Picker("Sample rate", selection: $model.settings.sampleRate) { Text("48 kHz").tag(48000); Text("44.1 kHz").tag(44100) }
+                    Picker("Sample rate", selection: $model.settings.sampleRate) { Text("Preserve captured rate").tag(0); Text("48 kHz").tag(48000); Text("44.1 kHz").tag(44100) }
+                    Text("Preserve captured rate avoids app resampling. System audio is requested at 48 kHz; microphone rate comes from the capture device.").font(.caption).foregroundStyle(.secondary)
                     if model.settings.microphone {
                         Picker("Microphone channels", selection: $model.settings.microphoneChannels) { Text("Mono").tag(1); Text("Stereo").tag(2) }
                     }
@@ -179,6 +183,7 @@ struct RecorderPanel: View {
             Divider()
             HStack {
                 Button("Show recording") { model.reveal() }.disabled(model.lastFolder == nil)
+                Button("Report") { model.showReport() }.disabled(model.lastFolder == nil || model.busy).accessibilityLabel("Open recording quality report")
                 Spacer()
                 Button("Quit") { NSApp.terminate(nil) }.keyboardShortcut("q")
             }.buttonStyle(.plain).font(.caption)

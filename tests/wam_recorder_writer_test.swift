@@ -6,11 +6,11 @@ import Darwin
 func require(_ yes: @autoclosure () -> Bool, _ message: String) throws {
     if !yes() { throw RecorderFailure(message: message) }
 }
-func makeSample(frames: Int, rate: Double, channels: UInt32, pts: Double, phase: Int) throws -> CMSampleBuffer {
-    let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: rate, channels: channels, interleaved: true)!
+func makeSample(frames: Int, rate: Double, channels: UInt32, pts: Double, phase: Int, interleaved: Bool = true) throws -> CMSampleBuffer {
+    let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: rate, channels: channels, interleaved: interleaved)!
     let pcm = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: UInt32(frames))!
     pcm.frameLength = UInt32(frames)
-    for i in 0..<frames { for c in 0..<Int(channels) { pcm.floatChannelData![0][i * Int(channels) + c] = Float(sin(Double(i + phase) * 2 * .pi * (c == 0 ? 440 : 880) / rate) * (phase < 4096 ? 1.2 : 0.2)) } }
+    for i in 0..<frames { for c in 0..<Int(channels) { pcm.floatChannelData![interleaved ? 0 : c][interleaved ? i * Int(channels) + c : i] = Float(sin(Double(i + phase) * 2 * .pi * (c == 0 ? 440 : 880) / rate) * (phase < 4096 ? 1.2 : 0.2)) } }
     var description: CMAudioFormatDescription?
     try require(CMAudioFormatDescriptionCreate(allocator: nil, asbd: format.streamDescription, layoutSize: 0, layout: nil, magicCookieSize: 0, magicCookie: nil, extensions: nil, formatDescriptionOut: &description) == noErr, "format description")
     var timing = CMSampleTimingInfo(duration: CMTime(value: 1, timescale: Int32(rate)), presentationTimeStamp: CMTime(seconds: pts, preferredTimescale: 1_000_000_000), decodeTimeStamp: .invalid)
@@ -20,6 +20,55 @@ func makeSample(frames: Int, rate: Double, channels: UInt32, pts: Double, phase:
     try require(CMSampleBufferSetDataReady(sample!) == noErr, "sample ready")
     return sample!
 }
+func verifyPreservation(root: URL) throws {
+    for rate in [16000, 44100, 48000, 96000] {
+        for channels in [1, 2] {
+            for interleaved in [true, false] {
+                var settings = RecordingSettings(); settings.systemAudio = false
+                settings.sampleRate = 0; settings.microphoneChannels = channels
+                let writer = try RecordingWriter(settings: settings, rootOverride: root)
+                let sample = try makeSample(frames: 4096, rate: Double(rate), channels: UInt32(channels), pts: writer.hostStart, phase: 0, interleaved: interleaved)
+                try writer.consume(sample, source: "Microphone"); try writer.finish()
+                let segment = writer.receipt.segments[0]
+                try require(segment.sampleRate == rate && segment.frames == 4096, "native rate or frame count changed")
+                try require(segment.resampled == false && segment.remixed == false && segment.limited == false, "unexpected sample processing")
+                let file = try AVAudioFile(forReading: writer.directory.appendingPathComponent(segment.file))
+                let decoded = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: 4096)!
+                try file.read(into: decoded)
+                for i in 0..<4096 { for c in 0..<channels {
+                    let expected = Float(sin(Double(i) * 2 * .pi * (c == 0 ? 440 : 880) / Double(rate)) * 1.2)
+                    try require(decoded.floatChannelData![c][i].bitPattern == expected.bitPattern, "Float32 sample changed at \(rate) Hz, channel \(c), frame \(i)")
+                } }
+                try require(abs(writer.lanes["Microphone"]!.totalSeconds - 4096 / Double(rate)) < 1e-9, "native-rate duration incorrect")
+                try require(FileManager.default.fileExists(atPath: writer.directory.appendingPathComponent("Recording report.txt").path), "missing recording report")
+            }
+        }
+    }
+    for rate in [8000, 192000] {
+        var pcm = RecordingSettings(); pcm.systemAudio = false; pcm.sampleRate = 0; pcm.scheme = .pcm16
+        let writer = try RecordingWriter(settings: pcm, rootOverride: root)
+        try writer.consume(makeSample(frames: 4096, rate: Double(rate), channels: 1, pts: writer.hostStart, phase: 20000), source: "Microphone")
+        try writer.finish()
+        let file = try AVAudioFile(forReading: writer.directory.appendingPathComponent(writer.receipt.segments[0].file))
+        try require(file.processingFormat.sampleRate == Double(rate) && file.length == 4096, "PCM16 rate boundary failed")
+    }
+    var settings = RecordingSettings(); settings.systemAudio = false; settings.sampleRate = 0
+    let writer = try RecordingWriter(settings: settings, rootOverride: root)
+    var pts = writer.hostStart
+    for (index, rate) in [44100, 96000, 96000, 96000].enumerated() {
+        if index == 2 { pts += 0.05 }
+        if index == 3 { pts -= 0.02 }
+        try writer.consume(makeSample(frames: 4096, rate: Double(rate), channels: 1, pts: pts, phase: 0), source: "Microphone")
+        pts += 4096 / Double(rate)
+    }
+    try writer.finish()
+    try require(writer.receipt.segments.count == 4, "format changes and gaps must split files")
+    try require(writer.receipt.events?.count == 3, "missing discontinuity/format events")
+    try require(writer.receipt.events?[0].kind == "formatChange", "missing format change")
+    try require(abs((writer.receipt.events?[1].deltaSeconds ?? 0) - 0.05) < 1e-6, "gap duration lost")
+    try require(abs((writer.receipt.events?[2].deltaSeconds ?? 0) + 0.02) < 1e-6, "overlap duration lost")
+    print("PASS bit-exact Float32: 16/44.1/48/96 kHz, mono/stereo, planar/interleaved, over-range peaks; format changes and 50ms gaps/20ms overlaps reported")
+}
 @main struct WriterTests {
     static func main() throws {
         let seconds = CommandLine.arguments.count > 1 ? Int(CommandLine.arguments[1])! : 12
@@ -28,6 +77,7 @@ func makeSample(frames: Int, rate: Double, channels: UInt32, pts: Double, phase:
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("wam-writer-test-\(UUID())")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
+        if selected == .float32 && !CommandLine.arguments.contains("--crash-proof") { try verifyPreservation(root: root) }
         for session in 0..<sessions {
             var settings = RecordingSettings(); settings.scheme = selected
             let writer = try RecordingWriter(settings: settings, rootOverride: root)
@@ -64,7 +114,7 @@ func makeSample(frames: Int, rate: Double, channels: UInt32, pts: Double, phase:
                     if segment.file == segments.first?.file {
                         let peak = (0..<Int(buffer.frameLength)).map { abs(buffer.floatChannelData![0][$0]) }.max() ?? 0
                         if selected == .float32 { try require(peak > 1, "Float32 must preserve capture peaks above full scale") }
-                        if selected == .pcm16 || selected == .alac { try require(peak <= 1, "integer formats must clamp safely") }
+                        if selected == .pcm16 || selected == .alac { try require(peak <= 1, "integer formats must clamp safely"); try require(segment.limited == true, "limiting must be reported") }
                     }
                     file.framePosition = max(0, file.length - 4096)
                     try file.read(into: buffer)

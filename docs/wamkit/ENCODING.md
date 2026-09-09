@@ -150,3 +150,12 @@ per-source resampling, peak handling, source configuration, and checkpoints.
 The [audio-energy benchmark](../../benchmarks/audio-energy/README.md) compares
 identical mono microphone + stereo system lanes at 48 kHz. It records the kernel's
 process-energy estimate separately from whole-system battery telemetry.
+
+### Captured-rate PCM
+
+`wam_audio_encoder_create_file` accepts integer PCM16/Float32 sample rates from
+8,000 through 192,000 Hz so a capture client can avoid unnecessary resampling.
+AAC and ALAC retain the 44,100/48,000 Hz contract; the original AAC API is unchanged.
+The recorder verifies bit-for-bit Float32 preservation with mono/stereo and
+planar/interleaved capture inputs at 16/44.1/48/96 kHz. These tests establish the
+app writer's behavior, not an absence of microphone/OS processing upstream.
