@@ -1,4 +1,5 @@
 /build/
+/build-encoding/
 /build-bench/
 /build-native/
 /build-perf/

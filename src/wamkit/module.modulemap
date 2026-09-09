@@ -1,5 +1,6 @@
 framework module WAMKit {
   header "WAMKit.h"
   header "WAMKitObjC.h"
+  header "WAMKitEncoding.h"
   export *
 }
