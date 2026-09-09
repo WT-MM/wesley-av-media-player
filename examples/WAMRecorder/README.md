@@ -7,7 +7,7 @@ clean originals and avoiding live mixing/echo or an extra encoding pass.
 
 Build using `scripts/build_wam_recorder.sh build-encoding`. The app stays in the
 menu bar. Capture begins only after Start recording and the macOS permission prompts.
-System capture uses ScreenCaptureKit audio output; no screen video is saved.
+System capture uses a private Core Audio process tap; it does not require a display or capture screen video.
 Microphone-only mode uses AVFoundation and does not request screen recording access.
 
 ## Controls and storage
@@ -44,7 +44,7 @@ them complete. Disk space is checked while writing, with a 256 MB stop threshold
 ## Preserving and inspecting audio
 
 Choose **Preserve captured rate** to avoid resampling in the app. Microphone audio
-retains the rate delivered by AVFoundation; system capture requests 48 kHz.
+retains the rate delivered by AVFoundation; system audio retains the tap’s reported rate.
 This does not promise that the device or macOS performed no earlier processing.
 PCM supports integer rates from 8–192 kHz. AAC/ALAC currently support only
 44.1/48 kHz and report an actionable error for other captured rates.
@@ -56,7 +56,7 @@ mono for stereo input still performs a channel conversion. Fixed-rate settings
 continue to work and existing settings are preserved.
 
 After stopping, **Report** opens `Recording report.txt` with actual rates,
-channels, frame counts, timing offsets, resampling/remixing flags, peak magnitudes
+channels, actual microphone and system clock device names, frame counts, timing offsets, resampling/remixing flags, peak magnitudes
 before encoder limiting, and whether samples were limited. The same information
 is in `session.json`. Finite peaks above full scale are preserved in Float32;
 other formats limit these peaks, PCM16/ALAC16 quantize to 16 bits, and AAC is lossy.
@@ -101,3 +101,45 @@ your selected microphone. Supported modes are microphone/system/both; schemes
 are float32/pcm16/alac/aac64/aac96; window length is 30–5400 seconds. Use at least
 180 seconds and five independent blocks for whole-battery comparison. Interrupted
 windows are rejected. See [comparison protocol](../../benchmarks/audio-energy/COMPARISON.md).
+
+Add `--benchmark-device-name 'MacBook Pro Microphone'` to select that exact input
+for a diagnostic. Ambiguous or disconnected names fail explicitly. The actual
+microphone name is now included in the session report and diagnostic results;
+recording the configured default alone is insufficient when AirPods or continuity
+microphones can become the system default. Device/OS processing may precede the
+format observed by this app.
+
+`--show-window` opens the same recorder panel in a regular window for accessibility
+inspection on hosts that cannot automate menu-bar extras. It never starts recording.
+
+## Audio-only system capture
+
+The process tap excludes this app, keeps normal playback unmuted, and uses a private
+aggregate with the current output device as its clock. The app does not set the
+system’s default input/output or alter an existing aggregate. Physical input channels
+are excluded; microphone capture remains independently controlled by AVFoundation.
+A tap-only aggregate stalled during development on this Mac; adding the physical
+output clock resolved startup. Clock/tap rate mismatches fail explicitly rather than
+writing samples with the wrong duration.
+
+The HAL callback copies borrowed samples into owned memory, with at most eight
+pending buffers. Conversion, encoding, and file writing run on the separate writer
+queue. Invalid layouts, a full queue, changed output route/format, or more than five
+seconds without callbacks stop and finalize the session. Output-device changes
+currently require a new recording; automatic route recovery is not implemented.
+
+Short local tests verified stereo test-tone capture while ScreenCaptureKit reported
+zero displays. This removes that display dependency; it does not permit recording
+during system sleep or establish 90-minute screen-off endurance. The underlying API
+is documented in [Apple’s Core Audio tap sample](https://developer.apple.com/documentation/coreaudio/capturing-system-audio-with-core-audio-taps).
+
+Diagnostic-only flags: `--benchmark-capture-only` skips idle brackets,
+`--benchmark-system-channels 1|2` selects the system track layout, and
+`--benchmark-retain-audio` keeps the generated test take for local inspection.
+Capture-only results are functional/process checks and cannot feed the bracketed
+battery comparison. Retained diagnostic audio must be removed after analysis.
+
+`--benchmark-silent-tap` (only honored in benchmark mode) restricts the tap to
+this diagnostic process to verify silent-buffer continuity without pausing other
+playback. Its report labels the diagnostic source, and the harness requires zero
+system-track peak. It does not represent a normal system recording.

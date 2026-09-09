@@ -69,6 +69,49 @@ func verifyPreservation(root: URL) throws {
     try require(abs((writer.receipt.events?[2].deltaSeconds ?? 0) + 0.02) < 1e-6, "overlap duration lost")
     print("PASS bit-exact Float32: 16/44.1/48/96 kHz, mono/stereo, planar/interleaved, over-range peaks; format changes and 50ms gaps/20ms overlaps reported")
 }
+func verifyTapBufferOwnership() throws {
+    for channels: AVAudioChannelCount in [1, 2] {
+        for interleaved in [false, true] {
+            let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 48000, channels: channels, interleaved: interleaved)!
+            let input = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 32)!
+            input.frameLength = 32
+            for c in 0..<Int(channels) { for i in 0..<32 {
+                input.floatChannelData![interleaved ? 0 : c][interleaved ? i * Int(channels) + c : i] = Float(c + 1) * 0.125
+            } }
+            var description: CMAudioFormatDescription?
+            try require(CMAudioFormatDescriptionCreate(allocator: nil, asbd: format.streamDescription, layoutSize: 0, layout: nil, magicCookieSize: 0, magicCookie: nil, extensions: nil, formatDescriptionOut: &description) == noErr, "tap format")
+            var time = AudioTimeStamp(); time.mFlags = .hostTimeValid; time.mHostTime = mach_absolute_time()
+            let sample = try CoreAudioSystemCapture.copySample(input.audioBufferList, time: time, format: format.streamDescription.pointee, description: description!)
+            for buffer in UnsafeMutableAudioBufferListPointer(input.mutableAudioBufferList) { memset(buffer.mData!, 0, Int(buffer.mDataByteSize)) }
+            let output = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 32)!; output.frameLength = 32
+            try require(CMSampleBufferCopyPCMDataIntoAudioBufferList(sample, at: 0, frameCount: 32, into: output.mutableAudioBufferList) == noErr, "tap decode")
+            for c in 0..<Int(channels) { for i in 0..<32 {
+                try require(output.floatChannelData![interleaved ? 0 : c][interleaved ? i * Int(channels) + c : i] == Float(c + 1) * 0.125, "tap retained borrowed memory or changed channel samples")
+            } }
+            try require(CMTimeCompare(CMSampleBufferGetPresentationTimeStamp(sample), CMClockMakeHostTimeFromSystemUnits(time.mHostTime)) == 0, "tap host timestamp changed")
+            func rejects(_ label: String, _ body: () throws -> CMSampleBuffer) throws {
+                var rejected = false
+                do { _ = try body() } catch { rejected = true }
+                try require(rejected, "tap accepted \(label)")
+            }
+            var invalidTime = time; invalidTime.mFlags = []
+            try rejects("missing host clock") { try CoreAudioSystemCapture.copySample(input.audioBufferList, time: invalidTime, format: format.streamDescription.pointee, description: description!) }
+            let listPointer = input.mutableAudioBufferList
+            let list = UnsafeMutableAudioBufferListPointer(listPointer)
+            let originalSize = list[0].mDataByteSize
+            list[0].mDataByteSize -= 1
+            try rejects("partial frame") { try CoreAudioSystemCapture.copySample(UnsafePointer(listPointer), time: time, format: format.streamDescription.pointee, description: description!) }
+            list[0].mDataByteSize = originalSize
+            let pointer = list[0].mData; list[0].mData = nil
+            try rejects("null audio") { try CoreAudioSystemCapture.copySample(UnsafePointer(listPointer), time: time, format: format.streamDescription.pointee, description: description!) }
+            list[0].mData = pointer
+            list[0].mDataByteSize = 9000 * format.streamDescription.pointee.mBytesPerFrame
+            try rejects("oversized callback") { try CoreAudioSystemCapture.copySample(UnsafePointer(listPointer), time: time, format: format.streamDescription.pointee, description: description!) }
+            list[0].mDataByteSize = originalSize
+        }
+    }
+    print("PASS Core Audio copy owns mono/stereo planar/interleaved samples and host timestamps; malformed callbacks rejected")
+}
 @main struct WriterTests {
     static func main() throws {
         let seconds = CommandLine.arguments.count > 1 ? Int(CommandLine.arguments[1])! : 12
@@ -77,7 +120,7 @@ func verifyPreservation(root: URL) throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("wam-writer-test-\(UUID())")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
-        if selected == .float32 && !CommandLine.arguments.contains("--crash-proof") { try verifyPreservation(root: root) }
+        if selected == .float32 && !CommandLine.arguments.contains("--crash-proof") { try verifyPreservation(root: root); try verifyTapBufferOwnership() }
         for session in 0..<sessions {
             var settings = RecordingSettings(); settings.scheme = selected
             let writer = try RecordingWriter(settings: settings, rootOverride: root)

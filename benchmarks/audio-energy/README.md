@@ -92,3 +92,27 @@ absolute values even when process CPU time is used. Report both medians and rang
 For actual whole-battery and fidelity comparison with Voice Memos, follow
 [COMPARISON.md](COMPARISON.md). Run its analysis tests with
 `python3 -m unittest discover -s benchmarks/audio-energy -p 'test_compare_capture.py'`.
+
+For a reference app, `process_sample.swift` reads one explicitly selected PID's
+CPU, energy, footprint and disk counters. It never starts recording or reads audio:
+
+```sh
+xcrun swiftc -O benchmarks/audio-energy/process_sample.swift -o build-encoding/process-sample
+build-encoding/process-sample PID 180 > /absolute/new-process-samples.jsonl
+```
+
+`cpu_ticks` is Mach absolute time, **not nanoseconds**. Convert its delta using
+`mach_timebase_numer / mach_timebase_denom / 1e9` to seconds, then divide by elapsed
+wall seconds and multiply by 100 for percent of one CPU core. On this Mac the
+ratio is 125/3; a local burn test matched `getrusage` (0.144405 seconds versus
+0.144406875 converted seconds). `energy_nj` is already nanojoules and receives no
+Mach-time conversion. WAM's internal diagnostic CPU values use `getrusage` directly.
+Measure steady recording windows away from UI actions; include the reference app's
+visible meter overhead when reporting the actual app configuration.
+
+
+Current system capture uses Core Audio process taps; older results in RESULTS.md
+used ScreenCaptureKit. Keep backend versions separate when comparing measurements.
+The optional capture-only/retained-audio flags are for short functional checks, not
+battery inference. A process-energy counter excludes shared services and storage
+hardware, even when the audio backend itself has no screen dependency.

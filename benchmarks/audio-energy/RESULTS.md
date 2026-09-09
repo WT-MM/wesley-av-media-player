@@ -155,8 +155,9 @@ to decoded files; microphone/OS processing before those buffers remains unverifi
 The previously discussed under-1-percentage-point additional 90-minute drain is
 an unverified planning estimate, not a measured upper bound. The new comparison
 analyzer rejects charging/stale/incomplete telemetry and requires independent
-bracketed repetitions. Live app opening/recording still awaits explicit approval
-following the earlier computer-control rejection. See COMPARISON.md for the
+bracketed repetitions. The user subsequently approved local app opening/recording. Short WAM/QuickTime
+checks are documented in LIVE_COMPARISON.md; controlled battery and Voice Memos
+comparisons remain outstanding. See COMPARISON.md for the
 controlled comparison and real 90-minute endurance acceptance criteria.
 
 Post-change validation: all 7 CTests pass (21.36 seconds), all 3 comparison-analysis
@@ -164,3 +165,36 @@ tests pass, and the app passes strict ad-hoc signature verification. The new wri
 again passed three accelerated 90-minute two-source runs with 36 playable files
 and 3,110,547,456 audio/container bytes each; peak writer-test RSS was 15.27, 15.33,
 and 15.41 MiB. These remain accelerated integrity tests, not live endurance tests.
+
+
+## Approved live follow-up
+
+The user approved local capture tests. [LIVE_COMPARISON.md](LIVE_COMPARISON.md)
+records two short built-in-microphone runs per app: QuickTime Maximum used
+10.53–10.72% of one core and 13.81–14.39 mW attributed process power; WAM Float32
+used 3.27–3.31% and 4.30–6.69 mW. Both saved 48 kHz mono Float32. QuickTime's meter
+was visible and WAM's menu-bar panel was closed. These are plugged-in exploratory
+app-overhead measurements, not whole-battery or calibrated acoustic results.
+The initial unpinned-input WAM run is excluded because its actual device was not
+retained. Device names are now recorded, and benchmarks can pin an exact input.
+
+Post-fix microphone, system, combined Float32, combined PCM16 and combined AAC64
+capture all completed with no detected discontinuities. Thus the earlier live
+PCM16/AAC64 validation blocker is resolved. See the live report for remaining
+formats and UI checks. Voice Memos was not recorded because active cloud sync
+could violate the local-only scope; a sync decision is pending. Whole-battery and
+real screen-off endurance still require an unplugged, stable interval.
+
+All five formats subsequently passed short live capture, including combined ALAC16
+and AAC96. Actual microphone names are included in reports. WAM UI attachment still
+times out through computer control; no interactive inspection pass is claimed.
+See LIVE_COMPARISON.md for the aggregate results and exact limitations.
+
+
+The subsequent unplugged attempt exposed ScreenCaptureKit's no-display startup
+failure before a complete measurement block could be collected. A new private
+Core Audio tap with an output-device clock successfully captured system audio while
+ScreenCaptureKit reported zero displays, including a verified stereo test tone.
+See LIVE_COMPARISON.md for the backend transition; earlier system-capture power
+figures refer to ScreenCaptureKit and should not be attributed to the replacement.
+There is still no validated standalone 90-minute battery-draw number.
