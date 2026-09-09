@@ -9,15 +9,15 @@ target_compile_options(wamkit_public_layer PRIVATE -fobjc-arc)
 target_compile_definitions(wamkit_public_layer PRIVATE WAM_PUBLIC_PRESENTATION_API=1)
 target_link_libraries(wamkit_public_layer PUBLIC wam_macos_native_video_core
   "-framework AppKit" "-framework AVFoundation" "-framework QuartzCore" "-framework CoreImage")
-add_library(WAMKit SHARED wamkit.mm include/WAMKit/WAMKit.h include/WAMKit/WAMKitObjC.h)
+add_library(WAMKit SHARED wamkit.mm encoding.mm include/WAMKit/WAMKitEncoding.h include/WAMKit/WAMKit.h include/WAMKit/WAMKitObjC.h)
 set_target_properties(WAMKit PROPERTIES FRAMEWORK TRUE FRAMEWORK_VERSION A
   MACOSX_FRAMEWORK_IDENTIFIER org.wam.WAMKit VERSION 1.0.0 SOVERSION 1
-  PUBLIC_HEADER "include/WAMKit/WAMKit.h;include/WAMKit/WAMKitObjC.h"
+  PUBLIC_HEADER "include/WAMKit/WAMKitEncoding.h;include/WAMKit/WAMKit.h;include/WAMKit/WAMKitObjC.h"
   CXX_VISIBILITY_PRESET hidden OBJCXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN YES
   INSTALL_NAME_DIR "@rpath" BUILD_WITH_INSTALL_NAME_DIR YES)
 target_include_directories(WAMKit PRIVATE "${PROJECT_SOURCE_DIR}/src" include)
 target_compile_options(WAMKit PRIVATE -fobjc-arc -Wall -Wextra)
-target_link_libraries(WAMKit PRIVATE wam_macos_native_session_system wamkit_public_layer "-framework AppKit")
+target_link_libraries(WAMKit PRIVATE wam_macos_native_session_system wamkit_public_layer "-framework AppKit" "-framework VideoToolbox" "-framework AudioToolbox")
 target_link_options(WAMKit PRIVATE "LINKER:-exported_symbols_list,${CMAKE_CURRENT_SOURCE_DIR}/exports.txt")
 set_property(TARGET WAMKit APPEND PROPERTY LINK_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/exports.txt" "${PROJECT_SOURCE_DIR}/scripts/package_wamkit.py")
 add_custom_command(TARGET WAMKit POST_BUILD
@@ -119,4 +119,20 @@ endif()
 
 if(BUILD_TESTING)
   add_test(NAME wamkit_dogfooding COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/wamkit_dogfooding_test.py")
+endif()
+
+if(BUILD_TESTING)
+  add_executable(wamkit_encoding_test "${PROJECT_SOURCE_DIR}/tests/wamkit_encoding_test.mm")
+  target_compile_options(wamkit_encoding_test PRIVATE -fobjc-arc -Wall -Wextra -Werror)
+  target_link_libraries(wamkit_encoding_test PRIVATE WAMKit "-framework AVFoundation" "-framework VideoToolbox" "-framework CoreMedia" "-framework CoreVideo" "-framework Foundation")
+  target_compile_options(wamkit_encoding_test PRIVATE "-F${CMAKE_CURRENT_BINARY_DIR}")
+  add_test(NAME wamkit_audio_encoding COMMAND wamkit_encoding_test audio)
+  option(WAMKIT_REQUIRE_HARDWARE_ENCODING "Fail video encoding tests if Apple hardware is unavailable" OFF)
+  if(WAMKIT_REQUIRE_HARDWARE_ENCODING)
+    add_test(NAME wamkit_video_encoding COMMAND wamkit_encoding_test video --require-hardware)
+  else()
+    add_test(NAME wamkit_video_encoding COMMAND wamkit_encoding_test video)
+    set_tests_properties(wamkit_video_encoding PROPERTIES SKIP_RETURN_CODE 77)
+  endif()
+  set_tests_properties(wamkit_audio_encoding wamkit_video_encoding PROPERTIES TIMEOUT 60 RUN_SERIAL TRUE)
 endif()

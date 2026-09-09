@@ -4,6 +4,13 @@ WAMKit embeds WAM's native playback pipeline in a macOS AppKit host. The SDK exp
 
 The current SDK implements local-file open, play/pause, accurate rational seek, gain/mute, rate/pitch intent, state observation, optional metrics, and asynchronous stop/close. The [AppKit sample](../../examples/WAMKitHost/main.m) uses only AppKit and the public ABI.
 
+## Encoding
+
+WAMKit now also exposes [hardware H.264/HEVC and native software AAC encoding](ENCODING.md)
+through the additive `WAMKitEncoding.h` API. Each encoder reports its actual
+backend. Hardware video is required and verified; macOS AAC is explicitly
+software. The host supplies raw frames/PCM and owns capture permissions.
+
 ## Build and install
 
 Use the repository's locally provisioned native dependencies; configuration and packaging perform no downloads.
@@ -107,7 +114,7 @@ Retain the player until its close result if the host needs confirmation. The hos
 
 ## C ABI version 1
 
-The authoritative declarations are [WAMKit.h](../../src/wamkit/include/WAMKit/WAMKit.h) and [WAMKitObjC.h](../../src/wamkit/include/WAMKit/WAMKitObjC.h). The [export list](../../src/wamkit/exports.txt) admits exactly eighteen C functions and the class/metaclass symbols for `WAMPlayer` and `WAMPresentationView`.
+The authoritative declarations are [WAMKit.h](../../src/wamkit/include/WAMKit/WAMKit.h) and [WAMKitObjC.h](../../src/wamkit/include/WAMKit/WAMKitObjC.h). The [export list](../../src/wamkit/exports.txt) admits eighteen playback C functions, nine encoding C functions and the class/metaclass symbols for `WAMPlayer` and `WAMPresentationView`.
 
 | Functions | Contract |
 |---|---|
