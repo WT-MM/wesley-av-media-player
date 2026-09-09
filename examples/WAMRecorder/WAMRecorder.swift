@@ -22,6 +22,7 @@ final class RecorderModel: ObservableObject {
     private var coordinator: CaptureCoordinator?
     private var activity: NSObjectProtocol?
     private var observers: [NSObjectProtocol] = []
+    private var inspectionWindow: NSWindow?
     var busy: Bool { state != .idle }
     var storageEstimate: String {
         if settings.sampleRate == 0 && settings.scheme.bitrate == 0 { return "Storage depends on the captured sample rate. Each file records its actual format." }
@@ -39,6 +40,20 @@ final class RecorderModel: ObservableObject {
     init() {
         settings = UserDefaults.standard.data(forKey: "settings").flatMap { try? JSONDecoder().decode(RecordingSettings.self, from: $0) } ?? RecordingSettings()
         refreshDevices()
+        // The same panel can be inspected through Accessibility on hosts whose
+        // automation cannot reach menu-bar extras. This flag never starts capture.
+        if CommandLine.arguments.contains("--show-window") {
+            Task { @MainActor in
+                NSApp.setActivationPolicy(.regular)
+                let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 390, height: 650),
+                    styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+                window.title = "WAM Recorder"
+                window.contentView = NSHostingView(rootView: ScrollView { RecorderPanel(model: self) })
+                window.isReleasedWhenClosed = false
+                self.inspectionWindow = window
+                window.center(); window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
+            }
+        }
         if let index = CommandLine.arguments.firstIndex(of: "--benchmark-output"), CommandLine.arguments.count > index + 1 {
             let url = URL(fileURLWithPath: CommandLine.arguments[index + 1])
             Task { await runCaptureBenchmark(model: self, output: url) }
@@ -61,6 +76,7 @@ final class RecorderModel: ObservableObject {
     func refreshDevices() { devices = AVCaptureDevice.DiscoverySession(deviceTypes: [.microphone, .external], mediaType: .audio, position: .unspecified).devices }
     func start() {
         guard !busy, settings.microphone || settings.systemAudio else { return }
+        RecorderAppDelegate.shared?.model = self
         state = .starting; failure = nil; message = "Preparing recording…"; frames = [:]; capturedSeconds = [:]
         let coordinator = CaptureCoordinator(); self.coordinator = coordinator
         coordinator.onFailure = { [weak self] message in Task { @MainActor in await self?.stop(reason: message) } }
@@ -104,6 +120,8 @@ final class RecorderModel: ObservableObject {
 }
 @MainActor
 final class RecorderAppDelegate: NSObject, NSApplicationDelegate {
+    static weak var shared: RecorderAppDelegate?
+    override init() { super.init(); Self.shared = self }
     weak var model: RecorderModel?
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let model, model.busy else { return .terminateNow }

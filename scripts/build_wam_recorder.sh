@@ -14,9 +14,10 @@ COPY
 xcrun swiftc -swift-version 5 -O -target arm64-apple-macos15.0 \
   -module-cache-path "$build_dir/recorder-modules" \
   -F "$build_dir/src/wamkit" -framework WAMKit \
-  -framework SwiftUI -framework AppKit -framework AVFoundation -framework ScreenCaptureKit -framework Accelerate \
+  -framework SwiftUI -framework AppKit -framework AVFoundation -framework CoreAudio -framework Accelerate \
   -Xlinker -rpath -Xlinker @executable_path/../Frameworks \
   "$repo_dir/examples/WAMRecorder/RecordingWriter.swift" \
+  "$repo_dir/examples/WAMRecorder/CoreAudioSystemCapture.swift" \
   "$repo_dir/examples/WAMRecorder/CaptureCoordinator.swift" \
   "$repo_dir/examples/WAMRecorder/CaptureBenchmark.swift" \
   "$repo_dir/examples/WAMRecorder/WAMRecorder.swift" \
@@ -34,7 +35,7 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
 <key>LSMinimumSystemVersion</key><string>15.0</string>
 <key>LSUIElement</key><true/>
 <key>NSMicrophoneUsageDescription</key><string>Record the microphone when you enable the Microphone source and start a recording.</string>
-<key>NSAudioCaptureUsageDescription</key><string>Record system audio when you enable the System audio source and start a recording.</string>
+<key>NSAudioCaptureUsageDescription</key><string>Record outgoing system audio when you enable the System audio source and start a recording.</string>
 <key>NSHighResolutionCapable</key><true/>
 </dict></plist>
 PLIST

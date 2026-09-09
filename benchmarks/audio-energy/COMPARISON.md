@@ -1,8 +1,8 @@
 # Recorder comparison protocol
 
-No Voice Memos head-to-head recording has been measured yet. Opening the local
-recorder for live tests is pending explicit approval after computer-control review
-blocked it. Synthetic results must not be presented as battery or product superiority.
+No Voice Memos head-to-head recording has been measured yet. The user approved local live tests; short WAM/QuickTime results are now in
+LIVE_COMPARISON.md. Voice Memos appears to have cloud sync active, so its local-only
+comparison awaits a sync decision. Synthetic results must not be presented as battery or product superiority.
 The earlier under-1-percentage-point incremental battery estimate is unverified.
 
 ## What would establish an advantage

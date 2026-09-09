@@ -1,12 +1,12 @@
 import Foundation
 import AVFoundation
-import ScreenCaptureKit
+import CoreAudio
 
-final class CaptureCoordinator: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
+final class CaptureCoordinator: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate, @unchecked Sendable {
     private let audioQueue = DispatchQueue(label: "org.wam.recorder.audio", qos: .utility)
     private let controlQueue = DispatchQueue(label: "org.wam.recorder.control", qos: .utility)
     private var microphone: AVCaptureSession?
-    private var stream: SCStream?
+    private var systemCapture: CoreAudioSystemCapture?
     private var writer: RecordingWriter?
     private var failed = false
     private var lastUpdate = Date.distantPast
@@ -18,12 +18,6 @@ final class CaptureCoordinator: NSObject, AVCaptureAudioDataOutputSampleBufferDe
         if settings.microphone {
             let granted = await AVCaptureDevice.requestAccess(for: .audio)
             guard granted else { throw RecorderFailure(message: "Microphone access is off. Enable WAM Recorder in System Settings → Privacy & Security → Microphone.") }
-        }
-        try Task.checkCancellation()
-        var content: SCShareableContent?
-        if settings.systemAudio {
-            do { content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true) }
-            catch { throw RecorderFailure(message: "System audio access is unavailable. Enable WAM Recorder in System Settings → Privacy & Security → Screen & System Audio Recording, then try again. \(error.localizedDescription)") }
         }
         try Task.checkCancellation()
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
@@ -43,6 +37,7 @@ final class CaptureCoordinator: NSObject, AVCaptureAudioDataOutputSampleBufferDe
                         do {
                             let device = settings.deviceID.isEmpty ? AVCaptureDevice.default(for: .audio) : AVCaptureDevice.DiscoverySession(deviceTypes: [.microphone, .external], mediaType: .audio, position: .unspecified).devices.first { $0.uniqueID == settings.deviceID }
                             guard let device else { throw RecorderFailure(message: "The selected microphone is disconnected. Choose an available input.") }
+                            self.audioQueue.sync { self.writer?.receipt.inputDevices?["Microphone"] = device.localizedName }
                             let session = AVCaptureSession(); session.beginConfiguration()
                             let input = try AVCaptureDeviceInput(device: device)
                             guard session.canAddInput(input) else { throw RecorderFailure(message: "Cannot use the selected microphone.") }
@@ -59,17 +54,20 @@ final class CaptureCoordinator: NSObject, AVCaptureAudioDataOutputSampleBufferDe
             }
             try Task.checkCancellation()
             if settings.systemAudio {
-                guard let display = content?.displays.first else { throw RecorderFailure(message: "No display is available for the system-audio capture session.") }
-                let filter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
-                let config = SCStreamConfiguration()
-                config.capturesAudio = true; config.excludesCurrentProcessAudio = true
-                config.sampleRate = settings.sampleRate == 0 ? 48000 : settings.sampleRate; config.channelCount = settings.systemChannels
-                // Only audio output is registered. Minimize unused visual work; no video is saved.
-                config.width = 2; config.height = 2; config.minimumFrameInterval = CMTime(value: 1, timescale: 1); config.queueDepth = 3
-                let stream = SCStream(filter: filter, configuration: config, delegate: self)
-                try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: audioQueue)
-                self.stream = stream
-                try await stream.startCapture()
+                try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                    controlQueue.async {
+                        do {
+                            let capture = CoreAudioSystemCapture(deliveryQueue: self.audioQueue,
+                                onSample: { [weak self] sample in self?.accept(sample, source: "System audio") },
+                                onFailure: { [weak self] message in self?.fail(message) })
+                            self.systemCapture = capture
+                            try capture.start(channels: settings.systemChannels,
+                                silenceProbe: CommandLine.arguments.contains("--benchmark-output") && CommandLine.arguments.contains("--benchmark-silent-tap"))
+                            self.audioQueue.sync { self.writer?.receipt.inputDevices?["System audio"] = capture.deviceDescription }
+                            continuation.resume()
+                        } catch { continuation.resume(throwing: error) }
+                    }
+                }
                 try Task.checkCancellation()
             }
         } catch {
@@ -79,12 +77,10 @@ final class CaptureCoordinator: NSObject, AVCaptureAudioDataOutputSampleBufferDe
     }
     func stop(failure: String? = nil) async throws {
         var stopError: Error?
-        if let stream {
-            self.stream = nil
-            do { try await stream.stopCapture() } catch { stopError = error }
-        }
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             controlQueue.async {
+                do { try self.systemCapture?.stop() } catch { stopError = error }
+                self.systemCapture = nil
                 self.microphone?.stopRunning(); self.microphone = nil
                 continuation.resume()
             }
@@ -117,11 +113,5 @@ final class CaptureCoordinator: NSObject, AVCaptureAudioDataOutputSampleBufferDe
     }
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
         accept(sampleBuffer, source: "Microphone")
-    }
-    func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
-        if type == .audio { accept(sampleBuffer, source: "System audio") }
-    }
-    func stream(_ stream: SCStream, didStopWithError error: Error) {
-        audioQueue.async { self.fail("System audio capture stopped: \(error.localizedDescription)") }
     }
 }

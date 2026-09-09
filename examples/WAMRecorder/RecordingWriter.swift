@@ -80,6 +80,7 @@ struct SessionReceipt: Codable {
     var failure: String?
     var segments: [SegmentReceipt]
     var events: [CaptureEvent]? = []
+    var inputDevices: [String: String]? = [:]
 }
 
 // Entire object is confined to CaptureCoordinator's utility queue.
@@ -289,6 +290,7 @@ final class RecordingWriter {
         try saveManifest()
         var lines = ["WAM recording report", "Status: \(receipt.status)", "Format: \(settings.scheme.title)",
             "Files are separate source tracks. Use start offsets to align them; gaps are not filled with invented audio."]
+        for (source, device) in receipt.inputDevices ?? [:] { lines.append("\(source) device: \(device)") }
         if let failure = receipt.failure { lines.append("Failure: \(failure)") }
         for segment in receipt.segments {
             lines.append("\(segment.file): \(segment.completed ? "saved" : "incomplete"), \(segment.frames) frames, \(segment.sampleRate) Hz, \(segment.channels) channels, offset \(segment.startOffsetSeconds)s")
