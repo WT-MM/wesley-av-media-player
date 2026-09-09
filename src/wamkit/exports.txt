@@ -29,3 +29,4 @@ _wam_audio_encoder_finish
 _wam_audio_encoder_release
 _wam_video_encoder_copy_info
 _wam_audio_encoder_copy_info
+_wam_audio_encoder_create_file
