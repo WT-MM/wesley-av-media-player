@@ -20,3 +20,12 @@ _OBJC_METACLASS_$_WAMPlayer
 _OBJC_CLASS_$_WAMPresentationView
 _OBJC_METACLASS_$_WAMPresentationView
 _wam_copy_capabilities
+_wam_video_encoder_create
+_wam_video_encoder_encode
+_wam_video_encoder_release
+_wam_audio_encoder_create
+_wam_audio_encoder_write
+_wam_audio_encoder_finish
+_wam_audio_encoder_release
+_wam_video_encoder_copy_info
+_wam_audio_encoder_copy_info
