@@ -37,3 +37,6 @@ SESSION_HANDOFF.md
 
 # Agent worktrees and local tool state
 .claude/
+
+# Local battery/capture telemetry and generated benchmark media
+/benchmarks/audio-energy/results/

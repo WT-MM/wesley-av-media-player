@@ -133,3 +133,20 @@ Existing playback ABI layouts and version 1 remain unchanged. The new header and
 nine exports are additive. The ABI test still requires exact export-list equality;
 C11, Objective-C and Swift imports exercise the new surface. No frozen playback
 source or audio-test contract is modified.
+
+## Configurable audio files and the recorder
+
+`wam_audio_encoder_create_file` adds `wam_audio_file_config_t` without changing
+`wam_audio_encoder_config_t`. Choose `WAM_AUDIO_FLOAT32` or `WAM_AUDIO_PCM16` for
+CAF output, `WAM_AUDIO_ALAC` for 16-bit Apple Lossless/M4A, or `WAM_AUDIO_AAC` for
+AAC/M4A. AAC supports an explicit total bitrate (32–320 kb/s); zero keeps the
+Apple default. All of these audio paths report `hardware_accelerated=0`.
+Float32 CAF preserves finite peaks outside −1…1; other formats keep the bounded
+input contract. PCM CAF avoids WAV's 4 GB limit. Lossless refers to the selected
+16-bit representation for ALAC, not preservation of arbitrary Float32 samples.
+
+The [menu bar recorder](../../examples/WAMRecorder/README.md) supplies capture,
+per-source resampling, peak handling, source configuration, and checkpoints.
+The [audio-energy benchmark](../../benchmarks/audio-energy/README.md) compares
+identical mono microphone + stereo system lanes at 48 kHz. It records the kernel's
+process-energy estimate separately from whole-system battery telemetry.

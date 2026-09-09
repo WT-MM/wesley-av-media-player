@@ -65,13 +65,37 @@ typedef struct {
 WAM_EXPORT wam_status_t wam_audio_encoder_create(
     const wam_audio_encoder_config_t *config, const char *absolute_utf8_path,
     wam_audio_encoder_t *out_encoder, wam_error_t *error);
-/* Contiguous interleaved Float32 PCM at the configured rate, -1..1, finite.
+/* Configurable audio output; existing AAC creation ABI remains unchanged. */
+enum {
+  WAM_AUDIO_AAC = 1,
+  WAM_AUDIO_ALAC = 2,
+  WAM_AUDIO_PCM16 = 3,
+  WAM_AUDIO_FLOAT32 = 4
+};
+typedef struct {
+  uint32_t struct_size;
+  uint32_t sample_rate; /* 44100 or 48000 */
+  uint32_t channels;    /* 1 or 2 */
+  uint32_t codec;
+  uint32_t bitrate; /* AAC total bits/sec: 32000..320000, or 0 for Apple
+                       default. Otherwise 0. */
+  uint32_t require_hardware; /* Native macOS audio paths are software. */
+  uint32_t reserved;
+} wam_audio_file_config_t;
+/* AAC/ALAC use M4A; PCM16/Float32 use CAF (no WAV 4GB limit).
+   Same ownership, validation, finish and no-overwrite contract as AAC create.
+ */
+WAM_EXPORT wam_status_t wam_audio_encoder_create_file(
+    const wam_audio_file_config_t *config, const char *absolute_utf8_path,
+    wam_audio_encoder_t *out_encoder, wam_error_t *error);
+/* Contiguous interleaved Float32 PCM at the configured rate, finite.
+   AAC/ALAC/PCM16 require -1..1; Float32 CAF preserves out-of-range peaks.
    1..4096 frames per call; samples borrowed through return. */
 WAM_EXPORT wam_status_t wam_audio_encoder_write(wam_audio_encoder_t encoder,
                                                 const float *samples,
                                                 uint32_t frames,
                                                 wam_error_t *error);
-/* Flushes AAC tail and closes the container. Idempotent after successful
+/* Flushes codec tail and closes the container. Idempotent after successful
    finish. Release without finish closes but does not promise a completed
    recording. On any backend failure the file may be partial; the host owns
    recovery/removal. */

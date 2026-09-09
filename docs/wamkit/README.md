@@ -114,7 +114,7 @@ Retain the player until its close result if the host needs confirmation. The hos
 
 ## C ABI version 1
 
-The authoritative declarations are [WAMKit.h](../../src/wamkit/include/WAMKit/WAMKit.h) and [WAMKitObjC.h](../../src/wamkit/include/WAMKit/WAMKitObjC.h). The [export list](../../src/wamkit/exports.txt) admits eighteen playback C functions, nine encoding C functions and the class/metaclass symbols for `WAMPlayer` and `WAMPresentationView`.
+The authoritative declarations are [WAMKit.h](../../src/wamkit/include/WAMKit/WAMKit.h) and [WAMKitObjC.h](../../src/wamkit/include/WAMKit/WAMKitObjC.h). The [export list](../../src/wamkit/exports.txt) admits eighteen playback C functions, ten encoding C functions and the class/metaclass symbols for `WAMPlayer` and `WAMPresentationView`.
 
 | Functions | Contract |
 |---|---|

@@ -136,3 +136,8 @@ if(BUILD_TESTING)
   endif()
   set_tests_properties(wamkit_audio_encoding wamkit_video_encoding PROPERTIES TIMEOUT 60 RUN_SERIAL TRUE)
 endif()
+
+if(BUILD_TESTING AND WAMKIT_SWIFT AND CMAKE_HOST_SYSTEM_PROCESSOR STREQUAL "arm64")
+  add_test(NAME wamkit_recorder_writer COMMAND sh "${PROJECT_SOURCE_DIR}/scripts/test_wam_recorder.sh" "${PROJECT_BINARY_DIR}")
+  set_tests_properties(wamkit_recorder_writer PROPERTIES RUN_SERIAL TRUE TIMEOUT 120 SKIP_RETURN_CODE 77)
+endif()
