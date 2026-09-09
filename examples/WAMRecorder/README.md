@@ -13,7 +13,7 @@ Microphone-only mode uses AVFoundation and does not request screen recording acc
 ## Controls and storage
 
 Select microphone, system audio, or both; choose the microphone device, mono or
-stereo per source, 44.1/48 kHz, Float32 PCM, PCM16, ALAC16, or AAC (64/96 kb/s per
+stereo per source, preserved capture rate or fixed 44.1/48 kHz, Float32 PCM, PCM16, ALAC16, or AAC (64/96 kb/s per
 channel), and a save folder. Settings persist. Recording settings are locked
 while a session is running; Stop and save finalizes the current files.
 
@@ -41,11 +41,40 @@ recovery after process kill/power loss; this is not a claim of crash-proof stora
 A ten-second rolling manifest update describes active files but does not mark
 them complete. Disk space is checked while writing, with a 256 MB stop threshold.
 
+## Preserving and inspecting audio
+
+Choose **Preserve captured rate** to avoid resampling in the app. Microphone audio
+retains the rate delivered by AVFoundation; system capture requests 48 kHz.
+This does not promise that the device or macOS performed no earlier processing.
+PCM supports integer rates from 8–192 kHz. AAC/ALAC currently support only
+44.1/48 kHz and report an actionable error for other captured rates.
+
+Matching Float32 input goes directly to WAMKit without conversion or an extra
+sample copy. Mono planar Float32 is also eligible; other layouts/conversions use
+a reusable conversion buffer. Channels remain explicitly configured: choosing
+mono for stereo input still performs a channel conversion. Fixed-rate settings
+continue to work and existing settings are preserved.
+
+After stopping, **Report** opens `Recording report.txt` with actual rates,
+channels, frame counts, timing offsets, resampling/remixing flags, peak magnitudes
+before encoder limiting, and whether samples were limited. The same information
+is in `session.json`. Finite peaks above full scale are preserved in Float32;
+other formats limit these peaks, PCM16/ALAC16 quantize to 16 bits, and AAC is lossy.
+No claim of better microphone hardware or fidelity than Voice Memos follows from
+file size or the report alone.
+
+Timestamp gaps or overlaps exceeding two input frames start a new file and are
+logged, as are capture-format changes. Audio is not silently stretched or padded
+to hide a discontinuity. The report is produced at normal finalization; after a
+crash, use the existing checkpoint manifest to inspect completed files.
+
 ## Verification and diagnostics
 
 `tests/wam_recorder_writer_test.swift` drives the exact app writer with synthetic
 CMSampleBuffers. It covers two sources, 44.1→48 kHz resampling, over-range peaks,
-checkpoint rotation, decoded segment lengths, and final tails. Three accelerated
+checkpoint rotation, decoded segment lengths, and final tails. Bit-for-bit Float32
+checks cover 16/44.1/48/96 kHz, mono/stereo, planar/interleaved input and over-range
+peaks. Format changes, 50 ms gaps, and 20 ms overlaps are explicitly tested. Three accelerated
 90-minute sessions each produce 36 playable checkpoints. This is full-duration
 content validation, not an elapsed 4.5-hour live-capture/battery soak.
 
@@ -64,3 +93,11 @@ older-macOS distribution, Developer ID signing, and notarization are not qualifi
 includes codec comparisons, source modes, uncertainty, and the remaining live
 validation. Reproduce writer checks with `scripts/test_wam_recorder.sh build-encoding`;
 append `--long` for three accelerated 90-minute sessions.
+
+For one bracketed profile, add `--benchmark-mode microphone --benchmark-scheme
+float32 --benchmark-seconds 180` to diagnostic mode. It measures idle/capture/idle
+with five-second warmups, fixed 48 kHz and mono mic/stereo system settings, retaining
+your selected microphone. Supported modes are microphone/system/both; schemes
+are float32/pcm16/alac/aac64/aac96; window length is 30–5400 seconds. Use at least
+180 seconds and five independent blocks for whole-battery comparison. Interrupted
+windows are rejected. See [comparison protocol](../../benchmarks/audio-energy/COMPARISON.md).

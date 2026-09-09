@@ -20,11 +20,28 @@ func runCaptureBenchmark(model: RecorderModel, output: URL) async {
     let original = model.settings
     model.persistSettings = false
     var rows: [[String: Any]] = []
-    let steps: [(String, AudioScheme)] = [("idle", .float32), ("microphone", .float32), ("idle", .float32), ("system", .float32), ("idle", .float32), ("both", .float32), ("both", .pcm16), ("both", .aac64), ("idle", .float32)]
+    var steps: [(String, AudioScheme)] = [("idle", .float32), ("microphone", .float32), ("idle", .float32), ("system", .float32), ("idle", .float32), ("both", .float32), ("both", .pcm16), ("both", .aac64), ("idle", .float32)]
+    func argument(_ name: String) -> String? {
+        guard let index = CommandLine.arguments.firstIndex(of: name), index + 1 < CommandLine.arguments.count else { return nil }
+        return CommandLine.arguments[index + 1]
+    }
+    let customMode = argument("--benchmark-mode")
+    let requestedDuration = argument("--benchmark-seconds").flatMap(Int.init)
     do {
+        if let mode = customMode {
+            guard ["microphone", "system", "both"].contains(mode),
+                  let scheme = AudioScheme(rawValue: argument("--benchmark-scheme") ?? "float32"),
+                  let duration = requestedDuration, (30...5400).contains(duration) else {
+                throw RecorderFailure(message: "Use --benchmark-mode microphone|system|both, --benchmark-scheme float32|pcm16|alac|aac64|aac96, and --benchmark-seconds 30…5400.")
+            }
+            steps = [("idle", scheme), (mode, scheme), ("idle", scheme)]
+        }
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
         for (mode, scheme) in steps {
             model.settings = original; model.settings.scheme = scheme
+            // Pin comparison settings; never inherit unrelated persisted channel/rate choices.
+            model.settings.sampleRate = 48000; model.settings.microphoneChannels = 1
+            model.settings.systemChannels = 2; model.settings.checkpointMinutes = 5
             model.settings.microphone = mode == "microphone" || mode == "both"
             model.settings.systemAudio = mode == "system" || mode == "both"
             model.settings.folderPath = output.appendingPathComponent("temporary-audio").path
@@ -38,10 +55,13 @@ func runCaptureBenchmark(model: RecorderModel, output: URL) async {
             }
             // Keep creation/TCC costs outside the steady recording measurement.
             try await Task.sleep(nanoseconds: 5_000_000_000)
-            let initialEnergy = energy(), initialCPU = cpuTime(), start = Date()
-            let duration = mode == "idle" ? 25 : 40
+            let initialEnergy = energy(), initialCPU = cpuTime(), start = Date(), uptime = ProcessInfo.processInfo.systemUptime
+            let duration = customMode == nil ? (mode == "idle" ? 25 : 40) : requestedDuration!
             try await Task.sleep(nanoseconds: UInt64(duration) * 1_000_000_000)
-            let elapsed = Date().timeIntervalSince(start), usedEnergy = energy() - initialEnergy, usedCPU = cpuTime() - initialCPU
+            let elapsed = ProcessInfo.processInfo.systemUptime - uptime, finalEnergy = energy(), usedCPU = cpuTime() - initialCPU
+            guard abs(elapsed - Double(duration)) < 2, abs(Date().timeIntervalSince(start) - elapsed) < 2,
+                  finalEnergy >= initialEnergy else { throw RecorderFailure(message: "Benchmark timing or energy counter was interrupted; repeat this block.") }
+            let usedEnergy = finalEnergy - initialEnergy
             if mode != "idle" {
                 guard model.state == .recording else { throw RecorderFailure(message: model.failure ?? "Capture stopped during benchmark.") }
                 await model.stop()
@@ -52,6 +72,17 @@ func runCaptureBenchmark(model: RecorderModel, output: URL) async {
                 let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
                 let receipt = try decoder.decode(SessionReceipt.self, from: Data(contentsOf: folder.appendingPathComponent("session.json")))
                 row["segments"] = receipt.segments.count
+                row["capture_events"] = receipt.events?.count ?? 0
+                row["bytes"] = try receipt.segments.reduce(UInt64(0)) { total, segment in
+                    total + ((try FileManager.default.attributesOfItem(atPath: folder.appendingPathComponent(segment.file).path)[.size] as? NSNumber)?.uint64Value ?? 0)
+                }
+                row["formats"] = receipt.segments.map { ["source": $0.source, "rate": $0.sampleRate, "channels": $0.channels,
+                    "resampled": $0.resampled ?? false, "remixed": $0.remixed ?? false, "limited": $0.limited ?? false] as [String: Any] }
+                guard (receipt.events ?? []).isEmpty else { throw RecorderFailure(message: "Capture had timestamp or format discontinuities; reject and inspect this benchmark block.") }
+                for source in (model.settings.microphone ? ["Microphone"] : []) + (model.settings.systemAudio ? ["System audio"] : []) {
+                    let captured = receipt.segments.filter { $0.source == source && $0.completed }.reduce(0.0) { $0 + Double($1.frames) / Double($1.sampleRate) }
+                    guard captured >= Double(duration) * 0.99 else { throw RecorderFailure(message: "Insufficient captured audio for \(source); reject this benchmark block.") }
+                }
                 row["status"] = receipt.status
                 // This diagnostic owns these temporary recordings; retain metrics, not captured audio.
                 try FileManager.default.removeItem(at: folder)

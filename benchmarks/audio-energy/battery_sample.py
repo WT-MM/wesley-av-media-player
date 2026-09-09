@@ -9,7 +9,7 @@ with a.output.open('x') as f:
   rows=plistlib.loads(subprocess.check_output(['/usr/sbin/ioreg','-r','-c','AppleSmartBattery','-a']))
   b=rows[0];t=b.get('PowerTelemetryData',{})
   row={'unix':time.time()}
-  for k in ['Voltage','Amperage','AppleRawCurrentCapacity','AppleRawMaxCapacity','NominalChargeCapacity','DesignCapacity','CurrentCapacity','ExternalConnected','IsCharging']:
+  for k in ['UpdateTime','Voltage','Amperage','AppleRawCurrentCapacity','AppleRawMaxCapacity','NominalChargeCapacity','DesignCapacity','CurrentCapacity','ExternalConnected','IsCharging']:
    row[k]=b.get(k)
   for k in ['SystemLoad','BatteryPower','SystemPowerIn','AccumulatedSystemLoad','SystemLoadAccumulatorCount']:row[k]=t.get(k)
   f.write(json.dumps(row)+'\n');f.flush();time.sleep(2)
