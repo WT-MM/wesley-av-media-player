@@ -46,3 +46,15 @@ while switching to Finder, before any test recording was started. No test take w
 created or deleted. End-to-end physical-key capture and in-app pointer scrubbing
 remain unverified in this pass. The rendered visual and decoder tests are separate
 from those interaction checks. No user audio was played by this validation.
+
+## Shortcut preference correction
+
+The final default is ⌃⌘9 (Control–Command–9), with ⌃⌘8 and ⌃⌘7 alternatives in a
+persisted picker. It uses no Option key. The intermediate ⌘⇧R candidate was not
+installed; Chrome's hard-refresh chord is no longer bound by the recorder. Local
+key equivalents are disabled while the global binding is active to avoid duplicate
+toggles. All three alternatives passed native registration, conflict, cleanup and
+re-registration tests. The app was rebuilt, signature-verified and installed after
+checking for recording writes. Physical-key end-to-end capture was not retested.
+Registration only detects global owners; foreground-app/website shortcuts can still
+conflict, which is why the choice is exposed rather than called universally unused.

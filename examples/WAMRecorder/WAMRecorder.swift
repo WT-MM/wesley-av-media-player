@@ -15,7 +15,14 @@ final class RecorderModel: ObservableObject {
             RecorderAppDelegate.shared?.configureShortcut()
         }
     }
+    @Published var shortcutChoice = UserDefaults.standard.string(forKey: "recordingShortcutChoice").flatMap(RecordingShortcutChoice.init(rawValue:)) ?? .commandControl9 {
+        didSet {
+            UserDefaults.standard.set(shortcutChoice.rawValue, forKey: "recordingShortcutChoice")
+            RecorderAppDelegate.shared?.configureShortcut()
+        }
+    }
     @Published var shortcutStatus = ""
+    @Published var globalShortcutRegistered = false
     @Published var showingRecordings = false
     @Published var state: State = .idle
     @Published var message = "Ready to record"
@@ -157,6 +164,7 @@ final class RecorderAppDelegate: NSObject, NSApplicationDelegate {
     func configureShortcut() {
         shortcut?.unregister(); shortcut = nil
         guard launched, !redirecting, let model else { return }
+        model.globalShortcutRegistered = false
         guard !CommandLine.arguments.contains("--benchmark-output"), model.globalShortcutEnabled else {
             model.shortcutStatus = "Global shortcut off"; return
         }
@@ -172,12 +180,13 @@ final class RecorderAppDelegate: NSObject, NSApplicationDelegate {
             case .starting, .stopping: break
             }
         }
-        let status = shortcut.register()
+        let status = shortcut.register(choice: model.shortcutChoice)
         if status == noErr {
             self.shortcut = shortcut
-            model.shortcutStatus = "\(GlobalRecordingShortcut.label) starts / stops recording from any app"
+            model.globalShortcutRegistered = true
+            model.shortcutStatus = "\(model.shortcutChoice.label) starts / stops recording from any app"
         } else {
-            model.shortcutStatus = "\(GlobalRecordingShortcut.label) unavailable (\(status)). Another app may use it. Turn the shortcut off and on to retry."
+            model.shortcutStatus = "\(model.shortcutChoice.label) unavailable (\(status)). Another app may use it. Turn the shortcut off and on to retry."
         }
     }
     func applicationWillTerminate(_ notification: Notification) { shortcut?.unregister() }
@@ -262,10 +271,12 @@ struct RecorderPanel: View {
                     .frame(maxWidth: .infinity).padding(.vertical, 5)
             }.buttonStyle(.borderedProminent).tint(.red)
                 .disabled(model.state == .starting || model.state == .stopping || (!model.settings.microphone && !model.settings.systemAudio))
-                .keyboardShortcut("r", modifiers: [.command, .shift])
+                .keyboardShortcut(model.globalShortcutRegistered ? nil : KeyboardShortcut(KeyEquivalent(model.shortcutChoice.digit), modifiers: [.command, .control]))
             Text(model.shortcutStatus).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            Toggle("Global recording shortcut (⌃⌥⌘R)", isOn: $model.globalShortcutEnabled)
-                .font(.caption)
+            Toggle("Global recording shortcut", isOn: $model.globalShortcutEnabled).font(.caption)
+            Picker("Key combination", selection: $model.shortcutChoice) {
+                ForEach(RecordingShortcutChoice.allCases) { Text($0.label).tag($0) }
+            }.disabled(!model.globalShortcutEnabled)
             DisclosureGroup("Recording settings", isExpanded: $advanced) {
                 VStack(alignment: .leading, spacing: 12) {
                     Picker("Format", selection: $model.settings.scheme) { ForEach(AudioScheme.allCases) { Text($0.title).tag($0) } }

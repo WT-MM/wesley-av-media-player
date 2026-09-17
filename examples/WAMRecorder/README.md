@@ -181,13 +181,13 @@ microphone or play user audio.
 
 ## Global recording shortcut and waveforms
 
-While WAM Recorder is running, **Control–Option–Command–R (⌃⌥⌘R)** starts or stops
+While WAM Recorder is running, **Control–Command–9 (⌃⌘9)** starts or stops
 recording from any app, using the currently selected sources/settings. Starting
 brings the Record controls forward; stopping saves without changing focus. Presses
 during startup/finalization and key auto-repeat are ignored. Turn **Global recording
 shortcut** off to release the chord. Registration conflicts appear beside the toggle;
 turn it off/on to retry after freeing the shortcut. No keyboard monitoring permission
-or polling is needed. The existing in-app ⌘⇧R shortcut still works; global shortcuts
+or polling is needed. The selected in-app handler is enabled only when the global binding is inactive, avoiding duplicate toggles; global shortcuts
 are disabled in benchmark mode.
 
 The player displays a relative-amplitude waveform for the current checkpoint.
@@ -197,3 +197,10 @@ chunks and Accelerate peak reduction, and cache at most eight 600-bin envelopes 
 memory. Changing tracks cancels outdated decoding. Silence remains flat; channel
 peaks are combined for visualization, not mixed for playback. This is not a calibrated
 loudness meter or a single stitched waveform across the entire session.
+
+
+Choose ⌃⌘9, ⌃⌘8, or ⌃⌘7 in **Key combination**. The choice persists. No Option key
+is required, and the recorder no longer registers ⌘⇧R. Registration detects other
+global hotkey owners; it cannot detect every foreground-app or website binding.
+These defaults avoid identified Chrome/Workspace shortcuts, not a guarantee of
+universal availability. Disable the global shortcut to release it to other apps.
