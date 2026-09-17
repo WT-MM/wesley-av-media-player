@@ -83,6 +83,9 @@ struct RecorderWindowContent: View {
                     Spacer()
                     Button("Stop") { library.stop() }
                 }
+                WaveformScrubber(peaks: library.waveform, position: library.position, duration: library.duration,
+                    loading: library.waveformLoading, seek: library.seek)
+                if let error = library.waveformError { Text(error).font(.caption).foregroundStyle(.secondary) }
                 Slider(value: Binding(get: { library.position }, set: { library.seek($0) }), in: 0...max(0.01, library.duration)).accessibilityLabel("Playback position")
                 HStack { Text(clockText(library.position)); Spacer(); Text(clockText(library.duration)) }.font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                 Text("Checkpoints play in order. Timing gaps are not filled.").font(.caption).foregroundStyle(.secondary)

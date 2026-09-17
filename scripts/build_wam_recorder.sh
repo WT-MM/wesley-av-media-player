@@ -15,14 +15,17 @@ COPY
 xcrun swiftc -swift-version 5 -O -target arm64-apple-macos15.0 \
   -module-cache-path "$build_dir/recorder-modules" \
   -F "$build_dir/src/wamkit" -framework WAMKit \
-  -framework SwiftUI -framework AppKit -framework AVFoundation -framework CoreAudio -framework Accelerate \
+  -framework SwiftUI -framework AppKit -framework Carbon -framework AVFoundation -framework CoreAudio -framework Accelerate \
   -Xlinker -rpath -Xlinker @executable_path/../Frameworks \
   "$repo_dir/examples/WAMRecorder/RecordingWriter.swift" \
   "$repo_dir/examples/WAMRecorder/CoreAudioSystemCapture.swift" \
   "$repo_dir/examples/WAMRecorder/CaptureCoordinator.swift" \
   "$repo_dir/examples/WAMRecorder/CaptureBenchmark.swift" \
+  "$repo_dir/examples/WAMRecorder/AudioWaveform.swift" \
   "$repo_dir/examples/WAMRecorder/RecorderLibrary.swift" \
+  "$repo_dir/examples/WAMRecorder/WaveformScrubber.swift" \
   "$repo_dir/examples/WAMRecorder/RecorderLibraryView.swift" \
+  "$repo_dir/examples/WAMRecorder/GlobalRecordingShortcut.swift" \
   "$repo_dir/examples/WAMRecorder/WAMRecorder.swift" \
   -o "$app/Contents/MacOS/WAMRecorder"
 cat > "$app/Contents/Info.plist" <<'PLIST'
@@ -34,7 +37,7 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
 <key>CFBundleName</key><string>WAM Recorder</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>0.2.0</string>
-<key>CFBundleVersion</key><string>3</string>
+<key>CFBundleVersion</key><string>4</string>
 <key>LSMinimumSystemVersion</key><string>15.0</string>
 <key>LSUIElement</key><false/>
 <key>CFBundleIconFile</key><string>WAMRecorder</string>

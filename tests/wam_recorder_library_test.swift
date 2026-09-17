@@ -41,6 +41,8 @@ func require(_ value: @autoclosure () -> Bool, _ message: String) throws {
                 try await Task.sleep(nanoseconds: 50_000_000)
             }
             try require(!library.playing && library.part == 1 && library.error == nil, "automatic checkpoint advance and finish \(scheme)")
+            for _ in 0..<100 { if !library.waveformLoading { break }; try await Task.sleep(nanoseconds: 20_000_000) }
+            try require(library.waveformError == nil && library.waveform.count == 600 && library.waveform.allSatisfy { abs($0) < 0.00001 }, "silent waveform \(scheme)")
             library.skip(-1); try require(library.playing && library.part == 0, "previous checkpoint")
             library.stop(); try require(library.partCount == 0 && !library.playing, "stop")
             print("PASS \(scheme.rawValue): decode, pause, seek, resume, automatic checkpoint advance, previous, stop")
@@ -61,5 +63,21 @@ func require(_ value: @autoclosure () -> Bool, _ message: String) throws {
         library.play(SavedRecording(folder: generated[0].folder, receipt: bad), source: "Microphone")
         try require(library.error != nil && !library.playing, "missing file reported")
         print("PASS library discovery, malformed manifest, path validation, and missing-file handling")
+        let waveURL = root.appendingPathComponent("waveform.caf")
+        let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 48000, channels: 2, interleaved: false)!
+        let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 65537)!; buffer.frameLength = 65537
+        for channel in 0..<2 { memset(buffer.floatChannelData![channel], 0, 65537 * 4) }
+        buffer.floatChannelData![0][10] = 0.25
+        buffer.floatChannelData![1][32768] = -1.2
+        buffer.floatChannelData![0][65536] = 0.8
+        do { let file = try AVAudioFile(forWriting: waveURL, settings: format.settings); try file.write(from: buffer) }
+        let peaks = try AudioWaveform.peaks(url: waveURL, bins: 3)
+        try require(peaks.count == 3 && abs(peaks[0] - 0.25) < 0.0001 && abs(peaks[1] - 1.2) < 0.0001 && abs(peaks[2] - 0.8) < 0.0001, "stereo peak envelope, chunk boundary and final frame")
+        let gate = DispatchSemaphore(value: 0)
+        let cancelled = Task.detached { gate.wait(); return try AudioWaveform.peaks(url: waveURL) }
+        cancelled.cancel(); gate.signal()
+        do { _ = try await cancelled.value; throw RecorderFailure(message: "cancelled waveform completed") }
+        catch is CancellationError { }
+        print("PASS waveform: stereo maxima, chunk boundary, final frame, over-range samples, cancellation and all-codec silence")
     }
 }

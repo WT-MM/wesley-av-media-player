@@ -178,3 +178,22 @@ Run `scripts/test_wam_recorder_library.sh build-encoding` for generated-silence
 playback checks across all five formats, seeking/pausing, automatic continuation,
 library discovery, and corrupt/missing-file handling. These tests never record a
 microphone or play user audio.
+
+## Global recording shortcut and waveforms
+
+While WAM Recorder is running, **Control–Option–Command–R (⌃⌥⌘R)** starts or stops
+recording from any app, using the currently selected sources/settings. Starting
+brings the Record controls forward; stopping saves without changing focus. Presses
+during startup/finalization and key auto-repeat are ignored. Turn **Global recording
+shortcut** off to release the chord. Registration conflicts appear beside the toggle;
+turn it off/on to retry after freeing the shortcut. No keyboard monitoring permission
+or polling is needed. The existing in-app ⌘⇧R shortcut still works; global shortcuts
+are disabled in benchmark mode.
+
+The player displays a relative-amplitude waveform for the current checkpoint.
+Elapsed audio is red; click or drag to seek. The time slider and accessibility
+adjustments remain available. Waveforms load at utility priority, using 32,768-frame
+chunks and Accelerate peak reduction, and cache at most eight 600-bin envelopes in
+memory. Changing tracks cancels outdated decoding. Silence remains flat; channel
+peaks are combined for visualization, not mixed for playback. This is not a calibrated
+loudness meter or a single stitched waveform across the entire session.
