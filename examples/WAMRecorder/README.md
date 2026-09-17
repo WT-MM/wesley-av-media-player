@@ -1,12 +1,12 @@
 # WAM Recorder
 
-Native macOS menu bar recorder powered by WAMKit. Requires macOS 15 or newer.
+Native macOS audio recorder powered by WAMKit, with a Dock window and optional menu-bar access. Requires macOS 15 or newer.
 Microphone and system audio can be enabled independently. When both are enabled,
 they are saved as separate source tracks in a timestamped session folder, preserving
 clean originals and avoiding live mixing/echo or an extra encoding pass.
 
 Build using `scripts/build_wam_recorder.sh build-encoding`. The app stays in the
-menu bar. Capture begins only after Start recording and the macOS permission prompts.
+Dock and menu bar, and opens its control window on launch. Capture begins only after Start recording and the macOS permission prompts.
 System capture uses a private Core Audio process tap; it does not require a display or capture screen video.
 Microphone-only mode uses AVFoundation and does not request screen recording access.
 
@@ -109,8 +109,21 @@ recording the configured default alone is insufficient when AirPods or continuit
 microphones can become the system default. Device/OS processing may precede the
 format observed by this app.
 
-`--show-window` opens the same recorder panel in a regular window for accessibility
-inspection on hosts that cannot automate menu-bar extras. It never starts recording.
+Normal launch opens the recorder window. Clicking its Dock icon or reopening it
+from Spotlight/Finder brings the same window forward, including after closing or
+minimizing it. Closing the window does not quit or stop a recording; use **Stop and
+save** or **Quit**. The Window → Show recorder command (⌘0 while the app is active)
+and Dock context menu also restore the controls. The shortcut is not global.
+
+Use `open "/path/to/WAM Recorder.app"` without `-n`; macOS reuses the running app.
+For Spotlight access, copy the bundle into `~/Applications` or `/Applications`.
+The app includes its own Dock/Finder icon, generated from
+`assets/wam-recorder-icon.svg` with `scripts/build_recorder_icon.sh` (librsvg is
+needed only to regenerate the committed ICNS, not for a normal app build).
+
+Benchmark mode keeps its previous accessory/no-window behavior. The legacy
+`--show-window` flag now only matters when showing the window during a benchmark.
+Opening or reopening the window never starts capture.
 
 ## Audio-only system capture
 
@@ -143,3 +156,25 @@ battery comparison. Retained diagnostic audio must be removed after analysis.
 this diagnostic process to verify silent-buffer continuity without pausing other
 playback. Its report labels the diagnostic source, and the harness requires zero
 system-track peak. It does not represent a normal system recording.
+
+## Finding and playing recordings
+
+Choose **Recordings** at the top of the window (or in the menu-bar panel). Sessions
+are listed newest first and can be filtered by date, source, or format. The library
+reads local `session.json` manifests from the current save folder, the default WAM
+Recordings folder, and destinations used for recordings since this version.
+It does not search unrelated folders or upload audio. Use **Refresh** after adding
+files externally, **Open save folder** for the destination, and **Show in Finder**
+for the selected session's audio files.
+
+Select a session and press **Play** next to Microphone or System audio. Playback
+supports pause/resume, seeking within the current file, previous/next checkpoint,
+and automatic continuation through the selected source's completed checkpoints.
+Source tracks play separately; playback does not mix/synchronize the two sources or
+fill timestamp gaps. Incomplete sessions expose only completed checkpoints. Missing
+or unreadable files produce an error. Playback remains independent of capture.
+
+Run `scripts/test_wam_recorder_library.sh build-encoding` for generated-silence
+playback checks across all five formats, seeking/pausing, automatic continuation,
+library discovery, and corrupt/missing-file handling. These tests never record a
+microphone or play user audio.

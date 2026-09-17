@@ -9,6 +9,7 @@ final class RecorderModel: ObservableObject {
         didSet { if persistSettings, let data = try? JSONEncoder().encode(settings) { UserDefaults.standard.set(data, forKey: "settings") } }
     }
     var persistSettings = true
+    @Published var showingRecordings = false
     @Published var state: State = .idle
     @Published var message = "Ready to record"
     @Published var failure: String?
@@ -22,7 +23,6 @@ final class RecorderModel: ObservableObject {
     private var coordinator: CaptureCoordinator?
     private var activity: NSObjectProtocol?
     private var observers: [NSObjectProtocol] = []
-    private var inspectionWindow: NSWindow?
     var busy: Bool { state != .idle }
     var storageEstimate: String {
         if settings.sampleRate == 0 && settings.scheme.bitrate == 0 { return "Storage depends on the captured sample rate. Each file records its actual format." }
@@ -40,20 +40,7 @@ final class RecorderModel: ObservableObject {
     init() {
         settings = UserDefaults.standard.data(forKey: "settings").flatMap { try? JSONDecoder().decode(RecordingSettings.self, from: $0) } ?? RecordingSettings()
         refreshDevices()
-        // The same panel can be inspected through Accessibility on hosts whose
-        // automation cannot reach menu-bar extras. This flag never starts capture.
-        if CommandLine.arguments.contains("--show-window") {
-            Task { @MainActor in
-                NSApp.setActivationPolicy(.regular)
-                let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 390, height: 650),
-                    styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
-                window.title = "WAM Recorder"
-                window.contentView = NSHostingView(rootView: ScrollView { RecorderPanel(model: self) })
-                window.isReleasedWhenClosed = false
-                self.inspectionWindow = window
-                window.center(); window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
-            }
-        }
+        Task { @MainActor in RecorderAppDelegate.shared?.attach(self) }
         if let index = CommandLine.arguments.firstIndex(of: "--benchmark-output"), CommandLine.arguments.count > index + 1 {
             let url = URL(fileURLWithPath: CommandLine.arguments[index + 1])
             Task { await runCaptureBenchmark(model: self, output: url) }
@@ -81,6 +68,11 @@ final class RecorderModel: ObservableObject {
         let coordinator = CaptureCoordinator(); self.coordinator = coordinator
         coordinator.onFailure = { [weak self] message in Task { @MainActor in await self?.stop(reason: message) } }
         coordinator.onProgress = { [weak self] frames, durations in self?.frames = frames; self?.capturedSeconds = durations }
+        if persistSettings {
+            var roots = UserDefaults.standard.stringArray(forKey: "recordingFolders") ?? []
+            if !roots.contains(settings.folderPath) { roots.append(settings.folderPath) }
+            UserDefaults.standard.set(roots, forKey: "recordingFolders")
+        }
         let chosen = settings
         let run = UUID(); generation = run
         startupTask = Task {
@@ -123,6 +115,64 @@ final class RecorderAppDelegate: NSObject, NSApplicationDelegate {
     static weak var shared: RecorderAppDelegate?
     override init() { super.init(); Self.shared = self }
     weak var model: RecorderModel?
+    private var recorderWindow: NSWindow?
+    private var launched = false
+    private var redirecting = false
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        guard !CommandLine.arguments.contains("--benchmark-output"), let bundle = Bundle.main.bundleIdentifier,
+              let existing = NSRunningApplication.runningApplications(withBundleIdentifier: bundle)
+                .filter({ $0.processIdentifier != getpid() && !$0.isTerminated })
+                .sorted(by: { $0.processIdentifier < $1.processIdentifier }).first,
+              let url = existing.bundleURL else { return }
+        redirecting = true
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        configuration.createsNewApplicationInstance = false
+        NSWorkspace.shared.openApplication(at: url, configuration: configuration) { _, _ in
+            DispatchQueue.main.async { NSApp.terminate(nil) }
+        }
+    }
+    private var showsWindowOnLaunch: Bool {
+        !CommandLine.arguments.contains("--benchmark-output") || CommandLine.arguments.contains("--show-window")
+    }
+    func attach(_ model: RecorderModel) {
+        self.model = model
+        if launched && !redirecting && showsWindowOnLaunch { showRecorderWindow() }
+    }
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        guard !redirecting else { return }
+        launched = true
+        NSApp.setActivationPolicy(showsWindowOnLaunch ? .regular : .accessory)
+        if showsWindowOnLaunch { showRecorderWindow() }
+    }
+    @objc func showRecorderWindow() {
+        guard let model else { return }
+        if recorderWindow == nil {
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 640),
+                styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+            window.title = "WAM Recorder"
+            window.minSize = NSSize(width: 480, height: 460)
+            window.contentView = NSHostingView(rootView: RecorderWindowContent(model: model))
+            window.isReleasedWhenClosed = false
+            window.setFrameAutosaveName("WAMRecorderControls")
+            window.center()
+            recorderWindow = window
+        }
+        if recorderWindow?.isMiniaturized == true { recorderWindow?.deminiaturize(nil) }
+        recorderWindow?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        showRecorderWindow()
+        return false
+    }
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+    func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
+        let menu = NSMenu()
+        let item = menu.addItem(withTitle: "Show recorder", action: #selector(showRecorderWindow), keyEquivalent: "")
+        item.target = self
+        return menu
+    }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let model, model.busy else { return .terminateNow }
         Task { await model.stop(); sender.reply(toApplicationShouldTerminate: true) }
@@ -182,7 +232,7 @@ struct RecorderPanel: View {
                     Picker("Format", selection: $model.settings.scheme) { ForEach(AudioScheme.allCases) { Text($0.title).tag($0) } }
                     Text(model.storageEstimate).font(.caption).foregroundStyle(.secondary)
                     Picker("Sample rate", selection: $model.settings.sampleRate) { Text("Preserve captured rate").tag(0); Text("48 kHz").tag(48000); Text("44.1 kHz").tag(44100) }
-                    Text("Preserve captured rate avoids app resampling. System audio is requested at 48 kHz; microphone rate comes from the capture device.").font(.caption).foregroundStyle(.secondary)
+                    Text("Preserve captured rate avoids app resampling. The report shows each source’s delivered rate; macOS or the device may process audio before capture.").font(.caption).foregroundStyle(.secondary)
                     if model.settings.microphone {
                         Picker("Microphone channels", selection: $model.settings.microphoneChannels) { Text("Mono").tag(1); Text("Stereo").tag(2) }
                     }
@@ -200,6 +250,7 @@ struct RecorderPanel: View {
             }.disabled(model.busy)
             Divider()
             HStack {
+                Button("Recordings") { model.showingRecordings = true; RecorderAppDelegate.shared?.showRecorderWindow() }
                 Button("Show recording") { model.reveal() }.disabled(model.lastFolder == nil)
                 Button("Report") { model.showReport() }.disabled(model.lastFolder == nil || model.busy).accessibilityLabel("Open recording quality report")
                 Spacer()
@@ -223,5 +274,11 @@ struct WAMRecorderApp: App {
             Image(systemName: model.state == .recording ? "record.circle.fill" : "waveform.circle")
                 .accessibilityLabel(model.state == .recording ? "WAM Recorder is recording" : "WAM Recorder")
         }.menuBarExtraStyle(.window)
+            .commands {
+                CommandGroup(after: .windowArrangement) {
+                    Button("Show recorder") { delegate.showRecorderWindow() }
+                        .keyboardShortcut("0", modifiers: .command)
+                }
+            }
     }
 }
