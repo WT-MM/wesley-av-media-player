@@ -9,6 +9,13 @@ final class RecorderModel: ObservableObject {
         didSet { if persistSettings, let data = try? JSONEncoder().encode(settings) { UserDefaults.standard.set(data, forKey: "settings") } }
     }
     var persistSettings = true
+    @Published var globalShortcutEnabled = UserDefaults.standard.object(forKey: "globalShortcutEnabled") as? Bool ?? true {
+        didSet {
+            UserDefaults.standard.set(globalShortcutEnabled, forKey: "globalShortcutEnabled")
+            RecorderAppDelegate.shared?.configureShortcut()
+        }
+    }
+    @Published var shortcutStatus = ""
     @Published var showingRecordings = false
     @Published var state: State = .idle
     @Published var message = "Ready to record"
@@ -118,6 +125,7 @@ final class RecorderAppDelegate: NSObject, NSApplicationDelegate {
     private var recorderWindow: NSWindow?
     private var launched = false
     private var redirecting = false
+    private var shortcut: GlobalRecordingShortcut?
     func applicationWillFinishLaunching(_ notification: Notification) {
         guard !CommandLine.arguments.contains("--benchmark-output"), let bundle = Bundle.main.bundleIdentifier,
               let existing = NSRunningApplication.runningApplications(withBundleIdentifier: bundle)
@@ -137,14 +145,42 @@ final class RecorderAppDelegate: NSObject, NSApplicationDelegate {
     }
     func attach(_ model: RecorderModel) {
         self.model = model
-        if launched && !redirecting && showsWindowOnLaunch { showRecorderWindow() }
+        if launched && !redirecting { configureShortcut(); if showsWindowOnLaunch { showRecorderWindow() } }
     }
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard !redirecting else { return }
         launched = true
         NSApp.setActivationPolicy(showsWindowOnLaunch ? .regular : .accessory)
+        configureShortcut()
         if showsWindowOnLaunch { showRecorderWindow() }
     }
+    func configureShortcut() {
+        shortcut?.unregister(); shortcut = nil
+        guard launched, !redirecting, let model else { return }
+        guard !CommandLine.arguments.contains("--benchmark-output"), model.globalShortcutEnabled else {
+            model.shortcutStatus = "Global shortcut off"; return
+        }
+        let shortcut = GlobalRecordingShortcut { [weak self] in
+            guard let self, let model = self.model else { return }
+            switch model.state {
+            case .idle:
+                model.showingRecordings = false
+                self.showRecorderWindow()
+                model.start()
+            case .recording:
+                Task { @MainActor in await model.stop() }
+            case .starting, .stopping: break
+            }
+        }
+        let status = shortcut.register()
+        if status == noErr {
+            self.shortcut = shortcut
+            model.shortcutStatus = "\(GlobalRecordingShortcut.label) starts / stops recording from any app"
+        } else {
+            model.shortcutStatus = "\(GlobalRecordingShortcut.label) unavailable (\(status)). Another app may use it. Turn the shortcut off and on to retry."
+        }
+    }
+    func applicationWillTerminate(_ notification: Notification) { shortcut?.unregister() }
     @objc func showRecorderWindow() {
         guard let model else { return }
         if recorderWindow == nil {
@@ -227,6 +263,9 @@ struct RecorderPanel: View {
             }.buttonStyle(.borderedProminent).tint(.red)
                 .disabled(model.state == .starting || model.state == .stopping || (!model.settings.microphone && !model.settings.systemAudio))
                 .keyboardShortcut("r", modifiers: [.command, .shift])
+            Text(model.shortcutStatus).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Toggle("Global recording shortcut (⌃⌥⌘R)", isOn: $model.globalShortcutEnabled)
+                .font(.caption)
             DisclosureGroup("Recording settings", isExpanded: $advanced) {
                 VStack(alignment: .leading, spacing: 12) {
                     Picker("Format", selection: $model.settings.scheme) { ForEach(AudioScheme.allCases) { Text($0.title).tag($0) } }

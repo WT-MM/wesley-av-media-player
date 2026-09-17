@@ -142,4 +142,6 @@ if(BUILD_TESTING AND WAMKIT_SWIFT AND CMAKE_HOST_SYSTEM_PROCESSOR STREQUAL "arm6
   set_tests_properties(wamkit_recorder_writer PROPERTIES RUN_SERIAL TRUE TIMEOUT 120 SKIP_RETURN_CODE 77)
   add_test(NAME wamkit_recorder_library COMMAND sh "${PROJECT_SOURCE_DIR}/scripts/test_wam_recorder_library.sh" "${PROJECT_BINARY_DIR}")
   set_tests_properties(wamkit_recorder_library PROPERTIES RUN_SERIAL TRUE TIMEOUT 120 SKIP_RETURN_CODE 77)
+  add_test(NAME wamkit_recorder_shortcut COMMAND sh "${PROJECT_SOURCE_DIR}/scripts/test_wam_recorder_shortcut.sh" "${PROJECT_BINARY_DIR}")
+  set_tests_properties(wamkit_recorder_shortcut PROPERTIES RUN_SERIAL TRUE TIMEOUT 30 SKIP_RETURN_CODE 77)
 endif()

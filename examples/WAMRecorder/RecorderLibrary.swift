@@ -25,6 +25,13 @@ final class RecordingLibrary: NSObject, ObservableObject, AVAudioPlayerDelegate 
     @Published var duration: Double = 0
     @Published var part = 0
     @Published var partCount = 0
+    @Published var waveform: [Float] = []
+    @Published var waveformLoading = false
+    @Published var waveformError: String?
+    private var waveformTask: Task<[Float], Error>?
+    private var waveformID = UUID()
+    private var waveformCache: [String: [Float]] = [:]
+    private var waveformOrder: [String] = []
     private var player: AVAudioPlayer?
     private var timer: Timer?
     private var playlist: [URL] = []
@@ -79,8 +86,32 @@ final class RecordingLibrary: NSObject, ObservableObject, AVAudioPlayerDelegate 
             next.delegate = self
             guard next.prepareToPlay(), next.play() else { throw RecorderFailure(message: "macOS could not play this audio file.") }
             player = next; part = index; duration = next.duration; position = 0; playing = true
+            loadWaveform(playlist[index])
             startTimer()
         } catch { self.error = "Could not play \(playlist[index].lastPathComponent): \(error.localizedDescription)"; stop() }
+    }
+    private func loadWaveform(_ url: URL) {
+        waveformTask?.cancel()
+        let run = UUID(); waveformID = run; waveform = []; waveformError = nil
+        let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
+        let key = "\(url.path)|\(values?.fileSize ?? 0)|\(values?.contentModificationDate?.timeIntervalSince1970 ?? 0)"
+        if let cached = waveformCache[key] { waveform = cached; waveformLoading = false; return }
+        waveformLoading = true
+        let task = Task.detached(priority: .utility) { try AudioWaveform.peaks(url: url) }
+        waveformTask = task
+        Task { [weak self] in
+            do {
+                let peaks = try await task.value
+                guard let self, self.waveformID == run else { return }
+                self.waveform = peaks; self.waveformLoading = false; self.waveformTask = nil
+                self.waveformCache[key] = peaks; self.waveformOrder.append(key)
+                if self.waveformOrder.count > 8 { self.waveformCache.removeValue(forKey: self.waveformOrder.removeFirst()) }
+            } catch {
+                guard let self, self.waveformID == run else { return }
+                self.waveformLoading = false; self.waveformTask = nil
+                if !(error is CancellationError) { self.waveformError = "Waveform unavailable. Playback and the time slider still work." }
+            }
+        }
     }
     private func startTimer() {
         timer?.invalidate()
@@ -97,6 +128,8 @@ final class RecordingLibrary: NSObject, ObservableObject, AVAudioPlayerDelegate 
     func seek(_ value: Double) { player?.currentTime = min(max(0, value), duration); position = player?.currentTime ?? 0 }
     func skip(_ delta: Int) { loadPart(part + delta) }
     func stop() {
+        waveformTask?.cancel(); waveformTask = nil; waveformID = UUID()
+        waveform = []; waveformLoading = false; waveformError = nil
         timer?.invalidate(); timer = nil; player?.stop(); player = nil
         playing = false; position = 0; duration = 0; title = ""; playlist = []; part = 0; partCount = 0
     }
@@ -114,5 +147,5 @@ final class RecordingLibrary: NSObject, ObservableObject, AVAudioPlayerDelegate 
             self.error = "Audio decoding failed: \(error?.localizedDescription ?? "unknown error")"; self.stop()
         }
     }
-    deinit { timer?.invalidate() }
+    deinit { timer?.invalidate(); waveformTask?.cancel() }
 }

@@ -11,6 +11,7 @@ xcrun swiftc -swift-version 5 -O -target arm64-apple-macos15.0 \
   -F "$build_dir/src/wamkit" -framework WAMKit -framework SwiftUI -framework AVFoundation -framework Accelerate \
   -Xlinker -rpath -Xlinker "$build_dir/src/wamkit" \
   "$repo_dir/examples/WAMRecorder/RecordingWriter.swift" \
+  "$repo_dir/examples/WAMRecorder/AudioWaveform.swift" \
   "$repo_dir/examples/WAMRecorder/RecorderLibrary.swift" \
   "$repo_dir/tests/wam_recorder_library_test.swift" -o "$build_dir/wam-recorder-library-test"
 "$build_dir/wam-recorder-library-test"
