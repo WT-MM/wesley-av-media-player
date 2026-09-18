@@ -2,15 +2,10 @@ import AppKit
 import Carbon
 
 enum RecordingShortcutChoice: String, CaseIterable, Identifiable {
-    case commandControl9, commandControl8, commandControl7
+    case commandEscape
     var id: String { rawValue }
-    var digit: Character {
-        switch self { case .commandControl9: return "9"; case .commandControl8: return "8"; case .commandControl7: return "7" }
-    }
-    var label: String { "⌃⌘\(digit)" }
-    var keyCode: UInt32 {
-        switch self { case .commandControl9: return UInt32(kVK_ANSI_9); case .commandControl8: return UInt32(kVK_ANSI_8); case .commandControl7: return UInt32(kVK_ANSI_7) }
-    }
+    var label: String { "⌘Esc" }
+    var keyCode: UInt32 { UInt32(kVK_Escape) }
 }
 
 // Register only this chord with macOS; no keyboard monitoring or polling.
@@ -22,7 +17,7 @@ final class GlobalRecordingShortcut {
     private let action: () -> Void
     init(action: @escaping () -> Void) { self.action = action }
 
-    func register(choice: RecordingShortcutChoice = .commandControl9) -> OSStatus {
+    func register(choice: RecordingShortcutChoice = .commandEscape) -> OSStatus {
         unregister()
         var events = [
             EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed)),
@@ -40,7 +35,7 @@ final class GlobalRecordingShortcut {
             return noErr
         }, events.count, &events, Unmanaged.passUnretained(self).toOpaque(), &handler)
         guard installed == noErr else { return installed }
-        let result = RegisterEventHotKey(choice.keyCode, UInt32(cmdKey | controlKey),
+        let result = RegisterEventHotKey(choice.keyCode, UInt32(cmdKey),
             EventHotKeyID(signature: 0x57414D52, id: 1), GetApplicationEventTarget(), 0, &hotKey)
         if result != noErr { unregister() }
         return result
