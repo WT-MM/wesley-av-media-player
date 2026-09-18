@@ -63,6 +63,21 @@ func require(_ value: @autoclosure () -> Bool, _ message: String) throws {
         library.play(SavedRecording(folder: generated[0].folder, receipt: bad), source: "Microphone")
         try require(library.error != nil && !library.playing, "missing file reported")
         print("PASS library discovery, malformed manifest, path validation, and missing-file handling")
+        let removable = generated[0]
+        var attempted = false
+        try require(!library.moveToTrash(removable, recordingInProgress: true, trash: { _ in attempted = true }), "active capture must block deletion")
+        try require(!attempted && FileManager.default.fileExists(atPath: removable.folder.path), "active recording touched")
+        try require(!library.moveToTrash(removable, recordingInProgress: false, trash: { _ in throw RecorderFailure(message: "test failure") }), "trash failure must be reported")
+        try require(library.recordings.contains { $0.id == removable.id }, "failed deletion removed library entry")
+        library.play(removable, source: "Microphone")
+        let recovered = root.appendingPathComponent("recoverable-test-session")
+        try require(library.moveToTrash(removable, recordingInProgress: false, trash: {
+            try FileManager.default.moveItem(at: $0, to: recovered)
+        }), "successful recoverable move")
+        try require(!library.playing && library.title.isEmpty && library.waveform.isEmpty, "deleted session playback not released")
+        try require(!library.recordings.contains { $0.id == removable.id }, "deleted session retained")
+        try require(FileManager.default.fileExists(atPath: recovered.appendingPathComponent("session.json").path), "recoverable session lost")
+        print("PASS deletion: capture protection, failure retention, playback cleanup and recoverable session move")
         let waveURL = root.appendingPathComponent("waveform.caf")
         let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 48000, channels: 2, interleaved: false)!
         let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 65537)!; buffer.frameLength = 65537

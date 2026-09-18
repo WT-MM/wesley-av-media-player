@@ -68,6 +68,29 @@ final class RecordingLibrary: NSObject, ObservableObject, AVAudioPlayerDelegate 
             loading = false
         }
     }
+    @discardableResult
+    func moveToTrash(_ recording: SavedRecording, recordingInProgress: Bool,
+                     trash: (URL) throws -> Void = { try FileManager.default.trashItem(at: $0, resultingItemURL: nil) }) -> Bool {
+        guard !recordingInProgress else {
+            error = "Stop and save the current recording before deleting sessions."; return false
+        }
+        guard recordings.contains(where: { $0.id == recording.id }) else {
+            error = "This recording is no longer in the library. Refresh and try again."; return false
+        }
+        do {
+            // Release playback and waveform readers before moving the session.
+            if playlist.contains(where: { $0.deletingLastPathComponent() == recording.folder }) { stop() }
+            try trash(recording.folder)
+            refreshID = UUID(); loading = false // Discard any stale directory scan.
+            recordings.removeAll { $0.id == recording.id }
+            waveformCache = [:]; waveformOrder = []
+            error = nil
+            return true
+        } catch {
+            self.error = "Could not move recording to Trash: \(error.localizedDescription)"
+            return false
+        }
+    }
     func play(_ recording: SavedRecording, source: String) {
         stop(); error = nil
         let segments = recording.segments(for: source)
