@@ -72,6 +72,30 @@ final class CoreAudioSystemCapture: @unchecked Sendable {
             property = address(kAudioHardwarePropertyDefaultOutputDevice); size = UInt32(MemoryLayout<AudioObjectID>.size)
             try check(AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &property, 0, nil, &size, &output), "read output clock")
             guard output != 0 else { throw RecorderFailure(message: "No output device is available for system audio.") }
+            let playbackOutput = output
+            func rate(of device: AudioObjectID) -> Double? {
+                var value: Float64 = 0, bytes = UInt32(MemoryLayout<Float64>.size)
+                var key = address(kAudioDevicePropertyNominalSampleRate)
+                guard AudioObjectGetPropertyData(device, &key, 0, nil, &bytes, &value) == noErr else { return nil }
+                return value
+            }
+            // Bluetooth can switch its physical clock to a speech rate while the
+            // process tap still advertises 48 kHz. Use a matching built-in clock
+            // instead; never change the user's playback device or sample rate.
+            if rate(of: output) != format.mSampleRate {
+                property = address(kAudioHardwarePropertyDevices)
+                try check(AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &property, 0, nil, &size), "list capture clocks")
+                var devices = [AudioObjectID](repeating: 0, count: Int(size) / MemoryLayout<AudioObjectID>.size)
+                try check(AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &property, 0, nil, &size, &devices), "read capture clocks")
+                if let matching = devices.first(where: { candidate in
+                    var transport: UInt32 = 0, bytes = UInt32(MemoryLayout<UInt32>.size)
+                    var key = address(kAudioDevicePropertyTransportType)
+                    guard AudioObjectGetPropertyData(candidate, &key, 0, nil, &bytes, &transport) == noErr,
+                          transport == kAudioDeviceTransportTypeBuiltIn, rate(of: candidate) == format.mSampleRate else { return false }
+                    key = address(kAudioDevicePropertyStreams); key.mScope = kAudioObjectPropertyScopeOutput
+                    return AudioObjectGetPropertyDataSize(candidate, &key, 0, nil, &bytes) == noErr && bytes > 0
+                }) { output = matching }
+            }
             var outputUIDValue: Unmanaged<CFString>?
             property = address(kAudioDevicePropertyDeviceUID); size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
             try check(AudioObjectGetPropertyData(output, &property, 0, nil, &size, &outputUIDValue), "read output identifier")
@@ -81,6 +105,8 @@ final class CoreAudioSystemCapture: @unchecked Sendable {
             if AudioObjectGetPropertyData(output, &property, 0, nil, &size, &nameValue) == noErr, let name = nameValue?.takeRetainedValue() {
                 deviceDescription = "Core Audio process tap · clock: \(name)"
             }
+            if output != playbackOutput { deviceDescription += " · independent clock (playback unchanged)" }
+            deviceDescription += " · tap: \(Int(format.mSampleRate)) Hz"
             if silenceProbe { deviceDescription += " · DIAGNOSTIC own-process silence" }
             let device: [String: Any] = [
                 kAudioAggregateDeviceNameKey: "WAM private system capture",
@@ -96,7 +122,7 @@ final class CoreAudioSystemCapture: @unchecked Sendable {
             property = address(kAudioDevicePropertyNominalSampleRate); size = UInt32(MemoryLayout<Float64>.size)
             try check(AudioObjectGetPropertyData(aggregate, &property, 0, nil, &size, &clockRate), "read capture clock rate")
             guard clockRate == format.mSampleRate else {
-                throw RecorderFailure(message: "System audio clock and tap rates differ. Choose an output device with a matching sample rate and start again.")
+                throw RecorderFailure(message: "System audio needs a \(Int(format.mSampleRate)) Hz clock, but the available output clock is \(Int(clockRate)) Hz. Try the Mac’s built-in microphone, or turn off System audio.")
             }
             let route: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
                 guard let self, self.active else { return }
