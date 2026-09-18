@@ -15,7 +15,7 @@ final class RecorderModel: ObservableObject {
             RecorderAppDelegate.shared?.configureShortcut()
         }
     }
-    @Published var shortcutChoice = UserDefaults.standard.string(forKey: "recordingShortcutChoice").flatMap(RecordingShortcutChoice.init(rawValue:)) ?? .commandControl9 {
+    @Published var shortcutChoice = UserDefaults.standard.string(forKey: "recordingShortcutChoice").flatMap(RecordingShortcutChoice.init(rawValue:)) ?? .commandEscape {
         didSet {
             UserDefaults.standard.set(shortcutChoice.rawValue, forKey: "recordingShortcutChoice")
             RecorderAppDelegate.shared?.configureShortcut()
@@ -271,12 +271,9 @@ struct RecorderPanel: View {
                     .frame(maxWidth: .infinity).padding(.vertical, 5)
             }.buttonStyle(.borderedProminent).tint(.red)
                 .disabled(model.state == .starting || model.state == .stopping || (!model.settings.microphone && !model.settings.systemAudio))
-                .keyboardShortcut(model.globalShortcutRegistered ? nil : KeyboardShortcut(KeyEquivalent(model.shortcutChoice.digit), modifiers: [.command, .control]))
+                .keyboardShortcut(model.globalShortcutRegistered ? nil : KeyboardShortcut(.escape, modifiers: [.command]))
             Text(model.shortcutStatus).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            Toggle("Global recording shortcut", isOn: $model.globalShortcutEnabled).font(.caption)
-            Picker("Key combination", selection: $model.shortcutChoice) {
-                ForEach(RecordingShortcutChoice.allCases) { Text($0.label).tag($0) }
-            }.disabled(!model.globalShortcutEnabled)
+            Toggle("Global recording shortcut (⌘Esc)", isOn: $model.globalShortcutEnabled).font(.caption)
             DisclosureGroup("Recording settings", isExpanded: $advanced) {
                 VStack(alignment: .leading, spacing: 12) {
                     Picker("Format", selection: $model.settings.scheme) { ForEach(AudioScheme.allCases) { Text($0.title).tag($0) } }

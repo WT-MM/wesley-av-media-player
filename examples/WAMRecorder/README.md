@@ -181,7 +181,7 @@ microphone or play user audio.
 
 ## Global recording shortcut and waveforms
 
-While WAM Recorder is running, **Control–Command–9 (⌃⌘9)** starts or stops
+While WAM Recorder is running, **Command–Escape (⌘Esc)** starts or stops
 recording from any app, using the currently selected sources/settings. Starting
 brings the Record controls forward; stopping saves without changing focus. Presses
 during startup/finalization and key auto-repeat are ignored. Turn **Global recording
@@ -199,8 +199,7 @@ peaks are combined for visualization, not mixed for playback. This is not a cali
 loudness meter or a single stitched waveform across the entire session.
 
 
-Choose ⌃⌘9, ⌃⌘8, or ⌃⌘7 in **Key combination**. The choice persists. No Option key
-is required, and the recorder no longer registers ⌘⇧R. Registration detects other
-global hotkey owners; it cannot detect every foreground-app or website binding.
-These defaults avoid identified Chrome/Workspace shortcuts, not a guarantee of
-universal availability. Disable the global shortcut to release it to other apps.
+The shortcut requires exactly two keys: Command and Escape. Previously saved
+multi-modifier choices automatically fall back to this binding. Registration detects
+other global hotkey owners; it cannot detect every foreground-app or website binding.
+Disable the global shortcut to release it to other apps.
