@@ -203,3 +203,9 @@ The shortcut requires exactly two keys: Command and Escape. Previously saved
 multi-modifier choices automatically fall back to this binding. Registration detects
 other global hotkey owners; it cannot detect every foreground-app or website binding.
 Disable the global shortcut to release it to other apps.
+
+When a Bluetooth output clock differs from the system tap rate, system capture
+uses an available built-in output with a matching rate as its private capture clock.
+Playback routing and device sample-rate settings stay unchanged. The clock and tap
+rate are recorded in the session report. If no matching clock exists, startup fails
+with the actual rates and a microphone-only workaround.
