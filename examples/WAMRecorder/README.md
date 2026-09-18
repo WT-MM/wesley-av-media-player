@@ -209,3 +209,9 @@ uses an available built-in output with a matching rate as its private capture cl
 Playback routing and device sample-rate settings stay unchanged. The clock and tap
 rate are recorded in the session report. If no matching clock exists, startup fails
 with the actual rates and a microphone-only workaround.
+
+To delete a session, select it in Recordings and click **Delete…**, or right-click
+and choose **Move to Trash…**. Confirm to move the entire session, including all
+tracks and its report, to macOS Trash. Restore it in Finder and refresh the library
+to recover it. Deletion is disabled during capture; playback of the deleted session
+stops automatically. Failed moves leave the session listed and show an error.

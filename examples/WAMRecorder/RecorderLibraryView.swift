@@ -6,6 +6,7 @@ struct RecorderWindowContent: View {
     @StateObject private var library = RecordingLibrary()
     @State private var selected: String?
     @State private var query = ""
+    @State private var pendingDeletion: SavedRecording?
     private var filteredRecordings: [SavedRecording] {
         guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return library.recordings }
         return library.recordings.filter {
@@ -23,6 +24,17 @@ struct RecorderWindowContent: View {
             } else {
                 ScrollView { RecorderPanel(model: model).frame(maxWidth: .infinity) }
             }
+        }
+        .alert("Move recording to Trash?", isPresented: Binding(
+            get: { pendingDeletion != nil }, set: { if !$0 { pendingDeletion = nil } }
+        ), presenting: pendingDeletion) { recording in
+            Button("Move to Trash", role: .destructive) {
+                if library.moveToTrash(recording, recordingInProgress: model.busy), selected == recording.id { selected = nil }
+                pendingDeletion = nil
+            }
+            Button("Cancel", role: .cancel) { pendingDeletion = nil }
+        } message: { recording in
+            Text("This moves the entire session from \(recording.receipt.startedAt.formatted(date: .abbreviated, time: .shortened)), including all audio tracks and its report. You can restore it from Trash in Finder.")
         }
         .onChange(of: model.showingRecordings) { _, visible in
             if visible { library.refresh(currentFolder: model.settings.folderPath) }
@@ -54,11 +66,18 @@ struct RecorderWindowContent: View {
                         Text("\(recording.sources.joined(separator: " + ")) · \(recording.receipt.settings.scheme.title)")
                             .font(.caption).foregroundStyle(.secondary)
                     }.tag(recording.id).padding(.vertical, 3)
+                    .contextMenu {
+                        Button("Move to Trash…", role: .destructive) { pendingDeletion = recording }
+                            .disabled(model.busy)
+                    }
                 }.listStyle(.inset).frame(minHeight: 110)
                 if let recording = library.recordings.first(where: { $0.id == selected }) {
                     HStack {
                         Text(recording.receipt.status == "completed" ? "Saved session" : "Incomplete session · saved checkpoints only").font(.caption).foregroundStyle(.secondary)
                         Spacer()
+                        Button(role: .destructive) { pendingDeletion = recording } label: {
+                            Label("Delete…", systemImage: "trash")
+                        }.disabled(model.busy).help(model.busy ? "Stop and save before deleting recordings" : "Move this session to Trash")
                         Button("Show in Finder") { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: recording.folder.path) }
                     }
                     ForEach(recording.sources, id: \.self) { source in
