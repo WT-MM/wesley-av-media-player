@@ -25,19 +25,25 @@ Apple silicon only. To build from source, see
 
 ## Features
 
-- Native playback of H.264 (through High 10 and 4:2:2), HEVC (8/10-bit,
-  including 4:2:2), VP9 and AV1 (including 10-bit), MPEG-2, MPEG-4 SP,
-  VP8, ProRes 422 and 4444/XQ (opaque; alpha is ignored), and Motion
-  JPEG video, and AAC, AC-3/E-AC-3, ALAC, ADPCM, FLAC, MP3, Opus, and
-  Vorbis audio, in MP4, MOV, MKV, WebM, and MPEG-TS containers, up to
-  4K. Audio-only files work too, down to 8 kHz. Unsupported formats
-  (MPEG-4 ASP, DTS, TrueHD, WMV/VC-1, RealMedia, Theora, and fragmented
-  or unfinished MP4s) fall back to a bundled mpv/FFmpeg engine; native
-  MPEG-4 ASP and DTS/TrueHD decoding is implemented but disabled by
-  default pending more work (see [docs/DEVELOPING.md](docs/DEVELOPING.md)).
-- HDR and Dolby Vision (profile 8 base layer) play in MKV; portrait and
-  rotated video, including portrait 4K, display at the right orientation;
-  BT.601/SD colorimetry reads correctly instead of defaulting to HD.
+- Native playback of H.264 (through High 10, 4:2:2 and 8-bit 4:4:4),
+  HEVC (8/10-bit, including 4:2:2), VP9 and AV1 (including 10-bit),
+  MPEG-2, MPEG-4 SP, VP8, ProRes 422 and 4444/XQ (opaque; alpha is
+  ignored), and Motion JPEG video, and AAC, AC-3/E-AC-3, ALAC, ADPCM,
+  FLAC, MP3, Opus, and Vorbis audio, in MP4 (including fragmented and
+  unfinished recordings), MOV, MKV, WebM, MPEG-TS, and Ogg (Opus)
+  containers, up to 4K. Audio-only files work too, down to 8 kHz.
+  Formats Apple hardware cannot decode (MPEG-4 ASP, DTS, TrueHD/MLP,
+  WMV/VC-1, RealMedia, Theora) fall back to a bundled mpv/FFmpeg
+  engine; native software decoding of MPEG-4 ASP, Hi10P, 4:2:2, DTS and
+  TrueHD/MLP is implemented but off by default pending the remaining
+  qualification gates (see
+  [docs/native-coverage/](docs/native-coverage/README.md)). Every native
+  refusal names its reason before the fallback engages.
+- HDR (PQ and HLG, including HLG BT.2020 H.264 with ambient viewing
+  metadata) plays in MKV and MP4, and Dolby Vision profile 8 base layers
+  play in MKV; portrait and rotated video, including portrait 4K,
+  display at the right orientation; BT.601/SD colorimetry reads
+  correctly instead of defaulting to HD.
 - Subtitle and caption tracks read natively from the container: PGS and
   VobSub bitmap subtitles, MP4 timed text (tx3g), and CEA-608 closed
   captions. Off by default like other subtitle tracks; turn them on in
@@ -70,14 +76,28 @@ Apple silicon only. To build from source, see
 | Quick Edit | E |
 | Close window | ⌘W |
 
+## Embedding (WAMKit)
+
+The native player ships as `WAMKit.framework`: a C ABI with an
+Objective-C facade and a Swift Package, so another app can create a
+player, place a `WAMPresentationView` in its own window, and drive
+open/play/pause/seek/close with state observation and named refusals.
+The Qt app itself is a client of the same layer. Sample AppKit and
+SwiftUI hosts live in `examples/`; the integration guide is
+[docs/wamkit/README.md](docs/wamkit/README.md).
+
 ## Architecture
 
-Demuxing is AVFoundation for MP4/MOV, plus custom Matroska and MPEG-TS
-demuxers. Video decodes through VideoToolbox (libvpx for VP8). An
-audio-driven clock using exact rational arithmetic schedules frames, and
-decoded output goes to an `AVSampleBufferDisplayLayer` composited by
+Demuxing is AVFoundation for MP4/MOV, custom Matroska and MPEG-TS
+demuxers, and a lazily loaded LGPL libavformat for fragmented MP4, AVI,
+FLV, Ogg, ASF, RealMedia and MPEG-PS. Decoding follows a fixed ladder:
+VideoToolbox hardware, then VideoToolbox software, AudioToolbox, libvpx,
+and libavcodec last, only where Apple cannot decode. An audio-driven
+clock using exact rational arithmetic schedules frames, and decoded
+output goes to an `AVSampleBufferDisplayLayer` composited by
 WindowServer, so video never enters the UI toolkit's render loop.
 
 More detail: [docs/DEVELOPING.md](docs/DEVELOPING.md),
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md),
+[docs/native-coverage/README.md](docs/native-coverage/README.md),
 [docs/PRODUCT.md](docs/PRODUCT.md)
