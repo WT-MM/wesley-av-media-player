@@ -2,6 +2,9 @@ name: Build standalone WAM apps
 
 on:
   push:
+    # Branches only: a tag push triggers release.yml alone.
+    branches:
+      - "**"
   pull_request:
   workflow_dispatch:
 
