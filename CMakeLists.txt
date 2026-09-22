@@ -738,6 +738,10 @@ if(BUILD_TESTING)
     target_link_libraries(wam_audio_downmix_test PRIVATE wam_native_core)
     add_test(NAME audio_downmix COMMAND wam_audio_downmix_test)
 
+    add_executable(wam_adpcm_decoder_test tests/adpcm_decoder_test.cpp)
+    target_link_libraries(wam_adpcm_decoder_test PRIVATE wam_native_core)
+    add_test(NAME adpcm_decoder COMMAND wam_adpcm_decoder_test)
+
     add_executable(wam_audio_codec_timing_test
       tests/audio_codec_timing_test.cpp)
     target_link_libraries(wam_audio_codec_timing_test PRIVATE wam_native_core)

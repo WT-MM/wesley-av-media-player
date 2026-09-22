@@ -2,7 +2,7 @@
 set -eu
 
 repo_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-build_dir=$(mktemp -d "/private/tmp/wam-wamkit-scratch/device-recovery.XXXXXX")
+build_dir=$(mktemp -d "${TMPDIR:-/private/tmp/wam-wamkit-scratch}/device-recovery.XXXXXX")
 trap 'rm -rf "$build_dir"' EXIT HUP INT TERM
 
 common_flags='-std=c++20 -Wall -Wextra -Wpedantic -Werror -Wconversion -Wsign-conversion -Wshadow -Wundef -Wcast-align -Wformat=2 -Wimplicit-fallthrough'
@@ -15,6 +15,9 @@ clang++ $common_flags $include_flags -c \
 clang++ $common_flags $include_flags -c \
   "$repo_dir/src/media/native_media_dispatcher.cpp" \
   -o "$build_dir/native_media_dispatcher.o"
+clang++ $common_flags $include_flags -c \
+  "$repo_dir/src/media/adpcm_decoder.cpp" \
+  -o "$build_dir/adpcm_decoder.o"
 clang++ $common_flags $include_flags -c \
   "$repo_dir/src/media/audio_downmix.cpp" \
   -o "$build_dir/audio_downmix.o"

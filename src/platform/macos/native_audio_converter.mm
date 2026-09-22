@@ -5,6 +5,7 @@
 #include "native_audio_sample_rates.hpp"
 
 #include "media/adpcm_audio.hpp"
+#include "media/adpcm_decoder.hpp"
 #include "media/audio_downmix.hpp"
 #include "media/matroska_ac3.hpp"
 #include "media/matroska_mpeg_audio.hpp"
@@ -315,6 +316,83 @@ floatOutputAsbd(std::uint32_t rate, std::uint32_t channels) noexcept {
   result.mBitsPerChannel = 8U * sizeof(float);
   return result;
 }
+
+class WamAdpcmBackend final : public NativeAudioConverterBackend {
+  media::AdpcmFormat format_{};
+  std::vector<float> block_;
+  std::size_t cursor_{0}, available_{0};
+  const char *refusal_{nullptr};
+
+public:
+  bool configure(const NativeAudioBackendConfiguration &c,
+                 std::string *error) override {
+    close();
+    format_ = {static_cast<std::uint16_t>(c.input.formatTag & 0xffffU),
+               c.input.channels, c.input.bytesPerPacket,
+               c.input.framesPerPacket};
+    if (const char *e = media::validateAdpcmFormat(format_)) {
+      refusal_ = e;
+      assignError(error, e);
+      return false;
+    }
+    if (c.outputChannels != format_.channels ||
+        c.outputSampleRate != c.input.sampleRate) {
+      assignError(error, "AdpcmOutputFormatMismatch");
+      return false;
+    }
+    block_.resize(static_cast<std::size_t>(format_.blockFrames) *
+                  format_.channels);
+    return true;
+  }
+  NativeAudioBackendResult convert(NativeAudioBackendInput input,
+                                   std::span<float> out) override {
+    NativeAudioBackendResult r;
+    if (available_ == 0 && !input.packets.empty()) {
+      const auto &p = input.packets.front();
+      if (p.startOffset < 0 ||
+          static_cast<std::uint64_t>(p.startOffset) > input.bytes.size() ||
+          p.byteSize >
+              input.bytes.size() - static_cast<std::size_t>(p.startOffset))
+        refusal_ = "AdpcmPacketBoundsInvalid";
+      else if (p.variableFrames != 0 && p.variableFrames != format_.blockFrames)
+        refusal_ = "AdpcmPacketFramesMismatch";
+      else
+        refusal_ = media::decodeAdpcmBlock(
+            format_,
+            input.bytes.subspan(static_cast<std::size_t>(p.startOffset),
+                                p.byteSize),
+            block_);
+      if (refusal_) {
+        r.failed = true;
+        return r;
+      }
+      cursor_ = 0;
+      available_ = format_.blockFrames;
+      r.consumedPackets = 1;
+      r.finalInputReleased = input.packets.size() == 1;
+    }
+    r.producedFrames = std::min(available_, out.size() / format_.channels);
+    std::copy_n(block_.data() + cursor_ * format_.channels,
+                r.producedFrames * format_.channels, out.data());
+    cursor_ += r.producedFrames;
+    available_ -= r.producedFrames;
+    r.needsInput = available_ == 0 &&
+                   r.consumedPackets == input.packets.size() &&
+                   !input.endOfStream;
+    r.drained = input.endOfStream && available_ == 0 && r.producedFrames == 0;
+    return r;
+  }
+  const char *failureReason() const noexcept override { return refusal_; }
+  bool reset(std::string *) override {
+    cursor_ = available_ = 0;
+    refusal_ = nullptr;
+    return !block_.empty();
+  }
+  void close() noexcept override {
+    cursor_ = available_ = 0;
+    refusal_ = nullptr;
+  }
+};
 
 class CoreAudioConverterBackend final : public NativeAudioConverterBackend {
 public:
@@ -1538,10 +1616,6 @@ bool NativeAudioConverter::configure(const media::MediaTrackDescriptor &track,
   std::int64_t candidateFloorFrame = 0;
   std::int64_t candidateCeilingFrame = 0;
   bool candidateCeilingKnown = false;
-  if (track.audio && !software && !audioCodecDecoderProvenOnHost(track.codec)) {
-    return state.fail(error, "AdpcmDecoderUnprovenOnHost: AudioToolbox ADPCM decodes "
-                             "bit-exactly only on macOS 26 or newer");
-  }
   if (generation == 0 || state.ring.generation() != generation ||
       track.id == 0 || track.kind != media::MediaTrackKind::Audio ||
       !track.audio || (!software && !supportedCodec(track.codec, track.audio->formatTag)) ||
@@ -1564,15 +1638,18 @@ bool NativeAudioConverter::configure(const media::MediaTrackDescriptor &track,
     return state.fail(error, "audio track is outside native converter v1");
   }
   state.backend->close();
-#if defined(WAM_ENABLE_AVCODEC_STAGE)
   if (!state.injected_backend) {
-    if (software) {
+    if (track.codec == media::MediaCodec::AdpcmIma || track.codec == media::MediaCodec::AdpcmMs)
+      state.backend = std::make_unique<WamAdpcmBackend>();
+#if defined(WAM_ENABLE_AVCODEC_STAGE)
+    else if (software) {
       const auto codec = track.codec == media::MediaCodec::Dts ? media::avcodec::Codec::Dts
           : track.codec == media::MediaCodec::TrueHd ? media::avcodec::Codec::TrueHd : media::avcodec::Codec::Mlp;
       state.backend = std::make_unique<SoftwareAvcodecAudioBackend>(codec);
-    } else state.backend = std::make_unique<CoreAudioConverterBackend>();
-  }
+    }
 #endif
+    else state.backend = std::make_unique<CoreAudioConverterBackend>();
+  }
   state.software_backend = software;
   state.clearFlow();
   state.configured = false;
@@ -1597,13 +1674,14 @@ bool NativeAudioConverter::configure(const media::MediaTrackDescriptor &track,
   } else configuration.magicCookie = track.codecConfiguration;
   try {
     if (!state.backend->configure(configuration, error)) {
+      const char* refusal = state.backend->failureReason();
       state.backend->close();
       state.audio = {};
       state.track = 0;
       state.cookie_size = 0;
       state.sample_rate = 0;
       state.statistics.configured = false;
-      return state.fail(error, "native audio backend configuration failed");
+      return state.fail(error, refusal ? refusal : "native audio backend configuration failed");
     }
   } catch (...) {
     state.backend->close();
@@ -1958,7 +2036,8 @@ NativeAudioPumpResult NativeAudioConverter::pump(std::string *error) {
     return NativeAudioPumpResult::Failed;
   }
   if (!state.resultWithinContract(converted, packetSpan.size(), sendingEof)) {
-    state.failPump(error, "native audio backend violated its bounded contract");
+    state.failPump(error, state.backend->failureReason() ? state.backend->failureReason() :
+                          "native audio backend violated its bounded contract");
     return NativeAudioPumpResult::Failed;
   }
   std::uint64_t decodedAfter = 0;

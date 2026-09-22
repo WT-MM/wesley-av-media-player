@@ -1,0 +1,19 @@
+{
+  "base": "f1ca74afa6c550dab7e546bffada2d430a82b613",
+  "branch": "adpcm-native-decoder",
+  "os": "ProductName:\t\tmacOS\nProductVersion:\t\t26.3.1\nProductVersionExtra:\t(a)\nBuildVersion:\t\t25D771280a\n",
+  "configuration": {
+    "WAM_ENABLE_AVFORMAT_STAGE": "ON",
+    "WAM_ENABLE_AVCODEC_STAGE": "OFF"
+  },
+  "executables": {
+    "WAM.app/Contents/MacOS/WAM": "2f85dbf5ef8e7ccbc70a06e71540bed2675a20ed8986e61d48b60c1edffd01d5",
+    "wam_native_coverage_audio_probe": "a61370879d67055897d3dbcfc5ae0d69f3a735b5deeb26363dc361a3e0377309",
+    "wam_native_coverage_source_probe": "4966f7e87a8ddbb03b387ddb3ba0858dca16fae6a3079519223f255ab789cebb"
+  },
+  "ctest": {
+    "passed": 130,
+    "failed": 0,
+    "seconds": 186.48
+  }
+}

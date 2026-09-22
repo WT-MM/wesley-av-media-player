@@ -1,0 +1,737 @@
+{
+  "version": 2,
+  "audio_probe_sha256": "a61370879d67055897d3dbcfc5ae0d69f3a735b5deeb26363dc361a3e0377309",
+  "source_probe_sha256": "4966f7e87a8ddbb03b387ddb3ba0858dca16fae6a3079519223f255ab789cebb",
+  "ffmpeg": "ffmpeg version 9.0.1 Copyright (c) 2000-2026 the FFmpeg developers\nbuilt with Apple clang version 21.0.0 (clang-2100.1.1.101)\nconfiguration: --prefix=/opt/homebrew/Cellar/ffmpeg/9.0.1_1 --enable-shared --enable-pthreads --enable-version3 --cc=clang --host-cflags= --host-ldflags= --enable-ffplay --enable-gpl --enable-libsvtav1 --enable-libopus --enable-libx264 --enable-libmp3lame --enable-libdav1d --enable-libvmaf --enable-libvpx --enable-libx265 --enable-openssl --enable-videotoolbox --enable-audiotoolbox --enable-neon\nlibavutil      61.  1.101 / 61.  1.101\nlibavcodec     63.  1.101 / 63.  1.101\nlibavformat    63.  1.101 / 63.  1.101\nlibavdevice    63.  1.101 / 63.  1.101\nlibavfilter    12.  1.101 / 12.  1.101\nlibswscale     10.  1.101 / 10.  1.101\nlibswresample   7.  1.101 /  7.  1.101\n\nExiting with exit code 0\n",
+  "specimens": [
+    {
+      "file": "adpcm_ima_wav-44100-1.mka",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=44100",
+        "-t",
+        "4",
+        "-c:a",
+        "adpcm_ima_wav",
+        "-ac",
+        "1",
+        "/private/tmp/wam-adpcm-scratch/matroska-final/adpcm_ima_wav-44100-1.mka"
+      ],
+      "sha256": "04de3d87615e62dbacc948a783ec152f104a16e79c75e49e3c08aff19fa618d3"
+    },
+    {
+      "file": "adpcm_ima_wav-44100-2.mka",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=44100",
+        "-t",
+        "4",
+        "-c:a",
+        "adpcm_ima_wav",
+        "-ac",
+        "2",
+        "/private/tmp/wam-adpcm-scratch/matroska-final/adpcm_ima_wav-44100-2.mka"
+      ],
+      "sha256": "9bf3c47bc8ad6afd80e6b1f2f52933c82c8bc1ca6730ffd5158b287a35dbf658"
+    },
+    {
+      "file": "adpcm_ima_wav-48000-1.mka",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=48000",
+        "-t",
+        "4",
+        "-c:a",
+        "adpcm_ima_wav",
+        "-ac",
+        "1",
+        "/private/tmp/wam-adpcm-scratch/matroska-final/adpcm_ima_wav-48000-1.mka"
+      ],
+      "sha256": "342f23bc3fb5c0dd00030e5625973c58aa11a72f8e9c72ebf2c34cff0fe20db2"
+    },
+    {
+      "file": "adpcm_ima_wav-48000-2.mka",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=48000",
+        "-t",
+        "4",
+        "-c:a",
+        "adpcm_ima_wav",
+        "-ac",
+        "2",
+        "/private/tmp/wam-adpcm-scratch/matroska-final/adpcm_ima_wav-48000-2.mka"
+      ],
+      "sha256": "25a4471a1d51813943115ec9182940be248c1f5d7087810f1fd7edc991bbe72a"
+    },
+    {
+      "file": "adpcm_ms-44100-1.mka",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=44100",
+        "-t",
+        "4",
+        "-c:a",
+        "adpcm_ms",
+        "-ac",
+        "1",
+        "/private/tmp/wam-adpcm-scratch/matroska-final/adpcm_ms-44100-1.mka"
+      ],
+      "sha256": "5cf9f38c35173abd147134ad4fa678a150d9372bd97e1988679c6f7b70ee3bab"
+    },
+    {
+      "file": "adpcm_ms-44100-2.mka",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=44100",
+        "-t",
+        "4",
+        "-c:a",
+        "adpcm_ms",
+        "-ac",
+        "2",
+        "/private/tmp/wam-adpcm-scratch/matroska-final/adpcm_ms-44100-2.mka"
+      ],
+      "sha256": "f7f6caf2de40cfad212561dac810aa5b470f9441996803a94bfad2e3974ba477"
+    },
+    {
+      "file": "adpcm_ms-48000-1.mka",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=48000",
+        "-t",
+        "4",
+        "-c:a",
+        "adpcm_ms",
+        "-ac",
+        "1",
+        "/private/tmp/wam-adpcm-scratch/matroska-final/adpcm_ms-48000-1.mka"
+      ],
+      "sha256": "9fdf74a69ed96e15d9542630e23176c353befd9056255b8c6ad57c642ea1da97"
+    },
+    {
+      "file": "adpcm_ms-48000-2.mka",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=48000",
+        "-t",
+        "4",
+        "-c:a",
+        "adpcm_ms",
+        "-ac",
+        "2",
+        "/private/tmp/wam-adpcm-scratch/matroska-final/adpcm_ms-48000-2.mka"
+      ],
+      "sha256": "67aaa4ec060bd2b3dcefc0b25270b6118e41119a44ce77e2fc06137fab809726"
+    },
+    {
+      "file": "alac.mka",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=48000",
+        "-t",
+        "4",
+        "-c:a",
+        "alac",
+        "/private/tmp/wam-adpcm-scratch/matroska-final/alac.mka"
+      ],
+      "sha256": "93425c33a03b6dee6f49756444450d48cf10c0ff86a071388a070de00093c8ab"
+    },
+    {
+      "file": "pcm_s16le.mka",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=48000",
+        "-t",
+        "4",
+        "-c:a",
+        "pcm_s16le",
+        "/private/tmp/wam-adpcm-scratch/matroska-final/pcm_s16le.mka"
+      ],
+      "sha256": "5302c442af4481c1894ccb01feeddd2096fd56951fab37c8b1fae002bb7c6721"
+    },
+    {
+      "file": "pcm_f32le.mka",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=48000",
+        "-t",
+        "4",
+        "-c:a",
+        "pcm_f32le",
+        "/private/tmp/wam-adpcm-scratch/matroska-final/pcm_f32le.mka"
+      ],
+      "sha256": "c15f1edffa0e08b151072461b67986d8777b77e57f586260d42ca362a3e0b112"
+    },
+    {
+      "file": "adpcm_ima_wav.mka",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=48000",
+        "-t",
+        "4",
+        "-c:a",
+        "adpcm_ima_wav",
+        "/private/tmp/wam-adpcm-scratch/matroska-final/adpcm_ima_wav.mka"
+      ],
+      "sha256": "92e9978a5033673985b10cf6e1c2ddcaef281713b1e63a38b51c84fdb3809ebd"
+    },
+    {
+      "file": "adpcm_ms.mka",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=48000",
+        "-t",
+        "4",
+        "-c:a",
+        "adpcm_ms",
+        "/private/tmp/wam-adpcm-scratch/matroska-final/adpcm_ms.mka"
+      ],
+      "sha256": "71ea4826337640ee97406c610505c9b7b0a47977c4d6119e33dda553276186c4"
+    },
+    {
+      "file": "adpcm_ima_wav-block-64.mka",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=48000",
+        "-t",
+        "4",
+        "-c:a",
+        "adpcm_ima_wav",
+        "-block_size",
+        "64",
+        "/private/tmp/wam-adpcm-scratch/matroska-final/adpcm_ima_wav-block-64.mka"
+      ],
+      "sha256": "03edca755fc056c9e7990ef458a97d37f4b8a6a230a06233d03bffdeeb9026c6"
+    },
+    {
+      "file": "adpcm_ima_wav-block-8192.mka",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=48000",
+        "-t",
+        "4",
+        "-c:a",
+        "adpcm_ima_wav",
+        "-block_size",
+        "8192",
+        "/private/tmp/wam-adpcm-scratch/matroska-final/adpcm_ima_wav-block-8192.mka"
+      ],
+      "sha256": "6e2a388bcbec379d732f34b6229bcc287fb3fa81bc43c64eccd6aca8665f69a1"
+    },
+    {
+      "file": "adpcm_ms-block-64.mka",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=48000",
+        "-t",
+        "4",
+        "-c:a",
+        "adpcm_ms",
+        "-block_size",
+        "64",
+        "/private/tmp/wam-adpcm-scratch/matroska-final/adpcm_ms-block-64.mka"
+      ],
+      "sha256": "66aa0dfa47133278f5ce35d5bf84276e2a03175bf8f8e9ba4a834a5efab40996"
+    },
+    {
+      "file": "adpcm_ms-block-8192.mka",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=48000",
+        "-t",
+        "4",
+        "-c:a",
+        "adpcm_ms",
+        "-block_size",
+        "8192",
+        "/private/tmp/wam-adpcm-scratch/matroska-final/adpcm_ms-block-8192.mka"
+      ],
+      "sha256": "17db807a7a261c77dc0770eaa8c4d76ca7370aa6dcd45a6be8bf5bfd21b46a7f"
+    }
+  ],
+  "proofs": [
+    {
+      "file": "adpcm_ima_wav-44100-1.mka",
+      "asset_sha256": "04de3d87615e62dbacc948a783ec152f104a16e79c75e49e3c08aff19fa618d3",
+      "target": 0,
+      "frames": 176400,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=44100 frames=176400 first=0 decoded=177567 trim=1167 exact=1 drained=1 error="
+    },
+    {
+      "file": "adpcm_ima_wav-44100-1.mka",
+      "asset_sha256": "04de3d87615e62dbacc948a783ec152f104a16e79c75e49e3c08aff19fa618d3",
+      "target": 2,
+      "frames": 88200,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=44100 frames=88200 first=88200 decoded=93886 trim=5686 exact=1 drained=1 error="
+    },
+    {
+      "file": "adpcm_ima_wav-44100-1.mka",
+      "asset_sha256": "04de3d87615e62dbacc948a783ec152f104a16e79c75e49e3c08aff19fa618d3",
+      "target": "100001/100000",
+      "frames": 132299,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=44100 frames=132299 first=44101 decoded=138788 trim=6489 exact=1 drained=1 error="
+    },
+    {
+      "file": "adpcm_ima_wav-44100-2.mka",
+      "asset_sha256": "9bf3c47bc8ad6afd80e6b1f2f52933c82c8bc1ca6730ffd5158b287a35dbf658",
+      "target": 0,
+      "frames": 176400,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=44100 frames=176400 first=0 decoded=176958 trim=558 exact=1 drained=1 error="
+    },
+    {
+      "file": "adpcm_ima_wav-44100-2.mka",
+      "asset_sha256": "9bf3c47bc8ad6afd80e6b1f2f52933c82c8bc1ca6730ffd5158b287a35dbf658",
+      "target": 2,
+      "frames": 88200,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=44100 frames=88200 first=88200 decoded=91530 trim=3330 exact=1 drained=1 error="
+    },
+    {
+      "file": "adpcm_ima_wav-44100-2.mka",
+      "asset_sha256": "9bf3c47bc8ad6afd80e6b1f2f52933c82c8bc1ca6730ffd5158b287a35dbf658",
+      "target": "100001/100000",
+      "frames": 132299,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=44100 frames=132299 first=44101 decoded=135261 trim=2962 exact=1 drained=1 error="
+    },
+    {
+      "file": "adpcm_ima_wav-48000-1.mka",
+      "asset_sha256": "342f23bc3fb5c0dd00030e5625973c58aa11a72f8e9c72ebf2c34cff0fe20db2",
+      "target": 0,
+      "frames": 192000,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=192000 first=0 decoded=193895 trim=1895 exact=1 drained=1 error="
+    },
+    {
+      "file": "adpcm_ima_wav-48000-1.mka",
+      "asset_sha256": "342f23bc3fb5c0dd00030e5625973c58aa11a72f8e9c72ebf2c34cff0fe20db2",
+      "target": 2,
+      "frames": 96000,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=96000 first=96000 decoded=102050 trim=6050 exact=1 drained=1 error="
+    },
+    {
+      "file": "adpcm_ima_wav-48000-1.mka",
+      "asset_sha256": "342f23bc3fb5c0dd00030e5625973c58aa11a72f8e9c72ebf2c34cff0fe20db2",
+      "target": "100001/100000",
+      "frames": 143999,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=143999 first=48001 decoded=151034 trim=7035 exact=1 drained=1 error="
+    },
+    {
+      "file": "adpcm_ima_wav-48000-2.mka",
+      "asset_sha256": "25a4471a1d51813943115ec9182940be248c1f5d7087810f1fd7edc991bbe72a",
+      "target": 0,
+      "frames": 192000,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=192000 first=0 decoded=192213 trim=213 exact=1 drained=1 error="
+    },
+    {
+      "file": "adpcm_ima_wav-48000-2.mka",
+      "asset_sha256": "25a4471a1d51813943115ec9182940be248c1f5d7087810f1fd7edc991bbe72a",
+      "target": 2,
+      "frames": 96000,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=96000 first=96000 decoded=98649 trim=2649 exact=1 drained=1 error="
+    },
+    {
+      "file": "adpcm_ima_wav-48000-2.mka",
+      "asset_sha256": "25a4471a1d51813943115ec9182940be248c1f5d7087810f1fd7edc991bbe72a",
+      "target": "100001/100000",
+      "frames": 143999,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=143999 first=48001 decoded=146448 trim=2449 exact=1 drained=1 error="
+    },
+    {
+      "file": "adpcm_ms-44100-1.mka",
+      "asset_sha256": "5cf9f38c35173abd147134ad4fa678a150d9372bd97e1988679c6f7b70ee3bab",
+      "target": 0,
+      "frames": 176400,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=44100 frames=176400 first=0 decoded=177132 trim=732 exact=1 drained=1 error="
+    },
+    {
+      "file": "adpcm_ms-44100-1.mka",
+      "asset_sha256": "5cf9f38c35173abd147134ad4fa678a150d9372bd97e1988679c6f7b70ee3bab",
+      "target": 2,
+      "frames": 88200,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=44100 frames=88200 first=88200 decoded=93656 trim=5456 exact=1 drained=1 error="
+    },
+    {
+      "file": "adpcm_ms-44100-1.mka",
+      "asset_sha256": "5cf9f38c35173abd147134ad4fa678a150d9372bd97e1988679c6f7b70ee3bab",
+      "target": "100001/100000",
+      "frames": 132299,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=44100 frames=132299 first=44101 decoded=138448 trim=6149 exact=1 drained=1 error="
+    },
+    {
+      "file": "adpcm_ms-44100-2.mka",
+      "asset_sha256": "f7f6caf2de40cfad212561dac810aa5b470f9441996803a94bfad2e3974ba477",
+      "target": 0,
+      "frames": 176400,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=44100 frames=176400 first=0 decoded=177100 trim=700 exact=1 drained=1 error="
+    },
+    {
+      "file": "adpcm_ms-44100-2.mka",
+      "asset_sha256": "f7f6caf2de40cfad212561dac810aa5b470f9441996803a94bfad2e3974ba477",
+      "target": 2,
+      "frames": 88200,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=44100 frames=88200 first=88200 decoded=91080 trim=2880 exact=1 drained=1 error="
+    },
+    {
+      "file": "adpcm_ms-44100-2.mka",
+      "asset_sha256": "f7f6caf2de40cfad212561dac810aa5b470f9441996803a94bfad2e3974ba477",
+      "target": "100001/100000",
+      "frames": 132299,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=44100 frames=132299 first=44101 decoded=135608 trim=3309 exact=1 drained=1 error="
+    },
+    {
+      "file": "adpcm_ms-48000-1.mka",
+      "asset_sha256": "9fdf74a69ed96e15d9542630e23176c353befd9056255b8c6ad57c642ea1da97",
+      "target": 0,
+      "frames": 192000,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=192000 first=0 decoded=193420 trim=1420 exact=1 drained=1 error="
+    },
+    {
+      "file": "adpcm_ms-48000-1.mka",
+      "asset_sha256": "9fdf74a69ed96e15d9542630e23176c353befd9056255b8c6ad57c642ea1da97",
+      "target": 2,
+      "frames": 96000,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=96000 first=96000 decoded=101800 trim=5800 exact=1 drained=1 error="
+    },
+    {
+      "file": "adpcm_ms-48000-1.mka",
+      "asset_sha256": "9fdf74a69ed96e15d9542630e23176c353befd9056255b8c6ad57c642ea1da97",
+      "target": "100001/100000",
+      "frames": 143999,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=143999 first=48001 decoded=150664 trim=6665 exact=1 drained=1 error="
+    },
+    {
+      "file": "adpcm_ms-48000-2.mka",
+      "asset_sha256": "67aaa4ec060bd2b3dcefc0b25270b6118e41119a44ce77e2fc06137fab809726",
+      "target": 0,
+      "frames": 192000,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=192000 first=0 decoded=192280 trim=280 exact=1 drained=1 error="
+    },
+    {
+      "file": "adpcm_ms-48000-2.mka",
+      "asset_sha256": "67aaa4ec060bd2b3dcefc0b25270b6118e41119a44ce77e2fc06137fab809726",
+      "target": 2,
+      "frames": 96000,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=96000 first=96000 decoded=99176 trim=3176 exact=1 drained=1 error="
+    },
+    {
+      "file": "adpcm_ms-48000-2.mka",
+      "asset_sha256": "67aaa4ec060bd2b3dcefc0b25270b6118e41119a44ce77e2fc06137fab809726",
+      "target": "100001/100000",
+      "frames": 143999,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=143999 first=48001 decoded=146740 trim=2741 exact=1 drained=1 error="
+    },
+    {
+      "file": "alac.mka",
+      "asset_sha256": "93425c33a03b6dee6f49756444450d48cf10c0ff86a071388a070de00093c8ab",
+      "target": 0,
+      "frames": 192000,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=192000 first=0 decoded=192000 trim=0 exact=1 drained=1 error="
+    },
+    {
+      "file": "alac.mka",
+      "asset_sha256": "93425c33a03b6dee6f49756444450d48cf10c0ff86a071388a070de00093c8ab",
+      "target": 2,
+      "frames": 96000,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=96000 first=96000 decoded=105984 trim=9984 exact=1 drained=1 error="
+    },
+    {
+      "file": "pcm_s16le.mka",
+      "asset_sha256": "5302c442af4481c1894ccb01feeddd2096fd56951fab37c8b1fae002bb7c6721",
+      "target": 0,
+      "frames": 192000,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=192000 first=0 decoded=192000 trim=0 exact=1 drained=1 error="
+    },
+    {
+      "file": "pcm_s16le.mka",
+      "asset_sha256": "5302c442af4481c1894ccb01feeddd2096fd56951fab37c8b1fae002bb7c6721",
+      "target": 2,
+      "frames": 96000,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=96000 first=96000 decoded=98816 trim=2816 exact=1 drained=1 error="
+    },
+    {
+      "file": "pcm_f32le.mka",
+      "asset_sha256": "c15f1edffa0e08b151072461b67986d8777b77e57f586260d42ca362a3e0b112",
+      "target": 0,
+      "frames": 192000,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=192000 first=0 decoded=192000 trim=0 exact=1 drained=1 error="
+    },
+    {
+      "file": "pcm_f32le.mka",
+      "asset_sha256": "c15f1edffa0e08b151072461b67986d8777b77e57f586260d42ca362a3e0b112",
+      "target": 2,
+      "frames": 96000,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=96000 first=96000 decoded=98816 trim=2816 exact=1 drained=1 error="
+    },
+    {
+      "file": "adpcm_ima_wav.mka",
+      "asset_sha256": "92e9978a5033673985b10cf6e1c2ddcaef281713b1e63a38b51c84fdb3809ebd",
+      "target": 0,
+      "frames": 192000,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=192000 first=0 decoded=192213 trim=213 exact=1 drained=1 error="
+    },
+    {
+      "file": "adpcm_ima_wav.mka",
+      "asset_sha256": "92e9978a5033673985b10cf6e1c2ddcaef281713b1e63a38b51c84fdb3809ebd",
+      "target": 2,
+      "frames": 96000,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=96000 first=96000 decoded=98649 trim=2649 exact=1 drained=1 error="
+    },
+    {
+      "file": "adpcm_ms.mka",
+      "asset_sha256": "71ea4826337640ee97406c610505c9b7b0a47977c4d6119e33dda553276186c4",
+      "target": 0,
+      "frames": 192000,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=192000 first=0 decoded=192280 trim=280 exact=1 drained=1 error="
+    },
+    {
+      "file": "adpcm_ms.mka",
+      "asset_sha256": "71ea4826337640ee97406c610505c9b7b0a47977c4d6119e33dda553276186c4",
+      "target": 2,
+      "frames": 96000,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=96000 first=96000 decoded=99176 trim=3176 exact=1 drained=1 error="
+    },
+    {
+      "file": "adpcm_ima_wav-block-64.mka",
+      "asset_sha256": "03edca755fc056c9e7990ef458a97d37f4b8a6a230a06233d03bffdeeb9026c6",
+      "target": 0,
+      "frames": 192000,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=192000 first=0 decoded=192033 trim=33 exact=1 drained=1 error="
+    },
+    {
+      "file": "adpcm_ima_wav-block-8192.mka",
+      "asset_sha256": "6e2a388bcbec379d732f34b6229bcc287fb3fa81bc43c64eccd6aca8665f69a1",
+      "target": 0,
+      "frames": 192000,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=192000 first=0 decoded=196440 trim=4440 exact=1 drained=1 error="
+    },
+    {
+      "file": "adpcm_ms-block-64.mka",
+      "asset_sha256": "66aa0dfa47133278f5ce35d5bf84276e2a03175bf8f8e9ba4a834a5efab40996",
+      "target": 0,
+      "frames": 192000,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=192000 first=0 decoded=192036 trim=36 exact=1 drained=1 error="
+    },
+    {
+      "file": "adpcm_ms-block-8192.mka",
+      "asset_sha256": "17db807a7a261c77dc0770eaa8c4d76ca7370aa6dcd45a6be8bf5bfd21b46a7f",
+      "target": 0,
+      "frames": 192000,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=192000 first=0 decoded=196320 trim=4320 exact=1 drained=1 error="
+    }
+  ]
+}

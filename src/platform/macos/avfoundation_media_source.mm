@@ -6,6 +6,8 @@
 #include "avfoundation_media_source.hpp"
 
 #include "media/adpcm_audio.hpp"
+#include "media/adpcm_decoder.hpp"
+#include "media/matroska_apple_audio.hpp"
 #include "media/audio_codec_timing.hpp"
 #include "media/matroska_ac3.hpp"
 #include "media/matroska_mpeg_audio.hpp"
@@ -934,6 +936,65 @@ audioMovieTimelineFactsFor(NSArray* segments) noexcept {
   }
   return extension == ".mp3" || extension == ".ac3" || extension == ".eac3" ||
          extension == ".ec3";
+}
+
+// CoreMedia omits WAV ADPCM coefficient cookies; inspect bounded RIFF chunks
+// at admission, before any packet or callback can observe the format.
+[[nodiscard]] bool validateWaveAdpcm(const MediaTrackDescriptor &track,
+                                     const std::filesystem::path &path,
+                                     std::string *error) {
+  if (track.codec != MediaCodec::AdpcmIma && track.codec != MediaCodec::AdpcmMs)
+    return true;
+  auto refuse = [&](const char *reason) {
+    assignError(error, reason);
+    return false;
+  };
+  std::ifstream file(path, std::ios::binary);
+  std::array<std::byte, 50> bytes{};
+  file.read(reinterpret_cast<char *>(bytes.data()), 12);
+  if (file.gcount() != 12 || std::memcmp(bytes.data(), "RIFF", 4) != 0 ||
+      std::memcmp(bytes.data() + 8, "WAVE", 4) != 0)
+    return refuse("AdpcmWaveFormatFactsUnavailable");
+  const auto read32 = [&](unsigned offset) {
+    return media::matroska::appleAudioInteger(bytes, offset, 4, true);
+  };
+  const std::uint64_t end = std::uint64_t(read32(4)) + 8;
+  std::error_code ec;
+  if (end > std::filesystem::file_size(path, ec) || ec)
+    return refuse("AdpcmWaveBoundsInvalid");
+  std::uint64_t offset = 12;
+  for (unsigned chunks = 0; chunks < 4096 && offset + 8 <= end; ++chunks) {
+    file.seekg(static_cast<std::streamoff>(offset));
+    file.read(reinterpret_cast<char *>(bytes.data()), 8);
+    if (file.gcount() != 8)
+      return refuse("AdpcmWaveBoundsInvalid");
+    const auto size = read32(4);
+    if (size > end - offset - 8)
+      return refuse("AdpcmWaveBoundsInvalid");
+    if (std::memcmp(bytes.data(), "fmt ", 4) == 0) {
+      if (size != 20 && size != 50)
+        return refuse("AdpcmWaveFormatUnsupported");
+      file.read(reinterpret_cast<char *>(bytes.data()), size);
+      if (file.gcount() != size)
+        return refuse("AdpcmWaveBoundsInvalid");
+      const auto &f = *track.audio;
+      const auto parsed = media::matroska::appleAudioPacketFormat(
+          "A_MS/ACM", std::span(bytes).first(size),
+          static_cast<std::uint32_t>(f.sampleRate), f.channels, 4);
+      if (parsed.codec != track.codec ||
+          parsed.format.bytesPerPacket != f.bytesPerPacket ||
+          parsed.blockFrames != f.framesPerPacket)
+        return refuse("AdpcmWaveFormatMismatch");
+      const media::AdpcmFormat format{
+          static_cast<std::uint16_t>(f.formatTag & 0xffffU), f.channels,
+          f.bytesPerPacket, f.framesPerPacket};
+      if (const auto e = media::validateAdpcmFormat(format))
+        return refuse(e);
+      return true;
+    }
+    offset += 8 + std::uint64_t(size) + (size & 1U);
+  }
+  return refuse("AdpcmWaveFormatFactsUnavailable");
 }
 
 // The EXTRA movie-timeline shift a selected audio track needs, on top of the
@@ -3741,6 +3802,7 @@ class ProductionGeneration final : public AVFoundationGeneration {
     }
     auto format = (__bridge CMAudioFormatDescriptionRef)formats.firstObject;
     auto result = inspectAudioFormatImpl(format, id, *duration, limits, error);
+    if (result && !validateWaveAdpcm(*result, request_.path, error)) return std::nullopt;
     if (result && naturalTimeScale > 0) {
       result->timeBase = {1, naturalTimeScale};
     }

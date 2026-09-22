@@ -16,6 +16,9 @@ clang++ $common_flags $include_flags -c \
   "$repo_dir/src/media/native_media_dispatcher.cpp" \
   -o "$build_dir/native_media_dispatcher.o"
 clang++ $common_flags $include_flags -c \
+  "$repo_dir/src/media/adpcm_decoder.cpp" \
+  -o "$build_dir/adpcm_decoder.o"
+clang++ $common_flags $include_flags -c \
   "$repo_dir/src/media/audio_downmix.cpp" \
   -o "$build_dir/audio_downmix.o"
 clang++ $common_flags $include_flags -c \
