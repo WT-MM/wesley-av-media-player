@@ -45,7 +45,7 @@ if(WAMKIT_BUILD_HOST)
   add_subdirectory("${PROJECT_SOURCE_DIR}/examples/WAMKitHost" "${PROJECT_BINARY_DIR}/examples/WAMKitHost")
 endif()
 
-if(BUILD_TESTING AND WAMKIT_BUILD_HOST AND WAMKIT_ENABLE_TEST_SUPPORT)
+if(BUILD_TESTING AND WAMKIT_BUILD_HOST)
   find_program(WAMKIT_FIXTURE_FFMPEG ffmpeg REQUIRED)
   add_custom_command(OUTPUT "${PROJECT_SOURCE_DIR}/test-media/wamkit/manifest.json"
     BYPRODUCTS "${PROJECT_SOURCE_DIR}/test-media/wamkit/av.mp4" "${PROJECT_SOURCE_DIR}/test-media/wamkit/av.mkv" "${PROJECT_SOURCE_DIR}/test-media/wamkit/refused.m4a"
@@ -54,6 +54,13 @@ if(BUILD_TESTING AND WAMKIT_BUILD_HOST AND WAMKIT_ENABLE_TEST_SUPPORT)
     DEPENDS "${PROJECT_SOURCE_DIR}/scripts/generate_wamkit_fixtures.py")
   add_custom_target(wamkit_fixtures DEPENDS "${PROJECT_SOURCE_DIR}/test-media/wamkit/manifest.json")
   add_dependencies(WAMKitHost wamkit_fixtures)
+  # The AVFoundation reader-cancellation test opens av.mp4 too.
+  if(TARGET wam_avfoundation_media_source_test)
+    add_dependencies(wam_avfoundation_media_source_test wamkit_fixtures)
+  endif()
+endif()
+
+if(BUILD_TESTING AND WAMKIT_BUILD_HOST AND WAMKIT_ENABLE_TEST_SUPPORT)
   foreach(kind IN ITEMS mp4 mkv refusal api quarantine replace recovery)
     set(asset "${PROJECT_SOURCE_DIR}/test-media/wamkit/av.${kind}")
     set(arguments --seek)

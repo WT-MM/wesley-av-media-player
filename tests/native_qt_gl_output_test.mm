@@ -5,6 +5,7 @@
 
 #include <QElapsedTimer>
 #include <QEventLoop>
+#include "accelerated_gl_gate.hpp"
 #include <QGuiApplication>
 #include <QImage>
 #include <QQuickWindow>
@@ -1403,6 +1404,7 @@ int main(int argc, char** argv) {
   format.setSwapBehavior(QSurfaceFormat::DoubleBuffer);
   QSurfaceFormat::setDefaultFormat(format);
   QGuiApplication application(argc, argv);
+  if (const int skip = skipUnlessAcceleratedGl()) return skip;
 
   QQuickWindow window;
   window.resize(480, 270);

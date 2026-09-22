@@ -4,6 +4,7 @@ import array
 import hashlib
 import json
 import math
+import platform
 from pathlib import Path
 import re
 import subprocess
@@ -116,7 +117,7 @@ def main():
         rms = math.sqrt(sum(x*x for x in errors)/len(errors))
         maximum = max(abs(x) for x in errors)
         assert all(math.isfinite(x) for x in output)
-        assert maximum < (1e-12 if bit_exact else 0.004), (path, maximum)
+        assert maximum < (1e-12 if bit_exact else 0.004), (path, maximum, platform.mac_ver()[0], output[:8].tolist(), expected[:8].tolist())
         # Both independent chirps must align at lag zero, including channel identity.
         lags = {}
         for lag in (-2,-1,0,1,2):

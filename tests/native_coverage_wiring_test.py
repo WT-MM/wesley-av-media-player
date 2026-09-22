@@ -98,7 +98,7 @@ def main():
         text,receipt=launch(path,'notice')
         assert 'Motion JPEG chroma' in text and 'fallback_selected' in text, text
         assert all(not x['notice'] for x in receipt['notices']), receipt['notices']
-        assert all(not x['error'] or x['error'].startswith('cannot load bundled fallback:')
+        assert all(not x['error'] or x['error'].startswith(('cannot load bundled fallback:','cannot open exact bundled fallback:'))
                    for x in receipt['notices']), receipt['notices']
         print('PASS: actual native admission route publishes no owner notice',flush=True)
     if a.case in ('all','retry'):

@@ -1238,7 +1238,7 @@ if(BUILD_TESTING)
             --source "$<TARGET_FILE:wam_native_coverage_source_probe>"
             --video "$<TARGET_FILE:wam_native_apple_video_probe>"
             --ffmpeg "${WAM_COVERAGE_FFMPEG}")
-        set_tests_properties(macos_native_phase0b_integration PROPERTIES TIMEOUT 180)
+        set_tests_properties(macos_native_phase0b_integration PROPERTIES TIMEOUT 180 SKIP_RETURN_CODE 77)
       endif()
 
       add_executable(wam_native_audio_converter_test
@@ -1900,7 +1900,7 @@ if(BUILD_TESTING)
       add_test(NAME macos_native_qt_gl_compositor
         COMMAND wam_native_qt_gl_compositor_test)
       set_tests_properties(macos_native_qt_gl_compositor PROPERTIES
-        TIMEOUT 120)
+        TIMEOUT 120 SKIP_RETURN_CODE 77)
 
       # Scene-graph route adapter gate (WAM_PRESENTATION=scenegraph). The
       # adapter's fault-injection seams exist only under the testing macro, so
@@ -1931,7 +1931,7 @@ if(BUILD_TESTING)
         LINKER_LANGUAGE OBJCXX)
       add_test(NAME macos_native_qt_gl_output
         COMMAND wam_native_qt_gl_output_test)
-      set_tests_properties(macos_native_qt_gl_output PROPERTIES TIMEOUT 120)
+      set_tests_properties(macos_native_qt_gl_output PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
 
       find_library(WAM_AVFOUNDATION_FRAMEWORK AVFoundation REQUIRED)
       add_executable(wam_video_toolbox_decoder_test

@@ -10,27 +10,14 @@ permissions:
 
 jobs:
   macos:
+    # Hosted arm64 only. The product ships for Apple silicon; the pinned LGPL
+    # FFmpeg recipe is arm64-only; and the Intel image has no hardware video
+    # decoder, no ProRes and no accelerated CGL, so its lane could only skip.
     timeout-minutes: 90
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: macos-15
-            architecture: arm64
-            require_native_hardware: "ON"
-            avformat_stage: "ON"
-          - runner: macos-15-intel
-            architecture: x86_64
-            # GitHub's hosted Intel image reports no hardware H.264 decoder.
-            # The arm64 lane remains the required, non-skippable hardware gate;
-            # this lane still proves real NV12/P010 decode and CGL import.
-            require_native_hardware: "OFF"
-            # scripts/build_ffmpeg_lgpl.sh is arm64-only; the shipped demux
-            # stage is proven on the arm64 lane and by release.yml.
-            avformat_stage: "OFF"
-    runs-on: ${{ matrix.runner }}
+    runs-on: macos-15
     env:
       QT_VERSION: 6.11.1
+      WAM_ARCHITECTURE: arm64
     steps:
       - uses: actions/checkout@v4
         with:
@@ -43,13 +30,8 @@ jobs:
           cache: true
       - run: brew install cmake ninja pkg-config mpv ffmpeg
       - run: test "$(qmake -query QT_VERSION)" = "$QT_VERSION"
-      - name: Verify native hardware gate assignment
-        run: |
-          if [[ "${{ matrix.architecture }}" == "arm64" ]]; then
-            test "${{ matrix.require_native_hardware }}" = "ON"
-          else
-            test "${{ matrix.require_native_hardware }}" = "OFF"
-          fi
+      - name: Install test-proof Python modules
+        run: python3 -m pip install --quiet numpy
       - name: Generate deterministic native decoder fixture
         run: |
           mkdir -p build-fixtures
@@ -82,13 +64,11 @@ jobs:
             -show_entries stream=pix_fmt -of csv=p=0 \
             build-fixtures/native-main10-hevc.mp4)" = "yuv420p10le"
       - name: Restore the native LGPL decoder SDK
-        if: matrix.architecture == 'arm64'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: third_party/ffmpeg-lgpl
           key: ffmpeg-lgpl-${{ runner.os }}-${{ runner.arch }}-13.3-${{ hashFiles('scripts/build_ffmpeg_lgpl.sh', 'scripts/apply_ffmpeg_memory_reservation.py', 'third_party/ffmpeg-patches/wam_memory_reservation.inc', 'third_party/ffmpeg-source/ffmpeg-9.0.1.tar.xz') }}
       - name: Build the native LGPL decoder SDK
-        if: matrix.architecture == 'arm64'
         run: |
           set -euo pipefail
           if [[ ! -f third_party/ffmpeg-lgpl/lib/libavcodec-wamnative.63.dylib ]]; then
@@ -100,12 +80,13 @@ jobs:
           -DCMAKE_BUILD_TYPE=Release
           -DBUILD_TESTING=ON
           -DWAM_ENABLE_MACOS_NATIVE_VIDEO=ON
-          -DWAM_ENABLE_AVFORMAT_STAGE=${{ matrix.avformat_stage }}
+          -DWAM_ENABLE_AVFORMAT_STAGE=ON
           -DWAM_NATIVE_VIDEO_TEST_FIXTURE=${{ github.workspace }}/build-fixtures/native-bframes-h264.mp4
           -DWAM_NATIVE_VIDEO_10BIT_TEST_FIXTURE=${{ github.workspace }}/build-fixtures/native-main10-hevc.mp4
-          -DWAM_REQUIRE_NATIVE_VIDEO_TEST_HARDWARE=${{ matrix.require_native_hardware }}
+          -DWAM_REQUIRE_NATIVE_VIDEO_TEST_HARDWARE=ON
       - run: cmake --build build --parallel
-      - run: ctest --test-dir build --output-on-failure
+      # Benchmarks are EXCLUDE_FROM_ALL targets registered under the benchmark label.
+      - run: ctest --test-dir build --output-on-failure -LE benchmark
       - name: Install Qt app bundle
         run: |
           set -o pipefail
@@ -135,7 +116,7 @@ jobs:
           test -x stage/WAM.app/Contents/Resources/tools/ffmpeg
           test -x stage/WAM.app/Contents/Resources/tools/whisper-cli
           test -s stage/WAM.app/Contents/Resources/models/ggml-base.en.bin
-          test "$(lipo -archs stage/WAM.app/Contents/MacOS/WAM)" = "${{ matrix.architecture }}"
+          test "$(lipo -archs stage/WAM.app/Contents/MacOS/WAM)" = "${{ env.WAM_ARCHITECTURE }}"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' \
             stage/WAM.app/Contents/Info.plist)" = "WAM.icns"
           stage/WAM.app/Contents/MacOS/WAM --verify-runtime
@@ -148,16 +129,15 @@ jobs:
             fi
           done < <(find stage/WAM.app/Contents -type f -print0)
       - name: Prepare offline WAMKit signing bundle when configured
-        if: matrix.architecture == 'arm64'
         env:
           WAM_MACOS_CODESIGN_IDENTITY: ${{ secrets.WAM_MACOS_CODESIGN_IDENTITY }}
         run: sh scripts/sign_release.sh --if-identity --app stage/WAM.app
       - run: >-
           ditto -c -k --sequesterRsrc --keepParent
-          stage/WAM.app WAM-macOS-${{ matrix.architecture }}.zip
+          stage/WAM.app WAM-macOS-${{ env.WAM_ARCHITECTURE }}.zip
       - uses: actions/upload-artifact@v4
         with:
-          name: WAM-macOS-${{ matrix.architecture }}
-          path: WAM-macOS-${{ matrix.architecture }}.zip
+          name: WAM-macOS-${{ env.WAM_ARCHITECTURE }}
+          path: WAM-macOS-${{ env.WAM_ARCHITECTURE }}.zip
           if-no-files-found: error
           retention-days: 14
