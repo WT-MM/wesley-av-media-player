@@ -22,6 +22,10 @@ concurrency:
 jobs:
   release:
     name: macOS arm64
+    # The shipped build is the deployment GitHub records for this environment.
+    environment:
+      name: macos-release
+      url: https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}
     runs-on: macos-14
     timeout-minutes: 90
     env:
