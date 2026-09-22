@@ -239,7 +239,9 @@ jobs:
     timeout-minutes: 90
     runs-on: windows-latest
     env:
-      QT_VERSION: 6.11.1
+      # Qt publishes no aggregate Windows index for 6.11.x yet; the installer
+      # tool reads 6.10.3, the newest Windows release it can resolve.
+      QT_VERSION: 6.10.3
     defaults:
       run:
         shell: msys2 {0}
