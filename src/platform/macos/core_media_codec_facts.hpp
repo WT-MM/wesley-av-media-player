@@ -212,6 +212,25 @@ static_assert(detail::admittedAudioFormatTagsCoverAudioCodecs(),
   return false;
 }
 
+// AudioToolbox's ADPCM decoders are proven bit-exact only on macOS 26: a
+// macOS 15.7 host decodes stereo IMA ADPCM with the right channel wrong from
+// the seventh frame (measured 2026-09-22 on hosted CI, first divergent
+// interleaved sample 13). Older hosts refuse by name and the fallback, which
+// decodes ADPCM itself, plays the track.
+[[nodiscard]] inline bool audioCodecDecoderProvenOnHost(
+    media::MediaCodec codec) noexcept {
+  switch (codec) {
+  case media::MediaCodec::AdpcmIma:
+  case media::MediaCodec::AdpcmMs:
+    if (__builtin_available(macOS 26.0, *)) {
+      return true;
+    }
+    return false;
+  default:
+    return true;
+  }
+}
+
 // Mono and stereo must state their canonical tag or none at all, and a
 // multichannel track may state a tag only when that tag expands to a stereo
 // fold this player can perform exactly. An unrecognised label makes the whole

@@ -202,7 +202,8 @@ void assignError(std::string* error, const char* message) noexcept {
     return false;
 #endif
   }
-  return track.audio && audioCodecFormatTagAdmitted(track.codec, track.audio->formatTag);
+  return track.audio && audioCodecFormatTagAdmitted(track.codec, track.audio->formatTag) &&
+         audioCodecDecoderProvenOnHost(track.codec);
 }
 
 // Whether this track's first access unit legitimately presents before media

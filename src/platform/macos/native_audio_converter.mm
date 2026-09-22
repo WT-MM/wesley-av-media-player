@@ -1538,6 +1538,10 @@ bool NativeAudioConverter::configure(const media::MediaTrackDescriptor &track,
   std::int64_t candidateFloorFrame = 0;
   std::int64_t candidateCeilingFrame = 0;
   bool candidateCeilingKnown = false;
+  if (track.audio && !software && !audioCodecDecoderProvenOnHost(track.codec)) {
+    return state.fail(error, "AdpcmDecoderUnprovenOnHost: AudioToolbox ADPCM decodes "
+                             "bit-exactly only on macOS 26 or newer");
+  }
   if (generation == 0 || state.ring.generation() != generation ||
       track.id == 0 || track.kind != media::MediaTrackKind::Audio ||
       !track.audio || (!software && !supportedCodec(track.codec, track.audio->formatTag)) ||
