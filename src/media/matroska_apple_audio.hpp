@@ -2,6 +2,7 @@
 
 #include "media/native_media_source.hpp"
 #include "media/adpcm_audio.hpp"
+#include "media/adpcm_decoder.hpp"
 #include <span>
 #include <string_view>
 
@@ -72,7 +73,7 @@ struct AppleAudioPacketFormat {
       f.formatTag = 0x6d730011U;
     } else if (tag == 2 && bytes.size() == 50 &&
                out.blockFrames == 2 + (f.bytesPerPacket - 7 * channels) * 2 / channels) {
-      constexpr std::int16_t coefficients[]{256,0,512,-256,0,0,192,64,240,0,460,-208,392,-232};
+      constexpr auto& coefficients = kAdpcmMsCoefficients;
       if (appleAudioInteger(bytes, 20, 2, true) != 7) return {};
       for (unsigned i = 0; i < 14; ++i)
         if (appleAudioInteger(bytes, 22 + 2*i, 2, true) !=

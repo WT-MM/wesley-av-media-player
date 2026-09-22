@@ -1,0 +1,549 @@
+{
+  "version": 2,
+  "audio_probe_sha256": "a61370879d67055897d3dbcfc5ae0d69f3a735b5deeb26363dc361a3e0377309",
+  "source_probe_sha256": "4966f7e87a8ddbb03b387ddb3ba0858dca16fae6a3079519223f255ab789cebb",
+  "ffmpeg": "ffmpeg version 9.0.1 Copyright (c) 2000-2026 the FFmpeg developers\nbuilt with Apple clang version 21.0.0 (clang-2100.1.1.101)\nconfiguration: --prefix=/opt/homebrew/Cellar/ffmpeg/9.0.1_1 --enable-shared --enable-pthreads --enable-version3 --cc=clang --host-cflags= --host-ldflags= --enable-ffplay --enable-gpl --enable-libsvtav1 --enable-libopus --enable-libx264 --enable-libmp3lame --enable-libdav1d --enable-libvmaf --enable-libvpx --enable-libx265 --enable-openssl --enable-videotoolbox --enable-audiotoolbox --enable-neon\nlibavutil      61.  1.101 / 61.  1.101\nlibavcodec     63.  1.101 / 63.  1.101\nlibavformat    63.  1.101 / 63.  1.101\nlibavdevice    63.  1.101 / 63.  1.101\nlibavfilter    12.  1.101 / 12.  1.101\nlibswscale     10.  1.101 / 10.  1.101\nlibswresample   7.  1.101 /  7.  1.101\n\nExiting with exit code 0\n",
+  "specimens": [
+    {
+      "file": "alac.m4a",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=48000",
+        "-t",
+        "4",
+        "-c:a",
+        "alac",
+        "/private/tmp/wam-adpcm-scratch/lossless-final/alac.m4a"
+      ],
+      "sha256": "5af318c89ad18e0a57b4574ae2444f63da289e0554ac204acf06c62acfcc1685"
+    },
+    {
+      "file": "pcm_s16le.wav",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=48000",
+        "-t",
+        "4",
+        "-c:a",
+        "pcm_s16le",
+        "/private/tmp/wam-adpcm-scratch/lossless-final/pcm_s16le.wav"
+      ],
+      "sha256": "71500c5505aae330dbc0d83fc9a10a41e8ce8765d19d26c3b65771ce284700c6"
+    },
+    {
+      "file": "adpcm_ima_wav.wav",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=48000",
+        "-t",
+        "4",
+        "-c:a",
+        "adpcm_ima_wav",
+        "/private/tmp/wam-adpcm-scratch/lossless-final/adpcm_ima_wav.wav"
+      ],
+      "sha256": "0acf780dd304e4b3a65f8dfa5fac5be9f2bfdab114ea9da2bc7deee72af1cc03"
+    },
+    {
+      "file": "adpcm_ms.wav",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=48000",
+        "-t",
+        "4",
+        "-c:a",
+        "adpcm_ms",
+        "/private/tmp/wam-adpcm-scratch/lossless-final/adpcm_ms.wav"
+      ],
+      "sha256": "01f7765a9d3e80ceffbb5d2a72ede9c0466cb42859f1adbb1543ec5c31bc4351"
+    },
+    {
+      "file": "adpcm_ima_wav-44100-1.wav",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=44100",
+        "-t",
+        "4",
+        "-c:a",
+        "adpcm_ima_wav",
+        "-ac",
+        "1",
+        "/private/tmp/wam-adpcm-scratch/lossless-final/adpcm_ima_wav-44100-1.wav"
+      ],
+      "sha256": "e759d31f7d1e61895fc9514ef36013aa0e10c303e7227cd5f18fa98db94557d3"
+    },
+    {
+      "file": "adpcm_ima_wav-44100-2.wav",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=44100",
+        "-t",
+        "4",
+        "-c:a",
+        "adpcm_ima_wav",
+        "-ac",
+        "2",
+        "/private/tmp/wam-adpcm-scratch/lossless-final/adpcm_ima_wav-44100-2.wav"
+      ],
+      "sha256": "ba9fbfe9b5bca39fc942488643980ce0f613b590319d5c18356179ae225ab898"
+    },
+    {
+      "file": "adpcm_ima_wav-48000-1.wav",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=48000",
+        "-t",
+        "4",
+        "-c:a",
+        "adpcm_ima_wav",
+        "-ac",
+        "1",
+        "/private/tmp/wam-adpcm-scratch/lossless-final/adpcm_ima_wav-48000-1.wav"
+      ],
+      "sha256": "5c99dc68841bc8797eb9835a791e03b750917818173669b540b0672111fb9f6c"
+    },
+    {
+      "file": "adpcm_ima_wav-48000-2.wav",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=48000",
+        "-t",
+        "4",
+        "-c:a",
+        "adpcm_ima_wav",
+        "-ac",
+        "2",
+        "/private/tmp/wam-adpcm-scratch/lossless-final/adpcm_ima_wav-48000-2.wav"
+      ],
+      "sha256": "0acf780dd304e4b3a65f8dfa5fac5be9f2bfdab114ea9da2bc7deee72af1cc03"
+    },
+    {
+      "file": "adpcm_ms-44100-1.wav",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=44100",
+        "-t",
+        "4",
+        "-c:a",
+        "adpcm_ms",
+        "-ac",
+        "1",
+        "/private/tmp/wam-adpcm-scratch/lossless-final/adpcm_ms-44100-1.wav"
+      ],
+      "sha256": "429306416d5f4fa2ffcf05575c73d125dd72f0bfb6af41852a75fdfb6f9e2372"
+    },
+    {
+      "file": "adpcm_ms-44100-2.wav",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=44100",
+        "-t",
+        "4",
+        "-c:a",
+        "adpcm_ms",
+        "-ac",
+        "2",
+        "/private/tmp/wam-adpcm-scratch/lossless-final/adpcm_ms-44100-2.wav"
+      ],
+      "sha256": "75e9983df0fb482877f8aa476143ff0d798db51f7fcbfa740d6e92945941c884"
+    },
+    {
+      "file": "adpcm_ms-48000-1.wav",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=48000",
+        "-t",
+        "4",
+        "-c:a",
+        "adpcm_ms",
+        "-ac",
+        "1",
+        "/private/tmp/wam-adpcm-scratch/lossless-final/adpcm_ms-48000-1.wav"
+      ],
+      "sha256": "fe8a49308ce642c6e5b1900ffaa60ef4834d2777ed109703f264009f035cce26"
+    },
+    {
+      "file": "adpcm_ms-48000-2.wav",
+      "argv": [
+        "/opt/homebrew/bin/ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.2*sin(2*PI*(200*t+100*t*t))|0.15*sin(2*PI*(300*t+130*t*t)):s=48000",
+        "-t",
+        "4",
+        "-c:a",
+        "adpcm_ms",
+        "-ac",
+        "2",
+        "/private/tmp/wam-adpcm-scratch/lossless-final/adpcm_ms-48000-2.wav"
+      ],
+      "sha256": "01f7765a9d3e80ceffbb5d2a72ede9c0466cb42859f1adbb1543ec5c31bc4351"
+    }
+  ],
+  "proofs": [
+    {
+      "file": "alac.m4a",
+      "asset_sha256": "5af318c89ad18e0a57b4574ae2444f63da289e0554ac204acf06c62acfcc1685",
+      "target": 0,
+      "frames": 192000,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=192000 first=0 decoded=192000 trim=0 exact=1 drained=1 error="
+    },
+    {
+      "file": "pcm_s16le.wav",
+      "asset_sha256": "71500c5505aae330dbc0d83fc9a10a41e8ce8765d19d26c3b65771ce284700c6",
+      "target": 0,
+      "frames": 192000,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=192000 first=0 decoded=192000 trim=0 exact=1 drained=1 error="
+    },
+    {
+      "file": "adpcm_ima_wav.wav",
+      "asset_sha256": "0acf780dd304e4b3a65f8dfa5fac5be9f2bfdab114ea9da2bc7deee72af1cc03",
+      "target": 0,
+      "frames": 192213,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=192213 first=0 decoded=192213 trim=0 exact=1 drained=1 error="
+    },
+    {
+      "file": "adpcm_ms.wav",
+      "asset_sha256": "01f7765a9d3e80ceffbb5d2a72ede9c0466cb42859f1adbb1543ec5c31bc4351",
+      "target": 0,
+      "frames": 192280,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=192280 first=0 decoded=192280 trim=0 exact=1 drained=1 error="
+    },
+    {
+      "file": "adpcm_ima_wav-44100-1.wav",
+      "asset_sha256": "e759d31f7d1e61895fc9514ef36013aa0e10c303e7227cd5f18fa98db94557d3",
+      "target": 0,
+      "frames": 177567,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=44100 frames=177567 first=0 decoded=177567 trim=0 exact=1 drained=1 error="
+    },
+    {
+      "file": "adpcm_ima_wav-44100-1.wav",
+      "asset_sha256": "e759d31f7d1e61895fc9514ef36013aa0e10c303e7227cd5f18fa98db94557d3",
+      "target": 2,
+      "frames": 89367,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=44100 frames=89367 first=88200 decoded=97968 trim=8601 exact=1 drained=1 error="
+    },
+    {
+      "file": "adpcm_ima_wav-44100-1.wav",
+      "asset_sha256": "e759d31f7d1e61895fc9514ef36013aa0e10c303e7227cd5f18fa98db94557d3",
+      "target": "100001/100000",
+      "frames": 133466,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=44100 frames=133466 first=44101 decoded=142870 trim=9404 exact=1 drained=1 error="
+    },
+    {
+      "file": "adpcm_ima_wav-44100-2.wav",
+      "asset_sha256": "ba9fbfe9b5bca39fc942488643980ce0f613b590319d5c18356179ae225ab898",
+      "target": 0,
+      "frames": 176958,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=44100 frames=176958 first=0 decoded=176958 trim=0 exact=1 drained=1 error="
+    },
+    {
+      "file": "adpcm_ima_wav-44100-2.wav",
+      "asset_sha256": "ba9fbfe9b5bca39fc942488643980ce0f613b590319d5c18356179ae225ab898",
+      "target": 2,
+      "frames": 88758,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=44100 frames=88758 first=88200 decoded=93564 trim=4806 exact=1 drained=1 error="
+    },
+    {
+      "file": "adpcm_ima_wav-44100-2.wav",
+      "asset_sha256": "ba9fbfe9b5bca39fc942488643980ce0f613b590319d5c18356179ae225ab898",
+      "target": "100001/100000",
+      "frames": 132857,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=44100 frames=132857 first=44101 decoded=137295 trim=4438 exact=1 drained=1 error="
+    },
+    {
+      "file": "adpcm_ima_wav-48000-1.wav",
+      "asset_sha256": "5c99dc68841bc8797eb9835a791e03b750917818173669b540b0672111fb9f6c",
+      "target": 0,
+      "frames": 193895,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=193895 first=0 decoded=193895 trim=0 exact=1 drained=1 error="
+    },
+    {
+      "file": "adpcm_ima_wav-48000-1.wav",
+      "asset_sha256": "5c99dc68841bc8797eb9835a791e03b750917818173669b540b0672111fb9f6c",
+      "target": 2,
+      "frames": 97895,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=97895 first=96000 decoded=106132 trim=8237 exact=1 drained=1 error="
+    },
+    {
+      "file": "adpcm_ima_wav-48000-1.wav",
+      "asset_sha256": "5c99dc68841bc8797eb9835a791e03b750917818173669b540b0672111fb9f6c",
+      "target": "100001/100000",
+      "frames": 145894,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=145894 first=48001 decoded=155116 trim=9222 exact=1 drained=1 error="
+    },
+    {
+      "file": "adpcm_ima_wav-48000-2.wav",
+      "asset_sha256": "0acf780dd304e4b3a65f8dfa5fac5be9f2bfdab114ea9da2bc7deee72af1cc03",
+      "target": 0,
+      "frames": 192213,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=192213 first=0 decoded=192213 trim=0 exact=1 drained=1 error="
+    },
+    {
+      "file": "adpcm_ima_wav-48000-2.wav",
+      "asset_sha256": "0acf780dd304e4b3a65f8dfa5fac5be9f2bfdab114ea9da2bc7deee72af1cc03",
+      "target": 2,
+      "frames": 96213,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=96213 first=96000 decoded=100683 trim=4470 exact=1 drained=1 error="
+    },
+    {
+      "file": "adpcm_ima_wav-48000-2.wav",
+      "asset_sha256": "0acf780dd304e4b3a65f8dfa5fac5be9f2bfdab114ea9da2bc7deee72af1cc03",
+      "target": "100001/100000",
+      "frames": 144212,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=144212 first=48001 decoded=148482 trim=4270 exact=1 drained=1 error="
+    },
+    {
+      "file": "adpcm_ms-44100-1.wav",
+      "asset_sha256": "429306416d5f4fa2ffcf05575c73d125dd72f0bfb6af41852a75fdfb6f9e2372",
+      "target": 0,
+      "frames": 177132,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=44100 frames=177132 first=0 decoded=177132 trim=0 exact=1 drained=1 error="
+    },
+    {
+      "file": "adpcm_ms-44100-1.wav",
+      "asset_sha256": "429306416d5f4fa2ffcf05575c73d125dd72f0bfb6af41852a75fdfb6f9e2372",
+      "target": 2,
+      "frames": 88932,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=44100 frames=88932 first=88200 decoded=97728 trim=8796 exact=1 drained=1 error="
+    },
+    {
+      "file": "adpcm_ms-44100-1.wav",
+      "asset_sha256": "429306416d5f4fa2ffcf05575c73d125dd72f0bfb6af41852a75fdfb6f9e2372",
+      "target": "100001/100000",
+      "frames": 133031,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=44100 frames=133031 first=44101 decoded=142520 trim=9489 exact=1 drained=1 error="
+    },
+    {
+      "file": "adpcm_ms-44100-2.wav",
+      "asset_sha256": "75e9983df0fb482877f8aa476143ff0d798db51f7fcbfa740d6e92945941c884",
+      "target": 0,
+      "frames": 177100,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=44100 frames=177100 first=0 decoded=177100 trim=0 exact=1 drained=1 error="
+    },
+    {
+      "file": "adpcm_ms-44100-2.wav",
+      "asset_sha256": "75e9983df0fb482877f8aa476143ff0d798db51f7fcbfa740d6e92945941c884",
+      "target": 2,
+      "frames": 88900,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=44100 frames=88900 first=88200 decoded=93104 trim=4204 exact=1 drained=1 error="
+    },
+    {
+      "file": "adpcm_ms-44100-2.wav",
+      "asset_sha256": "75e9983df0fb482877f8aa476143ff0d798db51f7fcbfa740d6e92945941c884",
+      "target": "100001/100000",
+      "frames": 132999,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=44100 frames=132999 first=44101 decoded=137632 trim=4633 exact=1 drained=1 error="
+    },
+    {
+      "file": "adpcm_ms-48000-1.wav",
+      "asset_sha256": "fe8a49308ce642c6e5b1900ffaa60ef4834d2777ed109703f264009f035cce26",
+      "target": 0,
+      "frames": 193420,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=193420 first=0 decoded=193420 trim=0 exact=1 drained=1 error="
+    },
+    {
+      "file": "adpcm_ms-48000-1.wav",
+      "asset_sha256": "fe8a49308ce642c6e5b1900ffaa60ef4834d2777ed109703f264009f035cce26",
+      "target": 2,
+      "frames": 97420,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=97420 first=96000 decoded=105872 trim=8452 exact=1 drained=1 error="
+    },
+    {
+      "file": "adpcm_ms-48000-1.wav",
+      "asset_sha256": "fe8a49308ce642c6e5b1900ffaa60ef4834d2777ed109703f264009f035cce26",
+      "target": "100001/100000",
+      "frames": 145419,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=145419 first=48001 decoded=154736 trim=9317 exact=1 drained=1 error="
+    },
+    {
+      "file": "adpcm_ms-48000-2.wav",
+      "asset_sha256": "01f7765a9d3e80ceffbb5d2a72ede9c0466cb42859f1adbb1543ec5c31bc4351",
+      "target": 0,
+      "frames": 192280,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=192280 first=0 decoded=192280 trim=0 exact=1 drained=1 error="
+    },
+    {
+      "file": "adpcm_ms-48000-2.wav",
+      "asset_sha256": "01f7765a9d3e80ceffbb5d2a72ede9c0466cb42859f1adbb1543ec5c31bc4351",
+      "target": 2,
+      "frames": 96280,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=96280 first=96000 decoded=101200 trim=4920 exact=1 drained=1 error="
+    },
+    {
+      "file": "adpcm_ms-48000-2.wav",
+      "asset_sha256": "01f7765a9d3e80ceffbb5d2a72ede9c0466cb42859f1adbb1543ec5c31bc4351",
+      "target": "100001/100000",
+      "frames": 144279,
+      "rms": 0.0,
+      "maximum": 0.0,
+      "best_lag": 0,
+      "diagnostic": "track=1 rate=48000 frames=144279 first=48001 decoded=148764 trim=4485 exact=1 drained=1 error="
+    },
+    {
+      "file": "adpcm_ima_wav-bad-header.wav",
+      "refusal": "AdpcmImaHeaderInvalid",
+      "diagnostic": "track=1 rate=48000 frames=0 first=0 decoded=0 trim=0 exact=0 drained=0 error=AdpcmImaHeaderInvalid\n"
+    },
+    {
+      "file": "adpcm_ms-bad-header.wav",
+      "refusal": "AdpcmMsHeaderInvalid",
+      "diagnostic": "track=1 rate=48000 frames=0 first=0 decoded=0 trim=0 exact=0 drained=0 error=AdpcmMsHeaderInvalid\n"
+    },
+    {
+      "file": "adpcm-ms-custom-coefficients.wav",
+      "refusal": "AdpcmWaveFormatMismatch",
+      "diagnostic": "status=1 error=AdpcmWaveFormatMismatch\ndecode_start=0/0\n"
+    }
+  ]
+}

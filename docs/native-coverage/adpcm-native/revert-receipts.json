@@ -1,0 +1,452 @@
+[
+  {
+    "name": "IMA capability removal",
+    "file": "src/media/adpcm_decoder.cpp",
+    "before_sha256": "daa8dc135bfa2c775e65e5b79f43e3c95b542eee07dd2f541a0d9f3719ea3dcc",
+    "old": "  if (auto e = validateAdpcmFormat(f))",
+    "replacement": "  if (f.tag == 17) return \"AdpcmDecoderUnavailable\";\n  if (auto e = validateAdpcmFormat(f))",
+    "negative": [
+      {
+        "argv": [
+          "/bin/sh",
+          "-c",
+          "clang++ -std=c++20 -Isrc tests/adpcm_decoder_test.cpp src/media/adpcm_decoder.cpp -o /private/tmp/wam-adpcm-scratch/revert-unit && /private/tmp/wam-adpcm-scratch/revert-unit"
+        ],
+        "rc": 1,
+        "stdout": "",
+        "stderr": "ADPCM assertion failed\n"
+      }
+    ],
+    "restored_sha256": "daa8dc135bfa2c775e65e5b79f43e3c95b542eee07dd2f541a0d9f3719ea3dcc",
+    "restored": [
+      {
+        "argv": [
+          "/bin/sh",
+          "-c",
+          "clang++ -std=c++20 -Isrc tests/adpcm_decoder_test.cpp src/media/adpcm_decoder.cpp -o /private/tmp/wam-adpcm-scratch/revert-unit && /private/tmp/wam-adpcm-scratch/revert-unit"
+        ],
+        "rc": 0,
+        "stdout": "ADPCM known answers and refusals passed\n",
+        "stderr": ""
+      }
+    ]
+  },
+  {
+    "name": "MS capability removal",
+    "file": "src/media/adpcm_decoder.cpp",
+    "before_sha256": "daa8dc135bfa2c775e65e5b79f43e3c95b542eee07dd2f541a0d9f3719ea3dcc",
+    "old": "  if (auto e = validateAdpcmFormat(f))",
+    "replacement": "  if (f.tag == 2) return \"AdpcmDecoderUnavailable\";\n  if (auto e = validateAdpcmFormat(f))",
+    "negative": [
+      {
+        "argv": [
+          "/bin/sh",
+          "-c",
+          "clang++ -std=c++20 -Isrc tests/adpcm_decoder_test.cpp src/media/adpcm_decoder.cpp -o /private/tmp/wam-adpcm-scratch/revert-unit && /private/tmp/wam-adpcm-scratch/revert-unit"
+        ],
+        "rc": 1,
+        "stdout": "",
+        "stderr": "ADPCM assertion failed\n"
+      }
+    ],
+    "restored_sha256": "daa8dc135bfa2c775e65e5b79f43e3c95b542eee07dd2f541a0d9f3719ea3dcc",
+    "restored": [
+      {
+        "argv": [
+          "/bin/sh",
+          "-c",
+          "clang++ -std=c++20 -Isrc tests/adpcm_decoder_test.cpp src/media/adpcm_decoder.cpp -o /private/tmp/wam-adpcm-scratch/revert-unit && /private/tmp/wam-adpcm-scratch/revert-unit"
+        ],
+        "rc": 0,
+        "stdout": "ADPCM known answers and refusals passed\n",
+        "stderr": ""
+      }
+    ]
+  },
+  {
+    "name": "IMA reserved-header validation removal",
+    "file": "src/media/adpcm_decoder.cpp",
+    "before_sha256": "daa8dc135bfa2c775e65e5b79f43e3c95b542eee07dd2f541a0d9f3719ea3dcc",
+    "old": "index[c] > 88 || byte(b, 4 * c + 3) != 0",
+    "replacement": "index[c] > 88",
+    "negative": [
+      {
+        "argv": [
+          "/bin/sh",
+          "-c",
+          "clang++ -std=c++20 -Isrc tests/adpcm_decoder_test.cpp src/media/adpcm_decoder.cpp -o /private/tmp/wam-adpcm-scratch/revert-unit && /private/tmp/wam-adpcm-scratch/revert-unit"
+        ],
+        "rc": 1,
+        "stdout": "",
+        "stderr": "ADPCM assertion failed\n"
+      }
+    ],
+    "restored_sha256": "daa8dc135bfa2c775e65e5b79f43e3c95b542eee07dd2f541a0d9f3719ea3dcc",
+    "restored": [
+      {
+        "argv": [
+          "/bin/sh",
+          "-c",
+          "clang++ -std=c++20 -Isrc tests/adpcm_decoder_test.cpp src/media/adpcm_decoder.cpp -o /private/tmp/wam-adpcm-scratch/revert-unit && /private/tmp/wam-adpcm-scratch/revert-unit"
+        ],
+        "rc": 0,
+        "stdout": "ADPCM known answers and refusals passed\n",
+        "stderr": ""
+      }
+    ]
+  },
+  {
+    "name": "MS minimum-delta validation removal",
+    "file": "src/media/adpcm_decoder.cpp",
+    "before_sha256": "daa8dc135bfa2c775e65e5b79f43e3c95b542eee07dd2f541a0d9f3719ea3dcc",
+    "old": "predictor[c] > 6 || delta[c] < 16",
+    "replacement": "predictor[c] > 6",
+    "negative": [
+      {
+        "argv": [
+          "/bin/sh",
+          "-c",
+          "clang++ -std=c++20 -Isrc tests/adpcm_decoder_test.cpp src/media/adpcm_decoder.cpp -o /private/tmp/wam-adpcm-scratch/revert-unit && /private/tmp/wam-adpcm-scratch/revert-unit"
+        ],
+        "rc": 1,
+        "stdout": "",
+        "stderr": "ADPCM assertion failed\n"
+      }
+    ],
+    "restored_sha256": "daa8dc135bfa2c775e65e5b79f43e3c95b542eee07dd2f541a0d9f3719ea3dcc",
+    "restored": [
+      {
+        "argv": [
+          "/bin/sh",
+          "-c",
+          "clang++ -std=c++20 -Isrc tests/adpcm_decoder_test.cpp src/media/adpcm_decoder.cpp -o /private/tmp/wam-adpcm-scratch/revert-unit && /private/tmp/wam-adpcm-scratch/revert-unit"
+        ],
+        "rc": 0,
+        "stdout": "ADPCM known answers and refusals passed\n",
+        "stderr": ""
+      }
+    ]
+  },
+  {
+    "name": "Restore AudioToolbox ADPCM routing",
+    "file": "src/platform/macos/native_audio_converter.mm",
+    "before_sha256": "219af212ae68c1b7f13f1f798743903d517ba6f85319c0453c52282fee798b3b",
+    "old": "state.backend = std::make_unique<WamAdpcmBackend>();",
+    "replacement": "state.backend = std::make_unique<CoreAudioConverterBackend>();",
+    "build": {
+      "argv": [
+        "cmake",
+        "--build",
+        "build",
+        "--target",
+        "wam_native_coverage_audio_probe",
+        "--parallel"
+      ],
+      "rc": 0,
+      "stdout": "[  0%] Built target wam_avcodec_worker\n[ 11%] Building CXX object CMakeFiles/wam_native_core.dir/src/media/adpcm_decoder.cpp.o\n[ 11%] Linking CXX static library libwam_native_core.a\n[ 55%] Built target wam_native_core\n[ 55%] Built target wam_macos_native_video_core\n[ 55%] Building OBJCXX object CMakeFiles/wam_macos_native_backend.dir/src/platform/macos/native_audio_converter.mm.o\n[ 55%] Linking OBJCXX static library libwam_macos_native_backend.a\n[ 88%] Built target wam_macos_native_backend\n[ 88%] Automatic MOC and UIC for target wam_native_coverage_audio_probe\n[ 88%] Built target wam_native_coverage_audio_probe_autogen\n[100%] Linking CXX executable wam_native_coverage_audio_probe\n[100%] Built target wam_native_coverage_audio_probe\n",
+      "stderr": "ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/libvpx/lib/libvpx.12.dylib' which was built for newer version 26.0\n"
+    },
+    "negative": [
+      {
+        "argv": [
+          "build/wam_native_coverage_audio_probe",
+          "/private/tmp/wam-adpcm-scratch/matroska/adpcm_ima_wav-block-64.mka",
+          "/private/tmp/wam-adpcm-scratch/revert-adpcm_ima_wav.f32",
+          "0"
+        ],
+        "rc": 1,
+        "stdout": "",
+        "stderr": "configure: native audio backend configuration failed\n"
+      },
+      {
+        "argv": [
+          "build/wam_native_coverage_audio_probe",
+          "/private/tmp/wam-adpcm-scratch/matroska/adpcm_ms-block-64.mka",
+          "/private/tmp/wam-adpcm-scratch/revert-adpcm_ms.f32",
+          "0"
+        ],
+        "rc": 0,
+        "stdout": "",
+        "stderr": "track=1 rate=48000 frames=192000 first=0 decoded=192036 trim=36 exact=1 drained=1 error=\n"
+      }
+    ],
+    "restored_sha256": "219af212ae68c1b7f13f1f798743903d517ba6f85319c0453c52282fee798b3b",
+    "restore_build": {
+      "argv": [
+        "cmake",
+        "--build",
+        "build",
+        "--target",
+        "wam_native_coverage_audio_probe",
+        "--parallel"
+      ],
+      "rc": 0,
+      "stdout": "[  0%] Built target wam_avcodec_worker\n[ 55%] Built target wam_native_core\n[ 55%] Built target wam_macos_native_video_core\n[ 55%] Building OBJCXX object CMakeFiles/wam_macos_native_backend.dir/src/platform/macos/native_audio_converter.mm.o\n[ 55%] Linking OBJCXX static library libwam_macos_native_backend.a\n[ 88%] Built target wam_macos_native_backend\n[ 88%] Automatic MOC and UIC for target wam_native_coverage_audio_probe\n[ 88%] Built target wam_native_coverage_audio_probe_autogen\n[100%] Linking CXX executable wam_native_coverage_audio_probe\n[100%] Built target wam_native_coverage_audio_probe\n",
+      "stderr": "ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/libvpx/lib/libvpx.12.dylib' which was built for newer version 26.0\n"
+    },
+    "restored": [
+      {
+        "argv": [
+          "build/wam_native_coverage_audio_probe",
+          "/private/tmp/wam-adpcm-scratch/matroska/adpcm_ima_wav-block-64.mka",
+          "/private/tmp/wam-adpcm-scratch/revert-adpcm_ima_wav.f32",
+          "0"
+        ],
+        "rc": 0,
+        "stdout": "",
+        "stderr": "track=1 rate=48000 frames=192000 first=0 decoded=192033 trim=33 exact=1 drained=1 error=\n"
+      },
+      {
+        "argv": [
+          "build/wam_native_coverage_audio_probe",
+          "/private/tmp/wam-adpcm-scratch/matroska/adpcm_ms-block-64.mka",
+          "/private/tmp/wam-adpcm-scratch/revert-adpcm_ms.f32",
+          "0"
+        ],
+        "rc": 0,
+        "stdout": "",
+        "stderr": "track=1 rate=48000 frames=192000 first=0 decoded=192036 trim=36 exact=1 drained=1 error=\n"
+      }
+    ]
+  },
+  {
+    "name": "Restore AudioToolbox routing: named malformed-packet ownership",
+    "file": "src/platform/macos/native_audio_converter.mm",
+    "before_sha256": "219af212ae68c1b7f13f1f798743903d517ba6f85319c0453c52282fee798b3b",
+    "old": "state.backend = std::make_unique<WamAdpcmBackend>();",
+    "replacement": "state.backend = std::make_unique<CoreAudioConverterBackend>();",
+    "build": {
+      "argv": [
+        "cmake",
+        "--build",
+        "build",
+        "--target",
+        "wam_native_coverage_audio_probe",
+        "--parallel"
+      ],
+      "rc": 0,
+      "stdout": "[  0%] Built target wam_avcodec_worker\n[ 55%] Built target wam_native_core\n[ 55%] Built target wam_macos_native_video_core\n[ 55%] Building OBJCXX object CMakeFiles/wam_macos_native_backend.dir/src/platform/macos/native_audio_converter.mm.o\n[ 55%] Linking OBJCXX static library libwam_macos_native_backend.a\n[ 88%] Built target wam_macos_native_backend\n[ 88%] Automatic MOC and UIC for target wam_native_coverage_audio_probe\n[ 88%] Built target wam_native_coverage_audio_probe_autogen\n[100%] Linking CXX executable wam_native_coverage_audio_probe\n[100%] Built target wam_native_coverage_audio_probe\n",
+      "stderr": "ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/libvpx/lib/libvpx.12.dylib' which was built for newer version 26.0\n"
+    },
+    "negative": [
+      {
+        "argv": [
+          "python3",
+          "-c",
+          "import subprocess; r=subprocess.run(['build/wam_native_coverage_audio_probe','/private/tmp/wam-adpcm-scratch/lossless/adpcm_ima_wav-bad-header.wav','/private/tmp/wam-adpcm-scratch/revert-bad.f32','0'],capture_output=True,text=True); print(r.stderr); assert r.returncode==1 and 'AdpcmImaHeaderInvalid' in r.stderr"
+        ],
+        "rc": 1,
+        "stdout": "track=1 rate=48000 frames=192213 first=0 decoded=192213 trim=0 exact=1 drained=1 error=\n\n",
+        "stderr": "Traceback (most recent call last):\n  File \"<string>\", line 1, in <module>\nAssertionError\n"
+      },
+      {
+        "argv": [
+          "python3",
+          "-c",
+          "import subprocess; r=subprocess.run(['build/wam_native_coverage_audio_probe','/private/tmp/wam-adpcm-scratch/lossless/adpcm_ms-bad-header.wav','/private/tmp/wam-adpcm-scratch/revert-bad.f32','0'],capture_output=True,text=True); print(r.stderr); assert r.returncode==1 and 'AdpcmMsHeaderInvalid' in r.stderr"
+        ],
+        "rc": 1,
+        "stdout": "track=1 rate=48000 frames=0 first=0 decoded=0 trim=0 exact=0 drained=0 error=native audio backend violated its bounded contract\n\n",
+        "stderr": "Traceback (most recent call last):\n  File \"<string>\", line 1, in <module>\nAssertionError\n"
+      }
+    ],
+    "restored_sha256": "219af212ae68c1b7f13f1f798743903d517ba6f85319c0453c52282fee798b3b",
+    "restore_build": {
+      "argv": [
+        "cmake",
+        "--build",
+        "build",
+        "--target",
+        "wam_native_coverage_audio_probe",
+        "--parallel"
+      ],
+      "rc": 0,
+      "stdout": "[  0%] Built target wam_avcodec_worker\n[ 55%] Built target wam_native_core\n[ 55%] Built target wam_macos_native_video_core\n[ 55%] Building OBJCXX object CMakeFiles/wam_macos_native_backend.dir/src/platform/macos/native_audio_converter.mm.o\n[ 55%] Linking OBJCXX static library libwam_macos_native_backend.a\n[ 88%] Built target wam_macos_native_backend\n[ 88%] Automatic MOC and UIC for target wam_native_coverage_audio_probe\n[ 88%] Built target wam_native_coverage_audio_probe_autogen\n[100%] Linking CXX executable wam_native_coverage_audio_probe\n[100%] Built target wam_native_coverage_audio_probe\n",
+      "stderr": "ld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/libvpx/lib/libvpx.12.dylib' which was built for newer version 26.0\n"
+    },
+    "restored": [
+      {
+        "argv": [
+          "python3",
+          "-c",
+          "import subprocess; r=subprocess.run(['build/wam_native_coverage_audio_probe','/private/tmp/wam-adpcm-scratch/lossless/adpcm_ima_wav-bad-header.wav','/private/tmp/wam-adpcm-scratch/revert-bad.f32','0'],capture_output=True,text=True); print(r.stderr); assert r.returncode==1 and 'AdpcmImaHeaderInvalid' in r.stderr"
+        ],
+        "rc": 0,
+        "stdout": "track=1 rate=48000 frames=0 first=0 decoded=0 trim=0 exact=0 drained=0 error=AdpcmImaHeaderInvalid\n\n",
+        "stderr": ""
+      },
+      {
+        "argv": [
+          "python3",
+          "-c",
+          "import subprocess; r=subprocess.run(['build/wam_native_coverage_audio_probe','/private/tmp/wam-adpcm-scratch/lossless/adpcm_ms-bad-header.wav','/private/tmp/wam-adpcm-scratch/revert-bad.f32','0'],capture_output=True,text=True); print(r.stderr); assert r.returncode==1 and 'AdpcmMsHeaderInvalid' in r.stderr"
+        ],
+        "rc": 0,
+        "stdout": "track=1 rate=48000 frames=0 first=0 decoded=0 trim=0 exact=0 drained=0 error=AdpcmMsHeaderInvalid\n\n",
+        "stderr": ""
+      }
+    ]
+  },
+  {
+    "name": "Remove WAV coefficient admission",
+    "file": "src/platform/macos/avfoundation_media_source.mm",
+    "before_sha256": "e9da17dbc5488c34d6a1b69d15af8ff2dd76f9c94235fb8729b26c4c0af44488",
+    "old": "    if (result && !validateWaveAdpcm(*result, request_.path, error)) return std::nullopt;",
+    "replacement": "",
+    "build": {
+      "argv": [
+        "cmake",
+        "--build",
+        "build",
+        "--target",
+        "wam_native_coverage_source_probe",
+        "--parallel"
+      ],
+      "rc": 0,
+      "stdout": "[  0%] Built target wam_avcodec_worker\n[ 62%] Built target wam_native_core\n[ 62%] Built target wam_macos_native_video_core\n[ 62%] Building OBJCXX object CMakeFiles/wam_macos_native_backend.dir/src/platform/macos/avfoundation_media_source.mm.o\n[ 62%] Linking OBJCXX static library libwam_macos_native_backend.a\n[100%] Built target wam_macos_native_backend\n[100%] Automatic MOC and UIC for target wam_native_coverage_source_probe\n[100%] Built target wam_native_coverage_source_probe_autogen\n[100%] Linking CXX executable wam_native_coverage_source_probe\n[100%] Built target wam_native_coverage_source_probe\n",
+      "stderr": "/tmp/wam-adpcm/src/platform/macos/avfoundation_media_source.mm:1702:11: warning: enumeration values 'Dts', 'TrueHd', and 'Mlp' not handled in switch [-Wswitch]\n 1702 |   switch (codec) {\n      |           ^~~~~\n/tmp/wam-adpcm/src/platform/macos/avfoundation_media_source.mm:1702:11: note: add missing switch cases\n 1702 |   switch (codec) {\n      |           ^\n/tmp/wam-adpcm/src/platform/macos/avfoundation_media_source.mm:943:20: warning: unused function 'validateWaveAdpcm' [-Wunused-function]\n  943 | [[nodiscard]] bool validateWaveAdpcm(const MediaTrackDescriptor &track,\n      |                    ^~~~~~~~~~~~~~~~~\n/tmp/wam-adpcm/src/platform/macos/avfoundation_media_source.mm:2712:20: warning: unused function 'exactIdentityVideoTransform' [-Wunused-function]\n 2712 | [[nodiscard]] bool exactIdentityVideoTransform(\n      |                    ^~~~~~~~~~~~~~~~~~~~~~~~~~~\n3 warnings generated.\nld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/libvpx/lib/libvpx.12.dylib' which was built for newer version 26.0\n"
+    },
+    "negative": [
+      {
+        "argv": [
+          "python3",
+          "-c",
+          "import subprocess; r=subprocess.run(['build/wam_native_coverage_source_probe','/private/tmp/wam-adpcm-scratch/lossless/adpcm-ms-custom-coefficients.wav'],capture_output=True,text=True); print(r.stdout); assert r.returncode==1 and 'AdpcmWaveFormatMismatch' in r.stdout"
+        ],
+        "rc": 1,
+        "stdout": "status=0 error=\ndecode_start=0/1\n\n",
+        "stderr": "Traceback (most recent call last):\n  File \"<string>\", line 1, in <module>\nAssertionError\n"
+      }
+    ],
+    "restored_sha256": "e9da17dbc5488c34d6a1b69d15af8ff2dd76f9c94235fb8729b26c4c0af44488",
+    "restore_build": {
+      "argv": [
+        "cmake",
+        "--build",
+        "build",
+        "--target",
+        "wam_native_coverage_source_probe",
+        "--parallel"
+      ],
+      "rc": 0,
+      "stdout": "[  0%] Built target wam_avcodec_worker\n[ 62%] Built target wam_native_core\n[ 62%] Built target wam_macos_native_video_core\n[100%] Built target wam_macos_native_backend\n[100%] Automatic MOC and UIC for target wam_native_coverage_source_probe\n[100%] Built target wam_native_coverage_source_probe_autogen\n[100%] Built target wam_native_coverage_source_probe\n",
+      "stderr": ""
+    },
+    "restored": [
+      {
+        "argv": [
+          "python3",
+          "-c",
+          "import subprocess; r=subprocess.run(['build/wam_native_coverage_source_probe','/private/tmp/wam-adpcm-scratch/lossless/adpcm-ms-custom-coefficients.wav'],capture_output=True,text=True); print(r.stdout); assert r.returncode==1 and 'AdpcmWaveFormatMismatch' in r.stdout"
+        ],
+        "rc": 1,
+        "stdout": "status=0 error=\ndecode_start=0/1\n\n",
+        "stderr": "Traceback (most recent call last):\n  File \"<string>\", line 1, in <module>\nAssertionError\n"
+      }
+    ]
+  },
+  {
+    "name": "Remove WAV coefficient admission",
+    "file": "src/platform/macos/avfoundation_media_source.mm",
+    "before_sha256": "e9da17dbc5488c34d6a1b69d15af8ff2dd76f9c94235fb8729b26c4c0af44488",
+    "old": "    if (result && !validateWaveAdpcm(*result, request_.path, error)) return std::nullopt;",
+    "replacement": "",
+    "build": {
+      "argv": [
+        "cmake",
+        "--build",
+        "build",
+        "--target",
+        "wam_native_coverage_source_probe",
+        "--parallel"
+      ],
+      "rc": 0,
+      "stdout": "[  0%] Built target wam_avcodec_worker\n[ 62%] Built target wam_native_core\n[ 62%] Built target wam_macos_native_video_core\n[ 62%] Building OBJCXX object CMakeFiles/wam_macos_native_backend.dir/src/platform/macos/avfoundation_media_source.mm.o\n[ 62%] Linking OBJCXX static library libwam_macos_native_backend.a\n[100%] Built target wam_macos_native_backend\n[100%] Automatic MOC and UIC for target wam_native_coverage_source_probe\n[100%] Built target wam_native_coverage_source_probe_autogen\n[100%] Linking CXX executable wam_native_coverage_source_probe\n[100%] Built target wam_native_coverage_source_probe\n",
+      "stderr": "/tmp/wam-adpcm/src/platform/macos/avfoundation_media_source.mm:1702:11: warning: enumeration values 'Dts', 'TrueHd', and 'Mlp' not handled in switch [-Wswitch]\n 1702 |   switch (codec) {\n      |           ^~~~~\n/tmp/wam-adpcm/src/platform/macos/avfoundation_media_source.mm:1702:11: note: add missing switch cases\n 1702 |   switch (codec) {\n      |           ^\n/tmp/wam-adpcm/src/platform/macos/avfoundation_media_source.mm:943:20: warning: unused function 'validateWaveAdpcm' [-Wunused-function]\n  943 | [[nodiscard]] bool validateWaveAdpcm(const MediaTrackDescriptor &track,\n      |                    ^~~~~~~~~~~~~~~~~\n/tmp/wam-adpcm/src/platform/macos/avfoundation_media_source.mm:2712:20: warning: unused function 'exactIdentityVideoTransform' [-Wunused-function]\n 2712 | [[nodiscard]] bool exactIdentityVideoTransform(\n      |                    ^~~~~~~~~~~~~~~~~~~~~~~~~~~\n3 warnings generated.\nld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/libvpx/lib/libvpx.12.dylib' which was built for newer version 26.0\n"
+    },
+    "negative": [
+      {
+        "argv": [
+          "python3",
+          "-c",
+          "import subprocess; r=subprocess.run(['build/wam_native_coverage_source_probe','/private/tmp/wam-adpcm-scratch/lossless/adpcm-ms-custom-coefficients.wav'],capture_output=True,text=True); print(r.stdout); assert r.returncode==1 and 'AdpcmWaveFormatMismatch' in r.stdout"
+        ],
+        "rc": 1,
+        "stdout": "status=0 error=\ndecode_start=0/1\n\n",
+        "stderr": "Traceback (most recent call last):\n  File \"<string>\", line 1, in <module>\nAssertionError\n"
+      }
+    ],
+    "restored_sha256": "e9da17dbc5488c34d6a1b69d15af8ff2dd76f9c94235fb8729b26c4c0af44488",
+    "restore_build": {
+      "argv": [
+        "cmake",
+        "--build",
+        "build",
+        "--target",
+        "wam_native_coverage_source_probe",
+        "--parallel"
+      ],
+      "rc": 0,
+      "stdout": "[  0%] Built target wam_avcodec_worker\n[ 62%] Built target wam_native_core\n[ 62%] Built target wam_macos_native_video_core\n[ 62%] Building OBJCXX object CMakeFiles/wam_macos_native_backend.dir/src/platform/macos/avfoundation_media_source.mm.o\n[ 62%] Linking OBJCXX static library libwam_macos_native_backend.a\n[100%] Built target wam_macos_native_backend\n[100%] Automatic MOC and UIC for target wam_native_coverage_source_probe\n[100%] Built target wam_native_coverage_source_probe_autogen\n[100%] Linking CXX executable wam_native_coverage_source_probe\n[100%] Built target wam_native_coverage_source_probe\n",
+      "stderr": "/tmp/wam-adpcm/src/platform/macos/avfoundation_media_source.mm:1702:11: warning: enumeration values 'Dts', 'TrueHd', and 'Mlp' not handled in switch [-Wswitch]\n 1702 |   switch (codec) {\n      |           ^~~~~\n/tmp/wam-adpcm/src/platform/macos/avfoundation_media_source.mm:1702:11: note: add missing switch cases\n 1702 |   switch (codec) {\n      |           ^\n/tmp/wam-adpcm/src/platform/macos/avfoundation_media_source.mm:2712:20: warning: unused function 'exactIdentityVideoTransform' [-Wunused-function]\n 2712 | [[nodiscard]] bool exactIdentityVideoTransform(\n      |                    ^~~~~~~~~~~~~~~~~~~~~~~~~~~\n2 warnings generated.\nld: warning: building for macOS-13.3, but linking with dylib '/opt/homebrew/opt/libvpx/lib/libvpx.12.dylib' which was built for newer version 26.0\n"
+    },
+    "restored": [
+      {
+        "argv": [
+          "python3",
+          "-c",
+          "import subprocess; r=subprocess.run(['build/wam_native_coverage_source_probe','/private/tmp/wam-adpcm-scratch/lossless/adpcm-ms-custom-coefficients.wav'],capture_output=True,text=True); print(r.stdout); assert r.returncode==1 and 'AdpcmWaveFormatMismatch' in r.stdout"
+        ],
+        "rc": 0,
+        "stdout": "status=1 error=AdpcmWaveFormatMismatch\ndecode_start=0/0\n\n",
+        "stderr": ""
+      }
+    ]
+  },
+  {
+    "name": "Restore old retry fixture",
+    "file": "tests/native_coverage_wiring_test.py",
+    "before_sha256": "5bd8fd09de5a5231e6bdc2089a3e431bb9230418f93e4b29574ac63affdf6493",
+    "old": "        # Partial stereo IMA groups satisfy the legacy frame-count equation\n        # but cannot form a complete eight-frame channel group.\n        data=bytearray(path.read_bytes())\n        pattern=bytes.fromhex('1100020080bb0000')\n        offset=0\n        for _ in range(2):\n            offset=data.index(pattern,offset)\n            assert int.from_bytes(data[offset+12:offset+14],'little')==64\n            data[offset+12:offset+14]=(68).to_bytes(2,'little')\n            data[offset+18:offset+20]=(61).to_bytes(2,'little')\n            offset+=20\n        path.write_bytes(data)\n",
+    "replacement": "",
+    "negative": [
+      {
+        "argv": [
+          "python3",
+          "tests/native_coverage_wiring_test.py",
+          "--app",
+          "build/WAM.app/Contents/MacOS/WAM",
+          "--ffmpeg",
+          "/opt/homebrew/bin/ffmpeg",
+          "--case",
+          "retry",
+          "--artifacts",
+          "/private/tmp/wam-adpcm-scratch/retry-revert"
+        ],
+        "rc": 1,
+        "stdout": "",
+        "stderr": "hain_sha256': '0000000000000000000000000000000000000000000000000000000000000000', 'run_id': '94bee55b-0985-40b7-bf24-7eb3422a6470', 'process_id': 73913, 'process_start_abstime': 6615289576126, 'asset_sha256': 'd1a66f7f87d6f487ba3a354c8eec2547b6e4196b2910e03efee3aeb47aab4a3d', 'candidate_id': '2f85dbf5ef8e7ccbc70a06e71540bed2675a20ed8986e61d48b60c1edffd01d5'}, {'schema': 'wam.native.benchmark.v2', 'record': 'event', 'batch': 1, 'event_sequence': 1, 'event': 'open_requested', 'monotonic_ns': 347136264976541, 'run_id': '94bee55b-0985-40b7-bf24-7eb3422a6470', 'process_id': 73913, 'process_start_abstime': 6615289576126, 'asset_sha256': 'd1a66f7f87d6f487ba3a354c8eec2547b6e4196b2910e03efee3aeb47aab4a3d', 'candidate_id': '2f85dbf5ef8e7ccbc70a06e71540bed2675a20ed8986e61d48b60c1edffd01d5', 'route': 'undecided', 'route_proof': False, 'source_key': 1, 'attempt': 0, 'serial': 0, 'generation': 0, 'gesture': 0, 'request': 0, 'draw_sequence': 0, 'target_seconds': None, 'libmpv_initialized': False}, {'schema': 'wam.native.benchmark.v2', 'record': 'event', 'batch': 1, 'event_sequence': 2, 'event': 'native_selected', 'monotonic_ns': 347136368608875, 'run_id': '94bee55b-0985-40b7-bf24-7eb3422a6470', 'process_id': 73913, 'process_start_abstime': 6615289576126, 'asset_sha256': 'd1a66f7f87d6f487ba3a354c8eec2547b6e4196b2910e03efee3aeb47aab4a3d', 'candidate_id': '2f85dbf5ef8e7ccbc70a06e71540bed2675a20ed8986e61d48b60c1edffd01d5', 'route': 'native', 'route_proof': True, 'source_key': 1, 'attempt': 1, 'serial': 1, 'generation': 1, 'gesture': 0, 'request': 0, 'draw_sequence': 0, 'target_seconds': 0, 'libmpv_initialized': False}, {'schema': 'wam.native.benchmark.v2', 'record': 'event', 'batch': 1, 'event_sequence': 3, 'event': 'prepared', 'monotonic_ns': 347136455490791, 'run_id': '94bee55b-0985-40b7-bf24-7eb3422a6470', 'process_id': 73913, 'process_start_abstime': 6615289576126, 'asset_sha256': 'd1a66f7f87d6f487ba3a354c8eec2547b6e4196b2910e03efee3aeb47aab4a3d', 'candidate_id': '2f85dbf5ef8e7ccbc70a06e71540bed2675a20ed8986e61d48b60c1edffd01d5', 'route': 'native', 'route_proof': False, 'source_key': 1, 'attempt': 1, 'serial': 1, 'generation': 1, 'gesture': 0, 'request': 0, 'draw_sequence': 0, 'target_seconds': None, 'libmpv_initialized': False}, {'schema': 'wam.native.benchmark.v2', 'record': 'event', 'batch': 1, 'event_sequence': 4, 'event': 'started', 'monotonic_ns': 347136487587916, 'run_id': '94bee55b-0985-40b7-bf24-7eb3422a6470', 'process_id': 73913, 'process_start_abstime': 6615289576126, 'asset_sha256': 'd1a66f7f87d6f487ba3a354c8eec2547b6e4196b2910e03efee3aeb47aab4a3d', 'candidate_id': '2f85dbf5ef8e7ccbc70a06e71540bed2675a20ed8986e61d48b60c1edffd01d5', 'route': 'native', 'route_proof': False, 'source_key': 0, 'attempt': 1, 'serial': 2, 'generation': 1, 'gesture': 0, 'request': 0, 'draw_sequence': 0, 'target_seconds': None, 'libmpv_initialized': False}, {'schema': 'wam.native.benchmark.v2', 'record': 'batch_commit', 'batch': 1, 'event_count': 4, 'first_sequence': 1, 'last_sequence': 4, 'payload_sha256': 'fcd291a30b04ad69bac4ffa2bac7874581506b7a764e35f81372f7f9232efe81', 'chain_sha256': '9cbd0a8607e09fd965d855b8785dcbbf3dfac8ad0b6f0ae038f94b4422939020', 'run_id': '94bee55b-0985-40b7-bf24-7eb3422a6470', 'process_id': 73913, 'process_start_abstime': 6615289576126, 'asset_sha256': 'd1a66f7f87d6f487ba3a354c8eec2547b6e4196b2910e03efee3aeb47aab4a3d', 'candidate_id': '2f85dbf5ef8e7ccbc70a06e71540bed2675a20ed8986e61d48b60c1edffd01d5'}, {'schema': 'wam.native.benchmark.v2', 'record': 'stream_commit', 'batch_count': 1, 'event_count': 4, 'first_sequence': 1, 'last_sequence': 4, 'chain_sha256': '9cbd0a8607e09fd965d855b8785dcbbf3dfac8ad0b6f0ae038f94b4422939020', 'run_id': '94bee55b-0985-40b7-bf24-7eb3422a6470', 'process_id': 73913, 'process_start_abstime': 6615289576126, 'asset_sha256': 'd1a66f7f87d6f487ba3a354c8eec2547b6e4196b2910e03efee3aeb47aab4a3d', 'candidate_id': '2f85dbf5ef8e7ccbc70a06e71540bed2675a20ed8986e61d48b60c1edffd01d5'}], 'rendered_frames': 73872})\n"
+      }
+    ],
+    "restored_sha256": "5bd8fd09de5a5231e6bdc2089a3e431bb9230418f93e4b29574ac63affdf6493",
+    "restored": [
+      {
+        "argv": [
+          "python3",
+          "tests/native_coverage_wiring_test.py",
+          "--app",
+          "build/WAM.app/Contents/MacOS/WAM",
+          "--ffmpeg",
+          "/opt/homebrew/bin/ffmpeg",
+          "--case",
+          "retry",
+          "--artifacts",
+          "/private/tmp/wam-adpcm-scratch/retry-revert"
+        ],
+        "rc": 0,
+        "stdout": "PASS: two refused decoder graphs retire; third track renders 88200 frames\n",
+        "stderr": ""
+      }
+    ]
+  }
+]

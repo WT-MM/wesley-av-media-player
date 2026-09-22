@@ -87,12 +87,7 @@ audioCodecStatesExactDecodedDuration(MediaCodec codec) noexcept {
   // before it takes the ceiling, so a container that states something else is
   // simply left with today's behaviour.
   case MediaCodec::Pcm:
-  // ADPCM in WAV joins for the same reason, and it is a MEASURED claim rather
-  // than a structural one: the format is blocked, so the container's frame
-  // count is not simply bytes over block align, and the last block is padded.
-  // Measured 2026-09-04 on IMA and MS chirp fixtures, mono and stereo: the
-  // frames AudioToolbox produces equal the declared frame count exactly
-  // (delta 0), with no lead-in to subtract and no tail to withhold.
+  // ADPCM retains the container's exact frame ceiling, including final-block trim.
   case MediaCodec::AdpcmIma:
   case MediaCodec::AdpcmMs:
     return true;

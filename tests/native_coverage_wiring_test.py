@@ -35,7 +35,7 @@ def main():
     app = Path(a.app).resolve()
     assert app.parts[-4:] == ('WAM.app', 'Contents', 'MacOS', 'WAM')
     assert app.parent.parent.parent.parent.name == 'build'
-    temporary = tempfile.TemporaryDirectory(prefix='wam-wiring-', dir='/private/tmp')
+    temporary = tempfile.TemporaryDirectory(prefix='wam-wiring-', dir=os.environ.get('WAM_TEST_SCRATCH', '/private/tmp'))
     root = Path(a.artifacts or temporary.name)
     root.mkdir(parents=True, exist_ok=True)
     candidate = sha(app)
@@ -109,6 +109,18 @@ def main():
         path=ffmpeg('retry-three.mka',['-i',bad,'-i',bad,'-i',good,'-map','0:a','-map','1:a',
                     '-map','2:a','-c','copy','-disposition:a:0','default',
                     '-disposition:a:1','0','-disposition:a:2','0'])
+        # Partial stereo IMA groups satisfy the legacy frame-count equation
+        # but cannot form a complete eight-frame channel group.
+        data=bytearray(path.read_bytes())
+        pattern=bytes.fromhex('1100020080bb0000')
+        offset=0
+        for _ in range(2):
+            offset=data.index(pattern,offset)
+            assert int.from_bytes(data[offset+12:offset+14],'little')==64
+            data[offset+12:offset+14]=(68).to_bytes(2,'little')
+            data[offset+18:offset+20]=(61).to_bytes(2,'little')
+            offset+=20
+        path.write_bytes(data)
         text,receipt=launch(path,'retry')
         assert 'prepared' in text and 'native_selected' in text and 'fallback_selected' not in text, text
         # The third track's length is whatever ffmpeg packetized (versions differ in
