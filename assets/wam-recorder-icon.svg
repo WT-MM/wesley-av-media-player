@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">WAM Recorder</title>
+  <desc id="desc">A vermilion recording disc with an ivory waveform on a warm charcoal rounded tile.</desc>
+  <defs>
+    <linearGradient id="tile" x1="150" y1="60" x2="850" y2="960" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#45474d"/><stop offset="1" stop-color="#202126"/>
+    </linearGradient>
+    <linearGradient id="record" x1="330" y1="230" x2="730" y2="820" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#ff775f"/><stop offset="1" stop-color="#d83d32"/>
+    </linearGradient>
+  </defs>
+  <rect x="62" y="62" width="900" height="900" rx="204" fill="#202126"/>
+  <rect x="62" y="54" width="900" height="900" rx="204" fill="url(#tile)"/>
+  <rect x="67" y="59" width="890" height="890" rx="199" fill="none" stroke="#fffefa" stroke-opacity=".12" stroke-width="4"/>
+  <circle cx="512" cy="516" r="321" fill="none" stroke="#fffefa" stroke-opacity=".18" stroke-width="9"/>
+  <circle cx="512" cy="520" r="272" fill="#151619" fill-opacity=".5"/>
+  <circle cx="512" cy="504" r="272" fill="url(#record)"/>
+  <g stroke="#fffefa" stroke-width="42" stroke-linecap="round">
+    <path d="M364 474v60M438 425v158M512 375v258M586 435v138M660 474v60"/>
+  </g>
+</svg>
