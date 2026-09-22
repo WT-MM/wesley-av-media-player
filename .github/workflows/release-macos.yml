@@ -1,9 +1,9 @@
 name: Release notarized macOS apps
 
+# Manual only until the macos-release environment holds Developer ID signing
+# secrets: on tags it failed at the Qt SDK step and marked every release's
+# deployment failed while release.yml actually shipped.
 on:
-  push:
-    tags:
-      - "v*"
   workflow_dispatch:
 
 permissions:
