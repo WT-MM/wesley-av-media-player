@@ -111,8 +111,13 @@ def main():
                     '-disposition:a:1','0','-disposition:a:2','0'])
         text,receipt=launch(path,'retry')
         assert 'prepared' in text and 'native_selected' in text and 'fallback_selected' not in text, text
-        assert 'WAM: native failure' not in text and receipt['rendered_frames']==88200, receipt
-        print('PASS: two refused decoder graphs retire; third track renders 88200 frames',flush=True)
+        # The third track's length is whatever ffmpeg packetized (versions differ in
+        # PCM chunking), so the exact count comes from ffmpeg's own decode of it.
+        decoded=subprocess.run([a.ffmpeg,'-v','error','-i',str(path),'-map','0:a:2','-ac','2',
+                                '-c:a','pcm_f32le','-f','f32le','-'],capture_output=True,check=True).stdout
+        expected=len(decoded)//8
+        assert 'WAM: native failure' not in text and receipt['rendered_frames']==expected, (expected,receipt)
+        print(f'PASS: two refused decoder graphs retire; third track renders {expected} frames',flush=True)
     if a.case in ('all','progress'):
         path=Path(a.slow_fixture) if a.slow_fixture else ffmpeg('slow.mp4',[
             '-f','lavfi','-i','color=c=steelblue:size=3840x2160:rate=24','-t','40',
