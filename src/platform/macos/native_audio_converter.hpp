@@ -62,6 +62,7 @@ struct NativeAudioBackendResult {
 class NativeAudioConverterBackend {
 public:
   virtual ~NativeAudioConverterBackend() = default;
+  [[nodiscard]] virtual const char* failureReason() const noexcept { return nullptr; }
 
   [[nodiscard]] virtual bool
   configure(const NativeAudioBackendConfiguration &configuration,

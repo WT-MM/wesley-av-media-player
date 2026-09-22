@@ -1,5 +1,6 @@
 if(APPLE)
   add_library(wam_native_core STATIC
+    src/media/adpcm_decoder.cpp
     src/media/matroska_aac.hpp
     src/media/matroska_aac.cpp
     src/media/audio_codec_timing.hpp

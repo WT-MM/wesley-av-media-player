@@ -9,6 +9,8 @@ from pathlib import Path
 import re
 import subprocess
 import tempfile
+import os
+from fractions import Fraction
 
 
 def run(argv, expected=0):
@@ -82,7 +84,7 @@ def main():
     args.add_argument('--artifacts')
     args.add_argument('--case', default='all')
     a = args.parse_args()
-    temporary = tempfile.TemporaryDirectory(prefix='wam-native-coverage-', dir='/private/tmp')
+    temporary = tempfile.TemporaryDirectory(prefix='wam-native-coverage-', dir=os.environ.get('WAM_TEST_SCRATCH', '/private/tmp'))
     root = Path(a.artifacts or temporary.name)
     root.mkdir(parents=True, exist_ok=True)
     manifest = {'version': 2,
@@ -101,25 +103,20 @@ def main():
             'sha256': hashlib.sha256((root/name).read_bytes()).hexdigest()})
         return root/name
 
-    host_major = int((platform.mac_ver()[0] or '0').split('.')[0])
-
-    def refuse_unproven_adpcm(path):
-        # AudioToolbox ADPCM is proven bit-exact only on macOS 26; older hosts must refuse by name.
-        result = run([a.audio, path, root/(path.name+'-refused.f32'), 0], expected=1)
-        assert 'AdpcmDecoderUnprovenOnHost' in result.stderr, result.stderr
-        print(f'PASS: {path.name} refuses by name on macOS {platform.mac_ver()[0]}', flush=True)
-
-    def decode(path, rate, frames, target=0, reference=None, bit_exact=False, origin=False):
-        pcm = root/(path.name+f'-{target}.f32')
+    def decode(path, rate, frames, target=0, reference=None, bit_exact=False, origin=False, mono=False):
+        target_frame = math.ceil(Fraction(target)*rate)
+        pcm = root/(path.name+f'-{str(target).replace(chr(47),chr(95))}.f32')
         result = run([a.audio, path, pcm, target, *(["origin"] if origin else [])])
-        assert f'rate={rate}' in result.stderr and f'frames={frames-target*rate} ' in result.stderr, result.stderr
+        assert f'rate={rate}' in result.stderr and f'frames={frames-target_frame} ' in result.stderr, result.stderr
         assert 'exact=1 drained=1' in result.stderr, result.stderr
-        assert pcm.stat().st_size == (frames-target*rate)*8
+        assert f'first={target_frame} ' in result.stderr, result.stderr
+        assert pcm.stat().st_size == (frames-target_frame)*8
         ref = root/(path.name+'.reference.f32')
         run([a.ffmpeg, '-v', 'error', '-y', '-i', reference or path, '-map', '0:a:0',
+             *(['-af','pan=stereo|c0=c0|c1=c0'] if mono else []),
              '-ac', '2', '-c:a', 'pcm_f32le', '-f', 'f32le', ref])
         output = array.array('f', pcm.read_bytes())
-        expected = array.array('f', ref.read_bytes())[target*rate*2:frames*2]
+        expected = array.array('f', ref.read_bytes())[target_frame*2:frames*2]
         assert len(output) == len(expected), (path, len(output), len(expected))
         errors = [float(x)-float(y) for x,y in zip(output, expected)]
         rms = math.sqrt(sum(x*x for x in errors)/len(errors))
@@ -183,21 +180,53 @@ def main():
     if a.case in ('all','lossless'):
         for codec,ext in [('alac','m4a'),('pcm_s16le','wav'),('adpcm_ima_wav','wav'),('adpcm_ms','wav')]:
             path=generate(codec+'.'+ext,48000,codec)
-            if codec.startswith('adpcm') and host_major<26:
-                refuse_unproven_adpcm(path); continue
             ref=root/(codec+'.count.f32')
             run([a.ffmpeg,'-v','error','-y','-i',path,'-ac','2','-c:a','pcm_f32le','-f','f32le',ref])
             decode(path,48000,ref.stat().st_size//8,bit_exact=True)
+    if a.case in ('all','lossless','matroska-apple'):
+        for codec in ('adpcm_ima_wav','adpcm_ms'):
+            for rate in (44100,48000):
+                for channels in (1,2):
+                    for ext in (('wav','mka') if a.case=='all' else ('wav',) if a.case=='lossless' else ('mka',)):
+                        path=generate(f'{codec}-{rate}-{channels}.{ext}',rate,codec,extra=('-ac',str(channels)))
+                        ref=root/(path.name+'.count.f32')
+                        run([a.ffmpeg,'-v','error','-y','-i',path,'-ac','2','-c:a','pcm_f32le','-f','f32le',ref])
+                        frames=ref.stat().st_size//8 if ext=='wav' else rate*4
+                        for target in (0,2,'100001/100000'):
+                            decode(path,rate,frames,target,bit_exact=True,mono=channels==1)
     if a.case in ('all','pcm-u8'):
         path=generate('pcm-u8-offset.mka',48000,'pcm_u8',seconds=2,offset=True)
         decode(path,48000,96000,bit_exact=True)
     if a.case in ('all','matroska-apple'):
         for codec in ('alac','pcm_s16le','pcm_f32le','adpcm_ima_wav','adpcm_ms'):
             path=generate(codec+'.mka',48000,codec)
-            if codec.startswith('adpcm') and host_major<26:
-                refuse_unproven_adpcm(path); continue
             decode(path,48000,192000,bit_exact=True)
             decode(path,48000,192000,2,bit_exact=True)
+    if a.case in ('all','matroska-apple'):
+        for codec in ('adpcm_ima_wav','adpcm_ms'):
+            for size in (64,8192):
+                path=generate(f'{codec}-block-{size}.mka',48000,codec,extra=('-block_size',str(size)))
+                decode(path,48000,192000,bit_exact=True)
+    if a.case in ('all','lossless'):
+        for codec,reason in (('adpcm_ima_wav','AdpcmImaHeaderInvalid'),('adpcm_ms','AdpcmMsHeaderInvalid')):
+            original=root/(codec+'.wav')
+            data=bytearray(original.read_bytes())
+            offset=12
+            while data[offset:offset+4]!=b'data':
+                size=int.from_bytes(data[offset+4:offset+8],'little')
+                offset+=8+size+(size&1)
+            data[offset+8+(2 if codec=='adpcm_ima_wav' else 0)]=255
+            path=root/(codec+'-bad-header.wav'); path.write_bytes(data)
+            result=run([a.audio,path,root/'bad.f32',0],expected=1)
+            assert reason in result.stderr, result.stderr
+            manifest['proofs'].append(dict(file=path.name,refusal=reason,diagnostic=result.stderr))
+        data=bytearray((root/'adpcm_ms.wav').read_bytes())
+        offset=data.index(b'fmt ')+8
+        data[offset+22:offset+24]=(255).to_bytes(2,'little')
+        path=root/'adpcm-ms-custom-coefficients.wav'; path.write_bytes(data)
+        result=run([a.source,path],expected=1)
+        assert 'AdpcmWaveFormatMismatch' in result.stdout, result.stdout
+        manifest['proofs'].append(dict(file=path.name,refusal='AdpcmWaveFormatMismatch',diagnostic=result.stdout))
     if a.case in ('all','matroska-rates'):
         for rate in (8000,11025,12000,16000,22050,24000,32000,44100,48000,96000,192000):
             for codec in ('pcm_s16le','alac'):
