@@ -1,12 +1,17 @@
 name: Build standalone WAM apps
 
+# The full build is the required check before a squash merge to main. It runs
+# once when a pull request opens or leaves draft, and on manual dispatch for
+# the branch head; it does not run on every push, and a newer run for the
+# same pull request cancels the older one.
 on:
-  push:
-    # Branches only: a tag push triggers release.yml alone.
-    branches:
-      - "**"
   pull_request:
+    types: [opened, ready_for_review]
   workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
