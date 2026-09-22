@@ -145,6 +145,10 @@ if [[ "$operation" == -id && "$found" != true ]]; then
   print -r -- "ID=$new_id" >> "$temporary"
 elif [[ "$operation" == -add_rpath ]]; then
   print -r -- "RPATH=$replacement" >> "$temporary"
+elif [[ "$operation" == -delete_rpath && "$found" != true ]]; then
+  print -u2 "error: no LC_RPATH load command with path: $old found in: $target"
+  /bin/rm -f "$temporary"
+  exit 1
 fi
 /bin/mv "$temporary" "$target"
 [[ "$was_executable" != true ]] || chmod +x "$target"' > \
@@ -543,6 +547,23 @@ grep -q '^LOAD=@executable_path/../Frameworks/QtFixture.framework/Versions/A/QtF
   "$success_app/Contents/Frameworks/WAMMpvFallback.dylib"
 if find "$success_root" -maxdepth 1 -name '.wam-bundle-stage.*' | grep -q .; then
   print -u2 "successful transaction retained the old app stage"
+  exit 1
+fi
+
+# The pinned CI Qt ships universal plugins: otool -l lists every slice, so one
+# external LC_RPATH reads once per slice. One -delete_rpath retires it from
+# every slice, and a second attempt fails exactly as the real tool does.
+fat_root="$fixture_root/universal-plugin"
+fat_app="$fat_root/WAM.app"
+fat_plugin="$fat_app/Contents/PlugIns/platforms/libqcocoa.dylib"
+mkdir -p "$fat_root"
+create_app "$fat_app"
+print -r -- 'RPATH=@loader_path/../../../lib' >> "$fat_plugin"
+print -r -- 'RPATH=@loader_path/../../../lib' >> "$fat_plugin"
+"$bundle_entry" "$fat_app" "$source_root/whisper-cli" \
+  "$fat_app/Contents/Resources/models/ggml-base.en.bin"
+if grep -q '^RPATH=@loader_path/../../../lib$' "$fat_plugin"; then
+  print -u2 "universal plugin kept its external rpath"
   exit 1
 fi
 

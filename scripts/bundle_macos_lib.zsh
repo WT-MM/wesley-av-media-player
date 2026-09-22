@@ -232,7 +232,10 @@ read_runtime_search_paths() {
   fi
   wam_fail_if_requested after-rpath-introspection || return 1
   if [[ -n "$rpath_output" ]]; then
-    WAM_INTROSPECTION_LINES=("${(@f)rpath_output}")
+    # otool -l prints every slice of a universal binary (the pinned CI Qt ships
+    # fat plugins), so one LC_RPATH shows up once per slice. A single
+    # -delete_rpath removes it from every slice, and a second attempt fails.
+    WAM_INTROSPECTION_LINES=("${(@fu)rpath_output}")
   fi
 }
 
