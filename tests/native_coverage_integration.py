@@ -101,6 +101,14 @@ def main():
             'sha256': hashlib.sha256((root/name).read_bytes()).hexdigest()})
         return root/name
 
+    host_major = int((platform.mac_ver()[0] or '0').split('.')[0])
+
+    def refuse_unproven_adpcm(path):
+        # AudioToolbox ADPCM is proven bit-exact only on macOS 26; older hosts must refuse by name.
+        result = run([a.audio, path, root/(path.name+'-refused.f32'), 0], expected=1)
+        assert 'AdpcmDecoderUnprovenOnHost' in result.stderr, result.stderr
+        print(f'PASS: {path.name} refuses by name on macOS {platform.mac_ver()[0]}', flush=True)
+
     def decode(path, rate, frames, target=0, reference=None, bit_exact=False, origin=False):
         pcm = root/(path.name+f'-{target}.f32')
         result = run([a.audio, path, pcm, target, *(["origin"] if origin else [])])
@@ -175,6 +183,8 @@ def main():
     if a.case in ('all','lossless'):
         for codec,ext in [('alac','m4a'),('pcm_s16le','wav'),('adpcm_ima_wav','wav'),('adpcm_ms','wav')]:
             path=generate(codec+'.'+ext,48000,codec)
+            if codec.startswith('adpcm') and host_major<26:
+                refuse_unproven_adpcm(path); continue
             ref=root/(codec+'.count.f32')
             run([a.ffmpeg,'-v','error','-y','-i',path,'-ac','2','-c:a','pcm_f32le','-f','f32le',ref])
             decode(path,48000,ref.stat().st_size//8,bit_exact=True)
@@ -184,6 +194,8 @@ def main():
     if a.case in ('all','matroska-apple'):
         for codec in ('alac','pcm_s16le','pcm_f32le','adpcm_ima_wav','adpcm_ms'):
             path=generate(codec+'.mka',48000,codec)
+            if codec.startswith('adpcm') and host_major<26:
+                refuse_unproven_adpcm(path); continue
             decode(path,48000,192000,bit_exact=True)
             decode(path,48000,192000,2,bit_exact=True)
     if a.case in ('all','matroska-rates'):
