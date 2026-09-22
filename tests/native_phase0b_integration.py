@@ -5,6 +5,7 @@ import json
 import math
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 
 
@@ -22,6 +23,11 @@ def main():
         parser.add_argument('--'+name, required=True)
     parser.add_argument('--artifacts')
     a = parser.parse_args()
+    # Hosted virtual machines expose no ProRes decoder (VTDecompressionSessionCreate -12906).
+    listing = run([a.video])
+    if 'HW codec=61703468 verdict=1' not in listing:
+        print('SKIP: this host has no ProRes 4444 hardware decoder; phase 0b hardware proofs need one')
+        sys.exit(77)
     with tempfile.TemporaryDirectory(prefix='wam-phase0b-', dir='/private/tmp') as tmp:
         root = Path(a.artifacts or tmp)
         root.mkdir(parents=True, exist_ok=True)

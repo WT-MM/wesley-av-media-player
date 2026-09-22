@@ -7,6 +7,7 @@
 #include <QColor>
 #include <QElapsedTimer>
 #include <QEventLoop>
+#include "accelerated_gl_gate.hpp"
 #include <QGuiApplication>
 #include <QImage>
 #include <QProcess>
@@ -346,6 +347,7 @@ int main(int argc, char** argv) {
   format.setSwapBehavior(QSurfaceFormat::DoubleBuffer);
   QSurfaceFormat::setDefaultFormat(format);
   QGuiApplication application(argc, argv);
+  if (const int skip = skipUnlessAcceleratedGl()) return skip;
   const QString faultPrefix = QStringLiteral("--retirement-fault=");
   const bool retirementAccountingOnly = application.arguments().contains(
       QStringLiteral("--retirement-accounting-only"));
