@@ -8,7 +8,14 @@ final class CoreAudioSystemCapture: @unchecked Sendable {
     private let ioQueue = DispatchQueue(label: "org.wam.recorder.tap", qos: .utility)
     private let queueKey = DispatchSpecificKey<Bool>()
     private let deliveryQueue: DispatchQueue
-    private let slots = DispatchSemaphore(value: 8)
+    // Backpressure headroom for the delivery queue. Disk writes and checkpoint
+    // fsyncs run synchronously on that queue, and a Time Machine snapshot on a
+    // near-full APFS volume can stall them for seconds; eight buffers was ~85 ms.
+    // 512 buffers is ~5.5 s at the default 512-frame/48 kHz HAL callback (~2 MB
+    // of copied stereo Float32). Ceiling: smaller HAL buffers shrink the window
+    // proportionally; the upgrade path is draining writes off the awaited queue.
+    static let queueDepth = 512
+    private let slots = DispatchSemaphore(value: CoreAudioSystemCapture.queueDepth)
     private let onSample: (CMSampleBuffer) -> Void
     private let onFailure: (String) -> Void
     private(set) var deviceDescription = "Core Audio process tap"
@@ -156,7 +163,11 @@ final class CoreAudioSystemCapture: @unchecked Sendable {
         guard !failed else { return }; failed = true
         deliveryQueue.async { [onFailure] in onFailure(message) }
     }
-    private func consume(_ input: UnsafePointer<AudioBufferList>, time: AudioTimeStamp) {
+    // Internal for backpressure tests: installs a format without touching HAL.
+    func prime(format: AudioStreamBasicDescription, description: CMAudioFormatDescription) {
+        ioQueue.sync { self.format = format; self.description = description; active = true; failed = false }
+    }
+    func consume(_ input: UnsafePointer<AudioBufferList>, time: AudioTimeStamp) {
         guard active, !failed else { return }
         // HAL can deliver an empty input list before the tap becomes ready.
         guard input.pointee.mNumberBuffers > 0, input.pointee.mBuffers.mDataByteSize > 0 else { return }
@@ -187,7 +198,7 @@ final class CoreAudioSystemCapture: @unchecked Sendable {
               time.mFlags.contains(.hostTimeValid) else {
             throw RecorderFailure(message: "System audio delivered an invalid buffer layout or timestamp.")
         }
-        // Copy borrowed HAL memory before returning. At most eight buffers are
+        // Copy borrowed HAL memory before returning. At most queueDepth buffers are
         // queued; all conversion, encoder work and disk I/O happen off this callback.
         var timing = CMSampleTimingInfo(duration: CMTime(value: 1, timescale: Int32(format.mSampleRate)),
             presentationTimeStamp: CMClockMakeHostTimeFromSystemUnits(time.mHostTime), decodeTimeStamp: .invalid)

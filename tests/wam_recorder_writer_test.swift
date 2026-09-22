@@ -115,6 +115,34 @@ func verifyTapBufferOwnership() throws {
     }
     print("PASS Core Audio copy owns mono/stereo planar/interleaved samples and host timestamps; malformed callbacks rejected")
 }
+func verifyTapBackpressure() throws {
+    // A Time Machine snapshot on a near-full volume stalls the synchronous disk
+    // write for seconds while HAL keeps calling back every ~10.7 ms. The old
+    // eight-slot queue failed the session on the ninth callback.
+    let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 48000, channels: 2, interleaved: true)!
+    let input = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 512)!; input.frameLength = 512
+    var description: CMAudioFormatDescription?
+    try require(CMAudioFormatDescriptionCreate(allocator: nil, asbd: format.streamDescription, layoutSize: 0, layout: nil, magicCookieSize: 0, magicCookie: nil, extensions: nil, formatDescriptionOut: &description) == noErr, "tap format")
+    var time = AudioTimeStamp(); time.mFlags = .hostTimeValid; time.mHostTime = mach_absolute_time()
+    func run(callbacks: Int) -> (delivered: Int, failure: String?) {
+        let queue = DispatchQueue(label: "org.wam.test.stalled-writer")
+        let stall = DispatchSemaphore(value: 0)
+        var delivered = 0, failure: String?
+        let capture = CoreAudioSystemCapture(deliveryQueue: queue,
+            onSample: { _ in if delivered == 0 { stall.wait() }; delivered += 1 },
+            onFailure: { failure = $0 })
+        capture.prime(format: format.streamDescription.pointee, description: description!)
+        for _ in 0..<callbacks { capture.consume(input.audioBufferList, time: time) }
+        stall.signal(); queue.sync {}
+        return (delivered, failure)
+    }
+    let twoSeconds = 2 * 48000 / 512
+    let survived = run(callbacks: twoSeconds)
+    try require(survived.failure == nil && survived.delivered == twoSeconds, "capture failed during a 2 s write stall: \(survived.failure ?? "\(survived.delivered) delivered")")
+    let overflowed = run(callbacks: CoreAudioSystemCapture.queueDepth + 1)
+    try require(overflowed.failure?.contains("could not keep up") == true && overflowed.delivered == CoreAudioSystemCapture.queueDepth, "queue must still bound memory when storage never recovers")
+    print("PASS system audio queue survives a 2 s storage stall and still fails past \(CoreAudioSystemCapture.queueDepth) buffers")
+}
 @main struct WriterTests {
     static func main() throws {
         let seconds = CommandLine.arguments.count > 1 ? Int(CommandLine.arguments[1])! : 12
@@ -123,7 +151,7 @@ func verifyTapBufferOwnership() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("wam-writer-test-\(UUID())")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
-        if selected == .float32 && !CommandLine.arguments.contains("--crash-proof") { try verifyPreservation(root: root); try verifyTapBufferOwnership() }
+        if selected == .float32 && !CommandLine.arguments.contains("--crash-proof") { try verifyPreservation(root: root); try verifyTapBufferOwnership(); try verifyTapBackpressure() }
         for session in 0..<sessions {
             var settings = RecordingSettings(); settings.scheme = selected
             let writer = try RecordingWriter(settings: settings, rootOverride: root)
