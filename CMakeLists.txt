@@ -77,6 +77,10 @@ if(WAM_ENABLE_AVCODEC_STAGE OR WAM_ENABLE_AVFORMAT_STAGE)
   target_link_libraries(wam_avcodec_worker PUBLIC wam_ffmpeg_lgpl)
 endif()
 
+set(WAM_NATIVE_READER_TEST_FIXTURE
+  "${PROJECT_SOURCE_DIR}/test-media/wamkit/av.mp4" CACHE FILEPATH
+  "Fixture for the AVFoundation cancellation test")
+
 set(WAM_NATIVE_VIDEO_TEST_FIXTURE "" CACHE FILEPATH
   "Optional H.264 B-frame fixture used by the macOS VideoToolbox test")
 set(WAM_NATIVE_VIDEO_10BIT_TEST_FIXTURE "" CACHE FILEPATH
@@ -112,7 +116,7 @@ option(WAM_BUILD_APP "Build WAM's Qt application" ON)
 option(WAM_BUILD_WAMKIT "Build the native embedding framework" ${APPLE})
 include(src/wamkit/NativeTargets.cmake)
 if(NOT WAM_BUILD_APP)
-  if(WAM_BUILD_WAMKIT)
+  if(APPLE AND WAM_BUILD_WAMKIT)
     add_subdirectory(src/wamkit)
   endif()
   return()
@@ -254,6 +258,9 @@ if(CMAKE_DL_LIBS)
   target_link_libraries(wam_mpv_runtime PRIVATE ${CMAKE_DL_LIBS})
 endif()
 target_link_libraries(wam PRIVATE wam_mpv_runtime)
+if(NOT APPLE)
+  target_link_libraries(wam PRIVATE wam_native_core)
+endif()
 
 # Stage FFmpeg into the development runtime.
 #
@@ -281,7 +288,7 @@ if(WAM_DEV_FFMPEG_EXECUTABLE)
   # the build system then restores build/runtime/ffmpeg when it is missing or
   # older than its source, even on a build where nothing else changed and the
   # app does not relink.
-  set(WAM_STAGED_FFMPEG "${CMAKE_CURRENT_BINARY_DIR}/runtime/ffmpeg")
+  set(WAM_STAGED_FFMPEG "${CMAKE_CURRENT_BINARY_DIR}/runtime/ffmpeg${CMAKE_EXECUTABLE_SUFFIX}")
   add_custom_command(
     OUTPUT "${WAM_STAGED_FFMPEG}"
     COMMAND ${CMAKE_COMMAND} -E make_directory
@@ -433,9 +440,6 @@ if(APPLE)
       add_executable(wam_native_owner_embedding_test tests/native_owner_embedding_test.mm)
       target_link_libraries(wam_native_owner_embedding_test PRIVATE wam_macos_native_session_system)
       add_test(NAME native_owner_embedding COMMAND wam_native_owner_embedding_test)
-      add_executable(wam_native_exact_embedding_time_test tests/native_exact_embedding_time_test.cpp)
-      target_link_libraries(wam_native_exact_embedding_time_test PRIVATE wam_native_core)
-      add_test(NAME native_exact_embedding_time COMMAND wam_native_exact_embedding_time_test)
       add_executable(wam_native_layer_embedding_test tests/native_layer_embedding_test.mm)
       target_compile_options(wam_native_layer_embedding_test PRIVATE -fobjc-arc)
       target_link_libraries(wam_native_layer_embedding_test PRIVATE wam_macos_native_layer)
@@ -668,7 +672,11 @@ if(BUILD_TESTING)
     COMMAND ${CMAKE_COMMAND} -P
       ${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/msys2_pkgconfig_paths_test.cmake)
 
-  if(APPLE)
+  if(TARGET wam_native_core)
+    add_executable(wam_native_exact_embedding_time_test tests/native_exact_embedding_time_test.cpp)
+    target_link_libraries(wam_native_exact_embedding_time_test PRIVATE wam_native_core)
+    add_test(NAME native_exact_embedding_time COMMAND wam_native_exact_embedding_time_test)
+
     add_executable(wam_native_media_source_test
       tests/native_media_source_test.cpp)
     target_link_libraries(
@@ -783,7 +791,7 @@ if(BUILD_TESTING)
       tests/mpegts_demuxer_test.cpp)
     target_link_libraries(wam_mpegts_demuxer_test PRIVATE wam_native_core)
     add_test(NAME mpegts_demuxer COMMAND wam_mpegts_demuxer_test)
-    find_program(WAM_MPEGTS_PYTHON NAMES python3 REQUIRED)
+    find_program(WAM_MPEGTS_PYTHON NAMES python3 python REQUIRED)
     find_program(WAM_MPEGTS_FFMPEG NAMES ffmpeg
       HINTS "${CMAKE_BINARY_DIR}/runtime" REQUIRED)
     set(WAM_MPEGTS_FIXTURE_DIR "${CMAKE_BINARY_DIR}/mpegts-fixtures-v1")
@@ -799,19 +807,23 @@ if(BUILD_TESTING)
       FIXTURES_REQUIRED mpegts_corpus
       ENVIRONMENT "WAM_MPEGTS_FIXTURES=${WAM_MPEGTS_FIXTURE_DIR}")
 
-    # Regime microbenchmarks for the demuxer. EXCLUDE_FROM_ALL keeps it off the
-    # default build; the ctest entry carries the `benchmark` label so it never
-    # enters the required-test regex, which names tests explicitly.
-    add_executable(wam_matroska_demuxer_bench EXCLUDE_FROM_ALL
-      benchmarks/matroska_demuxer_bench.cpp)
-    target_link_libraries(wam_matroska_demuxer_bench PRIVATE wam_native_core)
-    target_compile_features(wam_matroska_demuxer_bench PRIVATE cxx_std_20)
-    target_compile_options(wam_matroska_demuxer_bench PRIVATE
-      -Wall -Wextra -Wpedantic)
-    add_test(NAME matroska_demuxer_bench
-      COMMAND wam_matroska_demuxer_bench --quick)
-    set_tests_properties(matroska_demuxer_bench PROPERTIES
-      LABELS benchmark TIMEOUT 600 DISABLED FALSE)
+    # This optional benchmark uses POSIX-only fixture I/O.
+    if(APPLE)
+      # Regime microbenchmarks for the demuxer. EXCLUDE_FROM_ALL keeps it off the
+      # default build; the ctest entry carries the `benchmark` label so it never
+      # enters the required-test regex, which names tests explicitly.
+      add_executable(wam_matroska_demuxer_bench EXCLUDE_FROM_ALL
+        benchmarks/matroska_demuxer_bench.cpp)
+      target_link_libraries(wam_matroska_demuxer_bench PRIVATE wam_native_core)
+      target_compile_features(wam_matroska_demuxer_bench PRIVATE cxx_std_20)
+      target_compile_options(wam_matroska_demuxer_bench PRIVATE
+        -Wall -Wextra -Wpedantic)
+      add_test(NAME matroska_demuxer_bench
+        COMMAND wam_matroska_demuxer_bench --quick)
+      set_tests_properties(matroska_demuxer_bench PROPERTIES
+        LABELS benchmark TIMEOUT 600 DISABLED FALSE)
+
+    endif()
 
     add_executable(wam_video_codec_configuration_test
       tests/video_codec_configuration_test.cpp)
@@ -1057,7 +1069,7 @@ if(BUILD_TESTING)
   set_tests_properties(player_core_render_context_permission PROPERTIES
     TIMEOUT 30)
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    set_tests_properties(player_core_render_context_permission PROPERTIES
+    set_tests_properties(player_controller_lazy player_core_render_context_permission PROPERTIES
       ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
   endif()
 
@@ -1168,7 +1180,7 @@ if(BUILD_TESTING)
         "${WAM_VIDEOTOOLBOX_FRAMEWORK}")
       add_test(NAME macos_avfoundation_reader_cancellation
         COMMAND wam_avfoundation_media_source_test --cancel-only
-          "${PROJECT_SOURCE_DIR}/test-media/wamkit/av.mp4")
+          "${WAM_NATIVE_READER_TEST_FIXTURE}")
       set_tests_properties(macos_avfoundation_reader_cancellation PROPERTIES TIMEOUT 15)
       add_test(NAME macos_avfoundation_media_source
         COMMAND wam_avfoundation_media_source_test)
@@ -2233,7 +2245,10 @@ if(BUILD_TESTING AND WAM_ENABLE_AVFORMAT_STAGE)
   add_test(NAME libavformat_mpeg4_full_range_refusal COMMAND wam_libavformat_source_test
     "${CMAKE_SOURCE_DIR}/tests/fixtures/software-color/asp-full.mkv"
     "SoftwareColorUnqualified: MPEG-4 full-range container signaling")
-  set(WAM_AVFORMAT_FIXTURES "${CMAKE_SOURCE_DIR}/test-media/native-coverage/phase3")
+  set(WAM_AVFORMAT_FIXTURES "${CMAKE_SOURCE_DIR}/test-media/native-coverage/phase3"
+    CACHE PATH "Generated libavformat test corpus")
+  set(WAM_MIXED_FIXTURES "${CMAKE_SOURCE_DIR}/test-media/native-coverage/phase2e"
+    CACHE PATH "Generated mixed-container test corpus")
   add_test(NAME libavformat_fixtures COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_SOURCE_DIR}/tests/libavformat_fixtures.py" --root "${WAM_AVFORMAT_FIXTURES}"
     --ffmpeg "${WAM_AVCODEC_FIXTURE_FFMPEG}")
@@ -2270,7 +2285,7 @@ if(BUILD_TESTING AND WAM_ENABLE_AVFORMAT_STAGE)
   add_test(NAME libavformat_avi_missing_pts COMMAND wam_libavformat_source_test
     "${WAM_AVFORMAT_FIXTURES}/reordered-asp.avi" "LibavformatExactVideoTimelineUnavailable")
   add_test(NAME libavformat_flv_audio_refusal COMMAND wam_libavformat_source_test
-    "${CMAKE_SOURCE_DIR}/test-media/native-coverage/phase2e/positive-aac.flv" "LibavformatAudioTimingUnproven: aac")
+    "${WAM_MIXED_FIXTURES}/positive-aac.flv" "LibavformatAudioTimingUnproven: aac")
   add_test(NAME libavformat_asf_audio_refusal COMMAND wam_libavformat_source_test
     "${WAM_AVFORMAT_FIXTURES}/legacy.asf" "LibavformatAudioTimingUnproven: wmav2")
   add_test(NAME libavformat_routed_avi COMMAND wam_libavformat_source_test
@@ -2357,9 +2372,6 @@ if(BUILD_TESTING AND WAM_ENABLE_AVCODEC_STAGE)
 endif()
 
 if(BUILD_TESTING AND WAM_ENABLE_AVCODEC_STAGE)
-  add_executable(wam_software_audio_packet_test tests/software_audio_packet_test.cpp)
-  target_include_directories(wam_software_audio_packet_test PRIVATE src)
-  add_test(NAME software_audio_packet COMMAND wam_software_audio_packet_test)
   add_test(NAME software_audio_production COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_SOURCE_DIR}/tests/software_audio_production_proof.py"
     --probe "$<TARGET_FILE:wam_native_coverage_audio_probe>"
@@ -2394,7 +2406,6 @@ endif()
 
 if(BUILD_TESTING AND APPLE AND WAM_ENABLE_AVFORMAT_STAGE)
   find_program(WAM_MIXED_FFPROBE ffprobe REQUIRED)
-  set(WAM_MIXED_FIXTURES "${CMAKE_SOURCE_DIR}/test-media/native-coverage/phase2e")
   add_executable(wam_libavformat_mixed_source_test tests/libavformat_mixed_source_test.mm)
   target_link_libraries(wam_libavformat_mixed_source_test PRIVATE wam_macos_native_backend)
   add_test(NAME libavformat_mixed_fixtures COMMAND "${Python3_EXECUTABLE}"
@@ -2432,13 +2443,17 @@ if(BUILD_TESTING AND APPLE AND (WAM_ENABLE_AVCODEC_STAGE OR WAM_ENABLE_AVFORMAT_
   add_test(NAME ffmpeg_coexistence COMMAND wam_ffmpeg_coexistence_test "$<TARGET_FILE:wam_coexistence_fake_mpv>")
 endif()
 
-if(BUILD_TESTING AND APPLE)
+if(BUILD_TESTING)
+  add_executable(wam_software_audio_packet_test tests/software_audio_packet_test.cpp)
+  target_include_directories(wam_software_audio_packet_test PRIVATE src)
+  add_test(NAME software_audio_packet COMMAND wam_software_audio_packet_test)
+
   add_executable(wam_software_color_qualification_test tests/software_color_qualification_test.cpp)
   target_include_directories(wam_software_color_qualification_test PRIVATE src)
   add_test(NAME software_color_qualification COMMAND wam_software_color_qualification_test)
 endif()
 
-if(WAM_BUILD_WAMKIT)
+if(APPLE AND WAM_BUILD_WAMKIT)
   add_subdirectory(src/wamkit)
 endif()
 

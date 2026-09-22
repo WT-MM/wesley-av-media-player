@@ -93,6 +93,15 @@ PATH="$(dirname "$QMLIMPORTSCANNER_PATH"):$PATH" \
   "$WINDEPLOYQT" --release --no-translations \
   --qmldir "$QML_SOURCE_DIR" --dir "$PACKAGE_DIR" "$PACKAGE_DIR/WAM.exe"
 
+# WAM and its media closure use the UCRT64 compiler. The downloaded Qt SDK
+# can bundle an older MinGW runtime; deploy the compiler runtime used to build
+# WAM before ldd walks the package, otherwise it may resolve the stale local
+# DLL and never copy the newer one from UCRT64.
+for compiler_dll in libgcc_s_seh-1.dll libstdc++-6.dll libwinpthread-1.dll; do
+  test -f "/ucrt64/bin/$compiler_dll"
+  cp -f "/ucrt64/bin/$compiler_dll" "$PACKAGE_DIR/"
+done
+
 cp -f "$FFMPEG_EXECUTABLE" "$PACKAGE_DIR/tools/ffmpeg.exe"
 cp -f "$WHISPER_EXECUTABLE" "$PACKAGE_DIR/tools/whisper-cli.exe"
 cp -f "$MODEL" "$PACKAGE_DIR/models/ggml-base.en.bin"

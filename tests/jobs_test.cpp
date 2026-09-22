@@ -18,8 +18,9 @@
 #include <csignal>
 #include <unistd.h>
 
-#include "support/expect.hpp"
 #endif
+
+#include "support/expect.hpp"
 
 static_assert(noexcept(std::declval<wam::BackgroundJob&>().cancel()),
               "background cancellation must remain no-throw");

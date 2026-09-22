@@ -1,6 +1,12 @@
 #include "media/matroska_subtitles.hpp"
 
+#if defined(_WIN32)
+#include <io.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#else
 #include <unistd.h>
+#endif
 
 #include <array>
 #include <cstdio>
@@ -195,7 +201,13 @@ class TemporaryFile final {
         (std::filesystem::temp_directory_path() / "wam_subs_XXXXXX").string();
     std::vector<char> buffer(pattern.begin(), pattern.end());
     buffer.push_back('\0');
+#if defined(_WIN32)
+    const int descriptor = ::_mktemp_s(buffer.data(), buffer.size()) == 0
+        ? ::_open(buffer.data(), _O_CREAT | _O_EXCL | _O_RDWR | _O_BINARY,
+                  _S_IREAD | _S_IWRITE) : -1;
+#else
     const int descriptor = ::mkstemp(buffer.data());
+#endif
     if (descriptor < 0)
       return;
     path_ = buffer.data();
