@@ -101,7 +101,7 @@ jobs:
             echo "Qt deployment reported errors despite a zero exit code" >&2
             exit 1
           fi
-          scripts/fix_qt_qml_deploy_macos.zsh stage/WAM.app qml
+          MACDEPLOYQT="$QT_ROOT_DIR/bin/macdeployqt" scripts/fix_qt_qml_deploy_macos.zsh stage/WAM.app qml
       - name: Add standalone media and caption runtime
         run: |
           chmod +x scripts/*.sh scripts/*.zsh
