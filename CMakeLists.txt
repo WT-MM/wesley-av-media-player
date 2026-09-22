@@ -166,7 +166,7 @@ else()
   set(WAM_MPV_INTEGRATION_TEST_TARGET PkgConfig::MPV)
 endif()
 
-qt_standard_project_setup(REQUIRES 6.11)
+qt_standard_project_setup(REQUIRES 6.10)
 
 qt_add_executable(wam MACOSX_BUNDLE WIN32
   src/qt/main.cpp
