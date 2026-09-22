@@ -26,7 +26,11 @@ jobs:
     environment:
       name: macos-release
       url: https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}
-    runs-on: macos-14
+    # macos-15: Homebrew no longer pours bottles for the macos-14 image, so
+    # mpv, ffmpeg and libvpx built from source there and the job never
+    # finished (2026-09-22). Sequoia bottles carry minos 15.0, which the
+    # bundler adopts as the app's LSMinimumSystemVersion.
+    runs-on: macos-15
     timeout-minutes: 90
     env:
       WAM_MACOS_DEPLOYMENT_TARGET: "13.3"
