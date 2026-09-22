@@ -117,7 +117,11 @@ def main():
         rms = math.sqrt(sum(x*x for x in errors)/len(errors))
         maximum = max(abs(x) for x in errors)
         assert all(math.isfinite(x) for x in output)
-        assert maximum < (1e-12 if bit_exact else 0.004), (path, maximum, platform.mac_ver()[0], output[:8].tolist(), expected[:8].tolist())
+        limit = 1e-12 if bit_exact else 0.004
+        first = next((i for i, x in enumerate(errors) if abs(x) >= limit), None)
+        assert maximum < limit, (path, maximum, platform.mac_ver()[0], 'first divergent interleaved sample', first,
+                                 output[first:first+4].tolist() if first is not None else None,
+                                 expected[first:first+4].tolist() if first is not None else None)
         # Both independent chirps must align at lag zero, including channel identity.
         lags = {}
         for lag in (-2,-1,0,1,2):

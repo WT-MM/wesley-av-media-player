@@ -13,6 +13,11 @@ def run(argv, expected=0):
     p = subprocess.run([str(x) for x in argv], capture_output=True, text=True)
     if p.returncode in (-9, 137):
         p = subprocess.run([str(x) for x in argv], capture_output=True, text=True)
+    if p.returncode == 1 and 'create=-12906' in p.stdout:
+        # kVTCouldNotFindVideoDecoderErr: hosted virtual machines expose no ProRes
+        # decoder even though VTIsHardwareDecodeSupported answers yes for it.
+        print('SKIP: this host has no decoder for', p.stdout.strip())
+        sys.exit(77)
     assert p.returncode == expected, (argv, p.returncode, p.stdout, p.stderr)
     return p.stdout
 
@@ -23,11 +28,6 @@ def main():
         parser.add_argument('--'+name, required=True)
     parser.add_argument('--artifacts')
     a = parser.parse_args()
-    # Hosted virtual machines expose no ProRes decoder (VTDecompressionSessionCreate -12906).
-    listing = run([a.video])
-    if 'HW codec=61703468 verdict=1' not in listing:
-        print('SKIP: this host has no ProRes 4444 hardware decoder; phase 0b hardware proofs need one')
-        sys.exit(77)
     with tempfile.TemporaryDirectory(prefix='wam-phase0b-', dir='/private/tmp') as tmp:
         root = Path(a.artifacts or tmp)
         root.mkdir(parents=True, exist_ok=True)
