@@ -30,16 +30,27 @@ jobs:
     timeout-minutes: 90
     env:
       WAM_MACOS_DEPLOYMENT_TARGET: "13.3"
+      QT_VERSION: 6.11.1
 
     steps:
       - name: Check out the release source
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
+      # Qt comes from the pinned installer, as in build.yml: Homebrew's qt
+      # formula now pulls node and llvm, and llvm has no bottle for this
+      # runner, so brew spent the whole job compiling it (v0.4.34, 2026-09-22).
+      - name: Install pinned Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          modules: qtshadertools
+          cache: true
       - name: Install build and media dependencies
         run: |
           set -euo pipefail
           brew update --quiet
-          brew install --quiet cmake ninja pkg-config qt mpv ffmpeg libvpx
+          brew install --quiet cmake ninja pkg-config mpv ffmpeg libvpx
+          test "$(qmake -query QT_VERSION)" = "$QT_VERSION"
 
       # The model is a 148 MB download from Hugging Face. Key the cache on the
       # fetch script, which pins both the repository revision and the SHA-256,
@@ -78,7 +89,7 @@ jobs:
         run: |
           set -euo pipefail
           cmake -S . -B build -G Ninja \
-            -DCMAKE_PREFIX_PATH="$(brew --prefix qt)" \
+            -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR" \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_OSX_DEPLOYMENT_TARGET="$WAM_MACOS_DEPLOYMENT_TARGET" \
             -DWAM_ENABLE_MACOS_NATIVE_VIDEO=ON \
@@ -99,7 +110,7 @@ jobs:
         run: |
           set -euo pipefail
           cmake --install build --prefix "$GITHUB_WORKSPACE/stage"
-          scripts/fix_qt_qml_deploy_macos.zsh stage/WAM.app qml
+          MACDEPLOYQT="$QT_ROOT_DIR/bin/macdeployqt" scripts/fix_qt_qml_deploy_macos.zsh stage/WAM.app qml
           scripts/bundle_macos.zsh \
             stage/WAM.app \
             build/runtime/whisper-cli \
