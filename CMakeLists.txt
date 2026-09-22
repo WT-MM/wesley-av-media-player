@@ -122,7 +122,10 @@ if(NOT WAM_BUILD_APP)
   return()
 endif()
 
-find_package(Qt6 6.11 REQUIRED COMPONENTS
+# 6.10 is the floor: nothing here needs a newer API, and the Windows lane
+# takes the newest Qt its installer can resolve (6.10.3); macOS and Linux
+# still build against 6.11.1.
+find_package(Qt6 6.10 REQUIRED COMPONENTS
   Core
   Gui
   Qml
