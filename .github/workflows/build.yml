@@ -92,10 +92,16 @@ jobs:
           set -o pipefail
           cmake --install build \
             --prefix "${{ github.workspace }}/stage" 2>&1 | tee qt-install.log
-          if grep -E '^(ERROR:|CMake Error)' qt-install.log; then
+          # macdeployqt walks PlugIns/ and complains that the nested Quick Look
+          # appex's Info.plist is not an object file. The appex is self-contained
+          # by design and the payload verification below proves the closure;
+          # every other deployment error still fails the build.
+          if grep -E '^(ERROR:|CMake Error)' qt-install.log \
+             | grep -v 'WAMThumbnail.appex/Contents/.* is not an object file'; then
             echo "Qt deployment reported errors despite a zero exit code" >&2
             exit 1
           fi
+          scripts/fix_qt_qml_deploy_macos.zsh stage/WAM.app qml
       - name: Add standalone media and caption runtime
         run: |
           chmod +x scripts/*.sh scripts/*.zsh
