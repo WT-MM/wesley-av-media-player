@@ -269,7 +269,7 @@ jobs:
             mingw-w64-ucrt-x86_64-ninja
             mingw-w64-ucrt-x86_64-pkgconf
             mingw-w64-ucrt-x86_64-python
-            mingw-w64-ucrt-x86_64-libmpv
+            mingw-w64-ucrt-x86_64-mpv
             mingw-w64-ucrt-x86_64-ffmpeg
       - name: Select Qt SDK and verify media development package
         run: |
