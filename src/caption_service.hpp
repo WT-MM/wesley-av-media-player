@@ -45,12 +45,15 @@ CaptionTools findCaptionTools(const char *argv0);
 struct CaptionOptions {
   // Zero selects a conservative value based on the machine's CPU count.
   unsigned threads = 0;
-  // whisper.cpp's Metal backend can become uninterruptibly stuck on some
-  // macOS/driver combinations. The bundled Accelerate/BLAS CPU path is the
-  // reliable default; callers may opt into a supported GPU backend.
-  bool use_gpu = false;
+  // Metal is the default: the bake-off (docs/captions/ASR_BAKEOFF.md) measured
+  // it 5.9x faster than the CPU path per 300 s file at 1/55 of the CPU time and
+  // equal accuracy. whisper.cpp's Metal backend can still become
+  // uninterruptibly stuck on some macOS/driver combinations, so the caption
+  // worker watches for caption-time progress, kills a stalled process group and
+  // retries once on the Accelerate/BLAS CPU path.
+  bool use_gpu = true;
   bool prefer_apple = true;
-  // Testable no-caption-progress deadline; only used for GPU opt-in.
+  // Testable no-caption-progress deadline; applies whenever use_gpu is set.
   unsigned gpu_watchdog_ms = 30000;
   bool translate_to_english = false;
   bool overwrite = true;

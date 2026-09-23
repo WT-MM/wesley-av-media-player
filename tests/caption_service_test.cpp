@@ -267,13 +267,17 @@ int main(int argc, char **argv) {
     setenv("WAM_CAPTION_TEST_WAV_LOG", wav_log.c_str(), 1);
 #endif
 
-    // CPU remains the default, and opting into Metal changes no other argv.
+    // Metal is the default; opting out to CPU adds -ng and changes no other argv.
     {
       wam::CaptionOptions options;
       auto command = wam::buildCaptionWhisperCommand("whisper","model","audio","output",options);
-      check(command.find("-ng") != std::string::npos,"default must disable GPU");
-      options.use_gpu=true;
-      check(wam::buildCaptionWhisperCommand("whisper","model","audio","output",options).find("-ng") == std::string::npos,"GPU opt-in argv changed");
+      check(command.find("-ng") == std::string::npos,"default must use Metal");
+      options.use_gpu=false;
+      auto cpu = wam::buildCaptionWhisperCommand("whisper","model","audio","output",options);
+      check(cpu.find("-ng") != std::string::npos,"CPU opt-out must pass -ng");
+      // quoteArg wraps each argument, so the token is ' -ng' or " -ng" plus quotes.
+      auto strip = [](std::string s){ for (const char* tok : {" '-ng'", " \"-ng\"", " -ng"}) { auto at = s.find(tok); if (at != std::string::npos) { s.erase(at, std::string(tok).size()); break; } } return s; };
+      check(strip(cpu) == command,"CPU opt-out changed argv beyond -ng");
     }
 #ifndef _WIN32
     // No real GPU required: hung Metal leader + TERM-ignoring descendant must

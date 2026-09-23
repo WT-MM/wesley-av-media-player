@@ -29,10 +29,12 @@ uses Whisper; cancellation cancels the job, preserving the existing destination.
 There is no automatic download at launch, during a readiness query, or in tests.
 Closing and reopening the window creates a new service and permits another prompt.
 
-Whisper remains CPU by default (`-ng`). `asr-evidence.json` contains A/B/C only:
-there is **no engine D measurement**, so no CPU timing or energy claim supports
-this choice. It is the documented Metal reliability decision. A caller can opt in
-with `CaptionOptions::use_gpu=true`; there is deliberately no new GUI preference.
+Whisper runs on Metal by default. Engine D in `asr-evidence.json` measured the
+CPU path (`-ng`) at 24.8 s per 300 s file against 4.2 s on Metal, 314 s of CPU
+against 5.7 s, and a 2.2 s first caption against 0.6 s, at equal accuracy. The
+documented Metal hang is bounded by the caption-time watchdog: a stalled Metal
+process group is killed and the file is retried once on CPU. A caller can opt out
+with `CaptionOptions::use_gpu=false`; there is deliberately no new GUI preference.
 The argv otherwise remains unchanged. CoreML is not packaged.
 
 ## Isolation and progress
