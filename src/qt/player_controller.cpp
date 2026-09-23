@@ -3322,7 +3322,6 @@ void PlayerController::generateCaptionsTo(const QUrl &destination) {
   request.input = *input;
   request.output_srt = *output;
   request.tools = ::wam::findCaptionTools(nullptr);
-  request.options.use_gpu = false;
   request.options.overwrite = true;
 
   if (!caption_service_->start(std::move(request))) {

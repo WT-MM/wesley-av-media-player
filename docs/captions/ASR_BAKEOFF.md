@@ -26,7 +26,7 @@ An em dash means unavailable, not zero. Quiet gate: the harness starts a run onl
 | A: shipped Whisper Metal | short / long | 300 × 3 / 20 × 3 | 5.03% / 4.49% | 0.36 s / 4.22 s | 0.060 / 0.014 | 0.28 s / 5.70 s | 378 / 478 MB |
 | B: CoreML encoder + Metal decoder | short / long | 300 × 3 / 20 × 3 | 5.08% / 4.51% | 0.42 s / 4.16 s | 0.070 / 0.014 | 0.31 s / 4.49 s | 391 / 490 MB |
 | C: SpeechAnalyzer/Transcriber (client process only; see CPU note) | short / long | 300 × 3 / 20 × 3 | 2.49% / 2.45% | 1.34 s / 7.99 s | 0.230 / 0.026 | 0.03 s / 0.66 s | 18 / 20 MB |
-| D: shipped default, CPU (`-ng`) | short / long | 300 × 3 / 20 × 3 | 4.96% / 4.56% | 0.81 s / 24.83 s | 0.138 / 0.081 | 7.88 s / 314.47 s | 330 / 572 MB |
+| D: CPU (`-ng`), the default before v0.4.37 | short / long | 300 × 3 / 20 × 3 | 4.96% / 4.56% | 0.81 s / 24.83 s | 0.138 / 0.081 | 7.88 s / 314.47 s | 330 / 572 MB |
 
 | Engine | First-caption latency, long | Model load | First-observed CoreML load/specialization | Steady CoreML load | Long-form timestamp alignment |
 |---|---:|---:|---:|---:|---:|
