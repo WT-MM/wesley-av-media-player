@@ -14,7 +14,15 @@
 #include <tuple>
 #include <vector>
 #include <sys/stat.h>
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <io.h>
+#else
 #include <unistd.h>
+#endif
 
 namespace wam::media::matroska {
 namespace {
@@ -4073,6 +4081,10 @@ class DescriptorReader final : public SeekableByteReader {
   [[nodiscard]] bool
   readAt(std::uint64_t offset,
          std::span<std::byte> destination) noexcept override {
+#if defined(_WIN32)
+    // The CRT's off_t can be 32-bit; ReadFile accepts 64-bit offsets.
+    using off_t = std::int64_t;
+#endif
     if (offset > size_ || destination.size() > size_ - offset ||
         offset > static_cast<std::uint64_t>(
                      std::numeric_limits<off_t>::max())) {
@@ -4085,9 +4097,24 @@ class DescriptorReader final : public SeekableByteReader {
                               std::numeric_limits<off_t>::max())) {
         return false;
       }
+#if defined(_WIN32)
+      const std::uint64_t readOffset = currentOffset;
+      OVERLAPPED position{};
+      position.Offset = static_cast<DWORD>(readOffset);
+      position.OffsetHigh = static_cast<DWORD>(readOffset >> 32);
+      DWORD transferred = 0;
+      const bool succeeded = ::ReadFile(
+          reinterpret_cast<HANDLE>(::_get_osfhandle(descriptor_)),
+          destination.data() + static_cast<std::ptrdiff_t>(completed),
+          static_cast<DWORD>(std::min<std::size_t>(destination.size() - completed, MAXDWORD)),
+          &transferred, &position);
+      if (!succeeded) return false;
+      const auto count = static_cast<std::int64_t>(transferred);
+#else
       const auto count = ::pread(
           descriptor_, destination.data() + static_cast<std::ptrdiff_t>(completed),
           destination.size() - completed, static_cast<off_t>(currentOffset));
+#endif
       if (count < 0) {
         if (errno == EINTR) {
           continue;
@@ -4409,7 +4436,11 @@ ParseOutcome parseDocument(SeekableByteReader& reader, Visitor& visitor,
 ParseOutcome parseFile(const std::filesystem::path& path, Visitor& visitor,
                        const ParseOptions& options,
                        CancellationToken cancellation) noexcept {
-  const int descriptor = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
+#if defined(_WIN32)
+    const int descriptor = ::_wopen(path.c_str(), _O_RDONLY | _O_BINARY | _O_NOINHERIT);
+#else
+    const int descriptor = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
+#endif
   if (descriptor < 0) {
     return {ParseStatus::IoError, ParseError::ReadFailed, 0, 0, 0,
             std::nullopt, std::nullopt};
@@ -4419,8 +4450,18 @@ ParseOutcome parseFile(const std::filesystem::path& path, Visitor& visitor,
     ~DescriptorCloser() { static_cast<void>(::close(descriptor)); }
   } closer{descriptor};
 
-  struct stat before {};
-  if (::fstat(descriptor, &before) != 0 || !S_ISREG(before.st_mode) ||
+#if defined(_WIN32)
+    struct _stati64 before {};
+#else
+    struct stat before {};
+#endif
+  if (
+#if defined(_WIN32)
+        ::_fstati64(descriptor, &before)
+#else
+        ::fstat(descriptor, &before)
+#endif
+        != 0 || !S_ISREG(before.st_mode) ||
       before.st_size < 0) {
     return {ParseStatus::IoError, ParseError::ReadFailed, 0, 0, 0,
             std::nullopt, std::nullopt};
@@ -4432,8 +4473,18 @@ ParseOutcome parseFile(const std::filesystem::path& path, Visitor& visitor,
     outcome = parseDocument(reader, visitor, options, cancellation);
   }
 
-  struct stat after {};
-  if (::fstat(descriptor, &after) != 0) {
+#if defined(_WIN32)
+    struct _stati64 after {};
+#else
+    struct stat after {};
+#endif
+  if (
+#if defined(_WIN32)
+        ::_fstati64(descriptor, &after)
+#else
+        ::fstat(descriptor, &after)
+#endif
+        != 0) {
     outcome.status = ParseStatus::IoError;
     outcome.error = ParseError::ReadFailed;
     outcome.offset = 0;

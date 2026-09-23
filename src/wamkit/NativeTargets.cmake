@@ -1,4 +1,5 @@
-if(APPLE)
+# The parser, timing and state core contains no Apple SDK dependencies.
+if(APPLE OR WAM_BUILD_APP)
   add_library(wam_native_core STATIC
     src/media/adpcm_decoder.cpp
     src/media/matroska_aac.hpp

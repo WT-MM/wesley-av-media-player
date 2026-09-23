@@ -19,7 +19,7 @@ xc.parent.mkdir(parents=True, exist_ok=True)
 if xc.exists(): shutil.rmtree(xc)
 subprocess.run(['xcodebuild', '-create-xcframework', '-framework', str(framework),
                 '-output', str(xc)], check=True)
-scratch = Path('/private/tmp/wam-wamkit-scratch/swift')
+scratch = Path(os.environ.get('TMPDIR', '/private/tmp/wam-wamkit-scratch')) / 'swift'
 scratch.mkdir(parents=True, exist_ok=True)
 env = os.environ.copy()
 env['CLANG_MODULE_CACHE_PATH'] = str(scratch / 'modules')

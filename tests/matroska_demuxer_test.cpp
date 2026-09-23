@@ -23,7 +23,13 @@
 #include <string>
 #include <string_view>
 #include <type_traits>
+#if defined(_WIN32)
+#include <io.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#else
 #include <unistd.h>
+#endif
 #include <utility>
 #include <variant>
 #include <vector>
@@ -4172,10 +4178,17 @@ void testFractionalDuration() {
 
 void testLocalFilePreparation() {
   const Fixture fixture = buildFixture({});
-  std::array<char, 64> path{};
-  const std::string pattern = "/private/tmp/wam-matroska-demuxer-XXXXXX";
-  std::copy(pattern.begin(), pattern.end(), path.begin());
-  const int descriptor = ::mkstemp(path.data());
+  const std::string pattern = (std::filesystem::temp_directory_path() /
+      "wam-matroska-demuxer-XXXXXX").string();
+  std::vector<char> path(pattern.begin(), pattern.end());
+  path.push_back('\0');
+#if defined(_WIN32)
+    const int descriptor = ::_mktemp_s(path.data(), path.size()) == 0
+        ? ::_open(path.data(), _O_CREAT | _O_EXCL | _O_RDWR | _O_BINARY,
+                  _S_IREAD | _S_IWRITE) : -1;
+#else
+    const int descriptor = ::mkstemp(path.data());
+#endif
   expect(descriptor >= 0, "temporary Matroska fixture opens");
   if (descriptor < 0) {
     return;
@@ -4197,7 +4210,7 @@ void testLocalFilePreparation() {
   expect(written == fixture.bytes.size(), "temporary fixture is written whole");
 
   const std::filesystem::path localPath(path.data());
-  const auto outcome = prepareMatroskaLocalFile(localPath, {});
+  auto outcome = prepareMatroskaLocalFile(localPath, {});
   expect(outcome.status == MatroskaDemuxStatus::Ready && outcome.asset &&
              outcome.asset->path() == localPath,
          "a real local Matroska file prepares through one retained descriptor");
@@ -4231,10 +4244,11 @@ void testLocalFilePreparation() {
          "local-file preparation honors cancellation before opening");
 
   const auto missing = prepareMatroskaLocalFile(
-      std::filesystem::path("/private/tmp/wam-matroska-demuxer-absent"), {});
+      (std::filesystem::temp_directory_path() / "wam-matroska-demuxer-absent"), {});
   expect(missing.asset == nullptr && missing.error == MatroskaDemuxError::Io,
          "a missing local file fails with Io");
 
+  outcome.asset.reset();
   static_cast<void>(::unlink(path.data()));
 }
 

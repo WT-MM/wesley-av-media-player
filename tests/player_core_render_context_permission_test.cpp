@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <cstring>
 #include <cstdlib>
+#include <exception>
 #include <functional>
 #include <iostream>
 #include <memory>
@@ -335,7 +336,18 @@ bool makeCurrentOffscreen(QOpenGLContext &context, QOffscreenSurface &surface,
 
 } // namespace
 
-int main(int argc, char **argv) {
+int main(int argc, char **argv) try {
+  // Keep failures attributable to this executable in the Windows CTest log.
+  // Its own code performs no filesystem removal; capture the actual exception
+  // and last external-runtime boundary before assuming a file-lifetime bug.
+  const auto trace = [](const char *stage) {
+#if defined(_WIN32)
+    std::cerr << "[render_context_permission] " << stage << std::endl;
+#else
+    (void)stage;
+#endif
+  };
+  trace("constructing QGuiApplication");
   QGuiApplication application(argc, argv);
   const bool notification_only =
       argc == 2 && std::strcmp(argv[1], "--notification-only") == 0;
@@ -551,14 +563,19 @@ int main(int argc, char **argv) {
     return EXIT_SUCCESS;
   }
 
+  trace("callback and notification checks complete; creating OpenGL context");
   QOpenGLContext gl_context;
   QOffscreenSurface gl_surface;
   if (!makeCurrentOffscreen(gl_context, gl_surface)) {
-    std::cerr
-        << "FAIL: Qt could not create a current offscreen OpenGL context\n";
-    return EXIT_FAILURE;
+    // Hosted Windows runners have no OpenGL driver at all; the permission
+    // checks above already ran, and the context half cannot run anywhere
+    // without one. 77 is ctest's skip code.
+    std::cerr << "SKIP: Qt could not create a current offscreen OpenGL "
+                 "context on this host\n";
+    return 77;
   }
 
+  trace("OpenGL context current; initializing linked mpv");
   auto core_owner = std::make_shared<wam::qt::PlayerCore>(nullptr);
   wam::qt::PlayerCore &core = *core_owner;
   const auto runtime =
@@ -570,6 +587,7 @@ int main(int argc, char **argv) {
     return EXIT_FAILURE;
   }
 
+  trace("mpv initialized; exercising render ownership");
   expect(core.renderContextAllowed(), "render permission starts enabled");
   expect(!core.renderContextBusy(), "a fresh core is not Busy");
   expect(core.renderContextCreateCount() == 0,
@@ -1215,6 +1233,7 @@ int main(int argc, char **argv) {
              quarantined_terminations->load(std::memory_order_acquire) == 0,
          "process-lifetime quarantine outlives every external owner");
 
+  trace("render ownership checks complete");
   gl_context.doneCurrent();
 
   if (failures != 0) {
@@ -1230,4 +1249,8 @@ int main(int argc, char **argv) {
          "latest-intent publication, exact-context self-keepalive, retained "
          "post-API candidates, and destroyed-owner quarantine\n";
   return EXIT_SUCCESS;
+} catch (const std::exception &error) {
+  std::cerr << "[render_context_permission] uncaught exception: "
+            << error.what() << std::endl;
+  return EXIT_FAILURE;
 }

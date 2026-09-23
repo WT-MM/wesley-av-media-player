@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <limits>
+#include <memory>
 #include <new>
 #include <span>
 #include <type_traits>
@@ -139,7 +140,10 @@ struct FakeHostClock {
 
 struct Fixture {
   FakeHostClock host;
-  NativePcmRing ring{1};
+  // The 512 KiB PCM payload belongs on the heap, before callbacks run.
+  std::unique_ptr<NativePcmRing> ringStorage =
+      std::make_unique<NativePcmRing>(1);
+  NativePcmRing &ring = *ringStorage;
   NativeMediaClock clock{host.seam()};
   NativeAudioRenderCore core{ring, clock, kSampleRate};
   bool ready{false};
@@ -1010,7 +1014,8 @@ void testExactNonzeroMediaOrigin() {
          "clock interval is exact origin plus generation-local frame time");
 
   FakeHostClock mismatchedHost;
-  NativePcmRing mismatchedRing(1);
+  auto mismatchedRingStorage = std::make_unique<NativePcmRing>(1);
+  auto &mismatchedRing = *mismatchedRingStorage;
   NativeMediaClock mismatchedClock(mismatchedHost.seam());
   NativeAudioRenderCore mismatchedCore(mismatchedRing, mismatchedClock,
                                        kSampleRate);
@@ -1052,7 +1057,8 @@ void testExactDualSeekOrigins() {
   const auto targetSeconds = mediaTimeSeconds(visualTarget);
   const auto audioSeconds = mediaTimeSeconds(firstAudioFrame);
   FakeHostClock host;
-  NativePcmRing ring(1);
+  auto ringStorage = std::make_unique<NativePcmRing>(1);
+  auto &ring = *ringStorage;
   NativeMediaClock clock(host.seam());
   NativeAudioRenderCore core(ring, clock, kSampleRate);
   expect(targetSeconds && audioSeconds &&
@@ -1085,7 +1091,8 @@ void testExactDualSeekOrigins() {
          "from cached T without relabelling an earlier frame");
 
   FakeHostClock rejectedHost;
-  NativePcmRing rejectedRing(1);
+  auto rejectedRingStorage = std::make_unique<NativePcmRing>(1);
+  auto &rejectedRing = *rejectedRingStorage;
   NativeMediaClock rejectedClock(rejectedHost.seam());
   NativeAudioRenderCore rejectedCore(rejectedRing, rejectedClock,
                                      kSampleRate);
@@ -1098,7 +1105,8 @@ void testExactDualSeekOrigins() {
          "source boundary later than ceil(T*R)");
 
   FakeHostClock emptyHost;
-  NativePcmRing emptyRing(1);
+  auto emptyRingStorage = std::make_unique<NativePcmRing>(1);
+  auto &emptyRing = *emptyRingStorage;
   NativeMediaClock emptyClock(emptyHost.seam());
   NativeAudioRenderCore emptyCore(emptyRing, emptyClock, kSampleRate);
   expect(emptyClock.anchorAtHostTicks(1, 0, *targetSeconds, 1.0, false) &&
@@ -1122,7 +1130,8 @@ void testExactDualSeekOrigins() {
 void testCanonicalOriginRoundingRegression() {
   constexpr MediaTime origin{189751, 52016};
   FakeHostClock host;
-  NativePcmRing ring(1);
+  auto ringStorage = std::make_unique<NativePcmRing>(1);
+  auto &ring = *ringStorage;
   NativeMediaClock clock(host.seam());
   NativeAudioRenderCore core(ring, clock, kSampleRate);
   const auto anchored = mediaTimeSecondsAtFrame(origin, 0, kSampleRate);
@@ -1140,7 +1149,8 @@ void testHostFrequencyComposition() {
          "render core proves adapter, core, and clock host frequency identity");
 
   FakeHostClock host;
-  NativePcmRing ring(1);
+  auto ringStorage = std::make_unique<NativePcmRing>(1);
+  auto &ring = *ringStorage;
   NativeMediaClock mismatchedClock(host.seam(kSampleRate + 1U));
   NativeAudioRenderCore mismatchedCore(ring, mismatchedClock, kSampleRate);
   expect(mismatchedClock.anchorAtHostTicks(1, 0, 0.0, 1.0, false) &&
@@ -1301,7 +1311,8 @@ void testExactSampleTimeTiming() {
          "integral sample continuity preserves supplied exact host endpoints");
 
   FakeHostClock nanosecondHost;
-  NativePcmRing nanosecondRing(1);
+  auto nanosecondRingStorage = std::make_unique<NativePcmRing>(1);
+  auto &nanosecondRing = *nanosecondRingStorage;
   NativeMediaClock nanosecondClock(nanosecondHost.seam(1000000000));
   NativeAudioRenderCore nanosecondCore(nanosecondRing, nanosecondClock,
                                        1000000000);
@@ -1370,7 +1381,10 @@ void testExactSampleTimeTiming() {
 // host tick is exactly one stream frame, matching the fixed-rate Fixture.
 struct RateFixture {
   FakeHostClock host;
-  NativePcmRing ring{1};
+  // The 512 KiB PCM payload belongs on the heap, before callbacks run.
+  std::unique_ptr<NativePcmRing> ringStorage =
+      std::make_unique<NativePcmRing>(1);
+  NativePcmRing &ring = *ringStorage;
   NativeMediaClock clock;
   NativeAudioRenderCore core;
   std::uint32_t rate;

@@ -479,7 +479,9 @@ class FakeSource final : public MediaSource, public AudioTrackRetrySource {
 template <typename Result>
 Result scripted(const std::vector<Result>& values, std::size_t& cursor,
                 Result fallback) {
-  if (cursor == values.size()) {
+  // A test may clear the script after the cursor advanced; past the end
+  // means the fallback, never an out-of-bounds read.
+  if (cursor >= values.size()) {
     return fallback;
   }
   return values[cursor++];
