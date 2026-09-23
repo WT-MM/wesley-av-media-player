@@ -121,7 +121,8 @@
     "threshold": "max(4, cpu_count//2) = 8 (first 84 records at 4)",
     "waits_in_final_chain": 20,
     "records": 2883,
-    "note": "host idles near load 5 (browser, WindowServer, remote desktop)"
+    "note": "host idles near load 5 (browser, WindowServer, remote desktop)",
+    "engine_D_override": "WAM_BENCH_QUIET_LOAD=12 for the last ~300 D records (own threads raised load above 8); records=961 per engine"
   },
   "summary": [
     {
@@ -219,6 +220,38 @@
       "ready": 1.072463354037609,
       "prepare_time": 0.9935905000020284,
       "boundary_median": 0.35000000000002274
+    },
+    {
+      "engine": "D",
+      "kind": "short",
+      "files": 300,
+      "wer": 0.04959919839679359,
+      "wall": 0.8098365834739525,
+      "rtf": 0.13776580018239437,
+      "cpu": 7.885,
+      "rss": 346439680.0,
+      "first_caption": 0.7958198124833871,
+      "model_load": 0.056145,
+      "coreml_load": null,
+      "ready": 0.1619632920192089,
+      "prepare_time": null,
+      "boundary_median": null
+    },
+    {
+      "engine": "D",
+      "kind": "long",
+      "files": 20,
+      "wer": 0.04556884391291015,
+      "wall": 24.832574999978533,
+      "rtf": 0.08110644737370398,
+      "cpu": 314.46500000000003,
+      "rss": 599916544.0,
+      "first_caption": 2.160866625024937,
+      "model_load": 0.056105,
+      "coreml_load": null,
+      "ready": 0.16940874996362254,
+      "prepare_time": null,
+      "boundary_median": 1.1749999999999972
     }
   ],
   "experiments": {

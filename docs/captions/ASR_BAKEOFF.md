@@ -1,6 +1,6 @@
 # WAM offline ASR bake-off — 2026-09-22/23
 
-**Status: complete.** All three available engines ran the full matched corpus (320 files × 3 repetitions) on 2026-09-23 between 02:10 and 03:31. Apple SpeechTranscriber (C) halves the word error rate of the shipped f16 Whisper base.en (A) and aligns timestamps three times more tightly; Whisper on Metal finishes a 300 s file about twice as fast end to end and is the only engine available below macOS 26. The CoreML encoder variant (B) gives no wall-clock gain over Metal. Implemented selection: Apple on macOS 26+ when its locale asset is ready, bundled Whisper CPU elsewhere; Metal is an opt-in with a no-progress watchdog and one CPU retry. Do not ship B. Caveats: LibriSpeech read speech, not media audio; energy inferred from CPU time, not metered.
+**Status: complete.** All four engines ran the full matched corpus (320 files × 3 repetitions) on 2026-09-23 between 02:10 and 03:31. Apple SpeechTranscriber (C) halves the word error rate of the shipped f16 Whisper base.en (A) and aligns timestamps three times more tightly; Whisper on Metal finishes a 300 s file about twice as fast end to end and is the only engine available below macOS 26. The CoreML encoder variant (B) gives no wall-clock gain over Metal. Implemented selection: Apple on macOS 26+ when its locale asset is ready, bundled Whisper CPU elsewhere; Metal is an opt-in with a no-progress watchdog and one CPU retry. Do not ship B. Caveats: LibriSpeech read speech, not media audio; energy inferred from CPU time, not metered.
 
 ## Environment and inputs
 
@@ -26,13 +26,14 @@ An em dash means unavailable, not zero. Quiet gate: the harness starts a run onl
 | A: shipped Whisper Metal | short / long | 300 × 3 / 20 × 3 | 5.03% / 4.49% | 0.36 s / 4.22 s | 0.060 / 0.014 | 0.28 s / 5.70 s | 378 / 478 MB |
 | B: CoreML encoder + Metal decoder | short / long | 300 × 3 / 20 × 3 | 5.08% / 4.51% | 0.42 s / 4.16 s | 0.070 / 0.014 | 0.31 s / 4.49 s | 391 / 490 MB |
 | C: SpeechAnalyzer/Transcriber (client process only; see CPU note) | short / long | 300 × 3 / 20 × 3 | 2.49% / 2.45% | 1.34 s / 7.99 s | 0.230 / 0.026 | 0.03 s / 0.66 s | 18 / 20 MB |
-| D: CPU, optional | short / long | not run | — | — | — | — | — |
+| D: shipped default, CPU (`-ng`) | short / long | 300 × 3 / 20 × 3 | 4.96% / 4.56% | 0.81 s / 24.83 s | 0.138 / 0.081 | 7.88 s / 314.47 s | 330 / 572 MB |
 
 | Engine | First-caption latency, long | Model load | First-observed CoreML load/specialization | Steady CoreML load | Long-form timestamp alignment |
 |---|---:|---:|---:|---:|---:|
 | A | 0.61 s (short 0.34 s) | 0.07 s | n/a | n/a | boundary median 1.100 s |
 | B | 0.65 s (short 0.39 s) | 0.07 s | 0.03 s (already specialized) | 0.02 s | boundary median 1.075 s |
 | C | 1.12 s (short 1.14 s) | prepareToAnalyze 0.99 s per process (median; bimodal 1 s / 3 s) | n/a | n/a | boundary median 0.350 s |
+| D | 2.16 s (short 0.80 s) | 0.06 s | n/a | n/a | boundary median 1.175 s |
 
 All accepted steady-state timing values require three process invocations per file. Tables use the median across files of their three-run medians; WER is corpus-weighted, not a mean of file percentages. Raw records retain each file and each repetition. End-to-end process wall time includes startup, inference and SRT writing but excludes corpus preparation/audio extraction; WAM's user-visible caption delay would also include extraction. CPU seconds/RSS come from `/usr/bin/time -l`. For C they would exclude some system speech-service resource consumption, so cross-engine CPU comparisons are incomplete.
 
@@ -53,6 +54,8 @@ The requirement “f16 everywhere” needs a precise qualification. No model was
 **Asset status resolved (2026-09-23).** After `AssetInventory.assetInstallationRequest(supporting:)` + `downloadAndInstall()` completed in a separate process, `AssetInventory.status(forModules:)` still reported `supported` for the same module while `SpeechTranscriber.installedLocales` listed `en_US`; transcription then succeeded. The tool therefore treats the locale as ready when `status == .installed` **or** `installedLocales` contains it, and reserves the locale first. An app must not gate on `status(forModules:)` alone.
 
 **Per-process prepare.** `prepareToAnalyze` costs a median 1.02 s per process (n = 961; 639 runs near 1 s, 252 near 3 s, max 10.8 s). It is not caused by the reservation: a variant without `AssetInventory.reserve` measured the same 0.99–1.02 s over six interleaved runs. A caption service that keeps one analyzer alive pays it once.
+
+**CPU engine measured (D, 2026-09-23 03:37–06:35).** Engine D ran after A/B/C with `WAM_BENCH_QUIET_LOAD=12` for its final 300 records because its own four whisper threads plus the host baseline held the one-minute load above 8 between files (216 waits at the default gate); no other work ran. D matches A's accuracy (4.56% vs 4.49% long) but is 5.9× slower end to end and uses 55× the CPU time per 300 s file, so the CPU default is the energy floor's opposite; only the documented Metal hang keeps it the default, and the caption service now guards Metal with a no-progress watchdog and CPU retry.
 
 ## Packaging and criterion decisions
 
