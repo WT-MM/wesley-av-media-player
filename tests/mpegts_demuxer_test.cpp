@@ -2170,10 +2170,13 @@ void testFileIdentityAndCancellation() {
   }
   const std::filesystem::path temporary =
       root / "identity-working.ts";
+#if defined(_WIN32)
+  std::cerr << "[mpegts_demuxer] identity fixture: " << temporary << '\n';
+#endif
   std::filesystem::remove(temporary);
   std::filesystem::copy_file(source, temporary);
 
-  const MpegTsPrepareOutcome outcome = prepareMpegTsLocalFile(temporary, {});
+  MpegTsPrepareOutcome outcome = prepareMpegTsLocalFile(temporary, {});
   expect(outcome.status == MpegTsDemuxStatus::Ready,
          "the copied fixture prepares Ready");
   if (outcome.status != MpegTsDemuxStatus::Ready) {
@@ -2195,7 +2198,14 @@ void testFileIdentityAndCancellation() {
          "a file mutated under a prepared asset is refused as FileChanged, "
          "not read as if the index still described it");
 
-  std::filesystem::remove(temporary);
+  // The prepared asset retains an open reader. Windows forbids deleting its
+  // file until that owner is destroyed, even after identity validation fails.
+  const std::weak_ptr<const MpegTsPreparedAsset> retainedAsset = outcome.asset;
+  outcome.asset.reset();
+  expect(retainedAsset.expired(),
+         "the retained file reader is released before removal");
+  expect(std::filesystem::remove(temporary),
+         "the closed identity fixture can be removed");
 
   // Cancellation must be observed by preparation on a real file.
   std::atomic<bool> cancelled{true};
@@ -2487,6 +2497,10 @@ void testDurationAgainstGroundTruth() {
 }  // namespace
 
 int main(int argc, char** argv) {
+#if defined(_WIN32)
+  std::cerr << "[mpegts_demuxer] starting "
+            << (argc > 1 ? argv[1] : "unit tests") << '\n';
+#endif
   const bool integration = argc == 2 && std::string(argv[1]) == "--integration";
   if (!integration) {
     testTimestampRollover();

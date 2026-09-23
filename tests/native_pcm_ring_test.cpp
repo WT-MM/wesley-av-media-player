@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <limits>
+#include <memory>
 #include <span>
 #include <thread>
 #include <type_traits>
@@ -80,12 +81,16 @@ template <typename Range> bool allEqual(const Range &values, float expected) {
                      [expected](float value) { return value == expected; });
 }
 
+// Each ring is 525440 bytes on arm64; multiple automatic rings exceed the
+// Windows 1 MiB main-thread stack. Allocate fixtures during test setup only.
 void testValidationAndStaleConsumerSilence() {
-  NativePcmRing defaultedGeneration(0);
+  auto defaultedGenerationStorage = std::make_unique<NativePcmRing>(0);
+  auto &defaultedGeneration = *defaultedGenerationStorage;
   expect(defaultedGeneration.generation() == 1,
          "zero initial generation is normalized to one");
 
-  NativePcmRing ring(7);
+  auto ringStorage = std::make_unique<NativePcmRing>(7);
+  auto &ring = *ringStorage;
   const std::array<float, 2> oneFrame{1.0F, -1.0F};
   const std::array<float, 3> overlongFrame{1.0F, -1.0F, 2.0F};
   const std::span<const float> emptyInput;
@@ -151,7 +156,8 @@ void testValidationAndStaleConsumerSilence() {
 }
 
 void testPartialReadsAndExactUnderrunTail() {
-  NativePcmRing ring(11);
+  auto ringStorage = std::make_unique<NativePcmRing>(11);
+  auto &ring = *ringStorage;
   const std::array<float, 10> first{1.0F,   101.0F, 2.0F,   102.0F, 3.0F,
                                     103.0F, 4.0F,   104.0F, 5.0F,   105.0F};
   const std::array<float, 6> second{6.0F, 106.0F, 7.0F, 107.0F, 8.0F, 108.0F};
@@ -197,7 +203,8 @@ void testPartialReadsAndExactUnderrunTail() {
 }
 
 void testReadableFramesPreflight() {
-  NativePcmRing emptyRing(12);
+  auto emptyRingStorage = std::make_unique<NativePcmRing>(12);
+  auto &emptyRing = *emptyRingStorage;
   const auto empty = emptyRing.readableFrames(12);
   expect(empty.frames == 0 && empty.staleSlabs == 0 && empty.generation == 12 &&
              !empty.staleConsumer,
@@ -211,7 +218,8 @@ void testReadableFramesPreflight() {
   expect(emptyStats.staleConsumers == 0 && emptyStats.staleSlabs == 0,
          "non-destructive preflight does not alter lifetime counters");
 
-  NativePcmRing partialRing(13);
+  auto partialRingStorage = std::make_unique<NativePcmRing>(13);
+  auto &partialRing = *partialRingStorage;
   const std::array<float, 10> first{1.0F,   101.0F, 2.0F,   102.0F, 3.0F,
                                     103.0F, 4.0F,   104.0F, 5.0F,   105.0F};
   const std::array<float, 8> second{6.0F, 106.0F, 7.0F, 107.0F,
@@ -240,7 +248,8 @@ void testReadableFramesPreflight() {
              !crossingConsume.underrun && crossingOutput == expectedCrossing,
          "consume satisfies the exact cross-slab preflight lower bound");
 
-  NativePcmRing malformedRing(14);
+  auto malformedRingStorage = std::make_unique<NativePcmRing>(14);
+  auto &malformedRing = *malformedRingStorage;
   std::array<float, 2> frame{};
   for (std::size_t index = 0; index < NativePcmRing::kSlabCount; ++index) {
     frame.fill(static_cast<float>(index + 1));
@@ -281,7 +290,8 @@ void testReadableFramesPreflight() {
              malformedRing.stats().unreadPcmBytes == 0,
          "preflight metadata filtering exactly matches destructive consume");
 
-  NativePcmRing appendedRing(15);
+  auto appendedRingStorage = std::make_unique<NativePcmRing>(15);
+  auto &appendedRing = *appendedRingStorage;
   const std::array<float, 4> prefix{1.0F, -1.0F, 2.0F, -2.0F};
   const std::array<float, 6> appended{3.0F, -3.0F, 4.0F, -4.0F, 5.0F, -5.0F};
   expect(appendedRing.publish(15, prefix, 2) ==
@@ -307,7 +317,8 @@ void testReadableFramesPreflight() {
 }
 
 void testFixedCapacityPhysicalAndCursorWraparound() {
-  NativePcmRing ring(17);
+  auto ringStorage = std::make_unique<NativePcmRing>(17);
+  auto &ring = *ringStorage;
   std::array<float, 2> frame{};
   for (std::size_t index = 0; index < NativePcmRing::kSlabCount; ++index) {
     frame.fill(static_cast<float>(index + 1));
@@ -347,7 +358,8 @@ void testFixedCapacityPhysicalAndCursorWraparound() {
 
   // Unsigned cursors deliberately support their natural 64-bit wrap while the
   // live distance stays within the four-slot invariant.
-  NativePcmRing cursorWrap(19);
+  auto cursorWrapStorage = std::make_unique<NativePcmRing>(19);
+  auto &cursorWrap = *cursorWrapStorage;
   const std::uint64_t nearEnd = std::numeric_limits<std::uint64_t>::max() - 1;
   NativePcmRingTestAccess::setCursorsQuiescent(cursorWrap, nearEnd, nearEnd);
   for (std::size_t index = 0; index < NativePcmRing::kSlabCount; ++index) {
@@ -373,7 +385,8 @@ void testFixedCapacityPhysicalAndCursorWraparound() {
              wrappedOutput == expectedWrapped && cursorWrap.queuedSlabs() == 0,
          "preflight and consume preserve modular cursor-wrap ordering");
 
-  NativePcmRing snapshot(20);
+  auto snapshotStorage = std::make_unique<NativePcmRing>(20);
+  auto &snapshot = *snapshotStorage;
   NativePcmRingTestAccess::setCursorsQuiescent(snapshot, 10, 5);
   expect(snapshot.queuedSlabs() == 0,
          "incoherent cursor snapshot cannot underflow to a false full ring");
@@ -386,7 +399,8 @@ void testFixedCapacityPhysicalAndCursorWraparound() {
 }
 
 void testFullSizedSlab() {
-  NativePcmRing ring(31);
+  auto ringStorage = std::make_unique<NativePcmRing>(31);
+  auto &ring = *ringStorage;
   std::array<float, NativePcmRing::kSamplesPerSlab> input{};
   std::array<float, NativePcmRing::kSamplesPerSlab> output{};
   for (std::size_t sample = 0; sample < input.size(); ++sample) {
@@ -404,7 +418,8 @@ void testFullSizedSlab() {
 }
 
 void testExactUnreadPcmByteAccounting() {
-  NativePcmRing ring(37);
+  auto ringStorage = std::make_unique<NativePcmRing>(37);
+  auto &ring = *ringStorage;
   constexpr std::size_t kFrameBytes =
       NativePcmRing::kChannels * sizeof(float);
   const auto empty = ring.stats();
@@ -464,7 +479,8 @@ void testExactUnreadPcmByteAccounting() {
 }
 
 void testGenerationResetAndStaleSlabs() {
-  NativePcmRing ring(41);
+  auto ringStorage = std::make_unique<NativePcmRing>(41);
+  auto &ring = *ringStorage;
   const std::array<float, 8> oldAudio{1.0F, -1.0F, 2.0F, -2.0F,
                                       3.0F, -3.0F, 4.0F, -4.0F};
   expect(ring.publish(41, oldAudio, 4) ==
@@ -500,14 +516,16 @@ void testGenerationResetAndStaleSlabs() {
   expect(ring.flush(43) && !ring.flush(42) && !ring.flush(43),
          "repeated reset advances strictly and rejects reuse");
 
-  NativePcmRing exhausted(std::numeric_limits<std::uint64_t>::max());
+  auto exhaustedStorage = std::make_unique<NativePcmRing>(std::numeric_limits<std::uint64_t>::max());
+  auto &exhausted = *exhaustedStorage;
   expect(!exhausted.flush(std::numeric_limits<std::uint64_t>::max()) &&
              !exhausted.flush(1),
          "maximum generation fails closed instead of wrapping");
 
   // Normal flush discards old slabs. This seam deliberately leaves one queued
   // while changing the epoch to prove the consumer's per-slab tag check.
-  NativePcmRing injectedStale(51);
+  auto injectedStaleStorage = std::make_unique<NativePcmRing>(51);
+  auto &injectedStale = *injectedStaleStorage;
   const std::array<float, 2> staleFrame{6.0F, -6.0F};
   expect(injectedStale.publish(51, staleFrame, 1) ==
              NativePcmRing::PublishResult::Published,
@@ -529,7 +547,8 @@ void testGenerationResetAndStaleSlabs() {
 }
 
 void testSaturatingStatistics() {
-  NativePcmRing ring(100);
+  auto ringStorage = std::make_unique<NativePcmRing>(100);
+  auto &ring = *ringStorage;
   const std::uint64_t almostMaximum =
       std::numeric_limits<std::uint64_t>::max() - 1;
   NativePcmRingTestAccess::setAllCounters(ring, almostMaximum);
@@ -591,7 +610,8 @@ void testSaturatingStatistics() {
 void testConcurrentProducerConsumerStress() {
   constexpr std::size_t kFramesPerTransfer = 64;
   constexpr std::size_t kTransfers = 20000;
-  NativePcmRing ring(71);
+  auto ringStorage = std::make_unique<NativePcmRing>(71);
+  auto &ring = *ringStorage;
   std::atomic<bool> failed{false};
   std::atomic<bool> producerFinished{false};
   std::atomic<bool> consumerFinished{false};

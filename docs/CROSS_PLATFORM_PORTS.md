@@ -1,3 +1,95 @@
+# Windows runtime follow-up — reported CI run 2026-09-23
+
+Starting revision: `f39207d`, branch `cross-platform-ports`, PR #3. The
+maintainer reports Linux and macOS green and Windows building/linking with
+MSYS2 UCRT64 GCC 16.2 / MSYS2 Qt, with 41/45 tests passing. The older report
+below predates that CI evidence (including its now-obsolete downloaded-Qt
+Windows description). This follow-up was performed offline on macOS; no
+Windows execution or successful Windows lane is claimed.
+
+## Fixes and measured evidence
+
+- **`native_pcm_ring`: confirmed stack exhaustion in the local reproducer.**
+  `sizeof(NativePcmRing)` is **525,440 bytes** on this arm64 build, including
+  524,288 bytes of inline PCM. The first validation function declares two
+  rings (1,050,880 bytes before other locals), and the preflight test has four.
+  The unchanged Release executable relinked with
+  `-Wl,-stack_size,0x100000` died with SIGSEGV (subprocess return -11).
+  `otool -l` confirmed `LC_MAIN stacksize 1048576`. Every test-local ring now
+  uses `std::make_unique` during setup, with a reference preserving existing
+  assertions. The changed executable passes at the same 1 MiB stack limit.
+- **`native_audio_render_core`: confirmed stack exhaustion in the local
+  reproducer.** The render core itself is only **1,024 bytes**; the large
+  objects are the rings embedded in `Fixture` / `RateFixture` and standalone
+  test rings. Several functions keep multiple fixtures alive. This unchanged
+  test also died with SIGSEGV at 1 MiB. Only those test rings now live on the
+  heap, allocated before rendering. The changed test passes at 1 MiB,
+  including its existing callback allocation assertions. Production ring,
+  render core, callback code and executable stack reserves are unchanged.
+- **`mpegts_demuxer_integration`: confirmed open-reader cleanup defect;
+  reported fail-fast still needs Windows verification.** The unchanged
+  integration executable passes all **464 assertions** with a 1 MiB stack
+  on macOS. This is evidence against assuming the same stack explanation,
+  not a Windows ABI/compiler proof. `testFileIdentityAndCancellation` kept
+  `outcome.asset` alive while deleting `identity-working.ts`; that asset
+  retains `StableFileReader` and its open descriptor until destruction.
+  The test now resets the asset before removal. A weak-owner expiration
+  assertion checks the ordering portably, and removal must return true.
+  A scratch negative-control build omitting only the reset exits 1 with
+  `FAIL: the retained file reader is released before removal`; the corrected
+  integration test passes **466 assertions**, also at 1 MiB.
+- **`player_core_render_context_permission`: diagnostic only, not a claimed
+  fix.** This test has no file removal or rename, and the linked project
+  sources have no throwing filesystem removal on its exercised path.
+  The supplied `filesystem error: cannot remove` description fits the
+  MPEG-TS cleanup above, but the supplied labels cannot be reconciled from
+  source alone. No speculative renderer or production filesystem change was
+  made. Windows-only, flushed `[render_context_permission]` stage markers
+  identify application creation, callback/notification completion, OpenGL
+  context creation, linked-mpv initialization and ownership-test completion.
+  A top-level exception handler prints the executable-specific label and
+  `what()` while retaining a failing exit status. MPEG-TS prints its own
+  start label and exact identity-fixture path on Windows. The existing
+  `ctest --output-on-failure` will expose these diagnostics on the next lane.
+  Native fail-fast/foreign-thread exceptions cannot be caught by the main
+  handler; the last flushed stage remains useful in that case. Raw Windows
+  failure blocks are needed if either of these two tests still fails.
+
+## Local validation for this follow-up
+
+The existing native-enabled Release configuration and fixture locations were
+retained. Commands:
+
+```sh
+cmake --build build --parallel
+cd build
+TMPDIR=/private/tmp/wam-ports-scratch ctest --output-on-failure
+```
+
+The full build succeeded. Sandbox `ditto` metadata-copy errors in the WAMKit
+host bundle required an unsandboxed build retry; the full suite likewise runs
+outside the sandbox for the existing native/Qt tests. These are existing
+harness requirements, not changes to product behavior.
+
+**Full-suite result: 131/131 passed, zero failures and zero skips, in 147.85
+seconds.** All four named tests passed locally. `git diff --check` passed;
+the four frozen files matched HEAD byte-for-byte and the index is unchanged.
+
+Evidence lives under `/private/tmp/wam-ports-scratch`: `windows-stack-commands.txt`,
+`sizeof.cpp`, `wam_*-1m-before` / `wam_*-1m-after` executables and `.log` files,
+`mpegts-old-cleanup-order.cpp` / `.log`, `windows-fixes-build-complete.log`, and
+`windows-fixes-ctest.log`. The 1 MiB executables were relinked from the existing
+Ninja Release link commands with only the output path and stack-size flag
+changed; no CMake platform policy was altered for this experiment.
+
+Only the four test sources and this report were edited. Frozen files and all
+production sources remain unchanged. No network or git index/commit/branch
+operations were performed. Changes are intentionally uncommitted for the
+maintainer. Windows qualification, especially the unexplained Qt failure,
+remains outstanding; this is not yet a verified four-test Windows fix.
+
+---
+
 # Linux and Windows restoration — 2026-09-22
 
 The Linux and Windows build/package jobs are restored. They have **not been run
