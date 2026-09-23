@@ -36,3 +36,9 @@ SESSION_HANDOFF.md
 
 # Agent worktrees and local tool state
 .claude/
+
+# Release media closure: built output, and source archives fetched on demand
+# (the pinned manifest third_party/media-source/SHA256SUMS stays tracked)
+third_party/media-closure/
+third_party/media-source/*
+!third_party/media-source/SHA256SUMS

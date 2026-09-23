@@ -1,7 +1,7 @@
 name: Release macOS app
 
 # The ad-hoc release path: a self-contained Apple silicon bundle built from
-# Homebrew dependencies, signed with an ad-hoc signature, and published on the
+# pinned Qt and an offline media source closure, signed ad-hoc, and published on the
 # tag. `release-macos.yml` remains the aspirational Developer ID + notarization
 # path and stays dormant until the `macos-release` environment actually holds
 # signing secrets; this workflow is the one that runs today.
@@ -26,14 +26,13 @@ jobs:
     environment:
       name: macos-release
       url: https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}
-    # macos-15: Homebrew no longer pours bottles for the macos-14 image, so
-    # mpv, ffmpeg and libvpx built from source there and the job never
-    # finished (2026-09-22). Sequoia bottles carry minos 15.0, which the
-    # bundler adopts as the app's LSMinimumSystemVersion.
+    # Build on macos-15, but compile the media payload for 13.3.
+    # No Homebrew media bottles enter the shipped closure.
     runs-on: macos-15
     timeout-minutes: 90
     env:
       WAM_MACOS_DEPLOYMENT_TARGET: "13.3"
+      WAM_MACOS_RELEASE_FLOOR: "13.3"
       QT_VERSION: 6.11.1
 
     steps:
@@ -49,12 +48,34 @@ jobs:
           version: ${{ env.QT_VERSION }}
           modules: qtshadertools
           cache: true
-      - name: Install build and media dependencies
+      - name: Install source build tools
         run: |
           set -euo pipefail
           brew update --quiet
-          brew install --quiet cmake ninja pkg-config mpv ffmpeg libvpx
+          brew install --quiet cmake ninja pkg-config meson nasm autoconf automake libtool
           test "$(qmake -query QT_VERSION)" = "$QT_VERSION"
+          # Retain the installer Qt load-command evidence; the bundle gate
+          # checks every framework/plugin slice, including their minos.
+          otool -arch arm64 -l "$QT_ROOT_DIR/lib/QtCore.framework/Versions/A/QtCore"
+
+      - name: Restore the pinned media closure
+        id: media-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: third_party/media-closure
+          key: media-closure-${{ runner.os }}-${{ runner.arch }}-13.3-${{ hashFiles('scripts/build_media_closure.sh', 'scripts/media-patches/*', 'src/playback/mpv/mpv_api.cpp', 'third_party/media-source/SHA256SUMS') }}
+
+      - name: Build the pinned media closure (sources fetched and hash-verified)
+        if: steps.media-cache.outputs.cache-hit != 'true'
+        run: scripts/build_media_closure.sh
+
+      - name: Verify the media closure receipt
+        run: |
+          set -euo pipefail
+          test -s third_party/media-closure/share/wam-media/build-receipt.txt
+          cat third_party/media-closure/share/wam-media/machos.tsv
+          [[ "$(lipo -archs third_party/media-closure/lib/libmpv.2.dylib)" == arm64 ]]
+          [[ "$(lipo -archs third_party/media-closure/bin/ffmpeg)" == arm64 ]]
 
       # The model is a 148 MB download from Hugging Face. Key the cache on the
       # fetch script, which pins both the repository revision and the SHA-256,
@@ -92,12 +113,18 @@ jobs:
       - name: Configure and build
         run: |
           set -euo pipefail
+          media="$GITHUB_WORKSPACE/third_party/media-closure"
+          export PKG_CONFIG_PATH="$media/lib/pkgconfig"
+          export PKG_CONFIG_LIBDIR="$media/lib/pkgconfig"
           cmake -S . -B build -G Ninja \
-            -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR" \
+            -DCMAKE_PREFIX_PATH="$media;$QT_ROOT_DIR" \
+            -DWAM_DEV_FFMPEG_EXECUTABLE="$media/bin/ffmpeg" \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_OSX_DEPLOYMENT_TARGET="$WAM_MACOS_DEPLOYMENT_TARGET" \
             -DWAM_ENABLE_MACOS_NATIVE_VIDEO=ON \
             -DWAM_ENABLE_SOFTWARE_VP8=ON \
+            -DWAM_ENABLE_AVFORMAT_STAGE=ON \
+            -DWAM_ENABLE_AVCODEC_STAGE=OFF \
             -DBUILD_TESTING=OFF
           cmake --build build --parallel
 
@@ -115,6 +142,8 @@ jobs:
           set -euo pipefail
           cmake --install build --prefix "$GITHUB_WORKSPACE/stage"
           MACDEPLOYQT="$QT_ROOT_DIR/bin/macdeployqt" scripts/fix_qt_qml_deploy_macos.zsh stage/WAM.app qml
+          WAM_FFMPEG_EXECUTABLE="$GITHUB_WORKSPACE/third_party/media-closure/bin/ffmpeg" \
+          WAM_MPV_FALLBACK_LIBRARY="$GITHUB_WORKSPACE/third_party/media-closure/lib/libmpv.2.dylib" \
           scripts/bundle_macos.zsh \
             stage/WAM.app \
             build/runtime/whisper-cli \
