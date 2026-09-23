@@ -20,3 +20,10 @@ _OBJC_METACLASS_$_WAMPlayer
 _OBJC_CLASS_$_WAMPresentationView
 _OBJC_METACLASS_$_WAMPresentationView
 _wam_copy_capabilities
+_wam_caption_create_v1
+_wam_caption_query_v1
+_wam_caption_prepare_v1
+_wam_caption_start_v1
+_wam_caption_cancel_v1
+_wam_caption_finish_v1
+_wam_caption_release_v1

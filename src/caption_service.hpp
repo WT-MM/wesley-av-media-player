@@ -1,6 +1,8 @@
 #pragma once
 
 #include "cancellation.hpp"
+#include "caption_backend.hpp"
+#include <memory>
 
 #include <filesystem>
 #include <mutex>
@@ -17,6 +19,8 @@ enum class CaptionStage {
   Validating,
   ExtractingAudio,
   Transcribing,
+  AwaitingDownloadConsent,
+  PreparingEngine,
   VerifyingOutput,
   Completed,
   Failed,
@@ -45,6 +49,9 @@ struct CaptionOptions {
   // macOS/driver combinations. The bundled Accelerate/BLAS CPU path is the
   // reliable default; callers may opt into a supported GPU backend.
   bool use_gpu = false;
+  bool prefer_apple = true;
+  // Testable no-caption-progress deadline; only used for GPU opt-in.
+  unsigned gpu_watchdog_ms = 30000;
   bool translate_to_english = false;
   bool overwrite = true;
   // "auto" uses whisper.cpp language detection. A BCP-47/whisper language
@@ -68,6 +75,10 @@ struct CaptionStatus {
   bool cancelled = false;
   std::string message;
   std::string error;
+  CaptionEngine engine = CaptionEngine::Whisper;
+  bool needs_download_consent = false;
+  std::string download_locale;
+  std::vector<CaptionSegment> segments;
   std::filesystem::path output_srt;
 };
 
@@ -95,6 +106,7 @@ public:
   // media work happen on the worker thread; callers should poll status().
   bool start(CaptionRequest request);
   void cancel() noexcept;
+  void respondToDownload(bool consent) noexcept;
   void wait();
 
   CaptionStatus status() const;
@@ -115,6 +127,9 @@ private:
   mutable std::mutex worker_mutex_;
   std::thread worker_;
   detail::CancellationFlag cancellation_;
+  std::unique_ptr<CaptionBackend> apple_;
+  std::atomic<int> download_response_{0};
+  bool download_asked_ = false;
 };
 
 } // namespace wam

@@ -10,11 +10,18 @@ import subprocess
 p = argparse.ArgumentParser()
 p.add_argument('--framework', type=Path, required=True)
 p.add_argument('--build', type=Path, required=True)
+p.add_argument("--stage-package", type=Path, help="Stage the local package outside the checkout")
 a = p.parse_args()
 repo = Path(__file__).resolve().parents[1]
 build = a.build.resolve()
 framework = a.framework.resolve()
-xc = repo / 'build/WAMKit.xcframework'
+package = repo
+if a.stage_package:
+    package = a.stage_package.resolve()
+    package.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(repo / 'Package.swift', package / 'Package.swift')
+    shutil.copytree(repo / 'examples/WAMKitSwiftHost', package / 'examples/WAMKitSwiftHost', dirs_exist_ok=True)
+xc = package / 'build/WAMKit.xcframework'
 xc.parent.mkdir(parents=True, exist_ok=True)
 if xc.exists(): shutil.rmtree(xc)
 subprocess.run(['xcodebuild', '-create-xcframework', '-framework', str(framework),
@@ -23,7 +30,7 @@ scratch = Path(os.environ.get('TMPDIR', '/private/tmp/wam-wamkit-scratch')) / 's
 scratch.mkdir(parents=True, exist_ok=True)
 env = os.environ.copy()
 env['CLANG_MODULE_CACHE_PATH'] = str(scratch / 'modules')
-subprocess.run(['swift', 'build', '--package-path', str(repo), '--scratch-path',
+subprocess.run(['swift', 'build', '--package-path', str(package), '--jobs', '4', '--scratch-path',
                 str(build / 'swift-package'), '--cache-path', str(scratch / 'cache'),
                 '--manifest-cache', 'local', '--disable-sandbox', '--skip-update',
                 '-c', 'release', '--arch', 'arm64', '--product', 'WAMKitSwiftHost'],
