@@ -17,7 +17,13 @@
 #include <string>
 #include <string_view>
 #include <type_traits>
+#if defined(_WIN32)
+#include <io.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#else
 #include <unistd.h>
+#endif
 #include <utility>
 #include <vector>
 
@@ -2217,10 +2223,17 @@ void testChapterAdmissionFacts() {
 
 void testParseFile() {
   auto bytes = completeDocument();
-  std::array<char, 64> path{};
-  const std::string pattern = "/private/tmp/wam-matroska-ebml-XXXXXX";
-  std::copy(pattern.begin(), pattern.end(), path.begin());
-  const int descriptor = ::mkstemp(path.data());
+  const std::string pattern = (std::filesystem::temp_directory_path() /
+      "wam-matroska-ebml-XXXXXX").string();
+  std::vector<char> path(pattern.begin(), pattern.end());
+  path.push_back('\0');
+#if defined(_WIN32)
+    const int descriptor = ::_mktemp_s(path.data(), path.size()) == 0
+        ? ::_open(path.data(), _O_CREAT | _O_EXCL | _O_RDWR | _O_BINARY,
+                  _S_IREAD | _S_IWRITE) : -1;
+#else
+    const int descriptor = ::mkstemp(path.data());
+#endif
   expect(descriptor >= 0, "temporary Matroska fixture opens");
   if (descriptor < 0) return;
   std::size_t written = 0;

@@ -5,7 +5,15 @@
 
 #include <fcntl.h>
 #include <sys/stat.h>
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <io.h>
+#else
 #include <unistd.h>
+#endif
 
 #include <algorithm>
 #include <array>
@@ -46,11 +54,25 @@ class SubtitleFileReader final : public SeekableByteReader {
 
   [[nodiscard]] static std::unique_ptr<SubtitleFileReader> open(
       const std::filesystem::path& path) noexcept {
+#if defined(_WIN32)
+    const int descriptor = ::_wopen(path.c_str(), _O_RDONLY | _O_BINARY | _O_NOINHERIT);
+#else
     const int descriptor = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
+#endif
     if (descriptor < 0)
       return nullptr;
-    struct ::stat status {};
-    if (::fstat(descriptor, &status) != 0 || !S_ISREG(status.st_mode) ||
+#if defined(_WIN32)
+    struct _stati64 status {};
+#else
+    struct stat status {};
+#endif
+    if (
+#if defined(_WIN32)
+        ::_fstati64(descriptor, &status)
+#else
+        ::fstat(descriptor, &status)
+#endif
+        != 0 || !S_ISREG(status.st_mode) ||
         status.st_size <= 0) {
       ::close(descriptor);
       return nullptr;
@@ -60,7 +82,17 @@ class SubtitleFileReader final : public SeekableByteReader {
     reader->size_ = static_cast<std::uint64_t>(status.st_size);
     reader->device_ = status.st_dev;
     reader->inode_ = status.st_ino;
+#if defined(_WIN32)
+    BY_HANDLE_FILE_INFORMATION identity{};
+    if (!::GetFileInformationByHandle(
+            reinterpret_cast<HANDLE>(::_get_osfhandle(descriptor)), &identity))
+      return nullptr;
+    reader->modified_ = identity.ftLastWriteTime;
+#elif defined(__APPLE__)
     reader->modified_ = status.st_mtimespec;
+#else
+    reader->modified_ = status.st_mtim;
+#endif
     return reader;
   }
 
@@ -74,9 +106,24 @@ class SubtitleFileReader final : public SeekableByteReader {
       return false;
     std::size_t filled = 0;
     while (filled < destination.size()) {
+#if defined(_WIN32)
+      const std::uint64_t readOffset = offset + filled;
+      OVERLAPPED position{};
+      position.Offset = static_cast<DWORD>(readOffset);
+      position.OffsetHigh = static_cast<DWORD>(readOffset >> 32);
+      DWORD transferred = 0;
+      const bool succeeded = ::ReadFile(
+          reinterpret_cast<HANDLE>(::_get_osfhandle(descriptor_)),
+          destination.data() + filled,
+          static_cast<DWORD>(std::min<std::size_t>(destination.size() - filled, MAXDWORD)),
+          &transferred, &position);
+      if (!succeeded) return false;
+      const auto read = static_cast<std::int64_t>(transferred);
+#else
       const ssize_t read = ::pread(
           descriptor_, destination.data() + filled, destination.size() - filled,
           static_cast<off_t>(offset + filled));
+#endif
       if (read > 0) {
         filled += static_cast<std::size_t>(read);
         continue;
@@ -92,13 +139,36 @@ class SubtitleFileReader final : public SeekableByteReader {
   // after st_ctime proved to move for xattr and Spotlight writes that change
   // no content byte (see the 2026-08-17 handoff addendum).
   [[nodiscard]] bool unchanged() const noexcept {
-    struct ::stat status {};
-    if (::fstat(descriptor_, &status) != 0)
+#if defined(_WIN32)
+    struct _stati64 status {};
+#else
+    struct stat status {};
+#endif
+    if (
+#if defined(_WIN32)
+        ::_fstati64(descriptor_, &status)
+#else
+        ::fstat(descriptor_, &status)
+#endif
+        != 0)
       return false;
+#if defined(_WIN32)
+    BY_HANDLE_FILE_INFORMATION identity{};
+    if (!::GetFileInformationByHandle(
+            reinterpret_cast<HANDLE>(::_get_osfhandle(descriptor_)), &identity))
+      return false;
+#endif
     return status.st_dev == device_ && status.st_ino == inode_ &&
            static_cast<std::uint64_t>(status.st_size) == size_ &&
+#if defined(_WIN32)
+           ::CompareFileTime(&identity.ftLastWriteTime, &modified_) == 0;
+#elif defined(__APPLE__)
            status.st_mtimespec.tv_sec == modified_.tv_sec &&
            status.st_mtimespec.tv_nsec == modified_.tv_nsec;
+#else
+           status.st_mtim.tv_sec == modified_.tv_sec &&
+           status.st_mtim.tv_nsec == modified_.tv_nsec;
+#endif
   }
 
  private:
@@ -108,7 +178,11 @@ class SubtitleFileReader final : public SeekableByteReader {
   std::uint64_t size_{0};
   dev_t device_{};
   ino_t inode_{};
+#if defined(_WIN32)
+  FILETIME modified_{};
+#else
   struct timespec modified_ {};
+#endif
 };
 
 [[nodiscard]] std::string inlineString(const InlineAscii& value) {

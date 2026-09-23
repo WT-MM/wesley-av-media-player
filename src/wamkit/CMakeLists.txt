@@ -1,3 +1,6 @@
+set(WAMKIT_TEST_FIXTURE_DIR "${PROJECT_SOURCE_DIR}/test-media/wamkit"
+  CACHE PATH "Generated WAMKit test corpus")
+
 if(NOT APPLE)
   message(FATAL_ERROR "WAMKit requires macOS")
 endif()
@@ -47,12 +50,12 @@ endif()
 
 if(BUILD_TESTING AND WAMKIT_BUILD_HOST)
   find_program(WAMKIT_FIXTURE_FFMPEG ffmpeg REQUIRED)
-  add_custom_command(OUTPUT "${PROJECT_SOURCE_DIR}/test-media/wamkit/manifest.json"
-    BYPRODUCTS "${PROJECT_SOURCE_DIR}/test-media/wamkit/av.mp4" "${PROJECT_SOURCE_DIR}/test-media/wamkit/av.mkv" "${PROJECT_SOURCE_DIR}/test-media/wamkit/refused.m4a"
+  add_custom_command(OUTPUT "${WAMKIT_TEST_FIXTURE_DIR}/manifest.json"
+    BYPRODUCTS "${WAMKIT_TEST_FIXTURE_DIR}/av.mp4" "${WAMKIT_TEST_FIXTURE_DIR}/av.mkv" "${WAMKIT_TEST_FIXTURE_DIR}/refused.m4a"
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/scripts/generate_wamkit_fixtures.py"
-      --ffmpeg "${WAMKIT_FIXTURE_FFMPEG}" --output "${PROJECT_SOURCE_DIR}/test-media/wamkit"
+      --ffmpeg "${WAMKIT_FIXTURE_FFMPEG}" --output "${WAMKIT_TEST_FIXTURE_DIR}"
     DEPENDS "${PROJECT_SOURCE_DIR}/scripts/generate_wamkit_fixtures.py")
-  add_custom_target(wamkit_fixtures DEPENDS "${PROJECT_SOURCE_DIR}/test-media/wamkit/manifest.json")
+  add_custom_target(wamkit_fixtures DEPENDS "${WAMKIT_TEST_FIXTURE_DIR}/manifest.json")
   add_dependencies(WAMKitHost wamkit_fixtures)
   # The AVFoundation reader-cancellation test opens av.mp4 too.
   if(TARGET wam_avfoundation_media_source_test)
@@ -62,22 +65,22 @@ endif()
 
 if(BUILD_TESTING AND WAMKIT_BUILD_HOST AND WAMKIT_ENABLE_TEST_SUPPORT)
   foreach(kind IN ITEMS mp4 mkv refusal api quarantine replace recovery)
-    set(asset "${PROJECT_SOURCE_DIR}/test-media/wamkit/av.${kind}")
+    set(asset "${WAMKIT_TEST_FIXTURE_DIR}/av.${kind}")
     set(arguments --seek)
     if(kind STREQUAL "recovery")
-      set(asset "${PROJECT_SOURCE_DIR}/test-media/wamkit/av.mkv")
+      set(asset "${WAMKIT_TEST_FIXTURE_DIR}/av.mkv")
       set(arguments --seek --device-recovery)
     elseif(kind STREQUAL "refusal")
-      set(asset "${PROJECT_SOURCE_DIR}/test-media/wamkit/refused.m4a")
+      set(asset "${WAMKIT_TEST_FIXTURE_DIR}/refused.m4a")
       set(arguments --refusal HeAacSbrDecoderDelayUnproven)
     elseif(kind STREQUAL "replace")
-      set(asset "${PROJECT_SOURCE_DIR}/test-media/wamkit/av.mp4")
+      set(asset "${WAMKIT_TEST_FIXTURE_DIR}/av.mp4")
       set(arguments --replace)
     elseif(kind STREQUAL "quarantine")
-      set(asset "${PROJECT_SOURCE_DIR}/test-media/wamkit/av.mp4")
+      set(asset "${WAMKIT_TEST_FIXTURE_DIR}/av.mp4")
       set(arguments --quarantine)
     elseif(kind STREQUAL "api")
-      set(asset "${PROJECT_SOURCE_DIR}/test-media/wamkit/av.mp4")
+      set(asset "${WAMKIT_TEST_FIXTURE_DIR}/av.mp4")
       set(arguments --api)
     endif()
     add_test(NAME wamkit_host_${kind} COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/wamkit_embedding_test.py"
@@ -108,10 +111,10 @@ if(WAMKIT_SWIFT AND WAMKIT_XCODEBUILD AND WAMKIT_XCODE_STATUS EQUAL 0 AND WAMKIT
     set_tests_properties(wamkit_swift_build PROPERTIES RUN_SERIAL TRUE TIMEOUT 300 FIXTURES_SETUP wamkit_swift)
     if(WAMKIT_ENABLE_TEST_SUPPORT)
       foreach(kind IN ITEMS mp4 mkv refusal)
-        set(asset "${PROJECT_SOURCE_DIR}/test-media/wamkit/av.${kind}")
+        set(asset "${WAMKIT_TEST_FIXTURE_DIR}/av.${kind}")
         set(arguments --seek)
         if(kind STREQUAL "refusal")
-          set(asset "${PROJECT_SOURCE_DIR}/test-media/wamkit/refused.m4a")
+          set(asset "${WAMKIT_TEST_FIXTURE_DIR}/refused.m4a")
           set(arguments --refusal HeAacSbrDecoderDelayUnproven)
         endif()
         add_test(NAME wamkit_swift_${kind} COMMAND "${Python3_EXECUTABLE}"

@@ -414,6 +414,7 @@ void reportMenus(const wam::qt::WindowManager &windows) {
   }
 }
 
+#if defined(__APPLE__)
 void reportWindows(const wam::qt::WindowManager &windows) {
   const QList<wam::qt::PlayerWindow *> &open = windows.windows();
   qInfo().noquote() << QStringLiteral("WAM_TEST_WINDOWS count=%1")
@@ -802,6 +803,8 @@ void runWindowStep(wam::qt::WindowManager &windows, const QString &verb) {
 // Telemetry-gated like every other WAM_TEST_* seam. The benchmark harness
 // already suppresses the QuickTime aspect snap under the same opt-in (see
 // MacWindowChrome::benchmarkMode), so a parked rectangle stays put.
+#endif  // defined(__APPLE__)
+
 struct ScriptedGeometry {
   int x{0};
   int y{0};
@@ -1179,6 +1182,10 @@ int main(int argc, char *argv[]) {
     wam::macos::NativeEmbeddingSupport::setTestMuted(true);
 #endif
 
+#if !defined(Q_OS_MACOS) || !defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+  constexpr bool background_launch = false;
+#endif
+
   QGuiApplication app(argc, argv);
 
 #if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
@@ -1228,7 +1235,9 @@ int main(int argc, char *argv[]) {
   // stays on Cmd-Q, the app menu, and the orderly-quit seam
   // (WAM_TEST_QUIT_AFTER_MS); all three call QCoreApplication::quit() and are
   // unaffected by this.
+#if defined(__APPLE__)
   app.setQuitOnLastWindowClosed(false);
+#endif
 
   int exit_code = 0;
   {

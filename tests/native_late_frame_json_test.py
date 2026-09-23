@@ -3,12 +3,16 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
+from pathlib import Path
 
-result = subprocess.run([sys.argv[1]], capture_output=True, text=True,
-    env={**os.environ, 'WAM_NATIVE_BENCHMARK_TELEMETRY': '1',
-         'WAM_PLAYBACK_METRICS_PATH': '/dev/stdout'})
-assert result.returncode == 0, (result.returncode, result.stderr)
-rows = [json.loads(line) for line in result.stdout.splitlines()]
+with tempfile.TemporaryDirectory(prefix='wam-metrics-') as directory:
+    output = Path(directory) / 'metrics.jsonl'
+    result = subprocess.run([sys.argv[1]], capture_output=True, text=True,
+        env={**os.environ, 'WAM_NATIVE_BENCHMARK_TELEMETRY': '1',
+             'WAM_PLAYBACK_METRICS_PATH': str(output)})
+    assert result.returncode == 0, (result.returncode, result.stderr)
+    rows = [json.loads(line) for line in output.read_text().splitlines()]
 assert len(rows) == 3, rows
 trace, health, sample = rows
 assert trace['record'] == 'video_frame_trace'
