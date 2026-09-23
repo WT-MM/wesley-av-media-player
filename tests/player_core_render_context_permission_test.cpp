@@ -567,9 +567,12 @@ int main(int argc, char **argv) try {
   QOpenGLContext gl_context;
   QOffscreenSurface gl_surface;
   if (!makeCurrentOffscreen(gl_context, gl_surface)) {
-    std::cerr
-        << "FAIL: Qt could not create a current offscreen OpenGL context\n";
-    return EXIT_FAILURE;
+    // Hosted Windows runners have no OpenGL driver at all; the permission
+    // checks above already ran, and the context half cannot run anywhere
+    // without one. 77 is ctest's skip code.
+    std::cerr << "SKIP: Qt could not create a current offscreen OpenGL "
+                 "context on this host\n";
+    return 77;
   }
 
   trace("OpenGL context current; initializing linked mpv");

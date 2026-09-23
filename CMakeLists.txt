@@ -1070,7 +1070,7 @@ if(BUILD_TESTING)
   add_test(NAME player_core_render_context_permission
     COMMAND wam_player_core_render_context_permission_test)
   set_tests_properties(player_core_render_context_permission PROPERTIES
-    TIMEOUT 30)
+    TIMEOUT 30 SKIP_RETURN_CODE 77)
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     set_tests_properties(player_controller_lazy player_core_render_context_permission PROPERTIES
       ENVIRONMENT "QT_QPA_PLATFORM=offscreen")

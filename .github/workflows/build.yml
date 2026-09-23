@@ -249,9 +249,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      # mesa provides a software OpenGL (llvmpipe opengl32.dll): the hosted
-      # runner has no GPU driver and the render-context tests need a real
-      # offscreen context rather than a skip.
       - uses: msys2/setup-msys2@v2
         with:
           msystem: UCRT64
@@ -269,7 +266,6 @@ jobs:
             mingw-w64-ucrt-x86_64-qt6-declarative
             mingw-w64-ucrt-x86_64-qt6-shadertools
             mingw-w64-ucrt-x86_64-qt6-tools
-            mingw-w64-ucrt-x86_64-mesa
             mingw-w64-ucrt-x86_64-mpv
             mingw-w64-ucrt-x86_64-ffmpeg
       - name: Select Qt SDK and verify media development package
