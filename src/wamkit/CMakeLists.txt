@@ -12,16 +12,16 @@ target_compile_options(wamkit_public_layer PRIVATE -fobjc-arc)
 target_compile_definitions(wamkit_public_layer PRIVATE WAM_PUBLIC_PRESENTATION_API=1)
 target_link_libraries(wamkit_public_layer PUBLIC wam_macos_native_video_core
   "-framework AppKit" "-framework AVFoundation" "-framework QuartzCore" "-framework CoreImage")
-add_library(WAMKit SHARED wamkit.mm include/WAMKit/WAMKit.h include/WAMKit/WAMKitObjC.h)
+add_library(WAMKit SHARED wamkit.mm include/WAMKit/WAMKit.h include/WAMKit/WAMKitObjC.h include/WAMKit/WAMCaption.h)
 set_target_properties(WAMKit PROPERTIES FRAMEWORK TRUE FRAMEWORK_VERSION A
   MACOSX_FRAMEWORK_IDENTIFIER org.wam.WAMKit VERSION 1.0.0 SOVERSION 1
-  PUBLIC_HEADER "include/WAMKit/WAMKit.h;include/WAMKit/WAMKitObjC.h"
+  PUBLIC_HEADER "include/WAMKit/WAMKit.h;include/WAMKit/WAMKitObjC.h;include/WAMKit/WAMCaption.h"
   CXX_VISIBILITY_PRESET hidden OBJCXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN YES
   INSTALL_NAME_DIR "@rpath" BUILD_WITH_INSTALL_NAME_DIR YES)
 target_include_directories(WAMKit PRIVATE "${PROJECT_SOURCE_DIR}/src" include)
 target_compile_options(WAMKit PRIVATE -fobjc-arc -Wall -Wextra)
 target_link_libraries(WAMKit PRIVATE wam_macos_native_session_system wamkit_public_layer "-framework AppKit")
-target_link_options(WAMKit PRIVATE "LINKER:-exported_symbols_list,${CMAKE_CURRENT_SOURCE_DIR}/exports.txt")
+target_link_options(WAMKit PRIVATE "LINKER:-u,_wam_caption_create_v1" "LINKER:-exported_symbols_list,${CMAKE_CURRENT_SOURCE_DIR}/exports.txt")
 set_property(TARGET WAMKit APPEND PROPERTY LINK_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/exports.txt" "${PROJECT_SOURCE_DIR}/scripts/package_wamkit.py")
 add_custom_command(TARGET WAMKit POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:WAMKit>/Versions/A/Modules"
@@ -37,6 +37,7 @@ if(BUILD_TESTING)
     "$<TARGET_FILE:WAMKit>" "${CMAKE_CURRENT_SOURCE_DIR}/exports.txt")
   add_test(NAME wamkit_headers COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/wamkit_header_test.py"
     "$<TARGET_BUNDLE_DIR:WAMKit>")
+  set_tests_properties(wamkit_headers PROPERTIES ENVIRONMENT "WAM_TEST_SCRATCH=${PROJECT_BINARY_DIR}/wamkit-test-scratch")
 endif()
 
 option(WAMKIT_ENABLE_TEST_SUPPORT "Enable private identity-gated quiet proof seams" OFF)

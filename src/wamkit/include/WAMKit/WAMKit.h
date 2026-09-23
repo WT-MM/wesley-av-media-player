@@ -1,6 +1,7 @@
 #ifndef WAMKIT_H
 #define WAMKIT_H
 #include <stdint.h>
+#include "WAMCaption.h"
 #include <stddef.h>
 #if defined(__GNUC__)
 #define WAM_EXPORT __attribute__((visibility("default")))
