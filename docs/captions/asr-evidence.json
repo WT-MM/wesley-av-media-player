@@ -1,0 +1,273 @@
+{
+  "provenance": {
+    "/Applications/WAM.app/Contents/Resources/models/ggml-base.en.bin": {
+      "bytes": 147964211,
+      "sha256": "a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002"
+    },
+    "/Applications/WAM.app/Contents/Resources/tools/whisper-cli": {
+      "bytes": 3235552,
+      "sha256": "895f431ce3f8eda4e2fffb95e2264c726ecd4fad172e56da4d19ea21be61cd82"
+    },
+    "/private/tmp/wam-asr-scratch/whisper-coreml": {
+      "bytes": 3230600,
+      "sha256": "b17e47826c8fbe14f515512d587ff574ebed92707c3641e39e9f728b2f05ce6d"
+    },
+    "/private/tmp/wam-asr-scratch/apple-transcribe": {
+      "bytes": 91888,
+      "sha256": "587fccccc66c20157fd279fcdd77e3089fd06bf77f7b77b06a84bab8acbf6a70"
+    }
+  },
+  "assets": {
+    "test-clean.tar.gz": {
+      "bytes": 346663984,
+      "sha256": "39fde525e59672dc6d1551919b1478f724438a95aa55f874b576be21967e6c23"
+    },
+    "wam-whisper-1.9.1.tar.gz": {
+      "bytes": 9012805,
+      "sha256": "147267177eef7b22ec3d2476dd514d1b12e160e176230b740e3d1bd600118447"
+    },
+    "ggml-base.en-encoder.mlmodelc.zip": {
+      "bytes": 37950917,
+      "sha256": "8cf860309e2449e2bdc8be834cf838ab2565747ecc8c0ef914ef5975115e192b"
+    }
+  },
+  "apple_probe": [
+    {
+      "available": true,
+      "event": "assets",
+      "installedLocales": [
+        "en_NZ",
+        "en_SG",
+        "en_GB",
+        "en_US",
+        "en_IE",
+        "en_AU",
+        "en_CA",
+        "en_ZA",
+        "en_IN"
+      ],
+      "locale": "en_US",
+      "status": "supported"
+    },
+    {
+      "event": "blocked",
+      "reason": "On-device en-US asset unavailable; no download attempted. App must reserve locale, request AssetInventory.assetInstallationRequest(supporting:), and call downloadAndInstall with progress before use."
+    }
+  ],
+  "power_probe": "sudo -n powermetrics: a password is required",
+  "manifest_sha256": "69451ca0f3f9df1b2dc59e991fc5b93adc14f8c94577b7429db3630847d477e9",
+  "coreml_metadata": [
+    {
+      "metadataOutputVersion": "3.0",
+      "storagePrecision": "Float16",
+      "outputSchema": [
+        {
+          "hasShapeFlexibility": "0",
+          "isOptional": "0",
+          "dataType": "Float32",
+          "formattedType": "MultiArray (Float32)",
+          "shortDescription": "",
+          "shape": "[]",
+          "name": "output",
+          "type": "MultiArray"
+        }
+      ],
+      "modelParameters": [],
+      "specificationVersion": 6,
+      "mlProgramOperationTypeHistogram": {
+        "Linear": 36,
+        "Matmul": 12,
+        "Cast": 2,
+        "Conv": 2,
+        "Softmax": 6,
+        "Add": 13,
+        "LayerNorm": 13,
+        "Mul": 12,
+        "Transpose": 25,
+        "Gelu": 8,
+        "Reshape": 24
+      },
+      "computePrecision": "Mixed (Float16, Float32, Int32)",
+      "isUpdatable": "0",
+      "availability": {
+        "macOS": "12.0",
+        "tvOS": "15.0",
+        "watchOS": "8.0",
+        "iOS": "15.0",
+        "macCatalyst": "15.0"
+      },
+      "modelType": {
+        "name": "MLModelType_mlProgram"
+      },
+      "userDefinedMetadata": {},
+      "inputSchema": [
+        {
+          "hasShapeFlexibility": "0",
+          "isOptional": "0",
+          "dataType": "Float32",
+          "formattedType": "MultiArray (Float32 1 \u00d7 80 \u00d7 3000)",
+          "shortDescription": "",
+          "shape": "[1, 80, 3000]",
+          "name": "logmel_data",
+          "type": "MultiArray"
+        }
+      ],
+      "generatedClassName": "coreml_encoder_base_en",
+      "method": "predict"
+    }
+  ],
+  "coreml_encoder_logical_bytes": 41259062,
+  "quiet_gate": {
+    "threshold": "max(4, cpu_count//2) = 8 (first 84 records at 4)",
+    "waits_in_final_chain": 20,
+    "records": 2883,
+    "note": "host idles near load 5 (browser, WindowServer, remote desktop)"
+  },
+  "summary": [
+    {
+      "engine": "A",
+      "kind": "short",
+      "files": 300,
+      "wer": 0.05026720106880427,
+      "wall": 0.3592101039830595,
+      "rtf": 0.06030584473262182,
+      "cpu": 0.28,
+      "rss": 396853248.0,
+      "first_caption": 0.3417781875177752,
+      "model_load": 0.067275,
+      "coreml_load": null,
+      "ready": 0.1828201869793702,
+      "prepare_time": null,
+      "boundary_median": null
+    },
+    {
+      "engine": "A",
+      "kind": "long",
+      "files": 20,
+      "wer": 0.04489420423183073,
+      "wall": 4.218388999986928,
+      "rtf": 0.013905970417531086,
+      "cpu": 5.700000000000001,
+      "rss": 501194752.0,
+      "first_caption": 0.607703458488686,
+      "model_load": 0.06942,
+      "coreml_load": null,
+      "ready": 0.190015978529118,
+      "prepare_time": null,
+      "boundary_median": 1.0999999999999943
+    },
+    {
+      "engine": "B",
+      "kind": "short",
+      "files": 300,
+      "wer": 0.05076820307281229,
+      "wall": 0.4151881880243309,
+      "rtf": 0.07040335341208454,
+      "cpu": 0.31,
+      "rss": 409534464.0,
+      "first_caption": 0.3937173539889045,
+      "model_load": 0.06861500000000001,
+      "coreml_load": 0.021991958521539345,
+      "ready": 0.2040115834970493,
+      "prepare_time": null,
+      "boundary_median": null
+    },
+    {
+      "engine": "B",
+      "kind": "long",
+      "files": 20,
+      "wer": 0.045078196872125116,
+      "wall": 4.1629231045080815,
+      "rtf": 0.01378430705601427,
+      "cpu": 4.49,
+      "rss": 513884160.0,
+      "first_caption": 0.6534483329742216,
+      "model_load": 0.06815,
+      "coreml_load": 0.031351458019344136,
+      "ready": 0.22306839551310986,
+      "prepare_time": null,
+      "boundary_median": 1.0750000000000028
+    },
+    {
+      "engine": "C",
+      "kind": "short",
+      "files": 300,
+      "wer": 0.02488309953239813,
+      "wall": 1.3389196665084455,
+      "rtf": 0.230152481029808,
+      "cpu": 0.03,
+      "rss": 18694144.0,
+      "first_caption": 1.1447875414742157,
+      "model_load": null,
+      "coreml_load": null,
+      "ready": 1.0987648750306107,
+      "prepare_time": 1.0169782291341107,
+      "boundary_median": null
+    },
+    {
+      "engine": "C",
+      "kind": "long",
+      "files": 20,
+      "wer": 0.024532352039251762,
+      "wall": 7.988679936970584,
+      "rtf": 0.026294868025215988,
+      "cpu": 0.6599999999999999,
+      "rss": 21389312.0,
+      "first_caption": 1.1161502705072053,
+      "model_load": null,
+      "coreml_load": null,
+      "ready": 1.072463354037609,
+      "prepare_time": 0.9935905000020284,
+      "boundary_median": 0.35000000000002274
+    }
+  ],
+  "experiments": {
+    "reserve_effect": {
+      "with_reserve_prepare_s": [
+        0.988,
+        0.998,
+        0.987,
+        1.001,
+        0.987,
+        0.978
+      ],
+      "without_reserve_prepare_s": [
+        0.987,
+        1.0,
+        0.998,
+        0.992,
+        0.996,
+        1.015
+      ],
+      "conclusion": "prepare is independent of AssetInventory.reserve"
+    },
+    "prepare_distribution": {
+      "n": 961,
+      "median_s": 1.02,
+      "min_s": 0.89,
+      "max_s": 10.8,
+      "buckets": {
+        "~1s": 639,
+        "~2s": 41,
+        "~3s": 252,
+        ">3.5s": 29
+      }
+    },
+    "cpu_location": {
+      "apple_long_file_client_user_sys_s": [
+        0.47,
+        0.07
+      ],
+      "daemons_cpu_delta_s": 0,
+      "daemons_checked": [
+        "corespeechd",
+        "corespeechd_system",
+        "localspeechrecognition",
+        "axassetsd"
+      ],
+      "aned_present": true,
+      "conclusion": "no CPU-attributable work; consistent with Neural Engine; not metered (powermetrics needs root)"
+    },
+    "asset_status": "status(forModules:) stayed supported after install; installedLocales contains en_US; transcription works"
+  }
+}
