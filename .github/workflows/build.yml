@@ -238,10 +238,10 @@ jobs:
   windows:
     timeout-minutes: 90
     runs-on: windows-latest
-    env:
-      # Qt publishes no aggregate Windows index for 6.11.x yet; the installer
-      # tool reads 6.10.3, the newest Windows release it can resolve.
-      QT_VERSION: 6.10.3
+    # Qt comes from MSYS2 like the compiler: Qt's own MinGW build targets the
+    # msvcrt runtime and its entry-point library fails to link against UCRT64
+    # (undefined __imp___argc), and the installer tool cannot read Qt's
+    # 6.11.x Windows index anyway.
     defaults:
       run:
         shell: msys2 {0}
@@ -249,13 +249,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Install pinned Qt
-        uses: jurplel/install-qt-action@v4
-        with:
-          version: ${{ env.QT_VERSION }}
-          arch: win64_mingw
-          modules: qtshadertools
-          cache: true
       - uses: msys2/setup-msys2@v2
         with:
           msystem: UCRT64
@@ -269,13 +262,18 @@ jobs:
             mingw-w64-ucrt-x86_64-ninja
             mingw-w64-ucrt-x86_64-pkgconf
             mingw-w64-ucrt-x86_64-python
+            mingw-w64-ucrt-x86_64-qt6-base
+            mingw-w64-ucrt-x86_64-qt6-declarative
+            mingw-w64-ucrt-x86_64-qt6-shadertools
+            mingw-w64-ucrt-x86_64-qt6-tools
             mingw-w64-ucrt-x86_64-mpv
             mingw-w64-ucrt-x86_64-ffmpeg
       - name: Select Qt SDK and verify media development package
         run: |
-          qt_root="$(cygpath -u "$QT_ROOT_DIR")"
+          echo "QT_ROOT_DIR=$(cygpath -w /ucrt64)" >> "$GITHUB_ENV"
           export PKG_CONFIG_PATH=/ucrt64/lib/pkgconfig:/ucrt64/share/pkgconfig
-          "$qt_root/bin/qmake" -query QT_VERSION | grep -xF "$QT_VERSION"
+          /ucrt64/bin/qmake6 -query QT_VERSION | grep -E '^6\.1[0-9]\.'
+          command -v windeployqt6
           /ucrt64/bin/pkg-config --modversion mpv
           test -f /ucrt64/include/mpv/client.h
       - name: Test Windows QML deploy tool discovery
