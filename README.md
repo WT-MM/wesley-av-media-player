@@ -101,3 +101,9 @@ More detail: [docs/DEVELOPING.md](docs/DEVELOPING.md),
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md),
 [docs/native-coverage/README.md](docs/native-coverage/README.md),
 [docs/PRODUCT.md](docs/PRODUCT.md)
+
+## License
+
+WAM is released under the [MIT License](LICENSE). The bundled third-party
+components (Qt, the LGPL FFmpeg closure, mpv, libvpx, whisper.cpp and its
+model) keep their own licenses; their notices ship inside the app bundle.
