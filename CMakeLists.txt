@@ -1092,8 +1092,16 @@ if(BUILD_TESTING)
     add_executable(wam_export_integration_test
       tests/export_integration_test.cpp src/jobs.cpp src/jobs.hpp)
     target_include_directories(wam_export_integration_test PRIVATE src)
+    set(WAM_EXPORT_FFMPEG_EXECUTABLE "${WAM_FFMPEG_EXECUTABLE}" CACHE FILEPATH
+      "FFmpeg used for export integration proofs")
+    set(WAM_EXPORT_FFPROBE_EXECUTABLE "${WAM_FFPROBE_EXECUTABLE}" CACHE FILEPATH
+      "FFprobe used for export integration proofs")
+    if(APPLE)
+      add_test(NAME export_presets COMMAND wam_export_integration_test
+        "${WAM_EXPORT_FFMPEG_EXECUTABLE}" "${WAM_EXPORT_FFPROBE_EXECUTABLE}" --all-presets)
+    endif()
     add_test(NAME export_duration COMMAND wam_export_integration_test
-      "${WAM_FFMPEG_EXECUTABLE}" "${WAM_FFPROBE_EXECUTABLE}")
+      "${WAM_EXPORT_FFMPEG_EXECUTABLE}" "${WAM_EXPORT_FFPROBE_EXECUTABLE}")
   endif()
 
   if(APPLE)

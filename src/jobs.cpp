@@ -662,19 +662,16 @@ ProcessCommand buildExportProcess(const std::filesystem::path& ffmpeg,
     case ExportFormat::Gif:
     case ExportFormat::Mp4H264:
     default:
-      if (o.prefer_hardware_encoder) {
 #ifdef __APPLE__
-        args.insert(args.end(), {"-c:v", "h264_videotoolbox", "-allow_sw", "1",
-                                 "-realtime", "1", "-q:v", "65", "-pix_fmt",
-                                 "yuv420p"});
+      // VideoToolbox permits software encoding too, keeping both preferences
+      // available with the LGPL macOS media closure.
+      args.insert(args.end(), {"-c:v", "h264_videotoolbox", "-allow_sw", "1",
+                               "-realtime", "1", "-q:v", "65", "-pix_fmt",
+                               "yuv420p"});
 #else
-        args.insert(args.end(), {"-c:v", "libx264", "-preset", "veryfast",
-                                 "-crf", "18", "-pix_fmt", "yuv420p"});
+      args.insert(args.end(), {"-c:v", "libx264", "-preset", "veryfast",
+                               "-crf", "18", "-pix_fmt", "yuv420p"});
 #endif
-      } else {
-        args.insert(args.end(), {"-c:v", "libx264", "-preset", "veryfast",
-                                 "-crf", "18", "-pix_fmt", "yuv420p"});
-      }
       args.insert(args.end(), {"-c:a", "aac", "-b:a", "192k", "-movflags",
                                "+faststart"});
       break;

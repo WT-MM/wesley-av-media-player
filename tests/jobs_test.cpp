@@ -202,6 +202,16 @@ int main(int argc, char** argv) {
                expected_default,
            "the default preset's argv is unchanged, element for element");
 
+#ifdef __APPLE__
+    // Runnable regression guard: neither macOS preference may request x264.
+    for (bool hardware : {false, true}) {
+      baseline.prefer_hardware_encoder = hardware;
+      const auto command = wam::buildExportProcess("ffmpeg", baseline);
+      expect(command.arguments == expected_default && !contains(command, "libx264"),
+             "both macOS H.264 preferences use VideoToolbox with allow_sw=1");
+    }
+#endif
+
     // Stream copy is legal only at 1x with no crop, and the predicate is the
     // one the UI asks too -- so the sheet can never promise a copy the
     // encoder declines.
