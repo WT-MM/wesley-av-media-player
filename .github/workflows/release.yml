@@ -38,6 +38,12 @@ jobs:
     steps:
       - name: Check out the release source
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Select an Xcode whose SDK provides SpeechAnalyzer
+        # macos-15 defaults to Xcode 16.4 (macOS 15 SDK); the Apple caption
+        # backend is compile-probed and would silently build as the stub.
+        run: |
+          sudo xcode-select -s /Applications/Xcode_26.3.0.app
+          xcrun --show-sdk-version
 
       # Qt comes from the pinned installer, as in build.yml: Homebrew's qt
       # formula now pulls node and llvm, and llvm has no bottle for this
