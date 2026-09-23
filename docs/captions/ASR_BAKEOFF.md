@@ -1,6 +1,6 @@
 # WAM offline ASR bake-off — 2026-09-22/23
 
-**Status: complete.** All three available engines ran the full matched corpus (320 files × 3 repetitions) on 2026-09-23 between 02:10 and 03:31. Apple SpeechTranscriber (C) halves the word error rate of the shipped f16 Whisper base.en (A) and aligns timestamps three times more tightly; Whisper on Metal finishes a 300 s file about twice as fast end to end and is the only engine available below macOS 26. The CoreML encoder variant (B) gives no wall-clock gain over Metal. Recommendation: Apple on macOS 26+ when its locale asset is ready, Whisper Metal (A) everywhere else; do not ship B. Caveats: LibriSpeech read speech, not media audio; energy inferred from CPU time, not metered.
+**Status: complete.** All three available engines ran the full matched corpus (320 files × 3 repetitions) on 2026-09-23 between 02:10 and 03:31. Apple SpeechTranscriber (C) halves the word error rate of the shipped f16 Whisper base.en (A) and aligns timestamps three times more tightly; Whisper on Metal finishes a 300 s file about twice as fast end to end and is the only engine available below macOS 26. The CoreML encoder variant (B) gives no wall-clock gain over Metal. Implemented selection: Apple on macOS 26+ when its locale asset is ready, bundled Whisper CPU elsewhere; Metal is an opt-in with a no-progress watchdog and one CPU retry. Do not ship B. Caveats: LibriSpeech read speech, not media audio; energy inferred from CPU time, not metered.
 
 ## Environment and inputs
 
@@ -74,32 +74,60 @@ The requirement “f16 everywhere” needs a precise qualification. No model was
 
 Apple's claim tested: **competitive accuracy holds and exceeds** (half the WER of Whisper base.en on clean read speech, with tighter timestamps); **faster does not hold end to end** against Whisper base.en on Metal for batch transcription of a file (about half the throughput), although C does its work with almost no attributable CPU. Read speech is not media audio: a representative movie/podcast corpus remains a promotion gate, as does a controlled cold-cache prepare measurement.
 
-## Proposed caption architecture (not implemented)
+## Implemented caption architecture
 
-Keep the bundled, unquantized Whisper fallback on every supported macOS version and retain today's CPU default until the documented Metal hang risk and this bake-off are resolved. On macOS 26+, make SpeechAnalyzer eligible only when its locale asset is ready and measured accuracy, latency and reliability justify selection; on macOS 13.3–15, promote CoreML plus Metal only after the same evidence exists. Prepare assets and warm model contexts asynchronously after the first frame or during idle time, using the already-ready fallback when a caption request arrives before preparation completes. Deliver stable-ID timed segment revisions to the UI immediately, replacing volatile Apple results and finalizing confirmed segments while showing processed-audio progress and supporting prompt cancellation. Preserve atomic final SRT publication and keep the first-frame/video path independent of caption preparation.
+`CaptionService` now selects a backend below its existing validation, extraction,
+staging, verification and atomic commit transaction. `CaptionBackend` supplies
+readiness, asynchronous preparation and transcription, timed final/volatile
+segments, progress, cancellation and off-main finish. Whisper preserves its
+subprocess argv and CPU default. Its optional Metal path has a timestamp-progress
+watchdog, verified process-group teardown and one CPU retry. There is no engine D
+measurement in `asr-evidence.json`; CPU remains the reliability default, not a
+measured speed or energy winner.
 
-### CaptionService and jobs
+The availability-gated Swift adapter is exposed through the opaque, versioned
+`WAMCaption.h` C ABI at WAMKit. The build probes SDK support and otherwise compiles
+a tested unavailable stub. Speech is weak-linked and all new API use is guarded
+for macOS 26. Readiness reserves the supported equivalent locale and accepts
+inventory `installed` OR membership in `installedLocales`. An unready asset prompts
+once per service for a named, one-time on-device language download of unknown
+size. Only explicit consent starts OS installation; decline or failure uses
+Whisper. Progress and cancellation use the existing caption flow.
 
-Introduce a backend contract below `CaptionService`: capabilities/readiness, asynchronous prepare, start on a bounded PCM stream, progress/segment events, cancel and finish. Keep the existing service's output validation, staging file and atomic commit semantics. Replace the hard-coded 0.12/0.35/0.92 progress plateaus with extraction progress and an audio-time watermark; show an indeterminate preparing state when progress cannot be measured. A partial caption store is separate from the eventual exported SRT and must be keyed by request generation so cancelled or superseded work cannot contaminate a later request.
+One prepared analyzer is retained across successful requests. **A correctness
+finding changes the proposed module lifetime:** on macOS 26.3.1, reusing the same
+transcriber corrupts the first sentence of a repeated file. Context resets,
+same-module resets and silence padding did not fix it. Replacing the transcriber
+module between files while retaining the analyzer did, without another call to
+prepare. The real-file proof compares complete cold/warm SRTs. This deviation and
+its reproduction are documented in [CAPTION_ENGINES.md](CAPTION_ENGINES.md).
 
-For Whisper, move model ownership and inference to a worker with a retained context, use new-segment/progress/abort callbacks, and avoid blocking the UI or playback threads. Initially a helper process can preserve hard cancellation/isolation if the documented Metal hang persists; an in-process implementation cannot safely force-kill a stuck GPU call. Parsing today's flushed CLI segment output is an interim partial-caption path, but production should use structured events rather than human diagnostic parsing. Bound concurrent caption jobs and retained contexts; release memory under pressure and after an idle timeout.
+Streaming input is bounded Int16 PCM in one-second chunks. Finalization uses the
+last sample returned by `analyzeSequence`; progress comes from result audio time.
+Volatile ranges replace earlier volatile results. Generation-filtered callbacks
+copy payloads off-main into a bounded recent-segment status snapshot. Final text
+is written only to the service's staging SRT. Cancellation cancels the feeding and
+result tasks, calls `cancelAndFinishNow`, and awaits cleanup off-main. Window
+teardown retires CaptionService on a worker, leaving the playback path untouched.
 
-`jobs.cpp` retains packaged tool/model discovery and ffmpeg fallback; shared cancellation and process-group teardown should have one owner. Stream extraction with backpressure or bounded chunks so transcription can start before a whole movie is decoded, preserving source timestamp offset, sample rate and seek/discontinuity semantics. The benchmark's pre-extracted WAV results do not quantify this pipeline benefit. Measure export/cancellation under load separately before changing the current service.
+### Validation and remaining gaps
 
-### Swift and WAMKit boundary
+Policy, consent/fallback, cancellation, revisions, generation isolation, staging,
+SDK absence, process-group watchdog retry, C/Objective-C/Swift framework imports,
+and real-file warm reuse have runnable checks. A paired quiet GUI proof captures
+native playback and UI responsiveness with captioning active. Exact commands,
+results and changed files are in
+[CAPTION_ENGINE_VALIDATION.md](CAPTION_ENGINE_VALIDATION.md).
 
-Add an availability-gated Swift backend compiled against Speech on macOS 26, with older-OS-safe linkage/availability guards. Do not expose Swift async or C++ ownership across the ABI: add an opaque caption-session handle and versioned start/cancel/events contract through WAMKit's C/Objective-C boundary (currently playback-oriented). Events need session generation, segment ID, media start/end, UTF-8 text, revision/finality, readiness/download/progress state and structured failure. Copy event payloads into a bounded queue, coalesce volatile revisions and progress, and dispatch UI work to the main actor; terminal completion/cancellation must be delivered exactly once.
-
-The Swift task consumes `SpeechTranscriber.results` while audio analysis runs; volatile results replace their time range rather than being appended permanently. Cancellation cancels feeding/results tasks and calls `cancelAndFinishNow`, then waits off the main thread for teardown. Whisper uses its abort callback and ffmpeg uses the existing verified process-group cancellation escalation. Report progress from the consumed-audio watermark and distinguish transcription complete from SRT committed.
-
-### Shipping and first use
-
-Ship the f16 ggml model and reliable Whisper engine so offline captions work on 13.3+ immediately without a model download. If B wins, also ship the matching compiled encoder; record version/checksum compatibility and allow CoreML to cache machine-specific specialization off the launch path. Apple assets remain OS-managed downloads; request them proactively only through explicit caption setup and never block app launch on them. When offline or assets fail, use the bundled fallback and expose a retryable readiness state. Background warmup must yield to playback, battery/thermal pressure and memory constraints; keeping every model permanently resident would undermine the low-energy goal.
-
-### Promotion validation still required
-
-Complete three quiet repetitions on all 320 files for each available engine, inspect empty/truncated outputs and long-window drift, and compare matched-corpus WER before declaring a winner. Measure cold/warm prepare on controlled caches, partial/final latency, cancellation during extraction/prepare/inference, repeated-request memory growth and old-OS fallback on actual supported systems. Run power metering with authorized root access before energy claims and test movie audio beyond LibriSpeech. No new caption service or WAMKit ABI was implemented in this run.
+Remaining gaps: no physical older-OS run, no actual asset download test (the
+installed locale was preserved), no multi-hour memory-growth or idle-eviction
+policy, no streaming extraction, and no rendering partial captions over playback
+before the final commit. Whisper interim events still parse CLI timestamps rather
+than a structured callback API. The persistent-transcriber proposal is not shipped
+because of the reproduced corruption; the analyzer/model preparation is retained.
+Movie/podcast accuracy, controlled cold-cache preparation and authorized power
+metering remain promotion work; LibriSpeech and CPU proxies do not settle those.
 
 ## Artifacts and reproduction
 
-Harness: `tools/asr-bench/README.md`, `bench.py`, `apple-transcribe.swift`, `build.sh`, `test_bench.py`. Five self-tests pass. Built tools: `/private/tmp/wam-asr-scratch/whisper-coreml` and `/private/tmp/wam-asr-scratch/apple-transcribe`. Corpus manifest, raw runs, model metadata, build logs, asset probe, gate history and provenance hashes are under `/private/tmp/wam-asr-scratch`; use `bench.py summarize` to derive the numeric summary after accepted runs exist. Only the explicitly allowed repository paths were edited; no commit, index update or service implementation was performed.
+Harness: `tools/asr-bench/README.md`, `bench.py`, `apple-transcribe.swift`, `build.sh`, `test_bench.py`. Five self-tests pass. Built tools: `/private/tmp/wam-asr-scratch/whisper-coreml` and `/private/tmp/wam-asr-scratch/apple-transcribe`. Corpus manifest, raw runs, model metadata, build logs, asset probe, gate history and provenance hashes are under `/private/tmp/wam-asr-scratch`; use `bench.py summarize` to derive the numeric summary after accepted runs exist. The original bake-off changed only its allowed harness/documentation paths and made no commit or index update. Caption service implementation and validation followed on `caption-service`; see the implementation report linked above.

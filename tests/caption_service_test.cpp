@@ -75,6 +75,8 @@ int runFakeCaptionTool(int argc, char **argv) {
     return 0;
   }
   if (name.find("fake-whisper") != std::string::npos) {
+    bool cpu = false;
+    for (int i=1;i<argc;++i) if (std::string(argv[i]) == "-ng") cpu = true;
     fs::path output_base;
     for (int i = 1; i + 1 < argc; ++i) {
       if (std::string(argv[i]) == "-of")
@@ -83,7 +85,8 @@ int runFakeCaptionTool(int argc, char **argv) {
     if (output_base.empty())
       return 3;
 #ifndef _WIN32
-    if (name.find("descendant") != std::string::npos) {
+    if (name.find("descendant") != std::string::npos &&
+        (name.find("gpu") == std::string::npos || !cpu)) {
       signal(SIGTERM, exitSuccessfullyOnTerm);
       const pid_t descendant = fork();
       if (descendant < 0)
@@ -178,6 +181,7 @@ wam::CaptionRequest requestFor(const fs::path &directory,
   writeFile(request.input, "non-empty-media");
   writeFile(request.tools.model, "non-empty-model");
   request.options.threads = 2;
+  request.options.prefer_apple = false;
   return request;
 }
 
@@ -263,6 +267,36 @@ int main(int argc, char **argv) {
     setenv("WAM_CAPTION_TEST_WAV_LOG", wav_log.c_str(), 1);
 #endif
 
+    // CPU remains the default, and opting into Metal changes no other argv.
+    {
+      wam::CaptionOptions options;
+      auto command = wam::buildCaptionWhisperCommand("whisper","model","audio","output",options);
+      check(command.find("-ng") != std::string::npos,"default must disable GPU");
+      options.use_gpu=true;
+      check(wam::buildCaptionWhisperCommand("whisper","model","audio","output",options).find("-ng") == std::string::npos,"GPU opt-in argv changed");
+    }
+#ifndef _WIN32
+    // No real GPU required: hung Metal leader + TERM-ignoring descendant must
+    // be killed as a group, then exactly one CPU retry must publish the SRT.
+    {
+      const auto gpu = copyAsTool(this_executable,temporary.path,"fake-whisper-gpu-descendant");
+      const auto log = temporary.path/"watchdog-descendant.pid";
+      setenv("WAM_CAPTION_TEST_DESCENDANT_PID_LOG",log.c_str(),1);
+      auto request=requestFor(temporary.path,fake_ffmpeg,gpu,"watchdog.srt");
+      request.options.use_gpu=true; request.options.gpu_watchdog_ms=150;
+      wam::CaptionService service;
+      const auto start=std::chrono::steady_clock::now();
+      check(service.start(request),"watchdog request refused");
+      service.wait();
+      check(service.succeeded(),"watchdog CPU retry must succeed");
+      check(std::chrono::steady_clock::now()-start < 3s,"watchdog wedged");
+      check(waitForFile(log,1s),"GPU descendant not started");
+      check(waitForProcessExit(static_cast<pid_t>(std::stol(readFile(log))),1s),"watchdog leaked descendant");
+      check(readFile(request.output_srt).find("Hello from WAM")!=std::string::npos,"retry not committed");
+      unsetenv("WAM_CAPTION_TEST_DESCENDANT_PID_LOG");
+    }
+#endif
+
     // A valid tool exit is followed by SRT verification and an output commit.
     {
       auto request = requestFor(temporary.path, fake_ffmpeg, fake_whisper,
@@ -272,6 +306,14 @@ int main(int argc, char **argv) {
       check(service.start(request), "valid caption request should start");
       check(!service.start(request),
             "a second concurrent request must be refused");
+      const auto deadline = std::chrono::steady_clock::now() + 3s;
+      while (!service.finished() && std::chrono::steady_clock::now() < deadline)
+        std::this_thread::sleep_for(5ms);
+      check(service.finished(), "caption worker did not publish completion");
+      check(captionTemporaryCount(temporary.path) == 0,
+            "terminal status was published before staging cleanup");
+      check(!fs::exists(fs::path(readFile(wav_log))),
+            "terminal status was published before audio cleanup");
       service.wait();
       const auto status = service.status();
       check(status.stage == wam::CaptionStage::Completed,

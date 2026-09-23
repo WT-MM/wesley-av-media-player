@@ -919,7 +919,8 @@ private:
   std::optional<double> scroll_sweep_target_;
 
   ::wam::BackgroundJob export_job_;
-  ::wam::CaptionService caption_service_;
+  std::shared_ptr<::wam::CaptionService> caption_service_ = std::make_shared<::wam::CaptionService>();
+  bool caption_download_prompted_ = false;
   std::unique_ptr<SubtitleSources> subtitles_;
   // The live closed-caption tap the native video consumer feeds for this
   // window. Owned here so it outlives any one session; handed to the session

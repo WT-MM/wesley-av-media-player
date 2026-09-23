@@ -1,6 +1,10 @@
 #include "caption_service.hpp"
 
 #include "jobs.hpp"
+#ifdef WAM_CAPTION_ABI
+#include "apple_caption_backend.hpp"
+#endif
+#include <cstdio>
 
 #include <algorithm>
 #include <array>
@@ -53,11 +57,38 @@ std::string pathArgument(const fs::path &path) {
 }
 
 struct ProcessResult {
+  bool timed_out = false;
   bool launched = false;
   bool cancelled = false;
   int exit_code = -1;
   std::string output;
   std::string launch_error;
+};
+
+struct ProcessMonitor {
+  unsigned timeout_ms = 0;
+  CaptionBackendEvents events;
+  double watermark = -1;
+  std::chrono::steady_clock::time_point last = std::chrono::steady_clock::now();
+  bool stalled(const std::string& output) {
+    std::size_t pos = 0;
+    while ((pos = output.find('[', pos)) != std::string::npos) {
+      int sh, sm, eh, em; double ss, es; int consumed = 0;
+      if (std::sscanf(output.c_str()+pos, "[%d:%d:%lf --> %d:%d:%lf]%n",
+                      &sh,&sm,&ss,&eh,&em,&es,&consumed) == 6 && consumed > 0) {
+        const double end = eh*3600+em*60+es;
+        if (end > watermark) {
+          watermark = end; last = std::chrono::steady_clock::now();
+          const auto textStart = pos+static_cast<std::size_t>(consumed);
+          const auto lineEnd = output.find('\n',textStart);
+          if (lineEnd != std::string::npos && events.segment)
+            events.segment({sh*3600+sm*60+ss,end,output.substr(textStart,lineEnd-textStart),true});
+        }
+      }
+      ++pos;
+    }
+    return timeout_ms && std::chrono::steady_clock::now()-last >= std::chrono::milliseconds(timeout_ms);
+  }
 };
 
 void appendProcessOutput(std::string &destination, const char *bytes,
@@ -221,7 +252,8 @@ void drainWindowsPipe(HANDLE pipe, std::string &output) {
 
 ProcessResult runProcess(const fs::path &executable,
                          const std::vector<std::string> &arguments,
-                         const detail::CancellationFlag &cancellation) {
+                         const detail::CancellationFlag &cancellation,
+                         ProcessMonitor monitor = {}) {
   ProcessResult result;
   if (cancellation.requested()) {
     result.cancelled = true;
@@ -294,8 +326,10 @@ ProcessResult runProcess(const fs::path &executable,
       WaitForSingleObject(process.hProcess, INFINITE);
       break;
     }
-    if (cancellation.requested() && !termination_sent) {
-      result.cancelled = true;
+    const bool stalled = monitor.stalled(result.output);
+    if ((cancellation.requested() || stalled) && !termination_sent) {
+      result.cancelled = cancellation.requested();
+      result.timed_out = stalled && !result.cancelled;
       termination_sent = true;
       if (process_in_job)
         TerminateJobObject(job, ERROR_CANCELLED);
@@ -321,7 +355,7 @@ constexpr auto kCaptionGracefulShutdownTimeout = 500ms;
 
 void drainPosixPipe(int pipe, std::string &output) {
   std::array<char, 4096> buffer{};
-  for (;;) {
+  for (unsigned chunk=0;chunk<64;++chunk) {
     const ssize_t count = read(pipe, buffer.data(), buffer.size());
     if (count > 0) {
       appendProcessOutput(output, buffer.data(),
@@ -397,7 +431,8 @@ void terminateUnisolatedCaptionChild(pid_t child) {
 
 ProcessResult runProcess(const fs::path &executable,
                          const std::vector<std::string> &arguments,
-                         const detail::CancellationFlag &cancellation) {
+                         const detail::CancellationFlag &cancellation,
+                         ProcessMonitor monitor = {}) {
   ProcessResult result;
   if (cancellation.requested()) {
     result.cancelled = true;
@@ -495,9 +530,11 @@ ProcessResult runProcess(const fs::path &executable,
   bool status_valid = false;
   for (;;) {
     drainPosixPipe(output_pipe[0], result.output);
+    const bool stalled = monitor.stalled(result.output);
     if (!termination_sent) {
-      if (cancellation.requested()) {
-        result.cancelled = true;
+      if (cancellation.requested() || stalled) {
+        result.cancelled = cancellation.requested();
+        result.timed_out = stalled && !result.cancelled;
         termination_sent = true;
         force_at = std::chrono::steady_clock::now() +
                    kCaptionGracefulShutdownTimeout;
@@ -544,9 +581,18 @@ ProcessResult runProcess(const fs::path &executable,
       // PID prevents the process-group number from being reused underneath us.
       signalVerifiedCaptionProcessGroup(pid, SIGKILL);
       int reap_error = 0;
-      status_valid = reapCaptionChild(pid, &status, &reap_error);
-      if (!status_valid)
-        result.exit_code = 130;
+      const auto reap_deadline = std::chrono::steady_clock::now()+500ms;
+      while (observeCaptionChild(pid,&reap_error)==CaptionChildObservation::Running &&
+             std::chrono::steady_clock::now()<reap_deadline)
+        std::this_thread::sleep_for(kCaptionProcessPollInterval);
+      if (observeCaptionChild(pid,&reap_error)==CaptionChildObservation::Exited) {
+        status_valid = reapCaptionChild(pid, &status, &reap_error);
+      } else if (reap_error != ECHILD) {
+        // A driver can defer SIGKILL indefinitely. Reap eventually off-job;
+        // the caption worker can retry on CPU and cancellation stays bounded.
+        std::thread([pid] { int ignored=0,error=0; reapCaptionChild(pid,&ignored,&error); }).detach();
+      }
+      if (!status_valid) result.exit_code = 130;
       break;
     }
     std::this_thread::sleep_for(kCaptionProcessPollInterval);
@@ -561,6 +607,43 @@ ProcessResult runProcess(const fs::path &executable,
 }
 
 #endif
+
+class WhisperCaptionBackend final : public CaptionBackend {
+public:
+  WhisperCaptionBackend(CaptionTools tools, CaptionOptions options)
+      : tools_(std::move(tools)), options_(std::move(options)) {}
+  ~WhisperCaptionBackend() override { cancel(); finish(); }
+  CaptionCapabilities capabilities(const std::string&) override { return {true,true,false,-1}; }
+  std::future<CaptionBackendResult> prepare(bool) override {
+    cancellation_.reset();
+    return std::async(std::launch::deferred, [] { return CaptionBackendResult{true,{}}; });
+  }
+  std::future<CaptionBackendResult> start(const fs::path& wav, const fs::path& staging,
+                                        CaptionBackendEvents events) override {
+    finish();
+    std::packaged_task<CaptionBackendResult()> task([this,wav,staging,events] {
+      fs::path base = staging; base.replace_extension();
+      auto result = runProcess(tools_.whisper,whisperArguments(tools_.model,wav,base,options_),
+        cancellation_, {options_.use_gpu ? std::max(100u,options_.gpu_watchdog_ms) : 0,events});
+      if (result.timed_out && !cancellation_.requested()) {
+        if (events.progress) events.progress(0,"Whisper Metal stopped making progress; retrying on CPU…");
+        std::ofstream(staging,std::ios::trunc).close();
+        auto cpu = options_; cpu.use_gpu = false;
+        result = runProcess(tools_.whisper,whisperArguments(tools_.model,wav,base,cpu),cancellation_,{0,events});
+      }
+      return CaptionBackendResult{result.launched && result.exit_code == 0 && !result.cancelled,
+                                  processFailure("whisper.cpp",result)};
+    });
+    auto future = task.get_future();
+    worker_ = std::thread(std::move(task));
+    return future;
+  }
+  void cancel() noexcept override { cancellation_.request(); }
+  void finish() override { if (worker_.joinable()) worker_.join(); }
+private:
+  CaptionTools tools_; CaptionOptions options_; detail::CancellationFlag cancellation_;
+  std::thread worker_;
+};
 
 struct ResolvedTool {
   fs::path path;
@@ -804,6 +887,10 @@ const char *captionStageName(CaptionStage stage) noexcept {
     return "Validating";
   case CaptionStage::ExtractingAudio:
     return "Preparing audio";
+  case CaptionStage::AwaitingDownloadConsent:
+    return "Language download";
+  case CaptionStage::PreparingEngine:
+    return "Preparing caption engine";
   case CaptionStage::Transcribing:
     return "Transcribing";
   case CaptionStage::VerifyingOutput:
@@ -849,6 +936,7 @@ std::string buildCaptionWhisperCommand(const fs::path &whisper,
 CaptionService::~CaptionService() {
   cancel();
   wait();
+  apple_.reset();
 }
 
 bool CaptionService::start(CaptionRequest request) {
@@ -861,6 +949,7 @@ bool CaptionService::start(CaptionRequest request) {
   if (worker_.joinable())
     worker_.join();
   cancellation_.reset();
+  download_response_.store(0);
   {
     std::lock_guard status_lock(status_mutex_);
     status_ = {};
@@ -873,9 +962,18 @@ bool CaptionService::start(CaptionRequest request) {
   try {
     worker_ = std::thread([this, request = std::move(request)]() mutable {
       run(std::move(request), cancellation_);
+      // Publish terminal status only after run's staging/audio guards and
+      // backend workers have finished. UI polling can then join without
+      // accidentally waiting for disk or Speech cleanup.
+      std::lock_guard lock(status_mutex_);
+      status_.running = false;
+      status_.finished = true;
     });
   } catch (const std::exception &exception) {
     fail(std::string("Could not start caption worker: ") + exception.what());
+    std::lock_guard lock(status_mutex_);
+    status_.running = false;
+    status_.finished = true;
     return false;
   }
   return true;
@@ -895,6 +993,10 @@ void CaptionService::cancel() noexcept {
     // The cancellation flag is already published. A diagnostic status update
     // is optional and must not violate this method's no-throw contract.
   }
+}
+
+void CaptionService::respondToDownload(bool consent) noexcept {
+  download_response_.store(consent ? 1 : -1);
 }
 
 void CaptionService::wait() {
@@ -924,11 +1026,10 @@ void CaptionService::complete(const fs::path &output) {
   std::lock_guard lock(status_mutex_);
   status_.stage = CaptionStage::Completed;
   status_.progress = 1.0f;
-  status_.running = false;
-  status_.finished = true;
+  // The worker publishes finished after all request-local cleanup.
   status_.succeeded = true;
   status_.cancelled = false;
-  status_.message = "Captions are ready.";
+  status_.message = status_.engine == CaptionEngine::Apple ? "Apple Speech captions are ready." : "Whisper captions are ready.";
   status_.error.clear();
   status_.output_srt = output;
 }
@@ -936,8 +1037,7 @@ void CaptionService::complete(const fs::path &output) {
 void CaptionService::fail(std::string error) {
   std::lock_guard lock(status_mutex_);
   status_.stage = CaptionStage::Failed;
-  status_.running = false;
-  status_.finished = true;
+  // The worker publishes finished after all request-local cleanup.
   status_.succeeded = false;
   status_.cancelled = false;
   status_.message = "Caption generation failed.";
@@ -947,8 +1047,7 @@ void CaptionService::fail(std::string error) {
 void CaptionService::cancelled() {
   std::lock_guard lock(status_mutex_);
   status_.stage = CaptionStage::Cancelled;
-  status_.running = false;
-  status_.finished = true;
+  // The worker publishes finished after all request-local cleanup.
   status_.succeeded = false;
   status_.cancelled = true;
   status_.message = "Caption generation was cancelled.";
@@ -1015,6 +1114,59 @@ void CaptionService::run(
       fail(ffmpeg.failure);
       return;
     }
+    CaptionBackendEvents events;
+    events.progress = [this](float p, const std::string& message) {
+      std::lock_guard lock(status_mutex_);
+      const bool preparing = status_.stage == CaptionStage::PreparingEngine;
+      status_.progress = preparing ? 0.08f : 0.35f+0.55f*std::clamp(p,0.0f,1.0f);
+      status_.message = message;
+      if (message.find("Downloading") != std::string::npos)
+        status_.message += " (" + std::to_string(int(std::clamp(p,0.0f,1.0f)*100)) + "%)";
+    };
+    events.segment = [this](CaptionSegment segment) {
+      std::lock_guard lock(status_mutex_);
+      reviseCaptionSegments(status_.segments,std::move(segment));
+      // UI snapshot is bounded; the backend retains final SRT content.
+      if (status_.segments.size()>512) status_.segments.erase(status_.segments.begin());
+    };
+    auto awaitBackend = [&](auto& future, CaptionBackend& backend) {
+      while (future.wait_for(20ms) == std::future_status::timeout)
+        if (cancellation.requested()) backend.cancel();
+      return future.get();
+    };
+    bool useApple = false;
+#ifdef WAM_CAPTION_ABI
+    if (request.options.prefer_apple && !request.options.translate_to_english) {
+      if (!apple_) apple_ = std::make_unique<AppleCaptionBackend>();
+      auto query = std::async(std::launch::async,[&] {
+        const auto language = request.options.language;
+        // The shipped model and default caption locale are English. Explicit
+        // non-English requests resolve through supportedLocale(equivalentTo:).
+        return apple_->capabilities(language.empty() || language == "auto" || language == "en" ? "en-US" : language);
+      });
+      auto caps = awaitBackend(query,*apple_);
+      bool consent = false;
+      if (caps.available && caps.needs_download && !download_asked_ && !cancellation.requested()) {
+        download_asked_ = true;
+        update(CaptionStage::AwaitingDownloadConsent,0.05f,
+          "Apple Speech needs a one-time on-device language download (size unknown).");
+        { std::lock_guard lock(status_mutex_); status_.needs_download_consent = true; status_.download_locale = caps.locale; }
+        while (download_response_.load() == 0 && !cancellation.requested()) std::this_thread::sleep_for(20ms);
+        consent = download_response_.load() == 1;
+        { std::lock_guard lock(status_mutex_); status_.needs_download_consent = false; }
+      }
+      if (!cancellation.requested() && (selectCaptionEngine(caps) == CaptionEngine::Apple || consent)) {
+        static_cast<AppleCaptionBackend*>(apple_.get())->setEvents(events);
+        update(CaptionStage::PreparingEngine,0.08f,consent ? "Apple Speech: downloading language asset…" : "Preparing Apple Speech on device…");
+        auto preparation = apple_->prepare(consent);
+        useApple = awaitBackend(preparation,*apple_).succeeded;
+      }
+      if (!useApple) { apple_->finish(); apple_.reset(); }
+    }
+#endif
+    if (stopIfRequested()) return;
+    request.tools.ffmpeg = ffmpeg.path;
+    if (!useApple) {
     const auto whisper =
         resolveCaptionTool("whisper.cpp", request.tools.whisper);
     if (whisper.path.empty()) {
@@ -1043,6 +1195,9 @@ void CaptionService::run(
     }
     if (stopIfRequested())
       return;
+
+    }
+    { std::lock_guard lock(status_mutex_); status_.engine = useApple ? CaptionEngine::Apple : CaptionEngine::Whisper; }
 
     std::error_code temp_error;
     const fs::path temp_directory = fs::temp_directory_path(temp_error);
@@ -1086,19 +1241,18 @@ void CaptionService::run(
       return;
     }
     RemoveFileOnExit remove_staged_srt(*staged_srt);
-    fs::path output_base = *staged_srt;
-    output_base.replace_extension();
 
     update(CaptionStage::Transcribing, 0.35f,
-           "Listening and generating captions locally…");
-    const auto transcription =
-        runProcess(request.tools.whisper,
-                   whisperArguments(request.tools.model, *wav, output_base,
-                                    request.options),
-                   cancellation);
-    if (transcription.cancelled) {
-      cancelled();
-      return;
+           useApple ? "Apple Speech: generating captions on device…" : (request.options.use_gpu ? "Whisper Metal: generating captions locally…" : "Whisper CPU: generating captions locally…"));
+    WhisperCaptionBackend whisperBackend(request.tools,request.options);
+    CaptionBackend& backend = useApple ? *apple_ : static_cast<CaptionBackend&>(whisperBackend);
+    if (!useApple) { auto ready = backend.prepare(false); ready.get(); }
+    auto operation = backend.start(*wav,*staged_srt,events);
+    const auto transcription = awaitBackend(operation,backend);
+    if (cancellation.requested()) {
+      backend.cancel(); backend.finish();
+      if (useApple) apple_.reset();
+      cancelled(); return;
     }
     if (stopIfRequested())
       return;
@@ -1106,12 +1260,13 @@ void CaptionService::run(
     update(CaptionStage::VerifyingOutput, 0.92f,
            "Checking and saving the generated captions…");
     const bool usable_srt = fileHasVisibleContent(*staged_srt);
-    if (!transcription.launched || transcription.exit_code != 0) {
-      fail(processFailure("whisper.cpp", transcription));
+    if (!transcription.succeeded) {
+      if (useApple) { apple_->finish(); apple_.reset(); }
+      fail(transcription.error);
       return;
     }
     if (!usable_srt) {
-      fail("whisper.cpp reported success but did not create a non-empty SRT. "
+      fail("Caption engine reported success but did not create a non-empty SRT. "
            "No speech may have been detected, or this model may be "
            "incompatible.");
       return;

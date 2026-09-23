@@ -1458,6 +1458,33 @@ int main(int argc, char *argv[]) {
     // rather than a new window, because a new window would pay window and
     // scene-graph startup and stop being a warm open at all.
     if (wam::qt::NativeBenchmarkTelemetry::instance().enabled()) {
+      // Caption proof uses the existing identity-gated quiet benchmark mode.
+      // It exercises the actual controller flow while playback is running.
+      if (qEnvironmentVariableIsSet("WAM_TEST_CAPTION_METRICS")) {
+        struct CaptionHeartbeat { QElapsedTimer clock; qint64 last=0, maximum=0; unsigned samples=0; };
+        auto heartbeat = std::make_shared<CaptionHeartbeat>();
+        heartbeat->clock.start();
+        auto *timer = new QTimer(first_player);
+        timer->setInterval(10);
+        QObject::connect(timer,&QTimer::timeout,first_player,[heartbeat] {
+          const auto now=heartbeat->clock.elapsed();
+          heartbeat->maximum=std::max(heartbeat->maximum,now-heartbeat->last);
+          heartbeat->last=now; ++heartbeat->samples;
+        });
+        QObject::connect(&app,&QCoreApplication::aboutToQuit,first_player,[heartbeat] {
+          qInfo() << "caption-heartbeat max_gap_ms=" << heartbeat->maximum << "samples=" << heartbeat->samples;
+        });
+        timer->start();
+      }
+      const QString caption_output = QString::fromUtf8(qgetenv("WAM_TEST_CAPTION_OUTPUT"));
+      if (!caption_output.isEmpty()) {
+        QTimer::singleShot(1000, first_player, [first_player, caption_output] {
+          first_player->generateCaptionsTo(QUrl::fromLocalFile(caption_output));
+        });
+        QObject::connect(first_player, &wam::qt::PlayerController::captionStatusChanged,
+          first_player, [first_player] { qInfo().noquote() << "caption-proof:" << first_player->captionStatus(); });
+      }
+
       const std::vector<ScriptedOpen> open_script =
           parseOpenScript(qgetenv("WAM_TEST_REOPEN_SCRIPT"));
       int cumulative = 0;

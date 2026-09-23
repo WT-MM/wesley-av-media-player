@@ -114,6 +114,30 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(WAM_BUILD_APP "Build WAM's Qt application" ON)
 option(WAM_BUILD_WAMKIT "Build the native embedding framework" ${APPLE})
+include(src/wamkit/CaptionBackend.cmake)
+if(BUILD_TESTING)
+  add_executable(wam_caption_test
+    tests/caption_service_test.cpp
+    src/caption_service.cpp
+    src/caption_service.hpp
+    src/jobs.cpp
+    src/jobs.hpp)
+  target_include_directories(wam_caption_test PRIVATE src)
+  add_test(NAME caption_service COMMAND wam_caption_test)
+  add_executable(wam_caption_backend_test tests/caption_backend_test.cpp)
+  target_include_directories(wam_caption_backend_test PRIVATE src)
+  add_test(NAME caption_backend COMMAND wam_caption_backend_test)
+  if(NOT WAM_HAS_SPEECH_ANALYZER)
+    add_test(NAME caption_sdk_absent COMMAND wam_caption_backend_test --expect-unavailable)
+  endif()
+  if(UNIX)
+    add_executable(wam_caption_flow_test tests/caption_flow_test.cpp src/caption_service.cpp src/jobs.cpp)
+    target_include_directories(wam_caption_flow_test PRIVATE src)
+    add_test(NAME caption_flow COMMAND wam_caption_flow_test)
+  endif()
+  add_executable(wam_caption_proof tests/caption_engine_proof.cpp src/caption_service.cpp src/jobs.cpp)
+  target_include_directories(wam_caption_proof PRIVATE src)
+endif()
 include(src/wamkit/NativeTargets.cmake)
 if(NOT WAM_BUILD_APP)
   if(APPLE AND WAM_BUILD_WAMKIT)
@@ -978,14 +1002,6 @@ if(BUILD_TESTING)
     -Wall -Wextra -Wpedantic)
   add_test(NAME scroll_gesture COMMAND wam_scroll_gesture_test)
 
-  add_executable(wam_caption_test
-    tests/caption_service_test.cpp
-    src/caption_service.cpp
-    src/caption_service.hpp
-    src/jobs.cpp
-    src/jobs.hpp)
-  target_include_directories(wam_caption_test PRIVATE src)
-  add_test(NAME caption_service COMMAND wam_caption_test)
 
   add_executable(wam_player_controller_lazy_test
     tests/player_controller_lazy_test.cpp

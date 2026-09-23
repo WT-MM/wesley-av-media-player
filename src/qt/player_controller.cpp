@@ -1,4 +1,7 @@
 #include "player_controller.hpp"
+#ifdef Q_OS_MACOS
+#include "caption_download_prompt.hpp"
+#endif
 
 #include "mpv_video_item.hpp"
 #include "playback_policy.hpp"
@@ -698,8 +701,9 @@ PlayerController::~PlayerController() {
   export_job_.cancel();
   export_job_.wait();
   cleanupExportStaging();
-  caption_service_.cancel();
-  caption_service_.wait();
+  caption_service_->cancel();
+  // Swift teardown and subprocess joins must not block window destruction.
+  std::thread([service = std::move(caption_service_)] { service->wait(); }).detach();
 #if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   native_playback_.reset();
   if (macos_activity_held_) {
@@ -3277,8 +3281,10 @@ void PlayerController::generateCaptions() {
         "Wait for the video export to finish before captioning."));
     return;
   }
-  if (captioning_)
+  if (captioning_) {
+    setLastError(QStringLiteral("Another caption task is already running."));
     return;
+  }
   emit generateCaptionsRequested();
 }
 
@@ -3295,8 +3301,10 @@ void PlayerController::generateCaptionsTo(const QUrl &destination) {
         "Wait for the video export to finish before captioning."));
     return;
   }
-  if (captioning_)
+  if (captioning_) {
+    setLastError(QStringLiteral("Another caption task is already running."));
     return;
+  }
 
   const auto input = localPath(source_);
   const auto output = localPath(destination);
@@ -3317,8 +3325,8 @@ void PlayerController::generateCaptionsTo(const QUrl &destination) {
   request.options.use_gpu = false;
   request.options.overwrite = true;
 
-  if (!caption_service_.start(std::move(request))) {
-    const ::wam::CaptionStatus status = caption_service_.status();
+  if (!caption_service_->start(std::move(request))) {
+    const ::wam::CaptionStatus status = caption_service_->status();
     const QString error = fromUtf8(status.error);
     setLastError(
         error.isEmpty()
@@ -3328,6 +3336,7 @@ void PlayerController::generateCaptionsTo(const QUrl &destination) {
   }
 
   setLastError({});
+  caption_download_prompted_ = false;
   caption_input_ = *input;
   caption_cancel_reason_.clear();
   caption_completion_pending_ = true;
@@ -3341,7 +3350,7 @@ void PlayerController::cancelCaptioning() {
     return;
   emit cancelCaptioningRequested();
   caption_cancel_reason_ = QStringLiteral("Caption generation cancelled.");
-  caption_service_.cancel();
+  caption_service_->cancel();
   setCaptionStatus(QStringLiteral("Cancelling caption generation…"));
 }
 
@@ -3432,13 +3441,24 @@ void PlayerController::pollBackgroundWork() {
   }
 
   if (caption_completion_pending_) {
-    const ::wam::CaptionStatus status = caption_service_.status();
+    const ::wam::CaptionStatus status = caption_service_->status();
+    if (status.needs_download_consent && !caption_download_prompted_) {
+      caption_download_prompted_ = true;
+#ifdef Q_OS_MACOS
+      QPointer<PlayerController> controller(this);
+      ::wam::showCaptionDownloadPrompt(status.download_locale, [controller](bool consent) {
+        if (controller) controller->caption_service_->respondToDownload(consent);
+      });
+#else
+      caption_service_->respondToDownload(false);
+#endif
+    }
     const QString message = fromUtf8(status.message);
     if (!message.isEmpty())
       setCaptionStatus(message);
 
     if (status.finished) {
-      caption_service_.wait();
+      caption_service_->wait();
       caption_completion_pending_ = false;
       setCaptioning(false);
       if (status.succeeded) {
@@ -5530,7 +5550,7 @@ void PlayerController::cancelCaptionsForMediaChange() {
     return;
   caption_cancel_reason_ =
       QStringLiteral("Caption generation stopped because the media changed.");
-  caption_service_.cancel();
+  caption_service_->cancel();
   setCaptionStatus(QStringLiteral("Stopping caption generation…"));
 }
 

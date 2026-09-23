@@ -30,6 +30,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - name: Select an Xcode whose SDK provides SpeechAnalyzer
+        # macos-15 defaults to Xcode 16.4 (macOS 15 SDK); the Apple caption
+        # backend is compile-probed and would silently build as the stub.
+        run: |
+          sudo xcode-select -s /Applications/Xcode_26.3.0.app
+          xcrun --show-sdk-version
       - name: Install pinned Qt
         uses: jurplel/install-qt-action@v4
         with:
