@@ -35,8 +35,13 @@ bool runProcess(const char* label, wam::ProcessCommand command) {
 }  // namespace
 
 int main(int argc, char** argv) {
-  if (argc != 3) {
-    std::cerr << "expected ffmpeg and ffprobe paths\n";
+  const bool hardware = argc == 4 && std::string(argv[3]) == "--hardware";
+  const std::string preset_name = argc == 4 && std::string(argv[3]).starts_with("--preset=")
+      ? std::string(argv[3]).substr(9) : "";
+  const bool all_presets = argc == 4 &&
+      (std::string(argv[3]) == "--all-presets" || !preset_name.empty());
+  if (argc != 3 && !hardware && !all_presets) {
+    std::cerr << "expected ffmpeg and ffprobe paths [--hardware|--all-presets|--preset=NAME]\n";
     return 2;
   }
   const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
@@ -70,7 +75,61 @@ int main(int argc, char** argv) {
   options.out_seconds = 5.0;
   options.speed = 2.0;
   options.preserve_pitch = true;
-  options.prefer_hardware_encoder = false;
+  options.prefer_hardware_encoder = hardware;
+  if (all_presets) {
+    // Attempt every preset even when a platform encoder is unavailable.
+    struct Preset { wam::ExportFormat format; bool hardware; const char* name;
+                    const char* video; const char* audio; };
+    const Preset presets[] = {
+        {wam::ExportFormat::Mp4Hevc, true, "hevc", "hevc", "aac"},
+        {wam::ExportFormat::WebmVp9, false, "vp9", "vp9", "opus"},
+        {wam::ExportFormat::MkvCopy, false, "mkv-reencode", "h264", "aac"},
+        {wam::ExportFormat::Gif, false, "gif", "gif", ""},
+        {wam::ExportFormat::Mp4H264, false, "h264-software-preference", "h264", "aac"},
+        {wam::ExportFormat::Mp4H264, true, "h264-hardware-preference", "h264", "aac"}};
+    bool all_valid = true;
+    bool matched = false;
+    for (const auto& preset : presets) {
+      if (!preset_name.empty() && preset_name != preset.name) continue;
+      matched = true;
+      options.format = preset.format;
+      options.prefer_hardware_encoder = preset.hardware;
+      options.preserve_pitch = true;
+      options.output = directory / (std::string(preset.name) +
+                                    wam::exportFormatExtension(preset.format));
+      if (!runProcess(preset.name, wam::buildExportProcess(argv[1], options))) {
+        all_valid = false;
+        continue;
+      }
+      const auto metadata = directory / "metadata.txt";
+      wam::ProcessCommand inspect;
+      inspect.executable = argv[2];
+      inspect.arguments = {"-v", "error", "-show_entries",
+          "stream=codec_name:format=duration", "-of", "default=nw=1",
+          "-o", utf8Path(metadata), utf8Path(options.output)};
+      if (!runProcess("preset ffprobe", std::move(inspect))) {
+        all_valid = false;
+        continue;
+      }
+      std::ifstream stream(metadata);
+      const std::string info{std::istreambuf_iterator<char>(stream),
+                             std::istreambuf_iterator<char>()};
+      const auto duration_at = info.find("duration=");
+      const bool valid = info.find(std::string("codec_name=") + preset.video + "\n") != std::string::npos &&
+          (!*preset.audio || info.find(std::string("codec_name=") + preset.audio + "\n") != std::string::npos) &&
+          duration_at != std::string::npos &&
+          std::abs(std::stod(info.substr(duration_at + 9)) - 2.0) <= 0.12;
+      std::cout << preset.name << ": " << info;
+      if (!valid) {
+        std::cerr << "preset codec/duration mismatch\n";
+        all_valid = false;
+        continue;
+      }
+    }
+    fs::remove_all(directory);
+    if (!matched) std::cerr << "unknown preset: " << preset_name << "\n";
+    return matched && all_valid ? 0 : 1;
+  }
   {
     std::ofstream existing(output, std::ios::binary);
     existing << "existing destination must survive encoding";
@@ -179,12 +238,14 @@ int main(int argc, char** argv) {
     varispeed_correct =
         duration_input && std::abs(varispeed_seconds - 2.0) <= 0.12;
   }
-  fs::remove_all(directory);
   if (!varispeed_correct) {
+    fs::remove_all(directory);
     std::cerr << "expected a 2.0 second pitch-shifted export, got "
               << varispeed_seconds << "\n";
     return 1;
   }
+
+  fs::remove_all(directory);
   std::cout << "export duration test passed (" << duration
             << " seconds pitch-preserved, " << varispeed_seconds
             << " seconds pitch-shifted)\n";

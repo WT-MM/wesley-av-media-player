@@ -1,0 +1,301 @@
+--- a/audio/decode/ad_spdif.c
++++ b/audio/decode/ad_spdif.c
+@@ -53,7 +53,7 @@
+     struct mp_decoder public;
+ };
+ 
+-static int write_packet(void *p, uint8_t *buf, int buf_size)
++static int write_packet(void *p, const uint8_t *buf, int buf_size)
+ {
+     struct spdifContext *ctx = p;
+ 
+@@ -90,7 +90,7 @@
+                                    int *out_profile, int *out_rate)
+ {
+     struct spdifContext *spdif_ctx = da->priv;
+-    int profile = FF_PROFILE_UNKNOWN;
++    int profile = AV_PROFILE_UNKNOWN;
+     AVCodecContext *ctx = NULL;
+     AVFrame *frame = NULL;
+ 
+@@ -115,7 +115,7 @@
+         av_parser_close(parser);
+     }
+ 
+-    if (profile != FF_PROFILE_UNKNOWN || spdif_ctx->codec_id != AV_CODEC_ID_DTS)
++    if (profile != AV_PROFILE_UNKNOWN || spdif_ctx->codec_id != AV_CODEC_ID_DTS)
+         return;
+ 
+     const AVCodec *codec = avcodec_find_decoder(spdif_ctx->codec_id);
+@@ -145,7 +145,7 @@
+     av_frame_free(&frame);
+     avcodec_free_context(&ctx);
+ 
+-    if (profile == FF_PROFILE_UNKNOWN)
++    if (profile == AV_PROFILE_UNKNOWN)
+         MP_WARN(da, "Failed to parse codec profile.\n");
+ }
+ 
+@@ -153,7 +153,7 @@
+ {
+     struct spdifContext *spdif_ctx = da->priv;
+ 
+-    int profile = FF_PROFILE_UNKNOWN;
++    int profile = AV_PROFILE_UNKNOWN;
+     int c_rate = 0;
+     determine_codec_params(da, pkt, &profile, &c_rate);
+     MP_VERBOSE(da, "In: profile=%d samplerate=%d\n", profile, c_rate);
+@@ -206,15 +206,15 @@
+         num_channels                    = 2;
+         break;
+     case AV_CODEC_ID_DTS: {
+-        bool is_hd = profile == FF_PROFILE_DTS_HD_HRA ||
+-                     profile == FF_PROFILE_DTS_HD_MA  ||
+-                     profile == FF_PROFILE_UNKNOWN;
++        bool is_hd = profile == AV_PROFILE_DTS_HD_HRA ||
++                     profile == AV_PROFILE_DTS_HD_MA  ||
++                     profile == AV_PROFILE_UNKNOWN;
+ 
+         // Apparently, DTS-HD over SPDIF is specified to be 7.1 (8 channels)
+         // for DTS-HD MA, and stereo (2 channels) for DTS-HD HRA. The bit
+         // streaming rate as well as the signaled channel count are defined
+         // based on this value.
+-        int dts_hd_spdif_channel_count = profile == FF_PROFILE_DTS_HD_HRA ?
++        int dts_hd_spdif_channel_count = profile == AV_PROFILE_DTS_HD_HRA ?
+                                          2 : 8;
+         if (spdif_ctx->use_dts_hd && is_hd) {
+             av_dict_set_int(&format_opts, "dtshd_rate",
+--- a/audio/filter/af_lavcac3enc.c
++++ b/audio/filter/af_lavcac3enc.c
+@@ -1,3 +1,4 @@
++#include "common/wam_ffmpeg9.h"
+ /*
+  * audio filter for runtime AC-3 encoding with libavcodec.
+  *
+@@ -103,7 +104,10 @@
+     if (!bit_rate && chmap.num < AC3_MAX_CHANNELS + 1)
+         bit_rate = default_bit_rate[chmap.num];
+ 
+-    avcodec_close(s->lavc_actx);
++    avcodec_free_context(&s->lavc_actx);
++    s->lavc_actx = avcodec_alloc_context3(s->lavc_acodec);
++    if (!s->lavc_actx || mp_set_avopts(f->log, s->lavc_actx, s->opts->avopts) < 0)
++        return false;
+ 
+     // Put sample parameters
+     s->lavc_actx->sample_fmt = af_to_avformat(format);
+@@ -291,7 +295,7 @@
+             mp_autoconvert_add_chmap(conv, &chmap);
+     }
+ #else
+-    const AVChannelLayout *lch = codec->ch_layouts;
++    const AVChannelLayout *lch = wam_codec_config(codec, AV_CODEC_CONFIG_CHANNEL_LAYOUT);
+     for (int n = 0; lch && lch[n].nb_channels; n++) {
+         struct mp_chmap chmap = {0};
+ 
+@@ -349,11 +353,11 @@
+     // For this one, we require the decoder to export lists of all supported
+     // parameters. (Not all decoders do that, but the ones we're interested
+     // in do.)
+-    if (!s->lavc_acodec->sample_fmts ||
++    if (!wam_codec_config(s->lavc_acodec, AV_CODEC_CONFIG_SAMPLE_FORMAT) ||
+ #if !HAVE_AV_CHANNEL_LAYOUT
+         !s->lavc_acodec->channel_layouts
+ #else
+-        !s->lavc_acodec->ch_layouts
++        !wam_codec_config(s->lavc_acodec, AV_CODEC_CONFIG_CHANNEL_LAYOUT)
+ #endif
+         )
+     {
+@@ -380,7 +384,7 @@
+     if (!conv)
+         abort();
+ 
+-    const enum AVSampleFormat *lf = s->lavc_acodec->sample_fmts;
++    const enum AVSampleFormat *lf = wam_codec_config(s->lavc_acodec, AV_CODEC_CONFIG_SAMPLE_FORMAT);
+     for (int i = 0; lf && lf[i] != AV_SAMPLE_FMT_NONE; i++) {
+         int mpfmt = af_from_avformat(lf[i]);
+         if (mpfmt)
+--- a/audio/out/ao_lavc.c
++++ b/audio/out/ao_lavc.c
+@@ -1,3 +1,4 @@
++#include "common/wam_ffmpeg9.h"
+ /*
+  * audio encoding using libavformat
+  *
+@@ -64,7 +65,7 @@
+ 
+ static bool supports_format(const AVCodec *codec, int format)
+ {
+-    for (const enum AVSampleFormat *sampleformat = codec->sample_fmts;
++    for (const enum AVSampleFormat *sampleformat = wam_codec_config(codec, AV_CODEC_CONFIG_SAMPLE_FORMAT);
+          sampleformat && *sampleformat != AV_SAMPLE_FMT_NONE;
+          sampleformat++)
+     {
+@@ -111,7 +112,7 @@
+     const AVCodec *codec = encoder->codec;
+ 
+     int samplerate = af_select_best_samplerate(ao->samplerate,
+-                                               codec->supported_samplerates);
++                                               wam_codec_config(codec, AV_CODEC_CONFIG_SAMPLE_RATE));
+     if (samplerate > 0)
+         ao->samplerate = samplerate;
+ 
+--- a/common/encode_lavc.c
++++ b/common/encode_lavc.c
+@@ -920,7 +920,7 @@
+     return true;
+ 
+ fail:
+-    avcodec_close(p->encoder);
++    avcodec_free_context(&p->encoder);
+     return false;
+ }
+ 
+--- /dev/null
++++ b/common/wam_ffmpeg9.h
+@@ -0,0 +1,19 @@
++/* WAM: API migration for the pinned FFmpeg 9 source closure. */
++#pragma once
++#include <libavcodec/avcodec.h>
++#include <libavformat/avformat.h>
++static inline const void *wam_codec_config(const AVCodec *codec,
++                                           enum AVCodecConfig kind)
++{
++    const void *result = NULL;
++    if (avcodec_get_supported_config(NULL, codec, kind, 0, &result, NULL) < 0)
++        return NULL;
++    return result;
++}
++static inline uint8_t *wam_stream_side_data(const AVStream *stream,
++                                           enum AVPacketSideDataType kind)
++{
++    const AVPacketSideData *sd = av_packet_side_data_get(
++        stream->codecpar->coded_side_data, stream->codecpar->nb_coded_side_data, kind);
++    return sd ? sd->data : NULL;
++}
+--- a/demux/demux_lavf.c
++++ b/demux/demux_lavf.c
+@@ -1,3 +1,4 @@
++#include "common/wam_ffmpeg9.h"
+ /*
+  * Copyright (C) 2004 Michael Niedermayer <michaelni@gmx.at>
+  *
+@@ -605,10 +606,10 @@
+ static void export_replaygain(demuxer_t *demuxer, struct sh_stream *sh,
+                               AVStream *st)
+ {
+-    for (int i = 0; i < st->nb_side_data; i++) {
++    for (int i = 0; i < st->codecpar->nb_coded_side_data; i++) {
+         AVReplayGain *av_rgain;
+         struct replaygain_data *rgain;
+-        AVPacketSideData *src_sd = &st->side_data[i];
++        AVPacketSideData *src_sd = &st->codecpar->coded_side_data[i];
+ 
+         if (src_sd->type != AV_PKT_DATA_REPLAYGAIN)
+             continue;
+@@ -751,18 +752,18 @@
+         sh->codec->par_w = st->sample_aspect_ratio.num;
+         sh->codec->par_h = st->sample_aspect_ratio.den;
+ 
+-        uint8_t *sd = av_stream_get_side_data(st, AV_PKT_DATA_DISPLAYMATRIX, NULL);
++        uint8_t *sd = wam_stream_side_data(st, AV_PKT_DATA_DISPLAYMATRIX);
+         if (sd) {
+             double r = av_display_rotation_get((uint32_t *)sd);
+             if (!isnan(r))
+                 sh->codec->rotate = (((int)(-r) % 360) + 360) % 360;
+         }
+ 
+-        if ((sd = av_stream_get_side_data(st, AV_PKT_DATA_DOVI_CONF, NULL))) {
++        if ((sd = wam_stream_side_data(st, AV_PKT_DATA_DOVI_CONF))) {
+             const AVDOVIDecoderConfigurationRecord *cfg = (void *) sd;
+             MP_VERBOSE(demuxer, "Found Dolby Vision config record: profile "
+                        "%d level %d\n", cfg->dv_profile, cfg->dv_level);
+-            av_format_inject_global_side_data(avfc);
++            // FFmpeg 9 carries global side data in codec parameters.
+         }
+ 
+         // This also applies to vfw-muxed mkv, but we can't detect these easily.
+--- a/demux/demux_mkv.c
++++ b/demux/demux_mkv.c
+@@ -1886,16 +1886,16 @@
+             // [0x30..0x37] are component tags utilized for
+             // non-mobile captioning service ("profile A").
+             if (component_tag >= 0x30 && component_tag <= 0x37)
+-                lav->profile = FF_PROFILE_ARIB_PROFILE_A;
++                lav->profile = AV_PROFILE_ARIB_PROFILE_A;
+             break;
+         case 0x0012:
+             // component tag 0x87 signifies a mobile/partial reception
+             // (1seg) captioning service ("profile C").
+             if (component_tag == 0x87)
+-                lav->profile = FF_PROFILE_ARIB_PROFILE_C;
++                lav->profile = AV_PROFILE_ARIB_PROFILE_C;
+             break;
+         }
+-        if (lav->profile == FF_PROFILE_UNKNOWN)
++        if (lav->profile == AV_PROFILE_UNKNOWN)
+             MP_WARN(demuxer, "ARIB caption profile %02x / %04x not supported.\n",
+                     component_tag, data_component_id);
+     }
+--- a/filters/f_lavfi.c
++++ b/filters/f_lavfi.c
+@@ -1024,7 +1024,7 @@
+     case AV_OPT_TYPE_VIDEO_RATE:        return "fps";
+     case AV_OPT_TYPE_DURATION:          return "duration";
+     case AV_OPT_TYPE_COLOR:             return "color";
+-    case AV_OPT_TYPE_CHANNEL_LAYOUT:    return "channellayout";
++    case AV_OPT_TYPE_CHLAYOUT:    return "channellayout";
+     case AV_OPT_TYPE_BOOL:              return "bool";
+     case AV_OPT_TYPE_CONST: // fallthrough
+     default:
+--- a/meson.build
++++ b/meson.build
+@@ -1,5 +1,5 @@
+ project('mpv',
+-        'c',
++        'c', 'objc',
+         license: ['GPL2+', 'LGPL2.1+'],
+         version: files('./VERSION'),
+         meson_version: '>=0.62.0',
+--- a/video/image_writer.c
++++ b/video/image_writer.c
+@@ -1,3 +1,4 @@
++#include "common/wam_ffmpeg9.h"
+ /*
+  * This file is part of mpv.
+  *
+@@ -521,7 +522,7 @@
+ 
+ static int get_encoder_format(const AVCodec *codec, int srcfmt, bool highdepth)
+ {
+-    const enum AVPixelFormat *pix_fmts = codec->pix_fmts;
++    const enum AVPixelFormat *pix_fmts = wam_codec_config(codec, AV_CODEC_CONFIG_PIX_FORMAT);
+     int current = 0;
+     for (int n = 0; pix_fmts && pix_fmts[n] != AV_PIX_FMT_NONE; n++) {
+         int fmt = pixfmt2imgfmt(pix_fmts[n]);
+--- a/video/out/vo_lavc.c
++++ b/video/out/vo_lavc.c
+@@ -1,3 +1,4 @@
++#include "common/wam_ffmpeg9.h"
+ /*
+  * video encoding using libavformat
+  *
+@@ -127,7 +128,7 @@
+     tb.num = 24000;
+     tb.den = 1;
+ 
+-    const AVRational *rates = encoder->codec->supported_framerates;
++    const AVRational *rates = wam_codec_config(encoder->codec, AV_CODEC_CONFIG_FRAME_RATE);
+     if (rates && rates[0].den)
+         tb = rates[av_find_nearest_q_idx(tb, rates)];
+ 
+@@ -159,7 +160,7 @@
+     struct priv *vc = vo->priv;
+ 
+     enum AVPixelFormat pix_fmt = imgfmt2pixfmt(format);
+-    const enum AVPixelFormat *p = vc->enc->encoder->codec->pix_fmts;
++    const enum AVPixelFormat *p = wam_codec_config(vc->enc->encoder->codec, AV_CODEC_CONFIG_PIX_FORMAT);
+ 
+     if (!p)
+         return 1;

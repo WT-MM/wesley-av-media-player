@@ -127,8 +127,9 @@ That local command produces an ad-hoc-signed package — the same kind of
 artifact the shipping release path produces today.
 
 `.github/workflows/release.yml` is that path. It triggers on a `v*` tag, builds
-on a `macos-14` (Apple silicon) runner against Homebrew dependencies, caches
-the checksum-pinned caption engine and model, runs the same
+on a `macos-15` (Apple silicon) runner with installer Qt 6.11.1 and the
+pinned offline media closure described below, caches the checksum-pinned
+caption engine and model, runs the same
 install/repair/bundle sequence as above, asserts that no Mach-O in the finished
 app references a library outside the bundle, and publishes the ZIP and its
 SHA-256 sidecar to a GitHub Release. The bundle is ad-hoc signed, so the
@@ -149,6 +150,78 @@ ID, the base64 PKCS#12 certificate and password, App Store Connect notary key ID
 and issuer ID, and the base64 notary API key. Release credentials are imported
 into an ephemeral CI keychain and removed in an unconditional cleanup step;
 they must not be placed in the repository or local build files.
+
+## macOS release media closure
+
+`scripts/build_media_closure.sh [PREFIX]` verifies the eight archives in
+`third_party/media-source/SHA256SUMS` before extracting any of them. It
+fetches an archive from upstream only when it is missing (git tracks the manifest, not the archives), and every archive must match the manifest before extraction, so a pre-staged tree builds offline. `WAM_MEDIA_FETCH_ONLY=1` stops after fetching and verification. The default output is the ignored
+`third_party/media-closure`; temporary package builds live under
+`/private/tmp/wam-media-scratch` and are removed after installation. Build tools
+are Meson, Ninja, pkg-config, CMake, NASM, autoconf, automake, libtool, Python 3,
+and Apple's command-line tools. `WAM_MEDIA_JOBS` defaults to 4 and accepts 1 through 4.
+The recipe exports `lt_cv_sys_max_cmd_len=262144` and passes it to every
+autotools configure, avoiding sandbox-denied `sysctl kern.argmax` probes.
+It verifies the generated libtool value before linking and retains that proof.
+
+The recipe builds FreeType, FriBidi, HarfBuzz, libass (CoreText, no fontconfig),
+libvpx, BSD-licensed Opus, LGPL FFmpeg with its command-line tools, and LGPL libmpv. Every compiler
+and linker receives a 13.3 deployment target. mpv 0.36.0 needs the checked-in
+FFmpeg 9 compatibility patch; its optional libplacebo, scripting engines,
+VapourSynth, rubberband, archive and Blu-ray dependencies are disabled. OpenGL,
+Cocoa, CoreAudio and VideoToolbox interop remain enabled. The script checks all
+installed Mach-O files with `otool`, rejects non-system dependencies outside
+its prefix, verifies WAM's required mpv symbols with `nm`, and calls the client
+API version function (2.1). Logs, source hashes, licenses, build configuration,
+and the per-file minos/hash table are in `share/wam-media`.
+
+```sh
+scripts/build_media_closure.sh
+media="$PWD/third_party/media-closure"
+export PKG_CONFIG_PATH="$media/lib/pkgconfig"
+export PKG_CONFIG_LIBDIR="$media/lib/pkgconfig"
+cmake -S . -B build -G Ninja \
+  -DCMAKE_PREFIX_PATH="$media;$QT_ROOT_DIR" \
+  -DWAM_DEV_FFMPEG_EXECUTABLE="$media/bin/ffmpeg" \
+  -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_DEPLOYMENT_TARGET=13.3 \
+  -DWAM_ENABLE_MACOS_NATIVE_VIDEO=ON -DWAM_ENABLE_SOFTWARE_VP8=ON \
+  -DWAM_ENABLE_AVFORMAT_STAGE=ON -DWAM_ENABLE_AVCODEC_STAGE=OFF
+cmake --build build --parallel
+```
+
+The separate `third_party/ffmpeg-lgpl` SDK is still needed for the native demux
+stage: it has WAM's allocation patch and `-wamnative` library names. Do not
+replace it with the general-purpose media closure. Existing test fixture
+builders also need a development FFmpeg with GPL encoders; that executable
+must not become `WAM_DEV_FFMPEG_EXECUTABLE` in a release.
+
+After installing/repairing Qt and supplying the caption runtime, bundle with:
+
+```sh
+WAM_MACOS_RELEASE_FLOOR=13.3 \
+WAM_FFMPEG_EXECUTABLE="$media/bin/ffmpeg" \
+WAM_MPV_FALLBACK_LIBRARY="$media/lib/libmpv.2.dylib" \
+  scripts/bundle_macos.zsh stage/WAM.app \
+    build/runtime/whisper-cli build/runtime/models/ggml-base.en.bin
+```
+
+`release.yml` caches this closure by recipe, patch, API requirements, manifest,
+and archive contents. The release floor gate rejects any payload slice above
+13.3, including Qt and whisper; setting only the application's deployment
+target cannot lower an already-built dependency's minimum OS. `build.yml`
+continues using Homebrew for its development/test dependencies and GPL fixture
+encoders on macos-15. Its native-first executable needs mpv headers and libvpx;
+it does not link libmpv into WAM.
+
+The closure includes `libopus` and `libvpx-vp9`. Both macOS H.264 encoder
+preferences use `h264_videotoolbox -allow_sw 1`; libx264 remains confined to
+the non-Apple export path. For export proofs against the closure while keeping
+GPL fixture generation on the development tool, configure
+`WAM_EXPORT_FFMPEG_EXECUTABLE` and `WAM_EXPORT_FFPROBE_EXECUTABLE` to the
+closure's tools. CTest's `export_presets` checks every macOS export preset;
+`jobs` guards both H.264 preferences against requesting libx264.
+See [the local qualification report](MEDIA_CLOSURE_13_3.md) for measured
+results and remaining macOS 13.3 and fallback telemetry qualification.
 
 ## Performance policy
 
