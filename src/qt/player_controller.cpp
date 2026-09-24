@@ -2609,7 +2609,8 @@ void PlayerController::publishSubtitleText(const QString &text) {
 void PlayerController::updateSubtitleBitmapForPosition() {
   if (!subtitles_)
     return;
-  const bool off = subtitles_->activeId() == SubtitleSources::kOffId;
+  const bool off = subtitles_->activeId() == SubtitleSources::kOffId ||
+                   subtitles_->activeIsGenerated();
   const SubtitleSources::BitmapFrame &frame =
       off ? subtitles_->bitmapFrameAt(std::numeric_limits<double>::quiet_NaN())
           : subtitles_->bitmapFrameAt(position_);
@@ -2661,6 +2662,7 @@ void PlayerController::updateSubtitleForPosition() {
 }
 
 void PlayerController::resetSubtitlesForMediaChange() {
+  caption_live_bridge_.reset();
   if (!subtitles_)
     return;
   if (caption_feed_)
@@ -2879,6 +2881,8 @@ void PlayerController::selectSubtitleTrack(int id) {
   if (id == SubtitleSources::kOffId) {
     subtitles_->cancelNativeLoad();
     publishSubtitleText({});
+  } else if (source->generatedCues) {
+    // Both playback routes use the same in-memory generated track.
   } else if (source->mpvSid > 0) {
     // Compatibility route: mpv owns selection and timing; the overlay is fed
     // by the sub-text observation.
@@ -3323,9 +3327,59 @@ void PlayerController::generateCaptionsTo(const QUrl &destination) {
   request.output_srt = *output;
   request.tools = ::wam::findCaptionTools(nullptr);
   request.options.overwrite = true;
+  if (qEnvironmentVariableIsSet("WAM_TEST_CAPTION_METRICS") &&
+      qgetenv("WAM_TEST_CAPTION_ENGINE") == "whisper") request.options.prefer_apple = false;
+  auto bridge = std::shared_ptr<CaptionLiveBridge>(new CaptionLiveBridge,
+      [](CaptionLiveBridge* p) { p->deleteLater(); });
+  caption_live_bridge_ = bridge;
+  caption_live_selected_ = false;
+  caption_track_committed_ = false;
+  const QUrl media = source_;
+  connect(bridge.get(), &CaptionLiveBridge::available, this,
+      [this, weak=std::weak_ptr<CaptionLiveBridge>(bridge), media, path=*output] {
+    const auto bridge = weak.lock();
+    if (!bridge) return;
+    if (caption_live_bridge_ != bridge || source_ != media) return;
+    // Never wait on a backend mutex from the UI. Retry on a queued turn if
+    // publication owns it; queued remains set so producers stay coalesced.
+    std::unique_lock lock(bridge->mutex, std::try_to_lock);
+    if (!lock.owns_lock()) { QMetaObject::invokeMethod(bridge.get(), "available", Qt::QueuedConnection); return; }
+    auto snapshot = bridge->latest;
+    bridge->queued.store(false);
+    lock.unlock();
+    if (!snapshot || !subtitles_) return;
+    const int id = subtitles_->updateGenerated(path, snapshot->cues, snapshot->committed);
+    if (!caption_live_selected_) {
+      caption_live_selected_ = true;
+      selectSubtitleTrack(id);
+    }
+    caption_track_committed_ = snapshot->committed;
+    emit subtitleTracksChanged();
+    updateSubtitleForPosition();
+    if (snapshot->committed && qEnvironmentVariableIsSet("WAM_TEST_CAPTION_METRICS"))
+      qInfo() << "caption-track: committed";
+  }, Qt::QueuedConnection);
+  request.live_segments = [bridge](std::vector<::wam::CaptionSegment> segments) {
+    auto cues = std::make_shared<std::vector<media::subtitles::Cue>>();
+    for (const auto& segment : segments)
+      cues->push_back({static_cast<std::int64_t>(segment.start*1e9),
+                      static_cast<std::int64_t>(segment.end*1e9), segment.text});
+    bridge->publish(std::make_shared<CaptionLiveBridge::Snapshot>(CaptionLiveBridge::Snapshot{cues,false}));
+  };
+  request.committed = [bridge](const std::filesystem::path& path) {
+    QFile file(QString::fromStdString(path.string()));
+    if (!file.open(QIODevice::ReadOnly) || file.size() > 16*1024*1024)
+      throw std::runtime_error("Could not read committed captions");
+    const auto bytes = file.readAll();
+    auto parsed = media::subtitles::parseSubRip(std::string_view(bytes.constData(),bytes.size()));
+    if (parsed.cues.empty()) throw std::runtime_error("Committed captions contain no cues");
+    media::subtitles::finalizeCues(&parsed.cues, false);
+    auto cues = std::make_shared<const std::vector<media::subtitles::Cue>>(std::move(parsed.cues));
+    bridge->publish(std::make_shared<CaptionLiveBridge::Snapshot>(CaptionLiveBridge::Snapshot{cues,true}));
+  };
 
   if (!caption_service_->start(std::move(request))) {
-    const ::wam::CaptionStatus status = caption_service_->status();
+    const ::wam::CaptionStatus status = caption_service_->tryStatus().value_or(::wam::CaptionStatus{});
     const QString error = fromUtf8(status.error);
     setLastError(
         error.isEmpty()
@@ -3440,7 +3494,9 @@ void PlayerController::pollBackgroundWork() {
   }
 
   if (caption_completion_pending_) {
-    const ::wam::CaptionStatus status = caption_service_->status();
+    const auto snapshot = caption_service_->tryStatus();
+    if (!snapshot) return;
+    const ::wam::CaptionStatus& status = *snapshot;
     if (status.needs_download_consent && !caption_download_prompted_) {
       caption_download_prompted_ = true;
 #ifdef Q_OS_MACOS
@@ -3457,7 +3513,6 @@ void PlayerController::pollBackgroundWork() {
       setCaptionStatus(message);
 
     if (status.finished) {
-      caption_service_->wait();
       caption_completion_pending_ = false;
       setCaptioning(false);
       if (status.succeeded) {
@@ -3466,17 +3521,9 @@ void PlayerController::pollBackgroundWork() {
             !pathsReferToSameFile(caption_input_, *current_input)) {
           setCaptionStatus(QStringLiteral(
               "Captions saved, but not attached because the media changed."));
-        } else if (attachSubtitleSource(
-                       status.output_srt,
-                       static_cast<int>(SubtitleSources::Origin::Generated),
-                       QStringLiteral("Generated Captions"))) {
+        } else {
           setCaptionStatus(QStringLiteral("Captions generated and enabled."));
           setLastError({});
-        } else {
-          setCaptionStatus(
-              QStringLiteral("Captions were saved but could not be attached."));
-          setLastError(QStringLiteral("The caption file was created, but the "
-                                      "player could not attach it."));
         }
       } else if (status.cancelled) {
         setCaptionStatus(caption_cancel_reason_.isEmpty()
@@ -3488,6 +3535,10 @@ void PlayerController::pollBackgroundWork() {
         setLastError(error.isEmpty()
                          ? QStringLiteral("Caption generation failed.")
                          : error);
+      }
+      if (!status.succeeded) {
+        caption_live_bridge_.reset();
+        if (subtitles_ && subtitles_->activeIsGenerated()) selectSubtitleTrack(SubtitleSources::kOffId);
       }
       caption_input_.clear();
       caption_cancel_reason_.clear();
@@ -3736,6 +3787,7 @@ void PlayerController::drainMpvEvents() {
         // the line with its own markup already resolved, so nothing here has
         // to re-parse ASS or SRT: that work only exists on the native route,
         // where there is no mpv to do it.
+        if (subtitles_ && subtitles_->activeIsGenerated()) break;
         if (subtitles_ && subtitles_->activeId() != SubtitleSources::kOffId)
           publishSubtitleText(readString(property));
         else

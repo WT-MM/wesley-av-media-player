@@ -75,6 +75,7 @@ public:
     // A/53 SEI). Not a track and not a file: the cues come from the live
     // caption feed as the pictures are presented.
     bool closedCaptions{false};
+    std::shared_ptr<const std::vector<media::subtitles::Cue>> generatedCues;
     std::filesystem::path filePath;
 
     [[nodiscard]] bool isBitmap() const noexcept {
@@ -100,6 +101,13 @@ public:
   // added. `mpvSid` is 0 on the native route.
   int addFileSource(const std::filesystem::path &path, Origin origin,
                     const QString &label, std::int64_t mpvSid);
+
+  int updateGenerated(const std::filesystem::path& path,
+      std::shared_ptr<const std::vector<media::subtitles::Cue>> cues, bool committed);
+  bool activeIsGenerated() const noexcept {
+    const auto* source = find(active_id_);
+    return source && bool(source->generatedCues);
+  }
 
   // The live feed the "Closed Captions" source reads from. Set once by the
   // owning controller; the source itself is added only once the feed has
@@ -166,7 +174,7 @@ public:
   // True when there is something to look up: loaded cues, or the live
   // caption feed behind a selected Closed Captions source.
   [[nodiscard]] bool hasCues() const noexcept {
-    return !cues_.empty() || activeIsClosedCaptions();
+    return !cues_.empty() || activeIsClosedCaptions() || activeIsGenerated();
   }
 
   // ---------------------------------------------------------------------

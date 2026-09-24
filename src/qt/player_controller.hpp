@@ -1,6 +1,7 @@
 #pragma once
 
 #include "caption_service.hpp"
+#include "media/subtitle_text.hpp"
 #include "jobs.hpp"
 #include "media/live_caption_feed.hpp"
 #include "playback_policy.hpp"
@@ -42,6 +43,26 @@ struct PreviewPresented;
 } // namespace wam::media::native_playback
 
 namespace wam::qt {
+
+// Latest snapshot mailbox: at most one queued notification and one pending
+// snapshot, irrespective of backend speed. Its lifetime is independent of UI.
+class CaptionLiveBridge final : public QObject {
+  Q_OBJECT
+public:
+  struct Snapshot {
+    std::shared_ptr<const std::vector<media::subtitles::Cue>> cues;
+    bool committed = false;
+  };
+  std::mutex mutex;
+  std::shared_ptr<const Snapshot> latest;
+  std::atomic<bool> queued{false};
+  void publish(std::shared_ptr<const Snapshot> value) {
+    { std::lock_guard lock(mutex); latest = std::move(value); }
+    if (!queued.exchange(true)) emit available();
+  }
+signals:
+  void available();
+};
 
 // QML-facing playback state and commands. All regular libmpv client calls are
 // made on this object's (GUI) thread; video rendering remains isolated on Qt
@@ -282,6 +303,8 @@ public:
   }
   [[nodiscard]] bool exporting() const { return exporting_; }
   [[nodiscard]] QString exportStatus() const { return export_status_; }
+  [[nodiscard]] bool captionTranscribing() const { return caption_service_->transcribing(); }
+  [[nodiscard]] bool captionTrackCommitted() const { return caption_track_committed_; }
   [[nodiscard]] bool captioning() const { return captioning_; }
   [[nodiscard]] QString captionStatus() const { return caption_status_; }
   [[nodiscard]] QString lastError() const { return last_error_; }
@@ -921,6 +944,9 @@ private:
   ::wam::BackgroundJob export_job_;
   std::shared_ptr<::wam::CaptionService> caption_service_ = std::make_shared<::wam::CaptionService>();
   bool caption_download_prompted_ = false;
+  std::shared_ptr<CaptionLiveBridge> caption_live_bridge_;
+  bool caption_live_selected_ = false;
+  bool caption_track_committed_ = false;
   std::unique_ptr<SubtitleSources> subtitles_;
   // The live closed-caption tap the native video consumer feeds for this
   // window. Owned here so it outlives any one session; handed to the session
