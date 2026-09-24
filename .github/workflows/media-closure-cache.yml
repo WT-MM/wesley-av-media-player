@@ -11,6 +11,7 @@ on:
       - scripts/build_media_closure.sh
       - scripts/media-patches/**
       - third_party/media-source/SHA256SUMS
+      - src/playback/mpv/mpv_api.cpp
       - .github/workflows/media-closure-cache.yml
 
 concurrency:
