@@ -1,5 +1,6 @@
 #pragma once
 #include "native_concurrency_limits.hpp"
+#include "media/native_display_geometry.hpp"
 
 namespace wam::macos {
 // Host policy calls require the main thread and expose no native graph ownership.
@@ -14,5 +15,6 @@ struct NativeEmbeddingSupport {
   static void setVividBoost(void* window, double) noexcept;
   static double vividBoost(void* window) noexcept;
   static double appliedVividBoost(void* window) noexcept;
+  static media::MediaDisplayProjection displayGeometry(void* window) noexcept;
 };
 }

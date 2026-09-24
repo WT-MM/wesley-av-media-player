@@ -40,6 +40,7 @@ makeInjectedLinkedMpvRuntime() {
       &::mpv_observe_property,
       &::mpv_render_context_create,
       &::mpv_render_context_free,
+      &::mpv_render_context_get_info,
       &::mpv_render_context_render,
       &::mpv_render_context_set_update_callback,
       &::mpv_render_context_update,

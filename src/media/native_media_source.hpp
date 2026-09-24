@@ -953,11 +953,11 @@ static_assert(std::is_trivially_copyable_v<MediaSourceStats>);
 // axes is the sole empty encoding and means "not stated"; see the free
 // functions below for who produces it and when.
 struct MediaDisplaySize {
-  std::uint32_t width{0};
-  std::uint32_t height{0};
+  MediaRational width{};
+  MediaRational height{};
 
   [[nodiscard]] constexpr bool empty() const noexcept {
-    return width == 0 || height == 0;
+    return width.numerator <= 0 || height.numerator <= 0;
   }
 
   friend constexpr bool operator==(const MediaDisplaySize&,

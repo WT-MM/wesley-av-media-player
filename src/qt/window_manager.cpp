@@ -205,6 +205,9 @@ PlayerWindow::PlayerWindow(WindowManager &manager, QQmlComponent &component,
     // construction and stays alive for this window's lifetime so Main.qml can
     // drive its fade/aspect-ratio/actual-size calls afterwards.
     chrome_ = new MacWindowChrome(window_, this);
+    connect(controller_, &PlayerController::videoDisplaySizeChanged, chrome_, [this] {
+      chrome_->setExactVideoDisplaySize(controller_->exactVideoDisplaySize(), controller_->source());
+    });
     context_->setContextProperty(QStringLiteral("windowChrome"), chrome_);
     // The chrome cannot exist before the window it wraps, so it is necessarily
     // published after Component.onCompleted has already run with the name

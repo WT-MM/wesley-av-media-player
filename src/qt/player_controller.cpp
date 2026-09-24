@@ -3634,6 +3634,7 @@ void PlayerController::drainMpvEvents() {
 #endif
 
     if (event->event_id == MPV_EVENT_START_FILE) {
+      core_->beginFallbackMetricsEpoch();
       const auto *start = static_cast<mpv_event_start_file *>(event->data);
       handleStartFile(start ? start->playlist_entry_id : -1);
       continue;
@@ -4628,6 +4629,10 @@ void PlayerController::applyObservedDisplaySize() {
 }
 
 void PlayerController::updateVideoDisplaySize(int width, int height) {
+  updateVideoDisplaySize(media::MediaRational{width, 1}, media::MediaRational{height, 1});
+}
+
+void PlayerController::updateVideoDisplaySize(media::MediaRational width, media::MediaRational height) {
   // A backend that cannot state a size must not erase one another backend
   // already stated. The single place a size is deliberately forgotten is
   // resetTimeline(), which assigns the member directly for exactly that
@@ -4635,9 +4640,10 @@ void PlayerController::updateVideoDisplaySize(int width, int height) {
   // not one. This is what keeps the native route's Prepared answer alive
   // when the compatibility engine is initialized alongside it and reports
   // nothing, and vice versa.
-  if (width <= 0 || height <= 0)
+  if (width.numerator <= 0 || height.numerator <= 0 || !width.denominator || !height.denominator)
     return;
-  const QSize value(width, height);
+  exact_video_display_size_ = {width, height};
+  const QSizeF value(media::displayScalar(width), media::displayScalar(height));
   if (video_display_size_ == value)
     return;
   video_display_size_ = value;
@@ -5562,7 +5568,8 @@ void PlayerController::resetTimeline() {
   // media transition routes through here, so the previous file's aspect
   // cannot outlive it into the next open's window geometry.
   if (!video_display_size_.isEmpty()) {
-    video_display_size_ = QSize();
+    video_display_size_ = QSizeF();
+    exact_video_display_size_ = {};
     emit videoDisplaySizeChanged();
   }
   if (!nearlyEqual(trim_in_, 0.0)) {

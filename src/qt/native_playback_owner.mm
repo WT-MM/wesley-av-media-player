@@ -213,11 +213,11 @@ void NativePlaybackOwner::samplePlaybackMetrics() {
     sample.hasAudio = sampled.audioValid;
     sample.hasClock = sampled.clockValid;
     sample.paused = sampled.paused;
+  } else if (acceptsFallbackPlaybackEvents() && controller_.core_) {
+    sample = controller_.core_->fallbackMetrics();
   }
-  // With no native session the sample carries no counters at all: every field
-  // stays unavailable and is emitted as null rather than as a fabricated zero.
-  // The epoch is the exception; it stays 0, the reserved "no session open"
-  // value, because it names an epoch rather than counting anything.
+  // Unavailable audio/drop counters stay null; no time/fps estimate is used
+  // as a substitute for frames actually rendered by the compatibility host.
   static_cast<void>(metrics.write(sample));
 }
 
@@ -625,8 +625,8 @@ void NativePlaybackOwner::publishLifecycle(
           // below so that a handler reacting to the open already sees it.
           // Zero means "not stated" and updateVideoDisplaySize drops it.
           controller_.updateVideoDisplaySize(
-              static_cast<int>(event.descriptor.displayWidth),
-              static_cast<int>(event.descriptor.displayHeight));
+              event.descriptor.displayWidth,
+              event.descriptor.displayHeight);
           controller_.updatePause(true);
           controller_.updateIdle(false);
           controller_.updateEof(false);

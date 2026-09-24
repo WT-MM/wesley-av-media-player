@@ -20,6 +20,7 @@ bool MpvApi::complete() const noexcept {
   WAM_REQUIRE_MPV_SYMBOL(mpv_observe_property);
   WAM_REQUIRE_MPV_SYMBOL(mpv_render_context_create);
   WAM_REQUIRE_MPV_SYMBOL(mpv_render_context_free);
+  WAM_REQUIRE_MPV_SYMBOL(mpv_render_context_get_info);
   WAM_REQUIRE_MPV_SYMBOL(mpv_render_context_render);
   WAM_REQUIRE_MPV_SYMBOL(mpv_render_context_set_update_callback);
   WAM_REQUIRE_MPV_SYMBOL(mpv_render_context_update);

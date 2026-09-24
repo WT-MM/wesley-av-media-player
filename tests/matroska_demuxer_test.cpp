@@ -1832,7 +1832,7 @@ void testVideoDisplayGeometry() {
     if (descriptor != nullptr) {
       const wam::media::MediaDisplaySize size =
           wam::media::mediaSourceDisplaySize(*descriptor);
-      expect(size.width == kSampleAvcWidth && size.height == kSampleAvcHeight,
+      expect(size.width == wam::media::MediaRational{kSampleAvcWidth, 1} && size.height == wam::media::MediaRational{kSampleAvcHeight, 1},
              "mediaSourceDisplaySize reads the selected Matroska video "
              "track's display size");
     }
@@ -4634,8 +4634,8 @@ void testProjectionQuarterTurn() {
   struct Rotation {
     std::int16_t degrees{0};
     bool identity{true};
-    std::uint32_t displayWidth{0};
-    std::uint32_t displayHeight{0};
+    wam::media::MediaRational displayWidth{};
+    wam::media::MediaRational displayHeight{};
   };
   const auto rotationOf =
       [](const FixtureSpec& spec) -> std::optional<Rotation> {
@@ -4660,8 +4660,8 @@ void testProjectionQuarterTurn() {
     const auto rotation = rotationOf(spec);
     expect(rotation.has_value() && rotation->degrees == 90 &&
                !rotation->identity &&
-               rotation->displayWidth == kSampleAvcHeight &&
-               rotation->displayHeight == kSampleAvcWidth,
+               rotation->displayWidth == wam::media::MediaRational{kSampleAvcHeight, 1} &&
+               rotation->displayHeight == wam::media::MediaRational{kSampleAvcWidth, 1},
            "a rectangular Projection with roll -90 is the 90-degree clockwise "
            "quarter turn, and the display rectangle is transposed");
   }
@@ -4679,7 +4679,7 @@ void testProjectionQuarterTurn() {
     const auto rotation = rotationOf(spec);
     expect(rotation.has_value() && rotation->degrees == 180 &&
                !rotation->identity &&
-               rotation->displayWidth == kSampleAvcWidth,
+               rotation->displayWidth == wam::media::MediaRational{kSampleAvcWidth, 1},
            "roll 180 is the half turn and keeps the coded rectangle");
   }
   {

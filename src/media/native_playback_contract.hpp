@@ -1,5 +1,7 @@
 #pragma once
 
+#include "media/native_media_source.hpp"
+
 #include <cstdint>
 #include <limits>
 
@@ -299,8 +301,8 @@ struct PreparedDescriptor {
   // nonzero pair even when hasVideo is true. The Qt layer republishes this as
   // PlayerController::videoDisplayWidth/Height; see
   // src/qt/native_playback_owner.mm's Prepared arm.
-  std::uint32_t displayWidth{0};
-  std::uint32_t displayHeight{0};
+  media::MediaRational displayWidth{};
+  media::MediaRational displayHeight{};
 
   friend constexpr bool operator==(const PreparedDescriptor &,
                                    const PreparedDescriptor &) = default;

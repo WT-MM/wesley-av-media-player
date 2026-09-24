@@ -121,6 +121,7 @@ class NativeLayerVideoOutput final : public NativeTrackedVideoOutput {
   // transform on a layer WindowServer already composites, so a portrait file
   // costs exactly what a landscape one costs. See
   // setNativeLayerPresentationRotation in native_layer_host_view.hpp.
+  bool setPresentationDisplaySize(media::MediaDisplaySize size) noexcept override;
   [[nodiscard]] bool setPresentationRotation(int degrees) noexcept override;
 
   // Activates the first generation. The tracked contract requires an accepted
