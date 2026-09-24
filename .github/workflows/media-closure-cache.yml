@@ -1,0 +1,45 @@
+name: Seed the media closure cache
+
+# actions/cache entries saved on a tag ref are invisible to later tags, so every
+# release rebuilt the closure (~10 min). A cache saved from main is visible to
+# every ref. Run this after changing the recipe, patches or SHA256SUMS.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - scripts/build_media_closure.sh
+      - scripts/media-patches/**
+      - third_party/media-source/SHA256SUMS
+      - .github/workflows/media-closure-cache.yml
+
+concurrency:
+  group: media-closure-cache
+  cancel-in-progress: true
+
+jobs:
+  seed:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Select the release Xcode
+        run: sudo xcode-select -s /Applications/Xcode_26.3.0.app
+      - name: Install source build tools
+        run: |
+          set -euo pipefail
+          brew update --quiet
+          brew install --quiet cmake ninja pkg-config meson nasm autoconf automake libtool
+      - name: Restore the pinned media closure
+        id: media-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: third_party/media-closure
+          key: media-closure-${{ runner.os }}-${{ runner.arch }}-13.3-${{ hashFiles('scripts/build_media_closure.sh', 'scripts/media-patches/*', 'src/playback/mpv/mpv_api.cpp', 'third_party/media-source/SHA256SUMS') }}
+      - name: Build the pinned media closure (sources fetched and hash-verified)
+        if: steps.media-cache.outputs.cache-hit != 'true'
+        run: scripts/build_media_closure.sh
+      - name: Verify the media closure receipt
+        run: test -s third_party/media-closure/share/wam-media/build-receipt.txt
