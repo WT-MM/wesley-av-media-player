@@ -173,7 +173,7 @@ public:
   // WAM_TEST_GEOMETRY parks the FIRST window at an exact rectangle (later test
   // windows cascade off it like real ones).
   void setBackgroundLaunch(bool enabled);
-  void setParkedGeometry(int x, int y, int width, int height);
+  void setParkedGeometry(int x, int y, int width, int height, bool allWindows = false);
 
   // Installs the one desktop menu bar (qml/AppMenu.qml). It belongs to the
   // application rather than to any window, so it survives the last window

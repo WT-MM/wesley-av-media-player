@@ -2825,6 +2825,7 @@ void PlayerController::applySubtitleDefaultPolicy() {
 }
 
 void PlayerController::refreshSubtitleSources() {
+  if (open_attempt_) return; // refreshed after first-frame startup completion
   if (!subtitles_ || source_.isEmpty())
     return;
   const bool native = nativeRouteActive();
@@ -3613,7 +3614,7 @@ void PlayerController::drainMpvEvents() {
         continue;
       }
       if (reply_namespace == kOpenCommandReplyNamespace) {
-        handleOpenCommandReply(event->reply_userdata, event->error);
+        observeOpenCommandReply(event->reply_userdata, event->error);
         continue;
       }
       if (reply_namespace == kRenderRecoveryCommandReplyNamespace) {
@@ -3814,8 +3815,14 @@ void PlayerController::drainMpvEvents() {
 
     if (event->event_id == MPV_EVENT_END_FILE) {
       const auto *end = static_cast<mpv_event_end_file *>(event->data);
-      if (end)
+      if (end) {
+        // Failed/empty opens may end without PLAYBACK_RESTART. Retire their
+        // accepted command using the matching START_FILE identity as well.
+        if (open_attempt_ && open_attempt_->reply_ready &&
+            open_attempt_->playlist_entry_id == end->playlist_entry_id)
+          handleOpenCommandReply(kOpenCommandReplyNamespace | open_attempt_->id, 0);
         handleEndFile(*end);
+      }
     }
   }
 }
@@ -4057,6 +4064,27 @@ bool PlayerController::flushRenderRecovery(std::uint64_t render_stamp) {
   if (!core_->validateRenderTicket(ticket))
     continuePendingOpen();
   return true;
+}
+
+void PlayerController::observeOpenCommandReply(std::uint64_t reply_userdata,
+                                               int error) {
+  if (error >= 0 && open_attempt_ &&
+      open_attempt_->id == (reply_userdata & kOpenCommandReplyIdMask) &&
+      !open_attempt_->playback_restarted) {
+    // Metadata reads in handleOpenCommandReply are synchronous. Before the
+    // first frame they can wait on mpv's VO while Qt needs this GUI thread to
+    // dispatch rendering. Retain one reply in the existing attempt, then read
+    // metadata after PLAYBACK_RESTART (also emitted for paused/audio opens).
+    open_attempt_->reply_ready = true;
+    return;
+  }
+  const bool loaded = open_attempt_ && open_attempt_->file_loaded;
+  const bool restarted = open_attempt_ && open_attempt_->playback_restarted;
+  handleOpenCommandReply(reply_userdata, error);
+  if (error >= 0 && !open_attempt_ && restarted) {
+    if (loaded) handlePlaybackReady(true);
+    handlePlaybackReady(false);
+  }
 }
 
 void PlayerController::handleOpenCommandReply(std::uint64_t reply_userdata,
@@ -4484,6 +4512,14 @@ void PlayerController::handleEndFile(const mpv_event_end_file &end) {
 }
 
 void PlayerController::handlePlaybackReady(bool file_loaded) {
+  if (open_attempt_) {
+    if (file_loaded) open_attempt_->file_loaded = true;
+    else open_attempt_->playback_restarted = true;
+    if (file_loaded || !open_attempt_->reply_ready) return;
+    const auto attempt = *open_attempt_;
+    handleOpenCommandReply(kOpenCommandReplyNamespace | attempt.id, 0);
+    if (attempt.file_loaded) handlePlaybackReady(true);
+  }
   if (file_loaded)
     cacheCurrentEntrySource();
   if (file_loaded && last_error_playlist_entry_id_ >= 0 &&
@@ -4598,7 +4634,7 @@ void PlayerController::updateDuration(double duration) {
 }
 
 void PlayerController::applyObservedDisplaySize() {
-  if (!core_ || !engineReady())
+  if (!core_ || !engineReady() || open_attempt_)
     return;
   // Deliberately NOT gated on acceptsPlaybackObservation(), which every other
   // observation here does use. Measured: mpv announces dwidth/dheight exactly

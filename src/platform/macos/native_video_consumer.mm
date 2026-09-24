@@ -1596,8 +1596,9 @@ NativeVideoConsumer::quiesceForPreview(MediaGeneration generation) noexcept {
   if (!impl.previewDecoderFlushed) {
     // Same-generation flush is deliberate: it synchronously retires every VT
     // callback and decoder/sink lease while preserving playback lineage. It
-    // does not call the tracked output's flush/close lifecycle.
-    impl.decoder.flush(generation);
+    // does not call the tracked output's flush/close lifecycle. Software
+    // releases its worker so preview can reuse bounded process capacity.
+    impl.decoder.suspendForPreview(generation);
     impl.heldFrame.reset();
     impl.currentClock.reset();
     impl.clearDueHint();
@@ -1713,6 +1714,11 @@ NativeVideoConsumer::releasePreviewQuiesce(
       impl.lifecycle != Lifecycle::None || impl.output == nullptr) {
     return NativeVideoConsumerPreviewProgress::Failed;
   }
+  if (!impl.decoder.resumeAfterPreview()) {
+    impl.latch(NativeVideoConsumerFailure::Decoder,
+               "video decoder could not resume after preview handoff");
+    return NativeVideoConsumerPreviewProgress::Failed;
+  }
   const VideoToolboxDecoderStats decoderFacts = impl.decoder.stats();
   bool decoderConfigured = decoderFacts.configured;
 #if defined(WAM_NATIVE_VIDEO_CONSUMER_TESTING)
@@ -1817,7 +1823,7 @@ media::NativeMediaConsumeResult NativeVideoConsumer::configure(
       // keeps ONE source for the decision instead of one per container.
       colorPrimariesExtension(video.colorPrimaries),
       transferFunctionExtension(video.transferFunction),
-      ycbcrMatrixExtension(video.matrixCoefficients)};
+      ycbcrMatrixExtension(video.matrixCoefficients), video.fullRangeVideo};
   if (!impl.decoder.configure(configuration, impl.sink, error)) {
     impl.latch(NativeVideoConsumerFailure::DecoderConfiguration,
                "native video decoder configuration was refused", error);

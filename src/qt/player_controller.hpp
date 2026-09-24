@@ -478,6 +478,9 @@ private:
     std::uint64_t request_serial = 0;
     std::uint64_t render_stamp = 0;
     std::int64_t playlist_entry_id = -1;
+    bool reply_ready = false;
+    bool file_loaded = false;
+    bool playback_restarted = false;
   };
 
 #if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
@@ -699,6 +702,7 @@ private:
   void handleRenderInitializationFailure(const QString &error,
                                          std::uint64_t render_stamp);
   void handleRenderInvalidated(std::uint64_t retired_render_stamp);
+  void observeOpenCommandReply(std::uint64_t reply_userdata, int error);
   void handleOpenCommandReply(std::uint64_t reply_userdata, int error);
   void handleRenderRecoveryCommandReply(std::uint64_t reply_userdata,
                                         int error);
