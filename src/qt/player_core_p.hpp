@@ -2,6 +2,8 @@
 
 #include "playback/mpv/mpv_runtime.hpp"
 #include "render_lifecycle.hpp"
+#include "native_playback_metrics.hpp"
+#include "playback/mpv/frame_counters.hpp"
 
 #include <QPointer>
 #include <QString>
@@ -129,6 +131,8 @@ class PlayerCore final : public std::enable_shared_from_this<PlayerCore> {
   // These methods are called only from Qt Quick's OpenGL render thread.
   bool ensureRenderContext();
   void render(int framebuffer, int width, int height, bool flip_y);
+  void beginFallbackMetricsEpoch();
+  [[nodiscard]] NativePlaybackMetricsSample fallbackMetrics() const;
   // Returns false only when a retained renderer belongs to a different or
   // already-destroyed OpenGL context. That fail-closed path invokes no
   // mpv_render_* function and keeps Busy/resources alive for an exact-owner
@@ -194,6 +198,9 @@ class PlayerCore final : public std::enable_shared_from_this<PlayerCore> {
   std::atomic<bool> event_drain_queued_{false};
   std::atomic<bool> video_update_queued_{false};
   QString initialization_error_;
+  const bool collect_fallback_metrics_;
+  std::uint64_t fallback_metrics_epoch_{0}; // GUI thread only
+  ::wam::playback::mpv::FrameCounters fallback_frame_counters_;
 
   // Render lifecycle transitions happen on Qt's scene-graph thread, while
   // their controller effects belong to the GUI thread. Keep the exact facts

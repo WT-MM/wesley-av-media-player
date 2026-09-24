@@ -852,7 +852,7 @@ void checkVideoDisplaySize() {
   square.codedHeight = 800;
   square.displayWidth = 1920;
   square.displayHeight = 800;
-  expect(mediaVideoDisplaySize(square) == MediaDisplaySize{1920, 800},
+  expect(mediaVideoDisplaySize(square) == MediaDisplaySize{{1920, 1}, {800, 1}},
          "square-pixel 2.40:1 video reports its own size");
 
   // The case the whole rule exists for. A 1440x1080 track with 4:3 pixels is a
@@ -864,9 +864,9 @@ void checkVideoDisplaySize() {
   anamorphic.displayHeight = 1080;
   anamorphic.pixelAspectNumerator = 4;
   anamorphic.pixelAspectDenominator = 3;
-  expect(mediaVideoDisplaySize(anamorphic) == MediaDisplaySize{1920, 1080},
+  expect(mediaVideoDisplaySize(anamorphic) == MediaDisplaySize{{1920, 1}, {1080, 1}},
          "anamorphic video reports its DISPLAY size, not its coded size");
-  expect(mediaVideoDisplaySize(anamorphic).width != anamorphic.codedWidth,
+  expect(mediaVideoDisplaySize(anamorphic).width != MediaRational{anamorphic.codedWidth, 1},
          "anamorphic display size is distinguishable from the coded size");
 
   // A backend that states no display size at all still has to be usable; the
@@ -874,11 +874,11 @@ void checkVideoDisplaySize() {
   MediaVideoFormat codedOnly;
   codedOnly.codedWidth = 1280;
   codedOnly.codedHeight = 720;
-  expect(mediaVideoDisplaySize(codedOnly) == MediaDisplaySize{1280, 720},
+  expect(mediaVideoDisplaySize(codedOnly) == MediaDisplaySize{{1280, 1}, {720, 1}},
          "coded size stands in when no display size is stated");
   MediaVideoFormat halfStated = codedOnly;
   halfStated.displayWidth = 1920;
-  expect(mediaVideoDisplaySize(halfStated) == MediaDisplaySize{1920, 720},
+  expect(mediaVideoDisplaySize(halfStated) == MediaDisplaySize{{1920, 1}, {720, 1}},
          "each axis falls back to its own coded value independently");
 
   // A quarter turn swaps the rectangle the window has to be.
@@ -888,19 +888,19 @@ void checkVideoDisplaySize() {
   rotated.displayWidth = 1920;
   rotated.displayHeight = 1080;
   rotated.rotationDegrees = 90;
-  expect(mediaVideoDisplaySize(rotated) == MediaDisplaySize{1080, 1920},
+  expect(mediaVideoDisplaySize(rotated) == MediaDisplaySize{{1080, 1}, {1920, 1}},
          "90 degrees of rotation swaps the display rectangle");
   rotated.rotationDegrees = 270;
-  expect(mediaVideoDisplaySize(rotated) == MediaDisplaySize{1080, 1920},
+  expect(mediaVideoDisplaySize(rotated) == MediaDisplaySize{{1080, 1}, {1920, 1}},
          "270 degrees of rotation swaps the display rectangle");
   rotated.rotationDegrees = -90;
-  expect(mediaVideoDisplaySize(rotated) == MediaDisplaySize{1080, 1920},
+  expect(mediaVideoDisplaySize(rotated) == MediaDisplaySize{{1080, 1}, {1920, 1}},
          "a negative quarter turn normalizes before it decides to swap");
   rotated.rotationDegrees = 180;
-  expect(mediaVideoDisplaySize(rotated) == MediaDisplaySize{1920, 1080},
+  expect(mediaVideoDisplaySize(rotated) == MediaDisplaySize{{1920, 1}, {1080, 1}},
          "180 degrees of rotation leaves the rectangle alone");
   rotated.rotationDegrees = 0;
-  expect(mediaVideoDisplaySize(rotated) == MediaDisplaySize{1920, 1080},
+  expect(mediaVideoDisplaySize(rotated) == MediaDisplaySize{{1920, 1}, {1080, 1}},
          "an unrotated track is unchanged");
 
   // Empty is the one thing a consumer may act on as "leave geometry alone",
@@ -913,7 +913,7 @@ void checkVideoDisplaySize() {
          "a format with only one usable axis reports empty, not half a size");
 
   MediaSourceDescriptor selected = descriptor();
-  expect(mediaSourceDisplaySize(selected) == MediaDisplaySize{1920, 1080},
+  expect(mediaSourceDisplaySize(selected) == MediaDisplaySize{{1920, 1}, {1080, 1}},
          "a descriptor reports its SELECTED video track's display size");
 
   // Two video tracks, and the selection -- not the track order -- decides.
@@ -928,7 +928,7 @@ void checkVideoDisplaySize() {
   twoVideo.inventory.video = 2;
   twoVideo.inventory.total = 3;
   twoVideo.selectedVideo = 7;
-  expect(mediaSourceDisplaySize(twoVideo) == MediaDisplaySize{640, 480},
+  expect(mediaSourceDisplaySize(twoVideo) == MediaDisplaySize{{640, 1}, {480, 1}},
          "the selected video track decides, not the first one listed");
 
   MediaSourceDescriptor audioOnly = descriptor();

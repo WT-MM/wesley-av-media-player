@@ -305,12 +305,17 @@ bool NativePlaybackMetrics::write(
   if (sample.hasVideo) {
     line.unsignedInteger(sample.drawnFrames);
     line.unsignedField("submitted_frames", sample.submittedFrames);
-    line.unsignedField("superseded_frames", sample.supersededFrames);
-    line.unsignedField("discarded_late_frames", sample.discardedLateFrames);
+    if (sample.fallback) line.text(",\"superseded_frames\":null");
+    else line.unsignedField("superseded_frames", sample.supersededFrames);
+    if (sample.hasLateFrames) line.unsignedField("discarded_late_frames", sample.discardedLateFrames);
+    else line.text(",\"discarded_late_frames\":null");
   } else {
     line.text("null,\"submitted_frames\":null,\"superseded_frames\":null,"
               "\"discarded_late_frames\":null");
   }
+  line.text(sample.fallback ? ",\"backend\":\"mpv\"" : ",\"backend\":\"native\"");
+  if (sample.hasDecoderDiscards) line.unsignedField("decoder_discarded_frames", sample.decoderDiscardedFrames);
+  else line.text(",\"decoder_discarded_frames\":null");
   line.text(",\"audio_underrun_callbacks\":");
   if (sample.hasAudio) {
     line.unsignedInteger(sample.audioUnderrunCallbacks);

@@ -744,11 +744,35 @@ bool mediaVideoColorAdmitted(const MediaVideoFormat& video) noexcept {
 }
 
 MediaDisplaySize mediaVideoDisplaySize(const MediaVideoFormat& video) noexcept {
-  std::uint32_t width =
-      video.displayWidth != 0 ? video.displayWidth : video.codedWidth;
-  std::uint32_t height =
-      video.displayHeight != 0 ? video.displayHeight : video.codedHeight;
-  if (width == 0 || height == 0) {
+  MediaRational width{video.displayWidth != 0 ? video.displayWidth : video.codedWidth, 1};
+  MediaRational height{video.displayHeight != 0 ? video.displayHeight : video.codedHeight, 1};
+  // The legacy display fields are integral presentation hints. Reconstruct
+  // anamorphic geometry from the exact aperture and SAR, never those hints.
+  if (video.pixelAspectNumerator != video.pixelAspectDenominator) {
+    if (!video.pixelAspectNumerator || !video.pixelAspectDenominator)
+      return {};
+    width = video.cleanAperture ? video.cleanAperture->width
+                               : MediaRational{video.codedWidth, 1};
+    height = video.cleanAperture ? video.cleanAperture->height
+                                : MediaRational{video.codedHeight, 1};
+    if (width.numerator <= 0 || !width.denominator ||
+        height.numerator <= 0 || !height.denominator)
+      return {};
+    auto numerator = static_cast<std::uint64_t>(width.numerator);
+    auto denominator = width.denominator;
+    auto sarNumerator = static_cast<std::uint64_t>(video.pixelAspectNumerator);
+    auto sarDenominator = static_cast<std::uint64_t>(video.pixelAspectDenominator);
+    const auto left = std::gcd(numerator, sarDenominator);
+    numerator /= left; sarDenominator /= left;
+    const auto right = std::gcd(sarNumerator, denominator);
+    sarNumerator /= right; denominator /= right;
+    if (numerator > static_cast<std::uint64_t>(INT64_MAX) / sarNumerator ||
+        denominator > UINT64_MAX / sarDenominator)
+      return {};
+    width = {static_cast<std::int64_t>(numerator * sarNumerator),
+             denominator * sarDenominator};
+  }
+  if (width.numerator <= 0 || height.numerator <= 0) {
     return {};
   }
   // Normalized before the test so a negative or over-turned value cannot slip

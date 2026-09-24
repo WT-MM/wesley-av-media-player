@@ -1,5 +1,7 @@
 #pragma once
 
+#include "media/native_display_geometry.hpp"
+
 #include <QObject>
 #include <QSizeF>
 #include <QUrl>
@@ -294,6 +296,9 @@ namespace wam::qt {
 class MacWindowChrome final : public QObject {
   Q_OBJECT
 
+  media::MediaDisplaySize exactDisplaySize_;
+  QUrl exactDisplaySource_;
+
   // True when the process was launched by the benchmark harness (the same
   // WAM_NATIVE_BENCHMARK_TELEMETRY opt-in the telemetry stream keys on). The
   // harness positions the window itself and its validity checks reject any
@@ -315,6 +320,7 @@ public:
   // NSCursor's own until-mouse-moves latch keeps cursor and chrome in sync
   // by construction: the movement that brings one back brings both.
   Q_INVOKABLE void hideCursorUntilMouseMoves();
+  void setExactVideoDisplaySize(media::MediaDisplaySize size, const QUrl& source);
   Q_INVOKABLE void setContentAspectRatio(qreal width, qreal height);
   Q_INVOKABLE bool interactiveResizeActive() const;
   Q_INVOKABLE void resizeToActualSize(qreal videoPixelWidth,

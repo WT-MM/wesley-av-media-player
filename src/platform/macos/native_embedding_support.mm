@@ -5,6 +5,7 @@
 #include "native_layer_host_view.hpp"
 
 namespace wam::macos {
+media::MediaDisplayProjection NativeEmbeddingSupport::displayGeometry(void* window) noexcept { return nativeLayerDisplayGeometry(window); }
 void NativeEmbeddingSupport::setTestMuted(bool value) noexcept { setNativeAudioOutputTestMuted(value); }
 bool NativeEmbeddingSupport::testMuted() noexcept { return nativeAudioOutputTestMuted(); }
 bool NativeEmbeddingSupport::supportsAv1() noexcept { return nativeVideoToolboxSupportsAv1(); }

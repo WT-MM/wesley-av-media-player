@@ -443,7 +443,7 @@ static_assert(media::mediaCodecFacts(media::MediaCodec::Vp8).coreMediaType ==
          (!codecFacts.statesCodedSampleFormat ||
           media::mediaSampleFormatDepth(video.sampleFormat) != 0) &&
          media::mediaVideoHasFullCodedAperture(video) &&
-         media::mediaVideoHasSquarePixels(video);
+         !media::mediaVideoDisplaySize(video).empty();
 }
 
 [[nodiscard]] bool sampleIsKeyFrame(CMSampleBufferRef sample,

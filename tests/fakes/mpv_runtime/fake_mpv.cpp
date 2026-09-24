@@ -73,6 +73,10 @@ MPV_EXPORT int mpv_render_context_create(mpv_render_context** result,
 
 MPV_EXPORT void mpv_render_context_free(mpv_render_context*) {}
 
+MPV_EXPORT int mpv_render_context_get_info(mpv_render_context*, mpv_render_param) {
+  return MPV_ERROR_NOT_IMPLEMENTED;
+}
+
 MPV_EXPORT int mpv_render_context_render(mpv_render_context*,
                                          mpv_render_param*) {
   return 0;

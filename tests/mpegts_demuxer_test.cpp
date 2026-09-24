@@ -2458,8 +2458,8 @@ void testMpeg2AndAc3Admission() {
              "size");
       const wam::media::MediaDisplaySize display =
           wam::media::mediaSourceDisplaySize(descriptor);
-      expect(display.width == video->video->codedWidth &&
-                 display.height == video->video->codedHeight,
+      expect(display.width == wam::media::MediaRational{video->video->codedWidth, 1} &&
+                 display.height == wam::media::MediaRational{video->video->codedHeight, 1},
              "mediaSourceDisplaySize reads the selected MPEG-TS video track's "
              "display size");
     }

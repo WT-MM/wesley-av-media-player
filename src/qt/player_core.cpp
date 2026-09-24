@@ -11,6 +11,8 @@
 #include <QtGlobal>
 
 #include <mpv/render_gl.h>
+#include <chrono>
+#include <cstdlib>
 
 namespace wam::qt {
 namespace {
@@ -164,7 +166,43 @@ void applyRendererExperiments(const MpvApi &api, mpv_handle *handle) {
 
 } // namespace
 
-PlayerCore::PlayerCore(PlayerController *owner) : owner_(owner) {}
+PlayerCore::PlayerCore(PlayerController *owner) : owner_(owner),
+    collect_fallback_metrics_([] {
+      const char* path = std::getenv("WAM_PLAYBACK_METRICS_PATH");
+      return path && path[0] == '/';
+    }()) {}
+
+void PlayerCore::beginFallbackMetricsEpoch() {
+  if (!collect_fallback_metrics_) return;
+  std::scoped_lock lock(render_mutex_);
+  fallback_frame_counters_.reset();
+  fallback_metrics_epoch_ = static_cast<std::uint64_t>(
+      std::chrono::duration_cast<std::chrono::nanoseconds>(
+          std::chrono::system_clock::now().time_since_epoch()).count());
+}
+
+NativePlaybackMetricsSample PlayerCore::fallbackMetrics() const {
+  NativePlaybackMetricsSample sample;
+  if (!collect_fallback_metrics_ || !ready() || !fallback_metrics_epoch_) return sample;
+  sample.sessionEpoch = fallback_metrics_epoch_;
+  sample.fallback = true;
+  sample.drawnFrames = sample.submittedFrames = fallback_frame_counters_.drawn();
+  sample.hasVideo = sample.drawnFrames > 0;
+  // A decoder drop can also indicate damaged packets. Keep it distinct from
+  // the VO's deadline drops and from native scheduler supersession.
+  std::int64_t dropped = 0;
+  sample.hasLateFrames = api().mpv_get_property(handle_, "frame-drop-count", MPV_FORMAT_INT64, &dropped) >= 0 && dropped >= 0;
+  if (sample.hasLateFrames) sample.discardedLateFrames = static_cast<std::uint64_t>(dropped);
+  dropped = 0;
+  sample.hasDecoderDiscards = api().mpv_get_property(handle_, "decoder-frame-drop-count", MPV_FORMAT_INT64, &dropped) >= 0 && dropped >= 0;
+  if (sample.hasDecoderDiscards) sample.decoderDiscardedFrames = static_cast<std::uint64_t>(dropped);
+  sample.hasClock = api().mpv_get_property(handle_, "time-pos", MPV_FORMAT_DOUBLE, &sample.mediaSeconds) >= 0;
+  static_cast<void>(api().mpv_get_property(handle_, "speed", MPV_FORMAT_DOUBLE, &sample.clockRate));
+  int paused = 1;
+  static_cast<void>(api().mpv_get_property(handle_, "pause", MPV_FORMAT_FLAG, &paused));
+  sample.paused = paused != 0;
+  return sample;
+}
 
 bool PlayerCore::initialize(
     std::shared_ptr<const ::wam::playback::mpv::MpvRuntime> runtime) {
@@ -819,6 +857,11 @@ void PlayerCore::render(int framebuffer, int width, int height, bool flip_y) {
   // Rendering the current frame is also correct for redraws caused by an
   // expose or resize even when MPV_RENDER_UPDATE_FRAME is not set.
   api().mpv_render_context_update(render_context_);
+  mpv_render_frame_info nextFrame{};
+  if (collect_fallback_metrics_) {
+    const mpv_render_param query{MPV_RENDER_PARAM_NEXT_FRAME_INFO, &nextFrame};
+    if (api().mpv_render_context_get_info(render_context_, query) < 0) nextFrame = {};
+  }
   mpv_opengl_fbo target{framebuffer, width, height, 0};
   int flip = flip_y ? 1 : 0;
   mpv_render_param parameters[] = {
@@ -826,7 +869,8 @@ void PlayerCore::render(int framebuffer, int width, int height, bool flip_y) {
       {MPV_RENDER_PARAM_FLIP_Y, &flip},
       {MPV_RENDER_PARAM_INVALID, nullptr},
   };
-  api().mpv_render_context_render(render_context_, parameters);
+  const int result = api().mpv_render_context_render(render_context_, parameters);
+  if (collect_fallback_metrics_) fallback_frame_counters_.rendered(nextFrame, result);
 }
 
 bool PlayerCore::releaseRenderContext() {

@@ -1,9 +1,17 @@
 #pragma once
 
+#include "media/native_display_geometry.hpp"
+
 #include <memory>
 #include <string>
 
 namespace wam::macos {
+
+media::MediaDisplayProjection nativeLayerDisplayGeometry(void* nsWindow) noexcept;
+
+
+bool setNativeLayerPresentationDisplaySize(void* layer, media::MediaDisplaySize size) noexcept;
+media::MediaDisplaySize nativeLayerPresentationDisplaySize(void* layer) noexcept;
 
 // All members require AppKit main. Retire the presenter before releasing its host.
 class NativeLayerHostView final {

@@ -356,6 +356,18 @@ QString videoNaturalSizeSummary(const wam::qt::PlayerWindow *window) {
   const QObject *root = window != nullptr ? window->qmlRoot() : nullptr;
   if (root == nullptr)
     return QStringLiteral("?");
+  if (window->controller() != nullptr) {
+    const auto exact = window->controller()->exactVideoDisplaySize();
+    if (!exact.empty()) {
+      const auto aspect = wam::media::displayAspect(exact);
+      qInfo().noquote() << QStringLiteral("WAM_TEST_EXACT_GEOMETRY width=%1/%2 height=%3/%4 aspect=%5/%6 actual_physical=%7x%8")
+          .arg(exact.width.numerator).arg(exact.width.denominator)
+          .arg(exact.height.numerator).arg(exact.height.denominator)
+          .arg(aspect.numerator).arg(aspect.denominator)
+          .arg(wam::media::displayPhysicalPixels(exact.width))
+          .arg(wam::media::displayPhysicalPixels(exact.height));
+    }
+  }
   const QVariant value = root->property("videoNaturalSize");
   if (!value.isValid())
     return QStringLiteral("?");

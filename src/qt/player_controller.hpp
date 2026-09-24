@@ -2,6 +2,7 @@
 
 #include "caption_service.hpp"
 #include "media/subtitle_text.hpp"
+#include "media/native_display_geometry.hpp"
 #include "jobs.hpp"
 #include "media/live_caption_feed.hpp"
 #include "playback_policy.hpp"
@@ -10,6 +11,7 @@
 #include <QObject>
 #include <QPointer>
 #include <QSize>
+#include <QSizeF>
 #include <QString>
 #include <QUrl>
 #include <QVariantList>
@@ -90,7 +92,7 @@ class PlayerController final : public QObject {
   // AVURLAsset probe, which is what qml/Main.qml asked first and still asks
   // first, cannot demux Matroska/WebM/MPEG-TS and answers (0, 0) for every one
   // of them; Main.qml falls back to this when it does.
-  Q_PROPERTY(QSize videoDisplaySize READ videoDisplaySize NOTIFY
+  Q_PROPERTY(QSizeF videoDisplaySize READ videoDisplaySize NOTIFY
                  videoDisplaySizeChanged)
   // Normalized level where 1.0 is 100%. The range runs to maximumVolume
   // below: above unity this is VLC-style amplification, which can clip by
@@ -249,7 +251,8 @@ public:
   [[nodiscard]] bool paused() const { return paused_; }
   [[nodiscard]] double position() const { return position_; }
   [[nodiscard]] double duration() const { return duration_; }
-  [[nodiscard]] QSize videoDisplaySize() const { return video_display_size_; }
+  [[nodiscard]] QSizeF videoDisplaySize() const { return video_display_size_; }
+  [[nodiscard]] media::MediaDisplaySize exactVideoDisplaySize() const { return exact_video_display_size_; }
   // Normalized UI volume. mpv's 0..400 range maps to 0..4 here; 1.0 is 100%.
   [[nodiscard]] double volume() const { return volume_; }
   [[nodiscard]] double maximumVolume() const { return maximum_volume_; }
@@ -903,6 +906,7 @@ private:
   // overwrites a known one" rule are stated once. Pass (0, 0) only through
   // resetTimeline(), which is the one place a size is deliberately forgotten.
   void updateVideoDisplaySize(int width, int height);
+  void updateVideoDisplaySize(media::MediaRational width, media::MediaRational height);
   void updateSource(const QUrl &source);
   void updateMediaTitle(const QString &title);
   void resetTimeline();
@@ -996,7 +1000,8 @@ private:
   double position_ = 0.0;
   double duration_ = 0.0;
   double native_seek_ceiling_ = 0.0;
-  QSize video_display_size_;
+  QSizeF video_display_size_;
+  media::MediaDisplaySize exact_video_display_size_;
   double volume_ = 1.0;
   // Default 200%, the user-confirmed default for the Preferences setting.
   double maximum_volume_ = 2.0;

@@ -250,24 +250,24 @@ void testPreparationAndStartupProofs() {
   // turn a future backend's silence into a failed open instead of a window
   // that simply keeps the size it had.
   wrong = prepared;
-  wrong.descriptor.displayWidth = 1920;
-  wrong.descriptor.displayHeight = 800;
+  wrong.descriptor.displayWidth = {1920, 1};
+  wrong.descriptor.displayHeight = {800, 1};
   expect(preparedMatches(prepare, GenerationHighWater{}, wrong),
          "a stated display size does not disturb preparation proof");
   expect(wrong.descriptor != prepared.descriptor,
          "display size participates in descriptor equality");
-  wrong.descriptor.displayHeight = 801;
+  wrong.descriptor.displayHeight = {801, 1};
   expect(preparedMatches(prepare, GenerationHighWater{}, wrong),
          "any display size at all is accepted; geometry is not the "
          "protocol's business");
   wrong = prepared;
   wrong.descriptor.hasVideo = true;
-  wrong.descriptor.displayWidth = 0;
-  wrong.descriptor.displayHeight = 0;
+  wrong.descriptor.displayWidth = {0, 1};
+  wrong.descriptor.displayHeight = {0, 1};
   expect(preparedMatches(prepare, GenerationHighWater{}, wrong),
          "a video lane that states no display size is still ready");
-  expect(PreparedDescriptor{}.displayWidth == 0 &&
-             PreparedDescriptor{}.displayHeight == 0,
+  expect(PreparedDescriptor{}.displayWidth == wam::media::MediaRational{} &&
+             PreparedDescriptor{}.displayHeight == wam::media::MediaRational{},
          "an unstated display size defaults to the empty encoding");
 
   wrong = prepared;

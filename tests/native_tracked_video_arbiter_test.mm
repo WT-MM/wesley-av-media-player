@@ -86,6 +86,10 @@ FrameLease makeFrame(std::uint64_t generation, std::int64_t value) {
 
 class FakeTrackedOutput final : public NativeTrackedVideoOutput {
  public:
+  wam::media::MediaDisplaySize displaySize;
+  bool setPresentationDisplaySize(wam::media::MediaDisplaySize size) noexcept override {
+    displaySize = size; return true;
+  }
 #if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
   [[nodiscard]] wam::macos::late_display_trace::Snapshot diagnosticDisplayPhase() const noexcept override {
     return {7, 123456789, 1001, 60000};
@@ -473,6 +477,15 @@ void portsOwnTheWrappedLifetime() {
 }  // namespace
 
 int main() {
+  {
+    auto output = std::make_shared<FakeTrackedOutput>(7);
+    auto arbiter = NativeTrackedVideoArbiter::create(output);
+    const wam::media::MediaDisplaySize exact{{615240,307},{1080,1}};
+    expect(arbiter && arbiter->mainOutput()->setPresentationDisplaySize(exact) &&
+               output->displaySize == exact,
+           "the arbiter forwards the exact rational geometry to the actual presenter");
+  }
+
 #if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
   {
     namespace trace = wam::macos::late_display_trace;

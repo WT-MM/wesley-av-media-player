@@ -32,6 +32,10 @@ namespace wam::qt {
 // to shipping code.
 class PlayerControllerTestAccess final {
  public:
+  static void setExactDisplay(PlayerController& controller, media::MediaDisplaySize size) {
+    controller.updateVideoDisplaySize(size.width, size.height);
+  }
+
   static std::shared_ptr<const ::wam::playback::mpv::MpvRuntime> runtime() {
     static const auto injected =
         ::wam::playback::mpv::makeInjectedLinkedMpvRuntime();
@@ -1227,6 +1231,24 @@ int main(int argc, char **argv) {
     expect(!tracks.activeIsGenerated(), "Off suppresses live captions");
     tracks.clear();
     expect(tracks.sources().empty(), "media change discards live source");
+  }
+  {
+    using namespace wam::media;
+    wam::qt::PlayerController controller;
+    const MediaDisplaySize exact{{615240,307},{1080,1}};
+    wam::qt::PlayerControllerTestAccess::setExactDisplay(controller, exact);
+    expect(controller.exactVideoDisplaySize() == exact,
+           "Qt retains the exact prepared rational size independently of QSizeF");
+    expect(displayAspect(controller.exactVideoDisplaySize()) == MediaRational{1709,921},
+           "Qt aspect lock consumes the reduced rational aspect");
+    expect(displayFit(controller.exactVideoDisplaySize(),480,270) ==
+               MediaDisplaySize{{480,1},{442080,1709}},
+           "Qt fit keeps exact geometry until physical pixels");
+    expect(displayPhysicalPixels(controller.exactVideoDisplaySize().width) == 2004,
+           "Qt actual size rounds only at its physical-pixel boundary");
+    expect(controller.videoDisplaySize().width() > 2004.0 &&
+               controller.videoDisplaySize().width() < 2004.04,
+           "QML projection retains the fractional size rather than truncating it");
   }
   expect(std::setlocale(LC_NUMERIC, "C") != nullptr,
          "LC_NUMERIC can be restored for libmpv");

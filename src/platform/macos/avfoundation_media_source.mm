@@ -2686,7 +2686,7 @@ void incrementInventory(media::MediaTrackInventory* inventory,
   } else if (!media::mediaVideoHasFullCodedAperture(video)) {
     geometryRefusal =
         "selected video has a clean aperture smaller than its coded frame";
-  } else if (!media::mediaVideoHasSquarePixels(video)) {
+  } else if (media::mediaVideoDisplaySize(video).empty()) {
     geometryRefusal = "AnamorphicExactRationalDisplaySizeProofMissing";
   }
   if (geometryRefusal != nullptr) {

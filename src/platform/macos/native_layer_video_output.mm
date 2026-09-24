@@ -545,6 +545,14 @@ std::shared_ptr<NativeLayerVideoOutput> NativeLayerVideoOutput::createTracked(
   }
 }
 
+bool NativeLayerVideoOutput::setPresentationDisplaySize(media::MediaDisplaySize size) noexcept {
+  const auto state = state_;
+  if (!state) return false;
+  AVSampleBufferDisplayLayer* layer = nil;
+  { std::lock_guard lock(state->mutex); layer = state->layer; }
+  return layer == nil || setNativeLayerPresentationDisplaySize((__bridge void*)layer, size);
+}
+
 bool NativeLayerVideoOutput::setPresentationRotation(int degrees) noexcept {
   const std::shared_ptr<State> state = state_;
   if (state == nullptr) {

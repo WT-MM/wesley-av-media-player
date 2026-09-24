@@ -284,6 +284,7 @@ template <typename Function>
   WAM_VERIFY_MPV_SYMBOL(mpv_observe_property);
   WAM_VERIFY_MPV_SYMBOL(mpv_render_context_create);
   WAM_VERIFY_MPV_SYMBOL(mpv_render_context_free);
+  WAM_VERIFY_MPV_SYMBOL(mpv_render_context_get_info);
   WAM_VERIFY_MPV_SYMBOL(mpv_render_context_render);
   WAM_VERIFY_MPV_SYMBOL(mpv_render_context_set_update_callback);
   WAM_VERIFY_MPV_SYMBOL(mpv_render_context_update);
@@ -325,6 +326,8 @@ template <typename Function>
           library, "mpv_render_context_create"),
       resolve<decltype(&::mpv_render_context_free)>(
           library, "mpv_render_context_free"),
+      resolve<decltype(&::mpv_render_context_get_info)>(
+          library, "mpv_render_context_get_info"),
       resolve<decltype(&::mpv_render_context_render)>(
           library, "mpv_render_context_render"),
       resolve<decltype(&::mpv_render_context_set_update_callback)>(
@@ -365,6 +368,7 @@ template <typename Function>
   WAM_REQUIRE_MPV_SYMBOL(mpv_observe_property);
   WAM_REQUIRE_MPV_SYMBOL(mpv_render_context_create);
   WAM_REQUIRE_MPV_SYMBOL(mpv_render_context_free);
+  WAM_REQUIRE_MPV_SYMBOL(mpv_render_context_get_info);
   WAM_REQUIRE_MPV_SYMBOL(mpv_render_context_render);
   WAM_REQUIRE_MPV_SYMBOL(mpv_render_context_set_update_callback);
   WAM_REQUIRE_MPV_SYMBOL(mpv_render_context_update);

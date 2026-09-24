@@ -1,5 +1,7 @@
 #pragma once
 
+#include "media/native_media_source.hpp"
+
 #include "native_video_presenter.hpp"
 #include "native_late_display_trace.hpp"
 
@@ -169,6 +171,10 @@ class NativeTrackedVideoOutput {
   // forgets to override this -- the same rule the flag above follows. The
   // layer route overrides it; Qt's GL and Metal scene-graph items do not,
   // which is a documented refusal rather than a wrong picture.
+  virtual bool setPresentationDisplaySize(media::MediaDisplaySize size) noexcept {
+    return size.width.denominator == 1 && size.height.denominator == 1;
+  }
+
   [[nodiscard]] virtual bool setPresentationRotation(int degrees) noexcept {
     return degrees == 0;
   }
