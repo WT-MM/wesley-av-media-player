@@ -268,10 +268,6 @@ bool videoDescriptor(const LibavformatCursor::Stream &stream,
     error = "LibavformatVideoCodecNotAdmitted";
     return false;
   }
-  if (const char* refusal = softwareContainerColorRefusal(track.codec, stream.fullRange)) {
-    error = refusal;
-    return false;
-  }
   if (stream.extradata.size() > limits.maximumCodecConfigurationBytes) {
     error = "LibavformatConfigurationLimit";
     return false;
@@ -294,6 +290,10 @@ bool videoDescriptor(const LibavformatCursor::Stream &stream,
     return false;
   }
   const auto &facts = *inspected.facts;
+  if (const char* refusal = softwareContainerColorRefusal(track.codec, stream.fullRange, facts.profile)) {
+    error = refusal;
+    return false;
+  }
   if (facts.width != stream.width || facts.height != stream.height) {
     error = "LibavformatVideoDimensionsDisagree";
     return false;
@@ -317,6 +317,7 @@ bool videoDescriptor(const LibavformatCursor::Stream &stream,
   video.codedHeight = video.displayHeight = facts.height;
   video.bitsPerComponent = facts.bitDepth;
   video.sampleFormat = facts.sampleFormat;
+  video.fullRangeVideo = stream.rangeSpecified ? stream.fullRange : facts.color.fullRange;
   if (facts.color.colorDescriptionPresent) {
     video.colorPrimaries =
         mediaColorPrimariesFromIso(facts.color.colorPrimaries);

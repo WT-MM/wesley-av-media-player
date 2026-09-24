@@ -2111,6 +2111,10 @@ endif()
 include(CPack)
 
 if(BUILD_TESTING AND WAM_ENABLE_AVCODEC_STAGE)
+  add_executable(wam_avcodec_admission_queue_test tests/avcodec_admission_queue_test.cpp)
+  target_link_libraries(wam_avcodec_admission_queue_test PRIVATE wam_avcodec_worker)
+  add_test(NAME avcodec_admission_queue COMMAND wam_avcodec_admission_queue_test)
+  set_tests_properties(avcodec_admission_queue PROPERTIES TIMEOUT 30)
   add_executable(wam_avcodec_worker_test tests/avcodec_worker_test.cpp)
   target_link_libraries(wam_avcodec_worker_test PRIVATE wam_avcodec_worker)
   foreach(specimen IN ITEMS hi10p h264422 asp)
@@ -2273,9 +2277,9 @@ if(BUILD_TESTING AND WAM_ENABLE_AVFORMAT_STAGE)
   find_program(WAM_AVCODEC_FIXTURE_FFMPEG ffmpeg REQUIRED)
   add_executable(wam_libavformat_source_test tests/libavformat_source_test.mm)
   target_link_libraries(wam_libavformat_source_test PRIVATE wam_macos_native_backend)
-  add_test(NAME libavformat_mpeg4_full_range_refusal COMMAND wam_libavformat_source_test
+  add_test(NAME libavformat_mpeg4_full_range COMMAND wam_libavformat_source_test
     "${CMAKE_SOURCE_DIR}/tests/fixtures/software-color/asp-full.mkv"
-    "SoftwareColorUnqualified: MPEG-4 full-range container signaling")
+    "ready")
   set(WAM_AVFORMAT_FIXTURES "${CMAKE_SOURCE_DIR}/test-media/native-coverage/phase3"
     CACHE PATH "Generated libavformat test corpus")
   set(WAM_MIXED_FIXTURES "${CMAKE_SOURCE_DIR}/test-media/native-coverage/phase2e"

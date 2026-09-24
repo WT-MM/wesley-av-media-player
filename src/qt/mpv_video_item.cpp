@@ -25,8 +25,7 @@ class MpvRenderNode final : public QSGRenderNode {
   ~MpvRenderNode() override { releaseCore(); }
 
   void synchronize(std::shared_ptr<PlayerCore> core, QQuickWindow* window,
-                   const QRectF& rect, bool render_requested,
-                   bool has_media) {
+                   const QRectF& rect, bool render_requested) {
     if (core_ != core) {
       releaseCore();
       core_ = std::move(core);
@@ -34,7 +33,6 @@ class MpvRenderNode final : public QSGRenderNode {
     window_ = window;
     rect_ = rect;
     render_requested_ = render_requested;
-    has_media_ = has_media;
   }
 
   QRectF rect() const override { return rect_; }
@@ -82,8 +80,10 @@ class MpvRenderNode final : public QSGRenderNode {
       // Direct rendering to Qt's active target avoids a full-size intermediate
       // texture and composite pass. Default framebuffer coordinates need the
       // vertical flip described by libmpv's render API.
-      if (has_media_)
-        core_->render(framebuffer, viewport[2], viewport[3], true);
+      // Consume startup updates before hasMedia becomes true. mpv waits for
+      // this first render before publishing playback restart. Playback state
+      // therefore cannot be a prerequisite for consuming the render update.
+      core_->render(framebuffer, viewport[2], viewport[3], true);
     }
     QQuickOpenGLUtils::resetOpenGLState();
   }
@@ -104,7 +104,6 @@ class MpvRenderNode final : public QSGRenderNode {
   QQuickWindow* window_ = nullptr;
   QRectF rect_;
   bool render_requested_ = false;
-  bool has_media_ = false;
 };
 
 }  // namespace
@@ -165,8 +164,7 @@ QSGNode* MpvVideoItem::updatePaintNode(QSGNode* old_node,
   PlayerController *controller = controller_.data();
   node->synchronize(controller ? controller->coreForRendering() : nullptr,
                     window(), boundingRect(),
-                    controller && controller->needsRenderContext(),
-                    controller && controller->hasMedia());
+                    controller && controller->needsRenderContext());
   return node;
 }
 

@@ -84,8 +84,11 @@ public:
         limits.admitHighDynamicRangeColor = true;
         const auto inspected = media::inspectVideoCodecConfiguration(
             codec, facts.configurationKind, configuration.codecConfiguration, limits);
+        auto colorFacts = inspected.facts.value_or(media::VideoCodecConfigurationFacts{});
+        if (configuration.fullRangeVideo)
+          colorFacts.color.fullRange = *configuration.fullRangeVideo;
         if (!inspected.admitted() || !media::softwareColorQualified(
-                *inspected.facts, configuration.highDynamicRangeTransfer)) {
+                colorFacts, configuration.highDynamicRangeTransfer)) {
           if (error) *error = "SoftwareColorUnqualified";
           return false;
         }
@@ -166,6 +169,21 @@ public:
     return software_ != nullptr
                ? software_->drainEndOfStream(generation, error)
                : videoToolbox_.drainEndOfStream(generation, error);
+  }
+
+  // Handoff releases the software worker reservation instead of immediately
+  // reopening an idle playback decoder that would starve its own preview.
+  void suspendForPreview(std::uint64_t generation) noexcept {
+#if defined(WAM_ENABLE_AVCODEC_STAGE)
+    if (avcodec_) { avcodec_->suspendForPreview(generation); return; }
+#endif
+    flush(generation);
+  }
+  bool resumeAfterPreview() noexcept {
+#if defined(WAM_ENABLE_AVCODEC_STAGE)
+    if (avcodec_) return avcodec_->resumeAfterPreview();
+#endif
+    return true;
   }
 
   void flush(std::uint64_t nextGeneration) noexcept {

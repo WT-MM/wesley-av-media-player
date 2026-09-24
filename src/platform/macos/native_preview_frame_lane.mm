@@ -3,6 +3,7 @@
 #include "media/media_codec_facts.hpp"
 #include "core_media_codec_facts.hpp"
 #include "native_video_limits.hpp"
+#include "native_video_color.hpp"
 #if defined(WAM_ENABLE_AVFORMAT_STAGE)
 #include "video_decode_lane.hpp"
 #endif
@@ -431,7 +432,12 @@ struct NativePreviewFrameLane::Impl final {
           {static_cast<std::int32_t>(video.codedWidth),
            static_cast<std::int32_t>(video.codedHeight)},
           track->codecConfiguration, true, codecFacts.requiresHardwareDecode,
-          binding.activePlaybackGeneration.value};
+          binding.activePlaybackGeneration.value,
+          video.transferFunction == media::MediaTransferFunction::Pq ||
+              video.transferFunction == media::MediaTransferFunction::Hlg,
+          colorPrimariesExtension(video.colorPrimaries),
+          transferFunctionExtension(video.transferFunction),
+          ycbcrMatrixExtension(video.matrixCoefficients), video.fullRangeVideo};
       std::string configurationError;
       if (!decoder.configure(configuration, sink, &configurationError)) {
         latchFailure(configurationError.empty()

@@ -4951,13 +4951,18 @@ int main() {
            "Matroska retains full range for scoped presentation qualification");
   }
   {
-    FixtureSpec spec;
-    spec.videoCodecId = "V_MPEG4/ISO/ASP";
+    FixtureSpec spec = mpeg4VisualFixtureSpec();
     spec.videoRange = 2;
     const auto prepared = prepareFixture(spec);
     expect(prepared.outcome.status == MatroskaDemuxStatus::Unsupported &&
                prepared.outcome.message == "SoftwareColorUnqualified: MPEG-4 full-range container signaling",
-           "container-only MPEG-4 full range refuses before descriptor publication");
+           "unqualified Apple Simple Profile full range retains its named refusal");
+#if defined(WAM_ENABLE_AVCODEC_STAGE)
+    spec.videoCodecPrivate = fromOctets(kSampleMpeg4AdvancedSimple);
+    const auto asp = prepareFixture(spec);
+    expect(asp.outcome.asset && asp.outcome.asset->descriptor()->tracks.front().video->fullRangeVideo,
+           "qualified ASP retains its container range in the published descriptor");
+#endif
   }
   testCompleteDocumentPreparation();
   testVariableFrameRateDurationLookahead();

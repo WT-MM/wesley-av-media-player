@@ -98,6 +98,11 @@ class PlayerControllerTestAccess final {
         PlayerController::OpenAttempt{attempt_id, serial, ticket.stamp, -1};
   }
 
+  static void observeOpenReply(PlayerController &controller, std::uint64_t id,
+                               int error = 0) {
+    controller.observeOpenCommandReply((1ULL << 63) | id, error);
+  }
+
   static void completeOpenAttempt(PlayerController &controller,
                                   std::uint64_t attempt_id, int error = 0) {
     controller.handleOpenCommandReply((1ULL << 63) | attempt_id, error);
@@ -1343,6 +1348,28 @@ int main(int argc, char **argv) {
 
   {
     using Access = wam::qt::PlayerControllerTestAccess;
+    // Both legal event orders must leave the GUI free to deliver frame one.
+    // An accepted command alone must not run the synchronous metadata commit.
+    for (bool reply_first : {true, false}) {
+      wam::qt::PlayerController deferred;
+      expect(Access::initializeEngine(deferred), "deferred open initializes");
+      const auto ticket = Access::makeRendererReady(deferred);
+      Access::seedOpenAttempt(deferred, QUrl("wam-test://deferred"), 900, 901, ticket);
+      if (reply_first) Access::observeOpenReply(deferred, 901);
+      Access::startFile(deferred, 902);
+      Access::playbackReady(deferred, true);
+      expect(Access::hasPendingOpen(deferred) && !Access::hasCommittedOpen(deferred),
+             "FILE_LOADED leaves first-frame metadata reads deferred");
+      Access::playbackReady(deferred, false);
+      if (!reply_first) {
+        expect(!Access::hasCommittedOpen(deferred), "restart waits for command acceptance");
+        Access::observeOpenReply(deferred, 901);
+      }
+      expect(Access::hasCommittedOpen(deferred) && !Access::hasPendingOpen(deferred) &&
+                 Access::committedEntry(deferred) == 902 &&
+                 Access::startupPlaybackSyncQueued(deferred),
+             "accepted reply and first-frame restart commit the same entry in either order");
+    }
     const QUrl source(QStringLiteral("wam-test://startup/autoplay"));
     wam::qt::PlayerController controller;
     expect(Access::initializeEngine(controller),

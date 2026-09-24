@@ -429,6 +429,9 @@ void reportMenus(const wam::qt::WindowManager &windows) {
 
 #if defined(__APPLE__)
 void reportWindows(const wam::qt::WindowManager &windows) {
+  const auto workers = wam::macos::NativeEmbeddingSupport::softwareWorkers();
+  qInfo().noquote() << QStringLiteral("WAM_TEST_SOFTWARE_WORKERS active=%1 pending=%2 peak=%3 bytes=%4")
+      .arg(workers.active).arg(workers.pending).arg(workers.peak).arg(workers.bytes);
   const QList<wam::qt::PlayerWindow *> &open = windows.windows();
   qInfo().noquote() << QStringLiteral("WAM_TEST_WINDOWS count=%1")
                            .arg(open.size());
@@ -1183,7 +1186,7 @@ int main(int argc, char *argv[]) {
       wam::qt::NativeBenchmarkTelemetry::instance().enabled();
 #if defined(WAM_ENABLE_AVCODEC_STAGE)
   if (test_seams_admitted && wam::qt::wamEnvironmentTruth("WAM_TEST_NO_VIDEO_HARDWARE"))
-    wam::macos::setNativeVideoHardwareDisabledForTesting(true);
+    wam::macos::NativeEmbeddingSupport::setTestNoVideoHardware(true);
 #endif
   const bool background_launch =
       test_seams_admitted &&
@@ -1305,7 +1308,8 @@ int main(int argc, char *argv[]) {
       if (const std::optional<ScriptedGeometry> parked =
               parseGeometry(qgetenv("WAM_TEST_GEOMETRY"))) {
         windows.setParkedGeometry(parked->x, parked->y, parked->width,
-                                  parked->height);
+                                  parked->height,
+                                  wam::qt::wamEnvironmentTruth("WAM_TEST_ALL_WINDOW_GEOMETRY"));
       }
     }
 #endif

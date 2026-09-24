@@ -7,6 +7,9 @@ namespace wam::macos {
 struct NativeEmbeddingSupport {
   static constexpr auto maximumWindows = kMaximumConcurrentPlayerWindows;
   static void setTestMuted(bool) noexcept;
+  static void setTestNoVideoHardware(bool) noexcept;
+  struct SoftwareWorkers { unsigned active{}, pending{}, peak{}; std::uint64_t bytes{}; };
+  static SoftwareWorkers softwareWorkers() noexcept;
   static bool testMuted() noexcept;
   static bool supportsAv1() noexcept;
   static bool supportsVp9() noexcept;

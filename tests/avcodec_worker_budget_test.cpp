@@ -21,10 +21,13 @@ int main() {
   Configuration config;config.codec=Codec::Mpeg4;config.width=320;config.height=180;
   for(auto& worker:workers) {worker=std::make_unique<DecodeWorker>(FrameHandler{receive,nullptr});CHECK(worker->configure(config));}
   const unsigned during=threads();CHECK(during==before+16);
-  DecodeWorker excess({receive,nullptr});CHECK(!excess.configure(config));
-  CHECK(excess.failure() && std::strcmp(excess.failure(),"AvcodecWorkerBudgetExceeded")==0);
+  DecodeWorker excess({receive,nullptr});CHECK(excess.configure(config));
+  CHECK(!excess.failure() && !excess.hasCapacity());
+  CHECK(DecodeWorker::pendingWorkers()==1 && threads()==during);
+  excess.close();
+  CHECK(DecodeWorker::pendingWorkers()==0);
   for(auto& worker:workers)worker->close();
   CHECK(!nativeClosurePresent());
   const unsigned after=threads();CHECK(after==before);
-  std::printf("threads before=%u during=%u after=%u; worker 17 refused by budget\n",before,during,after);
+  std::printf("threads before=%u during=%u after=%u; worker 17 queued without another thread, then cancelled\n",before,during,after);
 }

@@ -1,6 +1,6 @@
 # Native deferred work — 2026-09-23
 
-**Status: item 1 qualified; item 2 implemented with its zero-late proof still failing; items 3–5 not started.**
+**Prior-round status is preserved below. The `native-deferred-2` follow-up and its current measurements are recorded at the end.**
 
 Worktree `/private/tmp/wam-native`, branch `native-deferred`. No commits or index operations; no network. Scratch/build/evidence root: `/private/tmp/wam-native-scratch`. Host dependency SDK reused read-only from `/Users/wesleymaa/Github/wesley-av-media-player/third_party/ffmpeg-lgpl`. This is a development build using Homebrew Qt/libvpx, not macOS 13.3 release qualification.
 
@@ -195,3 +195,384 @@ TMPDIR=/private/tmp/wam-native-scratch/test-tmp WAM_TEST_SCRATCH=/private/tmp/wa
 `ctest-final.log` passed 134/135 tests: the dogfooding audit rejected a direct Qt include of the native layer host. The diagnostic now goes through `NativeEmbeddingSupport`, preserving the existing architectural boundary; the audit was not relaxed. `build-boundary-fix.log` records the successful rebuild. `ctest-final-rerun.log`: **135/135 passed, zero failures, 127.59 seconds**, including `wamkit_dogfooding`. The command redirected stdout/stderr with `> /private/tmp/wam-native-scratch/ctest-final-rerun.log 2>&1`. `git diff --check` also passed. The final boundary change only relocates the geometry diagnostic API; the accepted picture geometry and counter implementations are unchanged. The scratch adapter also gates each measured GUI launch inside the existing regression harness and logs `ctest-gate.jsonl`. The earlier full green checkpoint did not yet have per-launch gating inside that existing CTest harness; it is a regression checkpoint, not the accepted quiet-seam measurement proof. Direct item proofs always used the gate. No compiler/linker or other user's process was terminated.
 
 Final inventory: **45 changed files** (including this report and six new files). Frozen header checks match the authorized replacements and required include; frozen audio tests remain byte-identical. No changes implement items 3–5.
+
+
+## native-deferred-2 follow-up (2026-09-23)
+
+This follow-up starts from the maintainer commits on `native-deferred-2`.
+The previous numbered items above belong to `native-deferred`; the four items
+below use the new request's numbering. No network or Git index/history writes.
+The shipped codec-stage setting remains OFF. All generated files and logs are
+under `/private/tmp/wam-native-scratch`; all GUI commands use this build's app,
+isolated HOME, identity-bound telemetry and the existing background/mute/geometry
+seams. Each runner logs its compiler/linker inventory and load gate, polling at
+30-second intervals. No sibling workspace or process was changed.
+
+### Follow-up 1: fallback startup discard
+
+Cause: `handleOpenCommandReply` synchronously reads mpv's playlist/transport
+metadata before the first video frame. The GUI thread waits on the mpv core;
+the core waits on its VO; Qt needs the GUI thread to dispatch that first render.
+The local libmpv trace proves a 200 ms render timeout, not a harmless pre-roll:
+`mpv_render_context_render() not being called or stuck.` The first render occurs
+after that timeout. Event tracing localized the GUI stall to COMMAND_REPLY
+(event 5), before START_FILE (event 6) was drained. The same dylib's offline
+symbolized disassembly identifies the timeout path calling
+`vo_increment_drop_count`. No count offset or drop-policy change is justified.
+
+Fix: retain a successful command reply in the existing bounded, identity-bound
+OpenAttempt until PLAYBACK_RESTART. Handle either reply/restart ordering, and
+retire a matching failed/empty open on END_FILE. Defer FILE_LOADED metadata,
+display-size and subtitle reads until that completion. The render node consumes
+startup frames without requiring `hasMedia`, since mpv publishes restart only
+after presentation. Its old gate alone was not the cause: removing only that
+gate still failed. No new polling, thread, render allocation, or counter reset
+was added. Temporary trace instrumentation was removed.
+
+Exact build/test commands (stdout/stderr redirected to the named scratch logs):
+
+```sh
+cmake --build /private/tmp/wam-native-scratch/build --parallel 4
+# build-startup-trace.log: successful 559-step incremental rebuild
+cmake --build /private/tmp/wam-native-scratch/build --target WAM --parallel 4
+# build-startup-consume.log, build-startup-events.log, build-startup-defer.log
+cmake --build /private/tmp/wam-native-scratch/build --target WAM wam_player_controller_lazy_test --parallel 4
+# build-startup-final.log
+cmake --build /private/tmp/wam-native-scratch/build --target wam_player_core_render_context_permission_test --parallel 4
+# build-startup-render-test.log
+ctest --test-dir /private/tmp/wam-native-scratch/build -R '^(player_controller_lazy|player_core_render_context_permission|mpv_frame_counters|native_playback_metrics)$' --output-on-failure
+# startup-unit.log: 2 passed; offscreen GL test could not access sandboxed macOS services
+ctest --test-dir /private/tmp/wam-native-scratch/build -R '^(player_controller_lazy|player_core_render_context_permission|mpv_frame_counters|native_playback_metrics_jsonl)$' --output-on-failure
+# startup-unit-host.log: 3/3 passed, 0.45 s (neither metrics name matched a test)
+```
+
+The controller regression asserts both command-reply/first-frame event orders,
+no premature metadata commit, retained playlist identity, and startup completion.
+Host-services execution was automatically approved. The first sandboxed proof
+attempt failed at `ps` before launching an app; it is not a GUI measurement.
+
+Every proof command has this exact form:
+
+```sh
+python3 scripts/native_deferred_proof.py --asset /private/tmp/wam-native-scratch/ASSET --output /private/tmp/wam-native-scratch/proofs/RUN [OPTIONS]
+```
+
+| RUN | ASSET | OPTIONS | Gate load1 | Drawn | VO discards | Decoder discards |
+| --- | --- | --- | ---: | ---: | ---: | ---: |
+| fallback-startup-trace-host | fallback.wmv | (none) | 6.3662109375 | 309 | 1 | 0 |
+| fallback-startup-consume | fallback.wmv | (none) | 5.384765625 | 327 | 1 | 0 |
+| fallback-startup-events | fallback.wmv | (none) | 3.5048828125 | 293 | 1 | 0 |
+| fallback-startup-defer | fallback.wmv | (none) | 3.74267578125 | 324 | 0 | 0 |
+| fallback-startup-final-wmv | fallback.wmv | --seconds 22 | 3.916015625 | 588 | 12 | 0 |
+| fallback-startup-final-wmv-2 | fallback.wmv | --seconds 22 | 4.76025390625 | 600 | 0 | 0 |
+
+All launch gates had zero compiler/linker processes; the trace-host gate first
+waited for the build. All apps exited 0. The first final WMV run had **zero
+startup drops**, then twelve drops between media times 2.843 and 3.843 seconds,
+around capture and overlapping an offscreen graphics unit-test invocation. It
+is retained as a failed all-session zero-drop proof; causality of those later
+drops is not asserted. The isolated rerun played all **600 frames**, through EOF,
+with **zero startup or later VO drops and zero decoder drops**. Its capture,
+metrics, environment, hashes and result are retained in its proof directory.
+The traced fixed run completed first-frame restart at 0.105 s without the timeout.
+
+Fallback audio underruns remain **unavailable (null)**. The installed libmpv
+0.41.0 manual exposes frame and decoder-drop counters, but no cumulative AO
+underrun count. `demuxer-cache-state/underrun` is packet starvation, not an audio
+output underrun count, and is not substituted. Audio clock advances in the A/V
+trials; no zero-underrun claim is made for fallback.
+
+Additional final-code item-1 proofs, using the same exact command form:
+
+| RUN | ASSET | OPTIONS | Gate load1 | Drawn | VO discards | Decoder discards |
+| --- | --- | --- | ---: | ---: | ---: | ---: |
+| fallback-startup-final-asp | fallback-asp.avi | --seconds 22 | 4.39697265625 | 600 | 0 | 0 |
+| fallback-startup-final-paused | fallback.wmv | --prime-paused | 3.7822265625 | 349 | 0 | 0 |
+
+Both exited 0 with captures and no compiler/linker at launch. ASP also completed
+its entire 600-frame file. The paused-start script is the pre-existing
+`pause:0@0,play:0@1500` sequence; this is not a claim that the window remained
+paused for the whole trial. Follow-up item 1 is accepted before starting item 2.
+
+### Follow-up 2: bounded software preview scheduling
+
+The software preview handoff had flushed then immediately reopened the playback
+worker, retaining all sixteen slots. It now suspends that software worker during
+preview, keeps the same-generation sink/output lineage, and resumes at the
+existing key-frame/commit boundary. Other decoder implementations retain their
+existing flush behavior. A suspended decoder reports quiescence rather than a
+false drain failure. Its awaiting-key-frame fact now describes its actual state.
+
+The libavcodec admission path has a fixed FIFO of 32 waiting configurations
+(two waves of the sixteen-worker ceiling). Waiting configurations create no
+threads or packet/conversion workspaces. The unchanged sixteen-worker and
+process-byte limits apply when a FIFO entry starts. Readiness uses the existing
+wake callback; no UI polling is added. Closing a queued decoder removes its
+identity before any admission can start it; closing a running decoder joins it
+and retires its byte reservation before admitting the next entry. A full queue
+still refuses with `AvcodecWorkerBudgetExceeded`. The unit test exercises 16
+active + 32 waiting jobs, FIFO progress, queue overflow, queued cancellation,
+and complete retirement to zero active/queued workers and zero reserved bytes.
+
+The warm build was temporarily configured with AVCODEC_STAGE=ON for these
+software-only proofs; this is not a change to the shipped default. An existing
+ON-only main.cpp call lacked its capability declaration. It now goes through
+NativeEmbeddingSupport, preserving the audited Qt/native boundary. The same
+host API exposes numeric worker facts to the admitted test `report` seam.
+
+Exact commands (logs under the scratch root):
+
+```sh
+cmake -S . -B /private/tmp/wam-native-scratch/build -DWAM_ENABLE_AVCODEC_STAGE=ON
+# configure-software-proof.log
+cmake --build /private/tmp/wam-native-scratch/build --target WAM wam_avcodec_worker_test wam_software_avcodec_video_test --parallel 4
+# build-software-scheduler.log: failed on the pre-existing ON-only missing declaration
+cmake --build /private/tmp/wam-native-scratch/build --target WAM wam_avcodec_admission_queue_test --parallel 4
+# build-software-scheduler2.log, build-software-scheduler3.log,
+# build-software-storm-geometry.log: succeeded
+ctest --test-dir /private/tmp/wam-native-scratch/build -R '^avcodec_admission_queue$' --output-on-failure
+# scheduler-unit.log, scheduler-unit-final.log, scheduler-unit-final2.log: 1/1 passed
+python3 tests/wamkit_dogfooding_test.py
+# passed; audit unchanged
+/opt/homebrew/bin/ffmpeg -hide_banner -loglevel error -y -f lavfi -i testsrc2=size=320x180:rate=25 -f lavfi -i sine=frequency=440:sample_rate=48000 -t 40 -c:v mpeg4 -bf 2 -q:v 4 -threads 2 -c:a pcm_s16le /private/tmp/wam-native-scratch/software-storm.mkv
+python3 scripts/native_software_storm_proof.py --asset /private/tmp/wam-native-scratch/software-storm.mkv --output /private/tmp/wam-native-scratch/proofs/software-storm-1
+python3 scripts/native_software_storm_proof.py --asset /private/tmp/wam-native-scratch/software-storm.mkv --output /private/tmp/wam-native-scratch/proofs/software-storm-2
+python3 scripts/native_software_storm_proof.py --asset /private/tmp/wam-native-scratch/software-storm.mkv --output /private/tmp/wam-native-scratch/proofs/software-storm-3
+python3 scripts/native_software_storm_proof.py --asset /private/tmp/wam-native-scratch/software-storm.mkv --output /private/tmp/wam-native-scratch/proofs/software-storm-4
+```
+
+The runner derives from the retained phase-2g storm and adds the mandatory gate,
+identity assertions, per-session drawn checks, exact preview-completion counts,
+worker-budget facts, geometry assertions and closed-process image inventory.
+Run 1 completed 41/41 admitted previews and all sixteen playback sessions, but
+is **diagnostic only**: the old geometry seam parked only the first window and
+the later windows cascaded to ordinary screen positions. Its result was marked
+failed after inspecting the actual geometry. The new explicit
+`WAM_TEST_ALL_WINDOW_GEOMETRY=1` applies the admitted parked rectangle to every
+window. The original first-window-only behavior remains the default for other
+harnesses. All acceptance runs require 32 reported rectangles (two reports ×
+sixteen windows) to equal `480x270+2400+1000`.
+
+Accepted storm results (all exit 0, no compiler/linker at launch):
+
+| Run | Gate load1 | Started / drawn sessions | Preview demanded / admitted / drawn / failed | Commit submitted / ready / drawn | Peak workers | Retired workers / queued / bytes |
+| --- | ---: | --- | --- | --- | ---: | --- |
+| software-storm-2 | 2.4580078125 | 16 / 16 | 105 / 41 / 41 / 0 | 19 / 19 / 19 | 16 | 0 / 0 / 0 |
+| software-storm-3 | 4.35546875 | 16 / 16 | 105 / 41 / 41 / 0 | 19 / 19 / 19 | 16 | 0 / 0 / 0 |
+| software-storm-4 | 4.73583984375 | 16 / 16 | 105 / 41 / 41 / 0 | 19 / 19 / 19 | 16 | 0 / 0 / 0 |
+
+All 41 dispatched/admitted previews complete in every run. The 105 pointer
+demands include normal upstream coalescing; they are not 105 decoder jobs.
+Active reported reservation: 488,668,640 bytes. Closed reports show zero windows,
+zero workers/queue/reservation, and `vmmap` shows no native codec/util images.
+All 32 geometry observations per run match the requested rectangle. There are
+no fallback selections or session failures. Queue waiting/cancellation under
+actual saturation is separately exercised by the admission unit test; the
+handoff storms themselves report zero queued jobs at their report checkpoints.
+Follow-up item 2 is accepted before starting item 3.
+
+The existing `avcodec_worker_budget` test was updated to expect worker 17 to
+queue without creating a seventeenth thread, then cancel and unload. Exact
+follow-up commands: `cmake --build /private/tmp/wam-native-scratch/build --target
+wam_avcodec_worker_budget_test wam_avcodec_admission_queue_test --parallel 4`
+(`build-software-budget-test.log`), then `ctest --test-dir
+/private/tmp/wam-native-scratch/build -R '^avcodec_(admission_queue|worker_budget)$'
+--output-on-failure` (`scheduler-budget-tests.log`): **2/2 passed, 0.50 s**.
+
+### Follow-up 3: full-range 8-bit ASP/VP9
+
+The internal VideoStreamConfiguration now carries an optional container-resolved
+range. Playback and preview both supply it; isolated codec-record callers keep
+their prior bitstream-derived default. The libavcodec adapter uses that fact to
+choose the full-range CVPixelBuffer format, retaining sample bytes without
+normalization. Libavformat now retains explicit versus unspecified range before
+publishing MediaVideoFormat. Matroska already retained it. Full-range ASP and
+VP9 profile 0 SDR are admitted by the software color predicate after the proof
+below. Apple's MPEG-4 Simple Profile full-range path retains its existing named
+refusal; HDR/Dolby Vision and other unqualified tuples remain gated. Frozen
+headers were not modified.
+
+The comparison is phase 2g's **hardware-oracle** projection, ported from
+`analyze-444-hardware-fixed.py`: ICC-converted sRGB, flat patch interiors,
+RMS ≤6/255, absolute matrix/range projection ≤0.15. The oracle is native
+VideoToolbox hardware VP9 profile 0; the two observations are native libavcodec
+ASP and forced-software VP9. Wrong-matrix and wrong-range hardware controls
+carry exactly the same decoded YUV bytes as the correct control and ASP's first
+frame: SHA-256 `701e6e060259b7da38c3cb92dc81170b0326db6ca5dc7ecc82a38c3172a86fc1`.
+Thus metadata controls do not accidentally re-encode different colors. The
+full-range ASP is Advanced Simple Profile with B frames; VP9 is explicitly
+profile 0, and both declare `color_range=pc`.
+
+Exact commands:
+
+```sh
+python3 scripts/native_full_range_proof.py --root /private/tmp/wam-native-scratch/proofs/full-range --phase generate
+cmake --build /private/tmp/wam-native-scratch/build --target WAM wam_software_color_qualification_test wam_libavformat_source_test wam_matroska_demuxer_test --parallel 4
+ctest --test-dir /private/tmp/wam-native-scratch/build -R '^(software_color_qualification|libavformat_mpeg4_full_range|matroska_demuxer)$' --output-on-failure
+python3 scripts/native_full_range_proof.py --root /private/tmp/wam-native-scratch/proofs/full-range --phase capture
+python3 scripts/native_full_range_proof.py --root /private/tmp/wam-native-scratch/proofs/full-range --phase analyze
+```
+
+Generation expands to the exact ffmpeg/ffprobe argv arrays retained in
+`proofs/full-range/commands.json`; `full-range-generate.log` and
+`specimens.json` retain profile/range and encoded/decoded hashes. It uses
+`smptebars=size=640x360:rate=25`, `scale=in_range=tv:out_range=pc`, MPEG-4
+`-bf 2 -q:v 1`, then lossless VP9 `-profile:v 0 -lossless 1` with the decoded
+ASP frame as input. Correct/matrix controls use `-color_range pc`; the deliberately
+wrong-range control uses `tv`. Each encoder/filter is limited to one thread.
+Build logs: `build-fullrange.log`, `build-fullrange2.log`. Targeted tests:
+**3/3 passed, 0.96 s**, including retained range in both demuxers and preserved
+Simple Profile/HDR refusals (`fullrange-unit.log`).
+
+| Capture | Gate load1 | Proven decoder | Exit |
+| --- | ---: | --- | ---: |
+| hardware-correct | 4.80712890625 | VideoToolboxHardware | 0 |
+| hardware-matrix | 4.67626953125 | VideoToolboxHardware | 0 |
+| hardware-range | 4.3818359375 | VideoToolboxHardware | 0 |
+| software-vp9 | 7.8818359375 | Libavcodec | 0 |
+| software-asp | 7.33056640625 | Libavcodec | 0 |
+
+Every compiler/linker inventory was empty. The software-VP9 gate first observed
+load 8.83251953125 and waited 30 s. Each capture retains isolated HOME,
+identity-bound events, metrics, environment and a 480×270 actual composited
+CALayer image. No fallback or native failure occurred. The ASP image was also
+visually inspected: color bars fill the video rectangle, without error UI.
+
+| Observation | Pixels | RMS /255 | Wrong-matrix projection | Wrong-range projection |
+| --- | ---: | ---: | ---: | ---: |
+| ASP full 8-bit | 91,441 | 0.04370534297656112 | +0.00010964848765823997 | −0.000016357728109618783 |
+| VP9 profile 0 full 8-bit | 91,441 | 0 | 0 | 0 |
+
+Positive matrix projection points toward interpreting these 601 samples as 709;
+positive range projection points toward treating full-range samples as limited
+and expanding them. ASP's minute negative range component points away from
+that expansion, not toward the lost-range defect. Control energies are
+19,507,793 (matrix) and 13,632,700 (range), so neither direction is degenerate.
+Both pass the unchanged tolerances (`projection.json`). This is the requested
+hardware-oracle qualification, not a claim that the historical independent
+FFmpeg RGB reference discrepancy has been repaired. No approximate pixel
+compensation ships. The software stage remains an opt-in build capability;
+the shipped OFF configuration is restored for final regression and item 4.
+Follow-up item 3 is accepted before item 4.
+
+### Final shipped regression (before item 4)
+
+Restored and built the shipped configuration successfully (692 Ninja steps):
+
+```sh
+cmake -S . -B /private/tmp/wam-native-scratch/build -DWAM_ENABLE_MACOS_NATIVE_VIDEO=ON -DWAM_ENABLE_AVFORMAT_STAGE=ON -DWAM_ENABLE_AVCODEC_STAGE=OFF -DBUILD_TESTING=ON
+cmake --build /private/tmp/wam-native-scratch/build --parallel 4
+TMPDIR=/private/tmp/wam-native-scratch/test-tmp WAM_TEST_SCRATCH=/private/tmp/wam-native-scratch/test-tmp ctest --test-dir /private/tmp/wam-native-scratch/build -LE benchmark --output-on-failure
+TMPDIR=/private/tmp/wam-native-scratch/test-tmp WAM_TEST_SCRATCH=/private/tmp/wam-native-scratch/test-tmp ctest --test-dir /private/tmp/wam-native-scratch/build -R '^caption_service$' --output-on-failure
+```
+
+Logs: scratch `configure-shipped-final.log`, `build-shipped-final.log`,
+`ctest-shipped-final.log`, `ctest-caption-retry.log`. Full suite: **134/135
+passed**, 155.56 s; `caption_service` failed with “GPU descendant not started”
+(150 ms fake-GPU watchdog). The isolated unchanged retry **passed 1/1**, 3.81 s.
+This is a timing-sensitive failed first attempt, not a clean first-pass suite.
+All changed-feature tests passed. No caption code or test was modified.
+
+As in the previous round, generated scratch CTest files use scratch
+`python-tests` instead of `/opt/anaconda3/bin/python3[.12]`, retaining Python
+semantics while redirecting temporary files and gating identity-bound GUI
+launches. The generated Swift invocation appends `--stage-package
+/private/tmp/wam-native-scratch/swift-package-source`. No repository test
+registration was changed for this adaptation. `ctest-gate.jsonl` records a
+30-second compiler wait before GUI launch. Frozen headers/audio tests have no
+Git diff; `git diff --check` passed. No Git writes were performed.
+
+### Follow-up item 4 — full A/V rerun, measurement only
+
+No code changed for this item. Inventoried workspace `tests/fixtures`,
+`test-media`, `docs` and scratch media using `rg --files`, deduplicated file
+identities, and queried `ffprobe -v error -show_entries
+format=duration:stream=codec_type,codec_name,duration -of json PATH`.
+Scratch `late-fixture-inventory.json` and `late-doc-fixture-inventory.json`
+retain the inventory. The longest shipped-native A/V fixture is
+`build/mpegts-fixtures-v1/L_video.ts` (format 20.021334 s, H.264 20 s / 600
+frames, AAC 19.84 s). The longer 40 s ASP storm and 20.086 s WMV fixtures need
+fallback with the restored codec-OFF build. Retained docs media are 4 s.
+
+Exact sequential commands (after all own builds/tests finished):
+
+```sh
+python3 scripts/native_deferred_proof.py --asset /private/tmp/wam-native-scratch/build/mpegts-fixtures-v1/L_video.ts --seconds 23 --output /private/tmp/wam-native-scratch/proofs/late-native-1
+python3 scripts/native_deferred_proof.py --asset /private/tmp/wam-native-scratch/build/mpegts-fixtures-v1/L_video.ts --seconds 23 --output /private/tmp/wam-native-scratch/proofs/late-native-2
+python3 scripts/native_deferred_proof.py --asset /private/tmp/wam-native-scratch/build/mpegts-fixtures-v1/L_video.ts --seconds 23 --output /private/tmp/wam-native-scratch/proofs/late-native-3
+python3 /private/tmp/wam-native-scratch/analyze-late.py
+```
+
+Each proof uses isolated HOME, `WAM_TEST_BACKGROUND=1 WAM_TEST_MUTED=1
+WAM_TEST_GEOMETRY=480x270+2400+1000`, benchmark RUN_ID/ASSET_SHA256/CANDIDATE_ID,
+and the existing 30 s poll gate. All accepted gates had no compiler/linker:
+
+| Run | Gate load1 | Drawn | Late discards | Audio underrun callbacks | Clock-advancing underruns | Final media seconds |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 2.439453125 | 599 | 1 | 1 | 0 | 20.020189375 |
+| 2 | 3.423828125 | 599 | 1 | 1 | 0 | 20.020101750 |
+| 3 | 7.5419921875 | 599 | 1 | 1 | 0 | 20.020065958 |
+
+Run 3 first observed load 9.2822265625, waited 30 s, then passed. All app
+processes exited 0. The existing runner returns **1** for each because its
+`zero_late_proof` predicate is false; these are valid nonzero measurements,
+not zero-late acceptance. All runs rendered 961,024 audio frames across
+1,003 callbacks, retired 0 late audio frames, and had 0 superseded video
+frames. The single video discard was present at the first native sample
+(media 0.1000395 / 1.158952583 / 0.261263792 s); the audio counter became 1
+only at the final ~20.020 s sample. Neither counter is excluded or relabeled.
+The cause of this native startup discard and endpoint underrun remains
+unresolved; item 4 authorizes measurement only.
+
+`analyze-late.py` verifies every benchmark record's run ID, process ID, asset
+hash and current candidate hash, native selection with route proof, first
+frame, no fallback/libmpv initialization, app exit, full-duration progress
+and rendered audio. Results are in `late-native-summary.json`; raw logs,
+metrics, environments, gates and captures remain under each proof directory.
+Asset SHA256: `597f2a7727b1e571664f8fabe3cf5d4f0586d475b752a6dbeb2df2b6f70e3a67`.
+Candidate SHA256: `12a9e3d87c1f5f8d1f296712df7da5b069fc90a9519003affccafb426553b6b2`.
+
+### Follow-up completion and remaining limits
+
+Items 1–3 have accepted measured proofs; item 4's three requested measurements
+are complete. Fallback audio underruns remain **unavailable**, native reruns
+retain the above nonzero counters, and the historical independent RGB-reference
+range discrepancy is not claimed repaired. Hardware-oracle full-range SDR
+qualification passes for ASP/VP9 only; Simple Profile full range and HDR stay
+fail-closed. Shipped codec OFF is restored. This developer-host proof is not
+macOS 13.3 deployment qualification. No commits, index changes, frozen-file
+changes, or changes to the sibling workspace were made.
+
+Every repository file changed in this follow-up (new files included):
+
+- `CMakeLists.txt`
+- `docs/NATIVE_DEFERRED_2026_09.md`
+- `scripts/native_full_range_proof.py`
+- `scripts/native_software_storm_proof.py`
+- `src/media/avcodec/decode_worker.cpp`
+- `src/media/avcodec/decode_worker.hpp`
+- `src/media/libavformat_cursor.cpp`
+- `src/media/libavformat_cursor.hpp`
+- `src/media/matroska_demuxer.cpp`
+- `src/media/software_color_qualification.hpp`
+- `src/platform/macos/libavformat_media_source.mm`
+- `src/platform/macos/native_embedding_support.hpp`
+- `src/platform/macos/native_embedding_support.mm`
+- `src/platform/macos/native_preview_frame_lane.mm`
+- `src/platform/macos/native_video_consumer.mm`
+- `src/platform/macos/native_video_presenter.hpp`
+- `src/platform/macos/software_avcodec_video_decoder.hpp`
+- `src/platform/macos/software_avcodec_video_decoder.mm`
+- `src/platform/macos/video_decode_lane.hpp`
+- `src/qt/main.cpp`
+- `src/qt/mpv_video_item.cpp`
+- `src/qt/player_controller.cpp`
+- `src/qt/player_controller.hpp`
+- `src/qt/window_manager.cpp`
+- `src/qt/window_manager.hpp`
+- `tests/avcodec_admission_queue_test.cpp`
+- `tests/avcodec_worker_budget_test.cpp`
+- `tests/libavformat_source_test.mm`
+- `tests/matroska_demuxer_test.cpp`
+- `tests/player_controller_lazy_test.cpp`
+- `tests/software_color_qualification_test.cpp`

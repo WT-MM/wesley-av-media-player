@@ -41,6 +41,9 @@ public:
   ~DecodeWorker();
   DecodeWorker(const DecodeWorker&) = delete;
   DecodeWorker& operator=(const DecodeWorker&) = delete;
+  // Cold admission: a full process worker/byte budget queues this decoder in
+  // a fixed FIFO. True means admitted or queued; hasCapacity stays false until
+  // its existing WakeHandler publishes readiness. close cancels either state.
   bool configure(const Configuration& configuration);
   WorkerResult submit(std::span<const std::byte> bytes, PacketTiming timing);
   WorkerResult endOfStream(std::uint64_t generation);
@@ -54,6 +57,8 @@ public:
   [[nodiscard]] const char* failure() const noexcept;
   [[nodiscard]] static std::uint64_t reservedProcessBytes() noexcept;
   [[nodiscard]] static unsigned reservedWorkers() noexcept;
+  [[nodiscard]] static unsigned pendingWorkers() noexcept;
+  [[nodiscard]] static unsigned peakReservedWorkers() noexcept;
   [[nodiscard]] std::span<std::byte> conversionStorage() noexcept;
 private:
   struct Impl;

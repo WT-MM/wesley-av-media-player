@@ -30,7 +30,7 @@ public:
     int codecId{};
     bool video{}, audio{}, attached{}, unsupportedMetadata{};
     unsigned primaries{}, transfer{}, matrix{};
-    bool fullRange{};
+    bool fullRange{}, rangeSpecified{};
     unsigned width{}, height{}, rate{}, channels{}, frameSize{};
     MediaTime timeBase{}, duration{}, start{};
     std::span<const std::byte> extradata{};

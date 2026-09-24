@@ -96,6 +96,7 @@ void applyColorScheme(QStyleHints *style_hints, int appearance) {
 // creates, not just the one the engine used to load.
 bool g_background_launch = false;
 bool g_parked_geometry_valid = false;
+bool g_parked_all_windows = false;
 QRect g_parked_geometry;
 
 } // namespace
@@ -489,7 +490,8 @@ void WindowManager::setBackgroundLaunch(bool enabled) {
   g_background_launch = enabled;
 }
 
-void WindowManager::setParkedGeometry(int x, int y, int width, int height) {
+void WindowManager::setParkedGeometry(int x, int y, int width, int height, bool allWindows) {
+  g_parked_all_windows = allWindows;
   g_parked_geometry_valid = width > 0 && height > 0;
   g_parked_geometry = QRect(x, y, width, height);
 }
@@ -559,8 +561,8 @@ PlayerWindow *WindowManager::createWindow() {
   last_created_ = window;
 
   if (QQuickWindow *quick = window->window()) {
-    if (g_parked_geometry_valid && previous == nullptr) {
-      // WAM_TEST_GEOMETRY parks the FIRST window at an exact rectangle. It is
+    if (g_parked_geometry_valid && (previous == nullptr || g_parked_all_windows)) {
+      // Park the first window, or every window for a quiet storm proof. It is
       // applied again on the next event-loop passes because QML's own sizing
       // (windowHugsVideo, the first frame's natural size) settles after this
       // point and would otherwise overwrite it.
