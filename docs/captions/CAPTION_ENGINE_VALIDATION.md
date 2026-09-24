@@ -178,9 +178,11 @@ Actual pre-26 OS execution and fresh OS-asset installation are untested here;
 SDK-disabled behavior and download control flow are tested. A transcriber cannot
 be retained unchanged across independent files on this tested OS without the
 reproduced text corruption; only the analyzer/preparation is retained. Extraction
-still precedes analysis, interim segments are not overlaid on playback, and there
-is no idle eviction or multi-hour memory-growth proof. Whisper interim events
-still parse CLI diagnostics. Movie/podcast accuracy and metered power remain
+still precedes analysis. The live-captions follow-up now overlays interim segments,
+reads Whisper's per-segment stdout stream, and evicts Apple analyzers after 30
+seconds idle; see `LIVE_CAPTIONS_VALIDATION.md`. Three-file RSS growth is measured
+there, including retained growth after idle, but there is no multi-hour memory-growth
+proof or system memory-pressure observer. Movie/podcast accuracy and metered power remain
 outside this implementation's evidence.
 
 ## Measured receipts

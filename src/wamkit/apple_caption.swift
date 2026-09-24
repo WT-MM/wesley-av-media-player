@@ -46,12 +46,38 @@ private actor Engine {
     var analyzer: SpeechAnalyzer?
     var reader: Task<Void, Error>?
     var prepared = false
+    // Production idle deadline. Query cancels the timer and awaits any close
+    // already in progress before reserving/re-preparing the next request.
+    var idleVersion: UInt64 = 0
+    var idle: Task<Void, Never>?
+    var eviction: Task<Void, Never>?
+    func armIdle() {
+        idle?.cancel()
+        idleVersion &+= 1
+        let version = idleVersion
+        idle = Task { [weak self] in
+            do { try await Task.sleep(for:.seconds(30)) } catch { return }
+            await self?.evict(version)
+        }
+    }
+    func evict(_ version: UInt64) {
+        // Cancellation can arrive after sleep returns but before this actor
+        // hop. A stale timer must never close a newly admitted request.
+        guard version == idleVersion, idle != nil else { return }
+        eviction = Task { await self.close() }
+    }
+    func resume() async {
+        idleVersion &+= 1
+        idle?.cancel(); idle = nil
+        await eviction?.value; eviction = nil
+    }
     var offset: Int64 = 0
     var generation: UInt64 = 0
     var base: Double = 0
     var duration: Double = 0
     init(_ session: Session) { self.session = session }
     func query(_ language: String, _ g: UInt64) async throws {
+        await resume()
         guard SpeechTranscriber.isAvailable,
               let resolved = await SpeechTranscriber.supportedLocale(equivalentTo: Locale(identifier:language)) else {
             session.emit(g,1,flags:0); return
@@ -149,6 +175,7 @@ private actor Engine {
             for try await result in fresh.results { self.receive(result) }
         }
         offset += file.length
+        armIdle()
         session.emit(g,5)
     }
     func cancel() async {
@@ -156,6 +183,8 @@ private actor Engine {
         if let a = analyzer { await a.cancelAndFinishNow() }
     }
     func close() async {
+        idleVersion &+= 1
+        idle?.cancel(); idle = nil
         await cancel()
         _ = try? await reader?.value
         reader = nil; analyzer = nil; module = nil; prepared = false; offset = 0
@@ -205,7 +234,7 @@ public func finish(_ p: UnsafeMutableRawPointer, _ g: UInt64) {
         active?.cancel()
         if #available(macOS 26, *), let e = s.core as? Engine { await e.cancel() }
         await active?.value
-        if #available(macOS 26, *), let e = s.core as? Engine { await e.close() }
+        if #available(macOS 26, *), let e = s.core as? Engine { await e.resume(); await e.close() }
         s.emit(g,8)
     }
 }

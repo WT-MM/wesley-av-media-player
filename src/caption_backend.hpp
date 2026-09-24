@@ -33,11 +33,19 @@ struct CaptionSegment {
 inline void reviseCaptionSegments(std::vector<CaptionSegment>& store,
                                   CaptionSegment segment) {
   if (!std::isfinite(segment.start) || !std::isfinite(segment.end) ||
-      segment.start < 0 || segment.end < segment.start) return;
+      segment.start < 0 || segment.end <= segment.start || segment.end > 1.0e7) return;
+  // Half-open ranges: adjacent sentences are independent. Reject stale
+  // revisions (including retry duplicates) that overlap already final text.
+  if (std::any_of(store.begin(), store.end(), [&](const auto& old) {
+        return old.final && old.start < segment.end && old.end > segment.start;
+      })) return;
   std::erase_if(store, [&](const auto& old) {
-    return !old.final && old.start <= segment.end && old.end >= segment.start;
+    return !old.final && old.start < segment.end && old.end > segment.start;
   });
   if (!segment.text.empty()) store.push_back(std::move(segment));
+  std::stable_sort(store.begin(), store.end(), [](const auto& a, const auto& b) {
+    return a.start < b.start;
+  });
 }
 struct CaptionBackendEvents {
   std::function<void(float, const std::string&)> progress;

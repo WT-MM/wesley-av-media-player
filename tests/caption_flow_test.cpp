@@ -39,6 +39,8 @@ void wam_caption_start_v1(void* p,uint64_t g,const char*) {
    emit(s,g-1,WAM_CAPTION_SEGMENT,"stale request",1);
    emit(s,g,WAM_CAPTION_SEGMENT,"vola");
    emit(s,g,WAM_CAPTION_SEGMENT,"Final Apple text",1);
+   if(mode==4) for(int i=1;i<=600;++i)
+     s->cb(s->ctx,g,WAM_CAPTION_SEGMENT,i,i+1,0,1,"bounded final");
    if(mode==3) while(!s->cancelled) std::this_thread::sleep_for(2ms);
    emit(s,g,s->cancelled ? WAM_CAPTION_CANCELLED : WAM_CAPTION_COMPLETED);
  });
@@ -78,6 +80,11 @@ int main(int argc,char**argv) {
    auto s=run(service,0);check(s.succeeded && s.engine==wam::CaptionEngine::Apple,"ready Apple selection failed");
    check(installs==0,"ready asset downloaded");check(s.segments.size()==1 && s.segments[0].text=="Final Apple text","revision or generation isolation failed");
  }
+ mode=4;
+ {wam::CaptionService service; auto s=run(service,0);
+  check(s.succeeded && s.segments.size()==512 && s.segments.front().start==89 &&
+        s.segments.back().start==600,"live snapshot must retain only latest 512 segments");}
+ mode=0;
  capability=0;
  {wam::CaptionService service;check(run(service,0).engine==wam::CaptionEngine::Whisper,"unavailable must degrade");}
  capability=5;

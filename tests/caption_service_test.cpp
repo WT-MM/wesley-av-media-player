@@ -124,6 +124,17 @@ int runFakeCaptionTool(int argc, char **argv) {
         pause();
     }
 #endif
+    if (name.find("stream") != std::string::npos) {
+      std::cerr << "[00:00:00.000 --> 00:00:59.000] diagnostic impostor\n" << std::flush;
+      std::cout << "noise [00:00:00.000 --> 00:00:59.000] ignored\n";
+      std::cout << "[00:00:00.000 --> 00:00:01.000]" << std::flush;
+      std::this_thread::sleep_for(80ms);
+      std::cout << " First sentence.\r\n" << std::flush;
+      std::this_thread::sleep_for(80ms);
+      std::cout << "[00:00:01.000 --> 00:00:02.000] Second sentence.\n" << std::flush;
+      std::this_thread::sleep_for(80ms);
+      std::cout << "[00:00:02.000 --> 00:00:03.000] EOF sentence." << std::flush;
+    }
     if (name.find("slow") != std::string::npos)
       std::this_thread::sleep_for(5s);
     fs::path srt = output_base;
@@ -300,6 +311,29 @@ int main(int argc, char **argv) {
       unsetenv("WAM_CAPTION_TEST_DESCENDANT_PID_LOG");
     }
 #endif
+
+    // Fragmented stdout and an unterminated final line are consumed once,
+    // in order. Timestamp-shaped stderr cannot poison the watchdog watermark.
+    {
+      auto tool = copyAsTool(this_executable,temporary.path,"fake-whisper-stream");
+      auto request = requestFor(temporary.path,fake_ffmpeg,tool,"stream.srt");
+      request.options.gpu_watchdog_ms = 200;
+      std::vector<wam::CaptionSegment> delivered;
+      const auto caller = std::this_thread::get_id();
+      bool offMain = true, beforeCommit = false;
+      wam::CaptionService service;
+      request.live_segments = [&](auto segments) {
+        offMain &= std::this_thread::get_id() != caller;
+        check(service.transcribing(),"segment must arrive during backend transcription");
+        beforeCommit |= !fs::exists(request.output_srt);
+        delivered = std::move(segments);
+      };
+      check(service.start(request),"stream request refused"); service.wait();
+      check(service.succeeded() && offMain && beforeCommit,"live delivery missing");
+      check(delivered.size()==3 && delivered[0].text=="First sentence." &&
+            delivered[1].start==1 && delivered[2].text=="EOF sentence.",
+            "fragmented stdout must yield ordered live segments exactly once");
+    }
 
     // A valid tool exit is followed by SRT verification and an output commit.
     {

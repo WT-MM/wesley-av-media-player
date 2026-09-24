@@ -23,5 +23,8 @@ int main(int argc, char**) {
   check(store.size()==2 && store[1].final);
   reviseCaptionSegments(store,{-1,3,"invalid",true});
   check(store.size()==2);
+  reviseCaptionSegments(store,{0,3,"stale volatile",false});
+  reviseCaptionSegments(store,{0,3,"duplicate final",true});
+  check(store.size()==2 && store[0].text=="Hello world.");
   std::cout << "caption policy and revision checks passed\n";
 }
