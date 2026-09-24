@@ -35,6 +35,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QQuickWindow>
+#include <QQuickItem>
 #include <QRect>
 #include <QPointF>
 #include <QWheelEvent>
@@ -1478,7 +1479,33 @@ int main(int argc, char *argv[]) {
       }
       const QString caption_output = QString::fromUtf8(qgetenv("WAM_TEST_CAPTION_OUTPUT"));
       if (!caption_output.isEmpty()) {
-        QTimer::singleShot(1000, first_player, [first_player, caption_output] {
+        struct LiveReceipt { QElapsedTimer clock; bool live=false, committed=false; QString previous; };
+        auto receipt = std::make_shared<LiveReceipt>();
+        QObject::connect(first->window(), &QQuickWindow::frameSwapped, first_player,
+          [first_player, window=first->window(), receipt] {
+            if (!receipt->clock.isValid()) return;
+            auto* item = window->findChild<QQuickItem*>(QStringLiteral("subtitleText"));
+            if (!item || !item->isVisible()) return;
+            const auto text = item->property("text").toString();
+            const bool stable = !text.isEmpty() && text == receipt->previous;
+            receipt->previous = text;
+            if (!stable) { if (!text.isEmpty()) window->update(); return; }
+            if (!receipt->live && first_player->captionTranscribing() && !first_player->captionTrackCommitted()) {
+              receipt->live = true;
+              qInfo() << "caption-screen: live_ms=" << receipt->clock.elapsed()
+                      << "position=" << first_player->position() << "text=" << text;
+            }
+            if (!receipt->committed && first_player->captionTrackCommitted()) {
+              receipt->committed = true;
+              qInfo() << "caption-screen: committed_ms=" << receipt->clock.elapsed()
+                      << "position=" << first_player->position() << "text=" << text;
+            }
+          }, Qt::QueuedConnection);
+        QObject::connect(first_player, &wam::qt::PlayerController::subtitleTracksChanged,
+                         first->window(), [window=first->window()] { window->update(); });
+        QTimer::singleShot(1000, first_player, [first_player, caption_output, receipt] {
+          receipt->clock.start();
+          qInfo() << "caption-screen: request playing=" << first_player->playing();
           first_player->generateCaptionsTo(QUrl::fromLocalFile(caption_output));
         });
         QObject::connect(first_player, &wam::qt::PlayerController::captionStatusChanged,

@@ -3,10 +3,12 @@
 #include "fakes/mpv_runtime/injected_mpv_runtime.hpp"
 #include "qt/player_controller.hpp"
 #include "qt/player_core_p.hpp"
+#include "qt/subtitle_sources.hpp"
 
 #include <QCoreApplication>
 #include <QEventLoop>
 #include <QTimer>
+#include <QThread>
 #include <QUrl>
 
 #include <mpv/client.h>
@@ -1194,6 +1196,38 @@ bool readFlag(mpv_handle *handle, const char *name) {
 
 int main(int argc, char **argv) {
   QCoreApplication app(argc, argv);
+  {
+    wam::qt::CaptionLiveBridge bridge;
+    int notifications = 0;
+    QObject::connect(&bridge, &wam::qt::CaptionLiveBridge::available, &app, [&] {
+      ++notifications;
+      expect(QThread::currentThread()==app.thread(), "caption events are queued to UI");
+    }, Qt::QueuedConnection);
+    std::thread producer([&] {
+      for (int i=0;i<1000;++i)
+        bridge.publish(std::make_shared<wam::qt::CaptionLiveBridge::Snapshot>());
+    });
+    producer.join();
+    expect(notifications==0, "caption worker cannot call UI directly");
+    QCoreApplication::processEvents();
+    expect(notifications==1 && bool(bridge.latest), "caption event queue is coalesced");
+  }
+  {
+    wam::qt::SubtitleSources tracks;
+    using Cue = wam::media::subtitles::Cue;
+    auto live = std::make_shared<const std::vector<Cue>>(std::vector<Cue>{{0,2000000000,"volatile"}});
+    const auto id = tracks.updateGenerated("captions.srt",live,false);
+    tracks.setActiveId(id);
+    expect(tracks.textAt(1)=="volatile", "live cue reaches selected track");
+    auto final = std::make_shared<const std::vector<Cue>>(std::vector<Cue>{{0,2000000000,"Final."}});
+    expect(tracks.updateGenerated("captions.srt",final,true)==id,
+           "commit replaces source without duplicate or selection change");
+    expect(tracks.sources().size()==1 && tracks.textAt(1)=="Final.", "atomic committed cue swap");
+    tracks.setActiveId(-1);
+    expect(!tracks.activeIsGenerated(), "Off suppresses live captions");
+    tracks.clear();
+    expect(tracks.sources().empty(), "media change discards live source");
+  }
   expect(std::setlocale(LC_NUMERIC, "C") != nullptr,
          "LC_NUMERIC can be restored for libmpv");
 

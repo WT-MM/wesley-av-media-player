@@ -41,11 +41,15 @@ The argv otherwise remains unchanged. CoreML is not packaged.
 
 `CaptionBackend` exposes readiness, asynchronous prepare/start, progress and timed
 segment revisions, nonblocking cancel, and off-main finish. Whisper stays in an
-isolated subprocess. Its flushed CLI timestamp output supplies interim segment
-events without changing argv; these are an interim diagnostic parser, not a
-structured whisper.cpp API. Final output still comes from its staged SRT.
+isolated subprocess. A bounded incremental reader consumes whisper-cli stdout's per-segment
+`[hh:mm:ss.mmm --> hh:mm:ss.mmm] text` lines, without changing argv. It handles
+fragmented reads, CRLF, and an unterminated last line; ignores malformed,
+backward and duplicate ranges; and discards overlong lines (8 KiB). Stderr is
+separately drained for diagnostics and cannot advance the watchdog. Accepted
+segments drive both live captions and the watchdog's caption-time watermark.
+Final output still comes from its staged SRT.
 
-Metal opt-in has a 30-second deadline without an advancing caption timestamp.
+Metal execution has a 30-second deadline without an advancing caption timestamp.
 Arbitrary diagnostic chatter does not reset it. Timeout sends TERM and then KILL
 to the verified process group, clears the staging file, and retries **once** with
 CPU. Cancellation does not retry. The group leader remains unreaped until the
@@ -60,8 +64,14 @@ accepts it through conversion. Finalization uses the last sample returned by
 `analyzeSequence`, not the file's exclusive end. `start(inputAudioFile:)` returning
 does not mean its results have been delivered.
 
-The analyzer is retained and `prepareToAnalyze` is paid once per successful
-service session. **Implementation deviation:** the transcriber module is replaced
+The analyzer is retained for warm reuse and `prepareToAnalyze` is paid once per
+successful session. After 30 seconds idle following transcription, an actor-owned
+cancellable timer releases the analyzer, result reader, module and locale reservation.
+A new query cancels the timer and awaits any eviction already underway, then
+reserves and prepares on demand. A timer generation guard also rejects cancellation
+that arrived after sleep but before the actor hop. Failed/cancelled requests retire the backend
+on the service worker, including failures before transcription could arm the timer.
+This is an idle policy, not a system memory-pressure observer. **Implementation deviation:** the transcriber module is replaced
 between independent files while the prepared analyzer remains alive. On this
 macOS 26.3.1 machine, retaining the same transcriber changed a repeated file's
 correct first sentence into “that... should be granted first…” and other corrupt
@@ -74,8 +84,25 @@ compares the two complete SRTs, not just exit status or file size.
 
 Volatile segments replace overlapping volatile time ranges; final segments remain
 stable. ABI events carry generation, media times, UTF-8 text and finality. Payloads
-are copied synchronously off-main rather than queued to the UI; the UI snapshot
-retains at most 512 recent segments. Backend final text is retained for SRT output.
+are copied synchronously off-main. Live snapshots retain at most 512 recent
+segments, with 4 KiB per segment on UTF-8 boundaries. Final ranges reject
+conflicting late revisions and duplicate retry output; adjacent ranges are
+half-open. Backend final text is retained for SRT output.
+
+The Qt adapter coalesces snapshots in a latest-value mailbox and delivers only a
+queued signal to the owning controller. The UI uses a try-lock and queues a retry
+rather than waiting for the publisher. Caption status polling also uses a
+try-lock and skips a busy publication. The mailbox and queued notifications are
+bounded even if the UI cannot keep up. A request-scoped bridge and source URL
+reject stale delivery after media changes; destruction disconnects the receiver.
+A selectable **Live Captions** source feeds the existing plain-text QML subtitle
+overlay on both playback routes. Turning captions off or choosing another track
+is respected. After atomic SRT commit, the worker parses that file using the
+existing bounded subtitle parser (65,536 cues / 8 MiB text; input capped at 16 MiB).
+One UI turn replaces the same source's cues and renames it **Generated Captions**,
+without clearing the displayed line or adding another source. Committed cues use
+the normal full-track bounds so seeking remains possible; the 512-segment bound
+applies to the running live job. The native video/audio path is uninvolved.
 Cancel cancels analysis and result tasks, calls `cancelAndFinishNow`, and awaits
 teardown off-main. A cancelled service session is rebuilt for the next request.
 
@@ -119,11 +146,21 @@ be hidden by a development sandbox, so run with ordinary OS access to an already
 installed locale. Tests do not remove assets or simulate an install by changing
 OS inventory.
 
-`tests/caption_gui_proof.py --app STAGED_WAM --asset LOCAL_VIDEO --output SCRATCH`
+`tests/caption_gui_proof.py --engine apple --app STAGED_WAM --asset LOCAL_VIDEO --output SCRATCH`
 runs paired baseline/caption trials using identity-bound native telemetry, muted
 background windows at `480x270+2400+1000`, and isolated HOME directories. It retains
 playback samples, UI timer gaps, status messages, executable/input hashes, and
-child PIDs. It starts captioning through the actual controller during playback.
+child PIDs. It starts captioning through the actual controller during playback. Repeat with
+`--engine whisper` to force the default Metal Whisper path. Before each trial the
+harness logs compiler/linker processes and one-minute load, polling every 30 seconds
+until none are building and load is below 8. It verifies the telemetry header's PID,
+run ID and executable/input hashes, and retains that identity alongside the exclusive
+per-child playback metrics file. The QML text item must be visible and unchanged
+across two presented overlay frames before first-live/committed receipts are logged.
+First-live additionally requires the service's atomic transcription flag, so a
+lagging UI completion timer cannot turn already-finished inference into a live pass.
+The proof requests an overlay frame on a track change; unchanged text otherwise
+correctly produces no scene-graph work. See `LIVE_CAPTIONS_VALIDATION.md` for receipts.
 
 The bake-off remains in `tools/asr-bench/README.md`. Run its documented build,
 prepare, run and summarize commands against the fixed manifest; use
@@ -137,8 +174,7 @@ No actual pre-26 OS was available; SDK-disabled selection, the 13.3 load command
 weak linkage and framework imports were checked here. The installed asset was
 preserved: actual download success/failure/cancel behavior is covered by fixtures,
 not a destructive fresh-install test. Extraction still completes before analysis
-and uses the existing extraction progress plateau. Partial segments are available
-in service snapshots but are not rendered over playback before final SRT commit.
-There is no idle eviction/memory-pressure policy yet. Movie/podcast accuracy,
+and uses the existing extraction progress plateau. Live segments are overlaid before commit and prepared Apple sessions have idle
+eviction. There is no system memory-pressure observer. Movie/podcast accuracy,
 controlled cold-cache tests, multi-hour memory growth and metered power remain
 outside the LibriSpeech bake-off evidence.

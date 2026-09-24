@@ -3,6 +3,7 @@
 #include "cancellation.hpp"
 #include "caption_backend.hpp"
 #include <memory>
+#include <optional>
 
 #include <filesystem>
 #include <mutex>
@@ -67,6 +68,9 @@ struct CaptionRequest {
   std::filesystem::path output_srt;
   CaptionTools tools;
   CaptionOptions options;
+  // Worker-only callbacks. Consumers must queue/coalesce delivery to the UI.
+  std::function<void(std::vector<CaptionSegment>)> live_segments;
+  std::function<void(const std::filesystem::path&)> committed;
 };
 
 struct CaptionStatus {
@@ -79,6 +83,7 @@ struct CaptionStatus {
   std::string message;
   std::string error;
   CaptionEngine engine = CaptionEngine::Whisper;
+  unsigned engine_preparations = 0;
   bool needs_download_consent = false;
   std::string download_locale;
   std::vector<CaptionSegment> segments;
@@ -113,7 +118,10 @@ public:
   void wait();
 
   CaptionStatus status() const;
+  // UI polling skips a turn if the worker is publishing a snapshot.
+  std::optional<CaptionStatus> tryStatus() const;
   bool running() const;
+  bool transcribing() const noexcept { return transcribing_.load(); }
   bool finished() const;
   bool succeeded() const;
 
@@ -132,6 +140,7 @@ private:
   detail::CancellationFlag cancellation_;
   std::unique_ptr<CaptionBackend> apple_;
   std::atomic<int> download_response_{0};
+  std::atomic<bool> transcribing_{false};
   bool download_asked_ = false;
 };
 

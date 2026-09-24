@@ -223,6 +223,17 @@ int SubtitleSources::addFileSource(const std::filesystem::path &path,
   return assigned;
 }
 
+int SubtitleSources::updateGenerated(const std::filesystem::path& path,
+    std::shared_ptr<const std::vector<media::subtitles::Cue>> cues, bool committed) {
+  const int id = addFileSource(path, Origin::Generated, {}, 0);
+  for (auto& source : sources_) if (source.id == id) {
+    source.generatedCues = std::move(cues);
+    source.label = committed ? QStringLiteral("Generated Captions")
+                             : QStringLiteral("Live Captions");
+  }
+  return id;
+}
+
 QVariantList SubtitleSources::toVariantList() const {
   QVariantList list;
   list.reserve(static_cast<qsizetype>(sources_.size()));
@@ -465,6 +476,11 @@ QString SubtitleSources::textAt(double seconds) noexcept {
   if (clamped > 1.0e7)
     return {};
   const auto t = static_cast<std::int64_t>(clamped * kNanosecondsPerSecond);
+  if (activeIsGenerated()) {
+    const auto& cues = *find(active_id_)->generatedCues;
+    const auto index = media::subtitles::cueIndexAt(cues, t, -1);
+    return index < 0 ? QString() : QString::fromStdString(cues[index].text);
+  }
   if (activeIsClosedCaptions()) {
     // The live feed answers directly; its list changes as pictures go by, so
     // the loaded-cue hint below does not apply to it.

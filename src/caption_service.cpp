@@ -70,23 +70,38 @@ struct ProcessMonitor {
   CaptionBackendEvents events;
   double watermark = -1;
   std::chrono::steady_clock::time_point last = std::chrono::steady_clock::now();
-  bool stalled(const std::string& output) {
-    std::size_t pos = 0;
-    while ((pos = output.find('[', pos)) != std::string::npos) {
-      int sh, sm, eh, em; double ss, es; int consumed = 0;
-      if (std::sscanf(output.c_str()+pos, "[%d:%d:%lf --> %d:%d:%lf]%n",
-                      &sh,&sm,&ss,&eh,&em,&es,&consumed) == 6 && consumed > 0) {
-        const double end = eh*3600+em*60+es;
-        if (end > watermark) {
-          watermark = end; last = std::chrono::steady_clock::now();
-          const auto textStart = pos+static_cast<std::size_t>(consumed);
-          const auto lineEnd = output.find('\n',textStart);
-          if (lineEnd != std::string::npos && events.segment)
-            events.segment({sh*3600+sm*60+ss,end,output.substr(textStart,lineEnd-textStart),true});
-        }
-      }
-      ++pos;
+  std::string pending;
+  bool overflow = false;
+  void consume(const char* bytes, std::size_t size) {
+    for (std::size_t i=0; i<size; ++i) {
+      const char c = bytes[i];
+      if (c == '\n') {
+        if (!overflow) line();
+        pending.clear(); overflow = false;
+      } else if (pending.size() < 8192) pending += c;
+      else overflow = true;
     }
+  }
+  void line() {
+    // whisper-cli stdout contract: a complete timestamped segment per line.
+    // Anchor at column zero; stderr never enters this reader.
+    int sh, sm, eh, em, consumed = 0; double ss, es;
+    if (pending.empty() || pending.front() != '[' ||
+        std::sscanf(pending.c_str(), "[%d:%d:%lf --> %d:%d:%lf]%n",
+                    &sh,&sm,&ss,&eh,&em,&es,&consumed) != 6 || consumed <= 0 ||
+        sh<0 || eh<0 || sm<0 || sm>=60 || em<0 || em>=60 ||
+        !std::isfinite(ss) || !std::isfinite(es) || ss<0 || ss>=60 || es<0 || es>=60) return;
+    const double start = sh*3600.0+sm*60+ss, end = eh*3600.0+em*60+es;
+    if (end <= start || start < watermark) return;
+    auto text = pending.substr(consumed);
+    auto first = text.find_first_not_of(" \t\r");
+    if (first == std::string::npos) return;
+    text = text.substr(first, text.find_last_not_of(" \t\r")-first+1);
+    watermark = end; last = std::chrono::steady_clock::now();
+    if (events.segment) events.segment({start,end,std::move(text),true});
+  }
+  void finish() { if (!pending.empty() && !overflow) line(); pending.clear(); }
+  bool stalled() const {
     return timeout_ms && std::chrono::steady_clock::now()-last >= std::chrono::milliseconds(timeout_ms);
   }
 };
@@ -234,7 +249,7 @@ std::wstring windowsCommandLine(const fs::path &executable,
   return line;
 }
 
-void drainWindowsPipe(HANDLE pipe, std::string &output) {
+void drainWindowsPipe(HANDLE pipe, std::string &output, ProcessMonitor* monitor = nullptr) {
   std::array<char, 4096> buffer{};
   for (;;) {
     DWORD available = 0;
@@ -246,6 +261,7 @@ void drainWindowsPipe(HANDLE pipe, std::string &output) {
         std::min<DWORD>(available, static_cast<DWORD>(buffer.size()));
     if (!ReadFile(pipe, buffer.data(), wanted, &read, nullptr) || read == 0)
       return;
+    if (monitor) monitor->consume(buffer.data(), read);
     appendProcessOutput(output, buffer.data(), read);
   }
 }
@@ -271,6 +287,12 @@ ProcessResult runProcess(const fs::path &executable,
   }
   SetHandleInformation(output_read, HANDLE_FLAG_INHERIT, 0);
 
+  HANDLE diagnostic_read = nullptr, diagnostic_write = nullptr;
+  if (!CreatePipe(&diagnostic_read, &diagnostic_write, &security, 0)) {
+    CloseHandle(output_read); CloseHandle(output_write); return result;
+  }
+  SetHandleInformation(diagnostic_read, HANDLE_FLAG_INHERIT, 0);
+  struct DiagnosticGuard { HANDLE handle; ~DiagnosticGuard() { CloseHandle(handle); } } diagnostics{diagnostic_read};
   HANDLE null_input =
       CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
                   &security, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -279,7 +301,7 @@ ProcessResult runProcess(const fs::path &executable,
   startup.cb = sizeof(startup);
   startup.dwFlags = STARTF_USESTDHANDLES;
   startup.hStdOutput = output_write;
-  startup.hStdError = output_write;
+  startup.hStdError = diagnostic_write;
   startup.hStdInput = null_input;
   PROCESS_INFORMATION process{};
   auto command = windowsCommandLine(executable, arguments);
@@ -291,6 +313,7 @@ ProcessResult runProcess(const fs::path &executable,
       executable.wstring().c_str(), mutable_command.data(), nullptr, nullptr,
       TRUE, flags, nullptr, nullptr, &startup, &process);
   CloseHandle(output_write);
+  CloseHandle(diagnostic_write);
   if (null_input != INVALID_HANDLE_VALUE)
     CloseHandle(null_input);
   if (!created) {
@@ -317,7 +340,8 @@ ProcessResult runProcess(const fs::path &executable,
 
   bool termination_sent = false;
   for (;;) {
-    drainWindowsPipe(output_read, result.output);
+    drainWindowsPipe(output_read, result.output, &monitor);
+    drainWindowsPipe(diagnostic_read, result.output);
     const DWORD wait = WaitForSingleObject(process.hProcess, 25);
     if (wait == WAIT_OBJECT_0)
       break;
@@ -326,7 +350,7 @@ ProcessResult runProcess(const fs::path &executable,
       WaitForSingleObject(process.hProcess, INFINITE);
       break;
     }
-    const bool stalled = monitor.stalled(result.output);
+    const bool stalled = monitor.stalled();
     if ((cancellation.requested() || stalled) && !termination_sent) {
       result.cancelled = cancellation.requested();
       result.timed_out = stalled && !result.cancelled;
@@ -337,7 +361,9 @@ ProcessResult runProcess(const fs::path &executable,
         TerminateProcess(process.hProcess, ERROR_CANCELLED);
     }
   }
-  drainWindowsPipe(output_read, result.output);
+  drainWindowsPipe(output_read, result.output, &monitor);
+    drainWindowsPipe(diagnostic_read, result.output);
+  monitor.finish();
   DWORD exit_code = static_cast<DWORD>(-1);
   GetExitCodeProcess(process.hProcess, &exit_code);
   result.exit_code = static_cast<int>(exit_code);
@@ -353,11 +379,12 @@ ProcessResult runProcess(const fs::path &executable,
 constexpr auto kCaptionProcessPollInterval = 20ms;
 constexpr auto kCaptionGracefulShutdownTimeout = 500ms;
 
-void drainPosixPipe(int pipe, std::string &output) {
+void drainPosixPipe(int pipe, std::string &output, ProcessMonitor* monitor = nullptr) {
   std::array<char, 4096> buffer{};
   for (unsigned chunk=0;chunk<64;++chunk) {
     const ssize_t count = read(pipe, buffer.data(), buffer.size());
     if (count > 0) {
+      if (monitor) monitor->consume(buffer.data(), static_cast<std::size_t>(count));
       appendProcessOutput(output, buffer.data(),
                           static_cast<std::size_t>(count));
       continue;
@@ -455,6 +482,21 @@ ProcessResult runProcess(const fs::path &executable,
     return result;
   }
 
+  int diagnostic_pipe[2];
+  if (pipe(diagnostic_pipe) != 0) {
+    close(output_pipe[0]); close(output_pipe[1]);
+    result.launch_error = std::strerror(errno); return result;
+  }
+  if (fcntl(diagnostic_pipe[0], F_SETFL, O_NONBLOCK) < 0) {
+    result.launch_error = std::strerror(errno);
+    close(output_pipe[0]); close(output_pipe[1]);
+    close(diagnostic_pipe[0]); close(diagnostic_pipe[1]);
+    return result;
+  }
+  struct DiagnosticGuard {
+    int read, write;
+    ~DiagnosticGuard() { close(read); if (write >= 0) close(write); }
+  } diagnostics{diagnostic_pipe[0], diagnostic_pipe[1]};
   std::vector<std::string> storage;
   storage.reserve(arguments.size() + 1);
   storage.push_back(executable.string());
@@ -476,7 +518,8 @@ ProcessResult runProcess(const fs::path &executable,
     if (setpgid(0, 0) != 0)
       _exit(125);
     dup2(output_pipe[1], STDOUT_FILENO);
-    dup2(output_pipe[1], STDERR_FILENO);
+    dup2(diagnostic_pipe[1], STDERR_FILENO);
+    close(diagnostic_pipe[0]); close(diagnostic_pipe[1]);
     close(output_pipe[0]);
     close(output_pipe[1]);
     execv(executable.c_str(), argv.data());
@@ -490,6 +533,7 @@ ProcessResult runProcess(const fs::path &executable,
   }
 
   result.launched = true;
+  close(diagnostic_pipe[1]); diagnostics.write = -1;
   close(output_pipe[1]);
   int setup_error = 0;
   if (!establishCaptionProcessGroup(pid, &setup_error)) {
@@ -504,7 +548,8 @@ ProcessResult runProcess(const fs::path &executable,
         (observation == CaptionChildObservation::Error &&
          observation_error != ECHILD))
       terminateUnisolatedCaptionChild(pid);
-    drainPosixPipe(output_pipe[0], result.output);
+    drainPosixPipe(output_pipe[0], result.output, &monitor);
+    drainPosixPipe(diagnostic_pipe[0], result.output);
     close(output_pipe[0]);
     result.cancelled = cancellation.requested();
     if (exited) {
@@ -529,8 +574,9 @@ ProcessResult runProcess(const fs::path &executable,
   int status = 0;
   bool status_valid = false;
   for (;;) {
-    drainPosixPipe(output_pipe[0], result.output);
-    const bool stalled = monitor.stalled(result.output);
+    drainPosixPipe(output_pipe[0], result.output, &monitor);
+    drainPosixPipe(diagnostic_pipe[0], result.output);
+    const bool stalled = monitor.stalled();
     if (!termination_sent) {
       if (cancellation.requested() || stalled) {
         result.cancelled = cancellation.requested();
@@ -597,7 +643,9 @@ ProcessResult runProcess(const fs::path &executable,
     }
     std::this_thread::sleep_for(kCaptionProcessPollInterval);
   }
-  drainPosixPipe(output_pipe[0], result.output);
+  drainPosixPipe(output_pipe[0], result.output, &monitor);
+  drainPosixPipe(diagnostic_pipe[0], result.output);
+  monitor.finish();
   close(output_pipe[0]);
   if (status_valid && WIFEXITED(status))
     result.exit_code = WEXITSTATUS(status);
@@ -962,6 +1010,10 @@ bool CaptionService::start(CaptionRequest request) {
   try {
     worker_ = std::thread([this, request = std::move(request)]() mutable {
       run(std::move(request), cancellation_);
+      transcribing_.store(false);
+      // A failed extraction/commit may never have reached Apple's idle arm.
+      // Retire that prepared session here, still off the UI thread.
+      if (!status().succeeded) apple_.reset();
       // Publish terminal status only after run's staging/audio guards and
       // backend workers have finished. UI polling can then join without
       // accidentally waiting for disk or Speech cleanup.
@@ -1007,6 +1059,12 @@ void CaptionService::wait() {
 
 CaptionStatus CaptionService::status() const {
   std::lock_guard lock(status_mutex_);
+  return status_;
+}
+
+std::optional<CaptionStatus> CaptionService::tryStatus() const {
+  std::unique_lock lock(status_mutex_, std::try_to_lock);
+  if (!lock.owns_lock()) return std::nullopt;
   return status_;
 }
 
@@ -1117,17 +1175,28 @@ void CaptionService::run(
     CaptionBackendEvents events;
     events.progress = [this](float p, const std::string& message) {
       std::lock_guard lock(status_mutex_);
+      if (message == "Apple Speech prepared") ++status_.engine_preparations;
       const bool preparing = status_.stage == CaptionStage::PreparingEngine;
       status_.progress = preparing ? 0.08f : 0.35f+0.55f*std::clamp(p,0.0f,1.0f);
       status_.message = message;
       if (message.find("Downloading") != std::string::npos)
         status_.message += " (" + std::to_string(int(std::clamp(p,0.0f,1.0f)*100)) + "%)";
     };
-    events.segment = [this](CaptionSegment segment) {
-      std::lock_guard lock(status_mutex_);
+    events.segment = [this, deliver=request.live_segments](CaptionSegment segment) {
+      // Bound a pathological single utterance too; preserve UTF-8 boundaries.
+      if (segment.text.size() > 4096) {
+        std::size_t end = 4096;
+        while (end && (static_cast<unsigned char>(segment.text[end]) & 0xc0) == 0x80) --end;
+        segment.text.resize(end);
+      }
+      std::vector<CaptionSegment> snapshot;
+      { std::lock_guard lock(status_mutex_);
       reviseCaptionSegments(status_.segments,std::move(segment));
       // UI snapshot is bounded; the backend retains final SRT content.
       if (status_.segments.size()>512) status_.segments.erase(status_.segments.begin());
+      if (deliver) snapshot = status_.segments;
+      }
+      if (deliver) deliver(std::move(snapshot));
     };
     auto awaitBackend = [&](auto& future, CaptionBackend& backend) {
       while (future.wait_for(20ms) == std::future_status::timeout)
@@ -1247,8 +1316,10 @@ void CaptionService::run(
     WhisperCaptionBackend whisperBackend(request.tools,request.options);
     CaptionBackend& backend = useApple ? *apple_ : static_cast<CaptionBackend&>(whisperBackend);
     if (!useApple) { auto ready = backend.prepare(false); ready.get(); }
+    transcribing_.store(true);
     auto operation = backend.start(*wav,*staged_srt,events);
     const auto transcription = awaitBackend(operation,backend);
+    transcribing_.store(false);
     if (cancellation.requested()) {
       backend.cancel(); backend.finish();
       if (useApple) apple_.reset();
@@ -1286,6 +1357,7 @@ void CaptionService::run(
            request.output_srt.string());
       return;
     }
+    if (request.committed) request.committed(request.output_srt);
     complete(request.output_srt);
   } catch (const fs::filesystem_error &exception) {
     fail(std::string("Caption file error: ") + exception.what());
