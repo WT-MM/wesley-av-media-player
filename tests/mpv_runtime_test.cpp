@@ -335,7 +335,7 @@ void testRetryCacheAndLifetime(const QString& root,
   expect(loaded.error == MpvRuntimeLoadError::None,
          "successful load has no error");
   expect(loaded.runtime->api().complete(),
-         "successful runtime publishes all 24 symbols");
+         "successful runtime publishes all 25 symbols");
   expect((loaded.runtime->clientApiVersion() >> 16U) ==
              (MPV_CLIENT_API_VERSION >> 16U),
          "successful runtime has the exact header API major");

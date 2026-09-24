@@ -680,7 +680,21 @@ bool revealInFinder(const QUrl &source) {
   return true;
 }
 
+media::MediaDisplaySize exactDisplaySize(QWindow* window) {
+  if (!window) return {};
+  return {{window->property("wamDisplayWidthNumerator").toLongLong(),
+           window->property("wamDisplayWidthDenominator").toULongLong()},
+          {window->property("wamDisplayHeightNumerator").toLongLong(),
+           window->property("wamDisplayHeightDenominator").toULongLong()}};
+}
+
 void setContentAspectRatio(QWindow *window, qreal width, qreal height) {
+  const auto exact = exactDisplaySize(window);
+  if (width > 0 && height > 0 && !exact.empty()) {
+    const auto aspect = media::displayAspect(exact);
+    width = aspect.numerator; height = aspect.denominator;
+  }
+
   NSWindow *nsWindow = nsWindowFor(window);
   if (!nsWindow)
     return;
@@ -705,6 +719,12 @@ bool interactiveResizeActive(QWindow *window) {
 
 void resizeToActualSize(QWindow *window, qreal videoPixelWidth,
                         qreal videoPixelHeight) {
+  const auto exact = exactDisplaySize(window);
+  if (!exact.empty()) {
+    videoPixelWidth = media::displayPhysicalPixels(exact.width);
+    videoPixelHeight = media::displayPhysicalPixels(exact.height);
+  }
+
   NSWindow *nsWindow = nsWindowFor(window);
   if (!nsWindow || videoPixelWidth <= 0 || videoPixelHeight <= 0)
     return;
@@ -767,6 +787,15 @@ void resizeToFitScreen(QWindow *window, qreal videoWidth, qreal videoHeight) {
 
   CGFloat target_width = NSWidth(visible);
   CGFloat target_height = NSHeight(visible);
+  const auto exact = exactDisplaySize(window);
+  if (!exact.empty()) {
+    const auto fit = media::displayFit(exact,
+        static_cast<std::uint32_t>(std::llround(NSWidth(visible) * screen.backingScaleFactor)),
+        static_cast<std::uint32_t>(std::llround(NSHeight(visible) * screen.backingScaleFactor)));
+    videoWidth = media::displayPhysicalPixels(fit.width);
+    videoHeight = media::displayPhysicalPixels(fit.height);
+  }
+
   if (videoWidth > 0 && videoHeight > 0) {
     const CGFloat aspect = static_cast<CGFloat>(videoWidth / videoHeight);
     target_height = target_width / aspect;
@@ -865,6 +894,11 @@ void clearFillScreenPadded(QWindow *window) {
 
 void snapToVideoAspectRatio(QWindow *window, qreal videoWidth,
                             qreal videoHeight) {
+  const auto exact = exactDisplaySize(window);
+  if (!exact.empty()) {
+    const auto aspect = media::displayAspect(exact);
+    videoWidth = aspect.numerator; videoHeight = aspect.denominator;
+  }
   NSWindow *nsWindow = nsWindowFor(window);
   if (!nsWindow || videoWidth <= 0 || videoHeight <= 0)
     return;
@@ -1142,12 +1176,21 @@ bool captureWindowToFile(QWindow *window, const QString &path) {
   CGImageRef image = CGWindowListCreateImage(
       CGRectNull, kCGWindowListOptionIncludingWindow, windowId,
       static_cast<CGWindowImageOption>(kCGWindowImageBoundsIgnoreFraming |
-                                       kCGWindowImageNominalResolution));
+                                       (qEnvironmentVariableIntValue("WAM_TEST_CAPTURE_PHYSICAL") == 1
+                                            ? kCGWindowImageBestResolution
+                                            : kCGWindowImageNominalResolution)));
 #pragma clang diagnostic pop
   if (image == nullptr)
     return false;
   const std::size_t width = CGImageGetWidth(image);
   const std::size_t height = CGImageGetHeight(image);
+  const auto geometry = wam::macos::NativeEmbeddingSupport::displayGeometry((__bridge void*)nsWindow);
+  qInfo("WAM_TEST_LAYER_GEOMETRY width=%lld/%llu height=%lld/%llu bounds=%.4fx%.4f position=%.4f,%.4f scale=%.3f",
+        static_cast<long long>(geometry.source.width.numerator), static_cast<unsigned long long>(geometry.source.width.denominator),
+        static_cast<long long>(geometry.source.height.numerator), static_cast<unsigned long long>(geometry.source.height.denominator),
+        geometry.width, geometry.height, geometry.x, geometry.y, geometry.scale);
+  qInfo("WAM_TEST_CAPTURE_GEOMETRY backing_scale=%.3f capture=%zux%zu",
+        static_cast<double>(nsWindow.backingScaleFactor), width, height);
   if (width == 0 || height == 0) {
     CGImageRelease(image);
     return false;
@@ -1662,6 +1705,9 @@ void MacWindowChrome::requestVideoNaturalSize(const QUrl &source) {
                              size = wam::macos_window_chrome::
                                  naturalSizeFromAsset(asset);
                            }
+                           if (self->exactDisplaySource_ == requested && !self->exactDisplaySize_.empty())
+                             size = QSizeF(media::displayScalar(self->exactDisplaySize_.width),
+                                           media::displayScalar(self->exactDisplaySize_.height));
                            emit self->videoNaturalSizeReady(
                                requested, size.width(), size.height());
                          });
@@ -1675,6 +1721,18 @@ void MacWindowChrome::hideCursorUntilMouseMoves() {
 void MacWindowChrome::setTitlebarRevealed(bool revealed, bool animated) {
   wam::macos_window_chrome::setTitlebarControlsRevealed(window_, revealed,
                                                         animated);
+}
+
+void MacWindowChrome::setExactVideoDisplaySize(media::MediaDisplaySize size, const QUrl& source) {
+  exactDisplaySource_ = source;
+  exactDisplaySize_ = size;
+  // The rational payload stays attached to this window; QML's size is only a
+  // notification/visual projection and never feeds native sizing arithmetic.
+  window_->setProperty("wamDisplayWidthNumerator", QVariant::fromValue<qlonglong>(size.width.numerator));
+  window_->setProperty("wamDisplayWidthDenominator", QVariant::fromValue<qulonglong>(size.width.denominator));
+  window_->setProperty("wamDisplayHeightNumerator", QVariant::fromValue<qlonglong>(size.height.numerator));
+  window_->setProperty("wamDisplayHeightDenominator", QVariant::fromValue<qulonglong>(size.height.denominator));
+  if (!size.empty()) emit videoNaturalSizeReady(source, media::displayScalar(size.width), media::displayScalar(size.height));
 }
 
 void MacWindowChrome::setContentAspectRatio(qreal width, qreal height) {

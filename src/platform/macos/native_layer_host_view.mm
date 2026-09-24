@@ -147,6 +147,11 @@ void applyVividBoostToLayer(CALayer* layer, double boost) noexcept {
 // vivid boost above: it belongs to the video layer, is set once when a track
 // is configured, and has to be readable again on every resize without the
 // resize path knowing who set it.
+const void* videoDisplaySizeAssociationKey() {
+  static const char key = 0;
+  return &key;
+}
+
 const void* videoRotationAssociationKey() {
   static const char key = 0;
   return &key;
@@ -194,16 +199,38 @@ void layoutVideoLayer(CALayer* videoLayer) noexcept {
       !std::isfinite(bounds.size.height)) {
     return;
   }
+  CGSize fitted = bounds.size;
+  CGPoint position = CGPointMake(CGRectGetMidX(bounds), CGRectGetMidY(bounds));
+  const auto exact = nativeLayerPresentationDisplaySize((__bridge void*)videoLayer);
+  if (!exact.empty()) {
+    const double scale = container.contentsScale > 0 ? container.contentsScale : 1;
+    const auto fit = media::displayFit(exact,
+        static_cast<std::uint32_t>(std::llround(bounds.size.width * scale)),
+        static_cast<std::uint32_t>(std::llround(bounds.size.height * scale)));
+    if (!fit.empty()) {
+      const auto width = media::displayPhysicalPixels(fit.width);
+      const auto height = media::displayPhysicalPixels(fit.height);
+      fitted = CGSizeMake(width / scale, height / scale);
+      // Center on physical pixel edges, including odd letterbox remainders.
+      position = CGPointMake(bounds.origin.x + (std::floor((bounds.size.width * scale - width) / 2) + width / 2.0) / scale,
+                             bounds.origin.y + (std::floor((bounds.size.height * scale - height) / 2) + height / 2.0) / scale);
+    }
+  }
   const int rotation = videoRotationForLayer(videoLayer);
   const bool quarterTurn = rotation == 90 || rotation == 270;
   [CATransaction begin];
   [CATransaction setDisableActions:YES];
+  videoLayer.contentsScale = container.contentsScale;
   videoLayer.bounds =
       quarterTurn
-          ? CGRectMake(0.0, 0.0, bounds.size.height, bounds.size.width)
-          : CGRectMake(0.0, 0.0, bounds.size.width, bounds.size.height);
-  videoLayer.position =
-      CGPointMake(CGRectGetMidX(bounds), CGRectGetMidY(bounds));
+          ? CGRectMake(0.0, 0.0, fitted.height, fitted.width)
+          : CGRectMake(0.0, 0.0, fitted.width, fitted.height);
+  videoLayer.position = position;
+  if (!exact.empty() && [videoLayer isKindOfClass:[AVSampleBufferDisplayLayer class]]) {
+    // The exact fit above already accounts for SAR. A second automatic aspect
+    // fit would reintroduce fractional pixel edges after final quantization.
+    ((AVSampleBufferDisplayLayer*)videoLayer).videoGravity = AVLayerVideoGravityResize;
+  }
   // CoreAnimation's rotation is counterclockwise in the layer's y-up geometry;
   // rotationDegrees is clockwise as a viewer sees it, which is the same
   // convention mediaVideoDisplaySize uses when it transposes the rectangle.
@@ -280,6 +307,17 @@ void setNativeLayerVividBoost(void* nsWindow, double boost) noexcept {
   }
 }
 
+media::MediaDisplayProjection nativeLayerDisplayGeometry(void* nsWindow) noexcept {
+  if (!nsWindow || ![NSThread isMainThread]) return {};
+  NSWindow* window = (__bridge NSWindow*)nsWindow;
+  NSView* root = window.contentView.superview ?: window.contentView;
+  CALayer* layer = findDisplayLayer(root);
+  if (!layer) return {};
+  return {nativeLayerPresentationDisplaySize((__bridge void*)layer),
+          layer.bounds.size.width, layer.bounds.size.height,
+          layer.position.x, layer.position.y, layer.superlayer.contentsScale};
+}
+
 double nativeLayerAppliedVividBoost(void* nsWindow) noexcept {
   if (nsWindow == nullptr || ![NSThread isMainThread]) {
     return 0.0;
@@ -331,6 +369,27 @@ double nativeLayerAppliedVividBoost(void* nsWindow) noexcept {
     }
     return 1.0;
   }
+}
+
+media::MediaDisplaySize nativeLayerPresentationDisplaySize(void* displayLayer) noexcept {
+  if (!displayLayer) return {};
+  id value = objc_getAssociatedObject((__bridge id)displayLayer, videoDisplaySizeAssociationKey());
+  media::MediaDisplaySize size;
+  if ([value isKindOfClass:[NSValue class]]) [value getValue:&size size:sizeof(size)];
+  return size;
+}
+
+bool setNativeLayerPresentationDisplaySize(void* displayLayer, media::MediaDisplaySize size) noexcept {
+  if (!displayLayer || size.empty()) return false;
+  CALayer* layer = (__bridge CALayer*)displayLayer;
+  if (![layer isKindOfClass:[CALayer class]]) return false;
+  @autoreleasepool {
+    objc_setAssociatedObject(layer, videoDisplaySizeAssociationKey(),
+        [NSValue valueWithBytes:&size objCType:@encode(media::MediaDisplaySize)], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    if ([NSThread isMainThread]) layoutVideoLayer(layer);
+    else dispatch_async(dispatch_get_main_queue(), ^{ layoutVideoLayer(layer); });
+  }
+  return true;
 }
 
 bool setNativeLayerPresentationRotation(void* displayLayer,
@@ -623,8 +682,15 @@ void NativeLayerHostView::detach() noexcept {
 
 @implementation WAMNativeVideoHostView
 
+- (void)viewDidMoveToWindow {
+  [super viewDidMoveToWindow];
+  self.layer.contentsScale = self.window.backingScaleFactor > 0 ? self.window.backingScaleFactor : 1;
+  wam::macos::layoutVideoLayer(self.layer.sublayers.firstObject);
+}
+
 - (void)setFrameSize:(NSSize)newSize {
   [super setFrameSize:newSize];
+  self.layer.contentsScale = self.window.backingScaleFactor > 0 ? self.window.backingScaleFactor : 1;
   wam::macos::layoutVideoLayer(self.layer.sublayers.firstObject);
 }
 
@@ -633,6 +699,7 @@ void NativeLayerHostView::detach() noexcept {
 // backing store without changing the view's frame.
 - (void)viewDidChangeBackingProperties {
   [super viewDidChangeBackingProperties];
+  self.layer.contentsScale = self.window.backingScaleFactor > 0 ? self.window.backingScaleFactor : 1;
 #if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
   if (wam::media::late_trace::enabled)
     wam::macos::late_display_trace::bind((__bridge void*)self.layer.sublayers.firstObject,

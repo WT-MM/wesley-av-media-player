@@ -38,6 +38,10 @@ struct NativePlaybackMetricsSample {
   bool hasAudio{false};
   bool hasClock{false};
   bool paused{true};
+  bool fallback{false};
+  bool hasLateFrames{true};
+  bool hasDecoderDiscards{false};
+  std::uint64_t decoderDiscardedFrames{0};
 };
 
 // Opt-in JSONL playback metrics stream, wholly independent of
