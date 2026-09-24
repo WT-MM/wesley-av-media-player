@@ -223,6 +223,9 @@ struct VideoStreamConfiguration {
   CFStringRef colorPrimaries{nullptr};
   CFStringRef transferFunction{nullptr};
   CFStringRef ycbcrMatrix{nullptr};
+  // Container-resolved range. Absent for isolated codec-record callers;
+  // MPEG-4 Visual in particular has no VOL field carrying this information.
+  std::optional<bool> fullRangeVideo;
 };
 
 struct CompressedVideoPacket {

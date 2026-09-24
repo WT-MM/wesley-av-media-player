@@ -4450,14 +4450,6 @@ MatroskaPrepareOutcome prepareMatroska(
     state->constraints =
         trackConstraintsFor(document.tracks, video, audio, state->limits);
     if (video != nullptr) {
-      if (const char* refusal = softwareContainerColorRefusal(
-              videoCodecIdentity(inlineString(video->codecId)).codec,
-              video->video && video->video->colour.range == 2)) {
-        result.status = MatroskaDemuxStatus::Unsupported;
-        result.error = MatroskaDemuxError::CodecConfiguration;
-        result.message = refusal;
-        return result;
-      }
       MediaTrackDescriptor videoDescriptor;
       TrackRuntime videoRuntime;
       if (!makeVideoDescriptor(*state->reader, *video, state->limits, *duration,
@@ -4485,6 +4477,21 @@ MatroskaPrepareOutcome prepareMatroska(
         }
         return result;
       }
+      if (videoDescriptor.codec == MediaCodec::Mpeg4Visual &&
+          videoDescriptor.video->fullRangeVideo) {
+        VideoCodecConfigurationLimits colorLimits;
+        colorLimits.admitSoftwareProfiles = true;
+        const auto color = inspectVideoCodecConfiguration(videoDescriptor.codec,
+            videoDescriptor.codecConfigurationKind, videoDescriptor.codecConfiguration, colorLimits);
+        if (const char* refusal = softwareContainerColorRefusal(videoDescriptor.codec, true,
+                color.facts ? color.facts->profile : 0)) {
+          result.status = MatroskaDemuxStatus::Unsupported;
+          result.error = MatroskaDemuxError::CodecConfiguration;
+          result.message = refusal;
+          return result;
+        }
+      }
+
       descriptor->selectedVideo = videoDescriptor.id;
       descriptor->tracks.push_back(std::move(videoDescriptor));
       state->video = videoRuntime;

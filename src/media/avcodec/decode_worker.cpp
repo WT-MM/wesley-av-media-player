@@ -13,12 +13,13 @@ extern "C" {
 #include <cstring>
 #include <limits>
 #include <thread>
+#include <mutex>
 
 namespace wam::media::avcodec {
 namespace {
 constexpr std::array ids{AV_CODEC_ID_H264, AV_CODEC_ID_MPEG4, AV_CODEC_ID_VP9,
                         AV_CODEC_ID_DTS, AV_CODEC_ID_TRUEHD, AV_CODEC_ID_MLP};
-std::atomic<unsigned> activeWorkers{0};
+std::atomic<unsigned> activeWorkers{0}, queuedWorkers{0}, peakWorkers{0};
 std::atomic<std::uint64_t> reservedBytes{0};
 constexpr unsigned kMaximumWorkers = macos::kNativeSoftwareProcessWorkers;
 static_assert(AV_INPUT_BUFFER_PADDING_SIZE == macos::kNativeSoftwarePacketPaddingBytes);
@@ -49,13 +50,48 @@ struct DecodeWorker::Impl {
   std::array<Provenance, kProvenanceSlots> provenance;
   std::atomic<std::uint64_t> read{0}, write{0}, signal{0}, bytes{0}, peakBytes{0};
   std::atomic<bool> stopping{false}, ready{false}, eos{false}, done{false};
+  bool configurationRequested{};
   std::atomic<const char*> error{nullptr};
   std::thread worker;
   AVCodecContext* context{};
   AVPacket* packet{};
   AVFrame* frame{};
   RuntimeLease runtime;
-  bool counted{}, reservationRetired{true};
+  bool counted{}, queued{}, reservationRetired{true};
+  // At most sixteen playback lanes and sixteen preview lanes wait for the
+  // unchanged sixteen-worker ceiling. Queue entries own no decoder thread or
+  // packet/conversion workspace; only bounded codec configuration is retained.
+  static constexpr unsigned kMaximumPending = 2 * kMaximumWorkers;
+  inline static std::mutex admissionMutex;
+  inline static std::array<Impl*, kMaximumPending> pending{};
+  inline static unsigned pendingCount{};
+  static void startPendingLocked() noexcept {
+    while (pendingCount && activeWorkers.load() < kMaximumWorkers) {
+      auto& s = *pending[0];
+      const auto charge = s.reservation.totalBytes();
+      if (reservedBytes.load() > kSoftwareProcessReservationMaximumBytes - charge)
+        break;
+      for (unsigned i = 1; i < pendingCount; ++i) pending[i - 1] = pending[i];
+      pending[--pendingCount] = nullptr;
+      queuedWorkers.store(pendingCount);
+      s.queued = false;
+      s.reserved = charge;
+      reservedBytes.fetch_add(charge);
+      s.counted = true;
+      const auto active = activeWorkers.fetch_add(1) + 1;
+      if (peakWorkers.load() < active) peakWorkers.store(active);
+      try {
+        s.conversion = std::make_unique<std::byte[]>(s.reservation.conversionBytes);
+        for (auto& slot : s.slots)
+          slot.bytes = std::make_unique<std::byte[]>(kPacketBytes + AV_INPUT_BUFFER_PADDING_SIZE);
+        s.worker = std::thread([&s] { s.run(); });
+      } catch (...) {
+        s.fail("AvcodecWorkerAllocationFailed");
+        s.ready.store(true, std::memory_order_release);
+        s.ready.notify_one();
+      }
+    }
+  }
   SoftwareDecoderReservation reservation;
   std::uint64_t reserved{};
   void* allocationDomain{};
@@ -109,6 +145,7 @@ struct DecodeWorker::Impl {
     const bool opened = allocationDomain && open();
     ready.store(true, std::memory_order_release);
     ready.notify_one();
+    ownerWake(); // queued admission is a progress edge, not a polling obligation
     bool retainedFrame = false, retainedPacket = false, sentEos = false;
     std::int32_t scale = 0;
     while (opened && !stopping.load(std::memory_order_acquire) && !error.load()) {
@@ -217,7 +254,7 @@ DecodeWorker::DecodeWorker(FrameHandler handler, WakeHandler wake) : impl_(std::
 DecodeWorker::~DecodeWorker() { close(); }
 bool DecodeWorker::configure(const Configuration& configuration) {
   auto& s = *impl_;
-  if (s.worker.joinable() || !s.handler.receive || !configuration.generation ||
+  if (s.configurationRequested || !s.handler.receive || !configuration.generation ||
       configuration.extradata.size() > MediaSourceLimits::kHardMaximumCodecConfigurationBytes) return false;
   constexpr std::array mediaCodecs{MediaCodec::H264,MediaCodec::Mpeg4Visual,MediaCodec::Vp9,
                                    MediaCodec::Dts,MediaCodec::TrueHd,MediaCodec::Mlp};
@@ -227,36 +264,38 @@ bool DecodeWorker::configure(const Configuration& configuration) {
       configuration.codec==Codec::Mpeg4?8:configuration.bitDepth,
       configuration.codec==Codec::Mpeg4?1:configuration.chroma, configuration.extradata.size());
   if(!plan) { s.fail("AvcodecSoftwareReferenceBudgetExceeded"); return false; }
+  s.configurationRequested=true;
   s.reservation=*plan;
-  auto used=reservedBytes.load(std::memory_order_relaxed);
-  do {
-    if(used>kSoftwareProcessReservationMaximumBytes-plan->totalBytes()) {
-      s.fail("AvcodecProcessReservationExceeded"); return false;
-    }
-  } while(!reservedBytes.compare_exchange_weak(used,used+plan->totalBytes(),std::memory_order_relaxed));
-  s.reserved=plan->totalBytes();
-  if (activeWorkers.fetch_add(1) >= kMaximumWorkers) {
-    activeWorkers.fetch_sub(1); reservedBytes.fetch_sub(s.reserved); s.reserved=0;
-    s.fail("AvcodecWorkerBudgetExceeded"); return false;
-  }
-  s.counted = true;
   if (const char* failure = s.runtime.acquire()) { s.fail(failure); return false; }
   s.configuration = configuration;
   try {
-    s.conversion = std::make_unique<std::byte[]>(s.reservation.conversionBytes);
     s.extra = std::make_unique<std::byte[]>(configuration.extradata.size());
-    if (!configuration.extradata.empty()) std::memcpy(s.extra.get(), configuration.extradata.data(), configuration.extradata.size());
+    if (!configuration.extradata.empty())
+      std::memcpy(s.extra.get(), configuration.extradata.data(), configuration.extradata.size());
     s.configuration.extradata = {s.extra.get(), configuration.extradata.size()};
-    for (auto& slot : s.slots) slot.bytes = std::make_unique<std::byte[]>(kPacketBytes + AV_INPUT_BUFFER_PADDING_SIZE);
-    s.worker = std::thread([&s] { s.run(); });
-    s.ready.wait(false);
   } catch (...) { s.fail("AvcodecWorkerAllocationFailed"); return false; }
+  bool started = false;
+  {
+    std::scoped_lock lock(Impl::admissionMutex);
+    if (Impl::pendingCount == Impl::kMaximumPending) {
+      s.fail("AvcodecWorkerBudgetExceeded"); return false;
+    }
+    s.queued = true;
+    Impl::pending[Impl::pendingCount++] = &s;
+    queuedWorkers.store(Impl::pendingCount);
+    Impl::startPendingLocked();
+    started = !s.queued;
+  }
+  // Preserve synchronous configure failure for immediately available slots.
+  // Queued configurations publish readiness/failure through the existing wake.
+  if (started) s.ready.wait(false);
   return !s.error.load(std::memory_order_acquire);
 }
 WorkerResult DecodeWorker::submit(std::span<const std::byte> bytes, PacketTiming timing) {
   auto& s = *impl_;
   if (timing.generation != s.configuration.generation || timing.epoch != s.configuration.epoch) return WorkerResult::StaleGeneration;
-  if (bytes.empty() || bytes.size() > kPacketBytes || s.error.load() || s.eos.load() || !s.ready.load()) return WorkerResult::Failed;
+  if (!s.configurationRequested || bytes.empty() || bytes.size() > kPacketBytes || s.error.load() || s.eos.load() || s.stopping.load()) return WorkerResult::Failed;
+  if (!s.ready.load(std::memory_order_acquire)) return WorkerResult::Backpressure;
   const auto tail = s.write.load(std::memory_order_relaxed);
   if (tail - s.read.load(std::memory_order_acquire) >= kPacketSlots) return WorkerResult::Backpressure;
   auto& slot = s.slots[tail % kPacketSlots];
@@ -272,20 +311,37 @@ WorkerResult DecodeWorker::submit(std::span<const std::byte> bytes, PacketTiming
 WorkerResult DecodeWorker::endOfStream(std::uint64_t generation) {
   auto& s = *impl_;
   if (generation != s.configuration.generation) return WorkerResult::StaleGeneration;
-  if (s.error.load() || !s.ready.load()) return WorkerResult::Failed;
+  if (!s.configurationRequested || s.error.load() || s.stopping.load()) return WorkerResult::Failed;
   s.eos.store(true, std::memory_order_release); s.notify(); return WorkerResult::Accepted;
 }
 void DecodeWorker::retryOutput() noexcept { impl_->notify(); }
 void DecodeWorker::close() noexcept {
   auto& s = *impl_;
-  s.stopping.store(true, std::memory_order_release); s.notify();
+  {
+    std::scoped_lock lock(Impl::admissionMutex);
+    s.stopping.store(true, std::memory_order_release);
+    if (s.queued) {
+      unsigned index = 0;
+      while (index < Impl::pendingCount && Impl::pending[index] != &s) ++index;
+      for (unsigned i = index + 1; i < Impl::pendingCount; ++i)
+        Impl::pending[i - 1] = Impl::pending[i];
+      Impl::pending[--Impl::pendingCount] = nullptr;
+      queuedWorkers.store(Impl::pendingCount);
+      s.queued = false;
+    }
+  }
+  s.notify();
   if (s.worker.joinable()) s.worker.join();
   s.runtime.release();
   for(auto& slot:s.slots) { slot.bytes.reset(); slot.size=0; }
   s.conversion.reset(); s.extra.reset(); s.configuration.extradata={}; s.bytes.store(0);
-  if (s.reservationRetired) {
-    if (s.counted) { activeWorkers.fetch_sub(1); s.counted = false; }
-    if (s.reserved) { reservedBytes.fetch_sub(s.reserved); s.reserved=0; }
+  {
+    std::scoped_lock lock(Impl::admissionMutex);
+    if (s.reservationRetired) {
+      if (s.counted) { activeWorkers.fetch_sub(1); s.counted = false; }
+      if (s.reserved) { reservedBytes.fetch_sub(s.reserved); s.reserved=0; }
+    }
+    Impl::startPendingLocked();
   }
 }
 bool DecodeWorker::hasCapacity() const noexcept {
@@ -304,5 +360,7 @@ std::span<std::byte> DecodeWorker::conversionStorage() noexcept {
 }
 std::uint64_t DecodeWorker::reservedProcessBytes() noexcept { return reservedBytes.load(); }
 unsigned DecodeWorker::reservedWorkers() noexcept { return activeWorkers.load(); }
+unsigned DecodeWorker::pendingWorkers() noexcept { return queuedWorkers.load(); }
+unsigned DecodeWorker::peakReservedWorkers() noexcept { return peakWorkers.load(); }
 const char* DecodeWorker::failure() const noexcept { return impl_->error.load(std::memory_order_acquire); }
 }

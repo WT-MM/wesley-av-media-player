@@ -42,6 +42,10 @@ int main(int argc, char **argv) {
     return 0;
   }
   REQUIRE(opened.status == MediaSourceOpenStatus::Ready);
+  if (path.filename() == "asp-full.mkv") {
+    REQUIRE(opened.descriptor->tracks.front().video);
+    REQUIRE(opened.descriptor->tracks.front().video->fullRangeVideo);
+  }
   REQUIRE(opened.preparedContext->backendKind() ==
           MediaSourceBackendKind::Libavformat);
   REQUIRE(opened.preparedContext->descriptor() == opened.descriptor);

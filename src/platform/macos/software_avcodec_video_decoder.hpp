@@ -12,6 +12,8 @@ public:
   VideoDecodeDrainProgress drainPresentation(std::uint64_t,std::string*);
   VideoDecodeDrainProgress drainEndOfStream(std::uint64_t,std::string*);
   void flush(std::uint64_t) noexcept;
+  void suspendForPreview(std::uint64_t) noexcept;
+  bool resumeAfterPreview() noexcept;
   VideoDecoderRetireProgress retire(std::uint64_t,std::uint64_t) noexcept;
   void close() noexcept;
   VideoToolboxDecoderStats stats() const noexcept;

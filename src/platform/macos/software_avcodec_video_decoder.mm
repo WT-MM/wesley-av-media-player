@@ -34,7 +34,7 @@ struct SoftwareAvcodecVideoDecoder::Impl {
   std::atomic<const char*> error{nullptr};
   std::uint64_t submitted{},delivered{},pressure{},generation{};
   unsigned depth{};
-  bool chroma422{},fullRange{},eos{},notified{};
+  bool chroma422{},fullRange{},eos{},notified{},suspended{},awaitingKeyFrame{};
   OSType pixelFormat{};
   media::avcodec::Codec codec{};
   void fail(const char* reason) noexcept { error.store(reason,std::memory_order_release); }
@@ -141,11 +141,11 @@ bool SoftwareAvcodecVideoDecoder::configure(const VideoStreamConfiguration& conf
     if(error)*error="AvcodecHdrDepthPromotionUnsupported";close();return false;
   }
   s.chroma422=media::mediaSampleFormatIs422(facts.facts->sampleFormat);
-  s.fullRange=facts.facts->color.fullRange;
+  s.fullRange=configuration.fullRangeVideo.value_or(facts.facts->color.fullRange);
   s.pixelFormat=s.chroma422?(s.depth==10?kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange:kCVPixelFormatType_422YpCbCr8BiPlanarVideoRange):
     (s.depth==10?kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange:kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange);
   if(s.fullRange) s.pixelFormat=fullRangeCounterpartFormat(s.pixelFormat);
-  s.eos=false; s.notified=false; s.error.store(nullptr);
+  s.eos=false; s.notified=false; s.suspended=false; s.awaitingKeyFrame=true; s.error.store(nullptr);
   if(!s.pool.configure(configuration.codedSize.width,configuration.codedSize.height,s.pixelFormat) || !s.start()) {
     if(error) *error=s.worker && s.worker->failure()?s.worker->failure():"AvcodecVideoConfigureFailed";
     close(); return false;
@@ -168,7 +168,7 @@ VideoDecodeSubmitResult SoftwareAvcodecVideoDecoder::submitCMSampleBuffer(CMSamp
   PacketTiming timing{exact(CMSampleBufferGetPresentationTimeStamp(sample)),exact(CMSampleBufferGetDecodeTimeStamp(sample)),
     exact(CMSampleBufferGetDuration(sample)),generation,generation};
   switch(s.worker->submit(scratch.first(bytes),timing)) {
-  case WorkerResult::Accepted: ++s.submitted; return VideoDecodeSubmitResult::Accepted;
+  case WorkerResult::Accepted: s.awaitingKeyFrame=false; ++s.submitted; return VideoDecodeSubmitResult::Accepted;
   case WorkerResult::Backpressure: ++s.pressure; return VideoDecodeSubmitResult::Backpressure;
   default: if(error)*error="AvcodecPacketSubmissionRefused"; return VideoDecodeSubmitResult::Rejected;
   }
@@ -180,6 +180,7 @@ VideoDecodeDrainProgress SoftwareAvcodecVideoDecoder::beginEndOfStream(std::uint
 }
 VideoDecodeDrainProgress SoftwareAvcodecVideoDecoder::drainPresentation(std::uint64_t generation,std::string* error) {
   auto& s=*impl_; if(generation!=s.generation)return VideoDecodeDrainProgress::StaleGeneration;
+  if(s.suspended) return VideoDecodeDrainProgress::Quiescing;
   const char* failure=s.error.load(); if(!failure && s.worker)failure=s.worker->failure();
   if(failure || !s.worker) { if(error)*error=failure?failure:"AvcodecNotConfigured"; return VideoDecodeDrainProgress::Failed; }
   if(!s.published.load(std::memory_order_acquire)) { s.worker->retryOutput(); return VideoDecodeDrainProgress::Quiescing; }
@@ -198,11 +199,24 @@ VideoDecodeDrainProgress SoftwareAvcodecVideoDecoder::drainEndOfStream(std::uint
   }
   return VideoDecodeDrainProgress::Quiescing;
 }
+void SoftwareAvcodecVideoDecoder::suspendForPreview(std::uint64_t next) noexcept {
+  auto& s=*impl_; if(!s.worker && !s.suspended)return;
+  if(s.worker) s.worker->close();
+  s.worker.reset(); s.pending.reset(); s.published.store(false);
+  s.generation=next; s.eos=false; s.notified=false; s.error.store(nullptr);
+  s.suspended=true; s.awaitingKeyFrame=true; s.sink->flush(next);
+}
+bool SoftwareAvcodecVideoDecoder::resumeAfterPreview() noexcept {
+  auto& s=*impl_; if(!s.suspended)return true;
+  try {
+    if(!s.start()) { s.fail("AvcodecFlushFailed"); return false; }
+  } catch(...) { s.fail("AvcodecFlushFailed"); return false; }
+  s.suspended=false;
+  return true;
+}
 void SoftwareAvcodecVideoDecoder::flush(std::uint64_t next) noexcept {
-  auto& s=*impl_; if(!s.worker)return;
-  s.worker->close(); s.worker.reset(); s.pending.reset(); s.published.store(false);
-  s.generation=next; s.eos=false; s.notified=false; s.error.store(nullptr); s.sink->flush(next);
-  try { if(!s.start())s.fail("AvcodecFlushFailed"); } catch(...) { s.fail("AvcodecFlushFailed"); }
+  suspendForPreview(next);
+  static_cast<void>(resumeAfterPreview());
 }
 VideoDecoderRetireProgress SoftwareAvcodecVideoDecoder::retire(std::uint64_t retired,std::uint64_t next) noexcept {
   if(retired!=impl_->generation)return VideoDecoderRetireProgress::StaleGeneration;
@@ -211,13 +225,13 @@ VideoDecoderRetireProgress SoftwareAvcodecVideoDecoder::retire(std::uint64_t ret
 }
 void SoftwareAvcodecVideoDecoder::close() noexcept {
   auto& s=*impl_; if(s.worker) s.worker->close(); s.worker.reset();
-  s.pending.reset(); s.published.store(false); s.pool.close();
+  s.pending.reset(); s.published.store(false); s.pool.close(); s.suspended=false;
   std::vector<std::byte>().swap(s.configurationBytes); s.configuration.codecConfiguration={};
   if(s.sink) s.sink->flush(s.generation+1); s.sink=nullptr;
 }
 VideoToolboxDecoderStats SoftwareAvcodecVideoDecoder::stats() const noexcept {
   const auto& s=*impl_; VideoToolboxDecoderStats result;
-  result.configured=bool(s.worker); result.generation=s.generation; result.awaitingKeyFrame=false;
+  result.configured=bool(s.worker)||s.suspended; result.generation=s.generation; result.awaitingKeyFrame=s.awaitingKeyFrame;
   result.maxInFlightFrames=s.options.maxInFlightFrames;
   result.inFlightFrames=s.worker?s.worker->queuedPackets():0;
   result.acceptsCompressedSample=s.worker && s.worker->hasCapacity();
