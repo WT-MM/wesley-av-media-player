@@ -53,7 +53,8 @@ def prepare():
     print('Prepared', len(entries), 'files;', sum(e['duration'] for e in entries), 'audio seconds',flush=True)
 # Half the logical cores: this 16-core host idles near load 5 with a browser,
 # WindowServer and remote desktop; builds are detected separately below.
-QUIET_LOAD = max(4, os.cpu_count() // 2)
+# WAM_BENCH_QUIET_LOAD overrides it for a CPU engine whose own threads raise the load.
+QUIET_LOAD = int(os.environ.get('WAM_BENCH_QUIET_LOAD') or max(4, os.cpu_count() // 2))
 def quiet_snapshot():
     uptime = subprocess.check_output(['uptime'],text=True).strip()
     loads = [float(x) for x in re.search(r'load averages?:\s*([\d.]+)[, ]+([\d.]+)[, ]+([\d.]+)',uptime).groups()]
