@@ -1,4 +1,5 @@
 #include "native_benchmark_telemetry.hpp"
+#include "media/native_audio_benchmark.hpp"
 
 #include <CommonCrypto/CommonDigest.h>
 #include <charconv>
@@ -265,6 +266,9 @@ NativeBenchmarkTelemetry::NativeBenchmarkTelemetry(bool enabled, Clock clock,
       return;
     }
     ownerThread_ = std::this_thread::get_id();
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY)
+    media::audioBenchmarkMailbox.enabled.store(true, std::memory_order_relaxed);
+#endif
   }
 }
 
@@ -300,6 +304,12 @@ const char *NativeBenchmarkTelemetry::eventName(Event event) noexcept {
     return "preview_failed";
   case Event::CommitSeekSubmitted:
     return "commit_seek_submitted";
+  case Event::FallbackSeekSubmitted: return "fallback_seek_submitted";
+  case Event::FallbackPlaybackRestart: return "fallback_playback_restart";
+  case Event::AudioOutputStartIssued: return "audio_output_start_issued";
+  case Event::AudioFirstRender: return "audio_first_render";
+  case Event::AudioClockAdvancing: return "audio_clock_advancing";
+  case Event::RunStatePlayApplied: return "run_state_play_applied";
   case Event::CommitReady:
     return "commit_ready";
   case Event::CommitFrameDrawn:
@@ -500,6 +510,10 @@ bool NativeBenchmarkTelemetry::flushBuffered() noexcept {
     line.numberOrNull(point.targetSeconds, point.hasTargetSeconds);
     line.text(",\"libmpv_initialized\":");
     line.text(point.libmpvInitialized ? "true" : "false");
+    if (point.audioQuantumNanoseconds != 0) {
+      line.text(",\"audio_quantum_ns\":");
+      line.unsignedInteger(point.audioQuantumNanoseconds);
+    }
     line.text("}\n");
     if (!line.valid()) {
       failClosed();
@@ -623,6 +637,39 @@ bool NativeBenchmarkTelemetry::flushStreamCommit() noexcept {
   return true;
 }
 
+void NativeBenchmarkTelemetry::fallbackSeek(bool submitted) noexcept {
+  Point point{};
+  point.event = submitted ? Event::FallbackSeekSubmitted : Event::FallbackPlaybackRestart;
+  point.route = Route::Fallback;
+  point.libmpvInitialized = true;
+  static_cast<void>(record(point));
+}
+
+void NativeBenchmarkTelemetry::drainAudio() noexcept {
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY)
+  auto &box = media::audioBenchmarkMailbox;
+  if (box.claimed.load(std::memory_order_relaxed) > box.capacity) {
+    failClosed();
+    return;
+  }
+  while (audioReadIndex_ < box.capacity &&
+         box.entries[audioReadIndex_].ready.load(std::memory_order_acquire)) {
+    const auto &audio = box.entries[audioReadIndex_++].point;
+    Point point{};
+    switch (audio.event) {
+    case media::AudioBenchmarkEvent::Start: point.event = Event::AudioOutputStartIssued; break;
+    case media::AudioBenchmarkEvent::Render: point.event = Event::AudioFirstRender; break;
+    case media::AudioBenchmarkEvent::Advancing: point.event = Event::AudioClockAdvancing; break;
+    case media::AudioBenchmarkEvent::Play: point.event = Event::RunStatePlayApplied; break;
+    }
+    point.route = Route::Native;
+    point.generation = audio.generation;
+    point.audioQuantumNanoseconds = audio.quantumNanoseconds;
+    static_cast<void>(recordAt(point, audio.nanoseconds));
+  }
+#endif
+}
+
 bool NativeBenchmarkTelemetry::checkpoint() noexcept {
   if (!enabled_) {
     return true;
@@ -631,6 +678,7 @@ bool NativeBenchmarkTelemetry::checkpoint() noexcept {
       !firstDrawCaptured_) {
     return false;
   }
+  drainAudio();
   return flushBuffered();
 }
 
@@ -638,6 +686,7 @@ bool NativeBenchmarkTelemetry::finishUnchecked() noexcept {
   if (finished_) {
     return !failed_;
   }
+  drainAudio();
   finished_ = true;
   if (!flushBuffered()) {
     return false;

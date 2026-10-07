@@ -3,6 +3,7 @@
 #include "native_audio_render_core.hpp"
 #include "native_audio_stretch_stage.hpp"
 #include "native_audio_test_mute.hpp"
+#include "media/native_audio_benchmark.hpp"
 
 #include <AudioToolbox/AudioToolbox.h>
 
@@ -579,6 +580,11 @@ class NativeAudioOutput final
   std::atomic<std::uint8_t> failure_{
       static_cast<std::uint8_t>(NativeAudioOutputFailure::None)};
   std::atomic<std::int32_t> os_status_{noErr};
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY)
+  const bool benchmark_enabled_{media::audioBenchmarkMailbox.enabled.load(std::memory_order_relaxed)};
+  std::atomic<bool> benchmark_first_render_{false};
+  std::atomic<bool> benchmark_first_pcm_{false};
+#endif
   std::atomic<std::uint64_t> generation_{0};
   std::atomic<std::uint64_t> frame_cursor_{0};
   std::atomic<std::uint32_t> published_sample_rate_{0};

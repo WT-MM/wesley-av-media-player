@@ -78,6 +78,8 @@ struct GraphState {
   std::atomic<bool> releaseFactory{false};
   std::atomic<std::uint64_t> pauseCalls{0};
   std::atomic<std::uint64_t> audioStartCalls{0};
+  std::atomic<std::uint64_t> audioSuspendCalls{0};
+  bool observePauseSuspend{false};
   std::atomic<std::uint64_t> gainCalls{0};
   std::atomic<std::uint64_t> muteCalls{0};
   std::atomic<std::uint64_t> audioStopCalls{0};
@@ -895,6 +897,12 @@ bool observePreviewBinding(
   return accepted;
 }
 
+NativeAudioSessionProgress audioSuspend(void* context) noexcept {
+  auto& state = *static_cast<GraphState*>(context);
+  state.audioSuspendCalls.fetch_add(1, std::memory_order_release);
+  return NativeAudioSessionProgress::Done;
+}
+
 NativeMediaSessionTestGraph makeGraph(void* context) {
   auto* holder = static_cast<std::shared_ptr<GraphState>*>(context);
   const auto state = *holder;
@@ -917,6 +925,7 @@ NativeMediaSessionTestGraph makeGraph(void* context) {
                         &quiesceForPreview};
   graph.audioControl = {state.get(), &audioStart, &audioPaused, &audioGain,
                         &audioMuted, &audioStop, &testClock, &audioHigh};
+  if (state->observePauseSuspend) graph.audioControl.suspendForPause = &audioSuspend;
   graph.previewControl = {state.get(), &previewRequest, &previewPump,
                           &takePreviewPresented, &stopPreview};
   graph.assetContext = state->assetContext;
@@ -2084,6 +2093,7 @@ void testCommitSeekPendingReadyAndStopHighWater() {
   state->descriptor = descriptor();
   state->blockCapacity.store(true);
   state->quiesceFirstVideoFlush.store(true);
+  state->observePauseSuspend = true;
   std::shared_ptr<NativeMediaSessionWake> wake;
   auto session = sessionFor(&state, &wake);
   expect(prepare(*session, prepareCommand()) ==
@@ -2127,11 +2137,22 @@ void testCommitSeekPendingReadyAndStopHighWater() {
   expectCommitPhaseTrace(
       *session, kCommitRing,
       "a commit whose seek reports Pending walks the ring exactly once");
+  // Keep the GUI side of the CommitReady handshake parked while the worker
+  // processes fresh wakes. The target must not be mistaken for a user pause.
+  const auto suspendedBefore = state->audioSuspendCalls.load();
+  for (int i = 0; i < 20; ++i) {
+    wake->video().signal(wake->video().context);
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+  expect(state->audioSuspendCalls.load() == suspendedBefore,
+         "CommitReady awaiting run intent keeps the primed output alive");
   expect(session->setRunState({{{1}, {4}}, {8}, true, 1.0}) ==
              NativeMediaSessionCommandStatus::Accepted,
          "post-commit run state addresses the active target generation");
   static_cast<void>(waitFact<NativeMediaSessionRunStateApplied>(
       *session, "post-commit run state acknowledges target generation"));
+  waitUntil([&] { return state->audioSuspendCalls.load() > suspendedBefore; },
+            "explicit post-commit paused intent still suspends idle output");
   publishCommitDraw(*state, 8, 2, 2.0);
   wake->video().signal(wake->video().context);
   const NativeMediaSessionObservations postCommitDraw = waitObservations(
