@@ -2544,3 +2544,19 @@ if(BUILD_TESTING)
   target_link_libraries(wam_mpv_frame_counters_test PRIVATE wam_mpv_headers)
   add_test(NAME mpv_frame_counters COMMAND wam_mpv_frame_counters_test)
 endif()
+
+if(APPLE AND BUILD_TESTING AND WAM_ENABLE_AVFORMAT_STAGE)
+  add_executable(wam_libavformat_aac_oracle tests/libavformat_aac_oracle.mm)
+  target_compile_options(wam_libavformat_aac_oracle PRIVATE -fobjc-arc)
+  target_compile_features(wam_libavformat_aac_oracle PRIVATE cxx_std_20)
+  target_link_libraries(wam_libavformat_aac_oracle PRIVATE
+    "-framework AVFoundation" "-framework Foundation" "-framework CoreMedia")
+  add_test(NAME libavformat_aac_timing COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_SOURCE_DIR}/tests/libavformat_aac_timing_proof.py"
+    --probe "$<TARGET_FILE:wam_libavformat_mixed_audio_probe>"
+    --oracle "$<TARGET_FILE:wam_libavformat_aac_oracle>"
+    --ffmpeg "${WAM_FFMPEG_EXECUTABLE}"
+    --scratch "${CMAKE_BINARY_DIR}"
+    --output "${CMAKE_BINARY_DIR}/libavformat-aac-timing.json")
+  set_tests_properties(libavformat_aac_timing PROPERTIES TIMEOUT 180)
+endif()

@@ -802,7 +802,7 @@ void audioMailboxPublishesOffRenderThread() {
   auto telemetry = NativeBenchmarkTelemetryTestAccess::create(
       true, &testClock, &stringSink, &stringFlush, &probe);
   std::vector<std::thread> producers;
-  for (unsigned i = 0; i < 4; ++i) {
+  for (unsigned i = 0; i < 5; ++i) {
     producers.emplace_back([i] {
       audioBenchmarkStamp(static_cast<AudioBenchmarkEvent>(i), 123, 20000000);
     });
@@ -811,9 +811,10 @@ void audioMailboxPublishesOffRenderThread() {
   expect(probe.writes == 0, "audio producers never write the telemetry sink");
   expect(telemetry->finish(), "owner publishes audio mailbox at terminal drain");
   const auto records = lines(probe.output);
-  expect(records.size() == 4, "all concurrent audio facts survive publication");
+  expect(records.size() == 5, "all concurrent audio facts survive publication");
   for (const char *name : {"audio_output_start_issued", "audio_first_render",
-                          "audio_clock_advancing", "run_state_play_applied"})
+                          "audio_clock_advancing", "run_state_play_applied",
+                          "audio_output_stop_issued"})
     expect(contains(probe.output, name), "stable audio event name published");
   for (const auto record : records)
     expect(contains(record, "\"generation\":123") &&

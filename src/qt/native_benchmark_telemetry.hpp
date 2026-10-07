@@ -126,6 +126,7 @@ private:
     RunStatePlayApplied,
     FallbackSeekSubmitted,
     FallbackPlaybackRestart,
+    AudioOutputStopIssued,
   };
 
   enum class Route : std::uint8_t { Undecided, Native, Fallback };

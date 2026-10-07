@@ -678,6 +678,11 @@ OSStatus NativeAudioOutput::uninitializeUnit() noexcept {
 }
 
 OSStatus NativeAudioOutput::startUnit() noexcept {
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY)
+  if (benchmark_enabled_) media::audioBenchmarkStamp(
+      media::AudioBenchmarkEvent::Start, generation_.load(),
+      static_cast<std::uint64_t>(device_buffer_frames_.load() * 1000000000.0 / device_rate_));
+#endif
   try {
     @try {
       return calls_.start(calls_.context, unit_);
@@ -691,6 +696,10 @@ OSStatus NativeAudioOutput::startUnit() noexcept {
 }
 
 OSStatus NativeAudioOutput::stopUnit() noexcept {
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY)
+  if (benchmark_enabled_) media::audioBenchmarkStamp(
+      media::AudioBenchmarkEvent::Stop, generation_.load());
+#endif
   try {
     @try {
       return calls_.stop(calls_.context, unit_);
@@ -1210,6 +1219,7 @@ NativeAudioOutputProgress NativeAudioOutput::start() noexcept {
   prior_timing_denominator_ = 0;
   prior_rate_scalar_bits_ = 0;
   prior_end_host_ticks_ = 0;
+  const bool unitAlreadyRunning = stop_required_ && !stop_succeeded_;
   stop_required_ = true;
   stop_succeeded_ = false;
   observed_queued_slabs_.store(kUnobservedQueuedSlabs,
@@ -1220,12 +1230,9 @@ NativeAudioOutputProgress NativeAudioOutput::start() noexcept {
   if (benchmark_enabled_) {
     benchmark_first_render_.store(true, std::memory_order_relaxed);
     benchmark_first_pcm_.store(true, std::memory_order_relaxed);
-    media::audioBenchmarkStamp(media::AudioBenchmarkEvent::Start, generation_.load(),
-        static_cast<std::uint64_t>(device_buffer_frames_.load() *
-                                   1000000000.0 / device_rate_));
   }
 #endif
-  status = startUnit();
+  status = unitAlreadyRunning ? noErr : startUnit();
   if (status != noErr) {
     started_.store(false, std::memory_order_release);
     latchFailure(NativeAudioOutputFailure::StartFailed, status);
@@ -1295,6 +1302,14 @@ NativeAudioOutputProgress NativeAudioOutput::start() noexcept {
 }
 
 NativeAudioOutputProgress NativeAudioOutput::stop() noexcept {
+  return stopImpl(false);
+}
+
+NativeAudioOutputProgress NativeAudioOutput::quiesceForSeek() noexcept {
+  return stopImpl(true);
+}
+
+NativeAudioOutputProgress NativeAudioOutput::stopImpl(bool keepUnitRunning) noexcept {
   const NativeAudioOutputState state = static_cast<NativeAudioOutputState>(
       state_.load(std::memory_order_acquire));
   if (state == NativeAudioOutputState::Closed) {
@@ -1311,7 +1326,7 @@ NativeAudioOutputProgress NativeAudioOutput::stop() noexcept {
   stopped_.store(false, std::memory_order_release);
   setState(NativeAudioOutputState::Stopping);
 
-  if (stop_required_ && !stop_succeeded_) {
+  if (!keepUnitRunning && stop_required_ && !stop_succeeded_) {
     const OSStatus status = stopUnit();
     if (status != noErr) {
       latchFailure(NativeAudioOutputFailure::StopFailed, status);

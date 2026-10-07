@@ -246,3 +246,433 @@ python3 /private/tmp/wam-seek-scratch/measure.py \
 The retained gate contains **23 failed observations**, minimum load1 **9.244**, maximum **42.331**, no compiler/linker at those observations, and **zero passes**. Recorded wall-clock timestamp span: **84.90 minutes**, including a long gap between observations; this is not a claim of uninterrupted 30-second sampling during that gap. The waiting runner was cancelled by its exact owned PID 87122; no app PID existed. Receipt: `runs/paused-native-final/cancelled.json`.
 
 Consequently, **the live paused-seek/no-burst proof and the additional final-binary six-skip repeat remain unverified**. The passing earlier six-skip and scrubber measurements used the same handshake fix before the mailbox's namespace/location change; their exact candidate hashes remain in each invocation/trace. Final-binary production wiring passed under the gated Cocoa test, including the exact slow seek. Unit tests cover paused behavior, but are not represented as the missing live paused proof. No gate was bypassed and no acceptance result was invented.
+
+## Round 2 — keep the native output unit running (2026-10-07)
+
+Worktree `/private/tmp/wam-seek`, branch `seek-round-2`; parent binary preserved as
+`/private/tmp/wam-seek-scratch/build/WAM.app/Contents/MacOS/WAM-round2-before`.
+This round is **blocked and incomplete** at item 1 live acceptance. The candidate
+is implemented and unit-tested; no round-2 GUI acceptance is claimed.
+
+### Item 1 implementation and safety proof
+
+The remaining physical restart originated in `NativeAudioSession::flush()`.
+It called `NativeAudioOutput::stop()` before resetting the PCM ring, converter,
+and clock. The post-SeekCommitted `start()` therefore issued a hardware start.
+
+The candidate instead calls `quiesceForSeek()`: close render admission, drain
+entered callbacks using the existing bridge/epoch barrier, and leave HAL running.
+Callbacks under the closed bridge emit silence. Only after that barrier completes
+may the owner reset the ring, converter, and paused clock. The subsequent
+`start()` reopens admission on the retained unit, without AudioOutputUnitStart.
+Terminal stop, close, explicit idle-pause suspension, and device recovery retain
+physical-stop behavior. This does not remove already queued hardware latency or
+claim acoustic measurements.
+
+Start telemetry now lives immediately at `startUnit()`, and the new
+`audio_output_stop_issued` event lives at `stopUnit()`. Thus events count actual
+call attempts, including failed attempts, rather than logical generation starts.
+First-render/first-real-PCM instrumentation is rearmed for each logical start.
+No allocation, lock, I/O, or new unbounded operation was added to the render path.
+
+The commit proof loop now consumes up to 32 immediately runnable dispatcher steps
+per worker pass, matching normal playback's budget, rather than waking the worker
+for every packet. Blocking waits still yield. Every step retains the live-operation
+permit and stop check. The existing covering-frame, generation, exact-target,
+draw-sequence and paused-clock proofs are unchanged for both skips and scrubs.
+This is a scheduling optimization, not a relaxation of seek precision; a measured
+submitted-to-CommitReady improvement is still pending.
+
+New output tests prove that seek quiescence keeps fake HAL running, callbacks
+emit silence without allocating or publishing clock changes, generation 2 lands
+at exactly 10 seconds paused, logical unpause renders its PCM, the transition
+issues zero hardware starts/stops, and terminal stop still stops HAL. The stale
+callback/restart epoch race test also runs with HAL retained, proving that an
+entered old callback must drain before admission reopens. Existing frozen
+`native_audio_session_test` and playback-contract tests pass without edits.
+
+### Device observation
+
+A read-only CoreAudio probe queried the default output using
+`AudioObjectGetPropertyData`, output scope for latency/safety offset and global
+scope for nominal rate/buffer frames. Unsandboxed result:
+
+```text
+device=112 name=Wesley’s AirPods Pro rate=48000
+latency_frames=7680 safety_frames=0 buffer_frames=512
+latency_ms=160.000 safety_ms=0.000 buffer_ms=10.667 sum_ms=170.667
+```
+
+This is an observed device snapshot, not the supervisor's earlier 16,384-frame
+snapshot and not necessarily the AudioUnit client callback quantum. The sandbox
+could not obtain a valid device; only the unsandboxed result is used. Probe source
+and output: `/private/tmp/wam-seek-scratch/device_latency.cpp` and
+`round2-device.txt`. Exact build/read commands:
+
+```sh
+xcrun clang++ /private/tmp/wam-seek-scratch/device_latency.cpp \
+  -framework CoreAudio -framework CoreFoundation \
+  -o /private/tmp/wam-seek-scratch/build/device_latency
+/private/tmp/wam-seek-scratch/build/device_latency \
+  > /private/tmp/wam-seek-scratch/round2-device.txt
+cmake --build /private/tmp/wam-seek-scratch/build --parallel 4
+```
+
+### Validation and outstanding measured proof
+
+Focused CTest selection: 4/4 passed in 1.22 seconds (`round2-focused.log`):
+`native_audio_render_core`, `macos_native_audio_output`,
+`macos_native_media_session`, `macos_native_benchmark_telemetry`.
+Additional selection: 5/5 passed in 14.51 seconds (`round2-contract-tests.log`):
+`native_playback_contract`, `native_media_dispatcher`,
+`macos_native_audio_session`, `native_stage_defaults`, `wamkit_device_recovery`.
+The last test also compiles the output implementation with telemetry disabled.
+
+```sh
+env QT_QPA_PLATFORM=offscreen ctest \
+  --test-dir /private/tmp/wam-seek-scratch/build \
+  -R 'macos_native_audio_output$|macos_native_media_session$|native_benchmark_telemetry|native_audio_render_core|native_ownership' \
+  --output-on-failure
+
+env HOME=/private/tmp/wam-seek-scratch/ctest-home \
+  TMPDIR=/private/tmp/wam-seek-scratch/ctest-tmp/ \
+  WAM_TEST_SCRATCH=/private/tmp/wam-seek-scratch/ctest-tmp \
+  QT_QPA_PLATFORM=offscreen QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM=1 \
+  WAM_TEST_BACKGROUND=1 WAM_TEST_MUTED=1 \
+  WAM_TEST_GEOMETRY=480x270+2400+1000 \
+  ctest --test-dir /private/tmp/wam-seek-scratch/build \
+  -R 'macos_native_audio_session$|native_media_dispatcher$|native_playback_contract$|wamkit_device_recovery$|native_stage_defaults$' \
+  --output-on-failure -j 1
+
+python3 /private/tmp/wam-seek-scratch/gate.py \
+  /private/tmp/wam-seek-scratch/runs/round2-before-gate.jsonl && \
+/private/tmp/wam-seek-scratch/run_skips.zsh \
+  /private/tmp/wam-seek-scratch/build/WAM.app/Contents/MacOS/WAM-round2-before \
+  /private/tmp/wam-seek-scratch/native-av.mp4 round2-before \
+  'skip:0:10@6000,skip:0:10@5000,skip:0:-10@5000,skip:0:30@5000,skip:0:-30@5000,skip:0:10@5000'
+```
+
+The initial gate was cancelled by its exact owned PID 91674 before any app
+launched, then requeued against the preserved parent binary so rebuilding could
+not change the queued baseline. No gate has been bypassed. Item 1 still requires
+six-skip before/after, scrubber and paused-seek GUI proofs. Items 2 and 3 remain
+untouched while that priority-ordered acceptance is pending; no AAC timing
+admission or mpv options have been changed.
+
+Round-2 files changed:
+
+- `src/media/native_audio_benchmark.hpp` — append hardware-stop event.
+- `src/platform/macos/native_audio_output.hpp` — seek-quiescence API and logical-state documentation.
+- `src/platform/macos/native_audio_output.mm` — retain HAL across seek quiescence; actual-call telemetry.
+- `src/platform/macos/native_audio_session.mm` — use seek quiescence in flush.
+- `src/platform/macos/native_media_session.mm` — bounded commit-proof work batching.
+- `src/qt/native_benchmark_telemetry.hpp` — hardware-stop event vocabulary.
+- `src/qt/native_benchmark_telemetry.cpp` — serialize hardware-stop events.
+- `tests/native_audio_output_test.mm` — retained-HAL lifecycle, silence/clock and callback-race proofs.
+- `tests/native_benchmark_telemetry_test.cpp` — concurrent publication includes the hardware-stop event.
+- `docs/SEEK_AUDIO_RESUME_2026_10.md` — round-2 record.
+
+### Final round-2 outcome and limits
+
+The gate was stopped by its verified owned PID **91957**, with **29 failed
+observations, zero passes**, spanning **841.765 seconds (14.03 minutes)**.
+Load1 minimum **19.960**, maximum **98.391**. The gate polled at 30-second
+intervals; the first runner was replaced as described above. No baseline or
+candidate GUI process launched. Receipt:
+`/private/tmp/wam-seek-scratch/runs/round2-gate-cancelled.json`.
+No pending measured runner remains.
+
+| Requested result | Before | Round-2 candidate |
+|---|---|---|
+| Hardware starts/stops per playing seek | Parent source: one stop/start; round-1 live trace: one start | Unit lifecycle: **0 starts, 0 stops**; six-skip live count **unverified** |
+| Submitted → CommitReady | Prior round control median **116.921 ms**, max **138.498 ms** (historical, not a fresh paired baseline) | **Unmeasured**; bounded batching implemented |
+| CommitReady → real PCM | Prior round passing control **8.578–17.575 ms**, 20 ms quantum | **Unmeasured** |
+| Zero underruns / late discards | Prior round passing control zero | **Unverified live** |
+| Exact scrubber / paused no-burst | Prior round exact scrubber targets; paused live proof absent | Clock/silence unit proof passes; **live proof absent** |
+| QuickTime AAC native admission | Refused per supervisor/parent report | **Unchanged**, item 2 not begun because item 1 has no live proof |
+| Forced-fallback qt-rec.mov proxy | Supervisor reports roughly 25 ms | **Not independently measured**, item 3 not begun |
+
+The broad suite command below selected **134 tests**: **130 passed, 3 skipped,
+1 failed**, **109.82 seconds**. The failure was `caption_service`, reporting
+`GPU descendant not started`. Its focused retry passed in **3.91 seconds**
+without code changes. The three skips were the existing offscreen GL tests.
+Production GUI `native_coverage_wiring` was explicitly excluded because it too
+requires the load gate. Thus this is **not a passing full-ctest claim**.
+
+```sh
+env HOME=/private/tmp/wam-seek-scratch/ctest-home   TMPDIR=/private/tmp/wam-seek-scratch/ctest-tmp/   WAM_TEST_SCRATCH=/private/tmp/wam-seek-scratch/ctest-tmp   QT_QPA_PLATFORM=offscreen QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM=1   WAM_NATIVE_BENCHMARK_TELEMETRY=1 WAM_TEST_BACKGROUND=1 WAM_TEST_MUTED=1   WAM_TEST_GEOMETRY=480x270+2400+1000 CMAKE_BUILD_PARALLEL_LEVEL=4   ctest --test-dir /private/tmp/wam-seek-scratch/build   -LE benchmark -E '^native_coverage_wiring$' --output-on-failure -j 1
+
+env HOME=/private/tmp/wam-seek-scratch/ctest-home   TMPDIR=/private/tmp/wam-seek-scratch/ctest-tmp/   WAM_TEST_SCRATCH=/private/tmp/wam-seek-scratch/ctest-tmp   QT_QPA_PLATFORM=offscreen   ctest --test-dir /private/tmp/wam-seek-scratch/build   -R '^caption_service$' --output-on-failure
+
+cmake --build /private/tmp/wam-seek-scratch/build --parallel 4
+env QT_QPA_PLATFORM=offscreen ctest   --test-dir /private/tmp/wam-seek-scratch/build   -R 'macos_native_audio_output$|macos_native_benchmark_telemetry$'   --output-on-failure
+```
+
+Logs in scratch: `round2-ctest-without-wiring.log`, `round2-caption-retry.log`,
+`round2-build-final.log`, `round2-final-focused.log`. Final focused checks:
+**2/2 passed in 0.59 seconds** after adding hardware-stop serialization coverage.
+The final build completed successfully. Frozen-file diff is empty;
+`git diff --check` passes. No staging, commits, stash, reset, checkout, network,
+media copies, decode-ladder changes, or AAC admission changes occurred.
+
+Final candidate SHA256: `d6f0b67e5b6452c2aeb90130744412e972b1afa9d77c85d65a5a5fea8b9ec6cd`.
+
+## Round 3 — prove QuickTime AAC timing (2026-10-07)
+
+The round-2 output-unit retention and commit batching changes present on entry
+are preserved. This round changes source admission/timing only; no render-thread,
+output-unit lifecycle, decode-ladder order, frozen file, or mpv option changes.
+The maintainer owns commits; no staging or git history operations were performed.
+
+### Why this MOV was refused
+
+A `.mov` suffix does not select a special decoder. ISO-BMFF signatures initially
+select AVFoundation (`media_container_probe.hpp`). The unchanged routed source
+sends fragmented ISO-BMFF, incomplete-tail recovery, and non-local mounts directly
+to libavformat. `qt-rec.mov` contains `moof` fragments, so
+`requiresExactDemuxTimeline()` selects libavformat. The ordinary synthetic
+`native-av.mp4` stays on AVFoundation. AVFoundation can open the MOV directly in
+an offline source probe, but that does not change the production route.
+
+Libavformat already admits the H.264/AAC codec/container combination, but its
+AAC packet validator assumed origin **0/48000** and disallowed priming skips.
+Its first-packet residual check returned `LibavformatAudioTimingUnproven: aac`.
+Removing only that check would incorrectly place sound on the movie timeline.
+
+The supplied MOV is not a literal 2112-frame `elst`: its audio `elst` contains
+one rate-one entry with media time **64**, no empty leading edit. FFprobe and
+the pinned cursor expose its first AAC packet at **−64/48000**, skip **64**.
+CoreMedia independently reports one nonempty segment starting at **2112/48000**,
+output target **0**, and first compressed-buffer `TrimDurationAtStart`
+**2176/48000**. The second batch has input **93184/48000**, output
+**91008/48000**: displacement **−2176/48000**. Thus the demux timestamps need an
+additional **−2112/48000 = −44 ms** shift. Neither a guessed 64-frame trim nor
+blindly applying a second 2112-frame shift to ordinary MOV is correct.
+
+### Bounded admission proof
+
+A worker-only CoreMedia witness now admits two tested forms: demux origin/skip
+**−2112/2112** with CoreMedia trim **2112**, and **−64/64** with CoreMedia trim
+**2176**. Both require exactly one nonempty, rate-one CoreMedia segment with
+source start **2112/48000** and target zero. Track identity uses the actual
+container track ID, not an assumed stream index. The first compressed packet
+must match CoreMedia's first packet byte-for-byte, the first media PTS must be
+zero, and a subsequent compressed batch must independently state the same exact
+input-to-output displacement. Rounded, missing, other-priming, empty-prefix,
+retimed, or multi-edit shapes remain refused by the same named reason.
+
+The proof reads two compressed CoreMedia batches at open, bounds its copied
+packet to 64 KiB, and never decodes PCM in production. The existing bounded full
+libavformat scan still checks every packet's contiguous sample grid. Demux
+origin and presented origin are stored separately: seeks use the demux origin;
+materialized audio uses the proved presentation origin. The scanned endpoint
+must also equal CoreMedia's segment duration minus any extra trim beyond the
+2112-frame segment start. The supplied MOV ends at **4569984/48000 = 95.208 s**.
+All of this runs on the source worker. The callback remains allocation-free and
+lock-free. Short files without the second timing witness fail closed.
+
+### Offline proof
+
+`tests/libavformat_aac_oracle.mm` obtains independent float PCM from
+AVAssetReader on its edited output timeline and checks every output buffer's
+exact contiguous PTS. The production libavformat source, AudioToolbox converter,
+and PCM ring are exercised through the existing mixed-audio probe. The test
+keeps the existing mixed-AAC limits (**maximum < 0.002, RMS < 0.0001**), with no
+fitted time shift. Every comparison below is stronger: **maximum = RMS = 0**,
+bit-identical PCM and exact first-frame index.
+
+| Asset | Target | First frame | Retained frames |
+|---|---:|---:|---:|
+| Generated ordinary Apple AAC MOV | 0 | 0 | 192512 |
+| Same | 1/7 | 6858 | 185654 |
+| Same | 1 | 48000 | 144512 |
+| Same | 12029/3000 | 192464 | 48 |
+| Supplied `qt-rec.mov` | 0 | 0 | 4569984 |
+| Same | 1/7 | 6858 | 4563126 |
+| Same | 1 | 48000 | 4521984 |
+| Same | 95207/1000 | 4569936 | 48 |
+
+The supplied file's SHA256 is
+`7d873fb9528b52d42bdd1faa19bc18c700203ef19380a262356fc33b9f74e37e`.
+It has initial digital silence; the comparison covers the entire recording,
+including **5,797,888 nonzero interleaved samples** (peak magnitude **1.0401**),
+not just the silent head. Rational-target cases are cold-open accurate targets;
+they are not represented as live GUI skip measurements.
+
+The existing routed audio probe independently reports
+`WAM: native demux stage=Libavformat`, `frames=4569984 first=0 decoded=4572160
+trim=2176 exact=1 drained=1 error=`. This proves native source selection and
+full decode without mpv in that headless path. A GUI `native_selected` telemetry
+event still requires the measured GUI gate; it is not fabricated from this log.
+
+Commands (cwd `/private/tmp/wam-seek`; local Apple decode proofs run unsandboxed):
+
+```sh
+cmake --build /private/tmp/wam-seek-scratch/build --parallel 4
+python3 tests/libavformat_aac_timing_proof.py \
+  --probe /private/tmp/wam-seek-scratch/build/wam_libavformat_mixed_audio_probe \
+  --oracle /private/tmp/wam-seek-scratch/build/wam_libavformat_aac_oracle \
+  --ffmpeg /opt/homebrew/bin/ffmpeg \
+  --scratch /private/tmp/wam-seek-scratch \
+  --output /private/tmp/wam-seek-scratch/round3-aac-proof.json \
+  --asset /private/tmp/wam-seek-scratch/qt-rec.mov \
+  > /private/tmp/wam-seek-scratch/round3-aac-proof.log 2>&1
+/private/tmp/wam-seek-scratch/build/wam_native_coverage_audio_probe \
+  /private/tmp/wam-seek-scratch/qt-rec.mov \
+  /private/tmp/wam-seek-scratch/qt-routed.f32 0 \
+  > /private/tmp/wam-seek-scratch/round3-routed.log 2>&1
+```
+
+The Python proof records its exact FFmpeg fixture-generation argv. It creates
+only small synthetic media and temporary decoded PCM under scratch; original
+media are read in place. Negative synthetic variants cover unproved priming,
+retiming, leading empty edits, and an endpoint inconsistent with the packet grid.
+No network was used. Initial Apple PCM decoding failed in the sandbox; the
+unsandboxed oracle succeeded. Initial experimental build errors (Apple/FFmpeg
+`AVMediaType` collision and helper source registration) were corrected by
+putting the CoreMedia witness in its own Objective-C++ translation unit.
+
+### Test commands, gate policy, and scope of acceptance
+
+The full suite includes the benchmark (unlike the prior round's `-LE benchmark`
+selection). Its executable is excluded from the default build, so it was built
+explicitly:
+
+```sh
+cmake --build /private/tmp/wam-seek-scratch/build \
+  --target wam_matroska_demuxer_bench --parallel 4
+env HOME=/private/tmp/wam-seek-scratch/ctest-home \
+  TMPDIR=/private/tmp/wam-seek-scratch/ctest-tmp/ \
+  WAM_TEST_SCRATCH=/private/tmp/wam-seek-scratch/ctest-tmp \
+  QT_QPA_PLATFORM=offscreen QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM=1 \
+  WAM_NATIVE_BENCHMARK_TELEMETRY=1 WAM_TEST_BACKGROUND=1 WAM_TEST_MUTED=1 \
+  WAM_TEST_GEOMETRY=480x270+2400+1000 CMAKE_BUILD_PARALLEL_LEVEL=4 \
+  ctest --test-dir /private/tmp/wam-seek-scratch/build \
+  --output-on-failure -j 1 \
+  > /private/tmp/wam-seek-scratch/round3-ctest-final.log 2>&1
+```
+
+The scratch-only production wiring harness is
+`/private/tmp/wam-seek-scratch/native_coverage_wiring_round3.py`, preserving the
+repository's assertions and quiet seams, with Cocoa instead of offscreen for
+its actual app. Each launch uses `round3-gate.py`, which records compiler/linker
+processes and one-minute load every 30 seconds, up to three observations.
+No pass means exit **77** before launching. The generated scratch
+`CTestTestfile.cmake` points the wiring test to that copy and sets
+`SKIP_RETURN_CODE 77`, timeout 1800. This is explicitly an environmental skip,
+not a passing production-wiring assertion. Reconfiguring removes the override.
+All other tests retain their normal offscreen environment.
+
+The first full run (`round3-ctest.log`) had **137 selected, 131 passed,
+4 skipped, 2 failed/not run**, **172.13 s**. The benchmark was initially absent.
+The new endpoint test initially expected a valid *shortened* edit to fail; the
+source correctly retained a shortened interval. The regression now uses an edit
+extending past available media and gets the named refusal. These initial
+results are retained, not presented as acceptance. The final run follows the
+completed endpoint guard and corrected regression.
+
+### Round-3 files authored
+
+- `src/media/libavformat_cursor.hpp`, `src/media/libavformat_cursor.cpp` — expose container track identity to the witness.
+- `src/platform/macos/libavformat_aac_timing.hpp`, `src/platform/macos/libavformat_aac_timing.mm` — bounded CoreMedia priming/edit witness and exact endpoint.
+- `src/platform/macos/libavformat_media_source.mm` — separate demux/presentation origins, admit only witnessed priming, verify endpoint.
+- `src/wamkit/NativeTargets.cmake` — compile the witness with the libavformat backend.
+- `tests/libavformat_aac_oracle.mm` — independent AVAssetReader PCM/timestamp oracle.
+- `tests/libavformat_aac_timing_proof.py` — retained PCM/first-frame comparisons and named-refusal fixtures.
+- `CMakeLists.txt` — oracle target and `libavformat_aac_timing` CTest registration.
+- `docs/SEEK_AUDIO_RESUME_2026_10.md` — round-3 report appended to the pre-existing round-2 changes.
+
+The other dirty files listed in the round-2 section were dirty on entry and
+were not edited in round 3. Frozen-file diff remains empty. Candidate app SHA256:
+`0ef11491aab3d2ac4cdebaee6e12d6d89700b0de4e62b6906e006ab3022395d4`.
+
+### Final validation and gate outcome
+
+Final full CTest: **exit 0, 137 selected, 133 passed, 4 skipped, 0 failures,
+178.75 s**. `libavformat_aac_timing` passed in **0.49 s**; the benchmark passed
+in **0.90 s**. The four skips are `player_core_render_context_permission`,
+`macos_native_qt_gl_compositor`, `macos_native_qt_gl_output` (offscreen GL), and
+`native_coverage_wiring` (load gate). This is a successful full CTest execution
+with explicit environmental gaps, not 137 passing assertions. Logs:
+`round3-final-build.log`, `round3-ctest-final.log`, `round3-ctest-final-exit.txt`.
+The final external AAC receipt also records both probe binary hashes. A separate
+check of the valid shortened synthetic edit retained **192412** frames, also
+bit-identical to the Apple oracle.
+
+All GUI gates had no compiler/linker processes and no passing observations:
+
+| Gate | Observations | Load1 min–max |
+|---|---:|---:|
+| Initial native proof | 3 | 39.033–46.798 |
+| First full-suite wiring | 3 | 15.795–21.520 |
+| Final full-suite wiring | 3 | 18.869–23.638 |
+| Final post-suite native/fallback gate | 3 | 17.452–19.596 |
+
+Each row covers three observations approximately 30 seconds apart, rather than
+claiming uninterrupted polling between these separate windows. **No measured GUI
+app launched.** Final gate command, exit **77**:
+
+```sh
+python3 /private/tmp/wam-seek-scratch/round3-gate.py \
+  /private/tmp/wam-seek-scratch/runs/round3-final-gate.jsonl
+```
+
+Initial observations are in `runs/round3-native-gate.jsonl`; wiring observations
+are under `wiring-round3/notice-*/gate.jsonl`. The intended gated native launch
+was the existing scratch runner with the final scratch binary and original media:
+
+```sh
+# NOT EXECUTED: the prerequisite gate did not pass.
+/private/tmp/wam-seek-scratch/run_skips.zsh \
+  /private/tmp/wam-seek-scratch/build/WAM.app/Contents/MacOS/WAM \
+  /private/tmp/wam-seek-scratch/qt-rec.mov round3-native \
+  'skip:0:10@6000,skip:0:10@5000,skip:0:-10@5000,skip:0:30@5000,skip:0:-30@5000,skip:0:10@5000'
+```
+
+Consequently the GUI `native_selected`/absence-of-fallback event, live skip
+latencies, hardware start/stop counts on this MOV, underrun/late counts, paused
+no-burst proof, and subjective AirPods smoothness remain **unverified**. The
+round-2 output-retention implementation still awaits the supervisor's live
+acceptance. No runner or app launched by this round remains pending.
+
+### Item 2 — fallback proxy and its limits
+
+A fresh, quiet, gated WAM forced-fallback run on `qt-rec.mov` was not possible.
+However, the supervisor's **pre-existing** scratch `mpv.log` explicitly names
+that same path and contains three +10-second playing seeks. Read-only analysis
+pairs each `Run command: seek` timestamp with the next `playback restart complete`:
+
+| Submitted (s) | Engine restart (s) | Proxy (ms) |
+|---:|---:|---:|
+| 3.438 | 3.462 | 24 |
+| 6.470 | 6.501 | 31 |
+| 9.507 | 9.537 | 30 |
+
+Historical median **30 ms**, maximum **31 ms**, at the log's millisecond precision.
+This is standalone mpv engine evidence, not a new WAM fallback acceptance run;
+its executable hash and launch gate receipt are not available. The engine reports
+CoreAudio **48000 Hz**, device latency **170666666 ns = 170.667 ms**, device
+buffer **16384 samples**, and soft buffer **16384 samples**. Its latency components
+are **7680 + 512 + 0 frames**. These observations explain why an engine restart
+in tens of milliseconds is not proof that Bluetooth sound has resumed.
+The supervisor reports that mpv's AO reset internally stops/starts its CoreAudio
+unit; these log timestamps do not independently timestamp those HAL calls.
+Do not add the latency and restart values and call the sum a measured acoustic gap.
+
+The existing `mpv2.log` used `--audio-buffer=0.05`. Its one playing seek is
+**18 ms**; later **20 / 31 ms** restarts are explicitly **paused**, so they are
+not playing audio-resume measurements. It still reports the same **170.667 ms**
+device latency and **16384-sample** buffers. Different runs and paused cases do
+not establish a controlled audible win. **No mpv options were changed.**
+
+Exact read-only analysis command and retained receipt:
+
+```sh
+python3 /private/tmp/wam-seek-scratch/round3_analyze_existing_fallback.py \
+  > /private/tmp/wam-seek-scratch/round3-existing-fallback-analysis.log
+# JSON: /private/tmp/wam-seek-scratch/round3-existing-fallback-analysis.json
+```
+
+Files still outside the admitted AAC shapes therefore retain fallback behavior;
+this round proves their named refusal, not an improvement to fallback acoustic
+latency. Fresh WAM seek → restart and device/acoustic timestamps remain gaps.
