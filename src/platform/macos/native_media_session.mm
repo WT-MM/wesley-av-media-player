@@ -1,3 +1,4 @@
+#include "media/native_audio_benchmark.hpp"
 #include "media/native_late_frame_trace.hpp"
 #if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
 #include <mach/mach_time.h>
@@ -1330,7 +1331,8 @@ struct NativeMediaSession::Impl final {
                       graph.audioControl.setMuted,
                       graph.audioControl.stop,
                       graph.audioControl.clock,
-                      graph.audioControl.highestExposed};
+                      graph.audioControl.highestExposed, nullptr,
+                      graph.audioControl.suspendForPause};
       previewControl = {graph.previewControl.context,
                         graph.previewControl.request,
                         graph.previewControl.pump,
@@ -2480,6 +2482,11 @@ if (result != NativeAudioSessionProgress::Done) {
       }
       const NativeAudioSessionProgress result = audioControl.setPaused(
           audioControl.context, issued.paused);
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY)
+      if (!issued.paused && silentTimebase == nullptr &&
+          result == NativeAudioSessionProgress::Done)
+        media::audioBenchmarkStamp(media::AudioBenchmarkEvent::Play, activeGeneration);
+#endif
       endLiveIssue();
       bool superseded = false;
       bool acknowledgementInserted = false;
@@ -2628,6 +2635,17 @@ if (result != NativeAudioSessionProgress::Done) {
     }
     if (!beginLiveIssue()) {
       return;
+    }
+    {
+      std::lock_guard lock(mutex);
+      // CommitReady is a paused landing, not a user pause. Keep the already
+      // primed output running silently until its mandatory SetRunState arrives.
+      // Include the accepted mailbox command: it may not yet be in runPending.
+      // The live-issue permit orders a later command after this suspension.
+      if (commitRunStatePending || publishedRun.has_value()) {
+        liveIssueActive = false;
+        return;
+      }
     }
     const NativeAudioSessionProgress progress =
         audioControl.suspendForPause(audioControl.context);

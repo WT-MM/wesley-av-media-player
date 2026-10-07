@@ -493,6 +493,7 @@ struct NativeMediaSessionTestAudioControl {
   NativeAudioSessionProgress (*stop)(void* context) noexcept{nullptr};
   NativeMediaClockSnapshot (*clock)(void* context) noexcept{nullptr};
   media::MediaGeneration (*highestExposed)(void* context) noexcept{nullptr};
+  NativeAudioSessionProgress (*suspendForPause)(void* context) noexcept{nullptr};
 };
 
 struct NativeMediaSessionTestPreviewControl {

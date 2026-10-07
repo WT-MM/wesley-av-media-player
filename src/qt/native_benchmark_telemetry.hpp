@@ -92,6 +92,8 @@ public:
   void commitReady(const media::native_playback::CommitReady &event,
                    bool libmpvInitialized) noexcept;
 
+  void fallbackSeek(bool submitted) noexcept;
+
   // A checkpoint never writes while an open is still awaiting its first-draw
   // timestamp. firstFrameDrawn() performs this checkpoint automatically only
   // after sampling that timestamp, which keeps the harness's startup metric
@@ -118,6 +120,12 @@ private:
     CommitSeekSubmitted,
     CommitReady,
     CommitFrameDrawn,
+    AudioOutputStartIssued,
+    AudioFirstRender,
+    AudioClockAdvancing,
+    RunStatePlayApplied,
+    FallbackSeekSubmitted,
+    FallbackPlaybackRestart,
   };
 
   enum class Route : std::uint8_t { Undecided, Native, Fallback };
@@ -135,6 +143,7 @@ private:
     double targetSeconds;
     bool hasTargetSeconds;
     bool libmpvInitialized;
+    std::uint64_t audioQuantumNanoseconds;
   };
 
   struct BufferedPoint {
@@ -162,6 +171,8 @@ private:
   [[nodiscard]] bool flushStreamCommit() noexcept;
   [[nodiscard]] bool finishUnchecked() noexcept;
   void failClosed() noexcept;
+  void drainAudio() noexcept;
+  unsigned audioReadIndex_{0};
 
   // 8,192 facts cover more than twenty seconds of 120 Hz request/admission/
   // terminal preview telemetry without I/O on the measured drag path.

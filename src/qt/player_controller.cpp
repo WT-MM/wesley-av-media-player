@@ -783,6 +783,9 @@ bool PlayerController::initializePlaybackEngine() {
   double engine_volume = volume_ * 100.0;
   double engine_rate = rate_;
   int engine_muted = muted_ ? 1 : 0;
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+  if (macos::NativeEmbeddingSupport::testMuted()) engine_muted = 1;
+#endif
   int engine_preserve_pitch = preserve_pitch_ ? 1 : 0;
   setCoreProperty(core_.get(), "volume", MPV_FORMAT_DOUBLE, &engine_volume);
   setCoreProperty(core_.get(), "speed", MPV_FORMAT_DOUBLE, &engine_rate);
@@ -2226,6 +2229,9 @@ void PlayerController::seekRelative(double seconds) {
     seekTo(position_ + seconds);
     return;
   }
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+  NativeBenchmarkTelemetry::instance().fallbackSeek(true);
+#endif
   sendCommand(core_.get(),
               {QByteArrayLiteral("seek"), QByteArray::number(seconds, 'g', 12),
                QByteArrayLiteral("relative")});
@@ -3647,6 +3653,9 @@ void PlayerController::drainMpvEvents() {
     }
 
     if (event->event_id == MPV_EVENT_PLAYBACK_RESTART) {
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+      NativeBenchmarkTelemetry::instance().fallbackSeek(false);
+#endif
       handleScrubPlaybackRestart();
       handlePlaybackReady(false);
       continue;

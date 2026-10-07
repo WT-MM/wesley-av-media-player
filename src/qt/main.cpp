@@ -210,6 +210,9 @@ std::vector<ScriptedOpen> parseOpenScript(const QByteArray &value) {
 //   focus:<index>       raise and focus
 //   pause:<index>       play:<index>       rate:<index>:<value>
 //   seekstep:<value>    set it on window 0, to observe the settings mirror
+//   skip:<index>:<seconds>
+//                       seekRelative(seconds) on that window: the keyboard
+//                       skip path, not a scrubber gesture
 //   volume:<index>:<v>  set that window's normalized volume (0..maximum)
 //   maxvolume:<v>       set the maximum-volume setting on window 0 (1..4),
 //                       to observe it mirror onto every other window
@@ -640,6 +643,11 @@ void runWindowStep(wam::qt::WindowManager &windows, const QString &verb) {
   } else if (head == QStringLiteral("seekstep")) {
     if (wam::qt::PlayerWindow *window = windowAt(0))
       window->controller()->setSeekStepSeconds(fields.value(1).toDouble());
+  } else if (head == QStringLiteral("skip")) {
+    // The keyboard skip path (skipForward/skipBackward -> seekRelative), as
+    // opposed to WAM_TEST_SEEK_SCRIPT's scrubber gestures.
+    if (wam::qt::PlayerWindow *window = windowAt(index))
+      window->controller()->seekRelative(fields.value(2).toDouble());
   } else if (head == QStringLiteral("volume")) {
     if (wam::qt::PlayerWindow *window = windowAt(index))
       window->controller()->setVolume(fields.value(2).toDouble());

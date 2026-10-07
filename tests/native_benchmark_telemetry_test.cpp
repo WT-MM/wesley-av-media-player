@@ -1,4 +1,5 @@
 #include "qt/native_benchmark_telemetry.hpp"
+#include "media/native_audio_benchmark.hpp"
 
 #include <cstdlib>
 #include <cerrno>
@@ -790,6 +791,38 @@ void laterOpenRestoresFirstDrawWriteBarrier() {
          "the terminal batch preserves the later open and fallback evidence");
 }
 
+void audioMailboxPublishesOffRenderThread() {
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY)
+  using namespace wam::media;
+  auto &box = audioBenchmarkMailbox;
+  box.enabled.store(false);
+  audioBenchmarkStamp(AudioBenchmarkEvent::Start, 123);
+  expect(box.claimed.load() == 0, "disabled audio telemetry claims no slot");
+  SinkProbe probe;
+  auto telemetry = NativeBenchmarkTelemetryTestAccess::create(
+      true, &testClock, &stringSink, &stringFlush, &probe);
+  std::vector<std::thread> producers;
+  for (unsigned i = 0; i < 4; ++i) {
+    producers.emplace_back([i] {
+      audioBenchmarkStamp(static_cast<AudioBenchmarkEvent>(i), 123, 20000000);
+    });
+  }
+  for (auto &producer : producers) producer.join();
+  expect(probe.writes == 0, "audio producers never write the telemetry sink");
+  expect(telemetry->finish(), "owner publishes audio mailbox at terminal drain");
+  const auto records = lines(probe.output);
+  expect(records.size() == 4, "all concurrent audio facts survive publication");
+  for (const char *name : {"audio_output_start_issued", "audio_first_render",
+                          "audio_clock_advancing", "run_state_play_applied"})
+    expect(contains(probe.output, name), "stable audio event name published");
+  for (const auto record : records)
+    expect(contains(record, "\"generation\":123") &&
+           contains(record, "\"audio_quantum_ns\":20000000"),
+           "audio facts preserve generation and actual render quantum");
+  box.enabled.store(false);
+#endif
+}
+
 void environmentTruthVocabularyIsStatedOnce() {
   unsetenv("WAM_NATIVE_BENCHMARK_TELEMETRY");
   expect(!wam::qt::nativeBenchmarkTelemetryArmed(),
@@ -834,6 +867,7 @@ int main() {
   controllerThreadConfinementIsFailClosed();
   fallbackPublicationTracksFirstDrawBoundary();
   laterOpenRestoresFirstDrawWriteBarrier();
+  audioMailboxPublishesOffRenderThread();
   std::cout << "native benchmark telemetry tests passed\n";
   return 0;
 }
