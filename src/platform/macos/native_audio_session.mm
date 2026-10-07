@@ -2268,7 +2268,7 @@ media::NativeMediaConsumerProgress NativeAudioSession::flush(
     control.firstAudioSampleAccepted = false;
     control.requestedPaused = true;
     control.renderCore.setPaused(true);
-    // The flush owns the output from here: it stops, re-anchors and
+    // The flush owns render admission from here: it quiesces, re-anchors and
     // re-activates it, so a pause suspend can no longer be the thing that
     // resumes it.
     control.outputSuspension = OutputSuspension::None;
@@ -2277,7 +2277,7 @@ media::NativeMediaConsumerProgress NativeAudioSession::flush(
 
   if (control.flushStage == FlushStage::Stop) {
     const NativeAudioSessionProgress stopped = mapOutputProgress(
-        control, control.output->stop(), NativeAudioSessionFailure::Output);
+        control, control.output->quiesceForSeek(), NativeAudioSessionFailure::Output);
     if (stopped != NativeAudioSessionProgress::Done) {
       return mapLifecycleProgress(stopped);
     }

@@ -715,11 +715,11 @@ struct Fixture {
 
 [[nodiscard]] bool publishConstant(NativePcmRing &ring,
                                    std::size_t frames,
-                                   float value = 1.0F) noexcept {
+                                   float value = 1.0F, std::uint64_t generation = 1) noexcept {
   std::array<float, NativePcmRing::kSamplesPerSlab> samples{};
   std::fill_n(samples.begin(), frames * NativePcmRing::kChannels, value);
   return ring.publish(
-             1, std::span<const float>(samples).first(
+             generation, std::span<const float>(samples).first(
                     frames * NativePcmRing::kChannels),
              frames) == NativePcmRing::PublishResult::Published;
 }
@@ -1855,10 +1855,10 @@ void testQuarantinedSlotIsRetainedBesideLiveWindows() {
          "the registry is empty again once every window has closed");
 }
 
-void testStoppedCallbackCannotCrossRestartEpoch() {
+void testStoppedCallbackCannotCrossRestartEpoch(bool keepUnitRunning = false) {
   Fixture fixture;
   expect(fixture.start() &&
-             fixture.output->stop() == NativeAudioOutputProgress::Done,
+             (keepUnitRunning ? fixture.output->quiesceForSeek() : fixture.output->stop()) == NativeAudioOutputProgress::Done,
          "restart-race fixture reaches a fully stopped state");
   const NativeAudioRenderStats before = fixture.core.stats();
   BlockingHook hook;
@@ -1888,6 +1888,46 @@ void testStoppedCallbackCannotCrossRestartEpoch() {
              fixture.output->facts().callbackQuiescent &&
              fixture.output->start() == NativeAudioOutputProgress::Done,
          "stale stopped callback drains silently before the next epoch starts");
+}
+
+void testSeekKeepsHardwareRunning() {
+  Fixture fixture;
+  fixture.core.setGain(1.0F);
+  expect(fixture.start() && publishConstant(fixture.ring, 32),
+         "seek fixture starts with PCM");
+  const auto begin = fixture.fake.callCount;
+  fixture.core.setPaused(true);
+  expect(fixture.output->quiesceForSeek() == NativeAudioOutputProgress::Done &&
+             fixture.fake.started && fixture.clock.pause(1) &&
+             fixture.core.settlePausedAfterStop(1),
+         "seek drains admission while hardware remains running");
+  std::array<float, 16> samples{};
+  samples.fill(5.0F);
+  const auto serial = fixture.clock.sample().publicationSerial;
+  expect(invokeTracked(fixture.fake, hostTimestamp(0), 8, samples) == noErr &&
+             std::all_of(samples.begin(), samples.end(), [](float x) { return x == 0; }) &&
+             fixture.clock.sample().publicationSerial == serial,
+         "closed seek admission emits silence without clock publication or allocation");
+  expect(fixture.ring.flush(2) && fixture.clock.seek(1, 2, 10.0) &&
+             fixture.output->activate(2, 0, {10, 1}, {10, 1}) == NativeAudioOutputProgress::Done &&
+             publishConstant(fixture.ring, 32, 1.0F, 2) &&
+             fixture.output->start() == NativeAudioOutputProgress::Done,
+         "seek reanchors and logically starts the running unit");
+  samples.fill(5.0F);
+  expect(invokeTracked(fixture.fake, hostTimestamp(8), 8, samples) == noErr &&
+             samples[0] == 0 && !fixture.clock.sample().running &&
+             fixture.clock.sample().mediaSeconds == 10.0,
+         "paused target cannot burst PCM or advance the clock");
+  fixture.core.setPaused(false);
+  fixture.host.ticks.store(16);
+  expect(invokeTracked(fixture.fake, hostTimestamp(16), 8, samples) == noErr &&
+             samples.back() > 0 && fixture.clock.sample().running,
+         "logical unpause renders new-generation PCM");
+  for (auto i = begin; i < fixture.fake.callCount; ++i)
+    expect(fixture.fake.calls[i] != Call::Start && fixture.fake.calls[i] != Call::Stop,
+           "seek issues zero hardware starts and stops");
+  expect(fixture.output->stop() == NativeAudioOutputProgress::Done && !fixture.fake.started,
+         "terminal stop still physically stops the retained unit");
 }
 
 // Stopping the output while paused is the largest single wake-rate lever in
@@ -2834,6 +2874,8 @@ int main() {
     testBoundedSlotRegistryAdmitsExactlyTheWindowCap();
     testQuarantinedSlotIsRetainedBesideLiveWindows();
     testStoppedCallbackCannotCrossRestartEpoch();
+    testStoppedCallbackCannotCrossRestartEpoch(true);
+    testSeekKeepsHardwareRunning();
     testPauseSuspendKeepsStreamPositionAcrossRestart();
     testWakeGatesResetAcrossGenerationActivation();
     testRefillEdgeTracksSlabRetirement();
