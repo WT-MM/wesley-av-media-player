@@ -1,4 +1,5 @@
 #include "native_audio_output.hpp"
+#include "media/native_audio_benchmark.hpp"
 
 #include "native_audio_sample_rates.hpp"
 #include "native_concurrency_limits.hpp"
@@ -1215,6 +1216,15 @@ NativeAudioOutputProgress NativeAudioOutput::start() noexcept {
                                std::memory_order_release);
   underrun_active_.store(false, std::memory_order_release);
 
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY)
+  if (benchmark_enabled_) {
+    benchmark_first_render_.store(true, std::memory_order_relaxed);
+    benchmark_first_pcm_.store(true, std::memory_order_relaxed);
+    media::audioBenchmarkStamp(media::AudioBenchmarkEvent::Start, generation_.load(),
+        static_cast<std::uint64_t>(device_buffer_frames_.load() *
+                                   1000000000.0 / device_rate_));
+  }
+#endif
   status = startUnit();
   if (status != noErr) {
     started_.store(false, std::memory_order_release);
@@ -1882,6 +1892,12 @@ OSStatus NativeAudioOutput::render(
   if (wakeReasons != nullptr) {
     *wakeReasons = 0;
   }
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY)
+  if (benchmark_enabled_ &&
+      benchmark_first_render_.load(std::memory_order_relaxed) &&
+      benchmark_first_render_.exchange(false, std::memory_order_relaxed))
+    media::audioBenchmarkStamp(media::AudioBenchmarkEvent::Render, generation_.load());
+#endif
   boundedCounterAdd(callbacks_, 1);
   boundedCounterAdd(requested_frames_, frameCount);
 
@@ -1959,6 +1975,13 @@ OSStatus NativeAudioOutput::render(
       input, std::span<float>(samples,
                               static_cast<std::size_t>(frameCount) *
                                   kChannels));
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY)
+  if (benchmark_enabled_ && result.committed && result.pcmFrames != 0 &&
+      benchmark_first_pcm_.load(std::memory_order_relaxed) &&
+      benchmark_first_pcm_.exchange(false, std::memory_order_relaxed))
+    media::audioBenchmarkStamp(media::AudioBenchmarkEvent::Advancing, generation_.load(),
+        static_cast<std::uint64_t>(frameCount) * 1000000000ULL / sample_rate_);
+#endif
   // Test-only silent output (WAM_TEST_MUTED). Deliberately AFTER the render
   // core has run and BEFORE nothing: no later statement touches `samples`, so
   // this is the last write on the way to the hardware buffer. Every counter,
