@@ -306,6 +306,7 @@ const char *NativeBenchmarkTelemetry::eventName(Event event) noexcept {
     return "commit_seek_submitted";
   case Event::FallbackSeekSubmitted: return "fallback_seek_submitted";
   case Event::FallbackPlaybackRestart: return "fallback_playback_restart";
+  case Event::AudioOutputStopIssued: return "audio_output_stop_issued";
   case Event::AudioOutputStartIssued: return "audio_output_start_issued";
   case Event::AudioFirstRender: return "audio_first_render";
   case Event::AudioClockAdvancing: return "audio_clock_advancing";
@@ -657,6 +658,7 @@ void NativeBenchmarkTelemetry::drainAudio() noexcept {
     const auto &audio = box.entries[audioReadIndex_++].point;
     Point point{};
     switch (audio.event) {
+    case media::AudioBenchmarkEvent::Stop: point.event = Event::AudioOutputStopIssued; break;
     case media::AudioBenchmarkEvent::Start: point.event = Event::AudioOutputStartIssued; break;
     case media::AudioBenchmarkEvent::Render: point.event = Event::AudioFirstRender; break;
     case media::AudioBenchmarkEvent::Advancing: point.event = Event::AudioClockAdvancing; break;

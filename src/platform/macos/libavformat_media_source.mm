@@ -1,3 +1,4 @@
+#include "platform/macos/libavformat_aac_timing.hpp"
 #include "media/software_color_qualification.hpp"
 #include "platform/macos/libavformat_media_source.hpp"
 #include "media/libavformat_cursor.hpp"
@@ -36,6 +37,7 @@ public:
   std::uint32_t audioPacketFrames{};
   MediaTime audioQuantum{};
   MediaTime audioOrigin{};
+  MediaTime audioDemuxOrigin{};
 };
 // Slots and control blocks are allocated at open. A slot is mutable only when
 // the source holds its sole reference; asynchronous decoder leases keep it
@@ -218,7 +220,7 @@ bool audioDescriptor(const LibavformatCursor::Stream& stream, MediaTrackDescript
   track.audio=format;return true;
 }
 bool audioPacket(LibavformatCursor::Packet& packet, const MediaTrackDescriptor& track,
-                 MediaTime origin, MediaTime quantum, std::uint64_t ordinal, std::uint32_t& frames,
+                 MediaTime origin, MediaTime demuxOrigin, MediaTime quantum, std::uint64_t ordinal, std::uint32_t& frames,
                  bool& tail, std::string& error) {
   if(track.codec==MediaCodec::Opus && (packet.bytes.empty() || (std::to_integer<unsigned>(packet.bytes.front())>>3)<16)) {
     error="LibavformatOpusModeUnqualified";return false;
@@ -232,16 +234,15 @@ bool audioPacket(LibavformatCursor::Packet& packet, const MediaTrackDescriptor& 
   const auto expected=origin.value+static_cast<std::int64_t>(ordinal*frames);
   // Adjacent integer container ticks cover quantization without altering the codec sample ordinal.
   const __int128 observed=__int128(packet.pts.value)*48000;
-  const __int128 exact=__int128(expected)*packet.pts.timescale;
+  const __int128 exact=__int128(demuxOrigin.value+static_cast<std::int64_t>(ordinal*frames))*packet.pts.timescale;
   const auto residual=observed-exact;
   const auto bound=__int128(48000)*packet.pts.timescale*quantum.value;
   if(!ordinal && track.codec==MediaCodec::Aac && residual!=0) {
     error="LibavformatAudioTimingUnproven: aac";return false;
   }
   if(!quantum.valid() || quantum.value<=0 || residual*quantum.timescale<=-bound || residual*quantum.timescale>=bound ||
-     (packet.skipStart && (ordinal || origin.value>=0 || packet.skipStart!=std::uint64_t(-origin.value))) ||
+     (packet.skipStart && (ordinal || demuxOrigin.value>=0 || packet.skipStart!=std::uint64_t(-demuxOrigin.value))) ||
      packet.skipEnd>=frames) {error="LibavformatAudioPacketGrid";return false;}
-  if(track.codec==MediaCodec::Aac && packet.skipStart) {error="LibavformatAacPrimingUnqualified";return false;}
   tail=packet.skipEnd!=0;
   packet.pts=packet.dts={expected,48000};
   packet.duration={frames-packet.skipEnd,48000};
@@ -381,13 +382,13 @@ struct LibavformatMediaSource::Impl {
     const auto* track=packetTrack(packet.stream);
     if(!track || !track->audio)return true;
     auto frames=context->audioPacketFrames;
-    return audioPacket(packet,*track,context->audioOrigin,context->audioQuantum,audioOrdinal++,frames,audioTail,error);
+    return audioPacket(packet,*track,context->audioOrigin,context->audioDemuxOrigin,context->audioQuantum,audioOrdinal++,frames,audioTail,error);
   }
   bool start(MediaTime requested, MediaSeekMode mode, std::string &error) {
     target=requested;eos=false;audioEos=false;audioTail=false;audioOrdinal=0;audioEosPublished=false;videoEosPublished=false;head.reset();videoPending.reset();audioPending.reset();
     decodeStart=preceding(*context,target);
     if(mode==MediaSeekMode::KeyFrame && compareMediaTime(decodeStart,target)!=MediaTimeOrder::Greater)target=decodeStart;
-    if(reader->audioCursor && !reader->audioCursor->seek(*context->audioStream,context->audioOrigin,error))return false;
+    if(reader->audioCursor && !reader->audioCursor->seek(*context->audioStream,context->audioDemuxOrigin,error))return false;
     if(!reader->cursor.seek(context->selectedStream,context->audioOnly?context->audioOrigin:decodeStart,error))return false;
     LibavformatCursor::Packet packet;
     for(unsigned skipped=0;skipped<4096;++skipped) {
@@ -514,12 +515,14 @@ LibavformatMediaSource::openLocalFile(const std::filesystem::path &path,
   context->selectedStream=*video;context->identity=s.reader->cursor.identity();
   context->audioOnly=audioOnly;context->audioStream=audio;
   context->audioOrigin=audioOrigin;
+  context->audioDemuxOrigin=audioOrigin;
   if(audio)context->audioQuantum=s.reader->cursor.stream(*audio).timeBase;
   if(audioOnly)context->raps.push_back({0,1});
   LibavformatCursor::Packet packet;
   MediaTime end{0, 1}, audioEnd{0,1},videoEnd{0,1};
   std::uint64_t bytes{}, audioPackets{};
   bool audioTail = false;
+  std::optional<MediaTime> aacProvedEnd;
   for (std::size_t packets = 0;; ++packets) {
     if (packets == 2'000'000 || bytes > 16ULL * 1024 * 1024 * 1024) {
       out.error = "LibavformatIndexScanLimit";
@@ -546,7 +549,21 @@ LibavformatMediaSource::openLocalFile(const std::filesystem::path &path,
       return fail();
     }
     if(isAudio) {
-      if(!audioPacket(packet,audioTrack,audioOrigin,context->audioQuantum,audioPackets++,audioFrames,audioTail,out.error))return fail();
+      if (!audioPackets && audioTrack.codec == MediaCodec::Aac &&
+          (packet.pts.value != 0 || packet.skipStart)) {
+        // Only the single, rate-one Apple priming edit has an affine map.
+        // Packet identity binds the CoreMedia witness to this demux origin.
+        const auto proof = proveLibavformatAacTiming(path,
+            s.reader->cursor.stream(*audio).containerTrackId, packet);
+        if (!proof) {
+          out.error="LibavformatAudioTimingUnproven: aac";return fail();
+        }
+        audioOrigin = proof->origin;
+        aacProvedEnd = proof->end;
+        context->audioOrigin = audioOrigin;
+        context->audioDemuxOrigin = proof->demuxOrigin;
+      }
+      if(!audioPacket(packet,audioTrack,audioOrigin,context->audioDemuxOrigin,context->audioQuantum,audioPackets++,audioFrames,audioTail,out.error))return fail();
       audioTrack.audio->framesPerPacket=audioFrames;
     }
     const auto packetEnd = checkedExactTimeSum(packet.pts, packet.duration);
@@ -575,6 +592,9 @@ LibavformatMediaSource::openLocalFile(const std::filesystem::path &path,
   if (context->raps.empty() || (!audio && context->raps.front().value != 0)) {
     out.error = "LibavformatStreamOriginRapMissing";
     return fail();
+  }
+  if (aacProvedEnd && compareMediaTime(audioEnd,*aacProvedEnd)!=MediaTimeOrder::Equal) {
+    out.error="LibavformatAudioTimingUnproven: aac";return fail();
   }
   context->audioPacketFrames=audioFrames;
   descriptor->duration=end;

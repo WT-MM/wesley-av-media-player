@@ -138,10 +138,12 @@ enum class NativeAudioOutputFailure : std::uint8_t {
 };
 
 // Independently atomic, bounded facts rather than a transactional snapshot.
-// started means AudioOutputUnitStart succeeded and stop has not been requested.
-// stopped means render admission is revoked, AudioOutputUnitStop (when needed)
-// succeeded, and every callback that captured an open admission bridge has
+// started means render admission is open on a running AudioUnit.
+// stopped means render admission is revoked and every callback that captured
+// an open admission bridge has
 // exited. A later callback can only silence under the stopped bridge epoch.
+// quiesceForSeek leaves HAL running behind that closed bridge; stop additionally
+// proves AudioOutputUnitStop succeeded.
 // callbackQuiescent is true only after the inner adapter/core counters, raw
 // callback bridge entries, and lifetime-safe exit notifications have drained;
 // a Done stop is the durable proof needed before ring/clock mutation or
@@ -376,6 +378,10 @@ class NativeAudioOutput final
 
   [[nodiscard]] NativeAudioOutputProgress start() noexcept;
   [[nodiscard]] NativeAudioOutputProgress stop() noexcept;
+  // Revoke render admission and drain entered callbacks without stopping HAL.
+  // Done permits the same ring/clock mutation as stop(); start() reopens
+  // admission without another hardware start. close()/stop() still stop HAL.
+  [[nodiscard]] NativeAudioOutputProgress quiesceForSeek() noexcept;
   [[nodiscard]] NativeAudioOutputProgress close() noexcept;
 
   // Serialized owner half of the StreamFormat listener. The listener runs in
@@ -411,6 +417,7 @@ class NativeAudioOutput final
   recoverQuarantined() noexcept;
 
  private:
+  [[nodiscard]] NativeAudioOutputProgress stopImpl(bool keepUnitRunning) noexcept;
   explicit NativeAudioOutput(NativeAudioRenderCore &renderCore,
                              NativeAudioUnitCallTable calls,
                              NativeAudioOutputWakeSeam wake) noexcept;

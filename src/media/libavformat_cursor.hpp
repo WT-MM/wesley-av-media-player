@@ -28,6 +28,7 @@ public:
   Identity identity() const noexcept;
   struct Stream {
     int codecId{};
+    int containerTrackId{};
     bool video{}, audio{}, attached{}, unsupportedMetadata{};
     unsigned primaries{}, transfer{}, matrix{};
     bool fullRange{}, rangeSpecified{};

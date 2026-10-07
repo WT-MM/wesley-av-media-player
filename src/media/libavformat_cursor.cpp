@@ -486,6 +486,7 @@ LibavformatCursor::Stream LibavformatCursor::stream(unsigned i) const noexcept {
   const auto &p = *s.codecpar;
   Stream out;
   out.codecId = p.codec_id;
+  out.containerTrackId = s.id;
   out.video = p.codec_type == AVMEDIA_TYPE_VIDEO;
   out.audio = p.codec_type == AVMEDIA_TYPE_AUDIO;
   out.attached = s.disposition & AV_DISPOSITION_ATTACHED_PIC;

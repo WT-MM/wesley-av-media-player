@@ -2902,7 +2902,7 @@ if (result != NativeAudioSessionProgress::Done) {
       }
     }
     // Dispatcher seek flushes NativeAudioSession and leaves the target
-    // generation activated but Ready (output stopped). Start must therefore
+    // generation activated but Ready (render admission closed). Start must therefore
     // follow SeekCommitted for every commit, not only replay from Ended.
     if (commitPhase == CommitPhase::StartingAudio) {
       if (!beginLiveIssue(nullptr, false, true)) {
@@ -2948,7 +2948,11 @@ if (result != NativeAudioSessionProgress::Done) {
   void progressCommitProofs() noexcept {
     refreshClockForCommit();
     captureCommitProofs();
-    if (!commitVideoProof.has_value()) {
+    // Match the ordinary playback work budget. CallAgain is immediately
+    // runnable work, not a reason to round-trip the worker semaphore for each
+    // demux packet. The exact same covering-frame proof remains mandatory.
+    for (unsigned stepCount = 0; !commitVideoProof.has_value() && stepCount != 32;
+         ++stepCount) {
       if (!beginLiveIssue(nullptr, false, true)) {
         acceptPublishedCommands();
         return;
@@ -2972,8 +2976,8 @@ if (result != NativeAudioSessionProgress::Done) {
         return;
       }
       captureCommitProofs();
-      if (!commitVideoProof.has_value() &&
-          step.wait == media::NativeMediaDispatcherWait::CallAgain) {
+      if (step.wait != media::NativeMediaDispatcherWait::CallAgain) break;
+      if (!commitVideoProof.has_value() && stepCount == 31) {
         dependencies.wake->notify();
       }
     }

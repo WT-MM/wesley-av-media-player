@@ -204,6 +204,7 @@ find_library(WAM_COREIMAGE_FRAMEWORK CoreImage REQUIRED)
       target_sources(wam_avcodec_worker PRIVATE src/media/libavformat_cursor.cpp)
       target_sources(wam_macos_native_backend PRIVATE
         src/platform/macos/libavformat_media_source.mm
+        src/platform/macos/libavformat_aac_timing.mm
         src/platform/macos/routed_media_source.mm)
       target_compile_definitions(wam_macos_native_backend PUBLIC WAM_ENABLE_AVFORMAT_STAGE=1)
     endif()
