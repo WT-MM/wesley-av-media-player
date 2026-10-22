@@ -4,6 +4,7 @@ import hashlib
 import json
 import pathlib
 import subprocess
+import struct
 import tempfile
 from fractions import Fraction
 import numpy as np
@@ -18,6 +19,48 @@ def run(argv, success=True):
     r = subprocess.run(list(map(str, argv)), capture_output=True, text=True, timeout=180)
     assert (r.returncode == 0) == success, (argv, r.returncode, r.stderr)
     return r
+
+def jitter_audio_stts(data, residual):
+    """Restate audio stts as a zero-drift three-unit pattern, retaining its tail."""
+    # This generated MOV has its moov after mdat, so growing stts cannot move
+    # any media payload or invalidate the existing chunk offsets.
+    def boxes(blob):
+        offset = 0
+        while offset < len(blob):
+            size, kind = struct.unpack_from('>I4s', blob, offset)
+            assert 8 <= size <= len(blob) - offset
+            yield kind, blob[offset + 8:offset + size]
+            offset += size
+    top = list(boxes(data))
+    assert [kind for kind, _ in top].index(b'mdat') < [kind for kind, _ in top].index(b'moov')
+    changed = 0
+    def rewrite(blob, audio=False):
+        nonlocal changed
+        out = bytearray()
+        for kind, payload in boxes(blob):
+            if kind == b'trak':
+                audio = b'soun' in payload
+            if kind in (b'moov', b'trak', b'mdia', b'minf', b'stbl'):
+                payload = rewrite(payload, audio)
+            elif kind == b'stts' and audio:
+                count = struct.unpack_from('>I', payload, 4)[0]
+                durations = []
+                for i in range(count):
+                    n, duration = struct.unpack_from('>II', payload, 8 + i * 8)
+                    durations.extend([duration] * n)
+                original_total = sum(durations)
+                for i in range(0, len(durations) - 3, 3):
+                    assert durations[i:i + 3] == [1024] * 3
+                    durations[i:i + 3] = [1024 + residual, 1024 - residual, 1024]
+                assert sum(durations) == original_total
+                payload = payload[:4] + struct.pack('>I', len(durations))
+                payload += b''.join(struct.pack('>II', 1, d) for d in durations)
+                changed += 1
+            out += struct.pack('>I4s', len(payload) + 8, kind) + payload
+        return bytes(out)
+    result = rewrite(data)
+    assert changed == 1
+    return result
 
 with tempfile.TemporaryDirectory(prefix='aac-proof-', dir=a.scratch) as tmp:
     root = pathlib.Path(tmp)
@@ -54,6 +97,17 @@ with tempfile.TemporaryDirectory(prefix='aac-proof-', dir=a.scratch) as tmp:
             del x
         rows.append(dict(asset=str(asset),sha256=hashlib.sha256(asset.read_bytes()).hexdigest(),oracle=oracle.stderr,cases=cases))
         del expected
+    grid_cases = []
+    for residual in [-1, 1, -2, 2]:
+        jittered = root/f'jitter-{residual}.mov'
+        jittered.write_bytes(jitter_audio_stts(apple.read_bytes(), residual))
+        admitted = abs(residual) == 1
+        result = run([a.probe, jittered, root/'jitter.f32', '0'], admitted)
+        if admitted:
+            assert 'exact=1 drained=1' in result.stderr, result.stderr
+        else:
+            assert 'LibavformatAudioPacketGrid' in result.stderr, result.stderr
+        grid_cases.append(dict(residual=residual, admitted=admitted, log=result.stderr))
     # Mutate only our small synthetic fixture. An unqualified priming value
     # must retain the named refusal, not silently use a nearby sample offset.
     data = bytearray(apple.read_bytes())
@@ -90,6 +144,7 @@ with tempfile.TemporaryDirectory(prefix='aac-proof-', dir=a.scratch) as tmp:
     receipt = dict(probe_sha256=hashlib.sha256(pathlib.Path(a.probe).read_bytes()).hexdigest(),
                    oracle_sha256=hashlib.sha256(pathlib.Path(a.oracle).read_bytes()).hexdigest(),
                    generation=list(map(str,generation)),assets=rows,refusal=refusal.stderr,
+                   grid_cases=grid_cases,
                    end_refusal=end_refusal.stderr,
                    rate_refusal=rate_refusal.stderr,leading_refusal=leading_refusal.stderr)
     pathlib.Path(a.output).write_text(json.dumps(receipt,indent=2)+'\n')
