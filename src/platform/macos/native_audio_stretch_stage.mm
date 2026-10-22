@@ -309,7 +309,7 @@ OSStatus NativeAudioStretchUnit::inputCallback(
     return kAudio_ParamError;
   }
   // The pull always fills exactly frameCount interleaved frames -- with real
-  // audio up to the render core's hard budget and silence beyond it -- so the
+  // audio while the ring has input and silence after its bound -- so the
   // deinterleave below never reads uninitialised scratch.
   static_cast<void>(
       self->pull_(self->pull_context_, self->pull_scratch_.data(),
@@ -333,8 +333,9 @@ bool NativeAudioStretchUnit::stageRender(void *context,
     return false;
   }
   // At 4096 output frames and 4x the raw unit under-pulls its first render
-  // by 2048 frames. Slices of at most 1024 have exact rounded demand from
-  // the first render, and bound each input pull to one ring slab at 4x.
+  // by 2048 frames on hosts with per-block rounding. Slices of at most 1024
+  // bound each input pull to one ring slab at 4x. Other hosts chunk input
+  // independently of these output slices.
   // Divide this callback's integer budget across slices without a residual.
   std::uint32_t previousBudget = 0;
   for (std::uint32_t offset = 0; offset < outputFrames;) {
@@ -343,7 +344,8 @@ bool NativeAudioStretchUnit::stageRender(void *context,
         static_cast<std::uint64_t>(offset + frames) * budget / outputFrames);
     const auto sliceBudget = endBudget - previousBudget;
     // Only the AudioUnit parameter is floating point. Its rounding error
-    // remains far below half an input frame, so the pull equals sliceBudget.
+    // remains below half an input frame. On hosts with per-block rounding
+    // the pull equals sliceBudget; chunked hosts retain their internal phase.
     const float blockRate = sliceBudget == 0 ? 1.0F / 32.0F
                                              : static_cast<float>(sliceBudget) /
                                                    static_cast<float>(frames);

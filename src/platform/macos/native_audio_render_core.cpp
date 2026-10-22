@@ -178,6 +178,7 @@ bool NativeAudioRenderCore::activate(
   }
 
   activation_cursor_frame_ = streamFrameCursor;
+  output_cursor_frame_ = streamFrameCursor;
   cursor_frame_ = streamFrameCursor;
   lead_in_end_frame_ = streamFrameCursor + declared.leadInFrames;
   declared_pcm_end_frame_ = declared.pcmEndFrame;
@@ -331,10 +332,7 @@ std::uint32_t NativeAudioRenderCore::stretchPull(
   if (core == nullptr || interleaved == nullptr || frames == 0) {
     return 0;
   }
-  // Hard budget. The callback reserved clock time for exactly
-  // pull_budget_frames_ media frames; a stage that asks for more gets
-  // silence rather than an over-drained ring, so the frame cursor and the
-  // published clock stay exact whatever the stage does.
+  // The pull bound covers readable input, independently of the clock budget.
   const std::uint32_t remaining =
       core->pull_budget_frames_ - core->pull_taken_frames_;
   const std::uint32_t wanted = std::min(frames, remaining);
@@ -400,6 +398,7 @@ std::uint32_t NativeAudioRenderCore::stretchPull(
     core->pull_taken_frames_ += served;
   }
   if (served < frames) {
+    core->pull_starved_ = true;
     std::fill_n(interleaved + static_cast<std::size_t>(served) *
                                   NativePcmRing::kChannels,
                 (static_cast<std::size_t>(frames) - served) *
@@ -617,10 +616,9 @@ NativeAudioRenderCore::PrefixSplit NativeAudioRenderCore::computePrefixSplit(
   const std::uint64_t rateDenominator = media::native_playback::kNativeRateGrid;
   const std::uint64_t rateNumerator =
       rate.numerator * (rateDenominator / rate.denominator);
-  // floor((carry + output * p) / q) is both the stage input demand and
-  // the clock advance. Ratios use the common admission-grid denominator so
-  // a rate change retains the fractional frame instead of discarding it. Client callbacks need not divide q: the output unit
-  // can resample a 44.1 kHz stream into a 48 kHz device period.
+  // floor((carry + output * p) / q) is the output media advance.
+  // Client callbacks need not divide q: the output unit can resample a
+  // 44.1 kHz stream into a 48 kHz device period.
   const auto mediaLimitedOutput =
       [this, rateNumerator, fullOutputFrames](std::uint64_t mediaFrames) noexcept {
         const auto ceiling =
@@ -763,6 +761,9 @@ NativeAudioRenderResult NativeAudioRenderCore::render(
     return result;
   }
 
+  // Adapter admission uses the input cursor; all clock arithmetic uses output.
+  input.streamFrameStart = output_cursor_frame_;
+
   const NativeAudioRenderFailure latched = failure();
   if (latched != NativeAudioRenderFailure::None) {
     silenceAll();
@@ -800,20 +801,20 @@ NativeAudioRenderResult NativeAudioRenderCore::render(
     const bool pitchChanged = requestedPreservePitch != active_preserve_pitch_;
     if ((rateChanged || pitchChanged) && requested.valid() &&
         (requested.unity() || stretchAvailable)) {
-      if (!requested.unity() &&
+      if ((!requested.unity() || cursor_frame_ != output_cursor_frame_) &&
           !stretch_.setRate(stretch_.context, requested.numerator,
                             requested.denominator, requestedPreservePitch)) {
         silenceAll();
         return refuse(result, NativeAudioRenderFailure::StretchStageFailed);
       }
       const std::uint32_t requestedLatency =
-          requested.unity() ? 0U
+          requested.unity() && cursor_frame_ == output_cursor_frame_ ? 0U
                             : stretch_.latencyOutputFrames(stretch_.context);
       bool admitRate = true;
       // A zero media budget publishes no interval. It can latch immediately;
       // the first carried input frame will establish the new clock slope.
       const auto requestedFrames =
-          (rate_carry_ + static_cast<std::uint64_t>(input.frameCount) *
+          ((rateChanged ? 0U : rate_carry_) + static_cast<std::uint64_t>(input.frameCount) *
                              requested.numerator *
                              (media::native_playback::kNativeRateGrid /
                               requested.denominator)) /
@@ -849,7 +850,7 @@ NativeAudioRenderResult NativeAudioRenderCore::render(
         }
       }
       if (!admitRate) {
-        if (!active_rate_.unity() &&
+        if ((!active_rate_.unity() || cursor_frame_ != output_cursor_frame_) &&
             !stretch_.setRate(stretch_.context, active_rate_.numerator,
                               active_rate_.denominator,
                               active_preserve_pitch_)) {
@@ -861,6 +862,7 @@ NativeAudioRenderResult NativeAudioRenderCore::render(
         // At unity a pitch toggle is bookkeeping only.
         active_preserve_pitch_ = requestedPreservePitch;
         if (rateChanged) {
+          rate_carry_ = 0;
           stretch_latency_output_frames_ = requestedLatency;
           rateBoundary = !next_discontinuous_;
           saturatingAdd(rate_changes_, 1);
@@ -873,7 +875,7 @@ NativeAudioRenderResult NativeAudioRenderCore::render(
   const std::uint64_t rateNumerator =
       rate.numerator * (rateDenominator / rate.denominator);
 
-  // Group-delay shift. Audio leaving the ring in this callback is HEARD
+  // Group-delay shift. Audio emitted by this callback is HEARD
   // later by the stretch stage's group delay at this rate plus the output
   // unit's own declared delay (its sample-rate converter, when the client
   // format does not run at the device rate), so every host endpoint this
@@ -954,6 +956,12 @@ NativeAudioRenderResult NativeAudioRenderCore::render(
       return result;
     }
 
+    // The final output interval must be heard before the owner stops audio.
+    // Callback timestamps can name future device time, so use the clock's
+    // sampled host time rather than this callback's shifted endpoint.
+    if (clock_.sample().sampledHostTicks < prior_end_host_ticks_) {
+      return result;
+    }
     std::uint64_t observed = 0;
     if (terminal_observed_generation_.compare_exchange_strong(
             observed, generation, std::memory_order_acq_rel,
@@ -1026,8 +1034,28 @@ NativeAudioRenderResult NativeAudioRenderCore::render(
                             std::numeric_limits<std::uint32_t>::max()));
   result.bufferedPcmFramesKnown = true;
 
+  const bool useStretch = !rate.unity() || stretch_latency_output_frames_ != 0 ||
+                          cursor_frame_ != output_cursor_frame_;
+  const std::uint64_t ringLead = lead_in_end_frame_ > cursor_frame_
+                                    ? lead_in_end_frame_ - cursor_frame_ : 0;
+  const std::uint64_t ringEnd = cursor_frame_ + ringLead + readable.frames;
+  const std::uint64_t outputLead = lead_in_end_frame_ > output_cursor_frame_
+                                      ? lead_in_end_frame_ - output_cursor_frame_ : 0;
+  std::uint64_t available = readable.frames;
+  if (useStretch) {
+    available = ringEnd > output_cursor_frame_ + outputLead
+                    ? ringEnd - output_cursor_frame_ - outputLead : 0;
+    // A stage can emit from its internal state without pulling this budget.
+    if (terminalCurrent)
+      available = std::max(available, full_media_frames);
+  }
+  if (useStretch && declared_end_frame_ != 0) {
+    available = std::min(available,
+        declared_pcm_end_frame_ > output_cursor_frame_ + outputLead
+            ? declared_pcm_end_frame_ - output_cursor_frame_ - outputLead : 0);
+  }
   const PrefixSplit split = computePrefixSplit(
-      input, rate, static_cast<std::uint64_t>(readable.frames),
+      input, rate, available,
       full_output_frames, terminalCurrent, terminalFrame);
   const std::uint64_t outputFrames = split.outputFrames;
   const std::size_t prefixFrames =
@@ -1037,14 +1065,47 @@ NativeAudioRenderResult NativeAudioRenderCore::render(
   const std::uint64_t silenceSuffixFrames = split.silenceSuffixFrames;
   const std::uint64_t declaredSilenceFrames = split.declaredSilenceFrames;
 
+  if (useStretch) {
+    // Input demand is bounded by the snapshot and one slab per stage slice.
+    const auto cap = static_cast<std::uint64_t>(NativePcmRing::kFramesPerSlab) *
+                     ((input.frameCount + 1023U) / 1024U);
+    const auto head = std::min(ringLead, cap);
+    const auto pcm = std::min<std::uint64_t>(readable.frames, cap - head);
+    const auto tail = declared_end_frame_ > cursor_frame_ + head + pcm &&
+                              cursor_frame_ + head + pcm >= declared_pcm_end_frame_
+                          ? std::min(cap - head - pcm,
+                                     declared_end_frame_ - cursor_frame_ - head - pcm)
+                          : 0;
+    pull_budget_frames_ = static_cast<std::uint32_t>(head + pcm + tail);
+    pull_silence_prefix_ = static_cast<std::uint32_t>(head);
+    pull_silence_suffix_ = static_cast<std::uint32_t>(tail);
+    pull_starved_ = false;
+    pull_taken_frames_ = 0;
+    pull_ring_taken_ = 0;
+    pull_ring_failed_ = false;
+  }
+
   if (outputFrames == input.frameCount && prefixFrames == 0 && !rate.unity()) {
     // A sub-frame media budget is not starvation. The stage emits output
-    // from its state without pulling input; the clock holds the same integer
+    // from its state; the clock holds the same integer
     // cursor until a later callback carries enough phase to consume a frame.
     if (!stretch_.render(stretch_.context, input.frameCount, 0,
                          interleavedStereoOutput.data())) {
       silenceAll();
       return refuse(result, NativeAudioRenderFailure::StretchStageFailed);
+    }
+    result.pcmFrames = pull_ring_taken_;
+    result.advancedSilentFrames = pull_taken_frames_ - pull_ring_taken_;
+    result.declaredSilenceFrames = result.advancedSilentFrames;
+    result.bufferedPcmFramesAfter -= result.pcmFrames;
+    cursor_frame_ += pull_taken_frames_;
+    if (pull_ring_failed_) {
+      silenceAll();
+      return refuse(result, NativeAudioRenderFailure::RingContractViolation);
+    }
+    if (pull_starved_ && !terminalCurrent) {
+      saturatingAdd(underrun_callbacks_, 1);
+      next_discontinuous_ = true;
     }
     rate_carry_ = static_cast<std::uint32_t>(
         (rate_carry_ + outputFrames * rateNumerator) % rateDenominator);
@@ -1106,7 +1167,8 @@ NativeAudioRenderResult NativeAudioRenderCore::render(
         result.advancedSilentFrames =
             static_cast<std::uint32_t>(full_media_frames);
         segment_serial_ = segment.serial;
-        cursor_frame_ = silenceEndFrame;
+        cursor_frame_ += full_media_frames;
+        output_cursor_frame_ = silenceEndFrame;
         rate_carry_ = static_cast<std::uint32_t>(
             (rate_carry_ + full_output_frames * rateNumerator) %
             rateDenominator);
@@ -1221,7 +1283,10 @@ NativeAudioRenderResult NativeAudioRenderCore::render(
 
   const std::size_t outputSamples =
       static_cast<std::size_t>(outputFrames) * NativePcmRing::kChannels;
-  if (rate.unity()) {
+  std::uint32_t consumedPcm = static_cast<std::uint32_t>(pcmShareFrames);
+  std::uint32_t consumedSilence = static_cast<std::uint32_t>(declaredSilenceFrames);
+  bool pullUnderrun = false;
+  if (!useStretch) {
     if (silencePrefixFrames != 0) {
       zero(interleavedStereoOutput.first(
           static_cast<std::size_t>(silencePrefixFrames) *
@@ -1254,16 +1319,6 @@ NativeAudioRenderResult NativeAudioRenderCore::render(
       return refuse(result, NativeAudioRenderFailure::RingContractViolation);
     }
   } else {
-    // The stage pulls its own input through stretchPull(), which is budgeted
-    // at exactly the media frames this reservation covers. Whatever the stage
-    // asks for, the ring can therefore drain by at most that much, so the
-    // frame cursor stays exactly where the committed interval says it is.
-    pull_budget_frames_ = static_cast<std::uint32_t>(prefixFrames);
-    pull_silence_prefix_ = static_cast<std::uint32_t>(silencePrefixFrames);
-    pull_silence_suffix_ = static_cast<std::uint32_t>(silenceSuffixFrames);
-    pull_taken_frames_ = 0;
-    pull_ring_taken_ = 0;
-    pull_ring_failed_ = false;
     const bool rendered = stretch_.render(
         stretch_.context, static_cast<std::uint32_t>(outputFrames),
         static_cast<std::uint32_t>(prefixFrames),
@@ -1286,20 +1341,12 @@ NativeAudioRenderResult NativeAudioRenderCore::render(
                         ? NativeAudioRenderFailure::RingContractViolation
                         : NativeAudioRenderFailure::StretchStageFailed);
     }
-    if (taken < prefixFrames) {
-      // A stage that under-pulled produced audio for less media than the
-      // interval about to commit describes. Retiring the difference is the
-      // only way to keep the cursor and the clock agreeing; the alternative
-      // is a permanent offset between them. Measured stages never take this
-      // branch, so it is counted rather than tolerated silently.
-      const std::size_t shortfall =
-          static_cast<std::size_t>(prefixFrames) - taken;
-      // Only the REAL PCM share of the reservation exists in the ring;
-      // declared silence was never queued, so it can never be discarded.
-      const std::size_t ringShortfall = std::min<std::size_t>(
-          shortfall, static_cast<std::size_t>(pcmShareFrames) - ringTaken);
-      static_cast<void>(ring_.discard(generation, ringShortfall));
-      saturatingAdd(stretch_shortfall_frames_, shortfall);
+    consumedPcm = ringTaken;
+    consumedSilence = taken - ringTaken;
+    pullUnderrun = pull_starved_ && !terminalCurrent &&
+                   !(declared_end_frame_ != 0 && ringEnd >= declared_pcm_end_frame_);
+    if (pullUnderrun) {
+      saturatingAdd(underrun_callbacks_, 1);
     }
     saturatingAdd(stretched_callbacks_, 1);
   }
@@ -1319,7 +1366,7 @@ NativeAudioRenderResult NativeAudioRenderCore::render(
   }
 
   segment_serial_ = segment.serial;
-  cursor_frame_ = endFrame;
+  output_cursor_frame_ = endFrame;
   rate_carry_ = static_cast<std::uint32_t>(
       (rate_carry_ + outputFrames * rateNumerator) % rateDenominator);
   prior_end_host_ticks_ = segmentEndHostTicks;
@@ -1330,19 +1377,10 @@ NativeAudioRenderResult NativeAudioRenderCore::render(
   first_segment_committed_.store(true, std::memory_order_release);
   result.committed = true;
   result.continuous = continuous;
-  // pcmFrames is what the platform adapter advances its cursor by, and that
-  // cursor is the MEDIA cursor -- so it is the media frames retired, not the
-  // device frames emitted. The carried remainder relates the two exactly.
-  //
-  // Declared silence is media the clock has passed exactly like rendered
-  // audio, but it never existed in the ring: it is reported through
-  // advancedSilentFrames, which the platform adapter already adds to
-  // pcmFrames when it advances its stream cursor. The two therefore sum to
-  // prefixFrames and the cursor stays exact, while bufferedPcmFramesAfter is
-  // debited only by the frames that really left the ring.
-  result.pcmFrames = static_cast<std::uint32_t>(pcmShareFrames);
-  result.advancedSilentFrames =
-      static_cast<std::uint32_t>(declaredSilenceFrames);
+  // The adapter retires input; the clock has advanced the output budget.
+  result.pcmFrames = consumedPcm;
+  result.advancedSilentFrames = consumedSilence;
+  cursor_frame_ += consumedPcm + consumedSilence;
   result.declaredSilenceFrames = result.advancedSilentFrames;
   result.bufferedPcmFramesAfter -= result.pcmFrames;
   if (declaredSilenceFrames != 0) {
@@ -1363,7 +1401,7 @@ NativeAudioRenderResult NativeAudioRenderCore::render(
     next_discontinuous_ = true;
     prior_sample_time_valid_ = false;
   } else {
-    next_discontinuous_ = false;
+    next_discontinuous_ = pullUnderrun;
   }
   // Rendered frames are REAL audio: declared silence is counted apart, so
   // "audio rendered frames" stays the honest count of samples that came from

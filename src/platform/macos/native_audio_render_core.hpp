@@ -25,15 +25,12 @@ using NativePlaybackRate = media::native_playback::PlaybackRateRatio;
 // CONTRACT, all of it enforced by the core:
 //  * render() is called only from the render callback, only after setRate()
 //    established the exact rational the core is accounting at. Output counts
-//    are arbitrary. mediaFrames is the carried integer budget reserved in
-//    the clock; the stage must pull exactly that many frames.
-//  * render() must produce exactly outputFrames interleaved stereo frames and
-//    obtain its input solely by calling the pull function registered through
-//    configure(). It must not allocate, block, or log.
-//  * The core's pull function is hard-budgeted: it serves at most the media
-//    frames the core reserved clock time for, and zero-fills anything beyond.
-//    A stage that over-pulls therefore corrupts only its own output, never
-//    the ring cursor or the published clock.
+//    are arbitrary. mediaFrames is the carried integer clock budget.
+//  * render() produces exactly outputFrames interleaved stereo frames and
+//    obtains input solely through the registered pull function. It must not
+//    allocate, block, or log. Input chunking may differ from the clock budget.
+//  * The pull function serves readable ring input up to one slab per slice.
+//    Declared silence and an exhausted ring are zero-filled.
 //  * latencyOutputFrames() is the stage's group delay at the currently set
 //    rate, in OUTPUT frames. The core shifts the segment's host endpoints
 //    forward by exactly that much so the clock describes when audio is
@@ -66,7 +63,7 @@ struct NativeAudioStretchStage {
 };
 
 // Exact callback metadata supplied by the platform adapter. streamFrameStart
-// is the generation-local media cursor. Host endpoints use the exact rational
+// is the generation-local ring consumption cursor. Host endpoints use the exact rational
 // endpoint(N) = firstHostTicks +
 // floor((hostTickRemainderAtStart + hostTickNumeratorPerFrame * N) /
 //       hostTickDenominator).
@@ -106,13 +103,12 @@ enum class NativeAudioRenderFailure : std::uint8_t {
 };
 
 struct NativeAudioRenderResult {
+  // Actual PCM retired from the ring, independent of the output budget.
   std::uint32_t pcmFrames{0};
   std::uint32_t silentFrames{0};
-  // Frames of generation-local media time published as elapsed across a real
-  // device interval the producer could not fill. The platform adapter must
-  // advance its stream frame cursor by pcmFrames + advancedSilentFrames so the
-  // next callback still describes the exact media position the clock has
-  // already published.
+  // Input cursor advance for declared silence or a clock-advanced underrun.
+  // The adapter advances by pcmFrames + advancedSilentFrames. The core owns
+  // the independent output cursor used by clock segments.
   std::uint32_t advancedSilentFrames{0};
   // The subset of advancedSilentFrames the CONTAINER declared: frames the
   // source states carry no audio media at all. Distinct from the rest of
@@ -179,9 +175,8 @@ struct NativeAudioRenderStats {
   std::uint64_t metadataCorrections{0};
   std::uint64_t pauseBoundaries{0};
   std::uint64_t endOfStreamFacts{0};
-  // Callbacks that ran through the pitch-preserving stretch stage, and the
-  // media frames the stage pulled short of (or over) the exact reservation.
-  // A healthy non-unit rate keeps stretchShortfallFrames at zero.
+  // Callbacks that ran through the stretch stage. stretchShortfallFrames is
+  // retained for telemetry compatibility; input chunking is not a shortfall.
   std::uint64_t stretchedCallbacks{0};
   std::uint64_t stretchShortfallFrames{0};
   std::uint64_t rateChanges{0};
@@ -240,7 +235,7 @@ public:
   // Resets generation-local callback state and captures the authoritative
   // paused clock exposed until the first segment commits. mediaOrigin is the
   // exact media position of generation-local frame zero; streamFrameCursor is
-  // an independent ring/output cursor. Every clock interval is derived from
+  // the initial ring and output cursor. Every clock interval is derived from
   // mediaOrigin + frame/sampleRate with checked integer arithmetic. The ring
   // and clock must already carry this exact generation. pausedClockPosition
   // is the exact generation commit position exposed before the first PCM
@@ -368,8 +363,7 @@ private:
   [[nodiscard]] static bool hostTicksForOutputFrames(
       NativeAudioRenderInput input, std::uint64_t outputFrames,
       std::uint64_t *ticks) noexcept;
-  // Serves one stretch-stage pull out of the ring under the hard media-frame
-  // budget the callback reserved clock time for.
+  // Serves one stretch-stage pull within the readable input bound.
   static std::uint32_t stretchPull(void *context, float *interleaved,
                                    std::uint32_t frames) noexcept;
   // The continuity rule, stated once for every segment the callback publishes.
@@ -439,7 +433,10 @@ private:
 
   alignas(128) std::atomic_flag callback_gate_ = ATOMIC_FLAG_INIT;
   std::uint64_t activation_cursor_frame_{0};
+  // Input retired by the adapter, including declared silence.
   std::uint64_t cursor_frame_{0};
+  // Exact carried media position of emitted output.
+  std::uint64_t output_cursor_frame_{0};
   std::uint64_t segment_serial_{0};
   // Frames already accounted for as elapsed media time but still queued in the
   // ring. They are retired without playback at the next opportunity: playing
@@ -470,11 +467,11 @@ private:
   // is the stage's group delay in output frames at that rate.
   NativeAudioStretchStage stretch_{};
   NativePlaybackRate active_rate_{};
-  // Fractional media frames in admission-grid units, retained across rates.
+  // Fractional media frames in admission-grid units, reset on rate changes.
   std::uint32_t rate_carry_{0};
   bool active_preserve_pitch_{true};
   std::uint32_t stretch_latency_output_frames_{0};
-  // Hard pull budget for the current callback, and what the stage took.
+  // Readable input bound for the current callback, and what the stage took.
   std::uint32_t pull_budget_frames_{0};
   std::uint32_t pull_taken_frames_{0};
   // Declared-silence media frames the stage must be served, in media order,
@@ -486,6 +483,7 @@ private:
   std::uint32_t pull_silence_suffix_{0};
   std::uint32_t pull_ring_taken_{0};
   bool pull_ring_failed_{false};
+  bool pull_starved_{false};
   std::atomic<bool> first_segment_committed_{false};
   NativeMediaClockSnapshot cached_paused_clock_{};
 
