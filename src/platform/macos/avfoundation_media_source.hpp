@@ -291,6 +291,11 @@ inspectedAudioChannelLayoutSizeForTesting() noexcept;
 [[nodiscard]] std::size_t restateCompressedAudioPacketDurationsForTesting(
     CMSampleBufferRef sample, CMSampleTimingInfo* timing,
     std::size_t entries) noexcept;
+// Projects fixed compressed audio packets at most one sample-rate tick away
+// from the ordinal grid. Exact-grid entries and larger residuals are untouched.
+[[nodiscard]] std::size_t projectCompressedAudioPacketTimingForTesting(
+    CMSampleBufferRef sample, CMSampleTimingInfo* timing,
+    std::size_t entries) noexcept;
 // Carries one MEDIA-timeline stamp onto the MOVIE timeline by the container's
 // own exact edit shift. Returns nullopt when a numeric stamp cannot carry the
 // shift exactly; a non-numeric stamp (an absent decode stamp) and a stamp in a

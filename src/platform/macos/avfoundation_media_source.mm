@@ -265,6 +265,66 @@ struct AudioPrimingPlan {
   return restated;
 }
 
+// A muxer that floors microsecond timestamps can state AAC access units one
+// media tick away from their exact ordinal grid, without cumulative drift.
+// When one tick is one audio frame, admit at most that residual and publish
+// the natural packet extent. Exact-grid entries are arithmetically untouched;
+// larger residuals still reach the converter's strict continuity proof.
+// ALAC and FLAC can decode a genuinely short final packet and are excluded.
+[[nodiscard]] std::size_t projectCompressedAudioPacketTiming(
+    CMSampleBufferRef sample, CMSampleTimingInfo* timing,
+    std::size_t entries) noexcept {
+  if (sample == nullptr || timing == nullptr) {
+    return 0;
+  }
+  const auto format = CMSampleBufferGetFormatDescription(sample);
+  if (format == nullptr ||
+      CMFormatDescriptionGetMediaType(format) != kCMMediaType_Audio) {
+    return 0;
+  }
+  const auto* asbd = CMAudioFormatDescriptionGetStreamBasicDescription(format);
+  if (asbd == nullptr || asbd->mFramesPerPacket == 0 ||
+      asbd->mFormatID == kAudioFormatLinearPCM ||
+      asbd->mFormatID == kAudioFormatAppleLossless ||
+      asbd->mFormatID == kAudioFormatFLAC) {
+    return 0;
+  }
+  std::size_t restated = 0;
+  for (std::size_t index = 0; index < entries; ++index) {
+    auto& entry = timing[index];
+    const auto natural = naturalAudioPacketDuration(
+        sample, static_cast<CMItemCount>(entries),
+        static_cast<CMItemCount>(index));
+    const auto pts = entry.presentationTimeStamp;
+    if (!CMTIME_IS_NUMERIC(natural) ||
+        natural.value != asbd->mFramesPerPacket ||
+        !CMTIME_IS_NUMERIC(pts) || pts.timescale != natural.timescale) {
+      continue;
+    }
+    // Signed wide arithmetic keeps rounding and the product exact even at
+    // the timestamp limits. Halfway ordinals round to the even integer.
+    const __int128 frames = natural.value;
+    __int128 ordinal = pts.value / frames;
+    const __int128 remainder = pts.value % frames;
+    const __int128 magnitude = remainder < 0 ? -remainder : remainder;
+    if (2 * magnitude > frames ||
+        (2 * magnitude == frames && ordinal % 2 != 0)) {
+      ordinal += remainder < 0 ? -1 : 1;
+    }
+    const __int128 exact = ordinal * frames;
+    const __int128 residual = static_cast<__int128>(pts.value) - exact;
+    if (residual == 0 || residual < -1 || residual > 1 ||
+        exact < std::numeric_limits<std::int64_t>::min() ||
+        exact > std::numeric_limits<std::int64_t>::max()) {
+      continue;
+    }
+    entry.presentationTimeStamp.value = static_cast<std::int64_t>(exact);
+    entry.duration = natural;
+    ++restated;
+  }
+  return restated;
+}
+
 // The most media time one staged audio sample may carry.
 //
 // Chosen against the PCM ring, which is what has to absorb the event:
@@ -3916,6 +3976,9 @@ class ProductionGeneration final : public AVFoundationGeneration {
       return;
     }
     const auto ceiling = exactCMTime(*audio_playout_proof_ceiling_);
+    // Measure the projected movie stamp, including a possible one-frame
+    // advance. The reader's two-unit slack covers that advance without
+    // relaxing the priming ceiling or changing the first audible frame.
     const CMTime start = CMSampleBufferGetPresentationTimeStamp(sample);
     if (!ceiling || !CMTIME_IS_NUMERIC(start) ||
         CMTimeCompare(start, *ceiling) > 0) {
@@ -3947,6 +4010,8 @@ class ProductionGeneration final : public AVFoundationGeneration {
       return nullptr;
     }
     static_cast<void>(restateCompressedAudioPacketDurations(
+        sample, audio_timing_.data(), static_cast<std::size_t>(entries)));
+    static_cast<void>(projectCompressedAudioPacketTiming(
         sample, audio_timing_.data(), static_cast<std::size_t>(entries)));
     for (CMItemCount index = 0; index < entries; ++index) {
       CMSampleTimingInfo& timing =
@@ -5460,6 +5525,12 @@ std::optional<CMTime> syncSearchTargetWithinLeadingEmptyEditForTesting(
 CMTime clampedSyncStartWithinTimelineContractForTesting(
     CMTime decodeStart, CMTime target) noexcept {
   return clampedSyncStartWithinTimelineContract(decodeStart, target);
+}
+
+std::size_t projectCompressedAudioPacketTimingForTesting(
+    CMSampleBufferRef sample, CMSampleTimingInfo* timing,
+    std::size_t entries) noexcept {
+  return projectCompressedAudioPacketTiming(sample, timing, entries);
 }
 
 std::size_t restateCompressedAudioPacketDurationsForTesting(

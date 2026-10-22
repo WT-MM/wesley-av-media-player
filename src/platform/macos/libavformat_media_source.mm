@@ -232,7 +232,8 @@ bool audioPacket(LibavformatCursor::Packet& packet, const MediaTrackDescriptor& 
   if(!frames)frames=*parsed;
   if(*parsed!=frames) {error="LibavformatAudioPacketGrid";return false;}
   const auto expected=origin.value+static_cast<std::int64_t>(ordinal*frames);
-  // Adjacent integer container ticks cover quantization without altering the codec sample ordinal.
+  // At most one container tick of residual covers quantization, including the
+  // boundary, without altering the codec sample ordinal.
   const __int128 observed=__int128(packet.pts.value)*48000;
   const __int128 exact=__int128(demuxOrigin.value+static_cast<std::int64_t>(ordinal*frames))*packet.pts.timescale;
   const auto residual=observed-exact;
@@ -240,7 +241,7 @@ bool audioPacket(LibavformatCursor::Packet& packet, const MediaTrackDescriptor& 
   if(!ordinal && track.codec==MediaCodec::Aac && residual!=0) {
     error="LibavformatAudioTimingUnproven: aac";return false;
   }
-  if(!quantum.valid() || quantum.value<=0 || residual*quantum.timescale<=-bound || residual*quantum.timescale>=bound ||
+  if(!quantum.valid() || quantum.value<=0 || residual*quantum.timescale<-bound || residual*quantum.timescale>bound ||
      (packet.skipStart && (ordinal || demuxOrigin.value>=0 || packet.skipStart!=std::uint64_t(-demuxOrigin.value))) ||
      packet.skipEnd>=frames) {error="LibavformatAudioPacketGrid";return false;}
   tail=packet.skipEnd!=0;
