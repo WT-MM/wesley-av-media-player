@@ -13,15 +13,16 @@ namespace wam::macos {
 
 // Pitch-preserving time-stretch stage backed by Apple's AUNewTimePitch.
 //
-// WHY THIS UNIT. Its input demand is exactly outputFrames * rate, deterministic
-// from the first block, with no read-ahead and no internal input backlog -- so
-// the media frames it takes out of the ring and the media time the clock must
-// advance are the SAME quantity, and no second cursor or drift term is needed.
-// Measured on the default output device at 48 kHz, 1024-frame blocks
-// (scratch/probe): 0.25x/0.5x/1.5x/2x/2.5x/4x all pull exactly
-// round(outputFrames * rate) with zero cumulative error over 409 600 output
-// frames; per-block cost is 58-70 us against a 21 333 us budget; a rate change
-// takes effect on the very next render with no transition block and no click.
+// AUNewTimePitch rounds input demand independently per block. Measured over
+// 200 alternating 940/941-frame blocks: 3/2 pulls 282200 rather than 282150;
+// 87/64 pulls 255700 rather than 255698. It does not carry fractional demand.
+// render() therefore sets the unit's block rate to the carried integer input
+// budget divided by the output count. The unit's nearest-integer pull then
+// equals that budget. The ring cursor and clock advance by the same integer,
+// and cumulative error stays below one media frame at a fixed rational rate.
+// Large callbacks use slices of at most 1024 output frames. The raw unit
+// under-pulls a first 4096-frame render at 4x by 2048 input frames; the slice
+// bound avoids that startup shortfall and bounds each pull to one ring slab.
 // Parameter range is 1/32..32, covering the advertised 0.25..4 window.
 //
 // PITCH. The unit's pitch parameter is independent of its rate parameter, so
@@ -29,7 +30,7 @@ namespace wam::macos {
 // code path and without touching frame accounting: pitch preserved is an
 // offset of 0 cents, and varispeed is an offset of 1200 * log2(rate) cents,
 // which scales the output pitch by exactly the rate. Input demand stays
-// round(outputFrames * rate) either way -- measured, see the stage test.
+// the carried integer budget either way -- measured, see the stage test.
 //
 // THE ONE COST is group delay: the unit declares 2048 + 2048/rate output frames
 // of latency at 48 kHz. That is constant per rate and is what
@@ -45,8 +46,8 @@ namespace wam::macos {
 class NativeAudioStretchUnit final {
  public:
   // Output frames of one render. The render core never asks for more than one
-  // ring slab of device frames, and the unit's MaximumFramesPerSlice is pinned
-  // to exactly this so an input pull can never exceed one ring consume.
+  // ring slab of client frames. Internally, 1024-frame slices bound a 4x
+  // input pull to one ring consume.
   static constexpr std::uint32_t kMaximumOutputFrames =
       static_cast<std::uint32_t>(NativePcmRing::kFramesPerSlab);
 
@@ -93,6 +94,7 @@ class NativeAudioStretchUnit final {
                            bool preservePitch) noexcept;
   static std::uint32_t stageLatency(void *context) noexcept;
   static bool stageRender(void *context, std::uint32_t outputFrames,
+                          std::uint32_t mediaFrames,
                           float *interleavedOutput) noexcept;
   static void stageReset(void *context) noexcept;
   static OSStatus inputCallback(void *context,

@@ -1574,7 +1574,9 @@ int main(int argc, char *argv[]) {
       for (const ScriptedWindowStep &step : window_script) {
         windowCumulative += step.delayMilliseconds;
         const QString verb = step.verb;
-        QTimer::singleShot(windowCumulative, &windows,
+        // Long coarse timers can merge short successive script steps into
+        // bursts. Preserve the requested cadence of live-control probes.
+        QTimer::singleShot(windowCumulative, Qt::PreciseTimer, &windows,
                            [&windows, verb] { runWindowStep(windows, verb); });
       }
 

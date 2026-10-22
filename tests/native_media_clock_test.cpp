@@ -81,6 +81,87 @@ struct FakeHostClock {
           continuity};
 }
 
+void testRateChangesKeepExactFutureBoundaries() {
+  FakeHostClock host;
+  NativeMediaClock clock(host.seam(1000));
+  expect(clock.anchorAtHostTicks(1, 0, 0.0, 1.0, true),
+         "rate change clock anchors");
+  expect(nativeMediaSegmentAccepted(
+             clock.observeSegment(1, segment(1, 0, 20, 0.0, 0.02))),
+         "old rate starts");
+  host.ticks.store(10, std::memory_order_relaxed);
+  expect(nativeMediaSegmentAccepted(clock.observeSegment(
+             1, segment(2, 20, 40, 0.02, 0.04,
+                        NativeMediaSegmentContinuity::Continuous))),
+         "old rate continuation occupies pending slot");
+  const auto before = clock.sample();
+  expect(nativeMediaSegmentAccepted(clock.observeSegment(
+             1, segment(3, 40, 60, 0.04, 0.07,
+                        NativeMediaSegmentContinuity::Continuous))),
+         "the new rate keeps its own pending interval");
+  const auto after = clock.sample();
+  expect(
+      after.mediaSeconds == before.mediaSeconds &&
+          after.pendingFirstHostTicks == 20 && after.pendingMediaStart == 0.02,
+      "queuing a rate preserves the active clock and first pending boundary");
+  host.ticks.store(50, std::memory_order_relaxed);
+  expectNear(clock.sample().mediaSeconds, 0.055, 1e-12,
+             "the new rate begins at its own boundary");
+}
+
+void testQueuedRateAcceptsTimestampQuantization() {
+  FakeHostClock host;
+  NativeMediaClock clock(host.seam(1000000));
+  expect(clock.anchorAtHostTicks(1, 0, 0.0, 1.0, true) &&
+             nativeMediaSegmentAccepted(
+                 clock.observeSegment(1, segment(1, 0, 20000, 0, 0.02))),
+         "quantized rate queue starts");
+  host.ticks.store(10000, std::memory_order_relaxed);
+  expect(nativeMediaSegmentAccepted(clock.observeSegment(
+             1, segment(2, 20000, 40000, 0.02, 0.04,
+                        NativeMediaSegmentContinuity::Continuous))) &&
+             nativeMediaSegmentAccepted(clock.observeSegment(
+                 1, segment(3, 40000, 60000, 0.04, 0.07,
+                            NativeMediaSegmentContinuity::Continuous))),
+         "changed rate queues behind a future interval");
+  expect(clock.observeSegment(1, segment(4, 60001, 80001, 0.07, 0.1)) ==
+             NativeMediaSegmentAdmission::Coalesced,
+         "timestamp quantization extends the last queued rate within the "
+         "unchanged bound");
+}
+
+void testFutureRateQueueIsBounded() {
+  FakeHostClock host;
+  NativeMediaClock clock(host.seam(1000));
+  expect(clock.anchorAtHostTicks(1, 0, 0.0, 1.0, true) &&
+             nativeMediaSegmentAccepted(
+                 clock.observeSegment(1, segment(1, 0, 10, 0, 0.01))),
+         "bounded rate queue starts");
+  double cursor = 0.01;
+  for (unsigned index = 0; index < 9; ++index) {
+    const double end = cursor + (index % 2 == 0 ? 0.1 : 0.2);
+    expect(
+        nativeMediaSegmentAccepted(clock.observeSegment(
+            1, segment(index + 2, 1000 + index * 100, 1100 + index * 100,
+                       cursor, end, NativeMediaSegmentContinuity::Continuous))),
+        "future rate boundary queues exactly");
+    cursor = end;
+  }
+  const auto full = clock.reserveSegment(
+      1, segment(11, 1900, 2000, cursor, cursor + 0.2,
+                 NativeMediaSegmentContinuity::Continuous));
+  expect(!full.accepted() &&
+             full.admission == NativeMediaSegmentAdmission::Backpressure,
+         "full rate storage applies bounded backpressure");
+  host.ticks.store(1050, std::memory_order_relaxed);
+  expectNear(clock.sample().mediaSeconds, 0.06, 1e-12,
+             "queued first rate is selected at audible time");
+  expect(nativeMediaSegmentAccepted(clock.observeSegment(
+             1, segment(11, 1900, 2000, cursor, cursor + 0.2,
+                        NativeMediaSegmentContinuity::Continuous))),
+         "promotion frees capacity without discarding an exact interval");
+}
+
 void testConfigurationPausedAndInvalidation() {
   FakeHostClock host;
   host.ticks.store(100, std::memory_order_relaxed);
@@ -267,9 +348,10 @@ void testSegmentsFutureAdjacencyGapAndSerials() {
   const auto nonCollinear = clock.reserveSegment(
       3, segment(6, 560, 600, 25.0, 26.0,
                  NativeMediaSegmentContinuity::Continuous));
-  expect(!nonCollinear.accepted() &&
-             nonCollinear.admission == NativeMediaSegmentAdmission::Invalid,
-         "future spans with different slopes cannot coalesce");
+  expect(nonCollinear.accepted() &&
+             nonCollinear.admission == NativeMediaSegmentAdmission::Pending &&
+             clock.cancelSegment(nonCollinear),
+         "future spans with different slopes reserve separate exact intervals");
   expect(clock.sample().mediaSeconds == 24.0,
          "rejected non-collinear coalescing preserves the exact boundary");
   host.ticks.store(500, std::memory_order_relaxed);
@@ -639,6 +721,9 @@ int main() {
   static_assert(noexcept(
       std::declval<const NativeMediaClock &>().ticksPerSecond()));
   testRequestedRateSurvivesSegmentSlope();
+  testRateChangesKeepExactFutureBoundaries();
+  testFutureRateQueueIsBounded();
+  testQueuedRateAcceptsTimestampQuantization();
   testConfigurationPausedAndInvalidation();
   testRunningRatesAndExactFutureResume();
   testSegmentsFutureAdjacencyGapAndSerials();
