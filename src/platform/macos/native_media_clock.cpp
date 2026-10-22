@@ -264,6 +264,11 @@ double NativeMediaClock::mediaAt(const State &state,
       hostTicks >= state.pendingSegment.firstHostTicks) {
     selected = &state.pendingSegment;
   }
+  for (std::size_t index = 0; index < state.rateSegmentCount; ++index) {
+    if (hostTicks >= state.rateSegments[index].firstHostTicks) {
+      selected = &state.rateSegments[index];
+    }
+  }
   if (selected == nullptr) {
     return evaluateLinear(
         state.anchorMediaSeconds, state.anchorHostTicks, hostTicks,
@@ -324,6 +329,13 @@ NativeMediaClockSnapshot NativeMediaClock::sample() const noexcept {
       snapshot.pendingMediaEnd = state.pendingSegment.mediaEnd;
       if (hostTicks >= state.pendingSegment.firstHostTicks) {
         selected = &state.pendingSegment;
+      }
+    }
+
+    for (std::size_t index = 0; index < state.rateSegmentCount; ++index) {
+      const auto &queued = state.rateSegments[index];
+      if (hostTicks >= queued.firstHostTicks) {
+        selected = &queued;
       }
     }
 
@@ -539,10 +551,17 @@ bool NativeMediaClock::prepareSegmentState(
   static_cast<void>(incoming_rate);
 
   State working = current;
-  if (working.pendingSegment.valid &&
-      now >= working.pendingSegment.firstHostTicks) {
+  while (working.pendingSegment.valid &&
+         now >= working.pendingSegment.firstHostTicks) {
     working.currentSegment = working.pendingSegment;
     working.pendingSegment = {};
+    if (working.rateSegmentCount != 0) {
+      working.pendingSegment = working.rateSegments[0];
+      --working.rateSegmentCount;
+      for (std::size_t index = 0; index < working.rateSegmentCount; ++index) {
+        working.rateSegments[index] = working.rateSegments[index + 1];
+      }
+    }
   }
 
   SegmentState candidate;
@@ -628,10 +647,11 @@ bool NativeMediaClock::prepareSegmentState(
       return false;
     }
     if (!working.currentSegment.valid ||
-        candidate.firstHostTicks <
-            working.currentSegment.endHostTicks ||
+        candidate.firstHostTicks < working.currentSegment.endHostTicks ||
         candidate.mediaStart != working.currentSegment.mediaEnd ||
-        candidate.mediaEnd != working.pendingSegment.mediaEnd) {
+        candidate.mediaEnd != working.pendingSegment.mediaEnd ||
+        (working.rateSegmentCount != 0 &&
+         candidate.endHostTicks > working.rateSegments[0].firstHostTicks)) {
       return false;
     }
     working.pendingSegment = candidate;
@@ -639,41 +659,58 @@ bool NativeMediaClock::prepareSegmentState(
     *consumePcm = false;
   } else if (segment.continuity ==
              NativeMediaSegmentContinuity::Continuous) {
-    SegmentState *target = working.pendingSegment.valid
-                               ? &working.pendingSegment
-                               : &working.currentSegment;
-    if (!target->valid || segment.mediaStart != target->mediaEnd ||
-        segment.firstHostTicks != target->endHostTicks) {
+    SegmentState *target =
+        working.rateSegmentCount != 0
+            ? &working.rateSegments[working.rateSegmentCount - 1]
+        : working.pendingSegment.valid ? &working.pendingSegment
+                                       : &working.currentSegment;
+    if (!target->valid || segment.mediaStart != target->mediaEnd) {
       return false;
     }
-    if (now < target->firstHostTicks) {
-      if (!extensionKeepsBoundary(*target, candidate)) {
-        return false;
-      }
+    if (now < target->firstHostTicks &&
+        extensionKeepsBoundary(*target, candidate)) {
       target->serial = segment.serial;
       target->endHostTicks = segment.endHostTicks;
       target->mediaEnd = segment.mediaEnd;
       *admission = NativeMediaSegmentAdmission::Coalesced;
-    } else {
+    } else if (!working.pendingSegment.valid) {
       working.pendingSegment = candidate;
+      *admission = NativeMediaSegmentAdmission::Pending;
+    } else {
+      // A changed slope is an exact future boundary, not permission to
+      // re-rate the preceding interval. Keep it separately while the stretch
+      // stage's group delay leaves several callbacks ahead of audible time.
+      // Exhaustion still defers the producer without consuming PCM.
+      if (working.rateSegmentCount == working.rateSegments.size()) {
+        *admission = NativeMediaSegmentAdmission::Backpressure;
+        return false;
+      }
+      if (candidate.firstHostTicks < target->firstHostTicks) {
+        return false;
+      }
+      working.rateSegments[working.rateSegmentCount++] = candidate;
       *admission = NativeMediaSegmentAdmission::Pending;
     }
     *consumePcm = true;
   } else if (working.pendingSegment.valid) {
-    // The sole pending interval is already occupied. A quantization-sized
+    SegmentState &target =
+        working.rateSegmentCount != 0
+            ? working.rateSegments[working.rateSegmentCount - 1]
+            : working.pendingSegment;
+    // The pending interval is already occupied. A quantization-sized
     // hole between the pending end and this start is not a real output-time
     // gap: it is the tick rounding of a device period that is not an integral
     // number of host ticks, so it may extend the pending interval on exactly
     // the same buried-boundary proof used for a gapless successor. Only a
     // real gap - one that would move that boundary - still forces the
     // callback to render silence and leave its PCM ring untouched.
-    if (!extensionKeepsBoundary(working.pendingSegment, candidate)) {
+    if (!extensionKeepsBoundary(target, candidate)) {
       *admission = NativeMediaSegmentAdmission::Backpressure;
       return false;
     }
-    working.pendingSegment.serial = segment.serial;
-    working.pendingSegment.endHostTicks = segment.endHostTicks;
-    working.pendingSegment.mediaEnd = segment.mediaEnd;
+    target.serial = segment.serial;
+    target.endHostTicks = segment.endHostTicks;
+    target.mediaEnd = segment.mediaEnd;
     *admission = NativeMediaSegmentAdmission::Coalesced;
     *consumePcm = true;
   } else if (!working.currentSegment.valid) {

@@ -240,11 +240,8 @@ bool NativeAudioStretchUnit::stageSetRate(
       denominator == 0) {
     return false;
   }
-  // Exact: numerator and denominator are small integers, so the quotient is
-  // correctly rounded exactly once, and the unit's own demand is
-  // round(outputFrames * rate) evaluated on that same value. The render core
-  // only ever asks for output frame counts that are multiples of the
-  // denominator, so that rounding is never actually exercised.
+  // The admission-grid rate is binary-exact. render() compensates the
+  // unit's independent per-block rounding with an integer carried budget.
   const double rate = static_cast<double>(numerator) /
                       static_cast<double>(denominator);
   if (AudioUnitSetParameter(self->unit_, kNewTimePitchParam_Rate,
@@ -255,9 +252,8 @@ bool NativeAudioStretchUnit::stageSetRate(
   }
   // Pitch is ORTHOGONAL to rate in this unit: it shifts the spectrum of the
   // frames the rate parameter already decided to consume, so the input demand
-  // stays exactly round(outputFrames * rate) at any offset. That is what lets
-  // the render core keep one cursor and no drift term whether the toggle is
-  // on or off; the stretch-stage test measures it rather than assuming it.
+  // follows the integer render budget at either offset. The stretch-stage
+  // test measures that invariant with fractional callback sizes.
   if (AudioUnitSetParameter(
           self->unit_, kNewTimePitchParam_Pitch, kAudioUnitScope_Global, 0,
           static_cast<AudioUnitParameterValue>(
@@ -326,26 +322,49 @@ OSStatus NativeAudioStretchUnit::inputCallback(
   return noErr;
 }
 
-bool NativeAudioStretchUnit::stageRender(
-    void *context, std::uint32_t outputFrames,
-    float *interleavedOutput) noexcept {
+bool NativeAudioStretchUnit::stageRender(void *context,
+                                         std::uint32_t outputFrames,
+                                         std::uint32_t budget,
+                                         float *interleavedOutput) noexcept {
   auto *self = static_cast<NativeAudioStretchUnit *>(context);
   if (self == nullptr || self->unit_ == nullptr || !self->initialized_ ||
       interleavedOutput == nullptr || outputFrames == 0 ||
       outputFrames > kMaximumOutputFrames || self->pull_ == nullptr) {
     return false;
   }
-  StereoBufferList buffers(self->output_left_.data(),
-                           self->output_right_.data(), outputFrames);
-  // A monotonically increasing sample time is what an effect unit expects
-  // from its host; restarting it every call is a legal but unnecessary lie.
-  AudioTimeStamp timestamp{};
-  timestamp.mFlags = kAudioTimeStampSampleTimeValid;
-  timestamp.mSampleTime = static_cast<Float64>(self->render_sample_time_);
-  AudioUnitRenderActionFlags flags = 0;
-  if (AudioUnitRender(self->unit_, &flags, &timestamp, 0, outputFrames,
-                      buffers.list()) != noErr) {
-    return false;
+  // At 4096 output frames and 4x the raw unit under-pulls its first render
+  // by 2048 frames. Slices of at most 1024 have exact rounded demand from
+  // the first render, and bound each input pull to one ring slab at 4x.
+  // Divide this callback's integer budget across slices without a residual.
+  std::uint32_t previousBudget = 0;
+  for (std::uint32_t offset = 0; offset < outputFrames;) {
+    const auto frames = std::min<std::uint32_t>(1024, outputFrames - offset);
+    const auto endBudget = static_cast<std::uint32_t>(
+        static_cast<std::uint64_t>(offset + frames) * budget / outputFrames);
+    const auto sliceBudget = endBudget - previousBudget;
+    // Only the AudioUnit parameter is floating point. Its rounding error
+    // remains far below half an input frame, so the pull equals sliceBudget.
+    const float blockRate = sliceBudget == 0 ? 1.0F / 32.0F
+                                             : static_cast<float>(sliceBudget) /
+                                                   static_cast<float>(frames);
+    if (AudioUnitSetParameter(self->unit_, kNewTimePitchParam_Rate,
+                              kAudioUnitScope_Global, 0, blockRate,
+                              0) != noErr) {
+      return false;
+    }
+    StereoBufferList buffers(self->output_left_.data() + offset,
+                             self->output_right_.data() + offset, frames);
+    AudioTimeStamp timestamp{};
+    timestamp.mFlags = kAudioTimeStampSampleTimeValid;
+    timestamp.mSampleTime =
+        static_cast<Float64>(self->render_sample_time_ + offset);
+    AudioUnitRenderActionFlags flags = 0;
+    if (AudioUnitRender(self->unit_, &flags, &timestamp, 0, frames,
+                        buffers.list()) != noErr) {
+      return false;
+    }
+    previousBudget = endBudget;
+    offset += frames;
   }
   const float *left = self->output_left_.data();
   const float *right = self->output_right_.data();

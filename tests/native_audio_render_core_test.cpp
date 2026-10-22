@@ -1532,6 +1532,7 @@ struct FakeStretchStage {
   bool preservePitch{true};
   std::uint64_t pitchChanges{0};
   bool rejectSetRate{false};
+  bool modelLatency{false};
   bool failRender{false};
   // Deliberate contract violations, for the defensive paths.
   std::int64_t pullBias{0};
@@ -1558,6 +1559,8 @@ struct FakeStretchStage {
       }
       self.numerator = numerator;
       self.denominator = denominator;
+      if (self.modelLatency)
+        self.latencyOutputFrames = 2048 + 2048 * denominator / numerator;
       if (self.preservePitch != preservePitch) {
         self.preservePitch = preservePitch;
         ++self.pitchChanges;
@@ -1569,6 +1572,7 @@ struct FakeStretchStage {
       return static_cast<FakeStretchStage *>(context)->latencyOutputFrames;
     };
     stage.render = [](void *context, std::uint32_t outputFrames,
+                      std::uint32_t mediaFrames,
                       float *interleavedOutput) noexcept {
       auto &self = *static_cast<FakeStretchStage *>(context);
       ++self.renders;
@@ -1576,10 +1580,7 @@ struct FakeStretchStage {
         return false;
       }
       const std::int64_t demand =
-          static_cast<std::int64_t>(
-              static_cast<std::uint64_t>(outputFrames) * self.numerator /
-              self.denominator) +
-          self.pullBias;
+          static_cast<std::int64_t>(mediaFrames) + self.pullBias;
       const std::uint32_t bounded = static_cast<std::uint32_t>(
           std::clamp<std::int64_t>(
               demand, 0,
@@ -1694,6 +1695,154 @@ void testExactRationalRateAdvance() {
   }
 }
 
+void testLiveRateChangesWithPendingLatency() {
+  Fixture fixture;
+  FakeStretchStage stage;
+  stage.modelLatency = true;
+  expect(fixture.core.attachStretchStage(stage.seam()),
+         "latency fixture attaches");
+  std::array<float, 2048> output{};
+  std::uint64_t cursor = 0;
+  for (unsigned block = 0; block < 120; ++block) {
+    if (block == 10)
+      expect(fixture.core.setRate({3, 2}), "leave unity");
+    if (block == 30)
+      expect(fixture.core.setRate({87, 64}), "change stretched rate");
+    if (block == 50)
+      expect(fixture.core.setRate({1, 1}), "return to unity");
+    if (block >= 70 && block < 116 && block % 2 == 0) {
+      expect(fixture.core.setRate({64 + (block - 70) / 2 + 1, 64}),
+             "rapid rate event is accepted");
+    }
+    while (fixture.ring.readableFrames(1).frames < 4096)
+      expect(publishConstant(fixture.ring, 1, 2048, 1.0F),
+             "refill rate fixture");
+    fixture.host.ticks.store(block * 1024, std::memory_order_relaxed);
+    const auto result = renderTracked(
+        fixture.core, hostInput(cursor, 1024, block * 1024), output);
+    expect(result.committed && result.silentFrames == 0 &&
+               (block == 0 || result.continuous),
+           "pending latency rate changes never silence or break continuity");
+    cursor += result.pcmFrames;
+  }
+  expect(fixture.core.stats().rateChanges == 26,
+         "all requested rate changes apply");
+}
+
+void testFractionalSilenceAndTerminal() {
+  Fixture fixture;
+  FakeStretchStage stage;
+  fixture.core.setAccepting(false);
+  expect(fixture.core.activate(1, 0, {0, 1}, {0, 1}, kSampleRate,
+                               {3, 2816, 2822}) &&
+             fixture.core.attachStretchStage(stage.seam()) &&
+             fixture.core.setRate({3, 2}),
+         "fractional declared spans configure");
+  fixture.core.setAccepting(true);
+  expect(publishConstant(fixture.ring, 1, 2813, 1.0F) &&
+             fixture.core.publishTerminalFrame(1, 2822),
+         "fractional terminal publishes");
+  std::uint64_t cursor = 0, ticks = 0, pcm = 0, silence = 0;
+  for (unsigned frames : {940U, 941U, 941U}) {
+    std::vector<float> output(frames * 2);
+    fixture.host.ticks.store(ticks, std::memory_order_relaxed);
+    auto result = fixture.core.render(hostInput(cursor, frames, ticks), output);
+    expect(result.committed, "fractional declared interval commits");
+    pcm += result.pcmFrames;
+    silence += result.advancedSilentFrames;
+    cursor = pcm + silence;
+    ticks += frames;
+  }
+  expect(
+      pcm == 2813 && silence == 9 && cursor == 2822 &&
+          fixture.core.stats().underrunCallbacks == 0,
+      "prefix, suffix and final partial frame retain exact media accounting");
+}
+
+void testSingleFrameCallbacks() {
+  Fixture fixture;
+  FakeStretchStage stage;
+  expect(fixture.core.attachStretchStage(stage.seam()) &&
+             fixture.core.setRate({1, 4}) &&
+             publishConstant(fixture.ring, 1, 100, 1.0F),
+         "tiny core fixture configures");
+  std::array<float, 2> output{};
+  std::uint64_t cursor = 0;
+  for (unsigned block = 0; block < 200; ++block) {
+    if (block == 100)
+      expect(fixture.core.setRate({1, 1}), "tiny rate returns to unity");
+    if (block == 108)
+      expect(fixture.core.setRate({1, 4}),
+             "tiny zero-budget rate change latches");
+    fixture.host.ticks.store(block, std::memory_order_relaxed);
+    const auto result =
+        renderTracked(fixture.core, hostInput(cursor, 1, block), output);
+    cursor += result.pcmFrames;
+    const auto expected = block < 100   ? (block + 1) / 4
+                          : block < 108 ? 25 + block - 99
+                                        : 33 + (block - 107) / 4;
+    expect(result.silentFrames == 0 && cursor == expected,
+           "sub-frame media budgets fill output without advancing the ring");
+  }
+  expect(fixture.core.stats().underrunCallbacks == 0,
+         "tiny callbacks do not underrun");
+}
+
+void testFractionalPhaseSurvivesRateChanges() {
+  Fixture fixture;
+  FakeStretchStage stage;
+  expect(fixture.core.attachStretchStage(stage.seam()), "changing fractional fixture attaches");
+  const std::array<NativePlaybackRate, 4> rates{{{3, 2}, {87, 64}, {1, 1}, {1, 4}}};
+  std::uint64_t cursor = 0, outputTotal = 0, scaledTotal = 0;
+  for (unsigned block = 0; block < 200; ++block) {
+    const auto rate = rates[block % rates.size()];
+    expect(fixture.core.setRate(rate), "fractional rate changes every callback");
+    while (fixture.ring.readableFrames(1).frames < 4096)
+      expect(publishConstant(fixture.ring, 1, 2048, 1.0F), "refill changing fractional fixture");
+    const unsigned frames = 940 + block % 2;
+    std::vector<float> output(frames * 2);
+    fixture.host.ticks.store(outputTotal, std::memory_order_relaxed);
+    const auto result = fixture.core.render(hostInput(cursor, frames, outputTotal), output);
+    cursor += result.pcmFrames;
+    outputTotal += frames;
+    scaledTotal += frames * rate.numerator * (64 / rate.denominator);
+    expect(result.committed && result.silentFrames == 0 && cursor == scaledTotal / 64 &&
+               (block == 0 || result.continuous),
+           "rate changes retain fractional phase and consume the exact cumulative budget");
+  }
+}
+
+void testFractionalCallbackSizes() {
+  for (auto rate : {NativePlaybackRate{3, 2}, NativePlaybackRate{87, 64}}) {
+    Fixture fixture;
+    FakeStretchStage stage;
+    expect(fixture.core.attachStretchStage(stage.seam()) &&
+               fixture.core.setRate(rate),
+           "fractional callback fixture configures");
+    std::uint64_t cursor = 0, outputTotal = 0;
+    for (unsigned block = 0; block < 200; ++block) {
+      while (fixture.ring.readableFrames(1).frames < 4096)
+        expect(publishConstant(fixture.ring, 1, 2048, 1.0F),
+               "refill fractional fixture");
+      const unsigned frames = 940 + block % 2;
+      std::vector<float> output(frames * 2);
+      fixture.host.ticks.store(outputTotal, std::memory_order_relaxed);
+      const auto result =
+          fixture.core.render(hostInput(cursor, frames, outputTotal), output);
+      outputTotal += frames;
+      cursor += result.pcmFrames;
+      expect(result.committed && result.silentFrames == 0 &&
+                 (block == 0 || result.continuous),
+             "fractional callback fills and stays continuous");
+      expect(cursor == outputTotal * rate.numerator / rate.denominator &&
+                 cursor == stage.pulledFrames,
+             "ring and clock follow the carried integer budget");
+    }
+    expect(fixture.core.stats().underrunCallbacks == 0,
+           "fractional callbacks never underrun");
+  }
+}
+
 // The clock must never see a rate it cannot serve, and the stage must never be
 // asked to stretch when there is nothing to stretch with.
 void testRateAdmission() {
@@ -1765,8 +1914,8 @@ void testRateChangeStateMachine() {
                stage.renders == 1 && stage.numerator == 1 &&
                stage.denominator == 2,
            "the very next callback latches the new rational and stretches");
-    expect(!afterChange.continuous,
-           "a rate change publishes a discontinuous interval, like a seek");
+    expect(afterChange.continuous && afterChange.silentFrames == 0,
+           "a rate change preserves continuity and fills the callback");
     const NativeAudioRenderResult settled =
         renderAt(kOutputFrames * 2U + kOutputFrames / 2U,
                  kOutputFrames * 3U);
@@ -1906,8 +2055,8 @@ void testStretchPullBudgetIsHard() {
   }
 }
 
-// A short ring at a non-unit rate must still round the output prefix down to a
-// whole multiple of the denominator, so the media advance stays exact.
+// The largest short prefix uses the carried floor budget, including when
+// its output count is not a multiple of the denominator.
 void testStretchShortPrefixStaysExact() {
   constexpr std::uint32_t kOutputFrames = 64;
   std::array<float, kOutputFrames * NativePcmRing::kChannels> output{};
@@ -1919,20 +2068,17 @@ void testStretchShortPrefixStaysExact() {
   expect(fixture.core.setRate(NativePlaybackRate{3, 2}),
          "short-prefix fixture runs at three halves");
   fixture.core.setAccepting(true);
-  // 70 media frames is 46.67 output frames at 3/2; the largest admissible
-  // output prefix is 46 rounded down to a multiple of 2, i.e. 46, consuming
-  // exactly 69 media frames.
+  // floor(47 * 3/2) is 70. The remaining half-frame carries forward.
   expect(publishConstant(fixture.ring, 1, 70, 1.0F),
          "short-prefix fixture stocks 70 media frames");
   fixture.host.ticks.store(0, std::memory_order_relaxed);
   const NativeAudioRenderResult result =
       renderTracked(fixture.core, hostInput(0, kOutputFrames, 0), output);
-  expect(result.committed && result.pcmFrames == 69 &&
-             result.silentFrames == kOutputFrames - 46 &&
-             stage.lastPull == 69,
-         "a short prefix consumes a whole multiple of the denominator");
-  expect(fixture.ring.readableFrames(1).frames == 1,
-         "exactly the unusable remainder is left in the ring");
+  expect(result.committed && result.pcmFrames == 70 &&
+             result.silentFrames == kOutputFrames - 47 && stage.lastPull == 70,
+         "a short prefix consumes its exact carried budget");
+  expect(fixture.ring.readableFrames(1).frames == 0,
+         "the carried prefix uses every available media frame");
 }
 
 // The live preserve-pitch preference reaches the stage at the same boundary a
@@ -2131,6 +2277,11 @@ int main() {
   testExactSampleTimeTiming();
   testLateRetirementHeadroomIsRateIndependent();
   testExactRationalRateAdvance();
+  testFractionalCallbackSizes();
+  testFractionalPhaseSurvivesRateChanges();
+  testFractionalSilenceAndTerminal();
+  testSingleFrameCallbacks();
+  testLiveRateChangesWithPendingLatency();
   testRateAdmission();
   testOutputLatencyShiftsHeardEndpoints();
   testRateChangeStateMachine();
