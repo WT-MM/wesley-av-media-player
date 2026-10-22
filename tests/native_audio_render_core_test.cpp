@@ -66,6 +66,7 @@ struct NativeAudioRenderCoreTestAccess {
                                  std::uint64_t segmentSerial,
                                  bool running) noexcept {
     core.cursor_frame_ = cursor;
+    core.output_cursor_frame_ = cursor;
     core.prior_end_frame_ = cursor;
     core.segment_serial_ = segmentSerial;
     core.running_ = running;
@@ -926,6 +927,7 @@ void testTerminalFramePublishesEofOnce() {
              !fixture.core.terminalObservation().observed(),
          "the final playable interval commits before terminal observation");
   const auto before = fixture.ring.stats();
+  fixture.host.ticks.store(32, std::memory_order_relaxed);
   const auto eof =
       renderTracked(fixture.core, hostInput(16, 16, 32), output);
   const NativeAudioTerminalObservation observed =
@@ -1534,6 +1536,11 @@ struct FakeStretchStage {
   bool rejectSetRate{false};
   bool modelLatency{false};
   bool failRender{false};
+  std::uint64_t resets{0};
+  bool chunked{false};
+  bool checkPcm{false};
+  bool receivedSilence{false};
+  std::uint64_t budgetTotal{0};
   // Deliberate contract violations, for the defensive paths.
   std::int64_t pullBias{0};
   NativeAudioStretchPull pull{nullptr};
@@ -1579,8 +1586,14 @@ struct FakeStretchStage {
       if (self.failRender) {
         return false;
       }
-      const std::int64_t demand =
-          static_cast<std::int64_t>(mediaFrames) + self.pullBias;
+      self.budgetTotal += mediaFrames;
+      std::int64_t demand = static_cast<std::int64_t>(mediaFrames) + self.pullBias;
+      if (self.chunked) {
+        constexpr std::array<unsigned, 8> initial{1410, 1285, 1160, 1521, 1536, 1536, 768, 1536};
+        demand = self.renders <= initial.size()
+                     ? initial[self.renders - 1]
+                     : (self.budgetTotal - self.pulledFrames) / 768 * 768;
+      }
       const std::uint32_t bounded = static_cast<std::uint32_t>(
           std::clamp<std::int64_t>(
               demand, 0,
@@ -1589,6 +1602,10 @@ struct FakeStretchStage {
           bounded == 0 ? 0U
                        : self.pull(self.pullContext, self.scratch.data(),
                                    bounded);
+      if (self.checkPcm) {
+        for (unsigned i = 0; i < taken * 2; ++i)
+          self.receivedSilence |= self.scratch[i] == 0.0F;
+      }
       self.lastPull = taken;
       self.pulledFrames += taken;
       // The stretched output is a marker, not real audio: the core only cares
@@ -1599,10 +1616,161 @@ struct FakeStretchStage {
       }
       return true;
     };
-    stage.reset = [](void *) noexcept {};
+    stage.reset = [](void *context) noexcept {
+      ++static_cast<FakeStretchStage *>(context)->resets;
+    };
     return stage;
   }
 };
+
+void testIndependentOutputCursor() {
+  for (const bool chunked : {false, true}) {
+    Fixture fixture;
+    FakeStretchStage stage;
+    stage.chunked = chunked;
+    stage.checkPcm = true;
+    expect(fixture.core.attachStretchStage(stage.seam()) &&
+               fixture.core.setRate({3, 2}), "independent cursor fixture configures");
+    std::uint64_t cursor = 0, outputTotal = 0;
+    for (unsigned block = 0; block < 200; ++block) {
+      while (fixture.ring.readableFrames(1).frames < 4096)
+        expect(publishConstant(fixture.ring, 1, 2048, 1.0F), "refill chunked input");
+      const unsigned frames = 940 + block % 2;
+      std::vector<float> output(frames * 2, -1.0F);
+      fixture.host.ticks.store(outputTotal);
+      const auto result = fixture.core.render(hostInput(cursor, frames, outputTotal), output);
+      outputTotal += frames;
+      cursor += result.pcmFrames;
+      expect(result.committed && !result.endOfStream && result.silentFrames == 0 &&
+                 (block == 0 || result.continuous), "chunked output fills continuous intervals");
+      expect(std::all_of(output.begin(), output.end(), [](float x) { return x > 0; }),
+             "every output frame is filled");
+      expect(fixture.clock.sample().segmentEndMediaSeconds ==
+                 *wam::media::mediaTimeSecondsAtFrame({0, 1}, outputTotal * 3 / 2, kSampleRate),
+             "output cursor advances by carried budget");
+      expect(cursor == stage.pulledFrames && !stage.receivedSilence,
+             "ring consumption equals pulls and real PCM never becomes silence");
+    }
+    expect(cursor == (chunked ? 281856U : 282150U) &&
+               fixture.core.stats().underrunCallbacks == 0,
+           "measured macOS pull totals are independent of the exact clock");
+    const auto terminal = cursor + fixture.ring.readableFrames(1).frames;
+    expect(fixture.core.publishTerminalFrame(1, terminal), "chunked terminal publishes");
+    bool ended = false;
+    for (unsigned block = 0; block < 12 && !ended; ++block) {
+      std::vector<float> output(941 * 2);
+      fixture.host.ticks.store(outputTotal);
+      const auto result = fixture.core.render(hostInput(cursor, 941, outputTotal), output);
+      cursor += result.pcmFrames;
+      outputTotal += 941;
+      ended = result.endOfStream;
+      const auto endpoint = fixture.clock.sample().segmentEndMediaSeconds;
+      const auto exactEnd = *wam::media::mediaTimeSecondsAtFrame({0, 1}, terminal, kSampleRate);
+      expect(endpoint <= exactEnd && (!ended || endpoint == exactEnd),
+             "chunked terminal never fires before the exact output endpoint");
+    }
+    expect(ended && fixture.core.stats().underrunCallbacks == 0,
+           "both pull patterns drain through exact EOF without underruns");
+  }
+  // Read-ahead empties the ring before the last output interval.
+  Fixture fixture;
+  FakeStretchStage stage;
+  stage.pullBias = 1000;
+  stage.checkPcm = true;
+  expect(fixture.core.attachStretchStage(stage.seam()) && fixture.core.setRate({3, 2}) &&
+             publishConstant(fixture.ring, 1, 4000, 1.0F) &&
+             fixture.core.publishTerminalFrame(1, 4000), "backlog EOF fixture configures");
+  std::uint64_t cursor = 0, ticks = 0;
+  for (unsigned block = 0; block < 3; ++block) {
+    std::vector<float> output(940 * 2);
+    fixture.host.ticks.store(ticks);
+    auto result = fixture.core.render(hostInput(cursor, 940, ticks), output);
+    cursor += result.pcmFrames;
+    ticks += 940;
+    expect(result.committed && !result.endOfStream, "ring exhaustion never signals early EOF");
+  }
+  expect(cursor == 4000 && fixture.clock.sample().segmentEndMediaSeconds ==
+             *wam::media::mediaTimeSecondsAtFrame({0, 1}, 4000, kSampleRate) &&
+             fixture.core.stats().underrunCallbacks == 0, "backlog renders to the exact terminal");
+  std::vector<float> output(940 * 2);
+  fixture.host.ticks.store(ticks);
+  expect(fixture.core.render(hostInput(cursor, 940, ticks), output).endOfStream,
+         "EOF fires only after the output terminal commits");
+}
+
+void testTerminalWaitsForHeardOutput() {
+  Fixture fixture;
+  FakeStretchStage stage;
+  stage.latencyOutputFrames = 100;
+  expect(fixture.core.attachStretchStage(stage.seam()) && fixture.core.setRate({3, 2}) &&
+             publishConstant(fixture.ring, 1, 96, 1.0F) &&
+             fixture.core.publishTerminalFrame(1, 96), "heard EOF fixture configures");
+  std::array<float, 128> output{};
+  expect(renderTracked(fixture.core, hostInput(0, 64, 0), output).committed,
+         "final interval commits with group delay");
+  fixture.host.ticks.store(64);
+  expect(!renderTracked(fixture.core, hostInput(96, 64, 64), output).endOfStream,
+         "terminal waits while the last output is still scheduled");
+  fixture.host.ticks.store(164);
+  expect(renderTracked(fixture.core, hostInput(96, 64, 192), output).endOfStream &&
+             fixture.clock.sample().mediaSeconds == 96.0 / kSampleRate,
+         "terminal fires at the exact heard endpoint despite future callback timestamps");
+}
+
+void testReadAheadDeclaredSilence() {
+  Fixture fixture;
+  FakeStretchStage stage;
+  stage.pullBias = 1000;
+  fixture.core.setAccepting(false);
+  expect(fixture.core.activate(1, 0, {0, 1}, {0, 1}, kSampleRate, {300, 3300, 3600}) &&
+             fixture.core.attachStretchStage(stage.seam()) && fixture.core.setRate({3, 2}) &&
+             publishConstant(fixture.ring, 1, 3000, 1.0F) &&
+             fixture.core.publishTerminalFrame(1, 3600), "read-ahead silence fixture configures");
+  fixture.core.setAccepting(true);
+  std::uint64_t cursor = 0, pcm = 0, silence = 0;
+  for (unsigned block = 0; block < 3; ++block) {
+    std::vector<float> output(940 * 2);
+    fixture.host.ticks.store(block * 940);
+    const auto result = fixture.core.render(hostInput(cursor, 940, block * 940), output);
+    pcm += result.pcmFrames;
+    silence += result.advancedSilentFrames;
+    cursor = pcm + silence;
+    expect(result.committed && !result.endOfStream, "declared read-ahead preserves output intervals");
+  }
+  expect(pcm == 3000 && silence == 600 && cursor == 3600 &&
+             fixture.core.stats().underrunCallbacks == 0 &&
+             fixture.clock.sample().segmentEndMediaSeconds == 0.075,
+         "head and tail follow the input cursor while output ends exactly");
+}
+
+void testBacklogAcrossRateAndGeneration() {
+  Fixture fixture;
+  FakeStretchStage stage;
+  stage.pullBias = 200;
+  expect(fixture.core.attachStretchStage(stage.seam()) && fixture.core.setRate({3, 2}) &&
+             publishConstant(fixture.ring, 1, 4096, 1.0F), "rate backlog fixture configures");
+  std::array<float, 128> output{};
+  auto first = renderTracked(fixture.core, hostInput(0, 64, 0), output);
+  expect(first.pcmFrames == 296, "first interval reads ahead");
+  stage.pullBias = 0;
+  expect(fixture.core.setRate({1, 1}), "backlog returns to unity");
+  fixture.host.ticks.store(64);
+  auto second = renderTracked(fixture.core, hostInput(296, 64, 64), output);
+  expect(second.committed && second.continuous && second.pcmFrames == 64 && stage.renders == 2 &&
+             fixture.clock.sample().segmentEndMediaSeconds ==
+                 *wam::media::mediaTimeSecondsAtFrame({0, 1}, 160, kSampleRate),
+         "unity renders retained backlog while the output cursor stays exact");
+  fixture.core.setAccepting(false);
+  expect(fixture.clock.pause(1) && fixture.ring.flush(2) && fixture.clock.seek(1, 2, 0.0) &&
+             fixture.core.activate(2, 0, {0, 1}, {0, 1}, kSampleRate),
+         "generation resets both cursors");
+  fixture.core.setAccepting(true);
+  expect(publishConstant(fixture.ring, 2, 64, 1.0F), "new generation queues PCM");
+  fixture.host.ticks.store(128);
+  auto third = renderTracked(fixture.core, hostInput(0, 64, 128, 2), output);
+  expect(third.committed && third.pcmFrames == 64 && stage.renders == 2 && stage.resets == 1,
+         "new unity generation has no stale stage backlog");
+}
 
 // The exactness claim, stated as arithmetic: N callbacks of `frames` output
 // frames at p/q advance the published media clock by EXACTLY N * frames * p/q
@@ -1788,7 +1956,7 @@ void testSingleFrameCallbacks() {
          "tiny callbacks do not underrun");
 }
 
-void testFractionalPhaseSurvivesRateChanges() {
+void testFractionalPhaseResetsOnRateChanges() {
   Fixture fixture;
   FakeStretchStage stage;
   expect(fixture.core.attachStretchStage(stage.seam()), "changing fractional fixture attaches");
@@ -1805,10 +1973,10 @@ void testFractionalPhaseSurvivesRateChanges() {
     const auto result = fixture.core.render(hostInput(cursor, frames, outputTotal), output);
     cursor += result.pcmFrames;
     outputTotal += frames;
-    scaledTotal += frames * rate.numerator * (64 / rate.denominator);
+    scaledTotal += (frames * rate.numerator / rate.denominator) * 64;
     expect(result.committed && result.silentFrames == 0 && cursor == scaledTotal / 64 &&
                (block == 0 || result.continuous),
-           "rate changes retain fractional phase and consume the exact cumulative budget");
+           "rate changes reset fractional phase without moving the output cursor");
   }
 }
 
@@ -1977,13 +2145,12 @@ void testRateChangeStateMachine() {
   }
 }
 
-// The pull budget is the invariant that keeps the ring cursor and the
-// published clock from ever disagreeing, whatever the stage does.
-void testStretchPullBudgetIsHard() {
+// Pulls follow available input independently of the clock budget.
+void testStretchPullFollowsRing() {
   constexpr std::uint32_t kOutputFrames = 64;
   std::array<float, kOutputFrames * NativePcmRing::kChannels> output{};
 
-  // Over-pull: the ring must not drain past the reservation.
+  // Read-ahead consumes real PCM beyond the output budget.
   {
     Fixture fixture;
     FakeStretchStage stage;
@@ -2002,12 +2169,12 @@ void testStretchPullBudgetIsHard() {
     const NativeAudioRenderResult result =
         renderTracked(fixture.core, hostInput(0, kOutputFrames, 0), output);
     const std::size_t after = fixture.ring.readableFrames(1).frames;
-    expect(result.committed && result.pcmFrames == 96 &&
-               stage.lastPull == 96 && before - after == 96,
-           "a stage that over-pulls is served silence, not extra ring audio");
+    expect(result.committed && result.pcmFrames == 596 &&
+               stage.lastPull == 596 && before - after == 596,
+           "read-ahead receives all available requested PCM");
   }
 
-  // Under-pull: the difference is retired so the cursor stays exact.
+  // Under-pull leaves real PCM available for later callbacks.
   {
     Fixture fixture;
     FakeStretchStage stage;
@@ -2025,10 +2192,10 @@ void testStretchPullBudgetIsHard() {
     const NativeAudioRenderResult result =
         renderTracked(fixture.core, hostInput(0, kOutputFrames, 0), output);
     const std::size_t after = fixture.ring.readableFrames(1).frames;
-    expect(result.committed && result.pcmFrames == 96 &&
-               stage.lastPull == 86 && before - after == 96 &&
-               fixture.core.stats().stretchShortfallFrames == 10,
-           "a stage that under-pulls has the difference retired and counted");
+    expect(result.committed && result.pcmFrames == 86 &&
+               stage.lastPull == 86 && before - after == 86 &&
+               fixture.core.stats().stretchShortfallFrames == 0,
+           "under-pull leaves the remaining PCM in the ring");
   }
 
   // A stage that fails outright latches, rather than silently desynchronising.
@@ -2276,16 +2443,20 @@ int main() {
   testExactPartialHostPrefix();
   testExactSampleTimeTiming();
   testLateRetirementHeadroomIsRateIndependent();
+  testIndependentOutputCursor();
+  testBacklogAcrossRateAndGeneration();
+  testReadAheadDeclaredSilence();
+  testTerminalWaitsForHeardOutput();
   testExactRationalRateAdvance();
   testFractionalCallbackSizes();
-  testFractionalPhaseSurvivesRateChanges();
+  testFractionalPhaseResetsOnRateChanges();
   testFractionalSilenceAndTerminal();
   testSingleFrameCallbacks();
   testLiveRateChangesWithPendingLatency();
   testRateAdmission();
   testOutputLatencyShiftsHeardEndpoints();
   testRateChangeStateMachine();
-  testStretchPullBudgetIsHard();
+  testStretchPullFollowsRing();
   testStretchShortPrefixStaysExact();
   testPreservePitchLatch();
 

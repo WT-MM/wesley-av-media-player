@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <iostream>
+#include <limits>
 #include <numbers>
 #include <vector>
 
@@ -39,10 +40,17 @@ constexpr double kToneHz = 1000.0;
 struct TonePull {
   std::uint64_t framesPulled{0};
   std::uint64_t phaseFrames{0};
+  std::uint64_t offeredFrames{std::numeric_limits<std::uint64_t>::max()};
+  bool exceededOffer{false};
 
   static std::uint32_t pull(void *context, float *interleaved,
                             std::uint32_t frames) noexcept {
     auto *self = static_cast<TonePull *>(context);
+    const auto requested = frames;
+    self->exceededOffer |= frames > self->offeredFrames - self->framesPulled;
+    frames = static_cast<std::uint32_t>(std::min<std::uint64_t>(
+        frames, self->offeredFrames - self->framesPulled));
+    std::fill_n(interleaved, requested * kChannels, 0.0F);
     for (std::uint32_t frame = 0; frame < frames; ++frame) {
       const double phase = 2.0 * std::numbers::pi * kToneHz *
                            static_cast<double>(self->phaseFrames + frame) /
@@ -279,6 +287,7 @@ void fractionalConsumption() {
       for (int block = 0; block < 200; ++block) {
         const unsigned frames = 940 + block % 2;
         const auto before = tone.framesPulled;
+        tone.offeredFrames = before + 4096;
         expect(
             stage.render(stage.context, frames,
                          (total + frames) * rate.numerator / rate.denominator -
@@ -286,6 +295,8 @@ void fractionalConsumption() {
                          output.data()),
             "fractional render succeeds");
         total += frames;
+        expect(!tone.exceededOffer && tone.framesPulled <= tone.offeredFrames,
+               "stage never consumes beyond offered ring input");
         if (gUnitRoundsPerBlock)
           expect(tone.framesPulled ==
                      total * rate.numerator / rate.denominator,
@@ -296,6 +307,10 @@ void fractionalConsumption() {
                   << " floor=" << total * rate.numerator / rate.denominator
                   << '\n';
       }
+      const auto budget = total * rate.numerator / rate.denominator;
+      const auto difference = tone.framesPulled > budget
+                                  ? tone.framesPulled - budget : budget - tone.framesPulled;
+      expect(difference <= 2048, "cumulative input stays within one internal chunk of the budget");
     }
   }
 }
