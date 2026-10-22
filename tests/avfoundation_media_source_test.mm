@@ -14,6 +14,7 @@
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <deque>
 #include <functional>
 #include <iostream>
@@ -3566,6 +3567,66 @@ void testTruncatedFinalAudioPacketIsRestatedOnTheMediaGrid() {
   }
 }
 
+void testCompressedAudioOneTickGridProjection() {
+  using namespace wam::macos::avfoundation_media_source_testing;
+  const OwnedFormat format = makeAudioFormat();
+  const auto entry = [](std::int64_t pts, std::int64_t duration = 1024,
+                        std::int32_t scale = 48000) {
+    return CMSampleTimingInfo{CMTimeMake(duration, scale),
+                             CMTimeMake(pts, scale), kCMTimeInvalid};
+  };
+  for (const auto original : {entry(1024), entry(1024, 1025),
+                              entry(1022), entry(1023, 1024, 24000)}) {
+    std::array timing{original};
+    const OwnedSample sample =
+        makeCompressedAudioSample(format.get(), timing, 1, 344);
+    expect(projectCompressedAudioPacketTimingForTesting(
+               sample.get(), timing.data(), timing.size()) == 0 &&
+               std::memcmp(&original, &timing[0], sizeof(original)) == 0,
+           "exact grid, two-tick residual and other timescales stay unchanged");
+  }
+  for (const auto original : {entry(1023, 1025), entry(1025, 1023),
+                              entry(1023, 1008), entry(1024, 1008)}) {
+    std::array timing{original};
+    const OwnedSample sample =
+        makeCompressedAudioSample(format.get(), timing, 1, 344);
+    static_cast<void>(restateCompressedAudioPacketDurationsForTesting(
+        sample.get(), timing.data(), timing.size()));
+    const auto projected = projectCompressedAudioPacketTimingForTesting(
+        sample.get(), timing.data(), timing.size());
+    expect(projected == (original.presentationTimeStamp.value == 1024 ? 0 : 1),
+           "only nonzero one-tick residuals are projected");
+    expect(timing[0].presentationTimeStamp.value == 1024 &&
+               timing[0].presentationTimeStamp.timescale == 48000 &&
+               timing[0].duration.value == 1024 &&
+               timing[0].duration.timescale == 48000,
+           "both jitter signs and a trimmed tail retain the natural extent");
+  }
+
+  // Separate staged buffers retain the same grid across their boundary.
+  CMTime previousEnd = kCMTimeZero;
+  std::int64_t totalFrames = 0;
+  for (std::int64_t base : {0, 3072}) {
+    std::array timing{entry(base, 1023), entry(base + 1023, 1025),
+                      entry(base + 2048, base == 0 ? 1024 : 1008)};
+    const OwnedSample sample =
+        makeCompressedAudioSample(format.get(), timing, timing.size(), 344);
+    static_cast<void>(restateCompressedAudioPacketDurationsForTesting(
+        sample.get(), timing.data(), timing.size()));
+    expect(projectCompressedAudioPacketTimingForTesting(
+               sample.get(), timing.data(), timing.size()) == 1,
+           "each batch projects its one jittered entry");
+    for (const auto& unit : timing) {
+      expect(CMTimeCompare(unit.presentationTimeStamp, previousEnd) == 0,
+             "projected packets remain contiguous within and across buffers");
+      previousEnd = CMTimeAdd(unit.presentationTimeStamp, unit.duration);
+      totalFrames += unit.duration.value;
+    }
+  }
+  expect(totalFrames == 6 * 1024 && previousEnd.value == 6 * 1024,
+         "projected total duration equals the decoded packet frame count");
+}
+
 // The video lane's movie-timeline restatement.
 //
 // AVFoundation states a compressed video sample on the track's MEDIA timeline
@@ -3965,6 +4026,7 @@ int main(int argc, char** argv) {
     testFormatlessDiscontinuityPrecedesImmutableFormatCheck();
     testMediaFreeMarkersAreDistinguishedFromDiscontinuities();
     testTruncatedFinalAudioPacketIsRestatedOnTheMediaGrid();
+    testCompressedAudioOneTickGridProjection();
     testAdmissionDiscontinuityPrefixIsBounded();
     testExactCancellationWhileStartBlocks();
     testMetadataLoadsOverlapAndValidateInSourceOrder();
