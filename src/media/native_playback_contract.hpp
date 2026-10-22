@@ -187,16 +187,15 @@ inline constexpr double kMaximumNativeRate = 4.0;
 // The admission grid. Every rate that reaches the native engine is first
 // snapped to a multiple of 1/kNativeRateGrid, so it is an EXACT rational p/q
 // with q dividing kNativeRateGrid -- never a UI double folded into the clock.
-// 64 is chosen for two independent reasons and both are load bearing:
-//   * it divides the device IO buffer (1024 frames), so the media advance
-//     per render callback, outputFrames * p / q, is an exact integer with no
-//     residual to carry and no rounding for the stretch stage to disagree
-//     with; and
-//   * its step, 1/64 = 1.5625%, is finer than half of the smallest step any
-//     rate control in this application produces (the 0.05 speed slider), so
-//     snapping never crosses a neighbouring control position and the worst
-//     displacement from the requested speed is 1/128 -- inaudible, and far
-//     below the ~4% pitch/tempo just-noticeable difference.
+// 64 makes each admitted rate binary-exact. A client callback can have any
+// frame count when the stream and device rates differ. The renderer carries
+// the fractional media-frame remainder between callbacks, and the stretch
+// stage makes its integer input demand match that budget.
+// Its step, 1/64 = 1.5625%, is finer than half of the smallest step any
+// rate control in this application produces (the 0.05 speed slider), so
+// snapping never crosses a neighbouring control position and the worst
+// displacement from the requested speed is 1/128 -- inaudible, and far
+// below the ~4% pitch/tempo just-noticeable difference.
 inline constexpr std::uint32_t kNativeRateGrid = 64;
 
 // An exact playback rate as the reduced rational numerator/denominator. This

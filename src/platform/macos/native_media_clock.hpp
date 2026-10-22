@@ -22,12 +22,12 @@ struct NativeMediaHostClock {
 
 enum class NativeMediaSegmentContinuity : std::uint8_t {
   // A real output-time gap precedes this interval. Media time holds across
-  // that gap, so the interval may consume the capacity-one pending slot.
+  // that gap, so the interval may consume the first pending slot.
   Discontinuous,
   // PCM was rendered without an intervening silence gap. mediaStart must
-  // equal the prior stored mediaEnd and firstHostTicks must equal the prior
-  // stored endHostTicks. A future equal-rate interval may coalesce without
-  // changing that exact shared boundary.
+  // equal the prior stored mediaEnd. Host endpoints normally meet; a rate
+  // change may move them by the stretch group-delay difference. A future
+  // interval coalesces only within the boundary-displacement bound.
   Continuous,
 };
 
@@ -216,6 +216,10 @@ private:
     double rate{1.0};
     SegmentState currentSegment;
     SegmentState pendingSegment;
+    // Exact future rate boundaries behind the first pending interval.
+    // Eight extra spans cover the stretch delay at the 40 ms control cadence.
+    std::array<SegmentState, 8> rateSegments{};
+    std::size_t rateSegmentCount{0};
     bool valid{false};
     bool running{false};
   };

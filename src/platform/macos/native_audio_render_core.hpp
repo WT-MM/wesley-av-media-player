@@ -24,9 +24,9 @@ using NativePlaybackRate = media::native_playback::PlaybackRateRatio;
 //
 // CONTRACT, all of it enforced by the core:
 //  * render() is called only from the render callback, only after setRate()
-//    established the exact rational the core is accounting at, and only with
-//    an output frame count the core has already proven is a multiple of the
-//    rate denominator.
+//    established the exact rational the core is accounting at. Output counts
+//    are arbitrary. mediaFrames is the carried integer budget reserved in
+//    the clock; the stage must pull exactly that many frames.
 //  * render() must produce exactly outputFrames interleaved stereo frames and
 //    obtain its input solely by calling the pull function registered through
 //    configure(). It must not allocate, block, or log.
@@ -55,7 +55,7 @@ struct NativeAudioStretchStage {
                   bool preservePitch) noexcept {nullptr};
   std::uint32_t (*latencyOutputFrames)(void *context) noexcept {nullptr};
   bool (*render)(void *context, std::uint32_t outputFrames,
-                 float *interleavedOutput) noexcept {nullptr};
+                 std::uint32_t mediaFrames, float *interleavedOutput) noexcept {nullptr};
   void (*reset)(void *context) noexcept {nullptr};
 
   [[nodiscard]] constexpr bool usable() const noexcept {
@@ -470,6 +470,8 @@ private:
   // is the stage's group delay in output frames at that rate.
   NativeAudioStretchStage stretch_{};
   NativePlaybackRate active_rate_{};
+  // Fractional media frames in admission-grid units, retained across rates.
+  std::uint32_t rate_carry_{0};
   bool active_preserve_pitch_{true};
   std::uint32_t stretch_latency_output_frames_{0};
   // Hard pull budget for the current callback, and what the stage took.

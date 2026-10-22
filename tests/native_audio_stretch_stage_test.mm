@@ -1,10 +1,9 @@
 // Measures the real AUNewTimePitch stage, not a fake of it. Two facts matter
 // and neither can be argued from documentation:
 //
-//  1. INPUT DEMAND IS EXACTLY outputFrames * rate, AT EVERY PITCH OFFSET.
-//     The whole clock derivation rests on "media frames consumed" and
-//     "outputFrames * p/q" being the same number, so the live preserve-pitch
-//     preference is only safe if the pitch parameter cannot move it.
+//  1. RAW INPUT DEMAND ROUNDS PER BLOCK. The production stage compensates
+//     that rounding so its pull equals the carried integer media budget.
+//     Pitch offsets must not change that demand.
 //  2. THE PITCH OFFSET DOES WHAT IT CLAIMS. A 1000 Hz tone played at 2x comes
 //     out at 1000 Hz with pitch preserved and at 2000 Hz with the varispeed
 //     offset. Measured by zero crossings and confirmed by Goertzel power,
@@ -124,43 +123,182 @@ void exactConsumptionAtEveryPitch() {
   constexpr int kBlocks = 400;  // 409 600 output frames, as in the design probe
   for (const Rate &rate : kRates) {
     for (const bool preservePitch : {true, false}) {
-      auto unit = NativeAudioStretchUnit::create(kSampleRate);
-      expect(unit != nullptr, "the time-stretch unit is available");
-      if (!unit) {
-        return;
+      for (const auto blockFrames : {1024U, 4096U}) {
+        auto unit = NativeAudioStretchUnit::create(kSampleRate);
+        expect(unit != nullptr, "the time-stretch unit is available");
+        if (!unit) {
+          return;
+        }
+        NativeAudioStretchStage stage = unit->stage();
+        TonePull tone;
+        expect(stage.configure(stage.context, &TonePull::pull, &tone),
+               "the stage accepts its pull");
+        expect(stage.setRate(stage.context, rate.numerator, rate.denominator,
+                             preservePitch),
+               "the stage accepts an advertised rate at either pitch");
+        stage.reset(stage.context);
+        tone.framesPulled = 0;
+
+        std::vector<float> output(
+            static_cast<std::size_t>(blockFrames) * kChannels, 0.0F);
+        bool rendered = true;
+        bool everyBudgetExact = true;
+        for (int block = 0; block < kBlocks; ++block) {
+          const auto before = tone.framesPulled;
+          rendered = rendered && stage.render(stage.context, blockFrames,
+                                              blockFrames * rate.numerator /
+                                                  rate.denominator,
+                                              output.data());
+          everyBudgetExact =
+              everyBudgetExact &&
+              tone.framesPulled - before ==
+                  blockFrames * rate.numerator / rate.denominator;
+        }
+        expect(rendered, "every render at an advertised rate succeeds");
+        expect(everyBudgetExact, "every block pulls its exact budget, "
+                                 "including the first large block");
+
+        const std::uint64_t outputFrames =
+            static_cast<std::uint64_t>(kBlocks) * blockFrames;
+        const std::uint64_t expected =
+            outputFrames * rate.numerator / rate.denominator;
+        const bool exact = tone.framesPulled == expected;
+        expect(exact,
+               "input demand is exactly outputFrames * p / q at this pitch");
+        std::cout << "  consumption " << rate.name
+                  << (preservePitch ? " pitch-preserved" : " varispeed  ")
+                  << " N=" << blockFrames << "  pulled=" << tone.framesPulled
+                  << " expected=" << expected << (exact ? "  EXACT" : "  DRIFT")
+                  << '\n';
       }
-      NativeAudioStretchStage stage = unit->stage();
+  }
+  }
+}
+
+// The raw unit rounds each render independently. This probe deliberately
+// bypasses the production stage's carried-budget parameter compensation.
+void rawDemandRoundsPerBlock() {
+  for (const Rate rate : {Rate{3, 2, "3/2"}, Rate{87, 64, "87/64"}}) {
+    const AudioComponentDescription description{
+        kAudioUnitType_FormatConverter, kAudioUnitSubType_NewTimePitch,
+        kAudioUnitManufacturer_Apple, 0, 0};
+    const auto component = AudioComponentFindNext(nullptr, &description);
+    AudioComponentInstance unit = nullptr;
+    expect(component && AudioComponentInstanceNew(component, &unit) == noErr,
+           "raw demand unit exists");
+    if (!unit)
+      return;
+    std::uint64_t pulled = 0;
+    AURenderCallbackStruct callback{};
+    callback.inputProcRefCon = &pulled;
+    callback.inputProc = [](void *context, AudioUnitRenderActionFlags *,
+                            const AudioTimeStamp *, UInt32, UInt32 frames,
+                            AudioBufferList *buffers) -> OSStatus {
+      *static_cast<std::uint64_t *>(context) += frames;
+      for (UInt32 channel = 0; channel < buffers->mNumberBuffers; ++channel)
+        std::fill_n(static_cast<float *>(buffers->mBuffers[channel].mData),
+                    frames, 0.0F);
+      return noErr;
+    };
+    expect(AudioUnitSetProperty(unit, kAudioUnitProperty_SetRenderCallback,
+                                kAudioUnitScope_Input, 0, &callback,
+                                sizeof(callback)) == noErr &&
+               AudioUnitInitialize(unit) == noErr,
+           "raw demand unit initializes");
+    expect(AudioUnitSetParameter(
+               unit, kNewTimePitchParam_Rate, kAudioUnitScope_Global, 0,
+               static_cast<float>(rate.numerator) / rate.denominator,
+               0) == noErr,
+           "raw demand rate sets");
+    std::array<float, 941> left{}, right{};
+    struct {
+      UInt32 count;
+      AudioBuffer buffers[2];
+    } output{
+        2, {{1, sizeof(left), left.data()}, {1, sizeof(right), right.data()}}};
+    std::uint64_t total = 0;
+    for (unsigned block = 0; block < 200; ++block) {
+      const unsigned frames = 940 + block % 2;
+      const auto before = pulled;
+      output.buffers[0].mDataByteSize = frames * sizeof(float);
+      output.buffers[1].mDataByteSize = frames * sizeof(float);
+      AudioTimeStamp timestamp{};
+      timestamp.mFlags = kAudioTimeStampSampleTimeValid;
+      timestamp.mSampleTime = static_cast<Float64>(total);
+      AudioUnitRenderActionFlags flags = 0;
+      expect(AudioUnitRender(unit, &flags, &timestamp, 0, frames,
+                             reinterpret_cast<AudioBufferList *>(&output)) ==
+                 noErr,
+             "raw fractional render succeeds");
+      expect(pulled - before ==
+                 (frames * rate.numerator + rate.denominator / 2) /
+                     rate.denominator,
+             "raw input demand rounds independently on every block");
+      total += frames;
+    }
+    std::cout << "raw " << rate.name << " blocks=200 pulled=" << pulled
+              << " carried=" << total * rate.numerator / rate.denominator
+              << '\n';
+    AudioUnitUninitialize(unit);
+    AudioComponentInstanceDispose(unit);
+  }
+}
+
+void fractionalConsumption() {
+  for (const Rate rate : {Rate{3, 2, "3/2"}, Rate{87, 64, "87/64"}}) {
+    for (const bool preservePitch : {true, false}) {
+      auto unit = NativeAudioStretchUnit::create(44100);
+      expect(unit != nullptr, "fractional probe unit exists");
+      if (!unit)
+        return;
+      auto stage = unit->stage();
       TonePull tone;
       expect(stage.configure(stage.context, &TonePull::pull, &tone),
-             "the stage accepts its pull");
+             "configure fractional probe");
       expect(stage.setRate(stage.context, rate.numerator, rate.denominator,
                            preservePitch),
-             "the stage accepts an advertised rate at either pitch");
+             "set fractional rate");
       stage.reset(stage.context);
-      tone.framesPulled = 0;
-
-      std::vector<float> output(
-          static_cast<std::size_t>(kBlockFrames) * kChannels, 0.0F);
-      bool rendered = true;
-      for (int block = 0; block < kBlocks; ++block) {
-        rendered = rendered &&
-                   stage.render(stage.context, kBlockFrames, output.data());
+      std::vector<float> output(941 * kChannels);
+      std::uint64_t total = 0;
+      for (int block = 0; block < 200; ++block) {
+        const unsigned frames = 940 + block % 2;
+        const auto before = tone.framesPulled;
+        expect(
+            stage.render(stage.context, frames,
+                         (total + frames) * rate.numerator / rate.denominator -
+                             total * rate.numerator / rate.denominator,
+                         output.data()),
+            "fractional render succeeds");
+        total += frames;
+        expect(tone.framesPulled == total * rate.numerator / rate.denominator,
+               "fractional demand equals the cumulative carried budget");
+        std::cout << "fractional " << rate.name << " block=" << block
+                  << " N=" << frames << " pull=" << tone.framesPulled - before
+                  << " cumulative=" << tone.framesPulled
+                  << " floor=" << total * rate.numerator / rate.denominator
+                  << '\n';
       }
-      expect(rendered, "every render at an advertised rate succeeds");
-
-      const std::uint64_t outputFrames =
-          static_cast<std::uint64_t>(kBlocks) * kBlockFrames;
-      const std::uint64_t expected =
-          outputFrames * rate.numerator / rate.denominator;
-      const bool exact = tone.framesPulled == expected;
-      expect(exact,
-             "input demand is exactly outputFrames * p / q at this pitch");
-      std::cout << "  consumption " << rate.name
-                << (preservePitch ? " pitch-preserved" : " varispeed  ")
-                << "  pulled=" << tone.framesPulled
-                << " expected=" << expected << (exact ? "  EXACT" : "  DRIFT")
-                << '\n';
     }
+  }
+}
+
+void tinyConsumption() {
+  auto unit = NativeAudioStretchUnit::create(44100);
+  expect(unit != nullptr, "tiny probe exists");
+  if (!unit)
+    return;
+  auto stage = unit->stage();
+  TonePull tone;
+  expect(stage.configure(stage.context, &TonePull::pull, &tone),
+         "configure tiny probe");
+  expect(stage.setRate(stage.context, 1, 4, true), "set quarter rate");
+  std::array<float, 2> output{};
+  for (unsigned i = 0; i < 200; ++i) {
+    expect(stage.render(stage.context, 1, (i + 1) / 4 - i / 4, output.data()),
+           "single-output-frame render succeeds");
+    expect(tone.framesPulled == (i + 1) / 4,
+           "tiny pulls follow the integer budget");
   }
 }
 
@@ -185,7 +323,8 @@ void exactConsumptionAtEveryPitch() {
   std::vector<float> block(
       static_cast<std::size_t>(kBlockFrames) * kChannels, 0.0F);
   for (int index = 0; index < kWarmupBlocks; ++index) {
-    if (!stage.render(stage.context, kBlockFrames, block.data())) {
+    if (!stage.render(stage.context, kBlockFrames,
+                      kBlockFrames * numerator / denominator, block.data())) {
       return {};
     }
   }
@@ -193,7 +332,8 @@ void exactConsumptionAtEveryPitch() {
   measured.reserve(static_cast<std::size_t>(kMeasuredBlocks) * kBlockFrames *
                    kChannels);
   for (int index = 0; index < kMeasuredBlocks; ++index) {
-    if (!stage.render(stage.context, kBlockFrames, block.data())) {
+    if (!stage.render(stage.context, kBlockFrames,
+                      kBlockFrames * numerator / denominator, block.data())) {
       return {};
     }
     measured.insert(measured.end(), block.begin(), block.end());
@@ -325,6 +465,9 @@ void declaredLatencyIgnoresPitch() {
 }  // namespace
 
 int main() {
+  rawDemandRoundsPerBlock();
+  fractionalConsumption();
+  tinyConsumption();
   pitchOffsetIsTheVarispeedCurve();
   declaredLatencyIgnoresPitch();
   exactConsumptionAtEveryPitch();
