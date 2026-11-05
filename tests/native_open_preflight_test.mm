@@ -1,6 +1,7 @@
 #include "qt/native_open_preflight.hpp"
 
 #include <QCoreApplication>
+#include <QEvent>
 #include <QUrl>
 
 #include <algorithm>
@@ -509,11 +510,36 @@ void evaluationExceptionCompletesAsFailure() {
          "evaluation exception preserves exact lineage in one failure result");
 }
 
+void defaultDeliveryUsesQtQueue() {
+  bool delivered = false;
+  const auto owner = std::this_thread::get_id();
+  NativeOpenPreflight::Dependencies dependencies;
+  dependencies.classifySource = [](const QUrl &, const QString &) {
+    return PlaybackSourceClass::FastLocal;
+  };
+  NativeOpenPreflight preflight([&](NativeOpenPreflightResult result) {
+    expect(std::this_thread::get_id() == owner, "completion stays on Qt owner");
+    expect(result.sourceKey.value == 77, "completion retains request identity");
+    delivered = true;
+  }, std::move(dependencies));
+  expect(preflight.enqueue(localRequest("/private/tmp/queue-fixture.mp4", 0, false)).has_value(),
+         "Qt delivery request accepted");
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  while (!delivered && std::chrono::steady_clock::now() < deadline) {
+    // Deliberately do not pump Cocoa/libdispatch: regression to dispatch_main
+    // delivery must fail even though an ordinary app.exec would eventually work.
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  expect(delivered, "preflight completes through Qt posted events alone");
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
   QCoreApplication application(argc, argv);
   try {
+    defaultDeliveryUsesQtQueue();
     capacityOneLatestRequestWins();
     routeMappingIsExact();
     productionMountClassificationIsFailClosed();

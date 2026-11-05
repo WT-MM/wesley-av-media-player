@@ -68,7 +68,7 @@ public:
 
   // Injectable boundaries keep concurrency, cancellation, and route mapping
   // deterministic in the focused headless test. Production leaves all three
-  // empty and uses the real filesystem plus the main dispatch queue. The
+  // empty and uses the real filesystem plus the Qt application event queue. The
   // injected queue must accept the closure and must not throw, matching
   // dispatch_async's required-delivery contract.
   struct Dependencies final {

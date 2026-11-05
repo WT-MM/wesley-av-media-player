@@ -958,14 +958,14 @@ QUrl mediaUrlFromArgument(const QString &argument) {
 // there is no argv. On a cold start the event is delivered once the event
 // loop first spins, which can precede the QML engine finishing its load, so
 // URLs are buffered until the player is attached and drained in arrival
-// order. Opens are dispatched through the event loop either way, matching
-// how the argv open is staged below.
+// order before the first window exposure. Subsequent opens remain queued to
+// avoid reentering window creation from a live Apple Event callback.
 class FileOpenRelay final : public QObject {
  public:
   void attach(wam::qt::WindowManager *windows) {
     windows_ = windows;
     for (const QUrl &url : pending_)
-      dispatch(url);
+      windows_->openUrl(url);
     pending_.clear();
   }
 
@@ -1230,6 +1230,9 @@ int main(int argc, char *argv[]) {
   // cannot slip past; attached to the player once the engine has loaded.
   FileOpenRelay file_open_relay;
   app.installEventFilter(&file_open_relay);
+  // Let LaunchServices deliver its initial QFileOpenEvent while the relay is
+  // buffering, before QML/GL startup can hold the Cocoa event loop busy.
+  QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
 
   // QGuiApplication adopts the user's locale. libmpv explicitly requires the
   // numeric category to remain POSIX so option/property numbers always use a
@@ -1474,14 +1477,10 @@ int main(int argc, char *argv[]) {
     }
 
     const QList<QUrl> media = initialMediaUrls(app);
-    if (!media.isEmpty()) {
-      QTimer::singleShot(0, &windows, [&windows, media] {
-        // The first window is empty, so it claims the first file; every
-        // further argument creates its own window.
-        for (const QUrl &url : media)
-          static_cast<void>(windows.openUrl(url));
-      });
-    }
+    // Queue the asynchronous preflight before entering the event loop, so it
+    // can finish while Cocoa exposes the first window and Qt prepares GL.
+    for (const QUrl &url : media)
+      static_cast<void>(windows.openUrl(url));
     file_open_relay.attach(&windows);
 
 #if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
