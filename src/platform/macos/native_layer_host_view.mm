@@ -384,8 +384,12 @@ bool setNativeLayerPresentationDisplaySize(void* displayLayer, media::MediaDispl
   CALayer* layer = (__bridge CALayer*)displayLayer;
   if (![layer isKindOfClass:[CALayer class]]) return false;
   @autoreleasepool {
+    // The worker replaces this value while main-thread layout reads it.
+    // Atomic association getters retain/autorelease under the association
+    // lock, keeping the value alive until the reader can take ownership.
     objc_setAssociatedObject(layer, videoDisplaySizeAssociationKey(),
-        [NSValue valueWithBytes:&size objCType:@encode(media::MediaDisplaySize)], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        [NSValue valueWithBytes:&size objCType:@encode(media::MediaDisplaySize)],
+        OBJC_ASSOCIATION_RETAIN);
     if ([NSThread isMainThread]) layoutVideoLayer(layer);
     else dispatch_async(dispatch_get_main_queue(), ^{ layoutVideoLayer(layer); });
   }
@@ -408,7 +412,7 @@ bool setNativeLayerPresentationRotation(void* displayLayer,
     }
     CALayer* layer = static_cast<CALayer*>(candidate);
     objc_setAssociatedObject(layer, videoRotationAssociationKey(),
-                             @(*normalized), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+                             @(*normalized), OBJC_ASSOCIATION_RETAIN);
     // This is called from the SESSION WORKER thread -- the consumer settles
     // rotation while configuring a generation, which is nowhere near the GUI
     // thread -- so the CoreAnimation half hops rather than refusing.

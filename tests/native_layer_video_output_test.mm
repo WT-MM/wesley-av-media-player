@@ -1027,6 +1027,31 @@ void verifyAutomaticDynamicRange() {
   }
 }
 
+// Geometry arrives on the session worker while the main queue lays out the
+// same layer. Replacing a nonatomic associated NSValue can free it between
+// objc_getAssociatedObject and the reader's retain.
+void verifyConcurrentDisplayMetadata() {
+  CALayer* layer = [CALayer layer];
+  void* handle = (__bridge void*)layer;
+  const wam::media::MediaDisplaySize size{{640, 1}, {360, 1}};
+  WAM_CHECK(setNativeLayerPresentationDisplaySize(handle, size));
+  std::atomic<bool> finished{false};
+  std::thread writer([&] {
+    for (int i = 0; i < 20000; ++i) {
+      @autoreleasepool {
+        WAM_CHECK(setNativeLayerPresentationDisplaySize(handle, size));
+      }
+    }
+    finished.store(true, std::memory_order_release);
+  });
+  while (!finished.load(std::memory_order_acquire)) {
+    @autoreleasepool {
+      WAM_CHECK(nativeLayerPresentationDisplaySize(handle) == size);
+    }
+  }
+  writer.join();
+}
+
 int main() {
   if (@available(macOS 14.0, *)) {
   } else {
@@ -1038,6 +1063,7 @@ int main() {
   }
 
   @autoreleasepool {
+    verifyConcurrentDisplayMetadata();
     verifyAutomaticDynamicRange();
     verifyDetachedConstructionAndActivation();
     verifyCapacityOneAdmissionAndExactTimingEcho();
