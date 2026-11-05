@@ -1,3 +1,4 @@
+#include "media/startup_benchmark.hpp"
 #include "native_open_preflight.hpp"
 
 #import <Foundation/Foundation.h>
@@ -110,12 +111,15 @@ evaluate(const NativeOpenPreflightState::Work &work,
     dependencies.beforeEvaluate(work.id);
   }
 
+  WAM_STARTUP_STAMP(PreflightBegin);
   LocalSourceSnapshot snapshot = snapshotLocalSource(work.request.source);
+  WAM_STARTUP_STAMP(SourceResolved);
   const NativeSourceClass sourceClass =
       dependencies.classifySource
           ? dependencies.classifySource(snapshot.displaySource,
                                         snapshot.absolutePath)
           : classifySource(snapshot.displaySource, snapshot.absolutePath);
+  WAM_STARTUP_STAMP(SourceClassified);
   auto initialPosition = macos::NativeMediaSession::preflightInitialPosition(
       work.request.initialPositionSeconds);
   const bool nativeEligible = work.request.nativeAdmissionAllowed &&
@@ -141,6 +145,7 @@ evaluate(const NativeOpenPreflightState::Work &work,
   result.initialPositionSeconds = work.request.initialPositionSeconds;
   result.paused = work.request.paused;
   result.initialPosition = std::move(initialPosition);
+  WAM_STARTUP_STAMP(PreflightEnd);
   return result;
 }
 

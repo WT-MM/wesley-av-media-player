@@ -1,4 +1,6 @@
 #include "native_open_preflight.hpp"
+#include <QCoreApplication>
+#include <QMetaObject>
 
 namespace wam::qt {
 namespace {
@@ -38,6 +40,15 @@ NativeOpenPreflight::NativeOpenPreflight(Completion completion, Dependencies dep
   macos::NativeOpenPreflight::Dependencies native;
   native.beforeEvaluate = std::move(dependencies.beforeEvaluate);
   native.queueCompletion = std::move(dependencies.queueCompletion);
+  if (!native.queueCompletion) {
+    // Cocoa's main dispatch queue can wait behind Qt's first GL scene draw.
+    // Post to the owning Qt event loop; the native edge still validates the
+    // request and lifetime at delivery, including after cancel/destruction.
+    native.queueCompletion = [](std::function<void()> completion) {
+      QMetaObject::invokeMethod(QCoreApplication::instance(),
+                                std::move(completion), Qt::QueuedConnection);
+    };
+  }
   if (dependencies.classifySource) {
     native.classifySource = [classify = std::move(dependencies.classifySource)](
         const std::string& source, const std::string& path) {
