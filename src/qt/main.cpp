@@ -1,3 +1,4 @@
+#include "media/startup_benchmark.hpp"
 #if defined(WAM_ENABLE_AVFORMAT_STAGE)
 #include "media/libavformat_cursor.hpp"
 #endif
@@ -973,6 +974,7 @@ class FileOpenRelay final : public QObject {
     if (event->type() != QEvent::FileOpen) {
       return QObject::eventFilter(watched, event);
     }
+    WAM_STARTUP_STAMP(FileOpenReceived);
     const auto *open_event = static_cast<QFileOpenEvent *>(event);
     QUrl url = open_event->url();
     if (url.isEmpty() && !open_event->file().isEmpty())
@@ -1133,6 +1135,10 @@ int verifyRuntime() {
 } // namespace
 
 int main(int argc, char *argv[]) {
+#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK) && defined(WAM_NATIVE_BENCHMARK_TELEMETRY)
+  (void)wam::qt::NativeBenchmarkTelemetry::instance();
+#endif
+  WAM_STARTUP_STAMP(MainEntered);
   // libmpv's public high-performance render API is OpenGL. Keep Qt Quick on
   // the same device so video can render directly into the scene graph target,
   // without a full-frame intermediate texture or CPU readback.
@@ -1211,6 +1217,7 @@ int main(int argc, char *argv[]) {
 #endif
 
   QGuiApplication app(argc, argv);
+  WAM_STARTUP_STAMP(GuiApplicationConstructed);
 
 #if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   // NSApp now exists and no window has been shown yet: the one moment where
@@ -1250,6 +1257,7 @@ int main(int argc, char *argv[]) {
   wam::qt::registerWamQtTypes();
   wam::StateStore state_store;
   (void)state_store.load();
+  WAM_STARTUP_STAMP(StateStoreLoaded);
 
   // A player window is a document window: closing the last one leaves the app
   // running with its menu bar, the way every document-based macOS app behaves,

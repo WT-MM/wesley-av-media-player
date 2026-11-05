@@ -1,3 +1,4 @@
+#include "media/startup_benchmark.hpp"
 #include "native_playback_owner.hpp"
 #import <Foundation/Foundation.h>
 #include <dispatch/dispatch.h>
@@ -1013,10 +1014,12 @@ NativePlaybackOwner::beginNativePrepare(const playback_router::Action& action) {
   bridge->epoch = nextObservationEpoch_;
 
   std::string error;
+  WAM_STARTUP_STAMP(NativeSessionCreateBegin);
   std::unique_ptr<macos::NativeMediaSession> session =
       createNativeMediaSessionSystem(
           {action.prepare.sourceKey, configuration->path}, bridge,
           configuration->presentation, &error, configuration->captionFeed);
+  WAM_STARTUP_STAMP(NativeSessionCreateEnd);
   if (session == nullptr) {
     surfaceNativeError(error.empty()
                            ? "Unable to create native playback."
@@ -1047,6 +1050,7 @@ NativePlaybackOwner::beginNativePrepare(const playback_router::Action& action) {
   lastAudioProofSerial_ = 0;
   lastVideoDrawSequence_ = 0;
   firstNativeDrawReported_ = false;
+  WAM_STARTUP_STAMP(NativePrepareIssued);
   const auto status =
       nativeSession_->prepare(action.prepare, configuration->initialPosition);
   if (status != macos::NativeMediaSessionCommandStatus::Accepted) {

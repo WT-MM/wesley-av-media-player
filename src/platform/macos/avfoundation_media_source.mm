@@ -1,3 +1,4 @@
+#include "media/startup_benchmark.hpp"
 #include "media/mp3_lame_gapless.hpp"
 #include <fstream>
 #include "media/audio_track_admission.hpp"
@@ -2379,7 +2380,8 @@ struct AsyncLoadRequest {
   if (rejectedByAVFoundation != nullptr) {
     *rejectedByAVFoundation = false;
   }
-  return waitForConcurrentLoadBatch(
+  WAM_STARTUP_STAMP(AssetKeysBegin);
+  const bool loaded = waitForConcurrentLoadBatch(
       signal, requests.size(),
       [&](std::size_t index, std::function<void()> completion) {
         id<AVAsynchronousKeyValueLoading> object = requests[index].object;
@@ -2418,6 +2420,8 @@ struct AsyncLoadRequest {
         return true;
       },
       nullptr, error);
+  WAM_STARTUP_STAMP(AssetKeysEnd);
+  return loaded;
 }
 
 [[nodiscard]] MediaTrackId stableTrackId(AVAssetTrack* track,

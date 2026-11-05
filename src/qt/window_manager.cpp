@@ -1,3 +1,4 @@
+#include "media/startup_benchmark.hpp"
 #include "window_manager.hpp"
 
 #include "player_controller.hpp"
@@ -29,6 +30,7 @@
 #include <QTimer>
 
 #include <algorithm>
+#include <utility>
 #include <chrono>
 #include <cmath>
 
@@ -47,6 +49,25 @@ static_assert(wam::qt::kMaximumPlayerWindows ==
 
 namespace wam::qt {
 namespace {
+
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY)
+class StartupExposureObserver final : public QObject {
+public:
+  explicit StartupExposureObserver(QQuickWindow *window) : QObject(window) {
+    window->installEventFilter(this);
+  }
+  bool eventFilter(QObject *object, QEvent *event) override {
+    if (!seen_ && event->type() == QEvent::Expose &&
+        static_cast<QQuickWindow *>(object)->isExposed()) {
+      seen_ = true;
+      WAM_STARTUP_STAMP(FirstWindowExposed);
+    }
+    return false;
+  }
+private:
+  bool seen_{false};
+};
+#endif
 
 QString localStateKey(const QUrl &source) {
   if (!source.isLocalFile())
@@ -195,10 +216,19 @@ PlayerWindow::PlayerWindow(WindowManager &manager, QQmlComponent &component,
   context_->setContextProperty(QStringLiteral("player"), controller_);
 
   qml_root_ = component.create(context_);
+  WAM_STARTUP_STAMP(QmlRootLoaded);
   if (qml_root_ == nullptr)
     return;
   qml_root_->setParent(this);
   window_ = qobject_cast<QQuickWindow *>(qml_root_);
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY)
+  if (window_ && media::audioBenchmarkMailbox.enabled.load(std::memory_order_relaxed)) {
+    connect(window_, &QQuickWindow::frameSwapped, this, [seen = false]() mutable {
+      if (!std::exchange(seen, true)) WAM_STARTUP_STAMP(FirstSceneFrame);
+    }, Qt::DirectConnection);
+    new StartupExposureObserver(window_);
+  }
+#endif
 
 #if defined(Q_OS_MACOS)
   if (window_ != nullptr) {
@@ -454,6 +484,7 @@ WindowManager::WindowManager(QQmlEngine &engine, ::wam::StateStore &store,
     : QObject(parent), engine_(engine), store_(store) {
   component_ = new QQmlComponent(&engine, QStringLiteral("Wam"),
                                  QStringLiteral("Main"), this);
+  WAM_STARTUP_STAMP(QmlComponentLoaded);
   checkpoint_timer_ = new QTimer(this);
   checkpoint_timer_->setInterval(
       static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -872,6 +903,7 @@ bool WindowManager::createMenuBar() {
                << component.errorString();
     return false;
   }
+  WAM_STARTUP_STAMP(MenuLoaded);
   menu_bar_->setParent(this);
   return true;
 }

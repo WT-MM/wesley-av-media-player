@@ -1,3 +1,4 @@
+#include "media/startup_benchmark.hpp"
 #include "native_playback_owner.hpp"
 
 #include "mpv_video_item.hpp"
@@ -334,6 +335,7 @@ bool NativePlaybackOwner::open(const QUrl &source,
 
 void NativePlaybackOwner::completeOpenPreflight(
     NativeOpenPreflightResult result) {
+  WAM_STARTUP_STAMP(PreflightDelivered);
   Q_ASSERT(QThread::currentThread() == controller_.thread());
   if (result.requestId == 0 ||
       result.requestId != latestOpenPreflightRequest_) {
@@ -351,7 +353,9 @@ void NativePlaybackOwner::completeOpenPreflight(
   record.initialPosition = std::move(result.initialPosition);
   record.sourceClass = result.sourceClass;
   const QUrl routedSource = record.url;
+  WAM_STARTUP_STAMP(RouteIntentBegin);
   controller_.prepareRoutedOpenIntent(routedSource);
+  WAM_STARTUP_STAMP(RouteIntentEnd);
   if (result.requestId != latestOpenPreflightRequest_) {
     return;
   }
@@ -460,8 +464,10 @@ NativePlaybackOwner::beginFallbackCreate(
 
   if (!controller_.engineReady()) {
     if (!controller_.fallback_runtime_) {
+      WAM_STARTUP_STAMP(FallbackLoadBegin);
       const auto loaded = playback::mpv::MpvFallbackFactory::load(
           QCoreApplication::applicationDirPath());
+      WAM_STARTUP_STAMP(FallbackLoadEnd);
       if (!loaded || !controller_.provisionMpvFallbackRuntime(loaded.runtime)) {
         controller_.setLastError(
             loaded.detail.isEmpty()
@@ -471,7 +477,10 @@ NativePlaybackOwner::beginFallbackCreate(
         return router_.onFallbackFailed({action.fallback.stamp}, nextTick());
       }
     }
-    if (!controller_.initializePlaybackEngine()) {
+    WAM_STARTUP_STAMP(FallbackInitializeBegin);
+    const bool initialized = controller_.initializePlaybackEngine();
+    WAM_STARTUP_STAMP(FallbackInitializeEnd);
+    if (!initialized) {
       return router_.onFallbackFailed({action.fallback.stamp}, nextTick());
     }
   }

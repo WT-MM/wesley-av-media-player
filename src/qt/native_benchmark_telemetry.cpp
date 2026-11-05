@@ -280,6 +280,31 @@ NativeBenchmarkTelemetry::~NativeBenchmarkTelemetry() noexcept {
 
 const char *NativeBenchmarkTelemetry::eventName(Event event) noexcept {
   switch (event) {
+  case Event::MainEntered: return "main_entered";
+  case Event::GuiApplicationConstructed: return "gui_application_constructed";
+  case Event::StateStoreLoaded: return "state_store_loaded";
+  case Event::QmlComponentLoaded: return "qml_component_loaded";
+  case Event::MenuLoaded: return "menu_loaded";
+  case Event::QmlRootLoaded: return "qml_root_loaded";
+  case Event::FirstWindowExposed: return "first_window_exposed";
+  case Event::FirstSceneFrame: return "first_scene_frame";
+  case Event::FileOpenReceived: return "file_open_received";
+  case Event::PreflightBegin: return "preflight_begin";
+  case Event::SourceResolved: return "source_resolved";
+  case Event::SourceClassified: return "source_classified";
+  case Event::PreflightEnd: return "preflight_end";
+  case Event::PreflightDelivered: return "preflight_delivered";
+  case Event::RouteIntentBegin: return "route_intent_begin";
+  case Event::RouteIntentEnd: return "route_intent_end";
+  case Event::NativeSessionCreateBegin: return "native_session_create_begin";
+  case Event::NativeSessionCreateEnd: return "native_session_create_end";
+  case Event::NativePrepareIssued: return "native_prepare_issued";
+  case Event::AssetKeysBegin: return "asset_keys_begin";
+  case Event::AssetKeysEnd: return "asset_keys_end";
+  case Event::FallbackLoadBegin: return "fallback_load_begin";
+  case Event::FallbackLoadEnd: return "fallback_load_end";
+  case Event::FallbackInitializeBegin: return "fallback_initialize_begin";
+  case Event::FallbackInitializeEnd: return "fallback_initialize_end";
   case Event::OpenRequested:
     return "open_requested";
   case Event::NativeSelected:
@@ -658,6 +683,31 @@ void NativeBenchmarkTelemetry::drainAudio() noexcept {
     const auto &audio = box.entries[audioReadIndex_++].point;
     Point point{};
     switch (audio.event) {
+    case media::AudioBenchmarkEvent::MainEntered: point.event = Event::MainEntered; break;
+    case media::AudioBenchmarkEvent::GuiApplicationConstructed: point.event = Event::GuiApplicationConstructed; break;
+    case media::AudioBenchmarkEvent::StateStoreLoaded: point.event = Event::StateStoreLoaded; break;
+    case media::AudioBenchmarkEvent::QmlComponentLoaded: point.event = Event::QmlComponentLoaded; break;
+    case media::AudioBenchmarkEvent::MenuLoaded: point.event = Event::MenuLoaded; break;
+    case media::AudioBenchmarkEvent::QmlRootLoaded: point.event = Event::QmlRootLoaded; break;
+    case media::AudioBenchmarkEvent::FirstWindowExposed: point.event = Event::FirstWindowExposed; break;
+    case media::AudioBenchmarkEvent::FirstSceneFrame: point.event = Event::FirstSceneFrame; break;
+    case media::AudioBenchmarkEvent::FileOpenReceived: point.event = Event::FileOpenReceived; break;
+    case media::AudioBenchmarkEvent::PreflightBegin: point.event = Event::PreflightBegin; break;
+    case media::AudioBenchmarkEvent::SourceResolved: point.event = Event::SourceResolved; break;
+    case media::AudioBenchmarkEvent::SourceClassified: point.event = Event::SourceClassified; break;
+    case media::AudioBenchmarkEvent::PreflightEnd: point.event = Event::PreflightEnd; break;
+    case media::AudioBenchmarkEvent::PreflightDelivered: point.event = Event::PreflightDelivered; break;
+    case media::AudioBenchmarkEvent::RouteIntentBegin: point.event = Event::RouteIntentBegin; break;
+    case media::AudioBenchmarkEvent::RouteIntentEnd: point.event = Event::RouteIntentEnd; break;
+    case media::AudioBenchmarkEvent::NativeSessionCreateBegin: point.event = Event::NativeSessionCreateBegin; break;
+    case media::AudioBenchmarkEvent::NativeSessionCreateEnd: point.event = Event::NativeSessionCreateEnd; break;
+    case media::AudioBenchmarkEvent::NativePrepareIssued: point.event = Event::NativePrepareIssued; break;
+    case media::AudioBenchmarkEvent::AssetKeysBegin: point.event = Event::AssetKeysBegin; break;
+    case media::AudioBenchmarkEvent::AssetKeysEnd: point.event = Event::AssetKeysEnd; break;
+    case media::AudioBenchmarkEvent::FallbackLoadBegin: point.event = Event::FallbackLoadBegin; break;
+    case media::AudioBenchmarkEvent::FallbackLoadEnd: point.event = Event::FallbackLoadEnd; break;
+    case media::AudioBenchmarkEvent::FallbackInitializeBegin: point.event = Event::FallbackInitializeBegin; break;
+    case media::AudioBenchmarkEvent::FallbackInitializeEnd: point.event = Event::FallbackInitializeEnd; break;
     case media::AudioBenchmarkEvent::Stop: point.event = Event::AudioOutputStopIssued; break;
     case media::AudioBenchmarkEvent::Start: point.event = Event::AudioOutputStartIssued; break;
     case media::AudioBenchmarkEvent::Render: point.event = Event::AudioFirstRender; break;

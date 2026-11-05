@@ -8,7 +8,7 @@
 #include <chrono>
 #include <cstdint>
 namespace wam::media {
-enum class AudioBenchmarkEvent : std::uint8_t { Start, Render, Advancing, Play, Stop };
+enum class AudioBenchmarkEvent : std::uint8_t { Start, Render, Advancing, Play, Stop, MainEntered, GuiApplicationConstructed, StateStoreLoaded, QmlComponentLoaded, MenuLoaded, QmlRootLoaded, FirstWindowExposed, FirstSceneFrame, FileOpenReceived, PreflightBegin, SourceResolved, SourceClassified, PreflightEnd, PreflightDelivered, RouteIntentBegin, RouteIntentEnd, NativeSessionCreateBegin, NativeSessionCreateEnd, NativePrepareIssued, AssetKeysBegin, AssetKeysEnd, FallbackLoadBegin, FallbackLoadEnd, FallbackInitializeBegin, FallbackInitializeEnd };
 struct AudioBenchmarkPoint {
   AudioBenchmarkEvent event{};
   std::uint64_t generation{}, nanoseconds{}, quantumNanoseconds{};
