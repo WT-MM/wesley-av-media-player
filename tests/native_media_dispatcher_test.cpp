@@ -2140,6 +2140,21 @@ void checkStopCancellationPreservesRetirementAuthority() {
 }
 
 int main() {
+  {
+    MediaSourceDescriptor d;
+    d.duration={77,1};
+    auto video=videoTrack();
+    video.duration={77,1};
+    d.selectedVideo=video.id;
+    d.tracks.push_back(video);
+    auto audio=audioTrack();
+    audio.duration={55313608,720000};
+    d.selectedAudio=audio.id;
+    d.tracks.push_back(audio);
+    const auto end=presentableSeekCeiling(d);
+    expect(end==MediaTime{3687573,48000}, "seek ceiling includes fractional AAC audio end and ceiling-frame rounding");
+  }
+
   checkStopCancellationPreservesRetirementAuthority();
   backendTrackRetry();
   static_assert(
