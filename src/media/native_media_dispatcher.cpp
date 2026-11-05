@@ -377,19 +377,25 @@ enum class OpenConfigureVerdict : std::uint8_t {
 
 MediaTime presentableSeekCeiling(
     const MediaSourceDescriptor& descriptor) noexcept {
-  if (!descriptor.selectedVideo.has_value()) {
-    return descriptor.duration;
+  MediaTime ceiling = descriptor.duration;
+  for (const auto selected : {descriptor.selectedVideo,descriptor.selectedAudio}) {
+    if (!selected) continue;
+    const auto* track = findMediaTrack(descriptor,*selected);
+    if (!track || !track->duration.valid() || track->duration.value <= 0) continue;
+    auto end = track->duration;
+    if (track->audio) {
+      const double rate = track->audio->sampleRate;
+      if (rate > 0 && rate <= INT32_MAX && rate == std::floor(rate)) {
+        // Accurate seeks round UP to an audio frame. Keep that frame strictly
+        // before the audio publication ceiling, including fractional edits.
+        const auto after = audioFrameAtOrAfter(end,static_cast<std::uint32_t>(rate));
+        const auto frame = after ? exactAudioFrameIndex(*after,static_cast<std::uint32_t>(rate)) : std::nullopt;
+        if (frame && *frame > 1) end = {*frame-1,static_cast<std::int32_t>(rate)};
+      }
+    }
+    if (compareMediaTime(end,ceiling)==MediaTimeOrder::Less) ceiling=end;
   }
-  const MediaTrackDescriptor* video =
-      findMediaTrack(descriptor, *descriptor.selectedVideo);
-  if (video == nullptr || !video->duration.valid() ||
-      video->duration.value <= 0) {
-    return descriptor.duration;
-  }
-  const auto order = compareMediaTime(video->duration, descriptor.duration);
-  return order.has_value() && *order == MediaTimeOrder::Less
-             ? video->duration
-             : descriptor.duration;
+  return ceiling;
 }
 
 static_assert(std::is_standard_layout_v<NativeMediaGenerationTimeline>);

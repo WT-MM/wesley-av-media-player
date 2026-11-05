@@ -135,6 +135,18 @@ void testFrameRecoveryFromNanoseconds() {
 } // namespace
 
 int main() {
+  using wam::media::projectAacPacketGrid;
+  for (unsigned rate : {44100u,48000u}) {
+    for (int residual : {-256,-22,0,38,152,256}) {
+      const auto t = projectAacPacketGrid({1024*600000LL-2048+residual,static_cast<int>(rate)},-2048,600000,rate);
+      expect(t && t->value == 1024*600000LL-2048, "bounded jitter preserves origin and long ordinal grid");
+    }
+    for (int residual : {-10331,-1104,-1023,-257,257,1024})
+      expect(!projectAacPacketGrid({1024*200LL+residual,static_cast<int>(rate)},0,200,rate),
+             "drift and missing/overlapping access units fail the original ordinal proof");
+    expect(!projectAacPacketGrid({0,static_cast<int>(rate)},INT64_MAX,1,rate),"grid overflow refuses");
+  }
+
   testCodecsThatPrecedeTheStreamOrigin();
   testCodecsThatStateAnExactDecodedDuration();
   testTheTwoPredicatesAreNotTheSameSet();
