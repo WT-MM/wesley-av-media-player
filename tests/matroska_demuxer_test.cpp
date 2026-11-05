@@ -1719,12 +1719,7 @@ void testPreparationRequestValidation() {
 //
 // DisplayUnit is Matroska's units-of-DisplayWidth/DisplayHeight selector:
 // 0 = pixels, 1 = centimetres, 2 = inches, 3 = display aspect ratio,
-// 4 = unspecified. This square-pixel v1 renderer models none of the non-pixel
-// geometries, so admission refuses 1, 2 and 3 outright and refuses a
-// DisplayUnit-0 track whose display size differs from its pixel size. Those
-// files are not broken -- they take the mpv compatibility route, which derives
-// its own display size from dwidth/dheight. Widening admission is a renderer
-// change, not a metadata change, and is deliberately not made here.
+// 4 = unspecified. Pixel dimensions also prove an exact sample aspect ratio.
 void testVideoDisplayGeometry() {
   const auto displaySizeOf = [](const FixtureSpec& spec)
       -> std::optional<std::pair<std::uint32_t, std::uint32_t>> {
@@ -1805,14 +1800,19 @@ void testVideoDisplayGeometry() {
                      "DisplayUnit 2 (inches) is refused");
 
   // Anamorphic stated in pixels: a 1920-wide picture from a narrower coded
-  // frame. Also refused, for the same renderer reason.
+  // frame. Its exact SAR reaches the native presenter.
   FixtureSpec anamorphic;
   anamorphic.videoDisplayUnit = 0;
   anamorphic.videoDisplayWidth = kSampleAvcWidth * 2;
   anamorphic.videoDisplayHeight = kSampleAvcHeight;
-  expectPrepareError(anamorphic, MatroskaDemuxError::CodecConfiguration,
-                     "DisplayUnit 0 anamorphic geometry is refused, not "
-                     "silently squashed to the coded size");
+  const auto anamorphicPrepared = prepareFixture(anamorphic);
+  expect(anamorphicPrepared.outcome.asset != nullptr, "pixel display geometry is admitted");
+  if (anamorphicPrepared.outcome.asset) {
+    const auto* track = wam::media::findMediaTrack(*anamorphicPrepared.asset().descriptor(), 1);
+    expect(track && track->video && track->video->pixelAspectNumerator == 2 &&
+           track->video->pixelAspectDenominator == 1,
+           "anamorphic descriptor retains exact reduced SAR");
+  }
 
   // DisplayUnit 4 is "unspecified", so stating dimensions alongside it is a
   // contradiction the parser itself rejects.
@@ -3786,8 +3786,16 @@ void testMalformedDocuments() {
     spec.durationTicks = 1'500.0;
     spec.includeAudioTrack = false;
     spec.includeSubtitleTrack = false;
-    expectPrepareError(spec, MatroskaDemuxError::InvalidTimeline,
-                       "a non-monotonic Cluster timeline is refused");
+    const auto prepared = prepareFixture(spec);
+    expect(prepared.outcome.asset != nullptr,
+           "video Cluster bases may regress with a monotonic scanned Cue index");
+    if (prepared.outcome.asset) {
+      const auto cues = prepared.asset().cues();
+      for (std::size_t i = 1; i < cues.size(); ++i)
+        expect(cues[i].timestampTick > cues[i-1].timestampTick,
+               "video seek index remains strictly ordered");
+    }
+
   }
   {
     const Fixture fixture = buildFixture({});
