@@ -1,3 +1,4 @@
+#include "media/startup_benchmark.hpp"
 #if defined(WAM_ENABLE_AVFORMAT_STAGE)
 #include "media/libavformat_cursor.hpp"
 #endif
@@ -957,14 +958,14 @@ QUrl mediaUrlFromArgument(const QString &argument) {
 // there is no argv. On a cold start the event is delivered once the event
 // loop first spins, which can precede the QML engine finishing its load, so
 // URLs are buffered until the player is attached and drained in arrival
-// order. Opens are dispatched through the event loop either way, matching
-// how the argv open is staged below.
+// order before the first window exposure. Subsequent opens remain queued to
+// avoid reentering window creation from a live Apple Event callback.
 class FileOpenRelay final : public QObject {
  public:
   void attach(wam::qt::WindowManager *windows) {
     windows_ = windows;
     for (const QUrl &url : pending_)
-      dispatch(url);
+      windows_->openUrl(url);
     pending_.clear();
   }
 
@@ -973,6 +974,7 @@ class FileOpenRelay final : public QObject {
     if (event->type() != QEvent::FileOpen) {
       return QObject::eventFilter(watched, event);
     }
+    WAM_STARTUP_STAMP(FileOpenReceived);
     const auto *open_event = static_cast<QFileOpenEvent *>(event);
     QUrl url = open_event->url();
     if (url.isEmpty() && !open_event->file().isEmpty())
@@ -1133,6 +1135,10 @@ int verifyRuntime() {
 } // namespace
 
 int main(int argc, char *argv[]) {
+#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK) && defined(WAM_NATIVE_BENCHMARK_TELEMETRY)
+  (void)wam::qt::NativeBenchmarkTelemetry::instance();
+#endif
+  WAM_STARTUP_STAMP(MainEntered);
   // libmpv's public high-performance render API is OpenGL. Keep Qt Quick on
   // the same device so video can render directly into the scene graph target,
   // without a full-frame intermediate texture or CPU readback.
@@ -1211,6 +1217,7 @@ int main(int argc, char *argv[]) {
 #endif
 
   QGuiApplication app(argc, argv);
+  WAM_STARTUP_STAMP(GuiApplicationConstructed);
 
 #if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   // NSApp now exists and no window has been shown yet: the one moment where
@@ -1223,6 +1230,9 @@ int main(int argc, char *argv[]) {
   // cannot slip past; attached to the player once the engine has loaded.
   FileOpenRelay file_open_relay;
   app.installEventFilter(&file_open_relay);
+  // Let LaunchServices deliver its initial QFileOpenEvent while the relay is
+  // buffering, before QML/GL startup can hold the Cocoa event loop busy.
+  QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
 
   // QGuiApplication adopts the user's locale. libmpv explicitly requires the
   // numeric category to remain POSIX so option/property numbers always use a
@@ -1250,6 +1260,7 @@ int main(int argc, char *argv[]) {
   wam::qt::registerWamQtTypes();
   wam::StateStore state_store;
   (void)state_store.load();
+  WAM_STARTUP_STAMP(StateStoreLoaded);
 
   // A player window is a document window: closing the last one leaves the app
   // running with its menu bar, the way every document-based macOS app behaves,
@@ -1466,14 +1477,10 @@ int main(int argc, char *argv[]) {
     }
 
     const QList<QUrl> media = initialMediaUrls(app);
-    if (!media.isEmpty()) {
-      QTimer::singleShot(0, &windows, [&windows, media] {
-        // The first window is empty, so it claims the first file; every
-        // further argument creates its own window.
-        for (const QUrl &url : media)
-          static_cast<void>(windows.openUrl(url));
-      });
-    }
+    // Queue the asynchronous preflight before entering the event loop, so it
+    // can finish while Cocoa exposes the first window and Qt prepares GL.
+    for (const QUrl &url : media)
+      static_cast<void>(windows.openUrl(url));
     file_open_relay.attach(&windows);
 
 #if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
