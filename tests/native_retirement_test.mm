@@ -17,6 +17,7 @@ struct Probe {
   std::atomic<bool> entered{false};
   std::atomic<bool> release{false};
   bool completed{false};
+  std::atomic<bool> destroyed{false};
 };
 void complete(std::shared_ptr<void> opaque) noexcept {
   auto probe = std::static_pointer_cast<Probe>(opaque);
@@ -38,6 +39,7 @@ int main() {
       probe->entered.store(true, std::memory_order_release);
       while (!probe->release.load(std::memory_order_acquire)) std::this_thread::yield();
       delete static_cast<int*>(value);
+      probe->destroyed.store(true, std::memory_order_release);
     });
     auto retiring = tickets.back();
     retiring->retire(std::move(graph), probe, &complete);
@@ -47,7 +49,20 @@ int main() {
     expect(probe->entered, "background destruction entered");
     expect(!retiring->complete() && !probe->completed, "close does not counterfeit retirement");
     expect(!NativeRetirement::reserve(), "blocked retirement remains charged");
+    std::atomic<bool> waiting{false}, drained{false};
+    std::thread exitWaiter([&] {
+      waiting.store(true, std::memory_order_release);
+      NativeRetirement::drainForProcessExit();
+      expect(probe->destroyed.load(std::memory_order_acquire),
+             "exit barrier observes actual graph destruction");
+      drained.store(true, std::memory_order_release);
+    });
+    while (!waiting.load(std::memory_order_acquire)) std::this_thread::yield();
+    expect(!drained.load(std::memory_order_acquire), "exit waits for blocked graph");
     probe->release.store(true, std::memory_order_release);
+    exitWaiter.join();
+    expect(drained && !probe->completed,
+           "exit drain does not depend on main-queue completion delivery");
     while (!probe->completed && std::chrono::steady_clock::now() < deadline)
       [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.001]];
     expect(probe->completed && retiring->complete(), "close completes after graph destruction");

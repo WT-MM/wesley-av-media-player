@@ -9,6 +9,7 @@ namespace wam::macos {
 namespace {
 std::array<std::atomic<bool>, kMaximumConcurrentPlayerWindows> slots{};
 std::atomic<bool> testPaused{false};
+std::atomic<unsigned> pendingDestructions{0};
 }
 std::shared_ptr<NativeRetirement> NativeRetirement::reserve() noexcept {
   for (unsigned i = 0; i < slots.size(); ++i) {
@@ -22,6 +23,12 @@ std::shared_ptr<NativeRetirement> NativeRetirement::reserve() noexcept {
     }
   }
   return {};
+}
+void NativeRetirement::drainForProcessExit() noexcept {
+  for (unsigned pending = pendingDestructions.load(std::memory_order_acquire);
+       pending != 0; pending = pendingDestructions.load(std::memory_order_acquire)) {
+    pendingDestructions.wait(pending, std::memory_order_acquire);
+  }
 }
 void NativeRetirement::setTestPaused(bool paused) noexcept {
   testPaused.store(paused, std::memory_order_release);
@@ -42,10 +49,15 @@ void NativeRetirement::retire(std::shared_ptr<void> graph,
   started_ = true;
   graph_ = std::move(graph);
   const auto retained = shared_from_this();
+  pendingDestructions.fetch_add(1, std::memory_order_release);
   dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
     while (testPaused.load(std::memory_order_acquire)) testPaused.wait(true);
-    retained->graph_.reset();
+    @autoreleasepool {
+      retained->graph_.reset();
+    }
     retained->complete_.store(true, std::memory_order_release);
+    pendingDestructions.fetch_sub(1, std::memory_order_release);
+    pendingDestructions.notify_all();
     dispatch_async(dispatch_get_main_queue(), ^{
       if (completion) completion(lifetime);
     });

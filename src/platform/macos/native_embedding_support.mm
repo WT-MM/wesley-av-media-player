@@ -1,5 +1,6 @@
 #include "native_embedding_support.hpp"
 #include "native_audio_test_mute.hpp"
+#include "native_retirement.hpp"
 #include "native_video_codec_capability.hpp"
 #include "native_layer_presentation_state.hpp"
 #include "native_layer_host_view.hpp"
@@ -8,6 +9,9 @@
 #include "media/avcodec/decode_worker.hpp"
 #endif
 namespace wam::macos {
+void NativeEmbeddingSupport::drainRetirementsForProcessExit() noexcept {
+  NativeRetirement::drainForProcessExit();
+}
 void NativeEmbeddingSupport::setTestNoVideoHardware(bool value) noexcept { setNativeVideoHardwareDisabledForTesting(value); }
 NativeEmbeddingSupport::SoftwareWorkers NativeEmbeddingSupport::softwareWorkers() noexcept {
 #if defined(WAM_ENABLE_AVCODEC_STAGE)
