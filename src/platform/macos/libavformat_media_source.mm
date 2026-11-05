@@ -709,9 +709,7 @@ LibavformatMediaSource::openLocalFile(const std::filesystem::path &path,
       }
       if (audioTrack.codec == MediaCodec::Aac) {
         if (!context->aacTimeline) context->aacTimeline = std::make_shared<AacPacketTimeline>(
-            static_cast<std::uint32_t>(audioTrack.audio->sampleRate),
-            static_cast<std::uint32_t>(std::max<std::int64_t>(1,
-                (context->audioQuantum.value*static_cast<std::int64_t>(audioTrack.audio->sampleRate)+context->audioQuantum.timescale-1)/context->audioQuantum.timescale)));
+            static_cast<std::uint32_t>(audioTrack.audio->sampleRate));
         // Some containers omit packet duration; their fixed AAC extent is
         // known from the ASC. MOV's explicit short durations remain intact.
         const auto duration = packet.duration.valid() && packet.duration.value > 0 ? packet.duration :

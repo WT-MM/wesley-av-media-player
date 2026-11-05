@@ -158,7 +158,20 @@ int main() {
     wam::media::AacPacketTimeline drift(48000);
     for (int i=0;i<=256;++i)
       expect(drift.append({i*1025,48000},{1025,48000}), "one-tick jitter remains within segment bound");
-    expect(!drift.append({257*1025,48000},{1025,48000}), "cumulative jitter cannot re-anchor away the bound");
+    expect(drift.append({257*1025,48000},{1025,48000}), "cumulative drift re-anchors beyond bound");
+    expect(drift.packets()[255].duration == 1024 && drift.packets()[256].duration == 1281,
+           "one edit accounts for the entire cumulative drift");
+    wam::media::AacPacketTimeline jitter(44100);
+    for (int i=0;i<1000;++i)
+      expect(jitter.append({i*1024+(i%2 ? -10 : 0),44100},{i%2 ? 1034 : 1014,44100}),
+             "alternating jitter is admitted");
+    for (const auto& packet : jitter.packets())
+      expect(packet.duration == 1024, "jitter never trims or inserts silence");
+    wam::media::AacPacketTimeline spanning(48000);
+    for (const auto [pts,duration] : {std::pair{0,911}, {911,1}, {912,1024}})
+      expect(spanning.append({pts,48000},{duration,48000}), "overlap spanning projected packet tails");
+    expect(spanning.packets()[0].duration == 911 && spanning.packets()[1].duration == 1 &&
+           spanning.packets()[2].start == 912, "single shift trims exactly 1136 frames across two AUs");
     wam::media::AacPacketTimeline fractional(48000);
     expect(fractional.append({0,48000},{1,48000}), "short first packet");
     expect(!fractional.append({1,96000},{1024,48000}), "fractional-frame segment anchor refuses");

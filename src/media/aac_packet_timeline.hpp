@@ -9,8 +9,8 @@ namespace wam::media {
 class AacPacketTimeline {
 public:
   struct Packet { MediaTime observed; std::int64_t start; std::int64_t duration; };
-  explicit AacPacketTimeline(std::uint32_t rate, std::uint32_t quantumFrames = 1)
-      : rate_(rate), quantumFrames_(quantumFrames) {}
+  explicit AacPacketTimeline(std::uint32_t rate)
+      : rate_(rate) {}
   bool append(MediaTime pts, MediaTime duration) {
     if (packets_.size() == 2'000'000 || !pts.valid() || !duration.valid() || duration.value <= 0)
       return false;
@@ -20,21 +20,30 @@ public:
       origin_ = *exact;
     } else {
       if (compareMediaTime(pts, packets_.back().observed) != MediaTimeOrder::Greater) return false;
-      // One container tick is timestamp quantization, not an edit. A stated
-      // short/long packet or a successor beyond its natural extent establishes
-      // a new segment. Ordinary jitter is still tested against the segment's
-      // ORIGINAL anchor, so accumulated drift cannot continually re-anchor.
-      const auto prior = packets_.back().observed;
-      const __int128 durationError = __int128(previousDuration_.value)*rate_ -
-                                    __int128(1024)*previousDuration_.timescale;
-      const __int128 tick = __int128(quantumFrames_)*previousDuration_.timescale;
-      const __int128 delta = (__int128(pts.value)*prior.timescale -
-                              __int128(prior.value)*pts.timescale)*rate_;
-      const __int128 natural = __int128(1024)*pts.timescale*prior.timescale;
-      const bool declaredEdit = durationError < -tick || durationError > tick;
-      const bool gap = delta > natural + __int128(quantumFrames_)*pts.timescale*prior.timescale;
-      if (declaredEdit || gap) {
-        if (!exact || *exact <= packets_.back().start) return false;
+      // Packet durations describe timestamp jitter as well as real edits.
+      // Only cumulative displacement from this segment's ORIGINAL grid can
+      // establish a boundary. Inside the bound, all decoded PCM is contiguous.
+      if (!projectAacPacketGrid(pts, origin_, packets_.size()-segmentOrdinal_, rate_)) {
+        if (!exact) return false;
+        // A short AU can cross the bound while its predecessor was projected
+        // slightly late. The overlap then spans more than one decoded AU.
+        // Walk that edit backwards, retaining positive extents for CoreMedia;
+        // the aggregate trim is still exactly the single re-anchor shift.
+        auto boundary = *exact;
+        for (std::size_t i = packets_.size(); i > 0; --i) {
+          auto& priorPacket = packets_[i-1];
+          if (boundary > priorPacket.start) break;
+          if (boundary == INT64_MIN || i == 1) return false;
+          priorPacket.start = boundary-1;
+          priorPacket.duration = 1;
+          boundary = priorPacket.start;
+        }
+        for (std::size_t i = packets_.size()-1; i > 0; --i) {
+          auto& previous = packets_[i-1];
+          const auto extent = packets_[i].start-previous.start;
+          if (previous.duration == extent) break;
+          previous.duration = extent;
+        }
         const __int128 extent = __int128(*exact) - packets_.back().start;
         if (extent > INT64_MAX) return false;
         packets_.back().duration = static_cast<std::int64_t>(extent);
@@ -69,7 +78,6 @@ public:
   std::uint32_t rate() const { return rate_; }
 private:
   std::uint32_t rate_;
-  std::uint32_t quantumFrames_;
   std::int64_t origin_{};
   std::size_t segmentOrdinal_{};
   MediaTime previousDuration_{};

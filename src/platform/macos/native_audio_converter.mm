@@ -990,6 +990,7 @@ struct NativeAudioConverter::Impl {
     aac_pending_count = aac_pending_offset = 0;
     statistics.decodedPcmFrames = 0;
     statistics.discardedTrimFrames = 0;
+    statistics.insertedSilenceFrames = 0;
     statistics.publishedPcmFrames = 0;
     statistics.presentationFloorFrame = floorFrame;
     statistics.firstPublishedFrame = 0;
@@ -1535,6 +1536,7 @@ struct NativeAudioConverter::Impl {
         if (!statistics.firstPublishedFrameKnown) {
           statistics.firstPublishedFrameKnown=true; statistics.firstPublishedFrame=low;
         }
+        if (silence) saturatingAdd(statistics.insertedSilenceFrames,count);
         saturatingAdd(statistics.publishedPcmFrames,count);
         saturatingAdd(statistics.publishedSlabs,1);
       }
