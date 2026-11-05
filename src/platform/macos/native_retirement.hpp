@@ -11,6 +11,9 @@ class NativeRetirement final : public std::enable_shared_from_this<NativeRetirem
 public:
   static std::shared_ptr<NativeRetirement> reserve() noexcept;
   static unsigned charged() noexcept;
+  // Process-exit barrier: call only after all owners have retired their graphs.
+  // Normal window close remains asynchronous. No main-queue callback is needed.
+  static void drainForProcessExit() noexcept;
   static void setTestPaused(bool) noexcept;
   ~NativeRetirement();
   NativeRetirement(const NativeRetirement&) = delete;

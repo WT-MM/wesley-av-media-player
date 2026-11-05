@@ -420,7 +420,8 @@ if(APPLE)
   find_library(WAM_COREIMAGE_FRAMEWORK CoreImage REQUIRED)
   target_sources(wam PRIVATE
     src/qt/macos_window_chrome.hpp
-    src/qt/macos_window_chrome.mm)
+    src/qt/macos_window_chrome.mm
+    src/qt/macos_video_service_cleanup.mm)
   # ARC only for the window-chrome helper: the playback .mm sources are
   # ARC-agnostic by design and pay per-frame retain/release costs under ARC.
   set_source_files_properties(src/qt/macos_window_chrome.mm PROPERTIES
@@ -463,6 +464,10 @@ if(APPLE)
       add_executable(wam_native_session_factory_test tests/native_session_factory_test.mm)
       target_link_libraries(wam_native_session_factory_test PRIVATE wam_macos_native_session_system)
       add_test(NAME native_session_factory COMMAND wam_native_session_factory_test)
+      add_executable(wam_macos_video_service_identity_test tests/macos_video_service_identity_test.cpp)
+      target_include_directories(wam_macos_video_service_identity_test PRIVATE src)
+      target_compile_features(wam_macos_video_service_identity_test PRIVATE cxx_std_20)
+      add_test(NAME macos_video_service_identity COMMAND wam_macos_video_service_identity_test)
       add_executable(wam_native_retirement_test tests/native_retirement_test.mm)
       target_link_libraries(wam_native_retirement_test PRIVATE wam_macos_native_session_system)
       add_test(NAME native_retirement COMMAND wam_native_retirement_test)
@@ -2580,4 +2585,24 @@ if(BUILD_TESTING AND APPLE AND WAM_ENABLE_MACOS_NATIVE_VIDEO AND WAM_NATIVE_BENC
         --output "${CMAKE_BINARY_DIR}/ui-evidence/${ui_case}")
     set_tests_properties(ui_${ui_case} PROPERTIES TIMEOUT 70 RUN_SERIAL TRUE LABELS ui)
   endforeach()
+endif()
+
+if(BUILD_TESTING AND APPLE AND WAM_ENABLE_MACOS_NATIVE_VIDEO AND WAM_NATIVE_BENCHMARK_TELEMETRY)
+  find_package(Python3 COMPONENTS Interpreter REQUIRED)
+  find_program(WAM_LIFETIME_FFMPEG NAMES ffmpeg REQUIRED)
+  add_test(NAME macos_video_service_lifetime
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tests/video_service_lifetime_test.py"
+      "$<TARGET_BUNDLE_DIR:wam>" --ffmpeg "${WAM_LIFETIME_FFMPEG}")
+  set_tests_properties(macos_video_service_lifetime PROPERTIES TIMEOUT 180 RUN_SERIAL TRUE)
+endif()
+
+if(BUILD_TESTING AND APPLE AND WAM_ENABLE_MACOS_NATIVE_VIDEO)
+  # Diagnostic, not a CTest: its window mode intentionally reproduces an OS leak.
+  add_executable(wam_video_service_os_probe EXCLUDE_FROM_ALL tests/video_service_os_probe.mm)
+  target_compile_features(wam_video_service_os_probe PRIVATE cxx_std_20)
+  target_compile_options(wam_video_service_os_probe PRIVATE -fobjc-arc -Wno-deprecated-declarations)
+  target_link_libraries(wam_video_service_os_probe PRIVATE
+    "${WAM_APPKIT_FRAMEWORK}" "${WAM_AVFOUNDATION_FRAMEWORK}"
+    "${WAM_VIDEOTOOLBOX_FRAMEWORK}" "${WAM_COREMEDIA_FRAMEWORK}" "${WAM_COREVIDEO_FRAMEWORK}"
+    "${WAM_OPENGL_FRAMEWORK}")
 endif()
