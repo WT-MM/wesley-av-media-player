@@ -137,7 +137,7 @@ def main():
             '-sc_threshold','0','-bf','0','-threads','4'])
         text,receipt=launch(path,'progress',8500,{'WAM_TEST_SEEK_SCRIPT':'30@1'})
         assert 'commit_ready' in text and 'fallback_selected' not in text and 'WAM: native failure' not in text, text
-        assert any(x['notice'].startswith('Seeking: decoded ') for x in receipt['notices']), receipt['notices']
+        assert any(x['notice'] == 'Seeking…' for x in receipt['notices']), receipt['notices']
         assert any(x.get('event')=='commit_ready' and x.get('target_seconds')==30
                    for x in receipt['events']), receipt['events']
         print('PASS: real slow seek publishes owner progress and exact target readiness',flush=True)

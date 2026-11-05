@@ -1255,6 +1255,18 @@ int main(int argc, char **argv) {
                controller.videoDisplaySize().width() < 2004.04,
            "QML projection retains the fractional size rather than truncating it");
   }
+  {
+    wam::qt::PlayerController controller;
+    controller.setMuted(true);
+    controller.setVolume(controller.volume());
+    expect(!controller.muted(), "volume adjustment unmutes even at a clamped limit");
+    controller.setRate(5);
+    expect(nearlyEqual(controller.rate(), 4), "speed is capped at 4x");
+    controller.setRate(0.1);
+    expect(nearlyEqual(controller.rate(), 0.25), "speed is floored at 0.25x");
+    controller.setRate(1.37);
+    expect(nearlyEqual(controller.rate(), 88.0 / 64), "stored speed matches the engine grid");
+  }
   expect(std::setlocale(LC_NUMERIC, "C") != nullptr,
          "LC_NUMERIC can be restored for libmpv");
 

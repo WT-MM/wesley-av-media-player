@@ -302,13 +302,12 @@ PlayerWindow::~PlayerWindow() {
 }
 
 bool PlayerWindow::claimable() const {
-  return controller_ != nullptr && !open_requested_ && !controller_->hasMedia();
+  return controller_ != nullptr && (controller_->loading() || !controller_->hasMedia());
 }
 
 bool PlayerWindow::open(const QUrl &source) {
   if (controller_ == nullptr)
     return false;
-  open_requested_ = true;
   return controller_->open(source);
 }
 

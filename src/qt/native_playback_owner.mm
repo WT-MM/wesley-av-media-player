@@ -33,80 +33,6 @@ constexpr std::uint64_t kFallbackStopReplyNamespace = 3ULL << 62U;
 constexpr std::uint64_t kFallbackStopReplyIdMask = (1ULL << 62U) - 1ULL;
 constexpr unsigned kMaximumFallbackStopSubmissions = 2;
 constexpr int kFallbackStopWatchdogMilliseconds = 2'000;
-// Wall-clock budget for the whole native admission path: asset load, decoder
-// and audio-unit construction, first decode and the physical audio start. A
-// healthy local open finishes inside a second even on a loaded machine, so
-// this only ever fires on a session that has genuinely stopped progressing.
-
-// Every predicate over playback_router::State is an exhaustive switch with no
-// default arm, so appending a State makes each one a -Wswitch diagnostic
-// instead of silently falling out of a boolean chain as "not this phase".
-
-// The phases that hold a deadline: each is waiting on a proof that an
-// unrendered, occluded or stalled window can fail to produce at all, so each
-// is watchdogged. The rest either progress on their own or are terminal.
-QString nativeFailureText(media::native_playback::FailureReason reason) {
-  using Reason = media::native_playback::FailureReason;
-  switch (reason) {
-  case Reason::Preparation:
-    return QStringLiteral(
-        "Native playback could not admit this file; using compatibility "
-        "playback.");
-  case Reason::Startup:
-    return QStringLiteral(
-        "Native playback could not start; using compatibility playback.");
-  case Reason::Clock:
-    return QStringLiteral(
-        "Native playback lost its media clock; using compatibility "
-        "playback.");
-  case Reason::Decode:
-    return QStringLiteral(
-        "Native decoding failed; using compatibility playback.");
-  case Reason::AudioOutput:
-    return QStringLiteral(
-        "Native audio output failed; using compatibility playback.");
-  case Reason::VideoOutput:
-    return QStringLiteral(
-        "Native video output failed; using compatibility playback.");
-  case Reason::Preview:
-  case Reason::CommitSeek:
-    return QStringLiteral("Native seeking is unavailable for this file.");
-  case Reason::Stop:
-    return QStringLiteral(
-        "Native playback could not retire safely; compatibility playback "
-        "was not started.");
-  case Reason::Protocol:
-    return QStringLiteral(
-        "Native playback rejected an internal command and was stopped.");
-  }
-  return QStringLiteral("Native playback failed.");
-}
-
-// True for failure reasons where the user-facing text above is merely
-// informational: playback kept going (compatibility playback took over
-// immediately, or -- for Preview/CommitSeek -- native playback is still
-// running and only the seek itself was declined). False for reasons where
-// playback did not continue, which stay on the blocking error surface.
-bool nativeFailureIsInformational(
-    media::native_playback::FailureReason reason) noexcept {
-  using Reason = media::native_playback::FailureReason;
-  switch (reason) {
-  case Reason::Preparation:
-  case Reason::Startup:
-  case Reason::Clock:
-  case Reason::Decode:
-  case Reason::AudioOutput:
-  case Reason::VideoOutput:
-  case Reason::Preview:
-  case Reason::CommitSeek:
-    return true;
-  case Reason::Stop:
-  case Reason::Protocol:
-    return false;
-  }
-  return false;
-}
-
 bool applied(const playback_router::Transition &transition) noexcept {
   return transition.status == playback_router::Status::Applied;
 }
@@ -159,6 +85,14 @@ void setMacosPlaybackActivityHeld(bool held) noexcept {
 NativePlaybackOwner::NativePlaybackOwner(PlayerController &controller)
     : controller_(controller),
       openPreflight_([this](NativeOpenPreflightResult result) {
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY)
+        const int delay = telemetry_ ? qEnvironmentVariableIntValue("WAM_TEST_OPEN_DELAY_MS") : 0;
+        if (delay > 0) {
+          QTimer::singleShot(std::min(delay, 15000), &controller_,
+              [this, result = std::move(result)]() mutable { completeOpenPreflight(std::move(result)); });
+          return;
+        }
+#endif
         completeOpenPreflight(std::move(result));
       }) {
   Q_ASSERT(QThread::currentThread() == controller_.thread());
@@ -209,11 +143,11 @@ void NativePlaybackOwner::samplePlaybackMetrics() {
     sample.audioCallbacks = sampled.audioCallbacks;
     sample.audioRenderedFrames = sampled.audioRenderedFrames;
     sample.mediaSeconds = sampled.mediaSeconds;
-    sample.clockRate = sampled.clockRate;
+    sample.clockRate = controller_.rate();
     sample.hasVideo = sampled.videoValid;
     sample.hasAudio = sampled.audioValid;
     sample.hasClock = sampled.clockValid;
-    sample.paused = sampled.paused;
+    sample.paused = controller_.paused();
   } else if (acceptsFallbackPlaybackEvents() && controller_.core_) {
     sample = controller_.core_->fallbackMetrics();
   }
@@ -237,7 +171,7 @@ NativePlaybackOwner::~NativePlaybackOwner() {
 // then sits with a visible window, an idle worker, and no failure. Bound all
 // three phases against the wall clock instead, so an open, a start, or a seek
 // commit either progresses or is retired into compatibility playback with a
-// user-visible reason.
+// diagnostic retained in the log.
 //
 // NativeSeeking is bounded for the same reason as the other two and not one
 // step less: its CommitReady needs an audio-clock proof and a video-draw proof
@@ -326,6 +260,7 @@ bool NativePlaybackOwner::open(const QUrl &source,
   if (!request.has_value()) {
     return false;
   }
+  sourceFailureDetail_.clear();
   latestOpenPreflightRequest_ = *request;
   if (telemetry_ != nullptr) {
     telemetry_->openRequested(*sourceKey, controller_.engineReady());
@@ -352,6 +287,7 @@ void NativePlaybackOwner::completeOpenPreflight(
   record.localPath = std::move(result.absoluteLocalPath);
   record.initialPosition = std::move(result.initialPosition);
   record.sourceClass = result.sourceClass;
+  sourceFailureDetail_.clear();
   const QUrl routedSource = record.url;
   WAM_STARTUP_STAMP(RouteIntentBegin);
   controller_.prepareRoutedOpenIntent(routedSource);
@@ -444,7 +380,7 @@ NativePlaybackOwner::beginFallbackCreate(
     const playback_router::Action &action) {
   if (hasNativeSession()) {
     controller_.setLastError(QStringLiteral(
-        "Compatibility playback was blocked until native retirement."));
+        "Please wait for playback to stop, then try again."));
     return std::nullopt;
   }
 
@@ -457,7 +393,7 @@ NativePlaybackOwner::beginFallbackCreate(
           std::make_shared<PlayerCore>(&controller_);
     } catch (...) {
       controller_.setLastError(QStringLiteral(
-          "Unable to reserve compatibility playback retirement."));
+          "Could not start playback. Please try again."));
       return router_.onFallbackFailed({action.fallback.stamp}, nextTick());
     }
   }
@@ -472,7 +408,7 @@ NativePlaybackOwner::beginFallbackCreate(
         controller_.setLastError(
             loaded.detail.isEmpty()
                 ? QStringLiteral(
-                      "The compatibility media engine is unavailable.")
+                      "A playback component is missing. Reinstall WAM to restore it.")
                 : loaded.detail);
         return router_.onFallbackFailed({action.fallback.stamp}, nextTick());
       }
@@ -493,7 +429,7 @@ bool NativePlaybackOwner::beginFallbackOpen(
   const SourceRecord *record = sourceRecord(action.fallback.sourceKey);
   if (record == nullptr || !controller_.engineReady()) {
     controller_.setLastError(
-        QStringLiteral("Compatibility playback lost its source record."));
+        QStringLiteral("Could not open the file. Please try again."));
     return false;
   }
   return controller_.beginRoutedFallbackOpen(
@@ -506,7 +442,7 @@ bool NativePlaybackOwner::beginFallbackStop(
     const playback_router::Action &action) {
   if (!controller_.engineReady() || fallbackStop_.has_value()) {
     controller_.setLastError(QStringLiteral(
-        "Compatibility playback could not begin exact retirement."));
+        "Could not stop playback. Please try again."));
     return false;
   }
 
@@ -527,7 +463,7 @@ bool NativePlaybackOwner::submitFallbackStop() {
       fallbackStop_->core != controller_.core_ ||
       fallbackStop_->submissions >= kMaximumFallbackStopSubmissions) {
     exhaustFallbackStop(QStringLiteral(
-        "Compatibility playback exhausted its exact Stop attempts."));
+        "Playback did not stop."));
     return false;
   }
 
@@ -550,7 +486,7 @@ bool NativePlaybackOwner::submitFallbackStop() {
     if (fallbackStop_->submissions < kMaximumFallbackStopSubmissions)
       return submitFallbackStop();
     exhaustFallbackStop(QStringLiteral(
-        "Compatibility playback could not submit an exact Stop."));
+        "Could not stop playback."));
     return false;
   }
   const QPointer<PlayerController> controller = &controller_;
@@ -566,7 +502,7 @@ bool NativePlaybackOwner::submitFallbackStop() {
           return;
         }
         owner.exhaustFallbackStop(QStringLiteral(
-            "Compatibility playback Stop did not complete in time."));
+            "Playback took too long to stop."));
       });
   return true;
 }
@@ -577,9 +513,8 @@ void NativePlaybackOwner::exhaustFallbackStop(const QString &detail) {
   fallbackStop_->terminalResetRequired = true;
   fallbackStop_->commandReplied = false;
   fallbackStop_->idleObserved = false;
-  controller_.setLastError(
-      detail +
-      QStringLiteral(" The engine will be replaced after renderer release."));
+  qWarning().noquote() << "WAM:" << detail;
+  controller_.setLastError(QStringLiteral("Playback stopped responding. Please open the file again."));
   if (executeDepth_ != 0 || fallbackEventDrainDepth_ != 0) {
     fallbackCompletionDeferred_ = true;
   } else {
@@ -599,6 +534,19 @@ void NativePlaybackOwner::endFallbackEventDrain() {
     fallbackCompletionDeferred_ = false;
     maybeCompleteFallbackStop();
   }
+}
+
+void NativePlaybackOwner::publishDiagnostic(
+    const macos::NativeMediaSessionDiagnostic &diagnostic) {
+  const QString detail = QString::fromUtf8(diagnostic.detail.data());
+  // Keep low-level diagnostics in the log; retain actionable file damage
+  // separately so a generic fallback decoder error cannot erase it.
+  if (detail.contains(QStringLiteral("initialization metadata is missing")))
+    sourceFailureDetail_ = QStringLiteral("This recording is incomplete: information needed to open it is missing.");
+}
+
+QString NativePlaybackOwner::playbackFailureText(const QString &fallback) const {
+  return sourceFailureDetail_.isEmpty() ? fallback : sourceFailureDetail_;
 }
 
 void NativePlaybackOwner::publishLifecycle(
@@ -644,6 +592,7 @@ void NativePlaybackOwner::publishLifecycle(
           if (telemetry_ != nullptr) {
             telemetry_->started(event, controller_.engineReady());
           }
+          controller_.updateLoading(false);
           controller_.updateIdle(false);
           controller_.updateEof(false);
         } else if constexpr (std::is_same_v<Event, native_protocol::Ended>) {
@@ -657,13 +606,9 @@ void NativePlaybackOwner::publishLifecycle(
           controller_.updateIdle(true);
           controller_.updateEof(true);
         } else if constexpr (std::is_same_v<Event, native_protocol::Failed>) {
-          if (admissionRouteChoice) {
-            // Successful admission routing carries no playback-failure notice.
-          } else if (nativeFailureIsInformational(event.reason)) {
-            controller_.setLastNotice(nativeFailureText(event.reason));
-          } else {
-            controller_.setLastError(nativeFailureText(event.reason));
-          }
+          // The router owns recovery. A native refusal is not a user error:
+          // only failure of the final playback route is surfaced.
+          Q_UNUSED(admissionRouteChoice);
 
         }
       },
@@ -772,7 +717,7 @@ void NativePlaybackOwner::fallbackStopCommandReply(std::uint64_t replyUserdata,
       static_cast<void>(submitFallbackStop());
     } else {
       exhaustFallbackStop(
-          QStringLiteral("Compatibility playback rejected its exact Stop."));
+          QStringLiteral("Could not stop playback."));
     }
     return;
   }
@@ -869,16 +814,21 @@ void NativePlaybackOwner::sessionCleared() noexcept {
 }
 
 void NativePlaybackOwner::surfaceNativeError(const QString &detail) {
-  controller_.setLastError(detail);
+  // Native refusals may still recover. Terminal route failures report below.
+  qWarning().noquote() << "WAM:" << detail;
 }
 
 void NativePlaybackOwner::surfaceNativeError(const char* detail) {
   surfaceNativeError(QString::fromUtf8(detail));
 }
-void NativePlaybackOwner::ownerError(const char* detail) { controller_.setLastError(QString::fromUtf8(detail)); }
-void NativePlaybackOwner::ownerNotice(const char* detail) { controller_.setLastNotice(QString::fromUtf8(detail)); }
-void NativePlaybackOwner::seekProgress(std::uint64_t frames) {
-  controller_.setLastNotice(QStringLiteral("Seeking: decoded %1 preroll frames").arg(frames));
+void NativePlaybackOwner::ownerError(const char* detail) {
+  qWarning() << "WAM:" << detail;
+  controller_.finishStopUi(false);
+  controller_.setLastError(QStringLiteral("Playback stopped. Please try opening the file again."));
+}
+void NativePlaybackOwner::ownerNotice(const char* detail) { qInfo() << "WAM:" << detail; }
+void NativePlaybackOwner::seekProgress(std::uint64_t) {
+  controller_.setLastNotice(QStringLiteral("Seeking…"));
 }
 void NativePlaybackOwner::commitFailed(std::uint64_t gesture, std::uint64_t request) {
   controller_.nativeCommitFailed(gesture, request);
@@ -908,7 +858,7 @@ std::optional<playback_router::Transition> NativePlaybackOwner::applyFallbackRun
         controller_.core_->handle(), "pause", MPV_FORMAT_FLAG, &paused);
     if (result < 0) {
       controller_.setLastError(
-          QStringLiteral("Compatibility playback rejected the transport "
+          QStringLiteral("Could not apply the playback "
                          "change."));
       return router_.onFallbackFailed({action.fallback.stamp}, nextTick());
     }
