@@ -14,6 +14,7 @@
 // container estimate).
 
 #include "media/audio_codec_timing.hpp"
+#include "media/aac_packet_timeline.hpp"
 
 #include <cstdlib>
 #include <iostream>
@@ -147,6 +148,21 @@ int main() {
     expect(!projectAacPacketGrid({0,static_cast<int>(rate)},INT64_MAX,1,rate),"grid overflow refuses");
   }
 
+  {
+    wam::media::AacPacketTimeline piecewise(48000);
+    for (const auto [pts,duration] : {std::pair{0,1024}, {1024,1}, {1025,307}, {1332,2764}, {4096,1024}})
+      expect(piecewise.append({pts,48000},{duration,48000}), "declared overlaps and gap re-anchor exactly");
+    expect(piecewise.finish() && piecewise.packets()[1].duration == 1 &&
+        piecewise.packets()[2].duration == 307 && piecewise.packets()[3].duration == 2764,
+        "piecewise proof retains trim and silence extents");
+    wam::media::AacPacketTimeline drift(48000);
+    for (int i=0;i<=256;++i)
+      expect(drift.append({i*1025,48000},{1025,48000}), "one-tick jitter remains within segment bound");
+    expect(!drift.append({257*1025,48000},{1025,48000}), "cumulative jitter cannot re-anchor away the bound");
+    wam::media::AacPacketTimeline fractional(48000);
+    expect(fractional.append({0,48000},{1,48000}), "short first packet");
+    expect(!fractional.append({1,96000},{1024,48000}), "fractional-frame segment anchor refuses");
+  }
   testCodecsThatPrecedeTheStreamOrigin();
   testCodecsThatStateAnExactDecodedDuration();
   testTheTwoPredicatesAreNotTheSameSet();

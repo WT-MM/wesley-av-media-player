@@ -21,7 +21,7 @@ def run(argv, success=True):
     assert (r.returncode == 0) == success, (argv, r.returncode, r.stderr)
     return r
 
-def jitter_audio_stts(data, residual):
+def jitter_audio_stts(data, residual, edits=None):
     """Restate audio stts as a zero-drift three-unit pattern, retaining its tail."""
     # This generated MOV has its moov after mdat, so growing stts cannot move
     # any media payload or invalidate the existing chunk offsets.
@@ -50,9 +50,12 @@ def jitter_audio_stts(data, residual):
                     n, duration = struct.unpack_from('>II', payload, 8 + i * 8)
                     durations.extend([duration] * n)
                 original_total = sum(durations)
-                for i in range(0, len(durations) - 3, 3):
-                    assert durations[i:i + 3] == [1024] * 3
-                    durations[i:i + 3] = [1024 + residual, 1024 - residual, 1024]
+                if edits:
+                    for i, duration in edits.items(): durations[i] = duration
+                else:
+                    for i in range(0, len(durations) - 3, 3):
+                        assert durations[i:i + 3] == [1024] * 3
+                        durations[i:i + 3] = [1024 + residual, 1024 - residual, 1024]
                 assert sum(durations) == original_total
                 payload = payload[:4] + struct.pack('>I', len(durations))
                 payload += b''.join(struct.pack('>II', 1, d) for d in durations)
@@ -150,11 +153,24 @@ with tempfile.TemporaryDirectory(prefix='aac-proof-', dir=a.scratch) as tmp:
             assert len(part)==len(full)-(first-origin), (rate,channels,suffix,len(part),len(full),first)
             assert np.max(np.abs(reference-part)) < .002, (rate,channels,suffix,target)
 
+    if a.routed_probe:
+        # An explicit initial reader range must include AAC packets beyond
+        # the last picture. This used to lose two tail AUs on some MP4s.
+        short_video = root/'short-video.mov'
+        command = [str(x).replace('testsrc2=size=160x90:rate=30:duration=4',
+                                 'testsrc2=size=160x90:rate=30:duration=3.96') for x in generation]
+        command[-1] = short_video
+        run(command)
+        result = run([a.routed_probe,short_video,root/'tail.f32','0'])
+        assert 'exact=1 drained=1' in result.stderr, result.stderr
+
     grid_cases = []
     for residual in [-256, -22, -1, 1, 38, 152, 256, -257, 257]:
         jittered = root/f'jitter-{residual}.mov'
         jittered.write_bytes(jitter_audio_stts(apple.read_bytes(), residual))
-        admitted = abs(residual) <= 256
+        # These fixtures explicitly declare short/long stts durations, so
+        # even a 257-frame displacement now has an exact piecewise mapping.
+        admitted = True
         result = run([a.probe, jittered, root/'jitter.f32', '0'], admitted)
         if admitted:
             assert 'exact=1 drained=1' in result.stderr, result.stderr
@@ -165,6 +181,31 @@ with tempfile.TemporaryDirectory(prefix='aac-proof-', dir=a.scratch) as tmp:
             if not admitted:
                 assert routed.stderr.startswith('open:') and 'AacPacketTimelineDiscontinuity' in routed.stderr, routed.stderr
         grid_cases.append(dict(residual=residual, admitted=admitted, log=result.stderr))
+    # Real AAC payloads are synthesized above. Keep their decode order while
+    # declaring two overlaps followed by a gap of the same total length.
+    reference = root/'piecewise-reference.f32'
+    run([a.oracle,apple,reference])
+    original = np.fromfile(reference,dtype='<f4').reshape(-1,2)
+    for edits in [{20:1,21:307,22:2764}, {**{i:1 for i in range(20,26)},26:7162},
+                  {**{i:1 for i in range(20,80)},80:62404}]:
+        piecewise = root/'piecewise.mov'
+        piecewise.write_bytes(jitter_audio_stts(apple.read_bytes(),0,edits))
+        at = 20*1024-2112
+        parts = [original[:at]]
+        for index, duration in edits.items():
+            start=index*1024-2112
+            parts.append(original[start:start+min(duration,1024)])
+            if duration>1024: parts.append(np.zeros((duration-1024,2),dtype='<f4'))
+        parts.append(original[(max(edits)+1)*1024-2112:])
+        expected=np.concatenate(parts)
+        assert len(expected)==len(original)
+        for probe in [a.probe]+([a.routed_probe] if a.routed_probe else []):
+            for first in [0,at,at+1,at+308,at+2048,at+3072,at+7000,at+60000,48000]:
+                result=run([probe,piecewise,root/'piecewise.f32',str(Fraction(first,48000))])
+                actual=np.fromfile(root/'piecewise.f32',dtype='<f4').reshape(-1,2)
+                assert len(actual)==len(expected)-first, result.stderr
+                assert np.max(np.abs(actual-expected[first:]))<.002, (probe,first,result.stderr)
+
     # An exact container skip is not restricted to an encoder-specific list.
     # Changing the edit by one sample must change the retained count by one.
     data = bytearray(apple.read_bytes())
