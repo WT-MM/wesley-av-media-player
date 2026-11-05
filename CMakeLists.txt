@@ -2554,6 +2554,7 @@ if(APPLE AND BUILD_TESTING AND WAM_ENABLE_AVFORMAT_STAGE)
   add_test(NAME libavformat_aac_timing COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_SOURCE_DIR}/tests/libavformat_aac_timing_proof.py"
     --probe "$<TARGET_FILE:wam_libavformat_mixed_audio_probe>"
+    --routed-probe "$<TARGET_FILE:wam_native_coverage_audio_probe>"
     --oracle "$<TARGET_FILE:wam_libavformat_aac_oracle>"
     --ffmpeg "${WAM_FFMPEG_EXECUTABLE}"
     --scratch "${CMAKE_BINARY_DIR}"

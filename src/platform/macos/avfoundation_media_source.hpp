@@ -291,8 +291,8 @@ inspectedAudioChannelLayoutSizeForTesting() noexcept;
 [[nodiscard]] std::size_t restateCompressedAudioPacketDurationsForTesting(
     CMSampleBufferRef sample, CMSampleTimingInfo* timing,
     std::size_t entries) noexcept;
-// Projects fixed compressed audio packets at most one sample-rate tick away
-// from the ordinal grid. Exact-grid entries and larger residuals are untouched.
+// Projects AAC-LC timing within the shared 256-sample ordinal-grid bound.
+// Restates interior durations; the source descriptor retains the final trim.
 [[nodiscard]] std::size_t projectCompressedAudioPacketTimingForTesting(
     CMSampleBufferRef sample, CMSampleTimingInfo* timing,
     std::size_t entries) noexcept;
