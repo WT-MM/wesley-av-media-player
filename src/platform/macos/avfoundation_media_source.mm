@@ -3012,6 +3012,7 @@ class ProductionGeneration final : public AVFoundationGeneration {
               "AVFoundation asset context has no production native handles";
           return result;
         }
+        aac_timeline_ = handles.aacTimeline;
         asset = (__bridge AVURLAsset*)(
             const_cast<void*>(handles.asset));
         videoTrack = (__bridge AVAssetTrack*)(
@@ -3300,7 +3301,7 @@ class ProductionGeneration final : public AVFoundationGeneration {
             AVFoundationAssetContextNativeHandles{
                 (__bridge const void*)asset,
                 (__bridge const void*)videoTrack,
-                (__bridge const void*)audioTrack},
+                (__bridge const void*)audioTrack, aac_timeline_},
             metadataLoads);
         if (assetContext == nullptr) {
           result.error =
@@ -3363,6 +3364,22 @@ class ProductionGeneration final : public AVFoundationGeneration {
           }
           if (CMTimeCompare(*primingFloor, searchStart) < 0) {
             searchStart = *primingFloor;
+          }
+          if (aac_timeline_ && audioTrack != nil) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+            const auto edits = audioMovieTimelineFactsFor(audioTrack.segments);
+#pragma clang diagnostic pop
+            const auto shift = edits ? audioFrameAlignedEditTime(edits->shift,aac_timeline_->rate()) : std::nullopt;
+            const auto frame = media::audioFrameAtOrAfter(*request_.target,aac_timeline_->rate());
+            const auto targetFrame = frame ? media::exactAudioFrameIndex(*frame,aac_timeline_->rate()) : std::nullopt;
+            if (!shift || !targetFrame) { result.error="AacSeekEditUnrepresentable"; return result; }
+            const auto shiftFrame = media::exactAudioFrameIndex({shift->value,shift->timescale},aac_timeline_->rate());
+            if (!shiftFrame) { result.error="AacSeekEditUnrepresentable"; return result; }
+            const auto index = aac_timeline_->indexAtFrame(*targetFrame-*shiftFrame);
+            const auto& packet = aac_timeline_->packets()[index > 4 ? index-4 : 0];
+            const auto packetFloor = CMTimeMake(std::max<std::int64_t>(0,packet.start+*shiftFrame),aac_timeline_->rate());
+            if (CMTimeCompare(packetFloor,searchStart)<0) searchStart=packetFloor;
           }
           audio_playout_proof_ceiling_ = priming->proofCeiling;
         }
@@ -3633,9 +3650,17 @@ class ProductionGeneration final : public AVFoundationGeneration {
         CMTime readerEnd = assetDuration;
         // Compressed audio timestamps retain the priming edit. Its reader
         // extent must reach the media tail; publication remains movie-trimmed.
-        if (videoTrack == nil && audioTrack != nil &&
+        if (audioTrack != nil &&
             CMTimeCompare(audio_movie_shift_, kCMTimeZero) < 0) {
           readerEnd = CMTimeSubtract(readerEnd, audio_movie_shift_);
+        }
+        if (aac_timeline_ && !aac_timeline_->packets().empty()) {
+          const auto& last = aac_timeline_->packets().back();
+          // Asset duration can end at the last picture before the audio tail.
+          // AVAssetReader's explicit range otherwise silently omits those AUs.
+          const auto audioEnd = CMTimeAdd(CMTimeMake(last.observed.value,last.observed.timescale),
+                                         CMTimeMake(1024,aac_timeline_->rate()));
+          if (CMTimeCompare(audioEnd,readerEnd)>0) readerEnd=audioEnd;
         }
         const auto range = exactReaderTimeRangeFacts(readerEnd, decodeStart);
         if (!range) {
@@ -3831,6 +3856,7 @@ class ProductionGeneration final : public AVFoundationGeneration {
   [[nodiscard]] std::optional<MediaTrackDescriptor> describeAudio(
       AVAssetTrack* track, MediaTrackId id, const MediaSourceLimits& limits,
       std::string* error) {
+    aac_timeline_.reset();
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
     NSArray* formats = track.formatDescriptions;
@@ -3855,9 +3881,11 @@ class ProductionGeneration final : public AVFoundationGeneration {
         assignError(error, "AacPacketFrameLengthUnsupported");
         return std::nullopt;
       }
+      const auto aacProofStart = std::chrono::steady_clock::now();
       AVSampleCursor* cursor = [track makeSampleCursorAtFirstSampleInDecodeOrder];
       const auto rate = static_cast<std::uint32_t>(result->audio->sampleRate);
       std::uint64_t ordinal = 0;
+      auto timeline = std::make_shared<media::AacPacketTimeline>(rate);
       if (!cursor) {
         assignError(error, "AacPacketTimelineProofUnavailable");
         return std::nullopt;
@@ -3873,13 +3901,20 @@ class ProductionGeneration final : public AVFoundationGeneration {
           return std::nullopt;
         }
         if (!CMTIME_IS_NUMERIC(pts) ||
-            !media::projectAacPacketGrid({pts.value,pts.timescale}, 0, ordinal++, rate)) {
-          assignError(error, "AacPacketTimelineDiscontinuity: packet residual exceeds 256 samples");
+            !timeline->append({pts.value,pts.timescale},
+                {cursor.currentSampleDuration.value,cursor.currentSampleDuration.timescale})) {
+          assignError(error, "AacPacketTimelineDiscontinuity: unrepresentable piecewise grid");
           return std::nullopt;
         }
+        ++ordinal;
       } while ([cursor stepInDecodeOrderByCount:1] == 1);
-      // Only the LAST duration may express a tail trim. Interior stts lengths
-      // cannot change the decoded extent of a 1024-frame AAC access unit.
+      if (std::getenv("WAM_NATIVE_BENCHMARK_TELEMETRY")) std::fprintf(stderr,
+          "WAM: AAC packet table packets=%llu scan_ms=%.3f\n",ordinal,
+          std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-aacProofStart).count());
+      if (!timeline->finish()) { assignError(error,"AacPacketTailTrimUnproven"); return std::nullopt; }
+      aac_timeline_ = timeline;
+      // The table separates the 1024-frame decode budget from each packet
+      // presentation extent, including interior overlap trims and gaps.
       const auto tail = exactMediaTime(cursor.currentSampleDuration);
       const auto tailFrames = tail ? media::exactAudioFrameIndex(*tail,rate) : std::nullopt;
 #pragma clang diagnostic push
@@ -3919,9 +3954,13 @@ class ProductionGeneration final : public AVFoundationGeneration {
       const auto shiftFrames = shift ? media::exactAudioFrameIndex({shift->value,shift->timescale},rate) : std::nullopt;
       const auto editEnd = media::audioFrameAtOrAfter(result->duration,rate);
       if (!shiftFrames || !editEnd) return std::nullopt;
-      const MediaTime packetEnd{static_cast<std::int64_t>((ordinal-1)*1024) +
-          std::min<std::int64_t>(*tailFrames,1024) + *shiftFrames,static_cast<std::int32_t>(rate)};
+      const MediaTime packetEnd{timeline->packets().back().start +
+          timeline->packets().back().duration + *shiftFrames,static_cast<std::int32_t>(rate)};
       result->duration = media::compareMediaTime(packetEnd,*editEnd)==MediaTimeOrder::Less ? packetEnd : *editEnd;
+      if (std::getenv("WAM_NATIVE_BENCHMARK_TELEMETRY")) std::fprintf(stderr,
+          "WAM: AAC proof packets=%llu total_ms=%.3f shift=%lld packet_end=%lld edit_end=%lld\n",
+          ordinal, std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-aacProofStart).count(),
+          *shiftFrames,packetEnd.value,editEnd->value);
     }
 
     if (result && naturalTimeScale > 0) {
@@ -4070,10 +4109,34 @@ class ProductionGeneration final : public AVFoundationGeneration {
         static_cast<std::size_t>(entries) > audio_timing_.size()) {
       return nullptr;
     }
-    static_cast<void>(restateCompressedAudioPacketDurations(
-        sample, audio_timing_.data(), static_cast<std::size_t>(entries)));
-    static_cast<void>(projectCompressedAudioPacketTiming(
-        sample, audio_timing_.data(), static_cast<std::size_t>(entries)));
+    if (aac_timeline_) {
+      // AVAssetReader can compress equal timings into a single entry. Expand
+      // before lookup so every access unit uses its open-time proof.
+      const auto count = CMSampleBufferGetNumSamples(sample);
+      if (count <= 0 || count > static_cast<CMItemCount>(audio_timing_.size())) return nullptr;
+      if (entries == 1 && count > 1) {
+        const auto first = audio_timing_[0];
+        for (CMItemCount i = 1; i < count; ++i) {
+          audio_timing_[i] = first;
+          audio_timing_[i].presentationTimeStamp = CMTimeAdd(first.presentationTimeStamp,
+              CMTimeMultiply(first.duration, static_cast<int32_t>(i)));
+        }
+        entries = count;
+      }
+      for (CMItemCount i = 0; i < entries; ++i) {
+        auto& timing = audio_timing_[i];
+        const auto* packet = aac_timeline_->find({timing.presentationTimeStamp.value,
+                                                timing.presentationTimeStamp.timescale});
+        if (!packet) return nullptr;
+        timing.presentationTimeStamp = CMTimeMake(packet->start,aac_timeline_->rate());
+        timing.duration = CMTimeMake(packet->duration,aac_timeline_->rate());
+      }
+    } else {
+      static_cast<void>(restateCompressedAudioPacketDurations(
+          sample, audio_timing_.data(), static_cast<std::size_t>(entries)));
+      static_cast<void>(projectCompressedAudioPacketTiming(
+          sample, audio_timing_.data(), static_cast<std::size_t>(entries)));
+    }
     for (CMItemCount index = 0; index < entries; ++index) {
       CMSampleTimingInfo& timing =
           audio_timing_[static_cast<std::size_t>(index)];
@@ -4126,6 +4189,8 @@ class ProductionGeneration final : public AVFoundationGeneration {
       CFRelease(restated);
       return nullptr;
     }
+    if (aac_timeline_) CMSetAttachment(restated, CFSTR("WAMAacPiecewiseTimeline"),
+        kCFBooleanTrue, kCMAttachmentMode_ShouldPropagate);
     return restated;
   }
 
@@ -4263,6 +4328,7 @@ class ProductionGeneration final : public AVFoundationGeneration {
     return result;
   }
 
+  std::shared_ptr<const media::AacPacketTimeline> aac_timeline_;
   AVFoundationGenerationRequest request_;
   std::array<CMSampleTimingInfo,
              media::MediaSourceLimits::kHardMaximumAudioSampleCount>

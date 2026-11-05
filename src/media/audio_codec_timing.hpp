@@ -11,8 +11,9 @@ namespace wam::media {
 // AAC-LC packet timestamps may jitter within a quarter access unit. The
 // 256-frame bound covers measured residuals through 152 frames and moves audio
 // by at most 5.81 ms at 44.1 kHz (5.33 ms at 48 kHz). Always compare against
-// the ORIGINAL origin plus packet ORDINAL, never against the preceding PTS:
-// otherwise cumulative drift, missing packets and overlaps would be hidden.
+// the segment ORIGINAL origin plus packet ORDINAL, never the preceding PTS.
+// AacPacketTimeline separately proves explicit edit boundaries and their exact
+// trim/silence extents; ordinary jitter cannot re-anchor cumulative drift.
 inline constexpr std::int64_t kAacPacketGridResidualFrames = 256;
 [[nodiscard]] constexpr std::optional<MediaTime> projectAacPacketGrid(
     MediaTime observed, std::int64_t originFrame, std::uint64_t ordinal,

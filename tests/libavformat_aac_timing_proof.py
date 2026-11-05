@@ -2,6 +2,7 @@
 import argparse
 import hashlib
 import json
+import re
 import pathlib
 import subprocess
 import struct
@@ -21,8 +22,8 @@ def run(argv, success=True):
     assert (r.returncode == 0) == success, (argv, r.returncode, r.stderr)
     return r
 
-def jitter_audio_stts(data, residual):
-    """Restate audio stts as a zero-drift three-unit pattern, retaining its tail."""
+def jitter_audio_stts(data, residual, edits=None, drift=False, unprimed=False):
+    """Generate jitter or explicit edits, with matching duration metadata for drift."""
     # This generated MOV has its moov after mdat, so growing stts cannot move
     # any media payload or invalidate the existing chunk offsets.
     def boxes(blob):
@@ -34,6 +35,12 @@ def jitter_audio_stts(data, residual):
             offset += size
     top = list(boxes(data))
     assert [kind for kind, _ in top].index(b'mdat') < [kind for kind, _ in top].index(b'moov')
+    moov = next(payload for kind, payload in top if kind == b'moov')
+    mvhd = next(payload for kind, payload in boxes(moov) if kind == b'mvhd')
+    assert mvhd[0] == 0
+    movie_rate = struct.unpack_from('>I', mvhd, 12)[0]
+    priming_ticks = (1024*movie_rate+47999)//48000
+    drift_ticks = 520*movie_rate//48000
     changed = 0
     def rewrite(blob, audio=False):
         nonlocal changed
@@ -41,7 +48,7 @@ def jitter_audio_stts(data, residual):
         for kind, payload in boxes(blob):
             if kind == b'trak':
                 audio = b'soun' in payload
-            if kind in (b'moov', b'trak', b'mdia', b'minf', b'stbl'):
+            if kind in (b'moov', b'trak', b'mdia', b'minf', b'stbl', b'edts'):
                 payload = rewrite(payload, audio)
             elif kind == b'stts' and audio:
                 count = struct.unpack_from('>I', payload, 4)[0]
@@ -50,13 +57,36 @@ def jitter_audio_stts(data, residual):
                     n, duration = struct.unpack_from('>II', payload, 8 + i * 8)
                     durations.extend([duration] * n)
                 original_total = sum(durations)
-                for i in range(0, len(durations) - 3, 3):
-                    assert durations[i:i + 3] == [1024] * 3
-                    durations[i:i + 3] = [1024 + residual, 1024 - residual, 1024]
-                assert sum(durations) == original_total
+                if edits:
+                    for i, duration in edits.items(): durations[i] = duration
+                else:
+                    for i in range(0, len(durations) - 3, 3):
+                        assert durations[i:i + 3] == [1024] * 3
+                        durations[i:i + 3] = [1024 + residual, 1024 - residual, 1024]
+                assert drift or sum(durations) == original_total
                 payload = payload[:4] + struct.pack('>I', len(durations))
                 payload += b''.join(struct.pack('>II', 1, d) for d in durations)
                 changed += 1
+            elif kind == b'elst' and audio and unprimed:
+                payload = bytearray(payload)
+                assert payload[0] == 0 and struct.unpack_from('>I', payload, 4)[0] == 1
+                duration = struct.unpack_from('>I', payload, 8)[0]
+                struct.pack_into('>Ii', payload, 8, duration+priming_ticks, 0)
+            elif kind == b'tkhd' and audio and unprimed:
+                payload = bytearray(payload)
+                duration = struct.unpack_from('>I', payload, 20)[0]
+                struct.pack_into('>I', payload, 20, duration+priming_ticks)
+            elif kind in (b'tkhd', b'mdhd') and audio and drift:
+                payload = bytearray(payload)
+                assert payload[0] == 0
+                offset = 20 if kind == b'tkhd' else 16
+                duration = struct.unpack_from('>I', payload, offset)[0]
+                struct.pack_into('>I', payload, offset, duration-(drift_ticks if kind == b'tkhd' else 520))
+            elif kind == b'elst' and audio and drift:
+                # Keep the movie edit within one tick of the shortened table.
+                payload = bytearray(payload)
+                duration = struct.unpack_from('>I', payload, 8)[0]
+                struct.pack_into('>I', payload, 8, duration-drift_ticks)
             out += struct.pack('>I4s', len(payload) + 8, kind) + payload
         return bytes(out)
     result = rewrite(data)
@@ -150,11 +180,63 @@ with tempfile.TemporaryDirectory(prefix='aac-proof-', dir=a.scratch) as tmp:
             assert len(part)==len(full)-(first-origin), (rate,channels,suffix,len(part),len(full),first)
             assert np.max(np.abs(reference-part)) < .002, (rate,channels,suffix,target)
 
+    if a.routed_probe:
+        # An explicit initial reader range must include AAC packets beyond
+        # the last picture. This used to lose two tail AUs on some MP4s.
+        short_video = root/'short-video.mov'
+        command = [str(x).replace('testsrc2=size=160x90:rate=30:duration=4',
+                                 'testsrc2=size=160x90:rate=30:duration=3.96') for x in generation]
+        command[-1] = short_video
+        run(command)
+        result = run([a.routed_probe,short_video,root/'tail.f32','0'])
+        assert 'exact=1 drained=1' in result.stderr, result.stderr
+
+    def counts(log):
+        return {key: int(re.search(r'\b'+key+r'=(\d+)', log).group(1))
+                for key in ['frames', 'decoded', 'trim', 'silence']}
+
+    continuous = root/'continuous.mp4'
+    command = generation.copy()
+    command[command.index('aac_at')] = 'aac'
+    command = [str(x).replace(':s=48000:d=4', ':s=48000:d=4.010666666667') for x in command]
+    # Noise substitution uses decoder RNG state and is not a seek PCM oracle.
+    command[-1:] = ['-aac_pns', '0', continuous]
+    run(command)
+    continuous.write_bytes(jitter_audio_stts(continuous.read_bytes(), 0, unprimed=True))
+    for probe in [a.probe]+([a.routed_probe] if a.routed_probe else []):
+        baseline = counts(run([probe, continuous, root/'base.f32', '0']).stderr)
+        # Whole-stream counters catch micro-splices even when clock length is exact.
+        jitter = root/'pure-jitter.mp4'
+        jitter.write_bytes(jitter_audio_stts(continuous.read_bytes(), -10))
+        result = run([probe, jitter, root/'jitter.f32', '0'])
+        assert counts(result.stderr) == baseline, result.stderr
+        assert baseline['silence'] == baseline['trim'] == 0, baseline
+        assert np.array_equal(np.fromfile(root/'base.f32', dtype='<f4'),
+                              np.fromfile(root/'jitter.f32', dtype='<f4'))
+        drift = root/'slow-drift.mp4'
+        drift.write_bytes(jitter_audio_stts(continuous.read_bytes(), 0,
+                          {i:1020 for i in range(20,150)}, drift=True))
+        result = run([probe, drift, root/'drift.f32', '0'])
+        measured = counts(result.stderr)
+        assert measured['trim'] == baseline['trim']+520, result.stderr
+        assert measured['silence'] == 0, result.stderr
+        assert measured['decoded'] == baseline['decoded'], result.stderr
+        assert measured['frames'] == baseline['frames']-520, result.stderr
+        for media, pcm in [(jitter, root/'jitter.f32'), (drift, root/'drift.f32')]:
+            whole = np.fromfile(pcm, dtype='<f4').reshape(-1,2)
+            for first in [25*1024, 86*1024, 151*1024]:
+                result = run([probe, media, root/'projected-seek.f32', str(Fraction(first,48000))])
+                part = np.fromfile(root/'projected-seek.f32', dtype='<f4').reshape(-1,2)
+                assert len(part) == len(whole)-first, result.stderr
+                assert np.max(np.abs(part-whole[first:])) < .002, (probe, media.name, first, float(np.max(np.abs(part-whole[first:]))), result.stderr)
+
     grid_cases = []
     for residual in [-256, -22, -1, 1, 38, 152, 256, -257, 257]:
         jittered = root/f'jitter-{residual}.mov'
         jittered.write_bytes(jitter_audio_stts(apple.read_bytes(), residual))
-        admitted = abs(residual) <= 256
+        # Up to 256 frames is continuous jitter; 257 crosses the bound and
+        # establishes an exact segment boundary.
+        admitted = True
         result = run([a.probe, jittered, root/'jitter.f32', '0'], admitted)
         if admitted:
             assert 'exact=1 drained=1' in result.stderr, result.stderr
@@ -165,6 +247,31 @@ with tempfile.TemporaryDirectory(prefix='aac-proof-', dir=a.scratch) as tmp:
             if not admitted:
                 assert routed.stderr.startswith('open:') and 'AacPacketTimelineDiscontinuity' in routed.stderr, routed.stderr
         grid_cases.append(dict(residual=residual, admitted=admitted, log=result.stderr))
+    # Real AAC payloads are synthesized above. Keep their decode order while
+    # declaring two overlaps followed by a gap of the same total length.
+    reference = root/'piecewise-reference.f32'
+    run([a.oracle,apple,reference])
+    original = np.fromfile(reference,dtype='<f4').reshape(-1,2)
+    for edits in [{20:911,21:1,22:2160}, {20:1,21:307,22:2764}, {**{i:1 for i in range(20,26)},26:7162},
+                  {**{i:1 for i in range(20,80)},80:62404}]:
+        piecewise = root/'piecewise.mov'
+        piecewise.write_bytes(jitter_audio_stts(apple.read_bytes(),0,edits))
+        at = 20*1024-2112
+        parts = [original[:at]]
+        for index, duration in edits.items():
+            start=index*1024-2112
+            parts.append(original[start:start+min(duration,1024)])
+            if duration>1024: parts.append(np.zeros((duration-1024,2),dtype='<f4'))
+        parts.append(original[(max(edits)+1)*1024-2112:])
+        expected=np.concatenate(parts)
+        assert len(expected)==len(original)
+        for probe in [a.probe]+([a.routed_probe] if a.routed_probe else []):
+            for first in [0,at,at+1,at+308,at+2048,at+3072,at+7000,at+60000,48000]:
+                result=run([probe,piecewise,root/'piecewise.f32',str(Fraction(first,48000))])
+                actual=np.fromfile(root/'piecewise.f32',dtype='<f4').reshape(-1,2)
+                assert len(actual)==len(expected)-first, result.stderr
+                assert np.max(np.abs(actual-expected[first:]))<.002, (probe,first,result.stderr)
+
     # An exact container skip is not restricted to an encoder-specific list.
     # Changing the edit by one sample must change the retained count by one.
     data = bytearray(apple.read_bytes())

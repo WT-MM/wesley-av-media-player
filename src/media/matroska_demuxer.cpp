@@ -504,12 +504,14 @@ struct TrackRuntime {
   //
   // Presentation times live on the PRESENTATION grid, whose origin is
   // -CodecDelay. Ordinal 0 of an Opus track legitimately presents preSkip
-  // frames before media time zero; for AAC the two grids coincide.
+  // frames before media time zero. AAC additionally preserves its first
+  // packet timestamp when the nearest container-grid ordinal is nonzero.
   std::uint32_t audioSamplesPerAccessUnit{kAacLcSamplesPerAccessUnit};
   MediaTime audioPresentationOrigin{0, 1};
+  std::uint64_t audioFirstOrdinal{0};
   // Presentation frame index of ordinal 0 is -audioGridOffsetFrames. It is the
-  // Opus pre-skip and zero for every other codec.
-  std::uint32_t audioGridOffsetFrames{0};
+  // codec delay, plus any exact AAC origin displacement.
+  std::int64_t audioGridOffsetFrames{0};
   // Always assigned by makeAudioDescriptor; the literal keeps this struct
   // declarable above kMaximumAacGridTickResidual, which is 1.
   std::int64_t audioTickResidualTolerance{1};
@@ -2704,7 +2706,42 @@ void fillAudioDescriptor(const TrackEntry& entry, MediaTrackId id,
   fields.tailBlockOffset = probe.tailBlockOffset;
   fields.tailDiscardPaddingNanoseconds = probe.tailDiscardPaddingNanoseconds;
   fillAudioDescriptor(entry, *id, fields, result, runtime);
-  return true;
+  // Retain the first present AU; a positive timestamp is declared leading
+  // silence, not a promise that an earlier ordinal exists in the file.
+  bool found = false;
+  for (std::size_t i = 0; i < clusters.size() && !found; ++i) {
+    bool valid = true;
+    if (!visitTrackBlocksInCluster(reader, clusters[i], options, entry.number,
+        cancellation, i, [&](std::size_t, const CapturedBlockVisitor& block) {
+          if (found) return true;
+          const auto tick = signedBlockTick(*clusters[i].timestamp, block.header.relativeTimestamp);
+          const auto projection = tick ? nearestAudioPacketForMatroskaTick(*tick,
+              {0,1}, sampleRate, timestampScaleNanoseconds, kAacLcSamplesPerAccessUnit)
+              : std::nullopt;
+          valid = aacProjectionOnGrid(projection, runtime->audioTickResidualTolerance);
+          if (valid) {
+            runtime->audioFirstOrdinal = projection->accessUnitOrdinal;
+            const auto time = timeFromSignedTick(*tick,timestampScaleNanoseconds);
+            const auto frame = time ? exactAudioFrameIndex(*time,sampleRate) : std::nullopt;
+            const __int128 grid = __int128(projection->accessUnitOrdinal)*kAacLcSamplesPerAccessUnit;
+            if (!frame || grid > INT64_MAX) valid = false;
+            else {
+              const auto residual = *frame-static_cast<std::int64_t>(grid);
+              const __int128 end = __int128(exact.endFrame)+residual;
+              if (end <= 0 || end > INT64_MAX) valid = false;
+              else if (residual != 0) {
+                result->duration = {static_cast<std::int64_t>(end),static_cast<std::int32_t>(sampleRate)};
+                runtime->audioPresentationOrigin = {residual-static_cast<std::int64_t>(*codecDelayFrames),
+                                                    static_cast<std::int32_t>(sampleRate)};
+                runtime->audioGridOffsetFrames = static_cast<std::int64_t>(*codecDelayFrames)-residual;
+              }
+            }
+          }
+          found = true;
+          return valid;
+        }) || !valid) return false;
+  }
+  return found;
 }
 
 
@@ -2890,7 +2927,7 @@ template <typename Predicate>
 [[nodiscard]] ScanResult scanTrack(
     const AssetState& state, MediaTrackId track, std::uint32_t firstCluster,
     std::uint32_t maximumClusters, Predicate&& predicate,
-    CancellationToken cancellation) {
+    CancellationToken cancellation, const bool* stop = nullptr) {
   ScanResult result;
   std::vector<TrackConstraint> constraints = cursorConstraints(state, track);
   ParseOptions options = parserOptions(state.limits, constraints);
@@ -2924,6 +2961,7 @@ template <typename Predicate>
         result.clusterIndex = static_cast<std::uint32_t>(clusterIndex);
         return result;
       }
+      if (stop && *stop) return result;
     }
   }
   return result;
@@ -3659,12 +3697,10 @@ MatroskaPlanOutcome MatroskaPreparedAsset::planGeneration(
           state.audio->audioTickResidualTolerance;
       // Ordinal k spans media frames [k*S - offset, (k+1)*S - offset), so the
       // ordinal containing a media frame is (frame + offset) / S. The offset is
-      // the Opus pre-skip and zero for AAC, which keeps the AAC expression
-      // arithmetically identical to the one this replaced.
-      const std::uint64_t desiredOrdinal =
-          (static_cast<std::uint64_t>(*pcmFrame) +
-           state.audio->audioGridOffsetFrames) /
-          samplesPerAccessUnit;
+      // codec delay plus any exact displacement of the first AAC packet.
+      const std::uint64_t desiredOrdinal = static_cast<std::uint64_t>(
+          std::max<__int128>(0,__int128(*pcmFrame)+state.audio->audioGridOffsetFrames) /
+          samplesPerAccessUnit);
       // Stage whole access units ahead of the first audible one. A decoder
       // reaches full precision only after a couple of frames, so a consumer
       // demands proof that the generation carries that preroll before it will
@@ -3676,7 +3712,8 @@ MatroskaPlanOutcome MatroskaPreparedAsset::planGeneration(
       // Software audio starts at the proven origin major sync; preroll is streamed.
       const bool softwareAudio = softwareAudioCodec(state.audio->codec);
       const std::uint64_t startOrdinal = softwareAudio ? 0 :
-          (desiredOrdinal >= priming ? desiredOrdinal - priming : 0);
+          std::max(state.audio->audioFirstOrdinal,
+                   desiredOrdinal >= priming ? desiredOrdinal - priming : 0);
       // One Cluster of backoff covers the priming access units, which are tens
       // of milliseconds against Clusters that are whole seconds long. An
       // audio-only generation backs off two, because its seed is the Cluster
@@ -3685,26 +3722,30 @@ MatroskaPlanOutcome MatroskaPreparedAsset::planGeneration(
       const std::size_t backoff = state.video ? 1U : 2U;
       const std::size_t searchStart =
           softwareAudio ? 0 : (seedCluster > backoff ? seedCluster - backoff : 0);
+      bool passedTarget = false;
       const ScanResult audioBlock = scanTrack(
           state, state.audio->id, static_cast<std::uint32_t>(searchStart),
           kMaximumMatroskaSeekClusters,
-          [&state, startOrdinal, samplesPerAccessUnit, tickTolerance](
+          [&state, &passedTarget, startOrdinal, samplesPerAccessUnit, tickTolerance](
               std::uint32_t clusterIndex, const CapturedBlockVisitor& block) {
             const auto tick = signedBlockTick(
                 state.clusters[clusterIndex].timestampTick,
                 block.header.relativeTimestamp);
             if (!tick) {
+              passedTarget = true;
               return false;
             }
             const auto projection = nearestAudioPacketForMatroskaTick(
                 *tick, MediaTime{0, 1}, state.audio->audioSampleRate,
                 state.timestampScaleNanoseconds, samplesPerAccessUnit);
+            passedTarget = !aacProjectionOnGrid(projection,tickTolerance) ||
+                           projection->accessUnitOrdinal > startOrdinal;
             return aacProjectionOnGrid(projection, tickTolerance) &&
                    projection->accessUnitOrdinal <= startOrdinal &&
                    startOrdinal < projection->accessUnitOrdinal +
                                       block.frameCount;
           },
-          cancellation);
+          cancellation, &passedTarget);
       if (audioBlock.error != MatroskaDemuxError::None || !audioBlock.block) {
         outcome.error = audioBlock.error == MatroskaDemuxError::None
                             ? MatroskaDemuxError::InvalidTimeline
@@ -3734,7 +3775,16 @@ MatroskaPlanOutcome MatroskaPreparedAsset::planGeneration(
         outcome.error = MatroskaDemuxError::InvalidTimeline;
         return outcome;
       }
-      plan.audioWindow = {*decode, *presentationStart, startOrdinal == 0};
+      const auto mediaStart = audioPacketGridTime({presentationOrigin,
+          state.audio->audioFirstOrdinal, state.audio->audioSampleRate, samplesPerAccessUnit});
+      if (!mediaStart) { outcome.error = MatroskaDemuxError::InvalidTimeline; return outcome; }
+      plan.audioWindow = {*decode, *presentationStart,
+                          startOrdinal == state.audio->audioFirstOrdinal};
+      if (mediaStart->value > 0) {
+        plan.audioWindow.mediaStart = *mediaStart;
+        if (compareMediaTime(*mediaStart,plan.audioWindow.presentationStart)==MediaTimeOrder::Greater)
+          plan.audioWindow.presentationStart = *mediaStart;
+      }
       if (!state.video) {
         // With no video lane the generation's decode start IS the audio
         // window's, floored at the stream origin. Opus states a negative
