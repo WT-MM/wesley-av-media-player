@@ -230,6 +230,7 @@ struct NativeAudioConverterStats {
   // affected PCM can reach the ring.
   std::uint64_t decodedPcmFrames{0};
   std::uint64_t discardedTrimFrames{0};
+  std::uint64_t insertedSilenceFrames{0};
   std::uint64_t publishedPcmFrames{0};
   std::int64_t presentationFloorFrame{0};
   std::int64_t firstPublishedFrame{0};

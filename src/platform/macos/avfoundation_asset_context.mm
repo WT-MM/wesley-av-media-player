@@ -50,6 +50,7 @@ struct AVFoundationAssetContext::Impl final {
   __strong AVAssetTrack* audioTrack{nil};
   AVFoundationAssetContextMetadataLoadFacts metadataLoads;
   std::shared_ptr<void> testingLifetime;
+  std::shared_ptr<const media::AacPacketTimeline> aacTimeline;
   std::atomic<std::uint64_t> readerCreationAttempts{0};
   std::atomic<std::uint64_t> readersStarted{0};
 };
@@ -128,6 +129,7 @@ adoptPreparedAVFoundationAssetContext(
         const_cast<void*>(handles.selectedAudioTrack));
     auto impl = std::make_unique<AVFoundationAssetContext::Impl>(
         asset, videoTrack, audioTrack, metadataLoads, nullptr);
+    impl->aacTimeline = std::move(handles.aacTimeline);
     return std::shared_ptr<const AVFoundationAssetContext>(
         new AVFoundationAssetContext(std::move(path), options,
                                      std::move(descriptor), std::move(impl)));
@@ -145,7 +147,7 @@ borrowAVFoundationAssetContextNativeHandles(
   return AVFoundationAssetContextNativeHandles{
       (__bridge const void*)context.impl_->asset,
       (__bridge const void*)context.impl_->videoTrack,
-      (__bridge const void*)context.impl_->audioTrack};
+      (__bridge const void*)context.impl_->audioTrack, context.impl_->aacTimeline};
 }
 
 void noteAVFoundationAssetContextReaderCreationAttempt(

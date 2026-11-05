@@ -1,6 +1,7 @@
 #pragma once
 
 #include "media/native_media_source.hpp"
+#include "media/aac_packet_timeline.hpp"
 
 #include <cstdint>
 #include <filesystem>
@@ -39,6 +40,7 @@ struct AVFoundationAssetContextNativeHandles {
   const void* asset{nullptr};
   const void* selectedVideoTrack{nullptr};
   const void* selectedAudioTrack{nullptr};
+  std::shared_ptr<const media::AacPacketTimeline> aacTimeline;
 
   // Native v1 admits audio-less assets (a GIF-to-MP4 conversion carries one
   // H.264 track and no audio) AND video-less ones (a standalone music file),

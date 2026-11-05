@@ -984,8 +984,13 @@ struct NativeAudioConverter::Impl {
     expected_input_frame = 0;
     decoded_cursor_frame = 0;
     accepted_pcm_frames = 0;
+    aac_piecewise = false;
+    aac_head = aac_size = 0;
+    aac_decoded_offset = aac_silence_offset = 0;
+    aac_pending_count = aac_pending_offset = 0;
     statistics.decodedPcmFrames = 0;
     statistics.discardedTrimFrames = 0;
+    statistics.insertedSilenceFrames = 0;
     statistics.publishedPcmFrames = 0;
     statistics.presentationFloorFrame = floorFrame;
     statistics.firstPublishedFrame = 0;
@@ -1255,7 +1260,7 @@ struct NativeAudioConverter::Impl {
     const auto recordFrames = [&](std::size_t index,
                                   std::uint32_t variableFrames) noexcept {
       const std::uint32_t frames =
-          variableFrames != 0 ? variableFrames : audio.framesPerPacket;
+          aac_piecewise ? 1024 : variableFrames != 0 ? variableFrames : audio.framesPerPacket;
       std::uint64_t nextTotal = 0;
       if (frames == 0 || !checkedAdd(frameTotal, frames, &nextTotal)) {
         return false;
@@ -1394,8 +1399,8 @@ struct NativeAudioConverter::Impl {
           !timingAt(output_timing, static_cast<std::size_t>(outputCount), index,
                     priorFrames, &outputPresentation, &outputDecode,
                     &outputDuration, error) ||
-          inputDuration != packet_frames[index] ||
-          outputDuration != packet_frames[index] ||
+          (!aac_piecewise && inputDuration != packet_frames[index]) ||
+          outputDuration != inputDuration ||
           inputPresentation != outputPresentation ||
           inputDecode != outputDecode ||
           (inputDecode && *inputDecode != inputPresentation)) {
@@ -1411,10 +1416,13 @@ struct NativeAudioConverter::Impl {
         firstDecode = inputDecode;
       }
       if (inputPresentation != expectedPresentation ||
-          !checkedFrameEnd(expectedPresentation, packet_frames[index],
+          !checkedFrameEnd(expectedPresentation, aac_piecewise ? inputDuration : packet_frames[index],
                            &expectedPresentation)) {
         assignError(error, "CoreMedia audio packets are not contiguous");
         return false;
+      }
+      if (aac_piecewise) {
+        aac_prepared[index] = {inputPresentation,inputDuration};
       }
       priorFrames += packet_frames[index];
     }
@@ -1430,7 +1438,8 @@ struct NativeAudioConverter::Impl {
                     &neutralPresentation) ||
         !exactFrame(neutral.duration, sample_rate, &neutralDuration) ||
         neutralDuration <= 0 ||
-        static_cast<std::uint64_t>(neutralDuration) != totalFrames) {
+        static_cast<std::uint64_t>(neutralDuration) != (aac_piecewise ?
+            static_cast<std::uint64_t>(expectedPresentation-*sampleStart) : totalFrames)) {
       assignError(error, "neutral audio timing is not frame-exact");
       return false;
     }
@@ -1468,7 +1477,7 @@ struct NativeAudioConverter::Impl {
         aggregatePresentation != *sampleStart ||
         outputPresentation != *sampleStart || aggregateDuration <= 0 ||
         outputDuration != aggregateDuration ||
-        static_cast<std::uint64_t>(aggregateDuration) != totalFrames ||
+        aggregateDuration != neutralDuration ||
         aggregateDecode != firstDecode || outputDecode != firstDecode ||
         neutralPresentation != *sampleStart || neutralDecode != firstDecode) {
       assignError(error,
@@ -1476,6 +1485,69 @@ struct NativeAudioConverter::Impl {
       return false;
     }
     return true;
+  }
+
+  struct AacEdit { std::int64_t start{}; std::uint64_t duration{}; };
+  bool aac_piecewise{};
+  std::array<AacEdit, NativeAudioConverter::kMaximumPackets> aac_prepared{};
+  std::array<AacEdit, NativeAudioConverter::kMaximumPackets*2> aac_edits{};
+  std::size_t aac_head{}, aac_size{};
+  std::uint64_t aac_decoded_offset{}, aac_silence_offset{};
+  std::size_t aac_pending_count{}, aac_pending_offset{};
+  std::array<float, NativeAudioConverter::kFramesPerPump*2> aac_output{};
+
+  // Decode accounting stays on the natural 1024-frame grid. This bounded
+  // queue maps those frames onto the source-proved presentation extents:
+  // short extents trim the packet tail; long extents append exact silence.
+  NativeAudioPumpResult publishAac(std::string* error) {
+    while (aac_size) {
+      const auto& edit = aac_edits[aac_head];
+      const bool silence = aac_decoded_offset == 1024 && edit.duration > 1024;
+      if (aac_decoded_offset == 1024 && (!silence || aac_silence_offset == edit.duration-1024)) {
+        aac_head = (aac_head+1)%aac_edits.size(); --aac_size;
+        aac_decoded_offset = aac_silence_offset = 0;
+        continue;
+      }
+      if (!silence && aac_pending_offset == aac_pending_count) return NativeAudioPumpResult::Progress;
+      const auto offset = silence ? 1024+aac_silence_offset : aac_decoded_offset;
+      const auto start = edit.start+static_cast<std::int64_t>(offset);
+      auto n = silence ? std::min<std::uint64_t>(NativeAudioConverter::kFramesPerPump,edit.duration-offset) :
+          std::min<std::uint64_t>(1024-aac_decoded_offset,aac_pending_count-aac_pending_offset);
+      // Skipping an hour of declared silence on a seek is arithmetic, not
+      // an hour's worth of zero slabs or an unbounded pump loop.
+      if (silence && start < presentation_floor_frame)
+        n = std::min(edit.duration-offset,static_cast<std::uint64_t>(presentation_floor_frame-start));
+      if (silence && has_presentation_ceiling && start >= presentation_ceiling_frame)
+        n = edit.duration-offset;
+      const auto kept = silence ? n : std::min(n,edit.duration > offset ? edit.duration-offset : 0);
+      const auto low = std::max(start,presentation_floor_frame);
+      const auto high = std::min(start+static_cast<std::int64_t>(kept),
+          has_presentation_ceiling ? presentation_ceiling_frame : INT64_MAX);
+      const auto count = high > low ? static_cast<std::uint64_t>(high-low) : 0;
+      if (count && ring.queuedSlabs() >= NativePcmRing::kSlabCount)
+        return NativeAudioPumpResult::Backpressure;
+      if (count) {
+        if (silence) std::fill_n(aac_output.data(),count*2,0.0f);
+        else std::copy_n(pcm.data()+(aac_pending_offset+static_cast<std::size_t>(low-start))*2,count*2,aac_output.data());
+        if (ring.publish(statistics.generation,std::span<const float>(aac_output.data(),count*2),count)
+            != NativePcmRing::PublishResult::Published) {
+          failPump(error,"AAC mapped PCM publication failed"); return NativeAudioPumpResult::Failed;
+        }
+        if (!statistics.firstPublishedFrameKnown) {
+          statistics.firstPublishedFrameKnown=true; statistics.firstPublishedFrame=low;
+        }
+        if (silence) saturatingAdd(statistics.insertedSilenceFrames,count);
+        saturatingAdd(statistics.publishedPcmFrames,count);
+        saturatingAdd(statistics.publishedSlabs,1);
+      }
+      if (silence) aac_silence_offset += n;
+      else {
+        aac_decoded_offset += n; aac_pending_offset += n;
+        saturatingAdd(statistics.discardedTrimFrames,n-count);
+      }
+      if (count) return NativeAudioPumpResult::Published;
+    }
+    return NativeAudioPumpResult::Progress;
   }
 
   std::shared_ptr<const void> instance_identity;
@@ -1804,6 +1876,15 @@ NativeAudioConverter::prepare(const media::MediaSample &sample,
     outcome.result = NativeAudioSubmitResult::Invalid;
     return outcome;
   }
+  const bool piecewise = state.audio.formatTag == kAudioFormatMPEG4AAC &&
+      CMGetAttachment(nativeSample,CFSTR("WAMAacPiecewiseTimeline"),nullptr) == kCFBooleanTrue;
+  if ((state.has_input_timeline && piecewise != state.aac_piecewise) ||
+      (piecewise && sample.sampleCount > state.aac_edits.size()-state.aac_size)) {
+    assignError(error,"AAC piecewise mapping capacity or identity mismatch");
+    outcome.result = NativeAudioSubmitResult::Invalid;
+    return outcome;
+  }
+  state.aac_piecewise = piecewise;
   const std::size_t byteCount = sample.payload.byteSize();
   std::uint64_t totalFrames = 0;
   std::int64_t sampleStart = 0;
@@ -1812,7 +1893,9 @@ NativeAudioConverter::prepare(const media::MediaSample &sample,
                                     &totalFrames, error) ||
       !state.validateTiming(nativeSample, sample, totalFrames, &sampleStart,
                             error) ||
-      !checkedFrameEnd(sampleStart, totalFrames, &sampleEnd)) {
+      !checkedFrameEnd(sampleStart, state.aac_piecewise ?
+          static_cast<std::uint64_t>(state.aac_prepared[sample.sampleCount-1].start - sampleStart +
+          static_cast<std::int64_t>(state.aac_prepared[sample.sampleCount-1].duration)) : totalFrames, &sampleEnd)) {
     state.clearInputMetadata();
     saturatingAdd(state.statistics.rejectedSamples, 1);
     if (error != nullptr && error->empty()) {
@@ -1941,7 +2024,8 @@ bool NativeAudioConverter::commitPrepared(
       exactFrame(sample.presentationTime, state.sample_rate, &sampleStart) &&
       exactFrame(sample.duration, state.sample_rate, &sampleDuration) &&
       sampleDuration > 0 && sampleStart == state.prepared_start_frame &&
-      static_cast<std::uint64_t>(sampleDuration) == state.prepared_frame_count;
+      static_cast<std::uint64_t>(sampleDuration) == (state.aac_piecewise ?
+          static_cast<std::uint64_t>(state.prepared_end_frame-state.prepared_start_frame) : state.prepared_frame_count);
   prepared.instance_.reset();
   prepared.owner_ = nullptr;
   prepared.serial_ = 0;
@@ -1966,6 +2050,12 @@ bool NativeAudioConverter::commitPrepared(
       return false;
     }
     state.has_input_timeline = true;
+  }
+  if (state.aac_piecewise) {
+    for (std::size_t i=0;i<sample.sampleCount;++i) {
+      state.aac_edits[(state.aac_head+state.aac_size)%state.aac_edits.size()] = state.aac_prepared[i];
+      ++state.aac_size;
+    }
   }
   state.expected_input_frame = state.prepared_end_frame;
   state.accepted_pcm_frames = state.prepared_accepted_frames;
@@ -1995,6 +2085,10 @@ NativeAudioPumpResult NativeAudioConverter::pump(std::string *error) {
   }
   if (state.ring.generation() != state.statistics.generation) {
     return NativeAudioPumpResult::StaleGeneration;
+  }
+  if (state.aac_piecewise && state.aac_size) {
+    const auto mapped = state.publishAac(error);
+    if (mapped != NativeAudioPumpResult::Progress) return mapped;
   }
   if (state.drained) {
     return NativeAudioPumpResult::Drained;
@@ -2076,7 +2170,7 @@ NativeAudioPumpResult NativeAudioConverter::pump(std::string *error) {
       state.statistics.downmixApplied = true;
     }
     Impl::PcmTrimPlan plan;
-    if (const char *refusal =
+    if (const char *refusal = state.aac_piecewise ? nullptr :
             state.planTrim(converted.producedFrames, cursorAfter, &plan)) {
       state.failPump(error, refusal);
       return NativeAudioPumpResult::Failed;
@@ -2084,7 +2178,7 @@ NativeAudioPumpResult NativeAudioConverter::pump(std::string *error) {
     const std::uint64_t discarded = plan.headDiscarded;
     const std::uint64_t publishFrames = plan.publishFrames;
     state.statistics.decodedPcmFrames = decodedAfter;
-    state.statistics.discardedTrimFrames = plan.discardedTrimAfter;
+    if (!state.aac_piecewise) state.statistics.discardedTrimFrames = plan.discardedTrimAfter;
     state.decoded_cursor_frame = cursorAfter;
     // Width normalisation, and the ONLY place the decoded PCM changes shape.
     // It happens after the frame accounting above is already final and before
@@ -2103,6 +2197,12 @@ NativeAudioPumpResult NativeAudioConverter::pump(std::string *error) {
                                 converted.producedFrames);
       saturatingAdd(state.statistics.downmixedFrames,
                     converted.producedFrames);
+    }
+    if (state.aac_piecewise) {
+      state.aac_pending_count = converted.producedFrames;
+      state.aac_pending_offset = 0;
+      if (converted.drained && !state.sealDrain(decodedAfter,error)) return NativeAudioPumpResult::Failed;
+      return state.publishAac(error);
     }
     if (publishFrames == 0) {
       if (converted.drained && !state.sealDrain(decodedAfter, error)) {
