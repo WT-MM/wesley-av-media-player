@@ -215,6 +215,31 @@ CMVideoFormatDescriptionRef createMatroskaVideoFormatDescription(
       applyColorExtensions(mutableExtensions, track.video->colorPrimaries,
                            track.video->transferFunction,
                            track.video->matrixCoefficients);
+      // Match the container's exact display geometry at the CoreMedia boundary
+      // too, so the decoded surface and the window use the same sample aspect.
+      const std::int64_t horizontal = track.video->pixelAspectNumerator;
+      const std::int64_t vertical = track.video->pixelAspectDenominator;
+      if (horizontal != vertical) {
+        CFNumberRef h = CFNumberCreate(kCFAllocatorDefault, kCFNumberSInt64Type, &horizontal);
+        CFNumberRef v = CFNumberCreate(kCFAllocatorDefault, kCFNumberSInt64Type, &vertical);
+        const void* keys[] = {kCMFormatDescriptionKey_PixelAspectRatioHorizontalSpacing,
+                              kCMFormatDescriptionKey_PixelAspectRatioVerticalSpacing};
+        const void* values[] = {h, v};
+        CFDictionaryRef aspect = h && v ? CFDictionaryCreate(kCFAllocatorDefault,
+            keys, values, 2, &kCFTypeDictionaryKeyCallBacks,
+            &kCFTypeDictionaryValueCallBacks) : nullptr;
+        if (h) CFRelease(h);
+        if (v) CFRelease(v);
+        if (!aspect) {
+          CFRelease(mutableExtensions);
+          CFRelease(atoms);
+          CFRelease(atomData);
+          return nullptr;
+        }
+        CFDictionarySetValue(mutableExtensions,
+                             kCMFormatDescriptionExtension_PixelAspectRatio, aspect);
+        CFRelease(aspect);
+      }
       extensions = mutableExtensions;
     }
   }

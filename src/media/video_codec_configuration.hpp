@@ -125,8 +125,7 @@ struct VideoCodecConfigurationFacts {
   // AVC stream without bitstream_restriction COULD require, not what it does.
   // Every other codec states its depth or has a fixed reorder model, so the
   // default is the stated case and only the inference arm has to say so. A
-  // decoder may clamp an inferred depth to its bound; a stated one above the
-  // bound is a refusal.
+  // decoder must honour either bound in full or refuse at configuration.
   bool maximumReorderFramesInferred{false};
   std::uint16_t vpsCount{0};
   std::uint16_t spsCount{0};

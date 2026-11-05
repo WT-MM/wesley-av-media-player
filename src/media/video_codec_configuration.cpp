@@ -277,6 +277,26 @@ h264MaxDpbMacroblocks(std::uint32_t level, bool level1b) noexcept {
   }
 }
 
+// Table A-1 MaxFS, paired with MaxDpbMbs for the inferred-depth repair.
+[[nodiscard]] std::uint32_t h264MaxFrameMacroblocks(std::uint32_t level,
+                                                   bool level1b) noexcept {
+  switch (level) {
+  case 9: case 10: return 99;
+  case 11: return level1b ? 99 : 396;
+  case 12: case 13: case 20: return 396;
+  case 21: return 792;
+  case 22: case 30: return 1620;
+  case 31: return 3600;
+  case 32: return 5120;
+  case 40: case 41: return 8192;
+  case 42: return 8704;
+  case 50: return 22080;
+  case 51: case 52: return 36864;
+  case 60: case 61: case 62: return 139264;
+  default: return 0;
+  }
+}
+
 // The profiles whose SPS carries chroma_format_idc, the bit-depth fields and
 // the scaling matrices (H.264 7.3.2.1.1). Reading a profile outside this set as
 // "high" -- or one inside it as "not high" -- shifts every subsequent field by
@@ -491,9 +511,31 @@ parseH264SpsGeometry(RbspBitReader &bits,
   maximumDpbFrames = static_cast<std::uint32_t>(std::min<std::uint64_t>(
       kMaximumVideoCodecReorderFrames,
       static_cast<std::uint64_t>(*maximumDpbMacroblocks) / pictureMacroblocks));
+  // Without a VUI buffering declaration, the SPS-owned DPB bound is its
+  // max_num_ref_frames. This is separate from the E.2.1 reorder inference.
+  if (geometry.maxReferenceFrames > 16U) return Error::MalformedRecord;
+  const bool level1b = (compatibility & 0x10U) != 0U &&
+                      h264ConstraintSet3Level1b(profile);
   if (maximumDpbFrames == 0U ||
-      geometry.maxReferenceFrames > maximumDpbFrames) {
-    return Error::MalformedRecord;
+      geometry.maxReferenceFrames > maximumDpbFrames ||
+      pictureMacroblocks > h264MaxFrameMacroblocks(level, level1b)) {
+    // A mislabelled level cannot override SPS geometry/reference statements.
+    // If VUI supplies no reorder declaration, retain E.2.1's spec inference
+    // using the smallest Table A-1 level admitting the picture, never refs as
+    // a guessed reorder depth. Explicit VUI bounds are checked separately.
+    maximumDpbFrames = 0;
+    for (const auto candidate : {10U, 11U, 12U, 13U, 20U, 21U, 22U, 30U,
+                                 31U, 32U, 40U, 41U, 42U, 50U, 51U, 52U,
+                                 60U, 61U, 62U}) {
+      const auto dpb = *h264MaxDpbMacroblocks(candidate, false);
+      if (pictureMacroblocks <= h264MaxFrameMacroblocks(candidate, false) &&
+          pictureMacroblocks <= dpb) {
+        maximumDpbFrames = static_cast<std::uint32_t>(
+            std::min<std::uint64_t>(16U, dpb / pictureMacroblocks));
+        break;
+      }
+    }
+    if (maximumDpbFrames == 0U) return Error::MalformedRecord;
   }
   return Error::None;
 }
@@ -503,7 +545,6 @@ parseH264SpsGeometry(RbspBitReader &bits,
 // own statement when bitstream_restriction makes one.
 [[nodiscard]] Error parseH264Vui(RbspBitReader &bits,
                                  const VideoCodecConfigurationLimits &limits,
-                                 std::uint32_t maximumDpbFrames,
                                  std::uint32_t maxReferenceFrames,
                                  ParsedSpsFacts &facts,
                                  std::uint32_t &reorderFrames) noexcept {
@@ -539,8 +580,10 @@ parseH264SpsGeometry(RbspBitReader &bits,
     bits.skipExpGolomb(4U);
     reorderFrames = bits.readUnsignedExpGolomb();
     const std::uint32_t decodedFrameBuffering = bits.readUnsignedExpGolomb();
+    // The SPS restriction is authoritative even when its level label implies
+    // a smaller DPB. Keep all SPS-internal inequalities and the absolute cap.
     bits.require(reorderFrames <= decodedFrameBuffering &&
-                 decodedFrameBuffering <= maximumDpbFrames &&
+                 decodedFrameBuffering <= 16U &&
                  decodedFrameBuffering >= maxReferenceFrames);
     facts.reorderFramesInferred = false;
   }
@@ -602,7 +645,7 @@ parseH264SpsGeometry(RbspBitReader &bits,
   facts.reorderFramesInferred = !intraOnly;
   if (bits.readBit()) {
     const Error vuiError =
-        parseH264Vui(bits, limits, maximumDpbFrames,
+        parseH264Vui(bits, limits,
                      geometry.maxReferenceFrames, facts, reorderFrames);
     if (vuiError != Error::None) {
       return vuiError;
@@ -1190,8 +1233,10 @@ void parseHevcVui(RbspBitReader &bits, std::uint32_t subLayers,
 [[nodiscard]] VideoCodecConfigurationInspection
 inspectAvcC(std::span<const std::uint8_t> bytes,
             const VideoCodecConfigurationLimits &limits) noexcept {
-  if (bytes.size() < 8U || bytes[0] != 1U || (bytes[4] & 0xFCU) != 0xFCU ||
-      (bytes[4] & 0x03U) != 3U || (bytes[5] & 0xE0U) != 0xE0U) {
+  // Reserved avcC padding carries no decoding facts. Read the defined
+  // length/count fields even when an encoder writes zero padding.
+  if (bytes.size() < 8U || bytes[0] != 1U ||
+      (bytes[4] & 0x03U) != 3U) {
     return rejected(Error::MalformedRecord);
   }
   const std::uint8_t profile = bytes[1];
@@ -1214,6 +1259,7 @@ inspectAvcC(std::span<const std::uint8_t> bytes,
   }
   std::size_t offset = 6U;
   std::uint32_t spsIds = 0;
+  std::array<std::span<const std::uint8_t>, 32> spsBytes{};
   std::optional<ParsedSpsFacts> canonical;
   for (std::uint32_t index = 0; index < spsCount; ++index) {
     if (offset > bytes.size() || bytes.size() - offset < 2U) {
@@ -1231,11 +1277,18 @@ inspectAvcC(std::span<const std::uint8_t> bytes,
       return rejected(error);
     }
     const std::uint32_t idBit = std::uint32_t{1} << parsed.id;
-    if ((spsIds & idBit) != 0U ||
+    const auto payload = bytes.subspan(offset, length);
+    // Repeated identical parameter sets have one unambiguous meaning. A
+    // redefinition of an ID still fails closed, including changes to syntax
+    // not represented by ParsedSpsFacts.
+    if (((spsIds & idBit) != 0U &&
+         !std::equal(payload.begin(), payload.end(),
+                     spsBytes[parsed.id].begin(), spsBytes[parsed.id].end())) ||
         (canonical && !sameImmutableFacts(*canonical, parsed))) {
       return rejected(Error::ParameterSetMismatch);
     }
     spsIds |= idBit;
+    spsBytes[parsed.id] = payload;
     if (!canonical) {
       canonical = parsed;
     }
@@ -1257,6 +1310,7 @@ inspectAvcC(std::span<const std::uint8_t> bytes,
     return rejected(Error::MissingParameterSet);
   }
   std::array<std::uint64_t, 4> ppsIds{};
+  std::array<std::span<const std::uint8_t>, 256> ppsBytes{};
   for (std::uint32_t index = 0; index < ppsCount; ++index) {
     if (offset > bytes.size() || bytes.size() - offset < 2U) {
       return rejected(Error::MalformedRecord);
@@ -1274,23 +1328,27 @@ inspectAvcC(std::span<const std::uint8_t> bytes,
     }
     const std::size_t ppsWord = ppsId / 64U;
     const std::uint64_t ppsBit = std::uint64_t{1} << (ppsId % 64U);
-    if ((ppsIds[ppsWord] & ppsBit) != 0U) {
+    const auto payload = bytes.subspan(offset, length);
+    if ((ppsIds[ppsWord] & ppsBit) != 0U &&
+        !std::equal(payload.begin(), payload.end(),
+                    ppsBytes[ppsId].begin(), ppsBytes[ppsId].end())) {
       return rejected(Error::ParameterSetMismatch);
     }
     ppsIds[ppsWord] |= ppsBit;
+    ppsBytes[ppsId] = payload;
     offset += length;
   }
 
   if (offset != bytes.size()) {
     // The AVC high-profile record extension is optional in common avcC. When
-    // present, accept only the current 4:2:0 8-bit contract and no SPS-ext
-    // payload. Anything else is a real, unsupported tail rather than padding.
+    // present, its chroma/depth hints do not override the SPS. Still require
+    // complete syntax and no unsupported SPS-ext payload. The decoder drops
+    // this optional tail before constructing its CoreMedia description.
     if (!h264HighProfile(profile) || bytes.size() - offset != 4U ||
-        (bytes[offset] & 0xFCU) != 0xFCU || (bytes[offset] & 0x03U) != canonical->chromaFormat ||
+        (bytes[offset] & 0xFCU) != 0xFCU ||
         (bytes[offset + 1U] & 0xF8U) != 0xF8U ||
-        (bytes[offset + 1U] & 0x07U) != canonical->bitDepth - 8U ||
         (bytes[offset + 2U] & 0xF8U) != 0xF8U ||
-        (bytes[offset + 2U] & 0x07U) != canonical->bitDepth - 8U || bytes[offset + 3U] != 0U) {
+        bytes[offset + 3U] != 0U) {
       return rejected(Error::MalformedRecord);
     }
     offset += 4U;

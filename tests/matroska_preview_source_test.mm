@@ -765,6 +765,28 @@ void testPromotedSampleBuilders() {
          "the promoted description restates the admitted codec and geometry");
   CFRelease(format);
 
+  auto anamorphic = *track;
+  anamorphic.video->pixelAspectNumerator = 481;
+  anamorphic.video->pixelAspectDenominator = 480;
+  auto aspectFormat = wam::macos::createMatroskaVideoFormatDescription(anamorphic);
+  expect(aspectFormat != nullptr, "anamorphic format is built");
+  if (aspectFormat) {
+    const auto aspect = static_cast<CFDictionaryRef>(CMFormatDescriptionGetExtension(
+        aspectFormat, kCMFormatDescriptionExtension_PixelAspectRatio));
+    std::int64_t horizontal = 0, vertical = 0;
+    if (aspect) {
+      const auto h = static_cast<CFNumberRef>(CFDictionaryGetValue(aspect,
+          kCMFormatDescriptionKey_PixelAspectRatioHorizontalSpacing));
+      const auto v = static_cast<CFNumberRef>(CFDictionaryGetValue(aspect,
+          kCMFormatDescriptionKey_PixelAspectRatioVerticalSpacing));
+      if (h) CFNumberGetValue(h, kCFNumberSInt64Type, &horizontal);
+      if (v) CFNumberGetValue(v, kCFNumberSInt64Type, &vertical);
+    }
+    expect(horizontal == 481 && vertical == 480,
+           "container sample aspect reaches CoreMedia exactly");
+    CFRelease(aspectFormat);
+  }
+
   auto source = MatroskaPreviewSource::create(prepared.binding());
   if (source == nullptr ||
       source->begin(NativePreviewRequest{1, MediaTime{1, 2}}).status !=

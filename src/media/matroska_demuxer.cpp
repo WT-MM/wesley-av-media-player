@@ -1250,20 +1250,18 @@ constexpr std::size_t kVp9KeyframeProbeClusters{4};
     }
   }
   const VideoCodecConfigurationFacts& facts = *inspection.facts;
-  // DisplayUnit 0 is pixels; 4 is "unspecified" (Matroska v4), which carries
-  // no display-size information at all and is therefore only admissible when
-  // DisplayWidth/DisplayHeight are absent -- exactly the shape OBS records
-  // (unit 4, no dims). Units 1-3 (centimetres, inches, display aspect ratio)
-  // express a non-pixel display geometry this square-pixel v1 renderer does
-  // not model, and stay rejected.
+  // Pixel display dimensions define an exact sample aspect ratio. The
+  // native layer presenter already consumes that rational geometry; physical
+  // units and unspecified dimensions remain outside this source's model.
+  const auto displayWidth = entry.video->displayWidth.value_or(facts.width);
+  const auto displayHeight = entry.video->displayHeight.value_or(facts.height);
   const bool displayGeometryAdmitted =
-      entry.video->displayUnit == 0
-          ? (!entry.video->displayWidth ||
-             *entry.video->displayWidth == facts.width) &&
-                (!entry.video->displayHeight ||
-                 *entry.video->displayHeight == facts.height)
-          : entry.video->displayUnit == 4 && !entry.video->displayWidth &&
-                !entry.video->displayHeight;
+      (entry.video->displayUnit == 0 && displayWidth > 0 && displayHeight > 0 &&
+       displayWidth <= UINT32_MAX && displayHeight <= UINT32_MAX &&
+       limits.codedDimensionsAdmitted(static_cast<std::uint32_t>(displayWidth),
+                                     static_cast<std::uint32_t>(displayHeight))) ||
+      (entry.video->displayUnit == 4 && !entry.video->displayWidth &&
+       !entry.video->displayHeight);
   if (!entry.video->pixelWidth || !entry.video->pixelHeight ||
       *entry.video->pixelWidth != facts.width ||
       *entry.video->pixelHeight != facts.height ||
@@ -1278,8 +1276,17 @@ constexpr std::size_t kVp9KeyframeProbeClusters{4};
   format.codedHeight = facts.height;
   // Coded orientation, as on the MP4 route: mediaVideoDisplaySize() is the
   // one place the quarter turn transposes the rectangle.
-  format.displayWidth = facts.width;
-  format.displayHeight = facts.height;
+  format.displayWidth = static_cast<std::uint32_t>(displayWidth);
+  format.displayHeight = static_cast<std::uint32_t>(displayHeight);
+  const std::uint64_t sarNumerator = displayWidth * facts.height;
+  const std::uint64_t sarDenominator = displayHeight * facts.width;
+  const auto sarDivisor = std::gcd(sarNumerator, sarDenominator);
+  if (sarNumerator / sarDivisor > UINT32_MAX ||
+      sarDenominator / sarDivisor > UINT32_MAX) {
+    return false;
+  }
+  format.pixelAspectNumerator = static_cast<std::uint32_t>(sarNumerator / sarDivisor);
+  format.pixelAspectDenominator = static_cast<std::uint32_t>(sarDenominator / sarDivisor);
   format.rotationDegrees = static_cast<std::int16_t>(*rotationDegrees);
   format.identityTransform = *rotationDegrees == 0;
   format.bitsPerComponent = facts.bitDepth;
@@ -4575,6 +4582,10 @@ MatroskaPrepareOutcome prepareMatroska(
       result.message = "bounded Cluster directory is required";
       return result;
     }
+    // File offsets must be ordered, but Cluster timestamp bases need not be:
+    // reordered video can start a later Cluster at an earlier presentation
+    // time. Video seeks use the independently validated, monotonic Cue index.
+    // Audio-only seeks binary-search Cluster times and still require order.
     state->clusters.reserve(document.clusters.size());
     std::uint64_t previousOffset = 0;
     std::uint64_t previousTimestamp = 0;
@@ -4582,7 +4593,7 @@ MatroskaPrepareOutcome prepareMatroska(
       MatroskaClusterIndexEntry cluster;
       if (!clusterRangeValid(document.clusters[index], &cluster) ||
           (index != 0 && (cluster.encodedOffset <= previousOffset ||
-                         cluster.timestampTick < previousTimestamp))) {
+                         (!state->video && cluster.timestampTick < previousTimestamp)))) {
         result.error = MatroskaDemuxError::InvalidTimeline;
         result.message = "Cluster directory is not finite and monotonic";
         return result;
