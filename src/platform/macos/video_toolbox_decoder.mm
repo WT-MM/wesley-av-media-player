@@ -2779,18 +2779,32 @@ bool VideoToolboxDecoder::configure(
                 "the codec SPS");
     return false;
   }
-  // E.2.1's inferred depth is a spec-derived bound, not permission to
-  // under-buffer. Honour it in full or refuse now: clamping can otherwise
-  // discover an out-of-order picture only after playback has started.
-  const std::size_t admittedReorderFrames = codecReorderDepth->frames;
+  // A DECLARED depth above the bound is a refusal: the stream is entitled to
+  // every frame it asked for, honouring it would overrun the route's
+  // decoded-surface budget, and clamping it would reorder that stream's
+  // output. An INFERRED depth above the bound is not a demand at all, only the
+  // ceiling the specification substitutes for a statement the stream never
+  // made, so it is clamped to the bound instead of refused. Understating a
+  // stream that really did need more cannot present frames out of order:
+  // collectCompletedDecodes() compares every completed frame against the last
+  // one delivered and fails the decoder closed before publishing an older one.
+  // See CodecReorderDepthOrigin for why the inference is unusable as a refusal
+  // criterion in the first place.
+  std::size_t admittedReorderFrames = codecReorderDepth->frames;
   if (admittedReorderFrames > impl_->options.maxPendingPresentationFrames) {
-    CFRelease(impl_->formatDescription);
-    impl_->formatDescription = nullptr;
-    assignError(error,
-                "codec SPS requires " + std::to_string(codecReorderDepth->frames) +
-                    " presentation-reorder frames, exceeding the configured bound of " +
-                    std::to_string(impl_->options.maxPendingPresentationFrames));
-    return false;
+    if (codecReorderDepth->origin == CodecReorderDepthOrigin::Declared) {
+      CFRelease(impl_->formatDescription);
+      impl_->formatDescription = nullptr;
+      assignError(error,
+                  "codec SPS requires " +
+                      std::to_string(codecReorderDepth->frames) +
+                      " presentation-reorder frames, exceeding the configured "
+                      "bound of " +
+                      std::to_string(
+                          impl_->options.maxPendingPresentationFrames));
+      return false;
+    }
+    admittedReorderFrames = impl_->options.maxPendingPresentationFrames;
   }
   if (admittedReorderFrames >
       std::numeric_limits<std::size_t>::max() -

@@ -300,27 +300,49 @@ void testCodecReorderDepthCarriesItsAuthority() {
   }
 }
 
-void testInferredAndDeclaredReorderDepthRespectBudget() {
+void testInferredReorderDepthIsClampedAndDeclaredIsRefused() {
   using wam::macos::CodecReorderDepthOrigin;
   constexpr std::uint64_t generation = 78;
 
-  // Inferred bounds are not clamped: doing so risks a mid-playback failure.
-  for (const bool small : {false, true}) {
+  // An inferred depth above the bound is admitted at the bound. This is the
+  // exact case the real screen recording hits on the playback route, whose
+  // kMaximumPresentationReorderFrames is 4.
+  {
     wam::macos::VideoToolboxDecoderOptions options;
     options.maxInFlightFrames = 2;
     options.maxPendingPresentationFrames = 4;
     wam::macos::VideoToolboxDecoder decoder(options);
     wam::macos::BoundedFrameQueue queue(2, generation);
     std::string error;
-    const auto config = small
-        ? h264RecordConfiguration(kSmallPictureAvcC, 640, 360, generation)
-        : h264RecordConfiguration(kScreenRecordingAvcC, 2804, 1658, generation);
-    WAM_CHECK(!decoder.configure(config, queue, &error));
-    WAM_CHECK(error.find("exceeding the configured bound") != std::string::npos);
-    WAM_CHECK(!decoder.stats().configured);
+    WAM_CHECK_DETAIL(
+        decoder.configure(h264RecordConfiguration(kScreenRecordingAvcC, 2804,
+                                                  1658, generation),
+                          queue, &error),
+        error);
+    WAM_CHECK(decoder.stats().codecReorderFrames == 4);
+    decoder.close();
   }
 
-  // A budget wide enough for the inference admits it in full.
+  // The clamp is to the bound, not to any particular number: a record whose
+  // inference is 8 lands on the same 4.
+  {
+    wam::macos::VideoToolboxDecoderOptions options;
+    options.maxInFlightFrames = 2;
+    options.maxPendingPresentationFrames = 4;
+    wam::macos::VideoToolboxDecoder decoder(options);
+    wam::macos::BoundedFrameQueue queue(2, generation);
+    std::string error;
+    WAM_CHECK_DETAIL(
+        decoder.configure(
+            h264RecordConfiguration(kSmallPictureAvcC, 640, 360, generation),
+            queue, &error),
+        error);
+    WAM_CHECK(decoder.stats().codecReorderFrames == 4);
+    decoder.close();
+  }
+
+  // The clamp only ever lowers. A bound wide enough for the whole inference
+  // keeps the inferred depth intact rather than snapping it to the bound.
   {
     wam::macos::VideoToolboxDecoderOptions options;
     options.maxInFlightFrames = 2;
@@ -356,7 +378,8 @@ void testInferredAndDeclaredReorderDepthRespectBudget() {
   }
 
   // ...and a declared depth ABOVE the bound is still refused at configure(),
-  // with the same refusal as an inferred depth over budget.
+  // with the message unchanged. Identical geometry and level to the clamped
+  // record above, so only the declaration separates the two outcomes.
   {
     wam::macos::VideoToolboxDecoderOptions options;
     options.maxInFlightFrames = 2;
@@ -3683,7 +3706,7 @@ int main(int argc, char **argv) {
   testDecodedSdrColorAttachmentMatrix();
   testDecodedColorCallbackRejectsHdrBeforeLease();
   testCodecReorderDepthCarriesItsAuthority();
-  testInferredAndDeclaredReorderDepthRespectBudget();
+  testInferredReorderDepthIsClampedAndDeclaredIsRefused();
   if (argc == 2 && std::string_view(argv[1]) == "--progress-wake-only") {
     testEventDrivenDecoderProgressWake();
     testExactDecoderRetirement();
