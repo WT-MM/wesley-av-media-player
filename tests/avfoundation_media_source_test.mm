@@ -3575,17 +3575,18 @@ void testCompressedAudioOneTickGridProjection() {
     return CMSampleTimingInfo{CMTimeMake(duration, scale),
                              CMTimeMake(pts, scale), kCMTimeInvalid};
   };
-  for (const auto original : {entry(1024), entry(1024, 1025),
-                              entry(1022), entry(1023, 1024, 24000)}) {
+  for (const auto original : {entry(1024), entry(767),
+                              entry(1281), entry(1023, 1024, 24000)}) {
     std::array timing{original};
     const OwnedSample sample =
         makeCompressedAudioSample(format.get(), timing, 1, 344);
     expect(projectCompressedAudioPacketTimingForTesting(
                sample.get(), timing.data(), timing.size()) == 0 &&
                std::memcmp(&original, &timing[0], sizeof(original)) == 0,
-           "exact grid, two-tick residual and other timescales stay unchanged");
+           "exact grid, out-of-bound residual and other timescales stay unchanged");
   }
-  for (const auto original : {entry(1023, 1025), entry(1025, 1023),
+  for (const auto original : {entry(768, 1059), entry(1280, 1015),
+                              entry(1024, 1059), entry(1023, 1025), entry(1025, 1023),
                               entry(1023, 1008), entry(1024, 1008)}) {
     std::array timing{original};
     const OwnedSample sample =
@@ -3594,8 +3595,8 @@ void testCompressedAudioOneTickGridProjection() {
         sample.get(), timing.data(), timing.size()));
     const auto projected = projectCompressedAudioPacketTimingForTesting(
         sample.get(), timing.data(), timing.size());
-    expect(projected == (original.presentationTimeStamp.value == 1024 ? 0 : 1),
-           "only nonzero one-tick residuals are projected");
+    expect(projected == (original.presentationTimeStamp.value == 1024 && original.duration.value <= 1024 ? 0 : 1),
+           "bounded residuals and overstated durations are projected");
     expect(timing[0].presentationTimeStamp.value == 1024 &&
                timing[0].presentationTimeStamp.timescale == 48000 &&
                timing[0].duration.value == 1024 &&

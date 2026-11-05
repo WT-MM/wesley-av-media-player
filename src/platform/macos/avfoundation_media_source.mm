@@ -266,64 +266,34 @@ struct AudioPrimingPlan {
   return restated;
 }
 
-// A muxer that floors microsecond timestamps can state AAC access units one
-// media tick away from their exact ordinal grid, without cumulative drift.
-// When one tick is one audio frame, admit at most that residual and publish
-// the natural packet extent. Exact-grid entries are arithmetically untouched;
-// larger residuals still reach the converter's strict continuity proof.
-// ALAC and FLAC can decode a genuinely short final packet and are excluded.
+// The open-time cursor proof below establishes the ordinal grid over ALL
+// packets. Here the nearest ordinal locates a packet after an arbitrary seek;
+// it is not itself the continuity proof. Edits are applied only afterwards.
 [[nodiscard]] std::size_t projectCompressedAudioPacketTiming(
     CMSampleBufferRef sample, CMSampleTimingInfo* timing,
     std::size_t entries) noexcept {
-  if (sample == nullptr || timing == nullptr) {
-    return 0;
-  }
+  if (!sample || !timing) return 0;
   const auto format = CMSampleBufferGetFormatDescription(sample);
-  if (format == nullptr ||
-      CMFormatDescriptionGetMediaType(format) != kCMMediaType_Audio) {
-    return 0;
-  }
+  if (!format || CMFormatDescriptionGetMediaType(format) != kCMMediaType_Audio) return 0;
   const auto* asbd = CMAudioFormatDescriptionGetStreamBasicDescription(format);
-  if (asbd == nullptr || asbd->mFramesPerPacket == 0 ||
-      asbd->mFormatID == kAudioFormatLinearPCM ||
-      asbd->mFormatID == kAudioFormatAppleLossless ||
-      asbd->mFormatID == kAudioFormatFLAC) {
-    return 0;
-  }
-  std::size_t restated = 0;
-  for (std::size_t index = 0; index < entries; ++index) {
-    auto& entry = timing[index];
-    const auto natural = naturalAudioPacketDuration(
-        sample, static_cast<CMItemCount>(entries),
-        static_cast<CMItemCount>(index));
+  if (!asbd || asbd->mFormatID != kAudioFormatMPEG4AAC ||
+      asbd->mFramesPerPacket != 1024 || asbd->mSampleRate <= 0 ||
+      asbd->mSampleRate > INT32_MAX) return 0;
+  const auto rate = static_cast<std::uint32_t>(asbd->mSampleRate);
+  if (rate != asbd->mSampleRate) return 0;
+  std::size_t changed = 0;
+  for (std::size_t i = 0; i < entries; ++i) {
+    auto& entry = timing[i];
     const auto pts = entry.presentationTimeStamp;
-    if (!CMTIME_IS_NUMERIC(natural) ||
-        natural.value != asbd->mFramesPerPacket ||
-        !CMTIME_IS_NUMERIC(pts) || pts.timescale != natural.timescale) {
-      continue;
-    }
-    // Signed wide arithmetic keeps rounding and the product exact even at
-    // the timestamp limits. Halfway ordinals round to the even integer.
-    const __int128 frames = natural.value;
-    __int128 ordinal = pts.value / frames;
-    const __int128 remainder = pts.value % frames;
-    const __int128 magnitude = remainder < 0 ? -remainder : remainder;
-    if (2 * magnitude > frames ||
-        (2 * magnitude == frames && ordinal % 2 != 0)) {
-      ordinal += remainder < 0 ? -1 : 1;
-    }
-    const __int128 exact = ordinal * frames;
-    const __int128 residual = static_cast<__int128>(pts.value) - exact;
-    if (residual == 0 || residual < -1 || residual > 1 ||
-        exact < std::numeric_limits<std::int64_t>::min() ||
-        exact > std::numeric_limits<std::int64_t>::max()) {
-      continue;
-    }
-    entry.presentationTimeStamp.value = static_cast<std::int64_t>(exact);
-    entry.duration = natural;
-    ++restated;
+    if (!CMTIME_IS_NUMERIC(pts) || pts.value < 0 || pts.timescale != rate) continue;
+    const auto ordinal = (static_cast<std::uint64_t>(pts.value) + 512) / 1024;
+    const auto projected = media::projectAacPacketGrid({pts.value, pts.timescale}, 0, ordinal, rate);
+    if (!projected) continue;
+    if (pts.value != projected->value || CMTimeCompare(entry.duration, CMTimeMake(1024,rate))) ++changed;
+    entry.presentationTimeStamp = CMTimeMake(projected->value, rate);
+    entry.duration = CMTimeMake(1024, rate);
   }
-  return restated;
+  return changed;
 }
 
 // The most media time one staged audio sample may carry.
@@ -3738,6 +3708,17 @@ class ProductionGeneration final : public AVFoundationGeneration {
           "media timeline";
       return copied;
     }
+    const auto format = CMSampleBufferGetFormatDescription(copied.sample);
+    const auto* asbd = format ? CMAudioFormatDescriptionGetStreamBasicDescription(format) : nullptr;
+    if (asbd && asbd->mFormatID == kAudioFormatMPEG4AAC && !audio_first_unit_restated_ &&
+        (!request_.target || request_.target->value == 0) &&
+        CMTimeCompare(CMSampleBufferGetPresentationTimeStamp(copied.sample), audio_media_start_) > 0) {
+      CFRelease(copied.sample);
+      copied.sample = nullptr;
+      copied.status = AVFoundationSampleReadStatus::Failed;
+      copied.error = "AacEditedReaderOriginUnproven: reader omitted required priming packets";
+      return copied;
+    }
     provedImmediatePlayoutOnFirstUnit(copied.sample);
     return copied;
   }
@@ -3867,6 +3848,82 @@ class ProductionGeneration final : public AVFoundationGeneration {
     auto format = (__bridge CMAudioFormatDescriptionRef)formats.firstObject;
     auto result = inspectAudioFormatImpl(format, id, *duration, limits, error);
     if (result && !validateWaveAdpcm(*result, request_.path, error)) return std::nullopt;
+    if (result && result->codec == MediaCodec::Aac) {
+      // AVSampleCursor walks the sample table, including packets outside an
+      // edit. No compressed payload is read or retained by this open proof.
+      if (result->audio->framesPerPacket != 1024) {
+        assignError(error, "AacPacketFrameLengthUnsupported");
+        return std::nullopt;
+      }
+      AVSampleCursor* cursor = [track makeSampleCursorAtFirstSampleInDecodeOrder];
+      const auto rate = static_cast<std::uint32_t>(result->audio->sampleRate);
+      std::uint64_t ordinal = 0;
+      if (!cursor) {
+        assignError(error, "AacPacketTimelineProofUnavailable");
+        return std::nullopt;
+      }
+      do {
+        const auto pts = cursor.presentationTimeStamp;
+        if (cancelled_.load(std::memory_order_acquire) || ordinal >= 2'000'000) {
+          assignError(error, "AacPacketTimelineScanLimitOrCancelled");
+          return std::nullopt;
+        }
+        if (ordinal == 0 && !exactZero(pts)) {
+          assignError(error, "AacPacketMediaOriginUnproven");
+          return std::nullopt;
+        }
+        if (!CMTIME_IS_NUMERIC(pts) ||
+            !media::projectAacPacketGrid({pts.value,pts.timescale}, 0, ordinal++, rate)) {
+          assignError(error, "AacPacketTimelineDiscontinuity: packet residual exceeds 256 samples");
+          return std::nullopt;
+        }
+      } while ([cursor stepInDecodeOrderByCount:1] == 1);
+      // Only the LAST duration may express a tail trim. Interior stts lengths
+      // cannot change the decoded extent of a 1024-frame AAC access unit.
+      const auto tail = exactMediaTime(cursor.currentSampleDuration);
+      const auto tailFrames = tail ? media::exactAudioFrameIndex(*tail,rate) : std::nullopt;
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+      const auto edits = audioMovieTimelineFactsFor(track.segments);
+#pragma clang diagnostic pop
+      if (!tailFrames || *tailFrames <= 0 || !edits) {
+        assignError(error, "AacPacketTailTrimUnproven");
+        return std::nullopt;
+      }
+      // Validate the reader's stream-origin witness even for an initial
+      // nonzero target. Some edits make AVAssetReader silently omit priming
+      // units; such an asset must choose the exact demux route at OPEN.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+      NSError* originError = nil;
+      AVAssetReader* originReader = [AVAssetReader assetReaderWithAsset:track.asset error:&originError];
+#pragma clang diagnostic pop
+      AVAssetReaderTrackOutput* originOutput = [AVAssetReaderTrackOutput
+          assetReaderTrackOutputWithTrack:track outputSettings:nil];
+      if (!originReader || ![originReader canAddOutput:originOutput]) {
+        assignError(error, "AacEditedReaderOriginUnproven");
+        return std::nullopt;
+      }
+      [originReader addOutput:originOutput];
+      const bool reading = [originReader startReading];
+      CMSampleBufferRef first = reading ? [originOutput copyNextSampleBuffer] : nullptr;
+      const bool originProved = first &&
+          CMTimeCompare(CMTimeAdd(CMSampleBufferGetPresentationTimeStamp(first),edits->shift),edits->mediaStart) <= 0;
+      if (first) CFRelease(first);
+      [originReader cancelReading];
+      if (!originProved) {
+        assignError(error, "AacEditedReaderOriginUnproven: reader omitted required priming packets");
+        return std::nullopt;
+      }
+      const auto shift = audioFrameAlignedEditTime(edits->shift,rate);
+      const auto shiftFrames = shift ? media::exactAudioFrameIndex({shift->value,shift->timescale},rate) : std::nullopt;
+      const auto editEnd = media::audioFrameAtOrAfter(result->duration,rate);
+      if (!shiftFrames || !editEnd) return std::nullopt;
+      const MediaTime packetEnd{static_cast<std::int64_t>((ordinal-1)*1024) +
+          std::min<std::int64_t>(*tailFrames,1024) + *shiftFrames,static_cast<std::int32_t>(rate)};
+      result->duration = media::compareMediaTime(packetEnd,*editEnd)==MediaTimeOrder::Less ? packetEnd : *editEnd;
+    }
+
     if (result && naturalTimeScale > 0) {
       result->timeBase = {1, naturalTimeScale};
     }
@@ -3980,7 +4037,7 @@ class ProductionGeneration final : public AVFoundationGeneration {
       return;
     }
     const auto ceiling = exactCMTime(*audio_playout_proof_ceiling_);
-    // Measure the projected movie stamp, including a possible one-frame
+    // Measure the projected movie stamp, including a possible 256-frame
     // advance. The reader's two-unit slack covers that advance without
     // relaxing the priming ceiling or changing the first audible frame.
     const CMTime start = CMSampleBufferGetPresentationTimeStamp(sample);

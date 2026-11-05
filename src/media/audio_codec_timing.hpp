@@ -4,8 +4,28 @@
 
 #include <cstdint>
 #include <optional>
+#include <limits>
 
 namespace wam::media {
+
+// AAC-LC packet timestamps may jitter within a quarter access unit. The
+// 256-frame bound covers measured residuals through 152 frames and moves audio
+// by at most 5.81 ms at 44.1 kHz (5.33 ms at 48 kHz). Always compare against
+// the ORIGINAL origin plus packet ORDINAL, never against the preceding PTS:
+// otherwise cumulative drift, missing packets and overlaps would be hidden.
+inline constexpr std::int64_t kAacPacketGridResidualFrames = 256;
+[[nodiscard]] constexpr std::optional<MediaTime> projectAacPacketGrid(
+    MediaTime observed, std::int64_t originFrame, std::uint64_t ordinal,
+    std::uint32_t rate) noexcept {
+  if (!observed.valid() || !rate || rate > INT32_MAX) return std::nullopt;
+  const __int128 expected = __int128(originFrame) + __int128(ordinal) * 1024;
+  if (expected < INT64_MIN || expected > INT64_MAX) return std::nullopt;
+  const __int128 residual = __int128(observed.value) * rate -
+                            expected * observed.timescale;
+  const __int128 bound = __int128(kAacPacketGridResidualFrames) * observed.timescale;
+  if (residual < -bound || residual > bound) return std::nullopt;
+  return MediaTime{static_cast<std::int64_t>(expected), static_cast<std::int32_t>(rate)};
+}
 
 // True for audio codecs whose first access unit legitimately presents BEFORE
 // media time zero.

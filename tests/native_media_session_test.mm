@@ -3706,7 +3706,8 @@ void testStopWinsDispatcherFailurePublication() {
 // transport has been committed to the seek.
 void testSeekAdmissionStopsAtThePresentableCeiling() {
   auto state = std::make_shared<GraphState>();
-  auto tail = std::make_shared<media::MediaSourceDescriptor>(*descriptor());
+  auto tail = std::make_shared<media::MediaSourceDescriptor>(
+      *descriptor({3758, 375}));
   tail->duration = {3758, 375};
   state->descriptor = tail;
   auto session = sessionFor(&state);

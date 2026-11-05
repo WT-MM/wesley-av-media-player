@@ -126,7 +126,9 @@ int main(int argc, char **argv) {
     }
   }
   const auto stats = converter.stats();
-  const auto targetFrame=*exactAudioFrameIndex(*audioFrameAtOrAfter(target,static_cast<std::uint32_t>(track->audio->sampleRate)),static_cast<std::uint32_t>(track->audio->sampleRate));
+  // Leading declared silence carries no PCM; the first retained frame is
+  // the source-proved presentation floor, which may be after the request.
+  const auto targetFrame=*exactAudioFrameIndex(timeline.presentationFloor,static_cast<std::uint32_t>(track->audio->sampleRate));
   const auto expected = static_cast<__int128>(track->duration.value) *
                         static_cast<std::uint32_t>(track->audio->sampleRate);
   const bool exact =

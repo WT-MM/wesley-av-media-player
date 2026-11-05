@@ -67,15 +67,10 @@ struct NativeMediaGenerationTimeline {
       default;
 };
 
-// The instant every seek target must stay strictly below: the selected video
-// track's duration when one is selected, the source duration otherwise. A
-// container may let audio outlive the last picture (AAC padding, an audio
-// edit longer than the video edit), and the source duration then names an
-// interval in which no frame covers any target -- the video port refuses the
-// seek flush at its own track duration, and a target admitted against the
-// source duration alone reaches that refusal only after the transport has
-// been committed to it. Stated once here so the controller's snap, the
-// session's admission and the video port's gate agree by construction.
+// Exclusive seek ceiling shared by transport and session admission. It is
+// bounded by both selected tracks: a video frame AND an audible audio frame
+// must exist at the landing. Audio's upward frame rounding is included, so a
+// target just below a fractional container end cannot round past that end.
 [[nodiscard]] MediaTime presentableSeekCeiling(
     const MediaSourceDescriptor& descriptor) noexcept;
 
