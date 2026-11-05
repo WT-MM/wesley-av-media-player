@@ -358,6 +358,8 @@ struct H264SpsSpec {
   // cross-checks them). Level 4.0 caps MaxDpbMbs at 32,768, which is under one
   // frame at UHD, so a case above 1080p has to state a level that admits it.
   std::uint8_t level{40};
+  std::uint8_t compatibility{0};
+  bool restriction{true};
   std::uint32_t chromaFormat{1};
   std::uint32_t lumaDepthMinusEight{0};
   std::uint32_t chromaDepthMinusEight{0};
@@ -372,7 +374,7 @@ struct H264SpsSpec {
 
   BitWriter bits;
   bits.bits(spec.profile, 8U);
-  bits.bits(0U, 8U);  // constraint flags
+  bits.bits(spec.compatibility, 8U);  // constraint flags
   bits.bits(spec.level, 8U);
   bits.unsignedExpGolomb(spec.id);
   if (spec.profile == 100U || spec.profile == 110U || spec.profile == 122U || spec.profile == 244U) {
@@ -407,7 +409,8 @@ struct H264SpsSpec {
   bits.bit(false); // nal_hrd_parameters_present_flag
   bits.bit(false); // vcl_hrd_parameters_present_flag
   bits.bit(false); // pic_struct_present_flag
-  bits.bit(true);  // bitstream_restriction_flag
+  bits.bit(spec.restriction);  // bitstream_restriction_flag
+  if (spec.restriction) {
   bits.bit(true);  // motion_vectors_over_pic_boundaries_flag
   bits.unsignedExpGolomb(0U);
   bits.unsignedExpGolomb(0U);
@@ -415,6 +418,7 @@ struct H264SpsSpec {
   bits.unsignedExpGolomb(0U);
   bits.unsignedExpGolomb(spec.reorderFrames);
   bits.unsignedExpGolomb(std::max(1U, spec.reorderFrames));
+  }
 
   std::vector<std::uint8_t> nal{0x67U};
   auto rbsp = bits.finishRbsp();
@@ -449,7 +453,7 @@ struct H264SpsSpec {
 makeAvcC(std::span<const H264SpsSpec> specifications, bool includePps = true) {
   std::vector<std::uint8_t> result{
       1U,    specifications.front().profile,
-      0U,    specifications.front().level,
+      specifications.front().compatibility, specifications.front().level,
       0xFFU, static_cast<std::uint8_t>(0xE0U | specifications.size())};
   for (const H264SpsSpec &spec : specifications) {
     const auto sps = makeH264Sps(spec);
@@ -947,15 +951,55 @@ void testCompactH264() {
          "encoder-produced High avcC with complete PPS syntax is admitted");
 }
 
+void testH264InferredDepthAndRepeatedSets() {
+  struct Case { unsigned profile, compatibility, level, width, height, depth; };
+  const Case cases[] = {
+      {66, 0x10, 11, 176, 144, 4}, // level 1b, not level 1.1
+      {77, 0x10, 11, 176, 144, 4},
+      {88, 0x10, 11, 176, 144, 4},
+      {66, 0, 11, 176, 144, 9},
+      {100, 0, 40, 1920, 1080, 4},
+      {100, 0, 51, 3840, 2160, 5},
+      {100, 0, 51, 640, 480, 16},
+      {100, 0x10, 40, 1920, 1080, 0}};
+  for (const auto& c : cases) {
+    H264SpsSpec spec;
+    spec.profile = c.profile; spec.compatibility = c.compatibility;
+    spec.level = c.level; spec.width = c.width; spec.height = c.height;
+    spec.restriction = false;
+    const auto result = inspectAvc(makeAvcC(std::array{spec}));
+    expect(result.admitted() && result.facts->maximumReorderFrames == c.depth,
+           "E.2.1 inference uses level, macroblock geometry and intra constraint");
+  }
+  const auto repeated = makeAvcC(std::array{H264SpsSpec{}, H264SpsSpec{}});
+  expect(inspectAvc(repeated).admitted(), "identical repeated SPS is unambiguous");
+  auto ppsRepeat = makeAvcC(std::array{H264SpsSpec{}});
+  const auto pps = makeH264Pps(0U);
+  const auto countOffset = ppsRepeat.size() - pps.size() - 3U;
+  ppsRepeat[countOffset] = 2U;
+  appendLength(ppsRepeat, pps.size());
+  ppsRepeat.insert(ppsRepeat.end(), pps.begin(), pps.end());
+  expect(inspectAvc(ppsRepeat).admitted(), "identical repeated PPS is unambiguous");
+  ppsRepeat[ppsRepeat.size() - pps.size() + 1U] ^= 0x20U;
+  expectError(inspectAvc(ppsRepeat), VideoCodecConfigurationError::ParameterSetMismatch,
+              "same PPS ID with different valid syntax remains refused");
+  const auto changed = makeAvcC(std::array{H264SpsSpec{}, H264SpsSpec{.reorderFrames = 1U}});
+  expectError(inspectAvc(changed), VideoCodecConfigurationError::ParameterSetMismatch,
+              "same SPS ID with different bytes remains refused");
+}
+
 void testH264Rejections() {
   const std::array validSpec{H264SpsSpec{}};
   const auto valid = makeAvcC(validSpec);
 
   auto reserved = valid;
   reserved[4] &= 0x7FU;
-  expectError(inspectAvc(reserved),
-              VideoCodecConfigurationError::MalformedRecord,
-              "H.264 avcC reserved bits are enforced");
+  expect(inspectAvc(reserved).admitted(),
+         "H.264 avcC padding does not change decoded facts");
+  reserved[4] = 3U;
+  reserved[5] &= 0x1FU;
+  expect(inspectAvc(reserved).facts == inspectAvc(valid).facts,
+         "zero avcC padding preserves every inspected fact");
 
   auto trailing = valid;
   trailing.push_back(0U);
@@ -1068,6 +1112,17 @@ void testH264Rejections() {
       H264SpsSpec{.width = 3840U, .height = 2160U, .level = 51U}};
   expect(inspectAvc(makeAvcC(uhd)).admitted(),
          "H.264 UHD is inside the 4096x2320 v1 envelope");
+
+  for (const auto width : {1920U, 2560U}) {
+    const auto underLevel = makeAvcC(std::array{H264SpsSpec{
+        .width = width, .height = 1080U, .reorderFrames = 0U, .level = 30U}});
+    expectError(inspectAvc(underLevel), VideoCodecConfigurationError::MalformedRecord,
+                "explicit zero reorder does not repair an impossible level DPB");
+  }
+  auto extension = makeAvcC(std::array{H264SpsSpec{.profile = 100U}});
+  extension.insert(extension.end(), {0xFCU, 0xF8U, 0xF8U, 0U});
+  expectError(inspectAvc(extension), VideoCodecConfigurationError::MalformedRecord,
+              "extension chroma zero contradicting SPS 4:2:0 stays refused");
 
   const std::array oversized{
       H264SpsSpec{.width = 7680U, .height = 4320U, .level = 62U}};
@@ -2616,6 +2671,7 @@ int main() {
   testApiAndHardBounds();
   testCompactH264();
   testHardwareH264Formats();
+  testH264InferredDepthAndRepeatedSets();
   testH264Rejections();
   testCompactHevcMainAndMain10();
   testHevcRejections();

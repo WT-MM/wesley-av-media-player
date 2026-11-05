@@ -123,16 +123,8 @@ enum class CodecReorderDepthOrigin : std::uint8_t {
   // specification infers in its place. For H.264 without bitstream_restriction
   // that is ISO/IEC 14496-10 E.2.1's inference, MaxDpbFrames for the level and
   // picture size -- what the stream COULD require, not what it does require.
-  // The inference is blind to content: a screen recording with no B pictures
-  // at all and max_num_ref_frames = 1 still infers the full DPB, and the
-  // inference GROWS as the picture shrinks (MaxDpbMbs / PicSizeInMbs), so at
-  // level 5.0 every stream under ~7 MP infers 5 or more. Refusing on that
-  // inference sent whole classes of ordinary recordings to compatibility
-  // playback, so configure() clamps an inferred depth to the route's bound
-  // instead. Truth is still enforced exactly, one layer down: the ordered
-  // drain's out-of-order check fails a stream closed the moment it actually
-  // delivers a frame older than one already presented, so a clamp that was
-  // too small can never present frames in the wrong order.
+  // Both origins must be honoured in full. A bound above the configured
+  // surface budget is refused at open, never clamped during playback.
   Inferred,
 };
 
@@ -153,9 +145,8 @@ struct VideoToolboxDecoderOptions {
   // packet storage when this bound is reached.
   std::size_t maxInFlightFrames{3};
   // Hard ceiling for the codec-derived presentation reorder depth. configure()
-  // rejects a stream whose SPS DECLARES a depth above this, allowing the caller
-  // to fall back without silently corrupting presentation order; an INFERRED
-  // depth above it is clamped to it instead. See CodecReorderDepthOrigin.
+  // rejects a stream whose declared or inferred depth exceeds this, allowing
+  // the caller to fall back before playback. See CodecReorderDepthOrigin.
   std::size_t maxPendingPresentationFrames{8};
   // Metal is the established decoder output contract. The dormant OpenGL mode
   // additionally guarantees CGLTexImageIOSurface2D-compatible IOSurfaces and

@@ -1190,8 +1190,10 @@ void parseHevcVui(RbspBitReader &bits, std::uint32_t subLayers,
 [[nodiscard]] VideoCodecConfigurationInspection
 inspectAvcC(std::span<const std::uint8_t> bytes,
             const VideoCodecConfigurationLimits &limits) noexcept {
-  if (bytes.size() < 8U || bytes[0] != 1U || (bytes[4] & 0xFCU) != 0xFCU ||
-      (bytes[4] & 0x03U) != 3U || (bytes[5] & 0xE0U) != 0xE0U) {
+  // Reserved avcC padding carries no decoding facts. Read the defined
+  // length/count fields even when an encoder writes zero padding.
+  if (bytes.size() < 8U || bytes[0] != 1U ||
+      (bytes[4] & 0x03U) != 3U) {
     return rejected(Error::MalformedRecord);
   }
   const std::uint8_t profile = bytes[1];
@@ -1214,6 +1216,7 @@ inspectAvcC(std::span<const std::uint8_t> bytes,
   }
   std::size_t offset = 6U;
   std::uint32_t spsIds = 0;
+  std::array<std::span<const std::uint8_t>, 32> spsBytes{};
   std::optional<ParsedSpsFacts> canonical;
   for (std::uint32_t index = 0; index < spsCount; ++index) {
     if (offset > bytes.size() || bytes.size() - offset < 2U) {
@@ -1231,11 +1234,18 @@ inspectAvcC(std::span<const std::uint8_t> bytes,
       return rejected(error);
     }
     const std::uint32_t idBit = std::uint32_t{1} << parsed.id;
-    if ((spsIds & idBit) != 0U ||
+    const auto payload = bytes.subspan(offset, length);
+    // Repeated identical parameter sets have one unambiguous meaning. A
+    // redefinition of an ID still fails closed, including changes to syntax
+    // not represented by ParsedSpsFacts.
+    if (((spsIds & idBit) != 0U &&
+         !std::equal(payload.begin(), payload.end(),
+                     spsBytes[parsed.id].begin(), spsBytes[parsed.id].end())) ||
         (canonical && !sameImmutableFacts(*canonical, parsed))) {
       return rejected(Error::ParameterSetMismatch);
     }
     spsIds |= idBit;
+    spsBytes[parsed.id] = payload;
     if (!canonical) {
       canonical = parsed;
     }
@@ -1257,6 +1267,7 @@ inspectAvcC(std::span<const std::uint8_t> bytes,
     return rejected(Error::MissingParameterSet);
   }
   std::array<std::uint64_t, 4> ppsIds{};
+  std::array<std::span<const std::uint8_t>, 256> ppsBytes{};
   for (std::uint32_t index = 0; index < ppsCount; ++index) {
     if (offset > bytes.size() || bytes.size() - offset < 2U) {
       return rejected(Error::MalformedRecord);
@@ -1274,10 +1285,14 @@ inspectAvcC(std::span<const std::uint8_t> bytes,
     }
     const std::size_t ppsWord = ppsId / 64U;
     const std::uint64_t ppsBit = std::uint64_t{1} << (ppsId % 64U);
-    if ((ppsIds[ppsWord] & ppsBit) != 0U) {
+    const auto payload = bytes.subspan(offset, length);
+    if ((ppsIds[ppsWord] & ppsBit) != 0U &&
+        !std::equal(payload.begin(), payload.end(),
+                    ppsBytes[ppsId].begin(), ppsBytes[ppsId].end())) {
       return rejected(Error::ParameterSetMismatch);
     }
     ppsIds[ppsWord] |= ppsBit;
+    ppsBytes[ppsId] = payload;
     offset += length;
   }
 
