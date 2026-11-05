@@ -57,6 +57,7 @@ public:
   [[nodiscard]] bool open(const QUrl &source, double initialPositionSeconds,
                           bool paused);
   [[nodiscard]] bool stop(bool preserveVisibleState = false);
+  [[nodiscard]] QString playbackFailureText(const QString &fallback) const;
   [[nodiscard]] PauseDisposition setPaused(bool paused);
   // Starts the main-video surface handoff and constructs the preview lane at
   // pointer-down. A retained Ended graph is already drained, so it prewarms
@@ -84,6 +85,9 @@ public:
   void detachSurface(MpvVideoItem *item) noexcept;
 
 private:
+  void publishDiagnostic(const ::wam::macos::NativeMediaSessionDiagnostic &) override;
+  QString sourceFailureDetail_;
+
   struct SourceRecord {
     QUrl url;
     std::filesystem::path localPath;

@@ -134,7 +134,6 @@ private:
   ResumeTracker resume_tracker_;
   double resume_position_ = 0.0;
   bool resume_pending_ = false;
-  bool open_requested_ = false;
 };
 
 // ---------------------------------------------------------------------------

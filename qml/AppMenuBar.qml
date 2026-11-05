@@ -51,7 +51,7 @@ Platform.MenuBar {
             return action;
         const step = Number(root.controller.seekStepSeconds);
         const formatted = step.toFixed(step % 1 === 0 ? 0 : 1);
-        return action + " " + formatted + " Seconds";
+        return action + " " + formatted + (step === 1 ? " Second" : " Seconds");
     }
 
     Platform.Menu {
@@ -107,6 +107,14 @@ Platform.MenuBar {
 
     Platform.Menu {
         title: "Playback"
+
+        Platform.MenuItem {
+            text: "Mute  M"
+            checkable: true
+            checked: root.hasController && root.controller.muted
+            enabled: root.mediaLoaded
+            onTriggered: root.controller.toggleMute()
+        }
 
         // No `shortcut:` here -- see the file header comment. The action
         // remains reachable by click; Space keeps working exactly as before

@@ -1269,7 +1269,7 @@ ApplicationWindow {
             // arriving while the chrome is faded out -- that is what brings
             // the chrome back when the pointer enters over the titlebar.
             opacity: root.controller.hasMedia
-                && root.controlsRevealed
+                && (root.controlsRevealed || root.controller.loading)
                 && root.visibility !== Window.FullScreen ? 1 : 0
 
             Behavior on opacity {
@@ -1486,6 +1486,7 @@ ApplicationWindow {
 
     Item {
         id: stage
+        objectName: "videoStage"
         anchors.fill: parent
         focus: true
 
@@ -1722,11 +1723,7 @@ ApplicationWindow {
         // so a line looks identical whichever engine is playing.
         //
         // Deliberately NOT chrome. It does not appear in interactionActive, it
-        // never re-arms the idle fade, and it does not move when the transport
-        // fades in or out -- subtitles belong to the picture, not to the
-        // controls, and a caption that pinned the toolbar up would be a bug.
-        // It sits low enough to clear the transport's default slot so the two
-        // never fight for the same pixels.
+        // never re-arms the idle fade. Reserve only the visible controls.
         Item {
             id: subtitleLayer
             objectName: "subtitleLayer"
@@ -1735,7 +1732,10 @@ ApplicationWindow {
             anchors.bottom: parent.bottom
             anchors.leftMargin: 24 + SafeArea.margins.left
             anchors.rightMargin: 24 + SafeArea.margins.right
-            anchors.bottomMargin: Math.round(Math.max(16, SafeArea.margins.bottom + 10) + transport.height + 10)
+            anchors.bottomMargin: Math.round(Math.max(12, parent.height * 0.045,
+                SafeArea.margins.bottom + 10,
+                transport.visible && transport.opacity > 0.01 && !transport.suppressed
+                    ? parent.height - transport.y + 8 : 0))
             height: subtitleText.implicitHeight
             // No animation and no opacity binding on chrome state: the item is
             // simply present exactly while there is a line to show, so between
@@ -1787,7 +1787,7 @@ ApplicationWindow {
             width: root.quickEditOpen && !transport.suppressed ? Math.min(540, parent.width - root.quickEditWidth - root.quickEditRightMargin - SafeArea.margins.left - 24) : Math.min(680, parent.width - SafeArea.margins.left - SafeArea.margins.right - 24)
             height: width < 560 ? 98 : 90
             player: root.controller
-            revealed: root.controlsRevealed
+            revealed: root.controlsRevealed && !root.controller.loading
             instantHide: root.chromeInstantHide
             suppressed: (!root.active && root.controller.hasMedia) || (root.quickEditOpen && root.width < 760)
             onInteraction: root.revealControls()
@@ -1848,6 +1848,17 @@ ApplicationWindow {
             text: root.noticeText
             shown: root.noticeVisible
             onDismissed: root.dismissNotice()
+        }
+
+        Text {
+            objectName: "loadingLabel"
+            anchors.centerIn: parent
+            visible: root.controller.loading
+            text: "Opening…"
+            color: "#b8b8bd"
+            font.pixelSize: 14
+            Accessible.role: Accessible.StaticText
+            Accessible.name: text
         }
 
         // The crop surface. It lives in `stage`, not in `background` beside
@@ -1940,6 +1951,10 @@ ApplicationWindow {
                 // into Quick Edit or Preferences is unaffected.
                 root.hideAndPauseAll();
                 event.accepted = true;
+            } else if (event.key === Qt.Key_M && root.controller.hasMedia) {
+                root.controller.toggleMute();
+                root.showVolumeOsd();
+                event.accepted = true;
             } else if (event.key === Qt.Key_E) {
                 root.toggleQuickEdit();
                 event.accepted = true;
@@ -1998,8 +2013,11 @@ ApplicationWindow {
         }
 
         function onLastErrorChanged() {
-            if (root.controller.lastError.length === 0)
+            if (root.controller.lastError.length === 0) {
+                if (errorDialogLoader.item)
+                    errorDialogLoader.item.close();
                 return;
+            }
             root.showErrorDialog(root.controller.lastError);
         }
 

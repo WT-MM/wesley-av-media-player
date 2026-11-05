@@ -124,6 +124,9 @@ if(BUILD_TESTING)
     src/jobs.hpp)
   target_include_directories(wam_caption_test PRIVATE src)
   add_test(NAME caption_service COMMAND wam_caption_test)
+  # Its 150 ms watchdog deliberately races a real child process; do not let
+  # concurrent codec/packaging tests starve that child before it can start.
+  set_tests_properties(caption_service PROPERTIES RUN_SERIAL TRUE)
   add_executable(wam_caption_backend_test tests/caption_backend_test.cpp)
   target_include_directories(wam_caption_backend_test PRIVATE src)
   add_test(NAME caption_backend COMMAND wam_caption_backend_test)
@@ -1267,7 +1270,10 @@ if(BUILD_TESTING)
           COMMAND "${WAM_MPEGTS_PYTHON}"
             "${CMAKE_SOURCE_DIR}/tests/native_coverage_wiring_test.py"
             --app "$<TARGET_FILE:wam>" --ffmpeg "${WAM_COVERAGE_FFMPEG}")
-        set_tests_properties(native_coverage_wiring PROPERTIES TIMEOUT 180)
+        # Native menus need Cocoa; the harness itself guarantees parked,
+        # muted, nonactivating windows even when the rest of ctest is offscreen.
+        set_tests_properties(native_coverage_wiring PROPERTIES TIMEOUT 180
+          ENVIRONMENT "QT_QPA_PLATFORM=cocoa")
         add_test(NAME macos_native_coverage_integration
           COMMAND "${WAM_MPEGTS_PYTHON}"
             "${CMAKE_SOURCE_DIR}/tests/native_coverage_integration.py"
@@ -2560,4 +2566,18 @@ if(APPLE AND BUILD_TESTING AND WAM_ENABLE_AVFORMAT_STAGE)
     --scratch "${CMAKE_BINARY_DIR}"
     --output "${CMAKE_BINARY_DIR}/libavformat-aac-timing.json")
   set_tests_properties(libavformat_aac_timing PROPERTIES TIMEOUT 180)
+endif()
+
+# Quiet UI regressions use only generated, silent media and the in-process
+# window seam; run serially so probes do not compete for native admission.
+if(BUILD_TESTING AND APPLE AND WAM_ENABLE_MACOS_NATIVE_VIDEO AND WAM_NATIVE_BENCHMARK_TELEMETRY)
+  find_package(Python3 COMPONENTS Interpreter REQUIRED)
+  find_program(WAM_UI_FFMPEG ffmpeg REQUIRED)
+  foreach(ui_case refusal pending failed rapid skip replay volume mute subtitles transport rate truncated menu metrics)
+    add_test(NAME ui_${ui_case}
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tests/ui_regression_test.py"
+        --app "$<TARGET_FILE:wam>" --ffmpeg "${WAM_UI_FFMPEG}" --case "${ui_case}"
+        --output "${CMAKE_BINARY_DIR}/ui-evidence/${ui_case}")
+    set_tests_properties(ui_${ui_case} PROPERTIES TIMEOUT 70 RUN_SERIAL TRUE LABELS ui)
+  endforeach()
 endif()

@@ -54,8 +54,8 @@ namespace {
 
 using ::wam::playback::mpv::MpvApi;
 
-constexpr double kMinimumRate = 0.0625;
-constexpr double kMaximumRate = 16.0;
+constexpr double kMinimumRate = 0.25;
+constexpr double kMaximumRate = 4.0;
 constexpr double kScrubConvergenceToleranceSeconds = 0.050;
 constexpr int kScrubSeekTimeoutMs = 750;
 
@@ -857,10 +857,17 @@ bool PlayerController::open(const QUrl &source) {
   // observations from the retiring source. A late exact presentation from
   // that source must not become visible during the replacement transaction.
   invalidateNativeSeekIntents();
-  // A blank player follows the existing mpv behavior and starts a newly
-  // opened file. Replacements retain the user's current pause intent.
-  const bool intended_paused = hasMedia() ? paused_ : false;
-  return native_playback_->open(source, 0.0, intended_paused);
+  // Preparing/retiring a previous file can temporarily pause the engine.
+  // A user open always carries fresh autoplay intent.
+  const bool accepted = native_playback_->open(source, 0.0, false);
+  if (accepted) {
+    setLastError({});
+    setLastNotice({});
+    updateLoading(true);
+    updateSource(source);
+    updateMediaTitle(source.fileName());
+  }
+  return accepted;
 #else
   const QString argument = sourceArgument(source);
   if (argument.isEmpty() || !initializePlaybackEngine())
@@ -969,7 +976,7 @@ bool PlayerController::beginRoutedFallbackOpen(
   if (!engineReady() || source.isEmpty() || attempt == 0 || serial == 0 ||
       source_key == 0) {
     setLastError(
-        QStringLiteral("Compatibility playback received an invalid open."));
+        QStringLiteral("Could not open this file."));
     return false;
   }
 
@@ -977,7 +984,7 @@ bool PlayerController::beginRoutedFallbackOpen(
   if (core_->api().mpv_set_property(core_->handle(), "pause", MPV_FORMAT_FLAG,
                                     &paused_flag) < 0) {
     setLastError(QStringLiteral(
-        "Compatibility playback could not apply the requested transport."));
+        "Could not start playback. Please try again."));
     return false;
   }
 
@@ -1064,7 +1071,8 @@ void PlayerController::play() {
     if (disposition == NativePlaybackOwner::PauseDisposition::NativeHandled ||
         disposition == NativePlaybackOwner::PauseDisposition::NotOwned) {
       if (disposition == NativePlaybackOwner::PauseDisposition::NativeHandled &&
-          eof_reached_ && !native_seek_intent_) {
+          (eof_reached_ || (duration_ > 0.0 && position_ >= duration_ -
+              std::max(0.05, native_frame_duration_))) && !native_seek_intent_) {
         // Native Ended retains its graph. Replay is one ordinary exact seek
         // to zero; CommitReady then restores the retained playing intent.
         updatePause(false);
@@ -1086,7 +1094,12 @@ void PlayerController::play() {
     active_event_playlist_entry_id_ = terminal_playlist_entry_id_;
     terminal_playlist_entry_id_ = -1;
   }
-  if (eof_reached_ || (duration_ > 0.0 && position_ >= duration_ - 0.05))
+  double fps = 0.0;
+  static_cast<void>(core_->api().mpv_get_property(
+      core_->handle(), "estimated-vf-fps", MPV_FORMAT_DOUBLE, &fps));
+  const double end_tolerance = std::isfinite(fps) && fps > 0.0
+      ? std::max(0.05, 1.0 / fps) : 0.05;
+  if (eof_reached_ || (duration_ > 0.0 && position_ >= duration_ - end_tolerance))
     seekTo(0.0);
   updateEof(false);
   if (render_recovery_ && render_recovery_->request_serial == request_serial_) {
@@ -1177,6 +1190,7 @@ void PlayerController::stop() {
 }
 
 void PlayerController::finishStopUi(bool stop_compatibility_engine) {
+  updateLoading(false);
   invalidateNativeSeekIntents();
   ++request_serial_;
   if (request_serial_ == 0)
@@ -2225,8 +2239,10 @@ void PlayerController::seekRelative(double seconds) {
 #endif
   if (!engineReady() || !std::isfinite(seconds))
     return;
-  if (scrub_seek_ || render_recovery_) {
-    seekTo(position_ + seconds);
+  if (scrub_seek_ || render_recovery_ || position_ + seconds < 0.0 ||
+      (duration_ > 0.0 && position_ + seconds >= duration_)) {
+    seekTo(duration_ > 0.0 ? std::clamp(position_ + seconds, 0.0,
+        std::max(0.0, duration_ - 0.001)) : position_ + seconds);
     return;
   }
 #if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
@@ -2234,7 +2250,7 @@ void PlayerController::seekRelative(double seconds) {
 #endif
   sendCommand(core_.get(),
               {QByteArrayLiteral("seek"), QByteArray::number(seconds, 'g', 12),
-               QByteArrayLiteral("relative")});
+               QByteArrayLiteral("relative+exact")});
 }
 
 void PlayerController::skipBackward() { seekRelative(-seek_step_seconds_); }
@@ -2364,6 +2380,7 @@ void PlayerController::setMuted(bool muted) {
 void PlayerController::setVolume(double volume) {
   if (!std::isfinite(volume))
     return;
+  setMuted(false);
   // The configured maximum, never the absolute one: the engine would happily
   // take 4.0, and the whole point of the setting is that this installation
   // has decided it should not.
@@ -2506,23 +2523,12 @@ void PlayerController::settleScrollGesture() {
 void PlayerController::setRate(double rate) {
   if (!std::isfinite(rate))
     return;
-  const double bounded = std::clamp(rate, kMinimumRate, kMaximumRate);
+  const double bounded = std::round(std::clamp(rate, kMinimumRate, kMaximumRate) * 64.0) / 64.0;
 #if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   if (nativeRouteActive()) {
-    // The native engine serves the advertised pitch-preserved window itself.
-    // Only a rate outside that window still needs a refusal, and it gets the
-    // non-blocking notice channel rather than a modal error: the speed slider
-    // emits on every motion event, and an error dialog per pixel of drag is
-    // not feedback, it is a trap.
-    if (native_protocol::routeForRate(bounded) !=
-        native_protocol::RateRoute::NativeVersion1) {
-      setLastNotice(
-          QStringLiteral("Native playback supports speeds from 0.25x to 4x."));
-      return;
-    }
     if (!native_playback_->setRate(bounded)) {
       setLastNotice(
-          QStringLiteral("Native playback could not change the speed."));
+          QStringLiteral("Could not change playback speed."));
       return;
     }
     if (nearlyEqual(rate_, bounded))
@@ -4510,9 +4516,19 @@ void PlayerController::handleEndFile(const mpv_event_end_file &end) {
     updateIdle(true);
     updateEof(false);
     resetTimeline();
+    updateLoading(false);
+    updateSource({});
+    updateMediaTitle({});
+    requested_source_.clear();
+    committed_open_.reset();
     last_error_playlist_entry_id_ = end.playlist_entry_id;
-    setLastError(QStringLiteral("Playback failed: %1")
-                     .arg(mpvErrorDetail(core_.get(), end.error)));
+    QString failure = QStringLiteral("Could not open this file: %1")
+                          .arg(mpvErrorDetail(core_.get(), end.error));
+#if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+    if (native_playback_)
+      failure = native_playback_->playbackFailureText(failure);
+#endif
+    setLastError(failure);
 #if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
     if (native_playback_)
       native_playback_->fallbackPlaybackFailed();
@@ -4521,6 +4537,7 @@ void PlayerController::handleEndFile(const mpv_event_end_file &end) {
 }
 
 void PlayerController::handlePlaybackReady(bool file_loaded) {
+  if (!file_loaded) updateLoading(false);
   if (open_attempt_) {
     if (file_loaded) open_attempt_->file_loaded = true;
     else open_attempt_->playback_restarted = true;
@@ -5570,6 +5587,12 @@ void PlayerController::updateEof(bool eof_reached) {
     emit playingChanged();
 }
 
+void PlayerController::updateLoading(bool loading) {
+  if (loading_ == loading) return;
+  loading_ = loading;
+  emit loadingChanged();
+}
+
 void PlayerController::updateSource(const QUrl &source) {
   if (captioning_) {
     const auto current = localPath(source);
@@ -5661,8 +5684,17 @@ void PlayerController::setLastError(const QString &error) {
   // A window on its way out has no user left to tell. See beginTeardown().
   if (tearing_down_)
     return;
-  if (!error.isEmpty())
+  if (!error.isEmpty()) {
     qWarning().noquote() << "WAM:" << error;
+    if (loading_) {
+      updateLoading(false);
+      updateSource({});
+      updateMediaTitle({});
+      resetTimeline();
+      updatePause(true);
+      updateIdle(true);
+    }
+  }
   if (last_error_ == error) {
     // Error dialogs are action feedback, not merely state reflection. Emit
     // again so retrying an invalid operation never fails silently.

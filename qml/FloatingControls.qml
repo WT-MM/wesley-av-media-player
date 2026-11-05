@@ -595,6 +595,7 @@ FocusScope {
     // anchor to this row's centre for the same reason.
     Row {
         id: transport
+        objectName: "playCluster"
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.bottom: parent.bottom
         anchors.bottomMargin: 10
@@ -660,6 +661,7 @@ FocusScope {
 
         QuietButton {
             id: rateButton
+            visible: root.width >= 480
             anchors.verticalCenter: parent.verticalCenter
             text: root.formatRate(root.player.rate)
             accessibleName: "Playback speed"
@@ -902,6 +904,7 @@ FocusScope {
         // cluster by ~14pt, so both stay reachable with no compact fallback.
         IconButton {
             id: vividButton
+            visible: root.width >= 420
             anchors.verticalCenter: parent.verticalCenter
             compact: true
             toolTipClearItem: glass
@@ -923,6 +926,7 @@ FocusScope {
 
         IconButton {
             id: theaterButton
+            visible: root.width >= 480
             anchors.verticalCenter: parent.verticalCenter
             compact: true
             toolTipClearItem: glass

@@ -1245,17 +1245,17 @@ void CaptionService::run(
     request.tools.ffmpeg = ffmpeg.path;
     request.tools.whisper = whisper.path;
     if (request.tools.model.empty()) {
-      fail(toolSearchFailure(captionModelSearch(nullptr)));
+      std::fprintf(stderr, "%s\n", toolSearchFailure(captionModelSearch(nullptr)).c_str());
+      fail("The caption model is missing. Reinstall WAM to restore it.");
       return;
     }
     request.tools.model = absolutePath(request.tools.model);
     if (const auto error =
             validateNonEmptyFile(request.tools.model, "Whisper model")) {
-      // The packaged/development runtime is the normal source of this file, so
-      // a miss should say where WAM looked rather than only naming one path.
-      fail(fs::exists(request.tools.model)
-               ? *error
-               : toolSearchFailure(captionModelSearch(nullptr)));
+      // Keep the configured path and all search locations in diagnostics.
+      std::fprintf(stderr, "%s\n%s\n", error->c_str(),
+                   toolSearchFailure(captionModelSearch(nullptr)).c_str());
+      fail("The caption model is missing or damaged. Reinstall WAM to restore it.");
       return;
     }
     if (pathsReferToSameFile(request.tools.model, request.output_srt)) {

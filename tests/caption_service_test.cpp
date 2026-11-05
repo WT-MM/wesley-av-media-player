@@ -312,6 +312,20 @@ int main(int argc, char **argv) {
     }
 #endif
 
+    {
+      auto request = requestFor(temporary.path, fake_ffmpeg, fake_whisper,
+                                "missing-model.srt");
+      request.tools.model = temporary.path / "missing-model.bin";
+      wam::CaptionService service;
+      check(service.start(request), "missing model request starts validation");
+      service.wait();
+      const auto error = service.status().error;
+      check(error.find("caption model") != std::string::npos && error.size() < 100,
+            "missing model has a short actionable explanation");
+      check(error.find(temporary.path.string()) == std::string::npos,
+            "model search paths stay out of the user error");
+    }
+
     // Fragmented stdout and an unterminated final line are consumed once,
     // in order. Timestamp-shaped stderr cannot poison the watchdog watermark.
     {
