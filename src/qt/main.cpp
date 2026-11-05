@@ -9,6 +9,7 @@
 #include "subtitle_bitmap_provider.hpp"
 #if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
 #include "native_benchmark_telemetry.hpp"
+#include "native_playback_owner.hpp"
 #include "platform/macos/native_embedding_support.hpp"
 #endif
 #if defined(Q_OS_MACOS)
@@ -33,6 +34,7 @@
 #include <QQmlEngine>
 #include <QQuickStyle>
 #include <QImage>
+#include <QKeyEvent>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QQuickWindow>
@@ -60,6 +62,26 @@
 #include <optional>
 #include <string>
 #include <vector>
+
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+namespace wam::qt {
+// Fault injection stays inside the telemetry-gated window-script seam.
+// Exercise the actual owner/router notification and recovery boundaries.
+struct NativePlaybackOwnerTestAccess {
+  static void fail(NativePlaybackOwner &owner) {
+    const auto snapshot = owner.router_.snapshot();
+    owner.consumeLifecycle(native_protocol::Failed{
+        {snapshot.attempt, snapshot.serial}, native_protocol::FailureReason::Protocol}, false);
+  }
+};
+class PlayerControllerTestAccess {
+public:
+  static void failNative(PlayerController &player) {
+    if (player.native_playback_) NativePlaybackOwnerTestAccess::fail(*player.native_playback_);
+  }
+};
+}
+#endif
 
 namespace {
 
@@ -264,6 +286,11 @@ std::vector<ScriptedOpen> parseOpenScript(const QByteArray &value) {
 //   captions:<index>:<path>
 //                       generate captions for that window into <path>, the
 //                       Quick Edit gesture without its Save panel
+//   nativefail:<index>  inject a current Protocol refusal through the owner
+//   edit:<index>        toggle Quick Edit without activating the window
+//   controls:<index>:<0|1> set chrome visibility for layout checks
+//   key:<index>:M       deliver a bare key to the existing QML stage
+//   layout:<index>      report named overlay/control geometry
 //   menu                write one WAM_TEST_MENU line per top-level menu,
 //                       with each item's title and check mark, read off the
 //                       real Qt.labs.platform menu bar
@@ -514,6 +541,9 @@ void reportWindows(const wam::qt::WindowManager &windows) {
                .arg(rootFlag(open.at(index), "theaterDimEnabled"))
                .arg(wam::macos_window_chrome::theaterDimOverlayCount());
 
+    qInfo().noquote() << QStringLiteral("WAM_TEST_DIALOG idx=%1 visible=%2")
+        .arg(index).arg(rootFlag(open.at(index), "nativeDialogVisible"));
+
     // Subtitles get their own line rather than more fields on the one above:
     // the track labels are free text and would break any parser that splits
     // the WINDOW line on spaces. `text` is the line actually on screen, read
@@ -631,6 +661,41 @@ void runWindowStep(wam::qt::WindowManager &windows, const QString &verb) {
         QMetaObject::invokeMethod(
             qmlRoot, "setCropMode",
             Q_ARG(QVariant, QVariant(fields.value(2).toInt() != 0)));
+    }
+  } else if (head == QStringLiteral("nativefail")) {
+#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+    if (auto *window = windowAt(index))
+      wam::qt::PlayerControllerTestAccess::failNative(*window->controller());
+#endif
+  } else if (head == QStringLiteral("edit")) {
+    if (auto *window = windowAt(index))
+      QMetaObject::invokeMethod(window->qmlRoot(), "toggleQuickEdit");
+  } else if (head == QStringLiteral("controls")) {
+    if (auto *window = windowAt(index)) {
+      window->qmlRoot()->setProperty("controlsRevealed", fields.value(2).toInt() != 0);
+      // Model the foreground chrome without ever activating a test window.
+      if (auto *bar = window->qmlRoot()->findChild<QQuickItem *>(QStringLiteral("transport")))
+        bar->setProperty("suppressed", false);
+    }
+  } else if (head == QStringLiteral("key")) {
+    if (auto *window = windowAt(index)) {
+      if (auto *stage = window->qmlRoot()->findChild<QQuickItem *>(QStringLiteral("videoStage"))) {
+        QKeyEvent event(QEvent::KeyPress, fields.value(2).at(0).unicode(), Qt::NoModifier);
+        QCoreApplication::sendEvent(stage, &event);
+      }
+    }
+  } else if (head == QStringLiteral("layout")) {
+    if (auto *window = windowAt(index)) {
+      for (const char *name : {"subtitleLayer", "transport", "playCluster", "utilityCluster", "volumeOsd", "loadingLabel"}) {
+        if (auto *item = window->qmlRoot()->findChild<QQuickItem *>(QString::fromLatin1(name))) {
+          const QPointF origin = item->mapToScene(QPointF());
+          qInfo().noquote() << QStringLiteral("WAM_TEST_LAYOUT name=%1 x=%2 y=%3 w=%4 h=%5 visible=%6 opacity=%7")
+              .arg(QString::fromLatin1(name)).arg(origin.x()).arg(origin.y())
+              .arg(item->width()).arg(item->height()).arg(item->isVisible()).arg(item->opacity());
+        }
+      }
+      qInfo().noquote() << "WAM_TEST_LOADING" << window->controller()->loading()
+                       << window->controller()->mediaTitle();
     }
   } else if (head == QStringLiteral("pause")) {
     if (wam::qt::PlayerWindow *window = windowAt(index))

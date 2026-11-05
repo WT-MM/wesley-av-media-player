@@ -74,6 +74,7 @@ class PlayerController final : public QObject {
 
   Q_PROPERTY(bool available READ available NOTIFY availableChanged)
   Q_PROPERTY(bool hasMedia READ hasMedia NOTIFY hasMediaChanged)
+  Q_PROPERTY(bool loading READ loading NOTIFY loadingChanged)
   Q_PROPERTY(QUrl source READ source WRITE setSource NOTIFY sourceChanged)
   Q_PROPERTY(QString mediaTitle READ mediaTitle NOTIFY mediaTitleChanged)
   Q_PROPERTY(bool playing READ playing NOTIFY playingChanged)
@@ -242,6 +243,7 @@ public:
       std::shared_ptr<const ::wam::playback::mpv::MpvRuntime> runtime);
 
   [[nodiscard]] bool available() const;
+  [[nodiscard]] bool loading() const { return loading_; }
   [[nodiscard]] bool hasMedia() const { return !source_.isEmpty(); }
   [[nodiscard]] QUrl source() const { return source_; }
   [[nodiscard]] QString mediaTitle() const { return media_title_; }
@@ -417,6 +419,7 @@ public:
 signals:
   void availableChanged();
   void hasMediaChanged();
+  void loadingChanged();
   void sourceChanged();
   void mediaTitleChanged();
   void playingChanged();
@@ -898,6 +901,8 @@ private:
 
   void updatePause(bool paused);
   void updateIdle(bool idle);
+  void updateLoading(bool loading);
+  bool loading_ = false;
   void updateEof(bool eof_reached);
   void updateDuration(double duration);
   // The native route's presentable ceiling (NativeMediaSession::
