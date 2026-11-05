@@ -363,6 +363,8 @@ struct H264SpsSpec {
   std::uint32_t chromaFormat{1};
   std::uint32_t lumaDepthMinusEight{0};
   std::uint32_t chromaDepthMinusEight{0};
+  std::uint32_t referenceFrames{1};
+  std::optional<std::uint32_t> buffering;
   ColorSpec color{};
 };
 
@@ -388,7 +390,7 @@ struct H264SpsSpec {
   bits.unsignedExpGolomb(0U); // log2_max_frame_num_minus4
   bits.unsignedExpGolomb(0U); // pic_order_cnt_type
   bits.unsignedExpGolomb(0U); // log2_max_pic_order_cnt_lsb_minus4
-  bits.unsignedExpGolomb(1U); // max_num_ref_frames
+  bits.unsignedExpGolomb(spec.referenceFrames); // max_num_ref_frames
   bits.bit(false);            // gaps_in_frame_num_value_allowed_flag
   bits.unsignedExpGolomb(storageWidth / 16U - 1U);
   bits.unsignedExpGolomb(storageHeight / 16U - 1U);
@@ -417,7 +419,7 @@ struct H264SpsSpec {
   bits.unsignedExpGolomb(0U);
   bits.unsignedExpGolomb(0U);
   bits.unsignedExpGolomb(spec.reorderFrames);
-  bits.unsignedExpGolomb(std::max(1U, spec.reorderFrames));
+  bits.unsignedExpGolomb(spec.buffering.value_or(std::max(spec.referenceFrames, spec.reorderFrames)));
   }
 
   std::vector<std::uint8_t> nal{0x67U};
@@ -959,6 +961,7 @@ void testH264InferredDepthAndRepeatedSets() {
       {88, 0x10, 11, 176, 144, 4},
       {66, 0, 11, 176, 144, 9},
       {100, 0, 40, 1920, 1080, 4},
+      {100, 0, 30, 1280, 720, 5}, // MaxFS contradiction despite nonzero DPB
       {100, 0, 51, 3840, 2160, 5},
       {100, 0, 51, 640, 480, 16},
       {100, 0x10, 40, 1920, 1080, 0}};
@@ -1116,13 +1119,53 @@ void testH264Rejections() {
   for (const auto width : {1920U, 2560U}) {
     const auto underLevel = makeAvcC(std::array{H264SpsSpec{
         .width = width, .height = 1080U, .reorderFrames = 0U, .level = 30U}});
-    expectError(inspectAvc(underLevel), VideoCodecConfigurationError::MalformedRecord,
-                "explicit zero reorder does not repair an impossible level DPB");
+    const auto result = inspectAvc(underLevel);
+    expect(result.admitted() && result.facts->maximumReorderFrames == 0 &&
+               !result.facts->maximumReorderFramesInferred,
+           "explicit SPS restriction overrides an understated level");
   }
   auto extension = makeAvcC(std::array{H264SpsSpec{.profile = 100U}});
   extension.insert(extension.end(), {0xFCU, 0xF8U, 0xF8U, 0U});
+  const auto core = makeAvcC(std::array{H264SpsSpec{.profile = 100U}});
+  expect(inspectAvc(extension).facts == inspectAvc(core).facts,
+         "SPS chroma overrides contradictory optional hints");
+  extension[extension.size() - 3] = 0xFF;
+  extension[extension.size() - 2] = 0xFA;
+  expect(inspectAvc(extension).facts == inspectAvc(core).facts,
+         "SPS depths override contradictory optional hints");
+  extension.back() = 1;
   expectError(inspectAvc(extension), VideoCodecConfigurationError::MalformedRecord,
-              "extension chroma zero contradicting SPS 4:2:0 stays refused");
+              "unsupported SPS extension payload stays refused");
+  extension.back() = 0;
+  extension.pop_back();
+  expectError(inspectAvc(extension), VideoCodecConfigurationError::MalformedRecord,
+              "truncated optional extension stays refused");
+
+  for (const auto height : {1080U, 1440U}) {
+    H264SpsSpec spec{.width = height == 1080U ? 1920U : 2560U,
+                     .height = height, .reorderFrames = 0U, .level = 30U};
+    spec.restriction = false;
+    auto result = inspectAvc(makeAvcC(std::array{spec}));
+    expect(result.admitted() && result.facts->maximumReorderFrames ==
+               (height == 1080U ? 4U : 7U),
+           "understated level without restriction infers smallest fitting level");
+    spec.restriction = true;
+    spec.buffering = 16;
+    expect(inspectAvc(makeAvcC(std::array{spec})).admitted(),
+           "explicit SPS buffering up to sixteen overrides level");
+    spec.buffering = 17;
+    expect(!inspectAvc(makeAvcC(std::array{spec})).admitted(),
+           "explicit buffering above sixteen remains refused");
+    spec.buffering = 0;
+    expect(!inspectAvc(makeAvcC(std::array{spec})).admitted(),
+           "buffering below SPS references remains refused");
+    spec.buffering = 1; spec.reorderFrames = 2;
+    expect(!inspectAvc(makeAvcC(std::array{spec})).admitted(),
+           "reorder above SPS buffering remains refused");
+    spec.restriction = false; spec.referenceFrames = 17;
+    expect(!inspectAvc(makeAvcC(std::array{spec})).admitted(),
+           "references above sixteen remain refused without VUI");
+  }
 
   const std::array oversized{
       H264SpsSpec{.width = 7680U, .height = 4320U, .level = 62U}};
