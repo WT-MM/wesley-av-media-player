@@ -633,6 +633,8 @@ enum class CueVariant : std::uint8_t {
 };
 
 struct FixtureSpec {
+  std::uint64_t audioFirstOrdinal{0};
+  std::optional<std::uint64_t> audioOmitOrdinal;
   std::vector<std::uint64_t> clusterTimestamps{0, 500, 1000};
   double durationTicks{1500.0};
   bool includeVideoTrack{true};
@@ -1024,7 +1026,7 @@ Fixture buildFixture(const FixtureSpec& spec) {
   }
   if (spec.includeAudioTrack) {
     const auto cycle = audioLacingCycle();
-    std::uint64_t ordinal = 0;
+    std::uint64_t ordinal = spec.audioFirstOrdinal;
     std::size_t patternIndex = 0;
     while (true) {
       const auto tick = nearestMatroskaTick(
@@ -1050,7 +1052,7 @@ Fixture buildFixture(const FixtureSpec& spec) {
           true, false, false, plan.lacing, plan.sizes, fill);
       block.video = false;
       block.firstOrdinal = ordinal;
-      clusterBlocks[cluster].push_back(std::move(block));
+      if (spec.audioOmitOrdinal != ordinal) clusterBlocks[cluster].push_back(std::move(block));
       ordinal += plan.frameCount;
       ++patternIndex;
     }
@@ -2726,6 +2728,41 @@ void expectAccuratePlan(const MatroskaPreparedAsset& asset, MediaTime target,
               plan.audioWindow.startsAtStreamOrigin == (expectedOrdinal == 0U);
   }
   expect(matched, message);
+}
+
+void testLeadingAudioOrdinal() {
+  FixtureSpec spec;
+  spec.audioFirstOrdinal = 1;
+  const auto prepared = prepareFixture(spec);
+  expect(prepared.outcome.asset != nullptr, "leading AAC fixture prepares");
+  if (!prepared.outcome.asset) return;
+  for (const MediaTime target : {MediaTime{0,1}, MediaTime{1,100}, MediaTime{1,2}}) {
+    const auto outcome = prepared.asset().planGeneration(target, MediaSeekMode::Accurate);
+    expect(outcome.plan.has_value(), "leading AAC plans without scanning for missing ordinal zero");
+    if (outcome.plan) {
+      expect(outcome.plan->audioAccessUnitOrdinal >= 1, "preroll clamps to first present AU");
+      expect(compareMediaTime(outcome.plan->audioWindow.mediaStart, MediaTime{21,1000}) == wam::media::MediaTimeOrder::Equal, "leading silence stays declared");
+      expect(compareMediaTime(outcome.plan->audioWindow.presentationStart, MediaTime{21,1000}) != wam::media::MediaTimeOrder::Less,
+             "PCM publication starts after declared silence");
+      expect(outcome.plan->audioWindow.startsAtStreamOrigin ==
+             (outcome.plan->audioAccessUnitOrdinal == 1), "origin means first present packet");
+    }
+  }
+}
+
+void testMissingAudioOrdinalFailsFast() {
+  FixtureSpec spec;
+  spec.clusterTimestamps.clear();
+  for (unsigned i=0;i<100;++i) spec.clusterTimestamps.push_back(i*500);
+  spec.durationTicks=50000;
+  spec.audioOmitOrdinal=4; // The second laced Block; leave a hole before ordinal 8.
+  const auto prepared=prepareFixture(spec);
+  expect(prepared.outcome.asset != nullptr, "missing-interior-AU fixture prepares");
+  if (!prepared.outcome.asset) return;
+  const auto before=prepared.reader->reads;
+  const auto result=prepared.asset().planGeneration({6*1024,48000},MediaSeekMode::Accurate);
+  expect(!result.plan, "absent preroll ordinal fails rather than selecting a later packet");
+  expect(prepared.reader->reads-before < 200, "missing ordinal stops at first later block, not the file tail");
 }
 
 void testAccuratePlanning() {
@@ -4986,6 +5023,8 @@ int main() {
   testPreparationRequestValidation();
   testBoundedIndexes();
   testCodecAdmissionAndSelection();
+  testLeadingAudioOrdinal();
+  testMissingAudioOrdinalFailsFast();
   testAccuratePlanning();
   testKeyFramePlanning();
   testPlanningRejectsNonRandomAccessCue();
