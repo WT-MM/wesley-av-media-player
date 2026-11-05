@@ -1,5 +1,6 @@
 #include "qt/native_benchmark_telemetry.hpp"
 #include "media/native_audio_benchmark.hpp"
+#include "media/startup_benchmark.hpp"
 
 #include <cstdlib>
 #include <cerrno>
@@ -820,6 +821,23 @@ void audioMailboxPublishesOffRenderThread() {
     expect(contains(record, "\"generation\":123") &&
            contains(record, "\"audio_quantum_ns\":20000000"),
            "audio facts preserve generation and actual render quantum");
+  box.enabled.store(false);
+  const auto claimed = box.claimed.load();
+  WAM_STARTUP_STAMP(MainEntered);
+  expect(box.claimed.load() == claimed, "disabled startup telemetry claims no slot");
+  // Start a separate mailbox trial after the audio producer proof has drained.
+  for (unsigned i = 0; i < claimed; ++i) box.entries[i].ready.store(false);
+  box.claimed.store(0);
+  SinkProbe startupProbe;
+  auto startup = NativeBenchmarkTelemetryTestAccess::create(
+      true, &testClock, &stringSink, &stringFlush, &startupProbe);
+  std::thread render([] { WAM_STARTUP_STAMP(FirstSceneFrame); });
+  render.join();
+  expect(startupProbe.writes == 0, "scene timestamp performs no render-thread I/O");
+  expect(startup->finish(), "blank startup drains without a playback first draw");
+  expect(contains(startupProbe.output, "first_scene_frame") &&
+         contains(startupProbe.output, "\"route\":\"undecided\""),
+         "startup is a phase fact, not a native route proof");
   box.enabled.store(false);
 #endif
 }

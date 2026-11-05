@@ -305,6 +305,10 @@ const char *NativeBenchmarkTelemetry::eventName(Event event) noexcept {
   case Event::FallbackLoadEnd: return "fallback_load_end";
   case Event::FallbackInitializeBegin: return "fallback_initialize_begin";
   case Event::FallbackInitializeEnd: return "fallback_initialize_end";
+  case Event::AudioConfigureBegin: return "audio_configure_begin";
+  case Event::AudioConfigureEnd: return "audio_configure_end";
+  case Event::VideoConfigureBegin: return "video_configure_begin";
+  case Event::VideoConfigureEnd: return "video_configure_end";
   case Event::OpenRequested:
     return "open_requested";
   case Event::NativeSelected:
@@ -708,13 +712,18 @@ void NativeBenchmarkTelemetry::drainAudio() noexcept {
     case media::AudioBenchmarkEvent::FallbackLoadEnd: point.event = Event::FallbackLoadEnd; break;
     case media::AudioBenchmarkEvent::FallbackInitializeBegin: point.event = Event::FallbackInitializeBegin; break;
     case media::AudioBenchmarkEvent::FallbackInitializeEnd: point.event = Event::FallbackInitializeEnd; break;
+    case media::AudioBenchmarkEvent::AudioConfigureBegin: point.event = Event::AudioConfigureBegin; break;
+    case media::AudioBenchmarkEvent::AudioConfigureEnd: point.event = Event::AudioConfigureEnd; break;
+    case media::AudioBenchmarkEvent::VideoConfigureBegin: point.event = Event::VideoConfigureBegin; break;
+    case media::AudioBenchmarkEvent::VideoConfigureEnd: point.event = Event::VideoConfigureEnd; break;
     case media::AudioBenchmarkEvent::Stop: point.event = Event::AudioOutputStopIssued; break;
     case media::AudioBenchmarkEvent::Start: point.event = Event::AudioOutputStartIssued; break;
     case media::AudioBenchmarkEvent::Render: point.event = Event::AudioFirstRender; break;
     case media::AudioBenchmarkEvent::Advancing: point.event = Event::AudioClockAdvancing; break;
     case media::AudioBenchmarkEvent::Play: point.event = Event::RunStatePlayApplied; break;
     }
-    point.route = Route::Native;
+    point.route = audio.event <= media::AudioBenchmarkEvent::Stop
+                      ? Route::Native : Route::Undecided;
     point.generation = audio.generation;
     point.audioQuantumNanoseconds = audio.quantumNanoseconds;
     static_cast<void>(recordAt(point, audio.nanoseconds));

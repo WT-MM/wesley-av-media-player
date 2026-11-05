@@ -1,3 +1,4 @@
+#include "startup_benchmark.hpp"
 #include "media/native_late_frame_trace.hpp"
 #if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
 #include <mach/mach_time.h>
@@ -631,12 +632,14 @@ NativeMediaDispatcherOpenOutcome NativeMediaDispatcher::openLocalFile(
         return;
       }
       try {
+        WAM_STARTUP_STAMP(AudioConfigureBegin);
         audioVerdict = audio_->configure(*audioTrack, generation,
                                          configureTimeline,
                                          &audioConfigureError) ==
                                NativeMediaConsumeResult::Accepted
                            ? OpenConfigureVerdict::Accepted
                            : OpenConfigureVerdict::Rejected;
+        WAM_STARTUP_STAMP(AudioConfigureEnd);
       } catch (...) {
         // An exception must never cross the thread boundary: it would bypass
         // the join and terminate. Record it and let the owner thread decide.
@@ -693,12 +696,14 @@ NativeMediaDispatcherOpenOutcome NativeMediaDispatcher::openLocalFile(
         videoVerdict = OpenConfigureVerdict::Rejected;
       } else {
         try {
+          WAM_STARTUP_STAMP(VideoConfigureBegin);
           videoVerdict = video_->configure(*videoTrack, generation,
                                            configureTimeline,
                                            &videoConfigureError) ==
                                  NativeMediaConsumeResult::Accepted
                              ? OpenConfigureVerdict::Accepted
                              : OpenConfigureVerdict::Rejected;
+          WAM_STARTUP_STAMP(VideoConfigureEnd);
         } catch (...) {
           videoVerdict = OpenConfigureVerdict::Threw;
         }
