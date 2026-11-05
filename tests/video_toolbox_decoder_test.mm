@@ -420,6 +420,56 @@ void testFixtureFreeProductionLimitAdmission() {
           format, equivalentFormat, &error),
       error);
 
+  // Synthetic optional hints must never survive the production format builder.
+  auto hinted = h264RecordConfiguration(kCorpusFixtureAvcC, 1280, 720, generation);
+  std::vector<std::byte> hintedBytes(hinted.codecConfiguration.begin(),
+                                      hinted.codecConfiguration.end() - 4);
+  const auto coreSize = hintedBytes.size();
+  hintedBytes.insert(hintedBytes.end(),
+      {std::byte{0xFC}, std::byte{0xFF}, std::byte{0xFA}, std::byte{0}});
+  hinted.codecConfiguration = hintedBytes;
+  CMVideoFormatDescriptionRef repaired = nullptr;
+  WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::copyFormatDescription(
+      hinted, &repaired, &error), error);
+  if (repaired) {
+    auto atoms = static_cast<CFDictionaryRef>(CMFormatDescriptionGetExtension(
+        repaired, kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms));
+    auto avc = static_cast<CFDataRef>(CFDictionaryGetValue(atoms, CFSTR("avcC")));
+    WAM_CHECK(avc && CFDataGetLength(avc) == static_cast<CFIndex>(coreSize));
+    WAM_CHECK(avc && std::memcmp(CFDataGetBytePtr(avc),
+        hinted.codecConfiguration.data(), coreSize) == 0);
+    const auto rawFormat = [&](const std::vector<std::byte> &bytes) {
+      CFDataRef data = CFDataCreate(kCFAllocatorDefault,
+          reinterpret_cast<const UInt8 *>(bytes.data()), bytes.size());
+      const void *keys[] = {CFSTR("avcC")};
+      const void *values[] = {data};
+      CFDictionaryRef rawAtoms = CFDictionaryCreate(kCFAllocatorDefault,
+          keys, values, 1, &kCFTypeDictionaryKeyCallBacks,
+          &kCFTypeDictionaryValueCallBacks);
+      const void *extensionKeys[] = {kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms};
+      const void *extensionValues[] = {rawAtoms};
+      CFDictionaryRef extensions = CFDictionaryCreate(kCFAllocatorDefault,
+          extensionKeys, extensionValues, 1, &kCFTypeDictionaryKeyCallBacks,
+          &kCFTypeDictionaryValueCallBacks);
+      CMVideoFormatDescriptionRef result = nullptr;
+      WAM_CHECK(CMVideoFormatDescriptionCreate(kCFAllocatorDefault,
+          kCMVideoCodecType_H264, 1280, 720, extensions, &result) == noErr);
+      CFRelease(extensions); CFRelease(rawAtoms); CFRelease(data);
+      return result;
+    };
+    auto raw = rawFormat(hintedBytes);
+    WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::equivalentFormatConfigurations(
+        repaired, raw, &error), error);
+    CFRelease(raw);
+    auto changedSps = hintedBytes;
+    changedSps[12] ^= std::byte{1};
+    raw = rawFormat(changedSps);
+    WAM_CHECK(!VideoToolboxDecoderTestAccess::equivalentFormatConfigurations(
+        repaired, raw, &error));
+    CFRelease(raw);
+    CFRelease(repaired);
+  }
+
   // Exercise the exact production selector used on a direct sample's
   // format-description extensions. The atom bytes remain PROT_NONE: the
   // boundary decision must use only CFData metadata, and cap+1 must reject

@@ -1405,9 +1405,47 @@ bool equivalentSessionCodecTypes(CMVideoCodecType configured,
                                   namedCodec(configured) == namedCodec(direct));
 }
 
+// Only an admitted avcC may lose its optional hint-only extension. SPS/PPS
+// bytes, counts, and NAL-length encoding remain exact identity witnesses.
+std::size_t avcCoreLength(std::span<const std::byte> record) {
+  const auto inspection = media::inspectVideoCodecConfiguration(
+      media::MediaCodec::H264, media::MediaCodecConfigurationKind::AvcC,
+      record, reorderDepthLimits());
+  if (!inspection.admitted()) return record.size();
+  std::size_t offset = 6;
+  auto skipSets = [&](unsigned count) {
+    for (unsigned i = 0; i < count; ++i) {
+      const auto length = (std::to_integer<unsigned>(record[offset]) << 8U) |
+                           std::to_integer<unsigned>(record[offset + 1]);
+      offset += 2 + length;
+    }
+  };
+  skipSets(std::to_integer<unsigned>(record[5]) & 31U);
+  const auto count = std::to_integer<unsigned>(record[offset++]);
+  skipSets(count);
+  return offset;
+}
+
+bool equivalentAvcAtoms(const CodecConfigurationAtomMetadata &a,
+                        const CodecConfigurationAtomMetadata &b) {
+  if (a.codec != kCMVideoCodecType_H264 || b.codec != a.codec ||
+      !a.atom || !b.atom) return false;
+  const auto bytes = [](const CodecConfigurationAtomMetadata &m) {
+    return std::span<const std::byte>(
+        reinterpret_cast<const std::byte *>(CFDataGetBytePtr(m.atom)),
+        m.byteLength);
+  };
+  const auto left = bytes(a), right = bytes(b);
+  const auto n = avcCoreLength(left), m = avcCoreLength(right);
+  return n == m && std::equal(left.begin(), left.begin() + n, right.begin());
+}
+
 bool equivalentCodecConfigurationAtoms(
     const CodecConfigurationAtomMetadata &configured,
     const CodecConfigurationAtomMetadata &direct, std::string *error) {
+  if (configured.codec == direct.codec && configured.atom && direct.atom &&
+      CFEqual(configured.atom, direct.atom)) return true;
+  if (equivalentAvcAtoms(configured, direct)) return true;
   if (!equivalentSessionCodecTypes(configured.codec, direct.codec) ||
       configured.byteLength != direct.byteLength ||
       // Two absences are equal; one absence against one record is not. The
@@ -1487,7 +1525,9 @@ OSStatus createFormatDescription(const VideoStreamConfiguration &configuration,
         kCFAllocatorDefault,
         reinterpret_cast<const UInt8 *>(
             configuration.codecConfiguration.data()),
-        static_cast<CFIndex>(configuration.codecConfiguration.size()));
+        static_cast<CFIndex>(configuration.codec == kCMVideoCodecType_H264
+            ? avcCoreLength(configuration.codecConfiguration)
+            : configuration.codecConfiguration.size()));
   }
   if (atomData == nullptr) {
     return memFullErr;
@@ -3065,6 +3105,73 @@ VideoDecodeSubmitResult VideoToolboxDecoder::submitCMSampleBuffer(
   if (auto asyncError = impl_->takeAsyncErrorLocked()) {
     assignError(error, std::move(*asyncError));
     return VideoDecodeSubmitResult::Rejected;
+  }
+  struct NormalizedSample {
+    CMSampleBufferRef value{nullptr};
+    CMVideoFormatDescriptionRef format{nullptr};
+    ~NormalizedSample() {
+      if (value) CFRelease(value);
+      if (format) CFRelease(format);
+    }
+  } normalized;
+  if (metadata.codec == kCMVideoCodecType_H264) {
+    CodecConfigurationAtomMetadata configured;
+    if (!inspectFormatCodecConfiguration(impl_->formatDescription, configured, error) ||
+        !equivalentCodecConfigurationAtoms(configured,
+            {metadata.codec, metadata.codecConfigurationAtom,
+             metadata.configurationLength}, error)) {
+      return VideoDecodeSubmitResult::Rejected;
+    }
+    if (!CFEqual(configured.atom, metadata.codecConfigurationAtom)) {
+      // Share compressed storage and preserve timing/attachments, but supply
+      // only the admitted SPS/PPS truth to VideoToolbox, including direct input.
+      // Preserve all direct format extensions (including HDR ambient metadata)
+      // while replacing only avcC. Adopting the bare configured description
+      // would silently discard those container-owned presentation facts.
+      auto extensions = CFDictionaryCreateMutableCopy(kCFAllocatorDefault, 0,
+          CMFormatDescriptionGetExtensions(metadata.formatDescription));
+      auto atoms = extensions ? CFDictionaryCreateMutableCopy(kCFAllocatorDefault, 0,
+          static_cast<CFDictionaryRef>(CFDictionaryGetValue(extensions,
+              kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms))) : nullptr;
+      OSStatus status = memFullErr;
+      if (atoms) {
+        CFDictionarySetValue(atoms, CFSTR("avcC"), configured.atom);
+        CFDictionarySetValue(extensions,
+            kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms, atoms);
+        status = CMVideoFormatDescriptionCreate(kCFAllocatorDefault,
+            kCMVideoCodecType_H264, sampleDimensions.width, sampleDimensions.height,
+            extensions, &normalized.format);
+        CFRelease(atoms);
+      }
+      if (extensions) CFRelease(extensions);
+      CMSampleTimingInfo timing;
+      if (status == noErr)
+        status = CMSampleBufferGetSampleTimingInfo(sample, 0, &timing);
+      const size_t size = CMSampleBufferGetSampleSize(sample, 0);
+      if (status == noErr) {
+        status = CMSampleBufferCreateReady(kCFAllocatorDefault,
+            CMSampleBufferGetDataBuffer(sample), normalized.format,
+            1, 1, &timing, 1, &size, &normalized.value);
+      }
+      if (status != noErr || !normalized.value) {
+        assignError(error, statusError("normalize AVC sample", status));
+        return VideoDecodeSubmitResult::Rejected;
+      }
+      CMPropagateAttachments(sample, normalized.value);
+      CFArrayRef source = CMSampleBufferGetSampleAttachmentsArray(sample, false);
+      CFArrayRef destination = CMSampleBufferGetSampleAttachmentsArray(normalized.value, true);
+      if (source && destination && CFArrayGetCount(source) == 1) {
+        auto target = static_cast<CFMutableDictionaryRef>(const_cast<void *>(
+            CFArrayGetValueAtIndex(destination, 0)));
+        CFDictionaryRef original = static_cast<CFDictionaryRef>(CFArrayGetValueAtIndex(source, 0));
+        CFDictionaryApplyFunction(original, [](const void *key, const void *value, void *context) {
+          CFDictionarySetValue(static_cast<CFMutableDictionaryRef>(context), key, value);
+        }, target);
+      }
+      sample = normalized.value;
+      if (!inspectDirectCompressedSample(sample, metadata, error))
+        return VideoDecodeSubmitResult::Rejected;
+    }
   }
   if (!impl_->adoptDirectFormatLocked(metadata, error)) {
     return VideoDecodeSubmitResult::Rejected;
