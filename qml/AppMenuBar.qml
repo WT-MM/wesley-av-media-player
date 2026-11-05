@@ -72,6 +72,7 @@ Platform.MenuBar {
             onTriggered: aboutDialog.open()
         }
         Platform.MenuItem {
+            objectName: "wamQuitMenuItem"
             text: "Quit WAM"
             shortcut: StandardKey.Quit
             role: Platform.MenuItem.QuitRole

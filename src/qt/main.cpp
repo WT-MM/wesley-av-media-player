@@ -14,6 +14,8 @@
 #endif
 #if defined(Q_OS_MACOS)
 #include "macos_window_chrome.hpp"
+#include "termination_signal.hpp"
+#include "macos_video_service_cleanup.hpp"
 #endif
 #include "playback/mpv/mpv_runtime.hpp"
 #include "player_controller.hpp"
@@ -1199,7 +1201,7 @@ int verifyRuntime() {
 
 } // namespace
 
-int main(int argc, char *argv[]) {
+static int runApplication(int argc, char *argv[]) {
 #if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK) && defined(WAM_NATIVE_BENCHMARK_TELEMETRY)
   (void)wam::qt::NativeBenchmarkTelemetry::instance();
 #endif
@@ -1283,6 +1285,9 @@ int main(int argc, char *argv[]) {
 
   QGuiApplication app(argc, argv);
   WAM_STARTUP_STAMP(GuiApplicationConstructed);
+#if defined(Q_OS_MACOS)
+  wam::qt::TerminationSignal terminationSignal;
+#endif
 
 #if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
   // NSApp now exists and no window has been shown yet: the one moment where
@@ -1444,7 +1449,8 @@ int main(int argc, char *argv[]) {
     QObject::connect(&app, &QCoreApplication::aboutToQuit, &app, [&windows] {
       // Cmd-Q with N playing windows must retire N native sessions, not
       // abandon them at process exit: aboutToQuit is the last moment the event
-      // loop is alive, so the teardown runs here and synchronously.
+      // loop is alive, so owner teardown runs here synchronously. Native
+      // graphs retire off-thread and are drained after these owners are gone.
       windows.closeAllWindows();
       windows.flushPersistence();
     });
@@ -1663,7 +1669,16 @@ int main(int argc, char *argv[]) {
           QString::fromLatin1(qgetenv("WAM_TEST_QUIT_AFTER_MS"))
               .toInt(&quit_after_ok);
       if (quit_after_ok && quit_after > 0) {
-        QTimer::singleShot(quit_after, &app, [] { QCoreApplication::quit(); });
+        QTimer::singleShot(quit_after, &app, [&windows] {
+          if (qEnvironmentVariable("WAM_TEST_QUIT_MODE") == QStringLiteral("menu")) {
+            if (QObject *item = windows.findChild<QObject *>(QStringLiteral("wamQuitMenuItem"))) {
+              QMetaObject::invokeMethod(item, "triggered", Qt::DirectConnection);
+              return;
+            }
+            qFatal("Quit menu item was not found");
+          }
+          QCoreApplication::quit();
+        });
       }
     }
 #endif
@@ -1672,9 +1687,18 @@ int main(int argc, char *argv[]) {
   }
 
 #if defined(Q_OS_MACOS) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+  wam::macos::NativeEmbeddingSupport::drainRetirementsForProcessExit();
   // The event loop and QML surface are gone, so no later production callsite
   // can append a playback fact after this terminal stream commit.
   (void)wam::qt::NativeBenchmarkTelemetry::instance().finish();
 #endif
   return exit_code;
+}
+
+int main(int argc, char *argv[]) {
+  const int result = runApplication(argc, argv);
+#if defined(Q_OS_MACOS)
+  wam::qt::finishMacosVideoServices();
+#endif
+  return result;
 }

@@ -10,6 +10,9 @@ struct NativeEmbeddingSupport {
   static void setTestNoVideoHardware(bool) noexcept;
   struct SoftwareWorkers { unsigned active{}, pending{}, peak{}; std::uint64_t bytes{}; };
   static SoftwareWorkers softwareWorkers() noexcept;
+  // Terminal host barrier, after every playback/window owner is destroyed.
+  // Ordinary closes remain asynchronous; this does not pump the main queue.
+  static void drainRetirementsForProcessExit() noexcept;
   static bool testMuted() noexcept;
   static bool supportsAv1() noexcept;
   static bool supportsVp9() noexcept;

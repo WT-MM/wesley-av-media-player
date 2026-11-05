@@ -60,6 +60,11 @@ attempt to prepare, run, or retire; frontend churn therefore cannot accumulate
 stuck AVFoundation/VideoToolbox sessions. Asset and track keys load on a private
 serial queue; the caller only starts work and polls one generation-tagged
 terminal result, so no Apple callback can invoke client code after destruction.
+At process exit, the app drains pending native graph destruction after closing
+all window owners. SIGTERM is routed through the same Qt quit path. macOS 26
+also needs scoped retirement of the app's own idle VideoToolbox XPC helper
+after rendering teardown; the OpenGL/launchd lifetime evidence and exact
+ownership checks are recorded in `docs/VT_DECODER_SERVICE_LIFETIME_2026_11.md`.
 The native pipeline is connected end to end: an authoritative audio clock,
 atomic libmpv fallback, native subtitle/caption tracks, and long-GOP seek
 coverage are all live on the default route.
