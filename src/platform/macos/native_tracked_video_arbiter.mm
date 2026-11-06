@@ -367,7 +367,8 @@ class NativeTrackedVideoArbiter::MainOutput final
     return state_->output->presentsDecodedSurfacesDirectly();
   }
 
-  bool setPresentationDisplaySize(media::MediaDisplaySize size) noexcept override {
+  [[nodiscard]] bool setPresentationDisplaySize(
+      media::MediaDisplaySize size) noexcept override {
     return state_->output->setPresentationDisplaySize(size);
   }
 

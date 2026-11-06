@@ -215,7 +215,8 @@ class NativeTrackedVideoOutput {
 
   // Capability question like the rotation below: the default admits only an
   // integral display size; the layer route overrides it.
-  virtual bool setPresentationDisplaySize(media::MediaDisplaySize size) noexcept {
+  [[nodiscard]] virtual bool setPresentationDisplaySize(
+      media::MediaDisplaySize size) noexcept {
     return size.width.denominator == 1 && size.height.denominator == 1;
   }
 
