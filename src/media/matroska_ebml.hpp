@@ -16,6 +16,9 @@ namespace wam::media::matroska {
 // frameworks. The parser never requests more than kHardMaximumReadBytes from a
 // SeekableByteReader at once.
 
+// The EBML header element ID, which is also a Matroska file's first 4 bytes.
+inline constexpr std::uint32_t kEbmlHeaderId{0x1A45DFA3};
+
 enum class VintKind : std::uint8_t {
   ElementId,
   ElementSize,

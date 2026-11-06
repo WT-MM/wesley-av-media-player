@@ -15,7 +15,7 @@
 namespace wam::media::matroska {
 namespace {
 
-constexpr std::uint32_t kEbml{0x1A45DFA3};
+constexpr std::uint32_t kEbml{kEbmlHeaderId};
 constexpr std::uint32_t kSegment{0x18538067};
 constexpr std::uint32_t kSeekHead{0x114D9B74};
 constexpr std::uint32_t kSeek{0x4DBB};

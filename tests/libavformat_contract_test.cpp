@@ -30,10 +30,16 @@ int main() {
   REQUIRE(probe("", 0, "hint.WMV") == Kind::Libavformat);
   for (const unsigned stride : {188U, 192U, 204U}) {
     std::array<std::byte, 1024> bytes{};
-    unsigned offset = stride == 192 ? 4 : 0;
-    bytes[offset] = bytes[offset + stride] = bytes[offset + 2 * stride] =
-        std::byte{0x47};
+    const unsigned offset = stride == 192 ? 4 : 0;
+    for (unsigned at = offset; at < bytes.size(); at += stride)
+      bytes[at] = std::byte{0x47};
     REQUIRE(containerBackendForBytes(bytes, "wrong.mp4") == Kind::MpegTs);
+  }
+  {
+    // Three syncs then silence is not the demuxer's framing, so not TS.
+    std::array<std::byte, 1024> bytes{};
+    bytes[0] = bytes[188] = bytes[376] = std::byte{0x47};
+    REQUIRE(containerBackendForBytes(bytes, "wrong.mp4") == Kind::AVFoundation);
   }
   REQUIRE(avcodecExactTime(9007199254740993LL, 1, 90000) ==
           MediaTime(3002399751580331LL, 30000));

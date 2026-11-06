@@ -228,18 +228,6 @@ struct MpegTsPlanOutcome {
   std::string message;
 };
 
-// Immutable facts about the container framing, published because .m2ts and a
-// 204-byte DVB capture are the same demuxer with a different stride and the
-// distinction must be visible to a test and to telemetry.
-struct MpegTsFraming {
-  std::uint64_t firstSyncOffset{0};
-  std::uint32_t packetStride{0};   // 188, 192 or 204
-  std::uint32_t packetCount{0};
-  bool timestampedPackets{false};  // m2ts TP_extra_header present
-
-  friend constexpr bool operator==(MpegTsFraming, MpegTsFraming) = default;
-};
-
 class MpegTsPreparedAsset final
     : public std::enable_shared_from_this<MpegTsPreparedAsset> {
  public:
@@ -330,12 +318,5 @@ struct MpegTsPrepareOutcome {
 [[nodiscard]] MpegTsPrepareOutcome prepareMpegTsLocalFile(
     const std::filesystem::path& path, const MediaSourceOpenOptions& options,
     CancellationToken cancellation = {}) noexcept;
-
-// Detects the packet framing of a transport stream from a probe window. Public
-// because it is the first thing that can refuse a file and therefore the first
-// thing a test must be able to drive directly.
-[[nodiscard]] bool detectMpegTsFraming(std::span<const std::byte> probe,
-                                       std::uint64_t fileSize,
-                                       MpegTsFraming& framing) noexcept;
 
 }  // namespace wam::media::mpegts

@@ -4,6 +4,7 @@
 #include "media/avcodec/closure.hpp"
 #include "media/avcodec/runtime.hpp"
 #include "media/avcodec_time.hpp"
+#include "media/media_container_probe.hpp"
 extern "C" {
 #include <libavformat/avformat.h>
 }
@@ -202,11 +203,7 @@ struct LibavformatCursor::Impl {
     std::array<unsigned char, 16> box{};
     if (::pread(fd, box.data(), box.size(), 0) < 8)
       return true;
-    if (std::memcmp(box.data() + 4, "ftyp", 4) &&
-        std::memcmp(box.data() + 4, "moov", 4) &&
-        std::memcmp(box.data() + 4, "mdat", 4) &&
-        std::memcmp(box.data() + 4, "free", 4) &&
-        std::memcmp(box.data() + 4, "moof", 4))
+    if (!isoBmffTopLevelBoxAt(std::as_bytes(std::span(box)), 4))
       return true;
     bool init = false;
     std::int64_t offset = 0, fragment = -1;

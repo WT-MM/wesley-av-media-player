@@ -2,9 +2,11 @@
 
 #include "media/native_media_source.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <span>
 #include <type_traits>
@@ -42,6 +44,80 @@ inline constexpr std::size_t kM2tsPacketBytes{192};
 inline constexpr std::size_t kRsPacketBytes{204};
 inline constexpr std::size_t kMaximumPacketStrideBytes{kRsPacketBytes};
 inline constexpr std::byte kSyncByte{std::byte{0x47}};
+
+// Immutable facts about the container framing, published because .m2ts and a
+// 204-byte DVB capture are the same demuxer with a different stride and the
+// distinction must be visible to a test and to telemetry.
+struct MpegTsFraming {
+  std::uint64_t firstSyncOffset{0};
+  std::uint32_t packetStride{0};   // 188, 192 or 204
+  std::uint32_t packetCount{0};
+  bool timestampedPackets{false};  // m2ts TP_extra_header present
+
+  friend constexpr bool operator==(MpegTsFraming, MpegTsFraming) = default;
+};
+
+// How many consecutive sync bytes at a candidate stride prove framing. Ten
+// gives a false-positive probability of 2^-80 against random data while
+// needing only 10 * 204 = 2,040 bytes of probe, so even a two-packet file is
+// still decided from real evidence rather than from one lucky byte.
+inline constexpr std::size_t kFramingConfirmations{10};
+
+// Detects the packet framing of a transport stream from a probe window. The
+// one rule for the demuxer and for container routing; public because it is
+// the first thing that can refuse a file and therefore the first thing a test
+// must be able to drive directly.
+[[nodiscard]] inline bool detectMpegTsFraming(std::span<const std::byte> probe,
+                                              std::uint64_t fileSize,
+                                              MpegTsFraming& framing) noexcept {
+  framing = MpegTsFraming{};
+  static constexpr std::array<std::uint32_t, 3> kStrides{
+      static_cast<std::uint32_t>(kTsPacketBytes),
+      static_cast<std::uint32_t>(kM2tsPacketBytes),
+      static_cast<std::uint32_t>(kRsPacketBytes)};
+  for (const std::uint32_t stride : kStrides) {
+    // A candidate first-sync offset can never exceed one stride: if the file
+    // begins mid-packet, the next packet boundary is within `stride` bytes.
+    for (std::uint32_t start = 0; start < stride; ++start) {
+      if (start >= probe.size() || probe[start] != kSyncByte) {
+        continue;
+      }
+      std::size_t confirmed = 1;
+      bool broken = false;
+      for (std::size_t k = 1; k < kFramingConfirmations; ++k) {
+        const std::size_t at = static_cast<std::size_t>(start) + k * stride;
+        if (at >= probe.size()) {
+          break;  // ran out of probe, not a mismatch
+        }
+        if (probe[at] != kSyncByte) {
+          broken = true;
+          break;
+        }
+        ++confirmed;
+      }
+      if (broken) {
+        continue;
+      }
+      // A single sync byte is not evidence. Demand either the full
+      // confirmation run or every packet the file can hold, whichever is
+      // smaller, so a two-packet file is still decided from real repetitions.
+      const std::uint64_t possible =
+          fileSize > start ? (fileSize - start) / stride : 0;
+      const std::size_t required = static_cast<std::size_t>(
+          std::min<std::uint64_t>(kFramingConfirmations, possible));
+      if (required < 2 || confirmed < required) {
+        continue;
+      }
+      framing.firstSyncOffset = start;
+      framing.packetStride = stride;
+      framing.timestampedPackets = stride == kM2tsPacketBytes;
+      framing.packetCount = static_cast<std::uint32_t>(std::min<std::uint64_t>(
+          std::numeric_limits<std::uint32_t>::max(), possible));
+      return true;
+    }
+  }
+  return false;
+}
 
 inline constexpr std::uint16_t kPatPid{0x0000};
 inline constexpr std::uint16_t kNullPid{0x1FFF};
