@@ -121,7 +121,8 @@ evaluate(const NativeOpenPreflightState::Work &work,
           : classifySource(snapshot.displaySource, snapshot.absolutePath);
   WAM_STARTUP_STAMP(SourceClassified);
   auto initialPosition = macos::NativeMediaSession::preflightInitialPosition(
-      work.request.initialPositionSeconds);
+      media::exactNonnegativeMediaTime(work.request.initialPositionSeconds)
+          .value_or(media::MediaTime{}));
   const bool nativeEligible = work.request.nativeAdmissionAllowed &&
                               initialPosition.has_value() &&
                               !snapshot.filesystemPath.empty() &&

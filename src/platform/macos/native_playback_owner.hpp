@@ -61,7 +61,6 @@ public:
   // one for the whole gesture instead of collecting a failure per sample.
   [[nodiscard]] PreviewHandoffDisposition preparePreviewHandoff();
   [[nodiscard]] PreviewDisposition previewFrame(double, std::uint64_t, std::uint64_t);
-  [[nodiscard]] SeekDisposition commitSeek(double, std::uint64_t, std::uint64_t, bool);
   [[nodiscard]] SeekDisposition commitSeek(media::MediaTime, std::uint64_t, std::uint64_t, bool);
   [[nodiscard]] bool setGain(float);
   [[nodiscard]] bool setMuted(bool);
@@ -144,8 +143,6 @@ protected:
   void consumePreviewFailed(const native_protocol::PreviewFailed&);
   virtual void publishPreviewFailed(const native_protocol::PreviewFailed&) = 0;
   void consumeCommitReady(const native_protocol::CommitReady&);
-  void consumeExactCommitReady(const native_protocol::ExactCommitReady&);
-  virtual void publishExactCommitReady(const native_protocol::ExactCommitReady&) {}
   virtual void commitProved(const native_protocol::CommitReady&, bool) {}
   virtual void publishCommitReady(const native_protocol::CommitReady&) = 0;
 
@@ -156,7 +153,6 @@ protected:
   std::optional<NativePreviewFrameTarget> nativePreviewTarget_;
   std::optional<native_protocol::PreviewFrame> nativePreview_;
   std::optional<NativeMediaSessionCommitTarget> nativeCommitTarget_;
-  std::optional<media::MediaTime> nativeExactCommitTarget_;
   std::optional<native_protocol::CommitSeek> nativeCommit_;
   std::optional<native_protocol::Stop> nativeStop_;
   std::uint64_t nextObservationEpoch_{0};
@@ -166,6 +162,7 @@ protected:
   std::uint64_t nativePreviewGesture_{0};
   std::uint64_t nativePreviewSubmissionEpoch_{0};
   std::uint64_t nativeCommitDrawBaseline_{0};
+  media::MediaTime nativeCommitTime_{};
   std::uint64_t nativePhaseWatchdogEpoch_{0};
   bool nativePhaseWatchdogArmed_{false};
   media::SeekProgressDeadline nativeSeekProgress_{};
@@ -178,7 +175,6 @@ protected:
 private:
   std::shared_ptr<NativeMediaSession> nativeSession_;
   std::shared_ptr<ObservationBridge> observationBridge_;
-  SeekDisposition commitSeekImpl(double, std::optional<media::MediaTime>, std::uint64_t, std::uint64_t, bool);
   std::shared_ptr<ObservationBridge> ownerLifetime_;
   std::shared_ptr<NativeRetirement> retirement_;
   std::function<void()> retirementContinuation_;

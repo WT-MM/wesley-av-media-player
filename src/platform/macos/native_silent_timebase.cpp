@@ -26,34 +26,12 @@ std::unique_ptr<NativeSilentTimebase> NativeSilentTimebase::create(
 }
 
 bool NativeSilentTimebase::activate(media::MediaGeneration generation,
-                                    double positionSeconds) noexcept {
-  if (retired_ || generation == 0 || generation <= generation_ ||
-      !std::isfinite(positionSeconds) || positionSeconds < 0.0) {
-    return false;
-  }
-  if (generation_ == 0) {
-    if (!clock_.anchor(generation, positionSeconds, rate_.toDouble(),
-                       false)) {
-      return false;
-    }
-  } else {
-    // seek() carries the retired generation's running fact forward, so the
-    // transition is pinned paused first. The session's CommitSeek chain has
-    // already published its own physical pause of the retired generation;
-    // this repeat is idempotent and keeps the invariant local.
-    if (!clock_.pause(generation_) ||
-        !clock_.seek(generation_, generation, positionSeconds)) {
-      return false;
-    }
-  }
-  generation_ = generation;
-  running_ = false;
-  return true;
-}
-
-bool NativeSilentTimebase::activateExact(media::MediaGeneration generation,
-                                          media::MediaTime target) noexcept {
+                                    media::MediaTime target) noexcept {
   if (retired_ || generation == 0 || generation <= generation_) return false;
+  // seek() carries the retired generation's running fact forward, so the
+  // transition is pinned paused first. The session's CommitSeek chain has
+  // already published its own physical pause of the retired generation; this
+  // repeat is idempotent and keeps the invariant local.
   const bool applied = generation_ == 0
       ? clock_.anchorExact(generation, target, rate_.toDouble(), false)
       : clock_.pause(generation_) && clock_.seekExact(generation_, generation, target);

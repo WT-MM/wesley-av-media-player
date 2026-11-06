@@ -20,6 +20,12 @@
 
 namespace {
 
+// The owner's seconds -> exact edge: no exact form becomes an invalid time.
+wam::media::MediaTime secondsTime(double seconds) {
+  return wam::media::exactNonnegativeMediaTime(seconds).value_or(
+      wam::media::MediaTime{});
+}
+
 using namespace wam;
 using namespace wam::macos;
 namespace protocol = media::native_playback;
@@ -1058,8 +1064,8 @@ protocol::Prepare prepareCommand(double seconds = 0.5) {
 
 NativeMediaSessionCommandStatus prepare(
     NativeMediaSession& session, protocol::Prepare command) {
-  const auto preflight = NativeMediaSession::preflightInitialPosition(
-      command.initialPositionSeconds);
+  const auto preflight = NativeMediaSession::preflightInitialPosition(secondsTime(
+      command.initialPositionSeconds));
   if (!preflight.has_value()) {
     return NativeMediaSessionCommandStatus::Invalid;
   }
@@ -1251,7 +1257,7 @@ void testCommitWinsAfterPresentedChildReturn() {
   installExactAssetContext(*state);
   auto session = sessionFor(&state);
   prepareStartedPausedForPreview(*session);
-  const auto commitTarget = session->preflightCommitTarget(3.0);
+  const auto commitTarget = session->preflightCommitTarget(secondsTime(3.0));
   expect(commitTarget.has_value() &&
              session->preparePreviewHandoff() ==
                  NativeMediaSessionCommandStatus::Accepted,
@@ -1480,7 +1486,7 @@ void testCommitWinsSuccessfulPreviewConstructionWindow() {
   expect(session->setRunState({{{1}, {3}}, {7}, true, 1.0}) ==
              NativeMediaSessionCommandStatus::Accepted,
          "construction/commit physical pause accepted");
-  const auto target = session->preflightCommitTarget(2.0);
+  const auto target = session->preflightCommitTarget(secondsTime(2.0));
   auto previewTarget = session->preflightPreviewTarget(1.5);
   expect(target.has_value() && previewTarget.has_value(),
          "construction/commit targets preflight");
@@ -1740,7 +1746,7 @@ void testCommitBurnsQueuedPreviewFailure() {
             "queued-failure Commit prewarm reaches Ready");
 
   auto previewTarget = session->preflightPreviewTarget(2.0);
-  auto commitTarget = session->preflightCommitTarget(3.0);
+  auto commitTarget = session->preflightCommitTarget(secondsTime(3.0));
   const protocol::PreviewFrame preview = {
       {{1}, {4}}, {7}, {111}, {1}, 2.0};
   state->failPreviewPump.store(true, std::memory_order_release);
@@ -1900,7 +1906,7 @@ void testCommitPhaseRefusedStepIsANamedFailure() {
                  CommitPhase::Idle,
          "no commit phase is entered before a commit is accepted");
 
-  const auto target = session->preflightCommitTarget(2.0);
+  const auto target = session->preflightCommitTarget(secondsTime(2.0));
   expect(target.has_value(), "refused-step commit target preflights");
   const protocol::CommitSeek commit = commitCommand();
   fault.store(true, std::memory_order_release);
@@ -1957,7 +1963,7 @@ void testStopDuringCommitResetsPhaseToIdle() {
       state->pauseCalls.load(std::memory_order_acquire);
   state->pauseEntered.store(false, std::memory_order_release);
   state->blockPause.store(true, std::memory_order_release);
-  const auto target = session->preflightCommitTarget(2.0);
+  const auto target = session->preflightCommitTarget(secondsTime(2.0));
   expect(target.has_value(), "mid-commit Stop target preflights");
   expect(session->commitSeek(commitCommand(), *target) ==
              NativeMediaSessionCommandStatus::Accepted,
@@ -2008,7 +2014,7 @@ void testQuiescingCommitPauseIsRetriedNotFailed() {
   const std::uint64_t pausesBefore =
       state->pauseCalls.load(std::memory_order_acquire);
   state->quiescePauseCall.store(pausesBefore + 1, std::memory_order_release);
-  const auto target = session->preflightCommitTarget(2.0);
+  const auto target = session->preflightCommitTarget(secondsTime(2.0));
   expect(target.has_value(), "quiescing-pause target preflights");
   const protocol::CommitSeek commit = commitCommand();
   expect(session->commitSeek(commit, *target) ==
@@ -2032,7 +2038,7 @@ void testQuiescingCommitPauseIsRetriedNotFailed() {
   wake->video().signal(wake->video().context);
   const protocol::CommitReady ready = waitFact<protocol::CommitReady>(
       *session, "a commit whose pause quiesced once reaches readiness");
-  expect(protocol::commitReadyMatches(commit, target->drawBaseline(), ready),
+  expect(protocol::commitReadyMatches(commit, target->exact(), target->drawBaseline(), ready),
          "quiescing-pause CommitReady is exact");
   expect(state->pauseCalls.load(std::memory_order_acquire) ==
              pausesBefore + 3,
@@ -2062,13 +2068,13 @@ void testPendingSeekIsSuperseded() {
   expect(session->start({{{1}, {2}}, {7}, true}) == NativeMediaSessionCommandStatus::Accepted,
          "supersession starts");
   static_cast<void>(waitFact<protocol::Started>(*session, "supersession Started"));
-  const auto firstTarget = session->preflightCommitTarget(30.0);
+  const auto firstTarget = session->preflightCommitTarget(secondsTime(30.0));
   expect(firstTarget.has_value(), "first target is valid");
   expect(session->commitSeek(commitCommand(3, 8, 30.0), *firstTarget) == NativeMediaSessionCommandStatus::Accepted,
          "first seek starts");
   waitUntil([&] { return NativeMediaSessionTestAccess::commitPhase(*session) == CommitPhase::AwaitingProofs; },
             "first seek is pending video proof");
-  const auto newer = session->preflightCommitTarget(3.0);
+  const auto newer = session->preflightCommitTarget(secondsTime(3.0));
   expect(newer.has_value(), "pending slow seek accepts a newer exact target");
   if (newer) {
     const auto command = commitCommand(4, 9, 3.0);
@@ -2080,7 +2086,7 @@ void testPendingSeekIsSuperseded() {
     publishCommitDraw(*state, 9, 2, 3.0);
     wake->video().signal(wake->video().context);
     const auto ready = waitFact<protocol::CommitReady>(*session, "new seek reaches exact ready");
-    expect(protocol::commitReadyMatches(command, newer->drawBaseline(), ready),
+    expect(protocol::commitReadyMatches(command, newer->exact(), newer->drawBaseline(), ready),
            "only newest target can publish commit readiness");
   }
   expect(session->stop({{{1}, {5}}, {10}}) == NativeMediaSessionCommandStatus::Accepted,
@@ -2106,7 +2112,7 @@ void testCommitSeekPendingReadyAndStopHighWater() {
          "commit Start accepted");
   static_cast<void>(waitFact<protocol::Started>(*session, "commit Started"));
 
-  const auto target = session->preflightCommitTarget(2.0);
+  const auto target = session->preflightCommitTarget(secondsTime(2.0));
   expect(target.has_value() && target->drawBaseline() == 0,
          "session reserves exact pre-commit physical draw baseline");
   const protocol::CommitSeek commit = commitCommand();
@@ -2124,7 +2130,7 @@ void testCommitSeekPendingReadyAndStopHighWater() {
   wake->video().signal(wake->video().context);
   const protocol::CommitReady ready = waitFact<protocol::CommitReady>(
       *session, "commit publishes exact clock/draw readiness");
-  expect(protocol::commitReadyMatches(commit, target->drawBaseline(), ready) &&
+  expect(protocol::commitReadyMatches(commit, target->exact(), target->drawBaseline(), ready) &&
              session->facts().generation == 8 &&
              state->sourceSeeks.load() == 1 &&
              state->audioPhysicallyStarted.load(std::memory_order_acquire) &&
@@ -2193,7 +2199,7 @@ void testCommitSeekProceedsPastFailedPreviewLane() {
   static_cast<void>(waitFact<protocol::Started>(
       *session, "failed-lane commit Started"));
 
-  const auto target = session->preflightCommitTarget(2.0);
+  const auto target = session->preflightCommitTarget(secondsTime(2.0));
   expect(target.has_value(), "failed-lane commit target preflights");
   const protocol::CommitSeek commit = commitCommand();
   state->beginCommitLifecycle(commit.targetGeneration.value);
@@ -2209,7 +2215,7 @@ void testCommitSeekProceedsPastFailedPreviewLane() {
   wake->video().signal(wake->video().context);
   const protocol::CommitReady ready = waitFact<protocol::CommitReady>(
       *session, "commit reaches readiness past a failed preview lane");
-  expect(protocol::commitReadyMatches(commit, target->drawBaseline(), ready) &&
+  expect(protocol::commitReadyMatches(commit, target->exact(), target->drawBaseline(), ready) &&
              session->facts().generation == 8,
          "readiness advances the generation past a failed preview lane");
   expect(session->stop({{{1}, {5}}, {9}}) ==
@@ -2230,7 +2236,7 @@ void testCommitSeekAdmittedDuringStarting() {
          "Starting commit Prepare accepted");
   static_cast<void>(waitFact<protocol::Prepared>(*session,
                                                   "Starting commit Prepared"));
-  const auto target = session->preflightCommitTarget(2.0);
+  const auto target = session->preflightCommitTarget(secondsTime(2.0));
   expect(target.has_value(),
          "prepared session reserves commit target before Started");
   expect(session->commitSeek(commitCommand(3, 8, 2.0), *target) ==
@@ -2257,12 +2263,12 @@ void testCommitSeekAdmittedDuringStarting() {
 
 void testExactTimeAndSequencing() {
   const auto halfSecond =
-      NativeMediaSession::preflightInitialPosition(0.5);
+      NativeMediaSession::preflightInitialPosition(secondsTime(0.5));
   expect(halfSecond.has_value() &&
              halfSecond->exact() == media::MediaTime{1, 2} &&
-             !NativeMediaSession::preflightInitialPosition(0.1) &&
-             !NativeMediaSession::preflightInitialPosition(
-                 std::numeric_limits<double>::quiet_NaN()),
+             !NativeMediaSession::preflightInitialPosition(secondsTime(0.1)) &&
+             !NativeMediaSession::preflightInitialPosition(secondsTime(
+                 std::numeric_limits<double>::quiet_NaN())),
          "public initial-position preflight is the exact shared conversion");
 
   auto unboundState = std::make_shared<GraphState>();
@@ -3176,7 +3182,7 @@ void testExhaustionStopsAudioBeforeOneEnded() {
              state->previewQuiesces.load(std::memory_order_acquire) == 0,
          "Ended preview preserves EOS ownership while presenting the target");
   state->blockCapacity.store(true, std::memory_order_release);
-  const auto replayTarget = session->preflightCommitTarget(2.0);
+  const auto replayTarget = session->preflightCommitTarget(secondsTime(2.0));
   expect(replayTarget.has_value(),
          "Ended session retains a fresh exact seek target");
   const protocol::CommitSeek replay = {
@@ -3193,7 +3199,8 @@ void testExhaustionStopsAudioBeforeOneEnded() {
   const protocol::CommitReady replayReady = waitFact<protocol::CommitReady>(
       *session, "Ended CommitSeek reaches exact target readiness");
   expect(protocol::commitReadyMatches(
-             replay, replayTarget->drawBaseline(), replayReady) &&
+             replay, replayTarget->exact(), replayTarget->drawBaseline(),
+             replayReady) &&
              session->facts().generation == 8 && !session->facts().ending &&
              !session->facts().endedProofPublished &&
              state->audioPhysicallyStarted.load(std::memory_order_acquire) &&
@@ -3255,7 +3262,7 @@ void testNearEndCommitHoldsEndingUntilItsRunStateLands() {
   // command the commit protocol promises, and any near-end commit can lose
   // that race. The end-to-end matrix covers the exact 39.984375 case.
   constexpr double kNearTimelineEnd = 9.75;
-  const auto target = session->preflightCommitTarget(kNearTimelineEnd);
+  const auto target = session->preflightCommitTarget(secondsTime(kNearTimelineEnd));
   expect(target.has_value(),
          "a near-end commit target is exactly representable");
   if (!target.has_value()) {
@@ -3270,7 +3277,7 @@ void testNearEndCommitHoldsEndingUntilItsRunStateLands() {
   wake->video().signal(wake->video().context);
   const protocol::CommitReady ready = waitFact<protocol::CommitReady>(
       *session, "near-EOF commit publishes exact readiness");
-  expect(protocol::commitReadyMatches(commit, target->drawBaseline(), ready) &&
+  expect(protocol::commitReadyMatches(commit, target->exact(), target->drawBaseline(), ready) &&
              session->facts().generation == 8,
          "near-EOF CommitReady installs the target generation");
   expectExactCommitLifecycle(
@@ -3714,11 +3721,11 @@ void testSeekAdmissionStopsAtThePresentableCeiling() {
   prepareStartedPausedForPreview(*session);
   expect(session->seekCeilingSeconds() == 10.0,
          "the ceiling is the selected video track's end, not the duration");
-  expect(!session->preflightCommitTarget(10.015625).has_value(),
+  expect(!session->preflightCommitTarget(secondsTime(10.015625)).has_value(),
          "a commit target inside the video-less audio tail is refused");
   expect(!session->preflightPreviewTarget(10.015625).has_value(),
          "a preview target inside the video-less audio tail is refused");
-  expect(session->preflightCommitTarget(9.984375).has_value(),
+  expect(session->preflightCommitTarget(secondsTime(9.984375)).has_value(),
          "the last grid point below the video's end is admitted");
   expect(session->preflightPreviewTarget(9.984375).has_value(),
          "the last grid point below the video's end previews");
@@ -3750,12 +3757,12 @@ void testRationalEmbeddingCommit() {
     state->videoEvent->timing.duration = CMTimeMake(1,25);
   }
   wake->video().signal(wake->video().context);
-  const auto observations = waitObservations(*session, [](const auto& facts){return facts.exactCommitReady.has_value();},
-                                             "rational commit produces companion proof");
-  const auto& ready = *observations.exactCommitReady;
-  expect(!observations.commitReady && protocol::exactCommitReadyMatches(command, requested, target->drawBaseline(), ready),
-         "exact request emits only an exact validated completion");
-  expect(ready.requestedTarget == requested &&
+  const auto observations = waitObservations(*session, [](const auto& facts){return facts.commitReady.has_value();},
+                                             "rational commit produces its proof");
+  const auto& ready = *observations.commitReady;
+  expect(protocol::commitReadyMatches(command, requested, target->drawBaseline(), ready),
+         "exact request emits an exact validated completion");
+  expect(ready.target == requested &&
          media::compareMediaTime(ready.audioPresentationStart, {267,8000}) == media::MediaTimeOrder::Equal &&
          ready.videoStart == media::MediaTime{0,25} && ready.videoDuration == media::MediaTime{1,25},
          "seek completion preserves source T, A and covering CMTime interval");

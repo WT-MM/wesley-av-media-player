@@ -38,7 +38,7 @@ struct PreviewFrameRequest {
 struct CommitSeekRequest {
   native::GestureId gesture;
   native::RequestId request;
-  double targetSeconds{0.0};
+  MediaTime target{};
   // Exact output sequence sampled before physical CommitSeek issue. A ready
   // fact must contain a strictly newer draw in the target generation.
   std::uint64_t drawBaseline{0};
@@ -217,8 +217,6 @@ public:
                                         Tick now) noexcept;
   [[nodiscard]] Transition commitSeek(const CommitSeekRequest &request,
                                       Tick now) noexcept;
-  [[nodiscard]] Transition commitSeekExact(const CommitSeekRequest&, MediaTime, Tick) noexcept;
-  [[nodiscard]] Transition onNativeExactCommitReady(const native::ExactCommitReady&, Tick) noexcept;
   [[nodiscard]] Transition advance(Tick now) noexcept;
 
   [[nodiscard]] Transition onNativePrepared(const native::Prepared &event,
@@ -301,7 +299,7 @@ private:
   native::Start start_{};
   native::PreviewFrame latestPreview_{};
   native::CommitSeek commitSeek_{};
-  std::optional<MediaTime> exactCommitTarget_;
+  MediaTime commitTarget_{};
   std::uint64_t commitDrawBaseline_{0};
   native::Stop stop_{};
   std::optional<PendingOpen> pending_;

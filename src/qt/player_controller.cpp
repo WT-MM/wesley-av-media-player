@@ -1589,7 +1589,12 @@ PlayerController::dispatchNativeSeekIntent(const NativeSeekIntent &intent) {
   const auto submit = [](void *context,
                          const NativeSeekIntent &request) noexcept {
     auto &owner = *static_cast<NativePlaybackOwner *>(context);
-    switch (owner.commitSeek(request.target, request.gesture, request.request,
+    // The one seconds -> exact conversion on the native seek path. A value
+    // with no exact form reaches the owner as an invalid time and is refused
+    // there, after the route-ownership check.
+    const auto target = ::wam::media::exactNonnegativeMediaTime(request.target)
+                            .value_or(::wam::media::MediaTime{});
+    switch (owner.commitSeek(target, request.gesture, request.request,
                              request.intended_paused)) {
     case NativePlaybackOwner::SeekDisposition::NativeHandled:
       return NativeSeekSubmission::Accepted;

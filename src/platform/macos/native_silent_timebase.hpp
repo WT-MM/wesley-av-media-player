@@ -45,16 +45,13 @@ class NativeSilentTimebase final {
   NativeSilentTimebase(NativeSilentTimebase&&) = delete;
   NativeSilentTimebase& operator=(NativeSilentTimebase&&) = delete;
 
-  // Quiescent generation transition. positionSeconds becomes the exact paused
-  // commit position of the new generation, so a CommitSeek proof comparing
-  // visibleClock().mediaSeconds against its binary64 target matches bit for
-  // bit. The first activation anchors a fresh generation; later activations
-  // must name a strictly newer generation and pause the retired one first.
+  // Quiescent generation transition. target becomes the exact paused commit
+  // position of the new generation, so a CommitSeek proof comparing the
+  // clock's exact paused target against its own target matches exactly. The
+  // first activation anchors a fresh generation; later activations must name
+  // a strictly newer generation and pause the retired one first.
   [[nodiscard]] bool activate(media::MediaGeneration generation,
-                              double positionSeconds) noexcept;
-
-  [[nodiscard]] bool activateExact(media::MediaGeneration generation,
-                                   media::MediaTime target) noexcept;
+                              media::MediaTime target) noexcept;
 
   // Opens transport admission for the activated generation. The clock is
   // already anchored paused at its commit position, so unlike an audio start

@@ -752,11 +752,18 @@ struct NativeMediaSession::Impl final {
     }
   }
 
+  // The admission state every seek and preview preflight shares.
+  [[nodiscard]] bool seekAdmissibleLocked() const noexcept {
+    return !exitRequested && !publishedStop.has_value() && !publicLiveFailed &&
+           !(publicEnding && !publicEnded) && publicPrepared &&
+           publicActiveGeneration != 0;
+  }
+
   [[nodiscard]] bool observationsPresentLocked() const noexcept {
     return factMailbox.has_value() || runStateAppliedSlot.has_value() ||
            audioClockSlot.has_value() || videoDrawSlot.has_value() ||
            previewPresentedSlot.has_value() || previewFailedSlot.has_value() ||
-           (commitReadySlot.has_value() || exactCommitReadySlot.has_value());
+           commitReadySlot.has_value();
   }
 
   void queueObservations() noexcept {
@@ -905,7 +912,6 @@ struct NativeMediaSession::Impl final {
         previewPresentedSlot.reset();
         previewFailedSlot.reset();
         commitReadySlot.reset();
-        exactCommitReadySlot.reset();
         publishedPreviewHandoff.reset();
         publishedPreview.reset();
         publicPreviewHandoffPending = false;
@@ -981,11 +987,12 @@ struct NativeMediaSession::Impl final {
       const protocol::CommitSeek& command, std::uint64_t drawBaseline,
       const protocol::AudioClockProof& audioClock,
       const protocol::VideoDrawProof& videoDraw) noexcept {
-    const protocol::CommitReady ready{
-        command.stamp, command.targetGeneration, command.gesture,
-        command.request, command.targetSeconds, audioClock, videoDraw};
-    if (rationalCommit ? !protocol::exactCommitReadyMatches(command, commitTarget, drawBaseline, exactCommitProof) :
-        !protocol::commitReadyMatches(command, drawBaseline, ready)) {
+    protocol::CommitReady ready = exactCommitProof;
+    ready.targetSeconds = command.targetSeconds;
+    ready.audioClock = audioClock;
+    ready.videoDraw = videoDraw;
+    if (!protocol::commitReadyMatches(command, commitTarget, drawBaseline,
+                                      ready)) {
       return false;
     }
     {
@@ -993,7 +1000,7 @@ struct NativeMediaSession::Impl final {
       if (publishedStop.has_value() || publicEnding || publicEnded ||
           publicLiveFailed || !publicCommitPending ||
           generationHighWater != command.targetGeneration.value ||
-          (commitReadySlot.has_value() || exactCommitReadySlot.has_value())) {
+          commitReadySlot.has_value()) {
         return false;
       }
       publicActiveGeneration = command.targetGeneration.value;
@@ -1009,8 +1016,7 @@ struct NativeMediaSession::Impl final {
       publishedStart.reset();
       startPending = false;
       publicStartAccepted = true;
-      if (rationalCommit) exactCommitReadySlot = exactCommitProof;
-      else commitReadySlot = ready;
+      commitReadySlot = ready;
     }
 #if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
     if (media::late_trace::enabled)
@@ -1165,7 +1171,6 @@ struct NativeMediaSession::Impl final {
       prepareCommand = publishedPrepare->command;
       reservedGeneration = prepareCommand.reservedGeneration.value;
       initialPosition = publishedPrepare->initialPosition;
-      rationalInitial = publishedPrepare->rational;
       preparePending = true;
     }
     if (publishedStart.has_value() && !startPending) {
@@ -1205,13 +1210,12 @@ struct NativeMediaSession::Impl final {
         (!commitInFlight() || commitPhase == CommitPhase::AwaitingProofs)) {
       commitCommand = publishedCommit->command;
       commitTarget = publishedCommit->target;
-      rationalCommit = publishedCommit->rational;
       exactCommitProof = {};
       exactCommitProof.stamp = commitCommand.stamp;
       exactCommitProof.generation = commitCommand.targetGeneration;
       exactCommitProof.gesture = commitCommand.gesture;
       exactCommitProof.request = commitCommand.request;
-      exactCommitProof.requestedTarget = commitTarget;
+      exactCommitProof.target = commitTarget;
       commitDrawBaseline = publishedCommit->drawBaseline;
       if (publishedCommit->reviveFromEnded) {
         endingLatched = false;
@@ -2293,8 +2297,7 @@ if (descriptor == nullptr || !nativeV1Descriptor(*descriptor)) {
         silentTimebase = NativeSilentTimebase::create(dependencies.hostClock);
       }
       if (silentTimebase == nullptr ||
-          !((rationalInitial) ? silentTimebase->activateExact(reservedGeneration, initialPosition) :
-             silentTimebase->activate(reservedGeneration, prepareCommand.initialPositionSeconds))) {
+          !silentTimebase->activate(reservedGeneration, initialPosition)) {
         prepareFailed = true;
         static_cast<void>(publishFailure(protocol::FailureReason::Clock));
         return;
@@ -2846,12 +2849,12 @@ if (result != NativeAudioSessionProgress::Done) {
     // An audio-less generation has no consumer for the dispatcher to flush, so
     // nothing has moved its timebase onto the committed generation. Do that
     // here, at the same point the dispatcher's flush would have reactivated
-    // NativeAudioSession, and land it paused at the exact binary64 target the
-    // controller published so refreshClockForCommit() matches bit for bit.
+    // NativeAudioSession, and land it paused at the exact commit target so
+    // refreshClockForCommit() matches it exactly.
     if (commitPhase == CommitPhase::ActivatingTimebase) {
       if (silentTimebase != nullptr &&
-          !((rationalCommit) ? silentTimebase->activateExact(commitCommand.targetGeneration.value, commitTarget) :
-             silentTimebase->activate(commitCommand.targetGeneration.value, commitCommand.targetSeconds))) {
+          !silentTimebase->activate(commitCommand.targetGeneration.value,
+                                    commitTarget)) {
         failCommitSeek("commit-seek/timebase-activate");
         return;
       }
@@ -2967,12 +2970,11 @@ if (result != NativeAudioSessionProgress::Done) {
         clock.mediaSeconds, true, clock.rate};
     if (clock.publicationCurrent && clock.valid && !clock.running &&
         clock.generation == commitCommand.targetGeneration.value &&
-        (rationalCommit ? media::compareMediaTime(clock.exactPausedTarget, commitTarget) == media::MediaTimeOrder::Equal :
-                          clock.mediaSeconds == commitCommand.targetSeconds) &&
+        media::compareMediaTime(clock.exactPausedTarget, commitTarget) ==
+            media::MediaTimeOrder::Equal &&
         protocol::valid(proof)) {
       childLifetime->clock->snapshot = clock;
       commitAudioProof = proof;
-      exactCommitProof.clockPublication = clock.publicationSerial;
       exactCommitProof.audioPresentationStart = clock.exactAudioPresentationStart;
       exactCommitProof.audioLaneAbsent = silentTimebase != nullptr;
       if (dispatcher) {
@@ -3005,7 +3007,6 @@ if (result != NativeAudioSessionProgress::Done) {
       absent.videoLaneAbsent = true;
       if (protocol::valid(absent)) {
         commitVideoProof = absent;
-        exactCommitProof.videoLaneAbsent = true;
       }
       return;
     }
@@ -3028,7 +3029,7 @@ if (result != NativeAudioSessionProgress::Done) {
     }
     double presentationSeconds = 0.0;
     double durationSeconds = 0.0;
-    if (!rationalCommit && !presentedFrameInterval(event->timing, &presentationSeconds,
+    if (!presentedFrameInterval(event->timing, &presentationSeconds,
                                 &durationSeconds)) {
       return;
     }
@@ -3037,9 +3038,8 @@ if (result != NativeAudioSessionProgress::Done) {
         event->eventSequence, presentationSeconds, durationSeconds};
     const auto exactStart = exactFrameTime(event->timing.presentationTime);
     const auto exactDuration = exactFrameTime(event->timing.duration);
-    if (rationalCommit ? (!exactStart || !exactDuration ||
-        !media::exactFrameCovers(*exactStart, *exactDuration, commitTarget)) :
-        (!protocol::valid(proof) || !protocol::frameCoversPosition(proof, commitCommand.targetSeconds))) {
+    if (!protocol::valid(proof) || !exactStart || !exactDuration ||
+        !media::exactFrameCovers(*exactStart, *exactDuration, commitTarget)) {
       return;
     }
     {
@@ -3049,11 +3049,8 @@ if (result != NativeAudioSessionProgress::Done) {
     }
     lastVideoDrawProofSequence = event->eventSequence;
     commitVideoProof = proof;
-    if (exactStart && exactDuration) {
-      exactCommitProof.videoStart = *exactStart;
-      exactCommitProof.videoDuration = *exactDuration;
-      exactCommitProof.drawSequence = event->eventSequence;
-    }
+    exactCommitProof.videoStart = *exactStart;
+    exactCommitProof.videoDuration = *exactDuration;
   }
 
   void captureVideoDrawProof() noexcept {
@@ -3580,7 +3577,6 @@ if (result != NativeAudioSessionProgress::Done) {
   std::optional<protocol::PreviewPresented> previewPresentedSlot;
   std::optional<protocol::PreviewFailed> previewFailedSlot;
   std::optional<protocol::CommitReady> commitReadySlot;
-  std::optional<protocol::ExactCommitReady> exactCommitReadySlot;
   NativeMediaSessionObservationEdge observationEdge{};
   bool observationQueued{false};
   bool observationRetryWakeUsed{false};
@@ -3589,14 +3585,12 @@ if (result != NativeAudioSessionProgress::Done) {
   struct PublishedPrepare {
     protocol::Prepare command{};
     media::MediaTime initialPosition{};
-    bool rational{false};
   };
   struct PublishedCommit {
     protocol::CommitSeek command{};
     media::MediaTime target{};
     std::uint64_t drawBaseline{0};
     bool reviveFromEnded{false};
-    bool rational{false};
   };
   struct PublishedPreview {
     protocol::PreviewFrame command{};
@@ -3729,9 +3723,7 @@ if (result != NativeAudioSessionProgress::Done) {
   protocol::Stop stopCommand{};
   media::MediaTime initialPosition{};
   media::MediaTime commitTarget{};
-  bool rationalInitial{false};
-  bool rationalCommit{false};
-  protocol::ExactCommitReady exactCommitProof{};
+  protocol::CommitReady exactCommitProof{};
   std::optional<NativePreviewFrameTarget> previewTarget;
   MediaGeneration reservedGeneration{0};
   MediaGeneration activeGeneration{0};
@@ -3867,60 +3859,25 @@ std::unique_ptr<NativeMediaSession> NativeMediaSession::create(
 NativeMediaSession::~NativeMediaSession() = default;
 
 std::optional<NativeMediaSessionInitialPosition>
-NativeMediaSession::preflightInitialPosition(double seconds) noexcept {
-  const auto exact = media::exactNonnegativeMediaTime(seconds);
-  if (!exact.has_value()) {
-    return std::nullopt;
-  }
-  return NativeMediaSessionInitialPosition{seconds, *exact};
-}
-
-std::optional<NativeMediaSessionCommitTarget>
-NativeMediaSession::preflightCommitTarget(double seconds) noexcept {
-  const auto exact = media::exactNonnegativeMediaTime(seconds);
-  if (impl_ == nullptr || !exact.has_value()) {
-    return std::nullopt;
-  }
-  std::lock_guard lock(impl_->mutex);
-  if (impl_->exitRequested || impl_->publishedStop.has_value() ||
-      impl_->publicLiveFailed ||
-      (impl_->publicEnding && !impl_->publicEnded) ||
-      !impl_->publicPrepared ||
-      impl_->publicActiveGeneration == 0 ||
-      impl_->publicLastOutputEventSequence ==
-          std::numeric_limits<std::uint64_t>::max() ||
-      !(seconds < impl_->publicSeekCeilingSeconds)) {
-    return std::nullopt;
-  }
-  return NativeMediaSessionCommitTarget{
-      seconds, *exact, impl_->publicLastOutputEventSequence,
-      impl_->publicActiveGeneration};
-}
-
-std::optional<NativeMediaSessionInitialPosition>
 NativeMediaSession::preflightInitialPosition(media::MediaTime target) noexcept {
   const auto exact = media::canonicalNonnegativeTime(target);
-  if (!exact) return {};
-  const auto hint = media::mediaTimeSeconds(*exact);
-  if (!hint) return {};
-  return NativeMediaSessionInitialPosition{*hint, *exact, true};
+  const auto seconds = exact ? media::mediaTimeSeconds(*exact) : std::nullopt;
+  if (!seconds) return {};
+  return NativeMediaSessionInitialPosition{*seconds, *exact};
 }
 
 std::optional<NativeMediaSessionCommitTarget>
 NativeMediaSession::preflightCommitTarget(media::MediaTime target) noexcept {
   const auto exact = media::canonicalNonnegativeTime(target);
-  if (!impl_ || !exact) return {};
-  const auto hint = media::mediaTimeSeconds(*exact);
-  if (!hint) return {};
+  const auto seconds = exact ? media::mediaTimeSeconds(*exact) : std::nullopt;
+  if (!impl_ || !seconds) return {};
   std::lock_guard lock(impl_->mutex);
-  if (impl_->exitRequested || impl_->publishedStop || impl_->publicLiveFailed ||
-      (impl_->publicEnding && !impl_->publicEnded) || !impl_->publicPrepared ||
-      impl_->publicActiveGeneration == 0 ||
+  if (!impl_->seekAdmissibleLocked() ||
       impl_->publicLastOutputEventSequence == std::numeric_limits<std::uint64_t>::max() ||
       media::compareMediaTime(*exact, impl_->publicSeekCeiling) != media::MediaTimeOrder::Less)
     return {};
-  return NativeMediaSessionCommitTarget{*hint, *exact,
-      impl_->publicLastOutputEventSequence, impl_->publicActiveGeneration, true};
+  return NativeMediaSessionCommitTarget{*seconds, *exact,
+      impl_->publicLastOutputEventSequence, impl_->publicActiveGeneration};
 }
 
 double NativeMediaSession::seekCeilingSeconds() const noexcept {
@@ -3942,12 +3899,8 @@ NativeMediaSession::preflightPreviewTarget(double seconds) noexcept {
     return std::nullopt;
   }
   std::lock_guard lock(impl_->mutex);
-  if (impl_->exitRequested || impl_->publishedStop.has_value() ||
-      impl_->publicLiveFailed ||
-      (impl_->publicEnding && !impl_->publicEnded) ||
-      impl_->publicCommitPending || impl_->publicPreviewHandoffFailed ||
-      !impl_->publicPrepared ||
-      impl_->publicActiveGeneration == 0 ||
+  if (!impl_->seekAdmissibleLocked() || impl_->publicCommitPending ||
+      impl_->publicPreviewHandoffFailed ||
       !(seconds < impl_->publicSeekCeilingSeconds)) {
     return std::nullopt;
   }
@@ -4003,7 +3956,7 @@ NativeMediaSessionCommandStatus NativeMediaSession::prepare(
                  : NativeMediaSessionCommandStatus::Invalid;
     }
     impl_->publishedPrepare.emplace(
-        Impl::PublishedPrepare{command, initialPositionToken.exact(), initialPositionToken.rational_});
+        Impl::PublishedPrepare{command, initialPositionToken.exact()});
     impl_->previewPresentedSlot.reset();
     impl_->previewFailedSlot.reset();
     impl_->publicActiveGeneration = command.reservedGeneration.value;
@@ -4073,7 +4026,7 @@ NativeMediaSessionCommandStatus NativeMediaSession::setRunState(
     if (impl_->publicLiveFailed || impl_->publicEnded) {
       return NativeMediaSessionCommandStatus::Ignored;
     }
-    if (impl_->publicCommitPending || (impl_->commitReadySlot.has_value() || impl_->exactCommitReadySlot.has_value())) {
+    if (impl_->publicCommitPending || impl_->commitReadySlot.has_value()) {
       return NativeMediaSessionCommandStatus::Invalid;
     }
     if (impl_->publicEnding) {
@@ -4202,7 +4155,7 @@ NativeMediaSessionCommandStatus NativeMediaSession::commitSeek(
     const bool reviveFromEnded = impl_->publicEnded;
     impl_->publishedCommit = Impl::PublishedCommit{
         command, targetToken.exact(), targetToken.drawBaseline(),
-        reviveFromEnded, targetToken.rational_};
+        reviveFromEnded};
     impl_->generationHighWater = command.targetGeneration.value;
     impl_->publicCommitPending = true;
     impl_->publishedPreviewHandoff.reset();
@@ -4222,7 +4175,6 @@ NativeMediaSessionCommandStatus NativeMediaSession::commitSeek(
     impl_->audioClockSlot.reset();
     impl_->videoDrawSlot.reset();
     impl_->commitReadySlot.reset();
-    impl_->exactCommitReadySlot.reset();
     // A newer commit supersedes any handshake the previous one left open.
     impl_->commitRunStatePending = false;
     impl_->observationRetryWakeUsed = false;
@@ -4388,7 +4340,6 @@ NativeMediaSessionCommandStatus NativeMediaSession::stop(
     impl_->previewPresentedSlot.reset();
     impl_->previewFailedSlot.reset();
     impl_->commitReadySlot.reset();
-    impl_->exactCommitReadySlot.reset();
     impl_->publicCommitPending = false;
     // Retirement supersedes an open commit handshake; nothing will answer it.
     impl_->commitRunStatePending = false;
@@ -4424,7 +4375,6 @@ NativeMediaSession::takeObservations() noexcept {
     result.diagnostic = std::move(impl_->diagnosticSlot);
     impl_->diagnosticSlot.reset();
     result.commitReady = std::move(impl_->commitReadySlot);
-    result.exactCommitReady = std::move(impl_->exactCommitReadySlot);
     impl_->factMailbox.reset();
     impl_->runStateAppliedSlot.reset();
     impl_->audioClockSlot.reset();
@@ -4432,7 +4382,6 @@ NativeMediaSession::takeObservations() noexcept {
     impl_->previewPresentedSlot.reset();
     impl_->previewFailedSlot.reset();
     impl_->commitReadySlot.reset();
-    impl_->exactCommitReadySlot.reset();
     impl_->observationQueued = false;
     impl_->observationRetryWakeUsed = false;
     impl_->queuedObservationQueueSerial = 0;
@@ -4474,7 +4423,7 @@ NativeMediaSessionFacts NativeMediaSession::facts() const noexcept {
   result.previewPresentedPending = impl_->previewPresentedSlot.has_value();
   result.previewFailedPending = impl_->previewFailedSlot.has_value();
   result.commitPending = impl_->publicCommitPending;
-  result.commitReadyPending = (impl_->commitReadySlot.has_value() || impl_->exactCommitReadySlot.has_value());
+  result.commitReadyPending = impl_->commitReadySlot.has_value();
   result.requestedRunStateStamp = impl_->publicRequestedRunStamp;
   result.issuedRunStateStamp = impl_->publicIssuedRunStamp;
   result.appliedRunStateStamp = impl_->publicAppliedRunStamp;

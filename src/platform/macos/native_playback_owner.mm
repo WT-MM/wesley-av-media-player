@@ -301,22 +301,8 @@ NativePlaybackOwner::previewFrame(double targetSeconds, std::uint64_t gesture,
 }
 
 NativePlaybackOwner::SeekDisposition
-NativePlaybackOwner::commitSeek(double seconds, std::uint64_t gesture,
-                                std::uint64_t request, bool paused) {
-  return commitSeekImpl(seconds, {}, gesture, request, paused);
-}
-NativePlaybackOwner::SeekDisposition
 NativePlaybackOwner::commitSeek(media::MediaTime target, std::uint64_t gesture,
-                                std::uint64_t request, bool paused) {
-  const auto exact = media::canonicalNonnegativeTime(target);
-  if (!exact) return SeekDisposition::NativeRejected;
-  const auto hint = media::mediaTimeSeconds(*exact);
-  if (!hint) return SeekDisposition::NativeRejected;
-  return commitSeekImpl(*hint, *exact, gesture, request, paused);
-}
-NativePlaybackOwner::SeekDisposition
-NativePlaybackOwner::commitSeekImpl(double targetSeconds, std::optional<media::MediaTime> exact,
-    std::uint64_t gesture, std::uint64_t request, bool intendedPaused) {
+                                std::uint64_t request, bool intendedPaused) {
   assert([NSThread isMainThread]);
   if (nativeSession_ != nullptr) {
     drainObservations(observationBridge_ ? observationBridge_->epoch : 0);
@@ -347,17 +333,18 @@ NativePlaybackOwner::commitSeekImpl(double targetSeconds, std::optional<media::M
         "Native seeking lost its playback session.");
     return SeekDisposition::NativeRejected;
   }
-  std::optional<macos::NativeMediaSessionCommitTarget> target =
-      exact ? nativeSession_->preflightCommitTarget(*exact) : nativeSession_->preflightCommitTarget(targetSeconds);
-  if (!target.has_value()) {
+  std::optional<macos::NativeMediaSessionCommitTarget> commitTarget =
+      nativeSession_->preflightCommitTarget(target);
+  if (!commitTarget.has_value()) {
     surfaceNativeError(
         "Native seeking cannot represent this exact target.");
     return SeekDisposition::NativeRejected;
   }
 
   const playback_router::CommitSeekRequest seekRequest{
-      native_protocol::GestureId{gesture}, native_protocol::RequestId{request}, targetSeconds, target->drawBaseline()};
-  playback_router::Transition transition = exact ? router_.commitSeekExact(seekRequest, *exact, nextTick()) :
+      native_protocol::GestureId{gesture}, native_protocol::RequestId{request},
+      commitTarget->exact(), commitTarget->drawBaseline()};
+  playback_router::Transition transition =
       router_.commitSeek(seekRequest, nextTick());
   if (!applied(transition) || !transition.action.has_value() ||
       transition.action->kind !=
@@ -371,11 +358,11 @@ NativePlaybackOwner::commitSeekImpl(double targetSeconds, std::optional<media::M
   }
 
   const native_protocol::CommitSeek command = transition.action->commitSeek;
-  nativeExactCommitTarget_ = exact;
-  nativeCommitTarget_ = std::move(target);
+  nativeCommitTarget_ = std::move(commitTarget);
   nativeCommit_ = command;
   nativeSeekProgress_ = {};
   nativeCommitDrawBaseline_ = nativeCommitTarget_->drawBaseline();
+  nativeCommitTime_ = nativeCommitTarget_->exact();
   nativeCommitDispatchAccepted_ = false;
 
   // The controller may have changed logical play/pause during a scrub while
@@ -385,9 +372,7 @@ NativePlaybackOwner::commitSeekImpl(double targetSeconds, std::optional<media::M
   const playback_router::Transition pauseTransition =
       router_.setPaused(intendedPaused, nextTick());
   if (!applied(pauseTransition) || pauseTransition.action.has_value()) {
-    nativeCommitTarget_.reset();
-    nativeCommit_.reset();
-    nativeCommitDrawBaseline_ = 0;
+    clearNativeCommit(false);
     surfaceNativeError(
         "Native seeking could not retain transport intent.");
     execute(router_.onNativeFailed(
@@ -711,7 +696,6 @@ void NativePlaybackOwner::consumeObservations(
     if (observations.diagnostic->stamp == native_protocol::Stamp{snapshot.attempt, snapshot.serial})
       publishDiagnostic(*observations.diagnostic);
   }
-  if (observations.exactCommitReady) consumeExactCommitReady(*observations.exactCommitReady);
   if (observations.commitReady.has_value()) {
     consumeCommitReady(*observations.commitReady);
   }
@@ -757,9 +741,9 @@ void NativePlaybackOwner::clearNativeCommit(bool notifyFailure) noexcept {
   const std::optional<native_protocol::CommitSeek> command = nativeCommit_;
   const bool accepted = nativeCommitDispatchAccepted_;
   nativeCommitTarget_.reset();
-  nativeExactCommitTarget_.reset();
   nativeCommit_.reset();
   nativeCommitDrawBaseline_ = 0;
+  nativeCommitTime_ = {};
   nativeCommitDispatchAccepted_ = false;
   if (notifyFailure && accepted && command.has_value()) {
     commitFailed(command->gesture.value,
@@ -886,7 +870,7 @@ void NativePlaybackOwner::consumeVideoDraw(
 void NativePlaybackOwner::consumeCommitReady(
     const native_protocol::CommitReady &ready) {
   if (!nativeCommit_.has_value() || !nativeCommitDispatchAccepted_ ||
-      !native_protocol::commitReadyMatches(*nativeCommit_,
+      !native_protocol::commitReadyMatches(*nativeCommit_, nativeCommitTime_,
                                            nativeCommitDrawBaseline_, ready)) {
     return;
   }
@@ -921,27 +905,6 @@ void NativePlaybackOwner::consumeCommitReady(
   publishCommitReady(ready);
 }
 
-
-void NativePlaybackOwner::consumeExactCommitReady(const native_protocol::ExactCommitReady& ready) {
-  if (!nativeCommit_ || !nativeExactCommitTarget_ || !nativeCommitDispatchAccepted_ ||
-      !native_protocol::exactCommitReadyMatches(*nativeCommit_, *nativeExactCommitTarget_,
-          nativeCommitDrawBaseline_, ready)) return;
-  auto transition = router_.onNativeExactCommitReady(ready, nextTick());
-  if (!applied(transition)) return;
-  const auto completed = *nativeCommit_;
-  clearNativeCommit(false);
-  lastAudioProofSerial_ = ready.stamp.serial.value;
-  lastVideoDrawSequence_ = ready.drawSequence;
-  if (!ready.videoLaneAbsent) firstNativeDrawReported_ = true;
-  execute(std::move(transition));
-  const auto snapshot = router_.snapshot();
-  if (snapshot.state != playback_router::State::NativeActive ||
-      snapshot.attempt != completed.stamp.attempt || snapshot.generation != completed.targetGeneration) {
-    commitFailed(completed.gesture.value, completed.request.value);
-    return;
-  }
-  publishExactCommitReady(ready);
-}
 
 bool NativePlaybackOwner::retirementPending() const noexcept {
   return retirement_ && retirement_->started();

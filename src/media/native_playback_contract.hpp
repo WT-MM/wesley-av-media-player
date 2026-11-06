@@ -438,6 +438,14 @@ struct CommitReady {
   double targetSeconds{0.0};
   AudioClockProof audioClock;
   VideoDrawProof videoDraw;
+  // The exact proof. targetSeconds and the binary64 proof fields above are
+  // its display projection; commitReadyMatches() decides on these alone.
+  MediaTime target{};
+  MediaTime audioPresentationStart{};
+  MediaTime actualDecodeStart{};
+  MediaTime videoStart{};
+  MediaTime videoDuration{};
+  bool audioLaneAbsent{false};
 };
 
 struct Ended {
@@ -588,22 +596,6 @@ enum class PrepareDisposition : std::uint8_t {
          value.frameDurationSeconds <= std::numeric_limits<double>::max();
 }
 
-[[nodiscard]] constexpr bool
-frameCoversPosition(const VideoDrawProof &frame,
-                    double positionSeconds) noexcept {
-  if (frame.videoLaneAbsent) {
-    // Nothing to cover: an audio-only generation has no picture that must be
-    // held over the target instant.
-    return true;
-  }
-  // Subtraction after the ordered comparison avoids overflowing a
-  // frameStart + frameDuration sum. The half-open interval assigns an exact
-  // boundary to the following frame.
-  return valid(frame) && validPosition(positionSeconds) &&
-         positionSeconds >= frame.frameStartSeconds &&
-         positionSeconds - frame.frameStartSeconds < frame.frameDurationSeconds;
-}
-
 [[nodiscard]] constexpr bool valid(const CommitReady &value) noexcept {
   return validLive(value.stamp) && validLive(value.generation) &&
          valid(value.gesture) && valid(value.request) &&
@@ -614,9 +606,7 @@ frameCoversPosition(const VideoDrawProof &frame,
          sameCommand(value.stamp, value.audioClock.stamp) &&
          sameCommand(value.stamp, value.videoDraw.stamp) &&
          value.audioClock.generation == value.generation &&
-         value.videoDraw.generation == value.generation &&
-         value.audioClock.positionSeconds == value.targetSeconds &&
-         frameCoversPosition(value.videoDraw, value.targetSeconds);
+         value.videoDraw.generation == value.generation;
 }
 
 [[nodiscard]] constexpr bool valid(const Ended &value) noexcept {
@@ -869,18 +859,6 @@ commitFollowsLatestPreview(Stamp current, Generation activeGeneration,
          commitFollows(current, activeGeneration, generationHighWater,
                        command) &&
          latest.gesture == command.gesture;
-}
-
-[[nodiscard]] constexpr bool
-commitReadyMatches(const CommitSeek &command, std::uint64_t drawBaseline,
-                   const CommitReady &event) noexcept {
-  return valid(command) && valid(event) &&
-         sameCommand(command.stamp, event.stamp) &&
-         command.targetGeneration == event.generation &&
-         command.gesture == event.gesture && command.request == event.request &&
-         command.targetSeconds == event.targetSeconds &&
-         (event.videoDraw.videoLaneAbsent ||
-          event.videoDraw.drawSequence > drawBaseline);
 }
 
 [[nodiscard]] constexpr bool endedMatches(Stamp current,

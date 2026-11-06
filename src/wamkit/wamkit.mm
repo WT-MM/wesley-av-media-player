@@ -142,12 +142,12 @@ private:
   dispatch_source_t timer{nullptr};
   std::array<wam_event_t,128> events{}; unsigned eventCount{0}; bool deliveryQueued{false};
   void event(wam_event_kind_t kind, std::uint64_t request=0, wam_result_t result=WAM_COMPLETED,
-             const protocol::ExactCommitReady* ready=nullptr) {
+             const protocol::CommitReady* ready=nullptr) {
     wam_event_t event{}; event.struct_size=sizeof(event);event.kind=kind;event.request_id=request;
     event.result=result;event.snapshot=snapshot;event.error=refusal;
-    if(ready){event.requested_target=timeValue(ready->requestedTarget);event.audio_presentation_start=timeValue(ready->audioPresentationStart);
+    if(ready){event.requested_target=timeValue(ready->target);event.audio_presentation_start=timeValue(ready->audioPresentationStart);
       event.decode_start=timeValue(ready->actualDecodeStart);event.video_start=timeValue(ready->videoStart);
-      event.video_duration=timeValue(ready->videoDuration);event.audio_absent=ready->audioLaneAbsent;event.video_absent=ready->videoLaneAbsent;}
+      event.video_duration=timeValue(ready->videoDuration);event.audio_absent=ready->audioLaneAbsent;event.video_absent=ready->videoDraw.videoLaneAbsent;}
     if(kind==WAM_EVENT_METRICS || kind==WAM_EVENT_STATE){
       for(unsigned i=0;i<eventCount;++i)if(events[i].kind==kind){events[i]=event;return;}
     }
@@ -166,7 +166,7 @@ private:
     }
   }
   void state(wam_state_t value){snapshot.state=value;event(WAM_EVENT_STATE);}
-  void finish(std::optional<Command>& pending,wam_result_t result,const protocol::ExactCommitReady* ready=nullptr){
+  void finish(std::optional<Command>& pending,wam_result_t result,const protocol::CommitReady* ready=nullptr){
     if(!pending)return;const auto id=pending->id;pending.reset();event(WAM_EVENT_RESULT,id,result,ready);
   }
   void reject(const char* name,const char* detail="") {refusal=errorValue(name,detail);state(WAM_FAILED);event(WAM_EVENT_REFUSAL);}
@@ -296,8 +296,7 @@ private:
   }
   void publishPreviewPresented(const protocol::PreviewPresented&) override{}
   void publishPreviewFailed(const protocol::PreviewFailed&) override{}
-  void publishCommitReady(const protocol::CommitReady&) override{}
-  void publishExactCommitReady(const protocol::ExactCommitReady& ready) override{
+  void publishCommitReady(const protocol::CommitReady& ready) override{
     if(seeking && seeking->id==ready.request.value)finish(seeking,WAM_COMPLETED,&ready);
   }
 };
