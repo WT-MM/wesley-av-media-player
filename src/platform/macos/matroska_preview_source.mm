@@ -295,30 +295,16 @@ NativePreviewBeginOutcome MatroskaPreviewSource::begin(
       return outcome;
     }
     const MatroskaGenerationPlan& plan = *planned.plan;
-    const auto startAgainstTarget =
-        media::compareMediaTime(plan.actualDecodeStart, request.target);
-    // A plan may legitimately begin after its target in exactly one case, the
-    // same one the main source admits: the target lies at or before the first
-    // video Cue, which is the true video origin of a stream-copied file whose
-    // video starts a few milliseconds in. Any other late start really has
-    // skipped content and must not be presented as this target's frame.
-    bool clampedToVideoOrigin = false;
-    if (startAgainstTarget && *startAgainstTarget == MediaTimeOrder::Greater) {
-      const auto cues = impl_->asset->cues();
-      if (!cues.empty()) {
-        const auto firstCueTime = matroskaTickTime(
-            static_cast<std::int64_t>(cues.front().timestampTick),
-            impl_->asset->timestampScaleNanoseconds());
-        clampedToVideoOrigin =
-            firstCueTime.has_value() &&
-            media::compareMediaTime(plan.actualDecodeStart, *firstCueTime) ==
-                std::optional<MediaTimeOrder>{MediaTimeOrder::Equal};
-      }
+    // The same timeline window the main source admits; the preview reports
+    // the plan's own start.
+    std::optional<MediaTime> videoOrigin;
+    if (const auto cues = impl_->asset->cues(); !cues.empty()) {
+      videoOrigin = matroskaTickTime(
+          static_cast<std::int64_t>(cues.front().timestampTick),
+          impl_->asset->timestampScaleNanoseconds());
     }
-    if (!plan.actualDecodeStart.valid() || plan.actualDecodeStart.value < 0 ||
-        !startAgainstTarget ||
-        (*startAgainstTarget == MediaTimeOrder::Greater &&
-         !clampedToVideoOrigin)) {
+    if (!timelineWindowDecodeStart(plan.actualDecodeStart, request.target,
+                                   videoOrigin)) {
       outcome.status = NativePreviewStatus::Unsupported;
       outcome.error = "matroska preview plan starts after its own target";
       impl_->retireActive();

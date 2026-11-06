@@ -542,27 +542,6 @@ std::string describeNSError(NSError* error, const char* fallback) {
   return text == nullptr ? fallback : std::string(text);
 }
 
-[[nodiscard]] std::optional<MediaTime> exactMediaTime(CMTime time) noexcept {
-  if (!CMTIME_IS_NUMERIC(time) ||
-      (time.flags & kCMTimeFlags_HasBeenRounded) != 0 || time.epoch != 0 ||
-      time.timescale <= 0) {
-    return std::nullopt;
-  }
-  return MediaTime{time.value, time.timescale};
-}
-
-[[nodiscard]] MediaTime optionalMediaTime(CMTime time) noexcept {
-  const auto converted = exactMediaTime(time);
-  return converted.value_or(MediaTime{});
-}
-
-[[nodiscard]] std::optional<CMTime> exactCMTime(MediaTime time) noexcept {
-  if (!time.valid()) {
-    return std::nullopt;
-  }
-  return CMTimeMake(time.value, time.timescale);
-}
-
 [[nodiscard]] std::optional<MediaTime> canonicalDuration(CMTime time) noexcept {
   const auto converted = exactMediaTime(time);
   if (!converted || converted->value < 0) {
@@ -3318,11 +3297,8 @@ class ProductionGeneration final : public AVFoundationGeneration {
           result.error = "AVFoundation could not locate a bounded sync start";
           return result;
         }
-        // See clampedSyncStartWithinTimelineContract: an edit list can put the
-        // located random-access point outside `0 <= start <= target` at either
-        // end without being malformed.
-        decodeStart = clampedSyncStartWithinTimelineContract(decodeStart,
-                                                             *target);
+        decodeStart = syncStartWithinTimelineWindow(decodeStart,
+                                                    *request_.target);
 
       }
       const auto exactStart = exactMediaTime(decodeStart);
@@ -5555,11 +5531,6 @@ bool mediaFreeMarkerForTesting(CMSampleBufferRef sample) noexcept {
 std::optional<CMTime> syncSearchTargetWithinLeadingEmptyEditForTesting(
     CMTime target, CMTime mediaStart) noexcept {
   return syncSearchTargetWithinLeadingEmptyEdit(target, mediaStart);
-}
-
-CMTime clampedSyncStartWithinTimelineContractForTesting(
-    CMTime decodeStart, CMTime target) noexcept {
-  return clampedSyncStartWithinTimelineContract(decodeStart, target);
 }
 
 std::size_t projectCompressedAudioPacketTimingForTesting(

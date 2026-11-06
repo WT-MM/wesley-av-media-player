@@ -3,6 +3,7 @@
 #include "media/native_media_source.hpp"
 #include "media/audio_track_admission.hpp"
 #include "platform/macos/avfoundation_asset_context.hpp"
+#include "platform/macos/core_media_source_support.hpp"
 
 #include <CoreMedia/CoreMedia.h>
 
@@ -15,54 +16,32 @@
 
 namespace wam::macos {
 
-// Clamps a located sync start into the neutral timeline contract's window.
+// Places a located sync start in the neutral timeline window
+// (timelineWindowDecodeStart). A container edit list can legitimately put it
+// outside `0 <= start <= target` at either end:
 //
-// That contract is `0 <= actualDecodeStart <= requestedTarget` -- stated by
-// native_media_dispatcher.cpp deriveTimeline and re-proved independently by
-// native_video_consumer.mm validTimeline and native_audio_session.mm. A
-// container edit list can legitimately put the located random-access point
-// outside the window at EITHER end, and neither shape is a malformation:
+//   * a head-TRIMMED edit (elst media_time > 0) restates the RAP that decodes
+//     the picture at movie time 0 to a NEGATIVE movie time (measured:
+//     -0.801917 s on a 24000-timescale file whose video edit starts at media
+//     19246). AVAssetReader walks back to that RAP by itself from range start
+//     0, so nothing is lost by clamping;
+//   * a leading EMPTY EDIT (elst media_time == -1) puts the first RAP AFTER
+//     the target (measured: +0.023 s on an ffmpeg-muxed file whose video edit
+//     is [(23, -1), (N, 1024)]). A start can only be late when no sync sample
+//     exists at or before the search target, so it is the track's first
+//     picture: the video origin.
 //
-//   * a head-TRIMMED edit (elst media_time > 0) hides media before the movie
-//     origin, so the RAP that decodes the picture at movie time 0 restates to
-//     a NEGATIVE movie time (measured: -0.801917 s on a 24000-timescale file
-//     whose video edit starts at media 19246);
-//   * a leading EMPTY EDIT (elst media_time == -1) declares blank movie time
-//     before any picture exists, so the first RAP presents AFTER the target
-//     (measured: +0.023 s on an ffmpeg-muxed file whose video edit is
-//     [(23, -1), (N, 1024)]).
-//
-// Nothing is lost by clamping. AVAssetReader walks back to the random-access
-// point at or before its own range start by itself -- measured: given range
-// start 0 on the head-trimmed file it still delivers the RAP at media 0, with
-// outputPresentationTimeStamp -0.801917 -- and pictures presenting before the
-// generation start are already retired as compressed preroll by the consumer.
-//
-// This is the same floor matroska_demuxer.cpp applies to the Opus pre-skip
-// ("the downstream timeline contract requires 0 <= actualDecodeStart <=
-// target"). The custom-container sources (native_custom_source_core.hpp) keep
-// the same window differently: a plan that starts after its target is admitted
-// only when it starts at the first video access unit, reporting the target as
-// the decode start, and is refused otherwise.
-//
-// It lives in this header, rather than inside one route's translation unit,
-// because BOTH AVFoundation lanes locate a sync start the same way and must
-// answer this question identically. On a head-trimmed file every target before
-// the first in-window random-access point walks back to the pre-origin IDR; a
-// preview lane that refused that start would fail, latch, and veto the COMMIT
-// seek, stalling backward seeks.
-[[nodiscard]] inline CMTime clampedSyncStartWithinTimelineContract(
-    CMTime decodeStart, CMTime target) noexcept {
-  if (!CMTIME_IS_NUMERIC(decodeStart) || !CMTIME_IS_NUMERIC(target)) {
-    return decodeStart;
-  }
-  if (CMTimeCompare(decodeStart, kCMTimeZero) < 0) {
-    return kCMTimeZero;
-  }
-  if (CMTimeCompare(decodeStart, target) > 0) {
-    return target;
-  }
-  return decodeStart;
+// Both AVFoundation lanes locate a sync start the same way and must answer
+// identically: on a head-trimmed file every target before the first in-window
+// RAP walks back to the pre-origin IDR, and a preview lane that refused it
+// would fail, latch, and veto the COMMIT seek. A start that is not exact is
+// returned unchanged for the caller to refuse.
+[[nodiscard]] inline CMTime syncStartWithinTimelineWindow(
+    CMTime located, media::MediaTime target) noexcept {
+  const auto exact = exactMediaTime(located);
+  const auto window =
+      exact ? timelineWindowDecodeStart(*exact, target, exact) : std::nullopt;
+  return window ? CMTimeMake(window->value, window->timescale) : located;
 }
 
 // The AVFoundation bridge is split at the lifetime boundary, rather than at

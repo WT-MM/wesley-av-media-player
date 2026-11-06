@@ -278,23 +278,12 @@ NativePreviewBeginOutcome MpegTsPreviewSource::begin(
       return outcome;
     }
     const MpegTsGenerationPlan& plan = *planned.plan;
-    const auto startAgainstTarget =
-        media::compareMediaTime(plan.actualDecodeStart, request.target);
-    // The same one legitimate late start the main source admits: the target
-    // lies at or before the first video access unit, which is the true video
-    // origin of a mux whose audio leads its video.
-    bool clampedToVideoOrigin = false;
-    if (startAgainstTarget && *startAgainstTarget == MediaTimeOrder::Greater) {
-      const MediaTime videoOrigin = impl_->asset->videoOriginTime();
-      clampedToVideoOrigin =
-          videoOrigin.valid() &&
-          media::compareMediaTime(plan.actualDecodeStart, videoOrigin) ==
-              std::optional<MediaTimeOrder>{MediaTimeOrder::Equal};
-    }
-    if (!plan.actualDecodeStart.valid() || plan.actualDecodeStart.value < 0 ||
-        !startAgainstTarget ||
-        (*startAgainstTarget == MediaTimeOrder::Greater &&
-         !clampedToVideoOrigin)) {
+    // The same timeline window the main source admits; the preview reports
+    // the plan's own start.
+    const MediaTime origin = impl_->asset->videoOriginTime();
+    if (!timelineWindowDecodeStart(
+            plan.actualDecodeStart, request.target,
+            origin.valid() ? std::optional<MediaTime>{origin} : std::nullopt)) {
       outcome.status = NativePreviewStatus::Unsupported;
       outcome.error = "mpeg-ts preview plan starts after its own target";
       impl_->retireActive();

@@ -1,7 +1,7 @@
 #include "avfoundation_preview_source.hpp"
 #include "video_quarter_turn.hpp"
 
-// For clampedSyncStartWithinTimelineContract: the preview lane and the main
+// For syncStartWithinTimelineWindow: the preview lane and the main
 // route must answer the sync-start window question identically.
 #include "platform/macos/avfoundation_media_source.hpp"
 
@@ -49,25 +49,6 @@ constexpr std::size_t kMaximumSyncCursorSteps{100'000};
   }
   const char* text = error.localizedDescription.UTF8String;
   return text == nullptr ? fallback : std::string(text);
-}
-
-[[nodiscard]] std::optional<MediaTime> exactMediaTime(CMTime time) noexcept {
-  if (!CMTIME_IS_NUMERIC(time) || time.timescale <= 0 || time.epoch != 0 ||
-      (time.flags & kCMTimeFlags_HasBeenRounded) != 0) {
-    return std::nullopt;
-  }
-  return MediaTime{time.value, time.timescale};
-}
-
-[[nodiscard]] MediaTime optionalMediaTime(CMTime time) noexcept {
-  return exactMediaTime(time).value_or(MediaTime{});
-}
-
-[[nodiscard]] std::optional<CMTime> exactCMTime(MediaTime time) noexcept {
-  if (!time.valid()) {
-    return std::nullopt;
-  }
-  return CMTimeMake(time.value, time.timescale);
 }
 
 [[nodiscard]] bool validBinding(
@@ -641,22 +622,16 @@ class ProductionPreviewGeneration final
           break;
         }
       }
-      // A container edit list can legitimately put the located random-access
-      // point outside the neutral contract's `0 <= decodeStart <= target`
-      // window at either end: a head trim's walk-back lands on the pre-origin
-      // IDR. Refusing that shape here would fail the scrub preview -- and,
-      // through stopPreviewLaneForTerminal, the COMMIT SEEK behind it -- on
-      // every head-trimmed MP4 whose target precedes the first in-window sync
-      // sample. Both AVFoundation lanes clamp through the one definition.
-      decodeStart = clampedSyncStartWithinTimelineContract(decodeStart, *target);
+      // Refusing a head trim's pre-origin start here would fail the scrub
+      // preview -- and, through stopPreviewLaneForTerminal, the COMMIT SEEK
+      // behind it -- so both AVFoundation lanes clamp through the one window.
+      decodeStart = syncStartWithinTimelineWindow(decodeStart, request_.target);
       // The ceiling bounds the IN-WINDOW preroll, measured from the clamped
       // start, for the reason the main route states: the lead-in before the
       // origin is the container's own and is paid on every open.
       const CMTime preroll = CMTimeSubtract(*target, decodeStart);
       const auto exactStart = exactMediaTime(decodeStart);
-      if (!exactStart.has_value() || exactStart->value < 0 ||
-          media::compareMediaTime(*exactStart, request_.target) ==
-              MediaTimeOrder::Greater) {
+      if (!exactStart) {
         result.status = NativePreviewStatus::Unsupported;
         result.error = "preview could not locate a bounded full-sync start";
         return result;

@@ -554,46 +554,16 @@ class NativeCustomSourceCore {
     }
     const Plan& plan = *planned.plan;
 
-    // A plan may legitimately begin after its target in exactly one case: the
-    // requested position lies at or before the first video access unit, so the
-    // demuxer has nothing earlier to land on. Real files reach this constantly
-    // -- a stream-copied Matroska starts its video a few milliseconds in while
-    // audio starts at zero, and ffmpeg's transport-stream muxer emits audio
-    // ~23 ms ahead of video with the exported timeline rebased on the earlier
-    // of the two. That first access unit is the true video origin rather than
-    // a skipped seek target, exactly as it is for an MP4 carrying an edit list.
-    // Any plan that starts late anywhere else really has skipped content and
-    // stays rejected.
-    const std::optional<media::MediaTime> videoOrigin =
-        Traits::videoOrigin(*asset);
-    const auto startAgainstTarget =
-        requestedTarget
-            ? media::compareMediaTime(plan.actualDecodeStart, *requestedTarget)
-            : std::optional<media::MediaTimeOrder>{
-                  media::MediaTimeOrder::Less};
-    const bool startsAtVideoOrigin =
-        videoOrigin.has_value() &&
-        media::compareMediaTime(plan.actualDecodeStart, *videoOrigin) ==
-            std::optional<media::MediaTimeOrder>{media::MediaTimeOrder::Equal};
-    const bool clampedToVideoOrigin =
-        startAgainstTarget &&
-        *startAgainstTarget == media::MediaTimeOrder::Greater &&
-        startsAtVideoOrigin;
-    if (!plan.actualDecodeStart.valid() || plan.actualDecodeStart.value < 0 ||
-        !startAgainstTarget ||
-        (*startAgainstTarget == media::MediaTimeOrder::Greater &&
-         !clampedToVideoOrigin)) {
+    const std::optional<media::MediaTime> windowStart =
+        timelineWindowDecodeStart(plan.actualDecodeStart, requestedTarget,
+                                  Traits::videoOrigin(*asset));
+    if (!windowStart) {
       started.status = media::MediaSourceOpenStatus::Unsupported;
       started.error =
           named("", " plan starts after its own requested position");
       withdrawFailedOperation();
       return started;
     }
-    // The same clamp applies to a generation with NO requested target: the
-    // owner's timeline states target zero, and video that begins a few
-    // milliseconds later must not be published as a late decode start.
-    const bool clampedAtOrigin = !requestedTarget && startsAtVideoOrigin &&
-                                 plan.actualDecodeStart.value > 0;
 
     descriptor = started.descriptor;
     assetContext = context;
@@ -681,15 +651,7 @@ class NativeCustomSourceCore {
     }
 
     started.status = media::MediaSourceOpenStatus::Ready;
-    // When the plan was clamped to the video origin the generation still
-    // begins at the requested position: audio decodes from there, and the
-    // first video sample simply arrives a few milliseconds later. Reporting the
-    // video RAP time here instead would state a decode start after the target,
-    // which the whole downstream timeline contract forbids.
-    started.actualDecodeStart =
-        clampedToVideoOrigin && requestedTarget ? *requestedTarget
-        : clampedAtOrigin                       ? media::MediaTime{0, 1}
-                                                : plan.actualDecodeStart;
+    started.actualDecodeStart = *windowStart;
     started.error.clear();
     open = true;
     openSnapshot.store(true, std::memory_order_release);

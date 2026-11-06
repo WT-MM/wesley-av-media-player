@@ -413,7 +413,8 @@ struct LibavformatMediaSource::Impl {
   std::unique_ptr<PacketReader> reader;
   std::optional<MediaSample> head;
   std::optional<LibavformatCursor::Packet> videoPending,audioPending;
-  MediaTime target{}, decodeStart{}, audioDecodeStart{};
+  MediaTime target{}, decodeStart{}, audioDecodeStart{}, windowStart{};
+  MediaAudioGenerationWindow audioWindow{};
   bool audioStartsAtOrigin{true};
   bool eos{}, audioEos{}, opened{}, audioTail{}, audioEosPublished{}, videoEosPublished{};
   std::uint64_t audioOrdinal{};
@@ -501,9 +502,25 @@ struct LibavformatMediaSource::Impl {
       if(!normalize(packet,error))return false;
       MediaSample sample;
       if(!reader->materialize(packet,generation,target,*track,sample,error))return false;
-      peak=std::max(peak,sample.payload.byteSize());head=std::move(sample);return true;
+      peak=std::max(peak,sample.payload.byteSize());head=std::move(sample);
+      return stateWindow(error);
     }
     error="LibavformatInterleaveLimit";return false;
+  }
+  // The generation's reported decode start and audio window, shared by open
+  // and seek.
+  bool stateWindow(std::string& error) {
+    const auto start=timelineWindowDecodeStart(decodeStart,target,context->raps.front());
+    if(!start) {error="LibavformatDecodeStartOutsideWindow";return false;}
+    windowStart=*start;
+    audioWindow={};
+    if(!context->audioStream)return true;
+    const auto presentationStart=audioFrameAtOrAfter(
+        compareMediaTime(target,context->audioMediaStart)==MediaTimeOrder::Less ? context->audioMediaStart : target,
+        context->audioOrigin.timescale);
+    if(!presentationStart) {error="LibavformatAudioWindowUnrepresentable";return false;}
+    audioWindow={audioDecodeStart,*presentationStart,audioStartsAtOrigin,context->audioMediaStart};
+    return true;
   }
 
 };
@@ -806,15 +823,10 @@ LibavformatMediaSource::openLocalFile(const std::filesystem::path &path,
     return fail();
   s.opened = true;
   out.status = MediaSourceOpenStatus::Ready;
-  out.actualDecodeStart = s.context->audioStream && compareMediaTime(s.decodeStart,s.target)==MediaTimeOrder::Greater
-      ? MediaTime{0,1}:s.decodeStart;
+  out.actualDecodeStart = s.windowStart;
   out.descriptor = descriptor;
   out.preparedContext = context;
-  if (audio)
-    out.audioWindow = {s.audioDecodeStart,
-                       *audioFrameAtOrAfter(compareMediaTime(s.target,context->audioMediaStart)==MediaTimeOrder::Less
-                            ? context->audioMediaStart : s.target, context->audioOrigin.timescale), s.audioStartsAtOrigin,
-                       context->audioMediaStart};
+  out.audioWindow = s.audioWindow;
   if (telemetry) std::fprintf(stderr,
       "WAM: libavformat open packets=%zu bytes=%llu cursor_ms=%.3f metadata_ms=%.3f scan_ms=%.3f read_ms=%.3f witness_ms=%.3f generation_ms=%.3f total_ms=%.3f\n",
       scannedPackets,bytes,milliseconds(begun,cursorOpened),milliseconds(cursorOpened,scanStarted),
@@ -850,14 +862,9 @@ LibavformatMediaSource::seek(const MediaSourceSeekRequest &request) {
   }
   ++s.seeks;
   out.accepted = true;
-  out.actualDecodeStart = s.context->audioStream && compareMediaTime(s.decodeStart,s.target)==MediaTimeOrder::Greater
-      ? MediaTime{0,1}:s.decodeStart;
+  out.actualDecodeStart = s.windowStart;
   out.preparedContext = s.context;
-  if (s.context->audioStream)
-    out.audioWindow = {s.audioDecodeStart,
-                       *audioFrameAtOrAfter(compareMediaTime(s.target,s.context->audioMediaStart)==MediaTimeOrder::Less
-                            ? s.context->audioMediaStart : s.target, s.context->audioOrigin.timescale), s.audioStartsAtOrigin,
-                       s.context->audioMediaStart};
+  out.audioWindow = s.audioWindow;
   return out;
 }
 MediaSourceReadResult

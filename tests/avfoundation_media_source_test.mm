@@ -42,8 +42,6 @@ std::optional<CMTime> syncSearchTargetWithinLeadingEmptyEditForTesting(
     CMTime target, CMTime mediaStart) noexcept;
 std::optional<CMTime> audioFrameAlignedEditTimeForTesting(
     CMTime time, std::uint32_t sampleRate) noexcept;
-CMTime clampedSyncStartWithinTimelineContractForTesting(
-    CMTime decodeStart, CMTime target) noexcept;
 bool selectedFormatsRebindBeforeReaderForTesting(
     CMVideoFormatDescriptionRef videoFormat, std::size_t videoFormatCount,
     CGAffineTransform videoTransform,
@@ -2330,27 +2328,26 @@ void testDescriptorExtractionAndBounds() {
   // validTimeline). A container edit list can put the located random-access
   // point outside it at either end without being malformed.
   //
-  // Head-TRIMMED edit (vidya.mp4, video elst media_time 19246 @ 24000): the
+  // Head-TRIMMED edit (video elst media_time 19246 @ 24000): the
   // RAP that decodes the picture at movie time 0 restates to -0.801917 s.
   // This reached exactReaderTimeRange and was reported as "native reader range
   // is not exactly representable" -- the value is exactly representable, it is
   // negative. Floor it at the origin, as matroska_demuxer does for the Opus
   // pre-skip; AVAssetReader still walks back to the same RAP by itself.
   const CMTime trimmedRap = CMTimeMake(-19'246, 24'000);
-  expect(CMTimeCompare(clampedSyncStartWithinTimelineContractForTesting(
-                           trimmedRap, kCMTimeZero),
+  expect(CMTimeCompare(syncStartWithinTimelineWindow(trimmedRap,
+                                                    MediaTime{0, 1}),
                        kCMTimeZero) == 0 &&
              exactReaderTimeRange(
                  CMTimeMake(40'617, 1'000),
-                 clampedSyncStartWithinTimelineContractForTesting(
-                     trimmedRap, kCMTimeZero))
+                 syncStartWithinTimelineWindow(trimmedRap, MediaTime{0, 1}))
                  .has_value(),
          "a head-trimmed edit's negative sync start floors to the origin and "
          "then yields an exact reader range");
   // Leading EMPTY EDIT: the first RAP presents AFTER the target, which the
   // contract's start <= target clause forbids.
-  expect(CMTimeCompare(clampedSyncStartWithinTimelineContractForTesting(
-                           kEmptyEditMediaStart, kCMTimeZero),
+  expect(CMTimeCompare(syncStartWithinTimelineWindow(kEmptyEditMediaStart,
+                                                    MediaTime{0, 1}),
                        kCMTimeZero) == 0,
          "a leading empty edit's sync start after the target clamps down to "
          "the target");
@@ -2358,12 +2355,23 @@ void testDescriptorExtractionAndBounds() {
   // bit-for-bit, so no file that opened before changes behaviour.
   const CMTime inWindow = CMTimeMake(5, 1);
   const CMTime clampedInWindow =
-      clampedSyncStartWithinTimelineContractForTesting(inWindow,
-                                                       CMTimeMake(9, 1));
+      syncStartWithinTimelineWindow(inWindow, MediaTime{9, 1});
   expect(CMTimeCompare(clampedInWindow, inWindow) == 0 &&
              clampedInWindow.timescale == inWindow.timescale &&
              clampedInWindow.value == inWindow.value,
          "a sync start already inside [origin, target] is returned unchanged");
+  // The custom-container reading of the same window: a late start is admitted
+  // only at the first video access unit, and only a cold open (no target)
+  // keeps a later start as the start there is.
+  expect(timelineWindowDecodeStart(MediaTime{5, 1}, MediaTime{3, 1},
+                                   MediaTime{5, 1}) == MediaTime{3, 1} &&
+             !timelineWindowDecodeStart(MediaTime{5, 1}, MediaTime{3, 1},
+                                        MediaTime{4, 1}) &&
+             timelineWindowDecodeStart(MediaTime{5, 1}, std::nullopt,
+                                       MediaTime{5, 1}) == MediaTime{0, 1} &&
+             timelineWindowDecodeStart(MediaTime{5, 1}, std::nullopt,
+                                       std::nullopt) == MediaTime{5, 1},
+         "a late start is reported at the target only at the video origin");
 
   auto uhd = makeVideoFormat(kCMVideoCodecType_H264, 3840, 2160);
   expect(inspectVideoFormat(
