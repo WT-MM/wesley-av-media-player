@@ -1,6 +1,7 @@
 #include "native_audio_render_core.hpp"
 
 #include <algorithm>
+#include <utility>
 #include <bit>
 #include <cmath>
 #include <limits>
@@ -996,9 +997,11 @@ NativeAudioRenderResult NativeAudioRenderCore::render(
     readable.frames -= retired;
     saturatingAdd(retired_late_frames_, retired);
   }
+#if defined(WAM_NATIVE_TEST_SEAMS)
   if (after_preflight_hook_ != nullptr) {
     after_preflight_hook_(after_preflight_context_);
   }
+#endif
   const NativeAudioRenderFailure failureAfterHook = failure();
   if (failureAfterHook != NativeAudioRenderFailure::None) {
     silenceAll();
@@ -1234,13 +1237,7 @@ NativeAudioRenderResult NativeAudioRenderCore::render(
   result.admission = reservation.admission;
 
   if (acceptedWithoutPcm(reservation)) {
-    bool committed = false;
-    if (fail_next_commit_) {
-      fail_next_commit_ = false;
-      static_cast<void>(clock_.cancelSegment(reservation));
-    } else {
-      committed = clock_.commitSegment(reservation);
-    }
+    const bool committed = commitClockSegment(reservation);
     if (!committed) {
       silenceAll();
       return refuse(result, NativeAudioRenderFailure::ClockCommitFailed);
@@ -1320,13 +1317,7 @@ NativeAudioRenderResult NativeAudioRenderCore::render(
     saturatingAdd(stretched_callbacks_, 1);
   }
 
-  bool committed = false;
-  if (fail_next_commit_) {
-    fail_next_commit_ = false;
-    static_cast<void>(clock_.cancelSegment(reservation));
-  } else {
-    committed = clock_.commitSegment(reservation);
-  }
+  const bool committed = commitClockSegment(reservation);
   if (!committed) {
     silenceAll();
     return refuse(result, NativeAudioRenderFailure::ClockCommitFailed);
@@ -1421,6 +1412,17 @@ NativeAudioRenderFailure NativeAudioRenderCore::failure() const noexcept {
 
 std::size_t NativeAudioRenderCore::queuedRingSlabs() const noexcept {
   return ring_.queuedSlabs();
+}
+
+bool NativeAudioRenderCore::commitClockSegment(
+    const NativeMediaSegmentReservation &reservation) noexcept {
+#if defined(WAM_NATIVE_TEST_SEAMS)
+  if (std::exchange(fail_next_commit_, false)) {
+    static_cast<void>(clock_.cancelSegment(reservation));
+    return false;
+  }
+#endif
+  return clock_.commitSegment(reservation);
 }
 
 } // namespace wam::macos

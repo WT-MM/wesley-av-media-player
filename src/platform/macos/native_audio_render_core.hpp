@@ -515,6 +515,12 @@ private:
   std::atomic<std::uint64_t> stretched_callbacks_{0};
   std::atomic<std::uint64_t> rate_changes_{0};
 
+  [[nodiscard]] bool commitClockSegment(
+      const NativeMediaSegmentReservation &reservation) noexcept;
+
+  // Test seams, consulted only when WAM_NATIVE_TEST_SEAMS compiles the render
+  // core. The storage is unconditional so every translation unit agrees on
+  // this class's layout whichever archive it was compiled into.
   TestHook after_preflight_hook_{nullptr};
   void *after_preflight_context_{nullptr};
   bool fail_next_commit_{false};
