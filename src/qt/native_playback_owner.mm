@@ -186,7 +186,7 @@ const NativePlaybackOwner::SourceRecord *NativePlaybackOwner::sourceRecord(
 }
 
 void NativePlaybackOwner::pruneSourceRecords() {
-  const playback_router::Snapshot snapshot = router_.snapshot();
+  const playback_router::Snapshot snapshot = routeSnapshot();
   for (auto iterator = sources_.begin(); iterator != sources_.end();) {
     const bool current = snapshot.sourceKey.value != 0 &&
                          iterator->first == snapshot.sourceKey.value;
@@ -219,12 +219,12 @@ bool NativePlaybackOwner::open(const QUrl &source,
   // while the compatibility engine owned transport must not silently become
   // 1x the moment a file routes native. Outside NativeActive this only
   // retains the intent, which is exactly what the later Start consumes.
-  static_cast<void>(router_.setRate(controller_.rate(), nextTick()));
+  static_cast<void>(routeSetRate(controller_.rate()));
   // The pitch preference is seeded on the same terms, and for the same
   // reason: it is a persisted application setting, not per-file state, so a
   // file that routes native must not silently revert it to the default.
   static_cast<void>(
-      router_.setPreservePitch(controller_.preservePitch(), nextTick()));
+      routeSetPreservePitch(controller_.preservePitch()));
   const auto request = openPreflight_.enqueue(
       {*sourceKey, source, initialPositionSeconds, paused,
        !surfaceLost_ && surface_ != nullptr &&
@@ -276,9 +276,8 @@ void NativePlaybackOwner::completeOpenPreflight(
     return;
   }
   const playback_router::Transition transition =
-      router_.open({result.sourceKey, result.route,
-                    result.initialPositionSeconds, result.paused},
-                   nextTick());
+      routeOpen({result.sourceKey, result.route,
+                    result.initialPositionSeconds, result.paused});
   if (!applied(transition)) {
     sources_.erase(result.sourceKey.value);
     controller_.setLastError(
@@ -295,7 +294,7 @@ bool NativePlaybackOwner::stop(bool preserveVisibleState) {
   if (deferOwnerCommand([this, preserveVisibleState] { static_cast<void>(stop(preserveVisibleState)); }))
     return true;
   drainCurrentObservations();
-  const playback_router::Transition transition = router_.stop(nextTick());
+  const playback_router::Transition transition = routeStop();
   if (!applied(transition)) {
     controller_.setLastError(
         QStringLiteral("Unable to stop the active playback route."));
@@ -313,12 +312,12 @@ NativePlaybackOwner::setPaused(bool paused) {
   Q_ASSERT(QThread::currentThread() == controller_.thread());
   drainCurrentObservations();
 
-  const playback_router::State before = router_.snapshot().state;
+  const playback_router::State before = routeSnapshot().state;
   if (before == playback_router::State::Idle) {
     return PauseDisposition::NotOwned;
   }
   const playback_router::Transition transition =
-      router_.setPaused(paused, nextTick());
+      routeSetPaused(paused);
   if (!applied(transition)) {
     controller_.setLastError(
         QStringLiteral("Unable to change the playback state."));
@@ -366,7 +365,7 @@ NativePlaybackOwner::beginFallbackCreate(
     } catch (...) {
       controller_.setLastError(QStringLiteral(
           "Could not start playback. Please try again."));
-      return router_.onFallbackFailed({action.fallback.stamp}, nextTick());
+      return routeFallbackFailed({action.fallback.stamp});
     }
   }
 
@@ -382,18 +381,18 @@ NativePlaybackOwner::beginFallbackCreate(
                 ? QStringLiteral(
                       "A playback component is missing. Reinstall WAM to restore it.")
                 : loaded.detail);
-        return router_.onFallbackFailed({action.fallback.stamp}, nextTick());
+        return routeFallbackFailed({action.fallback.stamp});
       }
     }
     WAM_STARTUP_STAMP(FallbackInitializeBegin);
     const bool initialized = controller_.initializePlaybackEngine();
     WAM_STARTUP_STAMP(FallbackInitializeEnd);
     if (!initialized) {
-      return router_.onFallbackFailed({action.fallback.stamp}, nextTick());
+      return routeFallbackFailed({action.fallback.stamp});
     }
   }
 
-  return router_.onFallbackCreated({action.fallback.stamp}, nextTick());
+  return routeFallbackCreated({action.fallback.stamp});
 }
 
 bool NativePlaybackOwner::beginFallbackOpen(
@@ -487,25 +486,7 @@ void NativePlaybackOwner::exhaustFallbackStop(const QString &detail) {
   fallbackStop_->idleObserved = false;
   qWarning().noquote() << "WAM:" << detail;
   controller_.setLastError(QStringLiteral("Playback stopped responding. Please open the file again."));
-  if (executeDepth_ != 0 || fallbackEventDrainDepth_ != 0) {
-    fallbackCompletionDeferred_ = true;
-  } else {
-    maybeCompleteFallbackStop();
-  }
-}
-
-void NativePlaybackOwner::beginFallbackEventDrain() noexcept {
-  ++fallbackEventDrainDepth_;
-}
-
-void NativePlaybackOwner::endFallbackEventDrain() {
-  Q_ASSERT(fallbackEventDrainDepth_ != 0);
-  --fallbackEventDrainDepth_;
-  if (fallbackEventDrainDepth_ == 0 && executeDepth_ == 0 &&
-      fallbackCompletionDeferred_) {
-    fallbackCompletionDeferred_ = false;
-    maybeCompleteFallbackStop();
-  }
+  maybeCompleteFallbackStop();
 }
 
 void NativePlaybackOwner::publishDiagnostic(
@@ -662,19 +643,17 @@ void NativePlaybackOwner::publishCommitReady(
 void NativePlaybackOwner::fallbackOpenSucceeded(std::uint64_t attempt,
                                                 std::uint64_t serial,
                                                 std::uint64_t sourceKey) {
-  execute(router_.onFallbackOpened(
+  execute(routeFallbackOpened(
       {{native_protocol::AttemptId{attempt}, native_protocol::Serial{serial}},
-       native_protocol::SourceKey{sourceKey}},
-      nextTick()));
+       native_protocol::SourceKey{sourceKey}}));
 }
 
 void NativePlaybackOwner::fallbackOpenFailed(std::uint64_t attempt,
                                              std::uint64_t serial,
                                              std::uint64_t sourceKey) {
   (void)sourceKey;
-  execute(router_.onFallbackFailed(
-      {{native_protocol::AttemptId{attempt}, native_protocol::Serial{serial}}},
-      nextTick()));
+  execute(routeFallbackFailed(
+      {{native_protocol::AttemptId{attempt}, native_protocol::Serial{serial}}}));
 }
 
 void NativePlaybackOwner::fallbackStopCommandReply(std::uint64_t replyUserdata,
@@ -731,17 +710,15 @@ void NativePlaybackOwner::fallbackRenderStateChanged() {
 }
 
 void NativePlaybackOwner::fallbackPlaybackFailed() {
-  const playback_router::Snapshot snapshot = router_.snapshot();
+  const playback_router::Snapshot snapshot = routeSnapshot();
   if (!playback_router::fallbackPlaying(snapshot.state)) {
     return;
   }
-  execute(router_.onFallbackFailed({{snapshot.attempt, snapshot.serial}},
-                                   nextTick()));
+  execute(routeFallbackFailed({{snapshot.attempt, snapshot.serial}}));
 }
 
 void NativePlaybackOwner::maybeCompleteFallbackStop() {
-  if (executeDepth_ != 0 || fallbackEventDrainDepth_ != 0) {
-    fallbackCompletionDeferred_ = true;
+  if (deferFallbackCompletionWhileRouting()) {
     return;
   }
   if (!fallbackStop_.has_value() || !fallbackStop_->core ||
@@ -764,7 +741,7 @@ void NativePlaybackOwner::maybeCompleteFallbackStop() {
     return;
   }
   fallbackStop_.reset();
-  execute(router_.onFallbackStopped({command.stamp}, nextTick()));
+  execute(routeFallbackStopped({command.stamp}));
 }
 
 void NativePlaybackOwner::attachSurface(MpvVideoItem *item) noexcept {
@@ -824,7 +801,7 @@ void NativePlaybackOwner::commitSubmitted(const native_protocol::CommitSeek& com
 std::optional<playback_router::Transition> NativePlaybackOwner::applyFallbackRunState(const playback_router::Action& action) {
 
     if (!controller_.engineReady()) {
-      return router_.onFallbackFailed({action.fallback.stamp}, nextTick());
+      return routeFallbackFailed({action.fallback.stamp});
     }
     int paused = action.fallback.paused ? 1 : 0;
     const int result = controller_.core_->api().mpv_set_property(
@@ -833,7 +810,7 @@ std::optional<playback_router::Transition> NativePlaybackOwner::applyFallbackRun
       controller_.setLastError(
           QStringLiteral("Could not apply the playback "
                          "change."));
-      return router_.onFallbackFailed({action.fallback.stamp}, nextTick());
+      return routeFallbackFailed({action.fallback.stamp});
     }
     controller_.updatePause(action.fallback.paused);
     return std::nullopt;

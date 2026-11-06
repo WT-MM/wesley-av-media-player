@@ -418,6 +418,28 @@ bool NativePlaybackOwner::acceptsFallbackPlaybackEvents() const noexcept {
          state == playback_router::State::FallbackStopping;
 }
 
+bool NativePlaybackOwner::deferFallbackCompletionWhileRouting() noexcept {
+  if (executeDepth_ == 0 && fallbackEventDrainDepth_ == 0) {
+    return false;
+  }
+  fallbackCompletionDeferred_ = true;
+  return true;
+}
+
+void NativePlaybackOwner::beginFallbackEventDrain() noexcept {
+  ++fallbackEventDrainDepth_;
+}
+
+void NativePlaybackOwner::endFallbackEventDrain() {
+  assert(fallbackEventDrainDepth_ != 0);
+  --fallbackEventDrainDepth_;
+  if (fallbackEventDrainDepth_ == 0 && executeDepth_ == 0 &&
+      fallbackCompletionDeferred_) {
+    fallbackCompletionDeferred_ = false;
+    maybeCompleteFallbackStop();
+  }
+}
+
 void NativePlaybackOwner::execute(playback_router::Transition transition) {
   ++executeDepth_;
   bool completed = false;

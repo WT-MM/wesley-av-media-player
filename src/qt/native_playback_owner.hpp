@@ -68,8 +68,6 @@ public:
   void fallbackIdleChanged(bool idle);
   void fallbackRenderStateChanged();
   void fallbackPlaybackFailed();
-  void beginFallbackEventDrain() noexcept;
-  void endFallbackEventDrain();
 
   void attachSurface(MpvVideoItem *item) noexcept;
   void detachSurface(MpvVideoItem *item) noexcept;

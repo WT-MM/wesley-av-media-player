@@ -13,12 +13,7 @@ void expect(bool value, const char* message) {
 class Host final : public NativePlaybackOwner {
 public:
   std::vector<char> events;
-  native::SetRunState activate() {
-    const auto prepare = router_.open({{1}, router::Route::NativeEligibleLocal, 0, false}, nextTick()).action->prepare;
-    const auto start = router_.onNativePrepared({prepare.stamp, prepare.sourceKey,
-        {30, true, true}, prepare.reservedGeneration}, nextTick()).action->start;
-    return router_.onNativeStarted({start.stamp, start.preparedGeneration, 0}, nextTick()).action->runState;
-  }
+  native::SetRunState activate();
   void deliver(NativeMediaSessionObservations observations) {
     consumeObservations(std::move(observations));
   }
@@ -46,6 +41,24 @@ private:
   void publishPreviewFailed(const native::PreviewFailed&) override { events.push_back('F'); }
   void publishCommitReady(const native::CommitReady&) override { events.push_back('C'); }
 };
+
+}  // namespace
+namespace wam::macos {
+// Drives the owner's router through Prepared and Started without a session.
+struct NativePlaybackOwnerRouterTestAccess {
+  static native::SetRunState activate(NativePlaybackOwner& owner) {
+    auto& router = owner.router_;
+    const auto prepare = router.open({{1}, router::Route::NativeEligibleLocal, 0, false}, owner.nextTick()).action->prepare;
+    const auto start = router.onNativePrepared({prepare.stamp, prepare.sourceKey,
+        {30, true, true}, prepare.reservedGeneration}, owner.nextTick()).action->start;
+    return router.onNativeStarted({start.stamp, start.preparedGeneration, 0}, owner.nextTick()).action->runState;
+  }
+};
+}  // namespace wam::macos
+namespace {
+native::SetRunState Host::activate() {
+  return wam::macos::NativePlaybackOwnerRouterTestAccess::activate(*this);
+}
 }
 int main() {
   Host host;

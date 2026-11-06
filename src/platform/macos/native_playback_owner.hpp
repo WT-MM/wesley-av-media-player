@@ -170,14 +170,12 @@ protected:
   virtual void commitProved(const native_protocol::CommitReady&, bool) {}
   virtual void publishCommitReady(const native_protocol::CommitReady&) = 0;
 
-  playback_router::PlaybackRouter router_;
   std::optional<NativePreviewFrameTarget> nativePreviewTarget_;
   std::optional<native_protocol::PreviewFrame> nativePreview_;
   std::optional<NativeMediaSessionCommitTarget> nativeCommitTarget_;
   std::optional<native_protocol::CommitSeek> nativeCommit_;
   std::optional<native_protocol::Stop> nativeStop_;
   std::uint64_t nextObservationEpoch_{0};
-  std::uint64_t tick_{0};
   std::uint64_t lastAudioProofSerial_{0};
   std::uint64_t lastVideoDrawSequence_{0};
   std::uint64_t nativePreviewGesture_{0};
@@ -190,10 +188,61 @@ protected:
   bool firstNativeDrawReported_{false};
   PreviewDisposition nativePreviewDisposition_{PreviewDisposition::Rejected};
   bool nativeCommitDispatchAccepted_{false};
+  // Router commands for hosts. Each is stamped with the owner's next tick;
+  // the host executes the returned transition.
+  [[nodiscard]] playback_router::Snapshot routeSnapshot() const noexcept {
+    return router_.snapshot();
+  }
+  [[nodiscard]] playback_router::Transition routeOpen(
+      const playback_router::OpenRequest& request) noexcept {
+    return router_.open(request, nextTick());
+  }
+  [[nodiscard]] playback_router::Transition routeStop() noexcept {
+    return router_.stop(nextTick());
+  }
+  [[nodiscard]] playback_router::Transition routeSetPaused(bool paused) noexcept {
+    return router_.setPaused(paused, nextTick());
+  }
+  [[nodiscard]] playback_router::Transition routeSetRate(double rate) noexcept {
+    return router_.setRate(rate, nextTick());
+  }
+  [[nodiscard]] playback_router::Transition routeSetPreservePitch(
+      bool preserve) noexcept {
+    return router_.setPreservePitch(preserve, nextTick());
+  }
+  [[nodiscard]] playback_router::Transition routeFallbackCreated(
+      playback_router::FallbackCreated event) noexcept {
+    return router_.onFallbackCreated(event, nextTick());
+  }
+  [[nodiscard]] playback_router::Transition routeFallbackOpened(
+      playback_router::FallbackOpened event) noexcept {
+    return router_.onFallbackOpened(event, nextTick());
+  }
+  [[nodiscard]] playback_router::Transition routeFallbackStopped(
+      playback_router::FallbackStopped event) noexcept {
+    return router_.onFallbackStopped(event, nextTick());
+  }
+  [[nodiscard]] playback_router::Transition routeFallbackFailed(
+      playback_router::FallbackFailed event) noexcept {
+    return router_.onFallbackFailed(event, nextTick());
+  }
+  // A fallback stop completes only outside router execution and outside a
+  // fallback event drain. True when that completion was deferred; the owner
+  // re-runs maybeCompleteFallbackStop() once both unwind.
+  [[nodiscard]] bool deferFallbackCompletionWhileRouting() noexcept;
+
+public:
+  // Brackets a synchronous drain of fallback-player events.
+  void beginFallbackEventDrain() noexcept;
+  void endFallbackEventDrain();
+
+private:
+  friend struct NativePlaybackOwnerRouterTestAccess;
+  playback_router::PlaybackRouter router_;
+  std::uint64_t tick_{0};
   unsigned executeDepth_{0};
   unsigned fallbackEventDrainDepth_{0};
   bool fallbackCompletionDeferred_{false};
-private:
   std::shared_ptr<NativeMediaSession> nativeSession_;
   std::shared_ptr<ObservationBridge> observationBridge_;
   std::shared_ptr<ObservationBridge> ownerLifetime_;

@@ -128,7 +128,7 @@ public:
     dispatch_resume(timer);
   }
   void sample() {
-    snapshot.retiring=retirementPending(); snapshot.generation=router_.snapshot().generation.value;
+    snapshot.retiring=retirementPending(); snapshot.generation=routeSnapshot().generation.value;
     if(hasNativeSession() && metricsEnabled){
       const auto metrics=nativeMetrics(); snapshot.session_epoch=metrics.sessionEpoch;
       snapshot.drawn_frames=metrics.drawnFrames; snapshot.audio_rendered_frames=metrics.audioRenderedFrames;
@@ -190,7 +190,7 @@ private:
     case Operation::Pause:
       finish(pausing,WAM_SUPERSEDED);pausing=command;snapshot.requested_paused=command.value;
       if(!nativeOwnsTransport()){finish(pausing,WAM_RESULT_FAILED);return;}
-      execute(router_.setPaused(bool(command.value),nextTick()));return;
+      execute(routeSetPaused(bool(command.value)));return;
     case Operation::Seek:
       finish(seeking,WAM_SUPERSEDED);seeking=command;
       if(commitSeek(timeValue(command.time),command.id,command.id,bool(snapshot.requested_paused))!=SeekDisposition::NativeHandled){
@@ -200,12 +200,12 @@ private:
     case Operation::Volume: gain=command.gain; if(nativeOwnsTransport())static_cast<void>(setGain(gain));break;
     case Operation::Mute: muted=command.value; if(nativeOwnsTransport())static_cast<void>(setMuted(muted));break;
     case Operation::Rate:
-      execute(router_.setPreservePitch(command.flag,nextTick()));execute(router_.setRate(protocol::PlaybackRateRatio{command.value,protocol::kNativeRateGrid}.toDouble(),nextTick()));break;
+      execute(routeSetPreservePitch(command.flag));execute(routeSetRate(protocol::PlaybackRateRatio{command.value,protocol::kNativeRateGrid}.toDouble()));break;
     case Operation::Stop: case Operation::Close:
       preflight->cancel();finish(opening,WAM_CANCELLED);finish(seeking,WAM_CANCELLED);finish(pausing,WAM_CANCELLED);
       finish(stopping,WAM_SUPERSEDED);stopping=command;state(WAM_STOPPING);
-      if(!deferOwnerCommand([this]{execute(router_.stop(nextTick()));pruneSourceRecords();})){
-        execute(router_.stop(nextTick()));pruneSourceRecords();
+      if(!deferOwnerCommand([this]{execute(routeStop());pruneSourceRecords();})){
+        execute(routeStop());pruneSourceRecords();
       }
       if(command.operation==Operation::Close){
         std::weak_ptr<Engine> weak=shared_from_this();
@@ -231,7 +231,7 @@ private:
     }
     const auto command=[this]{
       if(!opening || !source)return;
-      execute(router_.open({source->sourceKey,router::Route::NativeEligibleLocal,initial->seconds(),bool(snapshot.requested_paused)},nextTick()));
+      execute(routeOpen({source->sourceKey,router::Route::NativeEligibleLocal,initial->seconds(),bool(snapshot.requested_paused)}));
     };
     if(!deferOwnerCommand(command))command();
   }
@@ -248,13 +248,13 @@ private:
   std::optional<router::Transition> beginFallbackCreate(const router::Action& action) override{
     if(!refusal.name[0])refusal=errorValue("UnsupportedContainer");
     state(WAM_FAILED);event(WAM_EVENT_REFUSAL);finish(opening,WAM_RESULT_FAILED);finish(seeking,WAM_RESULT_FAILED);finish(pausing,WAM_RESULT_FAILED);
-    return router_.onFallbackFailed({action.fallback.stamp},nextTick());
+    return routeFallbackFailed({action.fallback.stamp});
   }
   bool beginFallbackOpen(const router::Action&) override{return false;}
   bool beginFallbackStop(const router::Action&) override{return false;}
   std::optional<router::Transition> applyFallbackRunState(const router::Action&) override{return {};}
   void pruneSourceRecords() override{
-    if(router_.snapshot().state==router::State::Idle && !retirementPending() && stopping){
+    if(routeSnapshot().state==router::State::Idle && !retirementPending() && stopping){
       snapshot.retiring=0;state(stopping->operation==Operation::Close?WAM_PLAYER_CLOSED:WAM_EMPTY);
       finish(stopping,WAM_COMPLETED);if(closed)enableMetrics(false);
     }else if(closed && !retirementPending() && snapshot.state==WAM_PLAYER_CLOSED && snapshot.retiring){
@@ -278,7 +278,7 @@ private:
       if constexpr(std::is_same_v<T,protocol::Prepared>){
         snapshot.first_pts={};snapshot.drawn_frames=0;snapshot.audio_rendered_frames=0;
         snapshot.session_epoch=0;snapshot.clock_valid=0;
-        snapshot.generation=router_.snapshot().generation.value;
+        snapshot.generation=routeSnapshot().generation.value;
         if(hasNativeSession()){auto descriptor=nativeDescriptor();if(descriptor)snapshot.duration=timeValue(descriptor->duration);}
         state(WAM_READY);finish(opening,WAM_COMPLETED);
       }else if constexpr(std::is_same_v<T,protocol::Ended>)state(WAM_ENDED);
