@@ -15,6 +15,28 @@ namespace native_protocol = ::wam::media::native_playback;
 
 // Commands and delivery are main-thread-owned; native facts cross a retained,
 // capacity-one edge and never invoke the owner on the session worker.
+enum class NativeOwnerError : std::uint8_t {
+  InternalProtocolViolation,
+  SessionBudgetExceeded,
+  RetirementCapacityUnavailable,
+  PresentationUnavailable,
+};
+
+[[nodiscard]] constexpr const char* nativeOwnerErrorName(
+    NativeOwnerError error) noexcept {
+  switch (error) {
+  case NativeOwnerError::InternalProtocolViolation:
+    return "InternalProtocolViolation";
+  case NativeOwnerError::SessionBudgetExceeded:
+    return "SessionBudgetExceeded";
+  case NativeOwnerError::RetirementCapacityUnavailable:
+    return "RetirementCapacityUnavailable";
+  case NativeOwnerError::PresentationUnavailable:
+    return "PresentationUnavailable";
+  }
+  return "InternalProtocolViolation";
+}
+
 class NativePlaybackOwner {
 public:
   enum class PauseDisposition : std::uint8_t {
@@ -120,7 +142,9 @@ protected:
   virtual void sessionCleared() noexcept = 0;
   virtual void publishExactDraw(const NativeMediaSessionExactDraw&) {}
   virtual void publishDiagnostic(const NativeMediaSessionDiagnostic&) {}
-  virtual void surfaceNativeError(const char*) = 0;
+  // A recoverable native refusal: a typed code for embedding hosts plus
+  // human-readable detail.
+  virtual void surfaceNativeError(NativeOwnerError, const char* detail) = 0;
   virtual void ownerError(const char*) = 0;
   virtual void ownerNotice(const char*) = 0;
   virtual void seekProgress(std::uint64_t) = 0;

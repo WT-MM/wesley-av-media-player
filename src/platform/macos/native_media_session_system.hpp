@@ -21,13 +21,15 @@ struct NativeMediaSessionPresentationFactory {
 };
 
 // Resource creation remains lazy on the session worker after Prepare admission.
+// presentationUnavailable, when given, is set when the failure was the
+// presentation factory's.
 [[nodiscard]] std::unique_ptr<NativeMediaSession>
 createNativeMediaSessionSystem(
     NativeMediaSessionSourceBinding binding,
     std::shared_ptr<void> externalLifetime,
     NativeMediaSessionPresentationFactory presentation,
     std::string* error = nullptr,
-    std::shared_ptr<media::captions::LiveCaptionFeed> captionFeed =
-        nullptr) noexcept;
+    std::shared_ptr<media::captions::LiveCaptionFeed> captionFeed = nullptr,
+    bool* presentationUnavailable = nullptr) noexcept;
 
 }  // namespace wam::macos

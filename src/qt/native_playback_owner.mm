@@ -790,7 +790,8 @@ void NativePlaybackOwner::surfaceNativeError(const QString &detail) {
   qWarning().noquote() << "WAM:" << detail;
 }
 
-void NativePlaybackOwner::surfaceNativeError(const char* detail) {
+void NativePlaybackOwner::surfaceNativeError(macos::NativeOwnerError,
+                                             const char* detail) {
   surfaceNativeError(QString::fromUtf8(detail));
 }
 void NativePlaybackOwner::ownerError(const char* detail) {

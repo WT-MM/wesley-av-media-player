@@ -266,12 +266,10 @@ private:
   void publishDiagnostic(const NativeMediaSessionDiagnostic& diagnostic) override{
     refusal=errorValue(diagnostic.name.data(),diagnostic.detail.data());
   }
-  void surfaceNativeError(const char* message) override{
-    if(refusal.name[0])return;
-    for(const auto* name:names){const auto length=std::strlen(name);if(!std::strncmp(message,name,length) && (message[length]==0 || message[length]==':')){refusal=errorValue(name,message);return;}}
-    refusal=errorValue("InternalProtocolViolation",message);
+  void surfaceNativeError(NativeOwnerError code,const char* detail) override{
+    if(!refusal.name[0])refusal=errorValue(nativeOwnerErrorName(code),detail);
   }
-  void ownerError(const char* message) override{surfaceNativeError(message);}
+  void ownerError(const char* message) override{surfaceNativeError(NativeOwnerError::InternalProtocolViolation,message);}
   void ownerNotice(const char*) override{}
   void seekProgress(std::uint64_t) override{}
   void commitFailed(std::uint64_t,std::uint64_t request) override{if(seeking && seeking->id==request)finish(seeking,WAM_RESULT_FAILED);}

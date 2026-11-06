@@ -222,7 +222,8 @@ std::unique_ptr<NativeMediaSession> createNativeMediaSessionSystem(
     std::shared_ptr<void> externalLifetime,
     NativeMediaSessionPresentationFactory factory,
     std::string* error,
-    std::shared_ptr<media::captions::LiveCaptionFeed> captionFeed) noexcept {
+    std::shared_ptr<media::captions::LiveCaptionFeed> captionFeed,
+    bool* presentationUnavailable) noexcept {
   if (error != nullptr) {
     error->clear();
   }
@@ -262,6 +263,9 @@ std::unique_ptr<NativeMediaSession> createNativeMediaSessionSystem(
         factory.context, wake->trackedVideo(), error);
     if (!presentation.output) {
       assignError(error, "PresentationUnavailable");
+      if (presentationUnavailable != nullptr) {
+        *presentationUnavailable = true;
+      }
       return {};
     }
     std::shared_ptr<NativeTrackedVideoArbiter> videoArbiter =

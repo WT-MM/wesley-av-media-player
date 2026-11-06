@@ -31,7 +31,9 @@ private:
   void pruneSourceRecords() override {}
   void maybeCompleteFallbackStop() override {}
   void sessionCleared() noexcept override {}
-  void surfaceNativeError(const char*) override { events.push_back('!'); }
+  void surfaceNativeError(wam::macos::NativeOwnerError, const char*) override {
+    events.push_back('!');
+  }
   void ownerError(const char*) override { events.push_back('!'); }
   void ownerNotice(const char*) override {}
   void seekProgress(std::uint64_t) override {}

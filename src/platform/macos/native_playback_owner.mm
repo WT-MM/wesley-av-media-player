@@ -284,15 +284,15 @@ NativePlaybackOwner::commitSeek(media::MediaTime target, std::uint64_t gesture,
   }
 
   if (nativeSession_ == nullptr) {
-    surfaceNativeError(
-        "Native seeking lost its playback session.");
+    surfaceNativeError(NativeOwnerError::InternalProtocolViolation,
+                       "Native seeking lost its playback session.");
     return SeekDisposition::NativeRejected;
   }
   std::optional<macos::NativeMediaSessionCommitTarget> commitTarget =
       nativeSession_->preflightCommitTarget(target);
   if (!commitTarget.has_value()) {
-    surfaceNativeError(
-        "Native seeking cannot represent this exact target.");
+    surfaceNativeError(NativeOwnerError::InternalProtocolViolation,
+                       "Native seeking cannot represent this exact target.");
     return SeekDisposition::NativeRejected;
   }
 
@@ -304,8 +304,8 @@ NativePlaybackOwner::commitSeek(media::MediaTime target, std::uint64_t gesture,
   if (!applied(transition) || !transition.action.has_value() ||
       transition.action->kind !=
           playback_router::ActionKind::NativeCommitSeek) {
-    surfaceNativeError(
-        "Native seeking could not reserve exact lineage.");
+    surfaceNativeError(NativeOwnerError::InternalProtocolViolation,
+                       "Native seeking could not reserve exact lineage.");
     if (applied(transition)) {
       execute(std::move(transition));
     }
@@ -328,8 +328,8 @@ NativePlaybackOwner::commitSeek(media::MediaTime target, std::uint64_t gesture,
       router_.setPaused(intendedPaused, nextTick());
   if (!applied(pauseTransition) || pauseTransition.action.has_value()) {
     clearNativeCommit(false);
-    surfaceNativeError(
-        "Native seeking could not retain transport intent.");
+    surfaceNativeError(NativeOwnerError::InternalProtocolViolation,
+                       "Native seeking could not retain transport intent.");
     execute(router_.onNativeFailed(
         {command.stamp, native_protocol::FailureReason::Protocol}, nextTick()));
     return SeekDisposition::NativeRejected;
@@ -350,8 +350,8 @@ bool NativePlaybackOwner::setGain(float gain) {
   const auto status = nativeSession_->setGain(gain);
   if (status == macos::NativeMediaSessionCommandStatus::Invalid ||
       status == macos::NativeMediaSessionCommandStatus::Closed) {
-    surfaceNativeError(
-        "Native audio rejected the volume change.");
+    surfaceNativeError(NativeOwnerError::InternalProtocolViolation,
+                       "Native audio rejected the volume change.");
   }
   return true;
 }
@@ -394,8 +394,8 @@ bool NativePlaybackOwner::setMuted(bool muted) {
   const auto status = nativeSession_->setMuted(muted);
   if (status == macos::NativeMediaSessionCommandStatus::Invalid ||
       status == macos::NativeMediaSessionCommandStatus::Closed) {
-    surfaceNativeError(
-        "Native audio rejected the mute change.");
+    surfaceNativeError(NativeOwnerError::InternalProtocolViolation,
+                       "Native audio rejected the mute change.");
   }
   return true;
 }
@@ -471,12 +471,14 @@ NativePlaybackOwner::executeAction(const playback_router::Action &action) {
   switch (action.kind) {
   case Kind::NativePrepare:
     if (retirement_) {
-      surfaceNativeError("RetirementCapacityUnavailable");
+      surfaceNativeError(NativeOwnerError::RetirementCapacityUnavailable,
+                         "RetirementCapacityUnavailable");
       return rejectNativeCommand(action.prepare.stamp);
     }
     retirement_ = NativeRetirement::reserve();
     if (!retirement_) {
-      surfaceNativeError("SessionBudgetExceeded");
+      surfaceNativeError(NativeOwnerError::SessionBudgetExceeded,
+                         "SessionBudgetExceeded");
       return router_.onNativeFailed({action.prepare.stamp,
           native_protocol::FailureReason::Preparation}, nextTick());
     }
@@ -581,15 +583,16 @@ NativePlaybackOwner::executeAction(const playback_router::Action &action) {
     clearNativePreview();
     clearNativeCommit(true);
     if (nativeSession_ == nullptr) {
-      surfaceNativeError("Native playback lost its session before retirement.");
+      surfaceNativeError(NativeOwnerError::InternalProtocolViolation,
+                       "Native playback lost its session before retirement.");
       return std::nullopt;
     }
     nativeStop_ = action.stop;
     const auto status = nativeSession_->stop(action.stop);
     if (status != macos::NativeMediaSessionCommandStatus::Accepted &&
         status != macos::NativeMediaSessionCommandStatus::Ignored) {
-      surfaceNativeError(
-          "Native playback could not begin exact retirement.");
+      surfaceNativeError(NativeOwnerError::InternalProtocolViolation,
+                       "Native playback could not begin exact retirement.");
     }
     return std::nullopt;
   }
@@ -614,7 +617,8 @@ NativePlaybackOwner::executeAction(const playback_router::Action &action) {
 
 std::optional<playback_router::Transition>
 NativePlaybackOwner::rejectNativeCommand(native_protocol::Stamp stamp) {
-  surfaceNativeError("Native playback rejected an internal lifecycle command.");
+  surfaceNativeError(NativeOwnerError::InternalProtocolViolation,
+                       "Native playback rejected an internal lifecycle command.");
   return router_.onNativeFailed(
       {stamp, native_protocol::FailureReason::Protocol}, nextTick());
 }
@@ -897,7 +901,8 @@ void NativePlaybackOwner::abandonNativeSession() {
     nativeStop_.reset();
     const auto reset = router_.abandonNativeAfterSynchronousRetirement(nextTick());
     if (!applied(reset) || reset.action) {
-      surfaceNativeError("InternalProtocolViolation");
+      surfaceNativeError(NativeOwnerError::InternalProtocolViolation,
+                         "InternalProtocolViolation");
       return;
     }
     pruneSourceRecords();
@@ -921,16 +926,20 @@ NativePlaybackOwner::beginNativePrepare(const playback_router::Action& action) {
   bridge->epoch = nextObservationEpoch_;
 
   std::string error;
+  bool presentationUnavailable = false;
   WAM_STARTUP_STAMP(NativeSessionCreateBegin);
   std::unique_ptr<macos::NativeMediaSession> session =
       createNativeMediaSessionSystem(
           {action.prepare.sourceKey, configuration->path}, bridge,
-          configuration->presentation, &error, configuration->captionFeed);
+          configuration->presentation, &error, configuration->captionFeed,
+          &presentationUnavailable);
   WAM_STARTUP_STAMP(NativeSessionCreateEnd);
   if (session == nullptr) {
-    surfaceNativeError(error.empty()
-                           ? "Unable to create native playback."
-                           : error.c_str());
+    surfaceNativeError(presentationUnavailable
+                           ? NativeOwnerError::PresentationUnavailable
+                           : NativeOwnerError::InternalProtocolViolation,
+                       error.empty() ? "Unable to create native playback."
+                                     : error.c_str());
     return router_.onNativeFailed(
         {action.prepare.stamp, native_protocol::FailureReason::Preparation},
         nextTick());
@@ -944,8 +953,8 @@ NativePlaybackOwner::beginNativePrepare(const playback_router::Action& action) {
           macos::NativeMediaSessionCommandStatus::Accepted) {
     nativeSession_ = std::move(session);
     retireNativeSession();
-    surfaceNativeError(
-        "Unable to bind native playback controls.");
+    surfaceNativeError(NativeOwnerError::InternalProtocolViolation,
+                       "Unable to bind native playback controls.");
     return router_.onNativeFailed(
         {action.prepare.stamp, native_protocol::FailureReason::Preparation},
         nextTick());
@@ -962,8 +971,8 @@ NativePlaybackOwner::beginNativePrepare(const playback_router::Action& action) {
       nativeSession_->prepare(action.prepare, configuration->initialPosition);
   if (status != macos::NativeMediaSessionCommandStatus::Accepted) {
     retireNativeSession();
-    surfaceNativeError(
-        "Native playback rejected media preparation.");
+    surfaceNativeError(NativeOwnerError::InternalProtocolViolation,
+                       "Native playback rejected media preparation.");
     return router_.onNativeFailed(
         {action.prepare.stamp, native_protocol::FailureReason::Preparation},
         nextTick());
