@@ -9,6 +9,7 @@
 #include "media/codec/aac.hpp"
 #include "media/media_iso_color.hpp"
 #include "media/video_codec_configuration.hpp"
+#include "platform/macos/core_media_codec_facts.hpp"
 #include "platform/macos/core_media_source_support.hpp"
 #include "platform/macos/matroska_sample_builder.hpp"
 extern "C" {
@@ -181,11 +182,11 @@ public:
                            packet.key ? kCFBooleanFalse : kCFBooleanTrue);
     }
     if (track.codec == MediaCodec::Aac) {
-      CMSetAttachment(storage.sample, CFSTR("WAMAacPiecewiseTimeline"), kCFBooleanTrue, kCMAttachmentMode_ShouldPropagate);
+      CMSetAttachment(storage.sample, aacPiecewiseTimelineAttachmentKey(), kCFBooleanTrue, kCMAttachmentMode_ShouldPropagate);
       const auto floor=audioFrameAtOrAfter(target,static_cast<std::uint32_t>(track.audio->sampleRate));
       const auto frame=exactAudioFrameIndex(packet.pts,static_cast<std::uint32_t>(track.audio->sampleRate));
       const auto floorFrame=floor ? exactAudioFrameIndex(*floor,static_cast<std::uint32_t>(track.audio->sampleRate)) : std::nullopt;
-      if (floorFrame && frame && *floorFrame-*frame>=2048)
+      if (floorFrame && frame && *floorFrame-*frame>=audioPrimingFrames(codec::kAacLcSamplesPerAccessUnit))
         static_cast<void>(statedImmediatePlayoutFrame(storage.sample));
     }
     storage.bytes = size;
@@ -248,7 +249,7 @@ bool audioDescriptor(const LibavformatCursor::Stream& stream, MediaTrackDescript
         kAudioChannelLayoutTag_MPEG_5_1_A};
     format.channelLayoutTag=layouts[format.channels];
     track.codecConfiguration.assign(cookie->view().begin(),cookie->view().end());
-    origin={0,static_cast<std::int32_t>(asc.configuration->sampleRate)};frames=1024;format.framesPerPacket=frames;
+    origin={0,static_cast<std::int32_t>(asc.configuration->sampleRate)};frames=codec::kAacLcSamplesPerAccessUnit;format.framesPerPacket=frames;
   } else {error="LibavformatAudioTimingUnproven";return false;}
   track.audio=format;return true;
 }
@@ -480,7 +481,7 @@ struct LibavformatMediaSource::Impl {
         if(!audioStartsAtOrigin) {
           const auto floor=audioFrameAtOrAfter(target,context->audioOrigin.timescale);
           const auto frame=floor ? exactAudioFrameIndex(*floor,context->audioOrigin.timescale) : std::nullopt;
-          if(!frame || *frame-audioDecodeStart.value < 2048) {
+          if(!frame || *frame-audioDecodeStart.value < audioPrimingFrames(codec::kAacLcSamplesPerAccessUnit)) {
             error="LibavformatAudioSeekPrerollUnproven";return false;
           }
         }
@@ -713,7 +714,7 @@ LibavformatMediaSource::openLocalFile(const std::filesystem::path &path,
         // Some containers omit packet duration; their fixed AAC extent is
         // known from the ASC. Explicit short durations (MOV) are used as stated.
         const auto duration = packet.duration.valid() && packet.duration.value > 0 ? packet.duration :
-            MediaTime{1024,static_cast<std::int32_t>(audioTrack.audio->sampleRate)};
+            MediaTime{codec::kAacLcSamplesPerAccessUnit,static_cast<std::int32_t>(audioTrack.audio->sampleRate)};
         if (!context->aacTimeline->append(packet.pts,duration)) {
           out.error="AacPacketTimelineDiscontinuity: unrepresentable piecewise grid";return fail();
         }

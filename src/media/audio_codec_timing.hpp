@@ -1,12 +1,63 @@
 #pragma once
 
+#include "media/codec/aac.hpp"
 #include "media/native_media_source.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <optional>
 #include <limits>
 
 namespace wam::media {
+
+// Exact integer sample rate, or empty when the rate cannot sit on an integer
+// PCM grid whose timescale is a MediaTime's int32. The one bound for every
+// route.
+[[nodiscard]] inline std::optional<std::uint32_t>
+exactAudioSampleRate(double rate) noexcept {
+  if (!std::isfinite(rate) || rate <= 0.0 ||
+      rate > static_cast<double>(std::numeric_limits<std::int32_t>::max())) {
+    return std::nullopt;
+  }
+  const auto integral = static_cast<std::uint32_t>(rate);
+  if (static_cast<double>(integral) != rate || integral == 0) {
+    return std::nullopt;
+  }
+  return integral;
+}
+
+// Decoder preroll a source guarantees ahead of the first audible frame of an
+// accurate-seek generation, in whole compressed access units.
+//
+// AAC-LC carries no inter-frame dependency beyond the MDCT overlap-add window:
+// each 1024-frame access unit is reconstructed from its own spectral data plus
+// the second half of the previous unit's window, so one decoded predecessor
+// already makes a unit exact. Two units is the conventional decoder preroll
+// and the value used here, which also covers the same overlap structure at the
+// 2048-frame HE-AAC grid and the block-switch history of MP3.
+inline constexpr std::int64_t kAudioPrimingAccessUnits{2};
+// Guards the priming arithmetic against a pathological packet grid.
+inline constexpr std::int64_t kMaximumAudioFramesPerPacket{65'536};
+
+[[nodiscard]] constexpr std::int64_t
+audioPrimingFrames(std::int64_t framesPerPacket) noexcept {
+  return kAudioPrimingAccessUnits * framesPerPacket;
+}
+
+// The latest first-access-unit frame that still leaves the full priming ahead
+// of presentationFrame, clamped at zero.
+[[nodiscard]] constexpr std::int64_t
+audioPrimingCeilingFrame(std::int64_t presentationFrame,
+                         std::int64_t framesPerPacket) noexcept {
+  return std::max<std::int64_t>(
+      presentationFrame - audioPrimingFrames(framesPerPacket), 0);
+}
+
+// The CoreMedia sample attachment that switches the converter to the AAC
+// piecewise timeline. Spelled once; the platform wraps it in a CFString.
+inline constexpr char kAacPiecewiseTimelineAttachmentKey[] =
+    "WAMAacPiecewiseTimeline";
 
 // AAC-LC packet timestamps may jitter within a quarter access unit. The
 // 256-frame bound covers measured residuals through 152 frames and moves audio
@@ -19,7 +70,8 @@ inline constexpr std::int64_t kAacPacketGridResidualFrames = 256;
     MediaTime observed, std::int64_t originFrame, std::uint64_t ordinal,
     std::uint32_t rate) noexcept {
   if (!observed.valid() || !rate || rate > INT32_MAX) return std::nullopt;
-  const __int128 expected = __int128(originFrame) + __int128(ordinal) * 1024;
+  const __int128 expected = __int128(originFrame) +
+                            __int128(ordinal) * codec::kAacLcSamplesPerAccessUnit;
   if (expected < INT64_MIN || expected > INT64_MAX) return std::nullopt;
   const __int128 residual = __int128(observed.value) * rate -
                             expected * observed.timescale;

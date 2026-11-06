@@ -1,5 +1,6 @@
 #pragma once
 
+#include "media/audio_codec_timing.hpp"
 #include "media/native_media_source.hpp"
 #include "media/media_codec_facts.hpp"
 
@@ -48,22 +49,6 @@ inline void assignError(std::string* error, const char* message) {
   }
   const auto order = media::compareMediaTime(target, duration);
   return order && *order != media::MediaTimeOrder::Greater;
-}
-
-// Exact integer sample rate of a selected audio track, or empty when the
-// container declared a rate that cannot be placed on an integer PCM grid.
-[[nodiscard]] inline std::optional<std::uint32_t> exactAudioSampleRate(
-    const media::MediaAudioFormat& audio) noexcept {
-  const double rate = audio.sampleRate;
-  if (!std::isfinite(rate) || rate <= 0.0 ||
-      rate > static_cast<double>(std::numeric_limits<std::int32_t>::max())) {
-    return std::nullopt;
-  }
-  const auto integral = static_cast<std::uint32_t>(rate);
-  if (static_cast<double>(integral) != rate || integral == 0) {
-    return std::nullopt;
-  }
-  return integral;
 }
 
 // True when the sample's whole presentation interval closes at or before the
@@ -224,7 +209,7 @@ class CoreMediaSampleStorage final : public media::MediaPayloadStorage {
     return nullptr;
   }
   const media::MediaAudioFormat& audio = *track.audio;
-  if (!exactAudioSampleRate(audio) || audio.channels == 0) {
+  if (!media::exactAudioSampleRate(audio.sampleRate) || audio.channels == 0) {
     return nullptr;
   }
   AudioStreamBasicDescription asbd{};

@@ -88,13 +88,6 @@ class NativeCustomSourceCore {
     std::string error;
   };
 
-  // Decoder preroll the audio converter demands ahead of the first audible
-  // frame of a generation that does not begin at the stream origin, in whole
-  // compressed access units: a transform codec reconstructs each unit partly
-  // from its predecessor's window, so two decoded predecessors is full priming.
-  static constexpr std::int64_t kAudioPrimingAccessUnits{2};
-  static constexpr std::int64_t kMaximumAudioFramesPerPacket{65'536};
-
   NativeCustomSourceCore() = default;
   ~NativeCustomSourceCore() { releaseFormats(); }
 

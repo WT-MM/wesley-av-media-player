@@ -7,6 +7,8 @@ namespace wam::media {
 // Immutable after finish(). The observed stamps identify packets after any
 // seek; presentation stamps and extents are the same proof used at open.
 class AacPacketTimeline {
+  static constexpr std::int64_t kAacFrames = codec::kAacLcSamplesPerAccessUnit;
+
 public:
   struct Packet { MediaTime observed; std::int64_t start; std::int64_t duration; };
   explicit AacPacketTimeline(std::uint32_t rate)
@@ -52,16 +54,16 @@ public:
       }
     }
     const auto projected = projectAacPacketGrid(pts, origin_, packets_.size()-segmentOrdinal_, rate_);
-    if (!projected || projected->value > INT64_MAX-1024) return false;
-    packets_.push_back({pts,projected->value,1024});
+    if (!projected || projected->value > INT64_MAX-kAacFrames) return false;
+    packets_.push_back({pts,projected->value,kAacFrames});
     previousDuration_ = duration;
     return true;
   }
   bool finish(bool exactTail = true) {
     if (packets_.empty()) return false;
-    const auto tail = exactTail ? exactAudioFrameIndex(previousDuration_,rate_) : std::optional<std::int64_t>(1024);
+    const auto tail = exactTail ? exactAudioFrameIndex(previousDuration_,rate_) : std::optional<std::int64_t>(kAacFrames);
     if (!tail || *tail <= 0) return false;
-    packets_.back().duration = std::min<std::int64_t>(*tail,1024);
+    packets_.back().duration = std::min<std::int64_t>(*tail,kAacFrames);
     return packets_.back().start <= INT64_MAX-packets_.back().duration;
   }
   const Packet* find(MediaTime observed) const {

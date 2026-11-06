@@ -167,8 +167,6 @@ struct MpegTsMediaSource::Impl final
   using Base::cancellation;
   using Base::descriptor;
   using Base::generation;
-  using Base::kAudioPrimingAccessUnits;
-  using Base::kMaximumAudioFramesPerPacket;
   using Base::limits;
   using Base::publishCancellation;
   using Base::requestedTarget;
@@ -388,11 +386,11 @@ struct MpegTsMediaSource::Impl final
       assignError(error, "selected mpeg-ts audio track has no format");
       return false;
     }
-    const auto rate = exactAudioSampleRate(*track->audio);
+    const auto rate = media::exactAudioSampleRate(track->audio->sampleRate);
     const auto framesPerPacket =
         static_cast<std::int64_t>(track->audio->framesPerPacket);
     if (!rate || framesPerPacket <= 0 ||
-        framesPerPacket > kMaximumAudioFramesPerPacket ||
+        framesPerPacket > media::kMaximumAudioFramesPerPacket ||
         track->audio->channels == 0) {
       assignError(error, "mpeg-ts audio has no exact integer packet grid");
       return false;
@@ -478,9 +476,8 @@ struct MpegTsMediaSource::Impl final
                     "mpeg-ts audio presentation start is off the frame grid");
         return false;
       }
-      const std::int64_t ceilingFrame = std::max<std::int64_t>(
-          *presentationFrame - kAudioPrimingAccessUnits * audioFramesPerPacket,
-          0);
+      const std::int64_t ceilingFrame = media::audioPrimingCeilingFrame(
+          *presentationFrame, audioFramesPerPacket);
       audioProofCeiling = audioFrameTime(
           ceilingFrame, static_cast<std::uint32_t>(audioSampleRate));
       if (!audioProofCeiling) {

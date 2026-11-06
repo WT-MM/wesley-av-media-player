@@ -157,6 +157,9 @@ decoderFrameDeficitFrames(media::MediaCodec codec,
   return facts.decoderTailShortfallFrames;
 }
 
+// The AAC piecewise path works on the AAC-LC access-unit grid.
+constexpr std::uint64_t kAacFrames = media::codec::kAacLcSamplesPerAccessUnit;
+
 constexpr std::size_t kChannelLayoutPrefixBytes =
     offsetof(AudioChannelLayout, mChannelDescriptions);
 
@@ -1164,7 +1167,7 @@ struct NativeAudioConverter::Impl {
     const auto recordFrames = [&](std::size_t index,
                                   std::uint32_t variableFrames) noexcept {
       const std::uint32_t frames =
-          aac_piecewise ? 1024 : variableFrames != 0 ? variableFrames : audio.framesPerPacket;
+          aac_piecewise ? kAacFrames : variableFrames != 0 ? variableFrames : audio.framesPerPacket;
       std::uint64_t nextTotal = 0;
       if (frames == 0 || !checkedAdd(frameTotal, frames, &nextTotal)) {
         return false;
@@ -1406,17 +1409,17 @@ struct NativeAudioConverter::Impl {
   NativeAudioPumpResult publishAac(std::string* error) {
     while (aac_size) {
       const auto& edit = aac_edits[aac_head];
-      const bool silence = aac_decoded_offset == 1024 && edit.duration > 1024;
-      if (aac_decoded_offset == 1024 && (!silence || aac_silence_offset == edit.duration-1024)) {
+      const bool silence = aac_decoded_offset == kAacFrames && edit.duration > kAacFrames;
+      if (aac_decoded_offset == kAacFrames && (!silence || aac_silence_offset == edit.duration-kAacFrames)) {
         aac_head = (aac_head+1)%aac_edits.size(); --aac_size;
         aac_decoded_offset = aac_silence_offset = 0;
         continue;
       }
       if (!silence && aac_pending_offset == aac_pending_count) return NativeAudioPumpResult::Progress;
-      const auto offset = silence ? 1024+aac_silence_offset : aac_decoded_offset;
+      const auto offset = silence ? kAacFrames+aac_silence_offset : aac_decoded_offset;
       const auto start = edit.start+static_cast<std::int64_t>(offset);
       auto n = silence ? std::min<std::uint64_t>(NativeAudioConverter::kFramesPerPump,edit.duration-offset) :
-          std::min<std::uint64_t>(1024-aac_decoded_offset,aac_pending_count-aac_pending_offset);
+          std::min<std::uint64_t>(kAacFrames-aac_decoded_offset,aac_pending_count-aac_pending_offset);
       // Skipping an hour of declared silence on a seek is arithmetic, not
       // an hour's worth of zero slabs or an unbounded pump loop.
       if (silence && start < presentation_floor_frame)
@@ -1783,7 +1786,7 @@ NativeAudioConverter::prepare(const media::MediaSample &sample,
     return outcome;
   }
   const bool piecewise = state.audio.formatTag == kAudioFormatMPEG4AAC &&
-      CMGetAttachment(nativeSample,CFSTR("WAMAacPiecewiseTimeline"),nullptr) == kCFBooleanTrue;
+      CMGetAttachment(nativeSample,aacPiecewiseTimelineAttachmentKey(),nullptr) == kCFBooleanTrue;
   if ((state.has_input_timeline && piecewise != state.aac_piecewise) ||
       (piecewise && sample.sampleCount > state.aac_edits.size()-state.aac_size)) {
     assignError(error,"AAC piecewise mapping capacity or identity mismatch");

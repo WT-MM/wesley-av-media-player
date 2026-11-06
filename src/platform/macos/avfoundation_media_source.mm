@@ -75,16 +75,6 @@ constexpr std::size_t kMaximumMediaFreeMarkers{64};
 // ceiling stricter, both of which fail closed.
 constexpr std::int64_t kMaximumVariableAccessUnitFrames{5'760};
 
-// Decoder preroll this backend guarantees ahead of the first audible frame of
-// an accurate-seek generation, stated in whole compressed access units.
-//
-// AAC-LC carries no inter-frame dependency beyond the MDCT overlap-add window:
-// each 1024-frame access unit is reconstructed from its own spectral data plus
-// the second half of the previous unit's window, so one decoded predecessor
-// already makes a unit exact. Two units is the conventional decoder preroll
-// and the value used here, which also covers the same overlap structure at the
-// 2048-frame HE-AAC grid and the block-switch history of MP3.
-constexpr std::int64_t kAudioPrimingAccessUnits{2};
 // Additional units by which the reader time range is placed early. Given a
 // range start, AVFoundation may begin an audio track output at the access unit
 // boundary at or after it rather than at the unit containing it (observed up
@@ -92,13 +82,11 @@ constexpr std::int64_t kAudioPrimingAccessUnits{2};
 // intact; it is never assumed - the staged unit is always measured against the
 // exact priming ceiling before any proof is stated.
 constexpr std::int64_t kAudioReaderStartSlackAccessUnits{2};
-// Guards the priming arithmetic below against a pathological packet grid.
-constexpr std::int64_t kMaximumAudioFramesPerPacket{65'536};
 
 // Exact audio boundaries an accurate-seek generation needs before it reads.
 // searchFloor is the latest media time the reader may start at; proofCeiling
 // is the latest first-access-unit timestamp that still leaves the full
-// kAudioPrimingAccessUnits of decoded-and-discarded audio ahead of the
+// media::kAudioPrimingAccessUnits of decoded-and-discarded audio ahead of the
 // generation's first audible frame A = ceil(T*R)/R.
 struct AudioPrimingPlan {
   MediaTime searchFloor{};
@@ -107,13 +95,13 @@ struct AudioPrimingPlan {
 
 [[nodiscard]] std::optional<AudioPrimingPlan> audioPrimingPlanFacts(
     const MediaTrackDescriptor& audio, MediaTime target) noexcept {
-  if (!audio.audio || !std::isfinite(audio.audio->sampleRate) ||
-      audio.audio->sampleRate <= 0.0 ||
-      audio.audio->sampleRate >
-          static_cast<double>(std::numeric_limits<std::uint32_t>::max())) {
+  const auto exactRate =
+      audio.audio ? media::exactAudioSampleRate(audio.audio->sampleRate)
+                  : std::nullopt;
+  if (!exactRate) {
     return std::nullopt;
   }
-  const auto sampleRate = static_cast<std::uint32_t>(audio.audio->sampleRate);
+  const std::uint32_t sampleRate = *exactRate;
   // A codec whose packets carry no fixed frame count declares zero here and
   // states the count per packet instead. Bound it rather than refusing the
   // generation; see kMaximumVariableAccessUnitFrames.
@@ -121,9 +109,8 @@ struct AudioPrimingPlan {
       audio.audio->framesPerPacket == 0
           ? kMaximumVariableAccessUnitFrames
           : static_cast<std::int64_t>(audio.audio->framesPerPacket);
-  if (static_cast<double>(sampleRate) != audio.audio->sampleRate ||
-      sampleRate == 0 || framesPerPacket <= 0 ||
-      framesPerPacket > kMaximumAudioFramesPerPacket) {
+  if (framesPerPacket <= 0 ||
+      framesPerPacket > media::kMaximumAudioFramesPerPacket) {
     return std::nullopt;
   }
   // A stays exactly the accurate-seek ceiling frame; only the decode start
@@ -136,13 +123,13 @@ struct AudioPrimingPlan {
   if (!presentationFrame || *presentationFrame < 0) {
     return std::nullopt;
   }
-  const std::int64_t priming = kAudioPrimingAccessUnits * framesPerPacket;
   const std::int64_t searchBackoff =
-      priming + kAudioReaderStartSlackAccessUnits * framesPerPacket;
+      media::audioPrimingFrames(framesPerPacket) +
+      kAudioReaderStartSlackAccessUnits * framesPerPacket;
   const auto floorFrame = static_cast<std::int64_t>(
       std::max<std::int64_t>(*presentationFrame - searchBackoff, 0));
-  const auto ceilingFrame = static_cast<std::int64_t>(
-      std::max<std::int64_t>(*presentationFrame - priming, 0));
+  const std::int64_t ceilingFrame =
+      media::audioPrimingCeilingFrame(*presentationFrame, framesPerPacket);
   const auto scale = static_cast<std::int32_t>(sampleRate);
   return AudioPrimingPlan{MediaTime{floorFrame, scale},
                           MediaTime{ceilingFrame, scale}};
@@ -188,15 +175,12 @@ struct AudioPrimingPlan {
   const AudioStreamBasicDescription* asbd =
       CMAudioFormatDescriptionGetStreamBasicDescription(
           static_cast<CMAudioFormatDescriptionRef>(format));
-  if (asbd == nullptr || !(asbd->mSampleRate > 0.0) ||
-      asbd->mSampleRate >
-          static_cast<double>(std::numeric_limits<std::int32_t>::max())) {
+  const auto exactRate =
+      asbd ? media::exactAudioSampleRate(asbd->mSampleRate) : std::nullopt;
+  if (!exactRate) {
     return kCMTimeInvalid;
   }
-  const auto timescale = static_cast<std::int32_t>(asbd->mSampleRate);
-  if (static_cast<double>(timescale) != asbd->mSampleRate) {
-    return kCMTimeInvalid;
-  }
+  const auto timescale = static_cast<std::int32_t>(*exactRate);
   std::uint32_t frames = asbd->mFramesPerPacket;
   // A per-packet frame count only names one access unit when the timing array
   // states one entry per access unit; a single shared entry describes them all
@@ -275,22 +259,24 @@ struct AudioPrimingPlan {
   const auto format = CMSampleBufferGetFormatDescription(sample);
   if (!format || CMFormatDescriptionGetMediaType(format) != kCMMediaType_Audio) return 0;
   const auto* asbd = CMAudioFormatDescriptionGetStreamBasicDescription(format);
+  constexpr std::uint32_t kAacFrames = media::codec::kAacLcSamplesPerAccessUnit;
   if (!asbd || asbd->mFormatID != kAudioFormatMPEG4AAC ||
-      asbd->mFramesPerPacket != 1024 || asbd->mSampleRate <= 0 ||
-      asbd->mSampleRate > INT32_MAX) return 0;
-  const auto rate = static_cast<std::uint32_t>(asbd->mSampleRate);
-  if (rate != asbd->mSampleRate) return 0;
+      asbd->mFramesPerPacket != kAacFrames) return 0;
+  const auto exactRate = media::exactAudioSampleRate(asbd->mSampleRate);
+  if (!exactRate) return 0;
+  const std::uint32_t rate = *exactRate;
   std::size_t changed = 0;
   for (std::size_t i = 0; i < entries; ++i) {
     auto& entry = timing[i];
     const auto pts = entry.presentationTimeStamp;
     if (!CMTIME_IS_NUMERIC(pts) || pts.value < 0 || pts.timescale != rate) continue;
-    const auto ordinal = (static_cast<std::uint64_t>(pts.value) + 512) / 1024;
+    const auto ordinal =
+        (static_cast<std::uint64_t>(pts.value) + kAacFrames / 2) / kAacFrames;
     const auto projected = media::projectAacPacketGrid({pts.value, pts.timescale}, 0, ordinal, rate);
     if (!projected) continue;
-    if (pts.value != projected->value || CMTimeCompare(entry.duration, CMTimeMake(1024,rate))) ++changed;
+    if (pts.value != projected->value || CMTimeCompare(entry.duration, CMTimeMake(kAacFrames, rate))) ++changed;
     entry.presentationTimeStamp = CMTimeMake(projected->value, rate);
-    entry.duration = CMTimeMake(1024, rate);
+    entry.duration = CMTimeMake(kAacFrames, rate);
   }
   return changed;
 }
@@ -1082,16 +1068,11 @@ audioMovieTimelineFactsFor(NSArray* segments) noexcept {
   if (!audio.audio) {
     return std::nullopt;
   }
-  const double rate = audio.audio->sampleRate;
-  if (!std::isfinite(rate) || rate <= 0.0 ||
-      rate > static_cast<double>(std::numeric_limits<std::int32_t>::max())) {
+  const auto rate = media::exactAudioSampleRate(audio.audio->sampleRate);
+  if (!rate) {
     return std::nullopt;
   }
-  const auto scale = static_cast<std::int32_t>(rate);
-  if (static_cast<double>(scale) != rate) {
-    return std::nullopt;
-  }
-  return CMTimeMake(leadIn, scale);
+  return CMTimeMake(leadIn, static_cast<std::int32_t>(*rate));
 }
 
 [[nodiscard]] bool preservesZeroBasedTrackTimeline(
@@ -3452,13 +3433,7 @@ class ProductionGeneration final : public AVFoundationGeneration {
                                   ? selectedAudio->audio->sampleRate
                                   : 0.0;
           const auto sampleRate =
-              std::isfinite(rate) && rate > 0.0 &&
-                      rate <= static_cast<double>(
-                                  std::numeric_limits<std::int32_t>::max()) &&
-                      static_cast<double>(static_cast<std::uint32_t>(rate)) ==
-                          rate
-                  ? static_cast<std::uint32_t>(rate)
-                  : 0u;
+              media::exactAudioSampleRate(rate).value_or(0U);
           if (sampleRate != 0) {
             const auto exactShift = exactMediaTime(audio_movie_shift_);
             const bool shiftOnGrid =
@@ -3602,7 +3577,7 @@ class ProductionGeneration final : public AVFoundationGeneration {
           // Asset duration can end at the last picture before the audio tail.
           // AVAssetReader's explicit range otherwise silently omits those AUs.
           const auto audioEnd = CMTimeAdd(CMTimeMake(last.observed.value,last.observed.timescale),
-                                         CMTimeMake(1024,aac_timeline_->rate()));
+                                         CMTimeMake(media::codec::kAacLcSamplesPerAccessUnit,aac_timeline_->rate()));
           if (CMTimeCompare(audioEnd,readerEnd)>0) readerEnd=audioEnd;
         }
         const auto range = exactReaderTimeRangeFacts(readerEnd, decodeStart);
@@ -3820,7 +3795,8 @@ class ProductionGeneration final : public AVFoundationGeneration {
     if (result && result->codec == MediaCodec::Aac) {
       // AVSampleCursor walks the sample table, including packets outside an
       // edit. No compressed payload is read or retained by this open proof.
-      if (result->audio->framesPerPacket != 1024) {
+      if (result->audio->framesPerPacket !=
+          media::codec::kAacLcSamplesPerAccessUnit) {
         assignError(error, "AacPacketFrameLengthUnsupported");
         return std::nullopt;
       }
@@ -4128,7 +4104,7 @@ class ProductionGeneration final : public AVFoundationGeneration {
       CFRelease(restated);
       return nullptr;
     }
-    if (aac_timeline_) CMSetAttachment(restated, CFSTR("WAMAacPiecewiseTimeline"),
+    if (aac_timeline_) CMSetAttachment(restated, aacPiecewiseTimelineAttachmentKey(),
         kCFBooleanTrue, kCMAttachmentMode_ShouldPropagate);
     return restated;
   }
@@ -4870,16 +4846,12 @@ struct AVFoundationMediaSource::Impl {
     if (track == nullptr || !track->audio || head == nullptr) {
       return std::nullopt;
     }
-    const double rate = track->audio->sampleRate;
-    if (!std::isfinite(rate) || rate <= 0.0 ||
-        rate > static_cast<double>(
-                   std::numeric_limits<std::uint32_t>::max())) {
+    const auto exactRate =
+        media::exactAudioSampleRate(track->audio->sampleRate);
+    if (!exactRate) {
       return std::nullopt;
     }
-    const auto sampleRate = static_cast<std::uint32_t>(rate);
-    if (static_cast<double>(sampleRate) != rate) {
-      return std::nullopt;
-    }
+    const std::uint32_t sampleRate = *exactRate;
     const MediaTime decodeStart = head->presentationTime;
     const auto decodeFrame =
         media::exactAudioFrameIndex(decodeStart, sampleRate);

@@ -119,8 +119,6 @@ struct MatroskaMediaSource::Impl final
   using Base::cancellation;
   using Base::descriptor;
   using Base::generation;
-  using Base::kAudioPrimingAccessUnits;
-  using Base::kMaximumAudioFramesPerPacket;
   using Base::limits;
   using Base::publishCancellation;
   using Base::resetAudioFacts;
@@ -239,11 +237,11 @@ struct MatroskaMediaSource::Impl final
       assignError(error, "selected matroska audio track has no format");
       return false;
     }
-    const auto rate = exactAudioSampleRate(*track->audio);
+    const auto rate = media::exactAudioSampleRate(track->audio->sampleRate);
     const auto framesPerPacket =
         static_cast<std::int64_t>(track->audio->framesPerPacket);
     if (!rate || framesPerPacket <= 0 ||
-        framesPerPacket > kMaximumAudioFramesPerPacket) {
+        framesPerPacket > media::kMaximumAudioFramesPerPacket) {
       assignError(error, "matroska audio has no exact integer packet grid");
       return false;
     }
@@ -267,8 +265,8 @@ struct MatroskaMediaSource::Impl final
                   "matroska audio presentation start is off the frame grid");
       return false;
     }
-    const std::int64_t ceilingFrame = std::max<std::int64_t>(
-        *presentationFrame - kAudioPrimingAccessUnits * framesPerPacket, 0);
+    const std::int64_t ceilingFrame =
+        media::audioPrimingCeilingFrame(*presentationFrame, framesPerPacket);
     audioProofCeiling = MediaTime{ceilingFrame, audioSampleRate};
     return true;
   }
