@@ -3,8 +3,8 @@
 #include "media/live_caption_feed.hpp"
 #include "media/native_playback_contract.hpp"
 #include "media/native_exact_playback.hpp"
-#include "avfoundation_asset_context.hpp"
 #include "native_audio_session.hpp"
+#include "native_session_ports.hpp"
 #include "native_preview_frame_lane.hpp"
 #include "native_tracked_video_arbiter.hpp"
 #include "native_tracked_video_output.hpp"
@@ -141,7 +141,36 @@ struct NativeMediaSessionSourceBinding {
   std::filesystem::path localPath;
 };
 
+// The children of one session. Production builds them on the worker after
+// pure path/time preflight; each port views the consumer beside it.
+struct NativeMediaSessionGraph {
+  std::unique_ptr<media::MediaSource> source;
+  std::unique_ptr<media::NativeVideoConsumer> video;
+  std::unique_ptr<media::NativeAudioConsumer> audio;
+  std::unique_ptr<SessionVideoPort> videoPort;
+  std::unique_ptr<SessionClockAuthority> audioPort;
+};
+
+struct NativeMediaSessionDependencies;
+
+// Everything a graph factory needs from the session to build its children.
+struct NativeMediaSessionGraphRequest {
+  const std::filesystem::path& localPath;
+  media::MediaGeneration reservedGeneration{0};
+  // Retained by every child; it carries the session's cached clock control.
+  std::shared_ptr<void> childLifetime;
+  NativeVideoClockSeam videoClock{};
+  NativeMediaSessionDependencies& dependencies;
+};
+
+// Builds the session's children on the worker; an empty graph fails Prepare.
+using NativeMediaSessionGraphFactory =
+    NativeMediaSessionGraph (*)(void* context,
+                                NativeMediaSessionGraphRequest request) noexcept;
+
 struct NativeMediaSessionDependencies {
+  NativeMediaSessionGraphFactory graphFactory{nullptr};
+  void* graphFactoryContext{nullptr};
   // Retains the GUI output and every opaque dependency supplied in the audio
   // call table. The session additionally retains its shared Wake object.
   std::shared_ptr<void> externalLifetime;
@@ -458,66 +487,16 @@ class NativeMediaSession final {
 };
 
 #if defined(WAM_NATIVE_MEDIA_SESSION_TESTING)
-// Deterministic fixture seam. Production create() always constructs the four
-// concrete owners above lazily on the worker after pure path/time preflight.
-// Tests may replace the graph while exercising the identical worker,
-// cancellation latch, ownership phases, retirement barrier, and fact mailbox.
-struct NativeMediaSessionTestVideoControl {
-  void* context{nullptr};
-  NativeVideoConsumerArmProgress (*arm)(
-      void* context, media::MediaGeneration generation) noexcept{nullptr};
-  media::MediaGeneration (*highestExposed)(void* context) noexcept{nullptr};
-  std::uint64_t (*lastOutputEventSequence)(void* context) noexcept{nullptr};
-  std::uint64_t (*nextDueHostTicks)(void* context) noexcept{nullptr};
-  std::optional<NativeTrackedVideoEvent> (*takeOutputEvent)(
-      void* context) noexcept{nullptr};
-  NativeVideoConsumerPreviewProgress (*quiesceForPreview)(
-      void* context, media::MediaGeneration generation) noexcept{nullptr};
-};
-
-struct NativeMediaSessionTestAudioControl {
-  void* context{nullptr};
-  NativeAudioSessionProgress (*start)(void* context) noexcept{nullptr};
-  NativeAudioSessionProgress (*setPaused)(void* context,
-                                          bool paused) noexcept{nullptr};
-  NativeAudioSessionProgress (*setGain)(void* context,
-                                        float gain) noexcept{nullptr};
-  NativeAudioSessionProgress (*setMuted)(void* context,
-                                         bool muted) noexcept{nullptr};
-  NativeAudioSessionProgress (*stop)(void* context) noexcept{nullptr};
-  NativeMediaClockSnapshot (*clock)(void* context) noexcept{nullptr};
-  media::MediaGeneration (*highestExposed)(void* context) noexcept{nullptr};
-  NativeAudioSessionProgress (*suspendForPause)(void* context) noexcept{nullptr};
-};
-
-struct NativeMediaSessionTestPreviewControl {
-  void* context{nullptr};
-  NativePreviewFrameRequestStatus (*request)(
-      void* context, native_playback::PreviewFrame command,
-      NativePreviewFrameTarget target) noexcept{nullptr};
-  NativePreviewFramePumpProgress (*pump)(void* context) noexcept{nullptr};
-  std::optional<native_playback::PreviewPresented> (*takePresented)(
-      void* context) noexcept{nullptr};
-  NativePreviewFrameCancelProgress (*stop)(
-      void* context,
-      native_playback::Generation activeGeneration) noexcept{nullptr};
-};
-
-struct NativeMediaSessionTestGraph {
-  std::unique_ptr<media::MediaSource> source;
-  std::unique_ptr<media::NativeVideoConsumer> video;
-  std::unique_ptr<media::NativeAudioConsumer> audio;
-  NativeMediaSessionTestVideoControl videoControl;
-  NativeMediaSessionTestAudioControl audioControl;
-  NativeMediaSessionTestPreviewControl previewControl;
-  // Optional production-wiring seam. When supplied, the session validates
-  // this exact main-source context after Ready and exposes the immutable
-  // preview binding to the observer before using the injected lane control.
-  std::shared_ptr<const AVFoundationAssetContext> assetContext;
-  bool (*observePreviewBinding)(
-      void* context,
-      const NativePreviewBinding& binding) noexcept{nullptr};
-  void* previewBindingObserverContext{nullptr};
+// Deterministic fixture seam: tests replace the graph while exercising the
+// identical worker, cancellation latch, ownership phases, retirement barrier,
+// and fact mailbox.
+// A preview port injected in place of the production preview lane. The
+// observer, when present, first sees the exact preview binding.
+struct NativeMediaSessionTestPreview {
+  std::unique_ptr<SessionPreviewPort> port;
+  bool (*observeBinding)(void* context,
+                         const NativePreviewBinding& binding) noexcept{nullptr};
+  void* observerContext{nullptr};
 };
 
 enum class NativeMediaSessionTestPreviewCompletionPoint : std::uint8_t {
@@ -545,14 +524,9 @@ struct NativeMediaSessionTestCommitPhaseTrace {
   std::size_t length{0};
 };
 
-using NativeMediaSessionTestGraphFactory =
-    NativeMediaSessionTestGraph (*)(void* context);
-
 struct NativeMediaSessionTestAccess {
-  static void installGraphFactory(
-      NativeMediaSession& session,
-      NativeMediaSessionTestGraphFactory factory,
-      void* context) noexcept;
+  static void installPreview(NativeMediaSession& session,
+                             NativeMediaSessionTestPreview preview) noexcept;
   static void installFailureLatchBarrier(
       NativeMediaSession& session,
       std::atomic<bool>* entered,

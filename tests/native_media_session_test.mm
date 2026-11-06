@@ -1,5 +1,6 @@
 #define WAM_NATIVE_MEDIA_SESSION_TESTING 1
 
+#include "platform/macos/avfoundation_asset_context.hpp"
 #include "platform/macos/native_media_session.hpp"
 #include "platform/macos/native_presentation_admission.hpp"
 #include "media/playback_router.hpp"
@@ -156,7 +157,9 @@ struct GraphState {
   std::atomic<std::uint64_t> firstPreviewPauseOrder{0};
   std::atomic<std::uint64_t> firstPreviewQuiesceOrder{0};
   std::atomic<std::uint64_t> firstPreviewRequestOrder{0};
-  std::shared_ptr<const AVFoundationAssetContext> assetContext;
+  // The prepared context the fake source handed to the session at Ready.
+  std::shared_ptr<const media::MediaSourcePreparedContext> assetContext;
+  bool observePreviewBinding{false};
   std::atomic<std::uint64_t> previewBindingObservations{0};
   std::atomic<bool> previewBindingExact{false};
   std::atomic<bool> trackCommitLifecycle{false};
@@ -259,14 +262,7 @@ std::shared_ptr<const media::MediaSourceDescriptor> descriptor(
 }
 
 void installExactAssetContext(GraphState& state) {
-  media::MediaSourceOpenOptions options;
-  options.selection.requireVideo = true;
-  options.selection.requireAudio = true;
-  state.assetContext = makeAVFoundationAssetContextForTesting(
-      "/tmp/native-session-test.mov", options, state.descriptor,
-      std::make_shared<int>(1));
-  expect(state.assetContext != nullptr,
-         "test creates exact main-source asset context");
+  state.observePreviewBinding = true;
 }
 
 class FakeSource final : public media::MediaSource {
@@ -290,7 +286,7 @@ class FakeSource final : public media::MediaSource {
   }
 
   media::MediaSourceOpenOutcome openLocalFile(
-      const std::filesystem::path&,
+      const std::filesystem::path& path,
       const media::MediaSourceOpenOptions& options,
       media::MediaGeneration generation) override {
     state_->sourceOpens.fetch_add(1, std::memory_order_relaxed);
@@ -316,8 +312,13 @@ class FakeSource final : public media::MediaSource {
                     .value_or(media::MediaTime{});
       audioWindow.startsAtStreamOrigin = true;
     }
+    if (state_->openStatus == media::MediaSourceOpenStatus::Ready) {
+      context_ = makeAVFoundationAssetContextForTesting(
+          path, options, state_->descriptor, std::make_shared<int>(1));
+      state_->assetContext = context_;
+    }
     return {state_->openStatus, generation, {0, 1}, state_->descriptor, {},
-            {}, audioWindow};
+            context_, audioWindow};
   }
 
   media::MediaSourceSeekOutcome seek(
@@ -351,7 +352,7 @@ class FakeSource final : public media::MediaSource {
             audioWindow.decodeStart == media::MediaTime{0, 1};
       }
     }
-    return {true, request.generation, state_->singleGop ? media::MediaTime{0, 1} : request.target, {}, {}, audioWindow};
+    return {true, request.generation, state_->singleGop ? media::MediaTime{0, 1} : request.target, {}, context_, audioWindow};
   }
 
   media::MediaSourceReadResult readNext(
@@ -403,6 +404,7 @@ class FakeSource final : public media::MediaSource {
 
  private:
   std::shared_ptr<GraphState> state_;
+  std::shared_ptr<const media::MediaSourcePreparedContext> context_;
   std::atomic<media::MediaGeneration> operation_{0};
   media::MediaGeneration generation_{0};
   std::uint64_t read_{0};
@@ -909,7 +911,98 @@ NativeAudioSessionProgress audioSuspend(void* context) noexcept {
   return NativeAudioSessionProgress::Done;
 }
 
-NativeMediaSessionTestGraph makeGraph(void* context) {
+class FakeVideoPort final : public SessionVideoPort {
+ public:
+  explicit FakeVideoPort(GraphState* state) noexcept : state_(state) {}
+  NativeVideoConsumerArmProgress armFirstGeneration(
+      media::MediaGeneration generation) noexcept override {
+    return armVideo(state_, generation);
+  }
+  media::MediaGeneration highestExposedGeneration() noexcept override {
+    return videoHigh(state_);
+  }
+  std::uint64_t lastOutputEventSequence() noexcept override {
+    return ::lastOutputEventSequence(state_);
+  }
+  std::uint64_t nextDueHostTicks() noexcept override {
+    return nextVideoDueHostTicks(state_);
+  }
+  std::optional<NativeTrackedVideoEvent> takeOutputEvent() noexcept override {
+    return ::takeOutputEvent(state_);
+  }
+  NativeVideoConsumerPreviewProgress quiesceForPreview(
+      media::MediaGeneration generation) noexcept override {
+    return ::quiesceForPreview(state_, generation);
+  }
+
+ private:
+  GraphState* state_;
+};
+
+class FakeClockAuthority final : public SessionClockAuthority {
+ public:
+  explicit FakeClockAuthority(GraphState* state) noexcept : state_(state) {}
+  NativeAudioSessionProgress start() noexcept override {
+    return audioStart(state_);
+  }
+  NativeAudioSessionProgress setPaused(bool paused) noexcept override {
+    return audioPaused(state_, paused);
+  }
+  NativeAudioSessionProgress setGain(float gain) noexcept override {
+    return audioGain(state_, gain);
+  }
+  NativeAudioSessionProgress setMuted(bool muted) noexcept override {
+    return audioMuted(state_, muted);
+  }
+  NativeAudioSessionProgress setRate(NativePlaybackRate,
+                                     bool) noexcept override {
+    return NativeAudioSessionProgress::Done;
+  }
+  NativeAudioSessionProgress stop() noexcept override {
+    return audioStop(state_);
+  }
+  NativeMediaClockSnapshot visibleClock() const noexcept override {
+    return testClock(state_);
+  }
+  media::MediaGeneration highestExposedGeneration() const noexcept override {
+    return audioHigh(state_);
+  }
+  bool suspendsForPause() const noexcept override {
+    return state_->observePauseSuspend;
+  }
+  NativeAudioSessionProgress suspendForPause() noexcept override {
+    return audioSuspend(state_);
+  }
+
+ private:
+  GraphState* state_;
+};
+
+class FakePreviewPort final : public SessionPreviewPort {
+ public:
+  explicit FakePreviewPort(GraphState* state) noexcept : state_(state) {}
+  NativePreviewFrameRequestStatus request(
+      protocol::PreviewFrame command,
+      NativePreviewFrameTarget target) noexcept override {
+    return previewRequest(state_, command, std::move(target));
+  }
+  NativePreviewFramePumpProgress pump() noexcept override {
+    return previewPump(state_);
+  }
+  std::optional<protocol::PreviewPresented> takePresented() noexcept override {
+    return takePreviewPresented(state_);
+  }
+  NativePreviewFrameCancelProgress stop(
+      protocol::Generation generation) noexcept override {
+    return stopPreview(state_, generation);
+  }
+
+ private:
+  GraphState* state_;
+};
+
+NativeMediaSessionGraph makeGraph(void* context,
+                                  NativeMediaSessionGraphRequest) noexcept {
   auto* holder = static_cast<std::shared_ptr<GraphState>*>(context);
   const auto state = *holder;
   state->factoryCalls.fetch_add(1, std::memory_order_relaxed);
@@ -918,27 +1011,15 @@ NativeMediaSessionTestGraph makeGraph(void* context) {
          !state->releaseFactory.load(std::memory_order_acquire)) {
     std::this_thread::yield();
   }
-  NativeMediaSessionTestGraph graph;
+  NativeMediaSessionGraph graph;
   if (state->transportPath.empty()) graph.source = std::make_unique<FakeSource>(state);
   else graph.source = std::make_unique<MpegTsMediaSource>();
   graph.video =
       std::make_unique<FakeConsumer<media::NativeVideoConsumer>>(state, true);
   graph.audio =
       std::make_unique<FakeConsumer<media::NativeAudioConsumer>>(state, false);
-  graph.videoControl = {state.get(), &armVideo, &videoHigh,
-                        &lastOutputEventSequence, &nextVideoDueHostTicks,
-                        &takeOutputEvent,
-                        &quiesceForPreview};
-  graph.audioControl = {state.get(), &audioStart, &audioPaused, &audioGain,
-                        &audioMuted, &audioStop, &testClock, &audioHigh};
-  if (state->observePauseSuspend) graph.audioControl.suspendForPause = &audioSuspend;
-  graph.previewControl = {state.get(), &previewRequest, &previewPump,
-                          &takePreviewPresented, &stopPreview};
-  graph.assetContext = state->assetContext;
-  if (state->assetContext != nullptr) {
-    graph.observePreviewBinding = &observePreviewBinding;
-    graph.previewBindingObserverContext = state.get();
-  }
+  graph.videoPort = std::make_unique<FakeVideoPort>(state.get());
+  graph.audioPort = std::make_unique<FakeClockAuthority>(state.get());
   return graph;
 }
 
@@ -950,6 +1031,8 @@ std::unique_ptr<NativeMediaSession> sessionFor(
     bool bindObservations = true, bool realtimeDeadline = false) {
   auto wake = NativeMediaSessionWake::create();
   NativeMediaSessionDependencies dependencies;
+  dependencies.graphFactory = &makeGraph;
+  dependencies.graphFactoryContext = state;
   dependencies.externalLifetime = *state;
   dependencies.wake = wake;
   dependencies.videoOutput = std::make_shared<NullOutput>((*state)->directPresentation);
@@ -966,8 +1049,13 @@ std::unique_ptr<NativeMediaSession> sessionFor(
                 : (*state)->transportPath},
       std::move(dependencies));
   expect(result != nullptr, "test session creates");
-  NativeMediaSessionTestAccess::installGraphFactory(
-      *result, &makeGraph, state);
+  NativeMediaSessionTestPreview preview;
+  preview.port = std::make_unique<FakePreviewPort>(state->get());
+  if ((*state)->observePreviewBinding) {
+    preview.observeBinding = &observePreviewBinding;
+    preview.observerContext = state->get();
+  }
+  NativeMediaSessionTestAccess::installPreview(*result, std::move(preview));
   if (bindObservations) {
     expect(result->bindObservationEdge(
                {std::make_shared<int>(1), &queueObservations,

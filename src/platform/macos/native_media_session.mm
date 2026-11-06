@@ -9,17 +9,10 @@
 
 #include "native_presentation_admission.hpp"
 
-#include "avfoundation_media_source.hpp"
-#include "matroska_media_source.hpp"
-#include "mpegts_media_source.hpp"
-#if defined(WAM_ENABLE_AVFORMAT_STAGE)
-#include "routed_media_source.hpp"
-#endif
 #include "native_audio_sample_rates.hpp"
 #include "native_silent_timebase.hpp"
 #include "native_video_limits.hpp"
 
-#include "media/media_container_routing.hpp"
 #include "media/native_media_dispatcher.hpp"
 
 #include <algorithm>
@@ -366,44 +359,29 @@ struct NativeMediaSessionChildLifetime final {
   std::shared_ptr<ClockControl> clock;
 };
 
-struct SessionVideoControl {
-  void* context{nullptr};
-  NativeVideoConsumerArmProgress (*arm)(
-      void*, MediaGeneration) noexcept{nullptr};
-  MediaGeneration (*highestExposed)(void*) noexcept{nullptr};
-  std::uint64_t (*lastOutputEventSequence)(void*) noexcept{nullptr};
-  std::uint64_t (*nextDueHostTicks)(void*) noexcept{nullptr};
-  std::optional<NativeTrackedVideoEvent> (*takeOutputEvent)(
-      void*) noexcept{nullptr};
-  NativeVideoConsumerPreviewProgress (*quiesceForPreview)(
-      void*, MediaGeneration) noexcept{nullptr};
-  // Diagnostic-only, optional. Left null by the test graph seam, which has no
-  // NativeVideoConsumer to sample; publishMetrics() then reports the video
-  // counters as unavailable rather than as zero.
-  bool (*metrics)(void*, NativeMediaSessionMetrics*) noexcept{nullptr};
-};
+class LanePreviewPort final : public SessionPreviewPort {
+ public:
+  explicit LanePreviewPort(std::unique_ptr<NativePreviewFrameLane> lane) noexcept
+      : lane_(std::move(lane)) {}
+  ~LanePreviewPort() override = default;
+  NativePreviewFrameRequestStatus request(
+      protocol::PreviewFrame command,
+      NativePreviewFrameTarget target) noexcept override {
+    return lane_->request(command, std::move(target));
+  }
+  NativePreviewFramePumpProgress pump() noexcept override {
+    return lane_->pump();
+  }
+  std::optional<protocol::PreviewPresented> takePresented() noexcept override {
+    return lane_->takePresented();
+  }
+  NativePreviewFrameCancelProgress stop(
+      protocol::Generation generation) noexcept override {
+    return lane_->stop(generation);
+  }
 
-struct SessionAudioControl {
-  void* context{nullptr};
-  NativeAudioSessionProgress (*start)(void*) noexcept{nullptr};
-  NativeAudioSessionProgress (*setPaused)(void*, bool) noexcept{nullptr};
-  NativeAudioSessionProgress (*setGain)(void*, float) noexcept{nullptr};
-  NativeAudioSessionProgress (*setMuted)(void*, bool) noexcept{nullptr};
-  NativeAudioSessionProgress (*stop)(void*) noexcept{nullptr};
-  NativeMediaClockSnapshot (*clock)(void*) noexcept{nullptr};
-  MediaGeneration (*highestExposed)(void*) noexcept{nullptr};
-  // Diagnostic-only, optional; see SessionVideoControl::metrics.
-  bool (*metrics)(void*, NativeMediaSessionMetrics*) noexcept{nullptr};
-  // Optional wake-rate lever: stops the output device for a settled pause.
-  // A route that owns no AudioUnit -- the silent timebase -- leaves this
-  // null, which progressAudioSuspend() reads as "nothing to idle".
-  NativeAudioSessionProgress (*suspendForPause)(void*) noexcept{nullptr};
-  // Optional playback rate, applied as an exact rational together with the
-  // live preserve-pitch preference (true = time-stretched, false =
-  // varispeed). A route that leaves this null is served only at the unit
-  // rate, where the preference has nothing to apply.
-  NativeAudioSessionProgress (*setRate)(void*, NativePlaybackRate,
-                                        bool) noexcept{nullptr};
+ private:
+  std::unique_ptr<NativePreviewFrameLane> lane_;
 };
 
 // Paired-measurement seam for the pause-suspend lever. Read once per process.
@@ -421,59 +399,6 @@ struct SessionAudioControl {
   }();
   return enabled;
 }
-
-// Rebinds the session's transport/clock authority onto a host-clock timebase
-// for an audio-less generation. metrics is deliberately left null: a silent
-// generation has no render callback, so the audio counters are genuinely
-// unavailable rather than zero, and publishMetrics() already reports that.
-[[nodiscard]] SessionAudioControl silentTimebaseControl(
-    NativeSilentTimebase* timebase) noexcept {
-  return SessionAudioControl{
-      timebase,
-      [](void* context) noexcept {
-        return static_cast<NativeSilentTimebase*>(context)->start();
-      },
-      [](void* context, bool paused) noexcept {
-        return static_cast<NativeSilentTimebase*>(context)->setPaused(paused);
-      },
-      [](void* context, float gain) noexcept {
-        return static_cast<NativeSilentTimebase*>(context)->setGain(gain);
-      },
-      [](void* context, bool muted) noexcept {
-        return static_cast<NativeSilentTimebase*>(context)->setMuted(muted);
-      },
-      [](void* context) noexcept {
-        return static_cast<NativeSilentTimebase*>(context)->stop();
-      },
-      [](void* context) noexcept {
-        return static_cast<NativeSilentTimebase*>(context)->visibleClock();
-      },
-      [](void* context) noexcept {
-        return static_cast<NativeSilentTimebase*>(context)
-            ->highestExposedGeneration();
-      },
-      nullptr,
-      // No AudioUnit to idle on this route ...
-      nullptr,
-      // ... but rate is real here: it scales the host-clock slope directly.
-      // Pitch is not: a silent generation has no audio to shift, so the
-      // preference is accepted and ignored rather than refused.
-      [](void* context, NativePlaybackRate rate, bool) noexcept {
-        return static_cast<NativeSilentTimebase*>(context)->setRate(rate);
-      }};
-}
-
-struct SessionPreviewControl {
-  void* context{nullptr};
-  NativePreviewFrameRequestStatus (*request)(
-      void*, protocol::PreviewFrame, NativePreviewFrameTarget) noexcept{
-      nullptr};
-  NativePreviewFramePumpProgress (*pump)(void*) noexcept{nullptr};
-  std::optional<protocol::PreviewPresented> (*takePresented)(
-      void*) noexcept{nullptr};
-  NativePreviewFrameCancelProgress (*stop)(
-      void*, protocol::Generation) noexcept{nullptr};
-};
 
 }  // namespace
 
@@ -1121,9 +1046,8 @@ struct NativeMediaSession::Impl final {
     std::uint64_t due = 0;
     if (!stopLatched && !liveFailed && !endingLatched && !endedPublished &&
         !commitInFlight() && !previewActivity && !previewPending &&
-        videoControl.context != nullptr &&
-        videoControl.nextDueHostTicks != nullptr) {
-      due = videoControl.nextDueHostTicks(videoControl.context);
+        videoPort != nullptr) {
+      due = videoPort->nextDueHostTicks();
     }
     dependencies.wake->publishVideoDueHostTicks(due);
   }
@@ -1196,7 +1120,7 @@ struct NativeMediaSession::Impl final {
     if (publishedPreview.has_value()) {
       previewCommand = publishedPreview->command;
       previewTarget.emplace(std::move(publishedPreview->target));
-      if (previewControl.request == nullptr) {
+      if (previewPort == nullptr) {
         previewLaneAcceptedThrough = publishedPreview->acceptedThrough;
       }
       publishedPreview.reset();
@@ -1270,217 +1194,34 @@ struct NativeMediaSession::Impl final {
     if (videoObserver != nullptr || audioObserver != nullptr || dispatcher) {
       return true;
     }
-#if defined(WAM_NATIVE_MEDIA_SESSION_TESTING)
-    if (testFactory != nullptr) {
-      NativeMediaSessionTestGraph graph = testFactory(testFactoryContext);
-      if (graph.source == nullptr || graph.video == nullptr ||
-          graph.audio == nullptr || graph.videoControl.arm == nullptr ||
-          graph.videoControl.highestExposed == nullptr ||
-          graph.videoControl.lastOutputEventSequence == nullptr ||
-          graph.videoControl.nextDueHostTicks == nullptr ||
-          graph.videoControl.takeOutputEvent == nullptr ||
-          graph.videoControl.quiesceForPreview == nullptr ||
-          graph.audioControl.start == nullptr ||
-          graph.audioControl.setPaused == nullptr ||
-          graph.audioControl.setGain == nullptr ||
-          graph.audioControl.setMuted == nullptr ||
-          graph.audioControl.stop == nullptr ||
-          graph.audioControl.clock == nullptr ||
-          graph.audioControl.highestExposed == nullptr ||
-          graph.previewControl.request == nullptr ||
-          graph.previewControl.pump == nullptr ||
-          graph.previewControl.takePresented == nullptr ||
-          graph.previewControl.stop == nullptr) {
-        return false;
-      }
-      videoControl = {graph.videoControl.context,
-                      graph.videoControl.arm,
-                      graph.videoControl.highestExposed,
-                      graph.videoControl.lastOutputEventSequence,
-                      graph.videoControl.nextDueHostTicks,
-                      graph.videoControl.takeOutputEvent,
-                      graph.videoControl.quiesceForPreview};
-      audioControl = {graph.audioControl.context,
-                      graph.audioControl.start,
-                      graph.audioControl.setPaused,
-                      graph.audioControl.setGain,
-                      graph.audioControl.setMuted,
-                      graph.audioControl.stop,
-                      graph.audioControl.clock,
-                      graph.audioControl.highestExposed, nullptr,
-                      graph.audioControl.suspendForPause};
-      previewControl = {graph.previewControl.context,
-                        graph.previewControl.request,
-                        graph.previewControl.pump,
-                        graph.previewControl.takePresented,
-                        graph.previewControl.stop};
-      assetContextSnapshot = std::move(graph.assetContext);
-      previewBindingObserver = graph.observePreviewBinding;
-      previewBindingObserverContext = graph.previewBindingObserverContext;
+    if (dependencies.graphFactory == nullptr) {
+      return false;
+    }
+    NativeMediaSessionGraph graph = dependencies.graphFactory(
+        dependencies.graphFactoryContext,
+        {binding.localPath, reservedGeneration, childLifetime,
+         NativeVideoClockSeam{&sampleCachedClock, childLifetime->clock.get(),
+                              dependencies.hostClock.ticksPerSecond, true},
+         dependencies});
+    if (graph.source == nullptr || graph.video == nullptr ||
+        graph.audio == nullptr || graph.videoPort == nullptr ||
+        graph.audioPort == nullptr) {
+      return false;
+    }
+    try {
       sourceOwned = std::make_unique<NativeV1AdmissionSource>(
           std::move(graph.source), cancellation, dependencies.videoOutput);
-      videoOwned = std::move(graph.video);
-      audioOwned = std::move(graph.audio);
-      videoObserver = videoOwned.get();
-      audioObserver = audioOwned.get();
-      audioConsumerControl = audioControl;
-      return true;
-    }
-    return false;
-#else
-    std::unique_ptr<media::MediaSource> source;
-    std::unique_ptr<NativeAudioSession> audio;
-    std::unique_ptr<NativeVideoConsumer> video;
-    try {
-      // Container routing (media/media_container_routing.hpp). AVFoundation
-      // cannot demux Matroska at all, and routing a transport stream to the
-      // neutral demuxer moves files AVFoundation could also have opened: both
-      // are safe because the selected source still applies its own exact codec
-      // envelope and reports Unsupported for anything outside it, which keeps
-      // the fallback path as the single rejection route.
-      std::unique_ptr<media::MediaSource> backendSource;
-#if defined(WAM_ENABLE_AVFORMAT_STAGE)
-      backendSource = createRoutedMediaSource();
-#else
-      switch (media::containerBackendForExtension(binding.localPath)
-                  .value_or(media::MediaSourceBackendKind::AVFoundation)) {
-      case media::MediaSourceBackendKind::Matroska:
-        backendSource = std::make_unique<MatroskaMediaSource>();
-        break;
-      case media::MediaSourceBackendKind::MpegTs:
-        backendSource = std::make_unique<MpegTsMediaSource>();
-        break;
-      case media::MediaSourceBackendKind::Libavformat:
-      case media::MediaSourceBackendKind::AVFoundation:
-        backendSource = std::make_unique<AVFoundationMediaSource>();
-        break;
-      }
-#endif
-      source = std::make_unique<NativeV1AdmissionSource>(
-          std::move(backendSource), cancellation, dependencies.videoOutput);
-      NativeAudioSessionDependencies audioDependencies;
-      audioDependencies.externalLifetime = childLifetime;
-      audioDependencies.hostClock = dependencies.hostClock;
-      audioDependencies.outputCalls = dependencies.audioUnitCalls;
-      audioDependencies.outputWake = dependencies.wake->audio();
-      audioDependencies.converterBackend =
-          std::move(dependencies.audioConverterBackend);
-      audio = NativeAudioSession::create(reservedGeneration,
-                                         std::move(audioDependencies));
-      const NativeVideoClockSeam clock{
-          &sampleCachedClock, childLifetime->clock.get(),
-          dependencies.hostClock.ticksPerSecond,
-          true};
-      video = NativeVideoConsumer::create(
-          childLifetime, clock, dependencies.videoOutput,
-          dependencies.wake->video(), nullptr, dependencies.captionFeed);
     } catch (...) {
       return false;
     }
-    if (source == nullptr || audio == nullptr || video == nullptr) {
-      return false;
-    }
-    videoControl = {
-        video.get(),
-        [](void* context, MediaGeneration value) noexcept {
-          return static_cast<NativeVideoConsumer*>(context)
-              ->armFirstGeneration(value);
-        },
-        [](void* context) noexcept {
-          const NativeVideoConsumerFacts facts =
-              static_cast<NativeVideoConsumer*>(context)->facts();
-          return std::max({facts.generation, facts.armedGeneration,
-                           facts.output.generation,
-                           facts.decoder.generation});
-        },
-        [](void* context) noexcept {
-          return static_cast<NativeVideoConsumer*>(context)
-              ->facts()
-              .lastOutputEventSequence;
-        },
-        [](void* context) noexcept {
-          return static_cast<NativeVideoConsumer*>(context)
-              ->nextDueHostTicks();
-        },
-        [](void* context) noexcept {
-          return static_cast<NativeVideoConsumer*>(context)
-              ->takeOutputEvent();
-        },
-        [](void* context, MediaGeneration generation) noexcept {
-          return static_cast<NativeVideoConsumer*>(context)
-              ->quiesceForPreview(generation);
-        },
-        // Worker-thread only, exactly like every other entry in this table.
-        // NativeVideoConsumer::facts() is an owner-serialized read, so the
-        // metrics stream must never call it from the GUI thread; the worker
-        // copies the result into the Impl's atomic publication slots instead.
-        [](void* context, NativeMediaSessionMetrics* out) noexcept {
-          const NativeVideoConsumerFacts facts =
-              static_cast<NativeVideoConsumer*>(context)->facts();
-          out->drawnFrames = facts.output.drawnFrames;
-          out->firstDrawPts = facts.firstDrawPts;
-          out->submittedFrames = facts.output.submittedFrames;
-          out->supersededFrames = facts.output.supersededFrames;
-          out->discardedLateFrames = facts.discardedLateFrames;
-          out->decodedPrerollFrames = facts.discardedPrerollFrames;
-          return true;
-        }};
-    audioControl = {
-        audio.get(),
-        [](void* context) noexcept {
-          return static_cast<NativeAudioSession*>(context)->start();
-        },
-        [](void* context, bool paused) noexcept {
-          return static_cast<NativeAudioSession*>(context)->setPaused(paused);
-        },
-        [](void* context, float gain) noexcept {
-          return static_cast<NativeAudioSession*>(context)->setGain(gain);
-        },
-        [](void* context, bool muted) noexcept {
-          return static_cast<NativeAudioSession*>(context)->setMuted(muted);
-        },
-        [](void* context) noexcept {
-          return static_cast<NativeAudioSession*>(context)->stop();
-        },
-        [](void* context) noexcept {
-          return static_cast<NativeAudioSession*>(context)->visibleClock();
-        },
-        [](void* context) noexcept {
-          return static_cast<NativeAudioSession*>(context)
-              ->facts()
-              .highestExposedGeneration;
-        },
-        // renderStats() reads only relaxed callback-owned atomics, so it is
-        // the one audio accessor that would also be safe off-worker. It is
-        // still called here so the whole published set comes from one worker
-        // pass and no other thread ever touches NativeAudioSession.
-        [](void* context, NativeMediaSessionMetrics* out) noexcept {
-          const NativeAudioRenderStats stats =
-              static_cast<NativeAudioSession*>(context)->renderStats();
-          out->audioUnderrunCallbacks = stats.underrunCallbacks;
-          out->audioClockAdvancedUnderruns = stats.clockAdvancedUnderruns;
-          out->audioRetiredLateFrames = stats.retiredLateFrames;
-          out->audioCallbacks = stats.callbacks;
-          out->audioRenderedFrames = stats.renderedFrames;
-          return true;
-        },
-        [](void* context) noexcept {
-          return static_cast<NativeAudioSession*>(context)
-              ->suspendOutputForPause();
-        },
-        [](void* context, NativePlaybackRate rate,
-           bool preservePitch) noexcept {
-          return static_cast<NativeAudioSession*>(context)->setRate(
-              rate, preservePitch);
-        }};
-    sourceOwned = std::move(source);
-    videoOwned = std::move(video);
-    audioOwned = std::move(audio);
+    videoPort = std::move(graph.videoPort);
+    audioPort = std::move(graph.audioPort);
+    authority = audioPort.get();
+    videoOwned = std::move(graph.video);
+    audioOwned = std::move(graph.audio);
     videoObserver = videoOwned.get();
     audioObserver = audioOwned.get();
-    audioConsumerControl = audioControl;
     return true;
-#endif
   }
 
   [[nodiscard]] bool transferToDispatcher() noexcept {
@@ -1508,11 +1249,8 @@ struct NativeMediaSession::Impl final {
 
   [[nodiscard]] bool ensurePreviewLane() noexcept {
 #if defined(WAM_NATIVE_MEDIA_SESSION_TESTING)
-    if (previewControl.request != nullptr &&
-        previewBindingObserver == nullptr) {
-      return previewControl.pump != nullptr &&
-             previewControl.takePresented != nullptr &&
-             previewControl.stop != nullptr;
+    if (previewPort != nullptr && previewBindingObserver == nullptr) {
+      return true;
     }
 #endif
     if (descriptorSnapshot == nullptr || dependencies.previewOutput == nullptr ||
@@ -1534,10 +1272,8 @@ struct NativeMediaSession::Impl final {
       return false;
     }
 #endif
-    if (previewControl.request != nullptr) {
-      return previewControl.pump != nullptr &&
-             previewControl.takePresented != nullptr &&
-             previewControl.stop != nullptr;
+    if (previewPort != nullptr) {
+      return true;
     }
     if (assetContextSnapshot == nullptr) {
       return false;
@@ -1551,38 +1287,25 @@ struct NativeMediaSession::Impl final {
     NativePreviewFrameLaneBinding laneBinding{
         std::move(sourceBinding),
         protocol::Generation{activeGeneration}, previewLaneAcceptedThrough};
-    previewLane = NativePreviewFrameLane::create(
+    auto lane = NativePreviewFrameLane::create(
         std::move(laneBinding), dependencies.previewOutput,
         NativePreviewFrameLaneWakeSeam{childLifetime, edge.signal,
                                        edge.context},
         std::move(previewSource));
-    if (previewLane == nullptr) {
+    if (lane == nullptr) {
       return false;
     }
-    previewControl = {
-        previewLane.get(),
-        [](void* context, protocol::PreviewFrame command,
-           NativePreviewFrameTarget target) noexcept {
-          return static_cast<NativePreviewFrameLane*>(context)->request(
-              command, std::move(target));
-        },
-        [](void* context) noexcept {
-          return static_cast<NativePreviewFrameLane*>(context)->pump();
-        },
-        [](void* context) noexcept {
-          return static_cast<NativePreviewFrameLane*>(context)
-              ->takePresented();
-        },
-        [](void* context, protocol::Generation generation) noexcept {
-          return static_cast<NativePreviewFrameLane*>(context)->stop(
-              generation);
-        }};
+    try {
+      previewPort = std::make_unique<LanePreviewPort>(std::move(lane));
+    } catch (...) {
+      return false;
+    }
     return true;
   }
 
   [[nodiscard]] NativePreviewFrameCancelProgress
   stopPreviewLaneForTerminal() noexcept {
-    if (previewControl.context == nullptr) {
+    if (previewPort == nullptr) {
       previewActivity = false;
       previewHandoffPending = false;
       previewHandoffReady = false;
@@ -1590,8 +1313,7 @@ struct NativeMediaSession::Impl final {
       previewMainQuiesced = false;
       return NativePreviewFrameCancelProgress::Done;
     }
-    const NativePreviewFrameCancelProgress progress = previewControl.stop(
-        previewControl.context, protocol::Generation{activeGeneration});
+    const NativePreviewFrameCancelProgress progress = previewPort->stop(protocol::Generation{activeGeneration});
     if (progress == NativePreviewFrameCancelProgress::Quiescing) {
       return progress;
     }
@@ -1610,10 +1332,9 @@ struct NativeMediaSession::Impl final {
     previewHandoffReady = false;
     previewHandoffFailed = false;
     previewMainQuiesced = false;
-#if !defined(WAM_NATIVE_MEDIA_SESSION_TESTING)
-    previewControl = {};
-    previewLane.reset();
-#endif
+    if (!previewPortInjected) {
+      previewPort.reset();
+    }
     return NativePreviewFrameCancelProgress::Done;
   }
 
@@ -1759,7 +1480,7 @@ struct NativeMediaSession::Impl final {
   void progressPreview() noexcept {
     if ((!previewHandoffPending && !previewPending) || stopLatched ||
         liveFailed || commitInFlight() || previewHandoffFailed ||
-        videoControl.quiesceForPreview == nullptr) {
+        videoPort == nullptr) {
       return;
     }
     previewActivity = true;
@@ -1777,8 +1498,7 @@ struct NativeMediaSession::Impl final {
         return;
       }
       const NativeVideoConsumerPreviewProgress progress =
-          videoControl.quiesceForPreview(videoControl.context,
-                                         activeGeneration);
+          videoPort->quiesceForPreview(activeGeneration);
       bool continuePreview = true;
       bool requestWake = false;
       bool previewFailurePublished = false;
@@ -1875,8 +1595,7 @@ struct NativeMediaSession::Impl final {
         acceptPublishedCommands();
         return;
       }
-      const NativePreviewFrameRequestStatus status = previewControl.request(
-          previewControl.context, previewCommand,
+      const NativePreviewFrameRequestStatus status = previewPort->request(previewCommand,
           std::move(*previewTarget));
       bool requestFailed = false;
       bool requestFailurePublished = false;
@@ -1908,7 +1627,7 @@ struct NativeMediaSession::Impl final {
         return;
       }
       const NativePreviewFramePumpProgress progress =
-          previewControl.pump(previewControl.context);
+          previewPort->pump();
       bool pumpFailed = false;
       bool pumpFailurePublished = false;
       if (!completePreviewChild(
@@ -1933,7 +1652,7 @@ struct NativeMediaSession::Impl final {
         return;
       }
       std::optional<protocol::PreviewPresented> presented =
-          previewControl.takePresented(previewControl.context);
+          previewPort->takePresented();
       bool tookPresentation = false;
       bool publish = false;
       bool invalidPresentation = false;
@@ -1992,7 +1711,7 @@ struct NativeMediaSession::Impl final {
     if (!directVideoRetired) {
       if (directVideoRetiredGeneration == 0) {
         directVideoRetiredGeneration =
-            videoControl.highestExposed(videoControl.context);
+            videoPort->highestExposedGeneration();
       }
       const auto progress =
           videoObserver->retire(directVideoRetiredGeneration,
@@ -2012,11 +1731,10 @@ struct NativeMediaSession::Impl final {
     }
     if (!directAudioRetired) {
       if (directAudioRetiredGeneration == 0) {
-        // Never audioControl here: an audio-less generation has rebound that
-        // table to the silent timebase, whose generation is not the audio
-        // consumer's exposure high water.
-        directAudioRetiredGeneration = audioConsumerControl.highestExposed(
-            audioConsumerControl.context);
+        // Never authority here: an audio-less generation has rebound it to
+        // the silent timebase, whose generation is not the audio consumer's
+        // exposure high water.
+        directAudioRetiredGeneration = audioPort->highestExposedGeneration();
       }
       const auto progress =
           audioObserver->retire(directAudioRetiredGeneration,
@@ -2156,7 +1874,7 @@ struct NativeMediaSession::Impl final {
       return;
     }
     const NativeVideoConsumerArmProgress armed =
-        videoControl.arm(videoControl.context, reservedGeneration);
+        videoPort->armFirstGeneration(reservedGeneration);
     endLiveIssue();
     switch (armed) {
     case NativeVideoConsumerArmProgress::Quiescing:
@@ -2260,16 +1978,6 @@ if (descriptor == nullptr || !nativeV1Descriptor(*descriptor)) {
       static_cast<void>(publishFailure(protocol::FailureReason::Protocol));
       return;
     }
-#if defined(WAM_NATIVE_MEDIA_SESSION_TESTING)
-    if (assetContextSnapshot != nullptr &&
-        (assetContextSnapshot->descriptor().get() != descriptor.get() ||
-         !assetContextSnapshot->matchesPreviewBinding(binding.localPath,
-                                                      descriptor))) {
-      prepareFailed = true;
-      static_cast<void>(publishFailure(protocol::FailureReason::Protocol));
-      return;
-    }
-#else
     // Backend-neutral admission proof. The dispatcher republishes the exact
     // immutable context the source admitted at Ready, so the session needs no
     // concrete backend observer to state this identity and the same check
@@ -2287,7 +1995,6 @@ if (descriptor == nullptr || !nativeV1Descriptor(*descriptor)) {
       return;
     }
     assetContextSnapshot = std::move(admittedAssetContext);
-#endif
     descriptorSnapshot = descriptor;
     // Bind the generation's timebase before anything can publish Prepared.
     // From here the Start / SetRunState / CommitSeek / Ended chains address
@@ -2302,7 +2009,7 @@ if (descriptor == nullptr || !nativeV1Descriptor(*descriptor)) {
         static_cast<void>(publishFailure(protocol::FailureReason::Clock));
         return;
       }
-      audioControl = silentTimebaseControl(silentTimebase.get());
+      authority = silentTimebase.get();
       dependencies.wake->setHostPacedDeadlines(dependencies.hostClock);
     }
     bool committed = false;
@@ -2365,7 +2072,7 @@ if (descriptor == nullptr || !nativeV1Descriptor(*descriptor)) {
                              reservedGeneration) {
       return;
     }
-if (audioControl.start == nullptr) {
+if (authority == nullptr) {
       logNativeFailure("start", protocol::FailureReason::Startup,
                        dispatcher.get());
       static_cast<void>(publishFailure(protocol::FailureReason::Startup));
@@ -2377,7 +2084,7 @@ if (audioControl.start == nullptr) {
       return;
     }
     const NativeAudioSessionProgress result =
-        audioControl.start(audioControl.context);
+        authority->start();
     endLiveIssue();
     if (stopPublished()) {
       acceptPublishedCommands();
@@ -2401,7 +2108,7 @@ if (result != NativeAudioSessionProgress::Done) {
       return;
     }
     const std::uint64_t drawBaseline =
-        videoControl.lastOutputEventSequence(videoControl.context);
+        videoPort->lastOutputEventSequence();
     endLiveIssue();
     bool committed = false;
     {
@@ -2430,7 +2137,7 @@ if (result != NativeAudioSessionProgress::Done) {
   void progressRunState() noexcept {
     if (stopLatched || endingLatched || endedPublished || liveFailed ||
         !startedPublished || !runPending ||
-        audioControl.setPaused == nullptr) {
+        authority == nullptr) {
       return;
     }
     for (unsigned issueCount = 0; issueCount != 32; ++issueCount) {
@@ -2447,13 +2154,9 @@ if (result != NativeAudioSessionProgress::Done) {
       // render callback publishes, not from this command. The live
       // preserve-pitch preference rides on the same command because it is
       // part of the same decision, and it is equally soft.
-      if (audioControl.setRate != nullptr) {
-        static_cast<void>(audioControl.setRate(
-            audioControl.context, protocol::nativeRateRatio(issued.rate),
-            issued.preservePitch));
-      }
-      const NativeAudioSessionProgress result = audioControl.setPaused(
-          audioControl.context, issued.paused);
+      static_cast<void>(authority->setRate(
+          protocol::nativeRateRatio(issued.rate), issued.preservePitch));
+      const NativeAudioSessionProgress result = authority->setPaused(issued.paused);
 #if defined(WAM_NATIVE_BENCHMARK_TELEMETRY)
       if (!issued.paused && silentTimebase == nullptr &&
           result == NativeAudioSessionProgress::Done)
@@ -2518,7 +2221,7 @@ if (result != NativeAudioSessionProgress::Done) {
 
   void progressAudioClockProof() noexcept {
     if (!audioProofPending.has_value() || stopLatched || endingLatched ||
-        audioControl.clock == nullptr) {
+        authority == nullptr) {
       return;
     }
     const protocol::SetRunState command = *audioProofPending;
@@ -2539,7 +2242,7 @@ if (result != NativeAudioSessionProgress::Done) {
       return;
     }
     const NativeMediaClockSnapshot clock =
-        audioControl.clock(audioControl.context);
+        authority->visibleClock();
     endLiveIssue();
     const protocol::AudioClockProof proof{
         command.stamp,
@@ -2587,7 +2290,8 @@ if (result != NativeAudioSessionProgress::Done) {
   // straight back here, and Invalid only means the precondition moved.
   void progressAudioSuspend() noexcept {
     if (!pauseSuspendEnabled() ||
-        audioControl.suspendForPause == nullptr || !startedPublished ||
+        authority == nullptr || !authority->suspendsForPause() ||
+        !startedPublished ||
         stopLatched || liveFailed || endingLatched || endedPublished ||
         commitInFlight() || previewPending || previewActivity ||
         previewHandoffPending || runPending || !appliedPaused ||
@@ -2609,7 +2313,7 @@ if (result != NativeAudioSessionProgress::Done) {
       }
     }
     const NativeAudioSessionProgress progress =
-        audioControl.suspendForPause(audioControl.context);
+        authority->suspendForPause();
     endLiveIssue();
     if (stopPublished()) {
       acceptPublishedCommands();
@@ -2622,7 +2326,7 @@ if (result != NativeAudioSessionProgress::Done) {
 
   void progressAudioControls() noexcept {
     if (stopLatched || endingLatched || endedPublished || liveFailed ||
-        audioControl.context == nullptr) {
+        authority == nullptr) {
       return;
     }
     if (gainPending) {
@@ -2631,7 +2335,7 @@ if (result != NativeAudioSessionProgress::Done) {
         return;
       }
       const NativeAudioSessionProgress result =
-          audioControl.setGain(audioControl.context, requestedGain);
+          authority->setGain(requestedGain);
       endLiveIssue();
       if (stopPublished()) {
         acceptPublishedCommands();
@@ -2652,7 +2356,7 @@ if (result != NativeAudioSessionProgress::Done) {
         return;
       }
       const NativeAudioSessionProgress result =
-          audioControl.setMuted(audioControl.context, requestedMuted);
+          authority->setMuted(requestedMuted);
       endLiveIssue();
       if (stopPublished()) {
         acceptPublishedCommands();
@@ -2729,7 +2433,7 @@ if (result != NativeAudioSessionProgress::Done) {
       return false;
     }
     const NativeAudioSessionProgress paused =
-        audioControl.setPaused(audioControl.context, true);
+        authority->setPaused(true);
     endLiveIssue();
     return commitTransportDone(paused, stage);
   }
@@ -2759,8 +2463,8 @@ if (result != NativeAudioSessionProgress::Done) {
 
   void progressCommitSeek() noexcept {
     if (!commitInFlight() || stopLatched || liveFailed ||
-        dispatcher == nullptr || audioControl.start == nullptr ||
-        audioControl.setPaused == nullptr || audioControl.clock == nullptr) {
+        dispatcher == nullptr || authority == nullptr ||
+        authority == nullptr || authority == nullptr) {
       return;
     }
 
@@ -2871,7 +2575,7 @@ if (result != NativeAudioSessionProgress::Done) {
         return;
       }
       const NativeAudioSessionProgress started =
-          audioControl.start(audioControl.context);
+          authority->start();
       endLiveIssue();
       if (!commitTransportDone(started, "commit-seek/audio-start")) {
         return;
@@ -2962,7 +2666,7 @@ if (result != NativeAudioSessionProgress::Done) {
       return;
     }
     const NativeMediaClockSnapshot clock =
-        audioControl.clock(audioControl.context);
+        authority->visibleClock();
     endLiveIssue();
     const protocol::AudioClockProof proof{
         commitCommand.stamp, commitCommand.targetGeneration,
@@ -3010,14 +2714,14 @@ if (result != NativeAudioSessionProgress::Done) {
       }
       return;
     }
-    if (videoControl.takeOutputEvent == nullptr) {
+    if (videoPort == nullptr) {
       return;
     }
     if (!beginLiveIssue(nullptr, false, true)) {
       return;
     }
     const std::optional<NativeTrackedVideoEvent> event =
-        videoControl.takeOutputEvent(videoControl.context);
+        videoPort->takeOutputEvent();
     endLiveIssue();
     if (!event.has_value() ||
         event->kind != NativeTrackedVideoEventKind::FrameDrawn ||
@@ -3055,7 +2759,7 @@ if (result != NativeAudioSessionProgress::Done) {
 
   void captureVideoDrawProof() noexcept {
     if (stopLatched || endingLatched || endedPublished || liveFailed ||
-        videoControl.takeOutputEvent == nullptr) {
+        videoPort == nullptr) {
       return;
     }
     if (!retainedVideoEvent.has_value()) {
@@ -3063,7 +2767,7 @@ if (result != NativeAudioSessionProgress::Done) {
         return;
       }
       retainedVideoEvent =
-          videoControl.takeOutputEvent(videoControl.context);
+          videoPort->takeOutputEvent();
       endLiveIssue();
     }
     const std::optional<NativeTrackedVideoEvent>& event = retainedVideoEvent;
@@ -3112,11 +2816,11 @@ if (result != NativeAudioSessionProgress::Done) {
           std::max(publicLastOutputEventSequence, event->eventSequence);
     }
     if (!firstExactDrawCaptured) {
-      NativeMediaSessionMetrics sampled;
-      if (videoControl.metrics && videoControl.metrics(videoControl.context, &sampled) && sampled.firstDrawPts.valid()) {
+      const auto sampled = videoPort->metrics();
+      if (sampled && sampled->firstDrawPts.valid()) {
         std::lock_guard lock(mutex);
         exactDrawSlot = NativeMediaSessionExactDraw{proof.stamp, proof.generation,
-            proof.drawSequence, sampled.firstDrawPts, {}};
+            proof.drawSequence, sampled->firstDrawPts, {}};
         firstExactDrawCaptured = true;
       }
     }
@@ -3179,8 +2883,8 @@ if (result != NativeAudioSessionProgress::Done) {
 
   void progressEnded() noexcept {
     if (!dispatcherExhausted || endedPublished || liveFailed || stopLatched ||
-        !startedPublished || audioControl.stop == nullptr ||
-        audioControl.clock == nullptr) {
+        !startedPublished || authority == nullptr ||
+        authority == nullptr) {
       return;
     }
     if (!endingLatched && !latchEnding()) {
@@ -3190,7 +2894,7 @@ if (result != NativeAudioSessionProgress::Done) {
       return;
     }
     const NativeAudioSessionProgress stopped =
-        audioControl.stop(audioControl.context);
+        authority->stop();
     endLiveIssue();
     if (stopPublished()) {
       acceptPublishedCommands();
@@ -3208,7 +2912,7 @@ if (result != NativeAudioSessionProgress::Done) {
       return;
     }
     const NativeMediaClockSnapshot clock =
-        audioControl.clock(audioControl.context);
+        authority->visibleClock();
     endLiveIssue();
     if (stopPublished()) {
       acceptPublishedCommands();
@@ -3241,34 +2945,32 @@ if (result != NativeAudioSessionProgress::Done) {
     if (!metricsArmed.load(std::memory_order_relaxed)) {
       return;
     }
-    NativeMediaSessionMetrics sampled;
-    if (videoControl.metrics != nullptr && videoControl.context != nullptr &&
-        videoControl.metrics(videoControl.context, &sampled)) {
+    if (const auto sampled = videoPort ? videoPort->metrics() : std::nullopt) {
       const auto timeline = dispatcher ? dispatcher->timeline() : std::nullopt;
       metricsSlowSeek.store(commitInFlight() && timeline &&
           media::isSlowVideoSeek(timeline->requestedTarget, timeline->actualDecodeStart),
           std::memory_order_relaxed);
-      metricsDrawnFrames.store(sampled.drawnFrames, std::memory_order_relaxed);
-      metricsDecodedPrerollFrames.store(sampled.decodedPrerollFrames, std::memory_order_relaxed);
-      metricsSubmittedFrames.store(sampled.submittedFrames,
+      metricsDrawnFrames.store(sampled->drawnFrames, std::memory_order_relaxed);
+      metricsDecodedPrerollFrames.store(sampled->decodedPrerollFrames, std::memory_order_relaxed);
+      metricsSubmittedFrames.store(sampled->submittedFrames,
                                    std::memory_order_relaxed);
-      metricsSupersededFrames.store(sampled.supersededFrames,
+      metricsSupersededFrames.store(sampled->supersededFrames,
                                     std::memory_order_relaxed);
-      metricsDiscardedLateFrames.store(sampled.discardedLateFrames,
+      metricsDiscardedLateFrames.store(sampled->discardedLateFrames,
                                        std::memory_order_relaxed);
       metricsVideoValid.store(true, std::memory_order_relaxed);
     }
-    if (audioControl.metrics != nullptr && audioControl.context != nullptr &&
-        audioControl.metrics(audioControl.context, &sampled)) {
-      metricsAudioUnderrunCallbacks.store(sampled.audioUnderrunCallbacks,
+    if (const auto stats =
+            authority ? authority->renderStats() : std::nullopt) {
+      metricsAudioUnderrunCallbacks.store(stats->underrunCallbacks,
                                           std::memory_order_relaxed);
       metricsAudioClockAdvancedUnderruns.store(
-          sampled.audioClockAdvancedUnderruns, std::memory_order_relaxed);
-      metricsAudioRetiredLateFrames.store(sampled.audioRetiredLateFrames,
+          stats->clockAdvancedUnderruns, std::memory_order_relaxed);
+      metricsAudioRetiredLateFrames.store(stats->retiredLateFrames,
                                           std::memory_order_relaxed);
-      metricsAudioCallbacks.store(sampled.audioCallbacks,
+      metricsAudioCallbacks.store(stats->callbacks,
                                   std::memory_order_relaxed);
-      metricsAudioRenderedFrames.store(sampled.audioRenderedFrames,
+      metricsAudioRenderedFrames.store(stats->renderedFrames,
                                        std::memory_order_relaxed);
       metricsAudioValid.store(true, std::memory_order_relaxed);
     }
@@ -3301,7 +3003,7 @@ if (result != NativeAudioSessionProgress::Done) {
   // audioClock slot exactly like a draw proof, so it costs one latest-value
   // store per worker pass and no extra wake.
   void publishRunningPositionForVideoLessGeneration() noexcept {
-    if (!videoLessGeneration() || audioControl.clock == nullptr ||
+    if (!videoLessGeneration() || authority == nullptr ||
         stopLatched || endingLatched || endedPublished || liveFailed ||
         appliedPaused || commitInFlight()) {
       return;
@@ -3335,12 +3037,12 @@ if (result != NativeAudioSessionProgress::Done) {
   }
 
   void refreshClock() noexcept {
-    if (audioControl.clock != nullptr && dispatcherExposedGeneration) {
+    if (authority != nullptr && dispatcherExposedGeneration) {
       if (!beginLiveIssue()) {
         return;
       }
       const NativeMediaClockSnapshot sampled =
-          audioControl.clock(audioControl.context);
+          authority->visibleClock();
       endLiveIssue();
       if (stopPublished()) {
         return;
@@ -3656,7 +3358,6 @@ if (result != NativeAudioSessionProgress::Done) {
   std::unique_ptr<media::NativeVideoConsumer> videoOwned;
   std::unique_ptr<media::NativeAudioConsumer> audioOwned;
   std::unique_ptr<media::NativeMediaDispatcher> dispatcher;
-  std::unique_ptr<NativePreviewFrameLane> previewLane;
   // Valid from graph construction through dispatcher destruction only.
   media::NativeVideoConsumer* videoObserver{nullptr};
   media::NativeAudioConsumer* audioObserver{nullptr};
@@ -3671,21 +3372,21 @@ if (result != NativeAudioSessionProgress::Done) {
       void*, const NativePreviewBinding&) noexcept{nullptr};
   void* previewBindingObserverContext{nullptr};
 #endif
-  SessionVideoControl videoControl{};
-  // Transport and clock authority for the active generation. For an ordinary
-  // A/V generation this addresses the NativeAudioSession below; for an
-  // audio-less one progressPrepare rebinds it to silentTimebase, which
-  // publishes the same proofs from the host clock. Nothing else about the
-  // Start / SetRunState / CommitSeek / Ended chains changes.
-  SessionAudioControl audioControl{};
-  // The unswapped binding to the audio *consumer*. Retirement must pair
-  // audioObserver->retire() with that consumer's own highest exposed
-  // generation, never with a timebase generation, so this copy is captured at
-  // graph construction and is never rebound.
-  SessionAudioControl audioConsumerControl{};
+  std::unique_ptr<SessionVideoPort> videoPort;
+  // The audio consumer's own authority. Retirement must pair
+  // audioObserver->retire() with that consumer's highest exposed generation,
+  // never with a timebase generation, so this is never rebound.
+  std::unique_ptr<SessionClockAuthority> audioPort;
+  // Transport and clock authority for the active generation: audioPort for
+  // an ordinary A/V generation, silentTimebase for an audio-less one, which
+  // publishes the same proofs from the host clock.
+  SessionClockAuthority* authority{nullptr};
   // Present only while the active generation has no selected audio track.
   std::unique_ptr<NativeSilentTimebase> silentTimebase;
-  SessionPreviewControl previewControl{};
+  std::unique_ptr<SessionPreviewPort> previewPort;
+  // An injected preview port outlives terminal stops; a constructed lane is
+  // rebuilt for the next gesture.
+  bool previewPortInjected{false};
   // Names this session's counter epoch. Assigned once at construction and
   // immutable thereafter, so metrics() may read it from any thread without
   // synchronisation, and it is the only metrics field already valid before the
@@ -3793,8 +3494,6 @@ if (result != NativeAudioSessionProgress::Done) {
   bool liveIssueActive{false};
   bool exitRequested{false};
 #if defined(WAM_NATIVE_MEDIA_SESSION_TESTING)
-  NativeMediaSessionTestGraphFactory testFactory{nullptr};
-  void* testFactoryContext{nullptr};
   std::atomic<bool>* failureLatchEntered{nullptr};
   std::atomic<bool>* failureLatchRelease{nullptr};
   std::atomic<bool>* failureDetectionEntered{nullptr};
@@ -4500,10 +4199,8 @@ NativeMediaSessionMetrics NativeMediaSession::metrics() const noexcept {
 }
 
 #if defined(WAM_NATIVE_MEDIA_SESSION_TESTING)
-void NativeMediaSessionTestAccess::installGraphFactory(
-    NativeMediaSession& session,
-    NativeMediaSessionTestGraphFactory factory,
-    void* context) noexcept {
+void NativeMediaSessionTestAccess::installPreview(
+    NativeMediaSession& session, NativeMediaSessionTestPreview preview) noexcept {
   if (session.impl_ == nullptr) {
     return;
   }
@@ -4511,8 +4208,10 @@ void NativeMediaSessionTestAccess::installGraphFactory(
   if (!session.impl_->publishedPrepare.has_value() &&
       session.impl_->publicOwnership ==
           NativeMediaSessionOwnershipPhase::Empty) {
-    session.impl_->testFactory = factory;
-    session.impl_->testFactoryContext = context;
+    session.impl_->previewPort = std::move(preview.port);
+    session.impl_->previewPortInjected = session.impl_->previewPort != nullptr;
+    session.impl_->previewBindingObserver = preview.observeBinding;
+    session.impl_->previewBindingObserverContext = preview.observerContext;
   }
 }
 

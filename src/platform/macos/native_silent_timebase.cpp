@@ -1,6 +1,5 @@
 #include "native_silent_timebase.hpp"
 
-
 namespace wam::macos {
 
 NativeSilentTimebase::NativeSilentTimebase(
@@ -63,7 +62,7 @@ NativeAudioSessionProgress NativeSilentTimebase::setPaused(
 }
 
 NativeAudioSessionProgress NativeSilentTimebase::setRate(
-    NativePlaybackRate rate) noexcept {
+    NativePlaybackRate rate, bool) noexcept {
   if (retired_ || !rate.valid()) {
     return NativeAudioSessionProgress::Invalid;
   }
