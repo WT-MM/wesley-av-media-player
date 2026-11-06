@@ -3830,7 +3830,7 @@ void testMalformedDocuments() {
     auto reader = std::make_shared<ProbeReader>(std::move(twoDocuments));
     const auto outcome = prepareMatroska(reader, kFixturePath, {});
     expect(outcome.asset == nullptr &&
-               outcome.error == MediaRefusalClass::UnsupportedContainer &&
+               outcome.error == MediaRefusalClass::SegmentLayout &&
                outcome.status == MediaSourceOpenStatus::Unsupported,
            "a trailing second document is explicitly unsupported");
   }

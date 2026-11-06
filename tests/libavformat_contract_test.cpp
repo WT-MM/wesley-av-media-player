@@ -54,10 +54,12 @@ int main() {
   std::atomic<bool> cancel{};
   std::string error;
   LibavformatCursor cursor;
-  REQUIRE(!cursor.open(path, cancel, error));
+  MediaRefusalClass refusal = MediaRefusalClass::None;
+  REQUIRE(!cursor.open(path, cancel, error, &refusal));
   REQUIRE(
       error ==
       "this recording is incomplete: its initialization metadata is missing");
+  REQUIRE(refusal == MediaRefusalClass::MissingInitialization);
   cancel = true;
   REQUIRE(!cursor.open(path, cancel, error));
   REQUIRE(error == "LibavformatCancelled");

@@ -198,7 +198,7 @@ struct LibavformatCursor::Impl {
   std::string error;
   return probe.inspectTail(error) && (probe.extent < std::int64_t(identity->size) || probe.fragmented);
   }
-  bool inspectTail(std::string &error) {
+  bool inspectTail(std::string &error, MediaRefusalClass *refusal = nullptr) {
     std::array<unsigned char, 16> box{};
     if (::pread(fd, box.data(), box.size(), 0) < 8)
       return true;
@@ -259,6 +259,8 @@ struct LibavformatCursor::Impl {
     if (!init) {
       error = "this recording is incomplete: its initialization metadata is "
               "missing";
+      if (refusal)
+        *refusal = MediaRefusalClass::MissingInitialization;
       return false;
     }
     return true;
@@ -277,7 +279,7 @@ LibavformatCursor::LibavformatCursor() = default;
 LibavformatCursor::~LibavformatCursor() = default;
 bool LibavformatCursor::open(const std::filesystem::path &path,
                              const std::atomic<bool> &cancellation,
-                             std::string &error) {
+                             std::string &error, MediaRefusalClass *refusal) {
   return open(
       path,
       CancellationToken{&cancellation,
@@ -285,10 +287,11 @@ bool LibavformatCursor::open(const std::filesystem::path &path,
                      return static_cast<const std::atomic<bool> *>(value)->load(
                          std::memory_order_acquire);
                    }},
-      error);
+      error, refusal);
 }
 bool LibavformatCursor::open(const std::filesystem::path &path,
-                             CancellationToken cancellation, std::string &error) {
+                             CancellationToken cancellation, std::string &error,
+                             MediaRefusalClass *refusal) {
   impl_ = std::make_unique<Impl>();
   auto &s = *impl_;
   s.cancellation = cancellation;
@@ -304,7 +307,7 @@ bool LibavformatCursor::open(const std::filesystem::path &path,
   }
   s.identity = *identity;
   s.extent = std::int64_t(identity->size);
-  if (!s.inspectTail(error) || !s.load(error))
+  if (!s.inspectTail(error, refusal) || !s.load(error))
     return false;
   auto *buffer =
       static_cast<unsigned char *>(avcodec::api().av_mallocz(kIoBytes));

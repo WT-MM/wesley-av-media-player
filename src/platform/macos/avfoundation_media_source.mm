@@ -3739,11 +3739,11 @@ class ProductionGeneration final : public AVFoundationGeneration {
         !media::codedDimensionsWithinV1Ceiling(
             static_cast<std::uint64_t>(coded.width),
             static_cast<std::uint64_t>(coded.height))) {
-      const std::string refusal =
+      const std::string refusal = media::refusalMessage(
           media::codedDimensionRefusalMessage(
               static_cast<std::uint64_t>(coded.width),
-              static_cast<std::uint64_t>(coded.height)) +
-          " (CodedDimensionLimit)";
+              static_cast<std::uint64_t>(coded.height)),
+          media::MediaRefusalClass::CodedDimensionLimit);
       assignError(error, refusal.c_str());
       return std::nullopt;
     }
@@ -5189,7 +5189,8 @@ media::MediaSourceOpenOutcome AVFoundationMediaSource::retryAudioTrack(
       !rejectedAudio_.add(rejected)) {
     media::MediaSourceOpenOutcome out;
     out.generation = generation;
-    out.error = "AudioTrackRetryExhausted";
+    out.refusal = media::MediaRefusalClass::AudioTrackRetryExhausted;
+    out.error = media::mediaRefusalClassName(out.refusal);
     return out;
   }
   impl_->retireActive();

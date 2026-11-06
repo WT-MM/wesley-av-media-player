@@ -768,6 +768,9 @@ struct MediaSourceOpenOutcome {
   std::shared_ptr<const MediaSourcePreparedContext> preparedContext;
   // Ready with selected audio must carry an exact, nonempty window.
   MediaAudioGenerationWindow audioWindow{};
+  // The typed class of a non-Ready outcome, when the source names one. Routing
+  // decisions read this, never the error text.
+  MediaRefusalClass refusal{MediaRefusalClass::None};
 };
 
 struct MediaSourceSeekRequest {

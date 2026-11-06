@@ -346,10 +346,9 @@ inline constexpr std::size_t kMpeg4VisualEsdsOverheadBytes{41};
 //   no axis may exceed 4096, the shorter axis may not exceed 2320, and the
 //   frame may not exceed 9,502,720 px
 //
-// Callers append their own typed token -- the Matroska path gets
-// " (CodedDimensionLimit)" from refusalMessage, and the backends
-// with no such wrapper append the same token literally -- so a grep for
-// CodedDimensionLimit finds every backend's refusal.
+// Callers wrap it with refusalMessage(..., MediaRefusalClass::
+// CodedDimensionLimit), so every backend's refusal ends in the same
+// " (CodedDimensionLimit)" token.
 [[nodiscard]] bool codedDimensionsWithinV1Ceiling(
     std::uint64_t width, std::uint64_t height) noexcept;
 [[nodiscard]] std::string codedDimensionRefusalMessage(

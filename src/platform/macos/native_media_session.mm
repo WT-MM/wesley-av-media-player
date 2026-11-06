@@ -282,7 +282,8 @@ class NativeV1AdmissionSource final : public media::MediaSource, public media::A
     auto* retry = dynamic_cast<media::AudioTrackRetrySource*>(source_.get());
     if (!retry) {
       result.status = media::MediaSourceOpenStatus::Unsupported;
-      result.error = "AudioTrackRetryUnavailable";
+      result.refusal = media::MediaRefusalClass::AudioTrackRetryUnavailable;
+      result.error = media::mediaRefusalClassName(result.refusal);
       return result;
     }
     return admit(retry->retryAudioTrack(path, options, generation, rejected));
@@ -838,6 +839,7 @@ struct NativeMediaSession::Impl final {
       std::optional<protocol::Stamp> exactStamp = std::nullopt) noexcept {
     NativeMediaSessionDiagnostic diagnostic;
     diagnostic.reason = reason;
+    if (dispatcher) diagnostic.refusal = dispatcher->stats().refusal;
     const char* fallback = protocol::failureReasonName(reason);
     const std::string* detail = dispatcher ? &dispatcher->failureMessage() : nullptr;
     if (detail && !detail->empty()) {

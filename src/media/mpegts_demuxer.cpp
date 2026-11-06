@@ -2364,7 +2364,7 @@ MpegTsPrepareOutcome prepareMpegTs(std::shared_ptr<SeekableByteReader> reader,
       if (!state->limits.codedDimensionsAdmitted(sequence->width,
                                                  sequence->height)) {
         result.status = MediaSourceOpenStatus::Unsupported;
-        result.error = MediaRefusalClass::CodecConfiguration;
+        result.error = MediaRefusalClass::CodedDimensionLimit;
         // Both numbers, not just the word "exceeds": the cap is a constant the
         // reader of a stderr capture does not have in front of them.
         result.message = codedDimensionRefusalMessage(sequence->width,
@@ -2435,7 +2435,11 @@ MpegTsPrepareOutcome prepareMpegTs(std::shared_ptr<SeekableByteReader> reader,
                                          configurationKind, avcc, codecLimits);
       if (!inspection.admitted()) {
         result.status = MediaSourceOpenStatus::Unsupported;
-        result.error = MediaRefusalClass::CodecConfiguration;
+        result.error =
+            inspection.error ==
+                    VideoCodecConfigurationError::DimensionLimitExceeded
+                ? MediaRefusalClass::CodedDimensionLimit
+                : MediaRefusalClass::CodecConfiguration;
         // Name the inspector's own verdict: a byte-correct record can still be
         // refused for a color-description envelope the synthesis has no say
         // in, and "refused" alone does not say which.

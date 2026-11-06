@@ -4184,7 +4184,7 @@ MatroskaPrepareOutcome prepareMatroska(
         (document.chapters &&
          (document.chapters->linkedSegmentPresent ||
           document.chapters->orderedEditionPresent))) {
-      result.error = MediaRefusalClass::UnsupportedContainer;
+      result.error = MediaRefusalClass::SegmentLayout;
       result.status = MediaSourceOpenStatus::Unsupported;
       result.message = "v1 requires one finite unlinked Matroska Segment";
       return result;

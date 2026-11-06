@@ -546,7 +546,7 @@ LibavformatMediaSource::openLocalFile(const std::filesystem::path &path,
     s.operation.store(0, std::memory_order_release);
     return out;
   };
-  if (!s.reader->cursor.open(path, s.cancellation(), out.error))
+  if (!s.reader->cursor.open(path, s.cancellation(), out.error, &out.refusal))
     return fail();
   const auto cursorOpened = Clock::now();
   auto descriptor = std::make_shared<MediaSourceDescriptor>();

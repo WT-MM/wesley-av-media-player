@@ -320,7 +320,8 @@ media::MediaSourceOpenOutcome MatroskaMediaSource::retryAudioTrack(
       !rejectedAudio_.add(rejected)) {
     media::MediaSourceOpenOutcome out;
     out.generation = generation;
-    out.error = "AudioTrackRetryExhausted";
+    out.refusal = media::MediaRefusalClass::AudioTrackRetryExhausted;
+    out.error = media::mediaRefusalClassName(out.refusal);
     return out;
   }
   impl_->retireActive();

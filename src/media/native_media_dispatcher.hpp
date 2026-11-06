@@ -394,6 +394,8 @@ enum class NativeMediaDispatcherLifecycleKind : std::uint8_t {
 struct NativeMediaDispatcherStats {
   NativeMediaDispatcherState state{NativeMediaDispatcherState::Fresh};
   NativeMediaDispatcherFailure failure{NativeMediaDispatcherFailure::None};
+  // The typed class of the last refused or failed open, when one is named.
+  MediaRefusalClass refusal{MediaRefusalClass::None};
   NativeMediaDispatcherAction lastAction{NativeMediaDispatcherAction::Idle};
   NativeMediaDispatcherWait lastWait{NativeMediaDispatcherWait::Command};
   NativeMediaPendingKind pending{NativeMediaPendingKind::None};

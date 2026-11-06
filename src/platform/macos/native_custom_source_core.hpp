@@ -83,6 +83,7 @@ class NativeCustomSourceCore {
     std::shared_ptr<const AssetContext> context;
     media::MediaAudioGenerationWindow audioWindow{};
     std::string error;
+    media::MediaRefusalClass refusal{media::MediaRefusalClass::None};
   };
 
   NativeCustomSourceCore() = default;
@@ -479,6 +480,7 @@ class NativeCustomSourceCore {
             prepared.message.empty() ? named("", " preparation failed").c_str()
                                      : prepared.message.c_str(),
             prepared.error);
+        started.refusal = prepared.error;
         if (prepared.status == media::MediaSourceOpenStatus::Ready) {
           started.status = media::MediaSourceOpenStatus::Failed;
         }
@@ -546,6 +548,7 @@ class NativeCustomSourceCore {
               ? named("", " generation planning failed").c_str()
               : planned.message.c_str(),
           planned.error);
+      started.refusal = planned.error;
       withdrawFailedOperation();
       return started;
     }
@@ -737,6 +740,7 @@ class NativeCustomSourceCore {
       outcome.actualDecodeStart = started.actualDecodeStart;
       outcome.descriptor = std::move(started.descriptor);
       outcome.error = std::move(started.error);
+      outcome.refusal = started.refusal;
       if (outcome.status == media::MediaSourceOpenStatus::Ready) {
         outcome.preparedContext = std::move(started.context);
         outcome.audioWindow = started.audioWindow;

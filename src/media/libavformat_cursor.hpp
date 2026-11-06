@@ -39,9 +39,12 @@ public:
   LibavformatCursor(const LibavformatCursor &) = delete;
   LibavformatCursor &operator=(const LibavformatCursor &) = delete;
   static bool requiresExactDemuxTimeline(const std::filesystem::path &, CancellationToken);
-  bool open(const std::filesystem::path &, CancellationToken, std::string &error);
+  // refusal, when given, receives the typed class of a refusal that has one.
+  bool open(const std::filesystem::path &, CancellationToken, std::string &error,
+            MediaRefusalClass *refusal = nullptr);
   bool open(const std::filesystem::path &,
-            const std::atomic<bool> &cancellation, std::string &error);
+            const std::atomic<bool> &cancellation, std::string &error,
+            MediaRefusalClass *refusal = nullptr);
   Read read(Packet &, std::string &error);
   bool seek(unsigned stream, MediaTime target, std::string &error);
   unsigned streamCount() const noexcept;
