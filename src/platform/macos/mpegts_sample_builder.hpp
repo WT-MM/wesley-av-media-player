@@ -25,9 +25,6 @@ namespace wam::macos {
 // Nothing here is part of the shipping surface of `mpegts_media_source.hpp`;
 // this header is included only by MPEG-TS backend translation units.
 
-[[nodiscard]] const char* mpegTsDemuxErrorNameForMessage(
-    media::mpegts::MpegTsDemuxError error) noexcept;
-
 // The neutral header owns no FileChanged status, so a mid-stream identity
 // change has to travel as a MediaSourceFailure. Naming the demuxer error
 // inside the message keeps that fact recoverable by an owner that must

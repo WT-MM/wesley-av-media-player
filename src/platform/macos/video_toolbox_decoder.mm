@@ -333,10 +333,6 @@ struct AsyncDecodeState {
   CMTime lastDeliveredPresentationTime{kCMTimeInvalid};
   bool discarding{false};
   bool callbackFailedClosed{false};
-  // Set under deliveryMutex + mutex before FinishDelayedFrames. Once set,
-  // callbacks continue restoring decode/PTS order and retiring admission, but
-  // retain every resulting frame for owner-progressive EOS draining.
-  bool endOfStreamBegun{false};
   AsyncError lastError;
   const VideoToolboxDecoderProgressHandler progressHandler;
 #if defined(WAM_NATIVE_VIDEO_TESTING)
@@ -549,7 +545,6 @@ void resetPresentationState(
     state->currentCompressedBytes = 0;
     state->lastDeliveredPresentationTime = kCMTimeInvalid;
     state->callbackFailedClosed = false;
-    state->endOfStreamBegun = false;
   }
   // Release decoder surfaces outside the state mutex, then return the empty
   // vector's pre-reserved storage before another callback can enter.
@@ -1896,7 +1891,6 @@ struct VideoToolboxDecoder::Impl {
   // -layer interop, which otherwise deliberately leaves it unpinned -- see
   // createSessionLocked().
   bool hdrOutputSurfaceRequired{false};
-  std::size_t codecReorderFrames{0};
   std::uint64_t retirementRetiredGeneration{0};
   std::uint64_t retirementInvalidationGeneration{0};
   bool retirementStarted{false};
@@ -2444,7 +2438,6 @@ struct VideoToolboxDecoder::Impl {
         // below without repeating FinishDelayedFrames.
       } else {
         ended = true;
-        async->endOfStreamBegun = true;
         newlyBegun = true;
       }
     }
@@ -2871,7 +2864,6 @@ bool VideoToolboxDecoder::configure(
   // display-layer interop is deliberately left free to use.
   impl_->hdrOutputSurfaceRequired = configuration.highDynamicRangeTransfer &&
                                     !codedDepthIsTenBit(configuration);
-  impl_->codecReorderFrames = admittedReorderFrames;
   impl_->resetEndOfStreamLocked();
   impl_->awaitingKeyFrame = true;
   {
@@ -2900,9 +2892,9 @@ bool VideoToolboxDecoder::configure(
     impl_->async->endOfStreamBackpressureRetries = 0;
     impl_->async->surfaceBudgetRejections = 0;
     impl_->async->outOfOrderDrops = 0;
-    impl_->async->codecReorderFrames = impl_->codecReorderFrames;
+    impl_->async->codecReorderFrames = admittedReorderFrames;
     impl_->async->maxRetainedFrames =
-        impl_->options.maxInFlightFrames + impl_->codecReorderFrames;
+        impl_->options.maxInFlightFrames + admittedReorderFrames;
     impl_->async->peakPendingPresentationFrames = 0;
     impl_->async->nextSubmissionSequence = 0;
     impl_->async->nextCompletionSequence = 0;
@@ -2922,7 +2914,6 @@ bool VideoToolboxDecoder::configure(
     impl_->async->expectedCodedDimensions = configuration.codedSize;
     impl_->async->lastDeliveredPresentationTime = kCMTimeInvalid;
     impl_->async->callbackFailedClosed = false;
-    impl_->async->endOfStreamBegun = false;
     impl_->async->lastError.reset();
 #if defined(WAM_NATIVE_VIDEO_TESTING)
     impl_->async->failNextAllocationPoint.reset();
@@ -3600,7 +3591,6 @@ bool VideoToolboxDecoderTestAccess::setPresentationReorderDepth(
     assignError(error, "test decoder ordering state is not empty");
     return false;
   }
-  decoder.impl_->codecReorderFrames = reorderFrames;
   if (reorderFrames >
       std::numeric_limits<std::size_t>::max() -
           decoder.impl_->options.maxInFlightFrames) {
@@ -3803,7 +3793,6 @@ bool VideoToolboxDecoderTestAccess::prepareInjectedCallbacks(
     decoder.impl_->awaitingKeyFrame = false;
     decoder.impl_->outputPixelFormat =
         kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange;
-    decoder.impl_->codecReorderFrames = 0;
     decoder.impl_->async->sink = &sink;
     decoder.impl_->async->generation = generation;
     decoder.impl_->async->inFlight = 0;
@@ -3837,16 +3826,13 @@ bool VideoToolboxDecoderTestAccess::prepareInjectedCallbacks(
     decoder.impl_->async->lastDeliveredPresentationTime = kCMTimeInvalid;
     decoder.impl_->async->discarding = false;
     decoder.impl_->async->callbackFailedClosed = false;
-    decoder.impl_->async->endOfStreamBegun = false;
     decoder.impl_->async->endOfStreamBackpressureRetries = 0;
     decoder.impl_->async->sinkBackpressureRetries = 0;
     decoder.impl_->async->surfaceBudgetRejections = 0;
     decoder.impl_->async->lastError.reset();
-#if defined(WAM_NATIVE_VIDEO_TESTING)
     decoder.impl_->async->failNextAllocationPoint.reset();
     decoder.impl_->async->permitSyntheticCallbackFrame = true;
     decoder.impl_->async->permitSyntheticOutputSurface = false;
-#endif
   }
   sink.flush(generation);
   return true;

@@ -57,8 +57,8 @@ public:
     close();
     software_.reset();
     avcodec_.reset();
-    plan_ = nativeVideoDecodePlan(configuration, SoftwareVp8Decoder::available(), true, hardwareCapability);
-    for (auto& candidate : plan_.candidates) {
+    const auto plan = nativeVideoDecodePlan(configuration, SoftwareVp8Decoder::available(), true, hardwareCapability);
+    for (const auto& candidate : plan.candidates) {
       if (candidate.refusal != media::DecodeRefusal::None) continue;
       auto configured = configuration;
       switch (candidate.implementation) {
@@ -67,14 +67,12 @@ public:
         configured.requireHardwareDecode = candidate.implementation == media::DecodeImplementation::VideoToolboxHardware;
         configured.preferHardwareDecode = configured.requireHardwareDecode;
         if (videoToolbox_.configure(configured, sink, error)) {
-          plan_.implementation = candidate.implementation;
           std::fprintf(stderr, "WAM: native decoder stage=%s codec=%08x\n",
               videoToolbox_.stats().usingHardwareAcceleratedDecoder ? "VideoToolboxHardware" : "VideoToolboxSoftware", configuration.codec);
           if (error) error->clear();
           return true;
         }
         videoToolbox_.close();
-        candidate.refusal = media::DecodeRefusal::AppleCodecUnavailable;
         break;
       case media::DecodeImplementation::Libavcodec: {
         const auto codec = media::mediaCodecForCoreMediaType(configuration.codec);
@@ -94,7 +92,6 @@ public:
         }
         avcodec_ = std::make_unique<SoftwareAvcodecVideoDecoder>(options_);
         if (!avcodec_->configure(configured, sink, error)) return false;
-        plan_.implementation = candidate.implementation;
         std::fprintf(stderr, "WAM: native decoder stage=Libavcodec codec=%08x\n", configuration.codec);
         if (error) error->clear();
         return true;
@@ -102,14 +99,12 @@ public:
       case media::DecodeImplementation::Libvpx:
         software_ = std::make_unique<SoftwareVp8Decoder>(options_);
         if (!software_->configure(configured, sink, error)) return false;
-        plan_.implementation = candidate.implementation;
         std::fprintf(stderr, "WAM: native decoder stage=Libvpx codec=%08x\n", configuration.codec);
         if (error) error->clear();
         return true;
       default: break;
       }
     }
-    plan_.implementation = media::DecodeImplementation::None;
     if (error) *error = "NativeDecodePlanExhausted";
     return false;
 #else
@@ -258,7 +253,6 @@ private:
   std::unique_ptr<SoftwareVp8Decoder> software_;
 #if defined(WAM_ENABLE_AVCODEC_STAGE)
   std::unique_ptr<SoftwareAvcodecVideoDecoder> avcodec_;
-  media::DecodePlan plan_{};
 #endif
 };
 

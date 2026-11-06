@@ -25,14 +25,10 @@ using media::mpegts::MpegTsDemuxError;
 
 }  // namespace
 
-const char* mpegTsDemuxErrorNameForMessage(MpegTsDemuxError error) noexcept {
-  return media::mpegts::mpegTsDemuxErrorName(error);
-}
-
 std::string mpegTsDemuxErrorMessage(const char* what, MpegTsDemuxError error) {
   std::string message(what);
   message += " (";
-  message += mpegTsDemuxErrorNameForMessage(error);
+  message += media::mpegts::mpegTsDemuxErrorName(error);
   message += ")";
   return message;
 }
@@ -359,7 +355,6 @@ MpegTsSampleBuildStatus buildMpegTsCompressedSampleBuffer(
 
   CMBlockBufferRef block = nullptr;
   std::span<std::byte> destination;
-  std::size_t blockBytes = 0;
   CMItemCount numSamples = 1;
   CMItemCount sizeEntries = 1;
   std::array<std::size_t, 1> videoSizes{};
@@ -413,7 +408,6 @@ MpegTsSampleBuildStatus buildMpegTsCompressedSampleBuffer(
       assignError(error, "mpeg-ts Annex-B to AVCC repack refused the unit");
       return MpegTsSampleBuildStatus::Failed;
     }
-    blockBytes = repacked;
     videoSizes[0] = repacked;
     sizePointer = videoSizes.data();
   } else if (inputs.video) {
@@ -436,7 +430,6 @@ MpegTsSampleBuildStatus buildMpegTsCompressedSampleBuffer(
       }
       return MpegTsSampleBuildStatus::Failed;
     }
-    blockBytes = payloadBytes;
     videoSizes[0] = payloadBytes;
     sizePointer = videoSizes.data();
   } else {
@@ -495,7 +488,6 @@ MpegTsSampleBuildStatus buildMpegTsCompressedSampleBuffer(
       }
       written += layout.outputSize[index];
     }
-    blockBytes = layout.outputBytes;
     numSamples = static_cast<CMItemCount>(layout.count);
     sizeEntries = numSamples;
     sizePointer = layout.outputSize.data();
@@ -551,8 +543,6 @@ MpegTsSampleBuildStatus buildMpegTsCompressedSampleBuffer(
     assignError(error, "mpeg-ts sample buffer did not admit its access units");
     return MpegTsSampleBuildStatus::Failed;
   }
-  static_cast<void>(blockBytes);
-
   if (inputs.video) {
     CFArrayRef attachments =
         CMSampleBufferGetSampleAttachmentsArray(created, true);

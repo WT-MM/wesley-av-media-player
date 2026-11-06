@@ -310,15 +310,4 @@ public:
   virtual void close() noexcept = 0;
 };
 
-// Renderer-facing contract. It deliberately accepts decoded frame leases, not
-// codec packets, so decode and presentation can be benchmarked or replaced
-// independently.
-class VideoPresentationBackend : public DecodedFrameSink {
-public:
-  ~VideoPresentationBackend() override = default;
-  [[nodiscard]] virtual bool start(void *nativeMetalDevice,
-                                   std::string *error) = 0;
-  virtual void stop() noexcept = 0;
-};
-
 } // namespace wam::macos

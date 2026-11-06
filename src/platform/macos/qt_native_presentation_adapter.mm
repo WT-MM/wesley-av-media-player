@@ -11,17 +11,6 @@ namespace {
 void assignError(std::string* error, const char* message) noexcept {
   if (error && error->empty()) { try { *error = message; } catch (...) {} }
 }
-// Runtime presentation selection. The decision itself lives in
-// native_layer_presentation_state.hpp so this factory and main.cpp's QML
-// transparency flag cannot disagree; see the rationale and the default there.
-// The GL path stays a full implementation behind WAM_PRESENTATION=scenegraph.
-enum class PresentationRoute : std::uint8_t { SceneGraph, Layer };
-
-[[nodiscard]] PresentationRoute selectedPresentationRoute() noexcept {
-  return layerPresentationRouteSelected() ? PresentationRoute::Layer
-                                          : PresentationRoute::SceneGraph;
-}
-
 // The Qt view handle the layer must be installed beneath. Derived from the
 // video item's own window, so no change to main.cpp's window plumbing is
 // needed: the item already lives in the window whose content view hosts the
@@ -45,7 +34,10 @@ NativeMediaSessionPresentation createPresentation(
     auto* videoItem = static_cast<QtGlVideoItem*>(context);
     std::shared_ptr<NativeTrackedVideoOutput> trackedOutput;
     std::shared_ptr<NativeLayerHostView> layerHost;
-    if (selectedPresentationRoute() == PresentationRoute::Layer) {
+    // The route decision lives in native_layer_presentation_state.hpp so this
+    // factory and main.cpp's QML transparency flag cannot disagree. The GL
+    // path stays a full implementation behind WAM_PRESENTATION=scenegraph.
+    if (layerPresentationRouteSelected()) {
       // The layer presenter issues no in-process render pass, which is the
       // whole objective (DESIGN.md section 6). Everything downstream of this
       // pointer -- consumer, arbiter, session, owner, telemetry, commit-seek,

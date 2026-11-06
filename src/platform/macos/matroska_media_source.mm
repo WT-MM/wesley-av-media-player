@@ -52,14 +52,6 @@ constexpr std::size_t kMaximumLaceFrames{
 
 // ---- Traits ---------------------------------------------------------------
 
-MatroskaSourceTraits::PrepareOutcome MatroskaSourceTraits::prepare(
-    const std::filesystem::path& path,
-    const media::MediaSourceOpenOptions& options,
-    CancellationToken cancellation) noexcept {
-  return media::matroska::prepareMatroskaLocalFile(path, options,
-                                                   cancellation);
-}
-
 std::shared_ptr<const MatroskaAssetContext> MatroskaSourceTraits::adoptContext(
     const std::filesystem::path& path,
     const media::MediaSourceOpenOptions& options,
