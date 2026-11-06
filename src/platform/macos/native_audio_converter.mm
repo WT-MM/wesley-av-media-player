@@ -877,6 +877,8 @@ struct NativeAudioConverter::Impl {
     clearPreparedProof();
     eof_requested = false;
     drained = false;
+    staged_frames = 0;
+    staged_start = 0;
   }
 
   void resetExactTimeline(NativeAudioGenerationTimeline value,
@@ -1037,7 +1039,6 @@ struct NativeAudioConverter::Impl {
     std::uint64_t tailDiscarded{0};
     std::uint64_t publishFrames{0};
     std::uint64_t discardedTrimAfter{0};
-    std::uint64_t publishedAfter{0};
   };
 
   // Head and tail trim for one decoded block. Pure: it commits nothing, so the
@@ -1077,11 +1078,13 @@ struct NativeAudioConverter::Impl {
         producedFrames - discarded - tailDiscarded;
     std::uint64_t trimmed = 0;
     std::uint64_t discardedAfter = 0;
+    std::uint64_t publishedBefore = 0;
     std::uint64_t publishedAfter = 0;
     if (!checkedAdd(discarded, tailDiscarded, &trimmed) ||
         !checkedAdd(statistics.discardedTrimFrames, trimmed, &discardedAfter) ||
-        !checkedAdd(statistics.publishedPcmFrames, publishFrames,
-                    &publishedAfter)) {
+        !checkedAdd(statistics.publishedPcmFrames, staged_frames,
+                    &publishedBefore) ||
+        !checkedAdd(publishedBefore, publishFrames, &publishedAfter)) {
       return "generation-local PCM accounting overflowed";
     }
     plan->publishStart = publishStart;
@@ -1089,7 +1092,6 @@ struct NativeAudioConverter::Impl {
     plan->tailDiscarded = tailDiscarded;
     plan->publishFrames = publishFrames;
     plan->discardedTrimAfter = discardedAfter;
-    plan->publishedAfter = publishedAfter;
     return nullptr;
   }
 
@@ -1401,13 +1403,95 @@ struct NativeAudioConverter::Impl {
   std::size_t aac_head{}, aac_size{};
   std::uint64_t aac_decoded_offset{}, aac_silence_offset{};
   std::size_t aac_pending_count{}, aac_pending_offset{};
-  std::array<float, NativeAudioConverter::kFramesPerPump*2> aac_output{};
+  // Decoded stereo PCM waiting to fill one ring slab. The ring counts its
+  // occupancy in slabs, and the output's headroom proof
+  // (NativePcmRing::kMinimumFramesPerPublishedSlab) holds only if every slab
+  // but a generation's last carries at least that many frames -- which one
+  // codec packet per input sample (Opus, Vorbis, FLAC on Matroska or
+  // libavformat; an AAC edit extent) does not. So short blocks are coalesced
+  // here first. Before an append the staging holds fewer than the floor, and an
+  // append is at most one pump's block, so it always fits.
+  std::array<float, 2 * NativeAudioConverter::kFramesPerPump *
+                        NativePcmRing::kChannels>
+      staged{};
+  std::uint64_t staged_frames{0};
+  // Generation-local frame of staged[0]. Staged frames are contiguous: each
+  // append starts where the previous one ended.
+  std::int64_t staged_start{0};
+
+  void stage(std::int64_t start, const float *frames, std::uint64_t count) noexcept {
+    if (staged_frames == 0) {
+      staged_start = start;
+    }
+    float *destination = staged.data() + staged_frames * NativePcmRing::kChannels;
+    if (frames == nullptr) {
+      std::fill_n(destination, count * NativePcmRing::kChannels, 0.0f);
+    } else {
+      std::copy_n(frames, count * NativePcmRing::kChannels, destination);
+    }
+    staged_frames += count;
+  }
+
+  // Publishes one slab from staging once it holds the floor, or whatever it
+  // holds once `final` says no later frame will join it. Empty when nothing
+  // was due.
+  [[nodiscard]] std::optional<NativeAudioPumpResult>
+  publishStaged(bool final, std::string *error) noexcept {
+    if (staged_frames == 0 ||
+        (!final && staged_frames < NativePcmRing::kMinimumFramesPerPublishedSlab)) {
+      return std::nullopt;
+    }
+    if (ring.queuedSlabs() >= NativePcmRing::kSlabCount) {
+      saturatingAdd(statistics.ringBackpressure, 1);
+      return NativeAudioPumpResult::Backpressure;
+    }
+    const std::uint64_t frames =
+        std::min<std::uint64_t>(staged_frames, NativePcmRing::kFramesPerSlab);
+    const auto published = ring.publish(
+        statistics.generation,
+        std::span<const float>(staged.data(), frames * NativePcmRing::kChannels),
+        frames);
+    if (published == NativePcmRing::PublishResult::StaleGeneration) {
+      return NativeAudioPumpResult::StaleGeneration;
+    }
+    if (published != NativePcmRing::PublishResult::Published) {
+      failPump(error, published == NativePcmRing::PublishResult::Full
+                          ? "ring became full after converter preflight"
+                          : "native PCM ring rejected decoded audio");
+      return NativeAudioPumpResult::Failed;
+    }
+    if (!statistics.firstPublishedFrameKnown) {
+      statistics.firstPublishedFrame = staged_start;
+      statistics.firstPublishedFrameKnown = true;
+    }
+    saturatingAdd(statistics.publishedPcmFrames, frames);
+    saturatingAdd(statistics.publishedSlabs, 1);
+    std::copy(staged.begin() + static_cast<std::ptrdiff_t>(frames * NativePcmRing::kChannels),
+              staged.begin() + static_cast<std::ptrdiff_t>(staged_frames * NativePcmRing::kChannels),
+              staged.begin());
+    staged_frames -= frames;
+    staged_start += static_cast<std::int64_t>(frames);
+    return NativeAudioPumpResult::Published;
+  }
+
+  // True once the staged frames reach the presentation ceiling, after which
+  // the generation publishes nothing more.
+  [[nodiscard]] bool stagedReachesCeiling() const noexcept {
+    return has_presentation_ceiling && staged_frames != 0 &&
+           staged_start + static_cast<std::int64_t>(staged_frames) >=
+               presentation_ceiling_frame;
+  }
 
   // Decode accounting stays on the natural 1024-frame grid. This bounded
   // queue maps those frames onto the source-proved presentation extents:
   // short extents trim the packet tail; long extents append exact silence.
   NativeAudioPumpResult publishAac(std::string* error) {
-    while (aac_size) {
+    while (true) {
+      if (const auto result = publishStaged(
+              (drained && aac_size == 0) || stagedReachesCeiling(), error)) {
+        return *result;
+      }
+      if (aac_size == 0) return NativeAudioPumpResult::Progress;
       const auto& edit = aac_edits[aac_head];
       const bool silence = aac_decoded_offset == kAacFrames && edit.duration > kAacFrames;
       if (aac_decoded_offset == kAacFrames && (!silence || aac_silence_offset == edit.duration-kAacFrames)) {
@@ -1431,30 +1515,17 @@ struct NativeAudioConverter::Impl {
       const auto high = std::min(start+static_cast<std::int64_t>(kept),
           has_presentation_ceiling ? presentation_ceiling_frame : INT64_MAX);
       const auto count = high > low ? static_cast<std::uint64_t>(high-low) : 0;
-      if (count && ring.queuedSlabs() >= NativePcmRing::kSlabCount)
-        return NativeAudioPumpResult::Backpressure;
       if (count) {
-        if (silence) std::fill_n(aac_output.data(),count*2,0.0f);
-        else std::copy_n(pcm.data()+(aac_pending_offset+static_cast<std::size_t>(low-start))*2,count*2,aac_output.data());
-        if (ring.publish(statistics.generation,std::span<const float>(aac_output.data(),count*2),count)
-            != NativePcmRing::PublishResult::Published) {
-          failPump(error,"AAC mapped PCM publication failed"); return NativeAudioPumpResult::Failed;
-        }
-        if (!statistics.firstPublishedFrameKnown) {
-          statistics.firstPublishedFrameKnown=true; statistics.firstPublishedFrame=low;
-        }
+        stage(low, silence ? nullptr :
+              pcm.data()+(aac_pending_offset+static_cast<std::size_t>(low-start))*2, count);
         if (silence) saturatingAdd(statistics.insertedSilenceFrames,count);
-        saturatingAdd(statistics.publishedPcmFrames,count);
-        saturatingAdd(statistics.publishedSlabs,1);
       }
       if (silence) aac_silence_offset += n;
       else {
         aac_decoded_offset += n; aac_pending_offset += n;
         saturatingAdd(statistics.discardedTrimFrames,n-count);
       }
-      if (count) return NativeAudioPumpResult::Published;
     }
-    return NativeAudioPumpResult::Progress;
   }
 
   std::shared_ptr<const void> instance_identity;
@@ -2000,6 +2071,9 @@ NativeAudioPumpResult NativeAudioConverter::pump(std::string *error) {
     if (mapped != NativeAudioPumpResult::Progress) return mapped;
   }
   if (state.drained) {
+    if (const auto staged = state.publishStaged(true, error)) {
+      return *staged;
+    }
     return NativeAudioPumpResult::Drained;
   }
   if (!state.nextBlockIsAllPreroll() &&
@@ -2113,43 +2187,31 @@ NativeAudioPumpResult NativeAudioConverter::pump(std::string *error) {
       if (converted.drained && !state.sealDrain(decodedAfter,error)) return NativeAudioPumpResult::Failed;
       return state.publishAac(error);
     }
-    if (publishFrames == 0) {
-      if (converted.drained && !state.sealDrain(decodedAfter, error)) {
-        return NativeAudioPumpResult::Failed;
-      }
-      return NativeAudioPumpResult::Progress;
+    if (publishFrames != 0) {
+      state.stage(plan.publishStart,
+                  state.pcm.data() + discarded * NativePcmRing::kChannels,
+                  publishFrames);
     }
-    const auto published = state.ring.publish(
-        state.statistics.generation,
-        std::span<const float>(state.pcm.data() +
-                                   discarded * NativePcmRing::kChannels,
-                               publishFrames * NativePcmRing::kChannels),
-        publishFrames);
-    if (published == NativePcmRing::PublishResult::Full) {
-      state.failPump(error, "ring became full after converter preflight");
-      return NativeAudioPumpResult::Failed;
-    }
-    if (published == NativePcmRing::PublishResult::StaleGeneration) {
-      return NativeAudioPumpResult::StaleGeneration;
-    }
-    if (published != NativePcmRing::PublishResult::Published) {
-      state.failPump(error, "native PCM ring rejected decoded audio");
-      return NativeAudioPumpResult::Failed;
-    }
-    state.statistics.publishedPcmFrames = plan.publishedAfter;
-    if (!state.statistics.firstPublishedFrameKnown) {
-      state.statistics.firstPublishedFrame = plan.publishStart;
-      state.statistics.firstPublishedFrameKnown = true;
-    }
-    saturatingAdd(state.statistics.publishedSlabs, 1);
     if (converted.drained && !state.sealDrain(decodedAfter, error)) {
       return NativeAudioPumpResult::Failed;
     }
-    return NativeAudioPumpResult::Published;
+    // The pump preflight left room for this one slab. A remainder a drained
+    // generation could not publish here is published by the next pump before
+    // it reports Drained.
+    const bool final = converted.drained ||
+                       (state.has_presentation_ceiling &&
+                        cursorAfter >= state.presentation_ceiling_frame);
+    if (const auto staged = state.publishStaged(final, error)) {
+      return *staged;
+    }
+    return NativeAudioPumpResult::Progress;
   }
   if (converted.drained) {
     if (!state.sealDrain(state.statistics.decodedPcmFrames, error)) {
       return NativeAudioPumpResult::Failed;
+    }
+    if (const auto staged = state.publishStaged(true, error)) {
+      return *staged;
     }
     return NativeAudioPumpResult::Drained;
   }
@@ -2332,7 +2394,7 @@ NativeAudioConverterStats NativeAudioConverter::stats() const noexcept {
       std::max(impl_->peak_retained_payload_bytes,
                result.retainedPayloadBytes);
   result.endOfStreamRequested = impl_->eof_requested;
-  result.drained = impl_->drained;
+  result.drained = impl_->drained && impl_->staged_frames == 0;
   return result;
 }
 

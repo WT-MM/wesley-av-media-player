@@ -2660,7 +2660,8 @@ void testDeviceBufferFramesConfiguration() {
                 NativeAudioOutput::kMaximumFramesPerSlice);
   static_assert(NativeAudioOutput::kGuaranteedRingFrames ==
                 static_cast<std::uint32_t>(NativePcmRing::kSlabCount) *
-                    NativeAudioOutput::kMinimumFramesPerPublishedSlab);
+                    static_cast<std::uint32_t>(
+                        NativePcmRing::kMinimumFramesPerPublishedSlab));
 
   Fixture accepted;
   expect(accepted.configure() &&
