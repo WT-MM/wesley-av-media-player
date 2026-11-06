@@ -12,6 +12,7 @@
 #include "platform/macos/core_media_codec_facts.hpp"
 #include "platform/macos/core_media_source_support.hpp"
 #include "platform/macos/core_media_carriage.hpp"
+#include "platform/macos/native_preview_source_core.hpp"
 extern "C" {
 #include <libavcodec/codec_id.h>
 }
@@ -907,8 +908,9 @@ namespace wam::macos {
 namespace {
 class Preview final : public NativePreviewSource {
 public:
-  explicit Preview(std::shared_ptr<const Context> context)
-      : context_(std::move(context)) {}
+  Preview(std::shared_ptr<const Context> context,
+          const MediaTrackDescriptor &track)
+      : context_(std::move(context)), track_(track) {}
   NativePreviewBeginOutcome
   begin(NativePreviewRequest request) noexcept override {
     NativePreviewBeginOutcome out;
@@ -934,8 +936,7 @@ public:
                     return static_cast<const Preview *>(value)->isCancelled();
                   }},
               out.error) ||
-          !reader_->initialize(context_->descriptor()->tracks.front(),
-                               out.error)) {
+          !reader_->initialize(track_, out.error)) {
         out.status = NativePreviewStatus::Unsupported;
         return out;
       }
@@ -998,8 +999,7 @@ public:
       if (packet.stream != context_->selectedStream)
         continue;
       MediaSample sample;
-      if (!reader_->materialize(packet, epoch, facts_.target,
-                                context_->descriptor()->tracks.front(), sample,
+      if (!reader_->materialize(packet, epoch, facts_.target, track_, sample,
                                 error))
         return NativePreviewFailure{epoch, std::move(error)};
       ++facts_.samplesRead;
@@ -1012,13 +1012,7 @@ public:
     return NativePreviewFailure{epoch, "LibavformatPreviewInterleaveLimit"};
   }
   void requestCancel(std::uint64_t epoch) noexcept override {
-    if (epoch && operation_.load(std::memory_order_acquire) == epoch) {
-      auto observed = cancelled_.load(std::memory_order_acquire);
-      while (observed < epoch && !cancelled_.compare_exchange_weak(
-                                     observed, epoch, std::memory_order_release,
-                                     std::memory_order_acquire)) {
-      }
-    }
+    publishPreviewCancellation(operation_, cancelled_, epoch);
   }
   void close() noexcept override {
     operation_.store(0, std::memory_order_release);
@@ -1038,6 +1032,8 @@ public:
 
 private:
   std::shared_ptr<const Context> context_;
+  // Borrowed from the descriptor the context retains for this source's life.
+  const MediaTrackDescriptor &track_;
   std::unique_ptr<PacketReader> reader_;
   bool isCancelled() const noexcept {
     const auto active = operation_.load(std::memory_order_acquire);
@@ -1054,10 +1050,11 @@ createLibavformatPreviewSource(NativePreviewBinding binding) noexcept {
   try {
     auto context =
         std::dynamic_pointer_cast<const Context>(binding.assetContext);
-    if (!context || context->audioOnly ||
+    const MediaTrackDescriptor *track = previewableVideoTrack(binding);
+    if (!context || !track ||
         !context->matchesPreviewBinding(binding.localPath, binding.descriptor))
       return {};
-    return std::make_unique<Preview>(std::move(context));
+    return std::make_unique<Preview>(std::move(context), *track);
   } catch (...) {
     return {};
   }

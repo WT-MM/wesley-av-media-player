@@ -1584,6 +1584,8 @@ if(BUILD_TESTING)
         # closure whether or not the test exercises it.
         src/platform/macos/mpegts_asset_context.hpp
         src/platform/macos/mpegts_asset_context.cpp
+        src/platform/macos/mpegts_media_source.hpp
+        src/platform/macos/mpegts_media_source.mm
         src/platform/macos/mpegts_preview_source.hpp
         src/platform/macos/mpegts_preview_source.mm
         src/platform/macos/mpegts_sample_builder.hpp
@@ -1689,6 +1691,8 @@ if(BUILD_TESTING)
         # closure whether or not the test exercises it.
         src/platform/macos/matroska_asset_context.hpp
         src/platform/macos/matroska_asset_context.cpp
+        src/platform/macos/matroska_media_source.hpp
+        src/platform/macos/matroska_media_source.mm
         src/platform/macos/matroska_preview_source.hpp
         src/platform/macos/matroska_preview_source.mm
         src/platform/macos/core_media_carriage.hpp
@@ -1785,6 +1789,7 @@ if(BUILD_TESTING)
       add_executable(wam_native_media_session_test
         tests/native_media_session_test.mm
         src/platform/macos/mpegts_media_source.mm
+        src/platform/macos/matroska_media_source.mm
         src/media/native_media_source.hpp
         src/media/native_media_source.cpp
         src/media/native_media_dispatcher.hpp

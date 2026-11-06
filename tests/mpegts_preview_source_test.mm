@@ -55,7 +55,7 @@ extern char** environ;
 
 namespace {
 
-using wam::macos::MpegTsPreviewSource;
+using wam::macos::createMpegTsPreviewSource;
 using wam::macos::NativePreviewBeginOutcome;
 using wam::macos::NativePreviewBinding;
 using wam::macos::NativePreviewCancelled;
@@ -201,7 +201,7 @@ void testPlanMappingWithoutBackWalk(const Fixture& fixture) {
     expect(false, "plan mapping fixture prepares");
     return;
   }
-  auto source = MpegTsPreviewSource::create(prepared.binding());
+  auto source = createMpegTsPreviewSource(prepared.binding());
   expect(source != nullptr, "a preview source is created from a live context");
   if (source == nullptr) {
     return;
@@ -253,7 +253,7 @@ void testDecodeOnlyBoundaryAndForwardRetarget(const Fixture& fixture) {
     expect(false, "decodeOnly fixture prepares");
     return;
   }
-  auto source = MpegTsPreviewSource::create(prepared.binding());
+  auto source = createMpegTsPreviewSource(prepared.binding());
   if (source == nullptr) {
     expect(false, "decodeOnly fixture creates a preview source");
     return;
@@ -311,7 +311,7 @@ void testEndOfStreamIsIdempotent(const Fixture& fixture) {
     expect(false, "end-of-stream fixture prepares");
     return;
   }
-  auto source = MpegTsPreviewSource::create(prepared.binding());
+  auto source = createMpegTsPreviewSource(prepared.binding());
   if (source == nullptr) {
     expect(false, "end-of-stream fixture creates a preview source");
     return;
@@ -345,7 +345,7 @@ void testCancellation(const Fixture& fixture) {
     expect(false, "cancellation fixture prepares");
     return;
   }
-  auto source = MpegTsPreviewSource::create(prepared.binding());
+  auto source = createMpegTsPreviewSource(prepared.binding());
   if (source == nullptr) {
     expect(false, "cancellation fixture creates a preview source");
     return;
@@ -393,7 +393,7 @@ void testRequestAdmission(const Fixture& fixture) {
     expect(false, "admission fixture prepares");
     return;
   }
-  auto source = MpegTsPreviewSource::create(prepared.binding());
+  auto source = createMpegTsPreviewSource(prepared.binding());
   if (source == nullptr) {
     expect(false, "admission fixture creates a preview source");
     return;
@@ -437,24 +437,24 @@ void testBindingRejection(const Fixture& fixture) {
   }
   NativePreviewBinding noContext = prepared.binding();
   noContext.assetContext.reset();
-  expect(MpegTsPreviewSource::create(noContext) == nullptr,
+  expect(createMpegTsPreviewSource(noContext) == nullptr,
          "the MPEG-TS preview source refuses a cold-load binding");
 
   NativePreviewBinding wrongPath = prepared.binding();
   wrongPath.localPath = fixture.directory / "other.ts";
-  expect(MpegTsPreviewSource::create(wrongPath) == nullptr,
+  expect(createMpegTsPreviewSource(wrongPath) == nullptr,
          "a binding naming another path is refused");
 
   NativePreviewBinding clonedDescriptor = prepared.binding();
   clonedDescriptor.descriptor =
       std::make_shared<const wam::media::MediaSourceDescriptor>(
           *prepared.context->descriptor());
-  expect(MpegTsPreviewSource::create(clonedDescriptor) == nullptr,
+  expect(createMpegTsPreviewSource(clonedDescriptor) == nullptr,
          "a deep-equal descriptor clone is not descriptor identity");
 
   NativePreviewBinding relative = prepared.binding();
   relative.localPath = "preview.ts";
-  expect(MpegTsPreviewSource::create(relative) == nullptr,
+  expect(createMpegTsPreviewSource(relative) == nullptr,
          "a relative path is refused");
 }
 
@@ -517,7 +517,7 @@ void testPromotedSampleBuilders(const Fixture& fixture) {
          "the promoted description restates the admitted geometry");
   CFRelease(format);
 
-  auto source = MpegTsPreviewSource::create(prepared.binding());
+  auto source = createMpegTsPreviewSource(prepared.binding());
   if (source == nullptr ||
       source->begin(NativePreviewRequest{1, MediaTime{1, 2}}).status !=
           NativePreviewStatus::Ready) {
@@ -574,7 +574,7 @@ void testMemoryFactsStageAtMostOneBuffer(const Fixture& fixture) {
     expect(false, "memory facts fixture prepares");
     return;
   }
-  auto source = MpegTsPreviewSource::create(prepared.binding());
+  auto source = createMpegTsPreviewSource(prepared.binding());
   if (source == nullptr ||
       source->begin(NativePreviewRequest{1, MediaTime{1, 2}}).status !=
           NativePreviewStatus::Ready) {
@@ -608,7 +608,7 @@ void testPreviewIsIndependentOfTheMainSource(const Fixture& fixture) {
   binding.localPath = fixture.stream;
   binding.descriptor = opened.descriptor;
   binding.assetContext = opened.preparedContext;
-  auto preview = MpegTsPreviewSource::create(binding);
+  auto preview = createMpegTsPreviewSource(binding);
   expect(preview != nullptr,
          "a preview source binds to the context the main source admitted");
   if (preview == nullptr) {

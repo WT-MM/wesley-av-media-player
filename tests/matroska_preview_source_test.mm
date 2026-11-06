@@ -55,7 +55,7 @@
 
 namespace {
 
-using wam::macos::MatroskaPreviewSource;
+using wam::macos::createMatroskaPreviewSource;
 using wam::macos::NativePreviewBeginOutcome;
 using wam::macos::NativePreviewBinding;
 using wam::macos::NativePreviewCancelled;
@@ -448,7 +448,7 @@ void testCueMappingWithoutBackWalk() {
     expect(false, "cue mapping fixture prepares");
     return;
   }
-  auto source = MatroskaPreviewSource::create(prepared.binding());
+  auto source = createMatroskaPreviewSource(prepared.binding());
   expect(source != nullptr, "a preview source is created from a live context");
   if (source == nullptr) {
     return;
@@ -507,7 +507,7 @@ void testDecodeOnlyBoundaryAndForwardRetarget() {
     expect(false, "decodeOnly fixture prepares");
     return;
   }
-  auto source = MatroskaPreviewSource::create(prepared.binding());
+  auto source = createMatroskaPreviewSource(prepared.binding());
   if (source == nullptr) {
     expect(false, "decodeOnly fixture creates a preview source");
     return;
@@ -555,7 +555,7 @@ void testEndOfStreamIsIdempotent() {
     expect(false, "end-of-stream fixture prepares");
     return;
   }
-  auto source = MatroskaPreviewSource::create(prepared.binding());
+  auto source = createMatroskaPreviewSource(prepared.binding());
   if (source == nullptr) {
     expect(false, "end-of-stream fixture creates a preview source");
     return;
@@ -586,7 +586,7 @@ void testCancellation() {
     expect(false, "cancellation fixture prepares");
     return;
   }
-  auto source = MatroskaPreviewSource::create(prepared.binding());
+  auto source = createMatroskaPreviewSource(prepared.binding());
   if (source == nullptr) {
     expect(false, "cancellation fixture creates a preview source");
     return;
@@ -642,7 +642,7 @@ void testRequestAdmission() {
     expect(false, "admission fixture prepares");
     return;
   }
-  auto source = MatroskaPreviewSource::create(prepared.binding());
+  auto source = createMatroskaPreviewSource(prepared.binding());
   if (source == nullptr) {
     expect(false, "admission fixture creates a preview source");
     return;
@@ -686,24 +686,24 @@ void testBindingRejection() {
   }
   NativePreviewBinding noContext = prepared.binding();
   noContext.assetContext.reset();
-  expect(MatroskaPreviewSource::create(noContext) == nullptr,
+  expect(createMatroskaPreviewSource(noContext) == nullptr,
          "the Matroska preview source refuses a cold-load binding");
 
   NativePreviewBinding wrongPath = prepared.binding();
   wrongPath.localPath = "/tmp/wam-matroska-preview-other.mkv";
-  expect(MatroskaPreviewSource::create(wrongPath) == nullptr,
+  expect(createMatroskaPreviewSource(wrongPath) == nullptr,
          "a binding naming another path is refused");
 
   NativePreviewBinding clonedDescriptor = prepared.binding();
   clonedDescriptor.descriptor =
       std::make_shared<const wam::media::MediaSourceDescriptor>(
           *prepared.context->descriptor());
-  expect(MatroskaPreviewSource::create(clonedDescriptor) == nullptr,
+  expect(createMatroskaPreviewSource(clonedDescriptor) == nullptr,
          "a deep-equal descriptor clone is not descriptor identity");
 
   NativePreviewBinding relative = prepared.binding();
   relative.localPath = "wam-matroska-preview-fixture.mkv";
-  expect(MatroskaPreviewSource::create(relative) == nullptr,
+  expect(createMatroskaPreviewSource(relative) == nullptr,
          "a relative path is refused");
 }
 
@@ -787,7 +787,7 @@ void testPromotedSampleBuilders() {
     CFRelease(aspectFormat);
   }
 
-  auto source = MatroskaPreviewSource::create(prepared.binding());
+  auto source = createMatroskaPreviewSource(prepared.binding());
   if (source == nullptr ||
       source->begin(NativePreviewRequest{1, MediaTime{1, 2}}).status !=
           NativePreviewStatus::Ready) {
@@ -842,7 +842,7 @@ void testMemoryFactsStageAtMostOneBuffer() {
     expect(false, "memory facts fixture prepares");
     return;
   }
-  auto source = MatroskaPreviewSource::create(prepared.binding());
+  auto source = createMatroskaPreviewSource(prepared.binding());
   if (source == nullptr ||
       source->begin(NativePreviewRequest{1, MediaTime{1, 2}}).status !=
           NativePreviewStatus::Ready) {

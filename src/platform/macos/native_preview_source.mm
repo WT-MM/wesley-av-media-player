@@ -24,7 +24,7 @@ std::unique_ptr<NativePreviewSource> createNativePreviewSource(
   case media::MediaSourceBackendKind::AVFoundation:
     return AVFoundationPreviewSource::create(std::move(binding));
   case media::MediaSourceBackendKind::Matroska:
-    return MatroskaPreviewSource::create(std::move(binding));
+    return createMatroskaPreviewSource(std::move(binding));
   case media::MediaSourceBackendKind::Libavformat:
 #if defined(WAM_ENABLE_AVFORMAT_STAGE)
     return createLibavformatPreviewSource(std::move(binding));
@@ -32,7 +32,7 @@ std::unique_ptr<NativePreviewSource> createNativePreviewSource(
     return {};
 #endif
   case media::MediaSourceBackendKind::MpegTs:
-    return MpegTsPreviewSource::create(std::move(binding));
+    return createMpegTsPreviewSource(std::move(binding));
   }
   return {};
 }
