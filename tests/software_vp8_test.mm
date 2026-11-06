@@ -637,14 +637,6 @@ void testStage() {
   expect(sink.flushes == 1 && sink.generation == 7,
          "configure flushes the sink to the configured generation");
 
-  {
-    wam::macos::CompressedVideoPacket packet;
-    expect(decoder.submit(packet, &error) == VideoDecodeSubmitResult::Rejected,
-           "the generic span ingress is inert; only CoreMedia samples decode");
-    expect(decoder.takeLastError().has_value(),
-           "a rejected submission records a diagnostic");
-  }
-
   // A delta frame before any key frame is accepted and discarded rather than
   // decoded against a retired reference set.
   {
@@ -845,9 +837,6 @@ void testLane() {
          "the lane reports software VP8 as available in this build");
 
   VideoDecodeLane lane;
-  expect(!lane.usesSoftwareDecode(),
-         "a lane that has never configured holds no software backend, so a "
-         "session that never plays VP8 pays nothing for it");
 
   const EncodedStream stream = encodeVp8(320, 176, 1);
   if (stream.frames.empty()) {
@@ -862,8 +851,6 @@ void testLane() {
   std::string error;
   expect(lane.configure(vp8Configuration(320, 176, 3, record), sink, &error),
          "the lane configures a VP8 stream");
-  expect(lane.usesSoftwareDecode(),
-         "and selects the software backend, once, at configure");
   expect(lane.stats().configured && lane.stats().generation == 3 &&
              !lane.stats().usingHardwareAcceleratedDecoder,
          "the lane forwards the software backend's stats verbatim");

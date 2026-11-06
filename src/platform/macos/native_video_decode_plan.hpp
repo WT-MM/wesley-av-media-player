@@ -7,7 +7,7 @@
 #include <optional>
 namespace wam::macos {
 [[nodiscard]] inline media::DecodePlan nativeVideoDecodePlan(
-    const VideoStreamConfiguration& configuration,bool libvpxAvailable,bool avcodecAvailable, std::optional<bool> hardwareCapability = {}) noexcept {
+    const VideoStreamConfiguration& configuration,bool libvpxAvailable, std::optional<bool> hardwareCapability = {}) noexcept {
   using namespace media;
   const auto codec=mediaCodecForCoreMediaType(configuration.codec);
   const auto& facts=mediaCodecFacts(codec);
@@ -33,6 +33,6 @@ namespace wam::macos {
       supplemental?DecodeRefusal::None:DecodeRefusal::HardwareUnavailable,
     appleSoftwareProfile?appleRefusal:DecodeRefusal::AppleProfileUnsupported,DecodeRefusal::NotApplicable,
     codec==MediaCodec::Vp8 && libvpxAvailable?DecodeRefusal::None:DecodeRefusal::NotApplicable,
-    softwareMapped && avcodecAvailable?DecodeRefusal::None:DecodeRefusal::StageNotBuilt});
+    softwareMapped?DecodeRefusal::None:DecodeRefusal::StageNotBuilt});
 }
 }

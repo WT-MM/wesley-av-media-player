@@ -275,19 +275,4 @@ private:
   std::unique_ptr<Impl> impl_;
 };
 
-// Demuxers feed this interface without depending on VideoToolbox.
-// Implementations must consume or copy packet/configuration spans before the
-// call returns; the caller retains ownership of those byte ranges.
-class VideoDecodeBackend {
-public:
-  virtual ~VideoDecodeBackend() = default;
-  [[nodiscard]] virtual bool
-  configure(const VideoStreamConfiguration &configuration,
-            DecodedFrameSink &sink, std::string *error) = 0;
-  [[nodiscard]] virtual VideoDecodeSubmitResult
-  submit(const CompressedVideoPacket &packet, std::string *error) = 0;
-  virtual void flush(std::uint64_t nextGeneration) noexcept = 0;
-  virtual void close() noexcept = 0;
-};
-
 } // namespace wam::macos

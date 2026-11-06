@@ -60,7 +60,7 @@ public:
     close();
     software_.reset();
     avcodec_.reset();
-    const auto plan = nativeVideoDecodePlan(configuration, SoftwareVp8Decoder::available(), true, hardwareCapability);
+    const auto plan = nativeVideoDecodePlan(configuration, SoftwareVp8Decoder::available(), hardwareCapability);
     for (const auto& candidate : plan.candidates) {
       if (candidate.refusal != media::DecodeRefusal::None) continue;
       auto configured = configuration;
@@ -239,15 +239,6 @@ public:
 #endif
     return software_ != nullptr ? software_->takeLastError()
                                 : videoToolbox_.takeLastError();
-  }
-
-  // True once a software backend has been selected. Only tests call it;
-  // nothing on the frame path does.
-  [[nodiscard]] bool usesSoftwareDecode() const noexcept {
-#if defined(WAM_ENABLE_AVCODEC_STAGE)
-    if (avcodec_) return true;
-#endif
-    return software_ != nullptr;
   }
 
 private:

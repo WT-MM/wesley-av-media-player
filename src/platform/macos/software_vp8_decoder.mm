@@ -491,17 +491,6 @@ bool SoftwareVp8Decoder::configure(const VideoStreamConfiguration &configuration
 }
 
 VideoDecodeSubmitResult
-SoftwareVp8Decoder::submit(const CompressedVideoPacket &packet,
-                           std::string *error) {
-  // The native lane only ever submits CoreMedia-owned VP8 access units. The
-  // generic span entry point exists to satisfy VideoDecodeBackend and is
-  // deliberately inert rather than a second, untested ingress.
-  (void)packet;
-  impl_->latch("software VP8 accepts only CoreMedia sample buffers", error);
-  return VideoDecodeSubmitResult::Rejected;
-}
-
-VideoDecodeSubmitResult
 SoftwareVp8Decoder::submitCMSampleBuffer(CMSampleBufferRef sample,
                                          std::uint64_t generation,
                                          std::string *error) {

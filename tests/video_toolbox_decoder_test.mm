@@ -83,10 +83,6 @@ void testSharedLimitBoundaries() {
                 8ULL * 1024ULL * 1024ULL);
   static_assert(kMaximumVideoCodecConfigurationBytes ==
                 256ULL * 1024ULL);
-  static_assert(kMaximumTransientVideoCodecConfigurationBytes ==
-                768ULL * 1024ULL);
-  static_assert(kMaximumRetainedVideoCodecConfigurationBytes ==
-                256ULL * 1024ULL);
   static_assert(acceptsCompressedVideoAccessUnitSize(
       kMaximumCompressedVideoAccessUnitBytes));
   static_assert(!acceptsCompressedVideoAccessUnitSize(
@@ -305,11 +301,6 @@ void testCodecReorderDepthCarriesItsAuthority() {
     WAM_CHECK(depth.has_value());
     WAM_CHECK(depth->frames == expectation.frames);
     WAM_CHECK(depth->origin == expectation.origin);
-    // The depth-only accessor must keep reporting the same number.
-    const auto frames = VideoToolboxDecoderTestAccess::codecReorderFrames(
-        h264RecordConfiguration(expectation.record, expectation.width,
-                                expectation.height, generation));
-    WAM_CHECK(frames.has_value() && *frames == expectation.frames);
   }
 }
 
@@ -2144,7 +2135,6 @@ void testOwnerProgressiveDeliveryRetainsBackpressureIdentity() {
   WAM_CHECK(sink.attemptedTimes[2] == 1);
   WAM_CHECK(decoder.stats().pendingPresentationFrames == 1);
   WAM_CHECK(decoder.stats().droppedFrames == 0);
-  WAM_CHECK(decoder.stats().sinkBackpressureDrops == 0);
   WAM_CHECK(decoder.stats().sinkBackpressureRetries == 2);
 
   auto firstTaken = sink.take();
@@ -2815,10 +2805,13 @@ void testConfigurationByteBound(const DemuxedVideo &video) {
 void testCodecParserAndDeclaredReorderBound(const DemuxedVideo &video) {
   constexpr std::uint64_t generation = 8;
   const auto configuration = streamConfiguration(video, generation, false);
-  const auto reorderFrames =
-      wam::macos::VideoToolboxDecoderTestAccess::codecReorderFrames(
+  const auto reorderDepth =
+      wam::macos::VideoToolboxDecoderTestAccess::codecReorderDepth(
           configuration);
-  WAM_CHECK(reorderFrames.has_value());
+  WAM_CHECK(reorderDepth.has_value());
+  const auto reorderFrames =
+      reorderDepth ? std::optional<std::size_t>(reorderDepth->frames)
+                   : std::nullopt;
   WAM_CHECK(*reorderFrames > 0);
   WAM_CHECK(*reorderFrames <= 8);
 
@@ -2848,7 +2841,7 @@ void testCodecParserAndDeclaredReorderBound(const DemuxedVideo &video) {
     auto malformedConfiguration = configuration;
     malformedConfiguration.codecConfiguration = malformed;
     WAM_CHECK(
-        !wam::macos::VideoToolboxDecoderTestAccess::codecReorderFrames(
+        !wam::macos::VideoToolboxDecoderTestAccess::codecReorderDepth(
              malformedConfiguration)
              .has_value());
   }
@@ -3161,7 +3154,6 @@ void testSinkBackpressureIsRecoverable(const DemuxedVideo &video,
          wam::macos::VideoDecodeDrainProgress::Done) {
     (void)queue.tryTake();
   }
-  WAM_CHECK(decoder.stats().sinkBackpressureDrops == 0);
   WAM_CHECK(decoder.stats().droppedFrames == 0);
   WAM_CHECK(!decoder.takeLastError().has_value());
 

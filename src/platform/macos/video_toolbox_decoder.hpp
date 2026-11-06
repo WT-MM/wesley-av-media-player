@@ -196,8 +196,6 @@ struct VideoToolboxDecoderStats {
   std::uint64_t deliveredFrames{0};
   std::uint64_t droppedFrames{0};
   std::uint64_t backpressuredSubmissions{0};
-  // Always zero: owner-progressive delivery never drops on sink backpressure.
-  std::uint64_t sinkBackpressureDrops{0};
   std::uint64_t sinkBackpressureRetries{0};
   // EOS tail backpressure is lossless: the decoder retains the canonical
   // ordered lease and retries it only when its owner calls drainEndOfStream().
@@ -249,10 +247,10 @@ static_assert(std::is_trivially_copyable_v<VideoToolboxDecoderMemoryFacts>);
 // The configured DecodedFrameSink must outlive this object or be retained until
 // retire()/close() returns. retire(), close(), and flush() wait for every
 // asynchronous callback and invalidate the VT session before returning.
-class VideoToolboxDecoder final : public VideoDecodeBackend {
+class VideoToolboxDecoder final {
 public:
   explicit VideoToolboxDecoder(VideoToolboxDecoderOptions options = {});
-  ~VideoToolboxDecoder() override;
+  ~VideoToolboxDecoder();
 
   VideoToolboxDecoder(const VideoToolboxDecoder &) = delete;
   VideoToolboxDecoder &operator=(const VideoToolboxDecoder &) = delete;
@@ -261,9 +259,9 @@ public:
 
   [[nodiscard]] bool configure(const VideoStreamConfiguration &configuration,
                                DecodedFrameSink &sink,
-                               std::string *error) override;
+                               std::string *error);
   [[nodiscard]] VideoDecodeSubmitResult
-  submit(const CompressedVideoPacket &packet, std::string *error) override;
+  submit(const CompressedVideoPacket &packet, std::string *error);
   // Platform-specific zero-copy ingress for AVAssetReader. `sample` must be a
   // ready, single-sample CMSampleBuffer whose block buffer is no larger than
   // 8 MiB. Its configuration atom must be nonempty, no larger than 256 KiB,
@@ -272,8 +270,7 @@ public:
   // direct formats reuse the configured VideoToolbox session and are not
   // retained as a second decoder-owned format description. The caller keeps
   // the +1 sample reference alive until this method returns and may release it
-  // immediately afterward, including after Backpressure. End-of-stream
-  // remains expressed through submit().
+  // immediately afterward, including after Backpressure.
   [[nodiscard]] VideoDecodeSubmitResult
   submitCMSampleBuffer(CMSampleBufferRef sample, std::uint64_t generation,
                        std::string *error);
@@ -298,7 +295,7 @@ public:
   // is signalled by VideoToolboxDecoderProgressHandler.
   [[nodiscard]] VideoDecodeDrainProgress
   drainEndOfStream(std::uint64_t generation, std::string *error);
-  void flush(std::uint64_t nextGeneration) noexcept override;
+  void flush(std::uint64_t nextGeneration) noexcept;
   // Synchronously retires the exact exposed generation without inventing a
   // successor. The first valid pair is immutable; exact retries are
   // idempotent and a different pair is stale and inert. Done proves every VT
@@ -307,7 +304,7 @@ public:
   [[nodiscard]] VideoDecoderRetireProgress retire(
       std::uint64_t retiredGeneration,
       std::uint64_t invalidationGeneration) noexcept;
-  void close() noexcept override;
+  void close() noexcept;
 
   [[nodiscard]] VideoToolboxDecoderStats stats() const noexcept;
   // Allocation-free and owner-thread confined. Callback-owned fields are
@@ -353,11 +350,6 @@ struct VideoToolboxDecoderTestAccess {
   releaseInFlightCapacity(VideoToolboxDecoder &decoder, std::string *error);
   [[nodiscard]] static std::uint32_t
   decodeFlags(const VideoToolboxDecoder &decoder) noexcept;
-  [[nodiscard]] static std::optional<std::size_t>
-  codecReorderFrames(const VideoStreamConfiguration &configuration);
-  // The same derivation with its authority intact. codecReorderFrames() above
-  // is this value's `frames` half and stays for the callers that only need the
-  // depth.
   [[nodiscard]] static std::optional<CodecReorderDepth>
   codecReorderDepth(const VideoStreamConfiguration &configuration);
   [[nodiscard]] static bool setPresentationReorderDepth(

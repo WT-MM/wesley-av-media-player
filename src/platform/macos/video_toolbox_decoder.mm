@@ -216,7 +216,6 @@ struct AsyncDecodeState {
   std::uint64_t delivered{0};
   std::uint64_t dropped{0};
   std::uint64_t backpressuredSubmissions{0};
-  std::uint64_t sinkBackpressureDrops{0};
   std::uint64_t sinkBackpressureRetries{0};
   std::uint64_t endOfStreamBackpressureRetries{0};
   std::uint64_t surfaceBudgetRejections{0};
@@ -2739,7 +2738,6 @@ bool VideoToolboxDecoder::configure(
     impl_->async->delivered = 0;
     impl_->async->dropped = 0;
     impl_->async->backpressuredSubmissions = 0;
-    impl_->async->sinkBackpressureDrops = 0;
     impl_->async->sinkBackpressureRetries = 0;
     impl_->async->endOfStreamBackpressureRetries = 0;
     impl_->async->surfaceBudgetRejections = 0;
@@ -3231,7 +3229,6 @@ VideoToolboxDecoderStats VideoToolboxDecoder::stats() const noexcept {
     result.deliveredFrames = impl_->async->delivered;
     result.droppedFrames = impl_->async->dropped;
     result.backpressuredSubmissions = impl_->async->backpressuredSubmissions;
-    result.sinkBackpressureDrops = impl_->async->sinkBackpressureDrops;
     result.sinkBackpressureRetries = impl_->async->sinkBackpressureRetries;
     result.endOfStreamBackpressureRetries =
         impl_->async->endOfStreamBackpressureRetries;
@@ -3403,15 +3400,6 @@ std::uint32_t VideoToolboxDecoderTestAccess::decodeFlags(
   std::lock_guard operationLock(decoder.impl_->operationMutex);
   return static_cast<std::uint32_t>(finiteAdmissionDecodeFlags(
       decoder.impl_->options.enableAsynchronousDecompression));
-}
-
-std::optional<std::size_t> VideoToolboxDecoderTestAccess::codecReorderFrames(
-    const VideoStreamConfiguration &configuration) {
-  const auto depth = deriveCodecReorderDepth(configuration);
-  if (!depth) {
-    return std::nullopt;
-  }
-  return depth->frames;
 }
 
 std::optional<CodecReorderDepth>

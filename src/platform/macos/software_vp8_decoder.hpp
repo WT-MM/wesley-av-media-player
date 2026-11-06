@@ -126,10 +126,10 @@ inline constexpr std::size_t kSoftwareVp8PoolDepth = 6;
 // ~2.5 us/frame cheaper at 1080p) because NV12 is the only 4:2:0 layout every
 // one of WAM's presentation routes can sample -- every route hard-assumes two
 // planes.
-class SoftwareVp8Decoder final : public VideoDecodeBackend {
+class SoftwareVp8Decoder final {
 public:
   explicit SoftwareVp8Decoder(VideoToolboxDecoderOptions options = {});
-  ~SoftwareVp8Decoder() override;
+  ~SoftwareVp8Decoder();
 
   SoftwareVp8Decoder(const SoftwareVp8Decoder &) = delete;
   SoftwareVp8Decoder &operator=(const SoftwareVp8Decoder &) = delete;
@@ -138,9 +138,7 @@ public:
 
   [[nodiscard]] bool configure(const VideoStreamConfiguration &configuration,
                                DecodedFrameSink &sink,
-                               std::string *error) override;
-  [[nodiscard]] VideoDecodeSubmitResult
-  submit(const CompressedVideoPacket &packet, std::string *error) override;
+                               std::string *error);
   [[nodiscard]] VideoDecodeSubmitResult
   submitCMSampleBuffer(CMSampleBufferRef sample, std::uint64_t generation,
                        std::string *error);
@@ -151,11 +149,11 @@ public:
   drainPresentation(std::uint64_t generation, std::string *error);
   [[nodiscard]] VideoDecodeDrainProgress
   drainEndOfStream(std::uint64_t generation, std::string *error);
-  void flush(std::uint64_t nextGeneration) noexcept override;
+  void flush(std::uint64_t nextGeneration) noexcept;
   [[nodiscard]] VideoDecoderRetireProgress
   retire(std::uint64_t retiredGeneration,
          std::uint64_t invalidationGeneration) noexcept;
-  void close() noexcept override;
+  void close() noexcept;
 
   [[nodiscard]] VideoToolboxDecoderStats stats() const noexcept;
   [[nodiscard]] VideoToolboxDecoderMemoryFacts memoryFacts() const noexcept;
