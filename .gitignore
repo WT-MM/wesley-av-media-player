@@ -1,4 +1,5 @@
 /build/
+/Testing/
 /build-bench/
 /build-native/
 /build-perf/
