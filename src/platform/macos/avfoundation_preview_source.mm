@@ -54,20 +54,10 @@ using media::MediaTrackKind;
              binding.localPath, binding.descriptor))) {
       return false;
     }
-    const MediaTrackDescriptor* track = media::findMediaTrack(
-        *binding.descriptor, *binding.descriptor->selectedVideo);
-    // Two facts, both shared with the preview lane so neither can admit a
-    // codec the other refuses: the lane must be able to decode it, and the
-    // record requirement is INVERTED for the codecs that carry none, whose only
-    // correct descriptor is an empty record.
-    if (track == nullptr || track->kind != MediaTrackKind::Video ||
-        !track->video.has_value()) {
-      return false;
-    }
-    const media::MediaCodecFacts& facts = media::mediaCodecFacts(track->codec);
-    return facts.avfoundationVideoAdmitted && facts.previewScrubAdmitted &&
-           facts.carriesConfigurationRecord !=
-               track->codecConfiguration.empty();
+    // The shared preview predicate, plus this route's own codec admission.
+    const MediaTrackDescriptor* track = previewableVideoTrack(binding);
+    return track != nullptr &&
+           media::mediaCodecFacts(track->codec).avfoundationVideoAdmitted;
   } catch (...) {
     return false;
   }

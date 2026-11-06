@@ -491,7 +491,7 @@ struct LibavformatMediaSource::Impl final
   std::optional<LibavformatAacEdit> aacEditEnd;
   t.scanStarted = Clock::now();
   for (std::size_t packets = 0;; ++packets) {
-    if (packets == 2'000'000 || bytes > 16ULL * 1024 * 1024 * 1024) {
+    if (packets == kMaximumAudioIndexScanPackets || bytes > 16ULL * 1024 * 1024 * 1024) {
       error = "LibavformatIndexScanLimit";
       return nullptr;
     }
@@ -656,7 +656,7 @@ struct LibavformatMediaSource::Impl final
         const auto targetIndex=context->aacTimeline->indexAtFrame(demuxFrame);
         // An elapsed-time backoff alone can land inside declared silence,
         // with no decoder warm-up at all. Require four actual packets too.
-        const auto index=std::min(targetIndex > 4 ? targetIndex-4 : 0,
+        const auto index=std::min(targetIndex > kAacSeekBackoffPackets ? targetIndex-kAacSeekBackoffPackets : 0,
             context->aacTimeline->indexAtFrame(demuxFrame-4096));
         seekTime=context->aacTimeline->packets()[index].observed;
       }

@@ -61,7 +61,7 @@ audioPrimingCeilingFrame(std::int64_t presentationFrame,
 inline constexpr char kAacPiecewiseTimelineAttachmentKey[] =
     "WAMAacPiecewiseTimeline";
 
-// Bounds an open-time walk over every audio packet of a track.
+// Bounds an open-time walk over a file's packets.
 inline constexpr std::uint64_t kMaximumAudioIndexScanPackets{2'000'000};
 
 // Whole AAC packets an accurate seek backs off ahead of the target's packet.

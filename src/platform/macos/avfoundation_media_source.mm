@@ -253,7 +253,7 @@ struct AudioPrimingPlan {
   for (std::size_t i = 0; i < entries; ++i) {
     auto& entry = timing[i];
     const auto pts = entry.presentationTimeStamp;
-    if (!CMTIME_IS_NUMERIC(pts) || pts.value < 0 || pts.timescale != rate) continue;
+    if (!CMTIME_IS_NUMERIC(pts) || pts.value < 0 || static_cast<std::uint32_t>(pts.timescale) != rate) continue;
     const auto ordinal =
         (static_cast<std::uint64_t>(pts.value) + kAacFrames / 2) / kAacFrames;
     const auto projected = media::projectAacPacketGrid({pts.value, pts.timescale}, 0, ordinal, rate);
