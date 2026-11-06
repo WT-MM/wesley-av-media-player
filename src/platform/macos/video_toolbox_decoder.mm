@@ -75,17 +75,12 @@ std::string statusError(const char *operation, OSStatus status) {
          std::to_string(status);
 }
 
-// The decoder asks one question of a parameter set -- the presentation-reorder
-// depth -- and for AVC and HEVC alike the neutral parser answers it together
-// with the authority behind the answer, so no parameter-set reader lives
-// here. (HEVC always states sps_max_num_reorder_pics, so its depth is always
-// Declared; the parser's inferred flag stays false for it.) Colour is
-// admitted at its widest: it is the source's question, settled before any
-// stream reaches this decoder under limits at least this strict. A record the
-// parser refuses here (P3 primaries) is refused by the AVFoundation source
-// before any decoder sees it.
+// Every per-codec question about a configuration record (reorder depth, coded
+// depth, chroma) is answered by the neutral parser, so no record reader lives
+// here. Colour is admitted at its widest: it is the source's question, settled
+// before any stream reaches this decoder under limits at least this strict.
 [[nodiscard]] media::VideoCodecConfigurationLimits
-reorderDepthLimits() noexcept {
+recordLimits() noexcept {
   media::VideoCodecConfigurationLimits limits;
   limits.admitHighDynamicRangeColor = true;
   limits.admitHardwareH264Profiles = true;
@@ -95,67 +90,41 @@ reorderDepthLimits() noexcept {
   return limits;
 }
 
-std::optional<CodecReorderDepth>
-recordCodecReorderDepth(media::MediaCodec codec,
-                        media::MediaCodecConfigurationKind kind,
-                        std::span<const std::byte> record) {
-  const auto inspection = media::inspectVideoCodecConfiguration(
-      codec, kind, record, reorderDepthLimits());
+[[nodiscard]] constexpr bool
+recordParsed(media::MediaCodecConfigurationKind kind) noexcept {
+  return kind == media::MediaCodecConfigurationKind::AvcC ||
+         kind == media::MediaCodecConfigurationKind::HvcC ||
+         kind == media::MediaCodecConfigurationKind::Av1C ||
+         kind == media::MediaCodecConfigurationKind::VpcC;
+}
+
+// The parsed record of an AVC, HEVC, AV1 or VP9 stream; empty for a codec
+// without one of those records or for a record the parser refuses.
+[[nodiscard]] std::optional<media::VideoCodecConfigurationFacts>
+parsedRecordFacts(const VideoStreamConfiguration &configuration) noexcept {
+  const media::MediaCodec codec = media::mediaCodecForCoreMediaType(
+      static_cast<std::uint32_t>(configuration.codec));
+  const auto kind = media::mediaCodecFacts(codec).configurationKind;
+  if (codec == media::MediaCodec::Vp8 || !recordParsed(kind)) {
+    return std::nullopt;
+  }
+  auto inspection = media::inspectVideoCodecConfiguration(
+      codec, kind, configuration.codecConfiguration, recordLimits());
   if (!inspection.admitted()) {
     return std::nullopt;
   }
-  return CodecReorderDepth{inspection.facts->maximumReorderFrames,
-                           inspection.facts->maximumReorderFramesInferred
-                               ? CodecReorderDepthOrigin::Inferred
-                               : CodecReorderDepthOrigin::Declared};
+  return inspection.facts;
 }
 
+// AVC and HEVC depths come with the parser's authority (stated or inferred).
+// AV1's is the av1C initial presentation delay, deliberately NOT rounded up
+// "to be safe": the ordered drain holds delivery until more than this many
+// frames are retained, so every extra unit is a frame of added latency and one
+// more retained IOSurface, and a value above maxPendingPresentationFrames
+// hard-fails configure() as the intended clean fallback. Every other codec's
+// depth is intrinsic (the facts table). VP8 never reaches VideoToolbox.
 std::optional<CodecReorderDepth>
 deriveCodecReorderDepth(const VideoStreamConfiguration &configuration) {
-  const auto bytes = std::span<const std::uint8_t>(
-      reinterpret_cast<const std::uint8_t *>(
-          configuration.codecConfiguration.data()),
-      configuration.codecConfiguration.size());
-  if (configuration.codec == kCMVideoCodecType_H264) {
-    return recordCodecReorderDepth(media::MediaCodec::H264,
-                                   media::MediaCodecConfigurationKind::AvcC,
-                                   configuration.codecConfiguration);
-  }
-  if (configuration.codec == kCMVideoCodecType_HEVC) {
-    return recordCodecReorderDepth(media::MediaCodec::Hevc,
-                                   media::MediaCodecConfigurationKind::HvcC,
-                                   configuration.codecConfiguration);
-  }
-  if (configuration.codec == kCMVideoCodecType_AV1) {
-    // AV1 shares VP9's output model (show_existing_frame, no composition
-    // offsets), so its intrinsic reorder depth is also zero. The one signal a
-    // stream can carry is the av1C initial presentation delay, which is the
-    // number of frames a conforming decoder may buffer before its first
-    // output; honour it as an upper bound when present.
-    //
-    // This value is deliberately NOT rounded up "to be safe". The pipeline
-    // treats it as a delivery hold floor, not merely a memory bound: the
-    // ordered drain refuses to emit a frame until more than this many frames
-    // are retained (see the presentable/moreFrames predicates), so every extra
-    // unit is a frame of added presentation latency and one more retained
-    // IOSurface. A value above maxPendingPresentationFrames also hard-fails
-    // configure(), which is the intended clean fallback rather than a silent
-    // over-allocation.
-    //
-    // av1C byte 3: reserved(3) | initial_presentation_delay_present(1) |
-    //              initial_presentation_delay_minus_one(4)
-    if (bytes.size() < 4 || (bytes[0] & 0x7fU) != 1U ||
-        (bytes[0] & 0x80U) == 0U) {
-      return std::nullopt;
-    }
-    if ((bytes[3] & 0x10U) == 0U) {
-      return CodecReorderDepth{0, CodecReorderDepthOrigin::Declared};
-    }
-    return CodecReorderDepth{static_cast<std::size_t>(bytes[3] & 0x0fU) + 1U,
-                             CodecReorderDepthOrigin::Declared};
-  }
-  // Every other codec's depth is intrinsic (see intrinsicReorderDepth). VP8
-  // never reaches VideoToolbox.
   const media::MediaCodec codec = media::mediaCodecForCoreMediaType(
       static_cast<std::uint32_t>(configuration.codec));
   const media::MediaCodecFacts &facts = media::mediaCodecFacts(codec);
@@ -163,12 +132,17 @@ deriveCodecReorderDepth(const VideoStreamConfiguration &configuration) {
       codec == media::MediaCodec::Vp8) {
     return std::nullopt;
   }
-  // A codec with no configuration record must present none, and one with a
-  // record must present it.
-  if (bytes.empty() == facts.carriesConfigurationRecord) {
-    return std::nullopt;
+  if (const auto parsed = parsedRecordFacts(configuration)) {
+    return CodecReorderDepth{parsed->maximumReorderFrames,
+                             parsed->maximumReorderFramesInferred
+                                 ? CodecReorderDepthOrigin::Inferred
+                                 : CodecReorderDepthOrigin::Declared};
   }
-  if (codec == media::MediaCodec::Vp9 && (bytes.size() < 12 || bytes[0] != 1)) {
+  // A parsed-record codec whose record was refused, a codec with no record
+  // that presents one, or one with a record that presents none.
+  if (recordParsed(facts.configurationKind) ||
+      configuration.codecConfiguration.empty() ==
+          facts.carriesConfigurationRecord) {
     return std::nullopt;
   }
   return CodecReorderDepth{facts.intrinsicReorderDepth,
@@ -1330,7 +1304,7 @@ bool equivalentSessionCodecTypes(CMVideoCodecType configured,
 std::size_t avcCoreLength(std::span<const std::byte> record) {
   const auto inspection = media::inspectVideoCodecConfiguration(
       media::MediaCodec::H264, media::MediaCodecConfigurationKind::AvcC,
-      record, reorderDepthLimits());
+      record, recordLimits());
   if (!inspection.admitted()) return record.size();
   std::size_t offset = 6;
   auto skipSets = [&](unsigned count) {
@@ -1526,61 +1500,20 @@ OSStatus createFormatDescription(const VideoStreamConfiguration &configuration,
   return status;
 }
 
-// The stream's OWN coded depth, read from its configuration record. Kept
-// separate from requestedPixelFormat() because the requested OUTPUT depth can
-// exceed the coded depth for an HDR stream,
-// and only the difference between them justifies pinning the format on the
-// display-layer interop.
+// The stream's OWN coded depth. Kept separate from requestedPixelFormat()
+// because the requested OUTPUT depth can exceed the coded depth for an HDR
+// stream, and only the difference between them justifies pinning the format on
+// the display-layer interop. Getting VP9 Profile 2 wrong would be silent:
+// VideoToolbox happily creates an NV12 session for 10-bit VP9 and downconverts,
+// so the delivered format still matches the request. MPEG-2, MPEG-4 Part 2 and
+// Motion JPEG are 8-bit by profile; ProRes output retains at least ten bits.
 bool codedDepthIsTenBit(
     const VideoStreamConfiguration &configuration) noexcept {
-  // hvcC stores bit_depth_luma_minus8 in the low three bits of byte 17.
-  // The common H.264 High 10 profile uses profile_idc 110. Both map directly
-  // to the presenter's supported 10-bit bi-planar GPU import path.
-  const auto *bytes = reinterpret_cast<const std::uint8_t *>(
-      configuration.codecConfiguration.data());
-  bool tenBit = false;
-  if (configuration.codec == kCMVideoCodecType_HEVC &&
-      configuration.codecConfiguration.size() > 17) {
-    tenBit = (bytes[17] & 0x07U) > 0;
-  } else if (configuration.codec == kCMVideoCodecType_H264 &&
-             configuration.codecConfiguration.size() > 1) {
-    const auto parsed = media::inspectVideoCodecConfiguration(media::MediaCodec::H264,
-        media::MediaCodecConfigurationKind::AvcC, configuration.codecConfiguration, reorderDepthLimits());
-    tenBit = parsed.admitted() ? parsed.facts->bitDepth == 10U : bytes[1] == 110;
-  } else if (configuration.codec == kCMVideoCodecType_VP9 &&
-             configuration.codecConfiguration.size() >= 12 &&
-             bytes[0] == 1) {
-    // vpcC byte 6: bitDepth(4) | chromaSubsampling(3) | videoFullRangeFlag(1).
-    // VP9 Profile 2 carries 10-bit 4:2:0 and must request P010. Getting this
-    // wrong is silent: VideoToolbox happily creates an NV12 session for 10-bit
-    // VP9 and downconverts, so the delivered format still matches the request
-    // and validateOutputSurfaceContract cannot catch it. The record must
-    // therefore be well-formed here, and it is: configure() already rejected
-    // any vpcC shorter than 12 bytes or with a version other than 1 through
-    // deriveCodecReorderDepth, which runs before this call.
-    tenBit = (bytes[6] >> 4U) >= 10U;
-  } else if (configuration.codec == kCMVideoCodecType_AV1 &&
-             configuration.codecConfiguration.size() >= 4 &&
-             (bytes[0] & 0x80U) != 0U && (bytes[0] & 0x7fU) == 1U) {
-    // av1C byte 2: seq_tier_0(1) | high_bitdepth(1) | twelve_bit(1) |
-    //              monochrome(1) | subsampling_x(1) | subsampling_y(1) |
-    //              chroma_sample_position(2). AV1 Main 10 sets high_bitdepth
-    //              with twelve_bit clear. Same fail-closed reasoning as VP9:
-    //              a malformed av1C never reaches here because configure()
-    //              rejected it first.
-    tenBit = ((bytes[2] >> 6U) & 0x01U) != 0U;
-  } else if (codecIsProResFamily(configuration.codec)) {
-    // ProRes output retains at least ten bits per component.
-    tenBit = true;
+  if (codecIsProResFamily(configuration.codec)) {
+    return true;
   }
-  // MPEG-2, MPEG-4 Part 2 and Motion JPEG are deliberately absent from the
-  // chain above: all three are 8-bit by profile (MPEG-4 Part 2 Simple Profile
-  // defines 8-bit 4:2:0 and nothing else; baseline JPEG codes 8 bits per
-  // component), so the 8-bit answer below is a stated fact rather than a
-  // default they fell through to. They are also, with ProRes, the codecs whose
-  // decoders will not produce this format unless it is requested -- see
-  // codecNeedsPinnedOutputPixelFormat().
-  return tenBit;
+  const auto parsed = parsedRecordFacts(configuration);
+  return parsed && parsed->bitDepth >= 10U;
 }
 
 // The output surface this decode should produce.
@@ -1602,16 +1535,13 @@ requestedPixelFormat(const VideoStreamConfiguration &configuration) noexcept {
   if (namedCodec(configuration.codec) == media::MediaCodec::ProRes4444) {
     return kCVPixelFormatType_30RGBLEPackedWideGamut;
   }
-  bool is422 = (configuration.codec == kCMVideoCodecType_HEVC &&
-       configuration.codecConfiguration.size() > 16 &&
-       (std::to_integer<unsigned>(configuration.codecConfiguration[16]) & 3U) == 2U);
-  if (configuration.codec == kCMVideoCodecType_H264) {
-    const auto parsed = media::inspectVideoCodecConfiguration(media::MediaCodec::H264,
-        media::MediaCodecConfigurationKind::AvcC, configuration.codecConfiguration, reorderDepthLimits());
-    if (parsed.admitted() && parsed.facts->sampleFormat == media::MediaVideoSampleFormat::Yuv444EightBit)
-      return kCVPixelFormatType_444YpCbCr8BiPlanarVideoRange;
-    is422 = parsed.admitted() && media::mediaSampleFormatIs422(parsed.facts->sampleFormat);
+  const auto parsed = parsedRecordFacts(configuration);
+  if (parsed &&
+      parsed->sampleFormat == media::MediaVideoSampleFormat::Yuv444EightBit) {
+    return kCVPixelFormatType_444YpCbCr8BiPlanarVideoRange;
   }
+  const bool is422 =
+      parsed && media::mediaSampleFormatIs422(parsed->sampleFormat);
   if (is422) {
     return codedDepthIsTenBit(configuration)
         ? kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange
