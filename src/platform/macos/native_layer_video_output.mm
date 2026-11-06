@@ -582,12 +582,13 @@ NativeTrackedVideoSubmitStatus NativeLayerVideoOutput::submit(
   // The lease is cloned before the layer ever sees the surface: an accepted
   // submit means this output owns its own accounting token and the caller may
   // release theirs.
-  FrameLease retained(frame);
-  if (!retained || retained.pixelBuffer() != frame.pixelBuffer()) {
+  std::optional<FrameLease> clone = frame.tryClone();
+  if (!clone) {
     assignErrorNoexcept(
         error, "tracked layer video accounting token could not be cloned");
     return NativeTrackedVideoSubmitStatus::Failed;
   }
+  FrameLease retained = std::move(*clone);
 
   bool signal = false;
   NativeTrackedVideoSubmitStatus result =

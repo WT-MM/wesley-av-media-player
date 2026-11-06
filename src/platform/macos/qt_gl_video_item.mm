@@ -2312,8 +2312,7 @@ class QtGlVideoNode final : public QSGRenderNode {
 
   std::optional<FrameLease> cloneForImport(const FrameLease& frame,
                                            QString* error) {
-    const CVPixelBufferRef sourcePixelBuffer = frame.pixelBuffer();
-    FrameLease retainedFrame;
+    std::optional<FrameLease> retainedFrame;
 #if defined(WAM_NATIVE_GL_VIDEO_TESTING)
     const bool injectCopyFailure =
         state_->failNextImport.exchange(false, std::memory_order_relaxed);
@@ -2321,9 +2320,9 @@ class QtGlVideoNode final : public QSGRenderNode {
     constexpr bool injectCopyFailure = false;
 #endif
     if (!injectCopyFailure) {
-      retainedFrame = FrameLease(frame);
+      retainedFrame = frame.tryClone();
     }
-    if (!retainedFrame || retainedFrame.pixelBuffer() != sourcePixelBuffer) {
+    if (!retainedFrame) {
       *error = injectCopyFailure
                    ? QStringLiteral(
                          "injected Qt CGL import failure: decoded-surface "
@@ -2333,8 +2332,7 @@ class QtGlVideoNode final : public QSGRenderNode {
                          "for Qt CGL import");
       return std::nullopt;
     }
-    return std::optional<FrameLease>(std::in_place,
-                                     std::move(retainedFrame));
+    return retainedFrame;
   }
 
   ImportResult importLatest(FrameLease retainedFrame,
@@ -3365,8 +3363,6 @@ QSGNode* QtGlVideoItem::updatePaintNode(QSGNode* oldNode,
       } else if (state_->synchronizationRejectedSerial == serial) {
         handoffAlreadyRejected = true;
       } else if (state_->latestFrame) {
-        const CVPixelBufferRef sourcePixelBuffer =
-            state_->latestFrame->pixelBuffer();
 #if defined(WAM_NATIVE_GL_VIDEO_TESTING)
         const bool injectCopyFailure =
             state_->failNextSynchronization.exchange(
@@ -3374,11 +3370,11 @@ QSGNode* QtGlVideoItem::updatePaintNode(QSGNode* oldNode,
 #else
         constexpr bool injectCopyFailure = false;
 #endif
-        FrameLease handoff;
+        std::optional<FrameLease> handoff;
         if (!injectCopyFailure) {
-          handoff = FrameLease(*state_->latestFrame);
+          handoff = state_->latestFrame->tryClone();
         }
-        if (!handoff || handoff.pixelBuffer() != sourcePixelBuffer) {
+        if (!handoff) {
           handoffCopyFailed = true;
           // Drop only the failed newest mailbox entry. The render node keeps
           // its prior synchronized serial/frame and its GPU resources; the
@@ -3391,7 +3387,7 @@ QSGNode* QtGlVideoItem::updatePaintNode(QSGNode* oldNode,
           state_->publishTrackedRejectionNoexcept(identity, generation,
                                                    serial);
         } else {
-          latest.emplace(std::move(handoff));
+          latest.emplace(std::move(*handoff));
         }
       }
     }

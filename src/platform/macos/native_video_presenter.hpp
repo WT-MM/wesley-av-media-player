@@ -71,6 +71,17 @@ public:
 
   void reset() noexcept;
 
+  // A copy that owns its own accounting token, or empty when the copy could
+  // not be admitted (a copy of an admitted lease can still fail its budget
+  // token, and then silently comes out empty).
+  [[nodiscard]] std::optional<FrameLease> tryClone() const noexcept {
+    FrameLease copy(*this);
+    if (!copy || copy.pixelBuffer() != pixelBuffer_) {
+      return std::nullopt;
+    }
+    return copy;
+  }
+
 private:
 #if defined(WAM_NATIVE_FRAME_LEASE_TESTING)
   friend struct FrameLeaseTestAccess;

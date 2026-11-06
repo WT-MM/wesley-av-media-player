@@ -1881,12 +1881,13 @@ NativeTrackedVideoSubmitStatus NativeQtGlOutput::submit(
                         "tracked native video timing is invalid");
     return NativeTrackedVideoSubmitStatus::Failed;
   }
-  FrameLease retained(frame);
-  if (!retained || retained.pixelBuffer() != frame.pixelBuffer()) {
+  std::optional<FrameLease> clone = frame.tryClone();
+  if (!clone) {
     assignErrorNoexcept(
         error, "tracked native video accounting token could not be cloned");
     return NativeTrackedVideoSubmitStatus::Failed;
   }
+  FrameLease retained = std::move(*clone);
   std::pair<FailureHandler, std::string> notify;
   NativeTrackedVideoSubmitStatus result =
       NativeTrackedVideoSubmitStatus::Accepted;
