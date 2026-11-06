@@ -3,6 +3,7 @@
 #include "media/codec/ac3.hpp"
 #include "media/codec/mpeg_audio.hpp"
 #include "media/codec/opus.hpp"
+#include "media/adpcm_audio.hpp"
 #include "media/native_media_source.hpp"
 
 #include <array>
@@ -133,105 +134,218 @@ struct MediaCodecFacts {
   // first output frame packet0 + this, so the source's decode start and the
   // converter's first published frame meet on the presentation floor.
   //
-  // Vorbis is absent by construction and states zero here: its lead-in is one
-  // access unit -- the first packet carries half an overlap-add window and
-  // decodes to no samples -- so it is the PACKET LENGTH rather than a constant,
-  // and the one site that needs it supplies that length itself.
+  // Vorbis states zero here and sets decoderLeadInIsOnePacket instead.
   std::uint16_t decoderLeadInFrames{0};
 
   bool requiresMjpegHeaderInspection{false};
+
+  // The canonical CoreAudio AudioFormatID of an audio codec, as a plain
+  // integer so this header stays platform-neutral; the platform layer asserts
+  // each against its kAudioFormat* constant. Zero for video and for the
+  // software-decoded audio codecs, which never reach an AudioConverter.
+  std::uint32_t coreAudioFormatTag{0};
+
+  // The decoder's lead-in is exactly one access unit rather than a constant:
+  // Vorbis' first packet carries only the left half of an overlap-add window
+  // and decodes to zero samples by specification. Measured invariant across
+  // fresh converters and across AudioConverterReset alike, which is why Vorbis
+  // can use the cheap reset that Opus cannot.
+  bool decoderLeadInIsOnePacket{false};
+
+  // The decoder flushes at the end as many frames as it swallowed at the head,
+  // so the track decodes to exactly the frame count its packets declare even
+  // though its first emitted frame sits decoderLeadInFrames into the packet
+  // grid. MP3: 529 in, 529 out.
+  bool decoderFlushesLeadInAtEnd{false};
+
+  // Frames the decoder stops short of the end of the stream and never emits.
+  std::uint16_t decoderTailShortfallFrames{0};
+
+  // The final packet may decode up to one packet less one frame short of the
+  // declared budget, so the tail shortfall bound is framesPerPacket - 1.
+  bool decoderTailShortfallBelowOnePacket{false};
+
+  // AudioConverterReset does not restore this decoder's priming state, so a
+  // reset must rebuild the converter instead.
+  bool decoderResetRebuilds{false};
+
+  // The reorder depth of a video codec whose configuration record states none,
+  // a property of the codec rather than of the stream. H.264, HEVC and AV1
+  // derive theirs from the record and state zero here.
+  std::uint8_t intrinsicReorderDepth{0};
 };
 
 inline constexpr std::array<MediaCodecFacts, 25> kMediaCodecFacts{{
-    {MediaCodec::Unknown, MediaCodecKind::Unknown, 0,
-     MediaCodecConfigurationKind::None, nullptr, false, false, false, false,
-     false, false, 0},
-    {MediaCodec::H264, MediaCodecKind::Video, 0x61766331U /* 'avc1' */,
-     MediaCodecConfigurationKind::AvcC, "avcC", true, false, true, true, true,
-     true, 0},
-    {MediaCodec::Hevc, MediaCodecKind::Video, 0x68766331U /* 'hvc1' */,
-     MediaCodecConfigurationKind::HvcC, "hvcC", true, false, true, true, true,
-     true, 0},
-    {MediaCodec::Av1, MediaCodecKind::Video, 0x61763031U /* 'av01' */,
-     MediaCodecConfigurationKind::Av1C, "av1C", true, false, true, true, false,
-     true, 0},
-    {MediaCodec::Vp9, MediaCodecKind::Video, 0x76703039U /* 'vp09' */,
-     MediaCodecConfigurationKind::VpcC, "vpcC", true, false, true, true, false,
-     true, 0},
-    {MediaCodec::Aac, MediaCodecKind::Audio, 0,
-     MediaCodecConfigurationKind::None, nullptr, false, false, false, false,
-     false, false, 0},
-    {MediaCodec::Alac, MediaCodecKind::Audio, 0,
-     MediaCodecConfigurationKind::None, nullptr, false, false, false, false,
-     false, false, 0},
+    {.codec = MediaCodec::Unknown, .kind = MediaCodecKind::Unknown},
+    {.codec = MediaCodec::H264, .kind = MediaCodecKind::Video,
+     .coreMediaType = 0x61766331U /* 'avc1' */,
+     .configurationKind = MediaCodecConfigurationKind::AvcC,
+     .configurationAtomName = "avcC", .carriesConfigurationRecord = true,
+     .requiresHardwareDecode = true, .statesCodedSampleFormat = true,
+     .previewScrubAdmitted = true, .avfoundationVideoAdmitted = true},
+    {.codec = MediaCodec::Hevc, .kind = MediaCodecKind::Video,
+     .coreMediaType = 0x68766331U /* 'hvc1' */,
+     .configurationKind = MediaCodecConfigurationKind::HvcC,
+     .configurationAtomName = "hvcC", .carriesConfigurationRecord = true,
+     .requiresHardwareDecode = true, .statesCodedSampleFormat = true,
+     .previewScrubAdmitted = true, .avfoundationVideoAdmitted = true},
+    {.codec = MediaCodec::Av1, .kind = MediaCodecKind::Video,
+     .coreMediaType = 0x61763031U /* 'av01' */,
+     .configurationKind = MediaCodecConfigurationKind::Av1C,
+     .configurationAtomName = "av1C", .carriesConfigurationRecord = true,
+     .requiresHardwareDecode = true, .statesCodedSampleFormat = true,
+     .avfoundationVideoAdmitted = true},
+    // VP9 has no output reordering. Alternate-reference ("hidden") frames are
+    // decoded but never output at their own decode position; they reach the
+    // output only through show_existing_frame, which emits an already-decoded
+    // frame at the point the bitstream asks for it. Output order therefore
+    // equals bitstream order, which is why VP9 containers carry PTS == DTS on
+    // every packet. The vpcC record carries no reorder signal at all.
+    {.codec = MediaCodec::Vp9, .kind = MediaCodecKind::Video,
+     .coreMediaType = 0x76703039U /* 'vp09' */,
+     .configurationKind = MediaCodecConfigurationKind::VpcC,
+     .configurationAtomName = "vpcC", .carriesConfigurationRecord = true,
+     .requiresHardwareDecode = true, .statesCodedSampleFormat = true,
+     .avfoundationVideoAdmitted = true},
+    {.codec = MediaCodec::Aac, .kind = MediaCodecKind::Audio,
+     .coreAudioFormatTag = 0x61616320U /* 'aac ' */},
+    // Structurally FLAC's tail bound, for a different reason than the codec:
+    // on the AVFoundation route the shortfall is manufactured by this player.
+    // An MP4's stts states the final ALAC packet's true length -- 272 frames of
+    // a 4096-frame grid on the measured fixture -- but
+    // restateCompressedAudioPacketDurations (avfoundation_media_source.mm)
+    // lengthens every short trailing unit back to mFramesPerPacket, because
+    // that is the correct end-trim fix for AAC, whose 1024-frame packet
+    // genuinely decodes 1024 frames and whose trim really is an edit. ALAC's
+    // final packet genuinely holds fewer frames -- the count is in the ALAC
+    // frame header, which is how AudioToolbox decodes it exactly -- so the
+    // restatement inflates the budget by up to one packet and the decoder can
+    // never reach it. The bound is exactly the largest inflation that
+    // restatement can produce, one packet less one frame.
+    {.codec = MediaCodec::Alac, .kind = MediaCodecKind::Audio,
+     .coreAudioFormatTag = 0x616C6163U /* 'alac' */,
+     .decoderTailShortfallBelowOnePacket = true},
     // MP3 swallows 529 frames at the head and flushes exactly 529 more at the
     // end, so the track still decodes to the frame count its packets declare
     // even though its content sits 529 frames earlier than the packet grid
-    // alone would say. That second half of the fact is
-    // decoderFrameDeficitFrames in the converter, which is a DIFFERENT question
-    // and stays separate.
-    {MediaCodec::Mp3, MediaCodecKind::Audio, 0,
-     MediaCodecConfigurationKind::None, nullptr, false, false, false, false,
-     false, false,
-     static_cast<std::uint16_t>(codec::kMpegLayer3DecoderDelayFrames)},
-    {MediaCodec::Opus, MediaCodecKind::Audio, 0,
-     MediaCodecConfigurationKind::None, nullptr, false, false, false, false,
-     false, false,
-     static_cast<std::uint16_t>(codec::kOpusDecoderDelayFrames)},
-    {MediaCodec::Vorbis, MediaCodecKind::Audio, 0,
-     MediaCodecConfigurationKind::None, nullptr, false, false, false, false,
-     false, false, 0},
-    {MediaCodec::Pcm, MediaCodecKind::Audio, 0,
-     MediaCodecConfigurationKind::None, nullptr, false, false, false, false,
-     false, false, 0},
+    // alone would say.
+    {.codec = MediaCodec::Mp3, .kind = MediaCodecKind::Audio,
+     .decoderLeadInFrames =
+         static_cast<std::uint16_t>(codec::kMpegLayer3DecoderDelayFrames),
+     .coreAudioFormatTag = 0x2E6D7033U /* '.mp3' */,
+     .decoderFlushesLeadInAtEnd = true},
+    // AudioConverterReset does NOT restore an Opus converter's priming state:
+    // measured, a reset converter emits the decoder's 120-frame startup
+    // transient as real output instead of swallowing it, so the same stream
+    // decodes to a different frame count depending on whether the generation
+    // was configured or flushed. Rebuilding the converter restores the single
+    // invariant the whole Opus trim is derived from.
+    {.codec = MediaCodec::Opus, .kind = MediaCodecKind::Audio,
+     .decoderLeadInFrames =
+         static_cast<std::uint16_t>(codec::kOpusDecoderDelayFrames),
+     .coreAudioFormatTag = 0x6F707573U /* 'opus' */,
+     .decoderResetRebuilds = true},
+    // 'vorb'. AudioToolbox registers a Vorbis decoder under this fourcc --
+    // kAudioFormatProperty_DecodeFormatIDs reports it -- but publishes no
+    // kAudioFormatVorbis constant for it.
+    {.codec = MediaCodec::Vorbis, .kind = MediaCodecKind::Audio,
+     .coreAudioFormatTag = 0x766F7262U /* 'vorb' */,
+     .decoderLeadInIsOnePacket = true},
+    {.codec = MediaCodec::Pcm, .kind = MediaCodecKind::Audio,
+     .coreAudioFormatTag = 0x6C70636DU /* 'lpcm' */},
     // VP8 has no VideoToolbox decoder on any Apple platform and is decoded by
     // the libvpx software stage, which reads the vpcC record directly. The
     // four-character code is the ISO Media binding's own VP8 sample entry name
     // rather than an invented one, and VideoToolbox refuses it -- which is what
     // keeps a VP8 stream from ever reaching a decompression session.
-    {MediaCodec::Vp8, MediaCodecKind::Video, 0x76703038U /* 'vp08' */,
-     MediaCodecConfigurationKind::VpcC, nullptr, true, false, false, true,
-     false, false, 0},
-    {MediaCodec::Ac3, MediaCodecKind::Audio, 0,
-     MediaCodecConfigurationKind::None, nullptr, false, false, false, false,
-     false, false,
-     static_cast<std::uint16_t>(codec::kAc3DecoderDelayFrames)},
-    {MediaCodec::Eac3, MediaCodecKind::Audio, 0,
-     MediaCodecConfigurationKind::None, nullptr, false, false, false, false,
-     false, false,
-     static_cast<std::uint16_t>(codec::kAc3DecoderDelayFrames)},
-    {MediaCodec::Flac, MediaCodecKind::Audio, 0,
-     MediaCodecConfigurationKind::None, nullptr, false, false, false, false,
-     false, false, 0},
-    {MediaCodec::Mpeg2Video, MediaCodecKind::Video, 0x6D703276U /* 'mp2v' */,
-     MediaCodecConfigurationKind::None, nullptr, false, true, false, true, true,
-     false, 0},
+    {.codec = MediaCodec::Vp8, .kind = MediaCodecKind::Video,
+     .coreMediaType = 0x76703038U /* 'vp08' */,
+     .configurationKind = MediaCodecConfigurationKind::VpcC,
+     .carriesConfigurationRecord = true, .statesCodedSampleFormat = true},
+    {.codec = MediaCodec::Ac3, .kind = MediaCodecKind::Audio,
+     .decoderLeadInFrames =
+         static_cast<std::uint16_t>(codec::kAc3DecoderDelayFrames),
+     .coreAudioFormatTag = 0x61632D33U /* 'ac-3' */,
+     .decoderTailShortfallFrames =
+         static_cast<std::uint16_t>(codec::kAc3DecoderTailShortfallFrames)},
+    {.codec = MediaCodec::Eac3, .kind = MediaCodecKind::Audio,
+     .decoderLeadInFrames =
+         static_cast<std::uint16_t>(codec::kAc3DecoderDelayFrames),
+     .coreAudioFormatTag = 0x65632D33U /* 'ec-3' */,
+     .decoderTailShortfallFrames =
+         static_cast<std::uint16_t>(codec::kAc3DecoderTailShortfallFrames)},
+    // The final FLAC frame carries at least one sample and at most a whole
+    // block.
+    {.codec = MediaCodec::Flac, .kind = MediaCodecKind::Audio,
+     .coreAudioFormatTag = 0x666C6163U /* 'flac' */,
+     .decoderTailShortfallBelowOnePacket = true},
+    // Reorder depth one, and it is a property of the codec rather than of the
+    // stream. MPEG-2 reorders through exactly two reference frame stores: a B
+    // picture is output at its own decode position, and the only picture ever
+    // held back is the FUTURE anchor decoded ahead of the B pictures that
+    // reference it. That is true regardless of how many consecutive B pictures
+    // a GOP codes -- an M of 3 and an M of 12 both hold exactly one anchor --
+    // so the depth is 1 for every legal MPEG-2 stream and never needs a
+    // bitstream parse.
+    //
+    // Stating 1 rather than 0 costs one retained frame on a stream that codes
+    // no B pictures at all, which both of this project's MPEG-2 fixtures are
+    // (ffmpeg's mpeg2video encoder defaults to max_b_frames = 0). That is one
+    // frame of startup hold at SD rates and the right side to be wrong on:
+    // understating the depth reorders output, while overstating it by one
+    // delays it by one frame.
+    {.codec = MediaCodec::Mpeg2Video, .kind = MediaCodecKind::Video,
+     .coreMediaType = 0x6D703276U /* 'mp2v' */,
+     .needsPinnedOutputPixelFormat = true, .statesCodedSampleFormat = true,
+     .previewScrubAdmitted = true, .intrinsicReorderDepth = 1},
     // MPEG-4 Part 2's record is the esds the Matroska demuxer synthesizes
     // around the CodecPrivate headers. Only Simple Profile is admitted for
     // VideoToolbox, and that gate is upstream on the bitstream headers.
-    {MediaCodec::Mpeg4Visual, MediaCodecKind::Video, 0x6D703476U /* 'mp4v' */,
-     MediaCodecConfigurationKind::CodecPrivate, "esds", true, true, false, true,
-     true, false, 0},
-    {MediaCodec::ProRes, MediaCodecKind::Video, 0x6170636EU /* 'apcn' */,
-     MediaCodecConfigurationKind::None, nullptr, false, true, false, false,
-     true, true, 0},
-    {MediaCodec::Mjpeg, MediaCodecKind::Video, 0x6A706567U /* 'jpeg' */,
-     MediaCodecConfigurationKind::None, nullptr, false, true, false, false,
-     true, true, 0, true},
-    {MediaCodec::AdpcmIma, MediaCodecKind::Audio, 0,
-     MediaCodecConfigurationKind::None, nullptr, false, false, false, false,
-     false, false, 0},
-    {MediaCodec::AdpcmMs, MediaCodecKind::Audio, 0,
-     MediaCodecConfigurationKind::None, nullptr, false, false, false, false,
-     false, false, 0},
+    //
+    // Reorder depth zero is a property of the admitted PROFILE rather than of
+    // the codec. MPEG-4 Part 2 as a whole reorders exactly like MPEG-2, but
+    // B-VOPs are an Advanced Simple Profile tool, and Apple's 'mp4v' decoder
+    // refuses that profile at session creation, so
+    // media::inspectMpeg4VisualHeaders() admits Simple Profile alone. Simple
+    // Profile codes I-VOPs and P-VOPs only, so decode order IS presentation
+    // order -- which is also why the Matroska route's missing decode
+    // timestamps cost this codec nothing.
+    {.codec = MediaCodec::Mpeg4Visual, .kind = MediaCodecKind::Video,
+     .coreMediaType = 0x6D703476U /* 'mp4v' */,
+     .configurationKind = MediaCodecConfigurationKind::CodecPrivate,
+     .configurationAtomName = "esds", .carriesConfigurationRecord = true,
+     .needsPinnedOutputPixelFormat = true, .statesCodedSampleFormat = true,
+     .previewScrubAdmitted = true},
+    // ProRes, ProRes 4444 and Motion JPEG are ALL-INTRA by construction: every
+    // ProRes frame is independently coded and Motion JPEG is a sequence of
+    // independent JPEG images, so decode order IS presentation order and the
+    // reorder depth is honestly zero rather than a defensive one.
+    {.codec = MediaCodec::ProRes, .kind = MediaCodecKind::Video,
+     .coreMediaType = 0x6170636EU /* 'apcn' */,
+     .needsPinnedOutputPixelFormat = true, .previewScrubAdmitted = true,
+     .avfoundationVideoAdmitted = true},
+    {.codec = MediaCodec::Mjpeg, .kind = MediaCodecKind::Video,
+     .coreMediaType = 0x6A706567U /* 'jpeg' */,
+     .needsPinnedOutputPixelFormat = true, .previewScrubAdmitted = true,
+     .avfoundationVideoAdmitted = true, .requiresMjpegHeaderInspection = true},
+    {.codec = MediaCodec::AdpcmIma, .kind = MediaCodecKind::Audio,
+     .coreAudioFormatTag = 0x6D730011U /* kAudioFormatDVIIntelIMA */},
+    {.codec = MediaCodec::AdpcmMs, .kind = MediaCodecKind::Audio,
+     .coreAudioFormatTag = kMicrosoftAdpcmAudioFormatTag},
     // Opaque presentation ignores alpha in packed RGB10; chroma is not subsampled.
-    {MediaCodec::ProRes4444, MediaCodecKind::Video, 0x61703468U,
-     MediaCodecConfigurationKind::None, nullptr, false, true, true, false,
-     false, true, 0},
-    {MediaCodec::Dts, MediaCodecKind::Audio},
-    {MediaCodec::TrueHd, MediaCodecKind::Audio},
-    {MediaCodec::Mlp, MediaCodecKind::Audio},
+    {.codec = MediaCodec::ProRes4444, .kind = MediaCodecKind::Video,
+     .coreMediaType = 0x61703468U /* 'ap4h' */,
+     .needsPinnedOutputPixelFormat = true, .requiresHardwareDecode = true,
+     .avfoundationVideoAdmitted = true},
+    {.codec = MediaCodec::Dts, .kind = MediaCodecKind::Audio},
+    {.codec = MediaCodec::TrueHd, .kind = MediaCodecKind::Audio},
+    {.codec = MediaCodec::Mlp, .kind = MediaCodecKind::Audio},
 }};
+
+// CoreAudio's mono and stereo channel layout tags (kAudioChannelLayoutTag_Mono
+// and _Stereo), as plain integers; the platform layer asserts both.
+inline constexpr std::uint32_t kCoreAudioMonoLayoutTag{0x00640001U};
+inline constexpr std::uint32_t kCoreAudioStereoLayoutTag{0x00650002U};
 
 [[nodiscard]] constexpr bool softwareAudioCodec(MediaCodec codec) noexcept {
   return codec == MediaCodec::Dts || codec == MediaCodec::TrueHd || codec == MediaCodec::Mlp;
@@ -352,7 +466,20 @@ namespace detail {
          facts.carriesConfigurationRecord ||
          facts.needsPinnedOutputPixelFormat || facts.requiresHardwareDecode ||
          facts.statesCodedSampleFormat || facts.previewScrubAdmitted ||
-         facts.avfoundationVideoAdmitted)) {
+         facts.avfoundationVideoAdmitted || facts.intrinsicReorderDepth != 0)) {
+      return false;
+    }
+    if (stated &&
+        (facts.coreAudioFormatTag != 0 || facts.decoderLeadInFrames != 0 ||
+         facts.decoderLeadInIsOnePacket || facts.decoderFlushesLeadInAtEnd ||
+         facts.decoderTailShortfallFrames != 0 ||
+         facts.decoderTailShortfallBelowOnePacket ||
+         facts.decoderResetRebuilds)) {
+      return false;
+    }
+    const bool appleAudio =
+        facts.kind == MediaCodecKind::Audio && !softwareAudioCodec(facts.codec);
+    if (appleAudio != (facts.coreAudioFormatTag != 0)) {
       return false;
     }
   }
@@ -363,6 +490,7 @@ namespace detail {
 
 static_assert(detail::mediaCodecCoreMediaTypesRoundTrip(),
               "exactly the video rows state a four-character code and the "
-              "video-only fields, and each code names its own codec back");
+              "video-only fields, each code names its own codec back, and "
+              "exactly the Apple-decoded audio rows state an AudioFormatID");
 
 } // namespace wam::media

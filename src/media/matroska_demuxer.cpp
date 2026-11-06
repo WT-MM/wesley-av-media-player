@@ -57,20 +57,6 @@ using codec::parseAc3Syncframe;
 using codec::parseMpegAudioFrameHeader;
 using codec::parseOpusIdentificationHeader;
 
-constexpr std::uint32_t kAacFormatTag{0x61616320U};
-constexpr std::uint32_t kOpusFormatTag{0x6F707573U};
-constexpr std::uint32_t kVorbisFormatTag{kVorbisAudioFormatTag};
-// 'ac-3', 'ec-3', 'flac', '.mp3' -- kAudioFormatAC3, kAudioFormatEnhancedAC3,
-// kAudioFormatFLAC and kAudioFormatMPEGLayer3. Spelled numerically here so the
-// demuxer stays free of the AudioToolbox headers, exactly as the AAC and Opus
-// tags already are.
-constexpr std::uint32_t kAc3FormatTag{0x61632D33U};
-constexpr std::uint32_t kEnhancedAc3FormatTag{0x65632D33U};
-constexpr std::uint32_t kFlacFormatTag{0x666C6163U};
-constexpr std::uint32_t kMpegLayer3FormatTag{0x2E6D7033U};
-constexpr std::uint32_t kMonoLayoutTag{0x00640001U};
-constexpr std::uint32_t kStereoLayoutTag{0x00650002U};
-
 [[nodiscard]] std::string inlineString(const InlineAscii& value) {
   const std::span<const char> bytes = value.view();
   return std::string(bytes.begin(), bytes.end());
@@ -1441,12 +1427,12 @@ struct AudioDescriptorFields {
 void applyChannelLayoutTag(MediaAudioFormat* format,
                            std::uint32_t channelCount) noexcept {
   if (channelCount == 1) {
-    format->channelLayoutTag = kMonoLayoutTag;
+    format->channelLayoutTag = kCoreAudioMonoLayoutTag;
     format->channelLayoutPresent = true;
     return;
   }
   if (channelCount == 2) {
-    format->channelLayoutTag = kStereoLayoutTag;
+    format->channelLayoutTag = kCoreAudioStereoLayoutTag;
     format->channelLayoutPresent = true;
     return;
   }
@@ -1599,7 +1585,9 @@ void fillAudioDescriptor(const TrackEntry& entry, MediaTrackId id,
 
   AudioDescriptorFields fields;
   fields.codec = enhanced ? MediaCodec::Eac3 : MediaCodec::Ac3;
-  fields.formatTag = enhanced ? kEnhancedAc3FormatTag : kAc3FormatTag;
+  fields.formatTag =
+      mediaCodecFacts(enhanced ? MediaCodec::Eac3 : MediaCodec::Ac3)
+          .coreAudioFormatTag;
   fields.sampleRate = configuration.sampleRate;
   fields.channelCount = configuration.channelCount;
   fields.samplesPerAccessUnit = configuration.samplesPerAccessUnit;
@@ -1681,7 +1669,7 @@ void fillAudioDescriptor(const TrackEntry& entry, MediaTrackId id,
 
   AudioDescriptorFields fields;
   fields.codec = MediaCodec::Mp3;
-  fields.formatTag = kMpegLayer3FormatTag;
+  fields.formatTag = mediaCodecFacts(MediaCodec::Mp3).coreAudioFormatTag;
   fields.sampleRate = configuration.sampleRate;
   fields.channelCount = configuration.channelCount;
   fields.samplesPerAccessUnit = configuration.samplesPerAccessUnit;
@@ -1779,7 +1767,7 @@ void fillAudioDescriptor(const TrackEntry& entry, MediaTrackId id,
 
   AudioDescriptorFields fields;
   fields.codec = MediaCodec::Flac;
-  fields.formatTag = kFlacFormatTag;
+  fields.formatTag = mediaCodecFacts(MediaCodec::Flac).coreAudioFormatTag;
   fields.sampleRate = configuration.sampleRate;
   fields.channelCount = configuration.channelCount;
   fields.samplesPerAccessUnit = configuration.blockSize;
@@ -1932,7 +1920,7 @@ void fillAudioDescriptor(const TrackEntry& entry, MediaTrackId id,
   MediaAudioFormat format;
   format.sampleRate = sampleRate;
   format.channels = configuration.channelCount;
-  format.formatTag = kVorbisFormatTag;
+  format.formatTag = mediaCodecFacts(MediaCodec::Vorbis).coreAudioFormatTag;
   format.framesPerPacket = samplesPerAccessUnit;
   applyChannelLayoutTag(&format, configuration.channelCount);
   result->audio = format;
@@ -2095,7 +2083,7 @@ void fillAudioDescriptor(const TrackEntry& entry, MediaTrackId id,
   MediaAudioFormat format;
   format.sampleRate = kOpusOutputSampleRate;
   format.channels = configuration.channelCount;
-  format.formatTag = kOpusFormatTag;
+  format.formatTag = mediaCodecFacts(MediaCodec::Opus).coreAudioFormatTag;
   format.framesPerPacket = probe.samplesPerAccessUnit;
   applyChannelLayoutTag(&format, configuration.channelCount);
   result->audio = format;
@@ -2429,7 +2417,7 @@ void fillAudioDescriptor(const TrackEntry& entry, MediaTrackId id,
 
   AudioDescriptorFields fields;
   fields.codec = MediaCodec::Aac;
-  fields.formatTag = kAacFormatTag;
+  fields.formatTag = mediaCodecFacts(MediaCodec::Aac).coreAudioFormatTag;
   fields.sampleRate = sampleRate;
   fields.channelCount = admission.configuration->channelCount;
   fields.samplesPerAccessUnit = kAacLcSamplesPerAccessUnit;

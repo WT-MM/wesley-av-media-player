@@ -15,6 +15,10 @@ namespace wam::media::codec {
 // and decodes with the cookie property never set).
 inline constexpr std::size_t kMpegAudioFrameHeaderBytes{4};
 
+// '.mp2', kAudioFormatMPEGLayer2: MediaCodec::Mp3 is the MPEG audio family and
+// its facts row states '.mp3', so Layer II's second AudioFormatID lives here.
+inline constexpr std::uint32_t kMpegLayer2FormatTag{0x2E6D7032U};
+
 // MPEG-1 Layer III decodes 1152 frames per access unit. MPEG-2 and MPEG-2.5
 // Layer III decode 576, which the grid could represent, but the decoder
 // lead-in below was measured on MPEG-1 only and an unexercised branch is worse

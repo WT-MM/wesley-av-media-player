@@ -7,7 +7,6 @@
 #include "media/adpcm_audio.hpp"
 #include "media/adpcm_decoder.hpp"
 #include "media/audio_downmix.hpp"
-#include "media/codec/ac3.hpp"
 #include "media/media_codec_facts.hpp"
 #include "core_media_codec_facts.hpp"
 #include "native_audio_channel_map.hpp"
@@ -128,30 +127,19 @@ void saturatingAdd(std::uint64_t &value, std::uint64_t amount) noexcept {
 // generation decodes this many fewer frames than its packets declare. It is a
 // property of the decoder, not of the container, which is why it is stated in
 // the codec facts table and not carried in the timeline.
-//
-// Vorbis is the one codec whose answer is not a constant: its lead-in is
-// exactly one access unit, because the format's first packet carries only the
-// left half of an overlap-add window and decodes to zero samples by
-// specification. Measured invariant across fresh converters and across
-// AudioConverterReset alike, which is why Vorbis can use the cheap reset that
-// Opus cannot.
 [[nodiscard]] std::uint32_t decoderLeadInFrames(
     media::MediaCodec codec, std::uint32_t framesPerPacket) noexcept {
-  if (codec == media::MediaCodec::Vorbis) {
-    return framesPerPacket;
-  }
-  return media::mediaCodecFacts(codec).decoderLeadInFrames;
+  const media::MediaCodecFacts &facts = media::mediaCodecFacts(codec);
+  return facts.decoderLeadInIsOnePacket ? framesPerPacket
+                                        : facts.decoderLeadInFrames;
 }
 
-// The frames a decoder never emits at all. Identical to its lead-in for every
-// codec that simply swallows its warm-up, and ZERO for MP3, which swallows 529
-// frames at the head and flushes exactly 529 more at the end -- so an MP3
-// track decodes to precisely the frame count its packets declare even though
-// its first emitted frame sits 529 frames into the packet grid.
+// The frames a decoder never emits at all: its lead-in, unless it flushes the
+// same number at the end.
 [[nodiscard]] std::uint32_t
 decoderFrameDeficitFrames(media::MediaCodec codec,
                           std::uint32_t framesPerPacket) noexcept {
-  if (codec == media::MediaCodec::Mp3) {
+  if (media::mediaCodecFacts(codec).decoderFlushesLeadInAtEnd) {
     return 0U;
   }
   return decoderLeadInFrames(codec, framesPerPacket);
@@ -159,35 +147,14 @@ decoderFrameDeficitFrames(media::MediaCodec codec,
 
 // How many frames short of its declared packet budget a decoder may
 // legitimately finish. See NativeAudioConverterState::decodedBudgetExhausted
-// for why each value is what it is.
+// and the codec facts rows for why each value is what it is.
 [[nodiscard]] std::uint32_t decoderTailShortfallBoundFrames(
     media::MediaCodec codec, std::uint32_t framesPerPacket) noexcept {
-  switch (codec) {
-  case media::MediaCodec::Ac3:
-  case media::MediaCodec::Eac3:
-    return wam::media::codec::kAc3DecoderTailShortfallFrames;
-  case media::MediaCodec::Flac:
-    // The final frame carries at least one sample and at most a whole block.
+  const media::MediaCodecFacts &facts = media::mediaCodecFacts(codec);
+  if (facts.decoderTailShortfallBelowOnePacket) {
     return framesPerPacket == 0U ? 0U : framesPerPacket - 1U;
-  case media::MediaCodec::Alac:
-    // Structurally identical to FLAC, and for a DIFFERENT reason than the
-    // codec: on the AVFoundation route this shortfall is manufactured by this
-    // player, not by the decoder. An MP4's stts states the final ALAC packet's
-    // true length -- 272 frames of a 4096-frame grid on the measured fixture --
-    // but restateCompressedAudioPacketDurations
-    // (avfoundation_media_source.mm) lengthens every short trailing unit
-    // back to mFramesPerPacket, because that is the correct end-trim fix for
-    // AAC, whose 1024-frame packet genuinely decodes 1024 frames and whose trim
-    // really is an edit. ALAC's final packet genuinely holds fewer frames --
-    // the count is in the ALAC frame header, which is how AudioToolbox decodes
-    // it exactly -- so the restatement inflates the budget by up to one packet
-    // and the decoder can never reach it. The bound is therefore exactly the
-    // largest inflation that restatement can produce, one packet less one
-    // frame, and it is tight rather than generous.
-    return framesPerPacket == 0U ? 0U : framesPerPacket - 1U;
-  default:
-    return 0U;
   }
+  return facts.decoderTailShortfallFrames;
 }
 
 constexpr std::size_t kChannelLayoutPrefixBytes =
@@ -342,6 +309,8 @@ public:
   configure(const NativeAudioBackendConfiguration &configuration,
             std::string *error) override {
     close();
+    rebuild_on_reset_ =
+        media::mediaCodecFacts(configuration.codec).decoderResetRebuilds;
     input_asbd_ = exactAsbd(configuration.input);
     output_asbd_ = floatOutputAsbd(configuration.outputSampleRate,
                                    configuration.outputChannels);
@@ -466,14 +435,10 @@ public:
     }
     input_storage_outstanding_ = false;
     outstanding_storage_was_final_ = false;
-    // AudioConverterReset does NOT restore an Opus converter's priming state:
-    // measured, a reset converter emits the decoder's 120-frame startup
-    // transient as real output instead of swallowing it, so the same stream
-    // decodes to a different frame count depending on whether the generation
-    // was configured or flushed. Rebuilding the converter restores the single
-    // invariant the whole Opus trim is derived from. Every other codec uses
-    // the cheaper reset.
-    if (input_asbd_.mFormatID == kAudioFormatOpus) {
+    // A codec whose priming state AudioConverterReset does not restore is
+    // rebuilt (see decoderResetRebuilds); every other codec uses the cheaper
+    // reset.
+    if (rebuild_on_reset_) {
       AudioConverterDispose(converter_);
       converter_ = nullptr;
       if (!createConverter(error)) {
@@ -675,6 +640,7 @@ private:
   bool layout_present_{false};
   AudioStreamBasicDescription input_asbd_{};
   AudioStreamBasicDescription output_asbd_{};
+  bool rebuild_on_reset_{false};
   std::array<AudioStreamPacketDescription, kMaximumPacketsPerFill>
       callback_packets_{};
   bool input_storage_outstanding_{false};
@@ -1672,6 +1638,7 @@ bool NativeAudioConverter::configure(const media::MediaTrackDescriptor &track,
   // drops centre/LFE/surrounds for FLAC; the fold happens here,
   // after a complete decode, or not at all.
   NativeAudioBackendConfiguration configuration;
+  configuration.codec = track.codec;
   configuration.input = *track.audio;
   configuration.outputChannels = track.audio->channels;
   configuration.outputSampleRate = candidateSampleRate;

@@ -3,6 +3,7 @@
 #include "media/codec/aac.hpp"
 #include "media/codec/ac3.hpp"
 #include "media/codec/mpeg_audio.hpp"
+#include "media/media_codec_facts.hpp"
 #include "media/media_iso_color.hpp"
 #include "media/video_codec_configuration.hpp"
 
@@ -29,14 +30,6 @@ using codec::Ac3SyncFrame;
 using codec::MpegAudioFrame;
 
 namespace {
-
-constexpr std::uint32_t kAacFormatTag{0x61616320U};        // 'aac '
-constexpr std::uint32_t kMpegLayer2FormatTag{0x2E6D7032U}; // '.mp2'
-constexpr std::uint32_t kMpegLayer3FormatTag{0x2E6D7033U}; // '.mp3'
-constexpr std::uint32_t kAc3FormatTag{0x61632D33U};        // 'ac-3'
-constexpr std::uint32_t kEnhancedAc3FormatTag{0x65632D33U};// 'ec-3'
-constexpr std::uint32_t kMonoLayoutTag{0x00640001U};
-constexpr std::uint32_t kStereoLayoutTag{0x00650002U};
 
 // How many consecutive sync bytes at a candidate stride prove framing. Ten
 // gives a false-positive probability of 2^-80 against random data while
@@ -2620,7 +2613,8 @@ MpegTsPrepareOutcome prepareMpegTs(std::shared_ptr<SeekableByteReader> reader,
               format.sampleRate =
                   static_cast<double>(admission.configuration->sampleRate);
               format.channels = admission.configuration->channelCount;
-              format.formatTag = kAacFormatTag;
+              format.formatTag =
+                  mediaCodecFacts(MediaCodec::Aac).coreAudioFormatTag;
               format.framesPerPacket = kAacLcSamplesPerAccessUnit;
               // Mono and stereo keep their canonical tags. A wider AAC layout
               // states none: this demuxer knows a channel count, not
@@ -2629,9 +2623,11 @@ MpegTsPrepareOutcome prepareMpegTs(std::shared_ptr<SeekableByteReader> reader,
               // folding to stereo. Stating the stereo tag on a six-channel
               // track would be an outright false statement.
               format.channelLayoutTag =
-                  admission.configuration->channelCount == 1   ? kMonoLayoutTag
-                  : admission.configuration->channelCount == 2 ? kStereoLayoutTag
-                                                               : 0U;
+                  admission.configuration->channelCount == 1
+                      ? kCoreAudioMonoLayoutTag
+                  : admission.configuration->channelCount == 2
+                      ? kCoreAudioStereoLayoutTag
+                      : 0U;
               format.channelLayoutPresent =
                   admission.configuration->channelCount <= 2;
               state->audio.sampleRate = admission.configuration->sampleRate;
@@ -2666,9 +2662,8 @@ MpegTsPrepareOutcome prepareMpegTs(std::shared_ptr<SeekableByteReader> reader,
           track.codecConfigurationKind = MediaCodecConfigurationKind::None;
           format.sampleRate = static_cast<double>(frame.sampleRate);
           format.channels = frame.channels;
-          format.formatTag = state->audio.codec == MediaCodec::Eac3
-                                 ? kEnhancedAc3FormatTag
-                                 : kAc3FormatTag;
+          format.formatTag =
+              mediaCodecFacts(state->audio.codec).coreAudioFormatTag;
           // A-52 codes 6 blocks of 256 samples per syncframe. E-AC-3 may code
           // 1, 2, 3 or 6, and the parser READS which: describing a short-block
           // stream as 1536 frames per packet would mis-time the
@@ -2682,9 +2677,9 @@ MpegTsPrepareOutcome prepareMpegTs(std::shared_ptr<SeekableByteReader> reader,
           // per-codec channel ORDER, and the platform layer reads the
           // authoritative order back from the decoder before folding.
           format.channelLayoutTag =
-              frame.channels == 1 ? kMonoLayoutTag
+              frame.channels == 1 ? kCoreAudioMonoLayoutTag
               : frame.channels == 2
-                  ? kStereoLayoutTag
+                  ? kCoreAudioStereoLayoutTag
                   : 0U;
           format.channelLayoutPresent = frame.channels <= 2;
           state->audio.sampleRate = frame.sampleRate;
@@ -2707,11 +2702,14 @@ MpegTsPrepareOutcome prepareMpegTs(std::shared_ptr<SeekableByteReader> reader,
           track.codecConfigurationKind = MediaCodecConfigurationKind::None;
           format.sampleRate = static_cast<double>(frame.sampleRate);
           format.channels = frame.channels;
-          format.formatTag = frame.layer == 3 ? kMpegLayer3FormatTag
-                                              : kMpegLayer2FormatTag;
+          format.formatTag =
+              frame.layer == 3
+                  ? mediaCodecFacts(MediaCodec::Mp3).coreAudioFormatTag
+                  : codec::kMpegLayer2FormatTag;
           format.framesPerPacket = frame.samplesPerFrame;
           format.channelLayoutTag =
-              frame.channels == 1 ? kMonoLayoutTag : kStereoLayoutTag;
+              frame.channels == 1 ? kCoreAudioMonoLayoutTag
+                                  : kCoreAudioStereoLayoutTag;
           format.channelLayoutPresent = true;
           state->audio.sampleRate = frame.sampleRate;
           state->audio.channels = frame.channels;
