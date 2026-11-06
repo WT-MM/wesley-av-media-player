@@ -22,7 +22,7 @@ inline bool exactFrameCovers(MediaTime start, MediaTime duration, MediaTime targ
 
 std::optional<double> mediaTimeSecondsAtHostTicks(MediaTime origin,
     std::uint64_t ticks, std::uint64_t ticksPerSecond,
-    std::uint32_t rateUnits64) noexcept;
+    native_playback::PlaybackRateRatio rate) noexcept;
 
 namespace native_playback {
 inline bool commitReadyMatches(const CommitSeek& command, MediaTime target,

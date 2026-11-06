@@ -1,6 +1,5 @@
 #include "native_silent_timebase.hpp"
 
-#include <cmath>
 
 namespace wam::macos {
 
@@ -33,8 +32,8 @@ bool NativeSilentTimebase::activate(media::MediaGeneration generation,
   // already published its own physical pause of the retired generation; this
   // repeat is idempotent and keeps the invariant local.
   const bool applied = generation_ == 0
-      ? clock_.anchorExact(generation, target, rate_.toDouble(), false)
-      : clock_.pause(generation_) && clock_.seekExact(generation_, generation, target);
+      ? clock_.anchor(generation, target, rate_, false)
+      : clock_.pause(generation_) && clock_.seek(generation_, generation, target);
   if (!applied) return false;
   generation_ = generation;
   running_ = false;
@@ -55,7 +54,7 @@ NativeAudioSessionProgress NativeSilentTimebase::setPaused(
   }
   const bool applied =
       paused ? clock_.pause(generation_)
-             : clock_.run(generation_, rate_.toDouble());
+             : clock_.run(generation_, rate_);
   if (!applied) {
     return NativeAudioSessionProgress::Failed;
   }
@@ -79,7 +78,7 @@ NativeAudioSessionProgress NativeSilentTimebase::setRate(
   // Re-running an already running generation re-anchors it at the position it
   // has reached and continues from there at the new slope. That is exactly a
   // rate change: no media time is created or destroyed at the boundary.
-  return clock_.run(generation_, rate_.toDouble())
+  return clock_.run(generation_, rate_)
              ? NativeAudioSessionProgress::Done
              : NativeAudioSessionProgress::Failed;
 }

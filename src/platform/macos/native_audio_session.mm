@@ -1591,9 +1591,7 @@ media::NativeMediaConsumeResult NativeAudioSession::configure(
     control.latch(NativeAudioSessionFailure::ConverterConfiguration);
     return media::NativeMediaConsumeResult::Failed;
   }
-  const auto clockSeconds = media::mediaTimeSeconds(plan->clockPosition);
-  if (!clockSeconds ||
-      !control.clock.anchor(generation, *clockSeconds, 1.0, false)) {
+  if (!control.clock.anchor(generation, plan->clockPosition, {}, false)) {
     control.latch(NativeAudioSessionFailure::ClockActivation);
     assignError(error, "native audio clock activation failed");
     return media::NativeMediaConsumeResult::Failed;
@@ -2227,14 +2225,13 @@ media::NativeMediaConsumerProgress NativeAudioSession::flush(
   }
 
   if (control.flushStage == FlushStage::Reset) {
-    const auto clockSeconds =
-        media::mediaTimeSeconds(control.lifecyclePlan.clockPosition);
-    if (!clockSeconds || !control.ring.flush(control.lifecycleTarget)) {
+    if (!control.ring.flush(control.lifecycleTarget)) {
       control.latch(NativeAudioSessionFailure::RingTransition);
       return media::NativeMediaConsumerProgress::Failed;
     }
     if (!control.clock.seek(control.lifecycleRetired,
-                            control.lifecycleTarget, *clockSeconds)) {
+                            control.lifecycleTarget,
+                            control.lifecyclePlan.clockPosition)) {
       control.latch(NativeAudioSessionFailure::ClockTransition);
       return media::NativeMediaConsumerProgress::Failed;
     }

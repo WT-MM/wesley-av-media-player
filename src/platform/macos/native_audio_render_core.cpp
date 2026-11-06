@@ -1213,13 +1213,11 @@ NativeAudioRenderResult NativeAudioRenderCore::render(
   }
 
   if (!running_) {
-    // The resume anchor carries the exact rational as its double. It is only
-    // the unbounded fallback slope -- every published interval derives its
-    // own rate from endpoints that are exact by construction -- but it must
-    // still name the right speed for the instant before the first interval
-    // of this run lands.
-    if (!clock_.runAtHostTicks(generation, heard_first_host_ticks,
-                               rate.toDouble())) {
+    // The resume rate is only the unbounded fallback slope -- every
+    // published interval derives its own rate from endpoints that are exact
+    // by construction -- but it must still name the right speed for the
+    // instant before the first interval of this run lands.
+    if (!clock_.runAtHostTicks(generation, heard_first_host_ticks, rate)) {
       silenceAll();
       return refuse(result, NativeAudioRenderFailure::ResumeRejected);
     }

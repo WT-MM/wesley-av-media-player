@@ -19,6 +19,8 @@
 namespace {
 
 using wam::macos::NativeMediaClock;
+using wam::media::MediaTime;
+using Rate = NativeMediaClock::PlaybackRate;
 using wam::macos::NativeMediaClockSnapshot;
 using wam::macos::NativeMediaHostClock;
 using wam::macos::NativeMediaSegment;
@@ -31,17 +33,23 @@ static_assert(std::is_trivially_copyable_v<NativeMediaClockSnapshot>);
 static_assert(std::is_trivially_copyable_v<NativeMediaSegmentReservation>);
 static_assert(noexcept(std::declval<const NativeMediaClock &>().sample()));
 static_assert(noexcept(std::declval<NativeMediaClock &>().anchor(
-    1, 0.0, 1.0, false)));
-static_assert(noexcept(std::declval<NativeMediaClock &>().anchorAtHostTicks(
-    1, 0, 0.0, 1.0, false)));
+    1, MediaTime{0, 1}, Rate{}, false)));
 static_assert(noexcept(std::declval<NativeMediaClock &>().reserveSegment(
     1, NativeMediaSegment{})));
 static_assert(noexcept(std::declval<NativeMediaClock &>().commitSegment(
     NativeMediaSegmentReservation{})));
 static_assert(noexcept(std::declval<NativeMediaClock &>().runAtHostTicks(
-    1, 0, 1.0)));
+    1, 0, Rate{})));
 
 int failures = 0;
+
+MediaTime at(double seconds) {
+  return wam::media::exactNonnegativeMediaTime(seconds).value_or(MediaTime{});
+}
+
+Rate rate(double value) {
+  return wam::media::native_playback::nativeRateRatio(value);
+}
 
 void expect(bool condition, const char *message) {
   if (condition) {
@@ -72,6 +80,18 @@ struct FakeHostClock {
   }
 };
 
+// Anchors through the public API with the host clock held at hostTicks.
+template <typename Host>
+bool anchorAt(NativeMediaClock &clock, Host &host,
+              std::uint64_t generation, std::uint64_t hostTicks,
+              double seconds, double value, bool running) {
+  const std::uint64_t now = host.ticks.exchange(hostTicks);
+  const bool anchored =
+      clock.anchor(generation, at(seconds), rate(value), running);
+  host.ticks.store(now);
+  return anchored;
+}
+
 [[nodiscard]] NativeMediaSegment segment(
     std::uint64_t serial, std::uint64_t firstHostTicks,
     std::uint64_t endHostTicks, double mediaStart, double mediaEnd,
@@ -84,7 +104,7 @@ struct FakeHostClock {
 void testRateChangesKeepExactFutureBoundaries() {
   FakeHostClock host;
   NativeMediaClock clock(host.seam(1000));
-  expect(clock.anchorAtHostTicks(1, 0, 0.0, 1.0, true),
+  expect(anchorAt(clock, host, 1, 0, 0.0, 1.0, true),
          "rate change clock anchors");
   expect(nativeMediaSegmentAccepted(
              clock.observeSegment(1, segment(1, 0, 20, 0.0, 0.02))),
@@ -112,7 +132,7 @@ void testRateChangesKeepExactFutureBoundaries() {
 void testQueuedRateAcceptsTimestampQuantization() {
   FakeHostClock host;
   NativeMediaClock clock(host.seam(1000000));
-  expect(clock.anchorAtHostTicks(1, 0, 0.0, 1.0, true) &&
+  expect(anchorAt(clock, host, 1, 0, 0.0, 1.0, true) &&
              nativeMediaSegmentAccepted(
                  clock.observeSegment(1, segment(1, 0, 20000, 0, 0.02))),
          "quantized rate queue starts");
@@ -133,7 +153,7 @@ void testQueuedRateAcceptsTimestampQuantization() {
 void testFutureRateQueueIsBounded() {
   FakeHostClock host;
   NativeMediaClock clock(host.seam(1000));
-  expect(clock.anchorAtHostTicks(1, 0, 0.0, 1.0, true) &&
+  expect(anchorAt(clock, host, 1, 0, 0.0, 1.0, true) &&
              nativeMediaSegmentAccepted(
                  clock.observeSegment(1, segment(1, 0, 10, 0, 0.01))),
          "bounded rate queue starts");
@@ -176,7 +196,7 @@ void testConfigurationPausedAndInvalidation() {
   expect(host.reads.load(std::memory_order_relaxed) == 0,
          "an invalid sample does not read host time");
 
-  expect(clock.anchor(7, 12.5, 1.25, false),
+  expect(clock.anchor(7, at(12.5), rate(1.25), false),
          "a newer paused anchor is accepted");
   host.ticks.store(9000, std::memory_order_relaxed);
   const auto paused = clock.sample();
@@ -189,7 +209,7 @@ void testConfigurationPausedAndInvalidation() {
   expect(host.reads.load(std::memory_order_relaxed) == 1,
          "paused sampling performs no host read");
 
-  expect(!clock.pause(6) && !clock.run(6, 1.0) &&
+  expect(!clock.pause(6) && !clock.run(6, rate(1.0)) &&
              !clock.stop(6, 8),
          "stale generations reject every transport mutation");
   expect(clock.stop(7, 10),
@@ -199,8 +219,8 @@ void testConfigurationPausedAndInvalidation() {
              !stopped.valid && !stopped.running &&
              stopped.anchorHostTicks == 0 && stopped.mediaSeconds == 0.0,
          "a stopped clock retains only its invalidation generation");
-  expect(!clock.anchor(10, 0.0, 1.0, false) &&
-             clock.anchor(11, 0.0, 1.0, false),
+  expect(!clock.anchor(10, at(0.0), rate(1.0), false) &&
+             clock.anchor(11, at(0.0), rate(1.0), false),
          "reactivation requires a generation newer than invalidation");
 
   NativeMediaClock missingReader({nullptr, nullptr, 1000});
@@ -208,8 +228,8 @@ void testConfigurationPausedAndInvalidation() {
   expect(!missingReader.configured() && !missingScale.configured() &&
              missingReader.ticksPerSecond() == 1000 &&
              missingScale.ticksPerSecond() == 0 &&
-             !missingReader.anchor(1, 0.0, 1.0, false) &&
-             !missingScale.anchorAtHostTicks(1, 0, 0.0, 1.0, true),
+             !missingReader.anchor(1, at(0.0), rate(1.0), false) &&
+             !anchorAt(missingScale, host, 1, 0, 0.0, 1.0, true),
          "incomplete host seams remain inert");
 }
 
@@ -217,7 +237,7 @@ void testRunningRatesAndExactFutureResume() {
   FakeHostClock host;
   host.ticks.store(100, std::memory_order_relaxed);
   NativeMediaClock clock(host.seam(100));
-  expect(clock.anchor(1, 10.0, 2.0, true),
+  expect(clock.anchor(1, at(10.0), rate(2.0), true),
          "a running anchor is accepted");
 
   host.ticks.store(350, std::memory_order_relaxed);
@@ -236,9 +256,9 @@ void testRunningRatesAndExactFutureResume() {
          "pause fixes the evaluated media position");
   const std::uint64_t readsBeforeResume =
       host.reads.load(std::memory_order_relaxed);
-  expect(!clock.runAtHostTicks(2, 500, 0.5),
+  expect(!clock.runAtHostTicks(2, 500, rate(0.5)),
          "future-host resume rejects a stale generation");
-  expect(clock.runAtHostTicks(1, 500, 0.5),
+  expect(clock.runAtHostTicks(1, 500, rate(0.5)),
          "future-host resume accepts the exact paused generation");
   expect(host.reads.load(std::memory_order_relaxed) == readsBeforeResume,
          "future-host resume performs no implicit now read");
@@ -248,10 +268,10 @@ void testRunningRatesAndExactFutureResume() {
   host.ticks.store(600, std::memory_order_relaxed);
   expectNear(clock.sample().mediaSeconds, 15.5, 1e-12,
              "future-host resume advances from the supplied tick");
-  expect(!clock.runAtHostTicks(1, 700, 1.0),
+  expect(!clock.runAtHostTicks(1, 700, rate(1.0)),
          "future-host resume rejects an already-running state");
 
-  expect(clock.run(1, 4.0),
+  expect(clock.run(1, rate(4.0)),
          "run can re-anchor an already-running convenience clock");
   host.ticks.store(650, std::memory_order_relaxed);
   expectNear(clock.sample().mediaSeconds, 17.5, 1e-12,
@@ -261,7 +281,7 @@ void testRunningRatesAndExactFutureResume() {
 void testRequestedRateSurvivesSegmentSlope() {
   FakeHostClock host;
   NativeMediaClock clock(host.seam(1'000'000));
-  expect(clock.anchorAtHostTicks(1, 0, 0.0, 2.0, true), "rate fixture anchors");
+  expect(anchorAt(clock, host, 1, 0, 0.0, 2.0, true), "rate fixture anchors");
   expect(clock.observeSegment(1, segment(1, 0, 1'000'000, 0.0, 2.0002)) ==
              NativeMediaSegmentAdmission::Current, "rate fixture admits drift");
   host.ticks.store(500'000);
@@ -276,7 +296,7 @@ void testSegmentsFutureAdjacencyGapAndSerials() {
   FakeHostClock host;
   host.ticks.store(100, std::memory_order_relaxed);
   NativeMediaClock clock(host.seam(100));
-  expect(clock.anchorAtHostTicks(3, 200, 20.0, 1.0, true),
+  expect(anchorAt(clock, host, 3, 200, 20.0, 1.0, true),
          "segment test establishes an exact future anchor");
 
   expect(clock.observeSegment(3, segment(1, 200, 300, 20.0, 22.0)) ==
@@ -381,7 +401,7 @@ void testFuturePendingCollinearCoalescing() {
   FakeHostClock host;
   host.ticks.store(100, std::memory_order_relaxed);
   NativeMediaClock clock(host.seam(100));
-  expect(clock.anchorAtHostTicks(1, 100, 0.0, 1.0, true) &&
+  expect(anchorAt(clock, host, 1, 100, 0.0, 1.0, true) &&
              clock.observeSegment(1, segment(1, 100, 200, 0.0, 1.0)) ==
                  NativeMediaSegmentAdmission::Current,
          "pending coalesce test establishes its current interval");
@@ -416,7 +436,7 @@ void testTransactionalReservation() {
   FakeHostClock host;
   host.ticks.store(10, std::memory_order_relaxed);
   NativeMediaClock clock(host.seam(10));
-  expect(clock.anchorAtHostTicks(1, 10, 1.0, 1.0, true),
+  expect(anchorAt(clock, host, 1, 10, 1.0, 1.0, true),
          "reservation test establishes a running clock");
 
   const NativeMediaSegmentReservation first =
@@ -454,7 +474,7 @@ void testReservationTokenSaturation() {
   FakeHostClock host;
   host.ticks.store(0, std::memory_order_relaxed);
   NativeMediaClock clock(host.seam(10));
-  expect(clock.anchorAtHostTicks(1, 100, 0.0, 1.0, true),
+  expect(anchorAt(clock, host, 1, 100, 0.0, 1.0, true),
          "token saturation test establishes a future clock");
 
   NativeMediaSegmentReservation ancient;
@@ -484,7 +504,7 @@ void testActiveIntervalRewriteRejection() {
   FakeHostClock host;
   host.ticks.store(0, std::memory_order_relaxed);
   NativeMediaClock clock(host.seam(10));
-  expect(clock.anchorAtHostTicks(1, 0, 0.0, 1.0, true),
+  expect(anchorAt(clock, host, 1, 0, 0.0, 1.0, true),
          "active rewrite test establishes its clock");
   expect(clock.observeSegment(1, segment(1, 0, 100, 0.0, 10.0)) ==
              NativeMediaSegmentAdmission::Current,
@@ -524,9 +544,13 @@ struct RacingHostClock {
   std::atomic<Action> action{Action::None};
   NativeMediaClock *clock{nullptr};
   std::uint64_t generation{1};
+  bool nested{false};
 
   static std::uint64_t read(void *context) noexcept {
     auto &host = *static_cast<RacingHostClock *>(context);
+    if (host.nested) {
+      return host.ticks.load(std::memory_order_relaxed);
+    }
     host.reads.fetch_add(1, std::memory_order_relaxed);
     const std::uint64_t now = host.ticks.load(std::memory_order_relaxed);
     const Action selected = host.action.load(std::memory_order_relaxed);
@@ -535,9 +559,14 @@ struct RacingHostClock {
       static_cast<void>(host.clock->pause(host.generation));
     } else if (selected == Action::AdvanceEveryRead) {
       ++host.generation;
-      static_cast<void>(host.clock->anchorAtHostTicks(
-          host.generation, 0, static_cast<double>(host.generation * 10U),
-          1.0, true));
+      // anchor() reads the host clock itself; that nested read is not one
+      // of the sample's attempts and must not re-enter the race.
+      host.nested = true;
+      static_cast<void>(host.clock->anchor(
+          host.generation,
+          MediaTime{static_cast<std::int64_t>(host.generation * 10U), 1},
+          Rate{}, true));
+      host.nested = false;
     }
     return now;
   }
@@ -551,7 +580,7 @@ void testCoherentHostReadAndBoundedProgress() {
   RacingHostClock host;
   NativeMediaClock clock(host.seam());
   host.clock = &clock;
-  expect(clock.anchorAtHostTicks(1, 0, 0.0, 1.0, true),
+  expect(anchorAt(clock, host, 1, 0, 0.0, 1.0, true),
          "race test establishes an exact running clock");
   host.ticks.store(100, std::memory_order_relaxed);
   host.action.store(RacingHostClock::Action::PauseOnce,
@@ -562,7 +591,7 @@ void testCoherentHostReadAndBoundedProgress() {
              racedPause.mediaSeconds == 1.0,
          "sample retries when pause publishes during its host-time read");
 
-  expect(clock.runAtHostTicks(1, 0, 1.0),
+  expect(clock.runAtHostTicks(1, 0, rate(1.0)),
          "bounded-progress test resumes its running generation");
   host.reads.store(0, std::memory_order_relaxed);
   host.action.store(RacingHostClock::Action::AdvanceEveryRead,
@@ -590,23 +619,23 @@ void testInvalidInputsAndOverflow() {
   const std::uint64_t maximum =
       std::numeric_limits<std::uint64_t>::max();
 
-  expect(!clock.anchor(0, 0.0, 1.0, false) &&
-             !clock.anchor(maximum, 0.0, 1.0, false) &&
-             !clock.anchor(1, -1.0, 1.0, false) &&
-             !clock.anchor(1, nan, 1.0, false) &&
-             !clock.anchor(1, infinity, 1.0, false) &&
-             !clock.anchor(1, 0.0, 0.0, false) &&
-             !clock.anchor(1, 0.0, nan, false),
+  expect(!clock.anchor(0, at(0.0), rate(1.0), false) &&
+             !clock.anchor(maximum, at(0.0), rate(1.0), false) &&
+             !clock.anchor(1, at(-1.0), rate(1.0), false) &&
+             !clock.anchor(1, at(nan), rate(1.0), false) &&
+             !clock.anchor(1, at(infinity), rate(1.0), false) &&
+             !clock.anchor(1, at(0.0), Rate{0, 1}, false) &&
+             !clock.anchor(1, at(0.0), Rate{1, 3}, false) &&
+             !clock.anchor(1, at(0.0), Rate{5, 1}, false),
          "anchors reject reserved generations and invalid transport values");
-  expect(clock.anchorAtHostTicks(1, 0,
-                                 std::numeric_limits<double>::max() / 2.0,
-                                 std::numeric_limits<double>::max(), true),
-         "finite extreme clock inputs remain valid");
+  const MediaTime largest{std::numeric_limits<std::int64_t>::max(), 1};
+  expect(clock.anchor(1, largest, Rate{4, 1}, true),
+         "the largest exact clock inputs remain valid");
   host.ticks.store(maximum, std::memory_order_relaxed);
-  const auto saturated = clock.sample();
-  expect(saturated.mediaSeconds == std::numeric_limits<double>::max() &&
-             std::isfinite(saturated.mediaSeconds),
-         "unbounded evaluation saturates rather than overflowing");
+  const auto extreme = clock.sample();
+  expect(extreme.valid && std::isfinite(extreme.mediaSeconds) &&
+             extreme.mediaSeconds > *wam::media::mediaTimeSeconds(largest),
+         "the farthest exact evaluation stays finite");
 
   expect(clock.observeSegment(1, segment(1, 10, 10, 1.0, 2.0)) ==
              NativeMediaSegmentAdmission::Invalid &&
@@ -620,7 +649,7 @@ void testInvalidInputsAndOverflow() {
 
   FakeHostClock derivedHost;
   NativeMediaClock derived(derivedHost.seam(maximum));
-  expect(derived.anchorAtHostTicks(1, 0, 0.0, 1.0, true),
+  expect(anchorAt(derived, derivedHost, 1, 0, 0.0, 1.0, true),
          "derived-rate overflow test establishes a clock");
   expect(derived.observeSegment(
              1, segment(1, 0, 1, 0.0,
@@ -630,9 +659,9 @@ void testInvalidInputsAndOverflow() {
 
   FakeHostClock generationHost;
   NativeMediaClock terminal(generationHost.seam(1));
-  expect(terminal.anchor(maximum - 1U, 0.0, 1.0, false) &&
+  expect(terminal.anchor(maximum - 1U, at(0.0), rate(1.0), false) &&
              terminal.stop(maximum - 1U, maximum) &&
-             !terminal.anchor(maximum, 0.0, 1.0, false),
+             !terminal.anchor(maximum, at(0.0), rate(1.0), false),
          "UINT64_MAX remains a non-wrapping terminal invalidation tag");
 }
 
@@ -644,12 +673,12 @@ void testConcurrentReaderConsistency() {
     return static_cast<double>(generation * 4U);
   };
   auto rateFor = [](std::uint64_t generation) {
-    return static_cast<double>((generation % 7U) + 1U);
+    return static_cast<double>((generation % 7U) + 1U) / 4.0;
   };
   auto runningFor = [](std::uint64_t generation) {
     return (generation & 1U) != 0;
   };
-  expect(clock.anchorAtHostTicks(1, 1234, mediaFor(1), rateFor(1),
+  expect(anchorAt(clock, host, 1, 1234, mediaFor(1), rateFor(1),
                                  runningFor(1)),
          "concurrency test establishes its first publication");
 
@@ -688,7 +717,7 @@ void testConcurrentReaderConsistency() {
        ++generation) {
     const auto deadline =
         std::chrono::steady_clock::now() + std::chrono::seconds(5);
-    while (!clock.anchorAtHostTicks(generation, 1234, mediaFor(generation),
+    while (!anchorAt(clock, host, generation, 1234, mediaFor(generation),
                                     rateFor(generation),
                                     runningFor(generation))) {
       if (std::chrono::steady_clock::now() >= deadline) {

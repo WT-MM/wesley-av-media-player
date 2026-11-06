@@ -196,7 +196,7 @@ private:
     case Operation::Volume: gain=command.gain; if(nativeOwnsTransport())static_cast<void>(setGain(gain));break;
     case Operation::Mute: muted=command.value; if(nativeOwnsTransport())static_cast<void>(setMuted(muted));break;
     case Operation::Rate:
-      execute(router_.setPreservePitch(command.flag,nextTick()));execute(router_.setRate(command.value/64.0,nextTick()));break;
+      execute(router_.setPreservePitch(command.flag,nextTick()));execute(router_.setRate(protocol::PlaybackRateRatio{command.value,protocol::kNativeRateGrid}.toDouble(),nextTick()));break;
     case Operation::Stop: case Operation::Close:
       preflight->cancel();finish(opening,WAM_CANCELLED);finish(seeking,WAM_CANCELLED);finish(pausing,WAM_CANCELLED);
       finish(stopping,WAM_SUPERSEDED);stopping=command;state(WAM_STOPPING);
@@ -352,7 +352,9 @@ wam_status_t wam_player_set_paused(wam_player_t player,uint32_t paused,wam_reque
 wam_status_t wam_player_seek(wam_player_t player,wam_time_t time,wam_request_id_t* request,wam_error_t* error){if(time.reserved || !media::canonicalNonnegativeTime(timeValue(time)))return failure(error,"InvalidTime");Command command;command.operation=Operation::Seek;command.time=time;return submit(player,command,request,error);}
 wam_status_t wam_player_set_volume(wam_player_t player,float gain,wam_request_id_t* request,wam_error_t* error){if(!std::isfinite(gain)||gain<0||gain>4)return failure(error,"InvalidVolume");Command command;command.operation=Operation::Volume;command.gain=gain;return submit(player,command,request,error);}
 wam_status_t wam_player_set_muted(wam_player_t player,uint32_t muted,wam_request_id_t* request,wam_error_t* error){if(muted>1)return failure(error,"InternalProtocolViolation");Command command;command.operation=Operation::Mute;command.value=muted;return submit(player,command,request,error);}
-wam_status_t wam_player_set_rate(wam_player_t player,uint32_t units,uint32_t pitch,wam_request_id_t* request,wam_error_t* error){if(units<16||units>256||pitch>1)return failure(error,"RateUnsupported");Command command;command.operation=Operation::Rate;command.value=units;command.flag=pitch;return submit(player,command,request,error);}
+// The C ABI states rates in 64ths; the native grid must stay that fine.
+static_assert(protocol::kNativeRateGrid==64);
+wam_status_t wam_player_set_rate(wam_player_t player,uint32_t units,uint32_t pitch,wam_request_id_t* request,wam_error_t* error){if(!protocol::PlaybackRateRatio{units,protocol::kNativeRateGrid}.valid()||pitch>1)return failure(error,"RateUnsupported");Command command;command.operation=Operation::Rate;command.value=units;command.flag=pitch;return submit(player,command,request,error);}
 wam_status_t wam_player_stop(wam_player_t player,wam_request_id_t* request,wam_error_t* error){Command command;command.operation=Operation::Stop;return submit(player,command,request,error);}
 wam_status_t wam_player_close(wam_player_t player,wam_request_id_t* request,wam_error_t* error){Command command;command.operation=Operation::Close;return submit(player,command,request,error);}
 wam_status_t wam_player_copy_snapshot(wam_player_t player,wam_snapshot_t* snapshot){if(auto status=valid(player))return status;if(!snapshot || snapshot->struct_size<sizeof(*snapshot))return WAM_INVALID_ARGUMENT;*snapshot=player->engine->snapshot;return WAM_OK;}
