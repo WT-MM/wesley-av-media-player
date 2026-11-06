@@ -96,6 +96,33 @@ enum class State : std::uint8_t {
   FallbackStopping,
 };
 
+// The router's state classification, stated once for every host.
+[[nodiscard]] constexpr bool ownsNativeTransport(State state) noexcept {
+  return state >= State::NativePreparing && state <= State::NativeStopFailed;
+}
+[[nodiscard]] constexpr bool ownsFallbackTransport(State state) noexcept {
+  return state >= State::FallbackCreating && state <= State::FallbackStopping;
+}
+// The two ranges above depend on the declaration order of State.
+static_assert(!ownsNativeTransport(State::Idle) &&
+              ownsNativeTransport(State::NativeStopFailed) &&
+              !ownsNativeTransport(State::FallbackCreating) &&
+              ownsFallbackTransport(State::FallbackStopping));
+// The native phases that own no timer of their own and need a host deadline.
+[[nodiscard]] constexpr bool isBoundedNativePhase(State state) noexcept {
+  return state == State::NativePreparing || state == State::NativeStarting ||
+         state == State::NativeSeeking || state == State::NativeStopping;
+}
+// A native generation is live and can take preview and seek commands.
+[[nodiscard]] constexpr bool nativeGenerationLive(State state) noexcept {
+  return state == State::NativeStarting || state == State::NativeActive ||
+         state == State::NativeEnded;
+}
+// The fallback player is open and drives the visible picture.
+[[nodiscard]] constexpr bool fallbackPlaying(State state) noexcept {
+  return state == State::FallbackOpening || state == State::FallbackActive;
+}
+
 enum class Status : std::uint8_t {
   Applied,
   Ignored,

@@ -10,73 +10,9 @@
 namespace wam::macos {
 namespace {
 constexpr unsigned kMaximumImmediateTransitions = 12;
-constexpr int kNativePhaseWatchdogMilliseconds = 10'000;
 bool applied(const playback_router::Transition& transition) noexcept {
   return transition.status == playback_router::Status::Applied;
 }
-[[nodiscard]] bool nativePhaseIsBounded(playback_router::State state) noexcept {
-  switch (state) {
-  case playback_router::State::NativePreparing:
-  case playback_router::State::NativeStarting:
-  case playback_router::State::NativeSeeking:
-  case playback_router::State::NativeStopping:
-    return true;
-  case playback_router::State::Idle:
-  case playback_router::State::NativeActive:
-  case playback_router::State::NativeEnded:
-  case playback_router::State::NativeStopFailed:
-  case playback_router::State::FallbackCreating:
-  case playback_router::State::FallbackOpening:
-  case playback_router::State::FallbackActive:
-  case playback_router::State::FallbackStopping:
-    return false;
-  }
-  return false;
-}
-
-[[nodiscard]] bool
-stateOwnsNativeTransport(playback_router::State state) noexcept {
-  switch (state) {
-  case playback_router::State::NativePreparing:
-  case playback_router::State::NativeStarting:
-  case playback_router::State::NativeActive:
-  case playback_router::State::NativeSeeking:
-  case playback_router::State::NativeEnded:
-  case playback_router::State::NativeStopping:
-  case playback_router::State::NativeStopFailed:
-    return true;
-  case playback_router::State::Idle:
-  case playback_router::State::FallbackCreating:
-  case playback_router::State::FallbackOpening:
-  case playback_router::State::FallbackActive:
-  case playback_router::State::FallbackStopping:
-    return false;
-  }
-  return false;
-}
-
-[[nodiscard]] bool
-stateOwnsFallbackTransport(playback_router::State state) noexcept {
-  switch (state) {
-  case playback_router::State::FallbackCreating:
-  case playback_router::State::FallbackOpening:
-  case playback_router::State::FallbackActive:
-  case playback_router::State::FallbackStopping:
-    return true;
-  case playback_router::State::Idle:
-  case playback_router::State::NativePreparing:
-  case playback_router::State::NativeStarting:
-  case playback_router::State::NativeActive:
-  case playback_router::State::NativeSeeking:
-  case playback_router::State::NativeEnded:
-  case playback_router::State::NativeStopping:
-  case playback_router::State::NativeStopFailed:
-    return false;
-  }
-  return false;
-}
-
-
 }
 NativePlaybackOwner::NativePlaybackOwner()
     : ownerLifetime_(std::make_shared<ObservationBridge>()) {
@@ -114,7 +50,7 @@ playback_router::Tick NativePlaybackOwner::nextTick() noexcept {
 }
 
 void NativePlaybackOwner::refreshNativePhaseWatchdog() {
-  if (retirementPending() || !nativePhaseIsBounded(router_.snapshot().state)) {
+  if (retirementPending() || !playback_router::isBoundedNativePhase(router_.snapshot().state)) {
     ++nativePhaseWatchdogEpoch_;
     nativePhaseWatchdogArmed_ = false;
     return;
@@ -129,7 +65,7 @@ void NativePlaybackOwner::refreshNativePhaseWatchdog() {
   const std::uint64_t epoch = ++nativePhaseWatchdogEpoch_;
   const auto lifetime = ownerLifetime_;
   const int milliseconds = seeking ? media::SeekProgressDeadline::pollMilliseconds
-                                   : kNativePhaseWatchdogMilliseconds;
+                                   : int(media::kNativeStallDeadlineMilliseconds);
   dispatch_after(dispatch_time(DISPATCH_TIME_NOW, int64_t(milliseconds) * NSEC_PER_MSEC),
                  dispatch_get_main_queue(), ^{
     if (lifetime->owner) lifetime->owner->expireNativePhaseWatchdog(epoch);
@@ -148,7 +84,7 @@ void NativePlaybackOwner::expireNativePhaseWatchdog(std::uint64_t epoch) {
     drainObservations(observationBridge_ ? observationBridge_->epoch : 0);
   }
   const playback_router::State state = router_.snapshot().state;
-  if (!nativePhaseIsBounded(state)) {
+  if (!playback_router::isBoundedNativePhase(state)) {
     refreshNativePhaseWatchdog();
     return;
   }
@@ -206,9 +142,7 @@ NativePlaybackOwner::preparePreviewHandoff() {
   // therefore supports the same pointer-down preview prewarm without first
   // reviving the authoritative playback generation.
   if (nativeSession_ == nullptr ||
-      (state != playback_router::State::NativeStarting &&
-       state != playback_router::State::NativeActive &&
-       state != playback_router::State::NativeEnded)) {
+      !playback_router::nativeGenerationLive(state)) {
     return PreviewHandoffDisposition::Deferred;
   }
   const macos::NativeMediaSessionCommandStatus status =
@@ -266,9 +200,7 @@ NativePlaybackOwner::previewFrame(double targetSeconds, std::uint64_t gesture,
     return PreviewDisposition::Stale;
   }
   const playback_router::State state = router_.snapshot().state;
-  if (state != playback_router::State::NativeStarting &&
-      state != playback_router::State::NativeActive &&
-      state != playback_router::State::NativeEnded) {
+  if (!playback_router::nativeGenerationLive(state)) {
     return PreviewDisposition::Rejected;
   }
   std::optional<macos::NativePreviewFrameTarget> target =
@@ -446,23 +378,20 @@ bool NativePlaybackOwner::setMuted(bool muted) {
 }
 
 bool NativePlaybackOwner::nativeOwnsTransport() const noexcept {
-  return stateOwnsNativeTransport(router_.snapshot().state);
+  return playback_router::ownsNativeTransport(router_.snapshot().state);
 }
 
 bool NativePlaybackOwner::fallbackOwnsTransport() const noexcept {
-  return stateOwnsFallbackTransport(router_.snapshot().state);
+  return playback_router::ownsFallbackTransport(router_.snapshot().state);
 }
 
 bool NativePlaybackOwner::needsFallbackRenderContext() const noexcept {
-  const playback_router::State state = router_.snapshot().state;
-  return state == playback_router::State::FallbackOpening ||
-         state == playback_router::State::FallbackActive;
+  return playback_router::fallbackPlaying(router_.snapshot().state);
 }
 
 bool NativePlaybackOwner::acceptsFallbackPlaybackEvents() const noexcept {
   const playback_router::State state = router_.snapshot().state;
-  return state == playback_router::State::FallbackOpening ||
-         state == playback_router::State::FallbackActive ||
+  return playback_router::fallbackPlaying(state) ||
          state == playback_router::State::FallbackStopping;
 }
 
@@ -797,9 +726,7 @@ void NativePlaybackOwner::consumePreviewPresented(
     return;
   }
   const playback_router::Snapshot snapshot = router_.snapshot();
-  if (snapshot.state != playback_router::State::NativeStarting &&
-      snapshot.state != playback_router::State::NativeActive &&
-      snapshot.state != playback_router::State::NativeEnded) {
+  if (!playback_router::nativeGenerationLive(snapshot.state)) {
     return;
   }
   // A PreviewFrame admitted while Starting may be presented after Started
@@ -820,9 +747,7 @@ void NativePlaybackOwner::consumePreviewFailed(
     return;
   }
   const playback_router::Snapshot snapshot = router_.snapshot();
-  if (snapshot.state != playback_router::State::NativeStarting &&
-      snapshot.state != playback_router::State::NativeActive &&
-      snapshot.state != playback_router::State::NativeEnded) {
+  if (!playback_router::nativeGenerationLive(snapshot.state)) {
     return;
   }
   if (failed.stamp.attempt != snapshot.attempt ||

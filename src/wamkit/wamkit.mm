@@ -209,7 +209,7 @@ private:
       }
       if(command.operation==Operation::Close){
         std::weak_ptr<Engine> weak=shared_from_this();
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,10*NSEC_PER_SEC),dispatch_get_main_queue(),^{
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,int64_t(media::kNativeStallDeadlineMilliseconds)*NSEC_PER_MSEC),dispatch_get_main_queue(),^{
           if(auto self=weak.lock();self && self->stopping && self->stopping->id==command.id){
             self->snapshot.retiring=1;self->state(WAM_PLAYER_CLOSED);self->finish(self->stopping,WAM_QUARANTINED);
 #if defined(WAMKIT_ENABLE_TEST_SUPPORT)

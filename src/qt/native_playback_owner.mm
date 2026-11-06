@@ -762,8 +762,7 @@ void NativePlaybackOwner::fallbackRenderStateChanged() {
 
 void NativePlaybackOwner::fallbackPlaybackFailed() {
   const playback_router::Snapshot snapshot = router_.snapshot();
-  if (snapshot.state != playback_router::State::FallbackOpening &&
-      snapshot.state != playback_router::State::FallbackActive) {
+  if (!playback_router::fallbackPlaying(snapshot.state)) {
     return;
   }
   execute(router_.onFallbackFailed({{snapshot.attempt, snapshot.serial}},
