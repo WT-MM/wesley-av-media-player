@@ -570,10 +570,11 @@ bool copyKeyframeImage(const std::filesystem::path& path, ThumbnailFrame* out,
         return CopyMatroskaKeyframe(path, deadline, out, error);
       case media::MediaSourceBackendKind::MpegTs:
         return CopyMpegTsKeyframe(path, deadline, out, error);
+      case media::MediaSourceBackendKind::Libavformat:
       case media::MediaSourceBackendKind::AVFoundation:
         // This provider claims only the two types AVFoundation does not
-        // thumbnail itself, so the routing table never names that backend
-        // here; fall through to the header probes rather than assume.
+        // thumbnail itself and has no general demux stage; fall through to
+        // the header probes rather than assume.
         break;
     }
   }

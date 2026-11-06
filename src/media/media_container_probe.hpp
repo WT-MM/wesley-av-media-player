@@ -49,21 +49,7 @@ containerBackendForBytes(std::span<const std::byte> bytes,
       match(0, "ID3", 3) ||
       (match(0, "FORM", 4) && (match(8, "AIFF", 4) || match(8, "AIFC", 4))))
     return MediaSourceBackendKind::AVFoundation;
-  const auto known = containerBackendForExtension(hint);
-  if (known)
-    return *known;
-  try {
-    auto extension = hint.extension().string();
-    for (auto &c : extension)
-      if (c >= 'A' && c <= 'Z')
-        c = char(c - 'A' + 'a');
-    for (const auto name :
-         {".avi", ".flv", ".ogg", ".ogv", ".oga", ".opus", ".asf", ".wmv",
-          ".wma", ".rm", ".rmvb", ".mpg", ".mpeg", ".vob"})
-      if (extension == name)
-        return MediaSourceBackendKind::Libavformat;
-  } catch (...) {
-  }
-  return MediaSourceBackendKind::AVFoundation;
+  return containerBackendForExtension(hint).value_or(
+      MediaSourceBackendKind::AVFoundation);
 }
 } // namespace wam::media
