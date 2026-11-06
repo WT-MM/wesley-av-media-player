@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <limits>
@@ -59,6 +60,14 @@ audioPrimingCeilingFrame(std::int64_t presentationFrame,
 // piecewise timeline. Spelled once; the platform wraps it in a CFString.
 inline constexpr char kAacPiecewiseTimelineAttachmentKey[] =
     "WAMAacPiecewiseTimeline";
+
+// Bounds an open-time walk over every audio packet of a track.
+inline constexpr std::uint64_t kMaximumAudioIndexScanPackets{2'000'000};
+
+// Whole AAC packets an accurate seek backs off ahead of the target's packet.
+// An elapsed-time backoff alone can land inside declared silence with no
+// decoder warm-up at all.
+inline constexpr std::size_t kAacSeekBackoffPackets{4};
 
 // AAC-LC packet timestamps may jitter within a quarter access unit. The
 // 256-frame bound covers measured residuals through 152 frames and moves audio

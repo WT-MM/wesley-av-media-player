@@ -142,23 +142,6 @@ struct AudioPrimingPlan {
          CFBooleanGetValue(static_cast<CFBooleanRef>(raw));
 }
 
-// True exactly for a CMSampleBuffer that carries no media this backend can
-// publish on the track's own timeline. Two shapes qualify, and AVFoundation
-// emits both as the terminal marker tail of every track output of an
-// edit-list asset:
-//
-//   * No access units, no payload and no presentation time at all. These
-//     carry only decoder control (DrainAfterDecoding,
-//     PostNotificationWhenConsumed) for the reader-owned decoder native v1
-//     does not use.
-//   * No access units, no payload, and an EmptyMedia/PermanentEmptyMedia flag.
-//     These state the end of the *edited* timeline: their timestamp is the
-//     asset's edited duration in the movie timescale, which is not a position
-//     on the track's media timeline at all.
-//
-// A payload-free buffer that states an exact time and claims no empty media is
-// an ordinary discontinuity marker and is deliberately excluded, so the
-// staging path keeps owning format-change detection.
 // The exact media-timeline extent of one compressed audio access unit: the
 // frame count its own packet decodes to, over the stream's sample rate. An
 // invalid time means the sample does not state one unambiguously (not audio,
@@ -428,6 +411,23 @@ constexpr double kMaximumStagedAudioSeconds = 0.256;
   return fitting;
 }
 
+// True exactly for a CMSampleBuffer that carries no media this backend can
+// publish on the track's own timeline. Two shapes qualify, and AVFoundation
+// emits both as the terminal marker tail of every track output of an
+// edit-list asset:
+//
+//   * No access units, no payload and no presentation time at all. These
+//     carry only decoder control (DrainAfterDecoding,
+//     PostNotificationWhenConsumed) for the reader-owned decoder native v1
+//     does not use.
+//   * No access units, no payload, and an EmptyMedia/PermanentEmptyMedia flag.
+//     These state the end of the *edited* timeline: their timestamp is the
+//     asset's edited duration in the movie timescale, which is not a position
+//     on the track's media timeline at all.
+//
+// A payload-free buffer that states an exact time and claims no empty media is
+// an ordinary discontinuity marker and is deliberately excluded, so the
+// staging path keeps owning format-change detection.
 [[nodiscard]] bool mediaFreeMarker(CMSampleBufferRef sample) noexcept {
   if (sample == nullptr) {
     return false;
@@ -513,9 +513,8 @@ std::atomic<std::size_t> g_inspectedAudioChannelLayoutSize{
   // still fail closed above.
   //
   // Wider layouts are admitted exactly when the shared downmix stage can state
-  // the fold for them (multichannelLayoutTagAdmitted, the same predicate
-  // audioChannelLayoutAdmitted applies for the converter and the other
-  // routes). The decision is made on the TAG'S EXPANSION -- label by
+  // the fold for them; the tag goes through audioChannelLayoutAdmitted, the
+  // predicate the converter and the other routes apply. The decision is made on the TAG'S EXPANSION -- label by
   // label, never by channel index -- because AudioToolbox emits a different
   // channel ORDER per codec family for the identical 5.1 content (see the
   // table in native_audio_channel_map.hpp). Nothing here folds anything: the
@@ -524,10 +523,11 @@ std::atomic<std::size_t> g_inspectedAudioChannelLayoutSize{
   // which is the only description of the bytes it actually writes. A tag whose
   // expansion contains any unmapped label is refused whole, which is a clean
   // mpv fallback rather than a silently dropped channel.
-  const bool accepted =
-      channels == 1   ? tag == kAudioChannelLayoutTag_Mono
-      : channels == 2 ? tag == kAudioChannelLayoutTag_Stereo
-                      : multichannelLayoutTagAdmitted(tag, channels);
+  media::MediaAudioFormat format;
+  format.channels = channels;
+  format.channelLayoutPresent = true;
+  format.channelLayoutTag = tag;
+  const bool accepted = audioChannelLayoutAdmitted(format);
   if (accepted && acceptedTag != nullptr) {
     *acceptedTag = tag;
   }
@@ -914,40 +914,19 @@ std::atomic<std::size_t> g_inspectedAudioChannelLayoutSize{
   return preservesZeroBasedTrackTimelineFacts(trackRange, error);
 }
 
+// The codec an AudioFormatID names on this route: the shared admitted-tag
+// table, minus the two flavours AVFoundation is not measured for here. MPEG
+// Layer II and Vorbis reach this player only through its own demuxers.
 [[nodiscard]] MediaCodec audioCodec(AudioFormatID codec) noexcept {
-  switch (codec) {
-    case kAudioFormatMPEG4AAC:
-    case kAudioFormatMPEG4AAC_HE:
-    case kAudioFormatMPEG4AAC_HE_V2:
-      return MediaCodec::Aac;
-    case kAudioFormatAppleLossless:
-      return MediaCodec::Alac;
-    case kAudioFormatMPEGLayer3:
-      return MediaCodec::Mp3;
-    case kAudioFormatLinearPCM:
-      return MediaCodec::Pcm;
-    // Formats a standalone (video-less) music file carries; AVFoundation
-    // demuxes all of them (verified by probe against FLAC, Opus and AC-3
-    // assets).
-    case kAudioFormatFLAC:
-      return MediaCodec::Flac;
-    case kAudioFormatOpus:
-      return MediaCodec::Opus;
-    case kAudioFormatAC3:
-      return MediaCodec::Ac3;
-    case kAudioFormatEnhancedAC3:
-      return MediaCodec::Eac3;
-    // ADPCM in WAV. Both families decode through AudioToolbox bit-exactly
-    // against ffmpeg with a zero-frame lead-in. Microsoft ADPCM has no
-    // CoreAudio constant, so its
-    // tag is named once in media/adpcm_audio.hpp.
-    case kAudioFormatDVIIntelIMA:
-      return MediaCodec::AdpcmIma;
-    case media::kMicrosoftAdpcmAudioFormatTag:
-      return MediaCodec::AdpcmMs;
-    default:
-      return MediaCodec::Unknown;
+  if (codec == kAudioFormatMPEGLayer2) {
+    return MediaCodec::Unknown;
   }
+  for (const AdmittedAudioFormatTag& entry : kAdmittedAudioFormatTags) {
+    if (entry.formatTag == codec && entry.codec != MediaCodec::Vorbis) {
+      return entry.codec;
+    }
+  }
+  return MediaCodec::Unknown;
 }
 
 [[nodiscard]] std::optional<MediaTrackDescriptor> inspectVideoFormatImpl(
@@ -1431,20 +1410,9 @@ void incrementInventory(media::MediaTrackInventory* inventory,
 
 [[nodiscard]] bool audioLayoutSupported(const media::MediaAudioFormat& audio,
                                         std::string* error) {
-  // Must stay identical to audioChannelLayoutAdmitted
-  // (core_media_codec_facts.hpp), which the converter applies: the two
-  // disagreeing would admit a descriptor the converter then refuses at
-  // configure time -- a Startup failure instead of a clean Unsupported
-  // verdict.
-  const bool supportedLayout =
-      !audio.channelLayoutPresent
-          ? audio.channelLayoutTag == 0
-      : audio.channels == 1
-          ? audio.channelLayoutTag == kAudioChannelLayoutTag_Mono
-      : audio.channels == 2
-          ? audio.channelLayoutTag == kAudioChannelLayoutTag_Stereo
-          : multichannelLayoutTagAdmitted(audio.channelLayoutTag,
-                                          audio.channels);
+  // The converter applies the same predicate; disagreeing would admit a
+  // descriptor the converter then refuses at configure time.
+  const bool supportedLayout = audioChannelLayoutAdmitted(audio);
   if (!supportedLayout) {
     assignError(error,
                 "selected audio layout is outside the native v1 contract");
@@ -2151,16 +2119,8 @@ class ProductionGeneration final : public AVFoundationGeneration {
           }
           result.error.clear();
         }
-        if (!media::validateMediaSourceDescriptor(
-                *mutableDescriptor, limits, &result.error)) {
-          result.status = AVFoundationGenerationStatus::Unsupported;
-          return result;
-        }
-        if (!preservesLegacyNativeAdmission(*mutableDescriptor,
-                                            &result.error)) {
-          result.status = AVFoundationGenerationStatus::Unsupported;
-          return result;
-        }
+        // The descriptor is validated once, below, for cold and warm
+        // generations alike.
         if (cancelled_.load(std::memory_order_acquire)) {
           result.status = AVFoundationGenerationStatus::Cancelled;
           return result;
@@ -2199,6 +2159,10 @@ class ProductionGeneration final : public AVFoundationGeneration {
         return result;
       }
 
+      const MediaTrackDescriptor* const selectedAudio =
+          descriptor->selectedAudio
+              ? media::findMediaTrack(*descriptor, *descriptor->selectedAudio)
+              : nullptr;
       CMTime decodeStart = kCMTimeZero;
       audio_playout_proof_ceiling_.reset();
       audio_first_unit_restated_ = false;
@@ -2217,12 +2181,10 @@ class ProductionGeneration final : public AVFoundationGeneration {
         CMTime searchStart = *target;
         if (request_.seekMode == media::MediaSeekMode::Accurate &&
             descriptor->selectedAudio) {
-          const MediaTrackDescriptor* audio =
-              media::findMediaTrack(*descriptor, *descriptor->selectedAudio);
           const std::optional<AudioPrimingPlan> priming =
-              audio == nullptr
+              selectedAudio == nullptr
                   ? std::optional<AudioPrimingPlan>{}
-                  : audioPrimingPlanFacts(*audio, *request_.target);
+                  : audioPrimingPlanFacts(*selectedAudio, *request_.target);
           const auto primingFloor =
               priming ? exactCMTime(priming->searchFloor)
                       : std::optional<CMTime>{};
@@ -2247,7 +2209,7 @@ class ProductionGeneration final : public AVFoundationGeneration {
             const auto shiftFrame = media::exactAudioFrameIndex({shift->value,shift->timescale},aac_timeline_->rate());
             if (!shiftFrame) { result.error="AacSeekEditUnrepresentable"; return result; }
             const auto index = aac_timeline_->indexAtFrame(*targetFrame-*shiftFrame);
-            const auto& packet = aac_timeline_->packets()[index > 4 ? index-4 : 0];
+            const auto& packet = aac_timeline_->packets()[index > media::kAacSeekBackoffPackets ? index-media::kAacSeekBackoffPackets : 0];
             const auto packetFloor = CMTimeMake(std::max<std::int64_t>(0,packet.start+*shiftFrame),aac_timeline_->rate());
             if (CMTimeCompare(packetFloor,searchStart)<0) searchStart=packetFloor;
           }
@@ -2316,10 +2278,8 @@ class ProductionGeneration final : public AVFoundationGeneration {
         }
         audio_movie_shift_ = editFacts->shift;
         audio_media_start_ = editFacts->mediaStart;
-        const auto* gaplessTrack = descriptor->selectedAudio
-            ? media::findMediaTrack(*descriptor, *descriptor->selectedAudio) : nullptr;
-        if (gaplessTrack != nullptr && CMTimeCompare(audio_movie_shift_, kCMTimeZero) == 0) {
-          if (const auto gapless = mp3LsfGapless(*gaplessTrack, request_.path)) {
+        if (selectedAudio != nullptr && CMTimeCompare(audio_movie_shift_, kCMTimeZero) == 0) {
+          if (const auto gapless = mp3LsfGapless(*selectedAudio, request_.path)) {
             audio_movie_shift_ = CMTimeMake(-static_cast<std::int64_t>(gapless->encoderDelay),
                                             static_cast<std::int32_t>(gapless->sampleRate));
           }
@@ -2329,11 +2289,6 @@ class ProductionGeneration final : public AVFoundationGeneration {
         // zero for AAC, FLAC, ALAC and LPCM, and zero for every real container;
         // only a bare MP3/AC-3/E-AC-3 elementary stream moves.
         {
-          const MediaTrackDescriptor* selectedAudio =
-              descriptor->selectedAudio
-                  ? media::findMediaTrack(*descriptor,
-                                          *descriptor->selectedAudio)
-                  : nullptr;
           const std::optional<CMTime> deficit =
               selectedAudio == nullptr
                   ? std::optional<CMTime>{kCMTimeZero}
@@ -2363,11 +2318,6 @@ class ProductionGeneration final : public AVFoundationGeneration {
         // Applied ONLY when the declared time is not already frame-exact, so a
         // frame-exact edit is arithmetically untouched.
         {
-          const MediaTrackDescriptor* selectedAudio =
-              descriptor->selectedAudio
-                  ? media::findMediaTrack(*descriptor,
-                                          *descriptor->selectedAudio)
-                  : nullptr;
           const double rate = selectedAudio && selectedAudio->audio
                                   ? selectedAudio->audio->sampleRate
                                   : 0.0;
@@ -2741,16 +2691,17 @@ class ProductionGeneration final : public AVFoundationGeneration {
       }
       const auto aacProofStart = std::chrono::steady_clock::now();
       AVSampleCursor* cursor = [track makeSampleCursorAtFirstSampleInDecodeOrder];
-      const auto rate = static_cast<std::uint32_t>(result->audio->sampleRate);
+      const auto exactRate = media::exactAudioSampleRate(result->audio->sampleRate);
+      const std::uint32_t rate = exactRate.value_or(0U);
       std::uint64_t ordinal = 0;
       auto timeline = std::make_shared<media::AacPacketTimeline>(rate);
-      if (!cursor) {
+      if (!cursor || !exactRate) {
         assignError(error, "AacPacketTimelineProofUnavailable");
         return std::nullopt;
       }
       do {
         const auto pts = cursor.presentationTimeStamp;
-        if (cancelled_.load(std::memory_order_acquire) || ordinal >= 2'000'000) {
+        if (cancelled_.load(std::memory_order_acquire) || ordinal >= media::kMaximumAudioIndexScanPackets) {
           assignError(error, "AacPacketTimelineScanLimitOrCancelled");
           return std::nullopt;
         }
