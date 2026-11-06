@@ -829,32 +829,7 @@ struct NativeMediaSession::Impl final {
       if (reason != protocol::FailureReason::Stop) {
         liveFailed = true;
         publicLiveFailed = true;
-        publishedStart.reset();
-        publishedRun.reset();
-        publishedGain.reset();
-        publishedMuted.reset();
-        startPending = false;
-        runPending = false;
-        gainPending = false;
-        mutedPending = false;
-        audioProofPending.reset();
-        runStateAppliedSlot.reset();
-        audioClockSlot.reset();
-        videoDrawSlot.reset();
-        previewPresentedSlot.reset();
-        previewFailedSlot.reset();
-        commitReadySlot.reset();
-        publishedPreviewHandoff.reset();
-        publishedPreview.reset();
-        publicPreviewHandoffPending = false;
-        publicPreviewHandoffReady = false;
-        publicPreviewHandoffFailed = false;
-        publicPreviewPending = false;
-        publishedCommit.reset();
-        publicCommitPending = false;
-        // A live failure supersedes an open commit handshake; nothing will
-        // answer it, and ending must not stay suppressed behind it.
-        commitRunStatePending = false;
+        clearForLiveFailureLocked();
       }
       diagnostic.stamp = stamp;
       diagnosticSlot = diagnostic;
@@ -1034,6 +1009,84 @@ struct NativeMediaSession::Impl final {
     liveIssueActive = false;
   }
 
+  // Named terminal transitions. Each runs under `mutex`; the worker-only
+  // fields they touch are written by the worker thread alone.
+  void dropPublishedCommandsLocked() noexcept {
+    publishedStart.reset();
+    publishedRun.reset();
+    publishedGain.reset();
+    publishedMuted.reset();
+    publishedPreviewHandoff.reset();
+    publishedPreview.reset();
+    publishedCommit.reset();
+  }
+
+  void dropPendingTransportWork() noexcept {
+    startPending = false;
+    runPending = false;
+    gainPending = false;
+    mutedPending = false;
+    audioProofPending.reset();
+  }
+
+  // Every observation a live generation could still answer, and the public
+  // preview and commit handshakes they would answer.
+  void dropLiveObservationsLocked() noexcept {
+    runStateAppliedSlot.reset();
+    audioClockSlot.reset();
+    videoDrawSlot.reset();
+    previewPresentedSlot.reset();
+    previewFailedSlot.reset();
+    commitReadySlot.reset();
+    publicPreviewHandoffPending = false;
+    publicPreviewHandoffReady = false;
+    publicPreviewHandoffFailed = false;
+    publicPreviewPending = false;
+    publicCommitPending = false;
+    // A terminal state supersedes an open commit handshake; nothing will
+    // answer it, and ending must not stay suppressed behind it.
+    commitRunStatePending = false;
+  }
+
+  void clearForLiveFailureLocked() noexcept {
+    dropPublishedCommandsLocked();
+    dropPendingTransportWork();
+    dropLiveObservationsLocked();
+  }
+
+  // The worker's half of Stop; stop() itself drops the public half.
+  void clearForStopLatchLocked() noexcept {
+    dropPublishedCommandsLocked();
+    dropPendingTransportWork();
+    retainedVideoEvent.reset();
+    previewHandoffPending = false;
+    previewHandoffReady = false;
+    previewHandoffFailed = false;
+    previewPending = false;
+    previewIssued = false;
+    previewTarget.reset();
+    resetCommitPhase();
+    commitAudioProof.reset();
+    commitVideoProof.reset();
+    pendingFailure.reset();
+  }
+
+  // Ending keeps Start, preview and commit admission; it retires only the
+  // transport controls and the proofs a running generation would publish.
+  void clearForEndingLocked() noexcept {
+    publishedRun.reset();
+    publishedGain.reset();
+    publishedMuted.reset();
+    runPending = false;
+    gainPending = false;
+    mutedPending = false;
+    audioProofPending.reset();
+    retainedVideoEvent.reset();
+    runStateAppliedSlot.reset();
+    audioClockSlot.reset();
+    videoDrawSlot.reset();
+  }
+
   // One child call under the live-issue permit: begin, call, end. False when
   // the permit was refused (Stop, a live failure, ending or a pending commit
   // owns the worker) and nothing was called.
@@ -1087,29 +1140,7 @@ struct NativeMediaSession::Impl final {
       if (!stopLatched) {
         stopCommand = *publishedStop;
         stopLatched = true;
-        publishedStart.reset();
-        publishedRun.reset();
-        publishedGain.reset();
-        publishedMuted.reset();
-        startPending = false;
-        runPending = false;
-        gainPending = false;
-        mutedPending = false;
-        audioProofPending.reset();
-        retainedVideoEvent.reset();
-        publishedPreviewHandoff.reset();
-        publishedPreview.reset();
-        previewHandoffPending = false;
-        previewHandoffReady = false;
-        previewHandoffFailed = false;
-        previewPending = false;
-        previewIssued = false;
-        previewTarget.reset();
-        publishedCommit.reset();
-        resetCommitPhase();
-        commitAudioProof.reset();
-        commitVideoProof.reset();
-        pendingFailure.reset();
+        clearForStopLatchLocked();
       }
       return;
     }
@@ -2858,17 +2889,7 @@ if (result != NativeAudioSessionProgress::Done) {
     endingLatched = true;
     publicEnding = true;
     dependencies.wake->publishVideoDueHostTicks(0);
-    publishedRun.reset();
-    publishedGain.reset();
-    publishedMuted.reset();
-    runPending = false;
-    gainPending = false;
-    mutedPending = false;
-    audioProofPending.reset();
-    retainedVideoEvent.reset();
-    runStateAppliedSlot.reset();
-    audioClockSlot.reset();
-    videoDrawSlot.reset();
+    clearForEndingLocked();
     return true;
   }
 
@@ -3998,13 +4019,7 @@ NativeMediaSessionCommandStatus NativeMediaSession::stop(
         std::max(reserved, impl_->generationHighWater);
     impl_->cancellation->generation.store(cancellationGeneration,
                                           std::memory_order_release);
-    impl_->publishedStart.reset();
-    impl_->publishedRun.reset();
-    impl_->publishedGain.reset();
-    impl_->publishedMuted.reset();
-    impl_->publishedPreviewHandoff.reset();
-    impl_->publishedPreview.reset();
-    impl_->publishedCommit.reset();
+    impl_->dropPublishedCommandsLocked();
     // This latch closes cancel-before-source-arm: if the worker has not yet
     // built the source, it observes Stop before arm; if it is blocked in open,
     // requestCancel sees the dispatcher's published exact operation slot.
@@ -4014,19 +4029,7 @@ NativeMediaSessionCommandStatus NativeMediaSession::stop(
     impl_->latestAcceptedStamp = command.stamp;
     impl_->factMailbox.reset();
     impl_->pendingFailure.reset();
-    impl_->runStateAppliedSlot.reset();
-    impl_->audioClockSlot.reset();
-    impl_->videoDrawSlot.reset();
-    impl_->previewPresentedSlot.reset();
-    impl_->previewFailedSlot.reset();
-    impl_->commitReadySlot.reset();
-    impl_->publicCommitPending = false;
-    // Retirement supersedes an open commit handshake; nothing will answer it.
-    impl_->commitRunStatePending = false;
-    impl_->publicPreviewHandoffPending = false;
-    impl_->publicPreviewHandoffReady = false;
-    impl_->publicPreviewHandoffFailed = false;
-    impl_->publicPreviewPending = false;
+    impl_->dropLiveObservationsLocked();
     impl_->observationRetryWakeUsed = false;
   }
   impl_->dependencies.wake->publishVideoDueHostTicks(0);
