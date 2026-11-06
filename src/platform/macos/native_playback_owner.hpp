@@ -48,6 +48,17 @@ public:
   virtual ~NativePlaybackOwner();
   NativePlaybackOwner(const NativePlaybackOwner&) = delete;
   NativePlaybackOwner& operator=(const NativePlaybackOwner&) = delete;
+  // Starts the main-video surface handoff and constructs the preview lane at
+  // pointer-down. A retained Ended graph is already drained, so it prewarms
+  // the lane without a second main-consumer quiesce. Refusal is deliberately
+  // quiet; the final CommitSeek remains authoritative even when visual
+  // preview preparation is unavailable.
+  // Deferred and Unsupported are both quiet refusals, but they mean opposite
+  // things to a caller: Deferred is "not right now" (wrong router state, a
+  // handoff already in flight) and the next gesture may well succeed, while
+  // Unsupported is "not for this source at all" -- an audio-only binding has
+  // no frame to preview and never will, so the caller should stop demanding
+  // one for the whole gesture instead of collecting a failure per sample.
   [[nodiscard]] PreviewHandoffDisposition preparePreviewHandoff();
   [[nodiscard]] PreviewDisposition previewFrame(double, std::uint64_t, std::uint64_t);
   [[nodiscard]] SeekDisposition commitSeek(double, std::uint64_t, std::uint64_t, bool);
@@ -72,6 +83,9 @@ protected:
     std::uint64_t epoch{0};
   };
   [[nodiscard]] playback_router::Tick nextTick() noexcept;
+  // Re-evaluates the wall-clock watchdog that bounds the native phases that
+  // own no timer of their own: NativePreparing, NativeStarting, NativeSeeking
+  // and NativeStopping.
   void refreshNativePhaseWatchdog();
   void expireNativePhaseWatchdog(std::uint64_t);
   void execute(playback_router::Transition);

@@ -121,61 +121,6 @@ struct ScriptedSeekState {
   qint64 issued_ms = 0;
 };
 
-// ---------------------------------------------------------------------------
-// Scripted playback-rate driver (test/benchmark seam).
-//
-// WAM_TEST_RATE_SCRIPT="entry@delayMs[,entry@delayMs...]" replays speed and
-// transport gestures without a pointer, so pitch-preserved rate verification
-// can run against a parked, non-frontmost window exactly the way the scrubber
-// campaign does. An entry is either a speed ("1.5") or a transport letter
-// ("p" to pause, "r" to resume). Delays are cumulative from process start,
-// matching WAM_TEST_REOPEN_SCRIPT. Like the seek script, it is parsed only
-// when WAM_NATIVE_BENCHMARK_TELEMETRY is enabled, so a shipping run can never
-// observe it.
-//
-// It drives PlayerController::setRate / setPaused -- the same public boundary
-// the QML speed control and the play button use -- rather than reaching into
-// the engine, so the routing, admission and notice paths are all exercised.
-// ---------------------------------------------------------------------------
-struct ScriptedRate {
-  double rate{0.0};
-  int delayMilliseconds{0};
-  bool pause{false};
-  bool resume{false};
-};
-
-std::vector<ScriptedRate> parseRateScript(const QByteArray &raw) {
-  std::vector<ScriptedRate> entries;
-  const QString text = QString::fromUtf8(raw).trimmed();
-  if (text.isEmpty())
-    return entries;
-  const QStringList parts = text.split(QLatin1Char(','), Qt::SkipEmptyParts);
-  for (const QString &part : parts) {
-    const QStringList fields = part.split(QLatin1Char('@'));
-    if (fields.size() != 2)
-      continue;
-    const QString token = fields.at(0).trimmed();
-    bool delayOk = false;
-    const int delay = fields.at(1).trimmed().toInt(&delayOk);
-    if (!delayOk || delay < 0)
-      continue;
-    ScriptedRate entry;
-    entry.delayMilliseconds = delay;
-    if (token.compare(QStringLiteral("p"), Qt::CaseInsensitive) == 0) {
-      entry.pause = true;
-    } else if (token.compare(QStringLiteral("r"), Qt::CaseInsensitive) == 0) {
-      entry.resume = true;
-    } else {
-      bool rateOk = false;
-      entry.rate = token.toDouble(&rateOk);
-      if (!rateOk || !std::isfinite(entry.rate) || entry.rate <= 0.0)
-        continue;
-    }
-    entries.push_back(entry);
-  }
-  return entries;
-}
-
 // Scripted warm-open driver. A cold process open pays QML, window, and GL
 // startup on the main queue, so its open-to-first-draw span is dominated by
 // launch work a warm open never repeats. The benchmark target is the warm
@@ -232,26 +177,13 @@ std::vector<ScriptedOpen> parseOpenScript(const QByteArray &value) {
 //   load:<index>:<path> load into THAT window, the drag-and-drop gesture
 //   close:<index>       QQuickWindow::close() on that window, i.e. the real
 //                       user close path, including its playback teardown
-//   focus:<index>       raise and focus
 //   pause:<index>       play:<index>       rate:<index>:<value>
 //   seekstep:<value>    set it on window 0, to observe the settings mirror
 //   skip:<index>:<seconds>
 //                       seekRelative(seconds) on that window: the keyboard
 //                       skip path, not a scrubber gesture
 //   volume:<index>:<v>  set that window's normalized volume (0..maximum)
-//   maxvolume:<v>       set the maximum-volume setting on window 0 (1..4),
-//                       to observe it mirror onto every other window
-//   padded:<index>      toggle that window's "Fill Screen (Padded)" mode --
-//                       the View menu item's own QML entry point
-//   vivid:<index>       toggle that window's Vivid EDR boost -- the same QML
-//                       entry point the chrome toggle, the View menu item and
-//                       the V key all call. A no-op for an HDR source, which
-//                       is a real answer and not a failure: see `vboost` in
-//                       the report line for what the display layer actually
-//                       took
-//   theater:<index>     toggle that window's Theater dim, likewise
 //   mute:<index>        the transport's mute button (toggle + volume OSD)
-//   fullscreen:<index>  toggle that window's fullscreen, the F key's own path
 //   grab:<index>:<path> write that window's QML SCENE to a PNG (the video
 //                       itself is not in it on the layer route -- see the
 //                       implementation), so an overlay can be proved without
@@ -261,30 +193,19 @@ std::vector<ScriptedOpen> parseOpenScript(const QByteArray &value) {
 //                       included -- the capture `grab` cannot do on the layer
 //                       route. Window-scoped, so nothing the live user has in
 //                       front of WAM lands in it. Needs Screen Recording
-//   gestures:<0|1>      set scrollGesturesEnabled on window 0 (mirrored)
 //   scroll:<index>:<dx>:<dy>:<count>[:<phase>[:<inverted>[:<fx>:<fy>]]]
 //                       deliver <count> synthetic QWheelEvents to that
 //                       window. dx/dy are PIXEL deltas (angleDelta is derived
 //                       as 2x, exactly as Qt's cocoa plugin does for a
-//                       trackpad); pass dx=dy=0 with a non-zero notch count
-//                       through the `wheel` verb instead for a real wheel.
-//                       phase 0..4 = Qt::ScrollPhase. fx/fy are fractions of
+//                       trackpad). phase 0..4 = Qt::ScrollPhase. fx/fy are fractions of
 //                       the window rect and default to (0.5, 0.35), i.e. over
 //                       the picture and clear of the transport bar.
-//   wheel:<index>:<nx>:<ny>:<count>[:<inverted>[:<fx>:<fy>]]
-//                       the same, as a REAL wheel: null pixelDelta and
-//                       angleDelta of nx/ny * 120 per event, no phase.
-//   hide                pause every window and hide the app
-//   prefs               show the single Preferences window
-//   subs:<index>:<id>   select that window's subtitle source by id, or -1 for
-//                       Off -- the same call the Subtitles menu makes
 //   subsload:<index>:<path>
 //                       load a subtitle file into that window, the
 //                       Subtitles > Load Subtitle File gesture without the
 //                       native open panel (which would steal focus and defeat
 //                       WAM_TEST_BACKGROUND, exactly as the header explains
 //                       for the window verbs)
-//   substoggle:<index>  the transport captions button
 //   captions:<index>:<path>
 //                       generate captions for that window into <path>, the
 //                       Quick Edit gesture without its Save panel
@@ -381,10 +302,10 @@ int volumeFeedbackActive(const wam::qt::PlayerWindow *window) {
 // reached the aspect lock. It is reported next to the frame because the two
 // answer different questions and a run needs both: the frame is what the
 // window did, and this is what it was told. That separation matters most under
-// the benchmark telemetry every WAM_TEST_* seam is gated behind, which
-// suppresses the aspect snap outright (MacWindowChrome::benchmarkMode_) -- the
-// frame there proves nothing about geometry, while this still proves the
-// container was measured.
+// the benchmark telemetry every WAM_TEST_* seam is gated behind, under which
+// qml/Main.qml suppresses the aspect snap outright (windowChrome.benchmarkMode)
+// -- the frame there proves nothing about geometry, while this still proves
+// the container was measured.
 QString videoNaturalSizeSummary(const wam::qt::PlayerWindow *window) {
   const QObject *root = window != nullptr ? window->qmlRoot() : nullptr;
   if (root == nullptr)
@@ -590,9 +511,8 @@ void reportWindows(const wam::qt::WindowManager &windows) {
 // pixelDelta, how `inverted` is set) is deliberately NOT re-implemented here:
 // it is Qt's, it is fixed, and it is quoted from Qt's own source in
 // src/qt/scroll_gesture.hpp. What this seam reproduces is the SHAPE Qt
-// delivers -- a trackpad's angleDelta being exactly twice its pixelDelta, a
-// real wheel's null pixelDelta and 120-unit notches -- so everything
-// downstream of QWheelEvent is under test.
+// delivers -- a trackpad's angleDelta being exactly twice its pixelDelta -- so
+// everything downstream of QWheelEvent is under test.
 void deliverWheel(QQuickWindow *window, QPointF fraction, QPoint pixelDelta,
                   QPoint angleDelta, bool inverted, Qt::ScrollPhase phase,
                   int count) {
@@ -646,23 +566,6 @@ void runWindowStep(wam::qt::WindowManager &windows, const QString &verb) {
     if (wam::qt::PlayerWindow *window = windowAt(index)) {
       if (QQuickWindow *quick = window->window())
         quick->close();
-    }
-  } else if (head == QStringLiteral("focus")) {
-    if (wam::qt::PlayerWindow *window = windowAt(index))
-      window->raiseWindow();
-  } else if (head == QStringLiteral("crop")) {
-    // crop:<index>:<0|1>[:x:y:w:h] -- enter or leave crop mode on that
-    // window's root (qml/Main.qml setCropMode), optionally placing the
-    // normalised rectangle first.
-    if (wam::qt::PlayerWindow *window = windowAt(index)) {
-      if (fields.size() >= 7)
-        window->controller()->setCrop(
-            fields.at(3).toDouble(), fields.at(4).toDouble(),
-            fields.at(5).toDouble(), fields.at(6).toDouble());
-      if (QObject *qmlRoot = window->qmlRoot())
-        QMetaObject::invokeMethod(
-            qmlRoot, "setCropMode",
-            Q_ARG(QVariant, QVariant(fields.value(2).toInt() != 0)));
     }
   } else if (head == QStringLiteral("nativefail")) {
 #if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
@@ -720,8 +623,6 @@ void runWindowStep(wam::qt::WindowManager &windows, const QString &verb) {
     if (wam::qt::PlayerWindow *window = windowAt(index))
       window->controller()->setVolume(fields.value(2).toDouble());
   } else if (head == QStringLiteral("grab")) {
-    // Grab that window's QML scene to a PNG.
-    //
     // A screen capture cannot be trusted on a machine somebody is using: the
     // window is real and on screen (WAM_TEST_BACKGROUND orders it front
     // without activating), but anything the live user raises -- Mission
@@ -763,12 +664,6 @@ void runWindowStep(wam::qt::WindowManager &windows, const QString &verb) {
                    .arg(path);
       }
     }
-  } else if (head == QStringLiteral("maxvolume")) {
-    // Set on window 0 only, exactly like `seekstep` and `gestures`: it is an
-    // app-level setting and the point of driving it from one window is to
-    // observe the mirror land on the others.
-    if (wam::qt::PlayerWindow *window = windowAt(0))
-      window->controller()->setMaximumVolume(fields.value(1).toDouble());
   } else if (head == QStringLiteral("mute")) {
     // The transport's mute button, minus the button: the same
     // toggleMute() + volume-OSD pair the QML control fires.
@@ -777,67 +672,26 @@ void runWindowStep(wam::qt::WindowManager &windows, const QString &verb) {
       if (QObject *root = window->qmlRoot())
         QMetaObject::invokeMethod(root, "showVolumeOsd");
     }
-  } else if (head == QStringLiteral("fullscreen")) {
-    // The F key / View menu gesture, driven at the controller signal both of
-    // them raise, so the scripted round goes through the same QML handler.
-    if (wam::qt::PlayerWindow *window = windowAt(index))
-      window->controller()->toggleFullscreen();
-  } else if (head == QStringLiteral("padded")) {
-    // The View menu's "Fill Screen (Padded)" toggle, driven at the QML root
-    // the menu item itself calls -- so the scripted round exercises the real
-    // path and not a re-implementation of it.
-    if (wam::qt::PlayerWindow *window = windowAt(index)) {
-      if (QObject *root = window->qmlRoot())
-        QMetaObject::invokeMethod(root, "toggleFillScreenPadded");
-    }
-  } else if (head == QStringLiteral("vivid")) {
-    // The Vivid boost toggle, driven at the QML root the chrome button and the
-    // View menu item both call -- so a scripted round exercises the real path
-    // rather than a re-implementation of it. Same for `theater` below.
-    if (wam::qt::PlayerWindow *window = windowAt(index)) {
-      if (QObject *root = window->qmlRoot())
-        QMetaObject::invokeMethod(root, "toggleVividBoost");
-    }
-  } else if (head == QStringLiteral("theater")) {
-    if (wam::qt::PlayerWindow *window = windowAt(index)) {
-      if (QObject *root = window->qmlRoot())
-        QMetaObject::invokeMethod(root, "toggleTheaterDim");
-    }
-  } else if (head == QStringLiteral("gestures")) {
-    if (wam::qt::PlayerWindow *window = windowAt(0))
-      window->controller()->setScrollGesturesEnabled(fields.value(1).toInt() !=
-                                                     0);
-  } else if (head == QStringLiteral("scroll") ||
-             head == QStringLiteral("wheel")) {
+  } else if (head == QStringLiteral("scroll")) {
     wam::qt::PlayerWindow *window = windowAt(index);
     if (window != nullptr) {
-      const bool trackpad = head == QStringLiteral("scroll");
       const int dx = fields.value(2).toInt();
       const int dy = fields.value(3).toInt();
       const int count = std::max(1, fields.value(4).toInt());
-      const int phaseField = trackpad ? fields.value(5).toInt() : 0;
-      const bool inverted =
-          (trackpad ? fields.value(6) : fields.value(5)).toInt() != 0;
-      const QString fxField = trackpad ? fields.value(7) : fields.value(6);
-      const QString fyField = trackpad ? fields.value(8) : fields.value(7);
+      const int phaseField = fields.value(5).toInt();
+      const bool inverted = fields.value(6).toInt() != 0;
       bool fx_ok = false;
       bool fy_ok = false;
-      const double fx = fxField.toDouble(&fx_ok);
-      const double fy = fyField.toDouble(&fy_ok);
+      const double fx = fields.value(7).toDouble(&fx_ok);
+      const double fy = fields.value(8).toDouble(&fy_ok);
       const QPointF fraction(fx_ok ? fx : 0.5, fy_ok ? fy : 0.35);
       const Qt::ScrollPhase phase =
           phaseField >= 0 && phaseField <= 4
               ? static_cast<Qt::ScrollPhase>(phaseField)
               : Qt::NoScrollPhase;
-      const QPoint pixels = trackpad ? QPoint(dx, dy) : QPoint(0, 0);
-      const QPoint angles =
-          trackpad ? QPoint(dx * 2, dy * 2) : QPoint(dx * 120, dy * 120);
-      deliverWheel(window->window(), fraction, pixels, angles, inverted, phase,
-                   count);
+      deliverWheel(window->window(), fraction, QPoint(dx, dy),
+                   QPoint(dx * 2, dy * 2), inverted, phase, count);
     }
-  } else if (head == QStringLiteral("subs")) {
-    if (wam::qt::PlayerWindow *window = windowAt(index))
-      window->controller()->selectSubtitleTrack(fields.value(2).toInt());
   } else if (head == QStringLiteral("subsload")) {
     if (wam::qt::PlayerWindow *window = windowAt(index)) {
       const QUrl target = mediaUrlFromArgument(fields.mid(2).join(QLatin1Char(':')));
@@ -850,13 +704,6 @@ void runWindowStep(wam::qt::WindowManager &windows, const QString &verb) {
       if (!path.isEmpty())
         window->controller()->generateCaptionsTo(QUrl::fromLocalFile(path));
     }
-  } else if (head == QStringLiteral("substoggle")) {
-    if (wam::qt::PlayerWindow *window = windowAt(index))
-      window->controller()->toggleCaptions();
-  } else if (head == QStringLiteral("hide")) {
-    windows.hideAndPauseAll();
-  } else if (head == QStringLiteral("prefs")) {
-    windows.showPreferences();
   } else if (head == QStringLiteral("menu")) {
     reportMenus(windows);
   } else if (head == QStringLiteral("report")) {
@@ -892,9 +739,9 @@ void runWindowStep(wam::qt::WindowManager &windows, const QString &verb) {
 // unacceptable thing to leave on the user's screen. A small parked rectangle
 // keeps the compositing proof and stops the window from being in the way.
 //
-// Telemetry-gated like every other WAM_TEST_* seam. The benchmark harness
-// already suppresses the QuickTime aspect snap under the same opt-in (see
-// MacWindowChrome::benchmarkMode), so a parked rectangle stays put.
+// Telemetry-gated like every other WAM_TEST_* seam. qml/Main.qml already
+// suppresses the QuickTime aspect snap under the same opt-in (it reads
+// windowChrome.benchmarkMode), so a parked rectangle stays put.
 #endif  // defined(__APPLE__)
 
 struct ScriptedGeometry {
@@ -1625,24 +1472,6 @@ static int runApplication(int argc, char *argv[]) {
           if (target.isValid())
             first_player->open(target);
         });
-      }
-
-      const std::vector<ScriptedRate> rate_script =
-          parseRateScript(qgetenv("WAM_TEST_RATE_SCRIPT"));
-      int rateCumulative = 0;
-      for (const ScriptedRate &entry : rate_script) {
-        rateCumulative += entry.delayMilliseconds;
-        const ScriptedRate scheduled = entry;
-        QTimer::singleShot(rateCumulative, first_player,
-                           [first_player, scheduled] {
-                             if (scheduled.pause) {
-                               first_player->pause();
-                             } else if (scheduled.resume) {
-                               first_player->play();
-                             } else {
-                               first_player->setRate(scheduled.rate);
-                             }
-                           });
       }
 
       // Scripted multi-window lifecycle. See ScriptedWindowStep above.

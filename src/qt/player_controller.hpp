@@ -467,7 +467,6 @@ signals:
   void fullscreenToggleRequested();
   void exportSelectionRequested(double trim_in, double trim_out);
   void generateCaptionsRequested();
-  void cancelCaptioningRequested();
   void openSubtitleFileDialogRequested();
 
 private:

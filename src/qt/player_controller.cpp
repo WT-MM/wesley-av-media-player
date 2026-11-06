@@ -958,16 +958,11 @@ void PlayerController::prepareRoutedOpenIntent(const QUrl &source) {
 }
 
 bool PlayerController::nativeRouteAdmissionAllowed() const noexcept {
-  // The native engine now serves the advertised pitch-preserved window, so a
-  // non-unit speed no longer routes the file away from it. Anything outside
-  // that window still does: the compatibility engine has no such bound.
-#if defined(WAM_HAS_MACOS_NATIVE_PLAYBACK)
+  // The native engine serves the advertised pitch-preserved window. A rate
+  // outside it routes to the compatibility engine, which has no such bound.
   return native_protocol::routeForRate(rate_) ==
              native_protocol::RateRoute::NativeVersion1 &&
          video_item_;
-#else
-  return rate_ == 1.0 && video_item_;
-#endif
 }
 
 bool PlayerController::beginRoutedFallbackOpen(
@@ -3414,7 +3409,6 @@ void PlayerController::generateCaptionsTo(const QUrl &destination) {
 void PlayerController::cancelCaptioning() {
   if (!captioning_)
     return;
-  emit cancelCaptioningRequested();
   caption_cancel_reason_ = QStringLiteral("Caption generation cancelled.");
   caption_service_->cancel();
   setCaptionStatus(QStringLiteral("Cancelling caption generation…"));

@@ -1149,11 +1149,6 @@ ApplicationWindow {
         }
     }
 
-    // The desktop menu bar is NOT instantiated here. It is app-level and
-    // created once by WindowManager (qml/AppMenu.qml), because it has to
-    // survive the last window closing and must not be installed N times over.
-    // It follows the focused window through appHost.focusedController.
-
     // ApplicationWindow automatically extends `background` to cover the whole
     // window -- including the transparent titlebar strip -- while ordinary
     // content children (the `stage` Item below) stay confined to the safe

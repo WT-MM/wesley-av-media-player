@@ -250,8 +250,6 @@ signals:
   void darkAppearanceChanged();
 
 private:
-  [[nodiscard]] bool mirrorInProgress() const { return mirroring_; }
-
   QQmlEngine &engine_;
   ::wam::StateStore &store_;
   QQmlComponent *component_ = nullptr;

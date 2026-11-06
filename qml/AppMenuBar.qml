@@ -15,8 +15,8 @@ import Qt.labs.platform as Platform
 // native NSMenu key equivalent for a bare, unmodified key intercepts every
 // matching keystroke application-wide, including inside text fields (Quick
 // Edit's fields, the preferences window), which would silently eat normal
-// typing. Only Cmd-modified standard shortcuts (Preferences, Open) are
-// bound here, since those can never collide with typed text.
+// typing. Only Cmd-modified shortcuts (Preferences, Open, Close, Quit and
+// Cmd-Shift-F) are bound here, since those can never collide with typed text.
 Platform.MenuBar {
     id: root
 
@@ -39,12 +39,6 @@ Platform.MenuBar {
     readonly property bool hasController: root.controller !== null && root.controller !== undefined
     readonly property bool hasWindow: root.appRoot !== null && root.appRoot !== undefined
     readonly property bool mediaLoaded: root.hasController && root.controller.hasMedia
-    // Exposed so qml/Main.qml can keep this item's `checked` state in sync
-    // with the controller: Qt.labs.platform's MenuItem is not a QQuickItem,
-    // so it has no default property and cannot hold a declarative Binding as
-    // its own child (unlike, say, qml/PreferencesWindow.qml's CheckBox). A
-    // property alias is not content, so it does not hit that restriction.
-    readonly property alias hugsVideoMenuItem: hugsVideoMenuItem
 
     function stepLabel(action) {
         if (!root.hasController)
@@ -169,9 +163,9 @@ Platform.MenuBar {
     // compatibility route), so the same menu works either way.
     //
     // A FIXED POOL of items rather than an Instantiator. Qt.labs.platform
-    // mutates the real NSMenu, and this file already documents (see
-    // hugsVideoMenuItem below) that its checkable items imperatively overwrite
-    // `checked` and detach any binding on it. A static pool keeps every item's
+    // mutates the real NSMenu, and this file already documents (see the
+    // Window Hugs Video item below) that its checkable items imperatively
+    // overwrite `checked` and detach any binding on it. A static pool keeps every item's
     // identity stable across focus changes and file changes, so the one
     // imperative re-sync at the bottom of this file is the whole story;
     // creating and destroying native menu items on every open would add a
@@ -401,10 +395,10 @@ Platform.MenuBar {
         // `checked` below is only this item's *initial* value; Qt.labs.
         // platform's own checkable toggle does a direct imperative write to
         // `checked` on every click, which detaches a plain binding for good
-        // (ordinary QML property semantics). qml/Main.qml holds a Connections
-        // block (see hugsVideoMenuItem's alias above) that re-syncs `checked`
-        // imperatively every time the controller's real value changes, which
-        // does not depend on any binding having survived.
+        // (ordinary QML property semantics). The Connections block at the
+        // bottom of this file re-syncs `checked` imperatively every time the
+        // controller's real value changes, which does not depend on any
+        // binding having survived.
         Platform.MenuItem {
             id: hugsVideoMenuItem
             text: "Window Hugs Video"
