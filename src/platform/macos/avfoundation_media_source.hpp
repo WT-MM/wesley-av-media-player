@@ -174,7 +174,6 @@ class AVFoundationMediaSource final : public media::MediaSource, public media::A
  private:
   struct Impl;
   std::unique_ptr<Impl> impl_;
-  media::AudioTrackRejections rejectedAudio_;
 };
 
 #if defined(WAM_AVFOUNDATION_MEDIA_SOURCE_TESTING)
