@@ -200,6 +200,11 @@ private:
                             std::uint64_t amount) noexcept;
   void addUnreadPcmBytes(std::size_t bytes) noexcept;
   void removeUnreadPcmBytes(std::size_t bytes) noexcept;
+  // The consumer's one slab walk: retires up to `frames` readable frames of
+  // the active generation, copying them to `output` when it is non-null, and
+  // skips (and counts into `staleSlabs` when non-null) stale slabs on the way.
+  std::size_t takeFrames(std::uint64_t activeGeneration, std::size_t frames,
+                         float *output, std::size_t *staleSlabs) noexcept;
   [[nodiscard]] static bool
   readableSlab(std::uint64_t slabGeneration, std::size_t slabFrames,
                std::size_t frameOffset,

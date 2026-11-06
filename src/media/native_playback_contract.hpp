@@ -214,6 +214,10 @@ struct PlaybackRateRatio {
            kNativeRateGrid % denominator == 0 &&
            numerator * 4U >= denominator && numerator <= denominator * 4U;
   }
+  // The rate's numerator over kNativeRateGrid; exact whenever valid().
+  [[nodiscard]] constexpr std::uint64_t gridNumerator() const noexcept {
+    return std::uint64_t{numerator} * (kNativeRateGrid / denominator);
+  }
   // Exact: both operands are small integers and the quotient of two exactly
   // representable integers is correctly rounded exactly once.
   [[nodiscard]] constexpr double toDouble() const noexcept {

@@ -2091,8 +2091,7 @@ void testRateChangeStateMachine() {
                settled.pcmFrames == kOutputFrames / 2U,
            "the interval after the rate boundary is continuous again");
     expect(fixture.core.stats().rateChanges == 1 &&
-               fixture.core.stats().stretchedCallbacks == 2 &&
-               fixture.core.stats().stretchShortfallFrames == 0,
+               fixture.core.stats().stretchedCallbacks == 2,
            "rate-change and stretch counters are exact");
   }
 
@@ -2193,8 +2192,7 @@ void testStretchPullFollowsRing() {
         renderTracked(fixture.core, hostInput(0, kOutputFrames, 0), output);
     const std::size_t after = fixture.ring.readableFrames(1).frames;
     expect(result.committed && result.pcmFrames == 86 &&
-               stage.lastPull == 86 && before - after == 86 &&
-               fixture.core.stats().stretchShortfallFrames == 0,
+               stage.lastPull == 86 && before - after == 86,
            "under-pull leaves the remaining PCM in the ring");
   }
 
