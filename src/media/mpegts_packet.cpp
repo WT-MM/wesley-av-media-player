@@ -365,88 +365,87 @@ ProgramGrade gradeProgram(const ProgramMapTable& table) noexcept {
   return audio ? ProgramGrade::Complete : ProgramGrade::VideoOnly;
 }
 
+namespace {
+
+struct TsStreamTypeRow {
+  TsStreamType type;
+  MediaTrackKind kind;
+  MediaCodec codec;
+};
+
+// PrivatePes (0x06) is absent: its answer depends on descriptors.
+// MPEG-1 video (0x01), MPEG-4 part 2 (0x10) and DTS (0x82) have no route
+// (codec Unknown). That is a deliberate gap: the demuxer reports the raw
+// stream type in its verdict so the seam above refuses by name instead of
+// silently dropping a track.
+constexpr TsStreamTypeRow kTsStreamTypes[] = {
+    {TsStreamType::Mpeg1Video, MediaTrackKind::Video, MediaCodec::Unknown},
+    // VideoToolbox decodes MPEG-2 through a software decoder and needs no
+    // out-of-band configuration record.
+    {TsStreamType::Mpeg2Video, MediaTrackKind::Video, MediaCodec::Mpeg2Video},
+    // One routing family covers MPEG-1/2 Layer I-III. The exact layer is read
+    // from the frame header at admission and becomes the '.mp1'/'.mp2'/'.mp3'
+    // format tag; MediaCodec::Mp3 is the family, not the layer.
+    {TsStreamType::Mpeg1Audio, MediaTrackKind::Audio, MediaCodec::Mp3},
+    {TsStreamType::Mpeg2Audio, MediaTrackKind::Audio, MediaCodec::Mp3},
+    {TsStreamType::AdtsAac, MediaTrackKind::Audio, MediaCodec::Aac},
+    // ONE routing family, two framings. LOAS/LATM carries the same raw AAC
+    // access units ADTS does -- verified byte-for-byte against ADTS twins of
+    // the same encode -- so it needs no MediaCodec value of its own and the
+    // whole downstream (ES_Descriptor cookie, 1024-frame grid, audio-
+    // authoritative clock) is shared. The framing difference is carried by
+    // the stream type, which the demuxer already retains.
+    {TsStreamType::LatmAac, MediaTrackKind::Audio, MediaCodec::Aac},
+    {TsStreamType::Mpeg4Video, MediaTrackKind::Video, MediaCodec::Unknown},
+    {TsStreamType::H264, MediaTrackKind::Video, MediaCodec::H264},
+    {TsStreamType::Hevc, MediaTrackKind::Video, MediaCodec::Hevc},
+    {TsStreamType::Ac3Atsc, MediaTrackKind::Audio, MediaCodec::Ac3},
+    {TsStreamType::Dts, MediaTrackKind::Audio, MediaCodec::Unknown},
+    {TsStreamType::Eac3Atsc, MediaTrackKind::Audio, MediaCodec::Eac3},
+};
+
+constexpr const TsStreamTypeRow* tsStreamTypeRow(
+    std::uint8_t streamType) noexcept {
+  for (const TsStreamTypeRow& row : kTsStreamTypes) {
+    if (static_cast<std::uint8_t>(row.type) == streamType) {
+      return &row;
+    }
+  }
+  return nullptr;
+}
+
+}  // namespace
+
 MediaCodec codecForStreamType(std::uint8_t streamType, bool ac3Descriptor,
                               bool eac3Descriptor,
                               bool registrationAc3) noexcept {
-  switch (streamType) {
-    case static_cast<std::uint8_t>(TsStreamType::H264):
-      return MediaCodec::H264;
-    case static_cast<std::uint8_t>(TsStreamType::Hevc):
-      return MediaCodec::Hevc;
-    case static_cast<std::uint8_t>(TsStreamType::AdtsAac):
-    case static_cast<std::uint8_t>(TsStreamType::LatmAac):
-      // ONE routing family, two framings. LOAS/LATM carries the same raw AAC
-      // access units ADTS does -- verified byte-for-byte against ADTS twins of
-      // the same encode -- so it needs no MediaCodec value of its own and the
-      // whole downstream (ES_Descriptor cookie, 1024-frame grid, audio-
-      // authoritative clock) is shared. The framing difference is carried by
-      // the stream type, which the demuxer already retains.
-      return MediaCodec::Aac;
-    case static_cast<std::uint8_t>(TsStreamType::Mpeg1Audio):
-    case static_cast<std::uint8_t>(TsStreamType::Mpeg2Audio):
-      // One routing family covers MPEG-1/2 Layer I-III. The exact layer is
-      // read from the frame header at admission and becomes the '.mp1'/'.mp2'/
-      // '.mp3' format tag; MediaCodec::Mp3 is the family, not the layer.
-      return MediaCodec::Mp3;
-    case static_cast<std::uint8_t>(TsStreamType::Mpeg2Video):
-      // VideoToolbox decodes this through a software decoder and needs no
-      // out-of-band configuration record.
-      return MediaCodec::Mpeg2Video;
-    case static_cast<std::uint8_t>(TsStreamType::Ac3Atsc):
-      return MediaCodec::Ac3;
-    case static_cast<std::uint8_t>(TsStreamType::Eac3Atsc):
+  if (streamType == static_cast<std::uint8_t>(TsStreamType::PrivatePes)) {
+    // DVB carries AC-3 as private PES qualified by a descriptor. Without one
+    // the stream is genuinely unidentified and must stay Unknown rather than
+    // be guessed at. E-AC-3 is checked first because a stream may legally
+    // carry both descriptors and the enhanced one is the more specific fact.
+    if (eac3Descriptor) {
       return MediaCodec::Eac3;
-    case static_cast<std::uint8_t>(TsStreamType::PrivatePes):
-      // DVB carries AC-3 as private PES qualified by a descriptor. Without one
-      // the stream is genuinely unidentified and must stay Unknown rather than
-      // be guessed at. E-AC-3 is checked first because a stream may legally
-      // carry both descriptors and the enhanced one is the more specific fact.
-      if (eac3Descriptor) {
-        return MediaCodec::Eac3;
-      }
-      if (ac3Descriptor || registrationAc3) {
-        return MediaCodec::Ac3;
-      }
-      return MediaCodec::Unknown;
-    default:
-      break;
+    }
+    if (ac3Descriptor || registrationAc3) {
+      return MediaCodec::Ac3;
+    }
+    return MediaCodec::Unknown;
   }
-  // MPEG-1 video (0x01), MPEG-4 part 2 (0x10) and DTS (0x82) have no route.
-  // That is a deliberate gap: the demuxer reports the raw stream type in its
-  // verdict so the seam above refuses by name instead of silently dropping a
-  // track.
-  static_cast<void>(ac3Descriptor);
-  static_cast<void>(eac3Descriptor);
-  static_cast<void>(registrationAc3);
-  return MediaCodec::Unknown;
+  const TsStreamTypeRow* row = tsStreamTypeRow(streamType);
+  return row != nullptr ? row->codec : MediaCodec::Unknown;
 }
 
 MediaTrackKind trackKindForStreamType(std::uint8_t streamType,
                                       bool ac3Descriptor, bool eac3Descriptor,
                                       bool registrationAc3) noexcept {
-  switch (streamType) {
-    case static_cast<std::uint8_t>(TsStreamType::Mpeg1Video):
-    case static_cast<std::uint8_t>(TsStreamType::Mpeg2Video):
-    case static_cast<std::uint8_t>(TsStreamType::Mpeg4Video):
-    case static_cast<std::uint8_t>(TsStreamType::H264):
-    case static_cast<std::uint8_t>(TsStreamType::Hevc):
-      return MediaTrackKind::Video;
-    case static_cast<std::uint8_t>(TsStreamType::Mpeg1Audio):
-    case static_cast<std::uint8_t>(TsStreamType::Mpeg2Audio):
-    case static_cast<std::uint8_t>(TsStreamType::AdtsAac):
-    case static_cast<std::uint8_t>(TsStreamType::LatmAac):
-    case static_cast<std::uint8_t>(TsStreamType::Ac3Atsc):
-    case static_cast<std::uint8_t>(TsStreamType::Eac3Atsc):
-    case static_cast<std::uint8_t>(TsStreamType::Dts):
-      return MediaTrackKind::Audio;
-    case static_cast<std::uint8_t>(TsStreamType::PrivatePes):
-      if (ac3Descriptor || eac3Descriptor || registrationAc3) {
-        return MediaTrackKind::Audio;
-      }
-      return MediaTrackKind::Metadata;
-    default:
-      return MediaTrackKind::Metadata;
+  if (streamType == static_cast<std::uint8_t>(TsStreamType::PrivatePes)) {
+    return ac3Descriptor || eac3Descriptor || registrationAc3
+               ? MediaTrackKind::Audio
+               : MediaTrackKind::Metadata;
   }
+  const TsStreamTypeRow* row = tsStreamTypeRow(streamType);
+  return row != nullptr ? row->kind : MediaTrackKind::Metadata;
 }
 
 bool parseProgramMapSection(std::span<const std::byte> section,
