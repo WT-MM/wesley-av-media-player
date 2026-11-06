@@ -256,34 +256,4 @@ public:
   virtual void flush(std::uint64_t nextGeneration) noexcept = 0;
 };
 
-// A thread-safe, allocation-bounded handoff queue for decoder output. It
-// rejects over-capacity and stale-generation frames instead of silently
-// accumulating full-resolution pixel buffers.
-class BoundedFrameQueue final : public DecodedFrameSink {
-public:
-  explicit BoundedFrameQueue(std::size_t capacity,
-                             std::uint64_t initialGeneration = 0);
-  ~BoundedFrameQueue() override;
-
-  BoundedFrameQueue(const BoundedFrameQueue &) = delete;
-  BoundedFrameQueue &operator=(const BoundedFrameQueue &) = delete;
-  BoundedFrameQueue(BoundedFrameQueue &&) = delete;
-  BoundedFrameQueue &operator=(BoundedFrameQueue &&) = delete;
-
-  [[nodiscard]] FrameEnqueueResult enqueue(FrameLease frame,
-                                           std::string *error) override;
-  void endOfStream(std::uint64_t generation) override;
-  void flush(std::uint64_t nextGeneration) noexcept override;
-
-  [[nodiscard]] std::optional<FrameLease> tryTake();
-  [[nodiscard]] std::size_t size() const noexcept;
-  [[nodiscard]] std::size_t capacity() const noexcept;
-  [[nodiscard]] std::uint64_t generation() const noexcept;
-  [[nodiscard]] bool reachedEndOfStream() const noexcept;
-
-private:
-  struct Impl;
-  std::unique_ptr<Impl> impl_;
-};
-
 } // namespace wam::macos

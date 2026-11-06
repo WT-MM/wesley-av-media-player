@@ -1,3 +1,4 @@
+#include "bounded_frame_queue.hpp"
 #include "platform/macos/video_toolbox_decoder.hpp"
 #include "platform/macos/native_video_limits.hpp"
 
@@ -316,7 +317,7 @@ void testInferredReorderDepthIsClampedAndDeclaredIsRefused() {
     options.maxInFlightFrames = 2;
     options.maxPendingPresentationFrames = 4;
     wam::macos::VideoToolboxDecoder decoder(options);
-    wam::macos::BoundedFrameQueue queue(2, generation);
+    wam::test::BoundedFrameQueue queue(2, generation);
     std::string error;
     WAM_CHECK_DETAIL(
         decoder.configure(h264RecordConfiguration(kScreenRecordingAvcC, 2804,
@@ -334,7 +335,7 @@ void testInferredReorderDepthIsClampedAndDeclaredIsRefused() {
     options.maxInFlightFrames = 2;
     options.maxPendingPresentationFrames = 4;
     wam::macos::VideoToolboxDecoder decoder(options);
-    wam::macos::BoundedFrameQueue queue(2, generation);
+    wam::test::BoundedFrameQueue queue(2, generation);
     std::string error;
     WAM_CHECK_DETAIL(
         decoder.configure(
@@ -352,7 +353,7 @@ void testInferredReorderDepthIsClampedAndDeclaredIsRefused() {
     options.maxInFlightFrames = 2;
     options.maxPendingPresentationFrames = 8;
     wam::macos::VideoToolboxDecoder decoder(options);
-    wam::macos::BoundedFrameQueue queue(2, generation);
+    wam::test::BoundedFrameQueue queue(2, generation);
     std::string error;
     WAM_CHECK_DETAIL(
         decoder.configure(h264RecordConfiguration(kScreenRecordingAvcC, 2804,
@@ -370,7 +371,7 @@ void testInferredReorderDepthIsClampedAndDeclaredIsRefused() {
     options.maxInFlightFrames = 2;
     options.maxPendingPresentationFrames = 4;
     wam::macos::VideoToolboxDecoder decoder(options);
-    wam::macos::BoundedFrameQueue queue(2, generation);
+    wam::test::BoundedFrameQueue queue(2, generation);
     std::string error;
     WAM_CHECK_DETAIL(
         decoder.configure(h264RecordConfiguration(kDeclaredSameGeometryAvcC,
@@ -389,7 +390,7 @@ void testInferredReorderDepthIsClampedAndDeclaredIsRefused() {
     options.maxInFlightFrames = 2;
     options.maxPendingPresentationFrames = 1;
     wam::macos::VideoToolboxDecoder decoder(options);
-    wam::macos::BoundedFrameQueue queue(2, generation);
+    wam::test::BoundedFrameQueue queue(2, generation);
     std::string error;
     WAM_CHECK(!decoder.configure(
         h264RecordConfiguration(kDeclaredSameGeometryAvcC, 2804, 1658,
@@ -1067,7 +1068,7 @@ void testFiniteAdmissionNeverEnablesTemporalProcessing() {
 }
 
 void testPersistentFrameRefConSlotLifecycle() {
-  using wam::macos::BoundedFrameQueue;
+  using wam::test::BoundedFrameQueue;
   using wam::macos::FrameTiming;
   using wam::macos::VideoDecodeSubmitResult;
   using wam::macos::VideoToolboxDecoder;
@@ -1077,7 +1078,7 @@ void testPersistentFrameRefConSlotLifecycle() {
   constexpr std::uint64_t firstGeneration = 301;
   constexpr std::uint64_t secondGeneration = 302;
   constexpr std::size_t capacity = 3;
-  BoundedFrameQueue firstSink(capacity, firstGeneration);
+  wam::test::BoundedFrameQueue firstSink(capacity, firstGeneration);
   VideoDecoderOptions options;
   options.maxInFlightFrames = capacity;
   options.maxPendingPresentationFrames = 1;
@@ -1187,7 +1188,7 @@ void testPersistentFrameRefConSlotLifecycle() {
 
   // Reconfiguration is a generation barrier and reuses, rather than grows,
   // the same fixed slot pool. Closing returns with every slot available.
-  BoundedFrameQueue secondSink(capacity, secondGeneration);
+  wam::test::BoundedFrameQueue secondSink(capacity, secondGeneration);
   WAM_CHECK_DETAIL(VideoToolboxDecoderTestAccess::prepareInjectedCallbacks(
                        decoder, secondSink, secondGeneration, &error),
                    error);
@@ -1264,7 +1265,7 @@ private:
 void testPersistentCallbackTailBlocksClose() {
   constexpr std::uint64_t generation = 311;
   BlockingProgressProbe probe;
-  wam::macos::BoundedFrameQueue sink(1, generation);
+  wam::test::BoundedFrameQueue sink(1, generation);
   wam::macos::VideoDecoderOptions options;
   options.maxInFlightFrames = 1;
   options.maxPendingPresentationFrames = 1;
@@ -1401,7 +1402,7 @@ private:
 };
 
 void testEventDrivenDecoderProgressWake() {
-  using wam::macos::BoundedFrameQueue;
+  using wam::test::BoundedFrameQueue;
   using wam::macos::FrameLease;
   using wam::macos::FrameTiming;
   using wam::macos::NativeSurfaceBudget;
@@ -1417,7 +1418,7 @@ void testEventDrivenDecoderProgressWake() {
   {
     constexpr std::uint64_t generation = 81;
     ProgressWakeProbe probe;
-    BoundedFrameQueue sink(2, generation);
+    wam::test::BoundedFrameQueue sink(2, generation);
     VideoDecoderOptions options;
     options.maxInFlightFrames = 2;
     options.maxPendingPresentationFrames = 1;
@@ -1460,7 +1461,7 @@ void testEventDrivenDecoderProgressWake() {
   {
     constexpr std::uint64_t generation = 87;
     ProgressWakeProbe probe;
-    BoundedFrameQueue sink(1, generation);
+    wam::test::BoundedFrameQueue sink(1, generation);
     VideoDecoderOptions options;
     options.maxInFlightFrames = 1;
     options.maxPendingPresentationFrames = 1;
@@ -1497,7 +1498,7 @@ void testEventDrivenDecoderProgressWake() {
   {
     constexpr std::uint64_t generation = 88;
     ProgressWakeProbe probe;
-    BoundedFrameQueue sink(1, generation);
+    wam::test::BoundedFrameQueue sink(1, generation);
     VideoDecoderOptions options;
     options.maxInFlightFrames = 1;
     options.maxPendingPresentationFrames = 1;
@@ -1537,7 +1538,7 @@ void testEventDrivenDecoderProgressWake() {
     constexpr std::uint64_t generation = 82;
     constexpr std::uint64_t nextGeneration = 83;
     ProgressWakeProbe probe;
-    BoundedFrameQueue sink(1, generation);
+    wam::test::BoundedFrameQueue sink(1, generation);
     VideoDecoderOptions options;
     options.maxInFlightFrames = 1;
     options.maxPendingPresentationFrames = 1;
@@ -1572,7 +1573,7 @@ void testEventDrivenDecoderProgressWake() {
   for (const bool formatFailure : {false, true}) {
     constexpr std::uint64_t generation = 84;
     ProgressWakeProbe probe;
-    BoundedFrameQueue sink(1, generation);
+    wam::test::BoundedFrameQueue sink(1, generation);
     VideoDecoderOptions options;
     options.maxInFlightFrames = 1;
     options.maxPendingPresentationFrames = 1;
@@ -1632,7 +1633,7 @@ void testEventDrivenDecoderProgressWake() {
 
     constexpr std::uint64_t generation = 85;
     ProgressWakeProbe probe;
-    BoundedFrameQueue sink(1, generation);
+    wam::test::BoundedFrameQueue sink(1, generation);
     VideoDecoderOptions options;
     options.maxInFlightFrames = 1;
     options.maxPendingPresentationFrames = 1;
@@ -1675,7 +1676,7 @@ void testEventDrivenDecoderProgressWake() {
   {
     constexpr std::uint64_t generation = 86;
     ProgressWakeProbe probe;
-    BoundedFrameQueue sink(1, generation);
+    wam::test::BoundedFrameQueue sink(1, generation);
     VideoDecoderOptions options;
     options.maxInFlightFrames = 1;
     options.maxPendingPresentationFrames = 1;
@@ -1701,7 +1702,7 @@ void testEventDrivenDecoderProgressWake() {
 }
 
 void testExactDecoderRetirement() {
-  using wam::macos::BoundedFrameQueue;
+  using wam::test::BoundedFrameQueue;
   using wam::macos::VideoDecoderRetireProgress;
   using wam::macos::VideoToolboxDecoder;
   using wam::macos::VideoDecoderOptions;
@@ -1710,7 +1711,7 @@ void testExactDecoderRetirement() {
   constexpr std::uint64_t generation = 121;
   constexpr std::uint64_t invalidation = 130;
   ProgressWakeProbe probe;
-  BoundedFrameQueue sink(1, generation);
+  wam::test::BoundedFrameQueue sink(1, generation);
   VideoDecoderOptions options;
   options.maxInFlightFrames = 1;
   options.maxPendingPresentationFrames = 1;
@@ -1970,7 +1971,7 @@ void testInjectedCallbackOrderUsesDecodeSequence(
     const DemuxedVideo &video, bool requireHardware) {
   constexpr std::uint64_t generation = 41;
   constexpr std::size_t reorderDepth = 2;
-  wam::macos::BoundedFrameQueue queue(4, generation);
+  wam::test::BoundedFrameQueue queue(4, generation);
   wam::macos::VideoDecoderOptions options;
   options.maxInFlightFrames = 4;
   options.maxPendingPresentationFrames = 4;
@@ -2303,7 +2304,7 @@ void testOwnerProgressiveZeroFrameEndOfStream() {
 void testInjectedCompletionGapPreservesAdmissionAndMakesProgress(
     const DemuxedVideo &video, std::size_t keyIndex, bool requireHardware) {
   constexpr std::uint64_t generation = 42;
-  wam::macos::BoundedFrameQueue queue(2, generation);
+  wam::test::BoundedFrameQueue queue(2, generation);
   wam::macos::VideoDecoderOptions options;
   options.maxInFlightFrames = 2;
   options.maxPendingPresentationFrames = 2;
@@ -2385,7 +2386,7 @@ void testCallbackAllocationFailureFailsClosedAndRetiresInOrder() {
   auto exercise = [&](AllocationPoint point, std::uint64_t generation,
                       std::uint64_t failingSequence,
                       std::size_t expectedAfterFailure) {
-    wam::macos::BoundedFrameQueue queue(2, generation);
+    wam::test::BoundedFrameQueue queue(2, generation);
     wam::macos::VideoDecoderOptions options;
     options.maxInFlightFrames = 2;
     options.maxPendingPresentationFrames = 2;
@@ -2475,7 +2476,7 @@ void testCoreFoundationAllocationFailuresFailClosed() {
       AllocationPoint::PixelFormatNumber};
   std::uint64_t generation = 453;
   for (const AllocationPoint point : sessionAllocationPoints) {
-    wam::macos::BoundedFrameQueue queue(1, generation);
+    wam::test::BoundedFrameQueue queue(1, generation);
     wam::macos::VideoToolboxDecoder decoder;
     TestAccess::failNextCFAllocation(point);
     std::string error;
@@ -2495,7 +2496,7 @@ void testDecodedDimensionMismatchFailsBeforeSurfaceAdmission() {
   using wam::macos::VideoToolboxDecoderTestAccess;
 
   constexpr std::uint64_t generation = 461;
-  wam::macos::BoundedFrameQueue queue(1, generation);
+  wam::test::BoundedFrameQueue queue(1, generation);
   wam::macos::VideoDecoderOptions options;
   options.maxInFlightFrames = 1;
   options.maxPendingPresentationFrames = 1;
@@ -2696,7 +2697,7 @@ void testDecodedColorCallbackRejectsHdrBeforeLease() {
   using wam::macos::VideoToolboxDecoderTestAccess;
 
   constexpr std::uint64_t generation = 462;
-  wam::macos::BoundedFrameQueue queue(1, generation);
+  wam::test::BoundedFrameQueue queue(1, generation);
   wam::macos::VideoDecoderOptions options;
   options.maxInFlightFrames = 1;
   options.maxPendingPresentationFrames = 1;
@@ -2790,7 +2791,7 @@ void testConfigurationByteBound(const DemuxedVideo &video) {
            MAP_PRIVATE | MAP_ANON, -1, 0);
   WAM_CHECK(inaccessibleBytes != MAP_FAILED);
 
-  wam::macos::BoundedFrameQueue queue(1, generation);
+  wam::test::BoundedFrameQueue queue(1, generation);
   wam::macos::VideoToolboxDecoder decoder;
   auto configuration = streamConfiguration(video, generation, false);
   configuration.codecConfiguration = std::span<const std::byte>(
@@ -2850,7 +2851,7 @@ void testCodecParserAndDeclaredReorderBound(const DemuxedVideo &video) {
   options.maxInFlightFrames = 2;
   options.maxPendingPresentationFrames = *reorderFrames - 1;
   wam::macos::VideoToolboxDecoder decoder(options);
-  wam::macos::BoundedFrameQueue queue(2, generation);
+  wam::test::BoundedFrameQueue queue(2, generation);
   std::string error;
   WAM_CHECK(!decoder.configure(configuration, queue, &error));
   WAM_CHECK(error.find("exceeding the configured bound") != std::string::npos);
@@ -2860,7 +2861,7 @@ void testDefaultBoundMakesProgressBeforeEndOfStream(
     const DemuxedVideo &video, std::size_t keyIndex, bool requireHardware) {
   constexpr std::uint64_t generation = 9;
   const std::size_t packetCount = video.packets.size() - keyIndex;
-  wam::macos::BoundedFrameQueue queue(packetCount + 1, generation);
+  wam::test::BoundedFrameQueue queue(packetCount + 1, generation);
   wam::macos::VideoDecoderOptions options;
   options.maxInFlightFrames = 2;
   wam::macos::VideoToolboxDecoder decoder(options);
@@ -2918,7 +2919,7 @@ void testBFramePresentationOrderAndMetalImport(const DemuxedVideo &video,
   WAM_CHECK_DETAIL(decodeOrderDiffersFromPresentationOrder,
                    "H.264 fixture must contain B-frame PTS reordering");
 
-  wam::macos::BoundedFrameQueue queue(packetCount + 1, generation);
+  wam::test::BoundedFrameQueue queue(packetCount + 1, generation);
   wam::macos::VideoToolboxDecoder decoder({packetCount + 1});
   std::string error;
   WAM_CHECK_DETAIL(
@@ -2991,7 +2992,7 @@ void testDecodedNV12OpenGLInterop(const DemuxedVideo &video,
                                   CGLContextObj cglContext) {
   constexpr std::uint64_t generation = 45;
   const std::size_t packetCount = video.packets.size() - keyIndex;
-  wam::macos::BoundedFrameQueue queue(packetCount + 1, generation);
+  wam::test::BoundedFrameQueue queue(packetCount + 1, generation);
   wam::macos::VideoDecoderOptions options;
   options.maxInFlightFrames = packetCount + 1;
   options.outputInterop = wam::macos::VideoDecoderOutputInterop::OpenGL;
@@ -3050,7 +3051,7 @@ void testDecodedP010OpenGLInterop(const DemuxedVideo &video,
   constexpr std::uint64_t generation = 46;
   const std::size_t packetCount = video.packets.size() - keyIndex;
   WAM_CHECK(packetCount > 0);
-  wam::macos::BoundedFrameQueue queue(packetCount + 1, generation);
+  wam::test::BoundedFrameQueue queue(packetCount + 1, generation);
   wam::macos::VideoDecoderOptions options;
   options.maxInFlightFrames = packetCount + 1;
   options.outputInterop = wam::macos::VideoDecoderOutputInterop::OpenGL;
@@ -3126,7 +3127,7 @@ void testSinkBackpressureIsRecoverable(const DemuxedVideo &video,
                                        bool requireHardware) {
   constexpr std::uint64_t firstGeneration = 50;
   constexpr std::uint64_t secondGeneration = 51;
-  wam::macos::BoundedFrameQueue queue(1, firstGeneration);
+  wam::test::BoundedFrameQueue queue(1, firstGeneration);
   wam::macos::VideoToolboxDecoder decoder({video.packets.size() + 1});
   std::string error;
   WAM_CHECK_DETAIL(decoder.configure(streamConfiguration(video, firstGeneration,
@@ -3173,7 +3174,7 @@ void testSinkBackpressureIsRecoverable(const DemuxedVideo &video,
 void testAdmissionBeforeCopy(const DemuxedVideo &video, std::size_t keyIndex,
                              bool requireHardware) {
   constexpr std::uint64_t generation = 6;
-  wam::macos::BoundedFrameQueue queue(2, generation);
+  wam::test::BoundedFrameQueue queue(2, generation);
   wam::macos::VideoDecoderOptions options;
   options.maxInFlightFrames = 1;
   wam::macos::VideoToolboxDecoder decoder(options);
@@ -3260,7 +3261,7 @@ void testDirectCMSampleBufferSubmission(
   const std::size_t sampleBytes = CMBlockBufferGetDataLength(block);
   WAM_CHECK(sampleBytes != 0);
 
-  wam::macos::BoundedFrameQueue queue(4, generation);
+  wam::test::BoundedFrameQueue queue(4, generation);
   wam::macos::VideoDecoderOptions options;
   options.maxInFlightFrames = 1;
   wam::macos::VideoToolboxDecoder decoder(options);
@@ -3387,7 +3388,7 @@ public:
   std::optional<wam::macos::FrameLease> tryTake() { return queue_.tryTake(); }
 
 private:
-  wam::macos::BoundedFrameQueue queue_;
+  wam::test::BoundedFrameQueue queue_;
 };
 
 class CallbackSchedulingProbe final {
@@ -3551,7 +3552,7 @@ void testLifecycleAndGeneration(const DemuxedVideo &video, std::size_t keyIndex,
                                 bool requireHardware) {
   constexpr std::uint64_t firstGeneration = 20;
   constexpr std::uint64_t secondGeneration = 21;
-  wam::macos::BoundedFrameQueue queue(8, firstGeneration);
+  wam::test::BoundedFrameQueue queue(8, firstGeneration);
   wam::macos::VideoToolboxDecoder decoder({4});
   std::string error;
   WAM_CHECK_DETAIL(decoder.configure(streamConfiguration(video, firstGeneration,
@@ -3618,7 +3619,7 @@ void testLifecycleAndGeneration(const DemuxedVideo &video, std::size_t keyIndex,
 
 void testHevcConfiguration(bool requireHardware) {
   constexpr std::uint64_t generation = 30;
-  wam::macos::BoundedFrameQueue queue(2, generation);
+  wam::test::BoundedFrameQueue queue(2, generation);
   wam::macos::VideoToolboxDecoder decoder({2});
   auto configuration = fixtureFreeStreamConfiguration(generation);
   configuration.preferHardwareDecode = true;
