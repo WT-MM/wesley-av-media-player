@@ -38,7 +38,7 @@ class HarnessTest(unittest.TestCase):
         self.assertEqual(len(records), 4)
 
     def test_srt_and_anchor(self):
-        with tempfile.TemporaryDirectory(dir='/private/tmp/wam-asr-scratch') as d:
+        with tempfile.TemporaryDirectory() as d:
             p=pathlib.Path(d)/'out.srt'
             p.write_text('1\n00:00:01,250 --> 00:00:04,000\nOne two three\nfour\n\n')
             seg=segments(p)
