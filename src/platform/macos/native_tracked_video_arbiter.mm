@@ -33,19 +33,6 @@ void assignError(std::string* error, const char* message) noexcept {
   }
 }
 
-[[nodiscard]] bool sameTime(CMTime lhs, CMTime rhs) noexcept {
-  return lhs.value == rhs.value && lhs.timescale == rhs.timescale &&
-         lhs.flags == rhs.flags && lhs.epoch == rhs.epoch;
-}
-
-[[nodiscard]] bool sameTiming(const FrameTiming& lhs,
-                              const FrameTiming& rhs) noexcept {
-  return lhs.generation == rhs.generation &&
-         lhs.keyFrame == rhs.keyFrame &&
-         sameTime(lhs.presentationTime, rhs.presentationTime) &&
-         sameTime(lhs.duration, rhs.duration);
-}
-
 [[nodiscard]] NativeTrackedVideoPreviewEventKind previewKind(
     NativeTrackedVideoEventKind kind) noexcept {
   switch (kind) {
@@ -134,7 +121,7 @@ struct NativeTrackedVideoArbiter::State final {
     return admission.active() && event.frameSequence.valid() &&
            event.frameSequence == admission.internalSequence &&
            event.generation == admission.generation &&
-           sameTiming(event.timing, admission.timing) &&
+           sameFrameTiming(event.timing, admission.timing) &&
            (event.kind == NativeTrackedVideoEventKind::FrameDrawn ||
             event.kind == NativeTrackedVideoEventKind::FrameSuperseded ||
             event.kind == NativeTrackedVideoEventKind::Failed);

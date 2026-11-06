@@ -136,27 +136,6 @@ void assignError(std::string* error, const char* message) {
   return owned < decodedSurfaceOwnershipBound(decoder);
 }
 
-[[nodiscard]] std::optional<MediaTime> exactMediaTime(CMTime time) noexcept {
-  if (!CMTIME_IS_NUMERIC(time) || time.timescale <= 0 || time.epoch != 0 ||
-      (time.flags & kCMTimeFlags_HasBeenRounded) != 0) {
-    return std::nullopt;
-  }
-  return MediaTime{time.value, time.timescale};
-}
-
-[[nodiscard]] bool sameExactCMTime(CMTime lhs, CMTime rhs) noexcept {
-  return lhs.value == rhs.value && lhs.timescale == rhs.timescale &&
-         lhs.flags == rhs.flags && lhs.epoch == rhs.epoch;
-}
-
-[[nodiscard]] bool sameFrameTiming(const FrameTiming& lhs,
-                                   const FrameTiming& rhs) noexcept {
-  return lhs.generation == rhs.generation &&
-         lhs.keyFrame == rhs.keyFrame &&
-         sameExactCMTime(lhs.presentationTime, rhs.presentationTime) &&
-         sameExactCMTime(lhs.duration, rhs.duration);
-}
-
 // Compares an exact media rational with the exact binary rational represented
 // by a finite double. No epsilon or intermediate floating-point rounding is
 // introduced. Products that cannot fit 128 bits are already far enough apart
@@ -310,7 +289,6 @@ static_assert(media::mediaCodecFacts(media::MediaCodec::Vp8).coreMediaType ==
                   static_cast<std::uint32_t>(kWamVideoCodecTypeVp8),
               "the facts table's four-character code must be the one the "
               "software stage keys on");
-
 
 [[nodiscard]] bool supportedVideoTrack(
     const media::MediaTrackDescriptor& track) noexcept {
@@ -2648,7 +2626,6 @@ const std::string& NativeVideoConsumer::failureText() const noexcept {
       "native video consumer has no live graph (quarantined)";
   return impl_ == nullptr ? quarantined : impl_->failureText;
 }
-
 
 std::optional<NativeTrackedVideoEvent>
 NativeVideoConsumer::takeOutputEvent() noexcept {

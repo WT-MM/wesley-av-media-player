@@ -125,21 +125,6 @@ void pumpFor(int durationMs) {
   }
 }
 
-// Exact CMTime identity, not CMTimeCompare equivalence. The contract's timing
-// echo claim is bit-for-bit restatement, so a rescaled-but-equal time is a
-// failure, not a pass.
-[[nodiscard]] bool sameCMTime(CMTime left, CMTime right) noexcept {
-  return left.value == right.value && left.timescale == right.timescale &&
-         left.flags == right.flags && left.epoch == right.epoch;
-}
-
-[[nodiscard]] bool sameTiming(const FrameTiming& left,
-                              const FrameTiming& right) noexcept {
-  return sameCMTime(left.presentationTime, right.presentationTime) &&
-         sameCMTime(left.duration, right.duration) &&
-         left.generation == right.generation && left.keyFrame == right.keyFrame;
-}
-
 CVPixelBufferRef createSolidNv12(std::uint8_t luma) {
   CFMutableDictionaryRef attributes = CFDictionaryCreateMutable(
       kCFAllocatorDefault, 2, &kCFTypeDictionaryKeyCallBacks,
@@ -316,7 +301,7 @@ void verifyCapacityOneAdmissionAndExactTimingEcho() {
 
   const FrameTiming firstTiming = makeTiming(1, 0);
   auto first = makeFrame(1, 0, 160);
-  WAM_CHECK(sameTiming(first.timing(), firstTiming));
+  WAM_CHECK(sameFrameTiming(first.timing(), firstTiming));
   WAM_CHECK(output->submit(first, NativeTrackedFrameSequence{1}, &error) ==
             NativeTrackedVideoSubmitStatus::Accepted);
   WAM_CHECK(error.empty());
@@ -350,7 +335,7 @@ void verifyCapacityOneAdmissionAndExactTimingEcho() {
   WAM_CHECK(drawn->frameSequence.value == 1);
   WAM_CHECK(drawn->generation == 1);
   // Bit-for-bit, not merely CMTimeCompare-equal.
-  WAM_CHECK(sameTiming(drawn->timing, firstTiming));
+  WAM_CHECK(sameFrameTiming(drawn->timing, firstTiming));
   WAM_CHECK(CMTimeCompare(drawn->timing.presentationTime,
                           first.timing().presentationTime) == 0);
 
@@ -377,9 +362,9 @@ void verifyCapacityOneAdmissionAndExactTimingEcho() {
   // identity is echoed exactly as the caller minted it.
   WAM_CHECK(secondDrawn->eventSequence == drawn->eventSequence + 1);
   WAM_CHECK(secondDrawn->frameSequence.value == 2);
-  WAM_CHECK(sameTiming(secondDrawn->timing, secondTiming));
-  WAM_CHECK(!sameCMTime(secondTiming.presentationTime,
-                        firstTiming.presentationTime));
+  WAM_CHECK(sameFrameTiming(secondDrawn->timing, secondTiming));
+  WAM_CHECK(!sameExactCMTime(secondTiming.presentationTime,
+                             firstTiming.presentationTime));
 
   // A malformed submission is refused without disturbing the admission state.
   {
@@ -524,7 +509,7 @@ void verifyFlushProgressRetiresGeneration() {
   WAM_CHECK(terminal->kind == NativeTrackedVideoEventKind::FrameDrawn);
   WAM_CHECK(terminal->frameSequence.value == 1);
   WAM_CHECK(terminal->generation == 1);
-  WAM_CHECK(sameTiming(terminal->timing, makeTiming(1, 0)));
+  WAM_CHECK(sameFrameTiming(terminal->timing, makeTiming(1, 0)));
 
   WAM_CHECK(spinUntil([&] {
     return output->flushProgress(1, 2) ==
@@ -641,7 +626,7 @@ void verifyCloseProgressIsTerminal() {
   WAM_CHECK(pending->kind == NativeTrackedVideoEventKind::FrameDrawn);
   WAM_CHECK(pending->frameSequence.value == 1);
   WAM_CHECK(pending->generation == 1);
-  WAM_CHECK(sameTiming(pending->timing, makeTiming(1, 0)));
+  WAM_CHECK(sameFrameTiming(pending->timing, makeTiming(1, 0)));
 
   WAM_CHECK(spinUntil([&] {
     return output->closeProgress(2) == NativeTrackedVideoOutputProgress::Done;
@@ -838,7 +823,6 @@ void verifyRetainedLeaseCeilingAndRelease() {
             baseline.currentSurfaces +
                 NativeLayerVideoOutput::kRetainedFrameLeaseCeiling);
 }
-
 
 // A frame that BEGINS before the movie origin but ENDS after it is the frame
 // visible at time zero, and this route must present it.

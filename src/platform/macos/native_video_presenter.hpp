@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core_media_time.hpp"
 #include "native_surface_budget.hpp"
 
 #include <CoreMedia/CoreMedia.h>
@@ -18,19 +19,6 @@ namespace wam::macos {
 #if defined(WAM_NATIVE_FRAME_LEASE_TESTING)
 struct FrameLeaseTestAccess;
 #endif
-
-// Identifies a decode generation. Incrementing the generation on seek or load
-// lets every asynchronous stage reject frames from the previous timeline.
-struct FrameTiming {
-  CMTime presentationTime{kCMTimeInvalid};
-  CMTime duration{kCMTimeInvalid};
-  std::uint64_t generation{0};
-  bool keyFrame{false};
-#if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
-  std::uint64_t decodeCompleteHostTicks{0};
-  std::uint64_t surfaceLeaseHostTicks{0};
-#endif
-};
 
 // Whether a decoded frame can be presented at all: exact timing, a positive
 // duration, and an END after the movie origin. Where the frame BEGINS is not

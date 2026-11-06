@@ -53,19 +53,6 @@ void expect(bool condition, const char* message) {
   std::cerr << "FAIL: " << message << '\n';
 }
 
-[[nodiscard]] bool sameTime(CMTime lhs, CMTime rhs) noexcept {
-  return lhs.value == rhs.value && lhs.timescale == rhs.timescale &&
-         lhs.flags == rhs.flags && lhs.epoch == rhs.epoch;
-}
-
-[[nodiscard]] bool sameTiming(const FrameTiming& lhs,
-                              const FrameTiming& rhs) noexcept {
-  return lhs.generation == rhs.generation &&
-         lhs.keyFrame == rhs.keyFrame &&
-         sameTime(lhs.presentationTime, rhs.presentationTime) &&
-         sameTime(lhs.duration, rhs.duration);
-}
-
 FrameLease makeFrame(std::uint64_t generation, std::int64_t value) {
   CVPixelBufferRef pixelBuffer = nullptr;
   const CVReturn created = CVPixelBufferCreate(
@@ -347,7 +334,7 @@ void previewEventNeverAppearsAsMain() {
   expect(event && event->kind ==
                       NativeTrackedVideoPreviewEventKind::FrameDrawn &&
              event->frameSequence == submitted.sequence &&
-             event->generation == 7 && sameTiming(event->timing, timing),
+             event->generation == 7 && sameFrameTiming(event->timing, timing),
          "preview receives its exact translated draw fact");
   expect(!fixture.main->takeEvent() &&
              fixture.main->capacity(7) ==
@@ -372,7 +359,7 @@ void mainEventNeverAppearsAsPreview() {
   expect(event && event->kind == NativeTrackedVideoEventKind::FrameDrawn &&
              event->frameSequence == NativeTrackedFrameSequence{41} &&
              event->eventSequence == 1 &&
-             sameTiming(event->timing, timing),
+             sameFrameTiming(event->timing, timing),
          "main receives exact caller identity in its own event sequence domain");
   expect(!fixture.preview->takeEvent(),
          "main draw never enters typed preview lane");

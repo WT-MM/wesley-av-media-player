@@ -36,27 +36,6 @@ constexpr std::size_t kMaximumPreviewReorderFrames = 8;
 // the graph through many small replacements.
 constexpr std::uint64_t kMaximumSequentialAdvanceSeconds = 1;
 
-[[nodiscard]] std::optional<MediaTime> exactMediaTime(CMTime time) noexcept {
-  if (!CMTIME_IS_NUMERIC(time) || time.timescale <= 0 || time.epoch != 0 ||
-      (time.flags & kCMTimeFlags_HasBeenRounded) != 0) {
-    return std::nullopt;
-  }
-  return MediaTime{time.value, time.timescale};
-}
-
-[[nodiscard]] bool sameTime(CMTime lhs, CMTime rhs) noexcept {
-  return lhs.value == rhs.value && lhs.timescale == rhs.timescale &&
-         lhs.flags == rhs.flags && lhs.epoch == rhs.epoch;
-}
-
-[[nodiscard]] bool sameTiming(const FrameTiming& lhs,
-                              const FrameTiming& rhs) noexcept {
-  return lhs.generation == rhs.generation &&
-         lhs.keyFrame == rhs.keyFrame &&
-         sameTime(lhs.presentationTime, rhs.presentationTime) &&
-         sameTime(lhs.duration, rhs.duration);
-}
-
 [[nodiscard]] bool sameCommand(
     const preview_protocol::PreviewFrame& lhs,
     const preview_protocol::PreviewFrame& rhs) noexcept {
@@ -636,7 +615,7 @@ NativePreviewFrameRequestStatus NativePreviewFrameLane::request(
         std::string error;
         const auto staged = impl_->sink.timing();
         if (staged.has_value()) {
-          if (!sameTiming(*staged, active.cachedFrame.timing())) {
+          if (!sameFrameTiming(*staged, active.cachedFrame.timing())) {
             impl_->latchFailure(
                 "preview cached-frame staging violated exact identity");
             return NativePreviewFrameRequestStatus::Failed;
@@ -732,7 +711,7 @@ NativePreviewFramePumpProgress NativePreviewFrameLane::pump() noexcept {
           !impl_->active || !impl_->active->awaitingDraw.valid() ||
           event->frameSequence != impl_->active->awaitingDraw ||
           event->generation != impl_->binding.activePlaybackGeneration.value ||
-          !sameTiming(event->timing, impl_->active->awaitingTiming)) {
+          !sameFrameTiming(event->timing, impl_->active->awaitingTiming)) {
         impl_->latchFailure("preview output event violated its exact identity");
         return NativePreviewFramePumpProgress::Failed;
       }
@@ -1126,7 +1105,7 @@ NativePreviewFrameCancelProgress NativePreviewFrameLane::stop(
         !impl_->active || !impl_->active->awaitingDraw.valid() ||
         event->frameSequence != impl_->active->awaitingDraw ||
         event->generation != activePlaybackGeneration.value ||
-        !sameTiming(event->timing, impl_->active->awaitingTiming)) {
+        !sameFrameTiming(event->timing, impl_->active->awaitingTiming)) {
       impl_->latchFailure("preview stop observed an invalid terminal event");
       return NativePreviewFrameCancelProgress::Failed;
     }
