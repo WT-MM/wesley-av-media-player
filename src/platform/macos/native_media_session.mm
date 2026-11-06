@@ -387,22 +387,6 @@ class LanePreviewPort final : public SessionPreviewPort {
   std::unique_ptr<NativePreviewFrameLane> lane_;
 };
 
-// Paired-measurement seam for the pause-suspend lever. Read once per process.
-// Setting WAM_AUDIO_PAUSE_SUSPEND=0 keeps the output AudioUnit running through
-// a pause, so a baseline arm and a
-// treatment arm can be taken from ONE binary. Rebuilding between arms would
-// confound the treatment with every other difference two builds can carry, on
-// a machine whose ambient load and default audio device both drift. Any other
-// value (including unset) enables the lever, so the shipped default is the
-// treatment.
-[[nodiscard]] bool pauseSuspendEnabled() noexcept {
-  static const bool enabled = [] {
-    const char* value = std::getenv("WAM_AUDIO_PAUSE_SUSPEND");
-    return value == nullptr || std::strcmp(value, "0") != 0;
-  }();
-  return enabled;
-}
-
 }  // namespace
 
 struct NativeMediaSessionWake::Impl final {
@@ -2279,8 +2263,7 @@ if (result != NativeAudioSessionProgress::Done) {
   // before returning Quiescing, so the exiting callback brings the worker
   // straight back here, and Invalid only means the precondition moved.
   void progressAudioSuspend() noexcept {
-    if (!pauseSuspendEnabled() ||
-        authority == nullptr || !authority->suspendsForPause() ||
+    if (authority == nullptr || !authority->suspendsForPause() ||
         !startedPublished ||
         stopLatched || liveFailed || endingLatched || endedPublished ||
         commitInFlight() || previewPending || previewActivity ||
