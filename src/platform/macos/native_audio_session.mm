@@ -724,58 +724,6 @@ void quarantine(
   }
 }
 
-[[nodiscard]] const char* outputFailureName(
-    NativeAudioOutputFailure failure) noexcept {
-  switch (failure) {
-  case NativeAudioOutputFailure::None: return "None";
-  case NativeAudioOutputFailure::InvalidConfiguration:
-    return "InvalidConfiguration";
-  case NativeAudioOutputFailure::ComponentUnavailable:
-    return "ComponentUnavailable";
-  case NativeAudioOutputFailure::InstanceCreationFailed:
-    return "InstanceCreationFailed";
-  case NativeAudioOutputFailure::DeviceFormatQueryFailed:
-    return "DeviceFormatQueryFailed";
-  case NativeAudioOutputFailure::DeviceRateMismatch:
-    return "DeviceRateMismatch";
-  case NativeAudioOutputFailure::DeviceListenerInstallationFailed:
-    return "DeviceListenerInstallationFailed";
-  case NativeAudioOutputFailure::DeviceListenerRemovalFailed:
-    return "DeviceListenerRemovalFailed";
-  case NativeAudioOutputFailure::MaximumFramesConfigurationFailed:
-    return "MaximumFramesConfigurationFailed";
-  case NativeAudioOutputFailure::ClientFormatConfigurationFailed:
-    return "ClientFormatConfigurationFailed";
-  case NativeAudioOutputFailure::RenderCoreActivationFailed:
-    return "RenderCoreActivationFailed";
-  case NativeAudioOutputFailure::CallbackInstallationFailed:
-    return "CallbackInstallationFailed";
-  case NativeAudioOutputFailure::InitializationFailed:
-    return "InitializationFailed";
-  case NativeAudioOutputFailure::StartFailed: return "StartFailed";
-  case NativeAudioOutputFailure::StopFailed: return "StopFailed";
-  case NativeAudioOutputFailure::UninitializationFailed:
-    return "UninitializationFailed";
-  case NativeAudioOutputFailure::CallbackDetachmentFailed:
-    return "CallbackDetachmentFailed";
-  case NativeAudioOutputFailure::InstanceDisposalFailed:
-    return "InstanceDisposalFailed";
-  case NativeAudioOutputFailure::InvalidCallbackBuffer:
-    return "InvalidCallbackBuffer";
-  case NativeAudioOutputFailure::InvalidCallbackTimestamp:
-    return "InvalidCallbackTimestamp";
-  case NativeAudioOutputFailure::ReentrantCallback:
-    return "ReentrantCallback";
-  case NativeAudioOutputFailure::FrameCursorOverflow:
-    return "FrameCursorOverflow";
-  case NativeAudioOutputFailure::RenderCoreFailed: return "RenderCoreFailed";
-  case NativeAudioOutputFailure::NativeException: return "NativeException";
-  case NativeAudioOutputFailure::DeviceBufferFramesUnsupported:
-    return "DeviceBufferFramesUnsupported";
-  }
-  return "Unknown";
-}
-
 [[nodiscard]] const char* renderFailureName(
     NativeAudioRenderFailure failure) noexcept {
   switch (failure) {
@@ -836,7 +784,7 @@ void publishFailureText(NativeAudioSessionControl& control,
     const NativeAudioRenderFailure renderFailure = control.renderCore.failure();
     if (outputFailure != NativeAudioOutputFailure::None) {
       control.failureText =
-          std::string("audio output: ") + outputFailureName(outputFailure) +
+          std::string("audio output: ") + nativeAudioOutputFailureName(outputFailure) +
           " (osStatus " +
           std::to_string(
               static_cast<long long>(control.output->facts().osStatus)) +

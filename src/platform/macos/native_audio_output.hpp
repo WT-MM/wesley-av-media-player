@@ -186,6 +186,9 @@ enum class NativeAudioOutputFailure : std::uint8_t {
   DeviceBufferFramesUnsupported,
 };
 
+[[nodiscard]] const char* nativeAudioOutputFailureName(
+    NativeAudioOutputFailure failure) noexcept;
+
 // Independently atomic, bounded facts rather than a transactional snapshot.
 // started means render admission is open on a running AudioUnit.
 // stopped means render admission is revoked and every callback that captured
