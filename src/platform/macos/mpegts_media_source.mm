@@ -138,7 +138,7 @@ std::optional<MediaTime> MpegTsSourceTraits::videoOrigin(
 
 CMVideoFormatDescriptionRef MpegTsSourceTraits::createVideoFormatDescription(
     const MediaTrackDescriptor& track) noexcept {
-  return createMpegTsVideoFormatDescription(track);
+  return macos::createVideoFormatDescription(track);
 }
 
 MediaTime MpegTsSourceTraits::mergeOrderKey(const MediaSample& sample) noexcept {
@@ -426,7 +426,8 @@ struct MpegTsMediaSource::Impl final
       assignError(error, "mpeg-ts audio generation staged no first unit");
       return false;
     }
-    window.decodeStart = audioHead->value.presentationTime;
+    window.decodeStart =
+        std::get<MediaSample>(audioHead->value).presentationTime;
     audioDecodeStart = window.decodeStart;
     // The neutral contract fixes the presentation floor: in Accurate mode it
     // must be exactly the first audio frame boundary at or after the requested
@@ -491,7 +492,7 @@ struct MpegTsMediaSource::Impl final
         return false;
       }
       const auto borrowed =
-          audioHead->value.payload
+          std::get<MediaSample>(audioHead->value).payload
               .borrowNative<media::NativePayloadKind::CoreMediaSampleBuffer>();
       if (!borrowed ||
           !statedImmediatePlayoutFrame(static_cast<CMSampleBufferRef>(

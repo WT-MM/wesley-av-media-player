@@ -33,9 +33,10 @@ int main(int argc,char** argv) {
     CHECK(seek.accepted);
     CHECK(compareMediaTime(seek.actualDecodeStart,target)!=MediaTimeOrder::Greater);
     CHECK(std::holds_alternative<MediaSample>(source->readNext(epoch)));
-    source->requestCancel(epoch);
-    CHECK(std::holds_alternative<MediaSourceCancelled>(source->readNext(epoch)));
   }
+  // A cancelled generation withdraws the source, as on every native route.
+  source->requestCancel(5);
+  CHECK(std::holds_alternative<MediaSourceCancelled>(source->readNext(5)));
   source->close();CHECK(source->stats().stagedPayloadBytes==0);
   std::puts("routed mixed: video=48 audio=90 EOS=2; exact seeks, cancellation, zero staged payload");
 }

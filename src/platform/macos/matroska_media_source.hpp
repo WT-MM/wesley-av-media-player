@@ -121,7 +121,6 @@ class MatroskaMediaSource final : public media::MediaSource, public media::Audio
  private:
   struct Impl;
   std::unique_ptr<Impl> impl_;
-  media::AudioTrackRejections rejectedAudio_;
 };
 
 }  // namespace wam::macos

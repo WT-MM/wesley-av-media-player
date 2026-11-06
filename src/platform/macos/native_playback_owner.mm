@@ -1013,7 +1013,9 @@ NativePlaybackOwner::beginNativePrepare(const playback_router::Action& action) {
   WAM_STARTUP_STAMP(NativeSessionCreateBegin);
   std::unique_ptr<macos::NativeMediaSession> session =
       createNativeMediaSessionSystem(
-          {action.prepare.sourceKey, configuration->path}, bridge,
+          {action.prepare.sourceKey, configuration->path,
+           configuration->bufferedStorage},
+          bridge,
           configuration->presentation, &error, configuration->captionFeed);
   WAM_STARTUP_STAMP(NativeSessionCreateEnd);
   if (session == nullptr) {

@@ -411,7 +411,7 @@ bool CopyMatroskaKeyframe(const std::filesystem::path& path,
   }
 
   CMVideoFormatDescriptionRef format =
-      wam::macos::createMatroskaVideoFormatDescription(*track);
+      wam::macos::createVideoFormatDescription(*track);
   if (format == nullptr) {
     if (error) *error = "unsupported video codec for CoreMedia";
     return false;
@@ -426,7 +426,7 @@ bool CopyMatroskaKeyframe(const std::filesystem::path& path,
   wam::macos::ScopedSampleBuffer built;
   const auto build = wam::macos::buildMatroskaCompressedSampleBuffer(
       inputs, keyframe, &built, error);
-  if (build != wam::macos::MatroskaSampleBuildStatus::Built ||
+  if (build != wam::macos::CompressedSampleBuildStatus::Built ||
       built.get() == nullptr) {
     CFRelease(format);
     if (error && error->empty()) *error = "sample build failed";
@@ -519,7 +519,7 @@ bool CopyMpegTsKeyframe(const std::filesystem::path& path,
   }
 
   CMVideoFormatDescriptionRef format =
-      wam::macos::createMpegTsVideoFormatDescription(*track);
+      wam::macos::createVideoFormatDescription(*track);
   if (format == nullptr) {
     if (error) *error = "unsupported video codec for CoreMedia";
     return false;
@@ -537,7 +537,7 @@ bool CopyMpegTsKeyframe(const std::filesystem::path& path,
   wam::macos::ScopedSampleBuffer built;
   const auto build = wam::macos::buildMpegTsCompressedSampleBuffer(
       inputs, keyframe, &built, error);
-  if (build != wam::macos::MpegTsSampleBuildStatus::Built ||
+  if (build != wam::macos::CompressedSampleBuildStatus::Built ||
       built.get() == nullptr) {
     CFRelease(format);
     if (error && error->empty()) *error = "sample build failed";

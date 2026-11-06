@@ -139,6 +139,8 @@ class NativeMediaSessionWake final {
 struct NativeMediaSessionSourceBinding {
   native_playback::SourceKey sourceKey;
   std::filesystem::path localPath;
+  // The open preflight's classification (MediaSourceOpenOptions).
+  bool bufferedStorage{false};
 };
 
 struct NativeMediaSessionDependencies {

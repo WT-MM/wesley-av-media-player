@@ -340,37 +340,7 @@ static_assert(media::mediaCodecFacts(media::MediaCodec::Vp8).coreMediaType ==
       track.codecConfigurationKind != codecFacts.configurationKind) {
     return false;
   }
-  const media::MediaVideoFormat& video = *track.video;
-  // ONE colour rule, shared with avfoundation_media_source.mm's
-  // preservesLegacyNativeAdmission. The two drifting apart is what turns a
-  // clean Unsupported verdict into a mid-startup Failed one, because the
-  // source would admit a descriptor this function then refuses.
-  const bool supportedColor = media::mediaVideoColorAdmitted(video);
-  // ONE dimension rule too, for exactly the reason the colour comment above
-  // gives: this route refusing a shape the source admitted turns a clean
-  // Unsupported into a mid-startup Failed. Orientation-agnostic.
-  return media::MediaSourceLimits::codedDimensionsWithinHardCeiling(
-             video.codedWidth, video.codedHeight) &&
-         video.displayWidth != 0 && video.displayHeight != 0 &&
-         // Quarter turns are admitted; the presentation route is asked
-         // separately, in configure(), whether it can actually apply one.
-         // This term must stay in lockstep with preservesLegacyNativeAdmission
-         // in avfoundation_media_source.mm -- see the colour comment above for
-         // what drifting apart costs.
-         quarterTurnRotationAdmitted(video) && video.progressive &&
-         supportedColor &&
-         // A record-less codec's coded sample format is Unknown by
-         // construction, so this term would refuse it. It is exempted for
-         // exactly the reason given at the matching term in
-         // preservesLegacyNativeAdmission -- which this MUST stay in lockstep
-         // with, and reads the same field to do so -- namely that such a
-         // codec pins its decode output format and has every delivered surface
-         // validated against that pin, which is a stronger guarantee than the
-         // parsed record this term reads.
-         (!codecFacts.statesCodedSampleFormat ||
-          media::mediaSampleFormatDepth(video.sampleFormat) != 0) &&
-         media::mediaVideoHasFullCodedAperture(video) &&
-         !media::mediaVideoDisplaySize(video).empty();
+  return media::nativeVideoTrackAdmitted(*track.video, codecFacts);
 }
 
 [[nodiscard]] bool sampleIsKeyFrame(CMSampleBufferRef sample,

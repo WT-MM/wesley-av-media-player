@@ -1,9 +1,6 @@
 #include "avfoundation_preview_source.hpp"
-#include "video_quarter_turn.hpp"
 
-// For clampedSyncStartWithinTimelineContract: the preview lane and the main
-// route must answer the sync-start window question identically.
-#include "platform/macos/avfoundation_media_source.hpp"
+#include "platform/macos/avfoundation_media_support.hpp"
 
 #include "media/media_codec_facts.hpp"
 #include "core_media_codec_facts.hpp"
@@ -13,12 +10,7 @@
 
 #include <algorithm>
 #include <atomic>
-#include <chrono>
-#include <condition_variable>
-#include <cstring>
-#include <limits>
 #include <mutex>
-#include <numeric>
 #include <optional>
 #include <span>
 #include <utility>
@@ -39,36 +31,6 @@ using media::MediaTimeOrder;
 using media::MediaTrackDescriptor;
 using media::MediaTrackId;
 using media::MediaTrackKind;
-
-constexpr std::size_t kMaximumSyncCursorSteps{100'000};
-
-[[nodiscard]] std::string describeNSError(NSError* error,
-                                          const char* fallback) {
-  if (error == nil || error.localizedDescription == nil) {
-    return fallback;
-  }
-  const char* text = error.localizedDescription.UTF8String;
-  return text == nullptr ? fallback : std::string(text);
-}
-
-[[nodiscard]] std::optional<MediaTime> exactMediaTime(CMTime time) noexcept {
-  if (!CMTIME_IS_NUMERIC(time) || time.timescale <= 0 || time.epoch != 0 ||
-      (time.flags & kCMTimeFlags_HasBeenRounded) != 0) {
-    return std::nullopt;
-  }
-  return MediaTime{time.value, time.timescale};
-}
-
-[[nodiscard]] MediaTime optionalMediaTime(CMTime time) noexcept {
-  return exactMediaTime(time).value_or(MediaTime{});
-}
-
-[[nodiscard]] std::optional<CMTime> exactCMTime(MediaTime time) noexcept {
-  if (!time.valid()) {
-    return std::nullopt;
-  }
-  return CMTimeMake(time.value, time.timescale);
-}
 
 [[nodiscard]] bool validBinding(
     const NativePreviewBinding& binding) noexcept {
@@ -92,20 +54,10 @@ constexpr std::size_t kMaximumSyncCursorSteps{100'000};
              binding.localPath, binding.descriptor))) {
       return false;
     }
-    const MediaTrackDescriptor* track = media::findMediaTrack(
-        *binding.descriptor, *binding.descriptor->selectedVideo);
-    // Two facts, both shared with the preview lane so neither can admit a
-    // codec the other refuses: the lane must be able to decode it, and the
-    // record requirement is INVERTED for the codecs that carry none, whose only
-    // correct descriptor is an empty record.
-    if (track == nullptr || track->kind != MediaTrackKind::Video ||
-        !track->video.has_value()) {
-      return false;
-    }
-    const media::MediaCodecFacts& facts = media::mediaCodecFacts(track->codec);
-    return facts.avfoundationVideoAdmitted && facts.previewScrubAdmitted &&
-           facts.carriesConfigurationRecord !=
-               track->codecConfiguration.empty();
+    // The shared preview predicate, plus this route's own codec admission.
+    const MediaTrackDescriptor* track = previewableVideoTrack(binding);
+    return track != nullptr &&
+           media::mediaCodecFacts(track->codec).avfoundationVideoAdmitted;
   } catch (...) {
     return false;
   }
@@ -117,126 +69,6 @@ constexpr std::size_t kMaximumSyncCursorSteps{100'000};
          exactNonnegativeTimeWithinDuration(request.target, binding.descriptor->duration);
 }
 
-[[nodiscard]] bool sampleIsKeyFrame(CMSampleBufferRef sample,
-                                    bool* keyFrame) noexcept {
-  if (sample == nullptr || keyFrame == nullptr) {
-    return false;
-  }
-  CFArrayRef attachments =
-      CMSampleBufferGetSampleAttachmentsArray(sample, false);
-  if (attachments == nullptr || CFArrayGetCount(attachments) == 0) {
-    *keyFrame = true;
-    return true;
-  }
-  if (CFArrayGetCount(attachments) != 1) {
-    return false;
-  }
-  CFTypeRef first = CFArrayGetValueAtIndex(attachments, 0);
-  if (first == nullptr || CFGetTypeID(first) != CFDictionaryGetTypeID()) {
-    return false;
-  }
-  CFTypeRef notSync = CFDictionaryGetValue(
-      static_cast<CFDictionaryRef>(first),
-      kCMSampleAttachmentKey_NotSync);
-  if (notSync == nullptr) {
-    *keyFrame = true;
-    return true;
-  }
-  if (CFGetTypeID(notSync) != CFBooleanGetTypeID()) {
-    return false;
-  }
-  *keyFrame = !CFBooleanGetValue(static_cast<CFBooleanRef>(notSync));
-  return true;
-}
-
-[[nodiscard]] CFDataRef configurationAtom(
-    CMFormatDescriptionRef format, MediaCodec codec) noexcept {
-  if (format == nullptr) {
-    return nullptr;
-  }
-  CFDictionaryRef extensions = CMFormatDescriptionGetExtensions(format);
-  if (extensions == nullptr) {
-    return nullptr;
-  }
-  CFTypeRef atomsValue = CFDictionaryGetValue(
-      extensions,
-      kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms);
-  if (atomsValue == nullptr ||
-      CFGetTypeID(atomsValue) != CFDictionaryGetTypeID()) {
-    return nullptr;
-  }
-  // The atom NAME is the shared codec fact, so every admitted codec reads its
-  // own atom rather than an assumed avcC/hvcC.
-  const CFStringRef key = coreMediaConfigurationAtomName(codec);
-  if (key == nullptr) {
-    return nullptr;
-  }
-  CFTypeRef atom = CFDictionaryGetValue(
-      static_cast<CFDictionaryRef>(atomsValue), key);
-  if (atom == nullptr || CFGetTypeID(atom) != CFDataGetTypeID()) {
-    return nullptr;
-  }
-  return static_cast<CFDataRef>(atom);
-}
-
-// This lane re-verifies the live track against the immutable descriptor on
-// purpose; the arithmetic it asks with is the shared classifier, the proof
-// itself stays this lane's own.
-[[nodiscard]] bool previewTransformMatchesDescriptor(
-    CGAffineTransform transform,
-    const media::MediaTrackDescriptor& expected) noexcept {
-  if (!expected.video) {
-    return false;
-  }
-  const std::optional<int> live = quarterTurnDegrees(transform);
-  const std::optional<int> recorded =
-      normalizedQuarterTurn(expected.video->rotationDegrees);
-  return live && recorded && *live == *recorded;
-}
-
-[[nodiscard]] bool formatMatchesTrack(
-    CMFormatDescriptionRef format,
-    const MediaTrackDescriptor& track) noexcept {
-  if (format == nullptr || track.kind != MediaTrackKind::Video ||
-      !track.video.has_value() ||
-      CMFormatDescriptionGetMediaType(format) != kCMMediaType_Video) {
-    return false;
-  }
-  // The live subtype has to name the SAME codec, not the same four-character
-  // code: ProRes is one enumerator over four interchangeable 422-family codes,
-  // so an HQ file's 'apch' description must still match an 'apcn' track.
-  if (media::mediaCodecForCoreMediaType(static_cast<std::uint32_t>(
-          CMFormatDescriptionGetMediaSubType(format))) != track.codec) {
-    return false;
-  }
-  const CMVideoDimensions dimensions = CMVideoFormatDescriptionGetDimensions(
-      static_cast<CMVideoFormatDescriptionRef>(format));
-  if (dimensions.width <= 0 || dimensions.height <= 0 ||
-      static_cast<std::uint32_t>(dimensions.width) !=
-          track.video->codedWidth ||
-      static_cast<std::uint32_t>(dimensions.height) !=
-          track.video->codedHeight) {
-    return false;
-  }
-  // A record-less codec has no atom to borrow or compare, so the record
-  // equality below is vacuous for it and the codec-plus-dimensions comparison
-  // is the whole check. Its descriptor's record is empty by contract, proven at
-  // admission by supportedPreviewTrack.
-  if (!media::mediaCodecFacts(track.codec).carriesConfigurationRecord) {
-    return track.codecConfiguration.empty();
-  }
-  CFDataRef atom = configurationAtom(format, track.codec);
-  if (atom == nullptr || CFDataGetLength(atom) < 0 ||
-      static_cast<std::size_t>(CFDataGetLength(atom)) !=
-          track.codecConfiguration.size()) {
-    return false;
-  }
-  const UInt8* bytes = CFDataGetBytePtr(atom);
-  return bytes != nullptr &&
-         std::memcmp(bytes, track.codecConfiguration.data(),
-                     track.codecConfiguration.size()) == 0;
-}
-
 [[nodiscard]] std::optional<MediaSample> makeMediaSample(
     ScopedSampleBuffer owned, std::uint64_t epoch, MediaTime target,
     const MediaTrackDescriptor& track, const MediaSourceDescriptor& descriptor,
@@ -245,7 +77,9 @@ constexpr std::size_t kMaximumSyncCursorSteps{100'000};
   if (sample == nullptr || !CMSampleBufferIsValid(sample) ||
       !CMSampleBufferDataIsReady(sample) ||
       CMSampleBufferGetNumSamples(sample) != 1 ||
-      !formatMatchesTrack(CMSampleBufferGetFormatDescription(sample), track)) {
+      !videoFormatMatchesTrack(static_cast<CMVideoFormatDescriptionRef>(
+                                   CMSampleBufferGetFormatDescription(sample)),
+                               track, limits)) {
     assignError(error,
                 "preview reader returned an invalid or changed video sample");
     return std::nullopt;
@@ -267,12 +101,9 @@ constexpr std::size_t kMaximumSyncCursorSteps{100'000};
     assignError(error, "preview video sample exceeds its bounded contract");
     return std::nullopt;
   }
-  const auto intervalEnd = media::addMediaTime(*presentation, *duration);
-  const auto endAgainstTarget =
-      intervalEnd ? media::compareMediaTime(*intervalEnd, target)
-                  : std::nullopt;
-  if (!endAgainstTarget.has_value()) {
-    assignError(error, "preview sample interval is not exactly comparable");
+  const auto decodeOnly =
+      accurateVideoDecodeOnly(*presentation, *duration, target, error);
+  if (!decodeOnly) {
     return std::nullopt;
   }
   // Keep the +1 CoreMedia reference in the scope guard until make_shared has
@@ -289,7 +120,7 @@ constexpr std::size_t kMaximumSyncCursorSteps{100'000};
   result.decodeTime = decode;
   result.duration = *duration;
   result.keyFrame = keyFrame;
-  result.decodeOnly = *endAgainstTarget != MediaTimeOrder::Greater;
+  result.decodeOnly = *decodeOnly;
   result.sampleCount = 1;
   result.payload = MediaPayloadLease(std::move(storage));
   if (!media::validateMediaSample(result, descriptor, effective, error)) {
@@ -298,68 +129,12 @@ constexpr std::size_t kMaximumSyncCursorSteps{100'000};
   return result;
 }
 
-struct AsyncLoadState final {
-  std::mutex mutex;
-  std::condition_variable changed;
-  bool complete{false};
-};
-
-[[nodiscard]] bool waitForLoadedValues(
-    id<AVAsynchronousKeyValueLoading> object, NSArray<NSString*>* keys,
-    const std::atomic<bool>& cancelled, std::string* error) {
-  auto state = std::make_shared<AsyncLoadState>();
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
-  [object loadValuesAsynchronouslyForKeys:keys
-                        completionHandler:^{
-                          {
-                            std::lock_guard lock(state->mutex);
-                            state->complete = true;
-                          }
-                          state->changed.notify_all();
-                        }];
-#pragma clang diagnostic pop
-  {
-    std::unique_lock lock(state->mutex);
-    while (!state->complete && !cancelled.load(std::memory_order_acquire)) {
-      state->changed.wait_for(lock, std::chrono::milliseconds(2));
-    }
-  }
-  if (cancelled.load(std::memory_order_acquire)) {
-    assignError(error, "preview asset load was cancelled");
-    return false;
-  }
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
-  for (NSString* key in keys) {
-    NSError* loadError = nil;
-    if ([object statusOfValueForKey:key error:&loadError] !=
-        AVKeyValueStatusLoaded) {
-      if (error != nullptr) {
-        *error = describeNSError(loadError, "preview asset load failed");
-      }
-      return false;
-    }
-  }
-#pragma clang diagnostic pop
-  return true;
-}
-
-[[nodiscard]] MediaTrackId stableTrackId(AVAssetTrack* track,
-                                         MediaTrackId fallback) noexcept {
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
-  const CMPersistentTrackID raw = track.trackID;
-#pragma clang diagnostic pop
-  return raw > 0 ? static_cast<MediaTrackId>(raw) : fallback;
-}
-
 class ProductionAssetContext final {
  public:
   explicit ProductionAssetContext(NativePreviewBinding binding)
       : binding_(std::move(binding)),
-        // validBinding() has already refused any non-AVFoundation context, so
-        // a null here means the standalone cold-load path, never a mismatch.
+        // The production preview always borrows the main source's admitted
+        // asset; it never repeats the asset load behind a scrub gesture.
         shared_(std::dynamic_pointer_cast<const AVFoundationAssetContext>(
             binding_.assetContext)) {}
 
@@ -369,149 +144,33 @@ class ProductionAssetContext final {
     if (ready_) {
       return true;
     }
-    if (shared_ != nullptr) {
-      if (cancelled.load(std::memory_order_acquire) ||
-          !shared_->matchesPreviewBinding(
-              binding_.localPath, binding_.descriptor)) {
-        assignError(error, cancelled.load(std::memory_order_acquire)
-                               ? "preview asset load was cancelled"
-                               : "preview shared asset identity changed");
-        return false;
-      }
-      const AVFoundationAssetContextNativeHandles handles =
-          borrowAVFoundationAssetContextNativeHandles(*shared_);
-      if (!handles.complete()) {
-        assignError(error,
-                    "preview shared asset has no production native handles");
-        return false;
-      }
-      asset_ = (__bridge AVURLAsset*)(const_cast<void*>(handles.asset));
-      videoTrack_ = (__bridge AVAssetTrack*)(
-          const_cast<void*>(handles.selectedVideoTrack));
-      ready_ = asset_ != nil && videoTrack_ != nil;
-      if (!ready_) {
-        assignError(error, "preview shared asset context is incomplete");
-      }
-      return ready_;
+    if (shared_ == nullptr) {
+      assignError(error, "preview has no shared asset context");
+      return false;
     }
-    assetLoadAttempts_.fetch_add(1, std::memory_order_relaxed);
-    const auto begun = std::chrono::steady_clock::now();
-    const auto finishTiming = [this, begun]() noexcept {
-      const auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(
-          std::chrono::steady_clock::now() - begun);
-      const auto nonnegative = std::max<std::int64_t>(0, elapsed.count());
-      assetLoadNanoseconds_.fetch_add(
-          static_cast<std::uint64_t>(nonnegative),
-          std::memory_order_relaxed);
-    };
-
-    @autoreleasepool {
-      if (asset_ == nil) {
-        NSString* path = [NSString
-            stringWithUTF8String:binding_.localPath.string().c_str()];
-        if (path == nil) {
-          finishTiming();
-          assignError(error, "preview media path is not valid UTF-8");
-          return false;
-        }
-        asset_ = [AVURLAsset
-            URLAssetWithURL:[NSURL fileURLWithPath:path]
-                    options:@{
-                      AVURLAssetPreferPreciseDurationAndTimingKey : @YES
-                    }];
-      }
-      NSArray<NSString*>* assetKeys =
-          @[@"playable", @"hasProtectedContent", @"duration", @"tracks"];
-      if (!waitForLoadedValues(asset_, assetKeys, cancelled, error)) {
-        finishTiming();
-        return false;
-      }
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
-      const bool playable = asset_.playable;
-      const bool protectedContent = asset_.hasProtectedContent;
-      const CMTime assetDuration = asset_.duration;
-      NSArray<AVAssetTrack*>* tracks = asset_.tracks;
-#pragma clang diagnostic pop
-      if (!playable || protectedContent) {
-        finishTiming();
-        assignError(error, "preview asset is protected or unplayable");
-        return false;
-      }
-      const auto exactDuration = exactMediaTime(assetDuration);
-      if (!exactDuration.has_value() ||
-          media::compareMediaTime(*exactDuration,
-                                  binding_.descriptor->duration) !=
-              MediaTimeOrder::Equal) {
-        finishTiming();
-        assignError(error, "preview asset duration changed after admission");
-        return false;
-      }
-      AVAssetTrack* selected = nil;
-      AVAssetTrack* firstVideo = nil;
-      std::size_t videoCount = 0;
-      const MediaTrackId selectedId = *binding_.descriptor->selectedVideo;
-      for (AVAssetTrack* track in tracks) {
-        if (![track.mediaType isEqualToString:AVMediaTypeVideo]) {
-          continue;
-        }
-        ++videoCount;
-        if (firstVideo == nil) {
-          firstVideo = track;
-        }
-        if (stableTrackId(track, selectedId) == selectedId) {
-          selected = track;
-        }
-      }
-      if (videoCount != 1 || firstVideo == nil) {
-        finishTiming();
-        assignError(error, "preview asset no longer has one video track");
-        return false;
-      }
-      if (selected == nil) {
-        selected = firstVideo;
-      }
-      NSArray<NSString*>* trackKeys = @[
-        @"formatDescriptions", @"naturalTimeScale", @"timeRange",
-        @"preferredTransform"
-      ];
-      if (!waitForLoadedValues(selected, trackKeys, cancelled, error)) {
-        finishTiming();
-        return false;
-      }
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
-      NSArray* formats = selected.formatDescriptions;
-      const CMTimeRange range = selected.timeRange;
-      const CGAffineTransform transform = selected.preferredTransform;
-#pragma clang diagnostic pop
-      const MediaTrackDescriptor* expected = media::findMediaTrack(
-          *binding_.descriptor, selectedId);
-      if (expected == nullptr || formats.count != 1 ||
-          !CMTIMERANGE_IS_VALID(range) || !exactMediaTime(range.start) ||
-          exactMediaTime(range.start)->value != 0 ||
-          !exactMediaTime(range.duration) ||
-          media::compareMediaTime(*exactMediaTime(range.duration),
-                                  expected->duration) !=
-              MediaTimeOrder::Equal ||
-          // The track's transform must still state the SAME quarter turn the
-          // descriptor recorded at main admission. Identity is not required:
-          // the source admits rotated files.
-          !previewTransformMatchesDescriptor(transform, *expected) ||
-          !formatMatchesTrack(
-              (__bridge CMFormatDescriptionRef)formats.firstObject,
-              *expected)) {
-        finishTiming();
-        assignError(error,
-                    "preview video metadata changed after main admission");
-        return false;
-      }
-      videoTrack_ = selected;
-      ready_ = true;
-      assetLoadsCompleted_.fetch_add(1, std::memory_order_relaxed);
-      finishTiming();
-      return true;
+    if (cancelled.load(std::memory_order_acquire) ||
+        !shared_->matchesPreviewBinding(binding_.localPath,
+                                        binding_.descriptor)) {
+      assignError(error, cancelled.load(std::memory_order_acquire)
+                             ? "preview asset load was cancelled"
+                             : "preview shared asset identity changed");
+      return false;
     }
+    const AVFoundationAssetContextNativeHandles handles =
+        borrowAVFoundationAssetContextNativeHandles(*shared_);
+    if (!handles.complete()) {
+      assignError(error,
+                  "preview shared asset has no production native handles");
+      return false;
+    }
+    asset_ = (__bridge AVURLAsset*)(const_cast<void*>(handles.asset));
+    videoTrack_ = (__bridge AVAssetTrack*)(
+        const_cast<void*>(handles.selectedVideoTrack));
+    ready_ = asset_ != nil && videoTrack_ != nil;
+    if (!ready_) {
+      assignError(error, "preview shared asset context is incomplete");
+    }
+    return ready_;
   }
 
   [[nodiscard]] AVURLAsset* asset() const noexcept { return asset_; }
@@ -538,11 +197,10 @@ class ProductionAssetContext final {
   }
 
   [[nodiscard]] NativePreviewBackendFacts facts() const noexcept {
+    // The asset load belongs to the main source, so the three assetLoad*
+    // facts stay zero.
     return NativePreviewBackendFacts{
-        assetLoadAttempts_.load(std::memory_order_relaxed),
-        assetLoadsCompleted_.load(std::memory_order_relaxed),
-        assetLoadNanoseconds_.load(std::memory_order_relaxed),
-        readersCreated_.load(std::memory_order_relaxed),
+        0, 0, 0, readersCreated_.load(std::memory_order_relaxed),
         readersStarted_.load(std::memory_order_relaxed)};
   }
 
@@ -553,9 +211,6 @@ class ProductionAssetContext final {
   __strong AVURLAsset* asset_{nil};
   __strong AVAssetTrack* videoTrack_{nil};
   bool ready_{false};
-  std::atomic<std::uint64_t> assetLoadAttempts_{0};
-  std::atomic<std::uint64_t> assetLoadsCompleted_{0};
-  std::atomic<std::uint64_t> assetLoadNanoseconds_{0};
   std::atomic<std::uint64_t> readersCreated_{0};
   std::atomic<std::uint64_t> readersStarted_{0};
 };
@@ -591,72 +246,21 @@ class ProductionPreviewGeneration final
         result.error = "preview target or cached asset is invalid";
         return result;
       }
-      // Sample cursors are positioned and report timestamps in the track's own
-      // MEDIA timeline, while the preview target, the asset duration and the
-      // reader time range are all stated in the ASSET (movie) timeline. Every
-      // composition-delayed H.264/HEVC track separates the two by an edit list
-      // whose shift is exactly the reorder offset the encoder introduced
-      // (typically two frames), so the media timeline's earliest presentation
-      // is NOT zero. Walking the cursor against an unmapped asset-time target
-      // finds nothing for any target below that shift, and for every other
-      // target returns a MEDIA time the reader range would consume as an ASSET
-      // time, starting the read late. Map in, walk, map back -- the same
-      // discipline `AVFoundationGeneration::syncStart()` applies on the main
-      // route.
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
-      const CMTime mediaTarget =
-          [track samplePresentationTimeForTrackTime:*target];
-#pragma clang diagnostic pop
-      if (!CMTIME_IS_NUMERIC(mediaTarget)) {
-        result.status = NativePreviewStatus::Unsupported;
-        result.error = "preview target has no exact media-timeline image";
+      CMTime decodeStart = fullSyncStart(track, *target, &cancelled_);
+      if (cancelled_.load(std::memory_order_acquire)) {
+        result.status = NativePreviewStatus::Cancelled;
         return result;
       }
-      const CMTime mediaOffset = CMTimeSubtract(mediaTarget, *target);
-      AVSampleCursor* cursor =
-          [track makeSampleCursorWithPresentationTimeStamp:mediaTarget];
-      if (cursor == nil) {
-        cursor = [track makeSampleCursorAtLastSampleInDecodeOrder];
-      }
-      CMTime decodeStart = kCMTimeInvalid;
-      for (std::size_t step = 0;
-           cursor != nil && step != kMaximumSyncCursorSteps; ++step) {
-        if (cancelled_.load(std::memory_order_acquire)) {
-          result.status = NativePreviewStatus::Cancelled;
-          return result;
-        }
-        // An open-GOP random-access point presents after its own leading
-        // pictures, so stepping back in decode order from one lands on a sync
-        // sample later than the requested target. The bound below rejects that
-        // as unsupported; keep walking instead, so an HEVC preview target that
-        // happens to fall in a CRA's leading window still renders.
-        if (cursor.currentSampleSyncInfo.sampleIsFullSync &&
-            CMTimeCompare(cursor.presentationTimeStamp, mediaTarget) <= 0) {
-          decodeStart =
-              CMTimeSubtract(cursor.presentationTimeStamp, mediaOffset);
-          break;
-        }
-        if ([cursor stepInDecodeOrderByCount:-1] == 0) {
-          break;
-        }
-      }
-      // A container edit list can legitimately put the located random-access
-      // point outside the neutral contract's `0 <= decodeStart <= target`
-      // window at either end: a head trim's walk-back lands on the pre-origin
-      // IDR. Refusing that shape here would fail the scrub preview -- and,
-      // through stopPreviewLaneForTerminal, the COMMIT SEEK behind it -- on
-      // every head-trimmed MP4 whose target precedes the first in-window sync
-      // sample. Both AVFoundation lanes clamp through the one definition.
-      decodeStart = clampedSyncStartWithinTimelineContract(decodeStart, *target);
+      // Refusing a head trim's pre-origin start here would fail the scrub
+      // preview -- and, through stopPreviewLaneForTerminal, the COMMIT SEEK
+      // behind it -- so both AVFoundation lanes clamp through the one window.
+      decodeStart = syncStartWithinTimelineWindow(decodeStart, request_.target);
       // The ceiling bounds the IN-WINDOW preroll, measured from the clamped
       // start, for the reason the main route states: the lead-in before the
       // origin is the container's own and is paid on every open.
       const CMTime preroll = CMTimeSubtract(*target, decodeStart);
       const auto exactStart = exactMediaTime(decodeStart);
-      if (!exactStart.has_value() || exactStart->value < 0 ||
-          media::compareMediaTime(*exactStart, request_.target) ==
-              MediaTimeOrder::Greater) {
+      if (!exactStart) {
         result.status = NativePreviewStatus::Unsupported;
         result.error = "preview could not locate a bounded full-sync start";
         return result;
@@ -692,18 +296,13 @@ class ProductionPreviewGeneration final
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
       const CMTime duration = asset.duration;
 #pragma clang diagnostic pop
-      const CMTime remaining = CMTimeSubtract(duration, decodeStart);
-      const CMTimeRange range = CMTimeRangeMake(decodeStart, remaining);
-      if (!CMTIME_IS_NUMERIC(remaining) ||
-          (remaining.flags & kCMTimeFlags_HasBeenRounded) != 0 ||
-          remaining.epoch != 0 || remaining.timescale <= 0 ||
-          CMTimeCompare(remaining, kCMTimeZero) < 0 ||
-          !CMTIMERANGE_IS_VALID(range)) {
+      const auto range = exactReaderTimeRangeFacts(duration, decodeStart);
+      if (!range) {
         result.status = NativePreviewStatus::Unsupported;
         result.error = "preview reader range is not exact";
         return result;
       }
-      reader.timeRange = range;
+      reader.timeRange = *range;
       {
         std::lock_guard lock(objectsMutex_);
         reader_ = reader;
@@ -905,7 +504,7 @@ AVFoundationPreviewSource::AVFoundationPreviewSource(
 std::unique_ptr<AVFoundationPreviewSource>
 AVFoundationPreviewSource::create(
     NativePreviewBinding binding) noexcept {
-  if (!validBinding(binding)) {
+  if (!validBinding(binding) || binding.assetContext == nullptr) {
     return {};
   }
   try {
@@ -1109,8 +708,10 @@ NativePreviewReadResult AVFoundationPreviewSource::readNext(
       std::string discontinuityError;
       const bool valid =
           track != nullptr && time.has_value() &&
-          (nativeFormat == nullptr || formatMatchesTrack(nativeFormat,
-                                                         *track)) &&
+          (nativeFormat == nullptr ||
+           videoFormatMatchesTrack(
+               static_cast<CMVideoFormatDescriptionRef>(nativeFormat), *track,
+               impl_->binding.limits)) &&
                          media::validateMediaDiscontinuity(
                              discontinuity, *impl_->binding.descriptor,
                              &discontinuityError);
