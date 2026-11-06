@@ -49,6 +49,24 @@ static_assert(!nativeMediaSessionCommitStepAdmitted(CommitPhase::Idle,
 // child that keeps reporting progress; the next pass resumes it.
 constexpr unsigned kWorkerPassBudget = 32;
 
+// How the worker treats one transport result: proceed, resume on a later
+// pass, or fail the operation.
+enum class ChildStep : std::uint8_t { Done, Retry, Failed };
+[[nodiscard]] constexpr ChildStep classify(
+    NativeAudioSessionProgress progress) noexcept {
+  switch (progress) {
+  case NativeAudioSessionProgress::Done:
+    return ChildStep::Done;
+  case NativeAudioSessionProgress::Quiescing:
+  case NativeAudioSessionProgress::WaitingForData:
+    return ChildStep::Retry;
+  case NativeAudioSessionProgress::Invalid:
+  case NativeAudioSessionProgress::Failed:
+    return ChildStep::Failed;
+  }
+  return ChildStep::Failed;
+}
+
 // One always-on stderr line for every terminal native failure, written by
 // publishFailure() itself so no failure site can omit it.
 //
@@ -2066,8 +2084,7 @@ if (authority == nullptr) {
       acceptPublishedCommands();
       return;
     }
-    if (result == NativeAudioSessionProgress::Quiescing ||
-        result == NativeAudioSessionProgress::WaitingForData) {
+    if (classify(result) == ChildStep::Retry) {
       return;
     }
 if (result != NativeAudioSessionProgress::Done) {
@@ -2168,8 +2185,7 @@ if (result != NativeAudioSessionProgress::Done) {
           } else {
             audioProofPending.reset();
           }
-        } else if (result != NativeAudioSessionProgress::Quiescing &&
-                   result != NativeAudioSessionProgress::WaitingForData) {
+        } else if (classify(result) != ChildStep::Retry) {
           failed = true;
         }
       }
@@ -2181,8 +2197,7 @@ if (result != NativeAudioSessionProgress::Done) {
             publishFailure(protocol::FailureReason::AudioOutput, "run/audio"));
         return;
       }
-      if (result == NativeAudioSessionProgress::Quiescing ||
-          result == NativeAudioSessionProgress::WaitingForData) {
+      if (classify(result) == ChildStep::Retry) {
         return;
       }
       if (acknowledgementInserted) {
@@ -2316,8 +2331,7 @@ if (result != NativeAudioSessionProgress::Done) {
       }
       if (result == NativeAudioSessionProgress::Done) {
         gainPending = false;
-      } else if (result != NativeAudioSessionProgress::Quiescing &&
-                 result != NativeAudioSessionProgress::WaitingForData) {
+      } else if (classify(result) != ChildStep::Retry) {
         static_cast<void>(
             publishFailure(protocol::FailureReason::AudioOutput, "gain/audio"));
         return;
@@ -2337,8 +2351,7 @@ if (result != NativeAudioSessionProgress::Done) {
       }
       if (result == NativeAudioSessionProgress::Done) {
         mutedPending = false;
-      } else if (result != NativeAudioSessionProgress::Quiescing &&
-                 result != NativeAudioSessionProgress::WaitingForData) {
+      } else if (classify(result) != ChildStep::Retry) {
         static_cast<void>(
             publishFailure(protocol::FailureReason::AudioOutput, "mute/audio"));
       }
@@ -2387,8 +2400,7 @@ if (result != NativeAudioSessionProgress::Done) {
       acceptPublishedCommands();
       return false;
     }
-    if (progress == NativeAudioSessionProgress::Quiescing ||
-        progress == NativeAudioSessionProgress::WaitingForData) {
+    if (classify(progress) == ChildStep::Retry) {
       return false;
     }
     if (progress != NativeAudioSessionProgress::Done) {
@@ -2871,8 +2883,7 @@ if (result != NativeAudioSessionProgress::Done) {
       acceptPublishedCommands();
       return;
     }
-    if (stopped == NativeAudioSessionProgress::Quiescing ||
-        stopped == NativeAudioSessionProgress::WaitingForData) {
+    if (classify(stopped) == ChildStep::Retry) {
       return;
     }
     if (stopped != NativeAudioSessionProgress::Done) {
