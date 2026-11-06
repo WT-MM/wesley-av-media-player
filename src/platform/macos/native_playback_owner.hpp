@@ -100,7 +100,6 @@ protected:
   virtual std::optional<playback_router::Transition> applyFallbackRunState(const playback_router::Action&) = 0;
   virtual void pruneSourceRecords() = 0;
   virtual void maybeCompleteFallbackStop() = 0;
-  void clearNativeSession() noexcept;
   void retireNativeSession(std::function<void()> continuation = {});
   void abandonNativeSession();
   bool retirementPending() const noexcept;

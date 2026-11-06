@@ -183,12 +183,6 @@ void assignError(std::string* error, const char* message) noexcept {
   return true;
 }
 
-[[nodiscard]] bool supportedRate(double rate,
-                                 std::uint32_t* exactRate) noexcept {
-  return exactRate != nullptr &&
-         nativeAudioSampleRateSupported(rate, exactRate);
-}
-
 // The same whitelist NativeAudioConverter admits by, asked one layer earlier so
 // an inadmissible track produces a clean fallback rather than a converter
 // failure part-way through graph construction.
@@ -244,11 +238,6 @@ void assignError(std::string* error, const char* message) noexcept {
   std::int64_t ceilingFrame = 0;
   return exactFrame(track.duration, sampleRate, &ceilingFrame) &&
          ceilingFrame > 0;
-}
-
-[[nodiscard]] bool supportedLayout(const media::MediaAudioFormat& audio)
-    noexcept {
-  return audioChannelLayoutAdmitted(audio);
 }
 
 [[nodiscard]] bool validCallTable(
@@ -490,8 +479,8 @@ void assignError(std::string* error, const char* message) noexcept {
       track.audio->channels == 0 ||
       track.audio->channels > media::kMaximumDownmixSourceChannels ||
       !track.audio->interleaved || track.audio->framesPerPacket == 0 ||
-      !supportedLayout(*track.audio) ||
-      !supportedRate(track.audio->sampleRate, &sampleRate) ||
+      !audioChannelLayoutAdmitted(*track.audio) ||
+      !nativeAudioSampleRateSupported(track.audio->sampleRate, &sampleRate) ||
       track.codecConfiguration.size() >
           media::MediaSourceLimits::kHardMaximumCodecConfigurationBytes ||
       (media::softwareAudioCodec(track.codec)
@@ -508,11 +497,6 @@ void assignError(std::string* error, const char* message) noexcept {
                          track.duration);
 }
 
-[[nodiscard]] bool sameTimeline(
-    const media::NativeMediaGenerationTimeline& lhs,
-    const media::NativeMediaGenerationTimeline& rhs) noexcept {
-  return lhs == rhs;
-}
 
 // The gain wire admits VLC-style amplification above unity. The ceiling is
 // the render core's own kMaximumGain so the session can never publish a gain
@@ -2231,14 +2215,14 @@ media::NativeMediaConsumerProgress NativeAudioSession::flush(
   }
   if (control.completedFlushRetired == retiredGeneration &&
       control.completedFlushTarget == nextGeneration &&
-      sameTimeline(control.timeline, timeline) &&
+      control.timeline == timeline &&
       control.generation == nextGeneration) {
     return media::NativeMediaConsumerProgress::Done;
   }
   if (control.lifecycle == SessionLifecycle::Flush) {
     if (control.lifecycleRetired != retiredGeneration ||
         control.lifecycleTarget != nextGeneration ||
-        !sameTimeline(control.lifecycleTimeline, timeline)) {
+        control.lifecycleTimeline != timeline) {
       return media::NativeMediaConsumerProgress::StaleGeneration;
     }
   } else {
@@ -2577,53 +2561,10 @@ NativeAudioSessionFacts NativeAudioSession::facts() const noexcept {
   result.outputSuspended =
       control.outputSuspension == OutputSuspension::Suspended;
   result.converter = control.converter.stats();
-  result.converterDrained = result.converter.drained;
-  result.memory.generation = control.generation;
-  result.memory.converterGeneration = result.converter.generation;
-  result.memory.ringGeneration = ring.generation;
-  result.memory.converterRetainedPayloadBytes =
-      result.converter.retainedPayloadBytes;
-  result.memory.peakConverterRetainedPayloadBytes =
-      result.converter.peakRetainedPayloadBytes;
-  result.memory.ringUnreadPcmBytes = ring.unreadPcmBytes;
-  result.memory.peakRingUnreadPcmBytes = ring.peakUnreadPcmBytes;
-  result.memory.generationCoherent =
-      result.memory.ringGeneration == result.memory.generation &&
-      (result.memory.converterRetainedPayloadBytes == 0 ||
-       result.memory.converterGeneration == result.memory.generation);
   if (control.output != nullptr) {
     result.output = control.output->facts();
   }
   return result;
-}
-
-bool NativeAudioSession::resetMemoryHighWater(
-    media::MediaGeneration expectedGeneration) noexcept {
-  if (control_ == nullptr || expectedGeneration == 0) {
-    return false;
-  }
-  NativeAudioSessionControl& control = *control_;
-  if (!control.configured ||
-      control.state != NativeAudioSessionState::Ready ||
-      control.generation != expectedGeneration || control.output == nullptr) {
-    return false;
-  }
-  const NativeAudioConverterStats converter = control.converter.stats();
-  const NativePcmRing::Stats ring = control.ring.stats();
-  const NativeAudioOutputFacts output = control.output->facts();
-  if (converter.generation != expectedGeneration ||
-      ring.generation != expectedGeneration || output.started ||
-      !output.stopped || !output.callbackQuiescent) {
-    return false;
-  }
-
-  // Both generation checks were preflighted under the serialized stopped-owner
-  // contract, so the two noexcept leaf resets cannot partially fail.
-  const bool converterReset =
-      control.converter.resetRetainedPayloadByteHighWater(expectedGeneration);
-  const bool ringReset =
-      control.ring.resetUnreadPcmByteHighWater(expectedGeneration);
-  return converterReset && ringReset;
 }
 
 } // namespace wam::macos

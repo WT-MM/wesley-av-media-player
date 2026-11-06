@@ -63,12 +63,7 @@ void assignError(std::string* error, const char* message) noexcept {
       std::trunc(frequency) != frequency) {
     return false;
   }
-  const auto integral = static_cast<std::uint64_t>(frequency);
-  if (integral == 0 || integral > kMaximumExactDoubleInteger ||
-      static_cast<double>(integral) != frequency) {
-    return false;
-  }
-  *result = integral;
+  *result = static_cast<std::uint64_t>(frequency);
   return true;
 }
 
@@ -151,10 +146,6 @@ std::unique_ptr<NativeMediaSession> createNativeMediaSessionSystem(
     dependencies.hostClock = {
         &readSystemHostTicks, nullptr, ticksPerSecond};
     dependencies.audioUnitCalls = nativeAudioUnitSystemCallTable();
-    // A null injection is the existing production selector: NativeAudioConverter
-    // constructs its private CoreAudioConverterBackend lazily on the session
-    // worker. The factory deliberately does not duplicate that backend.
-    dependencies.audioConverterBackend.reset();
     dependencies.captionFeed = std::move(captionFeed);
 
     std::unique_ptr<NativeMediaSession> session = NativeMediaSession::create(

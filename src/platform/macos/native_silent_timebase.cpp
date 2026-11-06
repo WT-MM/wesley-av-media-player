@@ -1,15 +1,8 @@
 #include "native_silent_timebase.hpp"
 
-#include "media/native_playback_contract.hpp"
-
 #include <cmath>
 
 namespace wam::macos {
-namespace {
-
-namespace protocol = media::native_playback;
-
-}  // namespace
 
 NativeSilentTimebase::NativeSilentTimebase(
     NativeMediaHostClock hostClock) noexcept

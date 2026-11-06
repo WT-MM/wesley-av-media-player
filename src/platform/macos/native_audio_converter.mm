@@ -166,19 +166,6 @@ void saturatingAdd(std::uint64_t &value, std::uint64_t amount) noexcept {
                     distance);
 }
 
-[[nodiscard]] bool supportedRate(double rate,
-                                 std::uint32_t *exactRate) noexcept {
-  return exactRate != nullptr &&
-         nativeAudioSampleRateSupported(rate, exactRate);
-}
-
-// The AudioToolbox format identifier whitelist, stated once for this file and
-// the audio session in core_media_codec_facts.hpp.
-[[nodiscard]] bool supportedCodec(media::MediaCodec codec,
-                                  std::uint32_t formatTag) noexcept {
-  return audioCodecFormatTagAdmitted(codec, formatTag);
-}
-
 // AudioToolbox swallows this many leading frames before it emits anything, so a
 // generation decodes this many fewer frames than its packets declare. It is a
 // property of the decoder, not of the container, which is why it is stated in
@@ -253,11 +240,6 @@ struct ChannelLayoutIdentity {
   std::uint32_t tag{0};
 };
 
-[[nodiscard]] bool
-supportedChannelLayout(const media::MediaAudioFormat &audio) noexcept {
-  return audioChannelLayoutAdmitted(audio);
-}
-
 [[nodiscard]] bool readSupportedChannelLayout(
     const AudioChannelLayout *layout, std::size_t layoutSize,
     std::uint32_t channels, ChannelLayoutIdentity *identity) noexcept {
@@ -282,7 +264,7 @@ supportedChannelLayout(const media::MediaAudioFormat &audio) noexcept {
   candidate.channels = channels;
   candidate.channelLayoutTag = layout->mChannelLayoutTag;
   candidate.channelLayoutPresent = true;
-  if (!supportedChannelLayout(candidate)) {
+  if (!audioChannelLayoutAdmitted(candidate)) {
     return false;
   }
   *identity = {true, layout->mChannelLayoutTag};
@@ -1690,13 +1672,13 @@ bool NativeAudioConverter::configure(const media::MediaTrackDescriptor &track,
   bool candidateCeilingKnown = false;
   if (generation == 0 || state.ring.generation() != generation ||
       track.id == 0 || track.kind != media::MediaTrackKind::Audio ||
-      !track.audio || (!software && !supportedCodec(track.codec, track.audio->formatTag)) ||
+      !track.audio || (!software && !audioCodecFormatTagAdmitted(track.codec, track.audio->formatTag)) ||
       (software && track.audio->formatTag != 0) ||
       track.audio->channels == 0 ||
       track.audio->channels > media::kMaximumDownmixSourceChannels ||
       !track.audio->interleaved || track.audio->framesPerPacket == 0 ||
-      !supportedChannelLayout(*track.audio) ||
-      !supportedRate(track.audio->sampleRate, &candidateSampleRate) ||
+      !audioChannelLayoutAdmitted(*track.audio) ||
+      !nativeAudioSampleRateSupported(track.audio->sampleRate, &candidateSampleRate) ||
       !exactFrame(timeline.presentationFloor, candidateSampleRate,
                   &candidateFloorFrame) ||
       !resolveCeiling(timeline, candidateSampleRate, candidateFloorFrame,

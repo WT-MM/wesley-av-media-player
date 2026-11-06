@@ -159,7 +159,7 @@ void NativePlaybackOwner::samplePlaybackMetrics() {
 NativePlaybackOwner::~NativePlaybackOwner() {
   openPreflight_.stop();
   latestOpenPreflightRequest_ = 0;
-  clearNativeSession();
+  retireNativeSession();
 }
 
 // NativePreparing, NativeStarting and NativeSeeking are the phases whose

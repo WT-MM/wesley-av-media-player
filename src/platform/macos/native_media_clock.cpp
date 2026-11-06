@@ -326,7 +326,6 @@ NativeMediaClockSnapshot NativeMediaClock::sample() const noexcept {
           state.pendingSegment.firstHostTicks;
       snapshot.pendingEndHostTicks = state.pendingSegment.endHostTicks;
       snapshot.pendingMediaStart = state.pendingSegment.mediaStart;
-      snapshot.pendingMediaEnd = state.pendingSegment.mediaEnd;
       if (hostTicks >= state.pendingSegment.firstHostTicks) {
         selected = &state.pendingSegment;
       }
@@ -359,7 +358,6 @@ NativeMediaClockSnapshot NativeMediaClock::sample() const noexcept {
     snapshot.segmentEndMediaSeconds = selected->mediaEnd;
     snapshot.rate = segment_rate;
     snapshot.segmentBounded = true;
-    snapshot.segmentExhausted = hostTicks >= selected->endHostTicks;
     snapshot.mediaSeconds = evaluateLinear(
         selected->mediaStart, selected->firstHostTicks, hostTicks,
         host_clock_.ticksPerSecond, segment_rate, true,
@@ -952,7 +950,7 @@ bool NativeMediaClock::runAtHostTicks(
   next.generation = current.generation;
   next.anchorHostTicks = hostTicks;
   next.anchorMediaSeconds = current.anchorMediaSeconds;
-  if (!current.running) next.exactAnchor = current.exactAnchor;
+  next.exactAnchor = current.exactAnchor;
   next.rate = rate;
   next.valid = true;
   next.running = true;

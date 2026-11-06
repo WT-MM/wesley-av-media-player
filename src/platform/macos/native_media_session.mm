@@ -280,7 +280,6 @@ class NativeV1AdmissionSource final : public media::MediaSource, public media::A
     if (!source_->armOperation(generation)) {
       return false;
     }
-    armedGeneration_.store(generation, std::memory_order_release);
     if (cancellation_->generation.load(std::memory_order_acquire) ==
         generation) {
       source_->requestCancel(generation);
@@ -380,7 +379,6 @@ class NativeV1AdmissionSource final : public media::MediaSource, public media::A
   std::unique_ptr<media::MediaSource> source_;
   std::shared_ptr<NativeMediaSessionCancellation> cancellation_;
   std::shared_ptr<NativeTrackedVideoOutput> output_;
-  std::atomic<MediaGeneration> armedGeneration_{0};
 };
 
 struct NativeMediaSessionChildLifetime final {
@@ -1024,7 +1022,6 @@ struct NativeMediaSession::Impl final {
       }
       publicActiveGeneration = command.targetGeneration.value;
       requestedRunStamp = command.stamp;
-      issuedRunStamp = command.stamp;
       appliedRunStamp = command.stamp;
       publicRequestedRunStamp = command.stamp;
       publicIssuedRunStamp = command.stamp;
@@ -1113,8 +1110,7 @@ struct NativeMediaSession::Impl final {
     }
     liveIssueActive = true;
     if (runIssue != nullptr) {
-      issuedRunStamp = runIssue->stamp;
-      publicIssuedRunStamp = issuedRunStamp;
+      publicIssuedRunStamp = runIssue->stamp;
     }
     return true;
   }
@@ -2005,9 +2001,6 @@ struct NativeMediaSession::Impl final {
       }
       if (progress == NativePreviewFramePumpProgress::Progress) {
         continue;
-      }
-      if (progress == NativePreviewFramePumpProgress::Idle) {
-        return;
       }
       return;
     }
@@ -3827,7 +3820,6 @@ if (result != NativeAudioSessionProgress::Done) {
   MediaGeneration directVideoRetiredGeneration{0};
   MediaGeneration directAudioRetiredGeneration{0};
   protocol::Stamp requestedRunStamp{};
-  protocol::Stamp issuedRunStamp{};
   protocol::Stamp appliedRunStamp{};
   protocol::Stamp endingStamp{};
   std::optional<protocol::SetRunState> audioProofPending;
