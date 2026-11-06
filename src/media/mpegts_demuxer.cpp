@@ -438,11 +438,6 @@ struct AssetState {
   std::int64_t endTick{0};
   std::uint16_t programNumber{0};
   std::uint16_t pcrPid{kNullPid};
-  // Program numbers of the other services in the multiplex, in PAT order. A
-  // seam, not a feature: nothing consumes it yet, and a program picker is the
-  // named deferral it exists for.
-  std::vector<std::uint16_t> otherPrograms;
-  bool programSelectionComplete{false};
   TrackFacts video{};
   TrackFacts audio{};
   // Exact nominal video frame extent in 90 kHz ticks.
@@ -998,13 +993,6 @@ MpegTsFraming MpegTsPreparedAsset::framing() const noexcept {
 }
 std::uint16_t MpegTsPreparedAsset::programNumber() const noexcept {
   return impl_->state->programNumber;
-}
-std::span<const std::uint16_t>
-MpegTsPreparedAsset::otherPrograms() const noexcept {
-  return impl_->state->otherPrograms;
-}
-bool MpegTsPreparedAsset::programSelectionComplete() const noexcept {
-  return impl_->state->programSelectionComplete;
 }
 const LatmStreamMuxConfig*
 MpegTsPreparedAsset::latmStreamMuxConfig() const noexcept {
@@ -1744,31 +1732,20 @@ namespace {
 struct ProgramScanResult {
   ProgramAssociationTable pat{};
   ProgramMapTable pmt{};
-  // Programs whose PMT was read but which lost the selection. Retained so the
-  // verdict can NAME what it passed over instead of silently preferring one.
-  std::array<std::uint16_t, kMaximumPrograms> rejectedPrograms{};
-  std::uint8_t rejectedProgramCount{0};
   std::uint8_t pmtCount{0};      // PMTs actually parsed in the bounded scan
   bool hasPat{false};
   bool hasPmt{false};
-  bool selectedIsComplete{false};  // chosen program had routable video AND audio
 };
 
 // The selection rule itself lives in mpegts_packet.hpp (ProgramGrade,
 // gradeProgram) so it can be tested against a PMT directly rather than only
 // through a whole file. What lives here is the SEARCH the rule drives.
-//
-// The old rule -- first program in PAT order carrying a video-KIND stream --
-// picked a service that might have no audio at all, or audio in a codec this
-// player cannot carry, while a complete service sat two entries later in the
-// same PAT. The user heard silence and nothing named the choice.
 
 // One bounded forward pass that collects the PAT and the best program's PMT.
 //
-// It can no longer stop at the first video-bearing program: deciding between
-// grades means every program's PMT has to be read, so the pass runs to the
-// bound unless it finds a Complete program at the FIRST PAT entry, which
-// nothing later can beat under the rule above.
+// Deciding between grades means every program's PMT has to be read, so the
+// pass runs to the bound unless it finds a Complete program at the FIRST PAT
+// entry, which nothing later can beat.
 [[nodiscard]] MpegTsDemuxError
 scanPrograms(ReadWindow& window, const MpegTsFraming& framing,
              CancellationToken cancellation, ProgramScanResult& out) noexcept {
@@ -1847,23 +1824,14 @@ scanPrograms(ReadWindow& window, const MpegTsFraming& framing,
       // Strictly greater, so PAT order breaks every tie: an equally-graded
       // program later in the PAT never displaces one already chosen.
       if (grade > bestGrade) {
-        if (out.hasPmt && out.rejectedProgramCount < kMaximumPrograms) {
-          out.rejectedPrograms[out.rejectedProgramCount++] =
-              out.pmt.programNumber;
-        }
         out.pmt = table;
         out.hasPmt = true;
         bestGrade = grade;
         bestIndex = i;
-      } else if (grade != ProgramGrade::None &&
-                 out.rejectedProgramCount < kMaximumPrograms) {
-        out.rejectedPrograms[out.rejectedProgramCount++] = table.programNumber;
       }
       // Nothing later in the PAT can beat a Complete program at entry zero, so
-      // the common single-program and well-ordered-multiplex cases still stop
-      // as early as they ever did.
+      // the common single-program and well-ordered-multiplex cases stop early.
       if (bestGrade == ProgramGrade::Complete && bestIndex == 0) {
-        out.selectedIsComplete = true;
         return MpegTsDemuxError::None;
       }
       break;
@@ -1879,7 +1847,6 @@ scanPrograms(ReadWindow& window, const MpegTsFraming& framing,
   if (!out.hasPmt) {
     return MpegTsDemuxError::ProgramSelection;
   }
-  out.selectedIsComplete = bestGrade == ProgramGrade::Complete;
   return MpegTsDemuxError::None;
 }
 
@@ -2390,15 +2357,6 @@ MpegTsPrepareOutcome prepareMpegTs(std::shared_ptr<SeekableByteReader> reader,
     }
     state->programNumber = programs.pmt.programNumber;
     state->pcrPid = programs.pmt.pcrPid;
-    // A multiplex is not a media file, and choosing inside one is a decision
-    // the user never got to make. Retain what was passed over so the choice is
-    // inspectable now and a program picker has its seam later.
-    for (std::uint8_t i = 0; i < programs.rejectedProgramCount &&
-                             i < programs.rejectedPrograms.size();
-         ++i) {
-      state->otherPrograms.push_back(programs.rejectedPrograms[i]);
-    }
-    state->programSelectionComplete = programs.selectedIsComplete;
 
     // --- stream selection --------------------------------------------------
     MediaTrackInventory inventory{};

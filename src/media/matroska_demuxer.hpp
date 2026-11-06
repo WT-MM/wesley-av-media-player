@@ -201,9 +201,6 @@ private:
   [[nodiscard]] MatroskaCursorReadResult
   readNextRaw(CancellationToken cancellation) noexcept;
 
-public:
-
- private:
   struct Impl;
   explicit MatroskaCursor(std::unique_ptr<Impl> impl) noexcept;
   std::unique_ptr<Impl> impl_;

@@ -25,7 +25,7 @@ with tempfile.TemporaryDirectory(prefix='wam-avformat-mutants-',dir='/private/tm
  ('file_growth',cursor,'if (!s.sameFile())','if (false)','fragmented.mp4'),
  ('preview_file_identity',source,'if (reader_->cursor.identity() != context_->identity)','if (false)','fragmented.mp4'),
  ('preview_decoder_stage','src/platform/macos/native_preview_frame_lane.mm','using PreviewDecoder=VideoDecodeLane;','using PreviewDecoder=VideoToolboxDecoder;','asp-preview'),
- ('fragment_recovery_routing',routing,'media::LibavformatCursor::requiresTailRecovery(path,cancellation)','false','routed-tail'),
+ ('fragment_recovery_routing',routing,'media::LibavformatCursor::requiresExactDemuxTimeline(path, cancellation)','false','routed-tail'),
  ('admission_handoff',routing,'outcome=sources_[3]->openLocalFile(path,options,generation);','outcome.error="HandoffRemoved";','header-stripped.mkv'),
  ]
  for name,relative,before,after,specimen in mutants:
