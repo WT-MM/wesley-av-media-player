@@ -1,8 +1,5 @@
 #include "platform/macos/matroska_sample_builder.hpp"
 
-#include "platform/macos/native_video_codec_capability.hpp"
-#include "platform/macos/native_video_color.hpp"
-#include "platform/macos/software_vp8_decoder.hpp"
 
 #import <CoreMedia/CoreMedia.h>
 
@@ -60,154 +57,6 @@ std::optional<media::MediaTime> matroskaTickTime(
   return media::MediaTime{numerator, static_cast<std::int32_t>(denominator)};
 }
 
-CMVideoFormatDescriptionRef createMatroskaVideoFormatDescription(
-    const MediaTrackDescriptor& track) noexcept {
-  if (!track.video || track.kind != MediaTrackKind::Video ||
-      track.codecConfiguration.empty() ||
-      track.codecConfiguration.size() >
-          static_cast<std::size_t>(std::numeric_limits<CFIndex>::max())) {
-    return nullptr;
-  }
-  CMVideoCodecType codec = 0;
-  CFStringRef atomName = nullptr;
-  if (track.codec == MediaCodec::H264 &&
-      track.codecConfigurationKind == MediaCodecConfigurationKind::AvcC) {
-    codec = kCMVideoCodecType_H264;
-    atomName = CFSTR("avcC");
-  } else if (track.codec == MediaCodec::Hevc &&
-             track.codecConfigurationKind ==
-                 MediaCodecConfigurationKind::HvcC) {
-    codec = kCMVideoCodecType_HEVC;
-    atomName = CFSTR("hvcC");
-  } else if (track.codec == MediaCodec::Av1 &&
-             track.codecConfigurationKind ==
-                 MediaCodecConfigurationKind::Av1C &&
-             nativeVideoToolboxSupportsAv1()) {
-    codec = kCMVideoCodecType_AV1;
-    atomName = CFSTR("av1C");
-  } else if (track.codec == MediaCodec::Vp9 &&
-             track.codecConfigurationKind ==
-                 MediaCodecConfigurationKind::VpcC &&
-             nativeVp9StageAdmitted()) {
-    // Matroska rarely carries VP9 CodecPrivate, so the demuxer synthesizes the
-    // 12-byte vpcC from the keyframe bitstream. The non-empty guard above
-    // therefore still holds for VP9, and the record is handed to CoreMedia
-    // verbatim exactly like avcC/hvcC.
-    codec = kCMVideoCodecType_VP9;
-    atomName = CFSTR("vpcC");
-  } else if (track.codec == MediaCodec::Vp8 &&
-             track.codecConfigurationKind ==
-                 MediaCodecConfigurationKind::VpcC &&
-             SoftwareVp8Decoder::available()) {
-    // VP8 has no CoreMedia codec type and no Apple decoder. This description
-    // exists so the compressed access unit travels the same CMSampleBuffer
-    // carriage every other codec uses; NativeVideoConsumer keys the libvpx
-    // stage on exactly this four-character code, and VideoToolbox refuses it,
-    // so the sample can never reach a decompression session. The 12-byte
-    // vpcC the demuxer synthesized from the key frame rides along unread --
-    // libvpx needs no configuration record at all.
-    codec = kWamVideoCodecTypeVp8;
-    atomName = CFSTR("vpcC");
-  } else if (track.codec == MediaCodec::Mpeg4Visual &&
-             track.codecConfigurationKind ==
-                 MediaCodecConfigurationKind::CodecPrivate) {
-    // MPEG-4 Part 2 Simple Profile. The demuxer already turned the Matroska
-    // CodecPrivate headers into the ES_Descriptor CoreMedia demands, so the
-    // record travels verbatim exactly like avcC and hvcC. Measured: the raw
-    // headers in band, and an ES_Descriptor without the esds box's four
-    // version/flags bytes, both fail VTDecompressionSessionCreate with
-    // kVTVideoDecoderBadDataErr; this shape decodes.
-    codec = kCMVideoCodecType_MPEG4Video;
-    atomName = CFSTR("esds");
-  } else {
-    return nullptr;
-  }
-  const std::uint32_t width = track.video->codedWidth;
-  const std::uint32_t height = track.video->codedHeight;
-  const auto dimensionCeiling =
-      static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max());
-  if (width == 0 || height == 0 || width > dimensionCeiling ||
-      height > dimensionCeiling) {
-    return nullptr;
-  }
-
-  CFDataRef atomData = CFDataCreate(
-      kCFAllocatorDefault,
-      reinterpret_cast<const UInt8*>(track.codecConfiguration.data()),
-      static_cast<CFIndex>(track.codecConfiguration.size()));
-  if (atomData == nullptr) {
-    return nullptr;
-  }
-  const void* atomKeys[] = {atomName};
-  const void* atomValues[] = {atomData};
-  CFDictionaryRef atoms = CFDictionaryCreate(
-      kCFAllocatorDefault, atomKeys, atomValues, 1,
-      &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
-  CFDictionaryRef extensions = nullptr;
-  if (atoms != nullptr) {
-    CFMutableDictionaryRef mutableExtensions = CFDictionaryCreateMutable(
-        kCFAllocatorDefault, 4, &kCFTypeDictionaryKeyCallBacks,
-        &kCFTypeDictionaryValueCallBacks);
-    if (mutableExtensions != nullptr) {
-      CFDictionarySetValue(
-          mutableExtensions,
-          kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms, atoms);
-      // The colour description. Without these three keys VideoToolbox has
-      // nothing to attach to the decoded surface, and a PQ stream renders as
-      // if it were SDR -- washed out.
-      //
-      // Each key is set only when the fact is MODELLED and not Unknown.
-      // Omitting a key is how "untagged" is spelled to CoreMedia, so an
-      // untagged Matroska file gets a description with no colour keys at all.
-      applyColorExtensions(mutableExtensions, track.video->colorPrimaries,
-                           track.video->transferFunction,
-                           track.video->matrixCoefficients);
-      // Match the container's exact display geometry at the CoreMedia boundary
-      // too, so the decoded surface and the window use the same sample aspect.
-      const std::int64_t horizontal = track.video->pixelAspectNumerator;
-      const std::int64_t vertical = track.video->pixelAspectDenominator;
-      if (horizontal != vertical) {
-        CFNumberRef h = CFNumberCreate(kCFAllocatorDefault, kCFNumberSInt64Type, &horizontal);
-        CFNumberRef v = CFNumberCreate(kCFAllocatorDefault, kCFNumberSInt64Type, &vertical);
-        const void* keys[] = {kCMFormatDescriptionKey_PixelAspectRatioHorizontalSpacing,
-                              kCMFormatDescriptionKey_PixelAspectRatioVerticalSpacing};
-        const void* values[] = {h, v};
-        CFDictionaryRef aspect = h && v ? CFDictionaryCreate(kCFAllocatorDefault,
-            keys, values, 2, &kCFTypeDictionaryKeyCallBacks,
-            &kCFTypeDictionaryValueCallBacks) : nullptr;
-        if (h) CFRelease(h);
-        if (v) CFRelease(v);
-        if (!aspect) {
-          CFRelease(mutableExtensions);
-          CFRelease(atoms);
-          CFRelease(atomData);
-          return nullptr;
-        }
-        CFDictionarySetValue(mutableExtensions,
-                             kCMFormatDescriptionExtension_PixelAspectRatio, aspect);
-        CFRelease(aspect);
-      }
-      extensions = mutableExtensions;
-    }
-  }
-  CMVideoFormatDescriptionRef description = nullptr;
-  if (extensions != nullptr) {
-    const OSStatus status = CMVideoFormatDescriptionCreate(
-        kCFAllocatorDefault, codec, static_cast<std::int32_t>(width),
-        static_cast<std::int32_t>(height), extensions, &description);
-    if (status != noErr && description != nullptr) {
-      CFRelease(description);
-      description = nullptr;
-    }
-    CFRelease(extensions);
-  }
-  if (atoms != nullptr) {
-    CFRelease(atoms);
-  }
-  CFRelease(atomData);
-  return description;
-}
-
 MatroskaSampleBuildStatus buildMatroskaCompressedSampleBuffer(
     const MatroskaSampleBuildInputs& inputs,
     const MatroskaCompressedSample& sample, ScopedSampleBuffer* out,
@@ -229,35 +78,13 @@ MatroskaSampleBuildStatus buildMatroskaCompressedSampleBuffer(
     return MatroskaSampleBuildStatus::Failed;
   }
 
-  // The CoreMedia block is allocated first and the demuxer writes payload
-  // bytes straight into it, so each byte is copied exactly once. The demuxer
-  // takes an exactly sized destination span and allocates nothing, so the
-  // block's own memory is a legal destination; do not stage through a scratch
-  // vector. kCMBlockBufferAssureMemoryNowFlag makes the backing store real
-  // before the data pointer is taken.
+  // The demuxer writes payload bytes straight into the CoreMedia block, so
+  // each byte is copied exactly once; do not stage through a scratch vector.
   CMBlockBufferRef block = nullptr;
-  OSStatus status = CMBlockBufferCreateWithMemoryBlock(
-      kCFAllocatorDefault, nullptr, bytes, kCFAllocatorDefault, nullptr, 0,
-      bytes, kCMBlockBufferAssureMemoryNowFlag, &block);
-  if (status != noErr || block == nullptr) {
-    if (block != nullptr) {
-      CFRelease(block);
-    }
-    assignError(error, "matroska payload block allocation failed");
+  std::span<std::byte> destination;
+  if (!allocateSampleBlock(bytes, "matroska", &block, &destination, error)) {
     return MatroskaSampleBuildStatus::Failed;
   }
-  std::size_t lengthAtOffset = 0;
-  std::size_t totalLength = 0;
-  char* raw = nullptr;
-  status = CMBlockBufferGetDataPointer(block, 0, &lengthAtOffset, &totalLength,
-                                       &raw);
-  if (status != noErr || raw == nullptr || lengthAtOffset < bytes) {
-    CFRelease(block);
-    assignError(error, "matroska payload block is not contiguous");
-    return MatroskaSampleBuildStatus::Failed;
-  }
-  const std::span<std::byte> destination(reinterpret_cast<std::byte*>(raw),
-                                         bytes);
   MediaRefusalClass copyError = MediaRefusalClass::None;
   if (!inputs.asset->copyRanges({sample.frames.data(), frameCount}, destination,
                                 inputs.cancellation, &copyError)) {
@@ -343,49 +170,20 @@ MatroskaSampleBuildStatus buildMatroskaCompressedSampleBuffer(
       timing.duration = CMTimeMake(1, inputs.audioSampleRate);
     }
   }
-  CMSampleBufferRef created = nullptr;
-  status = CMSampleBufferCreateReady(kCFAllocatorDefault, block, inputs.format,
-                                     numSamples, 1, &timing, sizeEntries,
-                                     sizes.data(), &created);
-  CFRelease(block);
-  if (status != noErr || created == nullptr) {
-    if (created != nullptr) {
-      CFRelease(created);
-    }
-    assignError(error, "matroska sample buffer creation failed");
-    return MatroskaSampleBuildStatus::Failed;
-  }
-  ScopedSampleBuffer owned(created);
-  if (CMSampleBufferGetNumSamples(created) != numSamples ||
-      !CMSampleBufferDataIsReady(created) || !CMSampleBufferIsValid(created)) {
-    assignError(error, "matroska sample buffer did not admit its access units");
-    return MatroskaSampleBuildStatus::Failed;
-  }
-
+  // Video only: Matroska states every audio block as non-key by convention,
+  // not because the unit depends on another one.
+  CompressedSampleShape shape;
+  shape.timing = timing;
+  shape.sampleCount = numSamples;
+  shape.sizeEntryCount = sizeEntries;
+  shape.sizes = sizes.data();
   if (inputs.video) {
-    // Video only. The demuxer reports keyFrame == false for every AAC access
-    // unit because Matroska states audio blocks that way by convention, not
-    // because the unit depends on another one; marking audio NotSync would
-    // publish a decode dependency the codec does not have. The audio
-    // attachment array is therefore left exactly as CoreMedia created it,
-    // apart from the one-shot playout proof the source states separately.
-    CFArrayRef attachments =
-        CMSampleBufferGetSampleAttachmentsArray(created, true);
-    if (attachments == nullptr || CFArrayGetCount(attachments) != 1) {
-      assignError(error, "matroska video sample has no sync attachment slot");
-      return MatroskaSampleBuildStatus::Failed;
-    }
-    auto* attachment = static_cast<CFMutableDictionaryRef>(
-        const_cast<void*>(CFArrayGetValueAtIndex(attachments, 0)));
-    CFDictionarySetValue(attachment, kCMSampleAttachmentKey_NotSync,
-                         sample.keyFrame ? kCFBooleanFalse : kCFBooleanTrue);
-    if (sample.keyFrame) {
-      CFDictionarySetValue(attachment, kCMSampleAttachmentKey_DependsOnOthers,
-                           kCFBooleanFalse);
-    }
+    shape.videoKeyFrame = sample.keyFrame;
   }
-
-  *out = std::move(owned);
+  if (!buildCompressedSampleBuffer(block, inputs.format, shape, "matroska",
+                                   out, error)) {
+    return MatroskaSampleBuildStatus::Failed;
+  }
   return MatroskaSampleBuildStatus::Built;
 }
 

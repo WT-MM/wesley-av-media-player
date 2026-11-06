@@ -750,7 +750,7 @@ void testPromotedSampleBuilders() {
     return;
   }
   CMVideoFormatDescriptionRef format =
-      wam::macos::createMatroskaVideoFormatDescription(*track);
+      wam::macos::createVideoFormatDescription(*track);
   expect(format != nullptr,
          "the promoted format factory builds a description for avcC");
   if (format == nullptr) {
@@ -768,7 +768,7 @@ void testPromotedSampleBuilders() {
   auto anamorphic = *track;
   anamorphic.video->pixelAspectNumerator = 481;
   anamorphic.video->pixelAspectDenominator = 480;
-  auto aspectFormat = wam::macos::createMatroskaVideoFormatDescription(anamorphic);
+  auto aspectFormat = wam::macos::createVideoFormatDescription(anamorphic);
   expect(aspectFormat != nullptr, "anamorphic format is built");
   if (aspectFormat) {
     const auto aspect = static_cast<CFDictionaryRef>(CMFormatDescriptionGetExtension(

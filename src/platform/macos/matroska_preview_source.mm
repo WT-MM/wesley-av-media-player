@@ -217,7 +217,7 @@ std::unique_ptr<MatroskaPreviewSource> MatroskaPreviewSource::create(
       return {};
     }
     CMVideoFormatDescriptionRef format =
-        createMatroskaVideoFormatDescription(*track);
+        createVideoFormatDescription(*track);
     if (format == nullptr) {
       return {};
     }

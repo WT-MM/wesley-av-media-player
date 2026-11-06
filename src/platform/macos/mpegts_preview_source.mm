@@ -205,7 +205,7 @@ std::unique_ptr<MpegTsPreviewSource> MpegTsPreviewSource::create(
       return {};
     }
     CMVideoFormatDescriptionRef format =
-        createMpegTsVideoFormatDescription(*track);
+        createVideoFormatDescription(*track);
     if (format == nullptr) {
       return {};
     }

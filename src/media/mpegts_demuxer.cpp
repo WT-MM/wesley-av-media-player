@@ -2366,7 +2366,7 @@ MpegTsPrepareOutcome prepareMpegTs(std::shared_ptr<SeekableByteReader> reader,
       // The flag's own contract (video_codec_configuration.hpp) is that a
       // route may turn it on only if it also carries the colour description
       // onto the CMVideoFormatDescription it synthesizes. This route does:
-      // createMpegTsVideoFormatDescription writes ColorPrimaries,
+      // createVideoFormatDescription (core_media_carriage) writes ColorPrimaries,
       // TransferFunction and YCbCrMatrix extensions from exactly the facts
       // mapped below. Turning this on WITHOUT that would hand VideoToolbox a
       // PQ stream with nothing to attach to the surface, which renders as

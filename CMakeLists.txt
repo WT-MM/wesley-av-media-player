@@ -564,6 +564,8 @@ if(APPLE)
     set(WAM_QUICKLOOK_FRAME_SOURCES
       packaging/quicklook/wam_thumbnail_frame.hpp
       packaging/quicklook/wam_thumbnail_frame.mm
+      src/platform/macos/core_media_carriage.hpp
+      src/platform/macos/core_media_carriage.mm
       src/platform/macos/matroska_sample_builder.hpp
       src/platform/macos/matroska_sample_builder.mm
       src/platform/macos/mpegts_sample_builder.hpp
@@ -1573,6 +1575,8 @@ if(BUILD_TESTING)
         src/platform/macos/matroska_media_source.mm
         src/platform/macos/matroska_preview_source.hpp
         src/platform/macos/matroska_preview_source.mm
+        src/platform/macos/core_media_carriage.hpp
+        src/platform/macos/core_media_carriage.mm
         src/platform/macos/matroska_sample_builder.hpp
         src/platform/macos/matroska_sample_builder.mm
         # native_preview_source.mm switches exhaustively on backendKind, so
@@ -1622,6 +1626,8 @@ if(BUILD_TESTING)
         src/platform/macos/matroska_asset_context.cpp
         src/platform/macos/matroska_media_source.hpp
         src/platform/macos/matroska_media_source.mm
+        src/platform/macos/core_media_carriage.hpp
+        src/platform/macos/core_media_carriage.mm
         src/platform/macos/matroska_sample_builder.hpp
         src/platform/macos/matroska_sample_builder.mm)
       target_include_directories(
@@ -1647,6 +1653,8 @@ if(BUILD_TESTING)
         src/platform/macos/mpegts_asset_context.cpp
         src/platform/macos/mpegts_media_source.hpp
         src/platform/macos/mpegts_media_source.mm
+        src/platform/macos/core_media_carriage.hpp
+        src/platform/macos/core_media_carriage.mm
         src/platform/macos/mpegts_sample_builder.hpp
         src/platform/macos/mpegts_sample_builder.mm)
       target_include_directories(
@@ -1683,6 +1691,8 @@ if(BUILD_TESTING)
         src/platform/macos/matroska_asset_context.cpp
         src/platform/macos/matroska_preview_source.hpp
         src/platform/macos/matroska_preview_source.mm
+        src/platform/macos/core_media_carriage.hpp
+        src/platform/macos/core_media_carriage.mm
         src/platform/macos/matroska_sample_builder.hpp
         src/platform/macos/matroska_sample_builder.mm
         src/platform/macos/avfoundation_asset_context.hpp
@@ -1717,6 +1727,8 @@ if(BUILD_TESTING)
         src/platform/macos/matroska_asset_context.cpp
         src/platform/macos/matroska_media_source.hpp
         src/platform/macos/matroska_media_source.mm
+        src/platform/macos/core_media_carriage.hpp
+        src/platform/macos/core_media_carriage.mm
         src/platform/macos/matroska_sample_builder.hpp
         src/platform/macos/matroska_sample_builder.mm
         src/platform/macos/mpegts_asset_context.hpp
@@ -1785,6 +1797,8 @@ if(BUILD_TESTING)
         src/platform/macos/matroska_asset_context.cpp
         src/platform/macos/matroska_preview_source.hpp
         src/platform/macos/matroska_preview_source.mm
+        src/platform/macos/core_media_carriage.hpp
+        src/platform/macos/core_media_carriage.mm
         src/platform/macos/matroska_sample_builder.hpp
         src/platform/macos/matroska_sample_builder.mm
         src/platform/macos/mpegts_asset_context.hpp

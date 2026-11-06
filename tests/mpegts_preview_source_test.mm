@@ -500,7 +500,7 @@ void testPromotedSampleBuilders(const Fixture& fixture) {
     return;
   }
   CMVideoFormatDescriptionRef format =
-      wam::macos::createMpegTsVideoFormatDescription(*track);
+      wam::macos::createVideoFormatDescription(*track);
   expect(format != nullptr,
          "the promoted format factory builds a description for the admitted "
          "video track");
