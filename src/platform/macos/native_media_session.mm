@@ -45,9 +45,8 @@ static_assert(nativeMediaSessionCommitStepAdmitted(CommitPhase::Idle,
 static_assert(!nativeMediaSessionCommitStepAdmitted(CommitPhase::Idle,
                                                     CommitPhase::Idle));
 
-// One always-on stderr line for a terminal native failure. Called at the open,
-// start and steady-state failure sites; other failures (clock, audio output)
-// publish through publishFailure() without it.
+// One always-on stderr line for every terminal native failure, written by
+// publishFailure() itself so no failure site can omit it.
 //
 // protocol::FailureReason is a deliberately small vocabulary: every terminal
 // dispatcher failure collapses onto Protocol (open-status Failed) or Decode (a
@@ -768,8 +767,9 @@ struct NativeMediaSession::Impl final {
   }
 
   [[nodiscard]] bool publishFailure(
-      protocol::FailureReason reason,
+      protocol::FailureReason reason, const char* stage,
       std::optional<protocol::Stamp> exactStamp = std::nullopt) noexcept {
+    logNativeFailure(stage, reason, dispatcher.get());
     NativeMediaSessionDiagnostic diagnostic;
     diagnostic.reason = reason;
     if (dispatcher) diagnostic.refusal = dispatcher->stats().refusal;
@@ -1834,7 +1834,7 @@ struct NativeMediaSession::Impl final {
       }
       stopFailurePublished = true;
       publishWorkerFacts();
-      static_cast<void>(publishFailure(protocol::FailureReason::Stop,
+      static_cast<void>(publishFailure(protocol::FailureReason::Stop, "stop",
                                        stopCommand.stamp));
       return;
     }
@@ -1856,9 +1856,7 @@ struct NativeMediaSession::Impl final {
     endLiveIssue();
     if (!graphBuilt) {
       prepareFailed = true;
-      logNativeFailure("open/graph", protocol::FailureReason::Preparation,
-                       dispatcher.get());
-      static_cast<void>(publishFailure(protocol::FailureReason::Preparation,
+      static_cast<void>(publishFailure(protocol::FailureReason::Preparation, "open/graph",
                                        prepareCommand.stamp));
       return;
     }
@@ -1884,9 +1882,7 @@ struct NativeMediaSession::Impl final {
     case NativeVideoConsumerArmProgress::StaleGeneration:
 case NativeVideoConsumerArmProgress::Failed:
       prepareFailed = true;
-      logNativeFailure("open/arm", protocol::FailureReason::Startup,
-                       dispatcher.get());
-      static_cast<void>(publishFailure(protocol::FailureReason::Startup));
+      static_cast<void>(publishFailure(protocol::FailureReason::Startup, "open/arm"));
       return;
     }
     if (stopPublished()) {
@@ -1904,9 +1900,7 @@ case NativeVideoConsumerArmProgress::Failed:
     endLiveIssue();
 if (!transferred) {
       prepareFailed = true;
-      logNativeFailure("open/transfer", protocol::FailureReason::Startup,
-                       dispatcher.get());
-      static_cast<void>(publishFailure(protocol::FailureReason::Startup));
+      static_cast<void>(publishFailure(protocol::FailureReason::Startup, "open/transfer"));
       return;
     }
     if (stopPublished()) {
@@ -1965,17 +1959,14 @@ prepareFailed = true;
             opened.status == media::NativeMediaDispatcherOpenStatus::Failed
                 ? protocol::FailureReason::Protocol
                 : protocol::FailureReason::Startup;
-        logNativeFailure("open", reason, dispatcher.get());
-        static_cast<void>(publishFailure(reason));
+        static_cast<void>(publishFailure(reason, "open"));
       }
       return;
     }
     const auto descriptor = dispatcher->descriptor();
 if (descriptor == nullptr || !nativeV1Descriptor(*descriptor)) {
       prepareFailed = true;
-      logNativeFailure("open/descriptor", protocol::FailureReason::Protocol,
-                       dispatcher.get());
-      static_cast<void>(publishFailure(protocol::FailureReason::Protocol));
+      static_cast<void>(publishFailure(protocol::FailureReason::Protocol, "open/descriptor"));
       return;
     }
     // Backend-neutral admission proof. The dispatcher republishes the exact
@@ -1989,9 +1980,7 @@ if (descriptor == nullptr || !nativeV1Descriptor(*descriptor)) {
         !admittedAssetContext->matchesPreviewBinding(binding.localPath,
                                                      descriptor)) {
       prepareFailed = true;
-      logNativeFailure("open/context", protocol::FailureReason::Protocol,
-                       dispatcher.get());
-      static_cast<void>(publishFailure(protocol::FailureReason::Protocol));
+      static_cast<void>(publishFailure(protocol::FailureReason::Protocol, "open/context"));
       return;
     }
     assetContextSnapshot = std::move(admittedAssetContext);
@@ -2006,7 +1995,7 @@ if (descriptor == nullptr || !nativeV1Descriptor(*descriptor)) {
       if (silentTimebase == nullptr ||
           !silentTimebase->activate(reservedGeneration, initialPosition)) {
         prepareFailed = true;
-        static_cast<void>(publishFailure(protocol::FailureReason::Clock));
+        static_cast<void>(publishFailure(protocol::FailureReason::Clock, "open/clock"));
         return;
       }
       authority = silentTimebase.get();
@@ -2073,9 +2062,7 @@ if (descriptor == nullptr || !nativeV1Descriptor(*descriptor)) {
       return;
     }
 if (authority == nullptr) {
-      logNativeFailure("start", protocol::FailureReason::Startup,
-                       dispatcher.get());
-      static_cast<void>(publishFailure(protocol::FailureReason::Startup));
+      static_cast<void>(publishFailure(protocol::FailureReason::Startup, "start"));
       startPending = false;
       return;
     }
@@ -2095,9 +2082,7 @@ if (authority == nullptr) {
       return;
     }
 if (result != NativeAudioSessionProgress::Done) {
-      logNativeFailure("start/audio", protocol::FailureReason::Startup,
-                       dispatcher.get());
-      static_cast<void>(publishFailure(protocol::FailureReason::Startup));
+      static_cast<void>(publishFailure(protocol::FailureReason::Startup, "start/audio"));
       startPending = false;
       return;
     }
@@ -2204,7 +2189,7 @@ if (result != NativeAudioSessionProgress::Done) {
       }
       if (failed) {
         static_cast<void>(
-            publishFailure(protocol::FailureReason::AudioOutput));
+            publishFailure(protocol::FailureReason::AudioOutput, "run/audio"));
         return;
       }
       if (result == NativeAudioSessionProgress::Quiescing ||
@@ -2320,7 +2305,7 @@ if (result != NativeAudioSessionProgress::Done) {
       return;
     }
     if (progress == NativeAudioSessionProgress::Failed) {
-      static_cast<void>(publishFailure(protocol::FailureReason::AudioOutput));
+      static_cast<void>(publishFailure(protocol::FailureReason::AudioOutput, "pause-suspend/audio"));
     }
   }
 
@@ -2346,7 +2331,7 @@ if (result != NativeAudioSessionProgress::Done) {
       } else if (result != NativeAudioSessionProgress::Quiescing &&
                  result != NativeAudioSessionProgress::WaitingForData) {
         static_cast<void>(
-            publishFailure(protocol::FailureReason::AudioOutput));
+            publishFailure(protocol::FailureReason::AudioOutput, "gain/audio"));
         return;
       }
     }
@@ -2367,7 +2352,7 @@ if (result != NativeAudioSessionProgress::Done) {
       } else if (result != NativeAudioSessionProgress::Quiescing &&
                  result != NativeAudioSessionProgress::WaitingForData) {
         static_cast<void>(
-            publishFailure(protocol::FailureReason::AudioOutput));
+            publishFailure(protocol::FailureReason::AudioOutput, "mute/audio"));
       }
     }
   }
@@ -2400,9 +2385,7 @@ if (result != NativeAudioSessionProgress::Done) {
   }
 
   void failCommitSeek(const char* stage) noexcept {
-    logNativeFailure(stage, protocol::FailureReason::CommitSeek,
-                     dispatcher.get());
-    static_cast<void>(publishFailure(protocol::FailureReason::CommitSeek,
+    static_cast<void>(publishFailure(protocol::FailureReason::CommitSeek, stage,
                                      commitCommand.stamp));
   }
 
@@ -2905,7 +2888,7 @@ if (result != NativeAudioSessionProgress::Done) {
       return;
     }
     if (stopped != NativeAudioSessionProgress::Done) {
-      static_cast<void>(publishFailure(protocol::FailureReason::AudioOutput));
+      static_cast<void>(publishFailure(protocol::FailureReason::AudioOutput, "ended/audio-stop"));
       return;
     }
     if (!beginLiveIssue(nullptr, true)) {
@@ -2923,7 +2906,7 @@ if (result != NativeAudioSessionProgress::Done) {
         protocol::routeForRate(clock.rate) !=
             protocol::RateRoute::NativeVersion1 ||
         !protocol::validPosition(clock.mediaSeconds)) {
-      static_cast<void>(publishFailure(protocol::FailureReason::Clock));
+      static_cast<void>(publishFailure(protocol::FailureReason::Clock, "ended/clock"));
       return;
     }
     static_cast<void>(publishEnded(clock.mediaSeconds));
@@ -3233,11 +3216,7 @@ if (result != NativeAudioSessionProgress::Done) {
               }
             }
 #endif
-            // Admission, stamp capture and the public terminal latch are one
-            // mutex transaction inside publishFailure().
-            logNativeFailure("steady", protocol::FailureReason::Decode,
-                             dispatcher.get());
-            static_cast<void>(publishFailure(protocol::FailureReason::Decode));
+            static_cast<void>(publishFailure(protocol::FailureReason::Decode, "steady"));
             continue;
           }
         }
