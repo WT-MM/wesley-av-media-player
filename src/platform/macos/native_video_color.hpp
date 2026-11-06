@@ -171,7 +171,7 @@ struct YCbCrMatrixRows {
 // untagged PQ surface is presented as SDR -- the washed-out render this
 // mapping prevents.
 //
-// This is the exact inverse of avfoundation_media_source.mm's copy* readers,
+// This is the exact inverse of avfoundation_media_support.mm's copy* readers,
 // stated once so the two directions cannot drift apart.
 //
 // nullptr means "write no key". Absence is how an untagged stream is spelled
@@ -187,7 +187,7 @@ colorPrimariesExtension(media::MediaColorPrimaries value) noexcept {
   case media::MediaColorPrimaries::Bt2020:
     return kCMFormatDescriptionColorPrimaries_ITU_R_2020;
   // Bt601 is bound to SMPTE-C (525). The binding is load-bearing, not a
-  // preference: copyColorPrimaries() in avfoundation_media_source.mm admits
+  // preference: copyColorPrimaries() in avfoundation_media_support.mm admits
   // ONLY SMPTE-C into this enumerator and leaves EBU 3213 (625) refused, so on
   // that route writing SMPTE-C back is the exact inverse rather than a guess
   // between two different chromaticity sets.

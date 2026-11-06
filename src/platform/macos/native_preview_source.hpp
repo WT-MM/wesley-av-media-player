@@ -1,5 +1,6 @@
 #pragma once
 
+#include "media/media_codec_facts.hpp"
 #include "media/native_media_source.hpp"
 
 #include <cstddef>
@@ -24,10 +25,10 @@ namespace wam::macos {
 // facts a caller can compare against its own accounting.
 //
 // The implementations are `AVFoundationPreviewSource` (an AVAssetReader per
-// epoch, preceded by a full-sync back-walk), `MatroskaPreviewSource` and
-// `MpegTsPreviewSource` (a demuxer cursor per epoch, which needs no back-walk
-// because a planned generation already begins on a random-access point), and
-// the libavformat preview (`createLibavformatPreviewSource`).
+// epoch, preceded by a full-sync back-walk), the Matroska and MPEG-TS previews
+// built on NativePreviewSourceCore (a demuxer cursor per epoch, which needs no
+// back-walk because a planned generation already begins on a random-access
+// point), and the libavformat preview (`createLibavformatPreviewSource`).
 
 // Immutable input shared by every short-lived preview reader. The descriptor
 // is the one already admitted by the main native source. Preview never selects
@@ -36,10 +37,10 @@ struct NativePreviewBinding {
   std::filesystem::path localPath;
   std::shared_ptr<const media::MediaSourceDescriptor> descriptor;
   media::MediaSourceLimits limits{};
-  // Production sessions provide the immutable context admitted by the main
-  // source; its backendKind() is what selects the concrete preview source.
-  // Null keeps the standalone cold-load path available for isolated preview
-  // use and injected tests, and only the AVFoundation backend offers one.
+  // The immutable context admitted by the main source; its backendKind() is
+  // what selects the concrete preview source. Every production preview
+  // requires one: preview never repeats the asset load behind a scrub gesture.
+  // Only tests that inject a backend may leave it null.
   std::shared_ptr<const media::MediaSourcePreparedContext> assetContext{};
 };
 
@@ -84,9 +85,9 @@ using NativePreviewReadResult =
                  NativePreviewEndOfStream, NativePreviewCancelled,
                  NativePreviewFailure>;
 
-// Production facts are cumulative across reader replacement. assetLoad* is
-// the cold immutable-asset/track admission cost; later preview requests reuse
-// that cache and create only the per-epoch streaming object.
+// Production facts are cumulative across reader replacement. assetLoad* stays
+// zero on every backend: the asset is admitted by the main source and every
+// preview request creates only the per-epoch streaming object.
 //
 // "Reader" is the backend's unit of streaming state: one AVAssetReader on the
 // AVFoundation route, one demuxer cursor on the custom-container routes. The
@@ -167,11 +168,35 @@ class NativePreviewSource {
   NativePreviewSource() = default;
 };
 
+// The binding's selected video track when the scrub preview can serve it, or
+// null. Two facts from the codec table, the same pair the preview lane checks
+// so neither can admit a codec the other refuses: the lane must be able to
+// decode it, and the record requirement is INVERTED for the codecs that carry
+// none (MPEG-2's in-band sequence header), whose only correct descriptor is an
+// empty record.
+[[nodiscard]] inline const media::MediaTrackDescriptor* previewableVideoTrack(
+    const NativePreviewBinding& binding) noexcept {
+  if (binding.descriptor == nullptr || !binding.descriptor->selectedVideo) {
+    return nullptr;
+  }
+  const media::MediaTrackDescriptor* track = media::findMediaTrack(
+      *binding.descriptor, *binding.descriptor->selectedVideo);
+  if (track == nullptr || track->kind != media::MediaTrackKind::Video ||
+      !track->video.has_value()) {
+    return nullptr;
+  }
+  const media::MediaCodecFacts& facts = media::mediaCodecFacts(track->codec);
+  return facts.previewScrubAdmitted &&
+                 facts.carriesConfigurationRecord !=
+                     track->codecConfiguration.empty()
+             ? track
+             : nullptr;
+}
+
 // Selects the concrete preview source from the admitted context's
 // backendKind(). This is the single site that knows which containers can be
-// previewed; a binding whose context is null falls back to the AVFoundation
-// cold-load path, and an unrecognized backend returns null so the caller
-// leaves the scrub lane inactive rather than guessing.
+// previewed; a null context or an unrecognized backend returns null so the
+// caller leaves the scrub lane inactive rather than guessing.
 [[nodiscard]] std::unique_ptr<NativePreviewSource> createNativePreviewSource(
     NativePreviewBinding binding) noexcept;
 

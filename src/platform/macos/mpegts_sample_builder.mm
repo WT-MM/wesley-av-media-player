@@ -3,7 +3,6 @@
 #include "media/codec/ac3.hpp"
 #include "media/codec/mpeg_audio.hpp"
 #include "media/mpegts_packet.hpp"
-#include "platform/macos/native_video_color.hpp"
 
 #import <CoreMedia/CoreMedia.h>
 
@@ -26,118 +25,6 @@ using media::mpegts::MpegTsCompressedSample;
 using media::MediaRefusalClass;
 
 }  // namespace
-
-CMVideoFormatDescriptionRef createMpegTsVideoFormatDescription(
-    const MediaTrackDescriptor& track) noexcept {
-  if (!track.video || track.kind != MediaTrackKind::Video) {
-    return nullptr;
-  }
-  const std::uint32_t width = track.video->codedWidth;
-  const std::uint32_t height = track.video->codedHeight;
-  const auto dimensionCeiling =
-      static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max());
-  if (width == 0 || height == 0 || width > dimensionCeiling ||
-      height > dimensionCeiling) {
-    return nullptr;
-  }
-
-  if (track.codec == MediaCodec::Mpeg2Video) {
-    // The null extensions dictionary is the whole point: MPEG-2 carries its
-    // sequence header in band and has no out-of-band record, so the descriptor
-    // must state a None configuration kind and an empty configuration vector
-    // for the two facts to agree.
-    if (track.codecConfigurationKind != MediaCodecConfigurationKind::None ||
-        !track.codecConfiguration.empty()) {
-      return nullptr;
-    }
-    CMVideoFormatDescriptionRef description = nullptr;
-    const OSStatus status = CMVideoFormatDescriptionCreate(
-        kCFAllocatorDefault, kCMVideoCodecType_MPEG2Video,
-        static_cast<std::int32_t>(width), static_cast<std::int32_t>(height),
-        nullptr, &description);
-    if (status != noErr && description != nullptr) {
-      CFRelease(description);
-      description = nullptr;
-    }
-    return status == noErr ? description : nullptr;
-  }
-
-  const bool hevc = track.codec == MediaCodec::Hevc;
-  const MediaCodecConfigurationKind expectedKind =
-      hevc ? MediaCodecConfigurationKind::HvcC
-           : MediaCodecConfigurationKind::AvcC;
-  if ((track.codec != MediaCodec::H264 && !hevc) ||
-      track.codecConfigurationKind != expectedKind ||
-      track.codecConfiguration.empty() ||
-      track.codecConfiguration.size() >
-          static_cast<std::size_t>(std::numeric_limits<CFIndex>::max())) {
-    return nullptr;
-  }
-
-  // The record is handed to CoreMedia verbatim. Rewriting, reordering, or
-  // re-emitting the atom would change bytes the decoder compares against the
-  // description it was configured with.
-  CFDataRef atomData = CFDataCreate(
-      kCFAllocatorDefault,
-      reinterpret_cast<const UInt8*>(track.codecConfiguration.data()),
-      static_cast<CFIndex>(track.codecConfiguration.size()));
-  if (atomData == nullptr) {
-    return nullptr;
-  }
-  const void* atomKeys[] = {hevc ? CFSTR("hvcC") : CFSTR("avcC")};
-  const void* atomValues[] = {atomData};
-  CFDictionaryRef atoms = CFDictionaryCreate(
-      kCFAllocatorDefault, atomKeys, atomValues, 1,
-      &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
-  CFDictionaryRef extensions = nullptr;
-  if (atoms != nullptr) {
-    CFMutableDictionaryRef mutableExtensions = CFDictionaryCreateMutable(
-        kCFAllocatorDefault, 4, &kCFTypeDictionaryKeyCallBacks,
-        &kCFTypeDictionaryValueCallBacks);
-    if (mutableExtensions != nullptr) {
-      CFDictionarySetValue(
-          mutableExtensions,
-          kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms, atoms);
-      // THE COLOUR DESCRIPTION, AND THE REASON THIS ROUTE MAY ADMIT HDR AT
-      // ALL. A transport stream carries no colour box -- no `colr`, no
-      // Matroska Colour element -- so the SPS VUI is the only statement there
-      // is, and it reaches CoreMedia only through these three keys. Without
-      // them VideoToolbox has nothing to attach to the decoded surface and a
-      // PQ stream renders washed out, as if it were SDR. That is exactly the
-      // failure `VideoCodecConfigurationLimits::admitHighDynamicRangeColor` guards,
-      // and mpegts_demuxer.cpp turns that flag on BECAUSE of this block.
-      //
-      // Each key is written only when the fact is MODELLED and not Unknown.
-      // Omitting a key is how "untagged" is spelled, so an untagged MPEG-2 or
-      // H.264 TS keeps a byte-identical description. The mapping is the one
-      // table every producer shares (native_video_color.hpp), including the
-      // SMPTE_C spelling of BT.601 primaries that keeps VideoToolbox from
-      // inferring BT.709 by coded size.
-      applyColorExtensions(mutableExtensions, track.video->colorPrimaries,
-                           track.video->transferFunction,
-                           track.video->matrixCoefficients);
-      extensions = mutableExtensions;
-    }
-  }
-  CMVideoFormatDescriptionRef description = nullptr;
-  if (extensions != nullptr) {
-    const OSStatus status = CMVideoFormatDescriptionCreate(
-        kCFAllocatorDefault,
-        hevc ? kCMVideoCodecType_HEVC : kCMVideoCodecType_H264,
-        static_cast<std::int32_t>(width), static_cast<std::int32_t>(height),
-        extensions, &description);
-    if (status != noErr && description != nullptr) {
-      CFRelease(description);
-      description = nullptr;
-    }
-    CFRelease(extensions);
-  }
-  if (atoms != nullptr) {
-    CFRelease(atoms);
-  }
-  CFRelease(atomData);
-  return description;
-}
 
 bool layOutMpegTsAudioFrames(
     std::span<const std::byte> payload, MediaCodec codec,
@@ -298,41 +185,6 @@ bool layOutMpegTsAudioFrames(
   return true;
 }
 
-namespace {
-
-// Allocates one contiguous CoreMedia block and hands back its writable span.
-[[nodiscard]] bool allocateBlock(std::size_t bytes, CMBlockBufferRef* block,
-                                 std::span<std::byte>* destination,
-                                 std::string* error) {
-  *block = nullptr;
-  OSStatus status = CMBlockBufferCreateWithMemoryBlock(
-      kCFAllocatorDefault, nullptr, bytes, kCFAllocatorDefault, nullptr, 0,
-      bytes, kCMBlockBufferAssureMemoryNowFlag, block);
-  if (status != noErr || *block == nullptr) {
-    if (*block != nullptr) {
-      CFRelease(*block);
-      *block = nullptr;
-    }
-    assignError(error, "mpeg-ts payload block allocation failed");
-    return false;
-  }
-  std::size_t lengthAtOffset = 0;
-  std::size_t totalLength = 0;
-  char* raw = nullptr;
-  status =
-      CMBlockBufferGetDataPointer(*block, 0, &lengthAtOffset, &totalLength, &raw);
-  if (status != noErr || raw == nullptr || lengthAtOffset < bytes) {
-    CFRelease(*block);
-    *block = nullptr;
-    assignError(error, "mpeg-ts payload block is not contiguous");
-    return false;
-  }
-  *destination = std::span<std::byte>(reinterpret_cast<std::byte*>(raw), bytes);
-  return true;
-}
-
-}  // namespace
-
 MpegTsSampleBuildStatus buildMpegTsCompressedSampleBuffer(
     const MpegTsSampleBuildInputs& inputs, const MpegTsCompressedSample& sample,
     ScopedSampleBuffer* out, std::string* error) {
@@ -391,7 +243,7 @@ MpegTsSampleBuildStatus buildMpegTsCompressedSampleBuffer(
       assignError(error, "mpeg-ts access unit holds no complete NAL unit");
       return MpegTsSampleBuildStatus::Failed;
     }
-    if (!allocateBlock(repacked, &block, &destination, error)) {
+    if (!allocateSampleBlock(repacked, "mpeg-ts", &block, &destination, error)) {
       return MpegTsSampleBuildStatus::Failed;
     }
     if (media::mpegts::annexBToAvcc(gathered, destination, inputs.codec) !=
@@ -406,7 +258,7 @@ MpegTsSampleBuildStatus buildMpegTsCompressedSampleBuffer(
     // MPEG-2 needs no repack at all: the elementary stream bytes ARE what the
     // decoder wants, start codes included, so the gather goes straight into the
     // block and this path costs exactly one copy.
-    if (!allocateBlock(payloadBytes, &block, &destination, error)) {
+    if (!allocateSampleBlock(payloadBytes, "mpeg-ts", &block, &destination, error)) {
       return MpegTsSampleBuildStatus::Failed;
     }
     MediaRefusalClass copyError = MediaRefusalClass::None;
@@ -452,7 +304,8 @@ MpegTsSampleBuildStatus buildMpegTsCompressedSampleBuffer(
                                  inputs.audioFramesPerPacket, layout, error)) {
       return MpegTsSampleBuildStatus::Failed;
     }
-    if (!allocateBlock(layout.outputBytes, &block, &destination, error)) {
+    if (!allocateSampleBlock(layout.outputBytes, "mpeg-ts", &block, &destination,
+                             error)) {
       return MpegTsSampleBuildStatus::Failed;
     }
     std::size_t written = 0;
@@ -517,45 +370,21 @@ MpegTsSampleBuildStatus buildMpegTsCompressedSampleBuffer(
                    static_cast<std::int32_t>(inputs.audioSampleRate));
   }
 
-  CMSampleBufferRef created = nullptr;
-  const OSStatus status = CMSampleBufferCreateReady(
-      kCFAllocatorDefault, block, inputs.format, numSamples, 1, &timing,
-      sizeEntries, sizePointer, &created);
-  CFRelease(block);
-  if (status != noErr || created == nullptr) {
-    if (created != nullptr) {
-      CFRelease(created);
-    }
-    assignError(error, "mpeg-ts sample buffer creation failed");
-    return MpegTsSampleBuildStatus::Failed;
-  }
-  ScopedSampleBuffer owned(created);
-  if (CMSampleBufferGetNumSamples(created) != numSamples ||
-      !CMSampleBufferDataIsReady(created) || !CMSampleBufferIsValid(created)) {
-    assignError(error, "mpeg-ts sample buffer did not admit its access units");
-    return MpegTsSampleBuildStatus::Failed;
-  }
+  CompressedSampleShape shape;
+  shape.timing = timing;
+  shape.sampleCount = numSamples;
+  shape.sizeEntryCount = sizeEntries;
+  shape.sizes = sizePointer;
   if (inputs.video) {
-    CFArrayRef attachments =
-        CMSampleBufferGetSampleAttachmentsArray(created, true);
-    if (attachments == nullptr || CFArrayGetCount(attachments) != 1) {
-      assignError(error, "mpeg-ts video sample has no sync attachment slot");
-      return MpegTsSampleBuildStatus::Failed;
-    }
-    auto* attachment = static_cast<CFMutableDictionaryRef>(
-        const_cast<void*>(CFArrayGetValueAtIndex(attachments, 0)));
     // Transport Stream states no per-sample keyframe flag, so `keyFrame` here
-    // is the demuxer's bitstream verdict corroborated by the adaptation field's
-    // random_access_indicator -- not a container claim.
-    CFDictionarySetValue(attachment, kCMSampleAttachmentKey_NotSync,
-                         sample.keyFrame ? kCFBooleanFalse : kCFBooleanTrue);
-    if (sample.keyFrame) {
-      CFDictionarySetValue(attachment, kCMSampleAttachmentKey_DependsOnOthers,
-                           kCFBooleanFalse);
-    }
+    // is the demuxer's bitstream verdict corroborated by the adaptation
+    // field's random_access_indicator -- not a container claim.
+    shape.videoKeyFrame = sample.keyFrame;
   }
-
-  *out = std::move(owned);
+  if (!buildCompressedSampleBuffer(block, inputs.format, shape, "mpeg-ts",
+                                   out, error)) {
+    return MpegTsSampleBuildStatus::Failed;
+  }
   return MpegTsSampleBuildStatus::Built;
 }
 

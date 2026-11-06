@@ -2,7 +2,7 @@
 
 #include "media/mpegts_demuxer.hpp"
 #include "media/native_media_source.hpp"
-#include "platform/macos/core_media_source_support.hpp"
+#include "platform/macos/core_media_carriage.hpp"
 
 #include <CoreMedia/CoreMedia.h>
 
@@ -16,37 +16,15 @@
 
 namespace wam::macos {
 
-// Internal boundary shared by the MPEG-TS CoreMedia consumers, mirroring
-// `matroska_sample_builder.hpp`: the main media source and the scrub preview
-// source must hand VideoToolbox the byte-identical format description and the
-// identically assembled sample buffer, because the decoder compares the
-// description it was configured with against the one every sample carries.
+// Internal boundary shared by the MPEG-TS CoreMedia consumers (the main media
+// source and the scrub preview source), mirroring
+// `matroska_sample_builder.hpp`. The format description and the sample-buffer
+// assembly itself are the shared carriage in core_media_carriage.hpp.
 //
 // Nothing here is part of the shipping surface of `mpegts_media_source.hpp`;
 // this header is included only by MPEG-TS backend translation units.
 
-// Two video shapes, and exactly two.
-//
-//  * H.264 and HEVC arrive as Annex-B with in-band parameter sets (SPS/PPS,
-//    and VPS/SPS/PPS respectively). The demuxer synthesized an avcC or hvcC
-//    from those parameter sets and the shared codec inspector already
-//    admitted it, so the record travels to CoreMedia verbatim as an `avcC` or
-//    `hvcC` sample-description extension atom, exactly as the Matroska path
-//    does. The two differ ONLY in the atom name and the CMVideoCodecType;
-//    every other byte of the seam is shared, which is deliberate -- a
-//    divergence here would be a divergence the decoder sees.
-//  * MPEG-2 needs NO extensions dictionary at all. Its sequence header is
-//    in-band and `CMVideoFormatDescriptionCreate` accepts a null extensions
-//    argument; a VideoToolbox session built this way decodes access units
-//    1:1.
-[[nodiscard]] CMVideoFormatDescriptionRef createMpegTsVideoFormatDescription(
-    const media::MediaTrackDescriptor& track) noexcept;
-
-enum class MpegTsSampleBuildStatus : std::uint8_t {
-  Built,
-  Cancelled,
-  Failed,
-};
+using MpegTsSampleBuildStatus = CompressedSampleBuildStatus;
 
 // Largest number of whole audio access units one PES payload may carry. The
 // frozen source limit caps a compressed audio sample at 1,024 access units and

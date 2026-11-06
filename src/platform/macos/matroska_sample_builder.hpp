@@ -2,7 +2,7 @@
 
 #include "media/matroska_demuxer.hpp"
 #include "media/native_media_source.hpp"
-#include "platform/macos/core_media_source_support.hpp"
+#include "platform/macos/core_media_carriage.hpp"
 
 #include <CoreMedia/CoreMedia.h>
 
@@ -14,12 +14,9 @@
 namespace wam::macos {
 
 // Internal boundary shared by the two Matroska CoreMedia consumers: the main
-// media source and the scrub preview source. Both must hand VideoToolbox the
-// byte-identical format description and the identically assembled sample
-// buffer, because the decoder compares the description it was configured with
-// against the one every sample carries. A second, differently-built copy of
-// either routine would be a decoder reconfiguration waiting to happen, so
-// these live here rather than in either owner's anonymous namespace.
+// media source and the scrub preview source. The format description and the
+// sample-buffer assembly itself are the shared carriage in
+// core_media_carriage.hpp.
 //
 // Nothing here is part of the shipping surface of `matroska_media_source.hpp`;
 // this header is included only by Matroska backend translation units.
@@ -30,11 +27,7 @@ namespace wam::macos {
 [[nodiscard]] std::optional<media::MediaTime> matroskaTickTime(
     std::int64_t tick, std::uint64_t timestampScaleNanoseconds) noexcept;
 
-enum class MatroskaSampleBuildStatus : std::uint8_t {
-  Built,
-  Cancelled,
-  Failed,
-};
+using MatroskaSampleBuildStatus = CompressedSampleBuildStatus;
 
 struct MatroskaSampleBuildInputs {
   const media::matroska::MatroskaPreparedAsset* asset{nullptr};
@@ -46,14 +39,6 @@ struct MatroskaSampleBuildInputs {
   std::int64_t audioFramesPerPacket{0};
   std::int32_t audioSampleRate{0};
 };
-
-// The decoder builds its own format description from exactly these inputs, so
-// building this one identically is what lets VideoToolbox adopt the sample's
-// description instead of rejecting a second, differently-encoded one. The
-// configuration record is handed to CoreMedia verbatim: rewriting, reordering,
-// or re-emitting an avcC/hvcC atom would change bytes the decoder compares.
-[[nodiscard]] CMVideoFormatDescriptionRef createMatroskaVideoFormatDescription(
-    const media::MediaTrackDescriptor& track) noexcept;
 
 // Materializes one payload-free cursor sample into a retained CMSampleBuffer.
 //

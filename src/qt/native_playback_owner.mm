@@ -374,7 +374,8 @@ NativePlaybackOwner::preparationFor(native_protocol::SourceKey sourceKey) {
     return {};
   return Preparation{record->localPath, *record->initialPosition,
       macos::qtNativePresentationFactory(&surface_->nativeVideoItem()),
-      controller_.captionFeed(), static_cast<float>(controller_.volume_), controller_.muted_};
+      controller_.captionFeed(), static_cast<float>(controller_.volume_), controller_.muted_,
+      record->sourceClass == PlaybackSourceClass::BufferedLocal};
 }
 
 std::optional<playback_router::Transition>
