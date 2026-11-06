@@ -1,3 +1,4 @@
+#include "metal_frame_mapper.hpp"
 #include "bounded_frame_queue.hpp"
 #include "platform/macos/video_toolbox_decoder.hpp"
 #include "platform/macos/native_video_limits.hpp"

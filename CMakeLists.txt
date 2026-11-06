@@ -437,10 +437,9 @@ if(APPLE)
     find_library(WAM_METAL_FRAMEWORK Metal REQUIRED)
     find_library(WAM_QUARTZCORE_FRAMEWORK QuartzCore REQUIRED)
 
-    # The Metal texture mapper has no production route; only the presenter
-    # and decoder tests compile it.
     set(WAM_MACOS_NATIVE_VIDEO_METAL_MAPPER_SOURCES
-      src/platform/macos/native_video_metal_mapper.mm)
+      tests/metal_frame_mapper.hpp
+      tests/metal_frame_mapper.mm)
 
     if(BUILD_TESTING)
       add_executable(wam_native_session_factory_test tests/native_session_factory_test.mm)
