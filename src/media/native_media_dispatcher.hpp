@@ -228,15 +228,6 @@ enum class NativeMediaDispatcherState : std::uint8_t {
 };
 
 // APPEND-ONLY: every ordinal must stay stable.
-//
-// UnsupportedSource is the one value that does NOT accompany
-// NativeMediaDispatcherState::Failed. A source that declines a file -- an
-// unsupported codec, a track outside the admission envelope -- is an
-// envelope verdict, and turning it into a Failed state would replace a clean
-// "using compatibility playback" fallback with a hard protocol fault on a
-// blocking surface. The verdict still needs a name so a stderr capture can
-// attribute the refusal. The state stays Unsupported; only the diagnostic
-// channel is populated.
 #define WAM_NATIVE_MEDIA_DISPATCHER_FAILURES(X) \
   X(None)                                       \
   X(MissingDependency)                          \
@@ -252,8 +243,7 @@ enum class NativeMediaDispatcherState : std::uint8_t {
   X(FormatChanged)                              \
   X(Consumer)                                   \
   X(Seek)                                       \
-  X(Flush)                                      \
-  X(UnsupportedSource)
+  X(Flush)
 
 #define WAM_NATIVE_MEDIA_DISPATCHER_FAILURE_ENUMERATOR(name) name,
 enum class NativeMediaDispatcherFailure : std::uint8_t {
@@ -444,6 +434,19 @@ struct NativeMediaDispatcherStats {
   std::uint64_t consumerProgress{0};
   std::uint64_t acceptedSeeks{0};
 };
+
+// The class= / WAMKit error name for the dispatcher's terminal verdict. A
+// source that declines a file leaves the state Unsupported with no failure:
+// an envelope verdict must fall back cleanly rather than become a Failed
+// protocol fault, but it still needs a name so a stderr capture can attribute
+// the refusal.
+[[nodiscard]] constexpr const char* nativeMediaDispatcherFailureName(
+    const NativeMediaDispatcherStats& stats) noexcept {
+  return stats.state == NativeMediaDispatcherState::Unsupported &&
+                 stats.failure == NativeMediaDispatcherFailure::None
+             ? "UnsupportedSource"
+             : nativeMediaDispatcherFailureName(stats.failure);
+}
 
 // Deterministic single-owner demux/dispatch core. It creates no timer,
 // callback, or queue, and no thread outlives the call that made it: the only

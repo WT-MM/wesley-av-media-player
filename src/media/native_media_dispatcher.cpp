@@ -468,14 +468,13 @@ NativeMediaDispatcherOpenOutcome NativeMediaDispatcher::openLocalFile(
       operation_generation_.store(0, std::memory_order_release);
       // The source's own text is the ONLY description of why the file was
       // declined, and the session's stderr line reads failureMessage(). Carry
-      // the text, and name the class, without moving the state: an envelope
-      // verdict must still fall back cleanly (see UnsupportedSource).
+      // the text and the class without a failure: an envelope verdict must
+      // still fall back cleanly.
       failure_message_ = audioRefusals.empty() ? opened.error :
           std::string(mediaRefusalClassName(
               MediaRefusalClass::AudioBackendConfigurationRefused)) +
               ": " + audioRefusals + "; " + opened.error;
       stats_.refusal = opened.refusal;
-      stats_.failure = NativeMediaDispatcherFailure::UnsupportedSource;
       stats_.state = NativeMediaDispatcherState::Unsupported;
       stats_.lastWait = NativeMediaDispatcherWait::Terminal;
       result.status = NativeMediaDispatcherOpenStatus::Unsupported;

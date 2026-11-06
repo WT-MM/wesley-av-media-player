@@ -75,10 +75,11 @@ void logNativeFailure(const char* stage, protocol::FailureReason reason,
     std::string message;
     bool dispatcherFailed = false;
     if (dispatcher != nullptr) {
-      const media::NativeMediaDispatcherFailure failure =
-          dispatcher->stats().failure;
-      dispatcherFailed = failure != media::NativeMediaDispatcherFailure::None;
-      failureClass = media::nativeMediaDispatcherFailureName(failure);
+      const media::NativeMediaDispatcherStats stats = dispatcher->stats();
+      dispatcherFailed =
+          stats.failure != media::NativeMediaDispatcherFailure::None ||
+          stats.state == media::NativeMediaDispatcherState::Unsupported;
+      failureClass = media::nativeMediaDispatcherFailureName(stats);
       message = dispatcher->failureMessage();
     }
     // An empty error field is the one thing this line must never print: it
@@ -853,7 +854,7 @@ struct NativeMediaSession::Impl final {
                 (c >= '0' && c <= '9') || c == '_';
       }
       if (named) std::memcpy(diagnostic.name.data(), detail->data(), end);
-      else fallback = media::nativeMediaDispatcherFailureName(dispatcher->stats().failure);
+      else fallback = media::nativeMediaDispatcherFailureName(dispatcher->stats());
     }
     if (!diagnostic.name[0]) std::snprintf(diagnostic.name.data(), diagnostic.name.size(), "%s", fallback);
     bool inserted = false;
