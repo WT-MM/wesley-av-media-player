@@ -1,5 +1,7 @@
 #include "platform/macos/mpegts_sample_builder.hpp"
 
+#include "media/codec/ac3.hpp"
+#include "media/codec/mpeg_audio.hpp"
 #include "media/mpegts_packet.hpp"
 #include "platform/macos/native_video_color.hpp"
 
@@ -12,14 +14,14 @@ namespace wam::macos {
 namespace {
 
 using media::MediaCodec;
+using media::codec::Ac3SyncFrame;
+using media::codec::MpegAudioFrame;
 using media::MediaCodecConfigurationKind;
 using media::MediaTime;
 using media::MediaTimeOrder;
 using media::MediaTrackDescriptor;
 using media::MediaTrackKind;
-using media::mpegts::Ac3SyncFrame;
 using media::mpegts::AdtsHeader;
-using media::mpegts::MpegAudioFrame;
 using media::mpegts::MpegTsCompressedSample;
 using media::mpegts::MpegTsDemuxError;
 
@@ -223,7 +225,8 @@ bool layOutMpegTsAudioFrames(
       decoded = framesPerPacket;
     } else if (codec == MediaCodec::Ac3 || codec == MediaCodec::Eac3) {
       Ac3SyncFrame frame{};
-      if (!media::mpegts::parseAc3OrEac3SyncFrame(rest, frame)) {
+      if (media::codec::readAc3SyncframeHeader(rest, frame) !=
+          media::codec::Ac3AdmissionError::None) {
         break;
       }
       frameBytes = frame.frameBytes;
@@ -234,7 +237,8 @@ bool layOutMpegTsAudioFrames(
       decoded = frame.samplesPerFrame;
     } else if (codec == MediaCodec::Mp3) {
       MpegAudioFrame frame{};
-      if (!media::mpegts::parseMpegAudioFrame(rest, frame)) {
+      if (media::codec::readMpegAudioFrameHeader(rest, frame) !=
+          media::codec::MpegAudioAdmissionError::None) {
         break;
       }
       frameBytes = frame.frameBytes;

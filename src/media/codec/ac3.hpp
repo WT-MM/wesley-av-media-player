@@ -20,10 +20,10 @@ inline constexpr std::size_t kAc3MinimumSyncframeBytes{8};
 inline constexpr std::uint16_t kAc3Syncword{0x0B77};
 
 // Both flavours decode 6 blocks of 256 frames. AC-3 has no other option;
-// E-AC-3 does (1, 2, 3 or 6 blocks) and this source admits only the 6-block
+// E-AC-3 does (1, 2, 3 or 6 blocks) and Matroska admits only the 6-block
 // form, because a variable block count is a variable access-unit duration and
-// the demuxer's affine ordinal grid cannot represent one -- the same reasoning
-// that gates Vorbis to equal block sizes.
+// the Matroska demuxer's affine ordinal grid cannot represent one -- the same
+// reasoning that gates Vorbis to equal block sizes.
 inline constexpr std::uint32_t kAc3SamplesPerAccessUnit{1'536};
 inline constexpr std::uint32_t kAc3BlocksPerSyncframe{6};
 inline constexpr std::uint32_t kAc3FramesPerBlock{256};
@@ -53,9 +53,11 @@ inline constexpr std::uint32_t kAc3DecoderDelayFrames{256};
 // -113 dBFS where the preceding audio sits at -9 dBFS.
 inline constexpr std::uint32_t kAc3DecoderTailShortfallFrames{32};
 
-// Bit stream identification ranges. <= 8 is AC-3 (A/52 Annex D allows the
-// older values); 11..16 is E-AC-3 (Annex E). 9 and 10 are the unused
-// "alternate bit stream syntax" and are refused.
+// Bit stream identification ranges (A/52 5.4.2.1 and Annex E). <= 8 is AC-3,
+// decoded with the legacy syntax (bsid 6 is Annex D's alternate syntax, still
+// legacy); 11..16 is E-AC-3, decoded with the Annex E syntax. 9 and 10 are not
+// A/52 at all -- ffmpeg decodes them as legacy syntax at half and quarter the
+// fscod rate -- and are refused rather than given a wrong sample rate.
 inline constexpr std::uint8_t kMaximumLegacyAc3BitStreamIdentification{8};
 inline constexpr std::uint8_t kMinimumEnhancedAc3BitStreamIdentification{11};
 inline constexpr std::uint8_t kMaximumEnhancedAc3BitStreamIdentification{16};
@@ -77,7 +79,8 @@ enum class Ac3AdmissionError : std::uint8_t {
   // E-AC-3 dependent substreams, which carry the channels beyond the
   // independent stream's own program.
   UnsupportedSubstream,
-  // The Block does not hold exactly one whole syncframe.
+  // The Block does not hold exactly one whole syncframe, or the header states
+  // a frame shorter than kAc3MinimumSyncframeBytes.
   FrameSizeMismatch,
   CodecIdMismatch,
 };
@@ -108,14 +111,44 @@ struct Ac3Admission {
   }
 };
 
-// Reads one AC-3 or E-AC-3 syncframe header. `enhanced` states which CodecID
+// One AC-3 / E-AC-3 syncframe header, as every container reads it.
+struct Ac3SyncFrame {
+  std::uint32_t frameBytes{0};
+  std::uint32_t sampleRate{0};
+  // Decoded samples this syncframe codes. Legacy AC-3 always codes 6 blocks of
+  // 256; E-AC-3 may code 1, 2, 3 or 6, and a route that assumed 1536 would
+  // drift by three quarters of a frame on a short-block stream.
+  std::uint32_t samplesPerFrame{0};
+  // FULL-BANDWIDTH channels, excluding LFE. `channels` is the total the
+  // decoder will emit and is what an ASBD must state.
+  std::uint8_t fullBandwidthChannels{0};
+  std::uint8_t channels{0};
+  std::uint8_t bitstreamId{0};
+  bool lfe{false};
+  bool enhanced{false};
+
+  friend constexpr bool operator==(const Ac3SyncFrame &,
+                                   const Ac3SyncFrame &) = default;
+};
+
+// The one container-neutral reader of an AC-3 / E-AC-3 syncframe header.
+// Admits legacy bsid <= 8 and E-AC-3 bsid 11..16; refuses fscod 3, frmsizecod
+// > 37, acmod 0 (1+1 dual mono), and any E-AC-3 frame that is not independent
+// substream 0. Reads only the header under a bounded bit reader (7 bytes
+// legacy, 6 E-AC-3), never the whole frame. bitstreamId and enhanced are set
+// before the rest of the header is read, so a caller can rank a CodecID
+// mismatch ahead of a body error.
+[[nodiscard]] Ac3AdmissionError
+readAc3SyncframeHeader(std::span<const std::byte> bytes,
+                       Ac3SyncFrame &frame) noexcept;
+
+// Matroska Block-level admission of one syncframe. `enhanced` states which CodecID
 // the track declared, and admission requires the bitstream to agree: a track
 // labelled A_AC3 whose frames are E-AC-3 (or the reverse) is a mislabelled mux
 // and falls back rather than being decoded as whichever the bytes happen to be.
 //
-// Admission is intentionally narrower than the format: acmod 1..7 (no 1+1
-// dual mono) with or without LFE, 6 blocks per syncframe, an independent
-// substream 0 only, and one whole syncframe per Block.
+// On top of readAc3SyncframeHeader's rule, the Matroska grid requires 6
+// blocks per syncframe and one whole syncframe per Block.
 [[nodiscard]] Ac3Admission
 parseAc3Syncframe(std::span<const std::byte> frame, bool enhanced) noexcept;
 

@@ -1,5 +1,4 @@
 #include "media/startup_benchmark.hpp"
-#include "media/mp3_lame_gapless.hpp"
 #include <fstream>
 #include "media/audio_track_admission.hpp"
 #include "native_audio_sample_rates.hpp"
@@ -11,6 +10,7 @@
 #include "media/matroska_apple_audio.hpp"
 #include "media/audio_codec_timing.hpp"
 #include "media/codec/aac.hpp"
+#include "media/codec/mpeg_audio.hpp"
 #include "media/media_codec_facts.hpp"
 #include "media/video_codec_configuration.hpp"
 #include "core_media_codec_facts.hpp"
@@ -1013,7 +1013,7 @@ audioMovieTimelineFactsFor(NSArray* segments) noexcept {
   return refuse("AdpcmWaveFormatFactsUnavailable");
 }
 
-[[nodiscard]] std::optional<media::Mp3LameGapless> mp3LsfGapless(
+[[nodiscard]] std::optional<media::codec::Mp3LameGapless> mp3LsfGapless(
     const MediaTrackDescriptor& audio, const std::filesystem::path& path) {
   if (audio.codec != MediaCodec::Mp3 || !audio.audio ||
       audio.audio->framesPerPacket != 576 || !bareAudioElementaryStream(path)) {
@@ -1036,7 +1036,7 @@ audioMovieTimelineFactsFor(NSArray* segments) noexcept {
   }
   input.seekg(offset);
   input.read(reinterpret_cast<char*>(bytes.data()), bytes.size());
-  auto result = media::inspectMp3LsfGapless(
+  auto result = media::codec::inspectMp3LsfGapless(
       std::span(bytes).first(static_cast<std::size_t>(input.gcount())));
   if (result && result->sampleRate != audio.audio->sampleRate) return {};
   return result;

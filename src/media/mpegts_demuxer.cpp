@@ -1,6 +1,8 @@
 #include "media/mpegts_demuxer.hpp"
 
 #include "media/codec/aac.hpp"
+#include "media/codec/ac3.hpp"
+#include "media/codec/mpeg_audio.hpp"
 #include "media/media_iso_color.hpp"
 #include "media/video_codec_configuration.hpp"
 
@@ -23,6 +25,8 @@ using codec::AacLcEsDescriptorCookie;
 using codec::buildAacLcEsDescriptorCookie;
 using codec::kAacLcSamplesPerAccessUnit;
 using codec::parseAacLcAudioSpecificConfig;
+using codec::Ac3SyncFrame;
+using codec::MpegAudioFrame;
 
 namespace {
 
@@ -33,14 +37,6 @@ constexpr std::uint32_t kAc3FormatTag{0x61632D33U};        // 'ac-3'
 constexpr std::uint32_t kEnhancedAc3FormatTag{0x65632D33U};// 'ec-3'
 constexpr std::uint32_t kMonoLayoutTag{0x00640001U};
 constexpr std::uint32_t kStereoLayoutTag{0x00650002U};
-
-// ATSC A/52 codes six 256-sample audio blocks per syncframe; E-AC-3 may code
-// 1, 2, 3 or 6 and says which in numblkscod, so the per-stream value is READ
-// from the first syncframe rather than assumed here. This constant only pins
-// the legacy AC-3 identity the parser must reproduce.
-constexpr std::uint32_t kAc3SamplesPerSyncFrame{
-    kAc3BlocksPerSyncFrame * kAc3SamplesPerBlock};
-static_assert(kAc3SamplesPerSyncFrame == 1536);
 
 // How many consecutive sync bytes at a candidate stride prove framing. Ten
 // gives a false-positive probability of 2^-80 against random data while
@@ -2655,12 +2651,13 @@ MpegTsPrepareOutcome prepareMpegTs(std::shared_ptr<SeekableByteReader> reader,
                  state->audio.codec == MediaCodec::Eac3) {
         // AC-3 and E-AC-3 restate every parameter in each syncframe and take
         // NO magic cookie: AudioConverterNew succeeds with the cookie property
-        // never set. This reuses that codec-level admission,
-        // not Matroska's block-level framing: a TS PES carries whole
-        // syncframes back to back and the media source splits them itself.
+        // never set. This reuses the codec-level header rule, not Matroska's
+        // block-level framing: a TS PES carries whole syncframes back to back
+        // and the media source splits them itself.
         Ac3SyncFrame frame{};
         if (facts.hasAudioHeader &&
-            parseAc3OrEac3SyncFrame(audioHeader, frame) &&
+            codec::readAc3SyncframeHeader(audioHeader, frame) ==
+                codec::Ac3AdmissionError::None &&
             frame.channels > 0 &&
             frame.channels <= state->limits.maximumAudioChannels &&
             frame.sampleRate > 0) {
@@ -2701,7 +2698,9 @@ MpegTsPrepareOutcome prepareMpegTs(std::shared_ptr<SeekableByteReader> reader,
         }
       } else if (state->audio.codec == MediaCodec::Mp3) {
         MpegAudioFrame frame{};
-        if (facts.hasAudioHeader && parseMpegAudioFrame(audioHeader, frame) &&
+        if (facts.hasAudioHeader &&
+            codec::readMpegAudioFrameHeader(audioHeader, frame) ==
+                codec::MpegAudioAdmissionError::None &&
             frame.channels > 0 && frame.channels <= 2) {
           track.timeBase =
               MediaTime{1, static_cast<std::int32_t>(frame.sampleRate)};

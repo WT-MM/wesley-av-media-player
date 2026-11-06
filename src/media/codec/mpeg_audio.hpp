@@ -43,7 +43,8 @@ enum class MpegAudioAdmissionError : std::uint8_t {
   None,
   TruncatedFrameHeader,
   UnexpectedSyncword,
-  // Anything that is not MPEG-1 Layer III.
+  // The reserved version or layer code; for Matroska admission, anything
+  // that is not MPEG-1 Layer III.
   UnsupportedVersion,
   UnsupportedLayer,
   UnsupportedBitRateIndex,
@@ -72,7 +73,28 @@ struct MpegAudioAdmission {
   }
 };
 
-// Reads one MPEG-1 Layer III frame header. Admission is intentionally narrower
+// One MPEG audio frame header, as every container reads it.
+struct MpegAudioFrame {
+  std::uint32_t frameBytes{0};
+  std::uint32_t sampleRate{0};
+  std::uint32_t samplesPerFrame{0};
+  std::uint8_t channels{0};
+  std::uint8_t layer{0};   // 1, 2 or 3
+  std::uint8_t version{0}; // 1 = MPEG-1, 2 = MPEG-2, 3 = MPEG-2.5
+
+  friend constexpr bool operator==(const MpegAudioFrame &,
+                                   const MpegAudioFrame &) = default;
+};
+
+// The one container-neutral reader of an MPEG-1/2/2.5 Layer I-III frame
+// header. Refuses the reserved version and layer codes, the free-format and
+// reserved bit-rate indices and the reserved sample-rate index. version and
+// layer are set before the bit rate is read.
+[[nodiscard]] MpegAudioAdmissionError
+readMpegAudioFrameHeader(std::span<const std::byte> bytes,
+                         MpegAudioFrame &frame) noexcept;
+
+// Matroska admission of one MPEG-1 Layer III frame header. Admission is intentionally narrower
 // than the format: MPEG-1 Layer III only, a stated (non-free, non-reserved)
 // bit rate, and one whole frame per Block.
 [[nodiscard]] MpegAudioAdmission
@@ -92,5 +114,16 @@ parseMpegAudioFrameHeader(std::span<const std::byte> frame) noexcept;
 mpegAudioFrameMatches(std::span<const std::byte> header,
                       std::uint64_t frameBytes,
                       const MpegAudioConfiguration &configuration) noexcept;
+
+struct Mp3LameGapless {
+  std::uint32_t sampleRate{0};
+  std::uint32_t encoderDelay{0};
+  std::uint64_t retainedFrames{0};
+};
+
+// MPEG-2/2.5 Layer III Xing/Info frames carry a LAME-layout delay/padding
+// pair. MPEG-1 timing remains owned by the container adapter.
+[[nodiscard]] std::optional<Mp3LameGapless>
+inspectMp3LsfGapless(std::span<const std::byte> bytes) noexcept;
 
 } // namespace wam::media::codec

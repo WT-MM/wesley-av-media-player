@@ -15,7 +15,6 @@ namespace {
 
 using namespace wam::media::codec;
 
-
 // The first syncframe of an ffmpeg-encoded AC-3 Matroska fixture, byte for
 // byte as ffmpeg muxed it: 48 kHz, 192 kbit/s (frmsizecod 20 -> 768 bytes), bsid 8,
 // acmod 2 (stereo), no LFE.
@@ -119,7 +118,7 @@ void testMalformedInputs() {
            "a corrupt syncword is refused");
   }
   {
-    // bsid 9 and 10 are the unused alternate bit stream syntax.
+    // bsid 9 and 10 are not A/52 (ffmpeg reads them at half and quarter rate).
     auto frame = frameOf(kRealAc3Header, kRealAc3FrameBytes);
     frame[5] = std::byte{0x48}; // bsid 9
     expect(parseAc3Syncframe(frame, false).error ==
@@ -226,6 +225,54 @@ void testEnhancedGates() {
   }
 }
 
+// The one header rule every container shares, and the line between it and the
+// Matroska Block rules layered on top.
+void testSharedHeaderRule() {
+  Ac3SyncFrame frame;
+  auto ac3 = frameOf(kRealAc3Header, kRealAc3FrameBytes);
+  for (const std::uint8_t byte5 : {0x48U, 0x50U}) { // bsid 9, 10
+    ac3[5] = static_cast<std::byte>(byte5);
+    expect(readAc3SyncframeHeader(ac3, frame) ==
+               Ac3AdmissionError::UnsupportedBitStreamIdentification,
+           "bsid 9 and 10 are refused rather than read at the fscod rate");
+  }
+  ac3 = frameOf(kRealAc3Header, kRealAc3FrameBytes);
+  ac3[6] = std::byte{0x03}; // acmod 0
+  expect(readAc3SyncframeHeader(ac3, frame) ==
+             Ac3AdmissionError::UnsupportedChannelConfiguration,
+         "legacy dual mono is refused by the shared reader");
+
+  auto eac3 = frameOf(kRealEac3Header, kRealEac3FrameBytes);
+  eac3[5] = std::byte{0x5F}; // bsid 11
+  expect(readAc3SyncframeHeader(eac3, frame) == Ac3AdmissionError::None &&
+             frame.enhanced && frame.bitstreamId == 11U &&
+             frame.frameBytes == kRealEac3FrameBytes,
+         "bsid 11 is read as E-AC-3");
+  eac3 = frameOf(kRealEac3Header, kRealEac3FrameBytes);
+  eac3[2] = std::byte{0x41}; // strmtyp 1
+  expect(readAc3SyncframeHeader(eac3, frame) ==
+             Ac3AdmissionError::UnsupportedSubstream,
+         "a dependent substream is not an access unit of its own");
+  eac3[2] = std::byte{0x09}; // substreamid 1
+  expect(readAc3SyncframeHeader(eac3, frame) ==
+             Ac3AdmissionError::UnsupportedSubstream,
+         "an additional programme is refused");
+  eac3 = frameOf(kRealEac3Header, kRealEac3FrameBytes);
+  eac3[4] = std::byte{0x30}; // acmod 0
+  expect(readAc3SyncframeHeader(eac3, frame) ==
+             Ac3AdmissionError::UnsupportedChannelConfiguration,
+         "E-AC-3 dual mono is refused by the shared reader");
+
+  eac3 = frameOf(kRealEac3Header, kRealEac3FrameBytes);
+  eac3[4] = std::byte{0x04}; // numblkscod 0: one block
+  expect(readAc3SyncframeHeader(eac3, frame) == Ac3AdmissionError::None &&
+             frame.samplesPerFrame == 256U,
+         "the shared reader admits a one-block E-AC-3 frame");
+  expect(parseAc3Syncframe(eac3, true).error ==
+             Ac3AdmissionError::UnsupportedBlockCount,
+         "the Matroska grid still refuses it");
+}
+
 void testPerPacketMatch() {
   const auto ac3 = frameOf(kRealAc3Header, kRealAc3FrameBytes);
   const Ac3Admission admission = parseAc3Syncframe(ac3, false);
@@ -303,6 +350,7 @@ int main() {
   testMalformedInputs();
   testChannelGate();
   testEnhancedGates();
+  testSharedHeaderRule();
   testPerPacketMatch();
   testTrimArithmetic();
 
