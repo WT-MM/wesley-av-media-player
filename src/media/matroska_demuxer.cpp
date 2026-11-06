@@ -3735,6 +3735,64 @@ namespace {
   return result;
 }
 
+// The header-decidable audio refusals, each spelled once. `specific` marks the
+// reasons that name a precise cause and so outrank every other candidate's
+// reason when an audio candidate list is summarised.
+enum class AudioHeaderVerdict : std::uint8_t {
+  SoftwareStageNotBuilt,
+  OpusOutputSampleRate,
+  HeAacDecoderDelay,
+  AacLcNotAdmitted,
+};
+struct AudioHeaderVerdictRow {
+  std::string_view message;
+  bool specific;
+};
+inline constexpr AudioHeaderVerdictRow kAudioHeaderVerdicts[] = {
+    {"SoftwareAudioStageNotBuilt", false},
+    {"OpusOutputSampleRateUnsupported", true},
+    {kHeAacDecoderDelayRefusal, true},
+    {"selected AAC-LC or Opus track was not admitted", false},
+};
+[[nodiscard]] constexpr const AudioHeaderVerdictRow& audioHeaderVerdictRow(
+    AudioHeaderVerdict verdict) noexcept {
+  return kAudioHeaderVerdicts[static_cast<std::size_t>(verdict)];
+}
+
+// Only header-decidable audio refusals are judged here: a software-only codec
+// in a build without the software stage, an Opus output rate other than
+// 48 kHz, and AAC-LC, whose whole admissible-or-not answer is in
+// CodecPrivate. Everything else needs a Block (AC-3, MP3, FLAC, Vorbis, and
+// the rest of Opus admission), so it waits for the authoritative pass rather
+// than being second-guessed here.
+[[nodiscard]] std::optional<AudioHeaderVerdict> audioHeaderRefusal(
+    SeekableByteReader& reader, const TrackEntry& audio,
+    const MediaSourceLimits& limits, CancellationToken cancellation) {
+#if !defined(WAM_ENABLE_AVCODEC_STAGE)
+  if (softwareAudioCodecId(inlineString(audio.codecId)) != MediaCodec::Unknown)
+    return AudioHeaderVerdict::SoftwareStageNotBuilt;
+#endif
+  if (inlineString(audio.codecId) == "A_OPUS" && audio.audio &&
+      audio.audio->outputSamplingFrequency &&
+      *audio.audio->outputSamplingFrequency != kOpusOutputSampleRate) {
+    return AudioHeaderVerdict::OpusOutputSampleRate;
+  }
+  if (inlineString(audio.codecId) != "A_AAC" || !audio.audio ||
+      !audio.codecPrivate) {
+    return std::nullopt;
+  }
+  std::vector<std::byte> configuration;
+  if (!readRange(reader, *audio.codecPrivate, &configuration, cancellation)) {
+    return std::nullopt;
+  }
+  if (aacLcHeaderAdmitted(parseAacLcAudioSpecificConfig(configuration), audio,
+                          limits)) {
+    return std::nullopt;
+  }
+  return aacSbrSignaled(configuration) ? AudioHeaderVerdict::HeAacDecoderDelay
+                                       : AudioHeaderVerdict::AacLcNotAdmitted;
+}
+
 // Cheap pre-admission verdict, asked BEFORE the cluster scan.
 //
 // Preparation's authoritative parse sets ParseOptions::scanClusterMetadata so
@@ -3756,9 +3814,9 @@ namespace {
 // the authoritative pass completely unchanged, so a file it cannot judge --
 // including one where the cheap parse itself failed -- is judged by the
 // authoritative pass alone. Its refusals come from the same predicates the
-// authoritative pass uses (trackSelectionRefusal, aacLcHeaderAdmitted, and
-// this function itself, which the authoritative pass calls to name an audio
-// candidate's refusal reason). The track-selection refusal is identical; an
+// authoritative pass uses (trackSelectionRefusal, and audioHeaderRefusal,
+// which the authoritative pass also calls to name an audio candidate's
+// refusal reason). The track-selection refusal is identical; an
 // audio refusal carries the same status, error and reason, but the
 // authoritative pass's message additionally lists every audio candidate.
 [[nodiscard]] std::optional<MatroskaPrepareOutcome> matroskaHeaderRefusal(
@@ -3786,43 +3844,15 @@ namespace {
       }) > 1) {
     return std::nullopt;
   }
-  // Only header-decidable audio refusals are judged here: a software-only
-  // codec in a build without the software stage, an Opus output rate other
-  // than 48 kHz, and AAC-LC, whose whole admissible-or-not answer is in
-  // CodecPrivate. Everything else needs a Block (AC-3, MP3, FLAC, Vorbis, and
-  // the rest of Opus admission), so it waits for the authoritative pass rather
-  // than being second-guessed here.
-#if !defined(WAM_ENABLE_AVCODEC_STAGE)
-  if (audio && softwareAudioCodecId(inlineString(audio->codecId)) != MediaCodec::Unknown)
-    return MatroskaPrepareOutcome{MediaSourceOpenStatus::Unsupported,
-        MediaRefusalClass::CodecConfiguration, nullptr, "SoftwareAudioStageNotBuilt"};
-#endif
-  if (audio && inlineString(audio->codecId) == "A_OPUS" && audio->audio &&
-      audio->audio->outputSamplingFrequency &&
-      *audio->audio->outputSamplingFrequency != kOpusOutputSampleRate) {
-    return MatroskaPrepareOutcome{MediaSourceOpenStatus::Unsupported,
-        MediaRefusalClass::CodecConfiguration, nullptr,
-        "OpusOutputSampleRateUnsupported"};
-  }
-  if (audio == nullptr || inlineString(audio->codecId) != "A_AAC" ||
-      !audio->audio || !audio->codecPrivate) {
+  const auto verdict =
+      audio ? audioHeaderRefusal(reader, *audio, limits, cancellation)
+            : std::nullopt;
+  if (!verdict) {
     return std::nullopt;
   }
-  std::vector<std::byte> configuration;
-  if (!readRange(reader, *audio->codecPrivate, &configuration, cancellation)) {
-    return std::nullopt;
-  }
-  if (aacLcHeaderAdmitted(parseAacLcAudioSpecificConfig(configuration), *audio,
-                          limits)) {
-    return std::nullopt;
-  }
-  MatroskaPrepareOutcome result;
-  result.status = MediaSourceOpenStatus::Unsupported;
-  result.error = MediaRefusalClass::CodecConfiguration;
-  result.message = aacSbrSignaled(configuration)
-      ? kHeAacDecoderDelayRefusal
-      : "selected AAC-LC or Opus track was not admitted";
-  return result;
+  return MatroskaPrepareOutcome{
+      MediaSourceOpenStatus::Unsupported, MediaRefusalClass::CodecConfiguration,
+      nullptr, std::string(audioHeaderVerdictRow(*verdict).message)};
 }
 
 // The per-track table the parser and every cursor are driven by. It is built
@@ -4302,15 +4332,16 @@ MatroskaPrepareOutcome prepareMatroska(
                                      *duration, document.clusters, constraints,
                                      state->timestampScaleNanoseconds,
                                      cancellation, &proposed, &runtime)) {
-              auto exactRequest = requested;
-              exactRequest.selection.preferredAudio = candidates[i].id;
-              const auto header = matroskaHeaderRefusal(*state->reader,
-                  document.tracks, documentType, exactRequest, state->limits, cancellation);
+              // The authoritative selection already passed, so of the header
+              // gate only its audio half can still refuse this candidate.
+              const auto header = audioHeaderRefusal(
+                  *state->reader, candidate, state->limits, cancellation);
               const bool software = softwareAudioCodecId(inlineString(candidate.codecId)) != MediaCodec::Unknown;
-              const std::string reason = header ? header->message : software
-                  ? "SoftwareAudioPacketTimelineUnqualified" : "AudioCodecConfigurationRefused";
-              const bool named = reason == kHeAacDecoderDelayRefusal ||
-                                 reason == "OpusOutputSampleRateUnsupported";
+              const std::string reason = header
+                  ? std::string(audioHeaderVerdictRow(*header).message)
+                  : software ? "SoftwareAudioPacketTimelineUnqualified"
+                             : "AudioCodecConfigurationRefused";
+              const bool named = header && audioHeaderVerdictRow(*header).specific;
               if (named || (!specificRefusal && header)) bestRefusal = reason;
               specificRefusal = specificRefusal || named;
               if (!candidateRefusals.empty()) candidateRefusals += "; ";
