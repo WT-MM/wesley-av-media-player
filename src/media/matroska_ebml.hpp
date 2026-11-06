@@ -255,7 +255,7 @@ enum class VisitorAction : std::uint8_t {
 // The two DocTypes this demuxer admits. WebM is Matroska: the same EBML
 // element grammar, the same Cluster/Block layout, and the same timestamp
 // model, restricted to a smaller codec set. The demuxer applies that
-// restriction to audio tracks itself (audioCodecAllowedInDocument in
+// restriction to audio tracks itself (the webm column of kMatroskaCodecs in
 // matroska_demuxer.cpp), so the parser needs no separate WebM profile -- only
 // permission to read the name.
 enum class EbmlDocumentType : std::uint8_t {

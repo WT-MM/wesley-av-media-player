@@ -388,60 +388,157 @@ inline constexpr std::size_t kOpusTailProbeClusters{8};
   return !cancellation.cancelled();
 }
 
-[[nodiscard]] bool isVideoCodec(std::string_view id) noexcept {
-  return id == "V_MPEG4/ISO/AVC" || id == "V_MPEGH/ISO/HEVC" ||
-         id == "V_AV1" || id == "V_VP9"
-         // MPEG-4 Part 2. Both CodecIDs are named because the CodecID is not a
-         // profile signal: ffmpeg writes V_MPEG4/ISO/ASP for every mpeg4 track
-         // it muxes, Simple Profile included (measured across the whole
-         // fixture set), so a track selected here is profile-gated later, on
-         // the CodecPrivate headers, by inspectMpeg4VisualHeaders(). Advanced
-         // Simple Profile is refused there, cleanly, and falls back.
-         //
-         // V_MS/VFW/FOURCC -- the old AVI-remux carriage that wraps DIVX/XVID/
-         // DX50 in a BITMAPINFOHEADER -- is deliberately NOT named: its
-         // CodecPrivate is a Windows structure rather than a
-         // VisualObjectSequence, and the payload it wraps is Advanced Simple
-         // or MS-MPEG-4 v3 in every case this project has seen.
-         || id == "V_MPEG4/ISO/ASP" || id == "V_MPEG4/ISO/SP"
+// How an audio CodecID's descriptor is built, and whether it has a
+// header-decidable refusal. Switches over it carry no default, so a new
+// builder must state both explicitly.
+enum class MatroskaAudioBuilder : std::uint8_t {
+  None,
+  Software,
+  Apple,
+  Opus,
+  Vorbis,
+  Ac3,
+  Eac3,
+  Mpeg,
+  Flac,
+  Aac,
+};
+
+struct MatroskaCodecRow {
+  std::string_view codecId;
+  std::uint64_t trackType;  // 1 video, 2 audio
+  MediaCodec codec;
+  MediaCodecConfigurationKind kind;
+  // Audio only; video was never DocType-gated. WebM's audio codec set is
+  // Vorbis and Opus. Every other CodecID this source admits is legal in
+  // Matroska and NOT legal in WebM, so a file whose DocType says "webm" while
+  // carrying one of them is malformed. Admitting it would mean this source
+  // plays a file that no other WebM decoder would, which is a worse outcome
+  // than the mpv fallback -- mpv is not bound by the DocType either, so the
+  // file still plays, just not down this path.
+  //
+  // AAC is the one deliberate exception: it is not WebM-legal either, but an
+  // AAC track in a WebM DocType plays correctly down this path, so refusing
+  // it would only turn working files into fallbacks.
+  bool webm;
+  MatroskaAudioBuilder builder;
+};
+
+// Every CodecID this source selects. A missing CodecID is never selected, so
+// there is no catch-all row to mis-dispatch.
+inline constexpr MatroskaCodecRow kMatroskaCodecs[] = {
+    {"V_MPEG4/ISO/AVC", 1, MediaCodec::H264, MediaCodecConfigurationKind::AvcC,
+     false, MatroskaAudioBuilder::None},
+    {"V_MPEGH/ISO/HEVC", 1, MediaCodec::Hevc,
+     MediaCodecConfigurationKind::HvcC, false, MatroskaAudioBuilder::None},
+    {"V_AV1", 1, MediaCodec::Av1, MediaCodecConfigurationKind::Av1C, false,
+     MatroskaAudioBuilder::None},
+    {"V_VP9", 1, MediaCodec::Vp9, MediaCodecConfigurationKind::VpcC, false,
+     MatroskaAudioBuilder::None},
+    // MPEG-4 Part 2. Both CodecIDs are named because the CodecID is not a
+    // profile signal: ffmpeg writes V_MPEG4/ISO/ASP for every mpeg4 track it
+    // muxes, Simple Profile included (measured across the whole fixture set),
+    // so a track selected here is profile-gated later, on the CodecPrivate
+    // headers, by inspectMpeg4VisualHeaders(). Advanced Simple Profile is
+    // refused there, cleanly, and falls back. CodecPrivate names the esds
+    // makeVideoDescriptor synthesizes from the VisualObjectSequence/
+    // VideoObjectLayer headers, the same way VpcC names the record
+    // synthesized for VP8 and VP9.
+    //
+    // V_MS/VFW/FOURCC -- the old AVI-remux carriage that wraps DIVX/XVID/DX50
+    // in a BITMAPINFOHEADER -- is deliberately NOT named: its CodecPrivate is
+    // a Windows structure rather than a VisualObjectSequence, and the payload
+    // it wraps is Advanced Simple or MS-MPEG-4 v3 in every case this project
+    // has seen.
+    {"V_MPEG4/ISO/ASP", 1, MediaCodec::Mpeg4Visual,
+     MediaCodecConfigurationKind::CodecPrivate, false,
+     MatroskaAudioBuilder::None},
+    {"V_MPEG4/ISO/SP", 1, MediaCodec::Mpeg4Visual,
+     MediaCodecConfigurationKind::CodecPrivate, false,
+     MatroskaAudioBuilder::None},
 #if defined(WAM_ENABLE_SOFTWARE_VP8)
-         // VP8 has no hardware decoder on any Apple platform, so it is a
-         // selectable CodecID exactly when this build linked the libvpx
-         // software stage. Naming it in a build that cannot decode it would
-         // select the track and then fail the open, which is a strictly worse
-         // fallback than never selecting it.
-         || id == "V_VP8"
+    // VP8 has no hardware decoder on any Apple platform, so it is a
+    // selectable CodecID exactly when this build linked the libvpx software
+    // stage. Naming it in a build that cannot decode it would select the
+    // track and then fail the open, which is a strictly worse fallback than
+    // never selecting it. A VPCodecConfigurationBox describes vp08 as well as
+    // vp09; WebM never carries one for VP8, so VpcC names the record
+    // makeVideoDescriptor synthesizes from the key frame, as for VP9.
+    {"V_VP8", 1, MediaCodec::Vp8, MediaCodecConfigurationKind::VpcC, false,
+     MatroskaAudioBuilder::None},
 #endif
-      ;
-}
+    // The Apple builder derives the codec from the track itself.
+    {"A_ALAC", 2, MediaCodec::Unknown, MediaCodecConfigurationKind::None,
+     false, MatroskaAudioBuilder::Apple},
+    {"A_PCM/INT/LIT", 2, MediaCodec::Unknown,
+     MediaCodecConfigurationKind::None, false, MatroskaAudioBuilder::Apple},
+    {"A_PCM/FLOAT/IEEE", 2, MediaCodec::Unknown,
+     MediaCodecConfigurationKind::None, false, MatroskaAudioBuilder::Apple},
+    {"A_MS/ACM", 2, MediaCodec::Unknown, MediaCodecConfigurationKind::None,
+     false, MatroskaAudioBuilder::Apple},
+    {"A_AAC", 2, MediaCodec::Aac, MediaCodecConfigurationKind::None, true,
+     MatroskaAudioBuilder::Aac},
+    {"A_OPUS", 2, MediaCodec::Opus, MediaCodecConfigurationKind::None, true,
+     MatroskaAudioBuilder::Opus},
+    {"A_VORBIS", 2, MediaCodec::Vorbis, MediaCodecConfigurationKind::None,
+     true, MatroskaAudioBuilder::Vorbis},
+    {"A_AC3", 2, MediaCodec::Ac3, MediaCodecConfigurationKind::None, false,
+     MatroskaAudioBuilder::Ac3},
+    {"A_EAC3", 2, MediaCodec::Eac3, MediaCodecConfigurationKind::None, false,
+     MatroskaAudioBuilder::Eac3},
+    {"A_FLAC", 2, MediaCodec::Flac, MediaCodecConfigurationKind::None, false,
+     MatroskaAudioBuilder::Flac},
+    {"A_MPEG/L3", 2, MediaCodec::Mp3, MediaCodecConfigurationKind::None,
+     false, MatroskaAudioBuilder::Mpeg},
+    {"A_DTS", 2, MediaCodec::Dts, MediaCodecConfigurationKind::None, false,
+     MatroskaAudioBuilder::Software},
+    {"A_TRUEHD", 2, MediaCodec::TrueHd, MediaCodecConfigurationKind::None,
+     false, MatroskaAudioBuilder::Software},
+    {"A_MLP", 2, MediaCodec::Mlp, MediaCodecConfigurationKind::None, false,
+     MatroskaAudioBuilder::Software},
+};
 
-[[nodiscard]] bool isAudioCodec(std::string_view id) noexcept {
-  return id == "A_ALAC" || id == "A_PCM/INT/LIT" ||
-         id == "A_PCM/FLOAT/IEEE" || id == "A_MS/ACM" || id == "A_AAC" || id == "A_OPUS" || id == "A_VORBIS" ||
-         id == "A_AC3" || id == "A_EAC3" || id == "A_FLAC" ||
-         id == "A_MPEG/L3" || id == "A_DTS" || id == "A_TRUEHD" || id == "A_MLP";
-}
-
-// WebM's audio codec set is Vorbis and Opus. Every other CodecID this source
-// admits is legal in Matroska and NOT legal in WebM, so a file whose DocType
-// says "webm" while carrying one of them is malformed. Admitting it would mean
-// this source plays a file that no other WebM decoder would, which is a worse
-// outcome than the mpv fallback -- mpv is not bound by the DocType either, so
-// the file still plays, just not down this path.
-//
-// AAC is the one deliberate exception: it is not WebM-legal either, but an
-// AAC track in a WebM DocType plays correctly down this path, so refusing it
-// would only turn working files into fallbacks.
-[[nodiscard]] bool
-audioCodecAllowedInDocument(std::string_view codecId,
-                            EbmlDocumentType documentType) noexcept {
-  if (documentType != EbmlDocumentType::Webm) {
-    return true;
+[[nodiscard]] constexpr const MatroskaCodecRow* matroskaCodecRow(
+    std::string_view codecId) noexcept {
+  for (const MatroskaCodecRow& row : kMatroskaCodecs) {
+    if (row.codecId == codecId) {
+      return &row;
+    }
   }
-  return codecId != "A_DTS" && codecId != "A_TRUEHD" && codecId != "A_MLP" && codecId != "A_AC3" && codecId != "A_EAC3" && codecId != "A_FLAC" &&
-         codecId != "A_MPEG/L3" && codecId != "A_ALAC" &&
-         codecId != "A_PCM/INT/LIT" && codecId != "A_PCM/FLOAT/IEEE" &&
-         codecId != "A_MS/ACM";
+  return nullptr;
+}
+
+[[nodiscard]] constexpr bool matroskaCodecTableConsistent() noexcept {
+  std::size_t audio = 0;
+  for (std::size_t i = 0; i < std::size(kMatroskaCodecs); ++i) {
+    const MatroskaCodecRow& row = kMatroskaCodecs[i];
+    if (matroskaCodecRow(row.codecId) != &row ||
+        (row.trackType == 1) != (row.builder == MatroskaAudioBuilder::None) ||
+        (row.trackType == 1 && row.webm)) {
+      return false;
+    }
+    const std::string_view id = row.codecId;
+    const bool webm = id == "A_AAC" || id == "A_OPUS" || id == "A_VORBIS";
+    const bool software = id == "A_DTS" || id == "A_TRUEHD" || id == "A_MLP";
+    if (row.trackType == 2 &&
+        (row.webm != webm ||
+         (row.builder == MatroskaAudioBuilder::Software) != software)) {
+      return false;
+    }
+    audio += row.trackType == 2 ? 1 : 0;
+  }
+  return audio == 14;
+}
+static_assert(matroskaCodecTableConsistent());
+
+// Whether a track of `type` carrying `codecId` may be selected in a document
+// of `documentType`.
+[[nodiscard]] constexpr bool selectableCodec(
+    std::string_view codecId, std::uint64_t type,
+    EbmlDocumentType documentType) noexcept {
+  const MatroskaCodecRow* row = matroskaCodecRow(codecId);
+  return row != nullptr && row->trackType == type &&
+         (type != 2 || documentType != EbmlDocumentType::Webm || row->webm);
 }
 
 [[nodiscard]] const TrackEntry* chooseTrack(
@@ -452,9 +549,7 @@ audioCodecAllowedInDocument(std::string_view codecId,
     const std::string_view codec(track.codecId.view().data(),
                                  track.codecId.view().size());
     return track.enabled && track.type == type && trackId(track.number) &&
-           (type == 1 ? isVideoCodec(codec)
-                      : (isAudioCodec(codec) &&
-                         audioCodecAllowedInDocument(codec, documentType)));
+           selectableCodec(codec, type, documentType);
   };
   if (preferred) {
     const auto found = std::find_if(
@@ -704,45 +799,6 @@ struct CapturedBlockVisitor final : Visitor {
   bool emitted{false};
 };
 
-struct VideoCodecIdentity {
-  MediaCodec codec{MediaCodec::Unknown};
-  MediaCodecConfigurationKind kind{MediaCodecConfigurationKind::None};
-};
-
-// A full map, not a default: a catch-all branch would silently mis-dispatch
-// every CodecID it was not written for.
-[[nodiscard]] VideoCodecIdentity videoCodecIdentity(
-    std::string_view codecId) noexcept {
-  if (codecId == "V_MPEG4/ISO/AVC") {
-    return {MediaCodec::H264, MediaCodecConfigurationKind::AvcC};
-  }
-  if (codecId == "V_MPEGH/ISO/HEVC") {
-    return {MediaCodec::Hevc, MediaCodecConfigurationKind::HvcC};
-  }
-  if (codecId == "V_AV1") {
-    return {MediaCodec::Av1, MediaCodecConfigurationKind::Av1C};
-  }
-  if (codecId == "V_VP9") {
-    return {MediaCodec::Vp9, MediaCodecConfigurationKind::VpcC};
-  }
-  if (codecId == "V_MPEG4/ISO/ASP" || codecId == "V_MPEG4/ISO/SP") {
-    // CodecPrivate names the esds makeVideoDescriptor synthesizes below from
-    // the VisualObjectSequence/VideoObjectLayer headers this CodecID carries,
-    // the same way VpcC names the record synthesized for VP8 and VP9.
-    return {MediaCodec::Mpeg4Visual,
-            MediaCodecConfigurationKind::CodecPrivate};
-  }
-#if defined(WAM_ENABLE_SOFTWARE_VP8)
-  if (codecId == "V_VP8") {
-    // A VPCodecConfigurationBox describes vp08 as well as vp09. WebM never
-    // carries one for VP8, so this kind names the record makeVideoDescriptor
-    // synthesizes from the key frame, exactly as it does for VP9.
-    return {MediaCodec::Vp8, MediaCodecConfigurationKind::VpcC};
-  }
-#endif
-  return {};
-}
-
 // VP9 and VP8 in Matroska/WebM normally carry no CodecPrivate, so their facts
 // have to come from the bitstream. Reads the leading bytes of the first
 // keyframe of `trackNumber` within the first `maximumClusters` Clusters --
@@ -821,10 +877,12 @@ constexpr std::size_t kVp9KeyframeProbeClusters{4};
   if (!id) {
     return false;
   }
-  const VideoCodecIdentity identity =
-      videoCodecIdentity(inlineString(entry.codecId));
-  const MediaCodec codec = identity.codec;
-  const MediaCodecConfigurationKind kind = identity.kind;
+  const MatroskaCodecRow* row = matroskaCodecRow(inlineString(entry.codecId));
+  if (row == nullptr || row->trackType != 1) {
+    return false;
+  }
+  const MediaCodec codec = row->codec;
+  const MediaCodecConfigurationKind kind = row->kind;
   // CodecPrivate is the only fact source for AVC, HEVC, and AV1, so it stays
   // mandatory for them. VP9 and VP8 are the exceptions: WebM muxers routinely
   // write no CodecPrivate at all because both bitstreams are self-describing,
@@ -2221,13 +2279,8 @@ void fillAudioDescriptor(const TrackEntry& entry, MediaTrackId id,
   return true;
 }
 
-[[nodiscard]] MediaCodec softwareAudioCodecId(std::string_view id) noexcept {
-  return id == "A_DTS" ? MediaCodec::Dts : id == "A_TRUEHD" ? MediaCodec::TrueHd
-      : id == "A_MLP" ? MediaCodec::Mlp : MediaCodec::Unknown;
-}
-
 [[nodiscard]] bool makeSoftwareAudioDescriptor(
-    SeekableByteReader& reader, const TrackEntry& entry,
+    SeekableByteReader& reader, const TrackEntry& entry, MediaCodec codec,
     const MediaSourceLimits& limits, std::span<const Cluster> clusters,
     std::span<const TrackConstraint> constraints, std::uint64_t tickScale,
     CancellationToken cancellation, MediaTrackDescriptor* result,
@@ -2235,7 +2288,6 @@ void fillAudioDescriptor(const TrackEntry& entry, MediaTrackId id,
 #if !defined(WAM_ENABLE_AVCODEC_STAGE)
   return false;
 #endif
-  const auto codec = softwareAudioCodecId(inlineString(entry.codecId));
   if (!sweepTrackFeaturesSupported(entry) || entry.codecDelayNanoseconds || !entry.audio ||
       entry.audio->samplingFrequency != 48000 || entry.audio->channels == 0 ||
       entry.audio->channels > limits.maximumAudioChannels || !trackId(entry.number)) return false;
@@ -2304,44 +2356,47 @@ void fillAudioDescriptor(const TrackEntry& entry, MediaTrackId id,
     std::uint64_t timestampScaleNanoseconds,
     CancellationToken cancellation, MediaTrackDescriptor* result,
     TrackRuntime* runtime) {
-  if (softwareAudioCodecId(inlineString(entry.codecId)) != MediaCodec::Unknown)
-    return makeSoftwareAudioDescriptor(reader, entry, limits, clusters, constraints,
-        timestampScaleNanoseconds, cancellation, result, runtime);
-  const auto appleId = inlineString(entry.codecId);
-  if (appleId == "A_ALAC" || appleId == "A_PCM/INT/LIT" ||
-      appleId == "A_PCM/FLOAT/IEEE" || appleId == "A_MS/ACM") {
-    return makeAppleAudioDescriptor(reader, entry, limits, clusters, constraints,
-        timestampScaleNanoseconds, cancellation, result, runtime);
+  const MatroskaCodecRow* row = matroskaCodecRow(inlineString(entry.codecId));
+  if (row == nullptr) {
+    return false;
   }
-  if (inlineString(entry.codecId) == "A_OPUS") {
-    return makeOpusAudioDescriptor(reader, entry, limits, clusters, constraints,
-                                   timestampScaleNanoseconds, cancellation,
-                                   result, runtime);
-  }
-  if (inlineString(entry.codecId) == "A_VORBIS") {
-    return makeVorbisAudioDescriptor(reader, entry, limits, clusters,
+  switch (row->builder) {
+    case MatroskaAudioBuilder::None:
+      return false;
+    case MatroskaAudioBuilder::Software:
+      return makeSoftwareAudioDescriptor(reader, entry, row->codec, limits,
+                                         clusters, constraints,
+                                         timestampScaleNanoseconds,
+                                         cancellation, result, runtime);
+    case MatroskaAudioBuilder::Apple:
+      return makeAppleAudioDescriptor(reader, entry, limits, clusters,
+                                      constraints, timestampScaleNanoseconds,
+                                      cancellation, result, runtime);
+    case MatroskaAudioBuilder::Opus:
+      return makeOpusAudioDescriptor(reader, entry, limits, clusters,
                                      constraints, timestampScaleNanoseconds,
                                      cancellation, result, runtime);
-  }
-  if (inlineString(entry.codecId) == "A_AC3") {
-    return makeAc3AudioDescriptor(reader, entry, limits, clusters, constraints,
-                                  timestampScaleNanoseconds, false,
-                                  cancellation, result, runtime);
-  }
-  if (inlineString(entry.codecId) == "A_EAC3") {
-    return makeAc3AudioDescriptor(reader, entry, limits, clusters, constraints,
-                                  timestampScaleNanoseconds, true, cancellation,
-                                  result, runtime);
-  }
-  if (inlineString(entry.codecId) == "A_MPEG/L3") {
-    return makeMpegAudioDescriptor(reader, entry, limits, clusters, constraints,
-                                   timestampScaleNanoseconds, cancellation,
-                                   result, runtime);
-  }
-  if (inlineString(entry.codecId) == "A_FLAC") {
-    return makeFlacAudioDescriptor(reader, entry, limits, clusters, constraints,
-                                   timestampScaleNanoseconds, cancellation,
-                                   result, runtime);
+    case MatroskaAudioBuilder::Vorbis:
+      return makeVorbisAudioDescriptor(reader, entry, limits, clusters,
+                                       constraints, timestampScaleNanoseconds,
+                                       cancellation, result, runtime);
+    case MatroskaAudioBuilder::Ac3:
+    case MatroskaAudioBuilder::Eac3:
+      return makeAc3AudioDescriptor(
+          reader, entry, limits, clusters, constraints,
+          timestampScaleNanoseconds,
+          row->builder == MatroskaAudioBuilder::Eac3, cancellation, result,
+          runtime);
+    case MatroskaAudioBuilder::Mpeg:
+      return makeMpegAudioDescriptor(reader, entry, limits, clusters,
+                                     constraints, timestampScaleNanoseconds,
+                                     cancellation, result, runtime);
+    case MatroskaAudioBuilder::Flac:
+      return makeFlacAudioDescriptor(reader, entry, limits, clusters,
+                                     constraints, timestampScaleNanoseconds,
+                                     cancellation, result, runtime);
+    case MatroskaAudioBuilder::Aac:
+      break;
   }
   (void)duration;
   // AAC's CodecDelay (stated by every AAC track FFmpeg encodes, as opposed to
@@ -2354,7 +2409,7 @@ void fillAudioDescriptor(const TrackEntry& entry, MediaTrackId id,
     return false;
   }
   const auto id = trackId(entry.number);
-  if (!id || inlineString(entry.codecId) != "A_AAC") {
+  if (!id) {
     return false;
   }
   std::vector<std::byte> configuration;
@@ -3768,17 +3823,35 @@ inline constexpr AudioHeaderVerdictRow kAudioHeaderVerdicts[] = {
 [[nodiscard]] std::optional<AudioHeaderVerdict> audioHeaderRefusal(
     SeekableByteReader& reader, const TrackEntry& audio,
     const MediaSourceLimits& limits, CancellationToken cancellation) {
-#if !defined(WAM_ENABLE_AVCODEC_STAGE)
-  if (softwareAudioCodecId(inlineString(audio.codecId)) != MediaCodec::Unknown)
-    return AudioHeaderVerdict::SoftwareStageNotBuilt;
-#endif
-  if (inlineString(audio.codecId) == "A_OPUS" && audio.audio &&
-      audio.audio->outputSamplingFrequency &&
-      *audio.audio->outputSamplingFrequency != kOpusOutputSampleRate) {
-    return AudioHeaderVerdict::OpusOutputSampleRate;
+  const MatroskaCodecRow* row = matroskaCodecRow(inlineString(audio.codecId));
+  if (row == nullptr) {
+    return std::nullopt;
   }
-  if (inlineString(audio.codecId) != "A_AAC" || !audio.audio ||
-      !audio.codecPrivate) {
+  switch (row->builder) {
+    case MatroskaAudioBuilder::Software:
+#if !defined(WAM_ENABLE_AVCODEC_STAGE)
+      return AudioHeaderVerdict::SoftwareStageNotBuilt;
+#else
+      return std::nullopt;
+#endif
+    case MatroskaAudioBuilder::Opus:
+      if (audio.audio && audio.audio->outputSamplingFrequency &&
+          *audio.audio->outputSamplingFrequency != kOpusOutputSampleRate) {
+        return AudioHeaderVerdict::OpusOutputSampleRate;
+      }
+      return std::nullopt;
+    case MatroskaAudioBuilder::Aac:
+      break;
+    case MatroskaAudioBuilder::None:
+    case MatroskaAudioBuilder::Apple:
+    case MatroskaAudioBuilder::Vorbis:
+    case MatroskaAudioBuilder::Ac3:
+    case MatroskaAudioBuilder::Eac3:
+    case MatroskaAudioBuilder::Mpeg:
+    case MatroskaAudioBuilder::Flac:
+      return std::nullopt;
+  }
+  if (!audio.audio || !audio.codecPrivate) {
     return std::nullopt;
   }
   std::vector<std::byte> configuration;
@@ -4308,12 +4381,11 @@ MatroskaPrepareOutcome prepareMatroska(
           candidates{};
       for (std::size_t i = 0; i < document.tracks.size(); ++i) {
         const auto& candidate = document.tracks[i];
-        const auto codec = inlineString(candidate.codecId);
         candidates[i] = {trackId(candidate.number).value_or(0),
                          candidate.enabled && candidate.type == 2 &&
                              !rejectedAudio.contains(trackId(candidate.number).value_or(0)) &&
-                             isAudioCodec(codec) &&
-                             audioCodecAllowedInDocument(codec, documentType),
+                             selectableCodec(inlineString(candidate.codecId),
+                                             2, documentType),
                          candidate.defaultTrack};
       }
       std::string candidateRefusals;
@@ -4336,7 +4408,10 @@ MatroskaPrepareOutcome prepareMatroska(
               // gate only its audio half can still refuse this candidate.
               const auto header = audioHeaderRefusal(
                   *state->reader, candidate, state->limits, cancellation);
-              const bool software = softwareAudioCodecId(inlineString(candidate.codecId)) != MediaCodec::Unknown;
+              const MatroskaCodecRow* row =
+                  matroskaCodecRow(inlineString(candidate.codecId));
+              const bool software =
+                  row != nullptr && row->builder == MatroskaAudioBuilder::Software;
               const std::string reason = header
                   ? std::string(audioHeaderVerdictRow(*header).message)
                   : software ? "SoftwareAudioPacketTimelineUnqualified"
