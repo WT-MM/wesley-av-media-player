@@ -2570,7 +2570,7 @@ endif()
 if(BUILD_TESTING AND APPLE AND WAM_ENABLE_MACOS_NATIVE_VIDEO AND WAM_NATIVE_BENCHMARK_TELEMETRY)
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
   find_program(WAM_UI_FFMPEG ffmpeg REQUIRED)
-  foreach(ui_case refusal pending failed rapid skip replay volume mute subtitles transport rate truncated menu metrics)
+  foreach(ui_case refusal pending failed rapid skip replay volume mute subtitles transport rate truncated menu metrics gapseek)
     add_test(NAME ui_${ui_case}
       COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tests/ui_regression_test.py"
         --app "$<TARGET_FILE:wam>" --ffmpeg "${WAM_UI_FFMPEG}" --case "${ui_case}"
