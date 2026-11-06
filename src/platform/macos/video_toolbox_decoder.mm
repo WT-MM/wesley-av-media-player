@@ -268,6 +268,16 @@ void incrementSaturated(std::uint64_t &value) noexcept {
              : left + right;
 }
 
+// The one admission bound: decode credit, retained presentation frames, and
+// the two together against the retained ceiling.
+[[nodiscard]] bool admissionSaturatedLocked(const AsyncDecodeState &state,
+                                            std::size_t maxInFlight) noexcept {
+  const std::size_t retained = state.pendingPresentationFrames.size();
+  return state.inFlight >= maxInFlight ||
+         retained >= state.maxRetainedFrames ||
+         state.inFlight >= state.maxRetainedFrames - retained;
+}
+
 void updatePeak(std::uint64_t &peak, std::uint64_t current) noexcept {
   peak = std::max(peak, current);
 }
@@ -312,11 +322,7 @@ void releaseReservedDecodeCapacity(
         *state, "VideoToolbox reserved decode capacity is inconsistent");
     return;
   }
-  slot->state = AsyncDecodeState::FrameRefConSlotState::Available;
-  slot->submissionSequence = 0;
-  slot->timing = {};
-  slot->compressedBytes = 0;
-  slot->directCompressedStorage = false;
+  *slot = {};
   --state->inFlight;
   state->completion.notify_all();
 }
@@ -391,8 +397,8 @@ void collectCompletedDecodesLocked(AsyncDecodeState &state) {
     }
     if (timeBefore(completed.frame->timing().presentationTime,
                    state.lastDeliveredPresentationTime)) {
-      ++state.dropped;
-      ++state.outOfOrderDrops;
+      incrementSaturated(state.dropped);
+      incrementSaturated(state.outOfOrderDrops);
       assignAsyncErrorLocked(
           state,
           "decoded stream exceeded its admitted presentation-reorder depth");
@@ -405,7 +411,7 @@ void collectCompletedDecodesLocked(AsyncDecodeState &state) {
       completed.frame.reset();
       state.callbackFailedClosed = true;
       state.discarding = true;
-      ++state.dropped;
+      incrementSaturated(state.dropped);
       assignAsyncErrorLocked(
           state, "decoded-frame retention exceeded its bounded admission");
       continue;
@@ -441,11 +447,7 @@ void resetPresentationState(
     state->nextCompletionSequence = 0;
     for (AsyncDecodeState::FrameRefConSlot &slot :
          state->frameRefConSlots) {
-      slot.state = AsyncDecodeState::FrameRefConSlotState::Available;
-      slot.submissionSequence = 0;
-      slot.timing = {};
-      slot.compressedBytes = 0;
-      slot.directCompressedStorage = false;
+      slot = {};
     }
     state->currentDirectCompressedBytes = 0;
     state->currentCopiedCompressedBytes = 0;
@@ -931,7 +933,7 @@ void deliverDecodedFrameImpl(const std::shared_ptr<AsyncDecodeState> &state,
       return;
     }
     if (state->callbackFailedClosed) {
-      ++state->dropped;
+      incrementSaturated(state->dropped);
       insertCompletionTombstoneLocked(*state, slot, submissionSequence);
       collectCompletedDecodesLocked(*state);
     } else {
@@ -939,14 +941,14 @@ void deliverDecodedFrameImpl(const std::shared_ptr<AsyncDecodeState> &state,
       if (status != noErr) {
         assignAsyncErrorLocked(
             *state, "VideoToolbox output callback reported failure");
-        ++state->dropped;
+        incrementSaturated(state->dropped);
       } else if ((infoFlags & kVTDecodeInfo_FrameDropped) != 0 ||
                  (imageBuffer == nullptr
 #if defined(WAM_NATIVE_VIDEO_TESTING)
                   && !state->permitSyntheticCallbackFrame
 #endif
                   )) {
-        ++state->dropped;
+        incrementSaturated(state->dropped);
         if (imageBuffer == nullptr &&
             (infoFlags & kVTDecodeInfo_FrameDropped) == 0) {
           assignAsyncErrorLocked(
@@ -956,7 +958,7 @@ void deliverDecodedFrameImpl(const std::shared_ptr<AsyncDecodeState> &state,
       } else if (state->discarding || timing.generation != state->generation) {
         // A flush advances the generation before waiting for callbacks, so an
         // old frame is released here without ever reaching the new timeline.
-        ++state->dropped;
+        incrementSaturated(state->dropped);
       } else {
         auto pixelBuffer = static_cast<CVPixelBufferRef>(imageBuffer);
 #if defined(WAM_NATIVE_VIDEO_TESTING)
@@ -970,7 +972,7 @@ void deliverDecodedFrameImpl(const std::shared_ptr<AsyncDecodeState> &state,
               *state,
               "VideoToolbox decoded dimensions did not match the configured "
               "coded dimensions");
-          ++state->dropped;
+          incrementSaturated(state->dropped);
         } else {
           // Runs before both contract checks: the surface's own tag is what
           // the layer and the shaders read, so it is restated at the port
@@ -991,20 +993,20 @@ void deliverDecodedFrameImpl(const std::shared_ptr<AsyncDecodeState> &state,
             assignAsyncErrorLocked(
                 *state,
                 "VideoToolbox decoded surface violated the output contract");
-            ++state->dropped;
+            incrementSaturated(state->dropped);
           } else if (!validateDecodedSdrColorAttachments(pixelBuffer,
                                                          nullptr)) {
             assignAsyncErrorLocked(
                 *state,
                 "VideoToolbox decoded frame carried unsupported color or HDR "
                 "metadata");
-            ++state->dropped;
+            incrementSaturated(state->dropped);
           } else if (!CMTIME_IS_NUMERIC(timing.presentationTime)) {
             assignAsyncErrorLocked(
                 *state,
                 "VideoToolbox returned a decoded frame without a finite "
                 "numeric presentation timestamp");
-            ++state->dropped;
+            incrementSaturated(state->dropped);
           } else {
             const OSType pixelFormat =
                 CVPixelBufferGetPixelFormatType(pixelBuffer);
@@ -1012,7 +1014,7 @@ void deliverDecodedFrameImpl(const std::shared_ptr<AsyncDecodeState> &state,
             if (state->sink == nullptr) {
               assignAsyncErrorLocked(
                   *state, "decoded frame has no configured output sink");
-              ++state->dropped;
+              incrementSaturated(state->dropped);
             } else {
               // This is the first decoded-frame owner created after
               // generation, surface-layout, color, timestamp, and sink
@@ -1045,7 +1047,7 @@ void deliverDecodedFrameImpl(const std::shared_ptr<AsyncDecodeState> &state,
           (duplicate != state->completedDecodes.end() &&
            duplicate->submissionSequence == submissionSequence)) {
         if (decodedFrame) {
-          ++state->dropped;
+          incrementSaturated(state->dropped);
         }
         assignAsyncErrorLocked(
             *state,
@@ -1087,7 +1089,7 @@ void failDecodedFrameCallback(
       state->pendingPresentationFrames.clear();
       state->callbackFailedClosed = true;
       state->discarding = true;
-      ++state->dropped;
+      incrementSaturated(state->dropped);
       assignAsyncErrorLocked(*state, diagnostic);
       insertCompletionTombstoneLocked(*state, slot, submissionSequence);
       collectCompletedDecodesLocked(*state);
@@ -2065,15 +2067,8 @@ struct VideoToolboxDecoder::Impl {
 
   AsyncDecodeState::FrameRefConSlot *reserveDecodeCapacityLocked() {
     std::lock_guard stateLock(async->mutex);
-    const bool retainedSaturated =
-        async->pendingPresentationFrames.size() >= async->maxRetainedFrames ||
-        async->inFlight >=
-            async->maxRetainedFrames - async->pendingPresentationFrames.size();
-    if (async->inFlight >= options.maxInFlightFrames || retainedSaturated) {
-      if (async->backpressuredSubmissions !=
-          std::numeric_limits<std::uint64_t>::max()) {
-        ++async->backpressuredSubmissions;
-      }
+    if (admissionSaturatedLocked(*async, options.maxInFlightFrames)) {
+      incrementSaturated(async->backpressuredSubmissions);
       return nullptr;
     }
     const auto available = std::find_if(
@@ -2162,34 +2157,14 @@ struct VideoToolboxDecoder::Impl {
     }
     {
       std::lock_guard stateLock(async->mutex);
-      if (async->submitted != std::numeric_limits<std::uint64_t>::max()) {
-        ++async->submitted;
-      }
-      if (storage == CompressedSubmissionStorage::DirectSampleBuffer) {
-        if (async->directSampleBufferSubmissions !=
-            std::numeric_limits<std::uint64_t>::max()) {
-          ++async->directSampleBufferSubmissions;
-        }
-        const std::uint64_t directBytes =
-            static_cast<std::uint64_t>(compressedBytes);
-        async->directSampleBufferBytes =
-            directBytes > std::numeric_limits<std::uint64_t>::max() -
-                              async->directSampleBufferBytes
-                ? std::numeric_limits<std::uint64_t>::max()
-                : async->directSampleBufferBytes + directBytes;
-      } else {
-        if (async->copiedSpanSubmissions !=
-            std::numeric_limits<std::uint64_t>::max()) {
-          ++async->copiedSpanSubmissions;
-        }
-        const std::uint64_t copied =
-            static_cast<std::uint64_t>(compressedBytes);
-        async->copiedSpanBytes =
-            copied > std::numeric_limits<std::uint64_t>::max() -
-                         async->copiedSpanBytes
-                ? std::numeric_limits<std::uint64_t>::max()
-                : async->copiedSpanBytes + copied;
-      }
+      incrementSaturated(async->submitted);
+      const bool direct =
+          storage == CompressedSubmissionStorage::DirectSampleBuffer;
+      incrementSaturated(direct ? async->directSampleBufferSubmissions
+                                : async->copiedSpanSubmissions);
+      std::uint64_t &bytes =
+          direct ? async->directSampleBufferBytes : async->copiedSpanBytes;
+      bytes = saturatedAdd(bytes, static_cast<std::uint64_t>(compressedBytes));
     }
     awaitingKeyFrame = false;
     return VideoDecodeSubmitResult::Accepted;
@@ -2208,6 +2183,51 @@ struct VideoToolboxDecoder::Impl {
     async->completion.wait(lock, [this] {
       return async->inFlight == 0 && async->activeCallbacks == 0;
     });
+  }
+
+  [[nodiscard]] std::uint64_t currentGenerationLocked() const {
+    std::lock_guard stateLock(async->mutex);
+    return async->generation;
+  }
+
+  // Moves the async state to `generation`, waits out every callback and
+  // invalidates the session, then flushes the sink. The order is load-bearing:
+  // the flush must follow the wait, or a late callback enqueues into a sink
+  // that was already flushed.
+  void invalidateGenerationLocked(std::uint64_t generation,
+                                  bool clearError) noexcept {
+    DecodedFrameSink *sink = nullptr;
+    {
+      std::lock_guard stateLock(async->mutex);
+      async->generation = generation;
+      async->discarding = true;
+      if (clearError) {
+        async->lastError.reset();
+      }
+      sink = async->sink;
+    }
+    waitAndInvalidateSessionLocked();
+    resetPresentationState(async);
+    if (sink != nullptr) {
+      sink->flush(generation);
+    }
+  }
+
+  // After invalidateGenerationLocked: forget the stream and its sink.
+  void detachLocked() noexcept {
+    if (formatDescription != nullptr) {
+      CFRelease(formatDescription);
+      formatDescription = nullptr;
+    }
+    {
+      std::lock_guard stateLock(async->mutex);
+      async->sink = nullptr;
+    }
+    configured = false;
+    resetEndOfStreamLocked();
+    awaitingKeyFrame = true;
+    usingHardware = false;
+    notifyProgress(async);
   }
 
   std::optional<std::string> takeAsyncErrorLocked() {
@@ -2391,9 +2411,7 @@ struct VideoToolboxDecoder::Impl {
         const std::size_t retained = async->pendingPresentationFrames.size();
         starved = async->inFlight != 0 &&
                   retained <= async->codecReorderFrames &&
-                  (async->inFlight >= options.maxInFlightFrames ||
-                   retained >= async->maxRetainedFrames ||
-                   async->inFlight >= async->maxRetainedFrames - retained);
+                  admissionSaturatedLocked(*async, options.maxInFlightFrames);
       }
       if (starved) {
         const OSStatus waitStatus =
@@ -2618,18 +2636,8 @@ bool VideoToolboxDecoder::configure(
 
   // Retire an earlier configuration before exposing the new sink/generation.
   if (impl_->configured) {
-    DecodedFrameSink *oldSink = nullptr;
-    {
-      std::lock_guard stateLock(impl_->async->mutex);
-      impl_->async->discarding = true;
-      ++impl_->async->generation;
-      oldSink = impl_->async->sink;
-    }
-    impl_->waitAndInvalidateSessionLocked();
-    resetPresentationState(impl_->async);
-    if (oldSink != nullptr) {
-      oldSink->flush(impl_->async->generation);
-    }
+    impl_->invalidateGenerationLocked(impl_->currentGenerationLocked() + 1,
+                                      false);
     notifyProgress(impl_->async);
   }
   impl_->configured = false;
@@ -2750,11 +2758,7 @@ bool VideoToolboxDecoder::configure(
     impl_->async->nextCompletionSequence = 0;
     for (AsyncDecodeState::FrameRefConSlot &slot :
          impl_->async->frameRefConSlots) {
-      slot.state = AsyncDecodeState::FrameRefConSlotState::Available;
-      slot.submissionSequence = 0;
-      slot.timing = {};
-      slot.compressedBytes = 0;
-      slot.directCompressedStorage = false;
+      slot = {};
     }
     impl_->async->completedDecodes.clear();
     impl_->async->pendingPresentationFrames.clear();
@@ -3073,19 +3077,7 @@ void VideoToolboxDecoder::flush(std::uint64_t nextGeneration) noexcept {
   if (impl_->retirementStarted) {
     return;
   }
-  DecodedFrameSink *sink = nullptr;
-  {
-    std::lock_guard stateLock(impl_->async->mutex);
-    impl_->async->generation = nextGeneration;
-    impl_->async->discarding = true;
-    impl_->async->lastError.reset();
-    sink = impl_->async->sink;
-  }
-  impl_->waitAndInvalidateSessionLocked();
-  resetPresentationState(impl_->async);
-  if (sink != nullptr) {
-    sink->flush(nextGeneration);
-  }
+  impl_->invalidateGenerationLocked(nextGeneration, true);
   {
     std::lock_guard stateLock(impl_->async->mutex);
     impl_->async->discarding = !impl_->configured;
@@ -3126,32 +3118,9 @@ VideoDecoderRetireProgress VideoToolboxDecoder::retire(
   impl_->retirementRetiredGeneration = retiredGeneration;
   impl_->retirementInvalidationGeneration = invalidationGeneration;
 
-  DecodedFrameSink *sink = nullptr;
-  {
-    std::lock_guard stateLock(impl_->async->mutex);
-    impl_->async->generation = invalidationGeneration;
-    impl_->async->discarding = true;
-    sink = impl_->async->sink;
-  }
-  impl_->waitAndInvalidateSessionLocked();
-  resetPresentationState(impl_->async);
-  if (sink != nullptr) {
-    sink->flush(invalidationGeneration);
-  }
-  if (impl_->formatDescription != nullptr) {
-    CFRelease(impl_->formatDescription);
-    impl_->formatDescription = nullptr;
-  }
-  {
-    std::lock_guard stateLock(impl_->async->mutex);
-    impl_->async->sink = nullptr;
-  }
-  impl_->configured = false;
-  impl_->resetEndOfStreamLocked();
-  impl_->awaitingKeyFrame = true;
-  impl_->usingHardware = false;
+  impl_->invalidateGenerationLocked(invalidationGeneration, false);
   impl_->retirementDone = true;
-  notifyProgress(impl_->async);
+  impl_->detachLocked();
   return VideoDecoderRetireProgress::Done;
 }
 
@@ -3168,33 +3137,9 @@ void VideoToolboxDecoder::close() noexcept {
     return;
   }
 
-  DecodedFrameSink *sink = nullptr;
-  std::uint64_t retiredGeneration = 0;
-  {
-    std::lock_guard stateLock(impl_->async->mutex);
-    retiredGeneration = impl_->async->generation + 1;
-    impl_->async->generation = retiredGeneration;
-    impl_->async->discarding = true;
-    sink = impl_->async->sink;
-  }
-  impl_->waitAndInvalidateSessionLocked();
-  resetPresentationState(impl_->async);
-  if (sink != nullptr) {
-    sink->flush(retiredGeneration);
-  }
-  if (impl_->formatDescription != nullptr) {
-    CFRelease(impl_->formatDescription);
-    impl_->formatDescription = nullptr;
-  }
-  {
-    std::lock_guard stateLock(impl_->async->mutex);
-    impl_->async->sink = nullptr;
-  }
-  impl_->configured = false;
-  impl_->resetEndOfStreamLocked();
-  impl_->awaitingKeyFrame = true;
-  impl_->usingHardware = false;
-  notifyProgress(impl_->async);
+  impl_->invalidateGenerationLocked(impl_->currentGenerationLocked() + 1,
+                                    false);
+  impl_->detachLocked();
 }
 
 VideoToolboxDecoderStats VideoToolboxDecoder::stats() const noexcept {
@@ -3212,12 +3157,8 @@ VideoToolboxDecoderStats VideoToolboxDecoder::stats() const noexcept {
         impl_->async->pendingPresentationFrames.size();
     result.acceptsCompressedSample =
         impl_->configured && !impl_->ended && !impl_->async->discarding &&
-        impl_->async->inFlight < impl_->options.maxInFlightFrames &&
-        impl_->async->pendingPresentationFrames.size() <
-            impl_->async->maxRetainedFrames &&
-        impl_->async->inFlight <
-            impl_->async->maxRetainedFrames -
-                impl_->async->pendingPresentationFrames.size();
+        !admissionSaturatedLocked(*impl_->async,
+                                  impl_->options.maxInFlightFrames);
     result.codecReorderFrames = impl_->async->codecReorderFrames;
     result.generation = impl_->async->generation;
     result.submittedFrames = impl_->async->submitted;
@@ -3599,25 +3540,9 @@ bool VideoToolboxDecoderTestAccess::prepareInjectedCallbacks(
     return false;
   }
   if (decoder.impl_->configured) {
-    DecodedFrameSink *oldSink = nullptr;
-    std::uint64_t invalidationGeneration = 0;
-    {
-      std::lock_guard stateLock(decoder.impl_->async->mutex);
-      decoder.impl_->async->discarding = true;
-      invalidationGeneration = ++decoder.impl_->async->generation;
-      oldSink = decoder.impl_->async->sink;
-    }
-    decoder.impl_->waitAndInvalidateSessionLocked();
-    resetPresentationState(decoder.impl_->async);
-    if (oldSink != nullptr) {
-      oldSink->flush(invalidationGeneration);
-    }
-    decoder.impl_->configured = false;
-    {
-      std::lock_guard stateLock(decoder.impl_->async->mutex);
-      decoder.impl_->async->sink = nullptr;
-    }
-    notifyProgress(decoder.impl_->async);
+    decoder.impl_->invalidateGenerationLocked(
+        decoder.impl_->currentGenerationLocked() + 1, false);
+    decoder.impl_->detachLocked();
   }
   if (!reserveCallbackStorage(
           decoder.impl_->async, decoder.impl_->options.maxInFlightFrames,
@@ -3650,11 +3575,7 @@ bool VideoToolboxDecoderTestAccess::prepareInjectedCallbacks(
     decoder.impl_->async->peakCompressedBytes = 0;
     for (AsyncDecodeState::FrameRefConSlot &slot :
          decoder.impl_->async->frameRefConSlots) {
-      slot.state = AsyncDecodeState::FrameRefConSlotState::Available;
-      slot.submissionSequence = 0;
-      slot.timing = {};
-      slot.compressedBytes = 0;
-      slot.directCompressedStorage = false;
+      slot = {};
     }
     decoder.impl_->async->completedDecodes.clear();
     decoder.impl_->async->pendingPresentationFrames.clear();
