@@ -641,6 +641,21 @@ std::uint64_t allocateSessionEpoch() noexcept {
 }  // namespace
 
 struct NativeMediaSession::Impl final {
+  struct PublishedFacts {
+    NativeMediaSessionOwnershipPhase ownership{
+        NativeMediaSessionOwnershipPhase::Empty};
+    bool prepared{false};
+    bool started{false};
+    bool dispatcherObservedVideo{false};
+    bool directVideoRetired{false};
+    bool directAudioRetired{false};
+    bool stopped{false};
+    bool ending{false};
+    bool ended{false};
+    bool liveFailed{false};
+    bool appliedPaused{true};
+  };
+
   explicit Impl(NativeMediaSessionSourceBinding sourceBinding,
                 NativeMediaSessionDependencies sourceDependencies)
       : binding(std::move(sourceBinding)),
@@ -684,8 +699,8 @@ struct NativeMediaSession::Impl final {
 
   // The admission state every seek and preview preflight shares.
   [[nodiscard]] bool seekAdmissibleLocked() const noexcept {
-    return !exitRequested && !publishedStop.has_value() && !publicLiveFailed &&
-           !(publicEnding && !publicEnded) && publicPrepared &&
+    return !exitRequested && !publishedStop.has_value() && !published.liveFailed &&
+           !(published.ending && !published.ended) && published.prepared &&
            publicActiveGeneration != 0;
   }
 
@@ -817,10 +832,10 @@ struct NativeMediaSession::Impl final {
           return false;
         }
         stamp = publishedStop->stamp;
-      } else if (reason == protocol::FailureReason::Stop || publicEnded) {
+      } else if (reason == protocol::FailureReason::Stop || published.ended) {
         return false;
       }
-      if (reason != protocol::FailureReason::Stop && publicLiveFailed) {
+      if (reason != protocol::FailureReason::Stop && published.liveFailed) {
         return false;
       }
       if (!protocol::valid(protocol::Failed{stamp, reason})) {
@@ -828,7 +843,7 @@ struct NativeMediaSession::Impl final {
       }
       if (reason != protocol::FailureReason::Stop) {
         liveFailed = true;
-        publicLiveFailed = true;
+        published.liveFailed = true;
         clearForLiveFailureLocked();
       }
       diagnostic.stamp = stamp;
@@ -867,7 +882,7 @@ struct NativeMediaSession::Impl final {
   void publishAudioClock(protocol::AudioClockProof proof) noexcept {
     {
       std::lock_guard lock(mutex);
-      if (publishedStop.has_value() || endedPublished || publicEnding ||
+      if (publishedStop.has_value() || endedPublished || published.ending ||
           proof.stamp != publicRequestedRunStamp ||
           proof.stamp != publicAppliedRunStamp) {
         return;
@@ -880,7 +895,7 @@ struct NativeMediaSession::Impl final {
   void publishVideoDraw(protocol::VideoDrawProof proof) noexcept {
     {
       std::lock_guard lock(mutex);
-      if (publishedStop.has_value() || publicEnding || publicEnded ||
+      if (publishedStop.has_value() || published.ending || published.ended ||
           proof.stamp != publicRequestedRunStamp ||
           proof.stamp != publicAppliedRunStamp) {
         return;
@@ -904,8 +919,8 @@ struct NativeMediaSession::Impl final {
     }
     {
       std::lock_guard lock(mutex);
-      if (publishedStop.has_value() || publicEnding || publicEnded ||
-          publicLiveFailed || !publicCommitPending ||
+      if (publishedStop.has_value() || published.ending || published.ended ||
+          published.liveFailed || !publicCommitPending ||
           generationHighWater != command.targetGeneration.value ||
           commitReadySlot.has_value()) {
         return false;
@@ -917,7 +932,7 @@ struct NativeMediaSession::Impl final {
       publicIssuedRunStamp = command.stamp;
       publicAppliedRunStamp = command.stamp;
       appliedPaused = true;
-      publicAppliedPaused = true;
+      published.appliedPaused = true;
       publicCommitPending = false;
       commitRunStatePending = true;
       publishedStart.reset();
@@ -940,17 +955,7 @@ struct NativeMediaSession::Impl final {
         return false;
       }
       stoppedPublished = true;
-      publicOwnership = ownership;
-      publicPrepared = preparedPublished;
-      publicStarted = startedPublished;
-      publicDispatcherObservedVideo = dispatcherObservedVideo;
-      publicDirectVideoRetired = directVideoRetired;
-      publicDirectAudioRetired = directAudioRetired;
-      publicStopped = true;
-      publicEnding = endingLatched;
-      publicEnded = endedPublished;
-      publicLiveFailed = liveFailed;
-      publicAppliedPaused = appliedPaused;
+      published = workerFacts();
       factMailbox.emplace(protocol::Stopped{
           stopCommand.stamp, stopCommand.invalidationGeneration});
     }
@@ -993,7 +998,7 @@ struct NativeMediaSession::Impl final {
 #endif
     std::lock_guard lock(mutex);
     if (liveIssueActive || exitRequested || publishedStop.has_value() ||
-        liveFailed || (!allowEnding && (publicEnding || publicEnded)) ||
+        liveFailed || (!allowEnding && (published.ending || published.ended)) ||
         (publicCommitPending && !allowCommit)) {
       return false;
     }
@@ -1104,17 +1109,15 @@ struct NativeMediaSession::Impl final {
 
   void publishWorkerFacts() noexcept {
     std::lock_guard lock(mutex);
-    publicOwnership = ownership;
-    publicPrepared = preparedPublished;
-    publicStarted = startedPublished;
-    publicDispatcherObservedVideo = dispatcherObservedVideo;
-    publicDirectVideoRetired = directVideoRetired;
-    publicDirectAudioRetired = directAudioRetired;
-    publicStopped = stoppedPublished;
-    publicEnding = endingLatched;
-    publicEnded = endedPublished;
-    publicLiveFailed = liveFailed;
-    publicAppliedPaused = appliedPaused;
+    published = workerFacts();
+  }
+
+  // The worker's lifecycle facts as one value, for publication under mutex.
+  [[nodiscard]] PublishedFacts workerFacts() const noexcept {
+    return {ownership,        preparedPublished,  startedPublished,
+            dispatcherObservedVideo, directVideoRetired, directAudioRetired,
+            stoppedPublished, endingLatched,      endedPublished,
+            liveFailed,       appliedPaused};
   }
 
   void publishVideoDueHint() noexcept {
@@ -1393,14 +1396,14 @@ struct NativeMediaSession::Impl final {
 
   [[nodiscard]] bool previewTerminalLocked(
       bool allowPublishedEnded = false) const noexcept {
-    // publicEnding remains latched together with publicEnded. Only that fully
+    // published.ending remains latched together with published.ended. Only that fully
     // published state is reusable: the preceding audio-stop/drain interval is
     // still terminal to preview, as are Stop, Commit, and live failure.
     const bool endingIsTerminal =
-        (publicEnding || publicEnded) &&
-        !(allowPublishedEnded && publicEnded);
+        (published.ending || published.ended) &&
+        !(allowPublishedEnded && published.ended);
     return exitRequested || publishedStop.has_value() ||
-           publicCommitPending || publicLiveFailed || endingIsTerminal;
+           publicCommitPending || published.liveFailed || endingIsTerminal;
   }
 
   // Caller owns mutex. Preview child completion and its public result must be
@@ -2056,12 +2059,12 @@ if (descriptor == nullptr || !nativeV1Descriptor(*descriptor)) {
     bool committed = false;
     {
       std::lock_guard lock(mutex);
-      if (!publishedStop.has_value() && !publicLiveFailed &&
+      if (!publishedStop.has_value() && !published.liveFailed &&
           !publicCommitPending &&
           !factMailbox.has_value()) {
         activeGeneration = reservedGeneration;
         preparedPublished = true;
-        publicPrepared = true;
+        published.prepared = true;
         // Seek admission is bounded by the presentable ceiling, not the
         // source duration: the two differ exactly when audio outlives the last
         // picture, and a target in that tail would pass here only to be
@@ -2079,8 +2082,8 @@ if (descriptor == nullptr || !nativeV1Descriptor(*descriptor)) {
         // the descriptor is first known, and let preparePreviewHandoff() give
         // the quiet refusal its contract already promises.
         publicPreviewUnavailable = !descriptor->selectedVideo.has_value();
-        publicOwnership = ownership;
-        publicDispatcherObservedVideo = dispatcherObservedVideo;
+        published.ownership = ownership;
+        published.dispatcherObservedVideo = dispatcherObservedVideo;
         // The selected video track's on-screen rectangle, carried on Prepared
         // so window geometry can be shaped from the container that was
         // actually demuxed. It is the only route by which a Matroska, WebM or
@@ -2146,14 +2149,14 @@ if (result != NativeAudioSessionProgress::Done) {
     bool committed = false;
     {
       std::lock_guard lock(mutex);
-      if (!publishedStop.has_value() && !publicLiveFailed &&
+      if (!publishedStop.has_value() && !published.liveFailed &&
           !publicCommitPending &&
           !factMailbox.has_value()) {
         startedDrawBaseline = drawBaseline;
         publicLastOutputEventSequence = drawBaseline;
         startedPublished = true;
         startPending = false;
-        publicStarted = true;
+        published.started = true;
         factMailbox.emplace(protocol::Started{
             startCommand.stamp, startCommand.preparedGeneration,
             drawBaseline});
@@ -2215,7 +2218,7 @@ if (result != NativeAudioSessionProgress::Done) {
           appliedRunStamp = issued.stamp;
           appliedPaused = issued.paused;
           publicAppliedRunStamp = appliedRunStamp;
-          publicAppliedPaused = appliedPaused;
+          published.appliedPaused = appliedPaused;
           runPending = false;
           if (!dispatcherExhausted) {
             runStateAppliedSlot =
@@ -2263,7 +2266,7 @@ if (result != NativeAudioSessionProgress::Done) {
     }
     {
       std::lock_guard lock(mutex);
-      if (publishedStop.has_value() || publicEnding || publicEnded ||
+      if (publishedStop.has_value() || published.ending || published.ended ||
           requestedRunStamp != appliedRunStamp ||
           publicRequestedRunStamp != appliedRunStamp) {
         return;
@@ -2608,7 +2611,7 @@ if (result != NativeAudioSessionProgress::Done) {
           return;
         }
         startedPublished = true;
-        publicStarted = true;
+        published.started = true;
         publicStartAccepted = true;
         publishedStart.reset();
         startPending = false;
@@ -2809,7 +2812,7 @@ if (result != NativeAudioSessionProgress::Done) {
       if (!startedPublished || !protocol::validLive(appliedRunStamp) ||
           requestedRunStamp != appliedRunStamp ||
           publicRequestedRunStamp != appliedRunStamp ||
-          publishedStop.has_value() || publicEnding || publicEnded) {
+          publishedStop.has_value() || published.ending || published.ended) {
         return;
       }
     }
@@ -2861,8 +2864,8 @@ if (result != NativeAudioSessionProgress::Done) {
         return false;
       }
       endedPublished = true;
-      publicEnding = true;
-      publicEnded = true;
+      published.ending = true;
+      published.ended = true;
       runStateAppliedSlot.reset();
       audioClockSlot.reset();
       videoDrawSlot.reset();
@@ -2887,7 +2890,7 @@ if (result != NativeAudioSessionProgress::Done) {
     }
     endingStamp = latestAcceptedStamp;
     endingLatched = true;
-    publicEnding = true;
+    published.ending = true;
     dependencies.wake->publishVideoDueHostTicks(0);
     clearForEndingLocked();
     return true;
@@ -3020,7 +3023,7 @@ if (result != NativeAudioSessionProgress::Done) {
     protocol::Generation runGeneration{activeGeneration};
     {
       std::lock_guard lock(mutex);
-      if (publishedStop.has_value() || publicEnding || publicEnded ||
+      if (publishedStop.has_value() || published.ending || published.ended ||
           requestedRunStamp != appliedRunStamp ||
           publicRequestedRunStamp != appliedRunStamp) {
         return;
@@ -3323,20 +3326,13 @@ if (result != NativeAudioSessionProgress::Done) {
   // quietly instead of failing it once per pointer sample.
   bool publicPreviewUnavailable{false};
   media::NativeMediaDispatcher* dispatcherObserver{nullptr};
-  NativeMediaSessionOwnershipPhase publicOwnership{
-      NativeMediaSessionOwnershipPhase::Empty};
+  // The worker's lifecycle facts as last published; guarded by `mutex`.
+  // Individual facts are also latched here directly where a public command
+  // or a fact publication must linearize with them.
+  PublishedFacts published;
   protocol::Stamp publicRequestedRunStamp{};
   protocol::Stamp publicIssuedRunStamp{};
   protocol::Stamp publicAppliedRunStamp{};
-  bool publicPrepared{false};
-  bool publicStarted{false};
-  bool publicDispatcherObservedVideo{false};
-  bool publicDirectVideoRetired{false};
-  bool publicDirectAudioRetired{false};
-  bool publicStopped{false};
-  bool publicEnding{false};
-  bool publicEnded{false};
-  bool publicLiveFailed{false};
   bool publicCommitPending{false};
   // A CommitReady has been published and the promoted generation's
   // authoritative SetRunState has not arrived yet. The commit protocol
@@ -3354,7 +3350,6 @@ if (result != NativeAudioSessionProgress::Done) {
   bool publicPreviewHandoffReady{false};
   bool publicPreviewHandoffFailed{false};
   bool publicPreviewPending{false};
-  bool publicAppliedPaused{true};
   bool publicStartAccepted{false};
   std::unique_ptr<media::MediaSource> sourceOwned;
   std::unique_ptr<media::NativeVideoConsumer> videoOwned;
@@ -3586,7 +3581,7 @@ double NativeMediaSession::seekCeilingSeconds() const noexcept {
     return 0.0;
   }
   std::lock_guard lock(impl_->mutex);
-  return impl_->publicPrepared ? impl_->publicSeekCeilingSeconds : 0.0;
+  return impl_->published.prepared ? impl_->publicSeekCeilingSeconds : 0.0;
 }
 
 std::optional<NativePreviewFrameTarget>
@@ -3647,8 +3642,8 @@ NativeMediaSessionCommandStatus NativeMediaSession::prepare(
     if (impl_->publishedStop.has_value()) {
       return NativeMediaSessionCommandStatus::Ignored;
     }
-    if (impl_->publicLiveFailed || impl_->publicEnding ||
-        impl_->publicEnded) {
+    if (impl_->published.liveFailed || impl_->published.ending ||
+        impl_->published.ended) {
       return NativeMediaSessionCommandStatus::Ignored;
     }
     if (impl_->publishedPrepare.has_value()) {
@@ -3678,8 +3673,8 @@ NativeMediaSessionCommandStatus NativeMediaSession::start(
     if (impl_->publishedStop.has_value()) {
       return NativeMediaSessionCommandStatus::Ignored;
     }
-    if (impl_->publicLiveFailed || impl_->publicEnding ||
-        impl_->publicEnded) {
+    if (impl_->published.liveFailed || impl_->published.ending ||
+        impl_->published.ended) {
       return NativeMediaSessionCommandStatus::Ignored;
     }
     // A durationChanged reentrant seek may advance the Router from
@@ -3693,13 +3688,13 @@ NativeMediaSessionCommandStatus NativeMediaSession::start(
         command.stamp.serial.value < impl_->latestAcceptedStamp.serial.value) {
       if (!impl_->publicStartAccepted) {
         impl_->publicStartAccepted = true;
-        if (!impl_->publicStarted) {
+        if (!impl_->published.started) {
           impl_->publishedStart = command;
         }
       }
       return NativeMediaSessionCommandStatus::Accepted;
     }
-    if (!impl_->publicPrepared || impl_->publicStartAccepted ||
+    if (!impl_->published.prepared || impl_->publicStartAccepted ||
         !impl_->publishedPrepare.has_value() ||
         command.preparedGeneration !=
             impl_->publishedPrepare->command.reservedGeneration ||
@@ -3724,13 +3719,13 @@ NativeMediaSessionCommandStatus NativeMediaSession::setRunState(
     if (impl_->publishedStop.has_value()) {
       return NativeMediaSessionCommandStatus::Ignored;
     }
-    if (impl_->publicLiveFailed || impl_->publicEnded) {
+    if (impl_->published.liveFailed || impl_->published.ended) {
       return NativeMediaSessionCommandStatus::Ignored;
     }
     if (impl_->publicCommitPending || impl_->commitReadySlot.has_value()) {
       return NativeMediaSessionCommandStatus::Invalid;
     }
-    if (impl_->publicEnding) {
+    if (impl_->published.ending) {
       if (!impl_->publishedPrepare.has_value() ||
           !protocol::runStateFollows(impl_->latestAcceptedStamp,
                                      protocol::Generation{
@@ -3750,7 +3745,7 @@ NativeMediaSessionCommandStatus NativeMediaSession::setRunState(
     // A child issue that already owns the live permit linearized before this
     // request. The next intent is still accepted and will supersede its
     // completion proof; an Ended latch cannot begin until the permit closes.
-    if (!impl_->publicStarted || !impl_->publishedPrepare.has_value() ||
+    if (!impl_->published.started || !impl_->publishedPrepare.has_value() ||
         !protocol::runStateFollows(impl_->latestAcceptedStamp,
                                    protocol::Generation{
                                        impl_->publicActiveGeneration},
@@ -3788,12 +3783,12 @@ NativeMediaSession::preparePreviewHandoff() noexcept {
     if (impl_->exitRequested) {
       return NativeMediaSessionCommandStatus::Closed;
     }
-    if (impl_->publishedStop.has_value() || impl_->publicLiveFailed ||
-        (impl_->publicEnding && !impl_->publicEnded) ||
+    if (impl_->publishedStop.has_value() || impl_->published.liveFailed ||
+        (impl_->published.ending && !impl_->published.ended) ||
         impl_->publicCommitPending) {
       return NativeMediaSessionCommandStatus::Ignored;
     }
-    if (!impl_->publicPrepared || impl_->publicActiveGeneration == 0 ||
+    if (!impl_->published.prepared || impl_->publicActiveGeneration == 0 ||
         !protocol::validLive(impl_->latestAcceptedStamp) ||
         impl_->publicPreviewHandoffFailed) {
       return NativeMediaSessionCommandStatus::Invalid;
@@ -3832,11 +3827,11 @@ NativeMediaSessionCommandStatus NativeMediaSession::commitSeek(
     if (impl_->exitRequested) {
       return NativeMediaSessionCommandStatus::Closed;
     }
-    if (impl_->publishedStop.has_value() || impl_->publicLiveFailed ||
-        (impl_->publicEnding && !impl_->publicEnded)) {
+    if (impl_->publishedStop.has_value() || impl_->published.liveFailed ||
+        (impl_->published.ending && !impl_->published.ended)) {
       return NativeMediaSessionCommandStatus::Ignored;
     }
-    if (!impl_->publicPrepared || !impl_->publishedPrepare.has_value() ||
+    if (!impl_->published.prepared || !impl_->publishedPrepare.has_value() ||
         command.sourceGeneration.value != targetToken.sourceGeneration_ ||
         targetToken.sourceGeneration_ != impl_->publicActiveGeneration ||
         !(impl_->latestPreview.has_value()
@@ -3853,7 +3848,7 @@ NativeMediaSessionCommandStatus NativeMediaSession::commitSeek(
                     command))) {
       return NativeMediaSessionCommandStatus::Invalid;
     }
-    const bool reviveFromEnded = impl_->publicEnded;
+    const bool reviveFromEnded = impl_->published.ended;
     impl_->publishedCommit = Impl::PublishedCommit{
         command, targetToken.exact(), targetToken.drawBaseline(),
         reviveFromEnded};
@@ -3869,8 +3864,8 @@ NativeMediaSessionCommandStatus NativeMediaSession::commitSeek(
     impl_->previewFailedSlot.reset();
     impl_->latestPreview.reset();
     if (reviveFromEnded) {
-      impl_->publicEnding = false;
-      impl_->publicEnded = false;
+      impl_->published.ending = false;
+      impl_->published.ended = false;
     }
     impl_->runStateAppliedSlot.reset();
     impl_->audioClockSlot.reset();
@@ -3900,8 +3895,8 @@ NativePreviewFrameRequestStatus NativeMediaSession::previewFrame(
     if (impl_->exitRequested) {
       return NativePreviewFrameRequestStatus::Closed;
     }
-    if (impl_->publishedStop.has_value() || impl_->publicLiveFailed ||
-        (impl_->publicEnding && !impl_->publicEnded) ||
+    if (impl_->publishedStop.has_value() || impl_->published.liveFailed ||
+        (impl_->published.ending && !impl_->published.ended) ||
         impl_->publicCommitPending) {
       return NativePreviewFrameRequestStatus::Closed;
     }
@@ -3916,7 +3911,7 @@ NativePreviewFrameRequestStatus NativeMediaSession::previewFrame(
     if (impl_->publicPreviewUnavailable) {
       return NativePreviewFrameRequestStatus::Invalid;
     }
-    if (!impl_->publicPrepared ||
+    if (!impl_->published.prepared ||
         command.generation.value != impl_->publicActiveGeneration ||
         !(command.targetSeconds < impl_->publicSeekCeilingSeconds)) {
       return NativePreviewFrameRequestStatus::Invalid;
@@ -3957,8 +3952,8 @@ NativeMediaSessionCommandStatus NativeMediaSession::setGain(
     if (impl_->exitRequested) {
       return NativeMediaSessionCommandStatus::Closed;
     }
-    if (impl_->publishedStop.has_value() || impl_->publicEnding ||
-        impl_->publicEnded || impl_->publicLiveFailed) {
+    if (impl_->publishedStop.has_value() || impl_->published.ending ||
+        impl_->published.ended || impl_->published.liveFailed) {
       return NativeMediaSessionCommandStatus::Ignored;
     }
     impl_->publishedGain = gain;
@@ -3977,8 +3972,8 @@ NativeMediaSessionCommandStatus NativeMediaSession::setMuted(
     if (impl_->exitRequested) {
       return NativeMediaSessionCommandStatus::Closed;
     }
-    if (impl_->publishedStop.has_value() || impl_->publicEnding ||
-        impl_->publicEnded || impl_->publicLiveFailed) {
+    if (impl_->publishedStop.has_value() || impl_->published.ending ||
+        impl_->published.ended || impl_->published.liveFailed) {
       return NativeMediaSessionCommandStatus::Ignored;
     }
     impl_->publishedMuted = muted;
@@ -4130,7 +4125,7 @@ NativeMediaSessionMetrics NativeMediaSession::metrics() const noexcept {
   }
   {
     std::lock_guard lock(impl_->mutex);
-    result.paused = impl_->publicAppliedPaused;
+    result.paused = impl_->published.appliedPaused;
   }
   return result;
 }
@@ -4145,7 +4140,7 @@ NativeMediaSessionFacts NativeMediaSessionTestAccess::facts(
     return result;
   }
   std::lock_guard lock(impl_->mutex);
-  result.ownership = impl_->publicOwnership;
+  result.ownership = impl_->published.ownership;
   result.generation = impl_->publicActiveGeneration;
   result.generationHighWater = impl_->generationHighWater;
   result.invalidationGeneration =
@@ -4154,17 +4149,17 @@ NativeMediaSessionFacts NativeMediaSessionTestAccess::facts(
           : 0;
   result.workerRunning = impl_->worker.joinable() && !impl_->exitRequested;
   result.prepareAccepted = impl_->publishedPrepare.has_value();
-  result.prepared = impl_->publicPrepared;
-  result.started = impl_->publicStarted;
-  result.dispatcherObservedVideo = impl_->publicDispatcherObservedVideo;
-  result.directVideoRetired = impl_->publicDirectVideoRetired;
-  result.directAudioRetired = impl_->publicDirectAudioRetired;
+  result.prepared = impl_->published.prepared;
+  result.started = impl_->published.started;
+  result.dispatcherObservedVideo = impl_->published.dispatcherObservedVideo;
+  result.directVideoRetired = impl_->published.directVideoRetired;
+  result.directAudioRetired = impl_->published.directAudioRetired;
   result.factPending = impl_->factMailbox.has_value();
   result.stopLatched = impl_->publishedStop.has_value();
-  result.stoppedProofPublished = impl_->publicStopped;
-  result.ending = impl_->publicEnding;
-  result.endedProofPublished = impl_->publicEnded;
-  result.liveFailed = impl_->publicLiveFailed;
+  result.stoppedProofPublished = impl_->published.stopped;
+  result.ending = impl_->published.ending;
+  result.endedProofPublished = impl_->published.ended;
+  result.liveFailed = impl_->published.liveFailed;
   result.previewHandoffPending = impl_->publicPreviewHandoffPending;
   result.previewHandoffReady = impl_->publicPreviewHandoffReady;
   result.previewPending = impl_->publicPreviewPending;
@@ -4175,7 +4170,7 @@ NativeMediaSessionFacts NativeMediaSessionTestAccess::facts(
   result.requestedRunStateStamp = impl_->publicRequestedRunStamp;
   result.issuedRunStateStamp = impl_->publicIssuedRunStamp;
   result.appliedRunStateStamp = impl_->publicAppliedRunStamp;
-  result.appliedPaused = impl_->publicAppliedPaused;
+  result.appliedPaused = impl_->published.appliedPaused;
   result.observationPending = impl_->observationsPresentLocked();
   return result;
 }
@@ -4187,7 +4182,7 @@ void NativeMediaSessionTestAccess::installPreview(
   }
   std::lock_guard lock(session.impl_->mutex);
   if (!session.impl_->publishedPrepare.has_value() &&
-      session.impl_->publicOwnership ==
+      session.impl_->published.ownership ==
           NativeMediaSessionOwnershipPhase::Empty) {
     session.impl_->previewPort = std::move(preview.port);
     session.impl_->previewPortInjected = session.impl_->previewPort != nullptr;
