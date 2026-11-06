@@ -749,13 +749,13 @@ void testOpenGopLeadingPictureDiscard() {
 }
 
 void testSelectedDurationAdmission() {
-  expect(NativeVideoConsumer::selectedTrackDurationsSupported(
+  expect(native_video_limits::acceptsSelectedTrackDurations(
              {10, 1}, {10, 1}),
          "equal exact selected durations are native-supported");
-  expect(NativeVideoConsumer::selectedTrackDurationsSupported(
+  expect(native_video_limits::acceptsSelectedTrackDurations(
              {10001, 1000}, {10, 1}),
          "an exact longer audio clock covers the video tail");
-  expect(!NativeVideoConsumer::selectedTrackDurationsSupported(
+  expect(!native_video_limits::acceptsSelectedTrackDurations(
              {3000, 1000}, {10, 1}),
          "audio meaningfully shorter than video must fall back before "
          "activation");
@@ -763,13 +763,13 @@ void testSelectedDurationAdmission() {
   // video tail draws to the end (see native_video_limits.hpp), so a shortfall
   // of this size is admitted. The refusal above uses a shortfall the bound
   // still rejects.
-  expect(NativeVideoConsumer::selectedTrackDurationsSupported(
+  expect(native_video_limits::acceptsSelectedTrackDurations(
              {9000, 1000}, {10, 1}),
          "a one-second declared trailing silence is now admitted natively");
-  expect(NativeVideoConsumer::selectedTrackDurationsSupported(
+  expect(native_video_limits::acceptsSelectedTrackDurations(
              {9108, 1000}, {10, 1}),
          "the measured 892 ms movie shortfall is admitted natively");
-  expect(!NativeVideoConsumer::selectedTrackDurationsSupported(
+  expect(!native_video_limits::acceptsSelectedTrackDurations(
              {}, {10, 1}),
          "an inexact selected duration fails native admission");
 
@@ -778,22 +778,22 @@ void testSelectedDurationAdmission() {
   // duration while leaving the video edit at full length; the observed
   // ffmpeg-muxed shape is 313.185594 s of audio against 313.229589 s of video.
   // These stay native: the unpresentable tail is shorter than two frames.
-  expect(NativeVideoConsumer::selectedTrackDurationsSupported(
+  expect(native_video_limits::acceptsSelectedTrackDurations(
              {225493624, 720000}, {28190663, 90000}),
          "AAC priming trimmed by an edit list stays inside native admission");
-  expect(NativeVideoConsumer::selectedTrackDurationsSupported(
+  expect(native_video_limits::acceptsSelectedTrackDurations(
              {47956, 48000}, {1, 1}),
          "a 44 ms priming shortfall at 48 kHz is admitted");
 
   // The bound is exact on both sides, and is expressed on the shortfall's own
   // millisecond timescale rather than through double.
-  expect(NativeVideoConsumer::selectedTrackDurationsSupported(
+  expect(native_video_limits::acceptsSelectedTrackDurations(
              {10000 - native_video_limits::
                           kMaximumSelectedAudioShortfallMilliseconds,
               1000},
              {10, 1}),
          "a shortfall exactly at the bound is admitted");
-  expect(!NativeVideoConsumer::selectedTrackDurationsSupported(
+  expect(!native_video_limits::acceptsSelectedTrackDurations(
              {10000 -
                   native_video_limits::
                       kMaximumSelectedAudioShortfallMilliseconds -
@@ -801,7 +801,7 @@ void testSelectedDurationAdmission() {
               1000},
              {10, 1}),
          "one millisecond past the bound falls back");
-  expect(!NativeVideoConsumer::selectedTrackDurationsSupported(
+  expect(!native_video_limits::acceptsSelectedTrackDurations(
              {-1, 1000}, {10, 1}),
          "a negative selected duration fails native admission");
 }

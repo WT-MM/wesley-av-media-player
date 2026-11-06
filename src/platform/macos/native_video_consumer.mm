@@ -622,6 +622,35 @@ struct NativeVideoConsumer::Impl {
     flushDecoderApplied = false;
   }
 
+  // Everything presentation knows about the current generation's picture.
+  void resetPresentation() noexcept {
+    heldFrame.reset();
+    currentClock.reset();
+    clearDueHint();
+    generationStartPresentation.reset();
+  }
+
+  void resetEndOfStream() noexcept {
+    endOfStreamBegun = false;
+    decoderEndOfStreamDone = false;
+    endOfStreamDone = false;
+  }
+
+  // A non-Done output progress, forwarded: Failed latches, and Quiescing
+  // becomes Progress when this turn consumed an output event.
+  [[nodiscard]] media::NativeMediaConsumerProgress forwardOutputProgress(
+      NativeTrackedVideoOutputProgress output, PumpStatus event,
+      const char* failureText) noexcept {
+    const auto mapped = mapOutputProgress(output);
+    if (mapped == media::NativeMediaConsumerProgress::Failed) {
+      latch(NativeVideoConsumerFailure::Output, failureText);
+    }
+    return event == PumpStatus::Progress &&
+                   mapped == media::NativeMediaConsumerProgress::Quiescing
+               ? media::NativeMediaConsumerProgress::Progress
+               : mapped;
+  }
+
   void clearPreviewHandoff() noexcept {
     previewQuiesceGeneration = 0;
     previewReleasedGeneration = 0;
@@ -1424,12 +1453,6 @@ NativeVideoConsumer::quarantineFacts() noexcept {
   return result;
 }
 
-bool NativeVideoConsumer::selectedTrackDurationsSupported(
-    MediaTime audioDuration, MediaTime videoDuration) noexcept {
-  return native_video_limits::acceptsSelectedTrackDurations(audioDuration,
-                                                            videoDuration);
-}
-
 NativeVideoConsumerArmProgress NativeVideoConsumer::armFirstGeneration(
     MediaGeneration generation) noexcept {
 #if defined(WAM_NATIVE_BENCHMARK_TELEMETRY) && WAM_NATIVE_BENCHMARK_TELEMETRY
@@ -1537,10 +1560,7 @@ NativeVideoConsumer::quiesceForPreview(MediaGeneration generation) noexcept {
     // does not call the tracked output's flush/close lifecycle. Software
     // releases its worker so preview can reuse bounded process capacity.
     impl.decoder.suspendForPreview(generation);
-    impl.heldFrame.reset();
-    impl.currentClock.reset();
-    impl.clearDueHint();
-    impl.generationStartPresentation.reset();
+    impl.resetPresentation();
     impl.previewDecoderFlushed = true;
   }
 
@@ -1706,7 +1726,7 @@ media::NativeMediaConsumeResult NativeVideoConsumer::configure(
     return media::NativeMediaConsumeResult::Failed;
   }
   if (!supportedVideoTrack(track)) {
-    assignError(error, "video track is outside native SDR v1");
+    assignError(error, "video track is outside native video admission");
     return media::NativeMediaConsumeResult::Unsupported;
   }
   if (const char* refusal = nativePresentationRefusal(*track.video,
@@ -1731,37 +1751,8 @@ media::NativeMediaConsumeResult NativeVideoConsumer::configure(
 
   impl.armConsumed = true;
   impl.sink.flush(generation);
-  const media::MediaVideoFormat& video = *track.video;
-  const CMVideoCodecType codec = coreMediaCodecType(track.codec);
-  // The hardware REQUIREMENT is what makes a host without a VP9 or AV1 block
-  // fall back instead of quietly burning battery in software; the codecs whose
-  // rows drop it would otherwise fail VTDecompressionSessionCreate with
-  // kVTCouldNotFindVideoDecoderErr (-12906) on a stream that demonstrably
-  // decodes. Every codec still PREFERS hardware, which costs nothing and keeps
-  // the request identical for those that have a block.
-  const bool requireHardwareDecode =
-      media::mediaCodecFacts(track.codec).requiresHardwareDecode;
-  const VideoStreamConfiguration configuration{
-      codec,
-      {static_cast<std::int32_t>(video.codedWidth),
-       static_cast<std::int32_t>(video.codedHeight)},
-      track.codecConfiguration,
-      true,
-      requireHardwareDecode,
-      generation,
-      // See VideoStreamConfiguration::highDynamicRangeTransfer: the HDR
-      // presentation path is engaged by the decode surface's DEPTH, not by
-      // the colour tag, so an HDR transfer forces a 10-bit output surface
-      // even when the coded stream is 8-bit.
-      video.transferFunction == media::MediaTransferFunction::Pq ||
-          video.transferFunction == media::MediaTransferFunction::Hlg,
-      // The colour the decoder's synthesized description must carry. Routes
-      // that hand over their own description (AVFoundation) are unaffected in
-      // practice -- their description already agrees -- but stating it here
-      // keeps ONE source for the decision instead of one per container.
-      colorPrimariesExtension(video.colorPrimaries),
-      transferFunctionExtension(video.transferFunction),
-      ycbcrMatrixExtension(video.matrixCoefficients), video.fullRangeVideo};
+  const VideoStreamConfiguration configuration =
+      videoStreamConfigurationFor(track, generation);
   if (!impl.decoder.configure(configuration, impl.sink, error)) {
     impl.latch(NativeVideoConsumerFailure::DecoderConfiguration,
                "native video decoder configuration was refused", error);
@@ -2222,13 +2213,8 @@ media::NativeMediaConsumerProgress NativeVideoConsumer::flush(
     if (impl.captionFeed) {
       impl.captionFeed->resetForSeek();
     }
-    impl.heldFrame.reset();
-    impl.currentClock.reset();
-    impl.clearDueHint();
-    impl.generationStartPresentation.reset();
-    impl.endOfStreamBegun = false;
-    impl.decoderEndOfStreamDone = false;
-    impl.endOfStreamDone = false;
+    impl.resetPresentation();
+    impl.resetEndOfStream();
     impl.flushDecoderApplied = true;
   }
   const PumpStatus event = impl.consumeOutputEvent();
@@ -2242,15 +2228,9 @@ media::NativeMediaConsumerProgress NativeVideoConsumer::flush(
   const NativeTrackedVideoOutputProgress output =
       impl.output->flushProgress(retiredGeneration, nextGeneration);
   if (output != NativeTrackedVideoOutputProgress::Done) {
-    const auto mapped = mapOutputProgress(output);
-    if (mapped == media::NativeMediaConsumerProgress::Failed) {
-      impl.latch(NativeVideoConsumerFailure::Output,
-                 "tracked video output failed the seek flush");
-    }
-    return event == PumpStatus::Progress &&
-                   mapped == media::NativeMediaConsumerProgress::Quiescing
-               ? media::NativeMediaConsumerProgress::Progress
-               : mapped;
+    return impl.forwardOutputProgress(
+        output, event,
+        "tracked video output failed the seek flush");
   }
   const NativeTrackedVideoOutputFacts outputFacts = impl.output->facts();
   if (!outputSettledAt(outputFacts, nextGeneration, false, false) ||
@@ -2335,9 +2315,7 @@ template <typename ImplType>
   if (!impl.decoderClosed) {
     impl.decoder.close();
     impl.decoderClosed = true;
-    impl.heldFrame.reset();
-    impl.currentClock.reset();
-    impl.clearDueHint();
+    impl.resetPresentation();
   }
   if (impl.outputProtocolViolation) {
     return media::NativeMediaConsumerProgress::Failed;
@@ -2370,16 +2348,9 @@ template <typename ImplType>
       const NativeTrackedVideoOutputProgress flushOutput =
           impl.output->flushProgress(impl.flushRetired, impl.flushTarget);
       if (flushOutput != NativeTrackedVideoOutputProgress::Done) {
-        const auto mapped = mapOutputProgress(flushOutput);
-        if (mapped == media::NativeMediaConsumerProgress::Failed) {
-          impl.latch(NativeVideoConsumerFailure::Output,
-                     "tracked video output failed the flush superseded by "
-                     "close");
-        }
-        return flushEvent == PumpStatus::Progress &&
-                       mapped == media::NativeMediaConsumerProgress::Quiescing
-                   ? media::NativeMediaConsumerProgress::Progress
-                   : mapped;
+        return impl.forwardOutputProgress(
+            flushOutput, flushEvent,
+            "tracked video output failed the flush superseded by close");
       }
       const NativeTrackedVideoOutputFacts flushed = impl.output->facts();
       if (!outputSettledAt(flushed, impl.flushTarget, false, false) ||
@@ -2429,15 +2400,9 @@ template <typename ImplType>
   const NativeTrackedVideoOutputProgress output =
       impl.output->closeProgress(impl.terminalGeneration);
   if (output != NativeTrackedVideoOutputProgress::Done) {
-    const auto mapped = mapOutputProgress(output);
-    if (mapped == media::NativeMediaConsumerProgress::Failed) {
-      impl.latch(NativeVideoConsumerFailure::Output,
-                 "tracked video output failed the terminal close");
-    }
-    return event == PumpStatus::Progress &&
-                   mapped == media::NativeMediaConsumerProgress::Quiescing
-               ? media::NativeMediaConsumerProgress::Progress
-               : mapped;
+    return impl.forwardOutputProgress(
+        output, event,
+        "tracked video output failed the terminal close");
   }
   const NativeTrackedVideoOutputFacts outputFacts = impl.output->facts();
   if (impl.outputProtocolViolation ||
@@ -2520,9 +2485,7 @@ media::NativeMediaConsumerProgress NativeVideoConsumer::retire(
     impl.matchedFrameFailure = true;
   }
   impl.clearFlushState();
-  impl.heldFrame.reset();
-  impl.currentClock.reset();
-  impl.clearDueHint();
+  impl.resetPresentation();
 
   if (!impl.decoderClosed) {
     const MediaGeneration decoderRetired = impl.decoder.stats().generation;
@@ -2563,15 +2526,9 @@ media::NativeMediaConsumerProgress NativeVideoConsumer::retire(
   const NativeTrackedVideoOutputProgress output =
       impl.output->closeProgress(invalidationGeneration);
   if (output != NativeTrackedVideoOutputProgress::Done) {
-    const auto mapped = mapOutputProgress(output);
-    if (mapped == media::NativeMediaConsumerProgress::Failed) {
-      impl.latch(NativeVideoConsumerFailure::Output,
-                 "tracked video output failed the retirement invalidation");
-    }
-    return event == PumpStatus::Progress &&
-                   mapped == media::NativeMediaConsumerProgress::Quiescing
-               ? media::NativeMediaConsumerProgress::Progress
-               : mapped;
+    return impl.forwardOutputProgress(
+        output, event,
+        "tracked video output failed the retirement invalidation");
   }
   const NativeTrackedVideoOutputFacts outputFacts = impl.output->facts();
   if (impl.outputProtocolViolation ||
@@ -2587,9 +2544,7 @@ media::NativeMediaConsumerProgress NativeVideoConsumer::retire(
   impl.output.reset();
   impl.generation = invalidationGeneration;
   impl.configured = false;
-  impl.endOfStreamBegun = false;
-  impl.decoderEndOfStreamDone = false;
-  impl.endOfStreamDone = false;
+  impl.resetEndOfStream();
   impl.closed = true;
   impl.retirementDone = true;
   releaseConsumerClaim(impl);

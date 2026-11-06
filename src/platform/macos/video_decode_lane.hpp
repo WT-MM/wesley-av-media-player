@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core_media_codec_facts.hpp"
+#include "native_video_color.hpp"
 #include "software_vp8_decoder.hpp"
 #include "video_toolbox_decoder.hpp"
 #if defined(WAM_ENABLE_AVCODEC_STAGE)
@@ -16,6 +18,32 @@
 #include <utility>
 
 namespace wam::macos {
+
+// The one decoder configuration for a selected video track, shared by main
+// playback and the preview lane so both decode with the same colour.
+// The hardware REQUIREMENT comes from the codec facts: requiring hardware
+// where the platform's only decoder is software fails
+// VTDecompressionSessionCreate with kVTCouldNotFindVideoDecoderErr (-12906) on
+// a stream that demonstrably decodes. Every codec still PREFERS hardware. An
+// HDR transfer forces a 10-bit output surface (see
+// VideoStreamConfiguration::highDynamicRangeTransfer), and the colour
+// extensions are stated here so a synthesized description carries them.
+[[nodiscard]] inline VideoStreamConfiguration videoStreamConfigurationFor(
+    const media::MediaTrackDescriptor &track, std::uint64_t generation) {
+  const media::MediaVideoFormat &video = *track.video;
+  return {coreMediaCodecType(track.codec),
+          {static_cast<std::int32_t>(video.codedWidth),
+           static_cast<std::int32_t>(video.codedHeight)},
+          track.codecConfiguration,
+          true,
+          media::mediaCodecFacts(track.codec).requiresHardwareDecode,
+          generation,
+          media::mediaTransferIsHighDynamicRange(video.transferFunction),
+          colorPrimariesExtension(video.colorPrimaries),
+          transferFunctionExtension(video.transferFunction),
+          ycbcrMatrixExtension(video.matrixCoefficients),
+          video.fullRangeVideo};
+}
 
 // The one decode backend NativeVideoConsumer owns, selected once per open.
 //

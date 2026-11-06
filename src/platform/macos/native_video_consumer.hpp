@@ -323,9 +323,6 @@ class NativeVideoConsumer final : public media::NativeVideoConsumer {
   recoverQuarantined() noexcept;
   [[nodiscard]] static NativeVideoConsumerQuarantineFacts
   quarantineFacts() noexcept;
-  [[nodiscard]] static bool selectedTrackDurationsSupported(
-      media::MediaTime audioDuration,
-      media::MediaTime videoDuration) noexcept;
 
   NativeVideoConsumer(const NativeVideoConsumer&) = delete;
   NativeVideoConsumer& operator=(const NativeVideoConsumer&) = delete;

@@ -4,9 +4,7 @@
 #include "core_media_codec_facts.hpp"
 #include "native_video_limits.hpp"
 #include "native_video_color.hpp"
-#if defined(WAM_ENABLE_AVFORMAT_STAGE)
 #include "video_decode_lane.hpp"
-#endif
 
 #include <CoreMedia/CoreMedia.h>
 
@@ -342,25 +340,9 @@ struct NativePreviewFrameLane::Impl final {
         latchFailure("preview video track disappeared before decoder setup");
         return false;
       }
-      const media::MediaVideoFormat& video = *track->video;
-      // Requiring hardware where the codec's only decoder on this platform is
-      // software fails VTDecompressionSessionCreate with -12906 on a stream the
-      // main playback lane decodes perfectly well. Both facts come from the
-      // shared table, so this lane and the main video consumer cannot answer
-      // either question differently.
-      const media::MediaCodecFacts& codecFacts =
-          media::mediaCodecFacts(track->codec);
-      const VideoStreamConfiguration configuration{
-          coreMediaCodecType(track->codec),
-          {static_cast<std::int32_t>(video.codedWidth),
-           static_cast<std::int32_t>(video.codedHeight)},
-          track->codecConfiguration, true, codecFacts.requiresHardwareDecode,
-          binding.activePlaybackGeneration.value,
-          video.transferFunction == media::MediaTransferFunction::Pq ||
-              video.transferFunction == media::MediaTransferFunction::Hlg,
-          colorPrimariesExtension(video.colorPrimaries),
-          transferFunctionExtension(video.transferFunction),
-          ycbcrMatrixExtension(video.matrixCoefficients), video.fullRangeVideo};
+      const VideoStreamConfiguration configuration =
+          videoStreamConfigurationFor(
+              *track, binding.activePlaybackGeneration.value);
       std::string configurationError;
       if (!decoder.configure(configuration, sink, &configurationError)) {
         latchFailure(configurationError.empty()

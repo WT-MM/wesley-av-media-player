@@ -15,8 +15,7 @@ namespace wam::macos {
     media::MediaCodec codec = media::MediaCodec::Unknown) noexcept {
   if (codec == media::MediaCodec::ProRes4444) {
     if (!output.presentsDecodedSurfacesDirectly()) return "SceneGraphProRes4444OpaqueUnsupported";
-    if (video.transferFunction == media::MediaTransferFunction::Pq ||
-        video.transferFunction == media::MediaTransferFunction::Hlg)
+    if (media::mediaTransferIsHighDynamicRange(video.transferFunction))
       return "ProRes4444OpaqueRgbHdrUnsupported";
   }
   if (!output.presentsDecodedSurfacesDirectly()) {

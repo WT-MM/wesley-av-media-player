@@ -214,8 +214,7 @@ exactFrameTime(CMTime time) noexcept {
   if (!audio->duration.valid() || audio->duration.value < 0) {
     return false;
   }
-  // One shared rule with NativeVideoConsumer::selectedTrackDurationsSupported:
-  // an audio-authoritative clock must cover the video timeline apart from a
+  // An audio-authoritative clock must cover the video timeline apart from a
   // bounded container-artefact shortfall. See native_video_limits.hpp.
   return native_video_limits::acceptsSelectedTrackDurations(audio->duration,
                                                             video->duration);
