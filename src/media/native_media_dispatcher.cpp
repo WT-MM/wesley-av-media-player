@@ -20,45 +20,6 @@
 
 namespace wam::media {
 
-const char* nativeMediaDispatcherFailureName(
-    NativeMediaDispatcherFailure failure) noexcept {
-  switch (failure) {
-  case NativeMediaDispatcherFailure::None:
-    return "None";
-  case NativeMediaDispatcherFailure::MissingDependency:
-    return "MissingDependency";
-  case NativeMediaDispatcherFailure::InvalidOpenRequest:
-    return "InvalidOpenRequest";
-  case NativeMediaDispatcherFailure::SourceOpen:
-    return "SourceOpen";
-  case NativeMediaDispatcherFailure::InvalidDescriptor:
-    return "InvalidDescriptor";
-  case NativeMediaDispatcherFailure::InvalidTimeline:
-    return "InvalidTimeline";
-  case NativeMediaDispatcherFailure::ConsumerConfiguration:
-    return "ConsumerConfiguration";
-  case NativeMediaDispatcherFailure::ConsumerProtocol:
-    return "ConsumerProtocol";
-  case NativeMediaDispatcherFailure::SourceRead:
-    return "SourceRead";
-  case NativeMediaDispatcherFailure::InvalidSample:
-    return "InvalidSample";
-  case NativeMediaDispatcherFailure::InvalidEvent:
-    return "InvalidEvent";
-  case NativeMediaDispatcherFailure::FormatChanged:
-    return "FormatChanged";
-  case NativeMediaDispatcherFailure::Consumer:
-    return "Consumer";
-  case NativeMediaDispatcherFailure::Seek:
-    return "Seek";
-  case NativeMediaDispatcherFailure::Flush:
-    return "Flush";
-  case NativeMediaDispatcherFailure::UnsupportedSource:
-    return "UnsupportedSource";
-  }
-  return "Unknown";
-}
-
 namespace {
 
 template <typename Integer>

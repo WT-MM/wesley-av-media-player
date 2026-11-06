@@ -508,45 +508,6 @@ struct AssetState {
 // ISO mapping in media/media_iso_color.hpp is the whole colour path for this
 // container.
 
-// The shared inspector's verdict, by name, for a refusal message. Local
-// rather than published from video_codec_configuration.hpp so this file adds
-// no surface to a header three other containers include; if a second caller
-// ever wants it, that is the moment to move it.
-[[nodiscard]] const char* videoCodecConfigurationErrorName(
-    VideoCodecConfigurationError error) noexcept {
-  switch (error) {
-    case VideoCodecConfigurationError::None:
-      return "None";
-    case VideoCodecConfigurationError::UnsupportedCodec:
-      return "UnsupportedCodec";
-    case VideoCodecConfigurationError::ConfigurationKindMismatch:
-      return "ConfigurationKindMismatch";
-    case VideoCodecConfigurationError::EmptyConfiguration:
-      return "EmptyConfiguration";
-    case VideoCodecConfigurationError::ConfigurationTooLarge:
-      return "ConfigurationTooLarge";
-    case VideoCodecConfigurationError::MalformedRecord:
-      return "MalformedRecord";
-    case VideoCodecConfigurationError::MissingParameterSet:
-      return "MissingParameterSet";
-    case VideoCodecConfigurationError::ParameterSetMismatch:
-      return "ParameterSetMismatch";
-    case VideoCodecConfigurationError::UnsupportedProfile:
-      return "UnsupportedProfile";
-    case VideoCodecConfigurationError::UnsupportedChromaFormat:
-      return "UnsupportedChromaFormat";
-    case VideoCodecConfigurationError::UnsupportedBitDepth:
-      return "UnsupportedBitDepth";
-    case VideoCodecConfigurationError::UnsupportedColorDescription:
-      return "UnsupportedColorDescription";
-    case VideoCodecConfigurationError::DimensionLimitExceeded:
-      return "DimensionLimitExceeded";
-    case VideoCodecConfigurationError::ReorderLimitExceeded:
-      return "ReorderLimitExceeded";
-  }
-  return "Unknown";
-}
-
 // A two-byte AudioSpecificConfig recovered from an ADTS header, which is the
 // exact form the shared AAC admission already accepts.
 [[nodiscard]] bool audioSpecificConfigFromAdts(
