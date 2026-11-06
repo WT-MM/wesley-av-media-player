@@ -1,4 +1,5 @@
 #include "platform/macos/avfoundation_media_source.hpp"
+#include "platform/macos/avfoundation_media_support.hpp"
 
 #include "platform/macos/core_media_codec_facts.hpp"
 

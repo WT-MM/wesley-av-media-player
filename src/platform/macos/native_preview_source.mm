@@ -13,12 +13,10 @@ namespace wam::macos {
 
 std::unique_ptr<NativePreviewSource> createNativePreviewSource(
     NativePreviewBinding binding) noexcept {
-  // A null context is the standalone cold-load path, which only the
-  // AVFoundation source offers: admitting a Matroska file is a bounded,
-  // cancellable job that belongs to the main source, and preview must never
-  // repeat it behind a scrub gesture.
+  // Admitting an asset belongs to the main source; preview never repeats it
+  // behind a scrub gesture.
   if (binding.assetContext == nullptr) {
-    return AVFoundationPreviewSource::create(std::move(binding));
+    return {};
   }
   switch (binding.assetContext->backendKind()) {
   case media::MediaSourceBackendKind::AVFoundation:

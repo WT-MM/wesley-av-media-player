@@ -158,6 +158,8 @@ find_library(WAM_COREIMAGE_FRAMEWORK CoreImage REQUIRED)
     set(WAM_MACOS_NATIVE_BACKEND_SOURCES
       src/platform/macos/core_media_source_support.hpp
       src/platform/macos/native_custom_source_core.hpp
+      src/platform/macos/avfoundation_media_support.hpp
+      src/platform/macos/avfoundation_media_support.mm
       src/platform/macos/avfoundation_asset_context.hpp
       src/platform/macos/avfoundation_asset_context.mm
       src/platform/macos/avfoundation_media_source.hpp
