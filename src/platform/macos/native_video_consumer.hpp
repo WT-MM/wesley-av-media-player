@@ -135,7 +135,7 @@ struct NativeVideoConsumerFacts {
   bool previewResumeNeedsKeyFrame{false};
   bool closed{false};
   NativeVideoConsumerFailure failure{NativeVideoConsumerFailure::None};
-  VideoToolboxDecoderStats decoder{};
+  VideoDecoderStats decoder{};
   NativeTrackedVideoOutputFacts output{};
 };
 

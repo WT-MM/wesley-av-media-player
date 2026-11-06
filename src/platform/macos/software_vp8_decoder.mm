@@ -64,33 +64,14 @@ CFDictionaryRef createColorAttachments(std::int32_t width,
                             &kCFTypeDictionaryValueCallBacks);
 }
 
-[[nodiscard]] bool sampleIsKeyFrame(CMSampleBufferRef sample) noexcept {
-  CFArrayRef attachments = CMSampleBufferGetSampleAttachmentsArray(sample, false);
-  if (attachments == nullptr || CFArrayGetCount(attachments) == 0) {
-    // No attachment array at all conventionally means "sync sample".
-    return true;
-  }
-  auto entry = static_cast<CFDictionaryRef>(CFArrayGetValueAtIndex(attachments, 0));
-  if (entry == nullptr) {
-    return true;
-  }
-  const void *notSync = nullptr;
-  if (!CFDictionaryGetValueIfPresent(entry, kCMSampleAttachmentKey_NotSync,
-                                     &notSync) ||
-      notSync == nullptr) {
-    return true;
-  }
-  return !CFBooleanGetValue(static_cast<CFBooleanRef>(notSync));
-}
-
 } // namespace
 
 // --------------------------------------------------------------------------
 
 struct SoftwareVp8Decoder::Impl {
-  explicit Impl(VideoToolboxDecoderOptions opts) : options(opts) {}
+  explicit Impl(VideoDecoderOptions opts) : options(opts) {}
 
-  VideoToolboxDecoderOptions options;
+  VideoDecoderOptions options;
   DecodedFrameSink *sink{nullptr};
   SoftwarePresentationPool pool;
   CFDictionaryRef colorAttachments{nullptr};
@@ -166,7 +147,7 @@ struct SoftwareVp8Decoder::Impl {
   }
 };
 
-SoftwareVp8Decoder::SoftwareVp8Decoder(VideoToolboxDecoderOptions options)
+SoftwareVp8Decoder::SoftwareVp8Decoder(VideoDecoderOptions options)
     : impl_(std::make_unique<Impl>(options)) {}
 
 SoftwareVp8Decoder::~SoftwareVp8Decoder() = default;
@@ -328,14 +309,12 @@ SoftwareVp8Decoder::submitCMSampleBuffer(CMSampleBufferRef sample,
     bytes = impl.contiguous.data();
   }
 
-  const bool keyFrame = sampleIsKeyFrame(sample);
+  const bool keyFrame = sampleIsSyncSample(sample);
   if (impl.awaitingKeyFrame && !keyFrame) {
     // Without the key frame this decode began on, a delta frame would be
     // reconstructed against references that belong to a retired timeline.
-    // VideoToolboxDecoder applies the same rule after a flush but REJECTS the
-    // delta frame with an error; here it is accepted and counted as dropped.
-    ++impl.droppedFrames;
-    return VideoDecodeSubmitResult::Accepted;
+    impl.latch("decoder requires a key frame after configure or flush", error);
+    return VideoDecodeSubmitResult::Rejected;
   }
 
   // The pool buffer is taken BEFORE libvpx sees the packet. A VP8 delta frame
@@ -587,9 +566,9 @@ void SoftwareVp8Decoder::close() noexcept {
   impl.endOfStreamSinkNotified = false;
 }
 
-VideoToolboxDecoderStats SoftwareVp8Decoder::stats() const noexcept {
+VideoDecoderStats SoftwareVp8Decoder::stats() const noexcept {
   const Impl &impl = *impl_;
-  VideoToolboxDecoderStats result;
+  VideoDecoderStats result;
   result.configured = impl.configured;
   // libvpx runs on this thread. Reporting hardware acceleration would be a
   // lie, and the telemetry that reads this field is what proves VP8 is the
@@ -634,10 +613,10 @@ VideoToolboxDecoderStats SoftwareVp8Decoder::stats() const noexcept {
   return result;
 }
 
-VideoToolboxDecoderMemoryFacts
+VideoDecoderMemoryFacts
 SoftwareVp8Decoder::memoryFacts() const noexcept {
   const Impl &impl = *impl_;
-  VideoToolboxDecoderMemoryFacts result;
+  VideoDecoderMemoryFacts result;
   result.inFlightFrames = 0;
   result.presentationFrames = impl.pending ? 1U : 0U;
   result.currentDirectCompressedBytes = impl.currentCompressedBytes;

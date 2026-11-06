@@ -166,7 +166,7 @@ struct AsyncDecodeState {
   };
 
   explicit AsyncDecodeState(
-      VideoToolboxDecoderProgressHandler progress,
+      VideoDecoderProgressHandler progress,
       std::size_t maxInFlightFrames)
       : frameRefConSlots(maxInFlightFrames), progressHandler(progress) {}
 
@@ -233,7 +233,7 @@ struct AsyncDecodeState {
   std::vector<FrameRefConSlot> frameRefConSlots;
   std::vector<CompletedDecode> completedDecodes;
   std::vector<FrameLease> pendingPresentationFrames;
-  VideoToolboxOutputInterop outputInterop{VideoToolboxOutputInterop::Metal};
+  VideoDecoderOutputInterop outputInterop{VideoDecoderOutputInterop::Metal};
   OSType expectedOutputPixelFormat{0};
   OSType actualOutputPixelFormat{0};
   CMVideoDimensions expectedCodedDimensions{0, 0};
@@ -241,7 +241,7 @@ struct AsyncDecodeState {
   bool discarding{false};
   bool callbackFailedClosed{false};
   AsyncError lastError;
-  const VideoToolboxDecoderProgressHandler progressHandler;
+  const VideoDecoderProgressHandler progressHandler;
 #if defined(WAM_NATIVE_VIDEO_TESTING)
   std::optional<VideoToolboxDecoderTestAllocationPoint>
       failNextAllocationPoint;
@@ -305,7 +305,7 @@ void retireCompressedChargeLocked(
 }
 
 void notifyProgress(const std::shared_ptr<AsyncDecodeState> &state) noexcept {
-  const VideoToolboxDecoderProgressHandler handler = state->progressHandler;
+  const VideoDecoderProgressHandler handler = state->progressHandler;
   if (handler.function != nullptr) {
     handler.function(handler.context);
   }
@@ -527,8 +527,8 @@ biPlanarSurfaceLayout(OSType pixelFormat) noexcept {
 
 // Display-layer counterparts must preserve depth, chroma and range.
 bool admitsOutputPixelFormat(OSType pixelFormat, OSType expectedPixelFormat,
-                             VideoToolboxOutputInterop outputInterop) noexcept {
-  if (outputInterop != VideoToolboxOutputInterop::DisplayLayer &&
+                             VideoDecoderOutputInterop outputInterop) noexcept {
+  if (outputInterop != VideoDecoderOutputInterop::DisplayLayer &&
       (expectedPixelFormat == kCVPixelFormatType_444YpCbCr8BiPlanarVideoRange ||
        expectedPixelFormat == kCVPixelFormatType_30RGBLEPackedWideGamut ||
        expectedPixelFormat == kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange ||
@@ -538,7 +538,7 @@ bool admitsOutputPixelFormat(OSType pixelFormat, OSType expectedPixelFormat,
   if (pixelFormat == expectedPixelFormat) {
     return true;
   }
-  if (outputInterop != VideoToolboxOutputInterop::DisplayLayer) {
+  if (outputInterop != VideoDecoderOutputInterop::DisplayLayer) {
     return false;
   }
   // Only the display layer widens, and for the same reason in both directions:
@@ -562,7 +562,7 @@ bool admitsOutputPixelFormat(OSType pixelFormat, OSType expectedPixelFormat,
 
 bool validateOutputSurfaceContract(CVPixelBufferRef pixelBuffer,
                                    OSType expectedPixelFormat,
-                                   VideoToolboxOutputInterop outputInterop,
+                                   VideoDecoderOutputInterop outputInterop,
                                    std::string *error) {
   if (pixelBuffer == nullptr) {
     assignError(error, "VideoToolbox returned no decoded pixel buffer");
@@ -583,14 +583,14 @@ bool validateOutputSurfaceContract(CVPixelBufferRef pixelBuffer,
     assignError(error, "VideoToolbox produced a frame without an IOSurface");
     return false;
   }
-  if (outputInterop == VideoToolboxOutputInterop::Metal ||
-      outputInterop == VideoToolboxOutputInterop::DisplayLayer) {
+  if (outputInterop == VideoDecoderOutputInterop::Metal ||
+      outputInterop == VideoDecoderOutputInterop::DisplayLayer) {
     // A display layer consumes whatever biplanar surface the decoder produced,
     // including the lossless one, so there is no plane layout to verify beyond
     // the IOSurface backing already proven above.
     return true;
   }
-  if (outputInterop != VideoToolboxOutputInterop::OpenGL) {
+  if (outputInterop != VideoDecoderOutputInterop::OpenGL) {
     assignError(error, "unsupported VideoToolbox output interop contract");
     return false;
   }
@@ -1706,13 +1706,13 @@ bool inspectDirectCompressedSample(
 } // namespace
 
 struct VideoToolboxDecoder::Impl {
-  explicit Impl(VideoToolboxDecoderOptions decoderOptions)
+  explicit Impl(VideoDecoderOptions decoderOptions)
       : options(decoderOptions),
         async(std::make_shared<AsyncDecodeState>(
             decoderOptions.progressHandler,
             decoderOptions.maxInFlightFrames)) {}
 
-  VideoToolboxDecoderOptions options;
+  VideoDecoderOptions options;
   mutable std::mutex operationMutex;
   std::shared_ptr<AsyncDecodeState> async;
   CMVideoFormatDescriptionRef formatDescription{nullptr};
@@ -1877,7 +1877,7 @@ struct VideoToolboxDecoder::Impl {
                          emptyIOSurfaceProperties);
     CFDictionarySetValue(imageAttributes, kCVPixelBufferMetalCompatibilityKey,
                          kCFBooleanTrue);
-    if (options.outputInterop == VideoToolboxOutputInterop::OpenGL) {
+    if (options.outputInterop == VideoDecoderOutputInterop::OpenGL) {
       CFDictionarySetValue(
           imageAttributes,
           kCVPixelBufferIOSurfaceOpenGLTextureCompatibilityKey,
@@ -1913,7 +1913,7 @@ struct VideoToolboxDecoder::Impl {
     // the 10-bit request real; VideoToolbox honours it on an 8-bit stream
     // (measured: `x420` delivered from 8-bit PQ H.264).
     const bool pinOutputPixelFormat =
-        options.outputInterop != VideoToolboxOutputInterop::DisplayLayer ||
+        options.outputInterop != VideoDecoderOutputInterop::DisplayLayer ||
         codecNeedsPinnedOutputPixelFormat(sessionCodec) ||
         outputPixelFormat == kCVPixelFormatType_444YpCbCr8BiPlanarVideoRange ||
         outputPixelFormat == kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange ||
@@ -2548,7 +2548,7 @@ struct VideoToolboxDecoder::Impl {
   }
 };
 
-VideoToolboxDecoder::VideoToolboxDecoder(VideoToolboxDecoderOptions options)
+VideoToolboxDecoder::VideoToolboxDecoder(VideoDecoderOptions options)
     : impl_(std::make_unique<Impl>(options)) {
   if (options.maxInFlightFrames == 0) {
     throw std::invalid_argument(
@@ -2558,9 +2558,9 @@ VideoToolboxDecoder::VideoToolboxDecoder(VideoToolboxDecoderOptions options)
     throw std::invalid_argument(
         "VideoToolbox presentation reorder bound must be greater than zero");
   }
-  if (options.outputInterop != VideoToolboxOutputInterop::Metal &&
-      options.outputInterop != VideoToolboxOutputInterop::OpenGL &&
-      options.outputInterop != VideoToolboxOutputInterop::DisplayLayer) {
+  if (options.outputInterop != VideoDecoderOutputInterop::Metal &&
+      options.outputInterop != VideoDecoderOutputInterop::OpenGL &&
+      options.outputInterop != VideoDecoderOutputInterop::DisplayLayer) {
     throw std::invalid_argument(
         "unsupported VideoToolbox output interop contract");
   }
@@ -3131,9 +3131,9 @@ void VideoToolboxDecoder::close() noexcept {
   impl_->detachLocked();
 }
 
-VideoToolboxDecoderStats VideoToolboxDecoder::stats() const noexcept {
+VideoDecoderStats VideoToolboxDecoder::stats() const noexcept {
   std::lock_guard operationLock(impl_->operationMutex);
-  VideoToolboxDecoderStats result;
+  VideoDecoderStats result;
   result.configured = impl_->configured;
   result.usingHardwareAcceleratedDecoder = impl_->usingHardware;
   result.awaitingKeyFrame = impl_->awaitingKeyFrame;
@@ -3179,9 +3179,9 @@ VideoToolboxDecoderStats VideoToolboxDecoder::stats() const noexcept {
   return result;
 }
 
-VideoToolboxDecoderMemoryFacts
+VideoDecoderMemoryFacts
 VideoToolboxDecoder::memoryFacts() const noexcept {
-  VideoToolboxDecoderMemoryFacts result;
+  VideoDecoderMemoryFacts result;
   std::lock_guard operationLock(impl_->operationMutex);
   std::lock_guard stateLock(impl_->async->mutex);
   result.inFlightFrames = impl_->async->inFlight;
@@ -3721,7 +3721,7 @@ bool VideoToolboxDecoderTestAccess::setSurfaceBudgetRejections(
 
 bool VideoToolboxDecoderTestAccess::validateOutputSurface(
     CVPixelBufferRef pixelBuffer, OSType expectedPixelFormat,
-    VideoToolboxOutputInterop outputInterop, std::string *error) {
+    VideoDecoderOutputInterop outputInterop, std::string *error) {
   if (error != nullptr) {
     error->clear();
   }
@@ -3736,7 +3736,7 @@ OSType VideoToolboxDecoderTestAccess::requestedOutputFormat(
 
 bool VideoToolboxDecoderTestAccess::admitsDecodedOutputPixelFormat(
     OSType pixelFormat, OSType expectedPixelFormat,
-    VideoToolboxOutputInterop outputInterop) noexcept {
+    VideoDecoderOutputInterop outputInterop) noexcept {
   return admitsOutputPixelFormat(pixelFormat, expectedPixelFormat,
                                  outputInterop);
 }

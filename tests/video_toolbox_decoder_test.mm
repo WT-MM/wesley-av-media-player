@@ -312,7 +312,7 @@ void testInferredReorderDepthIsClampedAndDeclaredIsRefused() {
   // exact case the real screen recording hits on the playback route, whose
   // kMaximumPresentationReorderFrames is 4.
   {
-    wam::macos::VideoToolboxDecoderOptions options;
+    wam::macos::VideoDecoderOptions options;
     options.maxInFlightFrames = 2;
     options.maxPendingPresentationFrames = 4;
     wam::macos::VideoToolboxDecoder decoder(options);
@@ -330,7 +330,7 @@ void testInferredReorderDepthIsClampedAndDeclaredIsRefused() {
   // The clamp is to the bound, not to any particular number: a record whose
   // inference is 8 lands on the same 4.
   {
-    wam::macos::VideoToolboxDecoderOptions options;
+    wam::macos::VideoDecoderOptions options;
     options.maxInFlightFrames = 2;
     options.maxPendingPresentationFrames = 4;
     wam::macos::VideoToolboxDecoder decoder(options);
@@ -348,7 +348,7 @@ void testInferredReorderDepthIsClampedAndDeclaredIsRefused() {
   // The clamp only ever lowers. A bound wide enough for the whole inference
   // keeps the inferred depth intact rather than snapping it to the bound.
   {
-    wam::macos::VideoToolboxDecoderOptions options;
+    wam::macos::VideoDecoderOptions options;
     options.maxInFlightFrames = 2;
     options.maxPendingPresentationFrames = 8;
     wam::macos::VideoToolboxDecoder decoder(options);
@@ -366,7 +366,7 @@ void testInferredReorderDepthIsClampedAndDeclaredIsRefused() {
   // A declared depth is never clamped, in either direction: it is honoured
   // exactly when it fits.
   {
-    wam::macos::VideoToolboxDecoderOptions options;
+    wam::macos::VideoDecoderOptions options;
     options.maxInFlightFrames = 2;
     options.maxPendingPresentationFrames = 4;
     wam::macos::VideoToolboxDecoder decoder(options);
@@ -385,7 +385,7 @@ void testInferredReorderDepthIsClampedAndDeclaredIsRefused() {
   // with the message unchanged. Identical geometry and level to the clamped
   // record above, so only the declaration separates the two outcomes.
   {
-    wam::macos::VideoToolboxDecoderOptions options;
+    wam::macos::VideoDecoderOptions options;
     options.maxInFlightFrames = 2;
     options.maxPendingPresentationFrames = 1;
     wam::macos::VideoToolboxDecoder decoder(options);
@@ -865,9 +865,9 @@ bool earlier(CMTime left, CMTime right) {
 CVPixelBufferRef createIOSurfacePixelBuffer(OSType format,
                                              std::size_t width,
                                              std::size_t height,
-                                             wam::macos::VideoToolboxOutputInterop
+                                             wam::macos::VideoDecoderOutputInterop
                                                  outputInterop = wam::macos::
-                                                     VideoToolboxOutputInterop::
+                                                     VideoDecoderOutputInterop::
                                                          Metal) {
   CFMutableDictionaryRef attributes = CFDictionaryCreateMutable(
       kCFAllocatorDefault, 3, &kCFTypeDictionaryKeyCallBacks,
@@ -878,7 +878,7 @@ CVPixelBufferRef createIOSurfacePixelBuffer(OSType format,
   CFDictionarySetValue(attributes, kCVPixelBufferIOSurfacePropertiesKey, empty);
   CFDictionarySetValue(attributes, kCVPixelBufferMetalCompatibilityKey,
                        kCFBooleanTrue);
-  if (outputInterop == wam::macos::VideoToolboxOutputInterop::OpenGL) {
+  if (outputInterop == wam::macos::VideoDecoderOutputInterop::OpenGL) {
     CFDictionarySetValue(
         attributes, kCVPixelBufferIOSurfaceOpenGLTextureCompatibilityKey,
         kCFBooleanTrue);
@@ -1030,7 +1030,7 @@ void testForcedCGLCoreProfileFallback() {
   WAM_CHECK(fallbackContext.usedCoreProfileFallback());
   CVPixelBufferRef nv12 = createIOSurfacePixelBuffer(
       kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, 128, 64,
-      wam::macos::VideoToolboxOutputInterop::OpenGL);
+      wam::macos::VideoDecoderOutputInterop::OpenGL);
   bindIOSurfacePlanesWithCGL(fallbackContext.get(), nv12);
   CVPixelBufferRelease(nv12);
   std::cout << "Forced CGL 3.2-core fallback import passed ("
@@ -1042,14 +1042,14 @@ void testForcedCGLCoreProfileFallback() {
 void testFiniteAdmissionNeverEnablesTemporalProcessing() {
   wam::macos::VideoToolboxDecoder asynchronous;
   WAM_CHECK(asynchronous.stats().outputInterop ==
-            wam::macos::VideoToolboxOutputInterop::Metal);
+            wam::macos::VideoDecoderOutputInterop::Metal);
   const std::uint32_t asynchronousFlags =
       wam::macos::VideoToolboxDecoderTestAccess::decodeFlags(asynchronous);
   WAM_CHECK((asynchronousFlags &
              kVTDecodeFrame_EnableAsynchronousDecompression) != 0);
   WAM_CHECK((asynchronousFlags & kVTDecodeFrame_EnableTemporalProcessing) == 0);
 
-  wam::macos::VideoToolboxDecoderOptions synchronousOptions;
+  wam::macos::VideoDecoderOptions synchronousOptions;
   synchronousOptions.enableAsynchronousDecompression = false;
   wam::macos::VideoToolboxDecoder synchronous(synchronousOptions);
   const std::uint32_t synchronousFlags =
@@ -1058,12 +1058,12 @@ void testFiniteAdmissionNeverEnablesTemporalProcessing() {
              kVTDecodeFrame_EnableAsynchronousDecompression) == 0);
   WAM_CHECK((synchronousFlags & kVTDecodeFrame_EnableTemporalProcessing) == 0);
 
-  wam::macos::VideoToolboxDecoderOptions openGLOptions;
+  wam::macos::VideoDecoderOptions openGLOptions;
   openGLOptions.outputInterop =
-      wam::macos::VideoToolboxOutputInterop::OpenGL;
+      wam::macos::VideoDecoderOutputInterop::OpenGL;
   wam::macos::VideoToolboxDecoder openGL(openGLOptions);
   WAM_CHECK(openGL.stats().outputInterop ==
-            wam::macos::VideoToolboxOutputInterop::OpenGL);
+            wam::macos::VideoDecoderOutputInterop::OpenGL);
 }
 
 void testPersistentFrameRefConSlotLifecycle() {
@@ -1071,14 +1071,14 @@ void testPersistentFrameRefConSlotLifecycle() {
   using wam::macos::FrameTiming;
   using wam::macos::VideoDecodeSubmitResult;
   using wam::macos::VideoToolboxDecoder;
-  using wam::macos::VideoToolboxDecoderOptions;
+  using wam::macos::VideoDecoderOptions;
   using wam::macos::VideoToolboxDecoderTestAccess;
 
   constexpr std::uint64_t firstGeneration = 301;
   constexpr std::uint64_t secondGeneration = 302;
   constexpr std::size_t capacity = 3;
   BoundedFrameQueue firstSink(capacity, firstGeneration);
-  VideoToolboxDecoderOptions options;
+  VideoDecoderOptions options;
   options.maxInFlightFrames = capacity;
   options.maxPendingPresentationFrames = 1;
   VideoToolboxDecoder decoder(options);
@@ -1226,7 +1226,7 @@ void testPersistentFrameRefConSlotLifecycle() {
 
 class BlockingProgressProbe final {
 public:
-  [[nodiscard]] wam::macos::VideoToolboxDecoderProgressHandler
+  [[nodiscard]] wam::macos::VideoDecoderProgressHandler
   handler() noexcept {
     return {&BlockingProgressProbe::notify, this};
   }
@@ -1265,7 +1265,7 @@ void testPersistentCallbackTailBlocksClose() {
   constexpr std::uint64_t generation = 311;
   BlockingProgressProbe probe;
   wam::macos::BoundedFrameQueue sink(1, generation);
-  wam::macos::VideoToolboxDecoderOptions options;
+  wam::macos::VideoDecoderOptions options;
   options.maxInFlightFrames = 1;
   options.maxPendingPresentationFrames = 1;
   options.progressHandler = probe.handler();
@@ -1371,7 +1371,7 @@ public:
 
 class ProgressWakeProbe final {
 public:
-  [[nodiscard]] wam::macos::VideoToolboxDecoderProgressHandler
+  [[nodiscard]] wam::macos::VideoDecoderProgressHandler
   handler() noexcept {
     return {&ProgressWakeProbe::notify, this};
   }
@@ -1407,7 +1407,7 @@ void testEventDrivenDecoderProgressWake() {
   using wam::macos::NativeSurfaceBudget;
   using wam::macos::VideoDecodeSubmitResult;
   using wam::macos::VideoToolboxDecoder;
-  using wam::macos::VideoToolboxDecoderOptions;
+  using wam::macos::VideoDecoderOptions;
   using wam::macos::VideoToolboxDecoderTestAccess;
   using wam::macos::kNativeSurfaceBudgetProcessMaximumSurfaces;
 
@@ -1418,7 +1418,7 @@ void testEventDrivenDecoderProgressWake() {
     constexpr std::uint64_t generation = 81;
     ProgressWakeProbe probe;
     BoundedFrameQueue sink(2, generation);
-    VideoToolboxDecoderOptions options;
+    VideoDecoderOptions options;
     options.maxInFlightFrames = 2;
     options.maxPendingPresentationFrames = 1;
     options.progressHandler = probe.handler();
@@ -1461,7 +1461,7 @@ void testEventDrivenDecoderProgressWake() {
     constexpr std::uint64_t generation = 87;
     ProgressWakeProbe probe;
     BoundedFrameQueue sink(1, generation);
-    VideoToolboxDecoderOptions options;
+    VideoDecoderOptions options;
     options.maxInFlightFrames = 1;
     options.maxPendingPresentationFrames = 1;
     options.progressHandler = probe.handler();
@@ -1498,7 +1498,7 @@ void testEventDrivenDecoderProgressWake() {
     constexpr std::uint64_t generation = 88;
     ProgressWakeProbe probe;
     BoundedFrameQueue sink(1, generation);
-    VideoToolboxDecoderOptions options;
+    VideoDecoderOptions options;
     options.maxInFlightFrames = 1;
     options.maxPendingPresentationFrames = 1;
     options.progressHandler = probe.handler();
@@ -1538,7 +1538,7 @@ void testEventDrivenDecoderProgressWake() {
     constexpr std::uint64_t nextGeneration = 83;
     ProgressWakeProbe probe;
     BoundedFrameQueue sink(1, generation);
-    VideoToolboxDecoderOptions options;
+    VideoDecoderOptions options;
     options.maxInFlightFrames = 1;
     options.maxPendingPresentationFrames = 1;
     options.progressHandler = probe.handler();
@@ -1573,7 +1573,7 @@ void testEventDrivenDecoderProgressWake() {
     constexpr std::uint64_t generation = 84;
     ProgressWakeProbe probe;
     BoundedFrameQueue sink(1, generation);
-    VideoToolboxDecoderOptions options;
+    VideoDecoderOptions options;
     options.maxInFlightFrames = 1;
     options.maxPendingPresentationFrames = 1;
     options.progressHandler = probe.handler();
@@ -1633,7 +1633,7 @@ void testEventDrivenDecoderProgressWake() {
     constexpr std::uint64_t generation = 85;
     ProgressWakeProbe probe;
     BoundedFrameQueue sink(1, generation);
-    VideoToolboxDecoderOptions options;
+    VideoDecoderOptions options;
     options.maxInFlightFrames = 1;
     options.maxPendingPresentationFrames = 1;
     options.progressHandler = probe.handler();
@@ -1676,7 +1676,7 @@ void testEventDrivenDecoderProgressWake() {
     constexpr std::uint64_t generation = 86;
     ProgressWakeProbe probe;
     BoundedFrameQueue sink(1, generation);
-    VideoToolboxDecoderOptions options;
+    VideoDecoderOptions options;
     options.maxInFlightFrames = 1;
     options.maxPendingPresentationFrames = 1;
     options.progressHandler = probe.handler();
@@ -1704,14 +1704,14 @@ void testExactDecoderRetirement() {
   using wam::macos::BoundedFrameQueue;
   using wam::macos::VideoDecoderRetireProgress;
   using wam::macos::VideoToolboxDecoder;
-  using wam::macos::VideoToolboxDecoderOptions;
+  using wam::macos::VideoDecoderOptions;
   using wam::macos::VideoToolboxDecoderTestAccess;
 
   constexpr std::uint64_t generation = 121;
   constexpr std::uint64_t invalidation = 130;
   ProgressWakeProbe probe;
   BoundedFrameQueue sink(1, generation);
-  VideoToolboxDecoderOptions options;
+  VideoDecoderOptions options;
   options.maxInFlightFrames = 1;
   options.maxPendingPresentationFrames = 1;
   options.progressHandler = probe.handler();
@@ -1773,7 +1773,7 @@ void testDecodedSurfaceBudgetTombstoneAndGenerationFlush() {
   using wam::macos::FrameLease;
   using wam::macos::NativeSurfaceBudget;
   using wam::macos::VideoToolboxDecoder;
-  using wam::macos::VideoToolboxDecoderOptions;
+  using wam::macos::VideoDecoderOptions;
   using wam::macos::VideoToolboxDecoderTestAccess;
   using wam::macos::kNativeSurfaceBudgetProcessMaximumSurfaces;
 
@@ -1786,7 +1786,7 @@ void testDecodedSurfaceBudgetTombstoneAndGenerationFlush() {
     constexpr std::uint64_t generation = 71;
     constexpr std::uint64_t nextGeneration = 72;
     SurfaceBudgetTrackingSink sink;
-    VideoToolboxDecoderOptions options;
+    VideoDecoderOptions options;
     options.maxInFlightFrames = 1;
     options.maxPendingPresentationFrames = 1;
     VideoToolboxDecoder decoder(options);
@@ -1830,7 +1830,7 @@ void testDecodedSurfaceBudgetTombstoneAndGenerationFlush() {
   {
     constexpr std::uint64_t generation = 74;
     SurfaceBudgetTrackingSink sink;
-    VideoToolboxDecoderOptions options;
+    VideoDecoderOptions options;
     options.maxInFlightFrames = 1;
     options.maxPendingPresentationFrames = 1;
     VideoToolboxDecoder decoder(options);
@@ -1886,7 +1886,7 @@ void testDecodedSurfaceBudgetTombstoneAndGenerationFlush() {
               kNativeSurfaceBudgetProcessMaximumSurfaces);
 
     SurfaceBudgetTrackingSink sink;
-    VideoToolboxDecoderOptions options;
+    VideoDecoderOptions options;
     options.maxInFlightFrames = 2;
     options.maxPendingPresentationFrames = 1;
     VideoToolboxDecoder decoder(options);
@@ -1971,7 +1971,7 @@ void testInjectedCallbackOrderUsesDecodeSequence(
   constexpr std::uint64_t generation = 41;
   constexpr std::size_t reorderDepth = 2;
   wam::macos::BoundedFrameQueue queue(4, generation);
-  wam::macos::VideoToolboxDecoderOptions options;
+  wam::macos::VideoDecoderOptions options;
   options.maxInFlightFrames = 4;
   options.maxPendingPresentationFrames = 4;
   wam::macos::VideoToolboxDecoder decoder(options);
@@ -2082,12 +2082,12 @@ void testOwnerProgressiveDeliveryRetainsBackpressureIdentity() {
   using wam::macos::FrameTiming;
   using wam::macos::VideoDecodeDrainProgress;
   using wam::macos::VideoToolboxDecoder;
-  using wam::macos::VideoToolboxDecoderOptions;
+  using wam::macos::VideoDecoderOptions;
   using wam::macos::VideoToolboxDecoderTestAccess;
   constexpr std::uint64_t generation = 101;
 
   OneSlotIdentitySink sink;
-  VideoToolboxDecoderOptions options;
+  VideoDecoderOptions options;
   options.maxInFlightFrames = 2;
   options.maxPendingPresentationFrames = 2;
   VideoToolboxDecoder decoder(options);
@@ -2165,11 +2165,11 @@ void testOwnerProgressiveCallbacksStraddleEndOfStream() {
   using wam::macos::FrameTiming;
   using wam::macos::VideoDecodeDrainProgress;
   using wam::macos::VideoToolboxDecoder;
-  using wam::macos::VideoToolboxDecoderOptions;
+  using wam::macos::VideoDecoderOptions;
   using wam::macos::VideoToolboxDecoderTestAccess;
   constexpr std::uint64_t generation = 104;
   OneSlotIdentitySink sink;
-  VideoToolboxDecoderOptions options;
+  VideoDecoderOptions options;
   options.maxInFlightFrames = 2;
   options.maxPendingPresentationFrames = 2;
   VideoToolboxDecoder decoder(options);
@@ -2223,12 +2223,12 @@ void testOwnerProgressiveTailFlushInvalidatesRetainedFrame() {
   using wam::macos::FrameTiming;
   using wam::macos::VideoDecodeDrainProgress;
   using wam::macos::VideoToolboxDecoder;
-  using wam::macos::VideoToolboxDecoderOptions;
+  using wam::macos::VideoDecoderOptions;
   using wam::macos::VideoToolboxDecoderTestAccess;
   constexpr std::uint64_t generation = 102;
   constexpr std::uint64_t nextGeneration = 103;
   OneSlotIdentitySink sink;
-  VideoToolboxDecoderOptions options;
+  VideoDecoderOptions options;
   options.maxInFlightFrames = 1;
   options.maxPendingPresentationFrames = 2;
   VideoToolboxDecoder decoder(options);
@@ -2259,11 +2259,11 @@ void testOwnerProgressiveTailFlushInvalidatesRetainedFrame() {
 void testOwnerProgressiveZeroFrameEndOfStream() {
   using wam::macos::VideoDecodeDrainProgress;
   using wam::macos::VideoToolboxDecoder;
-  using wam::macos::VideoToolboxDecoderOptions;
+  using wam::macos::VideoDecoderOptions;
   using wam::macos::VideoToolboxDecoderTestAccess;
   constexpr std::uint64_t generation = 105;
   OneSlotIdentitySink sink;
-  VideoToolboxDecoderOptions options;
+  VideoDecoderOptions options;
   options.maxInFlightFrames = 1;
   options.maxPendingPresentationFrames = 1;
   VideoToolboxDecoder decoder(options);
@@ -2304,7 +2304,7 @@ void testInjectedCompletionGapPreservesAdmissionAndMakesProgress(
     const DemuxedVideo &video, std::size_t keyIndex, bool requireHardware) {
   constexpr std::uint64_t generation = 42;
   wam::macos::BoundedFrameQueue queue(2, generation);
-  wam::macos::VideoToolboxDecoderOptions options;
+  wam::macos::VideoDecoderOptions options;
   options.maxInFlightFrames = 2;
   options.maxPendingPresentationFrames = 2;
   wam::macos::VideoToolboxDecoder decoder(options);
@@ -2386,7 +2386,7 @@ void testCallbackAllocationFailureFailsClosedAndRetiresInOrder() {
                       std::uint64_t failingSequence,
                       std::size_t expectedAfterFailure) {
     wam::macos::BoundedFrameQueue queue(2, generation);
-    wam::macos::VideoToolboxDecoderOptions options;
+    wam::macos::VideoDecoderOptions options;
     options.maxInFlightFrames = 2;
     options.maxPendingPresentationFrames = 2;
     wam::macos::VideoToolboxDecoder decoder(options);
@@ -2496,7 +2496,7 @@ void testDecodedDimensionMismatchFailsBeforeSurfaceAdmission() {
 
   constexpr std::uint64_t generation = 461;
   wam::macos::BoundedFrameQueue queue(1, generation);
-  wam::macos::VideoToolboxDecoderOptions options;
+  wam::macos::VideoDecoderOptions options;
   options.maxInFlightFrames = 1;
   options.maxPendingPresentationFrames = 1;
   wam::macos::VideoToolboxDecoder decoder(options);
@@ -2697,7 +2697,7 @@ void testDecodedColorCallbackRejectsHdrBeforeLease() {
 
   constexpr std::uint64_t generation = 462;
   wam::macos::BoundedFrameQueue queue(1, generation);
-  wam::macos::VideoToolboxDecoderOptions options;
+  wam::macos::VideoDecoderOptions options;
   options.maxInFlightFrames = 1;
   options.maxPendingPresentationFrames = 1;
   wam::macos::VideoToolboxDecoder decoder(options);
@@ -2846,7 +2846,7 @@ void testCodecParserAndDeclaredReorderBound(const DemuxedVideo &video) {
              .has_value());
   }
 
-  wam::macos::VideoToolboxDecoderOptions options;
+  wam::macos::VideoDecoderOptions options;
   options.maxInFlightFrames = 2;
   options.maxPendingPresentationFrames = *reorderFrames - 1;
   wam::macos::VideoToolboxDecoder decoder(options);
@@ -2861,7 +2861,7 @@ void testDefaultBoundMakesProgressBeforeEndOfStream(
   constexpr std::uint64_t generation = 9;
   const std::size_t packetCount = video.packets.size() - keyIndex;
   wam::macos::BoundedFrameQueue queue(packetCount + 1, generation);
-  wam::macos::VideoToolboxDecoderOptions options;
+  wam::macos::VideoDecoderOptions options;
   options.maxInFlightFrames = 2;
   wam::macos::VideoToolboxDecoder decoder(options);
   std::string error;
@@ -2936,7 +2936,7 @@ void testBFramePresentationOrderAndMetalImport(const DemuxedVideo &video,
                        wam::macos::VideoDecodeSubmitResult::Accepted,
                    error);
 
-  const wam::macos::VideoToolboxDecoderStats stats = decoder.stats();
+  const wam::macos::VideoDecoderStats stats = decoder.stats();
   WAM_CHECK(stats.submittedFrames == packetCount);
   WAM_CHECK(stats.deliveredFrames == packetCount);
   WAM_CHECK(stats.droppedFrames == 0);
@@ -2992,9 +2992,9 @@ void testDecodedNV12OpenGLInterop(const DemuxedVideo &video,
   constexpr std::uint64_t generation = 45;
   const std::size_t packetCount = video.packets.size() - keyIndex;
   wam::macos::BoundedFrameQueue queue(packetCount + 1, generation);
-  wam::macos::VideoToolboxDecoderOptions options;
+  wam::macos::VideoDecoderOptions options;
   options.maxInFlightFrames = packetCount + 1;
-  options.outputInterop = wam::macos::VideoToolboxOutputInterop::OpenGL;
+  options.outputInterop = wam::macos::VideoDecoderOutputInterop::OpenGL;
   wam::macos::VideoToolboxDecoder decoder(options);
   std::string error;
   WAM_CHECK_DETAIL(
@@ -3013,7 +3013,7 @@ void testDecodedNV12OpenGLInterop(const DemuxedVideo &video,
 
   const auto stats = decoder.stats();
   WAM_CHECK(stats.outputInterop ==
-            wam::macos::VideoToolboxOutputInterop::OpenGL);
+            wam::macos::VideoDecoderOutputInterop::OpenGL);
   WAM_CHECK(stats.requestedOutputPixelFormat ==
             kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange);
   WAM_CHECK(stats.actualOutputPixelFormat ==
@@ -3029,7 +3029,7 @@ void testDecodedNV12OpenGLInterop(const DemuxedVideo &video,
     WAM_CHECK_DETAIL(
         wam::macos::VideoToolboxDecoderTestAccess::validateOutputSurface(
             frame->pixelBuffer(), stats.requestedOutputPixelFormat,
-            wam::macos::VideoToolboxOutputInterop::OpenGL, &error),
+            wam::macos::VideoDecoderOutputInterop::OpenGL, &error),
         error);
     bindIOSurfacePlanesWithCGL(cglContext, frame->pixelBuffer());
     ++importedFrames;
@@ -3051,9 +3051,9 @@ void testDecodedP010OpenGLInterop(const DemuxedVideo &video,
   const std::size_t packetCount = video.packets.size() - keyIndex;
   WAM_CHECK(packetCount > 0);
   wam::macos::BoundedFrameQueue queue(packetCount + 1, generation);
-  wam::macos::VideoToolboxDecoderOptions options;
+  wam::macos::VideoDecoderOptions options;
   options.maxInFlightFrames = packetCount + 1;
-  options.outputInterop = wam::macos::VideoToolboxOutputInterop::OpenGL;
+  options.outputInterop = wam::macos::VideoDecoderOutputInterop::OpenGL;
   wam::macos::VideoToolboxDecoder decoder(options);
   std::string error;
   WAM_CHECK_DETAIL(
@@ -3072,7 +3072,7 @@ void testDecodedP010OpenGLInterop(const DemuxedVideo &video,
 
   const auto stats = decoder.stats();
   WAM_CHECK(stats.outputInterop ==
-            wam::macos::VideoToolboxOutputInterop::OpenGL);
+            wam::macos::VideoDecoderOutputInterop::OpenGL);
   WAM_CHECK(stats.requestedOutputPixelFormat ==
             kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange);
   WAM_CHECK(stats.actualOutputPixelFormat ==
@@ -3088,7 +3088,7 @@ void testDecodedP010OpenGLInterop(const DemuxedVideo &video,
     WAM_CHECK_DETAIL(
         wam::macos::VideoToolboxDecoderTestAccess::validateOutputSurface(
             frame->pixelBuffer(), stats.requestedOutputPixelFormat,
-            wam::macos::VideoToolboxOutputInterop::OpenGL, &error),
+            wam::macos::VideoDecoderOutputInterop::OpenGL, &error),
         error);
     bindIOSurfacePlanesWithCGL(cglContext, frame->pixelBuffer());
     ++importedFrames;
@@ -3105,18 +3105,18 @@ void testDecodedP010OpenGLInterop(const DemuxedVideo &video,
 void testSyntheticP010LayoutRejection(CGLContextObj cglContext) {
   CVPixelBufferRef p010 = createIOSurfacePixelBuffer(
       kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange, 128, 64,
-      wam::macos::VideoToolboxOutputInterop::OpenGL);
+      wam::macos::VideoDecoderOutputInterop::OpenGL);
   std::string error;
   WAM_CHECK_DETAIL(
       wam::macos::VideoToolboxDecoderTestAccess::validateOutputSurface(
           p010, kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange,
-          wam::macos::VideoToolboxOutputInterop::OpenGL, &error),
+          wam::macos::VideoDecoderOutputInterop::OpenGL, &error),
       error);
   bindIOSurfacePlanesWithCGL(cglContext, p010);
 
   WAM_CHECK(!wam::macos::VideoToolboxDecoderTestAccess::validateOutputSurface(
       p010, kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
-      wam::macos::VideoToolboxOutputInterop::OpenGL, &error));
+      wam::macos::VideoDecoderOutputInterop::OpenGL, &error));
   WAM_CHECK(error.find("pixel format") != std::string::npos);
   CVPixelBufferRelease(p010);
 }
@@ -3174,7 +3174,7 @@ void testAdmissionBeforeCopy(const DemuxedVideo &video, std::size_t keyIndex,
                              bool requireHardware) {
   constexpr std::uint64_t generation = 6;
   wam::macos::BoundedFrameQueue queue(2, generation);
-  wam::macos::VideoToolboxDecoderOptions options;
+  wam::macos::VideoDecoderOptions options;
   options.maxInFlightFrames = 1;
   wam::macos::VideoToolboxDecoder decoder(options);
   std::string error;
@@ -3261,7 +3261,7 @@ void testDirectCMSampleBufferSubmission(
   WAM_CHECK(sampleBytes != 0);
 
   wam::macos::BoundedFrameQueue queue(4, generation);
-  wam::macos::VideoToolboxDecoderOptions options;
+  wam::macos::VideoDecoderOptions options;
   options.maxInFlightFrames = 1;
   wam::macos::VideoToolboxDecoder decoder(options);
   std::string error;
@@ -3395,7 +3395,7 @@ public:
   explicit CallbackSchedulingProbe(std::atomic<bool> &submissionActive)
       : submissionActive_(submissionActive) {}
 
-  [[nodiscard]] wam::macos::VideoToolboxDecoderProgressHandler
+  [[nodiscard]] wam::macos::VideoDecoderProgressHandler
   handler() noexcept {
     return {&CallbackSchedulingProbe::notify, this};
   }
@@ -3438,7 +3438,7 @@ void testCallbackScheduling(const DemuxedVideo &video, std::size_t keyIndex,
   std::atomic<bool> submissionActive{false};
   CallbackSchedulingProbe callbackProbe(submissionActive);
   GatedSink sink(generation);
-  wam::macos::VideoToolboxDecoderOptions options;
+  wam::macos::VideoDecoderOptions options;
   options.maxInFlightFrames = 1;
   options.enableAsynchronousDecompression = allowAsynchronousDecode;
   options.progressHandler = callbackProbe.handler();
@@ -3657,9 +3657,9 @@ void testHevcConfiguration(bool requireHardware) {
 // attachments. Depth still is predicted, and stays exact below.
 void testUnpinnedDisplayLayerAdmitsFullRangeDecodedSurfaces() {
   using wam::macos::VideoToolboxDecoderTestAccess;
-  using wam::macos::VideoToolboxOutputInterop;
+  using wam::macos::VideoDecoderOutputInterop;
   const auto admits = [](OSType actual, OSType expected,
-                         VideoToolboxOutputInterop interop) {
+                         VideoDecoderOutputInterop interop) {
     return VideoToolboxDecoderTestAccess::admitsDecodedOutputPixelFormat(
         actual, expected, interop);
   };
@@ -3678,15 +3678,15 @@ void testUnpinnedDisplayLayerAdmitsFullRangeDecodedSurfaces() {
   for (const OSType format : {kCVPixelFormatType_422YpCbCr8BiPlanarVideoRange,
                              kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange,
                              kCVPixelFormatType_30RGBLEPackedWideGamut}) {
-    WAM_CHECK(admits(format, format, VideoToolboxOutputInterop::DisplayLayer));
-    WAM_CHECK(!admits(format, format, VideoToolboxOutputInterop::OpenGL));
-    WAM_CHECK(!admits(format, format, VideoToolboxOutputInterop::Metal));
+    WAM_CHECK(admits(format, format, VideoDecoderOutputInterop::DisplayLayer));
+    WAM_CHECK(!admits(format, format, VideoDecoderOutputInterop::OpenGL));
+    WAM_CHECK(!admits(format, format, VideoDecoderOutputInterop::Metal));
   }
   WAM_CHECK(!admits(0x70343232U, kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange,
-                    VideoToolboxOutputInterop::DisplayLayer));
+                    VideoDecoderOutputInterop::DisplayLayer));
   WAM_CHECK(admits(kCVPixelFormatType_422YpCbCr10BiPlanarFullRange,
                    kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange,
-                   VideoToolboxOutputInterop::DisplayLayer));
+                   VideoDecoderOutputInterop::DisplayLayer));
   constexpr OSType videoRange8 =
       kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange;
   constexpr OSType fullRange8 =
@@ -3702,43 +3702,43 @@ void testUnpinnedDisplayLayerAdmitsFullRangeDecodedSurfaces() {
 
   // The whole 8-bit family an unpinned display-layer session can return.
   WAM_CHECK(admits(videoRange8, videoRange8,
-                   VideoToolboxOutputInterop::DisplayLayer));
+                   VideoDecoderOutputInterop::DisplayLayer));
   WAM_CHECK(admits(losslessVideoRange8, videoRange8,
-                   VideoToolboxOutputInterop::DisplayLayer));
+                   VideoDecoderOutputInterop::DisplayLayer));
   WAM_CHECK(admits(fullRange8, videoRange8,
-                   VideoToolboxOutputInterop::DisplayLayer));
+                   VideoDecoderOutputInterop::DisplayLayer));
   // The exact format measured on both specimen files.
   WAM_CHECK(admits(losslessFullRange8, videoRange8,
-                   VideoToolboxOutputInterop::DisplayLayer));
+                   VideoDecoderOutputInterop::DisplayLayer));
 
   // Same rule at 10 bits: a 10-bit SDR stream also leaves the format unpinned.
   WAM_CHECK(admits(fullRange10, videoRange10,
-                   VideoToolboxOutputInterop::DisplayLayer));
+                   VideoDecoderOutputInterop::DisplayLayer));
 
   // DEPTH stays exact. Widening the range must not widen the bit depth: the
   // surface budget and every sampler are sized from it.
   WAM_CHECK(!admits(videoRange10, videoRange8,
-                    VideoToolboxOutputInterop::DisplayLayer));
+                    VideoDecoderOutputInterop::DisplayLayer));
   WAM_CHECK(!admits(fullRange10, videoRange8,
-                    VideoToolboxOutputInterop::DisplayLayer));
+                    VideoDecoderOutputInterop::DisplayLayer));
   WAM_CHECK(!admits(videoRange8, videoRange10,
-                    VideoToolboxOutputInterop::DisplayLayer));
+                    VideoDecoderOutputInterop::DisplayLayer));
   // And an unrelated format is still refused.
   WAM_CHECK(!admits(kCVPixelFormatType_32BGRA, videoRange8,
-                    VideoToolboxOutputInterop::DisplayLayer));
+                    VideoDecoderOutputInterop::DisplayLayer));
 
   // Every other interop PINS the output format (pinOutputPixelFormat is true
   // whenever the interop is not DisplayLayer), so for those routes a format
   // that is not the requested one is a genuine contract violation and stays
   // refused -- including the range sibling.
   WAM_CHECK(admits(videoRange8, videoRange8,
-                   VideoToolboxOutputInterop::OpenGL));
+                   VideoDecoderOutputInterop::OpenGL));
   WAM_CHECK(!admits(fullRange8, videoRange8,
-                    VideoToolboxOutputInterop::OpenGL));
+                    VideoDecoderOutputInterop::OpenGL));
   WAM_CHECK(!admits(losslessFullRange8, videoRange8,
-                    VideoToolboxOutputInterop::OpenGL));
+                    VideoDecoderOutputInterop::OpenGL));
   WAM_CHECK(!admits(losslessVideoRange8, videoRange8,
-                    VideoToolboxOutputInterop::Metal));
+                    VideoDecoderOutputInterop::Metal));
 }
 
 int main(int argc, char **argv) {

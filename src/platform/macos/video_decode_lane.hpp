@@ -68,8 +68,30 @@ namespace wam::macos {
 // Software backends are constructed lazily, so a session that never selects
 // one pays only null pointers for them.
 class VideoDecodeLane final {
+private:
+  // The one backend dispatch: the selected software backend, else
+  // VideoToolbox. Selection is fixed for a generation, so this is a pair of
+  // predictable pointer tests, not a lookup or a virtual call.
+  template <typename Self, typename Function>
+  static decltype(auto) withBackend(Self &self, Function &&function) {
+#if defined(WAM_ENABLE_AVCODEC_STAGE)
+    if (self.avcodec_) {
+      return function(*self.avcodec_);
+    }
+#endif
+    return self.software_ != nullptr ? function(*self.software_)
+                                     : function(self.videoToolbox_);
+  }
+  template <typename Function> decltype(auto) with(Function &&function) {
+    return withBackend(*this, std::forward<Function>(function));
+  }
+  template <typename Function>
+  decltype(auto) with(Function &&function) const {
+    return withBackend(*this, std::forward<Function>(function));
+  }
+
 public:
-  explicit VideoDecodeLane(VideoToolboxDecoderOptions options = {})
+  explicit VideoDecodeLane(VideoDecoderOptions options = {})
       : options_(options), videoToolbox_(options) {}
 
   VideoDecodeLane(const VideoDecodeLane &) = delete;
@@ -159,118 +181,84 @@ public:
   [[nodiscard]] VideoDecodeSubmitResult
   submitCMSampleBuffer(CMSampleBufferRef sample, std::uint64_t generation,
                        std::string *error) {
-#if defined(WAM_ENABLE_AVCODEC_STAGE)
-    if (avcodec_) return avcodec_->submitCMSampleBuffer(sample, generation, error);
-#endif
-    return software_ != nullptr
-               ? software_->submitCMSampleBuffer(sample, generation, error)
-               : videoToolbox_.submitCMSampleBuffer(sample, generation, error);
+    return with([&](auto &decoder) {
+      return decoder.submitCMSampleBuffer(sample, generation, error);
+    });
   }
 
   [[nodiscard]] VideoDecodeDrainProgress
   beginEndOfStream(std::uint64_t generation, std::string *error) {
-#if defined(WAM_ENABLE_AVCODEC_STAGE)
-    if (avcodec_) return avcodec_->beginEndOfStream(generation, error);
-#endif
-    return software_ != nullptr
-               ? software_->beginEndOfStream(generation, error)
-               : videoToolbox_.beginEndOfStream(generation, error);
+    return with([&](auto &decoder) {
+      return decoder.beginEndOfStream(generation, error);
+    });
   }
 
   [[nodiscard]] VideoDecodeDrainProgress
   drainPresentation(std::uint64_t generation, std::string *error) {
-#if defined(WAM_ENABLE_AVCODEC_STAGE)
-    if (avcodec_) return avcodec_->drainPresentation(generation, error);
-#endif
-    return software_ != nullptr
-               ? software_->drainPresentation(generation, error)
-               : videoToolbox_.drainPresentation(generation, error);
+    return with([&](auto &decoder) {
+      return decoder.drainPresentation(generation, error);
+    });
   }
 
   [[nodiscard]] VideoDecodeDrainProgress
   drainEndOfStream(std::uint64_t generation, std::string *error) {
-#if defined(WAM_ENABLE_AVCODEC_STAGE)
-    if (avcodec_) return avcodec_->drainEndOfStream(generation, error);
-#endif
-    return software_ != nullptr
-               ? software_->drainEndOfStream(generation, error)
-               : videoToolbox_.drainEndOfStream(generation, error);
+    return with([&](auto &decoder) {
+      return decoder.drainEndOfStream(generation, error);
+    });
   }
 
-  // Handoff releases the software worker reservation instead of immediately
-  // reopening an idle playback decoder that would starve its own preview.
+  // Handoff releases a software worker reservation instead of immediately
+  // reopening an idle playback decoder that would starve its own preview; a
+  // backend with nothing to release simply flushes.
   void suspendForPreview(std::uint64_t generation) noexcept {
-#if defined(WAM_ENABLE_AVCODEC_STAGE)
-    if (avcodec_) { avcodec_->suspendForPreview(generation); return; }
-#endif
-    flush(generation);
+    with([&](auto &decoder) {
+      if constexpr (requires { decoder.suspendForPreview(generation); }) {
+        decoder.suspendForPreview(generation);
+      } else {
+        decoder.flush(generation);
+      }
+    });
   }
   bool resumeAfterPreview() noexcept {
-#if defined(WAM_ENABLE_AVCODEC_STAGE)
-    if (avcodec_) return avcodec_->resumeAfterPreview();
-#endif
-    return true;
+    return with([](auto &decoder) {
+      if constexpr (requires { decoder.resumeAfterPreview(); }) {
+        return decoder.resumeAfterPreview();
+      } else {
+        return true;
+      }
+    });
   }
 
   void flush(std::uint64_t nextGeneration) noexcept {
-#if defined(WAM_ENABLE_AVCODEC_STAGE)
-    if (avcodec_) { avcodec_->flush(nextGeneration); return; }
-#endif
-    if (software_ != nullptr) {
-      software_->flush(nextGeneration);
-      return;
-    }
-    videoToolbox_.flush(nextGeneration);
+    with([&](auto &decoder) { decoder.flush(nextGeneration); });
   }
 
   [[nodiscard]] VideoDecoderRetireProgress
   retire(std::uint64_t retiredGeneration,
          std::uint64_t invalidationGeneration) noexcept {
-#if defined(WAM_ENABLE_AVCODEC_STAGE)
-    if (avcodec_) return avcodec_->retire(retiredGeneration, invalidationGeneration);
-#endif
-    return software_ != nullptr
-               ? software_->retire(retiredGeneration, invalidationGeneration)
-               : videoToolbox_.retire(retiredGeneration,
-                                      invalidationGeneration);
+    return with([&](auto &decoder) {
+      return decoder.retire(retiredGeneration, invalidationGeneration);
+    });
   }
 
   void close() noexcept {
-#if defined(WAM_ENABLE_AVCODEC_STAGE)
-    if (avcodec_) { avcodec_->close(); return; }
-#endif
-    if (software_ != nullptr) {
-      software_->close();
-      return;
-    }
-    videoToolbox_.close();
+    with([](auto &decoder) { decoder.close(); });
   }
 
-  [[nodiscard]] VideoToolboxDecoderStats stats() const noexcept {
-#if defined(WAM_ENABLE_AVCODEC_STAGE)
-    if (avcodec_) return avcodec_->stats();
-#endif
-    return software_ != nullptr ? software_->stats() : videoToolbox_.stats();
+  [[nodiscard]] VideoDecoderStats stats() const noexcept {
+    return with([](const auto &decoder) { return decoder.stats(); });
   }
 
-  [[nodiscard]] VideoToolboxDecoderMemoryFacts memoryFacts() const noexcept {
-#if defined(WAM_ENABLE_AVCODEC_STAGE)
-    if (avcodec_) return avcodec_->memoryFacts();
-#endif
-    return software_ != nullptr ? software_->memoryFacts()
-                                : videoToolbox_.memoryFacts();
+  [[nodiscard]] VideoDecoderMemoryFacts memoryFacts() const noexcept {
+    return with([](const auto &decoder) { return decoder.memoryFacts(); });
   }
 
   [[nodiscard]] std::optional<std::string> takeLastError() {
-#if defined(WAM_ENABLE_AVCODEC_STAGE)
-    if (avcodec_) return avcodec_->takeLastError();
-#endif
-    return software_ != nullptr ? software_->takeLastError()
-                                : videoToolbox_.takeLastError();
+    return with([](auto &decoder) { return decoder.takeLastError(); });
   }
 
 private:
-  const VideoToolboxDecoderOptions options_;
+  const VideoDecoderOptions options_;
   VideoToolboxDecoder videoToolbox_;
   std::unique_ptr<SoftwareVp8Decoder> software_;
 #if defined(WAM_ENABLE_AVCODEC_STAGE)

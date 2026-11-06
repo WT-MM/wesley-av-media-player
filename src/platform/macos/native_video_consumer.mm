@@ -111,7 +111,7 @@ void assignError(std::string* error, const char* message) {
 // exceeds codecReorderFrames, so a bound at or below that floor would refuse
 // the very input that produces the next presentable frame.
 [[nodiscard]] std::size_t decodedSurfaceOwnershipBound(
-    const VideoToolboxDecoderStats& decoder) noexcept {
+    const VideoDecoderStats& decoder) noexcept {
   return std::max(NativeVideoConsumer::kMaximumDecodedSurfaceOwnership,
                   decoder.codecReorderFrames + 1);
 }
@@ -130,7 +130,7 @@ void assignError(std::string* error, const char* message) {
 // dispatcher's video lane, which is bounded by payload size rather than by
 // scarce decoded surfaces.
 [[nodiscard]] bool decodedSurfaceAdmissionOpen(
-    const VideoToolboxDecoderStats& decoder) noexcept {
+    const VideoDecoderStats& decoder) noexcept {
   const std::size_t owned =
       decoder.inFlightFrames + decoder.retainedPresentationFrames;
   return owned < decodedSurfaceOwnershipBound(decoder);
@@ -555,11 +555,11 @@ class NativeVideoConsumer::Sink final : public DecodedFrameSink {
 // hardware's native lossless surface; every other presenter samples in process
 // and needs the pinned uncompressed one. Both the construction and the
 // post-configure proof read this same function, so they cannot disagree.
-[[nodiscard]] VideoToolboxOutputInterop decodedSurfaceInteropFor(
+[[nodiscard]] VideoDecoderOutputInterop decodedSurfaceInteropFor(
     const NativeTrackedVideoOutput* output) noexcept {
   return output != nullptr && output->presentsDecodedSurfacesDirectly()
-             ? VideoToolboxOutputInterop::DisplayLayer
-             : VideoToolboxOutputInterop::OpenGL;
+             ? VideoDecoderOutputInterop::DisplayLayer
+             : VideoDecoderOutputInterop::OpenGL;
 }
 
 struct NativeVideoConsumer::Impl {
@@ -574,11 +574,11 @@ struct NativeVideoConsumer::Impl {
         // `output` is declared before `decoder`, so it is already the live
         // presenter here and the interop is decided once, from the presenter
         // itself, rather than from an environment read in the decode path.
-        decoder(VideoToolboxDecoderOptions{
+        decoder(VideoDecoderOptions{
             NativeVideoConsumer::kMaximumDecoderInFlightFrames,
             kMaximumPresentationReorderFrames,
             decodedSurfaceInteropFor(output.get()),
-            VideoToolboxDecoderProgressHandler{wake.signal, wake.context}}) {}
+            VideoDecoderProgressHandler{wake.signal, wake.context}}) {}
 
   // Every latch names the exact gate it tripped. The message is retained in
   // failureText on the first latch and, when the caller owns an error
@@ -1564,7 +1564,7 @@ NativeVideoConsumer::quiesceForPreview(MediaGeneration generation) noexcept {
     impl.previewDecoderFlushed = true;
   }
 
-  const VideoToolboxDecoderStats decoderFacts = impl.decoder.stats();
+  const VideoDecoderStats decoderFacts = impl.decoder.stats();
   bool decoderConfigured = decoderFacts.configured;
 #if defined(WAM_NATIVE_VIDEO_CONSUMER_TESTING)
   decoderConfigured =
@@ -1677,7 +1677,7 @@ NativeVideoConsumer::releasePreviewQuiesce(
                "video decoder could not resume after preview handoff");
     return NativeVideoConsumerPreviewProgress::Failed;
   }
-  const VideoToolboxDecoderStats decoderFacts = impl.decoder.stats();
+  const VideoDecoderStats decoderFacts = impl.decoder.stats();
   bool decoderConfigured = decoderFacts.configured;
 #if defined(WAM_NATIVE_VIDEO_CONSUMER_TESTING)
   decoderConfigured =
@@ -1758,7 +1758,7 @@ media::NativeMediaConsumeResult NativeVideoConsumer::configure(
                "native video decoder configuration was refused", error);
     return media::NativeMediaConsumeResult::Failed;
   }
-  const VideoToolboxDecoderStats decoderFacts = impl.decoder.stats();
+  const VideoDecoderStats decoderFacts = impl.decoder.stats();
   if (!decoderFacts.configured || decoderFacts.generation != generation ||
       decoderFacts.maxInFlightFrames != kMaximumDecoderInFlightFrames ||
       decoderFacts.outputInterop !=
@@ -1861,7 +1861,7 @@ media::NativeMediaConsumeResult NativeVideoConsumer::capacity(
   case PumpStatus::Idle:
     break;
   }
-  const VideoToolboxDecoderStats decoder = impl.decoder.stats();
+  const VideoDecoderStats decoder = impl.decoder.stats();
   if (decoder.generation != generation) {
     return media::NativeMediaConsumeResult::StaleGeneration;
   }
@@ -1934,7 +1934,7 @@ media::NativeMediaConsumeResult NativeVideoConsumer::trySample(
   // decoder credit alone permits maxInFlightFrames + codecReorderFrames
   // decoded surfaces and that is more than this route's share of the
   // per-session decoded-surface budget.
-  const VideoToolboxDecoderStats admission = impl.decoder.stats();
+  const VideoDecoderStats admission = impl.decoder.stats();
   if (admission.generation != impl.generation) {
     return media::NativeMediaConsumeResult::StaleGeneration;
   }
@@ -2449,7 +2449,7 @@ media::NativeMediaConsumerProgress NativeVideoConsumer::retire(
     const NativeTrackedVideoOutputFacts outputFacts =
         impl.output == nullptr ? NativeTrackedVideoOutputFacts{}
                                : impl.output->facts();
-    const VideoToolboxDecoderStats decoderFacts = impl.decoder.stats();
+    const VideoDecoderStats decoderFacts = impl.decoder.stats();
     const MediaGeneration exposed = std::max(
         {impl.generation, impl.armGeneration, impl.flushTarget,
          impl.highestExposedGeneration, outputFacts.generation,
@@ -2507,7 +2507,7 @@ media::NativeMediaConsumerProgress NativeVideoConsumer::retire(
   if (impl.sink.generation() != invalidationGeneration) {
     impl.sink.flush(invalidationGeneration);
   }
-  const VideoToolboxDecoderStats decoderFacts = impl.decoder.stats();
+  const VideoDecoderStats decoderFacts = impl.decoder.stats();
   if (decoderFacts.configured ||
       decoderFacts.generation != invalidationGeneration ||
       decoderFacts.inFlightFrames != 0 ||

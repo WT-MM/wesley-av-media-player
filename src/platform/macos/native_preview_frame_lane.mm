@@ -321,10 +321,10 @@ struct NativePreviewFrameLane::Impl final {
        bool bypass)
       : binding(std::move(laneBinding)), output(std::move(previewOutput)),
         wake(wakeSeam), source(std::move(previewSource)), sink(wakeSeam),
-        decoder(VideoToolboxDecoderOptions{
+        decoder(VideoDecoderOptions{
             1, kMaximumPreviewReorderFrames,
-            VideoToolboxOutputInterop::OpenGL,
-            VideoToolboxDecoderProgressHandler{wake.signal, wake.context}}),
+            VideoDecoderOutputInterop::OpenGL,
+            VideoDecoderProgressHandler{wake.signal, wake.context}}),
         bypassDecoder(bypass), acceptedThrough(binding.acceptedThrough) {}
 
   [[nodiscard]] bool prepareDecoder() {
@@ -1172,7 +1172,7 @@ NativePreviewFrameLane::memoryFacts() const noexcept {
   }
   const NativePreviewSourceMemoryFacts source =
       impl_->source->memoryFacts();
-  const VideoToolboxDecoderMemoryFacts decoder =
+  const VideoDecoderMemoryFacts decoder =
       impl_->decoder.memoryFacts();
   result.sourceCurrentCompressedBytes =
       source.currentStagedCompressedBytes;

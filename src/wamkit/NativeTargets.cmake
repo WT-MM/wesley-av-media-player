@@ -103,6 +103,7 @@ find_library(WAM_COREIMAGE_FRAMEWORK CoreImage REQUIRED)
     src/platform/macos/native_video_limits.hpp
     src/platform/macos/native_video_presenter.hpp
     src/platform/macos/native_video_presenter.mm
+    src/platform/macos/video_decoder_contract.hpp
     src/platform/macos/video_toolbox_decoder.hpp
     src/platform/macos/video_toolbox_decoder.mm
     src/platform/macos/software_presentation_pool.hpp

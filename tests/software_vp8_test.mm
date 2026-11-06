@@ -491,16 +491,18 @@ void testStage() {
   expect(sink.flushes == 1 && sink.generation == 7,
          "configure flushes the sink to the configured generation");
 
-  // A delta frame before any key frame is accepted and discarded rather than
-  // decoded against a retired reference set.
+  // A delta frame before any key frame is refused rather than decoded against
+  // a retired reference set, exactly as every decode backend refuses it.
   {
     CMSampleBufferRef sample =
         makeVp8Sample(stream.frames[1], description, 1, false);
     expect(decoder.submitCMSampleBuffer(sample, 7, &error) ==
-               VideoDecodeSubmitResult::Accepted,
-           "a delta frame before the first key frame is accepted");
-    expect(decoder.stats().droppedFrames == 1,
-           "and is counted as dropped rather than decoded");
+               VideoDecodeSubmitResult::Rejected &&
+               !error.empty(),
+           "a delta frame before the first key frame is rejected");
+    expect(decoder.takeLastError().has_value() &&
+               !decoder.takeLastError().has_value(),
+           "the refusal is latched once for takeLastError");
     expect(decoder.drainPresentation(7, &error) ==
                VideoDecodeDrainProgress::Quiescing,
            "no frame becomes presentable from a discarded delta frame");

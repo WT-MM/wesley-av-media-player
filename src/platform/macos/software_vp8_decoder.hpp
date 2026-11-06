@@ -1,6 +1,6 @@
 #pragma once
 
-#include "video_toolbox_decoder.hpp"
+#include "video_decoder_contract.hpp"
 
 #include <CoreMedia/CoreMedia.h>
 
@@ -109,10 +109,8 @@ inline constexpr std::size_t kSoftwareVp8RendererRetainedSurfaces = 1;
 // renderer's one is a CoreVideo reference this process no longer leases, which
 // is exactly why it has to be provisioned here instead of accounted there.
 
-// Software VP8 decode stage. It presents exactly the surface
-// NativeVideoConsumer drives on VideoToolboxDecoder, including that class's
-// stats record, so the consumer's state machine is unchanged and the two
-// backends are interchangeable behind VideoDecodeLane.
+// Software VP8 decode stage, one implementation of the backend contract in
+// video_decoder_contract.hpp behind VideoDecodeLane.
 //
 // Every method is confined to the one dispatcher worker thread. libvpx is
 // called synchronously from submitCMSampleBuffer(), there is no callback
@@ -127,7 +125,7 @@ inline constexpr std::size_t kSoftwareVp8RendererRetainedSurfaces = 1;
 // planes.
 class SoftwareVp8Decoder final {
 public:
-  explicit SoftwareVp8Decoder(VideoToolboxDecoderOptions options = {});
+  explicit SoftwareVp8Decoder(VideoDecoderOptions options = {});
   ~SoftwareVp8Decoder();
 
   SoftwareVp8Decoder(const SoftwareVp8Decoder &) = delete;
@@ -154,8 +152,8 @@ public:
          std::uint64_t invalidationGeneration) noexcept;
   void close() noexcept;
 
-  [[nodiscard]] VideoToolboxDecoderStats stats() const noexcept;
-  [[nodiscard]] VideoToolboxDecoderMemoryFacts memoryFacts() const noexcept;
+  [[nodiscard]] VideoDecoderStats stats() const noexcept;
+  [[nodiscard]] VideoDecoderMemoryFacts memoryFacts() const noexcept;
   [[nodiscard]] std::optional<std::string> takeLastError();
 
   // True when this build linked libvpx. When false, configure() always fails

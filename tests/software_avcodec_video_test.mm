@@ -142,6 +142,8 @@ int main(int argc,char** argv) {
     }
     sink.blocked=false;
     CHECK(decoder.beginEndOfStream(generation,&error)!=VideoDecodeDrainProgress::Failed);
+    // Idempotent: a repeated begin reports progress without restarting EOS.
+    CHECK(decoder.beginEndOfStream(generation,&error)!=VideoDecodeDrainProgress::Failed);
     while(!sink.ended) {
       CHECK(std::chrono::steady_clock::now()<deadline);
       if(decoder.drainEndOfStream(generation,&error)==VideoDecodeDrainProgress::Failed) {std::fprintf(stderr,"%s\n",error.c_str());CHECK(false);}
@@ -151,5 +153,7 @@ int main(int argc,char** argv) {
     sink.blocked=true;
   }
   CHECK(decoder.retire(2,3)==VideoDecoderRetireProgress::Done);
+  CHECK(decoder.retire(2,3)==VideoDecoderRetireProgress::Done);
+  CHECK(decoder.retire(2,4)==VideoDecoderRetireProgress::StaleGeneration);
   std::puts("video adapter packet/EOS/flush/backpressure and surface format passed");
 }

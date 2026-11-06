@@ -52,7 +52,7 @@ int main(int argc, char** argv) {
       }
     }
     Sink sink;
-    VideoToolboxDecoder decoder({3, 8, VideoToolboxOutputInterop::DisplayLayer});
+    VideoToolboxDecoder decoder({3, 8, VideoDecoderOutputInterop::DisplayLayer});
     std::string error;
     if (!decoder.configure(config, sink, &error)) { std::fprintf(stderr,"configure: %s\n",error.c_str()); return 5; }
     AVAssetReader* reader = [AVAssetReader assetReaderWithAsset:asset error:nil];
