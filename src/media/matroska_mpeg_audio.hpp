@@ -29,7 +29,7 @@ inline constexpr std::uint32_t kMpegLayer3SamplesPerAccessUnit{1'152};
 // 529 is the canonical MP3 decoder delay (the polyphase synthesis and MDCT
 // windows). Measured as a signed offset of -529 against ffmpeg's decode of the
 // raw elementary stream, invariant at 44.1 kHz and 48 kHz, mono and stereo,
-// and across AudioConverterReset. See scratchpad/sweep_probe.mm, cmpf32.py.
+// and across AudioConverterReset.
 //
 // ffmpeg states CodecDelay = 1105 frames on every MP3 it muxes, which is the
 // 576-frame LAME encoder delay PLUS this 529. So the head trim the caller

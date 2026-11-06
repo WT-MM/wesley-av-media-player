@@ -62,8 +62,7 @@ readBigEndian16(std::span<const std::byte> bytes, std::size_t offset) noexcept {
 //
 // Returns false for a malformed chain. A well-formed chain that simply carries
 // no STREAMINFO leaves `streamInfo` empty and returns true, so the caller can
-// tell those two apart -- they are different diagnoses, and collapsing them
-// once cost this parser a test.
+// tell those two apart -- they are different diagnoses.
 [[nodiscard]] bool
 walkMetadataBlocks(std::span<const std::byte> bytes,
                    std::span<const std::byte> *streamInfo) noexcept {
@@ -152,10 +151,9 @@ parseFlacCodecPrivate(std::span<const std::byte> bytes) noexcept {
   configuration.totalSamples = packed & ((UINT64_C(1) << 36U) - 1U);
 
   // STREAMINFO states channels as a 3-bit field plus one, so the value is
-  // already bounded to 1..8 -- exactly the neutral source limit. The old
-  // 1..2 bound existed only because the pipeline had no downmix and
-  // AudioConverter's own FLAC fold silently discarded centre, LFE and both
-  // surrounds; the player now decodes the full layout and folds it itself.
+  // already bounded to 1..8 -- exactly the neutral source limit. The player
+  // decodes the full layout and folds it itself, because AudioConverter's own
+  // FLAC fold silently discards centre, LFE and both surrounds.
   if (configuration.channelCount == 0U ||
       configuration.channelCount > kFlacMaximumChannels) {
     return failure(FlacAdmissionError::UnsupportedChannelCount);

@@ -131,9 +131,9 @@ private:
 // admits. Rejecting it while admitting absence is not a safety property, it is
 // an inconsistency -- and a costly one, because encoders routinely emit an
 // explicit matrix with unspecified primaries/transfer. The same stream is
-// admitted through AVFoundation today, so refusing it only here would make one
-// file play as .mp4 and fail as .mkv. Genuinely out-of-envelope descriptions
-// (BT.2020 primaries, PQ/HLG transfer) remain rejected exactly as before.
+// admitted through AVFoundation, so refusing it only here would make one file
+// play as .mp4 and fail as .mkv. Genuinely out-of-envelope descriptions
+// (BT.2020 primaries, PQ/HLG transfer) remain rejected by this SDR predicate.
 [[nodiscard]] constexpr bool sdrColorComponentAdmitted(
     std::uint32_t value, std::uint32_t bt709Value) noexcept {
   return value == bt709Value || value == 2U;
@@ -162,8 +162,7 @@ supportedSdrColor(const VideoCodecColorFacts &color) noexcept {
 // sees numbers rather than the modelled enums. The admitted set is exactly
 // media::mediaVideoColorAdmitted()'s -- BT.2020 primaries (9), the PQ (16) and
 // HLG (18) transfers, and the BT.2020 non-constant-luminance matrix (9) --
-// restated here rather than shared, because native_media_source.hpp is a
-// frozen contract this file must not depend on and the two vocabularies are
+// restated here rather than shared, because the two vocabularies are
 // genuinely different. The pairing is checked by a test that walks both.
 //
 // Note this is a SUPERSET of supportedSdrColor: an HDR-admitting route must
@@ -351,8 +350,8 @@ h264ConstraintSet3ZeroReorder(std::uint32_t profile) noexcept {
 // only admitted profile whose SPS takes the high-profile parse path and the
 // only one whose constraint_set3_flag means intra-only; 66/77/88 must take
 // neither. Widening admission to a 10-bit profile without the parser and
-// surface contract following would reintroduce the classifier drift this pins
-// shut.
+// surface contract following would let the classifiers drift; these
+// assertions pin that shut.
 static_assert(h264HighProfile(100U) && h264ConstraintSet3ZeroReorder(100U));
 static_assert(!h264HighProfile(66U) && !h264HighProfile(77U) &&
               !h264HighProfile(88U));
@@ -1435,8 +1434,8 @@ inspectHvcC(std::span<const std::uint8_t> bytes,
       // stream may also carry parameter sets in band, which VideoToolbox
       // handles either way. The MP4 and Matroska hvcC records for one
       // stream-copied stream are byte-identical apart from exactly this bit
-      // (0xa0/0xa1/0xa2 versus 0x20/0x21/0x22), so requiring it rejected the
-      // Matroska form of a stream that was admitted from MP4. A duplicate
+      // (0xa0/0xa1/0xa2 versus 0x20/0x21/0x22), so requiring it would reject
+      // the Matroska form of a stream admitted from MP4. A duplicate
       // array for the same parameter-set type remains a hard mismatch.
       if (parameterSetArrays[setIndex]) {
         return rejected(Error::ParameterSetMismatch);
@@ -1545,13 +1544,12 @@ inspectHvcC(std::span<const std::uint8_t> bytes,
   // MAY NOT be met". Only a positive claim can contradict the SPS -- a record
   // asserting more sub-layers than the SPS permits, or asserting nesting the
   // SPS and VPS do not state -- so those are the mismatches, and a declined
-  // claim is admitted. Demanding equality instead refused 19 of 23 real
-  // records (measured 2026-09-05): every Apple and Sony muxer writes
-  // temporalIdNested 0 over an sps_temporal_id_nesting_flag that H.265
-  // 7.4.3.2.1 REQUIRES to be 1 for a single-sub-layer SPS, and Apple's HLG
-  // muxer writes numTemporalLayers 0, while VideoToolbox decodes all of them.
-  // ffmpeg-built records derive both fields from the SPS, which is why no
-  // fixture or corpus file had ever met the equality rule.
+  // claim is admitted. Demanding equality would refuse most real records:
+  // Apple and Sony muxers write temporalIdNested 0 over an
+  // sps_temporal_id_nesting_flag that H.265 7.4.3.2.1 REQUIRES to be 1 for a
+  // single-sub-layer SPS, and Apple's HLG muxer writes numTemporalLayers 0,
+  // while VideoToolbox decodes all of them. ffmpeg-built records derive both
+  // fields from the SPS, so they satisfy either rule.
   const std::uint32_t declaredTemporalLayers =
       (static_cast<std::uint32_t>(bytes[21]) >> 3U) & 0x07U;
   const bool declaredTemporalIdNested = (bytes[21] & 0x04U) != 0U;
@@ -2311,8 +2309,10 @@ inspectMpeg4Visual(std::span<const std::uint8_t> bytes,
   if (!parseMpeg4VideoObjectLayer(headers.videoObjectLayer, layer)) {
     return rejected(Error::MalformedRecord);
   }
-  // THE GATE. Both fields, and the profile byte, must independently say Simple
-  // Profile version 1 -- this is what VideoToolbox itself enforces, measured.
+  // THE GATE. Unless the caller admits software profiles, both fields and the
+  // profile byte must independently say Simple Profile version 1 -- this is
+  // what VideoToolbox itself enforces, measured. A software-decode caller may
+  // also admit an Advanced Simple layer (video_object_type_indication 17).
   if ((!asp && (layer.videoObjectType != kMpeg4SimpleVideoObjectType ||
       layer.verid != kMpeg4Version1Verid || visualObjectVerid != kMpeg4Version1Verid)) ||
       (asp && layer.videoObjectType != 17U)) {
@@ -2347,8 +2347,9 @@ inspectMpeg4Visual(std::span<const std::uint8_t> bytes,
   result.profile = headers.profileAndLevel;
   result.nalLengthBytes = 0U;
   // Simple Profile forbids B-VOPs, so decode order is presentation order and
-  // nothing is ever held back. This zero is what lets the Matroska route carry
-  // the codec with no reorder window at all.
+  // nothing is ever held back. That zero is what lets the Matroska route carry
+  // the codec with no reorder window at all. Advanced Simple, admitted only
+  // for software decode, may carry B-VOPs and reports a depth of 2.
   result.maximumReorderFrames = asp ? 2U : 0U;
   result.color = color;
   return {Error::None, result};
@@ -2865,11 +2866,10 @@ bool codedDimensionsWithinV1Ceiling(std::uint64_t width,
 std::string codedDimensionRefusalMessage(std::uint64_t width,
                                          std::uint64_t height) noexcept {
   try {
-    // Stated as the rectangle rule it now is. The old wording named a
-    // "ceiling of 4096x2320", which read as a width bound and a height bound
-    // and so made the refusal of a portrait 4K file look like a typo rather
-    // than a rule -- and it is the shortest-axis clause that such a file
-    // would actually have to violate to be refused here.
+    // Stated as the rectangle rule it is. A "WxH ceiling" reads as a width
+    // bound and a height bound, which makes the refusal of a portrait 4K file
+    // look like a typo rather than a rule -- and it is the shorter-axis clause
+    // that such a file would actually have to violate to be refused here.
     return "coded dimensions " + std::to_string(width) + "x" +
            std::to_string(height) + " (" + groupedDecimal(width * height) +
            " px) exceed the native v1 ceiling: no axis may exceed " +

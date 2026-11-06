@@ -189,10 +189,10 @@ void bitmapCuesAt(const std::vector<BitmapCue>& cues, std::int64_t t,
     return;
   }
   out->clear();
-  // Cues are sorted by start, so every candidate begins at or before the first
-  // cue whose start exceeds t. Ends are not sorted, so the scan walks back from
-  // there; bitmap cue lists are small (a movie is ~1500 cues) and overlapping
-  // runs are shorter still.
+  // Cues are sorted by start, so every candidate lies before the first cue
+  // whose start exceeds t. Ends are not sorted, so every cue before that point
+  // is checked: O(n) per lookup, acceptable because bitmap cue lists are small
+  // (a movie is ~1500 cues).
   const auto upper = std::upper_bound(
       cues.begin(), cues.end(), t,
       [](std::int64_t value, const BitmapCue& cue) {

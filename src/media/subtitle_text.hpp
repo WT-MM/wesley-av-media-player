@@ -108,10 +108,11 @@ struct ParsedFile {
   std::string error;
 };
 
-// SubRip. Tolerates: missing/duplicated indices, CRLF, a BOM, blank lines
-// inside a cue, "," or "." as the millisecond separator, and a final cue with
-// no trailing blank line. A block whose timing line does not parse is skipped;
-// a cue whose end precedes its start is skipped.
+// SubRip. Tolerates: missing/duplicated indices, CRLF, a BOM, "," or "." as
+// the millisecond separator, and a final cue with no trailing blank line. A
+// blank line ends a cue's payload; text after it up to the next timing line is
+// ignored. A block whose timing line does not parse is skipped; a cue whose end
+// does not follow its start is skipped.
 [[nodiscard]] ParsedFile parseSubRip(std::string_view bytes);
 
 // SubStation Alpha / Advanced SSA: reads [Events], honours the Format: line to

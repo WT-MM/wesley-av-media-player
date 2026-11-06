@@ -28,7 +28,7 @@ inline constexpr std::size_t kFlacStreamInfoBytes{34};
 // The three plausible repackings (the raw CodecPrivate, the bare STREAMINFO
 // payload, and the metadata block with its header but no box) are each refused
 // with kAudioCodecUnsupportedFormatError, so the decoder parses the box rather
-// than storing the bytes. See scratchpad/flacinfo.mm and sweep_probe.mm.
+// than storing the bytes.
 //
 // The cookie this source builds carries STREAMINFO and nothing else. That is
 // deliberate: it is all the decoder needs (proven -- a cookie built from every
@@ -75,8 +75,8 @@ struct FlacConfiguration {
   // emits it correctly -- see totalSamples.
   std::uint32_t blockSize{0};
   // STREAMINFO's own count of the decoded samples in the stream. This is what
-  // makes FLAC the one codec in this sweep that needs no trim arithmetic at
-  // all: the exact duration is READ, not derived. Measured equal to ffmpeg's
+  // makes FLAC the one admitted codec that needs no trim arithmetic at all:
+  // the exact duration is READ, not derived. Measured equal to ffmpeg's
   // own decoded frame count on every fixture.
   std::uint64_t totalSamples{0};
 

@@ -242,20 +242,16 @@ enum class NativeMediaDispatcherFailure : std::uint8_t {
   Consumer,
   Seek,
   Flush,
-  // Appended 2026-08-21, APPEND-ONLY: every ordinal above is preserved.
+  // APPEND-ONLY: every ordinal above must stay stable.
   //
   // This is the one value that does NOT accompany
   // NativeMediaDispatcherState::Failed. A source that declines a file -- an
   // unsupported codec, a track outside the admission envelope -- is an
   // envelope verdict, and turning it into a Failed state would replace a clean
   // "using compatibility playback" fallback with a hard protocol fault on a
-  // blocking surface. But the verdict still has to have a NAME: before this
-  // existed, every such refusal reached a stderr capture as
-  //   class=None error="the session failed while the dispatcher reported no
-  //   failure"
-  // which cost two rebuild-and-rerun cycles to attribute once already
-  // (scratchpad/wild_webm_report.md section 5). The state stays Unsupported;
-  // only the diagnostic channel is populated.
+  // blocking surface. The verdict still needs a name so a stderr capture can
+  // attribute the refusal. The state stays Unsupported; only the diagnostic
+  // channel is populated.
   UnsupportedSource,
 };
 
@@ -437,14 +433,14 @@ struct NativeMediaDispatcherStats {
 //
 // Parallel open-time configuration. VTDecompressionSessionCreate and
 // AudioUnitInitialize are independent and both IPC-bound, so configuring the
-// two ports one after the other charged every open the sum of their latencies.
-// Automatic alternate-track opens finish audio admission before exposing
-// video; the single-candidate path retains concurrent port configuration.
-// openLocalFile() therefore configures audio on one worker thread while it
-// configures video on the owner thread, and joins that worker before it
-// decides any verdict. Both ports are marked configured and stamped with the
-// exact generation on the owner thread before either configure() runs, so the
-// old exposure invariant holds unchanged in intent: a port is accounted from
+// two ports one after the other would charge every open the sum of their
+// latencies. For a single-candidate dual-track open, openLocalFile()
+// therefore configures audio on one worker thread while it configures video
+// on the owner thread, and joins that worker before it decides any verdict.
+// An open that may retry alternate audio tracks instead finishes audio
+// admission inline before exposing video. Each port is marked configured and
+// stamped with the exact generation on the owner thread before its
+// configure() runs, so the exposure invariant holds: a port is accounted from
 // the moment it can be called, never merely from the moment it succeeds. The
 // worker mutates no dispatcher state, so the join is the single owner-thread
 // transition that the staged/pending generation facts can observe; there is no
@@ -456,13 +452,13 @@ struct NativeMediaDispatcherStats {
 //
 // Lane admission. MediaSource::readNext() is a single merged pull, so the
 // dispatcher cannot ask for one track: it must own storage for whatever the
-// next event turns out to be. The audio lane keeps the original capacity-one
-// rule: an audio consumer that reports Backpressure retains the sole pending
+// next event turns out to be. The audio lane uses a capacity-one rule: an
+// audio consumer that reports Backpressure retains the sole pending
 // event and closes the read gate, because a full audio buffer already means
 // the pipeline is ahead. The video lane instead owns a bounded read-ahead
 // queue: a video consumer that reports Backpressure defers its event into that
 // queue and the gate stays open, so audio source reads continue while video is
-// at capacity. This is the structural break in the old cycle "video full ->
+// at capacity. This structurally breaks the cycle "video full ->
 // no reads -> PCM ring empties -> audio-owned clock freezes -> video can never
 // become due -> video stays full". The queue is bounded by both an event count
 // and a soft payload high-water; the video lane also stops reading ahead once
@@ -508,15 +504,13 @@ class NativeMediaDispatcher final {
   // keeps a pathological bitrate from turning that count into a large lease.
   static constexpr std::size_t kAudioReadAheadPayloadBytes = 512U * 1024U;
 
-  // Worst-case retained read-ahead payload. The byte values above are read-
-  // ADMISSION high-waters, not ceilings: the event that crosses one is still
-  // stored, so one maximum sample may land on top of it. Spelling that out as
-  // a constant and asserting it matters because admission checks bytes
-  // (laneHasReadAheadRoom) but the lane writers enforce only the event count.
-  // The structural cap is therefore 24 x 8 MiB = 192 MiB of video payload --
-  // sixteen times the figure this header advertises -- held down only by an
-  // unchecked ordering invariant. These asserts pin the advertised number so a
-  // future change to either limit has to confront the real bound.
+  // Worst-case retained read-ahead payload: one admission high-water plus one
+  // maximum sample (see above). Asserting it matters because admission checks
+  // bytes (laneHasReadAheadRoom) but the lane writers enforce only the event
+  // count. The structural cap is therefore 24 x 8 MiB = 192 MiB of video
+  // payload -- sixteen times the documented figure -- held down only by an
+  // unchecked ordering invariant. These asserts pin the documented number so a
+  // change to either limit has to confront the real bound.
   static constexpr std::size_t kMaximumRetainedVideoReadAheadBytes =
       kVideoReadAheadPayloadBytes +
       MediaSourceLimits::kHardMaximumVideoSampleBytes;
@@ -678,9 +672,10 @@ class NativeMediaDispatcher final {
   [[nodiscard]] NativeMediaPendingKind pendingKind() const noexcept;
   void installPending(MediaSourceReadResult&& result);
   void clearPending() noexcept;
-  // Releases every retained source event, including the deferred video lane.
-  // Lifecycle transitions use this; a routed-and-accepted event uses
-  // clearPending() so the deferred lane survives.
+  // Releases every retained source event, including both deferred lanes, and
+  // closes the seek-settle window. Lifecycle transitions use this; a
+  // routed-and-accepted event uses clearPending() so the deferred lanes
+  // survive.
   void releaseRetainedEvents() noexcept;
   [[nodiscard]] bool laneHasReadAheadRoom(const ReadAheadLane& lane,
                                           std::size_t payloadHighWater)

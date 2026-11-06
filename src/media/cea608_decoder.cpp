@@ -165,9 +165,10 @@ void Cea608Decoder::feed(std::int64_t timeNanoseconds,
   if (triplet.type != CcType::Ntsc608Field1 && !isFieldTwo) return;
   if (isFieldTwo != wantsFieldTwo) return;
 
-  // Parity is odd over the low seven bits. A byte that fails it was corrupted
-  // in transmission; a real decoder shows a solid block, but discarding the
-  // pair keeps a synthesized-specimen mismatch from looking like caption text.
+  // Each byte carries odd parity over all eight bits (bit 7 is the parity
+  // bit). A byte that fails it was corrupted in transmission; a television
+  // shows a solid block, but discarding the pair keeps corruption from being
+  // drawn as caption text.
   if (!hasOddParity(triplet.data1) || !hasOddParity(triplet.data2)) {
     if (triplet.data1 != 0 || triplet.data2 != 0) ++parityErrors_;
     return;

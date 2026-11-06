@@ -1344,14 +1344,10 @@ bool Parser::readDocumentType(const ElementHeader& header,
   // no other DocType (webm2, matroskaX, an empty string) can slip through.
   //
   // The match is made against the element's value AFTER trailing NUL padding is
-  // removed. RFC 8794 s7.5 states that a String Element's value MAY be
-  // zero-padded at the end and that the padding is not part of the value, so a
-  // DocType of "webm\0" names WebM exactly as "webm" does. GStreamer's
-  // matroskamux writes that padding on every string it muxes (measured on
-  // matroskamux 1.20.3 output: DocType "webm\0", CodecID "V_VP8\0", Name
-  // "Video\0"), so refusing it refused every GStreamer-muxed file in existence
-  // -- the whole screencast/pipeline class -- at the EBML header, before a
-  // single track was looked at.
+  // removed (RFC 8794 s7.5; see readAscii()), so a DocType of "webm\0" names
+  // WebM exactly as "webm" does. GStreamer's matroskamux pads every string it
+  // muxes, so refusing the padding would refuse every GStreamer-muxed file at
+  // the EBML header, before a single track was looked at.
   constexpr std::string_view kMatroska{"matroska"};
   constexpr std::string_view kWebm{"webm"};
   // The bound is arithmetic, not a round number: the longest value this parser

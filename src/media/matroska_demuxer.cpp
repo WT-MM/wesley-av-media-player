@@ -89,8 +89,9 @@ timeFromNanosecondsUnsigned(std::uint64_t nanoseconds) noexcept {
 // Exact difference of two container rationals, in 128-bit so a
 // nanosecond-timescale delta -- already above 2^53 for adjacent frames --
 // cannot round the way a conversion through double would. This is the
-// subtraction counterpart of matroskaCheckedExactTimeSum() in
-// matroska_sample_builder.mm, which does the addition for the same reason.
+// subtraction counterpart of checkedExactTimeSum() in
+// platform/macos/core_media_source_support.hpp, which does the addition for
+// the same reason.
 [[nodiscard]] std::optional<MediaTime>
 exactTimeDifference(MediaTime lhs, MediaTime rhs) noexcept {
   if (!lhs.valid() || !rhs.valid()) {
@@ -291,19 +292,19 @@ class StableFileReader final : public SeekableByteReader {
   // against. dev+ino catch a replaced file, size catches truncation and
   // extension, and mtime catches any write to the content.
   //
-  // st_ctime is deliberately NOT part of that identity, and used to be. ctime
+  // st_ctime is deliberately NOT part of that identity. ctime
   // is the INODE-metadata timestamp: it moves for xattr writes, chmod, chown,
   // link-count and rename -- none of which touch a single content byte. On
   // macOS those happen to a media file constantly and from outside this
   // process: Spotlight/mds indexing, iCloud/FileProvider sync bookkeeping,
-  // quarantine and last-used-date stamping. Including ctime therefore made
-  // this predicate report "the file changed" for events that are, by
-  // construction, not changes to the file's content -- an unfixable false
-  // positive whose probability grew with how long the demuxer held the plan
-  // and with how busy the machine's metadata daemons were. That is precisely
-  // the observed defect: a load-dependent Matroska-only open/playback failure
-  // (FileChanged -> SourceOpen/SourceRead -> Protocol/Decode -> fallback),
-  // where the AVFoundation route, which makes no such assertion, was immune.
+  // quarantine and last-used-date stamping. Including ctime would make this
+  // predicate report "the file changed" for events that are, by construction,
+  // not changes to the file's content -- a false positive whose probability
+  // grows with how long the demuxer holds the plan and with how busy the
+  // machine's metadata daemons are. It surfaces as a load-dependent
+  // Matroska-only open/playback failure (FileChanged -> SourceOpen/SourceRead
+  // -> Protocol/Decode -> fallback) that the AVFoundation route, which makes
+  // no such assertion, never shows.
   //
   // What dropping ctime gives up is only the case of an in-place, byte-count-
   // preserving write whose mtime is then restored by an explicit utimes()
@@ -415,9 +416,9 @@ struct CollectedDocument final : Visitor {
     // the EBML header, Info and Tracks, all of which precede the first Cluster
     // in a non-streaming mux -- and a master element is never delivered
     // piecewise, so Tracks is complete by the time this fires. Stopping here
-    // is what keeps that pass cheap: it never reaches the Cues, which on the
-    // file that motivated it hold the parser's 65,536-cue maximum and cost
-    // about 1.08 million reads on their own.
+    // is what keeps that pass cheap: it never reaches the Cues, which can hold
+    // the parser's 65,536-cue maximum and cost on the order of a million reads
+    // on their own.
     if (stopAtFirstCluster) {
       return VisitorAction::Stop;
     }
@@ -533,10 +534,10 @@ struct AssetState {
   std::shared_ptr<const MediaSourceDescriptor> descriptor;
   std::uint64_t timestampScaleNanoseconds{1'000'000};
   std::vector<TrackConstraint> constraints;
-  // Both lanes are optional and exactly symmetric. `video` became optional for
+  // Both lanes are optional and exactly symmetric. `video` is absent for
   // audio-only media (MKA, and an audio-only MKV/WebM): the clock is
   // audio-authoritative, so a generation with no video lane is the simpler of
-  // the two degenerate cases -- the silent-video one had to manufacture a
+  // the two degenerate cases -- the silent-video one has to manufacture a
   // timebase, this one already owns the authority.
   std::optional<TrackRuntime> video;
   std::optional<TrackRuntime> audio;
@@ -575,8 +576,8 @@ struct AssetState {
 // FFmpeg writes each Block's timestamp relative to its Cluster and rounds both
 // values independently, so a 48 kHz stream in a 1 ms timebase legitimately
 // reports ticks 0, 21, 42, 64, 85, 106 where the exact grid is 0, 21, 43, 64,
-// 85, 107. Demanding an exact requantization match rejected essentially every
-// real AAC-in-Matroska file for being one tick off.
+// 85, 107. Demanding an exact requantization match would reject essentially
+// every real AAC-in-Matroska file for being one tick off.
 //
 // One tick of container jitter is the most double rounding can introduce, so
 // admit that and no more. This does not weaken timing: presentation times are
@@ -688,20 +689,16 @@ inline constexpr std::size_t kOpusTailProbeClusters{8};
          id == "A_MPEG/L3" || id == "A_DTS" || id == "A_TRUEHD" || id == "A_MLP";
 }
 
-// WebM's audio codec set is Vorbis and Opus. AC-3, E-AC-3, FLAC and MP3 are
-// legal in Matroska and are NOT legal in WebM, so a file whose DocType says
-// "webm" while carrying one of them is malformed. Admitting it would mean this
-// source plays a file that no other WebM decoder would, which is a worse
+// WebM's audio codec set is Vorbis and Opus. Every other CodecID this source
+// admits is legal in Matroska and NOT legal in WebM, so a file whose DocType
+// says "webm" while carrying one of them is malformed. Admitting it would mean
+// this source plays a file that no other WebM decoder would, which is a worse
 // outcome than the mpv fallback -- mpv is not bound by the DocType either, so
 // the file still plays, just not down this path.
 //
-// The rule is deliberately scoped to the four CodecIDs this source has just
-// started admitting, and NOT applied to AAC. AAC is not WebM-legal either, but
-// an AAC track in a WebM DocType was selectable before this work and playing
-// it natively is not a behaviour this change set has any reason to remove. A
-// consistent rule that quietly turned working files into fallbacks would be a
-// worse trade than an inconsistent one that changes nothing it was not asked
-// to.
+// AAC is the one deliberate exception: it is not WebM-legal either, but an
+// AAC track in a WebM DocType plays correctly down this path, so refusing it
+// would only turn working files into fallbacks.
 [[nodiscard]] bool
 audioCodecAllowedInDocument(std::string_view codecId,
                             EbmlDocumentType documentType) noexcept {
@@ -744,12 +741,11 @@ audioCodecAllowedInDocument(std::string_view codecId,
   return first == tracks.end() ? nullptr : &*first;
 }
 
-// CodecDelay and SeekPreRoll are refused by default and always have been:
-// honouring a delay the pipeline did not actually apply is a silent A/V shift,
-// so distrust was the right default while nothing could prove the arithmetic.
-// Opus is the single exception, and only because its delay IS provable -- the
-// container's CodecDelay must be exactly the OpusHead pre-skip expressed in
-// nanoseconds, which is checked at admission. AAC keeps the historic rule.
+// CodecDelay and SeekPreRoll are refused by default (allowCodecDelay false):
+// honouring a delay the pipeline did not actually apply is a silent A/V shift.
+// Only the audio descriptors pass allowCodecDelay, each of which then proves
+// its codec's delay exactly at admission (e.g. Opus CodecDelay must equal the
+// OpusHead pre-skip in nanoseconds; AAC's must be a whole frame count).
 // BlockAddIDType 'dvcC' / 'dvvC': a Dolby Vision configuration record, the
 // one BlockAdditionMapping this player admits. Its 24 bytes are
 // dv_version_major, dv_version_minor, then profile(7) level(6) rpu_present(1)
@@ -877,23 +873,19 @@ trackDuration(const Info& info) noexcept {
   // Matroska stores Duration as a float tick count measured in TimestampScale
   // units. Converting it to seconds first destroys exactness: a real 72.021 s
   // file becomes a binary64 whose exact rational needs a 2^46 denominator,
-  // which no longer fits MediaTime's int32 timescale, so the conversion fails
-  // closed and the whole container is rejected. Essentially every real file
-  // has a duration that is not a binary-exact number of seconds.
+  // which does not fit MediaTime's int32 timescale, so the conversion would
+  // fail closed and the whole container would be rejected. Essentially every
+  // real file has a duration that is not a binary-exact number of seconds.
   //
   // Build the exact nanosecond rational instead and reduce it. Wherever the
-  // seconds path already succeeded this yields the identical reduced value,
-  // so this is strictly a widening of what is admitted.
+  // seconds path would succeed this yields the identical reduced value.
   //
   // A FRACTIONAL tick count is admitted the same way, because Duration is a
   // float element and nothing requires a muxer to land on a whole tick.
-  // GStreamer's matroskamux does not: measured on matroskamux 1.20.3 output it
-  // wrote Duration 491295.376732 against TimestampScale 1 ms, i.e. a duration
-  // stated to sub-tick precision. That value has no exact int32-timescale
-  // rational in SECONDS, so the seconds fallback below failed closed and the
-  // whole container was refused with InvalidTimeline -- the exact defect this
-  // integral-tick path was written to remove, still reachable through the one
-  // door it did not cover.
+  // GStreamer's matroskamux does not (e.g. Duration 491295.376732 against
+  // TimestampScale 1 ms). Such a value has no exact int32-timescale rational
+  // in SECONDS, so the seconds fallback below would refuse the container with
+  // InvalidTimeline.
   //
   // The fraction is resolved at the timeline's own resolution. MediaTime's
   // finest representable step here is one nanosecond (denominator 1e9), so a
@@ -940,19 +932,19 @@ trackDuration(const Info& info) noexcept {
       }
     }
   }
-  // Out-of-range tick counts keep the original conservative seconds
-  // conversion, which still fails closed when it cannot be exact.
+  // Out-of-range tick counts take the conservative seconds conversion, which
+  // fails closed when it cannot be exact.
   return exactNonnegativeMediaTime(
       ticks * (static_cast<double>(info.timestampScaleNanoseconds) / 1.0e9));
 }
 
 // Reused as a workspace across blocks, never constructed per block. The
 // `frames` member is 256 * sizeof(FrameRange) = 4 KiB and a fresh instance
-// zero-fills all of it, so constructing one per parsed block spent 4 KiB of
-// stores to learn about a Block that carries one frame (video) or four
+// zero-fills all of it, so constructing one per parsed block would spend 4 KiB
+// of stores to learn about a Block that carries one frame (video) or four
 // (laced AAC). On the seek path that is not a rounding error: a planGeneration
 // audio scan walks up to kMaximumMatroskaSeekClusters (8,192) Clusters, so a
-// dense file cost hundreds of megabytes of memset per seek. Only `emitted`
+// dense file would cost hundreds of megabytes of memset per seek. Only `emitted`
 // needs clearing between parses -- every other field is written by onBlock
 // before it is read, and `frames` is only ever read below `frameCount`.
 struct CapturedBlockVisitor final : Visitor {
@@ -984,9 +976,8 @@ struct VideoCodecIdentity {
   MediaCodecConfigurationKind kind{MediaCodecConfigurationKind::None};
 };
 
-// A full map, not a default. The previous ternary sent every non-AVC CodecID to
-// HvcC, which was harmless only while HEVC was the sole other admitted codec
-// and became a silent mis-dispatch the moment a third one existed.
+// A full map, not a default: a catch-all branch would silently mis-dispatch
+// every CodecID it was not written for.
 [[nodiscard]] VideoCodecIdentity videoCodecIdentity(
     std::string_view codecId) noexcept {
   if (codecId == "V_MPEG4/ISO/AVC") {
@@ -1115,9 +1106,9 @@ constexpr std::size_t kVp9KeyframeProbeClusters{4};
   // FlagInterlaced 0 (undetermined) and 2 (progressive) are the only values a
   // progressive-only v1 renderer can admit; 1 is interlaced content.
   //
-  // MasteringMetadata / MaxCLL / MaxFALL used to be refused here on presence
-  // alone. They are now MODELLED facts on MediaVideoFormat instead (below),
-  // matching what the MP4 route already does: VideoToolbox copies the real
+  // MasteringMetadata / MaxCLL / MaxFALL are not refused here; they are
+  // MODELLED facts on MediaVideoFormat instead (below), matching what the MP4
+  // route does: VideoToolbox copies the real
   // 24-byte MDCV and 4-byte CLLI onto the decoded surface from the in-band
   // SEI, so the container's copy is a presence signal and never a payload we
   // re-carry. Re-carrying it would create a second copy that could only ever
@@ -1298,9 +1289,9 @@ constexpr std::size_t kVp9KeyframeProbeClusters{4};
     // ISO/IEC 23091-2 value 2 is "unspecified", which carries no color
     // information at all and is therefore Unknown, not OtherExplicit.
     // OtherExplicit means "an explicit value this renderer does not support"
-    // and is a fallback proof; mapping unspecified onto it made every stream
-    // with a partial VUI (an explicit matrix but unspecified primaries and
-    // transfer, which is what encoders commonly emit) fail consumer
+    // and is a fallback proof; mapping unspecified onto it would make every
+    // stream with a partial VUI (an explicit matrix but unspecified primaries
+    // and transfer, which is what encoders commonly emit) fail consumer
     // configuration even though it carries no unsupported metadata.
     format.colorPrimaries = mediaColorPrimariesFromIso(facts.color.colorPrimaries);
     format.transferFunction =
@@ -1309,14 +1300,13 @@ constexpr std::size_t kVp9KeyframeProbeClusters{4};
         mediaMatrixCoefficientsFromIso(facts.color.matrixCoefficients);
   }
   // The container's Colour element overrides the bitstream VUI where present.
-  // It no longer REFUSES a value it does not recognise: an unrecognised value
+  // It does not REFUSE a value it does not recognise: an unrecognised value
   // maps to OtherExplicit and the single modelled rule below decides, exactly
   // as the MP4 route does. Refusing here as well would be a second colour
-  // rule, and the drift between four such restatements is what the HDR
-  // session's mediaVideoColorAdmitted() consolidation exists to end.
+  // rule that could drift from mediaVideoColorAdmitted().
   //
-  // Measured, and the reason the two sources must both be mapped rather than
-  // one preferred: an ffmpeg `-c copy` remux of PQ H.264 into Matroska writes
+  // The reason the two sources must both be mapped rather than one
+  // preferred: an ffmpeg `-c copy` remux of PQ H.264 into Matroska writes
   // a Colour element carrying MatrixCoefficients ONLY, leaving the PQ transfer
   // and BT.2020 primaries readable solely from the SPS VUI. Dropping the VUI
   // in favour of the container would lose the very facts that make it HDR.
@@ -1671,8 +1661,8 @@ struct ExactAudioDuration {
   return true;
 }
 
-// Shared tail of every audio descriptor added by this sweep: the fields are
-// identical once the codec-specific admission has produced a sample rate, a
+// Shared tail of the AudioDescriptorFields-based audio descriptors: the fields
+// are identical once the codec-specific admission has produced a sample rate, a
 // channel count, an access unit size, a magic cookie and an exact duration.
 struct AudioDescriptorFields {
   MediaCodec codec{MediaCodec::Unknown};
@@ -1693,12 +1683,11 @@ struct AudioDescriptorFields {
 // tag at all, deliberately.
 //
 // This demuxer knows a channel COUNT; it does not know AudioToolbox's
-// per-codec channel-order convention, and the four decoders measured for the
-// downmix work emit three different 5.1 orders (AAC C L R Ls Rs LFE, AC-3 and
-// E-AC-3 L C R Ls Rs LFE, FLAC L R C LFE Ls Rs). Inventing a CoreAudio tag
-// here would be guessing at that convention, and a wrong guess puts dialogue
-// in the surround channel with no other symptom. Measured on the same
-// fixtures: AudioConverter reports the identical output channel layout
+// per-codec channel-order convention, and its decoders emit three different
+// 5.1 orders (AAC C L R Ls Rs LFE, AC-3 and E-AC-3 L C R Ls Rs LFE, FLAC
+// L R C LFE Ls Rs). Inventing a CoreAudio tag here would be guessing at that
+// convention, and a wrong guess puts dialogue in the surround channel with no
+// other symptom. AudioConverter reports the identical output channel layout
 // whether or not an input layout is supplied, so supplying none costs nothing
 // and the platform layer reads the authoritative order back from the decoder
 // itself.
@@ -1748,10 +1737,10 @@ void fillAudioDescriptor(const TrackEntry& entry, MediaTrackId id,
   runtime->audioSampleRate = fields.sampleRate;
   runtime->audioSamplesPerAccessUnit = fields.samplesPerAccessUnit;
   runtime->audioPresentationOrigin = fields.origin;
-  // Two ticks, for the reason the Opus work established: ffmpeg builds a Block
-  // timestamp as round(presentationMs) + round(delayMs), two roundings that add
-  // a systematic tick on top of ordinary cluster jitter. Still an order of
-  // magnitude below one access unit for every codec here (32 ticks for AC-3,
+  // Two ticks, for the reason given at kMaximumOpusGridTickResidual: ffmpeg
+  // builds a Block timestamp as round(presentationMs) + round(delayMs), two
+  // roundings that add a systematic tick on top of ordinary cluster jitter.
+  // Still an order of magnitude below one access unit for every codec here (32 ticks for AC-3,
   // 26 for MP3, 21 for AAC, 104 for FLAC), so a Block misplaced by whole
   // access units is still rejected.
   runtime->audioTickResidualTolerance = kMaximumOpusGridTickResidual;
@@ -1763,10 +1752,10 @@ void fillAudioDescriptor(const TrackEntry& entry, MediaTrackId id,
       fields.tailDiscardPaddingNanoseconds;
 }
 
-// Common admission gates for the codecs this sweep adds. CodecDelay is allowed
-// (and then proven exactly, per codec); SeekPreRoll is not -- none of these
-// formats states one, and a mux that does is describing warm-up this path has
-// not reasoned about.
+// Common admission gates for the AudioDescriptorFields-based codecs.
+// CodecDelay is allowed (and then proven exactly, per codec); SeekPreRoll is
+// not -- none of these formats states one, and a mux that does is describing
+// warm-up this path has not reasoned about.
 [[nodiscard]] bool sweepTrackFeaturesSupported(const TrackEntry& entry) noexcept {
   return entry.audio && entry.seekPreRollNanoseconds == 0 &&
          selectedTrackFeaturesSupported(entry, true) &&
@@ -1777,20 +1766,15 @@ void fillAudioDescriptor(const TrackEntry& entry, MediaTrackId id,
                                      const MediaSourceLimits& limits,
                                      std::uint32_t sampleRate,
                                      std::uint8_t channelCount) noexcept {
-  // Multichannel USED to be refused here, because the whole output chain is
-  // stereo (NativePcmRing::kChannels == 2) and AudioConverter's own 5.1
-  // downmix is unacceptable for both families in this sweep: AC-3 gets a
-  // normalised Lt/Rt at -10.70 dB against ffmpeg's Lo/Ro, and FLAC has
-  // centre, LFE and both surrounds silently dropped. Both were re-measured
-  // and still hold.
-  //
-  // The player no longer asks AudioConverter to downmix. It decodes the full
-  // native layout and folds it to stereo itself with exact BS.775 coefficients
-  // (media::applyStereoDownmix), verified against ffmpeg's and mpv's own
-  // output channel by channel. So the count bound here is simply the neutral
-  // source limit; a layout the fold cannot state exactly is still refused, but
-  // it is refused by the platform layer that can actually see the decoder's
-  // channel labels.
+  // The output chain is stereo (NativePcmRing::kChannels == 2), but
+  // AudioConverter's own 5.1 downmix is unacceptable: AC-3 gets a normalised
+  // Lt/Rt at -10.70 dB against ffmpeg's Lo/Ro, and FLAC has centre, LFE and
+  // both surrounds silently dropped. So the player never asks AudioConverter
+  // to downmix. It decodes the full native layout and folds it to stereo
+  // itself with exact BS.775 coefficients (media::applyStereoDownmix). The
+  // count bound here is therefore simply the neutral source limit; a layout
+  // the fold cannot state exactly is refused by the platform layer, which can
+  // actually see the decoder's channel labels.
   return channelCount >= 1U &&
          sampleRate <= limits.maximumAudioSampleRate &&
          channelCount <= limits.maximumAudioChannels &&
@@ -2073,7 +2057,7 @@ void fillAudioDescriptor(const TrackEntry& entry, MediaTrackId id,
   // Vorbis carries a CodecDelay -- measured, not assumed: ffmpeg writes
   // 23,219,955 ns for a 44.1 kHz track, which is one 1024-frame block. It
   // states no SeekPreRoll, and a track that does is describing warm-up this
-  // path has not reasoned about, so it still falls back.
+  // path has not reasoned about, so it falls back.
   if (!id || !entry.audio || !entry.codecPrivate ||
       !selectedTrackFeaturesSupported(entry, true) ||
       entry.seekPreRollNanoseconds != 0U || clusters.empty()) {
@@ -2103,8 +2087,8 @@ void fillAudioDescriptor(const TrackEntry& entry, MediaTrackId id,
     return false;
   }
 
-  // THE identity that makes the Vorbis trim exact, and the happy discovery
-  // that it is checkable at all: the offset of the presentation grid is
+  // THE identity that makes the Vorbis trim exact: the offset of the
+  // presentation grid is
   // derived from the format (one overlap-add block, samplesPerAccessUnit
   // frames), and the container states the same number independently as
   // CodecDelay. Requiring them to agree means a file whose muxer disagreed
@@ -2348,7 +2332,7 @@ void fillAudioDescriptor(const TrackEntry& entry, MediaTrackId id,
   result->codec = MediaCodec::Opus;
   result->timeBase =
       MediaTime{1, static_cast<std::int32_t>(kOpusOutputSampleRate)};
-  // Unlike every other track duration in this demuxer, this one is NOT the
+  // Like every derived audio duration in this demuxer, this one is NOT the
   // container's declared Duration: it is the exact decoded sample count after
   // both trims. The audio consumer uses it as the tail-trim ceiling, so an
   // approximate value here would be an approximate end of file.
@@ -2397,8 +2381,8 @@ void fillAudioDescriptor(const TrackEntry& entry, MediaTrackId id,
 // a compressed AAC track it is informational and has no effect on the
 // bitstream, the ASC, or the ES_Descriptor cookie. FFmpeg writes BitDepth=32
 // on every AAC track it muxes (reflecting float decoder output), so rejecting
-// its presence rejected essentially all real AAC-in-Matroska while the
-// identical stream was admitted from MP4.
+// its presence would reject essentially all real AAC-in-Matroska while the
+// identical stream is admitted from MP4.
 [[nodiscard]] bool aacLcHeaderAdmitted(const AacLcAdmission& admission,
                                        const TrackEntry& entry,
                                        const MediaSourceLimits& limits) {
@@ -2620,9 +2604,8 @@ void fillAudioDescriptor(const TrackEntry& entry, MediaTrackId id,
                                    result, runtime);
   }
   (void)duration;
-  // AAC's CodecDelay used to be refused outright, which is why every AAC track
-  // FFmpeg encodes -- as opposed to copies -- fell back as a whole file. It is
-  // now honoured exactly, and the proof is the same shape as Opus': the
+  // AAC's CodecDelay (stated by every AAC track FFmpeg encodes, as opposed to
+  // copies) is honoured exactly, and the proof is the same shape as Opus': the
   // container's stated delay must be a number the format could have produced,
   // and the head trim is derived from it rather than guessed.
   if (!entry.audio || !entry.codecPrivate ||
@@ -2761,7 +2744,8 @@ cursorConstraints(const AssetState& state, MediaTrackId selected) {
 }
 
 // DiscardPadding is honoured for exactly one Block per file: the last Block of
-// an Opus track, whose offset and value were both proven at preparation. It is
+// the selected audio track, whose offset and value were both proven at
+// preparation. It is
 // a PCM tail trim, so admitting it anywhere else -- or admitting a value the
 // stated duration was not derived from -- would let decoded audio outrun the
 // timeline the clock counts.
@@ -2787,11 +2771,10 @@ cursorConstraints(const AssetState& state, MediaTrackId selected) {
 constexpr std::uint32_t kClusterTimestampElementId{0xE7};
 
 // How far into a Cluster the harvest below will look for that Timestamp before
-// it gives up and asks for the historical whole-Cluster scan. Matroska requires
-// the Timestamp to be present and every muxer in the corpus writes it as the
-// first or second child (measured: mean 2.00 children on the 2.2 GB HEVC file
-// that motivated this, 2157/2157 recovered), so 16 is generous by an order of
-// magnitude while still keeping the pass O(1) per Cluster.
+// it gives up and asks for the whole-file scanClusterMetadata walk. Matroska
+// requires the Timestamp to be present and muxers write it as the first or
+// second child, so 16 is generous by an order of magnitude while still keeping
+// the pass O(1) per Cluster.
 constexpr std::size_t kMaximumClusterHeadElements{16};
 
 // Fills in each known-size Cluster's Timestamp WITHOUT the whole-file walk.
@@ -2801,28 +2784,27 @@ constexpr std::size_t kMaximumClusterHeadElements{16};
 // parser's O(1) skip-by-declared-size and reading an element header for EVERY
 // SimpleBlock and BlockGroup in EVERY Cluster in the file. Each of those
 // headers is four unbuffered pread(2) calls, because a header is a trust
-// boundary. Measured on the 2.2 GB HEVC/5.1-AAC file this was written for:
-// 2,152,353 reads scattered across the whole 2.2 GB, about 1.1 s warm and much
-// worse cold, to recover 2,157 integers that sit in the first 100 bytes of
-// their Clusters.
+// boundary. On a multi-gigabyte file that is millions of reads scattered
+// across the whole file to recover a few thousand integers that sit in the
+// first 100 bytes of their Clusters.
 //
-// So the authoritative pass now runs with scanClusterMetadata OFF -- every
+// So the authoritative pass runs with scanClusterMetadata OFF -- every
 // known-size Cluster skipped in O(1), exactly as the cheap pre-admission probe
-// already did -- and this walks the bounded HEAD of each Cluster afterwards to
-// read the one element that was skipped. 19,413 reads instead of 2,152,353,
-// for byte-identical values.
+// does -- and this walks the bounded HEAD of each Cluster afterwards to read
+// the one element that was skipped: roughly two orders of magnitude fewer
+// reads, for byte-identical values.
 //
 // It reads through readElementHeader(), the parser's own trust boundary, so no
 // structure is trusted that the parser would not have trusted; the difference
-// is only how many elements are visited. What the full walk additionally did
+// is only how many elements are visited. What the full walk additionally does
 // -- charge every in-Cluster child against the element budget and prove its
 // size at OPEN time -- is deliberately given up: those same headers are parsed
 // and proven by the same parser when a cursor actually reads them, and nothing
 // downstream trusts a Block header it has not itself parsed.
 //
 // Returns false if any Cluster's Timestamp is not in its bounded head. The
-// caller then falls back to the historical scan, so a file this cannot serve
-// is prepared exactly as it was before rather than refused.
+// caller then falls back to the full scanClusterMetadata walk, so a file this
+// cannot serve is still prepared rather than refused.
 [[nodiscard]] bool harvestClusterTimestamps(
     SeekableByteReader& reader, std::vector<Cluster>& clusters,
     CancellationToken cancellation) noexcept {
@@ -2968,7 +2950,7 @@ template <typename Predicate>
 }
 
 // ---------------------------------------------------------------------------
-// Random access index coverage, and the scanned index that repairs it.
+// The scanned random access index that repairs unusable Cues.
 // ---------------------------------------------------------------------------
 
 struct ScannedCueIndexOutcome {
@@ -2991,7 +2973,7 @@ struct ScannedCueIndexOutcome {
 //
 // This reads ELEMENT HEADERS only. Frame payloads are described by FrameRange
 // offsets the visitor never dereferences, so the pass touches the container's
-// skeleton and not its 380 MB of VP8. Blocks of unselected tracks are skipped
+// skeleton and not its frame payloads. Blocks of unselected tracks are skipped
 // by offset arithmetic without a read at all.
 //
 // Bounded three ways, all derived in matroska_demuxer.hpp: entries are capped
@@ -3094,7 +3076,7 @@ struct MatroskaCursor::Impl {
   std::vector<TrackConstraint> constraints;
   ParseOptions options;
   std::optional<ClusterChildCursor> clusterCursor;
-  // THE ONE-BLOCK LOOKAHEAD (2026-08-27).
+  // THE ONE-BLOCK LOOKAHEAD.
   //
   // A video Block carries no duration of its own unless its BlockGroup holds a
   // BlockDuration, and a track carries none unless its TrackEntry holds a
@@ -3113,9 +3095,8 @@ struct MatroskaCursor::Impl {
   // durationless track -- see readNext().
   MediaTime lastVideoDuration{};
   // One workspace per cursor, so the 4 KiB frame array is zero-filled once per
-  // generation instead of once per sample. Dropping the member initialiser
-  // instead measured neutral and would have put indeterminate values in a
-  // public record; this gets the same stores back without that trade.
+  // generation instead of once per sample, while keeping its member
+  // initialiser so no indeterminate values reach a public record.
   CapturedBlockVisitor visitor;
 };
 
@@ -3125,9 +3106,9 @@ MatroskaCursor::~MatroskaCursor() = default;
 MatroskaCursor::MatroskaCursor(MatroskaCursor&&) noexcept = default;
 MatroskaCursor& MatroskaCursor::operator=(MatroskaCursor&&) noexcept = default;
 
-// One Block in, one sample out -- the loop this cursor has always been. It is
-// now the STEP, and readNext() below is the policy that may hold one step back
-// in order to bound a durationless video frame by its successor.
+// One Block in, one sample out: the STEP. readNext() below is the policy that
+// may hold one step back in order to bound a durationless video frame by its
+// successor.
 MatroskaCursorReadResult
 MatroskaCursor::readNextRaw(CancellationToken cancellation) noexcept {
   try {
@@ -3463,15 +3444,13 @@ MatroskaCursor::readNext(CancellationToken cancellation) noexcept {
                             sample->presentationTime);
     // A non-positive delta is a non-monotonic or duplicated timestamp, and
     // this cursor may not invent a duration for it. The frame keeps its absent
-    // duration and the Accurate-seek path names its own refusal, which is
-    // exactly the behaviour that existed before this lookahead.
+    // duration and the Accurate-seek path names its own refusal.
     //
     // THE LIMIT OF THIS TECHNIQUE, stated so it is not mistaken for general:
     // Blocks are emitted in STORAGE order, which equals presentation order
     // only when the stream carries no reordered frames. On a B-frame stream
-    // the successor's timestamp routinely precedes this one's -- measured on
-    // an ffmpeg-encoded VFR file, whose packet deltas alternate sign -- so
-    // this branch declines and such a stream gains nothing. That is the right
+    // the successor's timestamp routinely precedes this one's (packet deltas
+    // alternate sign), so this branch declines and such a stream gains nothing. That is the right
     // outcome rather than a gap: a correct duration for reordered material
     // needs the reorder window, not the next Block. The target case, a
     // screencast/VFR capture from matroskamux, is IPPP with no reordering,
@@ -3558,12 +3537,11 @@ MatroskaPlanOutcome MatroskaPreparedAsset::planGeneration(
     // The Cue index is strictly increasing in tick (enforced at preparation)
     // and timeFromSignedTick is monotone in tick, so "this Cue starts at or
     // before the target" is a monotone predicate and the last index satisfying
-    // it is a binary search rather than a scan. The scan cost one gcd
-    // reduction plus one exact rational compare per Cue *passed*, so its price
-    // was set by where in the file the user seeks: measured 1.8 us landing on
-    // the first Cue but 545 us landing on the last Cue of a 65,536-Cue index
-    // (307x), paid on every seek and every open that carries an initial
-    // position. Binary search flattens that to 1.8-2.0 us everywhere.
+    // it is a binary search rather than a scan. A linear scan would cost one
+    // gcd reduction plus one exact rational compare per Cue *passed*, so its
+    // price would grow with how far into the file the user seeks (hundreds of
+    // times slower at the end of a 65,536-Cue index), paid on every seek and
+    // every open that carries an initial position.
     //
     // Evaluating only O(log n) Cues loses no rejection: preparation's Cue-gap
     // check already converts every Cue tick through timeFromSignedTick and
@@ -3766,8 +3744,8 @@ MatroskaPlanOutcome MatroskaPreparedAsset::planGeneration(
       plan.audioAccessUnitOrdinal = startOrdinal;
       // decodeStart must name the first access unit the audio cursor actually
       // emits, which is startOrdinal -- not the first AU of the Block that
-      // contains it. Naming the Block's first AU disagreed with the cursor
-      // whenever the seek landed mid-Block.
+      // contains it. Naming the Block's first AU would disagree with the
+      // cursor whenever the seek lands mid-Block.
       const auto decode = audioPacketGridTime(
           {presentationOrigin, startOrdinal, state.audio->audioSampleRate,
            samplesPerAccessUnit});
@@ -3917,14 +3895,12 @@ bool MatroskaPreparedAsset::copyRanges(
     }
   }
   // File identity brackets the whole copy rather than each 64 KiB chunk. The
-  // guarantee is unchanged -- the destination is only ever reported complete
-  // when the retained identity held from before the first read to after the
-  // last one, and a mid-copy substitution is still caught here before this
-  // function returns true -- but the syscall count is not. Checking twice per
-  // chunk made a local-file copy 3 fstat + 1 pread per 64 KiB: measured 1801 ns
-  // to move 1 KiB (0.53 GiB/s against 27 GiB/s from memory) and 49 syscalls to
-  // move 1 MiB. Per-chunk checking only made a doomed copy abandon sooner; it
-  // never made a returned buffer more trustworthy.
+  // destination is only ever reported complete when the retained identity held
+  // from before the first read to after the last one, so a mid-copy
+  // substitution is still caught here before this function returns true.
+  // Checking per chunk would cost extra fstat calls per 64 KiB read and would
+  // only make a doomed copy abandon sooner; it would never make a returned
+  // buffer more trustworthy.
   if (!state.unchanged()) {
     if (error != nullptr) {
       *error = MatroskaDemuxError::FileChanged;
@@ -4023,26 +3999,28 @@ namespace {
 //
 // Preparation's authoritative parse sets ParseOptions::scanClusterMetadata so
 // the parser descends into every Block of every Cluster, purely to collect the
-// ClusterTimestamp that the cluster index and the cue index -- both built at
-// the very END of preparation -- need. Every header read at that trust
-// boundary is deliberately unbuffered, so the walk costs four pread(2) calls
-// per element. Measured on the file that produced this defect (a 1.9 GiB
-// HEVC + 5.1-AAC MKV): 3,030,956 readAt calls fetching 3.9 MB scattered across
-// the whole file, 1.18 s warm on an M3 Max -- and cold, page faults spread
-// over all 1.9 GiB. The window sits dead for that entire time.
+// Preparation's authoritative parse can need the ClusterTimestamp of every
+// Cluster for the cluster index and the cue index -- both built at the very
+// END of preparation. Every header read at that trust boundary is deliberately
+// unbuffered, so a whole-file walk costs millions of reads scattered across a
+// multi-gigabyte file, over a second warm and far worse cold, with the window
+// sitting dead for that entire time.
 //
-// Every byte of that is wasted when the verdict is "this file cannot play
-// natively", because the facts that produce that verdict are stated in the
-// Tracks header at the HEAD of the file. So preparation now runs a cheap pass
-// first, with scanClusterMetadata off, which skips each Cluster in O(1) by its
-// declared size, and asks exactly the header-only questions here.
+// All of that is wasted when the verdict is "this file cannot play natively"
+// and the facts that produce that verdict are stated in the Tracks header at
+// the HEAD of the file. So preparation runs a cheap pass first, with
+// scanClusterMetadata off, which skips each Cluster in O(1) by its declared
+// size, and asks exactly the header-only questions here.
 //
 // This gate can only ever REFUSE. Anything it does not refuse falls through to
 // the authoritative pass completely unchanged, so a file it cannot judge --
-// including one where the cheap parse itself failed -- is judged exactly as it
-// was before. Both refusals it can reach are byte-identical to the ones the
-// authoritative pass would have produced from the same header, because both
-// call the same predicate (trackSelectionRefusal, aacLcHeaderAdmitted).
+// including one where the cheap parse itself failed -- is judged by the
+// authoritative pass alone. Its refusals come from the same predicates the
+// authoritative pass uses (trackSelectionRefusal, aacLcHeaderAdmitted, and
+// this function itself, which the authoritative pass calls to name an audio
+// candidate's refusal reason). The track-selection refusal is identical; an
+// audio refusal carries the same status, error and reason, but the
+// authoritative pass's message additionally lists every audio candidate.
 [[nodiscard]] std::optional<MatroskaPrepareOutcome> matroskaHeaderRefusal(
     SeekableByteReader& reader, const std::vector<TrackEntry>& tracks,
     EbmlDocumentType documentType, const MediaSourceOpenOptions& requested,
@@ -4068,11 +4046,12 @@ namespace {
       }) > 1) {
     return std::nullopt;
   }
-  // The multichannel refusal that motivated this pass. Only AAC-LC is judged
-  // here: it is the one codec whose whole admissible-or-not answer is in
-  // CodecPrivate, and the only one whose refusal therefore needs no Cluster.
-  // AC-3, MP3, FLAC, Opus and Vorbis all probe a Block, so they keep waiting
-  // for the authoritative pass rather than being second-guessed here.
+  // Only header-decidable audio refusals are judged here: a software-only
+  // codec in a build without the software stage, an Opus output rate other
+  // than 48 kHz, and AAC-LC, whose whole admissible-or-not answer is in
+  // CodecPrivate. Everything else needs a Block (AC-3, MP3, FLAC, Vorbis, and
+  // the rest of Opus admission), so it waits for the authoritative pass rather
+  // than being second-guessed here.
 #if !defined(WAM_ENABLE_AVCODEC_STAGE)
   if (audio && softwareAudioCodecId(inlineString(audio->codecId)) != MediaCodec::Unknown)
     return MatroskaPrepareOutcome{MatroskaDemuxStatus::Unsupported,
@@ -4131,13 +4110,13 @@ namespace {
 
 // ---- The authoritative pass stops before EOF ---------------------------
 //
-// Fix A made the admitted path skip every Cluster payload. What it could not
-// touch is that preparation still ran parseDocument() to EOF, and on the file
-// that motivated this work 1,079,956 of the remaining 1,137,251 reads (95 %)
-// are that document's own Cues: 3,847 CueTrackPositions of which 3,087 belong
-// to two SUBTITLE tracks. Every one of them is proven by walking its Cluster's
-// Block chain to a deep in-Cluster offset, and every one of them is then
-// discarded -- the seek index is selected-VIDEO-only and always has been.
+// harvestClusterTimestamps lets the admitted path skip every Cluster payload,
+// but parseDocument() still runs to EOF, and on a large file most of its
+// remaining reads can be the document's own Cues -- often dominated by
+// CueTrackPositions of unselected (e.g. SUBTITLE) tracks. parseDocument()
+// proves every one of them by walking its Cluster's Block chain to a deep
+// in-Cluster offset, and every unselected one is then discarded -- the seek
+// index is selected-VIDEO-only.
 //
 // parseDocument() cannot be asked to stop: it parses the Cues unconditionally,
 // and the three anti-polyglot facts preparation requires
@@ -4148,7 +4127,7 @@ namespace {
 //
 //   * the Cluster directory comes from the parser's own Segment child cursor,
 //     which skips every known-size Cluster in O(1) by its declared size;
-//   * each Cluster's Timestamp comes from harvestClusterTimestamps (Fix A);
+//   * each Cluster's Timestamp comes from harvestClusterTimestamps;
 //   * SeekHead, Chapters and Cues are parsed as PROVEN Segment children
 //     through parseSegmentChild(), so each keeps the validation parseDocument
 //     gave it, charged against one cumulative element budget;
@@ -4160,8 +4139,8 @@ namespace {
 //
 // Re-computing the summary here would move a security decision into the
 // demuxer and, worse, would change the TYPED verdict for shapes the parser
-// refuses outright (garbage after the Segment is a ParseStatus::Invalid today,
-// not an UnsupportedContainer). Instead this runs only when the document is
+// refuses outright (garbage after the Segment is a ParseStatus::Invalid, not
+// an UnsupportedContainer). Instead this runs only when the document is
 // positively proven to be
 //
 //     [EBML header at offset 0][one known-size Segment ending at reader.size()]
@@ -4171,11 +4150,11 @@ namespace {
 // header ends, the Segment ends at EOF, so nothing else fits in the file.
 // Every other shape -- a second document, trailing garbage, an unknown-size
 // Segment, a duplicated top-level master, a late-Tracks mux -- returns false
-// here and is prepared by the unmodified parseDocument() chain, with the
-// verdict it has always produced.
+// here and is prepared by the parseDocument() chain, which issues its own
+// verdict.
 //
 // Returns false on any doubt whatsoever. False is never a refusal; it is a
-// request for the historical path.
+// request for the parseDocument() path.
 [[nodiscard]] bool prepareFromSegmentDirectory(
     SeekableByteReader& reader, const CollectedDocument& probe,
     const std::vector<TrackConstraint>& constraints, ParseOptions options,
@@ -4259,8 +4238,8 @@ namespace {
     }
   }
   // parseSegment refuses a duplicate top-level master and a Segment with no
-  // Info; both stay refusals, by declining the fast path and letting the
-  // historical parse issue the DuplicateElement/MissingElement verdict.
+  // Info; both stay refusals, by declining the fast path and letting
+  // parseDocument() issue the DuplicateElement/MissingElement verdict.
   if (infoCount != 1 || tracksCount != 1 || cuesCount > 1 ||
       chaptersCount > 1 || !cursor->done()) {
     return false;
@@ -4375,11 +4354,10 @@ MatroskaPrepareOutcome prepareMatroska(
 
     // ---- Authoritative pass: directory-driven, not scan-driven ------------
     //
-    // The pre-admission probe above made a REFUSAL cheap. This makes an
-    // ADMISSION cheap, which is the other half of the same defect: a file that
-    // plays natively used to pay a whole-file cluster-metadata walk (measured
-    // 2,152,353 of the 3,270,191 reads on the 2.2 GB file that motivated this)
-    // before its first frame could be drawn.
+    // The pre-admission probe above makes a REFUSAL cheap. This makes an
+    // ADMISSION cheap: without it, a file that plays natively would pay a
+    // whole-file cluster-metadata walk (the bulk of all preparation reads on a
+    // large file) before its first frame could be drawn.
     //
     // scanClusterMetadata stays OFF, so every known-size Cluster is skipped in
     // O(1) by its declared size and the Cluster directory -- offsets and sizes
@@ -4387,13 +4365,13 @@ MatroskaPrepareOutcome prepareMatroska(
     // existed to collect, each Cluster's Timestamp, is then read directly out
     // of each Cluster's bounded head. See harvestClusterTimestamps.
     //
-    // The historical scan remains the fallback, and is entered only when a
-    // Cluster does not state its Timestamp within that bounded head. Nothing
-    // downstream can tell the two apart: the values are identical, so the
-    // cluster directory, the cue harvest, planGeneration, the cursors and the
-    // scanned-index rebuild all see exactly what they saw before.
-    // Fix B goes one step further: the parse no longer runs to EOF at all when
-    // the document is provably a single Segment that ends there. See
+    // The full scanClusterMetadata walk remains the fallback, and is entered
+    // only when a Cluster does not state its Timestamp within that bounded
+    // head. Nothing downstream can tell the two apart: the values are
+    // identical, so the cluster directory, the cue harvest, planGeneration,
+    // the cursors and the scanned-index rebuild see the same data either way.
+    // Further, the parse does not run to EOF at all when the document is
+    // provably a single Segment that ends there. See
     // prepareFromSegmentDirectory -- including why the anti-polyglot proof is
     // gated on rather than relocated, and what a `false` from it means.
     ParseOutcome parsed;
@@ -4653,7 +4631,7 @@ MatroskaPrepareOutcome prepareMatroska(
       previousTimestamp = cluster.timestampTick;
     }
 
-    // The Cue index is, and stays, selected-VIDEO-only: it exists to answer
+    // The Cue index is selected-VIDEO-only: it exists to answer
     // "which encoded byte is the random access point covering this target",
     // and only a video lane has non-random-access samples to skip. An
     // audio-only generation needs no Cue index at all -- every audio Block is
@@ -4662,7 +4640,7 @@ MatroskaPrepareOutcome prepareMatroska(
     // here would build a second index with different admission rules for no
     // benefit, and would make a Cue-less MKA (which FFmpeg does emit) refuse.
     //
-    // An unusable Cues element is no longer fatal. Every refusal below became a
+    // An unusable Cues element is not fatal. Every refusal below is a
     // REASON TO REBUILD: buildScannedVideoCueIndex derives the same index from
     // Cluster timestamps and Block headers, which are facts about the bytes
     // rather than a muxer's optional promise, so a file whose Cues this v1
@@ -4680,7 +4658,7 @@ MatroskaPrepareOutcome prepareMatroska(
       // is the first kind -- the element is OPTIONAL in Matroska and
       // GStreamer's matroskamux simply does not write it, so the file is
       // conforming. Everything else in this gate is a Cue shape the index
-      // cannot represent. Both now route to the scan.
+      // cannot represent. Both route to the scan.
       if (!cue.relativePosition) {
         degenerate =
             "the selected video Cues carry no CueRelativePosition, which this "
@@ -4729,8 +4707,8 @@ MatroskaPrepareOutcome prepareMatroska(
     // Matroska routinely places its first video keyframe a few milliseconds in
     // (FFmpeg emits a first CueTime of 21 ms for a 30 fps remux, which is also
     // why such a file reports 72.021 s rather than 72.000 s), and that cue is
-    // the true origin of the video timeline. Requiring literal zero rejected
-    // essentially every real remux. planGeneration already clamps any target
+    // the true origin of the video timeline. Requiring literal zero would
+    // reject essentially every real remux. planGeneration already clamps any target
     // at or before the first entry to entry zero, so a non-zero first entry
     // needs no special case, and the strictly-increasing check in the harvest
     // above still holds. The same is true of a scanned index, whose first
@@ -4745,13 +4723,10 @@ MatroskaPrepareOutcome prepareMatroska(
     //      about the medium -- Cues are optional metadata and a live mux
     //      routinely writes them badly or not at all -- so the answer is to
     //      rebuild the index from the Clusters, never to refuse the file.
-    //   2. Can the REBUILT index seed a seek anywhere in the medium? A no here
-    //      is a fact about the bitstream: the encoder wrote no random access
-    //      point inside the seek preroll, and no index can invent one. That is
-    //      the only cue-shaped refusal left, and it is named for what it is.
-    //
-    // Coverage is measured by the same predicate in both places, so a scanned
-    // index is held to exactly the bound a file-supplied one is.
+    //   2. Does the REBUILT index hold any entry at all? A no here is a fact
+    //      about the bitstream: the selected video track has no random access
+    //      Block anywhere, and no index can invent one. That is the only
+    //      cue-shaped refusal, and it is named for what it is.
     if (state->video) {
       if (degenerate == nullptr && state->cues.empty()) {
         degenerate = "the file carries no Cues for the selected video track";
@@ -4770,10 +4745,8 @@ MatroskaPrepareOutcome prepareMatroska(
           return result;
         }
         if (state->cues.empty()) {
-          // Not the same refusal as a sparse one. A selected video track with
-          // no random access Block anywhere has nothing to start decoding
-          // from, at any target, so this is the index genuinely being absent
-          // rather than the medium being coarse.
+          // A selected video track with no random access Block anywhere has
+          // nothing to start decoding from, at any target.
           result.status = MatroskaDemuxStatus::Unsupported;
           result.error = MatroskaDemuxError::SparseRandomAccess;
           result.message =

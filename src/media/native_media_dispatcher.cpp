@@ -142,10 +142,9 @@ enum class OpenConfigureVerdict : std::uint8_t {
 };
 
 // `reason`, when non-null, receives a static string naming the exact invariant
-// that refused. Fifteen distinct refusals used to fold into the single message
-// "generation timeline could not be derived", which named the verdict and not
-// its cause; bisecting one cost a rebuild per candidate. Same precedent as the
-// geometry/colour verdicts: a refusal must say what it refused.
+// that refused, so the failure line names the cause and not only the verdict.
+// Same precedent as the geometry/colour verdicts: a refusal must say what it
+// refused.
 [[nodiscard]] std::optional<NativeMediaGenerationTimeline> deriveTimeline(
     MediaGeneration generation, MediaSeekMode mode, MediaTime requestedTarget,
     MediaTime actualDecodeStart, MediaTime duration,
@@ -321,7 +320,7 @@ enum class OpenConfigureVerdict : std::uint8_t {
   // A window that begins at or before the movie time the audio media
   // begins can only be the stream origin; there is nothing earlier for it
   // to be. mediaStart is the origin for every source that declares no
-  // silence before its audio, so this is the prior rule verbatim there.
+  // silence before its audio.
   if (audioWindow.startsAtStreamOrigin !=
       (*decodeAgainstMediaStart != MediaTimeOrder::Greater)) {
     return refuse("audio window's stream-origin flag disagrees with its "
@@ -506,12 +505,9 @@ NativeMediaDispatcherOpenOutcome NativeMediaDispatcher::openLocalFile(
     case MediaSourceOpenStatus::Unsupported:
       operation_generation_.store(0, std::memory_order_release);
       // The source's own text is the ONLY description of why the file was
-      // declined, and it used to be dropped on the floor here: the session's
-      // stderr line reads failureMessage(), found it empty, and printed "the
-      // session failed while the dispatcher reported no failure" -- an
-      // anonymous verdict for a refusal that the source had already named.
-      // Carry the text, and name the class, without moving the state: an
-      // envelope verdict must still fall back cleanly (see UnsupportedSource).
+      // declined, and the session's stderr line reads failureMessage(). Carry
+      // the text, and name the class, without moving the state: an envelope
+      // verdict must still fall back cleanly (see UnsupportedSource).
       failure_message_ = audioRefusals.empty() ? opened.error :
           "AudioBackendConfigurationRefused: " + audioRefusals + "; " + opened.error;
       stats_.failure = NativeMediaDispatcherFailure::UnsupportedSource;
@@ -689,7 +685,7 @@ NativeMediaDispatcherOpenOutcome NativeMediaDispatcher::openLocalFile(
         audioWorker.worker = std::thread(configureAudio);
       } catch (...) {
         // Thread creation is the only failure allowed to degrade this path, and
-        // it degrades to the previous serial behaviour rather than to an open
+        // it degrades to serial configuration rather than to an open
         // failure. The handle stays non-joinable and audio is configured below.
       }
     }
@@ -868,8 +864,8 @@ NativeMediaDispatcherStep NativeMediaDispatcher::step() noexcept {
   // A quiescing audio route reports BlockedAudio: its PCM buffer is full and
   // only the output's own retirement wake reopens it. While the source is
   // still Ready that must close the read gate and nothing else. Returning it
-  // here instead skipped the whole video route - its presentation pump, its
-  // deferred lane and its read admission - for as long as the buffer stayed
+  // here would skip the whole video route - its presentation pump, its
+  // deferred lane and its read admission - for as long as the buffer stays
   // full. During an accurate seek that interval never ends on its own: the
   // audio-owned clock is held paused at the target until video draws the
   // frame covering it, so the buffer cannot retire a single slab until the
@@ -1320,8 +1316,8 @@ NativeMediaDispatcherStep NativeMediaDispatcher::deferBlockedLaneEvent(
   saturatingIncrement(stats_.videoBackpressure);
   deferPendingIntoLane(video_lane_);
   // CallAgain while the lane still owns read-ahead room: the dispatcher holds
-  // no head-of-line blocker, so the very next call may pull the audio lane's
-  // next event. Otherwise the lane is genuinely out of room and the wait names
+  // no head-of-line blocker, so the very next call may read the next source
+  // event. Otherwise the lane is genuinely out of room and the wait names
   // the consumer whose progress reopens it.
   return makeStep(
       NativeMediaDispatcherAction::BlockedVideo,
@@ -1779,10 +1775,10 @@ NativeMediaDispatcherStep NativeMediaDispatcher::checkReadCapacity() noexcept {
                       stats_.selectedAudio);
     } else if (result != NativeMediaConsumeResult::Accepted) {
       // NativeAudioConsumer::capacity() carries no error out-parameter, so the
-      // port cannot say which of its gates refused through this result. It
-      // does now expose failureText(), so prefer the port's own latched gate
-      // and fall back to naming the seam only when the port has nothing to
-      // add -- a bare empty string here would name neither.
+      // port cannot say which of its gates refused through this result. Prefer
+      // the port's own latched failureText() and fall back to naming the seam
+      // only when the port has nothing to add -- a bare empty string here
+      // would name neither.
       try {
         failure_message_ =
             audio_ != nullptr ? audio_->failureText() : std::string();
@@ -2084,17 +2080,12 @@ NativeMediaDispatcherStep NativeMediaDispatcher::makeStep(
 NativeMediaDispatcherStep NativeMediaDispatcher::failStep(
     NativeMediaDispatcherFailure failure,
     std::source_location origin) noexcept {
-  // Consumer results that carry no error out-parameter -- capacity(), and the
-  // whole lifecycle set -- can still fail a step, and only the port knows
-  // which of its internal gates refused. Without this the always-on stderr
-  // failure line reports class=Consumer with error="" for every one of them,
-  // which names the seam but not the branch. Adopt the port's own gate text
-  // when this step published nothing more specific.
+  // See adoptPortFailureText().
   if (failure == NativeMediaDispatcherFailure::Consumer ||
       failure == NativeMediaDispatcherFailure::ConsumerProtocol) {
     adoptPortFailureText(failure_message_, video_.get(), audio_.get());
   }
-  // Last resort, and the reason the stderr failure line can no longer carry an
+  // Last resort, and the reason the stderr failure line never carries an
   // empty error string. A seam that fails without publishing a reason is a
   // real and recurring shape here -- capacity(), and every lifecycle result,
   // carry no error out-parameter at all -- and naming the refusing step beats

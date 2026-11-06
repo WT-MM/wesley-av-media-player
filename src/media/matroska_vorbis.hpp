@@ -19,8 +19,7 @@ namespace wam::media::matroska {
 // the raw CodecPrivate is accepted with noErr while the three plausible
 // repackings (bare concatenation, 32-bit big-endian and little-endian length
 // prefixes) are all rejected with kAudioCodecUnsupportedFormatError. The
-// decoder parses what it is given, and only this shape satisfies it. See
-// scratchpad/vorb_probe.mm.
+// decoder parses what it is given, and only this shape satisfies it.
 inline constexpr std::size_t kVorbisHeaderCount{3};
 
 // 'vorb'. AudioToolbox registers a Vorbis decoder under this fourcc --
@@ -103,8 +102,7 @@ parseVorbisCodecPrivate(std::span<const std::byte> bytes) noexcept;
 // first packet carries only the left half of an overlap-add window, so it
 // decodes to zero samples by specification and the stream comes out exactly one
 // access unit short. Measured invariant across fresh converters AND across
-// AudioConverterReset -- unlike Opus, whose lead-in reset had to be worked
-// around by rebuilding the converter. See scratchpad/vorbreset_probe.mm.
+// AudioConverterReset.
 [[nodiscard]] constexpr std::uint32_t
 vorbisDecoderLeadInFrames(const VorbisConfiguration &configuration) noexcept {
   return configuration.samplesPerAccessUnit();

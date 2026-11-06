@@ -48,9 +48,9 @@ constexpr std::uint32_t kMonoLayoutTag{0x00640001U};
 constexpr std::uint32_t kStereoLayoutTag{0x00650002U};
 
 // ATSC A/52 codes six 256-sample audio blocks per syncframe; E-AC-3 may code
-// 1, 2, 3 or 6 and now says which in numblkscod, so the per-stream value is
-// READ from the first syncframe rather than assumed here. This constant is
-// retained only as the legacy AC-3 identity the parser must reproduce.
+// 1, 2, 3 or 6 and says which in numblkscod, so the per-stream value is READ
+// from the first syncframe rather than assumed here. This constant only pins
+// the legacy AC-3 identity the parser must reproduce.
 constexpr std::uint32_t kAc3SamplesPerSyncFrame{
     kAc3BlocksPerSyncFrame * kAc3SamplesPerBlock};
 static_assert(kAc3SamplesPerSyncFrame == 1536);
@@ -80,10 +80,10 @@ constexpr std::size_t kFramingConfirmations{10};
 // link-count and rename -- none of which touch a single content byte. On macOS
 // those happen to a media file constantly and from outside this process:
 // Spotlight/mds indexing, iCloud/FileProvider sync bookkeeping, quarantine and
-// last-used-date stamping. Including ctime made the Matroska predicate report
+// last-used-date stamping. Including ctime would make the predicate report
 // "the file changed" for events that are, by construction, not changes to the
-// file's content -- a load-dependent false positive that produced a real
-// playback defect. What dropping ctime gives up is only an in-place,
+// file's content -- a load-dependent false positive that breaks playback.
+// What dropping ctime gives up is only an in-place,
 // byte-count-preserving write whose mtime is then restored by an explicit
 // utimes() call, which is deliberate forgery rather than a hazard a local
 // media player defends against.
@@ -331,8 +331,8 @@ struct StreamWalk {
   // Sticky across units, deliberately: it is a property of the STREAM's
   // prologue size, not of any one access unit, and the only consumer is a
   // refusal message that wants to know whether the scan ever ran out of probe
-  // before reaching a picture. Cleared by beginUnit's caller? No -- see
-  // finishUnit, which only ever sets it.
+  // before reaching a picture. Never cleared: beginUnit leaves it alone and
+  // finishUnit only ever sets it.
   bool probeEndedBeforeSlice{false};
 
   void beginUnit(std::uint64_t offset) noexcept {
@@ -359,7 +359,8 @@ struct StreamWalk {
 
   // Appends one packet's payload. Only the bounded probe prefix is copied;
   // everything beyond it is counted, never moved. This is the single place the
-  // demuxer touches payload bytes, and it touches at most 4 KiB per unit.
+  // demuxer touches payload bytes, and it touches at most
+  // kMpegTsAccessUnitProbeBytes per unit.
   void appendPayload(std::span<const std::byte> payload) noexcept {
     if (probeFilled < probe.size()) {
       const std::size_t room = probe.size() - probeFilled;
@@ -446,7 +447,7 @@ struct AssetState {
   // presentation time and nothing about how long the picture is shown. Every
   // downstream video consumer in this player compares a sample's exact
   // presentation INTERVAL against the timeline and refuses a sample whose
-  // duration is absent or non-positive (native_video_consumer.mm:1658), so an
+  // duration is absent or non-positive (native_video_consumer.mm), so an
   // interval has to be established at admission rather than left invalid the
   // way the Matroska path leaves the decode timestamp.
   //
@@ -608,9 +609,8 @@ struct AssetState {
 //
 // array_completeness is left ZERO on every array. Zero is the honest value
 // here -- the elementary stream really does keep carrying its parameter sets
-// in band, and it is the value the inspector was taught to accept when the
-// Matroska form of a stream-copied file differed from the MP4 form by exactly
-// this bit.
+// in band -- and the inspector accepts it (the Matroska and MP4 forms of a
+// stream-copied file can differ by exactly this bit).
 [[nodiscard]] bool buildHvcCFromAnnexB(std::span<const std::byte> unit,
                                        std::vector<std::byte>& record) {
   std::array<AnnexBNal, 8> videoSets{};
@@ -713,7 +713,7 @@ struct AssetState {
 // container.
 
 // The shared inspector's verdict, by name, for a refusal message. Local
-// rather than published from video_codec_configuration.hpp so this lane adds
+// rather than published from video_codec_configuration.hpp so this file adds
 // no surface to a header three other containers include; if a second caller
 // ever wants it, that is the moment to move it.
 [[nodiscard]] const char* videoCodecConfigurationErrorName(
@@ -1203,12 +1203,10 @@ MpegTsCursor::readNext(CancellationToken cancellation) noexcept {
     // this is not a nicety. 13818-1 2.4.3.4 says the indicator means the
     // current or a SUBSEQUENT packet of this PID begins a random access point,
     // so ffmpeg sets it on the last packet before a keyframe's PES as well as
-    // on the PES packet itself. An earlier version applied it to whichever
-    // unit was under construction, which marked the access unit BEFORE every
-    // keyframe as a keyframe too: measured 39 keyframes against ffprobe's 20
-    // on seek.ts and 5 against 3 on h264-aac.ts, an almost exactly 2n-1 shape
-    // that is the signature of an off-by-one, not of a codec disagreement.
-    // Restricting it to the unit-start packet makes the count exact.
+    // on the PES packet itself. Applying it to whichever unit is under
+    // construction would mark the access unit BEFORE every keyframe as a
+    // keyframe too (about 2n-1 keyframes instead of n). Restricting it to the
+    // unit-start packet makes the count exact.
     if (header.payloadUnitStart) {
       std::optional<MpegTsCompressedSample> completed;
       if (walk.collecting) {
@@ -1455,28 +1453,25 @@ MpegTsPreparedAsset::planGeneration(MediaTime target, MediaSeekMode mode,
       // index points are spaced by BYTES and keyframes by TIME, so any stream
       // whose GOP is longer than the index spacing routinely puts the two on
       // opposite sides. A forward-only scan from the landed point then either
-      // refuses an entirely seekable file (measured: every seek past 1.5 s in
-      // a one-keyframe fixture came back ScanLimit) or, worse, silently lands
-      // AFTER the target and skips the frame the user asked for (measured: six
-      // of eight off-grid targets in a 20 s, 1 s-GOP fixture).
+      // refuses an entirely seekable file (a one-keyframe stream comes back
+      // ScanLimit for every seek past the first index spacing) or, worse,
+      // silently lands AFTER the target and skips the frame the user asked
+      // for.
       //
       // So the scan tracks the two candidates separately — the last cold
       // random access point at or before the target, and the first one after
       // it — and steps back until it has the former.
       //
-      // THE BACKOFF IS MEASURED IN TIME, NOT IN INDEX ENTRIES. It used to step
-      // back a fixed sixteen entries, and that was a byte measure wearing a
-      // time costume: index entries are spaced by BYTES, so how far sixteen of
-      // them reach depends on the bitrate. Measured 2026-08-27 on two muxes of
-      // the SAME 72 s clip with the SAME 8.33 s GOP: the 72 MB H.264 one has
-      // ~0.5 s of media per entry and sixteen entries just reached the
-      // preceding keyframe, while the 93 MB HEVC one has ~0.4 s per entry and
-      // sixteen entries fell 0.8 s short. The seek then took the first-after
-      // candidate, the plan started AFTER its own accurate target, and the
-      // preview lane refused it by name -- a bitrate-dependent seek failure
-      // with nothing to do with the codec.
+      // THE BACKOFF IS MEASURED IN TIME, NOT IN INDEX ENTRIES. Index entries
+      // are spaced by BYTES, so how far a fixed number of them reach depends on
+      // the bitrate: two muxes of the same clip with the same GOP but ~0.5 s
+      // and ~0.4 s of media per entry put the preceding keyframe inside a
+      // fixed sixteen-entry reach for one and short of it for the other. The
+      // seek then takes the first-after candidate and the plan starts AFTER
+      // its own accurate target -- a bitrate-dependent seek failure with
+      // nothing to do with the codec.
       //
-      // Now each round doubles how far back in MEDIA TIME it starts: the
+      // Each round doubles how far back in MEDIA TIME it starts: the
       // landed entry, then 1 s, 2 s, 4 s before the target, and so on. Each
       // round's forward scan stops as soon as it passes the target, so a
       // round's cost is proportional to its own reach and the whole sequence
@@ -1628,8 +1623,8 @@ MpegTsPreparedAsset::planGeneration(MediaTime target, MediaSeekMode mode,
         // Two different facts wear the same refusal, and telling them apart
         // from a stderr capture is the difference between "this stream has a
         // long GOP" and "this stream's per-picture prologue is larger than the
-        // probe, so the scan never saw a picture at all". The second was a
-        // real, measured failure on HDR HEVC and cost a whole diagnosis pass.
+        // probe, so the scan never saw a picture at all". The second is what
+        // an HDR HEVC SEI prologue produces.
         result.message =
             probeEndedBeforeSlice
                 ? "no decodable random access point within the bounded seek "
@@ -2201,13 +2196,11 @@ scanFirstUnits(ReadWindow& window, const MpegTsFraming& framing,
 // A PCR states when a byte should arrive at the decoder, and 13818-1's whole
 // buffering model puts the presentation of a picture one end-to-end buffer
 // delay AFTER the byte that carried it. Deriving the duration from the last
-// PCR therefore under-reports by exactly that delay -- measured across this
-// corpus it is 0.73 s to 0.88 s, every time, in the same direction. That is
-// not a rounding error: it shortens the scrubber's range by most of a second,
-// makes seeks near the end unrepresentable, and (the way it was actually
-// found) truncates real audio whenever the short value happens to land on the
-// audio frame grid, which is what made `video.ts` publish 247,424 of its
-// 289,792 decoded frames and then starve the clock.
+// PCR therefore under-reports by exactly that delay -- typically 0.7 s to
+// 0.9 s, always in the same direction. That is not a rounding error: it
+// shortens the scrubber's range by most of a second, makes seeks near the end
+// unrepresentable, and truncates real audio whenever the short value happens
+// to land on the audio frame grid, which then starves the clock.
 //
 // Unwrapping cannot use a TimestampUnwrapper here, because a tail scan has not
 // seen the stream that established the epoch. The PCR-derived end tick is
@@ -2399,9 +2392,9 @@ MpegTsPrepareOutcome prepareMpegTs(std::shared_ptr<SeekableByteReader> reader,
       result.error = rejectedVideoType != 0
                          ? MpegTsDemuxError::UnsupportedStreamType
                          : MpegTsDemuxError::ProgramSelection;
-      // Name the refused type. MPEG-2 video (0x02) has no MediaCodec
-      // enumerator yet; that is a recorded, authorized-append-pending gap and
-      // it must reach the caller by name rather than as a silent skip.
+      // Name the refused type. MPEG-1 video (0x01) and MPEG-4 part 2 (0x10)
+      // have no route; that gap must reach the caller by name rather than as
+      // a silent skip.
       result.message =
           rejectedVideoType != 0
               ? std::string("mpeg-ts video stream type is not routable: 0x") +
@@ -2633,7 +2626,7 @@ MpegTsPrepareOutcome prepareMpegTs(std::shared_ptr<SeekableByteReader> reader,
     if (state->video.codec == MediaCodec::Mpeg2Video) {
       // MPEG-2 needs NO decoder configuration record at all: the sequence
       // header is in-band and CMVideoFormatDescriptionCreate takes a null
-      // extensions dictionary (measured in scratchpad/vt_mpeg2_probe.mm).
+      // extensions dictionary.
       // `inspectVideoCodecConfiguration` therefore has nothing to inspect, and
       // the geometry gate it would have applied is restated by hand here so
       // MPEG-2 is held to the same admission envelope as every other codec.
@@ -2707,12 +2700,12 @@ MpegTsPrepareOutcome prepareMpegTs(std::shared_ptr<SeekableByteReader> reader,
       //
       // The flag's own contract (video_codec_configuration.hpp) is that a
       // route may turn it on only if it also carries the colour description
-      // onto the CMVideoFormatDescription it synthesizes. This route now
-      // does: createMpegTsVideoFormatDescription writes ColorPrimaries,
+      // onto the CMVideoFormatDescription it synthesizes. This route does:
+      // createMpegTsVideoFormatDescription writes ColorPrimaries,
       // TransferFunction and YCbCrMatrix extensions from exactly the facts
       // mapped below. Turning this on WITHOUT that would hand VideoToolbox a
       // PQ stream with nothing to attach to the surface, which renders as
-      // washed-out SDR -- worse than the named refusal it replaced.
+      // washed-out SDR -- worse than a named refusal.
       codecLimits.admitHighDynamicRangeColor = true;
       const VideoCodecConfigurationInspection inspection =
           inspectVideoCodecConfiguration(state->video.codec,
@@ -2720,10 +2713,9 @@ MpegTsPrepareOutcome prepareMpegTs(std::shared_ptr<SeekableByteReader> reader,
       if (!inspection.admitted()) {
         result.status = MpegTsDemuxStatus::Unsupported;
         result.error = MpegTsDemuxError::CodecConfiguration;
-        // Name the inspector's own verdict. "Refused" alone cost a whole
-        // debugging pass on the HEVC lane, where the record was byte-correct
-        // and the refusal was a color-description envelope the synthesis had
-        // no say in.
+        // Name the inspector's own verdict: a byte-correct record can still be
+        // refused for a color-description envelope the synthesis has no say
+        // in, and "refused" alone does not say which.
         result.message =
             std::string(hevc ? "synthesized hvcC was refused by the shared "
                                "codec inspector: "
@@ -2830,8 +2822,7 @@ MpegTsPrepareOutcome prepareMpegTs(std::shared_ptr<SeekableByteReader> reader,
               // AudioToolbox's per-codec channel ORDER, and the platform layer
               // reads the authoritative order back from the decoder before
               // folding to stereo. Stating the stereo tag on a six-channel
-              // track -- which is what the old expression did the moment the
-              // AAC parser widened -- would be an outright false statement.
+              // track would be an outright false statement.
               format.channelLayoutTag =
                   admission.configuration->channelCount == 1   ? kMonoLayoutTag
                   : admission.configuration->channelCount == 2 ? kStereoLayoutTag
@@ -2854,9 +2845,8 @@ MpegTsPrepareOutcome prepareMpegTs(std::shared_ptr<SeekableByteReader> reader,
       } else if (state->audio.codec == MediaCodec::Ac3 ||
                  state->audio.codec == MediaCodec::Eac3) {
         // AC-3 and E-AC-3 restate every parameter in each syncframe and take
-        // NO magic cookie -- measured by the parallel Matroska audio lane in
-        // scratchpad/sweep_probe.mm, where AudioConverterNew succeeds with the
-        // cookie property never set. This reuses that codec-level admission,
+        // NO magic cookie: AudioConverterNew succeeds with the cookie property
+        // never set. This reuses that codec-level admission,
         // not Matroska's block-level framing: a TS PES carries whole
         // syncframes back to back and the media source splits them itself.
         Ac3SyncFrame frame{};
@@ -2874,9 +2864,9 @@ MpegTsPrepareOutcome prepareMpegTs(std::shared_ptr<SeekableByteReader> reader,
                                  ? kEnhancedAc3FormatTag
                                  : kAc3FormatTag;
           // A-52 codes 6 blocks of 256 samples per syncframe. E-AC-3 may code
-          // 1, 2, 3 or 6, and the parser now READS which -- a stream of short
-          // blocks used to be described as 1536 frames per packet, which is a
-          // four-times timing error on the audio-authoritative clock. A frame
+          // 1, 2, 3 or 6, and the parser READS which: describing a short-block
+          // stream as 1536 frames per packet would mis-time the
+          // audio-authoritative clock by up to six times. A frame
           // that restates a different count mid-stream is still refused by the
           // per-frame walk in the media source.
           format.framesPerPacket = frame.samplesPerFrame;
@@ -2894,12 +2884,10 @@ MpegTsPrepareOutcome prepareMpegTs(std::shared_ptr<SeekableByteReader> reader,
           state->audio.sampleRate = frame.sampleRate;
           state->audio.channels = frame.channels;
           state->audio.samplesPerFrame = frame.samplesPerFrame;
-          // The old ceiling was `channels <= 2`, which dropped every 5.1 AC-3
-          // soundtrack to silence. It is lifted to the same limit every other
-          // codec on this route is held to, now that the LFE channel is
-          // actually counted (it was hardcoded absent, so a 5.1 stream was
-          // described as five channels) and now that 5.1 AAC has been proved
-          // through the same tag-less wider-layout path end to end.
+          // Held to the same channel limit as every other codec on this route
+          // (checked above). `channels` counts the LFE channel, so a 5.1
+          // stream is six channels, and layouts wider than stereo take the
+          // same tag-less path as 5.1 AAC.
           admitted = frame.samplesPerFrame > 0;
         }
       } else if (state->audio.codec == MediaCodec::Mp3) {

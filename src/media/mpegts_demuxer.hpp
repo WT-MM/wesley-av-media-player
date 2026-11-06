@@ -79,20 +79,17 @@ inline constexpr std::size_t kMpegTsSeekScanBytes{32U * 1024U * 1024U};
 // unit. This is the ONLY payload the cursor ever touches; the emitted sample
 // itself remains payload-free.
 //
-// RAISED FROM 4 KiB TO 16 KiB ON MEASUREMENT, 2026-08-27. The old comment said
-// 4 KiB left "two orders of magnitude of margin" over a 200-byte SPS+PPS+SEI
-// prefix. That premise was true of SDR and false of HDR: an x265 HDR keyframe
-// access unit carries a registered user-data SEI plus mastering-display and
-// content-light SEIs AHEAD of the slice, and in the measured PQ fixture
-// (scratchpad/fixtures/ts_cs_pq_full_hevc10.ts) the IRAP NAL begins at byte
-// 4,977 -- past the old bound. The scan then saw VPS/SPS/PPS but no IRAP,
-// reported keyFrame = false for the file's ONLY random access point, and every
-// seek including the open-time one was refused as ScanLimit. Not an HEVC bug
-// and not new: the same prologue in H.264 would have done the same thing.
+// An SDR SPS+PPS+SEI prefix is ~200 bytes, but an x265 HDR keyframe access
+// unit carries a registered user-data SEI plus mastering-display and
+// content-light SEIs AHEAD of the slice; in a measured PQ HEVC stream the IRAP
+// NAL begins at byte 4,977. A probe shorter than that sees VPS/SPS/PPS but no
+// IRAP, reports keyFrame = false for what may be the file's ONLY random access
+// point, and every seek including the open-time one fails as ScanLimit. The
+// same prologue in H.264 behaves the same way.
 //
-// 16 KiB is 3.3x the measured worst case. It is not a proof of sufficiency --
-// SEI length is not bounded by anything -- which is why AccessUnitScan now
-// reports `sliceInProbe` so a prologue that outgrows even this bound is
+// 16 KiB is 3.3x that measured case. It is not a proof of sufficiency -- SEI
+// length is not bounded by anything -- which is why AccessUnitScan reports
+// `sliceInProbe` so a prologue that outgrows even this bound is
 // refused BY NAME instead of being reported as an absent keyframe. Cost is
 // 16 KiB per StreamWalk; the walk already sits beside a 64 KiB ReadWindow.
 inline constexpr std::size_t kMpegTsAccessUnitProbeBytes{16U * 1024U};
@@ -104,7 +101,7 @@ inline constexpr std::size_t kMaximumMpegTsAccessUnitBytes{
 
 // An access unit is gathered by walking transport packets and taking the
 // payload of the ones matching its PID. At 184 payload bytes per packet the
-// 8 MiB cap needs at most 47,663 packets, and a 1:1 multiplex would put them
+// 8 MiB cap needs at least 45,591 packets, and a 1:1 multiplex would put them
 // 188 bytes apart while a heavily multiplexed one spreads them further. The
 // gather therefore refuses to walk more than this many packets for one access
 // unit, which bounds the scan even if the stream lies about its own framing.
@@ -184,7 +181,7 @@ static_assert(sizeof(MpegTsIndexEntry) * kMaximumMpegTsIndexEntries ==
 
 // Payload-free by construction. A transport-stream access unit is scattered
 // across many packets with headers between the fragments, so an inline range
-// array would need up to 47,663 entries; instead the sample names the packet
+// array would need 45,591 or more entries; instead the sample names the packet
 // span and the demuxer's gather walks it. Copying an access unit therefore
 // needs the sample and nothing else.
 struct MpegTsCompressedSample {
@@ -224,8 +221,8 @@ struct MpegTsGenerationPlan {
   MediaAudioGenerationWindow audioWindow{};
   std::uint64_t videoPacketOffset{0};
   std::uint64_t audioPacketOffset{0};
-  // The exact index entry the bisection landed on, for diagnostics and for the
-  // honest seek-accuracy accounting the report requires.
+  // The exact index entry the bisection landed on, for diagnostics and
+  // seek-accuracy accounting.
   std::int64_t landedTick{0};
   std::uint32_t refineScanPackets{0};
   MediaSeekMode mode{MediaSeekMode::Accurate};
@@ -253,7 +250,7 @@ class MpegTsCursor final {
   [[nodiscard]] MpegTsCursorReadResult
   readNext(CancellationToken cancellation = {}) noexcept;
 
-  // Diagnostics the report needs and the source publishes: unsignalled
+  // Diagnostics the source publishes: unsignalled
   // continuity gaps and resynchronizations observed on this cursor's walk.
   [[nodiscard]] std::uint32_t continuityGaps() const noexcept;
   [[nodiscard]] std::uint32_t resynchronizations() const noexcept;

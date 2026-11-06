@@ -480,8 +480,9 @@ std::optional<AacTickGridProjection> nearestAudioPacketForMatroskaTick(
   }
   reduceRational(&elapsedNumerator, &elapsedDenominator);
 
-  // ordinal = elapsedSeconds * sampleRate / 1024. Cross-cancel before the
-  // checked products so the one ties-to-even division sees the exact ratio.
+  // ordinal = elapsedSeconds * sampleRate / samplesPerAccessUnit. Cross-cancel
+  // before the checked products so the one ties-to-even division sees the
+  // exact ratio.
   WideUnsigned samplesPerAccessUnit = samplesPerAccessUnitValue;
   WideUnsigned rate = sampleRate;
   const WideUnsigned numeratorCancellation =

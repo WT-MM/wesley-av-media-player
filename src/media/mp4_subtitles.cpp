@@ -402,8 +402,8 @@ SubtitleTrackLoad loadMp4SubtitleTrack(const std::filesystem::path& path,
   }
 
   const auto toNanoseconds = [&timing](std::uint64_t ticks) -> std::int64_t {
-    // Exact rational scaling; the 1e9 numerator and a 32-bit timescale cannot
-    // overflow a signed 64-bit value for any duration a file can hold.
+    // Truncating integer scaling. ticks * 1e9 wraps once ticks exceeds ~1.8e10
+    // (about 2.3 days at a 90 kHz timescale), far past any subtitle track.
     return static_cast<std::int64_t>(ticks * 1'000'000'000ULL /
                                      timing.timescale);
   };

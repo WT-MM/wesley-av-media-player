@@ -18,10 +18,10 @@ namespace wam::media {
 // -- or silently mis-decodes -- is the failure this table exists to make
 // unrepresentable. Nothing in this project compiles with -Werror, so a fact
 // restated as an if-chain with a silent `default:` arm loses a newly appended
-// enumerator to build noise. The lookup below is an exhaustive switch with no
-// default and the table is covered by a static_assert on the enumerator count,
-// so an append-only MediaCodec addition is a compile diagnostic at exactly one
-// place.
+// enumerator to build noise. The lookup below is an index into one table
+// whose size and row order are covered by static_asserts against the
+// enumerator count, so an append-only MediaCodec addition is a compile
+// diagnostic at exactly one place.
 //
 // Every consumer of this table is on an open/admission path, never on a
 // per-sample or per-frame path, so a constexpr array read costs nothing that
@@ -84,10 +84,9 @@ struct MediaCodecFacts {
   // the output pixel format.
   //
   // This is a property of the DECODER's native output and nothing else. It is
-  // deliberately a separate field from carriesConfigurationRecord, which was
-  // true of MPEG-2 for an unrelated reason and selected the right codec only
-  // while MPEG-2 was the sole legacy decoder here: MPEG-4 Part 2 carries a
-  // record AND decodes to '2vuy'.
+  // deliberately a separate field from carriesConfigurationRecord: MPEG-2
+  // carries no record and pins, while MPEG-4 Part 2 carries a record AND
+  // decodes to '2vuy'.
   bool needsPinnedOutputPixelFormat{false};
 
   // True where a decompression session may REQUIRE hardware decode. False for
@@ -104,22 +103,21 @@ struct MediaCodecFacts {
   //
   // Deliberately NOT carriesConfigurationRecord, which is the same set minus
   // MPEG-2: MPEG-2 carries no out-of-band record and its sequence header is
-  // still parsed, in band, into a stated sample format. ProRes and Motion JPEG
-  // are the false rows, and their gate is stronger rather than weaker -- both
-  // pin their decode output format and have every delivered surface validated
+  // still parsed, in band, into a stated sample format. ProRes, ProRes 4444 and
+  // Motion JPEG are the false rows, and their gate is stronger rather than
+  // weaker -- all three pin their decode output format and have every delivered surface validated
   // against that pin, which is what a parsed record only ever predicted.
   bool statesCodedSampleFormat{false};
 
   // True where the scrub-preview lane can decode this codec. A preview decodes
   // from a key frame forward and shows the first frame it gets, so what it
   // needs is a codec whose VideoToolbox decoder is available unconditionally on
-  // this machine. AV1, VP9 and VP8 are the false video rows: the first two are
-  // gated on a decode block the preview lane has no fallback for, and VP8's
-  // software stage is not wired into that lane at all.
+  // this machine. AV1, VP9, VP8 and ProRes 4444 are the false video rows: AV1
+  // and VP9 are gated on a decode block the preview lane has no fallback for,
+  // and VP8's software stage is not wired into that lane at all.
   //
   // The preview SOURCE and the preview LANE both read this field. A codec one
-  // admits and the other refuses turns a scrub into a latched failure, which is
-  // exactly what a second whitelist produced for ProRes and Motion JPEG.
+  // admits and the other refuses turns a scrub into a latched failure.
   bool previewScrubAdmitted{false};
 
   // True where AVFoundation demuxes this codec into this pipeline in a shape
@@ -209,8 +207,8 @@ inline constexpr std::array<MediaCodecFacts, 25> kMediaCodecFacts{{
      MediaCodecConfigurationKind::None, nullptr, false, true, false, true, true,
      false, 0},
     // MPEG-4 Part 2's record is the esds the Matroska demuxer synthesizes
-    // around the CodecPrivate headers. Only Simple Profile is admitted, and
-    // that gate is upstream on the bitstream headers.
+    // around the CodecPrivate headers. Only Simple Profile is admitted for
+    // VideoToolbox, and that gate is upstream on the bitstream headers.
     {MediaCodec::Mpeg4Visual, MediaCodecKind::Video, 0x6D703476U /* 'mp4v' */,
      MediaCodecConfigurationKind::CodecPrivate, "esds", true, true, false, true,
      true, false, 0},

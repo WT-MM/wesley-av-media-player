@@ -116,7 +116,7 @@ class Cea608Decoder {
   Screen displayed_{};
   Screen nonDisplayed_{};
   Cea608Mode mode_{Cea608Mode::None};
-  std::size_t row_{kCaptionRows - 1};  // 0-based; row 15 is the bottom
+  std::size_t row_{kCaptionRows - 1};  // 0-based; index 14 is spec row 15, the bottom
   std::size_t column_{0};
   std::size_t rollUpRows_{2};
   bool underline_{false};

@@ -374,8 +374,7 @@ bool decodeRunLength(std::span<const std::uint8_t> rle, std::uint32_t width,
       }
     }
 
-    // Clip rather than refuse: an encoder that emits one pixel too many on a
-    // line must not cost the viewer the whole caption.
+    // Clip rather than refuse; see decodeRunLength in the header.
     const std::uint32_t remaining = width - std::min(col, width);
     const std::uint32_t writeCount = std::min(run, remaining);
     if (writeCount > 0) {
@@ -385,8 +384,8 @@ bool decodeRunLength(std::span<const std::uint8_t> rle, std::uint32_t width,
     }
     col += run;
     if (col >= width) {
-      // The spec requires an explicit end-of-line marker, but a line that fills
-      // exactly is also seen; wrapping here keeps both readable.
+      // Clamp at the right edge. The row advances only on the explicit
+      // end-of-line marker, so any further pixels on this line are clipped.
       col = width;
     }
   }
