@@ -10,9 +10,9 @@ endif()
 project(WAM VERSION 0.4.46 LANGUAGES CXX)
 
 if(APPLE)
-  # Apple-native targets below use Objective-C++ even when the dormant legacy
-  # video option is off. Enabling the language here keeps target availability
-  # independent of that older feature gate.
+  # Apple-native targets below use Objective-C++ even when
+  # WAM_ENABLE_MACOS_NATIVE_VIDEO is off. Enabling the language here keeps
+  # target availability independent of that feature gate.
   enable_language(OBJCXX)
 endif()
 
@@ -28,15 +28,12 @@ option(WAM_ENABLE_MACOS_NATIVE_VIDEO
 # so it needs a software decode stage. libvpx supplies it. Discovery is
 # best-effort and the option defaults to whatever discovery found: a machine
 # without libvpx configures cleanly and simply keeps routing VP8 to the
-# compatibility fallback, exactly as before this stage existed.
+# compatibility fallback.
 #
-# PACKAGING: this adds a real runtime dependency. Development builds link the
+# PACKAGING: this is a real runtime dependency. Development builds link the
 # Homebrew dylib by absolute path -- the same shape as the staged FFmpeg
-# binary -- but a shipped app needs libvpx added to the pinned, relocatable
-# closure in scripts/bundle_macos.zsh and to the release workflow's
-# checksum-pinned media archive. Until that lands, a bundled WAM.app must be
-# built with WAM_ENABLE_SOFTWARE_VP8=OFF or it will not launch off this
-# machine.
+# binary -- while a shipped app carries libvpx in the pinned, relocatable
+# media closure (scripts/build_media_closure.sh).
 find_package(PkgConfig QUIET)
 set(WAM_LIBVPX_FOUND OFF)
 if(APPLE AND PkgConfig_FOUND)
@@ -165,7 +162,7 @@ find_package(Qt6 6.10 REQUIRED COMPONENTS
 find_package(PkgConfig REQUIRED)
 if(APPLE)
   # The native-first macOS executable needs libmpv's declarations to compile
-  # its dormant compatibility client, but it must not acquire a load command
+  # its compatibility client, but it must not acquire a load command
   # for libmpv. The fallback runtime resolves the complete API table only
   # after the playback router explicitly selects fallback.
   pkg_check_modules(MPV_HEADERS REQUIRED mpv)
