@@ -565,6 +565,18 @@ Transition PlaybackRouter::advance(Tick now) noexcept {
   return ignored();
 }
 
+Transition PlaybackRouter::expirePhase(Tick now) noexcept {
+  if (!acceptTick(now)) {
+    return invalid();
+  }
+  if (!isBoundedNativePhase(state_)) {
+    return ignored();
+  }
+  deadlineArmed_ = true;
+  deadline_ = now;
+  return state_ == State::NativeStopping ? applied() : advance(now);
+}
+
 Transition PlaybackRouter::onNativePrepared(const native::Prepared &event,
                                             Tick now) noexcept {
   if (!acceptTick(now)) {

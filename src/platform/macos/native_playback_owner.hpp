@@ -146,10 +146,7 @@ protected:
   virtual void commitProved(const native_protocol::CommitReady&, bool) {}
   virtual void publishCommitReady(const native_protocol::CommitReady&) = 0;
 
-  static constexpr std::uint64_t kNativePhaseTickBudget = 1'000'000;
-  playback_router::PlaybackRouter router_{
-      playback_router::TimeoutPolicy{kNativePhaseTickBudget, kNativePhaseTickBudget,
-                                     kNativePhaseTickBudget, kNativePhaseTickBudget}};
+  playback_router::PlaybackRouter router_;
   std::optional<NativePreviewFrameTarget> nativePreviewTarget_;
   std::optional<native_protocol::PreviewFrame> nativePreview_;
   std::optional<NativeMediaSessionCommitTarget> nativeCommitTarget_;

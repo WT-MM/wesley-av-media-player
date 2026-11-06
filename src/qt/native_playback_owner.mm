@@ -161,36 +161,6 @@ NativePlaybackOwner::~NativePlaybackOwner() {
   retireNativeSession();
 }
 
-// Rationale for macos::NativePlaybackOwner's wall-clock phase watchdog
-// (refreshNativePhaseWatchdog in src/platform/macos/native_playback_owner.mm).
-//
-// NativePreparing, NativeStarting and NativeSeeking are the phases whose
-// completion depends entirely on a fact arriving from the session worker.
-// Every other phase either owns a physical transport or has already published
-// its route. The router models exactly this with TimeoutPolicy/advance(), but
-// its tick domain is an event counter, so a session that simply stops
-// publishing never advances a tick and never trips its own deadline: the app
-// then sits with a visible window, an idle worker, and no failure. Bound all
-// three phases against the wall clock instead, so an open, a start, or a seek
-// commit either progresses or is retired into compatibility playback with a
-// diagnostic retained in the log.
-//
-// NativeSeeking is bounded for the same reason as the other two and not one
-// step less: its CommitReady needs an audio-clock proof and a video-draw proof
-// covering the target, and any pipeline stall that withholds either one parks
-// the route with a frozen position, a live window, and complete silence.
-//
-// NativeStopping is bounded for a stronger reason still. Its Stopped proof
-// requires the tracked video output to observe its terminal invalidation, and
-// on the Qt path that observation is published only from a real render pass
-// (QtGlVideoNode acknowledges the invalidated generation while rendering or
-// while being destroyed). A window that has stopped compositing -- fully
-// occluded, on another Space, minimised, or moved offscreen -- therefore never
-// produces it, so a stop or a replacement open issued while parked would wait
-// forever behind the OLD frame with no failure, no timeout and no recovery.
-// The GUI-thread final flush has already invalidated the item by then, so
-// forcing retirement here cannot let a retired generation reach the screen.
-
 std::optional<native_protocol::SourceKey>
 NativePlaybackOwner::allocateSourceKey() {
   if (nextSourceKey_ == std::numeric_limits<std::uint64_t>::max()) {

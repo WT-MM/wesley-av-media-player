@@ -245,6 +245,12 @@ public:
   [[nodiscard]] Transition commitSeek(const CommitSeekRequest &request,
                                       Tick now) noexcept;
   [[nodiscard]] Transition advance(Tick now) noexcept;
+  // A host-owned wall-clock deadline for the current bounded native phase
+  // fired. Preparing, Starting and Seeking stop exactly as an expired tick
+  // deadline would; Stopping only records the expiry, which
+  // retireStoppingAfterSynchronousTeardown() then consumes once the host has
+  // destroyed the native graph.
+  [[nodiscard]] Transition expirePhase(Tick now) noexcept;
 
   [[nodiscard]] Transition onNativePrepared(const native::Prepared &event,
                                             Tick now) noexcept;

@@ -922,6 +922,36 @@ void timeoutStopsButNeverManufacturesQuiescence() {
       "only exact proof releases timed-out native ownership");
 }
 
+// A host's wall-clock deadline expires the bounded phase without a tick
+// budget: preparation stops, and a parked stop is released only through
+// retireStoppingAfterSynchronousTeardown().
+void hostDeadlineExpiresBoundedPhases() {
+  router::PlaybackRouter router;
+  action(router.open(nativeOpen(301), {1}), router::ActionKind::NativePrepare,
+         "untimed native prepare");
+  expect(router.advance({1000}).status == router::Status::Ignored,
+         "without a tick policy no tick expires the phase");
+  const auto stop = action(router.expirePhase({1001}),
+                           router::ActionKind::NativeStop,
+                           "host deadline stops preparation")
+                        .stop;
+  expect(router.retireStoppingAfterSynchronousTeardown({1002}).status ==
+             router::Status::Ignored,
+         "an unexpired stop keeps the exact proof authoritative");
+  expect(router.expirePhase({1003}).status == router::Status::Applied &&
+             !router.expirePhase({1003}).action.has_value() &&
+             router.snapshot().state == router::State::NativeStopping,
+         "host deadline on a stop only records the expiry");
+  expect(router.retireStoppingAfterSynchronousTeardown({1004}).status ==
+             router::Status::Applied,
+         "recorded expiry releases the stop after synchronous teardown");
+  expect(router.onNativeStopped({stop.stamp, stop.invalidationGeneration},
+                                {1005}).status == router::Status::Ignored,
+         "a late Stopped proof is inert after forced retirement");
+  expect(router.expirePhase({1006}).status == router::Status::Ignored,
+         "outside a bounded phase the host deadline is inert");
+}
+
 // NativeStopping is the phase whose completion needs the video output's
 // terminal invalidation proof, which the Qt path can only publish from a real
 // render pass. A window that has stopped compositing therefore parks the
@@ -1085,6 +1115,7 @@ int main() {
   exhaustionFailsWithoutWrapping();
   wrongLineageAndLatestIntent();
   timeoutStopsButNeverManufacturesQuiescence();
+  hostDeadlineExpiresBoundedPhases();
   stoppingPhaseIsWatchdogBoundedAndForceRetires();
   unboundedStopBudgetStillRequiresTheExactProof();
   naturalEndRetainsNativeUntilExactStop();
