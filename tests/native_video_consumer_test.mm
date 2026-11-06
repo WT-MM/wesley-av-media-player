@@ -955,13 +955,17 @@ void testHalfOpenFloorAndProvenLateDrop() {
            "preroll frame enters sink");
     expect(NativeVideoConsumerTestAccess::pumpScheduler(*fixture.consumer),
            "preroll frame is processed");
-    expect(fixture.consumer->facts().discardedPrerollFrames == 1,
-           "interval ending exactly at floor is dropped by half-open proof");
+    expect(fixture.consumer->facts().discardedPrerollFrames == 0,
+           "preroll waits for its successor to prove the floor is covered");
 
     std::vector<std::byte> coveringPixels;
     expect(NativeVideoConsumerTestAccess::injectDecodedFrame(
                *fixture.consumer, frame(7, 980, 40, &coveringPixels)),
            "covering frame enters sink");
+    expect(NativeVideoConsumerTestAccess::pumpScheduler(*fixture.consumer),
+           "successor retires the preroll frame");
+    expect(fixture.consumer->facts().discardedPrerollFrames == 1,
+           "interval ending exactly at floor is dropped by half-open proof");
     expect(NativeVideoConsumerTestAccess::pumpScheduler(*fixture.consumer),
            "covering frame is scheduled");
     expect(fixture.consumer->facts().submittedFrames == 1,

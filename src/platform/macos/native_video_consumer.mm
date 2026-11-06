@@ -553,6 +553,10 @@ class NativeVideoConsumer::Sink final : public DecodedFrameSink {
     return frame_.has_value() ? 1U : 0U;
   }
 
+  [[nodiscard]] const FrameLease* peek() const noexcept {
+    return frame_ ? &*frame_ : nullptr;
+  }
+
   [[nodiscard]] bool ended() const noexcept {
     return ended_ && !frame_;
   }
@@ -933,7 +937,7 @@ struct NativeVideoConsumer::Impl {
             "decoded video frame timing is invalid", error);
       return PumpStatus::Failed;
     }
-    const auto intervalEnd = media::addMediaTime(*presentation, *duration);
+    auto intervalEnd = media::addMediaTime(*presentation, *duration);
     if (!intervalEnd) {
       latch(NativeVideoConsumerFailure::InvalidFrameTiming,
             "decoded video frame interval is not exact", error);
@@ -948,9 +952,40 @@ struct NativeVideoConsumer::Impl {
       return PumpStatus::Failed;
     }
     if (*againstFloor != MediaTimeOrder::Greater) {
-      heldFrame.reset();
-      ++discardedPrerollFrames;
-      return PumpStatus::Progress;
+      // Matroska and FLV state millisecond timestamps beside a nominal frame
+      // duration, so stated intervals need not tile: 59.94 fps frames at 1000
+      // and 1017 ms lasting 16 ms leave [1016, 1017) to no frame. A floor in
+      // that gap still shows this frame; retiring it leaves nothing covering
+      // the floor, and a paused commit there never draws. So preroll retires
+      // only once its successor (decoders emit presentation order) starts at
+      // or before the floor; otherwise this frame is presented, extended to
+      // meet the successor. Idle lets pumpPresentation drain the decoder for
+      // that successor while this frame is held.
+      const FrameLease* next = sink.peek();
+      if (next == nullptr && !sink.ended() && !decoderEndOfStreamDone) {
+        return PumpStatus::Idle;
+      }
+      const auto nextStart =
+          next ? exactMediaTime(next->timing().presentationTime) : std::nullopt;
+      const auto nextAgainstFloor =
+          nextStart ? media::compareMediaTime(*nextStart,
+                                              timeline.presentationFloor)
+                    : std::nullopt;
+      const CMTime bridged =
+          nextAgainstFloor == MediaTimeOrder::Greater
+              ? CMTimeSubtract(next->timing().presentationTime,
+                               timing.presentationTime)
+              : kCMTimeInvalid;
+      const auto bridgedDuration = exactMediaTime(bridged);
+      intervalEnd = bridgedDuration
+                        ? media::addMediaTime(*presentation, *bridgedDuration)
+                        : std::nullopt;
+      if (!intervalEnd) {
+        heldFrame.reset();
+        ++discardedPrerollFrames;
+        return PumpStatus::Progress;
+      }
+      heldFrame->setDuration(bridged);
     }
     if (!refreshClock()) {
       return PumpStatus::Blocked;
@@ -1060,7 +1095,7 @@ struct NativeVideoConsumer::Impl {
     if (event == PumpStatus::Progress || scheduled == PumpStatus::Progress) {
       return PumpStatus::Progress;
     }
-    if (heldFrame) {
+    if (heldFrame && scheduled != PumpStatus::Idle) {
       return PumpStatus::Blocked;
     }
     // An outstanding accepted draw is deliberately not a decoder-drain gate.
@@ -2704,8 +2739,7 @@ bool NativeVideoConsumerTestAccess::installSchedulerGeneration(
 
 bool NativeVideoConsumerTestAccess::injectDecodedFrame(
     NativeVideoConsumer& consumer, FrameLease frame) noexcept {
-  if (consumer.impl_ == nullptr || consumer.impl_->heldFrame ||
-      consumer.impl_->sink.size() != 0) {
+  if (consumer.impl_ == nullptr || consumer.impl_->sink.size() != 0) {
     return false;
   }
   std::string ignored;

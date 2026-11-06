@@ -141,5 +141,16 @@ elif case == 'metrics':
     _, _, samples, _ = run(case, media, 'rate:0:4@1200,report@6000', ms=8000)
     check(any(s['clock_rate']==4 and not s['paused'] for s in samples), 'Metrics report actual configured rate')
     check(samples[-1]['paused'] is True, 'Metrics report paused at EOF')
+elif case == 'gapseek':
+    # Matroska stores 59.94 fps frames at whole milliseconds with a 16.683 ms
+    # DefaultDuration, so 4.921875 s falls after one frame's stated end and
+    # before the next frame's start. Both seeks must still commit and draw.
+    gapped = root / 'gapped.mkv'
+    subprocess.run([a.ffmpeg, '-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc2=size=320x180:rate=60000/1001',
+                    '-t', '8', '-an', '-c:v', 'libx264', '-preset', 'ultrafast', '-g', '240', str(gapped)], check=True)
+    log, _, _, _ = run(case, gapped, 'report@4000', WAM_TEST_SEEK_SCRIPT='4.921875@1.5,2.21875@3')
+    events = [json.loads(line).get('event') for line in log.splitlines() if line.startswith('{')]
+    check(events.count('commit_seek_submitted') == 2 and events.count('commit_frame_drawn') == 2,
+          'A seek between stated frame intervals must draw and release the next seek')
 else:
     raise AssertionError(case)
