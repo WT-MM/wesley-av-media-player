@@ -512,32 +512,6 @@ bool NativeLayerVideoOutput::applyPresentationGeometry(
                                                displaySize);
 }
 
-bool NativeLayerVideoOutput::startGeneration(std::uint64_t generation,
-                                             std::string* error) noexcept {
-  const std::shared_ptr<State> state = state_;
-  if (error != nullptr) {
-    error->clear();
-  }
-  std::lock_guard lock(state->mutex);
-  if (state->failureLatched || state->fatal || state->closed ||
-      state->tracked.closePending) {
-    assignErrorNoexcept(error, "layer video output is not accepting generations");
-    return false;
-  }
-  if (generation == 0 || generation <= state->acceptedGeneration ||
-      state->tracked.flushPending) {
-    assignErrorNoexcept(error, "layer video output generation is invalid");
-    return false;
-  }
-  state->acceptedGeneration = generation;
-  state->tracked.retiredGeneration = generation;
-  state->dropBaselineValid = false;
-  state->dropDebt = 0;
-  state->observedInvalidationGeneration.store(generation,
-                                              std::memory_order_release);
-  return true;
-}
-
 // ------------------------------------------------------------------ contract
 
 NativeTrackedVideoCapacity NativeLayerVideoOutput::capacity(
@@ -874,10 +848,12 @@ NativeTrackedVideoOutputFacts NativeLayerVideoOutput::facts() const noexcept {
   return result;
 }
 
+#if defined(WAM_NATIVE_LAYER_VIDEO_TESTING)
 NativeLayerVideoOutputHealth NativeLayerVideoOutput::health() const noexcept {
   const std::shared_ptr<State> state = state_;
   std::lock_guard lock(state->mutex);
   return state->healthCounters;
 }
+#endif
 
 }  // namespace wam::macos

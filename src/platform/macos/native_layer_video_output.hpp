@@ -122,13 +122,10 @@ class NativeLayerVideoOutput final : public NativeTrackedVideoOutput {
       media::MediaDisplaySize displaySize,
       int quarterTurnDegrees) noexcept override;
 
-  // Activates the first generation directly. The tracked contract requires an
-  // accepted generation before any submit; production arms through
-  // flushProgress(0, generation), and only the contract tests call this.
-  [[nodiscard]] bool startGeneration(std::uint64_t generation,
-                                     std::string* error = nullptr) noexcept;
-
+#if defined(WAM_NATIVE_LAYER_VIDEO_TESTING)
+  // The audit counters, read only by the contract tests.
   [[nodiscard]] NativeLayerVideoOutputHealth health() const noexcept;
+#endif
 
  private:
   struct State;

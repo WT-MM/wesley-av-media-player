@@ -1516,6 +1516,8 @@ if(BUILD_TESTING)
         src/platform/macos/native_layer_host_view.mm)
       target_include_directories(
         wam_native_layer_video_output_test PRIVATE src)
+      target_compile_definitions(wam_native_layer_video_output_test PRIVATE
+        WAM_NATIVE_LAYER_VIDEO_TESTING=1)
       target_link_libraries(wam_native_layer_video_output_test PRIVATE
         wam_native_core
         wam_macos_native_video_core

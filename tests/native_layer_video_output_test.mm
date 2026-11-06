@@ -212,6 +212,14 @@ std::shared_ptr<NativeLayerVideoOutput> createDetached(
   return output;
 }
 
+// Arms the first generation the way production does: a flush from 0.
+void armFirstGeneration(NativeLayerVideoOutput& output) {
+  WAM_CHECK(spinUntil([&] {
+    return output.flushProgress(0, 1) ==
+           NativeTrackedVideoOutputProgress::Done;
+  }));
+}
+
 // Terminal teardown shared by every case, so no test can leave the
 // process-global presentation flag or the surface budget dirty for the next
 // one. finalGeneration must be strictly newer than the accepted generation.
@@ -258,7 +266,7 @@ void verifyDetachedConstructionAndActivation() {
   WAM_CHECK(initialHealth.metricsLoads == 0);
   WAM_CHECK(initialHealth.peakRetainedLeases == 0);
 
-  // Zero is never a generation, and nothing is accepted before startGeneration.
+  // Zero is never a generation, and nothing is accepted before the first arm.
   WAM_CHECK(output->capacity(0) ==
             NativeTrackedVideoCapacity::StaleGeneration);
   WAM_CHECK(output->capacity(1) ==
@@ -273,11 +281,14 @@ void verifyDetachedConstructionAndActivation() {
   }
 
   std::string error;
-  WAM_CHECK(!output->startGeneration(0, &error));
-  WAM_CHECK(!error.empty());
-  WAM_CHECK_DETAIL(output->startGeneration(1, &error), error);
-  // Repeating a generation is a controller defect, not an idempotent no-op.
-  WAM_CHECK(!output->startGeneration(1, &error));
+  WAM_CHECK(output->flushProgress(0, 0) ==
+            NativeTrackedVideoOutputProgress::Failed);
+  armFirstGeneration(*output);
+  // The arm is repeatable for its exact pair only.
+  WAM_CHECK(output->flushProgress(0, 1) ==
+            NativeTrackedVideoOutputProgress::Done);
+  WAM_CHECK(output->flushProgress(0, 2) ==
+            NativeTrackedVideoOutputProgress::StaleGeneration);
   WAM_CHECK(output->capacity(1) == NativeTrackedVideoCapacity::Available);
   WAM_CHECK(output->capacity(2) ==
             NativeTrackedVideoCapacity::StaleGeneration);
@@ -296,7 +307,7 @@ void verifyCapacityOneAdmissionAndExactTimingEcho() {
   std::atomic<std::uint64_t> wakes{0};
   auto output = createDetached(&wakes);
   std::string error;
-  WAM_CHECK_DETAIL(output->startGeneration(1, &error), error);
+  armFirstGeneration(*output);
   WAM_CHECK(output->capacity(1) == NativeTrackedVideoCapacity::Available);
 
   const FrameTiming firstTiming = makeTiming(1, 0);
@@ -401,7 +412,7 @@ void verifySequenceRegressionIsFatalAndStillCloses() {
   std::atomic<std::uint64_t> wakes{0};
   auto output = createDetached(&wakes);
   std::string error;
-  WAM_CHECK_DETAIL(output->startGeneration(1, &error), error);
+  armFirstGeneration(*output);
 
   {
     auto first = makeFrame(1, 0, 150);
@@ -431,7 +442,6 @@ void verifySequenceRegressionIsFatalAndStillCloses() {
   }
   WAM_CHECK(output->flushProgress(1, 2) ==
             NativeTrackedVideoOutputProgress::Failed);
-  WAM_CHECK(!output->startGeneration(2, &error));
 
   // Terminal teardown is the one lifecycle operation a latched failure must not
   // block; otherwise a failed route could never be released.
@@ -447,7 +457,7 @@ void verifyFlushProgressRetiresGeneration() {
   std::atomic<std::uint64_t> wakes{0};
   auto output = createDetached(&wakes);
   std::string error;
-  WAM_CHECK_DETAIL(output->startGeneration(1, &error), error);
+  armFirstGeneration(*output);
 
   {
     auto admitted = makeFrame(1, 0, 190);
@@ -524,7 +534,7 @@ void verifyFlushProgressRetiresGeneration() {
   // are released rather than waiting for a successor enqueue.
   WAM_CHECK(flushed.retainedFrames == 0);
   WAM_CHECK(!flushed.fatal);
-  WAM_CHECK(output->health().flushes == 1);
+  WAM_CHECK(output->health().flushes == 2);
   WAM_CHECK(wakes.load(std::memory_order_acquire) > wakesBeforeFlush);
 
   // Done is repeatable for the exact pair, and only for that pair.
@@ -572,7 +582,7 @@ void verifyCloseProgressIsTerminal() {
   std::atomic<std::uint64_t> wakes{0};
   auto output = createDetached(&wakes);
   std::string error;
-  WAM_CHECK_DETAIL(output->startGeneration(1, &error), error);
+  armFirstGeneration(*output);
 
   // Zero is never a final generation, and a final generation must be strictly
   // newer than the accepted one.
@@ -610,7 +620,8 @@ void verifyCloseProgressIsTerminal() {
   }
   WAM_CHECK(output->flushProgress(1, 2) ==
             NativeTrackedVideoOutputProgress::Failed);
-  WAM_CHECK(!output->startGeneration(3, &error));
+  WAM_CHECK(output->flushProgress(2, 3) ==
+            NativeTrackedVideoOutputProgress::Failed);
   // Close is repeatable for one exact final generation, and only that one.
   WAM_CHECK(output->closeProgress(3) ==
             NativeTrackedVideoOutputProgress::StaleGeneration);
@@ -703,7 +714,7 @@ void verifyCloseSupersedesPendingFlush() {
   std::atomic<std::uint64_t> wakes{0};
   auto output = createDetached(&wakes);
   std::string error;
-  WAM_CHECK_DETAIL(output->startGeneration(1, &error), error);
+  armFirstGeneration(*output);
 
   {
     auto admitted = makeFrame(1, 0, 210);
@@ -751,7 +762,7 @@ void verifyRetainedLeaseCeilingAndRelease() {
   std::atomic<std::uint64_t> wakes{0};
   auto output = createDetached(&wakes);
   std::string error;
-  WAM_CHECK_DETAIL(output->startGeneration(1, &error), error);
+  armFirstGeneration(*output);
 
   std::uint64_t previousEventSequence = 0;
   constexpr std::uint64_t kFrames = 5;
@@ -843,7 +854,7 @@ void verifyStraddlingFrameIsPresentedAndEchoedExactly() {
   std::atomic<std::uint64_t> wakes{0};
   auto output = createDetached(&wakes);
   std::string error;
-  WAM_CHECK_DETAIL(output->startGeneration(1, &error), error);
+  armFirstGeneration(*output);
   WAM_CHECK(output->capacity(1) == NativeTrackedVideoCapacity::Available);
 
   // Ends exactly at the origin: never visible, still refused.
