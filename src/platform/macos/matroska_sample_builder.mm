@@ -203,15 +203,11 @@ CMVideoFormatDescriptionRef createMatroskaVideoFormatDescription(
           kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms, atoms);
       // The colour description. Without these three keys VideoToolbox has
       // nothing to attach to the decoded surface, and a PQ stream renders as
-      // if it were SDR -- washed out -- which is the failure the MP4 HDR work
-      // measured at 98/255 on the colour bars and is why Matroska HDR was
-      // deferred rather than admitted with the atom alone.
+      // if it were SDR -- washed out.
       //
       // Each key is set only when the fact is MODELLED and not Unknown.
-      // Omitting a key is how "untagged" is spelled to CoreMedia, and an
-      // untagged surface is what the SDR corpus has always presented from --
-      // so an SDR Matroska file gets a byte-identical description to the one
-      // it got before this change.
+      // Omitting a key is how "untagged" is spelled to CoreMedia, so an
+      // untagged Matroska file gets a description with no colour keys at all.
       applyColorExtensions(mutableExtensions, track.video->colorPrimaries,
                            track.video->transferFunction,
                            track.video->matrixCoefficients);
@@ -283,14 +279,11 @@ MatroskaSampleBuildStatus buildMatroskaCompressedSampleBuffer(
   }
 
   // The CoreMedia block is allocated first and the demuxer writes payload
-  // bytes straight into it. Staging through a reusable member vector and then
-  // CMBlockBufferReplaceDataBytes moved every byte TWICE -- a copy this
-  // project's own performance document had recorded as a single copy, which is
-  // how a duplicated memcpy survives a careful review. The demuxer already
+  // bytes straight into it, so each byte is copied exactly once. The demuxer
   // takes an exactly sized destination span and allocates nothing, so the
-  // block's own memory is a legal destination and the scratch vector is gone.
-  // kCMBlockBufferAssureMemoryNowFlag makes the backing store real before the
-  // data pointer is taken.
+  // block's own memory is a legal destination; do not stage through a scratch
+  // vector. kCMBlockBufferAssureMemoryNowFlag makes the backing store real
+  // before the data pointer is taken.
   CMBlockBufferRef block = nullptr;
   OSStatus status = CMBlockBufferCreateWithMemoryBlock(
       kCFAllocatorDefault, nullptr, bytes, kCFAllocatorDefault, nullptr, 0,

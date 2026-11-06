@@ -165,9 +165,8 @@ constexpr std::size_t kMaximumSyncCursorSteps{100'000};
       CFGetTypeID(atomsValue) != CFDictionaryGetTypeID()) {
     return nullptr;
   }
-  // The atom NAME is the shared codec fact rather than an H.264-or-HEVC
-  // ternary: such a ternary reads an hvcC for every codec that is not H.264,
-  // which borrows the wrong atom for any codec admitted beside those two.
+  // The atom NAME is the shared codec fact, so every admitted codec reads its
+  // own atom rather than an assumed avcC/hvcC.
   const CFStringRef key = coreMediaConfigurationAtomName(codec);
   if (key == nullptr) {
     return nullptr;
@@ -495,12 +494,9 @@ class ProductionAssetContext final {
           media::compareMediaTime(*exactMediaTime(range.duration),
                                   expected->duration) !=
               MediaTimeOrder::Equal ||
-          // Not "is identity" any more, but exactly as strict: the track's
-          // transform must still state the SAME quarter turn the descriptor
-          // recorded at main admission. Demanding identity here would have
-          // failed every rotated file the source now admits, and failed it
-          // with a message about metadata changing, which would have been
-          // untrue -- nothing changed; the check was.
+          // The track's transform must still state the SAME quarter turn the
+          // descriptor recorded at main admission. Identity is not required:
+          // the source admits rotated files.
           !previewTransformMatchesDescriptor(transform, *expected) ||
           !formatMatchesTrack(
               (__bridge CMFormatDescriptionRef)formats.firstObject,
@@ -599,16 +595,14 @@ class ProductionPreviewGeneration final
       // MEDIA timeline, while the preview target, the asset duration and the
       // reader time range are all stated in the ASSET (movie) timeline. Every
       // composition-delayed H.264/HEVC track separates the two by an edit list
-      // whose shift is exactly the reorder offset the encoder introduced --
-      // 1024/12288 s (two frames) on the fixtures, 1024/15360 s on the 30 fps
-      // corpus -- so the media timeline's earliest presentation is NOT zero.
-      // Walking the cursor against an unmapped asset-time target therefore
-      // finds nothing at all for any target below that shift (the whole reason
-      // a scrub near t=0 failed), and for every other target it returned a
-      // MEDIA time that the reader range then consumed as an ASSET time, so
-      // each preview read started two frames late. Map in, walk, map back --
-      // the exact discipline `AVFoundationGeneration::syncStart()` already
-      // applies on the main route.
+      // whose shift is exactly the reorder offset the encoder introduced
+      // (typically two frames), so the media timeline's earliest presentation
+      // is NOT zero. Walking the cursor against an unmapped asset-time target
+      // finds nothing for any target below that shift, and for every other
+      // target returns a MEDIA time the reader range would consume as an ASSET
+      // time, starting the read late. Map in, walk, map back -- the same
+      // discipline `AVFoundationGeneration::syncStart()` applies on the main
+      // route.
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
       const CMTime mediaTarget =

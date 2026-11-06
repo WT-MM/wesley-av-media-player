@@ -23,10 +23,11 @@ namespace wam::macos {
 // CoreMedia sample buffer, a prompt cancel that may run on another thread, and
 // facts a caller can compare against its own accounting.
 //
-// The two implementations are `AVFoundationPreviewSource` (an AVAssetReader per
-// epoch, preceded by a full-sync back-walk) and `MatroskaPreviewSource` (a
-// cue-aligned demuxer cursor per epoch, which needs no back-walk because a
-// planned generation already begins on a random-access point).
+// The implementations are `AVFoundationPreviewSource` (an AVAssetReader per
+// epoch, preceded by a full-sync back-walk), `MatroskaPreviewSource` and
+// `MpegTsPreviewSource` (a demuxer cursor per epoch, which needs no back-walk
+// because a planned generation already begins on a random-access point), and
+// the libavformat preview (`createLibavformatPreviewSource`).
 
 // Immutable input shared by every short-lived preview reader. The descriptor
 // is the one already admitted by the main native source. Preview never selects
@@ -88,9 +89,9 @@ using NativePreviewReadResult =
 // that cache and create only the per-epoch streaming object.
 //
 // "Reader" is the backend's unit of streaming state: one AVAssetReader on the
-// AVFoundation route, one MatroskaCursor on the Matroska route. The Matroska
-// asset context already counts exactly that pair of facts against cursors
-// (`matroska_asset_context.hpp`), so the two backends answer the same question.
+// AVFoundation route, one demuxer cursor on the custom-container routes. The
+// Matroska asset context counts exactly that pair of facts against cursors
+// (`matroska_asset_context.hpp`), so every backend answers the same question.
 struct NativePreviewBackendFacts {
   std::uint64_t assetLoadAttempts{0};
   std::uint64_t assetLoadsCompleted{0};

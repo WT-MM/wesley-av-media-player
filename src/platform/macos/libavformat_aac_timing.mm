@@ -85,7 +85,8 @@ std::optional<LibavformatAacTiming> proveLibavformatAacTiming(
       const auto duration = media::exactAudioFrameIndex(
           {mapping.target.duration.value,mapping.target.duration.timescale},48000);
       // CoreMedia's extra trim beyond the segment's 2112-frame media start
-      // shortens its output interval by the same amount (64 for this fMOV).
+      // shortens its output interval by the same amount (64 frames when the demux
+      // origin is -64, otherwise zero).
       const auto extraTrim = expectedTrim - 2112;
       const auto block = CMSampleBufferGetDataBuffer(first);
       const auto size = CMSampleBufferGetSampleSize(first,0);

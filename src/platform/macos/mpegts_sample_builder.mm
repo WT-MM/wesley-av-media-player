@@ -109,9 +109,8 @@ CMVideoFormatDescriptionRef createMpegTsVideoFormatDescription(
       // Matroska Colour element -- so the SPS VUI is the only statement there
       // is, and it reaches CoreMedia only through these three keys. Without
       // them VideoToolbox has nothing to attach to the decoded surface and a
-      // PQ stream renders as if it were SDR: the washout the MP4 HDR work
-      // measured at 98/255 on the colour bars. That is exactly the failure
-      // `VideoCodecConfigurationLimits::admitHighDynamicRangeColor` guards,
+      // PQ stream renders washed out, as if it were SDR. That is exactly the
+      // failure `VideoCodecConfigurationLimits::admitHighDynamicRangeColor` guards,
       // and mpegts_demuxer.cpp turns that flag on BECAUSE of this block.
       //
       // Each key is written only when the fact is MODELLED and not Unknown.
@@ -168,7 +167,7 @@ bool layOutMpegTsAudioFrames(
     std::uint32_t decoded = 0;
     // Where this access unit begins inside `rest`, as a byte and a bit. Every
     // byte-aligned framing leaves the shift at zero and the offset at its
-    // header length, which is exactly what the previous code derived.
+    // header length.
     std::uint32_t payloadOffset = 0;
     std::uint32_t payloadBitShift = 0;
     std::uint32_t payloadBytes = 0;
@@ -230,9 +229,7 @@ bool layOutMpegTsAudioFrames(
       frameBytes = frame.frameBytes;
       headerBytes = 0;
       rate = frame.sampleRate;
-      // `channels` already includes LFE; adding it again double-counted the
-      // subwoofer on any stream that had one, which no stream on this route
-      // ever did because >2 channels was refused at admission.
+      // `channels` already includes LFE; do not add it again.
       frameChannels = frame.channels;
       decoded = frame.samplesPerFrame;
     } else if (codec == MediaCodec::Mp3) {
@@ -362,16 +359,15 @@ MpegTsSampleBuildStatus buildMpegTsCompressedSampleBuffer(
 
   if (inputs.video && (inputs.codec == MediaCodec::H264 ||
                        inputs.codec == MediaCodec::Hevc)) {
-    // The one seam that costs an extra copy, recorded honestly. Annex-B to
-    // AVCC cannot know its output size until the input is assembled -- a
-    // three-byte start code grows by one byte and a four-byte one does not --
-    // so the gather lands in a reusable workspace and the repack writes
-    // straight into the CoreMedia block. That is two payload copies per video
-    // sample against Matroska's one. The available optimization (when every
-    // start code is four bytes the sizes are equal and the gather could go
-    // straight into the block) is deliberately NOT taken here because it is
-    // unmeasured, and this project's own performance record says page
-    // residency moves this number 20x while staging shape moves it under 2x.
+    // The one seam that costs an extra copy. Annex-B to AVCC cannot know its
+    // output size until the input is assembled -- a three-byte start code
+    // grows by one byte and a four-byte one does not -- so the gather lands in
+    // a reusable workspace and the repack writes straight into the CoreMedia
+    // block. That is two payload copies per video sample against Matroska's
+    // one. The available optimization (when every start code is four bytes the
+    // sizes are equal and the gather could go straight into the block) is
+    // deliberately NOT taken because it is unmeasured: page residency, not
+    // staging shape, dominates this cost.
     if (inputs.workspace == nullptr) {
       assignError(error, "mpeg-ts video repack has no workspace");
       return MpegTsSampleBuildStatus::Failed;

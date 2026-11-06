@@ -164,12 +164,11 @@ inline constexpr std::array<AdmittedAudioFormatTag, 14> kAdmittedAudioFormatTags
     // stream's stream types 0x03/0x04 carry Layer I, II or III and broadcast
     // MPEG-2 is overwhelmingly Layer II. Layer II is admitted because it was
     // measured, not assumed: '.mp2' is among kAudioFormatProperty_DecodeFormatIDs
-    // on this platform, and a real 115-frame MP2 elementary stream decodes to
-    // exactly 115 x 1152 = 132,480 PCM frames through an AudioConverter created
-    // with mFormatID = kAudioFormatMPEGLayer2 and no magic cookie. Layer I is
+    // on this platform, and an MP2 elementary stream decodes to exactly 1152
+    // PCM frames per audio frame through an AudioConverter created with
+    // mFormatID = kAudioFormatMPEGLayer2 and no magic cookie. Layer I is
     // deliberately NOT admitted: the format ID is listed but no fixture of this
-    // project exercises it, and an unmeasured admission is exactly the shape of
-    // bug this audio path has been bitten by before.
+    // project exercises it, and an unmeasured admission is refused.
     {media::MediaCodec::Mp3, kAudioFormatMPEGLayer3},
     {media::MediaCodec::Mp3, kAudioFormatMPEGLayer2},
     {media::MediaCodec::Opus, kAudioFormatOpus},
