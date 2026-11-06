@@ -3,7 +3,7 @@
 #include "media/matroska_apple_audio.hpp"
 #include "media/media_codec_facts.hpp"
 #include "media/mjpeg_admission.hpp"
-#include "media/mp3_lame_gapless.hpp"
+#include "media/codec/mpeg_audio.hpp"
 #include <array>
 #include <cstdio>
 
@@ -81,21 +81,21 @@ int main() {
   mp3[54] = std::byte{0x24};
   mp3[55] = std::byte{0x04};
   mp3[56] = std::byte{0x38};
-  const auto gapless = inspectMp3LsfGapless(mp3);
+  const auto gapless = codec::inspectMp3LsfGapless(mp3);
   check(gapless && gapless->sampleRate == 22050 &&
             gapless->encoderDelay == 576 && gapless->retainedFrames == 88200,
         "LSF LAME frame count excludes encoder delay and padding");
   for (std::size_t n = 0; n < mp3.size(); ++n)
-    check(!inspectMp3LsfGapless(std::span(mp3).first(n)),
+    check(!codec::inspectMp3LsfGapless(std::span(mp3).first(n)),
           "short MPEG frame cannot prove a LAME tag");
   mp3[1] = std::byte{0xfb};
-  check(!inspectMp3LsfGapless(mp3), "MPEG-1 remains container-owned");
+  check(!codec::inspectMp3LsfGapless(mp3), "MPEG-1 remains container-owned");
   mp3[1] = std::byte{0xf3};
   mp3[28] = std::byte{0};
-  check(!inspectMp3LsfGapless(mp3), "Xing frame count must be present");
+  check(!codec::inspectMp3LsfGapless(mp3), "Xing frame count must be present");
   mp3[28] = std::byte{1};
   mp3[32] = std::byte{1};
-  check(!inspectMp3LsfGapless(mp3), "padding cannot consume the stream");
+  check(!codec::inspectMp3LsfGapless(mp3), "padding cannot consume the stream");
 
   const auto pcm = matroska::appleAudioPacketFormat("A_PCM/INT/LIT", {}, 48000, 2, 24);
   check(pcm.codec == MediaCodec::Pcm && pcm.format.bytesPerFrame == 6 &&

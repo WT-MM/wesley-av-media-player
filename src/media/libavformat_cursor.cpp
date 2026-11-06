@@ -4,6 +4,7 @@
 #include "media/avcodec/closure.hpp"
 #include "media/avcodec/runtime.hpp"
 #include "media/avcodec_time.hpp"
+#include "media/media_container_probe.hpp"
 extern "C" {
 #include <libavformat/avformat.h>
 }
@@ -15,7 +16,6 @@ extern "C" {
 #include <dlfcn.h>
 #include <fcntl.h>
 #include <mach-o/dyld.h>
-#include <sys/stat.h>
 #include <unistd.h>
 
 namespace wam::media {
@@ -46,8 +46,8 @@ struct LibavformatCursor::Impl {
   AVIOContext *io{};
   AVPacket *packet{};
   int fd{-1};
-  struct stat identity{};
-  Cancellation cancellation{};
+  FileIdentity identity{};
+  CancellationToken cancellation{};
   std::int64_t position{}, extent{};
   std::uint64_t ioBudget{};
   bool ioLimit{}, changed{}, fragmented{};
@@ -77,12 +77,7 @@ struct LibavformatCursor::Impl {
     return static_cast<Impl *>(opaque)->cancelled();
   }
   bool sameFile() noexcept {
-    struct stat now{};
-    changed = ::fstat(fd, &now) || now.st_dev != identity.st_dev ||
-              now.st_ino != identity.st_ino ||
-              now.st_size != identity.st_size ||
-              now.st_mtimespec.tv_sec != identity.st_mtimespec.tv_sec ||
-              now.st_mtimespec.tv_nsec != identity.st_mtimespec.tv_nsec;
+    changed = FileIdentity::of(fd) != identity;
     return !changed;
   }
   static int readBytes(void *opaque, std::uint8_t *buffer, int count) {
@@ -192,26 +187,23 @@ struct LibavformatCursor::Impl {
     }
     return true;
   }
-  static bool needsRouting(const std::filesystem::path& path, Cancellation cancellation) {
+  static bool needsRouting(const std::filesystem::path& path, CancellationToken cancellation) {
   Impl probe;
   probe.cancellation = cancellation;
   probe.fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NONBLOCK);
-  if (probe.fd < 0 || ::fstat(probe.fd, &probe.identity) ||
-      !S_ISREG(probe.identity.st_mode))
+  const auto identity = probe.fd < 0 ? std::nullopt : FileIdentity::of(probe.fd);
+  if (!identity)
     return false;
-  probe.extent = probe.identity.st_size;
+  probe.identity = *identity;
+  probe.extent = std::int64_t(identity->size);
   std::string error;
-  return probe.inspectTail(error) && (probe.extent < probe.identity.st_size || probe.fragmented);
+  return probe.inspectTail(error) && (probe.extent < std::int64_t(identity->size) || probe.fragmented);
   }
-  bool inspectTail(std::string &error) {
+  bool inspectTail(std::string &error, MediaRefusalClass *refusal = nullptr) {
     std::array<unsigned char, 16> box{};
     if (::pread(fd, box.data(), box.size(), 0) < 8)
       return true;
-    if (std::memcmp(box.data() + 4, "ftyp", 4) &&
-        std::memcmp(box.data() + 4, "moov", 4) &&
-        std::memcmp(box.data() + 4, "mdat", 4) &&
-        std::memcmp(box.data() + 4, "free", 4) &&
-        std::memcmp(box.data() + 4, "moof", 4))
+    if (!isoBmffTopLevelBoxAt(std::as_bytes(std::span(box)), 4))
       return true;
     bool init = false;
     std::int64_t offset = 0, fragment = -1;
@@ -264,6 +256,8 @@ struct LibavformatCursor::Impl {
     if (!init) {
       error = "this recording is incomplete: its initialization metadata is "
               "missing";
+      if (refusal)
+        *refusal = MediaRefusalClass::MissingInitialization;
       return false;
     }
     return true;
@@ -275,25 +269,26 @@ std::string LibavformatCursor::runtimeFailure() {
   runtime.load(error);
   return error;
 }
-bool LibavformatCursor::requiresExactDemuxTimeline(const std::filesystem::path& path, Cancellation cancellation) {
+bool LibavformatCursor::requiresExactDemuxTimeline(const std::filesystem::path& path, CancellationToken cancellation) {
   return Impl::needsRouting(path,cancellation);
 }
 LibavformatCursor::LibavformatCursor() = default;
 LibavformatCursor::~LibavformatCursor() = default;
 bool LibavformatCursor::open(const std::filesystem::path &path,
                              const std::atomic<bool> &cancellation,
-                             std::string &error) {
+                             std::string &error, MediaRefusalClass *refusal) {
   return open(
       path,
-      Cancellation{&cancellation,
+      CancellationToken{&cancellation,
                    [](const void *value) noexcept {
                      return static_cast<const std::atomic<bool> *>(value)->load(
                          std::memory_order_acquire);
                    }},
-      error);
+      error, refusal);
 }
 bool LibavformatCursor::open(const std::filesystem::path &path,
-                             Cancellation cancellation, std::string &error) {
+                             CancellationToken cancellation, std::string &error,
+                             MediaRefusalClass *refusal) {
   impl_ = std::make_unique<Impl>();
   auto &s = *impl_;
   s.cancellation = cancellation;
@@ -302,12 +297,14 @@ bool LibavformatCursor::open(const std::filesystem::path &path,
     return false;
   }
   s.fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NONBLOCK);
-  if (s.fd < 0 || ::fstat(s.fd, &s.identity) || !S_ISREG(s.identity.st_mode)) {
+  const auto identity = s.fd < 0 ? std::nullopt : FileIdentity::of(s.fd);
+  if (!identity) {
     error = "LibavformatLocalFileRequired";
     return false;
   }
-  s.extent = s.identity.st_size;
-  if (!s.inspectTail(error) || !s.load(error))
+  s.identity = *identity;
+  s.extent = std::int64_t(identity->size);
+  if (!s.inspectTail(error, refusal) || !s.load(error))
     return false;
   auto *buffer =
       static_cast<unsigned char *>(avcodec::api().av_mallocz(kIoBytes));
@@ -466,12 +463,8 @@ bool LibavformatCursor::seek(unsigned stream, MediaTime target,
   }
   return true;
 }
-LibavformatCursor::Identity LibavformatCursor::identity() const noexcept {
-  if (!impl_)
-    return {};
-  const auto &info = impl_->identity;
-  return {std::uint64_t(info.st_dev), info.st_ino, std::uint64_t(info.st_size),
-          info.st_mtimespec.tv_sec, info.st_mtimespec.tv_nsec};
+FileIdentity LibavformatCursor::identity() const noexcept {
+  return impl_ ? impl_->identity : FileIdentity{};
 }
 unsigned LibavformatCursor::streamCount() const noexcept {
   return impl_ && impl_->format ? impl_->format->nb_streams : 0;

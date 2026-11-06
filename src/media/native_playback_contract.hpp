@@ -453,18 +453,22 @@ struct Ended {
 // published or retained native state under reservedGeneration. After either
 // publication, use another reason and complete exact Stop; Preparation must
 // not bypass that retirement.
+// Values 6 and 7 are retired; ordinals never move.
+#define WAM_FAILURE_REASONS(X) \
+  X(Preparation, 1)            \
+  X(Startup, 2)                \
+  X(Clock, 3)                  \
+  X(Decode, 4)                 \
+  X(AudioOutput, 5)            \
+  X(CommitSeek, 8)             \
+  X(Stop, 9)                   \
+  X(Protocol, 10)
+
+#define WAM_FAILURE_REASON_ENUMERATOR(name, value) name = value,
 enum class FailureReason : std::uint8_t {
-  Preparation = 1,
-  Startup = 2,
-  Clock = 3,
-  Decode = 4,
-  AudioOutput = 5,
-  VideoOutput = 6,
-  Preview = 7,
-  CommitSeek = 8,
-  Stop = 9,
-  Protocol = 10,
+  WAM_FAILURE_REASONS(WAM_FAILURE_REASON_ENUMERATOR)
 };
+#undef WAM_FAILURE_REASON_ENUMERATOR
 
 struct Failed {
   Stamp stamp;
@@ -620,22 +624,28 @@ frameCoversPosition(const VideoDrawProof &frame,
          validPosition(value.finalPositionSeconds);
 }
 
+#define WAM_FAILURE_REASON_CASE(name, value) case FailureReason::name:
 [[nodiscard]] constexpr bool valid(FailureReason value) noexcept {
   switch (value) {
-  case FailureReason::Preparation:
-  case FailureReason::Startup:
-  case FailureReason::Clock:
-  case FailureReason::Decode:
-  case FailureReason::AudioOutput:
-  case FailureReason::VideoOutput:
-  case FailureReason::Preview:
-  case FailureReason::CommitSeek:
-  case FailureReason::Stop:
-  case FailureReason::Protocol:
+  WAM_FAILURE_REASONS(WAM_FAILURE_REASON_CASE)
     return true;
   }
   return false;
 }
+#undef WAM_FAILURE_REASON_CASE
+
+#define WAM_FAILURE_REASON_NAME(name, value) \
+  case FailureReason::name:                  \
+    return #name;
+[[nodiscard]] constexpr const char* failureReasonName(
+    FailureReason reason) noexcept {
+  switch (reason) {
+  WAM_FAILURE_REASONS(WAM_FAILURE_REASON_NAME)
+  }
+  return "Unknown";
+}
+#undef WAM_FAILURE_REASON_NAME
+#undef WAM_FAILURE_REASONS
 
 [[nodiscard]] constexpr bool valid(const Failed &value) noexcept {
   // Only failure of the terminal Stop command may echo the reserved maximum

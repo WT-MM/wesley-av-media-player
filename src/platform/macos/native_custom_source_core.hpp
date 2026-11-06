@@ -33,8 +33,7 @@ namespace wam::macos {
 //                                        cursor may be admitted (audio-only)
 //                 AssetContext, PreparedAsset, Cursor, CompressedSample,
 //                 CursorReadResult, CursorEnd, CursorCancelled, CursorFailure,
-//                 DemuxStatus, DemuxError, Plan, PrepareOutcome, PlanOutcome,
-//                 CancellationToken
+//                 Plan, PrepareOutcome, PlanOutcome, CancellationToken
 //                 prepare(path, options, token)  (unless Derived supplies
 //                                        prepareAsset with the same shape)
 //                 adoptContext(path, options, asset)
@@ -42,7 +41,6 @@ namespace wam::macos {
 //                 videoOrigin(asset)     the first video access unit's time, or
 //                                        empty when the container states none
 //                 createVideoFormatDescription(track)
-//                 demuxErrorMessage(what, error)
 //                 mergeOrderKey(sample)  THE A/V MERGE KEY (see readNext)
 //   Derived  -- the backend's Impl, which supplies the per-generation hooks
 //               that read container facts the core does not model:
@@ -68,7 +66,6 @@ class NativeCustomSourceCore {
   using CursorEnd = typename Traits::CursorEnd;
   using CursorCancelled = typename Traits::CursorCancelled;
   using CursorFailure = typename Traits::CursorFailure;
-  using DemuxStatus = typename Traits::DemuxStatus;
   using Plan = typename Traits::Plan;
   using CancellationToken = typename Traits::CancellationToken;
 
@@ -86,14 +83,8 @@ class NativeCustomSourceCore {
     std::shared_ptr<const AssetContext> context;
     media::MediaAudioGenerationWindow audioWindow{};
     std::string error;
+    media::MediaRefusalClass refusal{media::MediaRefusalClass::None};
   };
-
-  // Decoder preroll the audio converter demands ahead of the first audible
-  // frame of a generation that does not begin at the stream origin, in whole
-  // compressed access units: a transform codec reconstructs each unit partly
-  // from its predecessor's window, so two decoded predecessors is full priming.
-  static constexpr std::int64_t kAudioPrimingAccessUnits{2};
-  static constexpr std::int64_t kMaximumAudioFramesPerPacket{65'536};
 
   NativeCustomSourceCore() = default;
   ~NativeCustomSourceCore() { releaseFormats(); }
@@ -367,7 +358,7 @@ class NativeCustomSourceCore {
     }
     if (const auto* failed = std::get_if<CursorFailure>(&result)) {
       if (error != nullptr) {
-        *error = Traits::demuxErrorMessage(
+        *error = media::refusalMessage(
             failed->message.empty() ? named("", " cursor read failed").c_str()
                                     : failed->message.c_str(),
             failed->error);
@@ -428,33 +419,6 @@ class NativeCustomSourceCore {
 
   // ---- generation start ---------------------------------------------------
 
-  [[nodiscard]] static media::MediaSourceOpenStatus preparedStatus(
-      DemuxStatus status) noexcept {
-    switch (status) {
-    case DemuxStatus::Ready:
-      return media::MediaSourceOpenStatus::Ready;
-    case DemuxStatus::Unsupported:
-      return media::MediaSourceOpenStatus::Unsupported;
-    case DemuxStatus::Cancelled:
-      return media::MediaSourceOpenStatus::Cancelled;
-    case DemuxStatus::Failed:
-      break;
-    }
-    return media::MediaSourceOpenStatus::Failed;
-  }
-
-  [[nodiscard]] static media::MediaSourceOpenStatus plannedStatus(
-      DemuxStatus status) noexcept {
-    switch (status) {
-    case DemuxStatus::Cancelled:
-      return media::MediaSourceOpenStatus::Cancelled;
-    case DemuxStatus::Unsupported:
-      return media::MediaSourceOpenStatus::Unsupported;
-    default:
-      return media::MediaSourceOpenStatus::Failed;
-    }
-  }
-
   [[nodiscard]] GenerationStart begin(
       const std::filesystem::path& requestedPath,
       const media::MediaSourceOpenOptions& requestedOptions,
@@ -510,13 +474,14 @@ class NativeCustomSourceCore {
               return Traits::prepare(requestedPath, requestedOptions, cancellation());
             }
           }();
-      started.status = preparedStatus(prepared.status);
-      if (prepared.status != DemuxStatus::Ready || prepared.asset == nullptr) {
-        started.error = Traits::demuxErrorMessage(
+      started.status = prepared.status;
+      if (prepared.status != media::MediaSourceOpenStatus::Ready || prepared.asset == nullptr) {
+        started.error = media::refusalMessage(
             prepared.message.empty() ? named("", " preparation failed").c_str()
                                      : prepared.message.c_str(),
             prepared.error);
-        if (prepared.status == DemuxStatus::Ready) {
+        started.refusal = prepared.error;
+        if (prepared.status == media::MediaSourceOpenStatus::Ready) {
           started.status = media::MediaSourceOpenStatus::Failed;
         }
         withdrawFailedOperation();
@@ -574,13 +539,16 @@ class NativeCustomSourceCore {
     const typename Traits::PlanOutcome planned = asset->planGeneration(
         requestedTarget.value_or(media::MediaTime{0, 1}), seekMode,
         cancellation());
-    if (planned.status != DemuxStatus::Ready || !planned.plan) {
-      started.status = plannedStatus(planned.status);
-      started.error = Traits::demuxErrorMessage(
+    if (planned.status != media::MediaSourceOpenStatus::Ready || !planned.plan) {
+      started.status = planned.status == media::MediaSourceOpenStatus::Ready
+                           ? media::MediaSourceOpenStatus::Failed
+                           : planned.status;
+      started.error = media::refusalMessage(
           planned.message.empty()
               ? named("", " generation planning failed").c_str()
               : planned.message.c_str(),
           planned.error);
+      started.refusal = planned.error;
       withdrawFailedOperation();
       return started;
     }
@@ -772,6 +740,7 @@ class NativeCustomSourceCore {
       outcome.actualDecodeStart = started.actualDecodeStart;
       outcome.descriptor = std::move(started.descriptor);
       outcome.error = std::move(started.error);
+      outcome.refusal = started.refusal;
       if (outcome.status == media::MediaSourceOpenStatus::Ready) {
         outcome.preparedContext = std::move(started.context);
         outcome.audioWindow = started.audioWindow;

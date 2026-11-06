@@ -1,5 +1,6 @@
 #pragma once
 
+#include "media/byte_source.hpp"
 #include "media/native_media_source.hpp"
 
 #include <array>
@@ -12,31 +13,11 @@
 namespace wam::media::matroska {
 
 // Matroska parsing is deliberately independent of Apple and Qt
-// frameworks. Readers must either fill the complete destination or return
-// false. The parser never requests more than kHardMaximumReadBytes at once.
-class SeekableByteReader {
- public:
-  virtual ~SeekableByteReader() = default;
-  [[nodiscard]] virtual std::uint64_t size() const noexcept = 0;
-  [[nodiscard]] virtual bool
-  readAt(std::uint64_t offset, std::span<std::byte> destination) noexcept = 0;
-};
+// frameworks. The parser never requests more than kHardMaximumReadBytes from a
+// SeekableByteReader at once.
 
-struct CancellationToken {
-  const void* context{nullptr};
-  bool (*probe)(const void*) noexcept{nullptr};
-
-  [[nodiscard]] bool cancelled() const noexcept {
-    return probe != nullptr && probe(context);
-  }
-};
-
-struct ByteRange {
-  std::uint64_t offset{0};
-  std::uint64_t size{0};
-
-  friend constexpr bool operator==(ByteRange, ByteRange) = default;
-};
+// The EBML header element ID, which is also a Matroska file's first 4 bytes.
+inline constexpr std::uint32_t kEbmlHeaderId{0x1A45DFA3};
 
 enum class VintKind : std::uint8_t {
   ElementId,
@@ -235,12 +216,6 @@ enum class Lacing : std::uint8_t {
   Ebml,
 };
 
-struct FrameRange {
-  ByteRange bytes;
-
-  friend constexpr bool operator==(FrameRange, FrameRange) = default;
-};
-
 struct BlockHeader {
   // containerEncoded is the direct Cluster child: SimpleBlock or BlockGroup.
   // blockEncoded is the SimpleBlock itself or the nested Block element.
@@ -283,7 +258,7 @@ enum class VisitorAction : std::uint8_t {
 // The two DocTypes this demuxer admits. WebM is Matroska: the same EBML
 // element grammar, the same Cluster/Block layout, and the same timestamp
 // model, restricted to a smaller codec set. The demuxer applies that
-// restriction to audio tracks itself (audioCodecAllowedInDocument in
+// restriction to audio tracks itself (the webm column of kMatroskaCodecs in
 // matroska_demuxer.cpp), so the parser needs no separate WebM profile -- only
 // permission to read the name.
 enum class EbmlDocumentType : std::uint8_t {

@@ -1,5 +1,7 @@
 #include "media/mpegts_demuxer.hpp"
 
+#include "media/codec/ac3.hpp"
+#include "media/codec/mpeg_audio.hpp"
 #include "media/mpegts_packet.hpp"
 #include "media/native_media_source.hpp"
 
@@ -24,6 +26,9 @@
 namespace {
 
 using namespace wam::media::mpegts;
+using wam::media::codec::Ac3SyncFrame;
+using wam::media::codec::MpegAudioFrame;
+using wam::media::SeekableByteReader;
 using wam::media::MediaCodec;
 using wam::media::MediaCodecConfigurationKind;
 using wam::media::MediaSampleKind;
@@ -36,7 +41,23 @@ using wam::media::MediaTime;
 using wam::media::MediaTimeOrder;
 using wam::media::MediaTrackKind;
 using wam::media::compareMediaTime;
+using wam::media::mediaTimeFromTicks;
+using wam::media::MediaRefusalClass;
+using wam::media::MediaSourceOpenStatus;
+using wam::media::mediaRefusalClassName;
 using Bytes = std::vector<std::byte>;
+
+[[nodiscard]] bool readsAc3(std::span<const std::byte> bytes,
+                            Ac3SyncFrame& frame) noexcept {
+  return wam::media::codec::readAc3SyncframeHeader(bytes, frame) ==
+         wam::media::codec::Ac3AdmissionError::None;
+}
+
+[[nodiscard]] bool readsMpegAudio(std::span<const std::byte> bytes,
+                                  MpegAudioFrame& frame) noexcept {
+  return wam::media::codec::readMpegAudioFrameHeader(bytes, frame) ==
+         wam::media::codec::MpegAudioAdmissionError::None;
+}
 
 // --- layout and ownership contracts, proved at compile time ---------------
 static_assert(!std::is_copy_constructible_v<MpegTsCursor>);
@@ -344,22 +365,22 @@ void testTimestampRollover() {
 }
 
 void testExactTicks() {
-  const std::optional<MediaTime> second = mediaTimeFromTicks(90'000);
+  const std::optional<MediaTime> second = mediaTimeFromTicks(90'000, kTimestampHz);
   expect(second && second->value == 1 && second->timescale == 1,
          "90,000 ticks reduces to exactly one second");
-  const std::optional<MediaTime> frame = mediaTimeFromTicks(3'003);
+  const std::optional<MediaTime> frame = mediaTimeFromTicks(3'003, kTimestampHz);
   expect(frame && frame->value == 1'001 && frame->timescale == 30'000,
          "one 30000/1001 frame is exactly 1001/30000 s, not a decimal");
-  const std::optional<MediaTime> zero = mediaTimeFromTicks(0);
+  const std::optional<MediaTime> zero = mediaTimeFromTicks(0, kTimestampHz);
   expect(zero && zero->value == 0 && zero->timescale == 1,
          "zero ticks is exactly zero");
-  const std::optional<MediaTime> negative = mediaTimeFromTicks(-90'000);
+  const std::optional<MediaTime> negative = mediaTimeFromTicks(-90'000, kTimestampHz);
   expect(negative && negative->value == -1 && negative->timescale == 1,
          "negative ticks stay exact and signed");
   // A tick count past the wrap must still be exactly representable, which is
   // the whole point of extending before converting.
   const std::optional<MediaTime> past =
-      mediaTimeFromTicks(kTimestampModulus + 90'000);
+      mediaTimeFromTicks(kTimestampModulus + 90'000, kTimestampHz);
   expect(past.has_value(), "a post-rollover tick is representable");
   // 8,589,934,592 + 90,000 = 8,590,024,592 ticks. gcd(8,590,024,592, 90,000)
   // is 16, so the exact reduced rational is 536,876,537 / 5,625 seconds
@@ -938,12 +959,12 @@ void testElementaryAudioFraming() {
   Bytes ac3;
   append(ac3, {0x0B, 0x77, 0x00, 0x00, 0x00, 0x08, 0x40});
   Ac3SyncFrame frame{};
-  expect(parseAc3SyncFrame(ac3, frame), "an AC-3 sync frame parses");
+  expect(readsAc3(ac3, frame), "an AC-3 sync frame parses");
   expect(frame.sampleRate == 48'000, "fscod 0 is 48 kHz");
   expect(frame.frameBytes == 128, "frmsizecod 0 at 48 kHz is 128 bytes");
   Bytes badAc3 = ac3;
   badAc3[1] = octet(0x78);
-  expect(!parseAc3SyncFrame(badAc3, frame), "a broken AC-3 syncword is refused");
+  expect(!readsAc3(badAc3, frame), "a broken AC-3 syncword is refused");
 
   // 44.1 kHz alternates its frame length to keep the average bit rate exact,
   // and the odd half of each frmsizecod pair is one 16-bit word longer. A real
@@ -952,29 +973,29 @@ void testElementaryAudioFraming() {
   // on the second frame of every PES payload. Both halves are pinned here.
   Bytes ac3even;
   append(ac3even, {0x0B, 0x77, 0x00, 0x00, 0x50, 0x40, 0x20});  // fscod 1, code 16
-  expect(parseAc3SyncFrame(ac3even, frame), "a 44.1 kHz AC-3 frame parses");
+  expect(readsAc3(ac3even, frame), "a 44.1 kHz AC-3 frame parses");
   expect(frame.sampleRate == 44'100, "fscod 1 is 44.1 kHz");
   expect(frame.frameBytes == 556,
          "frmsizecod 16 at 44.1 kHz is exactly 556 bytes");
   Bytes ac3odd;
   append(ac3odd, {0x0B, 0x77, 0x00, 0x00, 0x51, 0x40, 0x20});  // fscod 1, code 17
-  expect(parseAc3SyncFrame(ac3odd, frame), "the odd pair half parses");
+  expect(readsAc3(ac3odd, frame), "the odd pair half parses");
   expect(frame.frameBytes == 558,
          "frmsizecod 17 at 44.1 kHz is exactly 558 bytes -- one word more");
   Bytes ac348odd;
   append(ac348odd, {0x0B, 0x77, 0x00, 0x00, 0x01, 0x40, 0x20});  // fscod 0, code 1
-  expect(parseAc3SyncFrame(ac348odd, frame) && frame.frameBytes == 128,
+  expect(readsAc3(ac348odd, frame) && frame.frameBytes == 128,
          "48 kHz frame sizes do NOT alternate: both halves are 128 bytes");
   Bytes shortAc3 = ac3;
   shortAc3.resize(6);
-  expect(!parseAc3SyncFrame(shortAc3, frame),
+  expect(!readsAc3(shortAc3, frame),
          "a span too short to hold acmod is refused rather than read past");
 
   // MPEG-1 Layer II, 44.1 kHz, 128 kbit/s stereo.
   Bytes mp2;
   append(mp2, {0xFF, 0xFD, 0x80, 0x00});
   MpegAudioFrame audio{};
-  expect(parseMpegAudioFrame(mp2, audio), "an MPEG audio header parses");
+  expect(readsMpegAudio(mp2, audio), "an MPEG audio header parses");
   expect(audio.version == 1 && audio.layer == 2,
          "MPEG-1 Layer II is identified");
   expect(audio.sampleRate == 44'100, "the sample rate is exact");
@@ -983,7 +1004,7 @@ void testElementaryAudioFraming() {
          "128 kbit/s at 44.1 kHz is exactly 417 bytes per Layer II frame");
   Bytes badMp2 = mp2;
   badMp2[1] = octet(0xE9);  // reserved version
-  expect(!parseMpegAudioFrame(badMp2, audio),
+  expect(!readsMpegAudio(badMp2, audio),
          "a reserved MPEG audio version is refused");
 }
 
@@ -1052,13 +1073,13 @@ void testFramingDetection() {
 void testPreparationRequestValidation() {
   const MpegTsPrepareOutcome nullReader =
       prepareMpegTs(nullptr, "fixture.ts", {});
-  expect(nullReader.status == MpegTsDemuxStatus::Failed &&
-             nullReader.error == MpegTsDemuxError::InvalidRequest,
+  expect(nullReader.status == MediaSourceOpenStatus::Failed &&
+             nullReader.error == MediaRefusalClass::InvalidRequest,
          "preparation without a reader is an invalid request");
 
   auto reader = std::make_shared<MemoryReader>(Bytes(1024, octet(0x00)));
   const MpegTsPrepareOutcome noPath = prepareMpegTs(reader, "", {});
-  expect(noPath.error == MpegTsDemuxError::InvalidRequest,
+  expect(noPath.error == MediaRefusalClass::InvalidRequest,
          "preparation without a path is an invalid request");
 
   auto noise = std::make_shared<MemoryReader>([] {
@@ -1069,16 +1090,16 @@ void testPreparationRequestValidation() {
     return bytes;
   }());
   const MpegTsPrepareOutcome notTs = prepareMpegTs(noise, "noise.ts", {});
-  expect(notTs.status == MpegTsDemuxStatus::Unsupported &&
-             notTs.error == MpegTsDemuxError::NotTransportStream,
+  expect(notTs.status == MediaSourceOpenStatus::Unsupported &&
+             notTs.error == MediaRefusalClass::NotTransportStream,
          "a non-transport-stream file is Unsupported, not Failed — the "
          "session must be able to fall back rather than report a fault");
 
   std::atomic<bool> cancelled{true};
   const MpegTsPrepareOutcome stopped = prepareMpegTs(
       reader, "fixture.ts", {}, {&cancelled, atomicCancellation});
-  expect(stopped.status == MpegTsDemuxStatus::Cancelled &&
-             stopped.error == MpegTsDemuxError::Cancelled,
+  expect(stopped.status == MediaSourceOpenStatus::Cancelled &&
+             stopped.error == MediaRefusalClass::Cancelled,
          "a pre-cancelled preparation returns Cancelled before any I/O");
 
   // Framed packets that never carry a PAT must be refused by name.
@@ -1094,12 +1115,12 @@ void testPreparationRequestValidation() {
   auto framedReader = std::make_shared<MemoryReader>(framedOnly);
   const MpegTsPrepareOutcome noPat =
       prepareMpegTs(framedReader, "nopat.ts", {});
-  expect(noPat.status == MpegTsDemuxStatus::Unsupported &&
-             noPat.error == MpegTsDemuxError::MissingProgramTable,
+  expect(noPat.status == MediaSourceOpenStatus::Unsupported &&
+             noPat.error == MediaRefusalClass::MissingProgramTable,
          "framed packets with no PAT are refused by a named verdict");
   expect(!noPat.message.empty(), "the refusal carries a cold message");
 
-  expect(std::string(mpegTsDemuxErrorName(MpegTsDemuxError::NotTransportStream))
+  expect(std::string(mediaRefusalClassName(MediaRefusalClass::NotTransportStream))
              == "NotTransportStream",
          "every error enumerator names itself for telemetry");
 }
@@ -1162,26 +1183,26 @@ MpegTsPrepareOutcome prepareAudioSelection(std::uint8_t audioType,
 
 void testAudioSelectionRefusals() {
   const auto unsupported = prepareAudioSelection(0x82);
-  expect(unsupported.status == MpegTsDemuxStatus::Unsupported &&
-             unsupported.error == MpegTsDemuxError::UnsupportedStreamType &&
+  expect(unsupported.status == MediaSourceOpenStatus::Unsupported &&
+             unsupported.error == MediaRefusalClass::UnsupportedStreamType &&
              unsupported.message.find("0x82") != std::string::npos &&
              !unsupported.asset,
          "DTS-only soundtrack refuses the asset by stream type");
   const auto opus = prepareAudioSelection(0x06);
-  expect(opus.status == MpegTsDemuxStatus::Unsupported &&
-             opus.error == MpegTsDemuxError::UnsupportedStreamType &&
+  expect(opus.status == MediaSourceOpenStatus::Unsupported &&
+             opus.error == MediaRefusalClass::UnsupportedStreamType &&
              opus.message.find("0x06") != std::string::npos && !opus.asset,
          "registered Opus is an unsupported soundtrack, not metadata");
   const auto configuration = prepareAudioSelection(0x0f, true);
-  expect(configuration.status == MpegTsDemuxStatus::Unsupported &&
-             configuration.error == MpegTsDemuxError::CodecConfiguration &&
+  expect(configuration.status == MediaSourceOpenStatus::Unsupported &&
+             configuration.error == MediaRefusalClass::CodecConfiguration &&
              configuration.message.find("0x0F") != std::string::npos &&
              !configuration.asset,
          "rejected AAC configuration refuses the asset by configuration");
   for (const auto& outcome : {prepareAudioSelection(0),
                               prepareAudioSelection(0x82, false, true)}) {
     if (!outcome.asset) std::cerr << outcome.message << '\n';
-    expect(outcome.status == MpegTsDemuxStatus::Ready && outcome.asset,
+    expect(outcome.status == MediaSourceOpenStatus::Ready && outcome.asset,
            "video-only and supported alternate audio remain admitted");
   }
   const auto alternate = prepareAudioSelection(0x82, false, true);
@@ -1263,11 +1284,11 @@ struct WalkSummary {
     // reconstructs exactly the byte count the sample promised.
     if (summary.samples % 16 == 1) {
       scratch.assign(sample.payloadBytes, std::byte{0});
-      MpegTsDemuxError error = MpegTsDemuxError::None;
+      MediaRefusalClass error = MediaRefusalClass::None;
       if (!asset.copyAccessUnit(sample, scratch, {}, &error)) {
         summary.failed = true;
         summary.failure = std::string("copyAccessUnit failed: ") +
-                          mpegTsDemuxErrorName(error);
+                          mediaRefusalClassName(error);
         break;
       }
     }
@@ -1304,9 +1325,9 @@ void testRealMuxes() {
       continue;
     }
     const MpegTsPrepareOutcome outcome = prepareMpegTsLocalFile(path, {});
-    if (outcome.status != MpegTsDemuxStatus::Ready) {
+    if (outcome.status != MediaSourceOpenStatus::Ready) {
       std::cerr << "  " << entry.label << " -> "
-                << mpegTsDemuxErrorName(outcome.error) << ": "
+                << mediaRefusalClassName(outcome.error) << ": "
                 << outcome.message << '\n';
       expect(false, "a real ffmpeg mux prepares Ready");
       continue;
@@ -1332,10 +1353,10 @@ void testRealMuxes() {
 
     const MpegTsPlanOutcome plan =
         asset.planGeneration(MediaTime{0, 1}, MediaSeekMode::Accurate);
-    expect(plan.status == MpegTsDemuxStatus::Ready,
+    expect(plan.status == MediaSourceOpenStatus::Ready,
            "planning the stream origin succeeds on a real mux");
-    if (plan.status != MpegTsDemuxStatus::Ready) {
-      std::cerr << "  plan error: " << mpegTsDemuxErrorName(plan.error) << ": "
+    if (plan.status != MediaSourceOpenStatus::Ready) {
+      std::cerr << "  plan error: " << mediaRefusalClassName(plan.error) << ": "
                 << plan.message << '\n';
       continue;
     }
@@ -1427,14 +1448,14 @@ void testGroundTruthAgainstFfmpeg() {
       continue;
     }
     const MpegTsPrepareOutcome outcome = prepareMpegTsLocalFile(path, {});
-    if (outcome.status != MpegTsDemuxStatus::Ready) {
+    if (outcome.status != MediaSourceOpenStatus::Ready) {
       expect(false, "a ground-truth fixture prepares Ready");
       continue;
     }
     const MpegTsPreparedAsset& asset = *outcome.asset;
     const MpegTsPlanOutcome plan =
         asset.planGeneration(MediaTime{0, 1}, MediaSeekMode::Accurate);
-    if (plan.status != MpegTsDemuxStatus::Ready) {
+    if (plan.status != MediaSourceOpenStatus::Ready) {
       expect(false, "a ground-truth fixture plans from its origin");
       continue;
     }
@@ -1482,7 +1503,7 @@ void testGroundTruthAgainstFfmpeg() {
 
 void testMultiProgramSelection() {
   const auto complete = prepareMpegTsLocalFile(fixtureRoot() / "multiprogram-dts-first.ts", {});
-  expect(complete.status == MpegTsDemuxStatus::Ready && complete.asset &&
+  expect(complete.status == MediaSourceOpenStatus::Ready && complete.asset &&
              complete.asset->programNumber() == 2 &&
              complete.asset->descriptor()->selectedAudio.has_value(),
          "a complete second program outranks a first program with only DTS audio");
@@ -1494,10 +1515,10 @@ void testMultiProgramSelection() {
     return;
   }
   const MpegTsPrepareOutcome outcome = prepareMpegTsLocalFile(path, {});
-  expect(outcome.status == MpegTsDemuxStatus::Ready,
+  expect(outcome.status == MediaSourceOpenStatus::Ready,
          "a two-program transport stream prepares Ready");
-  if (outcome.status != MpegTsDemuxStatus::Ready) {
-    std::cerr << "  " << mpegTsDemuxErrorName(outcome.error) << ": "
+  if (outcome.status != MediaSourceOpenStatus::Ready) {
+    std::cerr << "  " << mediaRefusalClassName(outcome.error) << ": "
               << outcome.message << '\n';
     return;
   }
@@ -1831,7 +1852,7 @@ void testLatmFraming() {
 // nothing in this route reads past bsi.
 Bytes makeEac3Frame(std::uint32_t frameBytes, std::uint32_t fscod,
                     std::uint32_t numblkscod, std::uint32_t acmod,
-                    bool lfeon, std::uint32_t bsid = kEac3BitstreamId) {
+                    bool lfeon, std::uint32_t bsid = 16) {
   BitWriter w;
   w.put(0x0B77, 16);
   w.put(0, 2);  // strmtyp: independent substream
@@ -1854,16 +1875,17 @@ void testEac3Framing() {
   // because the LEGACY parser was the only one and an Annex E frame's bytes
   // 2-4 are strmtyp/substreamid/frmsiz where AC-3 has crc1 and frmsizecod.
   const Bytes eac3 = makeEac3Frame(768, 0, 3, 2, false);
-  Ac3SyncFrame legacy{};
-  expect(!parseAc3SyncFrame(eac3, legacy),
-         "the legacy AC-3 parser REFUSES an E-AC-3 frame instead of "
-         "mis-reading its frame size");
+  Ac3SyncFrame shared{};
+  expect(readsAc3(eac3, shared) && shared.enhanced &&
+             shared.frameBytes == 768,
+         "the shared reader reads an E-AC-3 frame as E-AC-3 instead of "
+         "mis-reading its frame size with the legacy syntax");
 
-  // The refusal above is not enough on its own, and finding that out is what a
-  // mutation check is for. In THAT frame byte 4 reads as frmsizecod 52, which
-  // the legacy table bound rejects for an unrelated reason -- so it would be
-  // refused even with the bitstream-id gate deleted, and it proves nothing
-  // about the gate.
+  // That frame alone is not enough, and finding that out is what a mutation
+  // check is for. In THAT frame byte 4 reads as frmsizecod 52, which the
+  // legacy table bound rejects for an unrelated reason -- so a legacy misread
+  // would fail even with the bitstream-id dispatch deleted, and it proves
+  // nothing about the dispatch.
   //
   // This frame is the one that matters: numblkscod 1 and acmod 2 make byte 4
   // read as a PERFECTLY LEGAL frmsizecod of 20, so a legacy parser accepts it
@@ -1872,17 +1894,14 @@ void testEac3Framing() {
   const Bytes deceptive = makeEac3Frame(768, 0, 1, 2, false);
   expect((static_cast<std::uint32_t>(deceptive[4]) & 0x3FU) <= 37U,
          "the deceptive fixture really does present a legal frmsizecod");
-  Ac3SyncFrame fooled{};
-  expect(!parseAc3SyncFrame(deceptive, fooled),
-         "an E-AC-3 frame whose byte 4 reads as a legal frmsizecod is still "
-         "refused by the legacy parser, on its bitstream id");
   Ac3SyncFrame viaDispatch{};
-  expect(parseAc3OrEac3SyncFrame(deceptive, viaDispatch) &&
-             viaDispatch.enhanced && viaDispatch.frameBytes == 768,
-         "and the dispatcher reads its real length instead");
+  expect(readsAc3(deceptive, viaDispatch) && viaDispatch.enhanced &&
+             viaDispatch.frameBytes == 768,
+         "an E-AC-3 frame whose byte 4 reads as a legal frmsizecod is read "
+         "as E-AC-3, on its bitstream id, with its real length");
 
   Ac3SyncFrame frame{};
-  expect(parseEac3SyncFrame(eac3, frame), "an E-AC-3 syncframe parses");
+  expect(readsAc3(eac3, frame), "an E-AC-3 syncframe parses");
   expect(frame.enhanced && frame.bitstreamId == 16,
          "the frame is identified as E-AC-3 by its bitstream id");
   expect(frame.frameBytes == 768,
@@ -1903,7 +1922,7 @@ void testEac3Framing() {
   for (const auto& entry : blocks) {
     const Bytes f = makeEac3Frame(512, 0, entry.code, 2, false);
     Ac3SyncFrame fx{};
-    expect(parseEac3SyncFrame(f, fx) && fx.samplesPerFrame == entry.samples,
+    expect(readsAc3(f, fx) && fx.samplesPerFrame == entry.samples,
            "numblkscod names the exact decoded sample count");
   }
 
@@ -1913,7 +1932,7 @@ void testEac3Framing() {
   // lays the decoder's own output out wrongly.
   const Bytes eac351 = makeEac3Frame(1536, 0, 3, 7, true);
   Ac3SyncFrame fx51{};
-  expect(parseEac3SyncFrame(eac351, fx51), "a 5.1 E-AC-3 frame parses");
+  expect(readsAc3(eac351, fx51), "a 5.1 E-AC-3 frame parses");
   expect(fx51.fullBandwidthChannels == 5 && fx51.lfe && fx51.channels == 6,
          "acmod 7 plus lfeon is 5 full-bandwidth channels and 6 total");
 
@@ -1926,7 +1945,7 @@ void testEac3Framing() {
     const Bytes ac351{octet(0x0B), octet(0x77), octet(0xD6), octet(0xD8),
                       octet(0x1E), octet(0x40), octet(0xEB), octet(0xF8)};
     Ac3SyncFrame a{};
-    expect(parseAc3SyncFrame(ac351, a), "a real 5.1 AC-3 syncframe parses");
+    expect(readsAc3(ac351, a), "a real 5.1 AC-3 syncframe parses");
     expect(a.bitstreamId == 8 && !a.enhanced,
            "it is identified as legacy AC-3");
     expect(a.fullBandwidthChannels == 5 && a.lfe && a.channels == 6,
@@ -1940,26 +1959,26 @@ void testEac3Framing() {
     const Bytes ac3stereo{octet(0x0B), octet(0x77), octet(0x00), octet(0x00),
                           octet(0x1E), octet(0x40), octet(0x40), octet(0x00)};
     Ac3SyncFrame a{};
-    expect(parseAc3SyncFrame(ac3stereo, a), "a stereo AC-3 syncframe parses");
+    expect(readsAc3(ac3stereo, a), "a stereo AC-3 syncframe parses");
     expect(a.fullBandwidthChannels == 2 && !a.lfe && a.channels == 2,
            "acmod 2 with lfeon clear is two channels");
   }
 
-  // --- the dispatcher ------------------------------------------------------
+  // --- one reader, both syntaxes -------------------------------------------
   Ac3SyncFrame routed{};
-  expect(parseAc3OrEac3SyncFrame(eac3, routed) && routed.enhanced,
-         "the dispatcher routes an E-AC-3 frame to the Annex E parser");
+  expect(readsAc3(eac3, routed) && routed.enhanced,
+         "an E-AC-3 frame is read with the Annex E syntax");
   const Bytes ac3{octet(0x0B), octet(0x77), octet(0xD6), octet(0xD8),
                   octet(0x1E), octet(0x40), octet(0xEB), octet(0xF8)};
-  expect(parseAc3OrEac3SyncFrame(ac3, routed) && !routed.enhanced &&
+  expect(readsAc3(ac3, routed) && !routed.enhanced &&
              routed.bitstreamId == 8,
-         "the dispatcher routes a legacy frame to the legacy parser");
+         "a legacy frame is read with the legacy syntax");
 
   // Half-rate E-AC-3 (fscod 3) is outside the admitted audio envelope and must
   // be refused by structure rather than admitted with an invented rate.
   const Bytes half = makeEac3Frame(768, 3, 3, 2, false);
   Ac3SyncFrame h{};
-  expect(!parseEac3SyncFrame(half, h),
+  expect(!readsAc3(half, h),
          "fscod 3 (half sample rate) is refused rather than guessed at");
 }
 
@@ -2017,10 +2036,10 @@ void testRolloverFixture() {
     return;
   }
   const MpegTsPrepareOutcome outcome = prepareMpegTsLocalFile(path, {});
-  expect(outcome.status == MpegTsDemuxStatus::Ready,
+  expect(outcome.status == MediaSourceOpenStatus::Ready,
          "a stream muxed across the 33-bit rollover prepares Ready");
-  if (outcome.status != MpegTsDemuxStatus::Ready) {
-    std::cerr << "  " << mpegTsDemuxErrorName(outcome.error) << ": "
+  if (outcome.status != MediaSourceOpenStatus::Ready) {
+    std::cerr << "  " << mediaRefusalClassName(outcome.error) << ": "
               << outcome.message << '\n';
     return;
   }
@@ -2035,9 +2054,9 @@ void testRolloverFixture() {
 
   const MpegTsPlanOutcome plan =
       asset.planGeneration(MediaTime{0, 1}, MediaSeekMode::Accurate);
-  expect(plan.status == MpegTsDemuxStatus::Ready,
+  expect(plan.status == MediaSourceOpenStatus::Ready,
          "planning across a rollover succeeds");
-  if (plan.status != MpegTsDemuxStatus::Ready) {
+  if (plan.status != MediaSourceOpenStatus::Ready) {
     return;
   }
   std::unique_ptr<MpegTsCursor> cursor = asset.makeVideoCursor(*plan.plan);
@@ -2071,20 +2090,20 @@ void testCorruptionResync() {
   const MpegTsPrepareOutcome cleanOutcome = prepareMpegTsLocalFile(clean, {});
   const MpegTsPrepareOutcome damagedOutcome =
       prepareMpegTsLocalFile(damaged, {});
-  expect(cleanOutcome.status == MpegTsDemuxStatus::Ready,
+  expect(cleanOutcome.status == MediaSourceOpenStatus::Ready,
          "the control mux prepares Ready");
-  expect(damagedOutcome.status == MpegTsDemuxStatus::Ready,
+  expect(damagedOutcome.status == MediaSourceOpenStatus::Ready,
          "a mid-file corrupted mux still prepares Ready — corruption after "
          "the program tables must not cost the whole file");
-  if (cleanOutcome.status != MpegTsDemuxStatus::Ready ||
-      damagedOutcome.status != MpegTsDemuxStatus::Ready) {
+  if (cleanOutcome.status != MediaSourceOpenStatus::Ready ||
+      damagedOutcome.status != MediaSourceOpenStatus::Ready) {
     return;
   }
 
   const auto walk = [](const MpegTsPreparedAsset& asset) -> WalkSummary {
     const MpegTsPlanOutcome plan =
         asset.planGeneration(MediaTime{0, 1}, MediaSeekMode::Accurate);
-    if (plan.status != MpegTsDemuxStatus::Ready) {
+    if (plan.status != MediaSourceOpenStatus::Ready) {
       WalkSummary summary{};
       summary.failed = true;
       return summary;
@@ -2125,7 +2144,7 @@ std::optional<std::int64_t> mediaTimeToTicks(MediaTime time) {
 void testSeekAccuracy() {
   for (const char* file : {"seek.ts", "hevc-aac.ts", "hevc-main10.ts", "hevc-ac3.m2ts"}) {
     const auto outcome = prepareMpegTsLocalFile(fixtureRoot() / file, {});
-    expect(outcome.status == MpegTsDemuxStatus::Ready && outcome.asset,
+    expect(outcome.status == MediaSourceOpenStatus::Ready && outcome.asset,
            "required seek fixture prepares");
     if (!outcome.asset) continue;
     std::size_t measured = 0;
@@ -2133,7 +2152,7 @@ void testSeekAccuracy() {
     for (std::int64_t tenths : {15, 33, 57, 74, 92, 111, 138, 165}) {
       const MediaTime target{tenths, 10};
       const auto plan = outcome.asset->planGeneration(target, MediaSeekMode::Accurate);
-      expect(plan.status == MpegTsDemuxStatus::Ready && plan.plan,
+      expect(plan.status == MediaSourceOpenStatus::Ready && plan.plan,
              "in-range accurate seek plans successfully");
       if (!plan.plan) continue;
       const auto landed = plan.plan->actualDecodeStart;
@@ -2176,15 +2195,15 @@ void testFileIdentityAndCancellation() {
   std::filesystem::copy_file(source, temporary);
 
   MpegTsPrepareOutcome outcome = prepareMpegTsLocalFile(temporary, {});
-  expect(outcome.status == MpegTsDemuxStatus::Ready,
+  expect(outcome.status == MediaSourceOpenStatus::Ready,
          "the copied fixture prepares Ready");
-  if (outcome.status != MpegTsDemuxStatus::Ready) {
+  if (outcome.status != MediaSourceOpenStatus::Ready) {
     std::filesystem::remove(temporary);
     return;
   }
   const MpegTsPlanOutcome plan = outcome.asset->planGeneration(
       MediaTime{0, 1}, MediaSeekMode::Accurate);
-  expect(plan.status == MpegTsDemuxStatus::Ready, "the initial plan succeeds");
+  expect(plan.status == MediaSourceOpenStatus::Ready, "the initial plan succeeds");
 
   // Append one byte: size and mtime both move, so identity must fail.
   {
@@ -2193,7 +2212,7 @@ void testFileIdentityAndCancellation() {
   }
   const MpegTsPlanOutcome afterChange = outcome.asset->planGeneration(
       MediaTime{0, 1}, MediaSeekMode::Accurate);
-  expect(afterChange.error == MpegTsDemuxError::FileChanged,
+  expect(afterChange.error == MediaRefusalClass::FileChanged,
          "a file mutated under a prepared asset is refused as FileChanged, "
          "not read as if the index still described it");
 
@@ -2210,20 +2229,20 @@ void testFileIdentityAndCancellation() {
   std::atomic<bool> cancelled{true};
   const MpegTsPrepareOutcome stopped =
       prepareMpegTsLocalFile(source, {}, {&cancelled, atomicCancellation});
-  expect(stopped.status == MpegTsDemuxStatus::Cancelled,
+  expect(stopped.status == MediaSourceOpenStatus::Cancelled,
          "a cancelled local-file preparation returns Cancelled");
 
   const MpegTsPrepareOutcome missing =
       prepareMpegTsLocalFile(root / "does-not-exist.ts", {});
-  expect(missing.error == MpegTsDemuxError::Io,
+  expect(missing.error == MediaRefusalClass::Io,
          "a missing path is an I/O verdict");
 }
 
 void testUnsupportedStreamTypeVerdicts() {
-  for (const auto& entry : {std::pair{"dts-only.ts", MpegTsDemuxError::UnsupportedStreamType},
-                            std::pair{"rejected-aac.ts", MpegTsDemuxError::CodecConfiguration}}) {
+  for (const auto& entry : {std::pair{"dts-only.ts", MediaRefusalClass::UnsupportedStreamType},
+                            std::pair{"rejected-aac.ts", MediaRefusalClass::CodecConfiguration}}) {
     const auto outcome = prepareMpegTsLocalFile(fixtureRoot() / entry.first, {});
-    expect(outcome.status == MpegTsDemuxStatus::Unsupported &&
+    expect(outcome.status == MediaSourceOpenStatus::Unsupported &&
                outcome.error == entry.second && !outcome.asset &&
                !outcome.message.empty(),
            "unsupported soundtrack fails closed with a named refusal");
@@ -2262,9 +2281,9 @@ void testHevcAdmission() {
       continue;
     }
     const MpegTsPrepareOutcome outcome = prepareMpegTsLocalFile(path, {});
-    if (outcome.status != MpegTsDemuxStatus::Ready) {
+    if (outcome.status != MediaSourceOpenStatus::Ready) {
       std::cerr << "  " << entry.label << " -> "
-                << mpegTsDemuxErrorName(outcome.error) << ": "
+                << mediaRefusalClassName(outcome.error) << ": "
                 << outcome.message << '\n';
       expect(false, "an HEVC transport stream is admitted");
       continue;
@@ -2336,7 +2355,7 @@ void testHevcAdmission() {
     // that a cold-decodable unit exists, which is what every seek depends on.
     const MpegTsPlanOutcome planned =
         outcome.asset->planGeneration(MediaTime{0, 1}, MediaSeekMode::Accurate);
-    expect(planned.status == MpegTsDemuxStatus::Ready,
+    expect(planned.status == MediaSourceOpenStatus::Ready,
            "an HEVC generation plans from the origin");
     if (!planned.plan) {
       continue;
@@ -2385,7 +2404,7 @@ void testMpeg2AndAc3Admission() {
       continue;
     }
     const MpegTsPrepareOutcome outcome = prepareMpegTsLocalFile(path, {});
-    expect(outcome.status == MpegTsDemuxStatus::Ready,
+    expect(outcome.status == MediaSourceOpenStatus::Ready,
            "the fixture is admitted");
     if (outcome.asset == nullptr) {
       continue;
@@ -2415,7 +2434,7 @@ void testMpeg2AndAc3Admission() {
     // consumer refuses a sample whose duration is absent or non-positive.
     const MpegTsPlanOutcome planned =
         outcome.asset->planGeneration(MediaTime{0, 1}, MediaSeekMode::Accurate);
-    expect(planned.status == MpegTsDemuxStatus::Ready && planned.plan.has_value(),
+    expect(planned.status == MediaSourceOpenStatus::Ready && planned.plan.has_value(),
            "a generation plans from the origin");
     if (!planned.plan) {
       continue;
@@ -2481,7 +2500,7 @@ void testDurationAgainstGroundTruth() {
                             {"mpeg2-mp3.ts", 3}, {"h264-ac3.m2ts", 3},
                             {"video.ts", 6}, {"L_video.ts", 20}, {"seek.ts", 20}}) {
     const auto outcome = prepareMpegTsLocalFile(fixtureRoot() / entry.first, {});
-    expect(outcome.status == MpegTsDemuxStatus::Ready && outcome.asset,
+    expect(outcome.status == MediaSourceOpenStatus::Ready && outcome.asset,
            "required duration fixture prepares");
     if (!outcome.asset) continue;
     const auto ticks = mediaTimeToTicks(outcome.asset->descriptor()->duration);

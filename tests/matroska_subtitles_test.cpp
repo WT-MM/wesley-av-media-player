@@ -450,7 +450,7 @@ void testCancellation() {
 
 // Records every read as a [offset, end) range, so a test can say exactly which
 // regions of the file a pass touched.
-class CountingReader final : public matroska::SeekableByteReader {
+class CountingReader final : public wam::media::SeekableByteReader {
  public:
   explicit CountingReader(std::span<const unsigned char> bytes)
       : bytes_(bytes) {}

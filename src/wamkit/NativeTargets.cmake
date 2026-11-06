@@ -2,6 +2,8 @@
 if(APPLE OR WAM_BUILD_APP)
   add_library(wam_native_core STATIC
     src/media/adpcm_decoder.cpp
+    src/media/codec/aac.hpp
+    src/media/codec/aac.cpp
     src/media/matroska_aac.hpp
     src/media/matroska_aac.cpp
     src/media/audio_codec_timing.hpp
@@ -9,16 +11,18 @@ if(APPLE OR WAM_BUILD_APP)
     src/media/media_iso_color.hpp
     src/media/audio_downmix.hpp
     src/media/audio_downmix.cpp
-    src/media/matroska_opus.hpp
-    src/media/matroska_opus.cpp
+    src/media/codec/opus.hpp
+    src/media/codec/opus.cpp
     src/media/matroska_vorbis.hpp
     src/media/matroska_vorbis.cpp
-    src/media/matroska_ac3.hpp
-    src/media/matroska_ac3.cpp
+    src/media/codec/ac3.hpp
+    src/media/codec/ac3.cpp
     src/media/matroska_flac.hpp
     src/media/matroska_flac.cpp
-    src/media/matroska_mpeg_audio.hpp
-    src/media/matroska_mpeg_audio.cpp
+    src/media/codec/mpeg_audio.hpp
+    src/media/codec/mpeg_audio.cpp
+    src/media/byte_source.hpp
+    src/media/byte_source.cpp
     src/media/matroska_ebml.hpp
     src/media/matroska_ebml.cpp
     src/media/matroska_demuxer.hpp
@@ -49,6 +53,7 @@ if(APPLE OR WAM_BUILD_APP)
     src/media/mpegts_demuxer.cpp
     src/media/video_codec_configuration.hpp
     src/media/video_codec_configuration.cpp
+    src/media/media_time.hpp
     src/media/native_media_source.hpp
     src/media/native_media_source.cpp
     src/media/native_media_backend.hpp
@@ -201,7 +206,8 @@ find_library(WAM_COREIMAGE_FRAMEWORK CoreImage REQUIRED)
       ${WAM_MACOS_NATIVE_BACKEND_SOURCES})
     if(WAM_ENABLE_AVFORMAT_STAGE)
       target_link_libraries(wam_macos_native_backend PUBLIC wam_avcodec_worker)
-      target_sources(wam_avcodec_worker PRIVATE src/media/libavformat_cursor.cpp)
+      target_sources(wam_avcodec_worker PRIVATE src/media/libavformat_cursor.cpp
+        src/media/byte_source.cpp)
       target_sources(wam_macos_native_backend PRIVATE
         src/platform/macos/libavformat_media_source.mm
         src/platform/macos/libavformat_aac_timing.mm

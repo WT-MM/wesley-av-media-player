@@ -5,7 +5,6 @@
 #include <algorithm>
 #include <cstring>
 #include <limits>
-#include <numeric>
 
 namespace wam::media::mpegts {
 namespace {
@@ -85,39 +84,6 @@ std::uint32_t mpegCrc32(std::span<const std::byte> data) noexcept {
     crc = crcStep(crc, static_cast<std::uint8_t>(value));
   }
   return crc;
-}
-
-std::optional<MediaTime> mediaTimeFromTicks(std::int64_t ticks) noexcept {
-  const bool negative = ticks < 0;
-  const std::uint64_t magnitude =
-      negative ? static_cast<std::uint64_t>(-(ticks + 1)) + 1U
-               : static_cast<std::uint64_t>(ticks);
-  const std::uint64_t divisor =
-      std::gcd(magnitude, static_cast<std::uint64_t>(kTimestampHz));
-  const std::uint64_t numerator = magnitude / divisor;
-  const std::uint64_t denominator =
-      static_cast<std::uint64_t>(kTimestampHz) / divisor;
-  const std::uint64_t ceiling =
-      negative
-          ? static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) +
-                1U
-          : static_cast<std::uint64_t>(
-                std::numeric_limits<std::int64_t>::max());
-  if (numerator > ceiling) {
-    return std::nullopt;
-  }
-  std::int64_t signedNumerator = 0;
-  if (negative) {
-    signedNumerator =
-        numerator == static_cast<std::uint64_t>(
-                         std::numeric_limits<std::int64_t>::max()) +
-                         1U
-            ? std::numeric_limits<std::int64_t>::min()
-            : -static_cast<std::int64_t>(numerator);
-  } else {
-    signedNumerator = static_cast<std::int64_t>(numerator);
-  }
-  return MediaTime{signedNumerator, static_cast<std::int32_t>(denominator)};
 }
 
 // ---------------------------------------------------------------------------
@@ -399,88 +365,87 @@ ProgramGrade gradeProgram(const ProgramMapTable& table) noexcept {
   return audio ? ProgramGrade::Complete : ProgramGrade::VideoOnly;
 }
 
+namespace {
+
+struct TsStreamTypeRow {
+  TsStreamType type;
+  MediaTrackKind kind;
+  MediaCodec codec;
+};
+
+// PrivatePes (0x06) is absent: its answer depends on descriptors.
+// MPEG-1 video (0x01), MPEG-4 part 2 (0x10) and DTS (0x82) have no route
+// (codec Unknown). That is a deliberate gap: the demuxer reports the raw
+// stream type in its verdict so the seam above refuses by name instead of
+// silently dropping a track.
+constexpr TsStreamTypeRow kTsStreamTypes[] = {
+    {TsStreamType::Mpeg1Video, MediaTrackKind::Video, MediaCodec::Unknown},
+    // VideoToolbox decodes MPEG-2 through a software decoder and needs no
+    // out-of-band configuration record.
+    {TsStreamType::Mpeg2Video, MediaTrackKind::Video, MediaCodec::Mpeg2Video},
+    // One routing family covers MPEG-1/2 Layer I-III. The exact layer is read
+    // from the frame header at admission and becomes the '.mp1'/'.mp2'/'.mp3'
+    // format tag; MediaCodec::Mp3 is the family, not the layer.
+    {TsStreamType::Mpeg1Audio, MediaTrackKind::Audio, MediaCodec::Mp3},
+    {TsStreamType::Mpeg2Audio, MediaTrackKind::Audio, MediaCodec::Mp3},
+    {TsStreamType::AdtsAac, MediaTrackKind::Audio, MediaCodec::Aac},
+    // ONE routing family, two framings. LOAS/LATM carries the same raw AAC
+    // access units ADTS does -- verified byte-for-byte against ADTS twins of
+    // the same encode -- so it needs no MediaCodec value of its own and the
+    // whole downstream (ES_Descriptor cookie, 1024-frame grid, audio-
+    // authoritative clock) is shared. The framing difference is carried by
+    // the stream type, which the demuxer already retains.
+    {TsStreamType::LatmAac, MediaTrackKind::Audio, MediaCodec::Aac},
+    {TsStreamType::Mpeg4Video, MediaTrackKind::Video, MediaCodec::Unknown},
+    {TsStreamType::H264, MediaTrackKind::Video, MediaCodec::H264},
+    {TsStreamType::Hevc, MediaTrackKind::Video, MediaCodec::Hevc},
+    {TsStreamType::Ac3Atsc, MediaTrackKind::Audio, MediaCodec::Ac3},
+    {TsStreamType::Dts, MediaTrackKind::Audio, MediaCodec::Unknown},
+    {TsStreamType::Eac3Atsc, MediaTrackKind::Audio, MediaCodec::Eac3},
+};
+
+constexpr const TsStreamTypeRow* tsStreamTypeRow(
+    std::uint8_t streamType) noexcept {
+  for (const TsStreamTypeRow& row : kTsStreamTypes) {
+    if (static_cast<std::uint8_t>(row.type) == streamType) {
+      return &row;
+    }
+  }
+  return nullptr;
+}
+
+}  // namespace
+
 MediaCodec codecForStreamType(std::uint8_t streamType, bool ac3Descriptor,
                               bool eac3Descriptor,
                               bool registrationAc3) noexcept {
-  switch (streamType) {
-    case static_cast<std::uint8_t>(TsStreamType::H264):
-      return MediaCodec::H264;
-    case static_cast<std::uint8_t>(TsStreamType::Hevc):
-      return MediaCodec::Hevc;
-    case static_cast<std::uint8_t>(TsStreamType::AdtsAac):
-    case static_cast<std::uint8_t>(TsStreamType::LatmAac):
-      // ONE routing family, two framings. LOAS/LATM carries the same raw AAC
-      // access units ADTS does -- verified byte-for-byte against ADTS twins of
-      // the same encode -- so it needs no MediaCodec value of its own and the
-      // whole downstream (ES_Descriptor cookie, 1024-frame grid, audio-
-      // authoritative clock) is shared. The framing difference is carried by
-      // the stream type, which the demuxer already retains.
-      return MediaCodec::Aac;
-    case static_cast<std::uint8_t>(TsStreamType::Mpeg1Audio):
-    case static_cast<std::uint8_t>(TsStreamType::Mpeg2Audio):
-      // One routing family covers MPEG-1/2 Layer I-III. The exact layer is
-      // read from the frame header at admission and becomes the '.mp1'/'.mp2'/
-      // '.mp3' format tag; MediaCodec::Mp3 is the family, not the layer.
-      return MediaCodec::Mp3;
-    case static_cast<std::uint8_t>(TsStreamType::Mpeg2Video):
-      // VideoToolbox decodes this through a software decoder and needs no
-      // out-of-band configuration record.
-      return MediaCodec::Mpeg2Video;
-    case static_cast<std::uint8_t>(TsStreamType::Ac3Atsc):
-      return MediaCodec::Ac3;
-    case static_cast<std::uint8_t>(TsStreamType::Eac3Atsc):
+  if (streamType == static_cast<std::uint8_t>(TsStreamType::PrivatePes)) {
+    // DVB carries AC-3 as private PES qualified by a descriptor. Without one
+    // the stream is genuinely unidentified and must stay Unknown rather than
+    // be guessed at. E-AC-3 is checked first because a stream may legally
+    // carry both descriptors and the enhanced one is the more specific fact.
+    if (eac3Descriptor) {
       return MediaCodec::Eac3;
-    case static_cast<std::uint8_t>(TsStreamType::PrivatePes):
-      // DVB carries AC-3 as private PES qualified by a descriptor. Without one
-      // the stream is genuinely unidentified and must stay Unknown rather than
-      // be guessed at. E-AC-3 is checked first because a stream may legally
-      // carry both descriptors and the enhanced one is the more specific fact.
-      if (eac3Descriptor) {
-        return MediaCodec::Eac3;
-      }
-      if (ac3Descriptor || registrationAc3) {
-        return MediaCodec::Ac3;
-      }
-      return MediaCodec::Unknown;
-    default:
-      break;
+    }
+    if (ac3Descriptor || registrationAc3) {
+      return MediaCodec::Ac3;
+    }
+    return MediaCodec::Unknown;
   }
-  // MPEG-1 video (0x01), MPEG-4 part 2 (0x10) and DTS (0x82) have no route.
-  // That is a deliberate gap: the demuxer reports the raw stream type in its
-  // verdict so the seam above refuses by name instead of silently dropping a
-  // track.
-  static_cast<void>(ac3Descriptor);
-  static_cast<void>(eac3Descriptor);
-  static_cast<void>(registrationAc3);
-  return MediaCodec::Unknown;
+  const TsStreamTypeRow* row = tsStreamTypeRow(streamType);
+  return row != nullptr ? row->codec : MediaCodec::Unknown;
 }
 
 MediaTrackKind trackKindForStreamType(std::uint8_t streamType,
                                       bool ac3Descriptor, bool eac3Descriptor,
                                       bool registrationAc3) noexcept {
-  switch (streamType) {
-    case static_cast<std::uint8_t>(TsStreamType::Mpeg1Video):
-    case static_cast<std::uint8_t>(TsStreamType::Mpeg2Video):
-    case static_cast<std::uint8_t>(TsStreamType::Mpeg4Video):
-    case static_cast<std::uint8_t>(TsStreamType::H264):
-    case static_cast<std::uint8_t>(TsStreamType::Hevc):
-      return MediaTrackKind::Video;
-    case static_cast<std::uint8_t>(TsStreamType::Mpeg1Audio):
-    case static_cast<std::uint8_t>(TsStreamType::Mpeg2Audio):
-    case static_cast<std::uint8_t>(TsStreamType::AdtsAac):
-    case static_cast<std::uint8_t>(TsStreamType::LatmAac):
-    case static_cast<std::uint8_t>(TsStreamType::Ac3Atsc):
-    case static_cast<std::uint8_t>(TsStreamType::Eac3Atsc):
-    case static_cast<std::uint8_t>(TsStreamType::Dts):
-      return MediaTrackKind::Audio;
-    case static_cast<std::uint8_t>(TsStreamType::PrivatePes):
-      if (ac3Descriptor || eac3Descriptor || registrationAc3) {
-        return MediaTrackKind::Audio;
-      }
-      return MediaTrackKind::Metadata;
-    default:
-      return MediaTrackKind::Metadata;
+  if (streamType == static_cast<std::uint8_t>(TsStreamType::PrivatePes)) {
+    return ac3Descriptor || eac3Descriptor || registrationAc3
+               ? MediaTrackKind::Audio
+               : MediaTrackKind::Metadata;
   }
+  const TsStreamTypeRow* row = tsStreamTypeRow(streamType);
+  return row != nullptr ? row->kind : MediaTrackKind::Metadata;
 }
 
 bool parseProgramMapSection(std::span<const std::byte> section,
@@ -1565,246 +1530,6 @@ bool latmCopyPayload(std::span<const std::byte> frame, const LatmFrame& facts,
     destination[i] = static_cast<std::byte>((high | rest) & 0xFFU);
   }
   return true;
-}
-
-bool parseAc3SyncFrame(std::span<const std::byte> bytes,
-                       Ac3SyncFrame& frame) noexcept {
-  frame = Ac3SyncFrame{};
-  // Seven bytes, not six: acmod is read out of byte 6 below, and a six-byte
-  // span would read past the end of the span to find it.
-  if (bytes.size() < 7) {
-    return false;
-  }
-  if (byteAt(bytes, 0) != 0x0BU || byteAt(bytes, 1) != 0x77U) {
-    return false;
-  }
-  // bsid first: this parser reads the LEGACY bsi, and an E-AC-3 frame's bytes
-  // 2-4 mean something else entirely. Refusing here is what stops a plausible
-  // but wrong frame length from being handed to the frame walk.
-  const std::uint8_t bsid =
-      static_cast<std::uint8_t>((byteAt(bytes, 5) >> 3) & 0x1FU);
-  if (bsid > 10U) {
-    return false;
-  }
-  const std::uint8_t fscod = static_cast<std::uint8_t>((byteAt(bytes, 4) >> 6) &
-                                                       0x03U);
-  const std::uint8_t frmsizecod =
-      static_cast<std::uint8_t>(byteAt(bytes, 4) & 0x3FU);
-  if (fscod > 2 || frmsizecod > 37) {
-    return false;
-  }
-  static constexpr std::array<std::uint32_t, 3> kRates{48'000, 44'100, 32'000};
-  // A/52 Table 5.18: frame size in 16-bit words, indexed by frmsizecod >> 1,
-  // with the odd codes adding one word at 44.1 kHz only.
-  static constexpr std::array<std::uint16_t, 19> kWords48{
-      64,  80,  96,  112, 128, 160, 192,  224,  256, 320,
-      384, 448, 512, 640, 768, 896, 1024, 1152, 1280};
-  static constexpr std::array<std::uint16_t, 19> kWords441{
-      69,  87,  104, 121, 139, 174, 208,  243,  278, 348,
-      417, 487, 557, 696, 835, 975, 1114, 1253, 1393};
-  static constexpr std::array<std::uint16_t, 19> kWords32{
-      96,  120, 144, 168, 192, 240, 288,  336,  384, 480,
-      576, 672, 768, 960, 1152, 1344, 1536, 1728, 1920};
-  const std::size_t index = static_cast<std::size_t>(frmsizecod) / 2U;
-  // The odd half of each frmsizecod pair carries ONE MORE 16-bit word, and
-  // only at 44.1 kHz. 48 kHz and 32 kHz divide 1,536 samples evenly at every
-  // admitted bit rate, so both codes of a pair name the same size there; 44.1
-  // kHz does not, and A/52 Table 5.18 alternates the frame length to keep the
-  // average bit rate exact.
-  //
-  // Omitting this is not a rounding error, it is a hard framing failure: a
-  // 128 kb/s 44.1 kHz stream alternates 556 and 558 bytes (frmsizecod 16 and
-  // 17), so a parser that always reports the even size walks off the sync word
-  // on the second frame of every PES payload and the whole audio track is
-  // refused.
-  const std::uint32_t oddWord =
-      fscod == 1 ? static_cast<std::uint32_t>(frmsizecod & 1U) : 0U;
-  const std::uint32_t words =
-      fscod == 0 ? kWords48[index]
-                 : (fscod == 1
-                        ? static_cast<std::uint32_t>(kWords441[index]) + oddWord
-                        : kWords32[index]);
-  frame.sampleRate = kRates[fscod];
-  frame.frameBytes = words * 2U;
-  frame.bitstreamId = bsid;
-  frame.enhanced = false;
-  // Legacy AC-3 always codes six blocks of 256 samples. There is no field.
-  frame.samplesPerFrame = kAc3BlocksPerSyncFrame * kAc3SamplesPerBlock;
-
-  // acmod and lfeon live in bsi, after bsid(5) and bsmod(3) in byte 5.
-  const std::uint8_t acmod = static_cast<std::uint8_t>((byteAt(bytes, 6) >> 5) &
-                                                       0x07U);
-  frame.fullBandwidthChannels = kAc3AcmodChannels[acmod];
-  // The lfe bit's position depends on acmod's extra fields -- and it is worth
-  // reading exactly, because it is the difference between a 5.1 stream being
-  // described as six channels and as five. A five-channel ASBD on a 5.1 stream
-  // is not a rounding error: the converter would lay out the decoder's own
-  // output wrongly. A/52 5.3.2 puts these three conditional fields between
-  // acmod and lfeon, each present only for the acmod values that need them.
-  std::uint32_t offset = 3;  // bits consumed of byte 6, starting after acmod
-  if ((acmod & 0x01U) != 0U && acmod != 0x01U) {
-    offset += 2;  // cmixlev
-  }
-  if ((acmod & 0x04U) != 0U) {
-    offset += 2;  // surmixlev
-  }
-  if (acmod == 0x02U) {
-    offset += 2;  // dsurmod
-  }
-  // Every combination above keeps lfeon inside byte 6 (the widest is
-  // 3 + 2 + 2 = 7 bits consumed, leaving bit 0), so no further byte is read.
-  frame.lfe = ((byteAt(bytes, 6) >> (7U - offset)) & 0x01U) != 0U;
-  frame.channels = static_cast<std::uint8_t>(frame.fullBandwidthChannels +
-                                             (frame.lfe ? 1U : 0U));
-  return frame.frameBytes >= 6;
-}
-
-bool parseEac3SyncFrame(std::span<const std::byte> bytes,
-                        Ac3SyncFrame& frame) noexcept {
-  frame = Ac3SyncFrame{};
-  // Six bytes: bsid is read out of byte 5 to prove this really is E-AC-3.
-  if (bytes.size() < 6) {
-    return false;
-  }
-  if (byteAt(bytes, 0) != 0x0BU || byteAt(bytes, 1) != 0x77U) {
-    return false;
-  }
-  // A/52 Annex E bsi. The layout diverges from legacy AC-3 immediately after
-  // the sync word -- where AC-3 has crc1 and a frmsizecod TABLE INDEX, E-AC-3
-  // has strmtyp/substreamid and an explicit frmsiz WORD COUNT. Reading one as
-  // the other yields a plausible-looking frame length that is simply wrong,
-  // and the frame walk then fails to divide the PES into whole frames.
-  const std::uint8_t bsid =
-      static_cast<std::uint8_t>((byteAt(bytes, 5) >> 3) & 0x1FU);
-  if (bsid != kEac3BitstreamId) {
-    return false;
-  }
-  const std::uint32_t frmsiz =
-      (static_cast<std::uint32_t>(byteAt(bytes, 2) & 0x07U) << 8) |
-      static_cast<std::uint32_t>(byteAt(bytes, 3));
-  const std::uint8_t fscod =
-      static_cast<std::uint8_t>((byteAt(bytes, 4) >> 6) & 0x03U);
-  const std::uint8_t numblkscod =
-      static_cast<std::uint8_t>((byteAt(bytes, 4) >> 4) & 0x03U);
-  const std::uint8_t acmod =
-      static_cast<std::uint8_t>((byteAt(bytes, 4) >> 1) & 0x07U);
-  const bool lfeon = (byteAt(bytes, 4) & 0x01U) != 0U;
-
-  static constexpr std::array<std::uint32_t, 3> kRates{48'000, 44'100, 32'000};
-  if (fscod == 3U) {
-    // fscod 3 selects a half-rate stream through fscod2 and pins six blocks.
-    // Those rates (24/22.05/16 kHz) are outside this player's admitted audio
-    // envelope, so the frame is refused here by structure rather than admitted
-    // and then rejected with a less specific verdict downstream.
-    return false;
-  }
-  // numblkscod names 1, 2, 3 or 6 blocks of 256 samples.
-  static constexpr std::array<std::uint32_t, 4> kBlocks{1, 2, 3, 6};
-  frame.sampleRate = kRates[fscod];
-  frame.frameBytes = (frmsiz + 1U) * 2U;
-  frame.samplesPerFrame = kBlocks[numblkscod] * kAc3SamplesPerBlock;
-  frame.fullBandwidthChannels = kAc3AcmodChannels[acmod];
-  frame.lfe = lfeon;
-  frame.channels = static_cast<std::uint8_t>(frame.fullBandwidthChannels +
-                                             (lfeon ? 1U : 0U));
-  frame.bitstreamId = bsid;
-  frame.enhanced = true;
-  return frame.frameBytes >= 6;
-}
-
-bool parseAc3OrEac3SyncFrame(std::span<const std::byte> bytes,
-                             Ac3SyncFrame& frame) noexcept {
-  // bsid sits at byte 5 bits 7..3 in BOTH syntaxes -- legacy AC-3 reaches it
-  // through crc1 and fscod/frmsizecod, E-AC-3 through strmtyp/substreamid,
-  // frmsiz and fscod/numblkscod/acmod/lfeon, and both land on the same bit.
-  // That coincidence is what makes a single dispatch honest rather than a
-  // heuristic.
-  if (bytes.size() >= 6 && byteAt(bytes, 0) == 0x0BU &&
-      byteAt(bytes, 1) == 0x77U &&
-      ((byteAt(bytes, 5) >> 3) & 0x1FU) == kEac3BitstreamId) {
-    return parseEac3SyncFrame(bytes, frame);
-  }
-  return parseAc3SyncFrame(bytes, frame);
-}
-
-bool parseMpegAudioFrame(std::span<const std::byte> bytes,
-                         MpegAudioFrame& frame) noexcept {
-  frame = MpegAudioFrame{};
-  if (bytes.size() < 4) {
-    return false;
-  }
-  if (byteAt(bytes, 0) != 0xFFU || (byteAt(bytes, 1) & 0xE0U) != 0xE0U) {
-    return false;
-  }
-  const std::uint8_t versionBits =
-      static_cast<std::uint8_t>((byteAt(bytes, 1) >> 3) & 0x03U);
-  const std::uint8_t layerBits =
-      static_cast<std::uint8_t>((byteAt(bytes, 1) >> 1) & 0x03U);
-  if (versionBits == 1 || layerBits == 0) {
-    return false;  // reserved
-  }
-  frame.version = versionBits == 3 ? 1U : (versionBits == 2 ? 2U : 3U);
-  frame.layer = static_cast<std::uint8_t>(4U - layerBits);
-
-  const std::uint8_t bitrateIndex =
-      static_cast<std::uint8_t>((byteAt(bytes, 2) >> 4) & 0x0FU);
-  const std::uint8_t rateIndex =
-      static_cast<std::uint8_t>((byteAt(bytes, 2) >> 2) & 0x03U);
-  if (bitrateIndex == 0 || bitrateIndex == 15 || rateIndex == 3) {
-    return false;
-  }
-  const bool padding = (byteAt(bytes, 2) & 0x02U) != 0;
-  const std::uint8_t mode =
-      static_cast<std::uint8_t>((byteAt(bytes, 3) >> 6) & 0x03U);
-  frame.channels = mode == 3 ? 1U : 2U;
-
-  static constexpr std::array<std::uint32_t, 3> kBaseRates{44'100, 48'000,
-                                                           32'000};
-  std::uint32_t sampleRate = kBaseRates[rateIndex];
-  if (frame.version == 2) {
-    sampleRate /= 2U;
-  } else if (frame.version == 3) {
-    sampleRate /= 4U;
-  }
-  frame.sampleRate = sampleRate;
-
-  // kbit/s tables, MPEG-1 layers I/II/III then MPEG-2/2.5 layers I / II+III.
-  static constexpr std::array<std::uint16_t, 15> kV1L1{
-      0, 32, 64, 96, 128, 160, 192, 224, 256, 288, 320, 352, 384, 416, 448};
-  static constexpr std::array<std::uint16_t, 15> kV1L2{
-      0, 32, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 384};
-  static constexpr std::array<std::uint16_t, 15> kV1L3{
-      0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320};
-  static constexpr std::array<std::uint16_t, 15> kV2L1{
-      0, 32, 48, 56, 64, 80, 96, 112, 128, 144, 160, 176, 192, 224, 256};
-  static constexpr std::array<std::uint16_t, 15> kV2L23{
-      0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160};
-
-  std::uint32_t kilobits = 0;
-  if (frame.version == 1) {
-    kilobits = frame.layer == 1   ? kV1L1[bitrateIndex]
-               : frame.layer == 2 ? kV1L2[bitrateIndex]
-                                  : kV1L3[bitrateIndex];
-    frame.samplesPerFrame = frame.layer == 1 ? 384U : 1'152U;
-  } else {
-    kilobits = frame.layer == 1 ? kV2L1[bitrateIndex] : kV2L23[bitrateIndex];
-    frame.samplesPerFrame = frame.layer == 1   ? 384U
-                            : frame.layer == 2 ? 1'152U
-                                               : 576U;
-  }
-  if (kilobits == 0 || frame.sampleRate == 0) {
-    return false;
-  }
-  const std::uint32_t bitsPerSecond = kilobits * 1'000U;
-  if (frame.layer == 1) {
-    frame.frameBytes =
-        ((12U * bitsPerSecond / frame.sampleRate) + (padding ? 1U : 0U)) * 4U;
-  } else {
-    const std::uint32_t coefficient = frame.samplesPerFrame / 8U;
-    frame.frameBytes =
-        (coefficient * bitsPerSecond / frame.sampleRate) + (padding ? 1U : 0U);
-  }
-  return frame.frameBytes >= 4;
 }
 
 }  // namespace wam::media::mpegts

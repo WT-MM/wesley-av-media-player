@@ -110,11 +110,6 @@ recordCodecReorderDepth(media::MediaCodec codec,
                                : CodecReorderDepthOrigin::Declared};
 }
 
-// Defined with the other codec predicates further down, where the measurement
-// that justifies it lives; declared here because the reorder-depth derivation
-// is the first thing in this file that needs to recognise the family.
-bool codecIsProResFamily(CMVideoCodecType codec) noexcept;
-
 std::optional<CodecReorderDepth>
 deriveCodecReorderDepth(const VideoStreamConfiguration &configuration) {
   const auto bytes = std::span<const std::uint8_t>(
@@ -130,83 +125,6 @@ deriveCodecReorderDepth(const VideoStreamConfiguration &configuration) {
     return recordCodecReorderDepth(media::MediaCodec::Hevc,
                                    media::MediaCodecConfigurationKind::HvcC,
                                    configuration.codecConfiguration);
-  }
-  if (configuration.codec == kCMVideoCodecType_MPEG2Video) {
-    // One, and it is a property of the codec rather than of the stream.
-    //
-    // MPEG-2 reorders through exactly two reference frame stores: a B picture
-    // is output at its own decode position, and the only picture ever held
-    // back is the FUTURE anchor decoded ahead of the B pictures that reference
-    // it. That is true regardless of how many consecutive B pictures a GOP
-    // codes -- an M of 3 and an M of 12 both hold exactly one anchor -- so the
-    // depth is 1 for every legal MPEG-2 stream and never needs a bitstream
-    // parse. There is nothing to parse in any case: MPEG-2 carries no decoder
-    // configuration record, so `bytes` is empty here by contract.
-    //
-    // Stating 1 rather than 0 costs one retained frame on a stream that codes
-    // no B pictures at all, which both of this project's MPEG-2 fixtures are
-    // (ffmpeg's mpeg2video encoder defaults to max_b_frames = 0, so `-g 12`
-    // produces a flat I-P-P-...-P GOP). That cost is one
-    // frame of startup hold at SD rates and is the right side to be wrong on:
-    // understating the depth reorders output, while overstating it by one
-    // delays it by one frame.
-    if (!bytes.empty()) {
-      return std::nullopt;
-    }
-    return CodecReorderDepth{1, CodecReorderDepthOrigin::Declared};
-  }
-  if (codecIsProResFamily(configuration.codec) ||
-      configuration.codec == kCMVideoCodecType_JPEG) {
-    // Zero, and for the strongest reason available: both codecs are ALL-INTRA
-    // by construction. Every ProRes frame is independently coded -- the format
-    // has no inter-frame prediction of any kind, which is the entire point of
-    // an editing codec -- and Motion JPEG is a sequence of independent JPEG
-    // images. Neither has a reference frame to hold back, so decode order IS
-    // presentation order and nothing is ever reordered.
-    //
-    // Like MPEG-2, both carry no decoder configuration record, so `bytes` is
-    // empty here by contract and the guard states that rather than assuming
-    // it. Unlike MPEG-2 the depth is honestly 0 rather than a defensive 1:
-    // there is no legal stream in either format that reorders.
-    if (!bytes.empty()) {
-      return std::nullopt;
-    }
-    return CodecReorderDepth{0, CodecReorderDepthOrigin::Declared};
-  }
-  if (configuration.codec == kCMVideoCodecType_MPEG4Video) {
-    // Zero, and it is a property of the admitted PROFILE rather than of the
-    // codec. MPEG-4 Part 2 as a whole reorders exactly like MPEG-2 -- one
-    // future anchor held back across the B-VOPs that reference it -- but
-    // B-VOPs are an Advanced Simple Profile tool, and Advanced Simple Profile
-    // never reaches this decoder: Apple's 'mp4v' decoder refuses it at session
-    // creation, so media::inspectMpeg4VisualHeaders() admits Simple Profile
-    // alone. Simple Profile codes I-VOPs and P-VOPs only, so decode order IS
-    // presentation order and nothing is ever held back.
-    //
-    // That is also why the Matroska route's missing decode timestamps cost
-    // this codec nothing: with no reordering there is no decode-versus-
-    // presentation displacement for the A/V merge lead to reconstruct.
-    //
-    // The record is the esds the demuxer synthesized, which is never empty --
-    // the inverse of the MPEG-2 arm above.
-    if (bytes.empty()) {
-      return std::nullopt;
-    }
-    return CodecReorderDepth{0, CodecReorderDepthOrigin::Declared};
-  }
-  if (configuration.codec == kCMVideoCodecType_VP9) {
-    // VP9 has no output reordering. Alternate-reference ("hidden") frames are
-    // decoded but never output at their own decode position; they reach the
-    // output only through show_existing_frame, which emits an already-decoded
-    // frame at the point the bitstream asks for it. Output order therefore
-    // equals bitstream order, which is why VP9 containers carry PTS == DTS on
-    // every packet. A vpcC record is still required for the session, but it
-    // carries no reorder signal at all, so the depth is a property of the
-    // codec: zero.
-    if (bytes.size() < 12 || bytes[0] != 1) {
-      return std::nullopt;
-    }
-    return CodecReorderDepth{0, CodecReorderDepthOrigin::Declared};
   }
   if (configuration.codec == kCMVideoCodecType_AV1) {
     // AV1 shares VP9's output model (show_existing_frame, no composition
@@ -236,7 +154,25 @@ deriveCodecReorderDepth(const VideoStreamConfiguration &configuration) {
     return CodecReorderDepth{static_cast<std::size_t>(bytes[3] & 0x0fU) + 1U,
                              CodecReorderDepthOrigin::Declared};
   }
-  return std::nullopt;
+  // Every other codec's depth is intrinsic (see intrinsicReorderDepth). VP8
+  // never reaches VideoToolbox.
+  const media::MediaCodec codec = media::mediaCodecForCoreMediaType(
+      static_cast<std::uint32_t>(configuration.codec));
+  const media::MediaCodecFacts &facts = media::mediaCodecFacts(codec);
+  if (facts.kind != media::MediaCodecKind::Video ||
+      codec == media::MediaCodec::Vp8) {
+    return std::nullopt;
+  }
+  // A codec with no configuration record must present none, and one with a
+  // record must present it.
+  if (bytes.empty() == facts.carriesConfigurationRecord) {
+    return std::nullopt;
+  }
+  if (codec == media::MediaCodec::Vp9 && (bytes.size() < 12 || bytes[0] != 1)) {
+    return std::nullopt;
+  }
+  return CodecReorderDepth{facts.intrinsicReorderDepth,
+                           CodecReorderDepthOrigin::Declared};
 }
 
 struct AsyncDecodeState {

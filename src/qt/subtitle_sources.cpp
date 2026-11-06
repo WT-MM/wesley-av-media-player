@@ -371,7 +371,7 @@ void SubtitleSources::beginNativeLoad(int id) {
     // onto the owning thread.
     const media::subtitles::BitmapCodec bitmapCodec = source->bitmapCodec;
     worker_ = std::thread([this, generation, path, track, bitmapCodec, cancel]() {
-      const media::matroska::CancellationToken token{
+      const media::CancellationToken token{
           cancel.get(), [](const void *context) noexcept {
             return static_cast<const std::atomic<bool> *>(context)->load(
                 std::memory_order_relaxed);
@@ -390,7 +390,7 @@ void SubtitleSources::beginNativeLoad(int id) {
   }
 
   worker_ = std::thread([this, generation, path, track, codec, cancel]() {
-    const media::matroska::CancellationToken token{
+    const media::CancellationToken token{
         cancel.get(), [](const void *context) noexcept {
           return static_cast<const std::atomic<bool> *>(context)->load(
               std::memory_order_relaxed);

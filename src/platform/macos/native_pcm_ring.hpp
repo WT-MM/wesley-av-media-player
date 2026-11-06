@@ -20,11 +20,16 @@ class NativePcmRing final {
 public:
   static constexpr std::size_t kChannels = 2;
   static constexpr std::size_t kFramesPerSlab = 4096;
-  // Occupancy is counted in SLABS and the producer's admission unit is one
-  // slab per converted input lease, so the reachable occupancy is
-  // kSlabCount * (frames the codec puts in a slab), which for AAC-LC is 1024
-  // -- not kSlabCount * kFramesPerSlab.
-  //
+  // Occupancy is counted in SLABS, so the reachable occupancy is
+  // kSlabCount * (frames per slab), not kSlabCount * kFramesPerSlab. The
+  // producer guarantees this floor: every slab of a generation except its last
+  // carries at least kMinimumFramesPerPublishedSlab frames, because the
+  // converter coalesces shorter decoded blocks (one Opus, Vorbis or FLAC packet
+  // per sample, an AAC edit extent, a seek's head-trimmed block) before
+  // publishing. The last slab of a generation may be short: after it the
+  // producer has nothing left to keep ahead of.
+  static constexpr std::size_t kMinimumFramesPerPublishedSlab = 1024;
+
   // Pitch-preserved playback rate means one device frame is not one media
   // frame: at 4x a single 1024-frame device callback consumes 4096 MEDIA
   // frames. The producer-headroom inequality is therefore

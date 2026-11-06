@@ -13,6 +13,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <type_traits>
 #include <utility>
@@ -272,6 +273,7 @@ class FakeSource final : public MediaSource, public AudioTrackRetrySource {
       out.status = MediaSourceOpenStatus::Unsupported;
       out.generation = generation;
       out.error = "all candidates exhausted";
+      out.refusal = MediaRefusalClass::AudioTrackRetryExhausted;
       return out;
     }
     descriptor_ = retryDescriptors[rejectedTracks.size()-1];
@@ -2079,9 +2081,10 @@ void backendTrackRetry() {
       if (track.kind == MediaTrackKind::Audio) track.id = id;
     return d;
   };
-  for (unsigned mode = 0; mode < 4; ++mode) {
+  for (unsigned mode = 0; mode < 5; ++mode) {
     auto rig = makeRigWithDescriptor(candidate(2), {});
     rig.source->retryDescriptors = {candidate(3), candidate(4)};
+    if (mode == 4) rig.source->retryDescriptors = {candidate(3)};
     rig.audio->allowOpenReset = true;
     rig.audio->configureHook = [&] {
       rig.audio->configureResult = rig.audio->configuredTrack == 4
@@ -2104,6 +2107,17 @@ void backendTrackRetry() {
     } else if (mode == 3) {
       expect(out.status == NativeMediaDispatcherOpenStatus::Cancelled &&
              rig.audio->configureCalls == 1, "cancellation survives retry retirement");
+    } else if (mode == 4) {
+      const auto stats = rig.dispatcher->stats();
+      expect(out.status == NativeMediaDispatcherOpenStatus::Unsupported &&
+             stats.state == NativeMediaDispatcherState::Unsupported &&
+             stats.failure == NativeMediaDispatcherFailure::None &&
+             stats.refusal == MediaRefusalClass::AudioTrackRetryExhausted &&
+             std::string_view(nativeMediaDispatcherFailureName(stats)) ==
+                 "UnsupportedSource" &&
+             rig.dispatcher->failureMessage().starts_with(
+                 "AudioBackendConfigurationRefused: track 2: "),
+             "exhausted candidates decline the file without a dispatcher failure");
     } else {
       expect(out.status == NativeMediaDispatcherOpenStatus::Failed &&
              rig.source->rejectedTracks.empty() && rig.audio->configureCalls == 1 &&

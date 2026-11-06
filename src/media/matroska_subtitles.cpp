@@ -3,21 +3,8 @@
 #include "media/subtitle_pgs.hpp"
 #include "media/subtitle_vobsub.hpp"
 
-#include <fcntl.h>
-#include <sys/stat.h>
-#if defined(_WIN32)
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
-#include <io.h>
-#else
-#include <unistd.h>
-#endif
-
 #include <algorithm>
 #include <array>
-#include <cerrno>
 #include <cstring>
 #include <optional>
 
@@ -41,149 +28,13 @@ constexpr std::size_t kMaximumBitmapBlockBytes{1024U * 1024U};
 // pathological file from being walked forever.
 constexpr std::size_t kMaximumBitmapBlocks{32'768};
 
-// A pread-backed reader owned by this lane alone. Deliberately NOT the
-// demuxer's StableFileReader: that one is private to the playback path and
-// carries an identity predicate tuned for a live decode session. This one
-// exists so a subtitle read shares no descriptor and no state with playback.
-class SubtitleFileReader final : public SeekableByteReader {
- public:
-  ~SubtitleFileReader() override {
-    if (descriptor_ >= 0)
-      ::close(descriptor_);
-  }
-
-  [[nodiscard]] static std::unique_ptr<SubtitleFileReader> open(
-      const std::filesystem::path& path) noexcept {
-#if defined(_WIN32)
-    const int descriptor = ::_wopen(path.c_str(), _O_RDONLY | _O_BINARY | _O_NOINHERIT);
-#else
-    const int descriptor = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
-#endif
-    if (descriptor < 0)
-      return nullptr;
-#if defined(_WIN32)
-    struct _stati64 status {};
-#else
-    struct stat status {};
-#endif
-    if (
-#if defined(_WIN32)
-        ::_fstati64(descriptor, &status)
-#else
-        ::fstat(descriptor, &status)
-#endif
-        != 0 || !S_ISREG(status.st_mode) ||
-        status.st_size <= 0) {
-      ::close(descriptor);
-      return nullptr;
-    }
-    auto reader = std::unique_ptr<SubtitleFileReader>(new SubtitleFileReader());
-    reader->descriptor_ = descriptor;
-    reader->size_ = static_cast<std::uint64_t>(status.st_size);
-    reader->device_ = status.st_dev;
-    reader->inode_ = status.st_ino;
-#if defined(_WIN32)
-    BY_HANDLE_FILE_INFORMATION identity{};
-    if (!::GetFileInformationByHandle(
-            reinterpret_cast<HANDLE>(::_get_osfhandle(descriptor)), &identity))
-      return nullptr;
-    reader->modified_ = identity.ftLastWriteTime;
-#elif defined(__APPLE__)
-    reader->modified_ = status.st_mtimespec;
-#else
-    reader->modified_ = status.st_mtim;
-#endif
-    return reader;
-  }
-
-  [[nodiscard]] std::uint64_t size() const noexcept override { return size_; }
-
-  [[nodiscard]] bool readAt(std::uint64_t offset,
-                            std::span<std::byte> destination) noexcept override {
-    if (destination.empty())
-      return true;
-    if (offset > size_ || destination.size() > size_ - offset)
-      return false;
-    std::size_t filled = 0;
-    while (filled < destination.size()) {
-#if defined(_WIN32)
-      const std::uint64_t readOffset = offset + filled;
-      OVERLAPPED position{};
-      position.Offset = static_cast<DWORD>(readOffset);
-      position.OffsetHigh = static_cast<DWORD>(readOffset >> 32);
-      DWORD transferred = 0;
-      const bool succeeded = ::ReadFile(
-          reinterpret_cast<HANDLE>(::_get_osfhandle(descriptor_)),
-          destination.data() + filled,
-          static_cast<DWORD>(std::min<std::size_t>(destination.size() - filled, MAXDWORD)),
-          &transferred, &position);
-      if (!succeeded) return false;
-      const auto read = static_cast<std::int64_t>(transferred);
-#else
-      const ssize_t read = ::pread(
-          descriptor_, destination.data() + filled, destination.size() - filled,
-          static_cast<off_t>(offset + filled));
-#endif
-      if (read > 0) {
-        filled += static_cast<std::size_t>(read);
-        continue;
-      }
-      if (read < 0 && errno == EINTR)
-        continue;
-      return false;
-    }
-    return true;
-  }
-
-  // dev + ino + size + mtime, matching the demuxer's identity check. st_ctime
-  // is excluded because xattr and Spotlight writes move it without changing
-  // any content byte.
-  [[nodiscard]] bool unchanged() const noexcept {
-#if defined(_WIN32)
-    struct _stati64 status {};
-#else
-    struct stat status {};
-#endif
-    if (
-#if defined(_WIN32)
-        ::_fstati64(descriptor_, &status)
-#else
-        ::fstat(descriptor_, &status)
-#endif
-        != 0)
-      return false;
-#if defined(_WIN32)
-    BY_HANDLE_FILE_INFORMATION identity{};
-    if (!::GetFileInformationByHandle(
-            reinterpret_cast<HANDLE>(::_get_osfhandle(descriptor_)), &identity))
-      return false;
-#endif
-    return status.st_dev == device_ && status.st_ino == inode_ &&
-           static_cast<std::uint64_t>(status.st_size) == size_ &&
-#if defined(_WIN32)
-           ::CompareFileTime(&identity.ftLastWriteTime, &modified_) == 0;
-#elif defined(__APPLE__)
-           status.st_mtimespec.tv_sec == modified_.tv_sec &&
-           status.st_mtimespec.tv_nsec == modified_.tv_nsec;
-#else
-           status.st_mtim.tv_sec == modified_.tv_sec &&
-           status.st_mtim.tv_nsec == modified_.tv_nsec;
-#endif
-  }
-
- private:
-  SubtitleFileReader() = default;
-
-  int descriptor_{-1};
-  std::uint64_t size_{0};
-  dev_t device_{};
-  ino_t inode_{};
-#if defined(_WIN32)
-  FILETIME modified_{};
-#else
-  struct timespec modified_ {};
-#endif
-};
+// A subtitle read opens its own reader, so it shares no descriptor and no
+// state with playback. An empty file has no subtitles to read.
+[[nodiscard]] std::shared_ptr<StableFileReader> openSubtitleFile(
+    const std::filesystem::path& path) noexcept {
+  auto reader = StableFileReader::open(path);
+  return reader && reader->size() > 0 ? reader : nullptr;
+}
 
 [[nodiscard]] std::string inlineString(const InlineAscii& value) {
   const auto view = value.view();
@@ -515,7 +366,7 @@ class BitmapCueVisitor final : public Visitor {
 
 SubtitleTrackInventory inspectMatroskaSubtitleTracks(
     const std::filesystem::path& path, CancellationToken cancellation) noexcept {
-  auto reader = SubtitleFileReader::open(path);
+  auto reader = openSubtitleFile(path);
   if (!reader)
     return {};
   return inspectMatroskaSubtitleTracks(*reader, cancellation);
@@ -552,7 +403,7 @@ SubtitleTrackLoad loadMatroskaSubtitleTrack(const std::filesystem::path& path,
     load.error = "no readable subtitle track was requested";
     return load;
   }
-  auto file = SubtitleFileReader::open(path);
+  auto file = openSubtitleFile(path);
   if (!file) {
     load.error = "the media file could not be opened for subtitles";
     return load;
@@ -653,7 +504,7 @@ BitmapSubtitleTrackLoad loadMatroskaBitmapSubtitleTrack(
     load.error = "no readable subtitle track was requested";
     return load;
   }
-  auto file = SubtitleFileReader::open(path);
+  auto file = openSubtitleFile(path);
   if (!file) {
     load.error = "the media file could not be opened for subtitles";
     return load;

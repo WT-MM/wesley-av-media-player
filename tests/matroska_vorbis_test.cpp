@@ -1,4 +1,6 @@
+#include "media/audio_codec_timing.hpp"
 #include "media/matroska_vorbis.hpp"
+#include "media/media_codec_facts.hpp"
 
 #include <array>
 #include <cstddef>
@@ -13,6 +15,13 @@
 namespace {
 
 using namespace wam::media::matroska;
+
+[[nodiscard]] std::optional<std::uint32_t>
+vorbisFramesFromNanoseconds(std::int64_t nanoseconds,
+                            std::uint32_t sampleRate) noexcept {
+  return wam::media::matroskaFramesFromNanoseconds(nanoseconds, sampleRate,
+                                                   kMaximumVorbisPacketFrames);
+}
 
 
 // The identification header of fixtures/vp8_vorbis.webm, byte for byte as
@@ -120,7 +129,8 @@ void testRealFixtureHeader() {
          "real header states 2048/2048 block sizes");
   expect(configuration.samplesPerAccessUnit() == 1024U,
          "2048-frame blocks decode 1024 frames per packet");
-  expect(vorbisDecoderLeadInFrames(configuration) == 1024U,
+  expect(wam::media::mediaCodecFacts(wam::media::MediaCodec::Vorbis)
+             .decoderLeadInIsOnePacket,
          "the Vorbis decoder lead-in is one access unit");
 }
 
@@ -350,7 +360,8 @@ int main() {
                 "a Vorbis CodecPrivate carries exactly three headers");
   static_assert(kMaximumVorbisPacketFrames == kMaximumVorbisBlockSize / 2U,
                 "the largest packet is half the largest block");
-  static_assert(kVorbisAudioFormatTag == 0x766F7262U,
+  static_assert(wam::media::mediaCodecFacts(wam::media::MediaCodec::Vorbis)
+                    .coreAudioFormatTag == 0x766F7262U,
                 "the AudioToolbox Vorbis decoder is registered as 'vorb'");
   static_assert(1'000'000'000U % 44'100U != 0U,
                 "one 44.1 kHz frame is not a whole number of nanoseconds, "

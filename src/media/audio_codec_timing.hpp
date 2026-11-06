@@ -1,12 +1,64 @@
 #pragma once
 
+#include "media/codec/aac.hpp"
+#include "media/media_codec_facts.hpp"
 #include "media/native_media_source.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <optional>
 #include <limits>
 
 namespace wam::media {
+
+// Exact integer sample rate, or empty when the rate cannot sit on an integer
+// PCM grid whose timescale is a MediaTime's int32. The one bound for every
+// route.
+[[nodiscard]] inline std::optional<std::uint32_t>
+exactAudioSampleRate(double rate) noexcept {
+  if (!std::isfinite(rate) || rate <= 0.0 ||
+      rate > static_cast<double>(std::numeric_limits<std::int32_t>::max())) {
+    return std::nullopt;
+  }
+  const auto integral = static_cast<std::uint32_t>(rate);
+  if (static_cast<double>(integral) != rate || integral == 0) {
+    return std::nullopt;
+  }
+  return integral;
+}
+
+// Decoder preroll a source guarantees ahead of the first audible frame of an
+// accurate-seek generation, in whole compressed access units.
+//
+// AAC-LC carries no inter-frame dependency beyond the MDCT overlap-add window:
+// each 1024-frame access unit is reconstructed from its own spectral data plus
+// the second half of the previous unit's window, so one decoded predecessor
+// already makes a unit exact. Two units is the conventional decoder preroll
+// and the value used here, which also covers the same overlap structure at the
+// 2048-frame HE-AAC grid and the block-switch history of MP3.
+inline constexpr std::int64_t kAudioPrimingAccessUnits{2};
+// Guards the priming arithmetic against a pathological packet grid.
+inline constexpr std::int64_t kMaximumAudioFramesPerPacket{65'536};
+
+[[nodiscard]] constexpr std::int64_t
+audioPrimingFrames(std::int64_t framesPerPacket) noexcept {
+  return kAudioPrimingAccessUnits * framesPerPacket;
+}
+
+// The latest first-access-unit frame that still leaves the full priming ahead
+// of presentationFrame, clamped at zero.
+[[nodiscard]] constexpr std::int64_t
+audioPrimingCeilingFrame(std::int64_t presentationFrame,
+                         std::int64_t framesPerPacket) noexcept {
+  return std::max<std::int64_t>(
+      presentationFrame - audioPrimingFrames(framesPerPacket), 0);
+}
+
+// The CoreMedia sample attachment that switches the converter to the AAC
+// piecewise timeline. Spelled once; the platform wraps it in a CFString.
+inline constexpr char kAacPiecewiseTimelineAttachmentKey[] =
+    "WAMAacPiecewiseTimeline";
 
 // AAC-LC packet timestamps may jitter within a quarter access unit. The
 // 256-frame bound covers measured residuals through 152 frames and moves audio
@@ -19,7 +71,8 @@ inline constexpr std::int64_t kAacPacketGridResidualFrames = 256;
     MediaTime observed, std::int64_t originFrame, std::uint64_t ordinal,
     std::uint32_t rate) noexcept {
   if (!observed.valid() || !rate || rate > INT32_MAX) return std::nullopt;
-  const __int128 expected = __int128(originFrame) + __int128(ordinal) * 1024;
+  const __int128 expected = __int128(originFrame) +
+                            __int128(ordinal) * codec::kAacLcSamplesPerAccessUnit;
   if (expected < INT64_MIN || expected > INT64_MAX) return std::nullopt;
   const __int128 residual = __int128(observed.value) * rate -
                             expected * observed.timescale;
@@ -37,37 +90,14 @@ inline constexpr std::int64_t kAacPacketGridResidualFrames = 256;
 // pre-skip -- so access unit 0 of every real Opus mux starts pre-skip frames
 // early and the generation decodes a bounded preroll it must not publish.
 //
-// Every other admitted codec starts exactly at zero, and the nonnegative
-// guards those codecs are checked against stay in force. This predicate exists
+// The codecs whose facts row sets precedesStreamOrigin share that shape (each
+// row says why); every other codec starts exactly at zero, and the
+// nonnegative guards it is checked against stay in force. This predicate exists
 // so the exception is stated once instead of being re-derived at each of the
 // layers that has to relax for it.
 [[nodiscard]] constexpr bool
 audioCodecPrecedesStreamOrigin(MediaCodec codec) noexcept {
-  switch (codec) {
-  // Vorbis joins Opus for the same structural reason stated differently by the
-  // format: its first packet carries only half an overlap-add window and
-  // decodes to no samples, so access unit 0 presents one block before media
-  // zero. Where Opus states the offset as a CodecDelay/pre-skip field, Vorbis
-  // implies it, but it lands in exactly the same arithmetic.
-  case MediaCodec::Opus:
-  case MediaCodec::Vorbis:
-  // AC-3 and E-AC-3 state a 256-frame CodecDelay -- the decoder delay Apple's
-  // decoder also swallows -- so access unit 0 presents 256 frames early.
-  case MediaCodec::Ac3:
-  case MediaCodec::Eac3:
-  // MP3 states the LAME encoder delay plus the 529-frame decoder delay
-  // (1105 frames from every ffmpeg mux).
-  case MediaCodec::Mp3:
-  // AAC states one 1024-frame access unit of encoder priming whenever the mux
-  // encoded rather than copied the track.
-  case MediaCodec::Aac:
-    return true;
-  default:
-    // FLAC states no CodecDelay and its decoder swallows nothing, so its
-    // access unit 0 is media frame 0 exactly. It deliberately does NOT join
-    // this predicate even though it does state an exact duration below.
-    return false;
-  }
+  return mediaCodecFacts(codec).precedesStreamOrigin;
 }
 
 // True for codecs whose Matroska descriptor states the audio track's duration
@@ -130,10 +160,6 @@ audioCodecStatesExactDecodedDuration(MediaCodec codec) noexcept {
 // Returns empty for a negative value (that asks for padding to be ADDED, which
 // this pipeline cannot manufacture), a zero sample rate, a residual over one
 // nanosecond, or a result beyond maximumFrames.
-//
-// This is the rate-generic form of the identical arithmetic in
-// opusFramesFromNanoseconds and vorbisFramesFromNanoseconds, which keep their
-// own codec-specific bounds; this shared copy serves the other codecs.
 [[nodiscard]] constexpr std::optional<std::uint32_t>
 matroskaFramesFromNanoseconds(std::int64_t nanoseconds,
                               std::uint32_t sampleRate,

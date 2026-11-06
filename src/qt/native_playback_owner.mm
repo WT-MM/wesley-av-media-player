@@ -540,10 +540,9 @@ void NativePlaybackOwner::endFallbackEventDrain() {
 
 void NativePlaybackOwner::publishDiagnostic(
     const macos::NativeMediaSessionDiagnostic &diagnostic) {
-  const QString detail = QString::fromUtf8(diagnostic.detail.data());
   // Keep low-level diagnostics in the log; retain actionable file damage
   // separately so a generic fallback decoder error cannot erase it.
-  if (detail.contains(QStringLiteral("initialization metadata is missing")))
+  if (diagnostic.refusal == media::MediaRefusalClass::MissingInitialization)
     sourceFailureDetail_ = QStringLiteral("This recording is incomplete: information needed to open it is missing.");
 }
 

@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <source_location>
@@ -226,41 +227,49 @@ enum class NativeMediaDispatcherState : std::uint8_t {
   Closed,
 };
 
+// APPEND-ONLY: every ordinal must stay stable.
+#define WAM_NATIVE_MEDIA_DISPATCHER_FAILURES(X) \
+  X(None)                                       \
+  X(MissingDependency)                          \
+  X(InvalidOpenRequest)                         \
+  X(SourceOpen)                                 \
+  X(InvalidDescriptor)                          \
+  X(InvalidTimeline)                            \
+  X(ConsumerConfiguration)                      \
+  X(ConsumerProtocol)                           \
+  X(SourceRead)                                 \
+  X(InvalidSample)                              \
+  X(InvalidEvent)                               \
+  X(FormatChanged)                              \
+  X(Consumer)                                   \
+  X(Seek)                                       \
+  X(Flush)
+
+#define WAM_NATIVE_MEDIA_DISPATCHER_FAILURE_ENUMERATOR(name) name,
 enum class NativeMediaDispatcherFailure : std::uint8_t {
-  None,
-  MissingDependency,
-  InvalidOpenRequest,
-  SourceOpen,
-  InvalidDescriptor,
-  InvalidTimeline,
-  ConsumerConfiguration,
-  ConsumerProtocol,
-  SourceRead,
-  InvalidSample,
-  InvalidEvent,
-  FormatChanged,
-  Consumer,
-  Seek,
-  Flush,
-  // APPEND-ONLY: every ordinal above must stay stable.
-  //
-  // This is the one value that does NOT accompany
-  // NativeMediaDispatcherState::Failed. A source that declines a file -- an
-  // unsupported codec, a track outside the admission envelope -- is an
-  // envelope verdict, and turning it into a Failed state would replace a clean
-  // "using compatibility playback" fallback with a hard protocol fault on a
-  // blocking surface. The verdict still needs a name so a stderr capture can
-  // attribute the refusal. The state stays Unsupported; only the diagnostic
-  // channel is populated.
-  UnsupportedSource,
+  WAM_NATIVE_MEDIA_DISPATCHER_FAILURES(
+      WAM_NATIVE_MEDIA_DISPATCHER_FAILURE_ENUMERATOR)
 };
+#undef WAM_NATIVE_MEDIA_DISPATCHER_FAILURE_ENUMERATOR
+
+#define WAM_NATIVE_MEDIA_DISPATCHER_FAILURE_NAME(name) #name,
+inline constexpr const char* kNativeMediaDispatcherFailureNames[] = {
+    WAM_NATIVE_MEDIA_DISPATCHER_FAILURES(
+        WAM_NATIVE_MEDIA_DISPATCHER_FAILURE_NAME)};
+#undef WAM_NATIVE_MEDIA_DISPATCHER_FAILURE_NAME
+#undef WAM_NATIVE_MEDIA_DISPATCHER_FAILURES
 
 // Stable diagnostic name for a terminal dispatcher failure. Every terminal
 // failure the session can publish collapses onto one of a handful of generic
 // protocol-level FailureReason values, so the exact class that actually fired
 // is otherwise unobservable from a stderr capture. Never returns nullptr.
-[[nodiscard]] const char* nativeMediaDispatcherFailureName(
-    NativeMediaDispatcherFailure failure) noexcept;
+[[nodiscard]] constexpr const char* nativeMediaDispatcherFailureName(
+    NativeMediaDispatcherFailure failure) noexcept {
+  const auto index = static_cast<std::size_t>(failure);
+  return index < std::size(kNativeMediaDispatcherFailureNames)
+             ? kNativeMediaDispatcherFailureNames[index]
+             : "Unknown";
+}
 
 enum class NativeMediaPendingKind : std::uint8_t {
   None,
@@ -375,6 +384,8 @@ enum class NativeMediaDispatcherLifecycleKind : std::uint8_t {
 struct NativeMediaDispatcherStats {
   NativeMediaDispatcherState state{NativeMediaDispatcherState::Fresh};
   NativeMediaDispatcherFailure failure{NativeMediaDispatcherFailure::None};
+  // The typed class of the last refused or failed open, when one is named.
+  MediaRefusalClass refusal{MediaRefusalClass::None};
   NativeMediaDispatcherAction lastAction{NativeMediaDispatcherAction::Idle};
   NativeMediaDispatcherWait lastWait{NativeMediaDispatcherWait::Command};
   NativeMediaPendingKind pending{NativeMediaPendingKind::None};
@@ -423,6 +434,19 @@ struct NativeMediaDispatcherStats {
   std::uint64_t consumerProgress{0};
   std::uint64_t acceptedSeeks{0};
 };
+
+// The class= / WAMKit error name for the dispatcher's terminal verdict. A
+// source that declines a file leaves the state Unsupported with no failure:
+// an envelope verdict must fall back cleanly rather than become a Failed
+// protocol fault, but it still needs a name so a stderr capture can attribute
+// the refusal.
+[[nodiscard]] constexpr const char* nativeMediaDispatcherFailureName(
+    const NativeMediaDispatcherStats& stats) noexcept {
+  return stats.state == NativeMediaDispatcherState::Unsupported &&
+                 stats.failure == NativeMediaDispatcherFailure::None
+             ? "UnsupportedSource"
+             : nativeMediaDispatcherFailureName(stats.failure);
+}
 
 // Deterministic single-owner demux/dispatch core. It creates no timer,
 // callback, or queue, and no thread outlives the call that made it: the only

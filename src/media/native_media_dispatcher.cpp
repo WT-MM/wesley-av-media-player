@@ -20,45 +20,6 @@
 
 namespace wam::media {
 
-const char* nativeMediaDispatcherFailureName(
-    NativeMediaDispatcherFailure failure) noexcept {
-  switch (failure) {
-  case NativeMediaDispatcherFailure::None:
-    return "None";
-  case NativeMediaDispatcherFailure::MissingDependency:
-    return "MissingDependency";
-  case NativeMediaDispatcherFailure::InvalidOpenRequest:
-    return "InvalidOpenRequest";
-  case NativeMediaDispatcherFailure::SourceOpen:
-    return "SourceOpen";
-  case NativeMediaDispatcherFailure::InvalidDescriptor:
-    return "InvalidDescriptor";
-  case NativeMediaDispatcherFailure::InvalidTimeline:
-    return "InvalidTimeline";
-  case NativeMediaDispatcherFailure::ConsumerConfiguration:
-    return "ConsumerConfiguration";
-  case NativeMediaDispatcherFailure::ConsumerProtocol:
-    return "ConsumerProtocol";
-  case NativeMediaDispatcherFailure::SourceRead:
-    return "SourceRead";
-  case NativeMediaDispatcherFailure::InvalidSample:
-    return "InvalidSample";
-  case NativeMediaDispatcherFailure::InvalidEvent:
-    return "InvalidEvent";
-  case NativeMediaDispatcherFailure::FormatChanged:
-    return "FormatChanged";
-  case NativeMediaDispatcherFailure::Consumer:
-    return "Consumer";
-  case NativeMediaDispatcherFailure::Seek:
-    return "Seek";
-  case NativeMediaDispatcherFailure::Flush:
-    return "Flush";
-  case NativeMediaDispatcherFailure::UnsupportedSource:
-    return "UnsupportedSource";
-  }
-  return "Unknown";
-}
-
 namespace {
 
 template <typename Integer>
@@ -462,6 +423,7 @@ NativeMediaDispatcherOpenOutcome NativeMediaDispatcher::openLocalFile(
 
   saturatingIncrement(stats_.openAttempts);
   stats_.generation = generation;
+  stats_.refusal = MediaRefusalClass::None;
   failure_message_.clear();
   if (path.empty() || generation == 0 ||
       !validateMediaSourceInitialPosition(options.initialPosition, nullptr)) {
@@ -506,11 +468,13 @@ NativeMediaDispatcherOpenOutcome NativeMediaDispatcher::openLocalFile(
       operation_generation_.store(0, std::memory_order_release);
       // The source's own text is the ONLY description of why the file was
       // declined, and the session's stderr line reads failureMessage(). Carry
-      // the text, and name the class, without moving the state: an envelope
-      // verdict must still fall back cleanly (see UnsupportedSource).
+      // the text and the class without a failure: an envelope verdict must
+      // still fall back cleanly.
       failure_message_ = audioRefusals.empty() ? opened.error :
-          "AudioBackendConfigurationRefused: " + audioRefusals + "; " + opened.error;
-      stats_.failure = NativeMediaDispatcherFailure::UnsupportedSource;
+          std::string(mediaRefusalClassName(
+              MediaRefusalClass::AudioBackendConfigurationRefused)) +
+              ": " + audioRefusals + "; " + opened.error;
+      stats_.refusal = opened.refusal;
       stats_.state = NativeMediaDispatcherState::Unsupported;
       stats_.lastWait = NativeMediaDispatcherWait::Terminal;
       result.status = NativeMediaDispatcherOpenStatus::Unsupported;
@@ -526,6 +490,7 @@ NativeMediaDispatcherOpenOutcome NativeMediaDispatcher::openLocalFile(
       // The source's own text is the only description of what actually went
       // wrong; every layer above this point collapses onto a generic enum.
       failure_message_ = opened.error;
+      stats_.refusal = opened.refusal;
       fail(NativeMediaDispatcherFailure::SourceOpen, generation);
       result.status = NativeMediaDispatcherOpenStatus::Failed;
       return result;
@@ -737,7 +702,10 @@ NativeMediaDispatcherOpenOutcome NativeMediaDispatcher::openLocalFile(
         audioVerdict != OpenConfigureVerdict::Accepted) {
       const auto rejectedTrack = descriptor_->selectedAudio.value_or(0);
       const std::string reason = "track " + std::to_string(rejectedTrack) + ": " +
-          (audioConfigureError.empty() ? "AudioBackendConfigurationRefused" : audioConfigureError);
+          (audioConfigureError.empty()
+               ? std::string(mediaRefusalClassName(
+                     MediaRefusalClass::AudioBackendConfigurationRefused))
+               : audioConfigureError);
       if (!audioRefusals.empty()) audioRefusals += "; ";
       audioRefusals += reason;
       if (mayRetryAudio && audioVerdict == OpenConfigureVerdict::Rejected &&
@@ -748,7 +716,10 @@ NativeMediaDispatcherOpenOutcome NativeMediaDispatcher::openLocalFile(
         try {
           opened = retrySource->retryAudioTrack(path, options, generation, rejectedTrack);
         } catch (...) {
-          failure_message_ = "AudioTrackRetryFailed: " + audioRefusals;
+          stats_.refusal = MediaRefusalClass::AudioTrackRetryFailed;
+          failure_message_ =
+              std::string(mediaRefusalClassName(stats_.refusal)) + ": " +
+              audioRefusals;
           fail(NativeMediaDispatcherFailure::SourceOpen, generation);
           result.status = NativeMediaDispatcherOpenStatus::Failed;
           return result;
@@ -757,7 +728,9 @@ NativeMediaDispatcherOpenOutcome NativeMediaDispatcher::openLocalFile(
         prepared_context_.reset();
         continue;
       }
-      failure_message_ = "AudioBackendConfigurationRefused: " + audioRefusals;
+      stats_.refusal = MediaRefusalClass::AudioBackendConfigurationRefused;
+      failure_message_ = std::string(mediaRefusalClassName(stats_.refusal)) +
+                         ": " + audioRefusals;
       fail(NativeMediaDispatcherFailure::ConsumerConfiguration, generation);
       result.status = NativeMediaDispatcherOpenStatus::Failed;
       return result;
@@ -774,7 +747,9 @@ NativeMediaDispatcherOpenOutcome NativeMediaDispatcher::openLocalFile(
     result.status = NativeMediaDispatcherOpenStatus::Ready;
     return result;
   }
-  failure_message_ = "AudioTrackRetryExhausted: " + audioRefusals;
+  stats_.refusal = MediaRefusalClass::AudioTrackRetryExhausted;
+  failure_message_ = std::string(mediaRefusalClassName(stats_.refusal)) + ": " +
+                     audioRefusals;
   fail(NativeMediaDispatcherFailure::ConsumerConfiguration, generation);
   result.status = NativeMediaDispatcherOpenStatus::Failed;
   return result;

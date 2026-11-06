@@ -2,9 +2,11 @@
 
 #include "media/native_media_source.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <span>
 #include <type_traits>
@@ -42,6 +44,80 @@ inline constexpr std::size_t kM2tsPacketBytes{192};
 inline constexpr std::size_t kRsPacketBytes{204};
 inline constexpr std::size_t kMaximumPacketStrideBytes{kRsPacketBytes};
 inline constexpr std::byte kSyncByte{std::byte{0x47}};
+
+// Immutable facts about the container framing, published because .m2ts and a
+// 204-byte DVB capture are the same demuxer with a different stride and the
+// distinction must be visible to a test and to telemetry.
+struct MpegTsFraming {
+  std::uint64_t firstSyncOffset{0};
+  std::uint32_t packetStride{0};   // 188, 192 or 204
+  std::uint32_t packetCount{0};
+  bool timestampedPackets{false};  // m2ts TP_extra_header present
+
+  friend constexpr bool operator==(MpegTsFraming, MpegTsFraming) = default;
+};
+
+// How many consecutive sync bytes at a candidate stride prove framing. Ten
+// gives a false-positive probability of 2^-80 against random data while
+// needing only 10 * 204 = 2,040 bytes of probe, so even a two-packet file is
+// still decided from real evidence rather than from one lucky byte.
+inline constexpr std::size_t kFramingConfirmations{10};
+
+// Detects the packet framing of a transport stream from a probe window. The
+// one rule for the demuxer and for container routing; public because it is
+// the first thing that can refuse a file and therefore the first thing a test
+// must be able to drive directly.
+[[nodiscard]] inline bool detectMpegTsFraming(std::span<const std::byte> probe,
+                                              std::uint64_t fileSize,
+                                              MpegTsFraming& framing) noexcept {
+  framing = MpegTsFraming{};
+  static constexpr std::array<std::uint32_t, 3> kStrides{
+      static_cast<std::uint32_t>(kTsPacketBytes),
+      static_cast<std::uint32_t>(kM2tsPacketBytes),
+      static_cast<std::uint32_t>(kRsPacketBytes)};
+  for (const std::uint32_t stride : kStrides) {
+    // A candidate first-sync offset can never exceed one stride: if the file
+    // begins mid-packet, the next packet boundary is within `stride` bytes.
+    for (std::uint32_t start = 0; start < stride; ++start) {
+      if (start >= probe.size() || probe[start] != kSyncByte) {
+        continue;
+      }
+      std::size_t confirmed = 1;
+      bool broken = false;
+      for (std::size_t k = 1; k < kFramingConfirmations; ++k) {
+        const std::size_t at = static_cast<std::size_t>(start) + k * stride;
+        if (at >= probe.size()) {
+          break;  // ran out of probe, not a mismatch
+        }
+        if (probe[at] != kSyncByte) {
+          broken = true;
+          break;
+        }
+        ++confirmed;
+      }
+      if (broken) {
+        continue;
+      }
+      // A single sync byte is not evidence. Demand either the full
+      // confirmation run or every packet the file can hold, whichever is
+      // smaller, so a two-packet file is still decided from real repetitions.
+      const std::uint64_t possible =
+          fileSize > start ? (fileSize - start) / stride : 0;
+      const std::size_t required = static_cast<std::size_t>(
+          std::min<std::uint64_t>(kFramingConfirmations, possible));
+      if (required < 2 || confirmed < required) {
+        continue;
+      }
+      framing.firstSyncOffset = start;
+      framing.packetStride = stride;
+      framing.timestampedPackets = stride == kM2tsPacketBytes;
+      framing.packetCount = static_cast<std::uint32_t>(std::min<std::uint64_t>(
+          std::numeric_limits<std::uint32_t>::max(), possible));
+      return true;
+    }
+  }
+  return false;
+}
 
 inline constexpr std::uint16_t kPatPid{0x0000};
 inline constexpr std::uint16_t kNullPid{0x1FFF};
@@ -113,12 +189,6 @@ class TimestampUnwrapper {
   std::uint32_t backwardWraps_{0};
   bool primed_{false};
 };
-
-// Exact conversion of a 90 kHz tick count to MediaTime. The result is reduced
-// to lowest terms so that comparisons against other bases stay exact and
-// cheap. Never rounds; fails closed if the reduced form leaves the domain.
-[[nodiscard]] std::optional<MediaTime>
-mediaTimeFromTicks(std::int64_t ticks) noexcept;
 
 // ---------------------------------------------------------------------------
 // Transport packet header
@@ -716,62 +786,5 @@ struct LatmFrame {
 [[nodiscard]] bool latmCopyPayload(std::span<const std::byte> frame,
                                    const LatmFrame& facts,
                                    std::span<std::byte> destination) noexcept;
-
-// AC-3 sync frame geometry (ATSC A/52). Needed to split a PES payload into
-// whole frames and to admit the stream's rate/channels without decoding.
-struct Ac3SyncFrame {
-  std::uint32_t frameBytes{0};
-  std::uint32_t sampleRate{0};
-  // Decoded samples this syncframe codes. A/52 legacy AC-3 always codes 6
-  // blocks of 256; E-AC-3 may code 1, 2, 3 or 6, and a route that assumed 1536
-  // would drift by three quarters of a frame on a short-block stream.
-  std::uint32_t samplesPerFrame{0};
-  // FULL-BANDWIDTH channels, excluding LFE. `channels` below is the total the
-  // decoder will emit and is what an ASBD must state.
-  std::uint8_t fullBandwidthChannels{0};
-  std::uint8_t channels{0};
-  std::uint8_t bitstreamId{0};  // <= 10 is AC-3, 16 is E-AC-3
-  bool lfe{false};
-  bool enhanced{false};
-
-  friend constexpr bool operator==(const Ac3SyncFrame&, const Ac3SyncFrame&) =
-      default;
-};
-
-inline constexpr std::uint8_t kEac3BitstreamId{16};
-inline constexpr std::uint32_t kAc3SamplesPerBlock{256};
-inline constexpr std::uint32_t kAc3BlocksPerSyncFrame{6};
-// A/52 Table 5.8: full-bandwidth channel count per acmod, LFE excluded.
-inline constexpr std::array<std::uint8_t, 8> kAc3AcmodChannels{2, 1, 2, 3,
-                                                               3, 4, 4, 5};
-
-// Legacy AC-3 (bsid <= 10). Refuses an E-AC-3 syncframe rather than mis-reading
-// its frmsiz as a frmsizecod table index.
-[[nodiscard]] bool parseAc3SyncFrame(std::span<const std::byte> bytes,
-                                     Ac3SyncFrame& frame) noexcept;
-// E-AC-3 (A/52 Annex E, bsid 16). An entirely different bsi layout from the
-// first bit after the sync word.
-[[nodiscard]] bool parseEac3SyncFrame(std::span<const std::byte> bytes,
-                                      Ac3SyncFrame& frame) noexcept;
-// Dispatches on the bitstream id, which both syntaxes happen to place at the
-// same bit. This is what a frame walk should call.
-[[nodiscard]] bool parseAc3OrEac3SyncFrame(std::span<const std::byte> bytes,
-                                           Ac3SyncFrame& frame) noexcept;
-
-// MPEG-1/2 Layer I-III frame geometry (stream types 0x03/0x04).
-struct MpegAudioFrame {
-  std::uint32_t frameBytes{0};
-  std::uint32_t sampleRate{0};
-  std::uint32_t samplesPerFrame{0};
-  std::uint8_t channels{0};
-  std::uint8_t layer{0};  // 1, 2 or 3
-  std::uint8_t version{0};  // 1 = MPEG-1, 2 = MPEG-2, 3 = MPEG-2.5
-
-  friend constexpr bool operator==(const MpegAudioFrame&,
-                                   const MpegAudioFrame&) = default;
-};
-
-[[nodiscard]] bool parseMpegAudioFrame(std::span<const std::byte> bytes,
-                                       MpegAudioFrame& frame) noexcept;
 
 }  // namespace wam::media::mpegts

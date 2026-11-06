@@ -1,8 +1,21 @@
 #pragma once
+#include "media/matroska_ebml.hpp"
 #include "media/media_container_routing.hpp"
+#include "media/mpegts_packet.hpp"
 #include <cstring>
 #include <span>
 namespace wam::media {
+// An ISO-BMFF top-level box type at `offset` (the type follows a 4-byte size).
+inline bool isoBmffTopLevelBoxAt(std::span<const std::byte> bytes,
+                                 std::size_t offset) noexcept {
+  if (offset > bytes.size() || bytes.size() - offset < 4)
+    return false;
+  for (const char *type : {"ftyp", "moov", "mdat", "free", "moof"})
+    if (!std::memcmp(bytes.data() + offset, type, 4))
+      return true;
+  return false;
+}
+
 // A recognized signature outranks the filename. ISO-BMFF keeps AVFoundation
 // first; only a refused admission advances to the general demux stage.
 inline MediaSourceBackendKind
@@ -13,18 +26,17 @@ containerBackendForBytes(std::span<const std::byte> bytes,
     return offset <= bytes.size() && size <= bytes.size() - offset &&
            !std::memcmp(bytes.data() + offset, text, size);
   };
-  if (match(0, "\x1a\x45\xdf\xa3", 4))
+  if (bytes.size() >= 4 &&
+      ((std::uint32_t(bytes[0]) << 24) | (std::uint32_t(bytes[1]) << 16) |
+       (std::uint32_t(bytes[2]) << 8) | std::uint32_t(bytes[3])) ==
+          matroska::kEbmlHeaderId)
     return MediaSourceBackendKind::Matroska;
-  for (const unsigned stride : {188U, 192U, 204U}) {
-    const unsigned offset = stride == 192 ? 4 : 0;
-    if (bytes.size() > offset + 2 * stride &&
-        bytes[offset] == std::byte{0x47} &&
-        bytes[offset + stride] == std::byte{0x47} &&
-        bytes[offset + 2 * stride] == std::byte{0x47})
-      return MediaSourceBackendKind::MpegTs;
-  }
-  if (match(4, "ftyp", 4) || match(4, "moov", 4) || match(4, "mdat", 4) ||
-      match(4, "free", 4) || match(4, "moof", 4))
+  // The demuxer's own framing rule; with the window as the file size it asks
+  // for as many sync confirmations as the window can hold.
+  mpegts::MpegTsFraming framing;
+  if (mpegts::detectMpegTsFraming(bytes, bytes.size(), framing))
+    return MediaSourceBackendKind::MpegTs;
+  if (isoBmffTopLevelBoxAt(bytes, 4))
     return MediaSourceBackendKind::AVFoundation;
   if ((match(0, "RIFF", 4) && match(8, "AVI ", 4)) || match(0, "FLV", 3) ||
       match(0, "OggS", 4) || match(0, ".RMF", 4) ||
@@ -37,21 +49,7 @@ containerBackendForBytes(std::span<const std::byte> bytes,
       match(0, "ID3", 3) ||
       (match(0, "FORM", 4) && (match(8, "AIFF", 4) || match(8, "AIFC", 4))))
     return MediaSourceBackendKind::AVFoundation;
-  const auto known = containerBackendForExtension(hint);
-  if (known)
-    return *known;
-  try {
-    auto extension = hint.extension().string();
-    for (auto &c : extension)
-      if (c >= 'A' && c <= 'Z')
-        c = char(c - 'A' + 'a');
-    for (const auto name :
-         {".avi", ".flv", ".ogg", ".ogv", ".oga", ".opus", ".asf", ".wmv",
-          ".wma", ".rm", ".rmvb", ".mpg", ".mpeg", ".vob"})
-      if (extension == name)
-        return MediaSourceBackendKind::Libavformat;
-  } catch (...) {
-  }
-  return MediaSourceBackendKind::AVFoundation;
+  return containerBackendForExtension(hint).value_or(
+      MediaSourceBackendKind::AVFoundation);
 }
 } // namespace wam::media

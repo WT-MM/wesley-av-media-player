@@ -4,6 +4,7 @@
 #include <array>
 #include <atomic>
 #include <bit>
+#include <chrono>
 #include <cerrno>
 #include <cmath>
 #include <cstddef>
@@ -32,6 +33,9 @@
 namespace {
 
 using namespace wam::media::matroska;
+using wam::media::ByteRange;
+using wam::media::FrameRange;
+using wam::media::SeekableByteReader;
 using Bytes = std::vector<std::byte>;
 
 static_assert(!std::is_default_constructible_v<SegmentChild>);
@@ -2256,6 +2260,17 @@ void testParseFile() {
   expect(changed.status == ParseStatus::IoError &&
              changed.error == ParseError::FileChanged,
          "single-descriptor adapter detects file growth during callbacks");
+
+  const std::filesystem::path file(path.data());
+  const auto reader = wam::media::StableFileReader::open(file);
+  expect(reader && reader->unchanged(), "an untouched file keeps its identity");
+  std::error_code ignored;
+  std::filesystem::last_write_time(
+      file, std::filesystem::last_write_time(file, ignored) +
+                std::chrono::seconds(1),
+      ignored);
+  expect(reader && !reader->unchanged(),
+         "a size-preserving content write (mtime only) is a file change");
   static_cast<void>(::unlink(path.data()));
 }
 

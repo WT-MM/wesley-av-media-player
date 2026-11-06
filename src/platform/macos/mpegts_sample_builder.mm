@@ -1,5 +1,7 @@
 #include "platform/macos/mpegts_sample_builder.hpp"
 
+#include "media/codec/ac3.hpp"
+#include "media/codec/mpeg_audio.hpp"
 #include "media/mpegts_packet.hpp"
 #include "platform/macos/native_video_color.hpp"
 
@@ -12,26 +14,18 @@ namespace wam::macos {
 namespace {
 
 using media::MediaCodec;
+using media::codec::Ac3SyncFrame;
+using media::codec::MpegAudioFrame;
 using media::MediaCodecConfigurationKind;
 using media::MediaTime;
 using media::MediaTimeOrder;
 using media::MediaTrackDescriptor;
 using media::MediaTrackKind;
-using media::mpegts::Ac3SyncFrame;
 using media::mpegts::AdtsHeader;
-using media::mpegts::MpegAudioFrame;
 using media::mpegts::MpegTsCompressedSample;
-using media::mpegts::MpegTsDemuxError;
+using media::MediaRefusalClass;
 
 }  // namespace
-
-std::string mpegTsDemuxErrorMessage(const char* what, MpegTsDemuxError error) {
-  std::string message(what);
-  message += " (";
-  message += media::mpegts::mpegTsDemuxErrorName(error);
-  message += ")";
-  return message;
-}
 
 CMVideoFormatDescriptionRef createMpegTsVideoFormatDescription(
     const MediaTrackDescriptor& track) noexcept {
@@ -223,7 +217,8 @@ bool layOutMpegTsAudioFrames(
       decoded = framesPerPacket;
     } else if (codec == MediaCodec::Ac3 || codec == MediaCodec::Eac3) {
       Ac3SyncFrame frame{};
-      if (!media::mpegts::parseAc3OrEac3SyncFrame(rest, frame)) {
+      if (media::codec::readAc3SyncframeHeader(rest, frame) !=
+          media::codec::Ac3AdmissionError::None) {
         break;
       }
       frameBytes = frame.frameBytes;
@@ -234,7 +229,8 @@ bool layOutMpegTsAudioFrames(
       decoded = frame.samplesPerFrame;
     } else if (codec == MediaCodec::Mp3) {
       MpegAudioFrame frame{};
-      if (!media::mpegts::parseMpegAudioFrame(rest, frame)) {
+      if (media::codec::readMpegAudioFrameHeader(rest, frame) !=
+          media::codec::MpegAudioAdmissionError::None) {
         break;
       }
       frameBytes = frame.frameBytes;
@@ -377,14 +373,14 @@ MpegTsSampleBuildStatus buildMpegTsCompressedSampleBuffer(
       workspace.resize(payloadBytes);
     }
     const std::span<std::byte> gathered(workspace.data(), payloadBytes);
-    MpegTsDemuxError copyError = MpegTsDemuxError::None;
+    MediaRefusalClass copyError = MediaRefusalClass::None;
     if (!inputs.asset->copyAccessUnit(sample, gathered, inputs.cancellation,
                                       &copyError)) {
-      if (copyError == MpegTsDemuxError::Cancelled) {
+      if (copyError == MediaRefusalClass::Cancelled) {
         return MpegTsSampleBuildStatus::Cancelled;
       }
       if (error != nullptr) {
-        *error = mpegTsDemuxErrorMessage("mpeg-ts payload gather failed",
+        *error = media::refusalMessage("mpeg-ts payload gather failed",
                                          copyError);
       }
       return MpegTsSampleBuildStatus::Failed;
@@ -413,15 +409,15 @@ MpegTsSampleBuildStatus buildMpegTsCompressedSampleBuffer(
     if (!allocateBlock(payloadBytes, &block, &destination, error)) {
       return MpegTsSampleBuildStatus::Failed;
     }
-    MpegTsDemuxError copyError = MpegTsDemuxError::None;
+    MediaRefusalClass copyError = MediaRefusalClass::None;
     if (!inputs.asset->copyAccessUnit(sample, destination, inputs.cancellation,
                                       &copyError)) {
       CFRelease(block);
-      if (copyError == MpegTsDemuxError::Cancelled) {
+      if (copyError == MediaRefusalClass::Cancelled) {
         return MpegTsSampleBuildStatus::Cancelled;
       }
       if (error != nullptr) {
-        *error = mpegTsDemuxErrorMessage("mpeg-ts payload gather failed",
+        *error = media::refusalMessage("mpeg-ts payload gather failed",
                                          copyError);
       }
       return MpegTsSampleBuildStatus::Failed;
@@ -438,14 +434,14 @@ MpegTsSampleBuildStatus buildMpegTsCompressedSampleBuffer(
       workspace.resize(payloadBytes);
     }
     const std::span<std::byte> gathered(workspace.data(), payloadBytes);
-    MpegTsDemuxError copyError = MpegTsDemuxError::None;
+    MediaRefusalClass copyError = MediaRefusalClass::None;
     if (!inputs.asset->copyAccessUnit(sample, gathered, inputs.cancellation,
                                       &copyError)) {
-      if (copyError == MpegTsDemuxError::Cancelled) {
+      if (copyError == MediaRefusalClass::Cancelled) {
         return MpegTsSampleBuildStatus::Cancelled;
       }
       if (error != nullptr) {
-        *error = mpegTsDemuxErrorMessage("mpeg-ts payload gather failed",
+        *error = media::refusalMessage("mpeg-ts payload gather failed",
                                          copyError);
       }
       return MpegTsSampleBuildStatus::Failed;

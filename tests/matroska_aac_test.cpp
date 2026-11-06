@@ -13,6 +13,7 @@
 namespace {
 
 using wam::media::MediaTime;
+using namespace wam::media::codec;
 using namespace wam::media::matroska;
 
 

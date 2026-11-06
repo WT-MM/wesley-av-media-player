@@ -22,13 +22,13 @@ using media::MediaTime;
 using media::MediaTimeOrder;
 using media::MediaTrackDescriptor;
 using media::MediaTrackKind;
-using media::mpegts::CancellationToken;
+using media::CancellationToken;
 using media::mpegts::MpegTsCompressedSample;
 using media::mpegts::MpegTsCursor;
 using media::mpegts::MpegTsCursorCancelled;
 using media::mpegts::MpegTsCursorEnd;
 using media::mpegts::MpegTsCursorFailure;
-using media::mpegts::MpegTsDemuxStatus;
+using media::MediaSourceOpenStatus;
 using media::mpegts::MpegTsGenerationPlan;
 using media::mpegts::MpegTsPreparedAsset;
 
@@ -258,19 +258,19 @@ NativePreviewBeginOutcome MpegTsPreviewSource::begin(
     // Matroska's -- see the header.
     const media::mpegts::MpegTsPlanOutcome planned = impl_->asset->planGeneration(
         request.target, media::MediaSeekMode::Accurate, impl_->cancellation());
-    if (planned.status != MpegTsDemuxStatus::Ready || !planned.plan) {
+    if (planned.status != MediaSourceOpenStatus::Ready || !planned.plan) {
       switch (planned.status) {
-      case MpegTsDemuxStatus::Cancelled:
+      case MediaSourceOpenStatus::Cancelled:
         outcome.status = NativePreviewStatus::Cancelled;
         break;
-      case MpegTsDemuxStatus::Unsupported:
+      case MediaSourceOpenStatus::Unsupported:
         outcome.status = NativePreviewStatus::Unsupported;
         break;
       default:
         outcome.status = NativePreviewStatus::Failed;
         break;
       }
-      outcome.error = mpegTsDemuxErrorMessage(
+      outcome.error = media::refusalMessage(
           planned.message.empty() ? "mpeg-ts preview planning failed"
                                   : planned.message.c_str(),
           planned.error);
@@ -364,7 +364,7 @@ NativePreviewReadResult MpegTsPreviewSource::readNext(
       return NativePreviewEndOfStream{expectedEpoch};
     }
     if (const auto* failed = std::get_if<MpegTsCursorFailure>(&read)) {
-      std::string error = mpegTsDemuxErrorMessage(
+      std::string error = media::refusalMessage(
           failed->message.empty() ? "mpeg-ts preview cursor read failed"
                                   : failed->message.c_str(),
           failed->error);

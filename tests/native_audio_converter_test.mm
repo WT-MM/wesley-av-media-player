@@ -452,7 +452,7 @@ void testConfigurationPacketMetadataAndAdmission() {
              fixture.backend->cookie[0] == std::byte{0x12} &&
              fixture.backend->configuredChannels == 2,
          "exact ASBD, output rate, channels, and cookie reach the backend");
-  fixture.backend->setScripts({{1, 1}});
+  fixture.backend->setScripts({{1, 1024}});
   const std::array<std::uint32_t, 2> sizes{3, 5};
   auto sample = makeSample(fixture.track, 1, sizes);
   expect(fixture.converter->submit(std::move(sample), &fixture.error) ==
@@ -473,7 +473,7 @@ void testConfigurationPacketMetadataAndAdmission() {
   cbrTrack.audio->bytesPerPacket = 4;
   cbrTrack.audio->framesPerPacket = 1152;
   Fixture cbr(16, cbrTrack);
-  cbr.backend->setScripts({{1, 1}});
+  cbr.backend->setScripts({{1, 1024}});
   const std::array<std::uint32_t, 2> cbrSizes{4, 4};
   auto cbrSample = makeSample(cbr.track, 16, cbrSizes, false, false);
   expect(cbr.ready &&
@@ -734,8 +734,11 @@ void testTransactionalPreparePreservesExactOwnership() {
 
 void testExactAccurateSeekPcmTrimming() {
   const std::array<std::uint32_t, 1> size{4};
+  // The ceiling at the straddling block's end makes its 1022-frame suffix the
+  // generation's final slab, which publishes below the per-slab floor.
   Fixture fixture(44, makeTrack(),
-                  NativeAudioGenerationTimeline{{1026, 48'000}, true, false});
+                  NativeAudioGenerationTimeline{
+                      {1026, 48'000}, true, false, {2048, 48'000}, true});
   fixture.backend->setScripts({{1, 1024, true}, {1, 1024, true}});
   auto wholePreroll =
       makeSample(fixture.track, 44, size, false, true, nullptr, 0);
@@ -911,7 +914,7 @@ void testTimelineEditsAndDecoderOverrunFailClosed() {
 
 void testPartialOutputAndCapacityOne() {
   Fixture fixture(5, makeTrack(1));
-  fixture.backend->setScripts({{1, 2}, {1, 1}, {0, 0, true, true}});
+  fixture.backend->setScripts({{1, 1022}, {1, 2}, {0, 0, true, true}});
   const std::array<std::uint32_t, 2> sizes{3, 5};
   auto first = makeSample(fixture.track, 5, sizes);
   auto blocked = makeSample(fixture.track, 5, sizes);
@@ -922,7 +925,8 @@ void testPartialOutputAndCapacityOne() {
           fixture.converter->submit(std::move(blocked), nullptr) ==
               NativeAudioSubmitResult::Backpressure &&
           fixture.converter->pump(nullptr) ==
-              NativeAudioPumpResult::Published &&
+              NativeAudioPumpResult::Progress &&
+          fixture.ring.queuedSlabs() == 0 &&
           fixture.converter->stats().sampleRetained &&
           fixture.converter->stats().retainedPayloadBytes == 8 &&
           fixture.converter->stats().peakRetainedPayloadBytes == 8 &&
@@ -951,7 +955,7 @@ void testRingBackpressurePrecedesConversion() {
                NativePcmRing::PublishResult::Published,
            "ring-full fixture publishes one slab");
   }
-  fixture.backend->setScripts({{1, 1}});
+  fixture.backend->setScripts({{1, 1024}});
   const std::array<std::uint32_t, 1> size{4};
   auto sample = makeSample(fixture.track, 6, size);
   expect(fixture.converter->submit(std::move(sample), nullptr) ==
@@ -1011,7 +1015,7 @@ void testGenerationFlushCancellationAndDecodeOnlyRejection() {
 void testExactInputStorageLifetimeHandshake() {
   Fixture fixture(20);
   fixture.backend->setScripts(
-      {{1, 1}, {0, 2}, {0, 0, true, true}, {1, 1, true}});
+      {{1, 512}, {0, 512}, {0, 0, true, true}, {1, 1024, true}});
   const std::array<std::uint32_t, 1> size{4};
   std::atomic<int> firstRelease{0};
   auto first = makeSample(fixture.track, 20, size, false, true, &firstRelease);
@@ -1019,7 +1023,7 @@ void testExactInputStorageLifetimeHandshake() {
   expect(fixture.converter->submit(std::move(first), nullptr) ==
                  NativeAudioSubmitResult::Accepted &&
              fixture.converter->pump(nullptr) ==
-                 NativeAudioPumpResult::Published &&
+                 NativeAudioPumpResult::Progress &&
              fixture.converter->stats().sampleRetained && firstRelease == 0 &&
              fixture.converter->submit(std::move(blocked), nullptr) ==
                  NativeAudioSubmitResult::Backpressure,
@@ -1171,7 +1175,7 @@ void testContiguousBorrowAndFragmentedFallback() {
   const std::array<std::int64_t, 2> offsets{2, 7};
 
   Fixture contiguous(57);
-  contiguous.backend->setScripts({{2, 2}, {0, 0, true, true}});
+  contiguous.backend->setScripts({{2, 1024}, {0, 0, true, true}});
   std::atomic<int> contiguousRelease{0};
   std::atomic<std::uint64_t> contiguousCopiedBytes{0};
   auto leaseBacked = makeSample(
@@ -1220,7 +1224,7 @@ void testContiguousBorrowAndFragmentedFallback() {
          "the borrowed span lease retires only at the backend release boundary");
 
   Fixture fragmented(58);
-  fragmented.backend->setScripts({{2, 1, true}});
+  fragmented.backend->setScripts({{2, 1024, true}});
   std::atomic<int> fragmentedRelease{0};
   std::atomic<std::uint64_t> fragmentedCopiedBytes{0};
   auto fragmentedPayload = makeSample(
@@ -1314,9 +1318,67 @@ void testRetainedPayloadHighWaterReset() {
          "later release clears current while retaining the seeded HWM");
 }
 
+// One codec packet per sample (Opus, Vorbis, FLAC on Matroska or libavformat)
+// decodes to fewer frames than the ring's per-slab floor. The converter
+// coalesces them, so every slab but the generation's last carries at least the
+// floor, and no frame is lost or held back at the drain.
+void testShortBlocksCoalesceToTheSlabFloor() {
+  constexpr std::uint32_t kPacketFrames = 960;
+  constexpr std::size_t kSamples = 5;
+  auto track = makeTrack();
+  track.audio->framesPerPacket = kPacketFrames;
+  Fixture fixture(60, track);
+  fixture.backend->setScripts({{1, kPacketFrames, true},
+                               {1, kPacketFrames, true},
+                               {1, kPacketFrames, true},
+                               {1, kPacketFrames, true},
+                               {1, kPacketFrames, true},
+                               {0, 0, false, false, true}});
+  const std::array<std::uint32_t, 1> size{4};
+  std::array<std::uint64_t, kSamples + 1> slabs{};
+  std::size_t slabCount = 0;
+  std::uint64_t publishedBefore = 0;
+  const auto record = [&](NativeAudioPumpResult result) {
+    const auto published = fixture.ring.stats().publishedFrames;
+    if (result == NativeAudioPumpResult::Published && slabCount < slabs.size()) {
+      slabs[slabCount++] = published - publishedBefore;
+    }
+    publishedBefore = published;
+    return result;
+  };
+  bool accepted = fixture.ready;
+  for (std::size_t index = 0; index < kSamples; ++index) {
+    auto sample = makeSample(fixture.track, 60, size, false, true, nullptr,
+                             static_cast<std::int64_t>(index * kPacketFrames));
+    accepted = accepted &&
+               fixture.converter->submit(std::move(sample), nullptr) ==
+                   NativeAudioSubmitResult::Accepted &&
+               record(fixture.converter->pump(nullptr)) !=
+                   NativeAudioPumpResult::Failed;
+  }
+  accepted = accepted && record(fixture.converter->endOfStream(60, nullptr)) ==
+                             NativeAudioPumpResult::Published;
+  const bool drained =
+      record(fixture.converter->pump(nullptr)) == NativeAudioPumpResult::Drained;
+  bool floorHeld = slabCount != 0;
+  for (std::size_t index = 0; index + 1 < slabCount; ++index) {
+    floorHeld = floorHeld &&
+                slabs[index] >= NativePcmRing::kMinimumFramesPerPublishedSlab;
+  }
+  const auto snapshot = fixture.converter->stats();
+  expect(accepted && drained && floorHeld && slabCount == 3 &&
+             fixture.ring.stats().publishedFrames == kSamples * kPacketFrames &&
+             snapshot.publishedPcmFrames == kSamples * kPacketFrames &&
+             snapshot.publishedSlabs == slabCount &&
+             snapshot.firstPublishedFrameKnown &&
+             snapshot.firstPublishedFrame == 0 && snapshot.drained,
+         "short decoded blocks coalesce to the slab floor and the drain "
+         "publishes the final short slab");
+}
+
 void testFlatAllocationAfterStart() {
   Fixture fixture(15);
-  fixture.backend->setScripts({{1, 4}});
+  fixture.backend->setScripts({{1, 1024}});
   const std::array<std::uint32_t, 1> size{4};
   auto sample = makeSample(fixture.track, 15, size);
   const std::uint64_t before = allocations.load(std::memory_order_relaxed);
@@ -1326,7 +1388,7 @@ void testFlatAllocationAfterStart() {
   const std::uint64_t after = allocations.load(std::memory_order_relaxed);
   expect(submitted == NativeAudioSubmitResult::Accepted &&
              pumped == NativeAudioPumpResult::Published &&
-             snapshot.producedFrames == 4 && before == after,
+             snapshot.producedFrames == 1024 && before == after,
          "submit, conversion, publish, and stats allocate nothing after start");
 }
 
@@ -1363,6 +1425,7 @@ int main() {
   testBoundedEofDrainAndFailures();
   testContiguousBorrowAndFragmentedFallback();
   testRetainedPayloadHighWaterReset();
+  testShortBlocksCoalesceToTheSlabFloor();
   testFlatAllocationAfterStart();
   if (failures != 0) {
     std::cerr << failures << " native audio converter test(s) failed\n";

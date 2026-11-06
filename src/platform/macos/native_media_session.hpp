@@ -266,6 +266,7 @@ struct NativeMediaSessionExactDraw {
 struct NativeMediaSessionDiagnostic {
   native_playback::Stamp stamp{};
   native_playback::FailureReason reason{};
+  media::MediaRefusalClass refusal{media::MediaRefusalClass::None};
   std::array<char, 128> name{};
   std::array<char, 768> detail{};
 };

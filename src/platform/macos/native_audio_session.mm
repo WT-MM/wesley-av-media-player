@@ -4,7 +4,6 @@
 #include "media/adpcm_audio.hpp"
 #include "media/audio_codec_timing.hpp"
 #include "media/audio_downmix.hpp"
-#include "media/matroska_vorbis.hpp"
 #include "media/media_codec_facts.hpp"
 #include "core_media_codec_facts.hpp"
 #include "native_audio_channel_map.hpp"
@@ -20,7 +19,6 @@
 #include <cstdio>
 #include <limits>
 #include <mutex>
-#include <numeric>
 #include <optional>
 #include <utility>
 
@@ -138,47 +136,14 @@ void assignError(std::string* error, const char* message) noexcept {
   }
 }
 
-[[nodiscard]] std::uint64_t magnitude(std::int64_t value) noexcept {
-  return value < 0 ? static_cast<std::uint64_t>(-(value + 1)) + 1U
-                   : static_cast<std::uint64_t>(value);
-}
-
 [[nodiscard]] bool exactFrame(media::MediaTime time,
                               std::uint32_t sampleRate,
                               std::int64_t* result) noexcept {
-  if (!time.valid() || sampleRate == 0 || result == nullptr) {
+  const auto frame = media::exactAudioFrameIndex(time, sampleRate);
+  if (!frame || result == nullptr) {
     return false;
   }
-  std::uint64_t numerator = magnitude(time.value);
-  std::uint64_t denominator = static_cast<std::uint32_t>(time.timescale);
-  std::uint64_t rate = sampleRate;
-  const std::uint64_t first = std::gcd(numerator, denominator);
-  numerator /= first;
-  denominator /= first;
-  const std::uint64_t second = std::gcd(rate, denominator);
-  rate /= second;
-  denominator /= second;
-  if (denominator != 1 ||
-      (rate != 0 &&
-       numerator > std::numeric_limits<std::uint64_t>::max() / rate)) {
-    return false;
-  }
-  const std::uint64_t absolute = numerator * rate;
-  if (time.value < 0) {
-    constexpr std::uint64_t negativeLimit = std::uint64_t{1} << 63U;
-    if (absolute > negativeLimit) {
-      return false;
-    }
-    *result = absolute == negativeLimit
-                  ? std::numeric_limits<std::int64_t>::min()
-                  : -static_cast<std::int64_t>(absolute);
-    return true;
-  }
-  if (absolute >
-      static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
-    return false;
-  }
-  *result = static_cast<std::int64_t>(absolute);
+  *result = *frame;
   return true;
 }
 

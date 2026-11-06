@@ -16,6 +16,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <type_traits>
 #include <utility>
@@ -671,6 +672,45 @@ MediaSample sampleWithSizedPayload(MediaSampleKind kind, MediaTrackId track,
   return sample;
 }
 
+// The "(Name)" suffix of every demuxer refusal reaches stderr and must keep
+// the spelling both demuxers printed before they shared one class.
+void checkRefusalClassNames() {
+  using enum MediaRefusalClass;
+  constexpr std::pair<MediaRefusalClass, std::string_view> kLegacy[] = {
+      {None, "None"},
+      {InvalidRequest, "InvalidRequest"},
+      {InvalidContainer, "InvalidContainer"},
+      {UnsupportedContainer, "UnsupportedContainer"},
+      {NotTransportStream, "NotTransportStream"},
+      {MissingProgramTable, "MissingProgramTable"},
+      {TrackSelection, "TrackSelection"},
+      {ProgramSelection, "ProgramSelection"},
+      {UnsupportedTrack, "UnsupportedTrack"},
+      {UnsupportedStreamType, "UnsupportedStreamType"},
+      {CodecConfiguration, "CodecConfiguration"},
+      {CodedDimensionLimit, "CodedDimensionLimit"},
+      {InvalidTimeline, "InvalidTimeline"},
+      {MissingCues, "MissingCues"},
+      {InvalidCue, "InvalidCue"},
+      {SparseRandomAccess, "SparseRandomAccess"},
+      {IndexLimit, "IndexLimit"},
+      {SampleLimit, "SampleLimit"},
+      {ScanLimit, "ScanLimit"},
+      {FileChanged, "FileChanged"},
+      {Io, "Io"},
+      {Cancelled, "Cancelled"},
+  };
+  for (const auto& [refusal, name] : kLegacy) {
+    expect(mediaRefusalClassName(refusal) == name,
+           "refusal class name keeps its legacy spelling");
+  }
+  expect(std::string_view(mediaRefusalClassName(
+             static_cast<MediaRefusalClass>(255))) == "Unknown",
+         "an out-of-range refusal class names itself Unknown");
+  expect(refusalMessage("read failed", Io) == "read failed (Io)",
+         "refusal message appends the class name in parentheses");
+}
+
 void checkPreparedContextIdentity() {
   auto admitted = std::make_shared<const MediaSourceDescriptor>(descriptor());
   MediaSourceOpenOptions options;
@@ -838,6 +878,29 @@ void checkExactAudioFrameGrid() {
              !exactAudioFrameIndex({}, 48'000).has_value() &&
              !audioFrameAtOrAfter({0, 1}, 0).has_value(),
          "invalid and out-of-int64 audio-grid projections fail closed");
+}
+
+void checkExactTickArithmetic() {
+  constexpr auto kMin = std::numeric_limits<std::int64_t>::min();
+  constexpr auto kMax = std::numeric_limits<std::int64_t>::max();
+  static_assert(mediaTimeFromTicks(3'003, 90'000) == MediaTime{1'001, 30'000});
+  expect(mediaTimeFromTicks(0, 1'000'000'000) == MediaTime{0, 1} &&
+             mediaTimeFromTicks(-90'000, 90'000) == MediaTime{-1, 1} &&
+             mediaTimeFromTicks(kMin, 1) == MediaTime{kMin, 1} &&
+             !mediaTimeFromTicks(1, 0) &&
+             !mediaTimeFromTicks(1, 3'000'000'000U) &&
+             !mediaTimeFromTicks(static_cast<__int128_t>(kMax) + 1, 1) &&
+             !mediaTimeFromTicks(static_cast<__int128_t>(kMin) - 1, 1),
+         "tick reduction is exact, signed and fails closed outside MediaTime");
+  // A product beyond 64 bits that reduces back into range stays exact.
+  expect(mediaTimeFromTicks(static_cast<__int128_t>(kMax) * 1'000'000'000,
+                            1'000'000'000) == MediaTime{kMax, 1},
+         "128-bit tick products reduce exactly");
+  expect(addMediaTime({1, 3}, {1, 6}) == MediaTime{1, 2} &&
+             subtractMediaTime({1, 3}, {1, 2}) == MediaTime{-1, 6} &&
+             subtractMediaTime({5, 10}, {1, 2}) == MediaTime{0, 1} &&
+             !addMediaTime({kMax, 1}, {1, 1}) && !addMediaTime({}, {1, 1}),
+         "exact add and subtract reduce and fail closed");
 }
 
 // mediaVideoDisplaySize / mediaSourceDisplaySize are the single rule every
@@ -2041,8 +2104,10 @@ int main() {
   static_assert(std::is_trivially_copyable_v<MediaSourceStats>);
   static_assert(std::is_standard_layout_v<MediaAudioGenerationWindow>);
   static_assert(std::is_trivially_copyable_v<MediaAudioGenerationWindow>);
+  checkRefusalClassNames();
   checkHardLimitClamping();
   checkExactAudioFrameGrid();
+  checkExactTickArithmetic();
   checkPreparedContextIdentity();
   checkDescriptorValidation();
   checkVideoDisplaySize();
