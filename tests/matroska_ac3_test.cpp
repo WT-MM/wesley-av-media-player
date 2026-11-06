@@ -1,5 +1,5 @@
 #include "media/audio_codec_timing.hpp"
-#include "media/matroska_ac3.hpp"
+#include "media/codec/ac3.hpp"
 
 #include <array>
 #include <cstddef>
@@ -13,7 +13,7 @@
 
 namespace {
 
-using namespace wam::media::matroska;
+using namespace wam::media::codec;
 
 
 // The first syncframe of an ffmpeg-encoded AC-3 Matroska fixture, byte for

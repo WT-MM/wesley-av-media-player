@@ -5,8 +5,8 @@
 #include "media/media_codec_facts.hpp"
 #include "platform/macos/libavformat_media_source.hpp"
 #include "media/libavformat_cursor.hpp"
-#include "media/matroska_opus.hpp"
-#include "media/matroska_aac.hpp"
+#include "media/codec/opus.hpp"
+#include "media/codec/aac.hpp"
 #include "media/media_iso_color.hpp"
 #include "media/video_codec_configuration.hpp"
 #include "platform/macos/core_media_source_support.hpp"
@@ -214,7 +214,7 @@ bool audioDescriptor(const LibavformatCursor::Stream& stream, MediaTrackDescript
   track.kind=MediaTrackKind::Audio;track.timeBase={1,static_cast<std::int32_t>(stream.rate)};
   track.codecConfigurationKind=MediaCodecConfigurationKind::AudioMagicCookie;
   if(stream.codecId==AV_CODEC_ID_OPUS) {
-    const auto opus=matroska::parseOpusIdentificationHeader(stream.extradata);
+    const auto opus=codec::parseOpusIdentificationHeader(stream.extradata);
     if(!opus.admitted() || opus.configuration->channelCount!=stream.channels) {
       error="LibavformatOpusConfigurationUnqualified";return false;
     }
@@ -222,19 +222,19 @@ bool audioDescriptor(const LibavformatCursor::Stream& stream, MediaTrackDescript
     track.codecConfiguration.assign(stream.extradata.begin(),stream.extradata.end());
     origin={-opus.configuration->preSkipFrames,48000};frames=0;
   } else if(stream.codecId==AV_CODEC_ID_AAC) {
-    const auto asc=matroska::parseAacLcAudioSpecificConfig(stream.extradata);
+    const auto asc=codec::parseAacLcAudioSpecificConfig(stream.extradata);
     if(!asc.admitted() || (!flvHeader && (asc.configuration->sampleRate!=stream.rate || asc.configuration->channelCount!=stream.channels))) {
       error="LibavformatAacConfigurationUnqualified";
-      if (aacSbrSignaled(stream.extradata)) error=kHeAacDecoderDelayRefusal;
+      if (codec::aacSbrSignaled(stream.extradata)) error=codec::kHeAacDecoderDelayRefusal;
       if (stream.extradata.size() >= 2) {
         constexpr unsigned rates[]={96000,88200,64000,48000,44100,32000,24000,22050,16000,12000,11025,8000,7350};
         const auto index=((std::to_integer<unsigned>(stream.extradata[0])&7)<<1) |
                          (std::to_integer<unsigned>(stream.extradata[1])>>7);
-        if (index<13 && rates[index]*2==stream.rate) error=kHeAacDecoderDelayRefusal;
+        if (index<13 && rates[index]*2==stream.rate) error=codec::kHeAacDecoderDelayRefusal;
       }
       return false;
     }
-    const auto cookie=matroska::buildAacLcEsDescriptorCookie(*asc.configuration);
+    const auto cookie=codec::buildAacLcEsDescriptorCookie(*asc.configuration);
     if(!cookie) {error="LibavformatAacConfigurationUnqualified";return false;}
     track.codec=MediaCodec::Aac;format.formatTag=kAudioFormatMPEG4AAC;
     // FLV's legacy SoundRate/SoundType fields are not AAC configuration.
@@ -258,7 +258,7 @@ bool audioPacket(LibavformatCursor::Packet& packet, const MediaTrackDescriptor& 
   if(track.codec==MediaCodec::Opus && (packet.bytes.empty() || (std::to_integer<unsigned>(packet.bytes.front())>>3)<16)) {
     error="LibavformatOpusModeUnqualified";return false;
   }
-  const auto parsed=track.codec==MediaCodec::Opus?matroska::opusPacketFrameCount(packet.bytes)
+  const auto parsed=track.codec==MediaCodec::Opus?codec::opusPacketFrameCount(packet.bytes)
                                                :std::optional<std::uint32_t>(track.audio->framesPerPacket);
   if(!parsed || !*parsed || !packet.pts.valid() || packet.corrupt || tail ||
      ordinal>std::uint64_t(INT64_MAX)/(*parsed)) {error="LibavformatAudioPacketGrid";return false;}

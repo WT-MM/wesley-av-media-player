@@ -130,10 +130,6 @@ audioCodecStatesExactDecodedDuration(MediaCodec codec) noexcept {
 // Returns empty for a negative value (that asks for padding to be ADDED, which
 // this pipeline cannot manufacture), a zero sample rate, a residual over one
 // nanosecond, or a result beyond maximumFrames.
-//
-// This is the rate-generic form of the identical arithmetic in
-// opusFramesFromNanoseconds and vorbisFramesFromNanoseconds, which keep their
-// own codec-specific bounds; this shared copy serves the other codecs.
 [[nodiscard]] constexpr std::optional<std::uint32_t>
 matroskaFramesFromNanoseconds(std::int64_t nanoseconds,
                               std::uint32_t sampleRate,

@@ -7,7 +7,7 @@
 #include <optional>
 #include <span>
 
-namespace wam::media::matroska {
+namespace wam::media::codec {
 
 // A Matroska A_MPEG/L3 track carries no CodecPrivate: every parameter is
 // restated in each 4-byte frame header, and AudioToolbox's '.mp3' decoder takes
@@ -93,4 +93,4 @@ mpegAudioFrameMatches(std::span<const std::byte> header,
                       std::uint64_t frameBytes,
                       const MpegAudioConfiguration &configuration) noexcept;
 
-} // namespace wam::media::matroska
+} // namespace wam::media::codec

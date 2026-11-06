@@ -1,5 +1,5 @@
 #include "media/audio_codec_timing.hpp"
-#include "media/matroska_mpeg_audio.hpp"
+#include "media/codec/mpeg_audio.hpp"
 
 #include <array>
 #include <cstddef>
@@ -13,7 +13,7 @@
 
 namespace {
 
-using namespace wam::media::matroska;
+using namespace wam::media::codec;
 
 
 // The first frame header of an ffmpeg/LAME MP3 Matroska fixture, byte for

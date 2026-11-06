@@ -1,8 +1,8 @@
-#include "media/matroska_mpeg_audio.hpp"
+#include "media/codec/mpeg_audio.hpp"
 
 #include <array>
 
-namespace wam::media::matroska {
+namespace wam::media::codec {
 namespace {
 
 // MPEG-1 Layer III bit rates in kbit/s, indexed by the header's bitrate_index.
@@ -116,4 +116,4 @@ static_assert(kMpegLayer3SamplesPerAccessUnit ==
                   kLayer3BytesPerKilobitSecond * 8U,
               "Layer III's 144 bytes per kbit/s per kHz is 1152 samples / 8");
 
-} // namespace wam::media::matroska
+} // namespace wam::media::codec

@@ -1,8 +1,8 @@
-#include "media/matroska_ac3.hpp"
+#include "media/codec/ac3.hpp"
 
 #include <array>
 
-namespace wam::media::matroska {
+namespace wam::media::codec {
 namespace {
 
 // A/52 table 5.1: fscod -> sample rate. Index 3 is reserved in AC-3 and means
@@ -302,4 +302,4 @@ static_assert(kAc3SamplesPerAccessUnit ==
                   kAc3BlocksPerSyncframe * kAc3FramesPerBlock,
               "an AC-3 access unit is 6 blocks of 256 frames");
 
-} // namespace wam::media::matroska
+} // namespace wam::media::codec

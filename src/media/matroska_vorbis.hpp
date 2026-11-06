@@ -108,16 +108,4 @@ vorbisDecoderLeadInFrames(const VorbisConfiguration &configuration) noexcept {
   return configuration.samplesPerAccessUnit();
 }
 
-// Recovers an exact frame count from a Matroska duration stated in nanoseconds
-// (DiscardPadding). Identical in intent to opusFramesFromNanoseconds, but the
-// sample rate is a parameter because Vorbis is commonly 44.1 kHz, where
-// gcd(44100, 1e9) = 100 makes the set of exactly-representable frame counts
-// different again. One nanosecond is a small fraction of a frame at every rate
-// this source admits, so the nearest whole frame is unique; the residual is
-// bounded at one nanosecond so a value that was never a rounded frame count is
-// refused rather than snapped.
-[[nodiscard]] std::optional<std::uint32_t>
-vorbisFramesFromNanoseconds(std::int64_t nanoseconds,
-                            std::uint32_t sampleRate) noexcept;
-
 } // namespace wam::media::matroska

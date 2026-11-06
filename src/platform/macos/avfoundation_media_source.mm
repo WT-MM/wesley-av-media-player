@@ -10,8 +10,7 @@
 #include "media/adpcm_decoder.hpp"
 #include "media/matroska_apple_audio.hpp"
 #include "media/audio_codec_timing.hpp"
-#include "media/matroska_ac3.hpp"
-#include "media/matroska_mpeg_audio.hpp"
+#include "media/codec/aac.hpp"
 #include "media/media_codec_facts.hpp"
 #include "media/video_codec_configuration.hpp"
 #include "core_media_codec_facts.hpp"
@@ -2043,7 +2042,7 @@ inspectVideoFormatFacts(
 
   if (asbd->mFormatID == kAudioFormatMPEG4AAC_HE ||
       asbd->mFormatID == kAudioFormatMPEG4AAC_HE_V2) {
-    assignError(error, media::kHeAacDecoderDelayRefusal);
+    assignError(error, media::codec::kHeAacDecoderDelayRefusal);
     return std::nullopt;
   }
   if (codec == MediaCodec::Aac && cookieSize != 0) {
@@ -2056,7 +2055,7 @@ inspectVideoFormatFacts(
       for (std::size_t i = 0; i < size / sizeof(AudioFormatListItem); ++i) {
         if (formats[i].mASBD.mFormatID == kAudioFormatMPEG4AAC_HE ||
             formats[i].mASBD.mFormatID == kAudioFormatMPEG4AAC_HE_V2) {
-          assignError(error, media::kHeAacDecoderDelayRefusal);
+          assignError(error, media::codec::kHeAacDecoderDelayRefusal);
           return std::nullopt;
         }
       }

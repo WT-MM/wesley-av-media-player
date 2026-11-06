@@ -6,10 +6,11 @@
 #include "media/audio_codec_timing.hpp"
 #include "media/matroska_aac.hpp"
 #include "media/matroska_apple_audio.hpp"
-#include "media/matroska_ac3.hpp"
+#include "media/codec/aac.hpp"
+#include "media/codec/ac3.hpp"
+#include "media/codec/mpeg_audio.hpp"
+#include "media/codec/opus.hpp"
 #include "media/matroska_flac.hpp"
-#include "media/matroska_mpeg_audio.hpp"
-#include "media/matroska_opus.hpp"
 #include "media/matroska_vorbis.hpp"
 #include "media/media_iso_color.hpp"
 #include "media/media_codec_facts.hpp"
@@ -30,6 +31,31 @@
 
 namespace wam::media::matroska {
 namespace {
+
+using codec::AacLcAdmission;
+using codec::aacSbrSignaled;
+using codec::Ac3Admission;
+using codec::Ac3Configuration;
+using codec::ac3SyncframeMatches;
+using codec::buildAacLcEsDescriptorCookie;
+using codec::kAc3DecoderDelayFrames;
+using codec::kAc3DecoderTailShortfallFrames;
+using codec::kAc3MinimumSyncframeBytes;
+using codec::kHeAacDecoderDelayRefusal;
+using codec::kMaximumOpusPacketFrames;
+using codec::kMpegLayer3DecoderDelayFrames;
+using codec::kOpusOutputSampleRate;
+using codec::MpegAudioAdmission;
+using codec::MpegAudioConfiguration;
+using codec::mpegAudioFrameMatches;
+using codec::OpusAdmission;
+using codec::OpusConfiguration;
+using codec::opusHeadTrimFrames;
+using codec::opusPacketFrameCount;
+using codec::parseAacLcAudioSpecificConfig;
+using codec::parseAc3Syncframe;
+using codec::parseMpegAudioFrameHeader;
+using codec::parseOpusIdentificationHeader;
 
 constexpr std::uint32_t kAacFormatTag{0x61616320U};
 constexpr std::uint32_t kOpusFormatTag{0x6F707573U};
@@ -1820,8 +1846,9 @@ void fillAudioDescriptor(const TrackEntry& entry, MediaTrackId id,
       static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
     return false;
   }
-  const auto codecDelayFrames = vorbisFramesFromNanoseconds(
-      static_cast<std::int64_t>(entry.codecDelayNanoseconds), sampleRate);
+  const auto codecDelayFrames = matroskaFramesFromNanoseconds(
+      static_cast<std::int64_t>(entry.codecDelayNanoseconds), sampleRate,
+      kMaximumVorbisPacketFrames);
   if (!codecDelayFrames || *codecDelayFrames != samplesPerAccessUnit) {
     return false;
   }
@@ -1864,8 +1891,9 @@ void fillAudioDescriptor(const TrackEntry& entry, MediaTrackId id,
   if (!aacProjectionOnGrid(tailProjection, kMaximumOpusGridTickResidual)) {
     return false;
   }
-  const auto discardFrames = vorbisFramesFromNanoseconds(
-      probe.tailDiscardPaddingNanoseconds, sampleRate);
+  const auto discardFrames = matroskaFramesFromNanoseconds(
+      probe.tailDiscardPaddingNanoseconds, sampleRate,
+      kMaximumVorbisPacketFrames);
   if (!discardFrames || *discardFrames >= samplesPerAccessUnit) {
     return false;
   }
@@ -1971,8 +1999,9 @@ void fillAudioDescriptor(const TrackEntry& entry, MediaTrackId id,
               std::numeric_limits<std::int64_t>::max())) {
     return false;
   }
-  const auto codecDelayFrames = opusFramesFromNanoseconds(
-      static_cast<std::int64_t>(entry.codecDelayNanoseconds));
+  const auto codecDelayFrames = matroskaFramesFromNanoseconds(
+      static_cast<std::int64_t>(entry.codecDelayNanoseconds),
+      kOpusOutputSampleRate, kMaximumOpusPacketFrames);
   if (!codecDelayFrames || *codecDelayFrames != configuration.preSkipFrames) {
     return false;
   }
@@ -2021,7 +2050,9 @@ void fillAudioDescriptor(const TrackEntry& entry, MediaTrackId id,
     return false;
   }
   const auto discardFrames =
-      opusFramesFromNanoseconds(probe.tailDiscardPaddingNanoseconds);
+      matroskaFramesFromNanoseconds(probe.tailDiscardPaddingNanoseconds,
+                                    kOpusOutputSampleRate,
+                                    kMaximumOpusPacketFrames);
   const auto headTrim = opusHeadTrimFrames(configuration);
   if (!discardFrames || !headTrim ||
       *discardFrames >= probe.samplesPerAccessUnit) {

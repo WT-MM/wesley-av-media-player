@@ -1,8 +1,8 @@
 #pragma once
 
-#include "media/matroska_ac3.hpp"
-#include "media/matroska_mpeg_audio.hpp"
-#include "media/matroska_opus.hpp"
+#include "media/codec/ac3.hpp"
+#include "media/codec/mpeg_audio.hpp"
+#include "media/codec/opus.hpp"
 #include "media/native_media_source.hpp"
 
 #include <array>
@@ -173,11 +173,11 @@ inline constexpr std::array<MediaCodecFacts, 25> kMediaCodecFacts{{
     {MediaCodec::Mp3, MediaCodecKind::Audio, 0,
      MediaCodecConfigurationKind::None, nullptr, false, false, false, false,
      false, false,
-     static_cast<std::uint16_t>(matroska::kMpegLayer3DecoderDelayFrames)},
+     static_cast<std::uint16_t>(codec::kMpegLayer3DecoderDelayFrames)},
     {MediaCodec::Opus, MediaCodecKind::Audio, 0,
      MediaCodecConfigurationKind::None, nullptr, false, false, false, false,
      false, false,
-     static_cast<std::uint16_t>(matroska::kOpusDecoderDelayFrames)},
+     static_cast<std::uint16_t>(codec::kOpusDecoderDelayFrames)},
     {MediaCodec::Vorbis, MediaCodecKind::Audio, 0,
      MediaCodecConfigurationKind::None, nullptr, false, false, false, false,
      false, false, 0},
@@ -195,11 +195,11 @@ inline constexpr std::array<MediaCodecFacts, 25> kMediaCodecFacts{{
     {MediaCodec::Ac3, MediaCodecKind::Audio, 0,
      MediaCodecConfigurationKind::None, nullptr, false, false, false, false,
      false, false,
-     static_cast<std::uint16_t>(matroska::kAc3DecoderDelayFrames)},
+     static_cast<std::uint16_t>(codec::kAc3DecoderDelayFrames)},
     {MediaCodec::Eac3, MediaCodecKind::Audio, 0,
      MediaCodecConfigurationKind::None, nullptr, false, false, false, false,
      false, false,
-     static_cast<std::uint16_t>(matroska::kAc3DecoderDelayFrames)},
+     static_cast<std::uint16_t>(codec::kAc3DecoderDelayFrames)},
     {MediaCodec::Flac, MediaCodecKind::Audio, 0,
      MediaCodecConfigurationKind::None, nullptr, false, false, false, false,
      false, false, 0},
@@ -235,18 +235,6 @@ inline constexpr std::array<MediaCodecFacts, 25> kMediaCodecFacts{{
 
 [[nodiscard]] constexpr bool softwareAudioCodec(MediaCodec codec) noexcept {
   return codec == MediaCodec::Dts || codec == MediaCodec::TrueHd || codec == MediaCodec::Mlp;
-}
-
-inline constexpr std::uint32_t kHeAacImplicitDecoderDelayFrames = 962;
-inline constexpr const char* kHeAacDecoderDelayRefusal =
-    "HeAacSbrDecoderDelayUnproven: doubled-rate delay and tail lack an exact ownership proof";
-
-[[nodiscard]] constexpr bool aacSbrSignaled(std::span<const std::byte> asc) noexcept {
-  if (asc.empty()) return false;
-  const auto type = std::to_integer<unsigned>(asc[0]) >> 3U;
-  if (type == 5U || type == 29U) return true;
-  return asc.size() >= 5 && type == 2U && asc[2] == std::byte{0x56} &&
-         asc[3] == std::byte{0xe5} && (std::to_integer<unsigned>(asc[4]) & 0x80U);
 }
 
 [[nodiscard]] constexpr bool mediaSampleFormatIs422(MediaVideoSampleFormat format) noexcept {

@@ -7,7 +7,7 @@
 #include <optional>
 #include <span>
 
-namespace wam::media::matroska {
+namespace wam::media::codec {
 
 // A Matroska A_AC3 / A_EAC3 track carries NO CodecPrivate: every parameter the
 // pipeline needs is restated in each syncframe, and AudioToolbox's 'ac-3' and
@@ -132,4 +132,4 @@ parseAc3Syncframe(std::span<const std::byte> frame, bool enhanced) noexcept;
                                        const Ac3Configuration &configuration,
                                        bool enhanced) noexcept;
 
-} // namespace wam::media::matroska
+} // namespace wam::media::codec

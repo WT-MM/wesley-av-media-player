@@ -20,7 +20,7 @@
 //      decoders swallow frames, because a PES header has no CodecDelay field.
 #include "platform/macos/mpegts_media_source.hpp"
 
-#include "media/matroska_ac3.hpp"
+#include "media/codec/ac3.hpp"
 #include "media/mpegts_demuxer.hpp"
 #include "media/native_media_source.hpp"
 #include "platform/macos/mpegts_asset_context.hpp"
@@ -499,7 +499,7 @@ void testDecoderLeadInShiftsTheAnchor(const Fixtures& fixtures) {
   expect(sameTime(*withoutLeadIn, MediaTime{0, 1}),
          "a codec with no decoder lead-in anchors on the container stamp");
   const std::int64_t leadIn =
-      static_cast<std::int64_t>(wam::media::matroska::kAc3DecoderDelayFrames);
+      static_cast<std::int64_t>(wam::media::codec::kAc3DecoderDelayFrames);
   expect(leadIn > 0, "the shared lead-in constant is not vacuous");
   expect(sameTime(*withLeadIn,
                   MediaTime{-leadIn, static_cast<std::int32_t>(kFullRateAudio)}),

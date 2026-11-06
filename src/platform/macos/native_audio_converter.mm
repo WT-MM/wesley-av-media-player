@@ -7,10 +7,7 @@
 #include "media/adpcm_audio.hpp"
 #include "media/adpcm_decoder.hpp"
 #include "media/audio_downmix.hpp"
-#include "media/matroska_ac3.hpp"
-#include "media/matroska_mpeg_audio.hpp"
-#include "media/matroska_opus.hpp"
-#include "media/matroska_vorbis.hpp"
+#include "media/codec/ac3.hpp"
 #include "media/media_codec_facts.hpp"
 #include "core_media_codec_facts.hpp"
 #include "native_audio_channel_map.hpp"
@@ -168,7 +165,7 @@ decoderFrameDeficitFrames(media::MediaCodec codec,
   switch (codec) {
   case media::MediaCodec::Ac3:
   case media::MediaCodec::Eac3:
-    return wam::media::matroska::kAc3DecoderTailShortfallFrames;
+    return wam::media::codec::kAc3DecoderTailShortfallFrames;
   case media::MediaCodec::Flac:
     // The final frame carries at least one sample and at most a whole block.
     return framesPerPacket == 0U ? 0U : framesPerPacket - 1U;

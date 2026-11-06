@@ -177,40 +177,6 @@ parseVorbisCodecPrivate(std::span<const std::byte> bytes) noexcept {
   return VorbisAdmission{VorbisAdmissionError::None, configuration};
 }
 
-std::optional<std::uint32_t>
-vorbisFramesFromNanoseconds(std::int64_t nanoseconds,
-                            std::uint32_t sampleRate) noexcept {
-  if (nanoseconds < 0 || sampleRate == 0U) {
-    return std::nullopt;
-  }
-  const auto magnitude = static_cast<std::uint64_t>(nanoseconds);
-  // Bound the magnitude BEFORE forming the product so a hostile value can never
-  // wrap the multiplication. One frame past the ceiling, so the frame-count
-  // check below -- not this overflow guard -- is what states the ceiling.
-  const std::uint64_t maximumNanoseconds =
-      UINT64_C(1'000'000'000) *
-      (static_cast<std::uint64_t>(kMaximumVorbisPacketFrames) + 1U) /
-      static_cast<std::uint64_t>(sampleRate);
-  if (magnitude > maximumNanoseconds) {
-    return std::nullopt;
-  }
-  const std::uint64_t product =
-      magnitude * static_cast<std::uint64_t>(sampleRate);
-  const std::uint64_t frames =
-      (product + UINT64_C(500'000'000)) / UINT64_C(1'000'000'000);
-  const std::uint64_t exact = frames * UINT64_C(1'000'000'000);
-  const std::uint64_t residual =
-      product > exact ? product - exact : exact - product;
-  // One nanosecond, expressed in the product's own units.
-  if (residual > static_cast<std::uint64_t>(sampleRate)) {
-    return std::nullopt;
-  }
-  if (frames > kMaximumVorbisPacketFrames) {
-    return std::nullopt;
-  }
-  return static_cast<std::uint32_t>(frames);
-}
-
 static_assert(kMaximumVorbisPacketFrames == 4'096U,
               "the largest Vorbis packet is half the 8192-frame block");
 static_assert(std::has_single_bit(kMinimumVorbisBlockSize) &&

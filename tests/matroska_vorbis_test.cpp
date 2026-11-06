@@ -1,3 +1,4 @@
+#include "media/audio_codec_timing.hpp"
 #include "media/matroska_vorbis.hpp"
 
 #include <array>
@@ -13,6 +14,13 @@
 namespace {
 
 using namespace wam::media::matroska;
+
+[[nodiscard]] std::optional<std::uint32_t>
+vorbisFramesFromNanoseconds(std::int64_t nanoseconds,
+                            std::uint32_t sampleRate) noexcept {
+  return wam::media::matroskaFramesFromNanoseconds(nanoseconds, sampleRate,
+                                                   kMaximumVorbisPacketFrames);
+}
 
 
 // The identification header of fixtures/vp8_vorbis.webm, byte for byte as

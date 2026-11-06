@@ -2,6 +2,8 @@
 if(APPLE OR WAM_BUILD_APP)
   add_library(wam_native_core STATIC
     src/media/adpcm_decoder.cpp
+    src/media/codec/aac.hpp
+    src/media/codec/aac.cpp
     src/media/matroska_aac.hpp
     src/media/matroska_aac.cpp
     src/media/audio_codec_timing.hpp
@@ -9,16 +11,16 @@ if(APPLE OR WAM_BUILD_APP)
     src/media/media_iso_color.hpp
     src/media/audio_downmix.hpp
     src/media/audio_downmix.cpp
-    src/media/matroska_opus.hpp
-    src/media/matroska_opus.cpp
+    src/media/codec/opus.hpp
+    src/media/codec/opus.cpp
     src/media/matroska_vorbis.hpp
     src/media/matroska_vorbis.cpp
-    src/media/matroska_ac3.hpp
-    src/media/matroska_ac3.cpp
+    src/media/codec/ac3.hpp
+    src/media/codec/ac3.cpp
     src/media/matroska_flac.hpp
     src/media/matroska_flac.cpp
-    src/media/matroska_mpeg_audio.hpp
-    src/media/matroska_mpeg_audio.cpp
+    src/media/codec/mpeg_audio.hpp
+    src/media/codec/mpeg_audio.cpp
     src/media/byte_source.hpp
     src/media/byte_source.cpp
     src/media/matroska_ebml.hpp

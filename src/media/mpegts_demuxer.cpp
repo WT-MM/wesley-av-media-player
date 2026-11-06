@@ -1,6 +1,6 @@
 #include "media/mpegts_demuxer.hpp"
 
-#include "media/matroska_aac.hpp"
+#include "media/codec/aac.hpp"
 #include "media/media_iso_color.hpp"
 #include "media/video_codec_configuration.hpp"
 
@@ -14,16 +14,15 @@
 
 namespace wam::media::mpegts {
 
-// The AAC-LC admission and ES_Descriptor cookie builder are container-neutral
-// despite living in the Matroska namespace: they take an AudioSpecificConfig
-// and emit the CoreAudio magic cookie. Reusing them is what makes an
-// ADTS-sourced AAC track byte-identical to a Matroska-sourced one downstream.
-using matroska::AacLcAdmission;
-using matroska::AacLcConfiguration;
-using matroska::AacLcEsDescriptorCookie;
-using matroska::buildAacLcEsDescriptorCookie;
-using matroska::kAacLcSamplesPerAccessUnit;
-using matroska::parseAacLcAudioSpecificConfig;
+// Sharing the AAC-LC admission and ES_Descriptor cookie builder with Matroska
+// is what makes an ADTS-sourced AAC track byte-identical to a Matroska-sourced
+// one downstream.
+using codec::AacLcAdmission;
+using codec::AacLcConfiguration;
+using codec::AacLcEsDescriptorCookie;
+using codec::buildAacLcEsDescriptorCookie;
+using codec::kAacLcSamplesPerAccessUnit;
+using codec::parseAacLcAudioSpecificConfig;
 
 namespace {
 
