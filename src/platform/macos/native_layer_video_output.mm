@@ -57,8 +57,6 @@ void assignErrorNoexcept(std::string* error,
 // nowhere near the per-frame path.
 constexpr std::uint64_t kMetricsLoadFrameInterval = 30;
 
-constexpr std::uint64_t kWakeClosedBit = std::uint64_t{1} << 63U;
-constexpr std::uint64_t kWakeEntryMask = ~kWakeClosedBit;
 
 }  // namespace
 
@@ -80,7 +78,7 @@ struct NativeLayerVideoOutput::State
   CMVideoFormatDescriptionRef formatDescription{nullptr};
 
   NativeTrackedVideoOutputWakeSeam wake{};
-  std::atomic<std::uint64_t> wakeGate{0};
+  NativeTrackedWakeGate wakeGate;
 
   // Generation lifecycle.
   std::uint64_t acceptedGeneration{0};
@@ -154,42 +152,15 @@ struct NativeLayerVideoOutput::State
 
   // ---------------------------------------------------------------- wake gate
 
-  void signalWakeNoexcept() noexcept {
-    std::uint64_t current = wakeGate.load(std::memory_order_acquire);
-    for (;;) {
-      if ((current & kWakeClosedBit) != 0) {
-        return;
-      }
-      if (wakeGate.compare_exchange_weak(current, current + 1,
-                                         std::memory_order_acq_rel,
-                                         std::memory_order_acquire)) {
-        break;
-      }
-    }
-    NativeTrackedVideoOutputWake signal = wake.signal;
-    void* context = wake.context;
-    if (signal != nullptr) {
-      signal(context);
-    }
-    wakeGate.fetch_sub(1, std::memory_order_release);
-  }
-
-  void closeWakeGateNoexcept() noexcept {
-    wakeGate.fetch_or(kWakeClosedBit, std::memory_order_acq_rel);
-  }
-
-  [[nodiscard]] bool wakeGateDrainedNoexcept() const noexcept {
-    return (wakeGate.load(std::memory_order_acquire) & kWakeEntryMask) == 0;
-  }
+  void signalWakeNoexcept() noexcept { wakeGate.signal(wake); }
 
   // ------------------------------------------------------------- bookkeeping
 
   [[nodiscard]] bool nextEventSequenceLocked(std::uint64_t* sequence) noexcept {
-    if (nextEventSequence == std::numeric_limits<std::uint64_t>::max()) {
+    if (!allocateTrackedEventSequence(nextEventSequence, sequence)) {
       fatal = true;
       return false;
     }
-    *sequence = ++nextEventSequence;
     return true;
   }
 
@@ -474,7 +445,7 @@ NativeLayerVideoOutput::~NativeLayerVideoOutput() {
     return;
   }
   state->releasePresentationOnceNoexcept();
-  state->closeWakeGateNoexcept();
+  state->wakeGate.close();
   std::lock_guard lock(state->mutex);
   state->releaseAllLeasesLocked();
   state->wake = {};
@@ -881,8 +852,8 @@ NativeTrackedVideoOutputProgress NativeLayerVideoOutput::closeProgress(
       if (state->closeGeneration != finalGeneration) {
         return NativeTrackedVideoOutputProgress::StaleGeneration;
       }
-      state->closeWakeGateNoexcept();
-      if (!state->wakeGateDrainedNoexcept()) {
+      state->wakeGate.close();
+      if (!state->wakeGate.drained()) {
         return NativeTrackedVideoOutputProgress::Quiescing;
       }
       state->wake = {};
@@ -930,8 +901,8 @@ NativeTrackedVideoOutputProgress NativeLayerVideoOutput::closeProgress(
         !state->invalidationObservedLocked(finalGeneration)) {
       return NativeTrackedVideoOutputProgress::Quiescing;
     }
-    state->closeWakeGateNoexcept();
-    if (!state->wakeGateDrainedNoexcept()) {
+    state->wakeGate.close();
+    if (!state->wakeGate.drained()) {
       return NativeTrackedVideoOutputProgress::Quiescing;
     }
     state->wake = {};

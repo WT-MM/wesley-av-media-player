@@ -24,8 +24,6 @@ namespace {
 
 constexpr const char* kOutputLeaseProperty =
     "_wam_native_qt_gl_output_lease";
-constexpr std::uint64_t kTrackedWakeClosedBit = std::uint64_t{1} << 63U;
-constexpr std::uint64_t kTrackedWakeEntryMask = kTrackedWakeClosedBit - 1U;
 
 void assignErrorNoexcept(std::string* error, const char* message) noexcept {
   if (error == nullptr) {
@@ -631,7 +629,7 @@ struct NativeQtGlOutput::State
   // One atomic linearizes callback pinning with terminal detachment. A signal
   // CAS-increments only while the high closed bit is clear; close atomically
   // sets that bit and can clear the raw seam only after the low count drains.
-  std::atomic<std::uint64_t> trackedWakeGate{0};
+  NativeTrackedWakeGate trackedWakeGate;
   std::atomic<bool> guiRenderObservationPending{false};
   std::shared_ptr<std::atomic<std::uint64_t>>
       observedPresenterFatalSerialAtomic{
@@ -712,54 +710,23 @@ struct NativeQtGlOutput::State
            DeferredSchedulingFailure::None;
   }
 
-  [[nodiscard]] bool tryPinTrackedWakeNoexcept() noexcept {
-    std::uint64_t gate = trackedWakeGate.load(std::memory_order_acquire);
-    for (;;) {
-      if ((gate & kTrackedWakeClosedBit) != 0 ||
-          (gate & kTrackedWakeEntryMask) == kTrackedWakeEntryMask) {
-        return false;
-      }
-      if (trackedWakeGate.compare_exchange_weak(
-              gate, gate + 1, std::memory_order_acq_rel,
-              std::memory_order_acquire)) {
-        return true;
-      }
-    }
-  }
-
-  void unpinTrackedWakeNoexcept() noexcept {
-    trackedWakeGate.fetch_sub(1, std::memory_order_release);
-  }
-
   void signalTrackedProgressNoexcept() noexcept {
-    if (!tryPinTrackedWakeNoexcept()) {
+    if (!trackedWakeGate.tryPin()) {
       return;
     }
     if (trackedMode.load(std::memory_order_acquire) &&
         !trackedWakePending.exchange(true, std::memory_order_acq_rel)) {
       signalTrackedWakeNoexcept(trackedWake);
     }
-    unpinTrackedWakeNoexcept();
-  }
-
-  void closeTrackedWakeGateNoexcept() noexcept {
-    trackedWakeGate.fetch_or(kTrackedWakeClosedBit,
-                             std::memory_order_acq_rel);
-  }
-
-  [[nodiscard]] bool trackedWakeGateDrainedNoexcept() const noexcept {
-    return (trackedWakeGate.load(std::memory_order_acquire) &
-            kTrackedWakeEntryMask) == 0;
+    trackedWakeGate.unpin();
   }
 
   [[nodiscard]] bool nextTrackedEventSequenceLocked(
       std::uint64_t* sequence) noexcept {
-    if (nextTrackedEventSequence ==
-        std::numeric_limits<std::uint64_t>::max()) {
+    if (!allocateTrackedEventSequence(nextTrackedEventSequence, sequence)) {
       trackedFatal = true;
       return false;
     }
-    *sequence = ++nextTrackedEventSequence;
     return true;
   }
 
@@ -1427,8 +1394,8 @@ NativeQtGlOutput::~NativeQtGlOutput() {
   // callback is contractually wait-free, so premature destruction may wait
   // only for an already-entered callback; the render thread never waits here.
   if (state_) {
-    state_->closeTrackedWakeGateNoexcept();
-    while (!state_->trackedWakeGateDrainedNoexcept()) {
+    state_->trackedWakeGate.close();
+    while (!state_->trackedWakeGate.drained()) {
       std::this_thread::yield();
     }
     {
@@ -2138,8 +2105,8 @@ NativeTrackedVideoOutputProgress NativeQtGlOutput::closeProgress(
       if (state->trackedCloseGeneration != finalGeneration) {
         return NativeTrackedVideoOutputProgress::StaleGeneration;
       }
-      state->closeTrackedWakeGateNoexcept();
-      if (!state->trackedWakeGateDrainedNoexcept()) {
+      state->trackedWakeGate.close();
+      if (!state->trackedWakeGate.drained()) {
         return NativeTrackedVideoOutputProgress::Quiescing;
       }
       state->trackedWake = {};
@@ -2184,8 +2151,8 @@ NativeTrackedVideoOutputProgress NativeQtGlOutput::closeProgress(
     }
     // No render/GUI callback can publish tracked progress after terminal
     // invalidation; detach the external raw wake context before Done.
-    state->closeTrackedWakeGateNoexcept();
-    if (!state->trackedWakeGateDrainedNoexcept()) {
+    state->trackedWakeGate.close();
+    if (!state->trackedWakeGate.drained()) {
       state->updateObservationArmLocked();
       return NativeTrackedVideoOutputProgress::Quiescing;
     }
@@ -2308,14 +2275,14 @@ void NativeQtGlOutput::noticeRenderProgressForTesting() noexcept {
 void NativeQtGlOutput::holdPinnedTrackedWakeForTesting(
     std::atomic<bool>* entered, std::atomic<bool>* release) noexcept {
   if (entered == nullptr || release == nullptr ||
-      !state_->tryPinTrackedWakeNoexcept()) {
+      !state_->trackedWakeGate.tryPin()) {
     return;
   }
   entered->store(true, std::memory_order_release);
   while (!release->load(std::memory_order_acquire)) {
     std::this_thread::yield();
   }
-  state_->unpinTrackedWakeNoexcept();
+  state_->trackedWakeGate.unpin();
 }
 #endif
 

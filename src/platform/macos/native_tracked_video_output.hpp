@@ -5,8 +5,10 @@
 #include "native_video_presenter.hpp"
 #include "native_late_display_trace.hpp"
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <string>
 
@@ -35,6 +37,62 @@ struct NativeTrackedVideoOutputWakeSeam {
   NativeTrackedVideoOutputWake signal{nullptr};
   void* context{nullptr};
 };
+
+// The wake gate every tracked output guards its seam with: a closed bit and a
+// count of signals in flight. Close sets the bit; the output reports
+// closeProgress Done only once the count has drained, which is what makes "the
+// seam outlives closeProgress Done" safe. A saturated count refuses a pin
+// rather than wrapping into the closed bit.
+class NativeTrackedWakeGate final {
+public:
+  [[nodiscard]] bool tryPin() noexcept {
+    std::uint64_t gate = state_.load(std::memory_order_acquire);
+    for (;;) {
+      if ((gate & kClosedBit) != 0 || (gate & kEntryMask) == kEntryMask) {
+        return false;
+      }
+      if (state_.compare_exchange_weak(gate, gate + 1,
+                                       std::memory_order_acq_rel,
+                                       std::memory_order_acquire)) {
+        return true;
+      }
+    }
+  }
+  void unpin() noexcept { state_.fetch_sub(1, std::memory_order_release); }
+  // Pins, signals the seam, unpins. A closed or saturated gate signals
+  // nothing.
+  void signal(const NativeTrackedVideoOutputWakeSeam& seam) noexcept {
+    if (!tryPin()) {
+      return;
+    }
+    if (seam.signal != nullptr) {
+      seam.signal(seam.context);
+    }
+    unpin();
+  }
+  void close() noexcept {
+    state_.fetch_or(kClosedBit, std::memory_order_acq_rel);
+  }
+  [[nodiscard]] bool drained() const noexcept {
+    return (state_.load(std::memory_order_acquire) & kEntryMask) == 0;
+  }
+
+private:
+  static constexpr std::uint64_t kClosedBit = std::uint64_t{1} << 63U;
+  static constexpr std::uint64_t kEntryMask = kClosedBit - 1U;
+  std::atomic<std::uint64_t> state_{0};
+};
+
+// Allocates the next strictly increasing tracked-event sequence; false (and
+// the caller latches fatal) once the sequence space is exhausted.
+[[nodiscard]] inline bool allocateTrackedEventSequence(
+    std::uint64_t& last, std::uint64_t* sequence) noexcept {
+  if (last == std::numeric_limits<std::uint64_t>::max()) {
+    return false;
+  }
+  *sequence = ++last;
+  return true;
+}
 
 enum class NativeTrackedVideoSubmitStatus : std::uint8_t {
   Accepted,
