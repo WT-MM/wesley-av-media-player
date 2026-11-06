@@ -142,29 +142,59 @@ void applyVividBoostToLayer(CALayer* layer, double boost) noexcept {
   [CATransaction commit];
 }
 
-// Where a layer's presentation display size and rotation live, by the same
-// reasoning as the vivid boost above: they belong to the video layer, are set
-// once when a track is configured, and have to be readable again on every
-// resize without the resize path knowing who set them.
-const void* videoDisplaySizeAssociationKey() {
+// A layer's presentation geometry, by the same reasoning as the vivid boost
+// above: it belongs to the video layer, is set when a track is configured, and
+// has to be readable again on every resize without the resize path knowing who
+// set it.
+struct VideoLayerGeometry {
+  media::MediaDisplaySize displaySize{};
+  int rotation{0};
+};
+
+const void* videoGeometryAssociationKey() {
   static const char key = 0;
   return &key;
 }
 
-const void* videoRotationAssociationKey() {
-  static const char key = 0;
-  return &key;
-}
-
-int videoRotationForLayer(CALayer* layer) noexcept {
+VideoLayerGeometry videoGeometryForLayer(CALayer* layer) noexcept {
+  VideoLayerGeometry geometry;
   if (layer == nil) {
-    return 0;
+    return geometry;
   }
-  id value = objc_getAssociatedObject(layer, videoRotationAssociationKey());
-  if (![value isKindOfClass:[NSNumber class]]) {
-    return 0;
+  id value = objc_getAssociatedObject(layer, videoGeometryAssociationKey());
+  if ([value isKindOfClass:[NSValue class]]) {
+    [value getValue:&geometry size:sizeof(geometry)];
   }
-  return normalizedQuarterTurn([(NSNumber*)value intValue]).value_or(0);
+  return geometry;
+}
+
+void layoutVideoLayer(CALayer* videoLayer) noexcept;
+
+// Called from the SESSION WORKER thread -- the consumer settles geometry while
+// configuring a generation -- so the CoreAnimation half hops to main rather
+// than refusing: the consumer treats "no" as "this route cannot present this
+// track", and the capability answer must not depend on which thread asks. The
+// association is the source of truth and is set first, so a resize racing the
+// hop reads the new geometry either way. Atomic association getters
+// retain/autorelease under the association lock, keeping the value alive until
+// the main-thread reader takes ownership.
+template <typename Change>
+void updateVideoGeometry(CALayer* layer, Change change) noexcept {
+  @autoreleasepool {
+    VideoLayerGeometry geometry = videoGeometryForLayer(layer);
+    change(geometry);
+    objc_setAssociatedObject(
+        layer, videoGeometryAssociationKey(),
+        [NSValue valueWithBytes:&geometry objCType:@encode(VideoLayerGeometry)],
+        OBJC_ASSOCIATION_RETAIN);
+    if ([NSThread isMainThread]) {
+      layoutVideoLayer(layer);
+    } else {
+      dispatch_async(dispatch_get_main_queue(), ^{
+        layoutVideoLayer(layer);
+      });
+    }
+  }
 }
 
 // Place the video layer inside its container for the current rotation.
@@ -215,7 +245,7 @@ void layoutVideoLayer(CALayer* videoLayer) noexcept {
                              bounds.origin.y + (std::floor((bounds.size.height * scale - height) / 2) + height / 2.0) / scale);
     }
   }
-  const int rotation = videoRotationForLayer(videoLayer);
+  const int rotation = videoGeometryForLayer(videoLayer).rotation;
   const bool quarterTurn = rotation == 90 || rotation == 270;
   [CATransaction begin];
   [CATransaction setDisableActions:YES];
@@ -371,26 +401,16 @@ double nativeLayerAppliedVividBoost(void* nsWindow) noexcept {
 
 media::MediaDisplaySize nativeLayerPresentationDisplaySize(void* displayLayer) noexcept {
   if (!displayLayer) return {};
-  id value = objc_getAssociatedObject((__bridge id)displayLayer, videoDisplaySizeAssociationKey());
-  media::MediaDisplaySize size;
-  if ([value isKindOfClass:[NSValue class]]) [value getValue:&size size:sizeof(size)];
-  return size;
+  return videoGeometryForLayer((__bridge CALayer*)displayLayer).displaySize;
 }
 
 bool setNativeLayerPresentationDisplaySize(void* displayLayer, media::MediaDisplaySize size) noexcept {
   if (!displayLayer || size.empty()) return false;
   CALayer* layer = (__bridge CALayer*)displayLayer;
   if (![layer isKindOfClass:[CALayer class]]) return false;
-  @autoreleasepool {
-    // The worker replaces this value while main-thread layout reads it.
-    // Atomic association getters retain/autorelease under the association
-    // lock, keeping the value alive until the reader can take ownership.
-    objc_setAssociatedObject(layer, videoDisplaySizeAssociationKey(),
-        [NSValue valueWithBytes:&size objCType:@encode(media::MediaDisplaySize)],
-        OBJC_ASSOCIATION_RETAIN);
-    if ([NSThread isMainThread]) layoutVideoLayer(layer);
-    else dispatch_async(dispatch_get_main_queue(), ^{ layoutVideoLayer(layer); });
-  }
+  updateVideoGeometry(layer, [size](VideoLayerGeometry& geometry) {
+    geometry.displaySize = size;
+  });
   return true;
 }
 
@@ -403,32 +423,15 @@ bool setNativeLayerPresentationRotation(void* displayLayer,
   if (!normalized) {
     return false;
   }
-  @autoreleasepool {
-    id candidate = (__bridge id)displayLayer;
-    if (![candidate isKindOfClass:[CALayer class]]) {
-      return false;
-    }
-    CALayer* layer = static_cast<CALayer*>(candidate);
-    objc_setAssociatedObject(layer, videoRotationAssociationKey(),
-                             @(*normalized), OBJC_ASSOCIATION_RETAIN);
-    // This is called from the SESSION WORKER thread -- the consumer settles
-    // rotation while configuring a generation, which is nowhere near the GUI
-    // thread -- so the CoreAnimation half hops rather than refusing. The
-    // consumer treats "no" as "this route cannot present this track", so
-    // refusing off-main would send every file to the compatibility renderer:
-    // the capability answer must not depend on which thread asks.
-    //
-    // The retained NSNumber above is the source of truth and is already set,
-    // so a resize racing this hop reads the new rotation either way.
-    if ([NSThread isMainThread]) {
-      layoutVideoLayer(layer);
-    } else {
-      dispatch_async(dispatch_get_main_queue(), ^{
-        layoutVideoLayer(layer);
-      });
-    }
-    return true;
+  CALayer* layer = (__bridge CALayer*)displayLayer;
+  if (![layer isKindOfClass:[CALayer class]]) {
+    return false;
   }
+  updateVideoGeometry(layer, [rotation = *normalized](
+                                 VideoLayerGeometry& geometry) {
+    geometry.rotation = rotation;
+  });
+  return true;
 }
 
 int nativeLayerPresentationRotation(void* displayLayer) noexcept {
@@ -440,7 +443,7 @@ int nativeLayerPresentationRotation(void* displayLayer) noexcept {
     if (![candidate isKindOfClass:[CALayer class]]) {
       return 0;
     }
-    return videoRotationForLayer(static_cast<CALayer*>(candidate));
+    return videoGeometryForLayer(static_cast<CALayer*>(candidate)).rotation;
   }
 }
 
