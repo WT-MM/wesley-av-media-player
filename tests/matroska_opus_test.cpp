@@ -1,4 +1,5 @@
-#include "media/matroska_opus.hpp"
+#include "media/audio_codec_timing.hpp"
+#include "media/codec/opus.hpp"
 
 #include <array>
 #include <cstddef>
@@ -13,7 +14,13 @@
 
 namespace {
 
-using namespace wam::media::matroska;
+using namespace wam::media::codec;
+
+[[nodiscard]] std::optional<std::uint32_t>
+opusFramesFromNanoseconds(std::int64_t nanoseconds) noexcept {
+  return wam::media::matroskaFramesFromNanoseconds(
+      nanoseconds, kOpusOutputSampleRate, kMaximumOpusPacketFrames);
+}
 
 
 // One OpusHead identification header, family 0, built field by field so every

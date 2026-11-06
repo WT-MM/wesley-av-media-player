@@ -7,7 +7,7 @@
 #include <optional>
 #include <span>
 
-namespace wam::media::matroska {
+namespace wam::media::codec {
 
 // A Matroska A_OPUS track's CodecPrivate is the OggOpus identification header
 // ("OpusHead") verbatim. For channel mapping family 0 -- the only family this
@@ -88,26 +88,4 @@ opusHeadTrimFrames(const OpusConfiguration &configuration) noexcept {
 [[nodiscard]] std::optional<std::uint32_t>
 opusPacketFrameCount(std::span<const std::byte> packet) noexcept;
 
-// Recovers an exact 48 kHz frame count from a Matroska duration stated in
-// nanoseconds (DiscardPadding, CodecDelay).
-//
-// Nanoseconds cannot express an arbitrary frame count: gcd(48000, 1e9) = 16000,
-// so only multiples of THREE frames land on an integer nanosecond. Demanding
-// an exact multiple would therefore reject two thirds of real files -- measured,
-// not theorised: a 4.0007 s clip muxed by ffmpeg carries DiscardPadding 614
-// frames, written as 12,791,667 ns.
-//
-// One nanosecond is 1/20833 of a frame, so the nearest frame count to a stated
-// nanosecond value is unique and unambiguous, and rounding to it recovers the
-// muxer's own integer exactly. The result is a whole frame count -- exact in
-// the only domain that matters -- and the residual is bounded at one nanosecond
-// so a value that was never a rounded frame count is still refused rather than
-// silently snapped.
-//
-// Returns empty for a negative value (that asks for padding to be ADDED, which
-// this pipeline cannot manufacture), for a residual over one nanosecond, and
-// for anything beyond one maximal packet.
-[[nodiscard]] std::optional<std::uint32_t>
-opusFramesFromNanoseconds(std::int64_t nanoseconds) noexcept;
-
-} // namespace wam::media::matroska
+} // namespace wam::media::codec

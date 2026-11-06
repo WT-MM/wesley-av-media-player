@@ -26,6 +26,7 @@ struct NativeAudioBackendWake {
 };
 
 struct NativeAudioBackendConfiguration {
+  media::MediaCodec codec{media::MediaCodec::Unknown};
   media::MediaAudioFormat input;
   // Borrowed only for the duration of configure().
   std::span<const std::byte> magicCookie;

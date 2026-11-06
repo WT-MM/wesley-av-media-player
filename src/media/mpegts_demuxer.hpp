@@ -1,6 +1,6 @@
 #pragma once
 
-#include "media/matroska_ebml.hpp"
+#include "media/byte_source.hpp"
 #include "media/mpegts_packet.hpp"
 #include "media/native_media_source.hpp"
 
@@ -15,17 +15,6 @@
 #include <variant>
 
 namespace wam::media::mpegts {
-
-// SeekableByteReader, CancellationToken, ByteRange and FrameRange are
-// container-neutral and already exist; they live in the Matroska namespace only
-// because that is where the first demuxer needed them. Aliasing rather than
-// re-declaring keeps one definition and leaves the frozen Matroska headers
-// untouched. If a third container ever appears they should be hoisted into a
-// neutral header; two is not yet enough to earn that churn.
-using matroska::ByteRange;
-using matroska::CancellationToken;
-using matroska::FrameRange;
-using matroska::SeekableByteReader;
 
 struct MpegTsPrepareOutcome;
 
@@ -54,10 +43,9 @@ inline constexpr std::size_t kMpegTsIndexProbeCount{512};
 // guessed at.
 inline constexpr std::size_t kMpegTsProbeWindowBytes{512U * 1024U};
 
-// Sequential read-ahead window used by the cursor and every scan. 64 KiB is
-// 348 whole 188-byte packets, matching the Matroska copy chunk so the two
-// demuxers present the same I/O shape to the page cache.
-inline constexpr std::size_t kMpegTsReadWindowBytes{64U * 1024U};
+// Sequential read-ahead window used by the cursor and every scan: 348 whole
+// 188-byte packets.
+inline constexpr std::size_t kMpegTsReadWindowBytes{kSequentialReadBytes};
 static_assert(kMpegTsReadWindowBytes % kMaximumPacketStrideBytes != 0,
               "the window is deliberately not a stride multiple; the cursor "
               "must handle a packet straddling the window edge");
@@ -111,35 +99,6 @@ static_assert(kMaximumMpegTsAccessUnitPackets * 184U >
               "the packet walk must be able to reach the byte cap");
 
 inline constexpr std::size_t kMaximumMpegTsTracks{8};
-
-enum class MpegTsDemuxStatus : std::uint8_t {
-  Ready,
-  Unsupported,
-  Cancelled,
-  Failed,
-};
-
-// Typed rejection verdicts. Nothing in this demuxer drops a stream silently:
-// every refusal names one of these and carries a cold message.
-enum class MpegTsDemuxError : std::uint8_t {
-  None,
-  InvalidRequest,
-  NotTransportStream,   // no consistent sync pattern
-  InvalidContainer,     // sync found, structure impossible
-  MissingProgramTable,  // no PAT/PMT within the bounded scan
-  ProgramSelection,     // no program carries an admissible video stream
-  UnsupportedStreamType,
-  CodecConfiguration,
-  InvalidTimeline,      // no usable PTS/PCR pair, or a non-monotone one
-  IndexLimit,
-  SampleLimit,
-  ScanLimit,            // a bounded scan ran out before finding its target
-  FileChanged,
-  Io,
-  Cancelled,
-};
-
-[[nodiscard]] const char* mpegTsDemuxErrorName(MpegTsDemuxError error) noexcept;
 
 // ---------------------------------------------------------------------------
 // Index
@@ -231,7 +190,7 @@ struct MpegTsGenerationPlan {
 struct MpegTsCursorEnd {};
 struct MpegTsCursorCancelled {};
 struct MpegTsCursorFailure {
-  MpegTsDemuxError error{MpegTsDemuxError::Io};
+  MediaRefusalClass error{MediaRefusalClass::Io};
   std::string message;
 };
 
@@ -263,22 +222,10 @@ class MpegTsCursor final {
 };
 
 struct MpegTsPlanOutcome {
-  MpegTsDemuxStatus status{MpegTsDemuxStatus::Failed};
-  MpegTsDemuxError error{MpegTsDemuxError::InvalidTimeline};
+  MediaSourceOpenStatus status{MediaSourceOpenStatus::Failed};
+  MediaRefusalClass error{MediaRefusalClass::InvalidTimeline};
   std::optional<MpegTsGenerationPlan> plan;
   std::string message;
-};
-
-// Immutable facts about the container framing, published because .m2ts and a
-// 204-byte DVB capture are the same demuxer with a different stride and the
-// distinction must be visible to a test and to telemetry.
-struct MpegTsFraming {
-  std::uint64_t firstSyncOffset{0};
-  std::uint32_t packetStride{0};   // 188, 192 or 204
-  std::uint32_t packetCount{0};
-  bool timestampedPackets{false};  // m2ts TP_extra_header present
-
-  friend constexpr bool operator==(MpegTsFraming, MpegTsFraming) = default;
 };
 
 class MpegTsPreparedAsset final
@@ -336,7 +283,7 @@ class MpegTsPreparedAsset final
   [[nodiscard]] bool copyAccessUnit(
       const MpegTsCompressedSample& sample, std::span<std::byte> destination,
       CancellationToken cancellation = {},
-      MpegTsDemuxError* error = nullptr) const noexcept;
+      MediaRefusalClass* error = nullptr) const noexcept;
 
  private:
   struct Impl;
@@ -353,8 +300,8 @@ class MpegTsPreparedAsset final
 };
 
 struct MpegTsPrepareOutcome {
-  MpegTsDemuxStatus status{MpegTsDemuxStatus::Failed};
-  MpegTsDemuxError error{MpegTsDemuxError::InvalidContainer};
+  MediaSourceOpenStatus status{MediaSourceOpenStatus::Failed};
+  MediaRefusalClass error{MediaRefusalClass::InvalidContainer};
   std::shared_ptr<const MpegTsPreparedAsset> asset;
   std::string message;
 };
@@ -371,12 +318,5 @@ struct MpegTsPrepareOutcome {
 [[nodiscard]] MpegTsPrepareOutcome prepareMpegTsLocalFile(
     const std::filesystem::path& path, const MediaSourceOpenOptions& options,
     CancellationToken cancellation = {}) noexcept;
-
-// Detects the packet framing of a transport stream from a probe window. Public
-// because it is the first thing that can refuse a file and therefore the first
-// thing a test must be able to drive directly.
-[[nodiscard]] bool detectMpegTsFraming(std::span<const std::byte> probe,
-                                       std::uint64_t fileSize,
-                                       MpegTsFraming& framing) noexcept;
 
 }  // namespace wam::media::mpegts

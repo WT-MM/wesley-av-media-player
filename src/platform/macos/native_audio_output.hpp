@@ -277,22 +277,14 @@ class NativeAudioOutput final
   static constexpr std::uint32_t kMaximumFramesPerSlice =
       static_cast<std::uint32_t>(NativePcmRing::kFramesPerSlab);
 
-  // Smallest PCM block the producer can put into one ring slab. The producer's
-  // admission unit is a slab, not a frame: pump() converts one input lease per
-  // call and publishes exactly one slab from it, so a slab carries one
-  // delivered sample's decoded frames. AAC-LC's access unit is 1024 frames
-  // (MP3 is 1152, ALAC up to 4096), and a container may deliver exactly one
-  // access unit per sample. Opus packets are shorter (typically 960 frames, as
-  // few as 120), so for Opus this floor -- and the kGuaranteedRingFrames
-  // headroom proof built on it -- does not hold.
-  static constexpr std::uint32_t kMinimumFramesPerPublishedSlab = 1024;
-
   // Frames a completely full ring is *guaranteed* to hold. Deliberately not
   // kSlabCount * kFramesPerSlab: that is the ring's storage, not its reachable
   // occupancy, because occupancy is counted in slabs and a slab may be short.
+  // The producer guarantees NativePcmRing::kMinimumFramesPerPublishedSlab per
+  // slab, except a generation's last.
   static constexpr std::uint32_t kGuaranteedRingFrames =
-      static_cast<std::uint32_t>(NativePcmRing::kSlabCount) *
-      kMinimumFramesPerPublishedSlab;
+      static_cast<std::uint32_t>(NativePcmRing::kSlabCount *
+                                 NativePcmRing::kMinimumFramesPerPublishedSlab);
 
   // Device periods of producer headroom the ring must carry. The producer is
   // rearmed by the slab-retirement edge that this render callback raises, so it
@@ -323,9 +315,9 @@ class NativeAudioOutput final
   // ... and the ring must be able to cover kRingDevicePeriodsOfHeadroom of
   // them AT THE FASTEST ADMITTED RATE. This is the inequality that pins
   // NativePcmRing::kSlabCount to 16: 1024 * 4 (rate) * 4 (periods) == 16384 ==
-  // 16 * kMinimumFramesPerPublishedSlab, exactly. Raising the requested size,
-  // or the maximum rate, requires raising kSlabCount (or proving a larger
-  // kMinimumFramesPerPublishedSlab) in the same change.
+  // 16 * NativePcmRing::kMinimumFramesPerPublishedSlab, exactly. Raising the
+  // requested size, or the maximum rate, requires raising kSlabCount (or
+  // guaranteeing a larger kMinimumFramesPerPublishedSlab) in the same change.
   static_assert(kDeviceBufferFrames * kMaximumRateNumerator *
                     kRingDevicePeriodsOfHeadroom <=
                 kGuaranteedRingFrames);

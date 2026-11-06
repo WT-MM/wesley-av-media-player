@@ -47,7 +47,7 @@ public:
     struct statfs mount{};
     const bool buffered =
         ::statfs(path.c_str(), &mount) == 0 && !(mount.f_flags & MNT_LOCAL);
-    const media::LibavformatCursor::Cancellation cancellation{
+    const media::CancellationToken cancellation{
         sources_[3].get(), [](const void *source) noexcept {
           return static_cast<const media::MediaSource *>(source)
               ->stats()
@@ -61,15 +61,15 @@ public:
     auto outcome = sources_[selected]->openLocalFile(path, options, generation);
     if (outcome.status == media::MediaSourceOpenStatus::Unsupported &&
         selected != 3 &&
-        outcome.error.find("unlinked Matroska Segment") == std::string::npos) {
+        outcome.refusal != media::MediaRefusalClass::SegmentLayout) {
       const auto firstRefusal = outcome.error;
       sources_[selected]->close();
       outcome = sources_[3]->openLocalFile(path, options, generation);
       if (outcome.status == media::MediaSourceOpenStatus::Ready)
         active_ = sources_[3].get();
       else if (outcome.status == media::MediaSourceOpenStatus::Unsupported &&
-               outcome.error != "this recording is incomplete: its "
-                                "initialization metadata is missing")
+               outcome.refusal !=
+                   media::MediaRefusalClass::MissingInitialization)
         outcome.error = firstRefusal + "; libavformat: " + outcome.error;
     } else if (outcome.status == media::MediaSourceOpenStatus::Ready)
       active_ = sources_[selected].get();
@@ -90,6 +90,7 @@ public:
     media::MediaSourceOpenOutcome out;
     out.generation = generation;
     out.error = "LibavformatAudioTrackRetryUnavailable";
+    out.refusal = media::MediaRefusalClass::AudioTrackRetryUnavailable;
     return out;
   }
   media::MediaSourceSeekOutcome

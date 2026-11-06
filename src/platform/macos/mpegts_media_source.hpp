@@ -30,12 +30,10 @@ struct MpegTsSourceTraits {
   using CursorEnd = media::mpegts::MpegTsCursorEnd;
   using CursorCancelled = media::mpegts::MpegTsCursorCancelled;
   using CursorFailure = media::mpegts::MpegTsCursorFailure;
-  using DemuxStatus = media::mpegts::MpegTsDemuxStatus;
-  using DemuxError = media::mpegts::MpegTsDemuxError;
   using Plan = media::mpegts::MpegTsGenerationPlan;
   using PrepareOutcome = media::mpegts::MpegTsPrepareOutcome;
   using PlanOutcome = media::mpegts::MpegTsPlanOutcome;
-  using CancellationToken = media::mpegts::CancellationToken;
+  using CancellationToken = media::CancellationToken;
 
   [[nodiscard]] static PrepareOutcome prepare(
       const std::filesystem::path& path,
@@ -53,8 +51,6 @@ struct MpegTsSourceTraits {
       const PreparedAsset& asset) noexcept;
   [[nodiscard]] static CMVideoFormatDescriptionRef
   createVideoFormatDescription(const media::MediaTrackDescriptor& track) noexcept;
-  [[nodiscard]] static std::string demuxErrorMessage(const char* what,
-                                                     DemuxError error);
   // THE MERGE KEY: `dts.valid() ? dts : pts`, the AVFoundation shape. A PES
   // header states an explicit decode timestamp, so the two lanes are ordered
   // by the times the decoders will actually consume them and there is NO

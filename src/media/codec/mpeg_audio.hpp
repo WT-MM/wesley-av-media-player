@@ -7,13 +7,17 @@
 #include <optional>
 #include <span>
 
-namespace wam::media::matroska {
+namespace wam::media::codec {
 
 // A Matroska A_MPEG/L3 track carries no CodecPrivate: every parameter is
 // restated in each 4-byte frame header, and AudioToolbox's '.mp3' decoder takes
 // the raw frame with no magic cookie (measured -- AudioConverterNew succeeds
 // and decodes with the cookie property never set).
 inline constexpr std::size_t kMpegAudioFrameHeaderBytes{4};
+
+// '.mp2', kAudioFormatMPEGLayer2: MediaCodec::Mp3 is the MPEG audio family and
+// its facts row states '.mp3', so Layer II's second AudioFormatID lives here.
+inline constexpr std::uint32_t kMpegLayer2FormatTag{0x2E6D7032U};
 
 // MPEG-1 Layer III decodes 1152 frames per access unit. MPEG-2 and MPEG-2.5
 // Layer III decode 576, which the grid could represent, but the decoder
@@ -43,7 +47,8 @@ enum class MpegAudioAdmissionError : std::uint8_t {
   None,
   TruncatedFrameHeader,
   UnexpectedSyncword,
-  // Anything that is not MPEG-1 Layer III.
+  // The reserved version or layer code; for Matroska admission, anything
+  // that is not MPEG-1 Layer III.
   UnsupportedVersion,
   UnsupportedLayer,
   UnsupportedBitRateIndex,
@@ -72,7 +77,28 @@ struct MpegAudioAdmission {
   }
 };
 
-// Reads one MPEG-1 Layer III frame header. Admission is intentionally narrower
+// One MPEG audio frame header, as every container reads it.
+struct MpegAudioFrame {
+  std::uint32_t frameBytes{0};
+  std::uint32_t sampleRate{0};
+  std::uint32_t samplesPerFrame{0};
+  std::uint8_t channels{0};
+  std::uint8_t layer{0};   // 1, 2 or 3
+  std::uint8_t version{0}; // 1 = MPEG-1, 2 = MPEG-2, 3 = MPEG-2.5
+
+  friend constexpr bool operator==(const MpegAudioFrame &,
+                                   const MpegAudioFrame &) = default;
+};
+
+// The one container-neutral reader of an MPEG-1/2/2.5 Layer I-III frame
+// header. Refuses the reserved version and layer codes, the free-format and
+// reserved bit-rate indices and the reserved sample-rate index. version and
+// layer are set before the bit rate is read.
+[[nodiscard]] MpegAudioAdmissionError
+readMpegAudioFrameHeader(std::span<const std::byte> bytes,
+                         MpegAudioFrame &frame) noexcept;
+
+// Matroska admission of one MPEG-1 Layer III frame header. Admission is intentionally narrower
 // than the format: MPEG-1 Layer III only, a stated (non-free, non-reserved)
 // bit rate, and one whole frame per Block.
 [[nodiscard]] MpegAudioAdmission
@@ -93,4 +119,15 @@ mpegAudioFrameMatches(std::span<const std::byte> header,
                       std::uint64_t frameBytes,
                       const MpegAudioConfiguration &configuration) noexcept;
 
-} // namespace wam::media::matroska
+struct Mp3LameGapless {
+  std::uint32_t sampleRate{0};
+  std::uint32_t encoderDelay{0};
+  std::uint64_t retainedFrames{0};
+};
+
+// MPEG-2/2.5 Layer III Xing/Info frames carry a LAME-layout delay/padding
+// pair. MPEG-1 timing remains owned by the container adapter.
+[[nodiscard]] std::optional<Mp3LameGapless>
+inspectMp3LsfGapless(std::span<const std::byte> bytes) noexcept;
+
+} // namespace wam::media::codec

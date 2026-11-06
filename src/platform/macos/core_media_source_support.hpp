@@ -1,5 +1,6 @@
 #pragma once
 
+#include "media/audio_codec_timing.hpp"
 #include "media/native_media_source.hpp"
 #include "media/media_codec_facts.hpp"
 
@@ -9,7 +10,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
-#include <numeric>
 #include <optional>
 #include <span>
 #include <string>
@@ -51,66 +51,6 @@ inline void assignError(std::string* error, const char* message) {
   return order && *order != media::MediaTimeOrder::Greater;
 }
 
-// Exact integer sample rate of a selected audio track, or empty when the
-// container declared a rate that cannot be placed on an integer PCM grid.
-[[nodiscard]] inline std::optional<std::uint32_t> exactAudioSampleRate(
-    const media::MediaAudioFormat& audio) noexcept {
-  const double rate = audio.sampleRate;
-  if (!std::isfinite(rate) || rate <= 0.0 ||
-      rate > static_cast<double>(std::numeric_limits<std::int32_t>::max())) {
-    return std::nullopt;
-  }
-  const auto integral = static_cast<std::uint32_t>(rate);
-  if (static_cast<double>(integral) != rate || integral == 0) {
-    return std::nullopt;
-  }
-  return integral;
-}
-
-// Exact sum of two container rationals. The intermediate product needs the
-// full 128-bit range: adjacent media ticks at a nanosecond timescale are
-// already above 2^53, so converting through double would silently move a
-// sample across the accurate-seek boundary.
-[[nodiscard]] inline std::optional<media::MediaTime> checkedExactTimeSum(
-    media::MediaTime lhs, media::MediaTime rhs) noexcept {
-  if (!lhs.valid() || !rhs.valid()) {
-    return std::nullopt;
-  }
-
-  using WideSigned = __int128_t;
-  using WideUnsigned = __uint128_t;
-  const WideSigned numerator =
-      static_cast<WideSigned>(lhs.value) *
-          static_cast<WideSigned>(rhs.timescale) +
-      static_cast<WideSigned>(rhs.value) *
-          static_cast<WideSigned>(lhs.timescale);
-  const std::uint64_t denominator =
-      static_cast<std::uint64_t>(static_cast<std::uint32_t>(lhs.timescale)) *
-      static_cast<std::uint64_t>(static_cast<std::uint32_t>(rhs.timescale));
-  if (denominator == 0) {
-    return std::nullopt;
-  }
-
-  const WideUnsigned magnitude =
-      numerator < 0 ? static_cast<WideUnsigned>(-(numerator + 1)) + 1
-                    : static_cast<WideUnsigned>(numerator);
-  const std::uint64_t common = std::gcd(
-      denominator, static_cast<std::uint64_t>(magnitude % denominator));
-  const WideSigned reducedNumerator =
-      numerator / static_cast<WideSigned>(common);
-  const std::uint64_t reducedDenominator = denominator / common;
-  if (reducedNumerator <
-          static_cast<WideSigned>(std::numeric_limits<std::int64_t>::min()) ||
-      reducedNumerator >
-          static_cast<WideSigned>(std::numeric_limits<std::int64_t>::max()) ||
-      reducedDenominator >
-          static_cast<std::uint64_t>(std::numeric_limits<std::int32_t>::max())) {
-    return std::nullopt;
-  }
-  return media::MediaTime{static_cast<std::int64_t>(reducedNumerator),
-                          static_cast<std::int32_t>(reducedDenominator)};
-}
-
 // True when the sample's whole presentation interval closes at or before the
 // accurate-seek target, which is exactly the decodeOnly predicate. Empty when
 // the interval is not exactly representable or comparable, with the reason
@@ -122,7 +62,7 @@ inline void assignError(std::string* error, const char* message) {
     assignError(error, "accurate video sample has no exact positive interval");
     return std::nullopt;
   }
-  const auto intervalEnd = checkedExactTimeSum(presentationTime, duration);
+  const auto intervalEnd = media::addMediaTime(presentationTime, duration);
   if (!intervalEnd) {
     assignError(error,
                 "accurate video sample interval is not exactly representable");
@@ -269,7 +209,7 @@ class CoreMediaSampleStorage final : public media::MediaPayloadStorage {
     return nullptr;
   }
   const media::MediaAudioFormat& audio = *track.audio;
-  if (!exactAudioSampleRate(audio) || audio.channels == 0) {
+  if (!media::exactAudioSampleRate(audio.sampleRate) || audio.channels == 0) {
     return nullptr;
   }
   AudioStreamBasicDescription asbd{};

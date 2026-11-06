@@ -52,33 +52,6 @@ static_assert(nativeMediaSessionCommitStepAdmitted(CommitPhase::Idle,
 static_assert(!nativeMediaSessionCommitStepAdmitted(CommitPhase::Idle,
                                                     CommitPhase::Idle));
 
-[[nodiscard]] const char* failureReasonName(
-    protocol::FailureReason reason) noexcept {
-  switch (reason) {
-  case protocol::FailureReason::Preparation:
-    return "Preparation";
-  case protocol::FailureReason::Startup:
-    return "Startup";
-  case protocol::FailureReason::Clock:
-    return "Clock";
-  case protocol::FailureReason::Decode:
-    return "Decode";
-  case protocol::FailureReason::AudioOutput:
-    return "AudioOutput";
-  case protocol::FailureReason::VideoOutput:
-    return "VideoOutput";
-  case protocol::FailureReason::Preview:
-    return "Preview";
-  case protocol::FailureReason::CommitSeek:
-    return "CommitSeek";
-  case protocol::FailureReason::Stop:
-    return "Stop";
-  case protocol::FailureReason::Protocol:
-    return "Protocol";
-  }
-  return "Unknown";
-}
-
 // One always-on stderr line for a terminal native failure. Called at the open,
 // start and steady-state failure sites; other failures (clock, audio output)
 // publish through publishFailure() without it.
@@ -102,10 +75,11 @@ void logNativeFailure(const char* stage, protocol::FailureReason reason,
     std::string message;
     bool dispatcherFailed = false;
     if (dispatcher != nullptr) {
-      const media::NativeMediaDispatcherFailure failure =
-          dispatcher->stats().failure;
-      dispatcherFailed = failure != media::NativeMediaDispatcherFailure::None;
-      failureClass = media::nativeMediaDispatcherFailureName(failure);
+      const media::NativeMediaDispatcherStats stats = dispatcher->stats();
+      dispatcherFailed =
+          stats.failure != media::NativeMediaDispatcherFailure::None ||
+          stats.state == media::NativeMediaDispatcherState::Unsupported;
+      failureClass = media::nativeMediaDispatcherFailureName(stats);
       message = dispatcher->failureMessage();
     }
     // An empty error field is the one thing this line must never print: it
@@ -136,7 +110,7 @@ void logNativeFailure(const char* stage, protocol::FailureReason reason,
     }
     std::fprintf(stderr,
                  "WAM: native failure stage=%s reason=%s class=%s error=\"%s\"\n",
-                 stage, failureReasonName(reason), failureClass,
+                 stage, protocol::failureReasonName(reason), failureClass,
                  message.c_str());
     std::fflush(stderr);
   } catch (...) {
@@ -309,7 +283,8 @@ class NativeV1AdmissionSource final : public media::MediaSource, public media::A
     auto* retry = dynamic_cast<media::AudioTrackRetrySource*>(source_.get());
     if (!retry) {
       result.status = media::MediaSourceOpenStatus::Unsupported;
-      result.error = "AudioTrackRetryUnavailable";
+      result.refusal = media::MediaRefusalClass::AudioTrackRetryUnavailable;
+      result.error = media::mediaRefusalClassName(result.refusal);
       return result;
     }
     return admit(retry->retryAudioTrack(path, options, generation, rejected));
@@ -865,7 +840,8 @@ struct NativeMediaSession::Impl final {
       std::optional<protocol::Stamp> exactStamp = std::nullopt) noexcept {
     NativeMediaSessionDiagnostic diagnostic;
     diagnostic.reason = reason;
-    const char* fallback = failureReasonName(reason);
+    if (dispatcher) diagnostic.refusal = dispatcher->stats().refusal;
+    const char* fallback = protocol::failureReasonName(reason);
     const std::string* detail = dispatcher ? &dispatcher->failureMessage() : nullptr;
     if (detail && !detail->empty()) {
       std::snprintf(diagnostic.detail.data(), diagnostic.detail.size(), "%s", detail->c_str());
@@ -878,7 +854,7 @@ struct NativeMediaSession::Impl final {
                 (c >= '0' && c <= '9') || c == '_';
       }
       if (named) std::memcpy(diagnostic.name.data(), detail->data(), end);
-      else fallback = media::nativeMediaDispatcherFailureName(dispatcher->stats().failure);
+      else fallback = media::nativeMediaDispatcherFailureName(dispatcher->stats());
     }
     if (!diagnostic.name[0]) std::snprintf(diagnostic.name.data(), diagnostic.name.size(), "%s", fallback);
     bool inserted = false;

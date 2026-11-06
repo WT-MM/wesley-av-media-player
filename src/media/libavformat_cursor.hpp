@@ -1,4 +1,5 @@
 #pragma once
+#include "media/byte_source.hpp"
 #include "media/native_media_source.hpp"
 #include <atomic>
 #include <memory>
@@ -9,7 +10,7 @@ namespace wam::media {
 // expires on the next read/seek; retained payload belongs to the consumer.
 class LibavformatCursor final {
 public:
-  static constexpr std::size_t kIoBytes = 64 * 1024;
+  static constexpr std::size_t kIoBytes = kSequentialReadBytes;
   static constexpr std::size_t kPacketBytes = 4 * 1024 * 1024;
   static constexpr std::size_t kProbeBytes = 8 * 1024 * 1024;
   static constexpr std::size_t kIndexBytes = 4 * 1024 * 1024;
@@ -20,12 +21,7 @@ public:
     bool key{}, corrupt{};
     std::uint32_t skipStart{}, skipEnd{};
   };
-  struct Identity {
-    std::uint64_t device{}, inode{}, size{};
-    std::int64_t modifiedSeconds{}, modifiedNanoseconds{};
-    friend bool operator==(const Identity &, const Identity &) = default;
-  };
-  Identity identity() const noexcept;
+  FileIdentity identity() const noexcept;
   struct Stream {
     int codecId{};
     int containerTrackId{};
@@ -42,15 +38,13 @@ public:
   ~LibavformatCursor();
   LibavformatCursor(const LibavformatCursor &) = delete;
   LibavformatCursor &operator=(const LibavformatCursor &) = delete;
-  struct Cancellation {
-    const void *context{};
-    bool (*probe)(const void *) noexcept {};
-    bool cancelled() const noexcept { return probe && probe(context); }
-  };
-  static bool requiresExactDemuxTimeline(const std::filesystem::path &, Cancellation);
-  bool open(const std::filesystem::path &, Cancellation, std::string &error);
+  static bool requiresExactDemuxTimeline(const std::filesystem::path &, CancellationToken);
+  // refusal, when given, receives the typed class of a refusal that has one.
+  bool open(const std::filesystem::path &, CancellationToken, std::string &error,
+            MediaRefusalClass *refusal = nullptr);
   bool open(const std::filesystem::path &,
-            const std::atomic<bool> &cancellation, std::string &error);
+            const std::atomic<bool> &cancellation, std::string &error,
+            MediaRefusalClass *refusal = nullptr);
   Read read(Packet &, std::string &error);
   bool seek(unsigned stream, MediaTime target, std::string &error);
   unsigned streamCount() const noexcept;

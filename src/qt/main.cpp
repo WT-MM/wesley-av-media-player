@@ -1,3 +1,4 @@
+#include "media/media_container_routing.hpp"
 #include "media/startup_benchmark.hpp"
 #if defined(WAM_ENABLE_AVFORMAT_STAGE)
 #include "media/libavformat_cursor.hpp"
@@ -56,7 +57,6 @@
 #include <QVariantMap>
 
 #include <algorithm>
-#include <array>
 #include <chrono>
 #include <clocale>
 #include <cmath>
@@ -817,22 +817,14 @@ QUrl mediaUrlFromArgument(const QString &argument) {
   if (!explicit_url.scheme().isEmpty())
     return QUrl::fromUserInput(argument);
 
-  // Sorted. A bare argument with one of these suffixes stays a local path, so
-  // a missing file is reported as missing rather than falling through to the
-  // web-host heuristic below and opening as a URL. Hand-kept in step with the
-  // open dialog's media filter (qml/Main.qml); the dialog's playlist suffixes
-  // (m3u, m3u8, pls, cue) are not listed.
-  constexpr std::array<std::string_view, 43> media_extensions = {
-      "3g2",  "3gp",  "3gpp", "aac",  "ac3",  "aif",  "aiff", "alac",
-      "amr",  "asf",  "avi",  "caf",  "dts",  "eac3", "flac", "flv",
-      "m2ts", "m4a",  "m4b",  "m4v",  "mk3d", "mka",  "mkv",  "mov",
-      "mp3",  "mp4",  "mpeg", "mpg",  "mts",  "oga",  "ogg",  "ogv",
-      "opus", "qt",   "spx",  "ts",   "vob",  "w64",  "wav",  "webm",
-      "wma",  "wmv",  "wv",
-  };
+  // A bare argument with a suffix the open dialog offers stays a local path,
+  // so a missing file is reported as missing rather than falling through to
+  // the web-host heuristic below and opening as a URL.
   const QByteArray suffix = local_candidate.suffix().toLatin1().toLower();
-  const bool known_media_extension =
-      std::ranges::any_of(media_extensions, [&suffix](std::string_view value) {
+  const bool known_media_extension = std::ranges::any_of(
+      wam::media::kMediaFileExtensions,
+      [&suffix](const wam::media::MediaFileExtensionRow &row) {
+        const std::string_view value = row.extension.substr(1);
         return suffix == QByteArrayView(value.data(),
                                         static_cast<qsizetype>(value.size()));
       });
@@ -1223,6 +1215,18 @@ static int runApplication(int argc, char *argv[]) {
     engine.rootContext()->setContextProperty(
         QStringLiteral("revealInFinderSupported"), false);
 #endif
+    // The open dialog's filter, from the one extension table.
+    {
+      QStringList patterns;
+      for (const wam::media::MediaFileExtensionRow &row :
+           wam::media::kMediaFileExtensions)
+        patterns << QLatin1String("*") +
+                        QLatin1String(row.extension.data(),
+                                      qsizetype(row.extension.size()));
+      engine.rootContext()->setContextProperty(
+          QStringLiteral("mediaFileNameFilter"),
+          QStringLiteral("Media files (%1)").arg(patterns.join(QLatin1Char(' '))));
+    }
 
     // The window factory. Everything app-level -- the state store and its
     // persistence checkpoint, the single desktop menu bar, the single

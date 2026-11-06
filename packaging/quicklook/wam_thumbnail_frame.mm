@@ -127,12 +127,7 @@ bool DeadlineProbe(const void* context) noexcept {
   return static_cast<const Deadline*>(context)->expired();
 }
 
-wam::media::matroska::CancellationToken MatroskaToken(
-    const Deadline& deadline) noexcept {
-  return {&deadline, &DeadlineProbe};
-}
-
-wam::media::mpegts::CancellationToken MpegTsToken(
+wam::media::CancellationToken DeadlineToken(
     const Deadline& deadline) noexcept {
   return {&deadline, &DeadlineProbe};
 }
@@ -352,9 +347,9 @@ bool CopyMatroskaKeyframe(const std::filesystem::path& path,
   options.selection.requireVideo = true;
   options.selection.requireAudio = false;
 
-  const auto token = MatroskaToken(deadline);
+  const auto token = DeadlineToken(deadline);
   auto outcome = mkv::prepareMatroskaLocalFile(path, options, token);
-  if (outcome.status != mkv::MatroskaDemuxStatus::Ready || !outcome.asset) {
+  if (outcome.status != wam::media::MediaSourceOpenStatus::Ready || !outcome.asset) {
     if (error) {
       *error = outcome.message.empty() ? "matroska prepare failed"
                                        : outcome.message;
@@ -461,9 +456,9 @@ bool CopyMpegTsKeyframe(const std::filesystem::path& path,
   options.selection.requireVideo = true;
   options.selection.requireAudio = false;
 
-  const auto token = MpegTsToken(deadline);
+  const auto token = DeadlineToken(deadline);
   auto outcome = ts::prepareMpegTsLocalFile(path, options, token);
-  if (outcome.status != ts::MpegTsDemuxStatus::Ready || !outcome.asset) {
+  if (outcome.status != wam::media::MediaSourceOpenStatus::Ready || !outcome.asset) {
     if (error) {
       *error = outcome.message.empty() ? "mpeg-ts prepare failed"
                                        : outcome.message;
@@ -575,10 +570,11 @@ bool copyKeyframeImage(const std::filesystem::path& path, ThumbnailFrame* out,
         return CopyMatroskaKeyframe(path, deadline, out, error);
       case media::MediaSourceBackendKind::MpegTs:
         return CopyMpegTsKeyframe(path, deadline, out, error);
+      case media::MediaSourceBackendKind::Libavformat:
       case media::MediaSourceBackendKind::AVFoundation:
         // This provider claims only the two types AVFoundation does not
-        // thumbnail itself, so the routing table never names that backend
-        // here; fall through to the header probes rather than assume.
+        // thumbnail itself and has no general demux stage; fall through to
+        // the header probes rather than assume.
         break;
     }
   }

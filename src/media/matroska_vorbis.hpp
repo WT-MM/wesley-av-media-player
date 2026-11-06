@@ -22,13 +22,6 @@ namespace wam::media::matroska {
 // decoder parses what it is given, and only this shape satisfies it.
 inline constexpr std::size_t kVorbisHeaderCount{3};
 
-// 'vorb'. AudioToolbox registers a Vorbis decoder under this fourcc --
-// kAudioFormatProperty_DecodeFormatIDs reports it -- but publishes no
-// kAudioFormatVorbis constant for it, so the value is stated here once and
-// shared by the demuxer, the converter and the session rather than spelled
-// three times.
-inline constexpr std::uint32_t kVorbisAudioFormatTag{0x766F7262U};
-
 // Vorbis I specification 4.2.2. Fixed size: 1 type byte, 6 magic bytes, a
 // 4-byte version, channels, rate, three bitrate fields, the packed block
 // sizes, and the framing bit.
@@ -97,27 +90,5 @@ struct VorbisAdmission {
 // or over-long blob is refused rather than handed to AudioToolbox.
 [[nodiscard]] VorbisAdmission
 parseVorbisCodecPrivate(std::span<const std::byte> bytes) noexcept;
-
-// The number of frames the decoder swallows before it emits anything: Vorbis'
-// first packet carries only the left half of an overlap-add window, so it
-// decodes to zero samples by specification and the stream comes out exactly one
-// access unit short. Measured invariant across fresh converters AND across
-// AudioConverterReset.
-[[nodiscard]] constexpr std::uint32_t
-vorbisDecoderLeadInFrames(const VorbisConfiguration &configuration) noexcept {
-  return configuration.samplesPerAccessUnit();
-}
-
-// Recovers an exact frame count from a Matroska duration stated in nanoseconds
-// (DiscardPadding). Identical in intent to opusFramesFromNanoseconds, but the
-// sample rate is a parameter because Vorbis is commonly 44.1 kHz, where
-// gcd(44100, 1e9) = 100 makes the set of exactly-representable frame counts
-// different again. One nanosecond is a small fraction of a frame at every rate
-// this source admits, so the nearest whole frame is unique; the residual is
-// bounded at one nanosecond so a value that was never a rounded frame count is
-// refused rather than snapped.
-[[nodiscard]] std::optional<std::uint32_t>
-vorbisFramesFromNanoseconds(std::int64_t nanoseconds,
-                            std::uint32_t sampleRate) noexcept;
 
 } // namespace wam::media::matroska

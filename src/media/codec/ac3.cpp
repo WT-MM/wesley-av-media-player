@@ -1,8 +1,8 @@
-#include "media/matroska_ac3.hpp"
+#include "media/codec/ac3.hpp"
 
 #include <array>
 
-namespace wam::media::matroska {
+namespace wam::media::codec {
 namespace {
 
 // A/52 table 5.1: fscod -> sample rate. Index 3 is reserved in AC-3 and means
@@ -108,51 +108,48 @@ legacyFrameWords(std::uint32_t frmsizecod, std::uint32_t fscod) noexcept {
   }
 }
 
-struct ParsedHeader {
-  std::uint32_t sampleRate{0};
-  std::uint8_t channelCount{0};
-  std::uint32_t syncframeBytes{0};
-  std::uint32_t blocks{0};
-  bool enhanced{false};
-};
+} // namespace
 
-[[nodiscard]] Ac3AdmissionError
-parseHeader(std::span<const std::byte> frame, bool wantEnhanced,
-            ParsedHeader *parsed) noexcept {
-  if (frame.size() < kAc3MinimumSyncframeBytes) {
+Ac3AdmissionError readAc3SyncframeHeader(std::span<const std::byte> bytes,
+                                         Ac3SyncFrame &frame) noexcept {
+  frame = Ac3SyncFrame{};
+  // bsid is byte 5 in both syntaxes, so six bytes are the least that can say
+  // which one this is.
+  if (bytes.size() < 6U) {
     return Ac3AdmissionError::TruncatedSyncframe;
   }
   const auto syncword = static_cast<std::uint16_t>(
-      (static_cast<std::uint32_t>(std::to_integer<std::uint8_t>(frame[0]))
+      (static_cast<std::uint32_t>(std::to_integer<std::uint8_t>(bytes[0]))
        << 8U) |
-      static_cast<std::uint32_t>(std::to_integer<std::uint8_t>(frame[1])));
+      static_cast<std::uint32_t>(std::to_integer<std::uint8_t>(bytes[1])));
   if (syncword != kAc3Syncword) {
     return Ac3AdmissionError::UnexpectedSyncword;
   }
 
   // bsid sits at bits 40..44 in BOTH syntaxes -- that co-location is what makes
   // it readable before the rest of the header has been interpreted, and it is
-  // the only reason a single parser can dispatch between them.
+  // the only reason a single parser can dispatch between them. Reading one
+  // syntax as the other yields a plausible but wrong frame length.
   const auto bsid = static_cast<std::uint8_t>(
-      (std::to_integer<std::uint8_t>(frame[5]) >> 3U) & 0x1FU);
+      (std::to_integer<std::uint8_t>(bytes[5]) >> 3U) & 0x1FU);
   const bool enhanced = bsid >= kMinimumEnhancedAc3BitStreamIdentification &&
                         bsid <= kMaximumEnhancedAc3BitStreamIdentification;
   const bool legacy = bsid <= kMaximumLegacyAc3BitStreamIdentification;
   if (!enhanced && !legacy) {
     return Ac3AdmissionError::UnsupportedBitStreamIdentification;
   }
-  if (enhanced != wantEnhanced) {
-    return Ac3AdmissionError::CodecIdMismatch;
-  }
-  parsed->enhanced = enhanced;
+  frame.bitstreamId = bsid;
+  frame.enhanced = enhanced;
 
-  BitReader reader(frame);
+  BitReader reader(bytes);
   if (!reader.skip(16U)) {
     return Ac3AdmissionError::TruncatedSyncframe;
   }
 
+  std::uint32_t acmod = 0;
+  std::uint32_t lfeon = 0;
   if (!enhanced) {
-    if (!reader.skip(16U)) {
+    if (!reader.skip(16U)) { // crc1
       return Ac3AdmissionError::TruncatedSyncframe;
     }
     std::uint32_t fscod = 0;
@@ -167,14 +164,10 @@ parseHeader(std::span<const std::byte> frame, bool wantEnhanced,
     if (!words) {
       return Ac3AdmissionError::UnsupportedBitRateCode;
     }
-    parsed->sampleRate = kSampleRateByFscod[fscod];
-    parsed->syncframeBytes = *words * 2U;
-    parsed->blocks = kAc3BlocksPerSyncframe;
-    if (!reader.skip(8U)) {
-      return Ac3AdmissionError::TruncatedSyncframe;
-    }
-    std::uint32_t acmod = 0;
-    if (!reader.read(3U, &acmod)) {
+    frame.sampleRate = kSampleRateByFscod[fscod];
+    frame.frameBytes = *words * 2U;
+    frame.samplesPerFrame = kAc3SamplesPerAccessUnit;
+    if (!reader.skip(8U) || !reader.read(3U, &acmod)) { // bsid, bsmod
       return Ac3AdmissionError::TruncatedSyncframe;
     }
     // A/52 5.4.1: the mix level fields are conditional on acmod, so the LFE
@@ -194,64 +187,82 @@ parseHeader(std::span<const std::byte> frame, bool wantEnhanced,
         return Ac3AdmissionError::TruncatedSyncframe;
       }
     }
-    std::uint32_t lfeon = 0;
     if (!reader.read(1U, &lfeon)) {
       return Ac3AdmissionError::TruncatedSyncframe;
     }
-    if (!admissibleChannelConfiguration(acmod)) {
-      return Ac3AdmissionError::UnsupportedChannelConfiguration;
+  } else {
+    // E-AC-3 (A/52 Annex E) bit stream information.
+    std::uint32_t strmtyp = 0;
+    std::uint32_t substreamid = 0;
+    std::uint32_t frmsiz = 0;
+    if (!reader.read(2U, &strmtyp) || !reader.read(3U, &substreamid) ||
+        !reader.read(11U, &frmsiz)) {
+      return Ac3AdmissionError::TruncatedSyncframe;
     }
-    parsed->channelCount = static_cast<std::uint8_t>(
-        kChannelsByAcmod[acmod] + static_cast<std::uint8_t>(lfeon));
-    return Ac3AdmissionError::None;
-  }
-
-  // E-AC-3 (A/52 Annex E) bit stream information.
-  std::uint32_t strmtyp = 0;
-  std::uint32_t substreamid = 0;
-  std::uint32_t frmsiz = 0;
-  if (!reader.read(2U, &strmtyp) || !reader.read(3U, &substreamid) ||
-      !reader.read(11U, &frmsiz)) {
-    return Ac3AdmissionError::TruncatedSyncframe;
-  }
-  // Type 0 is an independent substream; types 1 and 2 are dependent substreams
-  // and AC-3-converted streams, both of which describe audio this source does
-  // not assemble. substreamid must be 0 for the same reason.
-  if (strmtyp != 0U || substreamid != 0U) {
-    return Ac3AdmissionError::UnsupportedSubstream;
-  }
-  parsed->syncframeBytes = (frmsiz + 1U) * 2U;
-
-  std::uint32_t fscod = 0;
-  if (!reader.read(2U, &fscod)) {
-    return Ac3AdmissionError::TruncatedSyncframe;
-  }
-  if (fscod >= kSampleRateByFscod.size()) {
-    // fscod == 3 selects a halved rate via fscod2. Those streams are 6 blocks
-    // of 256 frames at half rate, which the grid could represent, but no
-    // encoder in reach emits them and an unexercised branch is worse than a
-    // fallback.
-    return Ac3AdmissionError::ReservedSampleRate;
-  }
-  parsed->sampleRate = kSampleRateByFscod[fscod];
-  std::uint32_t numblkscod = 0;
-  if (!reader.read(2U, &numblkscod)) {
-    return Ac3AdmissionError::TruncatedSyncframe;
-  }
-  parsed->blocks = kBlocksByNumblkscod[numblkscod & 0x03U];
-  if (parsed->blocks != kAc3BlocksPerSyncframe) {
-    return Ac3AdmissionError::UnsupportedBlockCount;
-  }
-  std::uint32_t acmod = 0;
-  std::uint32_t lfeon = 0;
-  if (!reader.read(3U, &acmod) || !reader.read(1U, &lfeon)) {
-    return Ac3AdmissionError::TruncatedSyncframe;
+    // Annex E: strmtyp 1 is a dependent substream -- part of the preceding
+    // independent frame's audio block period, not an access unit of its own --
+    // and substreamid != 0 is an additional programme. strmtyp 2 (converted
+    // from AC-3) is legal but unexercised and strmtyp 3 is reserved.
+    if (strmtyp != 0U || substreamid != 0U) {
+      return Ac3AdmissionError::UnsupportedSubstream;
+    }
+    frame.frameBytes = (frmsiz + 1U) * 2U;
+    std::uint32_t fscod = 0;
+    if (!reader.read(2U, &fscod)) {
+      return Ac3AdmissionError::TruncatedSyncframe;
+    }
+    if (fscod >= kSampleRateByFscod.size()) {
+      // fscod == 3 selects a halved rate (24/22.05/16 kHz) via fscod2, outside
+      // the admitted audio envelope, and no encoder in reach emits it.
+      return Ac3AdmissionError::ReservedSampleRate;
+    }
+    frame.sampleRate = kSampleRateByFscod[fscod];
+    std::uint32_t numblkscod = 0;
+    if (!reader.read(2U, &numblkscod) || !reader.read(3U, &acmod) ||
+        !reader.read(1U, &lfeon)) {
+      return Ac3AdmissionError::TruncatedSyncframe;
+    }
+    frame.samplesPerFrame =
+        kBlocksByNumblkscod[numblkscod & 0x03U] * kAc3FramesPerBlock;
   }
   if (!admissibleChannelConfiguration(acmod)) {
     return Ac3AdmissionError::UnsupportedChannelConfiguration;
   }
-  parsed->channelCount = static_cast<std::uint8_t>(
-      kChannelsByAcmod[acmod] + static_cast<std::uint8_t>(lfeon));
+  frame.fullBandwidthChannels = kChannelsByAcmod[acmod];
+  frame.lfe = lfeon != 0U;
+  frame.channels = static_cast<std::uint8_t>(frame.fullBandwidthChannels +
+                                             (frame.lfe ? 1U : 0U));
+  if (frame.frameBytes < kAc3MinimumSyncframeBytes) {
+    return Ac3AdmissionError::FrameSizeMismatch;
+  }
+  return Ac3AdmissionError::None;
+}
+
+namespace {
+
+// The Matroska Block-level rules on top of the shared header rule: the
+// declared CodecID must agree with the bitstream, and the affine grid needs
+// six blocks per syncframe.
+[[nodiscard]] Ac3AdmissionError readMatroskaSyncframe(
+    std::span<const std::byte> bytes, bool wantEnhanced,
+    Ac3SyncFrame &frame) noexcept {
+  if (bytes.size() < kAc3MinimumSyncframeBytes) {
+    return Ac3AdmissionError::TruncatedSyncframe;
+  }
+  const Ac3AdmissionError error = readAc3SyncframeHeader(bytes, frame);
+  if (error == Ac3AdmissionError::UnexpectedSyncword ||
+      error == Ac3AdmissionError::UnsupportedBitStreamIdentification) {
+    return error;
+  }
+  if (frame.enhanced != wantEnhanced) {
+    return Ac3AdmissionError::CodecIdMismatch;
+  }
+  if (error != Ac3AdmissionError::None) {
+    return error;
+  }
+  if (frame.samplesPerFrame != kAc3SamplesPerAccessUnit) {
+    return Ac3AdmissionError::UnsupportedBlockCount;
+  }
   return Ac3AdmissionError::None;
 }
 
@@ -259,21 +270,20 @@ parseHeader(std::span<const std::byte> frame, bool wantEnhanced,
 
 Ac3Admission parseAc3Syncframe(std::span<const std::byte> frame,
                                bool enhanced) noexcept {
-  ParsedHeader parsed;
-  const Ac3AdmissionError error = parseHeader(frame, enhanced, &parsed);
+  Ac3SyncFrame parsed;
+  const Ac3AdmissionError error =
+      readMatroskaSyncframe(frame, enhanced, parsed);
   if (error != Ac3AdmissionError::None) {
     return failure(error);
   }
-  if (parsed.syncframeBytes == 0U ||
-      parsed.syncframeBytes != frame.size()) {
+  if (parsed.frameBytes != frame.size()) {
     return failure(Ac3AdmissionError::FrameSizeMismatch);
   }
   Ac3Configuration configuration;
   configuration.sampleRate = parsed.sampleRate;
-  configuration.channelCount = parsed.channelCount;
-  configuration.samplesPerAccessUnit =
-      parsed.blocks * kAc3FramesPerBlock;
-  configuration.syncframeBytes = parsed.syncframeBytes;
+  configuration.channelCount = parsed.channels;
+  configuration.samplesPerAccessUnit = parsed.samplesPerFrame;
+  configuration.syncframeBytes = parsed.frameBytes;
   configuration.enhanced = parsed.enhanced;
   return Ac3Admission{Ac3AdmissionError::None, configuration};
 }
@@ -282,8 +292,9 @@ bool ac3SyncframeMatches(std::span<const std::byte> header,
                          std::uint64_t frameBytes,
                          const Ac3Configuration &configuration,
                          bool enhanced) noexcept {
-  ParsedHeader parsed;
-  if (parseHeader(header, enhanced, &parsed) != Ac3AdmissionError::None) {
+  Ac3SyncFrame parsed;
+  if (readMatroskaSyncframe(header, enhanced, parsed) !=
+      Ac3AdmissionError::None) {
     return false;
   }
   // The frame LENGTH is deliberately not compared against the admitted one:
@@ -291,15 +302,14 @@ bool ac3SyncframeMatches(std::span<const std::byte> header,
   // lengths by design. What must not change is anything the timeline or the
   // decoder's output shape is derived from.
   return parsed.sampleRate == configuration.sampleRate &&
-         parsed.channelCount == configuration.channelCount &&
-         parsed.blocks * kAc3FramesPerBlock ==
-             configuration.samplesPerAccessUnit &&
+         parsed.channels == configuration.channelCount &&
+         parsed.samplesPerFrame == configuration.samplesPerAccessUnit &&
          parsed.enhanced == configuration.enhanced &&
-         static_cast<std::uint64_t>(parsed.syncframeBytes) == frameBytes;
+         static_cast<std::uint64_t>(parsed.frameBytes) == frameBytes;
 }
 
 static_assert(kAc3SamplesPerAccessUnit ==
                   kAc3BlocksPerSyncframe * kAc3FramesPerBlock,
               "an AC-3 access unit is 6 blocks of 256 frames");
 
-} // namespace wam::media::matroska
+} // namespace wam::media::codec

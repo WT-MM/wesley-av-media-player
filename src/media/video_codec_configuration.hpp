@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <iterator>
 #include <optional>
 #include <span>
 #include <string>
@@ -69,22 +70,41 @@ struct VideoCodecConfigurationLimits {
       limits.maximumPixels);
 }
 
+#define WAM_VIDEO_CODEC_CONFIGURATION_ERRORS(X) \
+  X(None)                                     \
+  X(UnsupportedCodec)                         \
+  X(ConfigurationKindMismatch)                \
+  X(EmptyConfiguration)                       \
+  X(ConfigurationTooLarge)                    \
+  X(MalformedRecord)                          \
+  X(MissingParameterSet)                      \
+  X(ParameterSetMismatch)                     \
+  X(UnsupportedProfile)                       \
+  X(UnsupportedChromaFormat)                  \
+  X(UnsupportedBitDepth)                      \
+  X(UnsupportedColorDescription)              \
+  X(DimensionLimitExceeded)                   \
+  X(ReorderLimitExceeded)
+
+#define WAM_VIDEO_CODEC_CONFIGURATION_ENUMERATOR(name) name,
 enum class VideoCodecConfigurationError : std::uint8_t {
-  None,
-  UnsupportedCodec,
-  ConfigurationKindMismatch,
-  EmptyConfiguration,
-  ConfigurationTooLarge,
-  MalformedRecord,
-  MissingParameterSet,
-  ParameterSetMismatch,
-  UnsupportedProfile,
-  UnsupportedChromaFormat,
-  UnsupportedBitDepth,
-  UnsupportedColorDescription,
-  DimensionLimitExceeded,
-  ReorderLimitExceeded,
+  WAM_VIDEO_CODEC_CONFIGURATION_ERRORS(WAM_VIDEO_CODEC_CONFIGURATION_ENUMERATOR)
 };
+#undef WAM_VIDEO_CODEC_CONFIGURATION_ENUMERATOR
+
+#define WAM_VIDEO_CODEC_CONFIGURATION_NAME(name) #name,
+inline constexpr const char* kVideoCodecConfigurationErrorNames[] = {
+    WAM_VIDEO_CODEC_CONFIGURATION_ERRORS(WAM_VIDEO_CODEC_CONFIGURATION_NAME)};
+#undef WAM_VIDEO_CODEC_CONFIGURATION_NAME
+#undef WAM_VIDEO_CODEC_CONFIGURATION_ERRORS
+
+[[nodiscard]] constexpr const char* videoCodecConfigurationErrorName(
+    VideoCodecConfigurationError error) noexcept {
+  const auto index = static_cast<std::size_t>(error);
+  return index < std::size(kVideoCodecConfigurationErrorNames)
+             ? kVideoCodecConfigurationErrorNames[index]
+             : "Unknown";
+}
 
 // Exact ISO/IEC VUI values, when an SPS carries them. An absent color
 // description is intentionally not promoted to BT.709 and is not proof that
@@ -326,10 +346,9 @@ inline constexpr std::size_t kMpeg4VisualEsdsOverheadBytes{41};
 //   no axis may exceed 4096, the shorter axis may not exceed 2320, and the
 //   frame may not exceed 9,502,720 px
 //
-// Callers append their own typed token -- the Matroska path gets
-// " (CodedDimensionLimit)" from matroskaDemuxErrorMessage, and the backends
-// with no such wrapper append the same token literally -- so a grep for
-// CodedDimensionLimit finds every backend's refusal.
+// Callers wrap it with refusalMessage(..., MediaRefusalClass::
+// CodedDimensionLimit), so every backend's refusal ends in the same
+// " (CodedDimensionLimit)" token.
 [[nodiscard]] bool codedDimensionsWithinV1Ceiling(
     std::uint64_t width, std::uint64_t height) noexcept;
 [[nodiscard]] std::string codedDimensionRefusalMessage(

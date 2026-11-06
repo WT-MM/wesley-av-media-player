@@ -3,6 +3,7 @@
 #include "media/native_media_source.hpp"
 #include "media/adpcm_audio.hpp"
 #include "media/adpcm_decoder.hpp"
+#include "media/media_codec_facts.hpp"
 #include <span>
 #include <string_view>
 
@@ -42,7 +43,7 @@ struct AppleAudioPacketFormat {
     out.blockFrames = appleAudioInteger(bytes, 0, 4);
     if (out.blockFrames == 0 || out.blockFrames > 4096) return {};
     out.codec = MediaCodec::Alac;
-    f.formatTag = 0x616c6163U;
+    f.formatTag = mediaCodecFacts(MediaCodec::Alac).coreAudioFormatTag;
     f.formatFlags = depth == 16 ? 1U : depth == 20 ? 2U : depth == 24 ? 3U : 4U;
     f.framesPerPacket = out.blockFrames;
     out.cookie = bytes;
@@ -51,7 +52,7 @@ struct AppleAudioPacketFormat {
     if (!bytes.empty() || (floating ? depth != 32 :
         (depth != 8 && depth != 16 && depth != 24 && depth != 32))) return {};
     out.codec = MediaCodec::Pcm;
-    f.formatTag = 0x6c70636dU;
+    f.formatTag = mediaCodecFacts(MediaCodec::Pcm).coreAudioFormatTag;
     // Matroska integer PCM is unsigned at 8 bits and signed above 8 bits.
     f.formatFlags = 8U | (floating ? 1U : depth == 8 ? 0U : 4U);
     f.framesPerPacket = 1;
@@ -70,7 +71,7 @@ struct AppleAudioPacketFormat {
     if (tag == 17 && bytes.size() == 20 &&
         out.blockFrames == 1 + (f.bytesPerPacket - 4 * channels) * 2 / channels) {
       out.codec = MediaCodec::AdpcmIma;
-      f.formatTag = 0x6d730011U;
+      f.formatTag = mediaCodecFacts(MediaCodec::AdpcmIma).coreAudioFormatTag;
     } else if (tag == 2 && bytes.size() == 50 &&
                out.blockFrames == 2 + (f.bytesPerPacket - 7 * channels) * 2 / channels) {
       constexpr auto& coefficients = kAdpcmMsCoefficients;

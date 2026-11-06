@@ -196,13 +196,11 @@ bool validAudioFormat(const MediaAudioFormat& audio,
   // (0xffff0002) or a different two-channel layout (0x00660002 Headphones) is
   // refused even though its low bits do say two.  Both are pinned in
   // native_media_source_test.cpp.
-  constexpr std::uint32_t kCanonicalMonoLayout = 0x00640001U;
-  constexpr std::uint32_t kCanonicalStereoLayout = 0x00650002U;
   if (audio.channels == 1) {
-    return audio.channelLayoutTag == kCanonicalMonoLayout;
+    return audio.channelLayoutTag == kCoreAudioMonoLayoutTag;
   }
   if (audio.channels == 2) {
-    return audio.channelLayoutTag == kCanonicalStereoLayout;
+    return audio.channelLayoutTag == kCoreAudioStereoLayoutTag;
   }
   // MULTICHANNEL.  Wider layouts have no single canonical tag to
   // enumerate -- 5.1 alone has four in common use (MPEG_5_1_A..D), one per

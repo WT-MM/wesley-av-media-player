@@ -533,7 +533,7 @@ void previewRetirementClearsRetainedGesture() {
   expect(stop.invalidationGeneration.value > preview.generation.value,
          "replacement Stop invalidates the preview generation");
   expect(router.onNativeFailed(
-                   {preview.stamp, native::FailureReason::Preview}, {6})
+                   {preview.stamp, native::FailureReason::Decode}, {6})
                  .status == router::Status::Ignored,
          "preview failure is stale after replacement Stop admission");
   const auto replacement =
@@ -592,7 +592,7 @@ void previewFailureRequiresExactStopBeforeFallback() {
           .previewFrame;
   const auto stop =
       action(router.onNativeFailed(
-                 {preview.stamp, native::FailureReason::Preview}, {5}),
+                 {preview.stamp, native::FailureReason::Decode}, {5}),
              router::ActionKind::NativeStop,
              "exact preview failure retires native before fallback")
           .stop;
@@ -711,7 +711,7 @@ void previewFromEndedCanRetireWithoutReplay() {
              router.snapshot().state == router::State::NativeStopping,
          "Stop supersedes the exact ended preview lineage");
   expect(router.onNativeFailed(
-                   {preview.stamp, native::FailureReason::Preview}, {7})
+                   {preview.stamp, native::FailureReason::Decode}, {7})
                  .status == router::Status::Ignored,
          "late ended-preview failure cannot defeat cancellation");
   expect(router.onNativeStopped(

@@ -68,24 +68,6 @@ private:
   return reservation.accepted() && !reservation.requiresPcm();
 }
 
-[[nodiscard]] bool exactPositionAtFrame(
-    media::MediaTime position, media::MediaTime origin,
-    std::uint64_t frame, std::uint32_t sampleRate) noexcept {
-  if (!position.valid() || !origin.valid() || sampleRate == 0) {
-    return false;
-  }
-  using Wide = __int128_t;
-  const Wide originNumerator =
-      static_cast<Wide>(origin.value) * static_cast<Wide>(sampleRate) +
-      static_cast<Wide>(frame) * static_cast<Wide>(origin.timescale);
-  const Wide left = static_cast<Wide>(position.value) *
-                    static_cast<Wide>(origin.timescale) *
-                    static_cast<Wide>(sampleRate);
-  const Wide right = originNumerator *
-                     static_cast<Wide>(position.timescale);
-  return left == right;
-}
-
 } // namespace
 
 NativeAudioRenderCore::NativeAudioRenderCore(
@@ -165,9 +147,18 @@ bool NativeAudioRenderCore::activate(
         return false;
       }
     }
-  } else if (!exactPositionAtFrame(pausedClockPosition, mediaOrigin,
-                                   streamFrameCursor, sampleRate)) {
-    return false;
+  } else {
+    // pausedClockPosition must be exactly mediaOrigin + streamFrameCursor
+    // frames.
+    const auto offset =
+        media::subtractMediaTime(pausedClockPosition, mediaOrigin);
+    const auto offsetFrame =
+        offset ? media::exactAudioFrameIndex(*offset, sampleRate)
+               : std::nullopt;
+    if (!offsetFrame || *offsetFrame < 0 ||
+        static_cast<std::uint64_t>(*offsetFrame) != streamFrameCursor) {
+      return false;
+    }
   }
 
   const NativeMediaClockSnapshot paused = clock_.sample();

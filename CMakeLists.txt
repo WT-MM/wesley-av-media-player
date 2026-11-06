@@ -1026,6 +1026,7 @@ if(BUILD_TESTING)
     src/media/subtitle_bitmap.cpp
     src/media/subtitle_pgs.cpp
     src/media/subtitle_vobsub.cpp
+    src/media/byte_source.cpp
     src/media/matroska_ebml.cpp
     src/qt/scroll_gesture.cpp
     src/qt/scroll_gesture.hpp
@@ -1067,6 +1068,7 @@ if(BUILD_TESTING)
     src/media/subtitle_bitmap.cpp
     src/media/subtitle_pgs.cpp
     src/media/subtitle_vobsub.cpp
+    src/media/byte_source.cpp
     src/media/matroska_ebml.cpp
     src/qt/scroll_gesture.cpp
     src/qt/scroll_gesture.hpp
@@ -1155,6 +1157,7 @@ if(BUILD_TESTING)
       src/media/subtitle_bitmap.cpp
       src/media/subtitle_pgs.cpp
       src/media/subtitle_vobsub.cpp
+      src/media/byte_source.cpp
       src/media/matroska_ebml.cpp
       src/qt/scroll_gesture.cpp
       src/qt/scroll_gesture.hpp

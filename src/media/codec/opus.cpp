@@ -1,9 +1,9 @@
-#include "media/matroska_opus.hpp"
+#include "media/codec/opus.hpp"
 
 #include <array>
 #include <cstring>
 
-namespace wam::media::matroska {
+namespace wam::media::codec {
 namespace {
 
 constexpr std::array<std::byte, 8> kOpusHeadMagic{
@@ -145,41 +145,6 @@ opusPacketFrameCount(std::span<const std::byte> packet) noexcept {
   return total;
 }
 
-std::optional<std::uint32_t>
-opusFramesFromNanoseconds(std::int64_t nanoseconds) noexcept {
-  if (nanoseconds < 0) {
-    return std::nullopt;
-  }
-  const auto magnitude = static_cast<std::uint64_t>(nanoseconds);
-  // Bound the magnitude BEFORE forming the product, so a hostile value can
-  // never wrap the multiplication (it is unsigned, so a wrap would be defined
-  // but would also be a UBSan report and a lie).
-  // One frame past the ceiling, so the frame-count check below -- not this
-  // overflow guard -- is what states the ceiling.
-  constexpr std::uint64_t kMaximumNanoseconds =
-      UINT64_C(1'000'000'000) *
-      (static_cast<std::uint64_t>(kMaximumOpusPacketFrames) + 1U) /
-      static_cast<std::uint64_t>(kOpusOutputSampleRate);
-  if (magnitude > kMaximumNanoseconds) {
-    return std::nullopt;
-  }
-  const std::uint64_t product =
-      magnitude * static_cast<std::uint64_t>(kOpusOutputSampleRate);
-  const std::uint64_t frames =
-      (product + UINT64_C(500'000'000)) / UINT64_C(1'000'000'000);
-  const std::uint64_t exact = frames * UINT64_C(1'000'000'000);
-  const std::uint64_t residual =
-      product > exact ? product - exact : exact - product;
-  // One nanosecond, expressed in the product's own units.
-  if (residual > static_cast<std::uint64_t>(kOpusOutputSampleRate)) {
-    return std::nullopt;
-  }
-  if (frames > kMaximumOpusPacketFrames) {
-    return std::nullopt;
-  }
-  return static_cast<std::uint32_t>(frames);
-}
-
 static_assert(kOpusDecoderDelayFrames == 120U,
               "the AudioToolbox Opus decoder lead-in is 2.5 ms at 48 kHz");
 static_assert(kMaximumOpusPacketFrames ==
@@ -190,4 +155,4 @@ static_assert(static_cast<std::uint32_t>(kMaximumOpusFramesPerPacket) *
                   kMaximumOpusPacketFrames,
               "48 frames of 2.5 ms is exactly the 120 ms packet ceiling");
 
-} // namespace wam::media::matroska
+} // namespace wam::media::codec

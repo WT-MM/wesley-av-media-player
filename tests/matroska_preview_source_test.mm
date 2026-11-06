@@ -70,7 +70,7 @@ using wam::media::MediaSourceOpenOptions;
 using wam::media::MediaTime;
 using wam::media::MediaTimeOrder;
 using wam::media::matroska::MatroskaPrepareOutcome;
-using wam::media::matroska::SeekableByteReader;
+using wam::media::SeekableByteReader;
 using Bytes = std::vector<std::byte>;
 
 

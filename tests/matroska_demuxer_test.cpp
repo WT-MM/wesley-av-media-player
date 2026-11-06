@@ -39,6 +39,10 @@
 namespace {
 
 using namespace wam::media::matroska;
+using wam::media::ByteRange;
+using wam::media::CancellationToken;
+using wam::media::FrameRange;
+using wam::media::SeekableByteReader;
 using wam::media::MediaAudioGenerationWindow;
 using wam::media::MediaCodec;
 using wam::media::MediaCodecConfigurationKind;
@@ -52,6 +56,9 @@ using wam::media::MediaTime;
 using wam::media::MediaTrackKind;
 using wam::media::MediaTransferFunction;
 using wam::media::MediaVideoSampleFormat;
+using wam::media::MediaRefusalClass;
+using wam::media::MediaSourceOpenStatus;
+using wam::media::mediaRefusalClassName;
 using Bytes = std::vector<std::byte>;
 
 static_assert(!std::is_copy_constructible_v<MatroskaCursor>);
@@ -1437,46 +1444,6 @@ MediaTime audioGridTime(std::uint64_t ordinal) {
   return reducedTime(ordinal * 1024U, kAudioSampleRate);
 }
 
-const char* errorName(MatroskaDemuxError error) {
-  switch (error) {
-  case MatroskaDemuxError::None:
-    return "None";
-  case MatroskaDemuxError::InvalidRequest:
-    return "InvalidRequest";
-  case MatroskaDemuxError::InvalidContainer:
-    return "InvalidContainer";
-  case MatroskaDemuxError::UnsupportedContainer:
-    return "UnsupportedContainer";
-  case MatroskaDemuxError::TrackSelection:
-    return "TrackSelection";
-  case MatroskaDemuxError::UnsupportedTrack:
-    return "UnsupportedTrack";
-  case MatroskaDemuxError::CodecConfiguration:
-    return "CodecConfiguration";
-  case MatroskaDemuxError::InvalidTimeline:
-    return "InvalidTimeline";
-  case MatroskaDemuxError::MissingCues:
-    return "MissingCues";
-  case MatroskaDemuxError::InvalidCue:
-    return "InvalidCue";
-  case MatroskaDemuxError::IndexLimit:
-    return "IndexLimit";
-  case MatroskaDemuxError::SampleLimit:
-    return "SampleLimit";
-  case MatroskaDemuxError::FileChanged:
-    return "FileChanged";
-  case MatroskaDemuxError::Io:
-    return "Io";
-  case MatroskaDemuxError::Cancelled:
-    return "Cancelled";
-  case MatroskaDemuxError::CodedDimensionLimit:
-    return "CodedDimensionLimit";
-  case MatroskaDemuxError::SparseRandomAccess:
-    return "SparseRandomAccess";
-  }
-  return "?";
-}
-
 // A WebM-shaped VP9 track: 1920x1080, no CodecPrivate, and every random access
 // point carrying the repository sample's real VP9 uncompressed frame header.
 FixtureSpec vp9FixtureSpec() {
@@ -1522,15 +1489,15 @@ FixtureSpec av1FixtureSpec() {
   return spec;
 }
 
-void expectPrepareError(const FixtureSpec& spec, MatroskaDemuxError expected,
+void expectPrepareError(const FixtureSpec& spec, MediaRefusalClass expected,
                         const char* message) {
   const PreparedFixture prepared = prepareFixture(spec);
   const bool matched = prepared.outcome.asset == nullptr &&
                        prepared.outcome.error == expected &&
-                       prepared.outcome.status != MatroskaDemuxStatus::Ready;
+                       prepared.outcome.status != MediaSourceOpenStatus::Ready;
   if (!matched) {
-    std::cerr << "  (observed " << errorName(prepared.outcome.error)
-              << ", expected " << errorName(expected) << ": \""
+    std::cerr << "  (observed " << mediaRefusalClassName(prepared.outcome.error)
+              << ", expected " << mediaRefusalClassName(expected) << ": \""
               << prepared.outcome.message << "\")\n";
   }
   expect(matched, message);
@@ -1542,8 +1509,8 @@ void expectPrepareError(const FixtureSpec& spec, MatroskaDemuxError expected,
 
 void testCompleteDocumentPreparation() {
   const PreparedFixture prepared = prepareFixture({});
-  expect(prepared.outcome.status == MatroskaDemuxStatus::Ready &&
-             prepared.outcome.error == MatroskaDemuxError::None &&
+  expect(prepared.outcome.status == MediaSourceOpenStatus::Ready &&
+             prepared.outcome.error == MediaRefusalClass::None &&
              prepared.outcome.asset != nullptr,
          "complete synthetic Matroska document prepares Ready");
   if (prepared.outcome.asset == nullptr) {
@@ -1674,25 +1641,25 @@ void testPreparationRequestValidation() {
   const MediaSourceOpenOptions options;
   const auto nullOutcome =
       prepareMatroska(nullptr, kFixturePath, options);
-  expect(nullOutcome.error == MatroskaDemuxError::InvalidRequest &&
+  expect(nullOutcome.error == MediaRefusalClass::InvalidRequest &&
              nullOutcome.asset == nullptr,
          "a null reader is rejected as an invalid request");
 
   auto reader = std::make_shared<ProbeReader>(fixture.bytes);
   const auto emptyPath = prepareMatroska(reader, {}, options);
-  expect(emptyPath.error == MatroskaDemuxError::InvalidRequest,
+  expect(emptyPath.error == MediaRefusalClass::InvalidRequest,
          "an empty path identity is rejected as an invalid request");
 
   auto emptyReader = std::make_shared<ProbeReader>(Bytes{});
   expect(prepareMatroska(emptyReader, kFixturePath, options).error ==
-             MatroskaDemuxError::InvalidRequest,
+             MediaRefusalClass::InvalidRequest,
          "a zero-length reader is rejected as an invalid request");
 
   MediaSourceOpenOptions negative;
   negative.initialPosition = {MediaTime{-1, 1'000}, MediaSeekMode::Accurate};
   auto negativeReader = std::make_shared<ProbeReader>(fixture.bytes);
   expect(prepareMatroska(negativeReader, kFixturePath, negative).error ==
-             MatroskaDemuxError::InvalidRequest,
+             MediaRefusalClass::InvalidRequest,
          "a negative initial position is rejected before any I/O");
 
   MediaSourceOpenOptions accepted;
@@ -1700,7 +1667,7 @@ void testPreparationRequestValidation() {
   auto acceptedReader = std::make_shared<ProbeReader>(fixture.bytes);
   const auto positioned =
       prepareMatroska(acceptedReader, kFixturePath, accepted);
-  expect(positioned.status == MatroskaDemuxStatus::Ready,
+  expect(positioned.status == MediaSourceOpenStatus::Ready,
          "a representable initial position is planned during preparation");
 
   MediaSourceOpenOptions beyond;
@@ -1708,7 +1675,7 @@ void testPreparationRequestValidation() {
   auto beyondReader = std::make_shared<ProbeReader>(fixture.bytes);
   const auto rejected = prepareMatroska(beyondReader, kFixturePath, beyond);
   expect(rejected.asset == nullptr &&
-             rejected.error == MatroskaDemuxError::InvalidTimeline,
+             rejected.error == MediaRefusalClass::InvalidTimeline,
          "an initial position at the duration fails preparation closed");
 }
 
@@ -1783,7 +1750,7 @@ void testVideoDisplayGeometry() {
   aspectRatio.videoDisplayUnit = 3;
   aspectRatio.videoDisplayWidth = 16;
   aspectRatio.videoDisplayHeight = 9;
-  expectPrepareError(aspectRatio, MatroskaDemuxError::CodecConfiguration,
+  expectPrepareError(aspectRatio, MediaRefusalClass::CodecConfiguration,
                      "DisplayUnit 3 (display aspect ratio) is refused rather "
                      "than read as a pixel size");
 
@@ -1791,14 +1758,14 @@ void testVideoDisplayGeometry() {
   centimetres.videoDisplayUnit = 1;
   centimetres.videoDisplayWidth = 16;
   centimetres.videoDisplayHeight = 9;
-  expectPrepareError(centimetres, MatroskaDemuxError::CodecConfiguration,
+  expectPrepareError(centimetres, MediaRefusalClass::CodecConfiguration,
                      "DisplayUnit 1 (centimetres) is refused");
 
   FixtureSpec inches;
   inches.videoDisplayUnit = 2;
   inches.videoDisplayWidth = 16;
   inches.videoDisplayHeight = 9;
-  expectPrepareError(inches, MatroskaDemuxError::CodecConfiguration,
+  expectPrepareError(inches, MediaRefusalClass::CodecConfiguration,
                      "DisplayUnit 2 (inches) is refused");
 
   // Anamorphic stated in pixels: a 1920-wide picture from a narrower coded
@@ -1852,7 +1819,7 @@ void testBoundedIndexes() {
     const auto outcome = prepareMatroska(reader, kFixturePath, {});
     // The directory itself is admitted at the cap; the document then fails
     // only because these minimal clusters carry no Cues.
-    expect(outcome.error == MatroskaDemuxError::SparseRandomAccess,
+    expect(outcome.error == MediaRefusalClass::SparseRandomAccess,
            "exactly 65,536 clusters stay inside the bounded directory");
   }
   {
@@ -1860,14 +1827,14 @@ void testBoundedIndexes() {
         buildMinimalClusterDocument(kMaximumMatroskaClusters + 1U));
     const auto outcome = prepareMatroska(reader, kFixturePath, {});
     expect(outcome.asset == nullptr &&
-               outcome.error == MatroskaDemuxError::IndexLimit,
+               outcome.error == MediaRefusalClass::IndexLimit,
            "65,537 clusters are rejected with IndexLimit");
   }
   {
     auto reader = std::make_shared<ProbeReader>(buildMinimalClusterDocument(0));
     const auto outcome = prepareMatroska(reader, kFixturePath, {});
     expect(outcome.asset == nullptr &&
-               outcome.error == MatroskaDemuxError::IndexLimit,
+               outcome.error == MediaRefusalClass::IndexLimit,
            "a Segment without any Cluster is rejected with IndexLimit");
   }
   {
@@ -1879,7 +1846,7 @@ void testBoundedIndexes() {
     // payload-free document -- so the refusal names the absent index, not the
     // Cue shape that triggered the rebuild.
     expect(outcome.asset == nullptr &&
-               outcome.error == MatroskaDemuxError::SparseRandomAccess,
+               outcome.error == MediaRefusalClass::SparseRandomAccess,
            "65,536 cues parse, are discarded, and the scan finds no Block");
   }
   {
@@ -1887,7 +1854,7 @@ void testBoundedIndexes() {
         buildRepeatedCueDocument(kMaximumMatroskaCues + 1U));
     const auto outcome = prepareMatroska(reader, kFixturePath, {});
     expect(outcome.asset == nullptr &&
-               outcome.error == MatroskaDemuxError::IndexLimit,
+               outcome.error == MediaRefusalClass::IndexLimit,
            "65,537 cues are rejected with IndexLimit");
   }
   static_assert(sizeof(MatroskaClusterIndexEntry) == 24U);
@@ -1905,7 +1872,7 @@ void testCodecAdmissionAndSelection() {
   {
     FixtureSpec spec;
     spec.videoCodecId = "V_MPEGH/ISO/HEVC";
-    expectPrepareError(spec, MatroskaDemuxError::CodecConfiguration,
+    expectPrepareError(spec, MediaRefusalClass::CodecConfiguration,
                        "an avcC record under an HEVC CodecID is not admitted");
   }
   {
@@ -1914,7 +1881,7 @@ void testCodecAdmissionAndSelection() {
     // Block payloads is a VP9 keyframe header either.
     FixtureSpec spec;
     spec.videoCodecId = "V_VP9";
-    expectPrepareError(spec, MatroskaDemuxError::CodecConfiguration,
+    expectPrepareError(spec, MediaRefusalClass::CodecConfiguration,
                        "a VP9 track whose blocks are not VP9 is not admitted");
   }
   {
@@ -1923,7 +1890,7 @@ void testCodecAdmissionAndSelection() {
     // CoreMedia needs, synthesized from it -- the same move VP8 and VP9 make
     // with their vpcC.
     const PreparedFixture prepared = prepareFixture(mpeg4VisualFixtureSpec());
-    expect(prepared.outcome.status == MatroskaDemuxStatus::Ready &&
+    expect(prepared.outcome.status == MediaSourceOpenStatus::Ready &&
                prepared.outcome.asset != nullptr,
            "an MPEG-4 Part 2 Simple Profile track is admitted");
     if (prepared.outcome.asset != nullptr) {
@@ -1968,7 +1935,7 @@ void testCodecAdmissionAndSelection() {
     FixtureSpec spec = mpeg4VisualFixtureSpec();
     spec.videoCodecId = "V_MPEG4/ISO/SP";
     const PreparedFixture prepared = prepareFixture(spec);
-    expect(prepared.outcome.status == MatroskaDemuxStatus::Ready &&
+    expect(prepared.outcome.status == MediaSourceOpenStatus::Ready &&
                prepared.outcome.asset != nullptr,
            "the V_MPEG4/ISO/SP CodecID is admitted for the same headers");
   }
@@ -1983,10 +1950,10 @@ void testCodecAdmissionAndSelection() {
     spec.videoCodecPrivate = fromOctets(kSampleMpeg4AdvancedSimple);
 #if defined(WAM_ENABLE_AVCODEC_STAGE)
     const PreparedFixture prepared = prepareFixture(spec);
-    expect(prepared.outcome.status == MatroskaDemuxStatus::Ready && prepared.outcome.asset,
+    expect(prepared.outcome.status == MediaSourceOpenStatus::Ready && prepared.outcome.asset,
            "Advanced Simple Profile is admitted when the libavcodec stage is built");
 #else
-    expectPrepareError(spec, MatroskaDemuxError::CodecConfiguration,
+    expectPrepareError(spec, MediaRefusalClass::CodecConfiguration,
                        "an Advanced Simple Profile MPEG-4 Part 2 track is not "
                        "admitted");
 #endif
@@ -1996,7 +1963,7 @@ void testCodecAdmissionAndSelection() {
     // admitted no matter what the CodecID claims.
     FixtureSpec spec = mpeg4VisualFixtureSpec();
     spec.includeVideoCodecPrivate = false;
-    expectPrepareError(spec, MatroskaDemuxError::CodecConfiguration,
+    expectPrepareError(spec, MediaRefusalClass::CodecConfiguration,
                        "an MPEG-4 Part 2 track without CodecPrivate is not "
                        "admitted");
   }
@@ -2005,7 +1972,7 @@ void testCodecAdmissionAndSelection() {
     // exactly as they must for every other codec.
     FixtureSpec spec = mpeg4VisualFixtureSpec();
     spec.videoPixelWidth = 1280;
-    expectPrepareError(spec, MatroskaDemuxError::CodecConfiguration,
+    expectPrepareError(spec, MediaRefusalClass::CodecConfiguration,
                        "an MPEG-4 Part 2 track whose PixelWidth disagrees with "
                        "its VideoObjectLayer is not admitted");
   }
@@ -2016,7 +1983,7 @@ void testCodecAdmissionAndSelection() {
     // CodecID is deliberately never selected at all.
     FixtureSpec spec = mpeg4VisualFixtureSpec();
     spec.videoCodecId = "V_MS/VFW/FOURCC";
-    expectPrepareError(spec, MatroskaDemuxError::TrackSelection,
+    expectPrepareError(spec, MediaRefusalClass::TrackSelection,
                        "the VFW-wrapped DivX/Xvid CodecID is not admitted");
   }
   {
@@ -2025,7 +1992,7 @@ void testCodecAdmissionAndSelection() {
     // because VideoToolbox cannot open a VP9 session without one.
     FixtureSpec spec = vp9FixtureSpec();
     const PreparedFixture prepared = prepareFixture(spec);
-    expect(prepared.outcome.status == MatroskaDemuxStatus::Ready &&
+    expect(prepared.outcome.status == MediaSourceOpenStatus::Ready &&
                prepared.outcome.asset != nullptr,
            "a VP9 track with no CodecPrivate is admitted from its bitstream");
     if (prepared.outcome.asset != nullptr) {
@@ -2059,7 +2026,7 @@ void testCodecAdmissionAndSelection() {
     spec.includeVideoCodecPrivate = true;
     spec.videoCodecPrivate = fromOctets(kSampleVpcC);
     const PreparedFixture prepared = prepareFixture(spec);
-    expect(prepared.outcome.status == MatroskaDemuxStatus::Ready &&
+    expect(prepared.outcome.status == MediaSourceOpenStatus::Ready &&
                prepared.outcome.asset != nullptr,
            "a VP9 track with a real vpcC is admitted");
     if (prepared.outcome.asset != nullptr) {
@@ -2082,20 +2049,20 @@ void testCodecAdmissionAndSelection() {
     contradicting[4] = 2U;    // profile 2
     contradicting[6] = 0xA2U; // 10-bit
     spec.videoCodecPrivate = fromOctets(contradicting);
-    expectPrepareError(spec, MatroskaDemuxError::CodecConfiguration,
+    expectPrepareError(spec, MediaRefusalClass::CodecConfiguration,
                        "a vpcC that contradicts the keyframe is not admitted");
   }
   {
     FixtureSpec spec = vp9FixtureSpec();
     spec.videoPixelWidth = 1280;
     expectPrepareError(
-        spec, MatroskaDemuxError::CodecConfiguration,
+        spec, MediaRefusalClass::CodecConfiguration,
         "PixelWidth must equal the VP9 bitstream's coded width exactly");
   }
   {
     FixtureSpec spec = vp9FixtureSpec();
     spec.videoKeyframePayload.clear();
-    expectPrepareError(spec, MatroskaDemuxError::CodecConfiguration,
+    expectPrepareError(spec, MediaRefusalClass::CodecConfiguration,
                        "VP9 with no readable keyframe header is not admitted");
   }
 #if defined(WAM_ENABLE_SOFTWARE_VP8)
@@ -2106,7 +2073,7 @@ void testCodecAdmissionAndSelection() {
     // "codec configuration is nonempty and bounded" envelope.
     FixtureSpec spec = vp8FixtureSpec();
     const PreparedFixture prepared = prepareFixture(spec);
-    expect(prepared.outcome.status == MatroskaDemuxStatus::Ready &&
+    expect(prepared.outcome.status == MediaSourceOpenStatus::Ready &&
                prepared.outcome.asset != nullptr,
            "a VP8 track with no CodecPrivate is admitted from its bitstream");
     if (prepared.outcome.asset != nullptr) {
@@ -2154,27 +2121,27 @@ void testCodecAdmissionAndSelection() {
     FixtureSpec spec = vp8FixtureSpec();
     spec.includeVideoCodecPrivate = true;
     spec.videoCodecPrivate = fromOctets(kSampleVpcC);
-    expectPrepareError(spec, MatroskaDemuxError::CodecConfiguration,
+    expectPrepareError(spec, MediaRefusalClass::CodecConfiguration,
                        "a VP8 track carrying a CodecPrivate is not admitted");
   }
   {
     FixtureSpec spec = vp8FixtureSpec();
     spec.videoPixelWidth = 1280;
     expectPrepareError(
-        spec, MatroskaDemuxError::CodecConfiguration,
+        spec, MediaRefusalClass::CodecConfiguration,
         "PixelWidth must equal the VP8 bitstream's coded width exactly");
   }
   {
     FixtureSpec spec = vp8FixtureSpec();
     spec.videoPixelHeight = 720;
     expectPrepareError(
-        spec, MatroskaDemuxError::CodecConfiguration,
+        spec, MediaRefusalClass::CodecConfiguration,
         "PixelHeight must equal the VP8 bitstream's coded height exactly");
   }
   {
     FixtureSpec spec = vp8FixtureSpec();
     spec.videoKeyframePayload.clear();
-    expectPrepareError(spec, MatroskaDemuxError::CodecConfiguration,
+    expectPrepareError(spec, MediaRefusalClass::CodecConfiguration,
                        "VP8 with no readable key frame header is not admitted");
   }
   {
@@ -2183,7 +2150,7 @@ void testCodecAdmissionAndSelection() {
     FixtureSpec spec = vp8FixtureSpec();
     spec.videoKeyframePayload =
         fromOctets(std::span<const std::uint8_t>(kSampleVp8Keyframe).first(9));
-    expectPrepareError(spec, MatroskaDemuxError::CodecConfiguration,
+    expectPrepareError(spec, MediaRefusalClass::CodecConfiguration,
                        "a VP8 key frame shorter than its header is refused");
   }
   {
@@ -2191,7 +2158,7 @@ void testCodecAdmissionAndSelection() {
     FixtureSpec spec;
     spec.videoCodecId = "V_VP8";
     spec.includeVideoCodecPrivate = false;
-    expectPrepareError(spec, MatroskaDemuxError::CodecConfiguration,
+    expectPrepareError(spec, MediaRefusalClass::CodecConfiguration,
                        "a VP8 track whose blocks are not VP8 is not admitted");
   }
 #else
@@ -2200,7 +2167,7 @@ void testCodecAdmissionAndSelection() {
     // video CodecID: admitting the track and then failing the open is a worse
     // fallback than never selecting it.
     FixtureSpec spec = vp8FixtureSpec();
-    expectPrepareError(spec, MatroskaDemuxError::TrackSelection,
+    expectPrepareError(spec, MediaRefusalClass::TrackSelection,
                        "V_VP8 is not a selectable CodecID without libvpx");
   }
 #endif
@@ -2208,7 +2175,7 @@ void testCodecAdmissionAndSelection() {
     // AV1 keeps CodecPrivate mandatory: the av1C is the only fact source.
     FixtureSpec spec = av1FixtureSpec();
     const PreparedFixture prepared = prepareFixture(spec);
-    expect(prepared.outcome.status == MatroskaDemuxStatus::Ready &&
+    expect(prepared.outcome.status == MediaSourceOpenStatus::Ready &&
                prepared.outcome.asset != nullptr,
            "an AV1 track with a real av1C is admitted");
     if (prepared.outcome.asset != nullptr) {
@@ -2235,14 +2202,14 @@ void testCodecAdmissionAndSelection() {
   {
     FixtureSpec spec = av1FixtureSpec();
     spec.includeVideoCodecPrivate = false;
-    expectPrepareError(spec, MatroskaDemuxError::CodecConfiguration,
+    expectPrepareError(spec, MediaRefusalClass::CodecConfiguration,
                        "AV1 without CodecPrivate has no fact source");
   }
   {
     FixtureSpec spec = av1FixtureSpec();
     spec.videoPixelHeight = 1088;
     expectPrepareError(
-        spec, MatroskaDemuxError::CodecConfiguration,
+        spec, MediaRefusalClass::CodecConfiguration,
         "PixelHeight must equal the AV1 sequence header height exactly");
   }
   {
@@ -2250,7 +2217,7 @@ void testCodecAdmissionAndSelection() {
     // previous CodecID-to-kind ternary would have done for every non-AVC id.
     FixtureSpec spec;
     spec.videoCodecId = "V_AV1";
-    expectPrepareError(spec, MatroskaDemuxError::CodecConfiguration,
+    expectPrepareError(spec, MediaRefusalClass::CodecConfiguration,
                        "an avcC record under an AV1 CodecID is not admitted");
   }
   {
@@ -2265,7 +2232,7 @@ void testCodecAdmissionAndSelection() {
     FixtureSpec spec;
     spec.audioCodecId = "A_WMA";
     expectPrepareError(
-        spec, MatroskaDemuxError::TrackSelection,
+        spec, MediaRefusalClass::TrackSelection,
         "a document whose only audio is undecodable falls back whole-file");
   }
   {
@@ -2274,7 +2241,7 @@ void testCodecAdmissionAndSelection() {
     FixtureSpec spec;
     spec.includeAudioTrack = false;
     const PreparedFixture prepared = prepareFixture(spec);
-    expect(prepared.outcome.status == MatroskaDemuxStatus::Ready &&
+    expect(prepared.outcome.status == MediaSourceOpenStatus::Ready &&
                prepared.outcome.asset != nullptr &&
                prepared.outcome.asset->descriptor()->selectedAudio ==
                    std::nullopt,
@@ -2287,7 +2254,7 @@ void testCodecAdmissionAndSelection() {
     options.selection.requireAudio = true;
     const PreparedFixture prepared = prepareFixture(spec, options);
     expect(prepared.outcome.asset == nullptr &&
-               prepared.outcome.error == MatroskaDemuxError::TrackSelection,
+               prepared.outcome.error == MediaRefusalClass::TrackSelection,
            "requireAudio rejects a document whose audio codec is unsupported");
   }
   {
@@ -2298,7 +2265,7 @@ void testCodecAdmissionAndSelection() {
     FixtureSpec spec;
     spec.audioCodecDelayNanoseconds = 21'333'333;
     const PreparedFixture prepared = prepareFixture(spec);
-    expect(prepared.outcome.status == MatroskaDemuxStatus::Ready &&
+    expect(prepared.outcome.status == MediaSourceOpenStatus::Ready &&
                prepared.outcome.asset != nullptr,
            "an AAC track whose CodecDelay is exactly one access unit is now "
            "admitted");
@@ -2312,7 +2279,7 @@ void testCodecAdmissionAndSelection() {
     FixtureSpec spec;
     spec.audioCodecDelayNanoseconds = 44'000'000;
     const PreparedFixture prepared = prepareFixture(spec);
-    expect(prepared.outcome.status == MatroskaDemuxStatus::Ready &&
+    expect(prepared.outcome.status == MediaSourceOpenStatus::Ready &&
                prepared.outcome.asset != nullptr,
            "an AAC track whose CodecDelay is 2112 frames (Apple priming) is "
            "admitted");
@@ -2335,14 +2302,14 @@ void testCodecAdmissionAndSelection() {
     FixtureSpec spec;
     spec.audioCodecDelayNanoseconds = 6'505'000;
     expectPrepareError(
-        spec, MatroskaDemuxError::CodecConfiguration,
+        spec, MediaRefusalClass::CodecConfiguration,
         "an AAC CodecDelay that is not a whole number of frames falls back");
   }
   {
     // Past the ceiling: 9 access units at 48 kHz.
     FixtureSpec spec;
     spec.audioCodecDelayNanoseconds = 192'000'000;
-    expectPrepareError(spec, MatroskaDemuxError::CodecConfiguration,
+    expectPrepareError(spec, MediaRefusalClass::CodecConfiguration,
                        "an AAC CodecDelay past the head-trim ceiling falls "
                        "back");
   }
@@ -2356,7 +2323,7 @@ void testCodecAdmissionAndSelection() {
     for (const char *codecId : {"A_AC3", "A_EAC3", "A_MPEG/L3"}) {
       FixtureSpec spec;
       spec.audioCodecId = codecId;
-      expectPrepareError(spec, MatroskaDemuxError::CodecConfiguration,
+      expectPrepareError(spec, MediaRefusalClass::CodecConfiguration,
                          "a selectable AC-3/E-AC-3/MP3 CodecID falls back at "
                          "admission, not at track selection");
     }
@@ -2365,7 +2332,7 @@ void testCodecAdmissionAndSelection() {
       // the identical document prepares, so the refusals are the new codecs'
       // admission gates and not something about the fixture.
       const PreparedFixture control = prepareFixture({});
-      expect(control.outcome.status == MatroskaDemuxStatus::Ready,
+      expect(control.outcome.status == MediaSourceOpenStatus::Ready,
              "the same document with A_AAC still prepares");
     }
   }
@@ -2383,7 +2350,7 @@ void testCodecAdmissionAndSelection() {
       FixtureSpec spec;
       spec.docType = "webm";
       spec.audioCodecId = codecId;
-      expectPrepareError(spec, MatroskaDemuxError::TrackSelection,
+      expectPrepareError(spec, MediaRefusalClass::TrackSelection,
                          "AC-3, E-AC-3, MP3 and FLAC are not selectable in a "
                          "WebM DocType");
     }
@@ -2392,7 +2359,7 @@ void testCodecAdmissionAndSelection() {
       // the refusal above is provably the DocType gate.
       FixtureSpec spec;
       spec.audioCodecId = "A_FLAC";
-      expectPrepareError(spec, MatroskaDemuxError::CodecConfiguration,
+      expectPrepareError(spec, MediaRefusalClass::CodecConfiguration,
                          "the identical A_FLAC track in a Matroska DocType "
                          "reaches codec admission instead");
     }
@@ -2406,13 +2373,13 @@ void testCodecAdmissionAndSelection() {
       FixtureSpec spec;
       spec.docType = "webm";
       const PreparedFixture prepared = prepareFixture(spec);
-      expect(prepared.outcome.status == MatroskaDemuxStatus::Ready &&
+      expect(prepared.outcome.status == MediaSourceOpenStatus::Ready &&
                  prepared.outcome.asset != nullptr,
              "AAC in a WebM DocType keeps preparing, exactly as before");
     }
     FixtureSpec flac;
     flac.audioCodecId = "A_FLAC";
-    expectPrepareError(flac, MatroskaDemuxError::CodecConfiguration,
+    expectPrepareError(flac, MediaRefusalClass::CodecConfiguration,
                        "an A_FLAC track whose CodecPrivate is not a fLaC "
                        "stream header falls back at admission");
   }
@@ -2420,7 +2387,7 @@ void testCodecAdmissionAndSelection() {
     FixtureSpec spec;
     spec.audioSeekPreRollNanoseconds = 80'000'000;
     expectPrepareError(
-        spec, MatroskaDemuxError::CodecConfiguration,
+        spec, MediaRefusalClass::CodecConfiguration,
         "a nonzero SeekPreRoll on an AAC track still falls back");
   }
   {
@@ -2430,7 +2397,7 @@ void testCodecAdmissionAndSelection() {
     FixtureSpec spec;
     spec.audioCodecId = "A_OPUS";
     expectPrepareError(
-        spec, MatroskaDemuxError::CodecConfiguration,
+        spec, MediaRefusalClass::CodecConfiguration,
         "an Opus track whose CodecPrivate is not an OpusHead falls back");
   }
   {
@@ -2442,7 +2409,7 @@ void testCodecAdmissionAndSelection() {
     spec.audioCodecPrivate = fromOctets(kOpusHeadStereo312);
     spec.audioCodecDelayNanoseconds = 6'500'000 + 100'000;
     expectPrepareError(
-        spec, MatroskaDemuxError::CodecConfiguration,
+        spec, MediaRefusalClass::CodecConfiguration,
         "an Opus track whose CodecDelay disagrees with its pre-skip falls "
         "back");
   }
@@ -2451,7 +2418,7 @@ void testCodecAdmissionAndSelection() {
     spec.audioCodecId = "A_OPUS";
     spec.audioCodecPrivate = fromOctets(kOpusHeadStereo312);
     expectPrepareError(
-        spec, MatroskaDemuxError::CodecConfiguration,
+        spec, MediaRefusalClass::CodecConfiguration,
         "an Opus track with no CodecDelay at all falls back");
   }
   {
@@ -2460,7 +2427,7 @@ void testCodecAdmissionAndSelection() {
     FixtureSpec spec;
     spec.audioCodecId = "A_VORBIS";
     expectPrepareError(
-        spec, MatroskaDemuxError::CodecConfiguration,
+        spec, MediaRefusalClass::CodecConfiguration,
         "a Vorbis track whose CodecPrivate is not Xiph-laced headers falls "
         "back");
   }
@@ -2471,7 +2438,7 @@ void testCodecAdmissionAndSelection() {
     spec.audioCodecId = "A_VORBIS";
     spec.audioCodecPrivate = vorbisCodecPrivate(0xBBU);
     expectPrepareError(
-        spec, MatroskaDemuxError::CodecConfiguration,
+        spec, MediaRefusalClass::CodecConfiguration,
         "a Vorbis track with no CodecDelay at all falls back");
   }
   {
@@ -2485,7 +2452,7 @@ void testCodecAdmissionAndSelection() {
     spec.audioCodecPrivate = vorbisCodecPrivate(0xB8U);
     spec.audioCodecDelayNanoseconds = 21'333'333;
     expectPrepareError(
-        spec, MatroskaDemuxError::CodecConfiguration,
+        spec, MediaRefusalClass::CodecConfiguration,
         "a Vorbis track with unequal block sizes falls back rather than "
         "being placed on a constant-duration grid");
   }
@@ -2496,14 +2463,14 @@ void testCodecAdmissionAndSelection() {
     options.selection.requireAudio = true;
     const PreparedFixture prepared = prepareFixture(spec, options);
     expect(prepared.outcome.asset == nullptr &&
-               prepared.outcome.error == MatroskaDemuxError::TrackSelection,
+               prepared.outcome.error == MediaRefusalClass::TrackSelection,
            "requireAudio rejects a document with no audio track at all");
   }
   {
     FixtureSpec spec;
     spec.includeAudioTrack = false;
     const PreparedFixture prepared = prepareFixture(spec);
-    expect(prepared.outcome.status == MatroskaDemuxStatus::Ready &&
+    expect(prepared.outcome.status == MediaSourceOpenStatus::Ready &&
                prepared.outcome.asset != nullptr &&
                !prepared.outcome.asset->descriptor()->selectedAudio,
            "audio remains optional by default");
@@ -2516,7 +2483,7 @@ void testCodecAdmissionAndSelection() {
   {
     FixtureSpec spec;
     spec.includeVideoTrack = false;
-    expectPrepareError(spec, MatroskaDemuxError::TrackSelection,
+    expectPrepareError(spec, MediaRefusalClass::TrackSelection,
                        "requireVideo, which is the default, still rejects an "
                        "audio-only document");
   }
@@ -2525,7 +2492,7 @@ void testCodecAdmissionAndSelection() {
     spec.includeVideoTrack = false;
     spec.includeAudioTrack = false;
     spec.includeSubtitleTrack = false;
-    expectPrepareError(spec, MatroskaDemuxError::InvalidContainer,
+    expectPrepareError(spec, MediaRefusalClass::InvalidContainer,
                        "a Segment with no Tracks element is not a container");
   }
   {
@@ -2533,7 +2500,7 @@ void testCodecAdmissionAndSelection() {
     spec.includeVideoTrack = false;
     spec.includeAudioTrack = false;
     spec.includeSubtitleTrack = true;
-    expectPrepareError(spec, MatroskaDemuxError::TrackSelection,
+    expectPrepareError(spec, MediaRefusalClass::TrackSelection,
                        "a subtitle-only Tracks element admits no A/V output");
   }
   {
@@ -2548,7 +2515,7 @@ void testCodecAdmissionAndSelection() {
     MediaSourceOpenOptions options;
     options.selection.requireVideo = false;
     const PreparedFixture prepared = prepareFixture(spec, options);
-    expect(prepared.outcome.status == MatroskaDemuxStatus::Ready &&
+    expect(prepared.outcome.status == MediaSourceOpenStatus::Ready &&
                prepared.outcome.asset != nullptr &&
                !prepared.outcome.asset->descriptor()->selectedVideo &&
                prepared.outcome.asset->descriptor()->selectedAudio.has_value(),
@@ -2559,7 +2526,7 @@ void testCodecAdmissionAndSelection() {
              "an audio-only asset builds no selected-video Cue index");
       const MatroskaPlanOutcome planned = prepared.asset().planGeneration(
           MediaTime{0, 1}, MediaSeekMode::Accurate);
-      expect(planned.status == MatroskaDemuxStatus::Ready &&
+      expect(planned.status == MediaSourceOpenStatus::Ready &&
                  planned.plan.has_value(),
              "an audio-only generation plans off the Cluster directory");
       if (planned.plan) {
@@ -2578,7 +2545,7 @@ void testCodecAdmissionAndSelection() {
     options.selection.preferredVideo = 2;
     const PreparedFixture prepared = prepareFixture({}, options);
     expect(prepared.outcome.asset == nullptr &&
-               prepared.outcome.error == MatroskaDemuxError::TrackSelection,
+               prepared.outcome.error == MediaRefusalClass::TrackSelection,
            "a preferred video track that names the audio track is rejected");
   }
   {
@@ -2586,7 +2553,7 @@ void testCodecAdmissionAndSelection() {
     options.selection.preferredAudio = 7;
     const PreparedFixture prepared = prepareFixture({}, options);
     expect(prepared.outcome.asset == nullptr &&
-               prepared.outcome.error == MatroskaDemuxError::TrackSelection,
+               prepared.outcome.error == MediaRefusalClass::TrackSelection,
            "a preferred audio track that does not exist is rejected");
   }
   {
@@ -2594,7 +2561,7 @@ void testCodecAdmissionAndSelection() {
     options.selection.preferredSubtitle = 3;
     const PreparedFixture prepared = prepareFixture({}, options);
     expect(prepared.outcome.asset == nullptr &&
-               prepared.outcome.error == MatroskaDemuxError::TrackSelection,
+               prepared.outcome.error == MediaRefusalClass::TrackSelection,
            "any requested subtitle selection is rejected in v1");
   }
   {
@@ -2602,19 +2569,19 @@ void testCodecAdmissionAndSelection() {
     options.selection.preferredVideo = 1;
     options.selection.preferredAudio = 2;
     const PreparedFixture prepared = prepareFixture({}, options);
-    expect(prepared.outcome.status == MatroskaDemuxStatus::Ready,
+    expect(prepared.outcome.status == MediaSourceOpenStatus::Ready,
            "explicitly preferred existing tracks are honored");
   }
   {
     FixtureSpec spec;
     spec.audioChannels = 1;
-    expectPrepareError(spec, MatroskaDemuxError::CodecConfiguration,
+    expectPrepareError(spec, MediaRefusalClass::CodecConfiguration,
                        "Channels must equal the ASC channel configuration");
   }
   {
     FixtureSpec spec;
     spec.audioSamplingFrequency = 44'100.0;
-    expectPrepareError(spec, MatroskaDemuxError::CodecConfiguration,
+    expectPrepareError(spec, MediaRefusalClass::CodecConfiguration,
                        "SamplingFrequency must equal the ASC sampling rate");
   }
   {
@@ -2626,51 +2593,51 @@ void testCodecAdmissionAndSelection() {
     FixtureSpec spec;
     spec.audioBitDepth = 16;
     const PreparedFixture prepared = prepareFixture(spec);
-    expect(prepared.outcome.status == MatroskaDemuxStatus::Ready &&
+    expect(prepared.outcome.status == MediaSourceOpenStatus::Ready &&
                prepared.outcome.asset != nullptr,
            "a compressed AAC track may declare an ignored BitDepth");
   }
   {
     FixtureSpec spec;
     spec.audioCodecPrivate = Bytes{std::byte{0x12}, std::byte{0x10}};
-    expectPrepareError(spec, MatroskaDemuxError::CodecConfiguration,
+    expectPrepareError(spec, MediaRefusalClass::CodecConfiguration,
                        "a non AAC-LC AudioSpecificConfig is not admitted");
   }
   {
     FixtureSpec spec;
     spec.videoPixelWidth = 1'279;
-    expectPrepareError(spec, MatroskaDemuxError::CodecConfiguration,
+    expectPrepareError(spec, MediaRefusalClass::CodecConfiguration,
                        "PixelWidth must equal the SPS cropped luma width");
   }
   {
     FixtureSpec spec;
     spec.videoPixelHeight = 721;
-    expectPrepareError(spec, MatroskaDemuxError::CodecConfiguration,
+    expectPrepareError(spec, MediaRefusalClass::CodecConfiguration,
                        "PixelHeight must equal the SPS cropped luma height");
   }
   {
     FixtureSpec spec;
     spec.videoCodecPrivate = Bytes(8, std::byte{0x01});
-    expectPrepareError(spec, MatroskaDemuxError::CodecConfiguration,
+    expectPrepareError(spec, MediaRefusalClass::CodecConfiguration,
                        "a malformed avcC record fails codec admission");
   }
   {
     FixtureSpec spec;
     spec.videoInterlaced = 1;
-    expectPrepareError(spec, MatroskaDemuxError::CodecConfiguration,
+    expectPrepareError(spec, MediaRefusalClass::CodecConfiguration,
                        "FlagInterlaced interlaced content is not admitted");
   }
   {
     FixtureSpec spec;
     spec.videoInterlaced = 2;
     const PreparedFixture prepared = prepareFixture(spec);
-    expect(prepared.outcome.status == MatroskaDemuxStatus::Ready,
+    expect(prepared.outcome.status == MediaSourceOpenStatus::Ready,
            "FlagInterlaced progressive is admitted like an absent flag");
   }
   {
     FixtureSpec spec;
     spec.videoCodecDelayNanoseconds = 1;
-    expectPrepareError(spec, MatroskaDemuxError::CodecConfiguration,
+    expectPrepareError(spec, MediaRefusalClass::CodecConfiguration,
                        "a nonzero CodecDelay on the selected video is refused");
   }
   {
@@ -2681,7 +2648,7 @@ void testCodecAdmissionAndSelection() {
     const PreparedFixture prepared = prepareFixture(spec, options);
     expect(prepared.outcome.asset == nullptr &&
                prepared.outcome.error ==
-                   MatroskaDemuxError::CodecConfiguration,
+                   MediaRefusalClass::CodecConfiguration,
            "a tightened coded-width limit rejects the 1280x720 record");
   }
 }
@@ -2694,7 +2661,7 @@ void expectAccuratePlan(const MatroskaPreparedAsset& asset, MediaTime target,
                         std::uint64_t expectedCueTick, const char* message) {
   const MatroskaPlanOutcome outcome =
       asset.planGeneration(target, MediaSeekMode::Accurate);
-  bool matched = outcome.status == MatroskaDemuxStatus::Ready && outcome.plan;
+  bool matched = outcome.status == MediaSourceOpenStatus::Ready && outcome.plan;
   if (matched) {
     const MatroskaGenerationPlan& plan = *outcome.plan;
     const auto ceiling =
@@ -2816,14 +2783,14 @@ void testAccuratePlanning() {
          "a late accurate target stages from the last cue's cluster");
 
   expect(asset.planGeneration(MediaTime{3, 2}, MediaSeekMode::Accurate)
-                 .error == MatroskaDemuxError::InvalidTimeline &&
+                 .error == MediaRefusalClass::InvalidTimeline &&
              asset.planGeneration(MediaTime{2, 1}, MediaSeekMode::Accurate)
-                     .error == MatroskaDemuxError::InvalidTimeline,
+                     .error == MediaRefusalClass::InvalidTimeline,
          "targets at or beyond the finite duration are refused");
   expect(asset.planGeneration(MediaTime{-1, 1'000}, MediaSeekMode::Accurate)
-                 .error == MatroskaDemuxError::InvalidTimeline &&
+                 .error == MediaRefusalClass::InvalidTimeline &&
              asset.planGeneration(MediaTime{1, 0}, MediaSeekMode::Accurate)
-                     .error == MatroskaDemuxError::InvalidTimeline,
+                     .error == MediaRefusalClass::InvalidTimeline,
          "negative and invalid targets are refused");
 }
 
@@ -2854,7 +2821,7 @@ void testKeyFramePlanning() {
   for (const Case& item : cases) {
     const MatroskaPlanOutcome outcome =
         asset.planGeneration(item.target, MediaSeekMode::KeyFrame);
-    bool matched = outcome.status == MatroskaDemuxStatus::Ready && outcome.plan;
+    bool matched = outcome.status == MediaSourceOpenStatus::Ready && outcome.plan;
     if (matched) {
       const MatroskaGenerationPlan& plan = *outcome.plan;
       const MediaTime rap = tickTime(static_cast<std::int64_t>(item.cueTick));
@@ -2889,15 +2856,15 @@ void testPlanningRejectsNonRandomAccessCue() {
   FixtureSpec spec;
   spec.cues = CueVariant::NonKeyFrameTarget;
   const PreparedFixture prepared = prepareFixture(spec);
-  expect(prepared.outcome.status == MatroskaDemuxStatus::Ready,
+  expect(prepared.outcome.status == MediaSourceOpenStatus::Ready,
          "a cue that names a non-key block still prepares structurally");
   if (prepared.outcome.asset == nullptr) {
     return;
   }
   const MatroskaPlanOutcome outcome =
       prepared.asset().planGeneration(MediaTime{0, 1}, MediaSeekMode::KeyFrame);
-  expect(outcome.status != MatroskaDemuxStatus::Ready &&
-             outcome.error == MatroskaDemuxError::InvalidCue,
+  expect(outcome.status != MediaSourceOpenStatus::Ready &&
+             outcome.error == MediaRefusalClass::InvalidCue,
          "planning proves the cue block really is a random access point");
 }
 
@@ -2911,7 +2878,7 @@ void testPlanningWithoutAudio() {
   }
   const MatroskaPlanOutcome outcome = prepared.asset().planGeneration(
       MediaTime{3, 4}, MediaSeekMode::Accurate);
-  expect(outcome.status == MatroskaDemuxStatus::Ready && outcome.plan &&
+  expect(outcome.status == MediaSourceOpenStatus::Ready && outcome.plan &&
              outcome.plan->audioWindow == MediaAudioGenerationWindow{} &&
              outcome.plan->audioAccessUnitOrdinal == 0,
          "a video-only plan carries the empty audio window encoding");
@@ -3176,7 +3143,7 @@ void testCursorSampleLimits() {
   MediaSourceOpenOptions options;
   options.limits.maximumAudioSampleBytes = 12;
   const PreparedFixture prepared = prepareFixture(spec, options);
-  expect(prepared.outcome.status == MatroskaDemuxStatus::Ready,
+  expect(prepared.outcome.status == MediaSourceOpenStatus::Ready,
          "a tightened audio byte cap still prepares the document");
   if (prepared.outcome.asset == nullptr) {
     return;
@@ -3195,14 +3162,14 @@ void testCursorSampleLimits() {
   const MatroskaCursorReadResult result = cursor->readNext();
   const auto* failure = std::get_if<MatroskaCursorFailure>(&result);
   expect(failure != nullptr &&
-             failure->error == MatroskaDemuxError::SampleLimit,
+             failure->error == MediaRefusalClass::SampleLimit,
          "a laced AAC block over the aggregate byte cap fails SampleLimit");
 
   MediaSourceOpenOptions videoOptions;
   videoOptions.limits.maximumVideoSampleBytes = 4;
   const PreparedFixture cappedVideo = prepareFixture(spec, videoOptions);
   expect(cappedVideo.outcome.asset == nullptr &&
-             cappedVideo.outcome.error == MatroskaDemuxError::SampleLimit,
+             cappedVideo.outcome.error == MediaRefusalClass::SampleLimit,
          "a cue-targeted video block over its byte cap fails SampleLimit");
 }
 
@@ -3236,9 +3203,9 @@ void testCopyRanges() {
   const std::array<FrameRange, 1> single{FrameRange{large->frames[0]}};
   std::vector<std::byte> destination(spec.largeVideoFrameBytes);
   const auto readsBefore = prepared.reader->readSizes.size();
-  MatroskaDemuxError error = MatroskaDemuxError::Io;
+  MediaRefusalClass error = MediaRefusalClass::Io;
   const bool copied = asset.copyRanges(single, destination, {}, &error);
-  expect(copied && error == MatroskaDemuxError::None,
+  expect(copied && error == MediaRefusalClass::None,
          "a large frame copies successfully");
   bool identical = copied;
   for (std::size_t index = 0; identical && index < destination.size();
@@ -3283,10 +3250,10 @@ void testCopyRanges() {
       total += static_cast<std::size_t>(frame.size);
     }
     std::vector<std::byte> concatenated(total);
-    MatroskaDemuxError laceError = MatroskaDemuxError::Io;
+    MediaRefusalClass laceError = MediaRefusalClass::Io;
     const bool laceCopied =
         asset.copyRanges(ranges, concatenated, {}, &laceError);
-    bool exact = laceCopied && laceError == MatroskaDemuxError::None;
+    bool exact = laceCopied && laceError == MediaRefusalClass::None;
     std::size_t cursor = 0;
     for (const ByteRange frame : laced->frames) {
       for (std::uint64_t index = 0; exact && index < frame.size; ++index) {
@@ -3298,44 +3265,44 @@ void testCopyRanges() {
     expect(exact, "laced frames copy as an exact ordered concatenation");
   }
 
-  MatroskaDemuxError shortError = MatroskaDemuxError::None;
+  MediaRefusalClass shortError = MediaRefusalClass::None;
   std::vector<std::byte> tooSmall(4);
   expect(!asset.copyRanges(single, tooSmall, {}, &shortError) &&
-             shortError == MatroskaDemuxError::InvalidRequest,
+             shortError == MediaRefusalClass::InvalidRequest,
          "a destination smaller than the ranges is refused");
   const std::array<FrameRange, 2> doubled{FrameRange{large->frames[0]},
                                           FrameRange{large->frames[0]}};
-  MatroskaDemuxError aggregateError = MatroskaDemuxError::None;
+  MediaRefusalClass aggregateError = MediaRefusalClass::None;
   expect(!asset.copyRanges(doubled, destination, {}, &aggregateError) &&
-             aggregateError == MatroskaDemuxError::SampleLimit,
+             aggregateError == MediaRefusalClass::SampleLimit,
          "ranges whose running total passes the destination fail SampleLimit");
-  MatroskaDemuxError longError = MatroskaDemuxError::None;
+  MediaRefusalClass longError = MediaRefusalClass::None;
   std::vector<std::byte> tooLarge(spec.largeVideoFrameBytes + 1U);
   expect(!asset.copyRanges(single, tooLarge, {}, &longError) &&
-             longError == MatroskaDemuxError::InvalidRequest,
+             longError == MediaRefusalClass::InvalidRequest,
          "a destination larger than the ranges is refused");
-  MatroskaDemuxError emptyError = MatroskaDemuxError::Io;
+  MediaRefusalClass emptyError = MediaRefusalClass::Io;
   expect(asset.copyRanges({}, {}, {}, &emptyError) &&
-             emptyError == MatroskaDemuxError::None,
+             emptyError == MediaRefusalClass::None,
          "an empty copy request succeeds without any read");
 
   std::atomic<bool> cancelled{false};
   const CancellationToken token{&cancelled, atomicCancellation};
   prepared.reader->cancellation = &cancelled;
   prepared.reader->cancelAtRead = prepared.reader->reads + 1U;
-  MatroskaDemuxError cancelError = MatroskaDemuxError::None;
+  MediaRefusalClass cancelError = MediaRefusalClass::None;
   const bool cancelledCopy =
       asset.copyRanges(single, destination, token, &cancelError);
   prepared.reader->cancelAtRead = 0;
   prepared.reader->cancellation = nullptr;
-  expect(!cancelledCopy && cancelError == MatroskaDemuxError::Cancelled,
+  expect(!cancelledCopy && cancelError == MediaRefusalClass::Cancelled,
          "cancellation between split reads reports Cancelled exactly");
 
   std::atomic<bool> preCancelled{true};
-  MatroskaDemuxError preError = MatroskaDemuxError::None;
+  MediaRefusalClass preError = MediaRefusalClass::None;
   expect(!asset.copyRanges(single, destination,
                            {&preCancelled, atomicCancellation}, &preError) &&
-             preError == MatroskaDemuxError::Cancelled,
+             preError == MediaRefusalClass::Cancelled,
          "an already cancelled copy performs no read");
 
   std::atomic<bool> lateCancelled{false};
@@ -3345,31 +3312,31 @@ void testCopyRanges() {
       static_cast<std::size_t>(tiny[0].bytes.size));
   prepared.reader->cancellation = &lateCancelled;
   prepared.reader->cancelAtRead = prepared.reader->reads + 1U;
-  MatroskaDemuxError lateError = MatroskaDemuxError::None;
+  MediaRefusalClass lateError = MediaRefusalClass::None;
   const bool lateCopy = asset.copyRanges(
       tiny, tinyDestination, {&lateCancelled, atomicCancellation}, &lateError);
   prepared.reader->cancelAtRead = 0;
   prepared.reader->cancellation = nullptr;
-  expect(!lateCopy && lateError == MatroskaDemuxError::Cancelled,
+  expect(!lateCopy && lateError == MediaRefusalClass::Cancelled,
          "cancellation raised by the final read still reports Cancelled");
 
   prepared.reader->shrink();
-  MatroskaDemuxError changedError = MatroskaDemuxError::None;
+  MediaRefusalClass changedError = MediaRefusalClass::None;
   expect(!asset.copyRanges(single, destination, {}, &changedError) &&
-             changedError == MatroskaDemuxError::FileChanged,
+             changedError == MediaRefusalClass::FileChanged,
          "a shrunken reader fails the copy with FileChanged");
   prepared.reader->restore();
 
   prepared.reader->failAtRead = prepared.reader->reads + 1U;
-  MatroskaDemuxError ioError = MatroskaDemuxError::None;
+  MediaRefusalClass ioError = MediaRefusalClass::None;
   expect(!asset.copyRanges(single, destination, {}, &ioError) &&
-             ioError == MatroskaDemuxError::Io,
+             ioError == MediaRefusalClass::Io,
          "a failing read reports Io while the reader identity is unchanged");
   prepared.reader->failAtRead = 0;
 
-  MatroskaDemuxError recoveredError = MatroskaDemuxError::Io;
+  MediaRefusalClass recoveredError = MediaRefusalClass::Io;
   expect(asset.copyRanges(single, destination, {}, &recoveredError) &&
-             recoveredError == MatroskaDemuxError::None,
+             recoveredError == MediaRefusalClass::None,
          "the asset remains usable after a failed copy");
 }
 
@@ -3402,17 +3369,17 @@ void testMutationAndCancellation() {
     const MatroskaCursorReadResult grown = cursor->readNext();
     const auto* grownFailure = std::get_if<MatroskaCursorFailure>(&grown);
     expect(grownFailure != nullptr &&
-               grownFailure->error == MatroskaDemuxError::FileChanged,
+               grownFailure->error == MediaRefusalClass::FileChanged,
            "a grown reader stops the cursor with FileChanged");
     expect(asset.planGeneration(MediaTime{0, 1}, MediaSeekMode::Accurate)
-                   .error == MatroskaDemuxError::FileChanged,
+                   .error == MediaRefusalClass::FileChanged,
            "planning against a grown reader fails with FileChanged");
     prepared.reader->restore();
     prepared.reader->shrink();
     const MatroskaCursorReadResult shrunk = cursor->readNext();
     const auto* shrunkFailure = std::get_if<MatroskaCursorFailure>(&shrunk);
     expect(shrunkFailure != nullptr &&
-               shrunkFailure->error == MatroskaDemuxError::FileChanged,
+               shrunkFailure->error == MediaRefusalClass::FileChanged,
            "a shrunken reader stops the cursor with FileChanged");
     prepared.reader->restore();
     expect(sampleOf(cursor->readNext()) != nullptr,
@@ -3435,7 +3402,7 @@ void testMutationAndCancellation() {
     prepared.reader->failAtRead = prepared.reader->reads + 1U;
     const MatroskaCursorReadResult result = cursor->readNext();
     const auto* failure = std::get_if<MatroskaCursorFailure>(&result);
-    expect(failure != nullptr && failure->error == MatroskaDemuxError::Io,
+    expect(failure != nullptr && failure->error == MediaRefusalClass::Io,
            "a failing read stops the cursor with Io and no undefined behavior");
     prepared.reader->failAtRead = 0;
   }
@@ -3445,8 +3412,8 @@ void testMutationAndCancellation() {
     std::atomic<bool> cancelled{true};
     const auto outcome = prepareMatroska(reader, kFixturePath, {},
                                          {&cancelled, atomicCancellation});
-    expect(outcome.status == MatroskaDemuxStatus::Cancelled &&
-               outcome.error == MatroskaDemuxError::Cancelled &&
+    expect(outcome.status == MediaSourceOpenStatus::Cancelled &&
+               outcome.error == MediaRefusalClass::Cancelled &&
                reader->reads == 0,
            "preparation cancelled before I/O performs no read");
   }
@@ -3461,8 +3428,8 @@ void testMutationAndCancellation() {
       const auto outcome = prepareMatroska(reader, kFixturePath, {},
                                            {&cancelled, atomicCancellation});
       expect(outcome.asset == nullptr &&
-                 outcome.error == MatroskaDemuxError::Cancelled &&
-                 outcome.status == MatroskaDemuxStatus::Cancelled,
+                 outcome.error == MediaRefusalClass::Cancelled &&
+                 outcome.status == MediaSourceOpenStatus::Cancelled,
              "preparation cancelled mid-parse reports Cancelled exactly");
     }
   }
@@ -3475,8 +3442,8 @@ void testMutationAndCancellation() {
     const CancellationToken token{&cancelled, atomicCancellation};
     const MatroskaPlanOutcome outcome = prepared.asset().planGeneration(
         MediaTime{1, 2}, MediaSeekMode::Accurate, token);
-    expect(outcome.status == MatroskaDemuxStatus::Cancelled &&
-               outcome.error == MatroskaDemuxError::Cancelled,
+    expect(outcome.status == MediaSourceOpenStatus::Cancelled &&
+               outcome.error == MediaRefusalClass::Cancelled,
            "planning observes cancellation before it scans any cluster");
 
     const MatroskaPlanOutcome plan = prepared.asset().planGeneration(
@@ -3640,13 +3607,13 @@ void testScannedRandomAccessIndex() {
     spec.cues = item.variant;
     const PreparedFixture prepared = prepareFixture(spec);
     const bool rebuilt =
-        prepared.outcome.status == MatroskaDemuxStatus::Ready &&
+        prepared.outcome.status == MediaSourceOpenStatus::Ready &&
         prepared.outcome.asset != nullptr &&
         indexIsWellFormed(prepared.asset(), prepared.fixture) &&
         indexTicks(prepared.asset()) == kScannedDefaultTicks;
     if (!rebuilt) {
       std::cerr << "  (status " << static_cast<int>(prepared.outcome.status)
-                << " error " << errorName(prepared.outcome.error) << ": \""
+                << " error " << mediaRefusalClassName(prepared.outcome.error) << ": \""
                 << prepared.outcome.message << "\")\n";
     }
     expect(rebuilt, item.message);
@@ -3735,7 +3702,7 @@ void testScannedRandomAccessIndex() {
       for (const SeedCase& item : cases) {
         const MatroskaPlanOutcome outcome =
             asset.planGeneration(item.target, MediaSeekMode::KeyFrame);
-        bool seeded = outcome.status == MatroskaDemuxStatus::Ready &&
+        bool seeded = outcome.status == MediaSourceOpenStatus::Ready &&
                       outcome.plan.has_value();
         if (seeded) {
           const MatroskaGenerationPlan& plan = *outcome.plan;
@@ -3758,12 +3725,12 @@ void testScannedRandomAccessIndex() {
     spec.includeAudioTrack = false;
     spec.includeSubtitleTrack = false;
     const PreparedFixture prepared = prepareFixture(spec);
-    expect(prepared.outcome.status == MatroskaDemuxStatus::Ready &&
+    expect(prepared.outcome.status == MediaSourceOpenStatus::Ready &&
                prepared.outcome.asset != nullptr,
            "single-RAP long GOP is admitted for bounded slow seek");
     if (prepared.outcome.asset && duration > 30'000) {
       const auto plan = prepared.asset().planGeneration({30, 1}, MediaSeekMode::Accurate);
-      expect(plan.status == MatroskaDemuxStatus::Ready && plan.plan &&
+      expect(plan.status == MediaSourceOpenStatus::Ready && plan.plan &&
                  plan.plan->actualDecodeStart == MediaTime{0, 1},
              "30-second slow seek retains the preceding RAP");
     }
@@ -3781,7 +3748,7 @@ void testScannedRandomAccessIndex() {
     spec.includeAudioTrack = false;
     spec.includeSubtitleTrack = false;
     const PreparedFixture prepared = prepareFixture(spec);
-    expect(prepared.outcome.status == MatroskaDemuxStatus::Ready &&
+    expect(prepared.outcome.status == MediaSourceOpenStatus::Ready &&
                prepared.outcome.asset != nullptr &&
                prepared.asset().cues().size() == 1U,
            "a one-entry index inside the preroll stays admitted");
@@ -3805,14 +3772,14 @@ void testMalformedDocuments() {
     FixtureSpec spec;
     spec.cues = CueVariant::NonZeroFirst;
     const PreparedFixture prepared = prepareFixture(spec);
-    expect(prepared.outcome.status == MatroskaDemuxStatus::Ready &&
+    expect(prepared.outcome.status == MediaSourceOpenStatus::Ready &&
                prepared.outcome.asset != nullptr,
            "selected-video Cues may begin after tick zero");
   }
   {
     FixtureSpec spec;
     spec.cues = CueVariant::OutsideCluster;
-    expectPrepareError(spec, MatroskaDemuxError::InvalidContainer,
+    expectPrepareError(spec, MediaRefusalClass::InvalidContainer,
                        "a Cue pointing outside any Cluster is rejected");
   }
   {
@@ -3841,7 +3808,7 @@ void testMalformedDocuments() {
       auto reader = std::make_shared<ProbeReader>(std::move(truncated));
       const auto outcome = prepareMatroska(reader, kFixturePath, {});
       expect(outcome.asset == nullptr &&
-                 outcome.status != MatroskaDemuxStatus::Ready,
+                 outcome.status != MediaSourceOpenStatus::Ready,
              "a truncated document never prepares an asset");
     }
   }
@@ -3853,7 +3820,7 @@ void testMalformedDocuments() {
     auto reader = std::make_shared<ProbeReader>(std::move(noHeader));
     const auto outcome = prepareMatroska(reader, kFixturePath, {});
     expect(outcome.asset == nullptr &&
-               outcome.error == MatroskaDemuxError::InvalidContainer,
+               outcome.error == MediaRefusalClass::InvalidContainer,
            "a Segment without its EBML header is not a Matroska document");
   }
   {
@@ -3863,8 +3830,8 @@ void testMalformedDocuments() {
     auto reader = std::make_shared<ProbeReader>(std::move(twoDocuments));
     const auto outcome = prepareMatroska(reader, kFixturePath, {});
     expect(outcome.asset == nullptr &&
-               outcome.error == MatroskaDemuxError::UnsupportedContainer &&
-               outcome.status == MatroskaDemuxStatus::Unsupported,
+               outcome.error == MediaRefusalClass::SegmentLayout &&
+               outcome.status == MediaSourceOpenStatus::Unsupported,
            "a trailing second document is explicitly unsupported");
   }
   {
@@ -3885,8 +3852,8 @@ void testMalformedDocuments() {
       auto reader = std::make_shared<ProbeReader>(std::move(padded));
       const auto outcome = prepareMatroska(reader, kFixturePath, {});
       expect(outcome.asset == nullptr &&
-                 outcome.status == MatroskaDemuxStatus::Failed &&
-                 outcome.error == MatroskaDemuxError::InvalidContainer,
+                 outcome.status == MediaSourceOpenStatus::Failed &&
+                 outcome.error == MediaRefusalClass::InvalidContainer,
              "one byte after the Segment still refuses the whole document");
     }
   }
@@ -3897,7 +3864,7 @@ void testMalformedDocuments() {
     auto reader = std::make_shared<ProbeReader>(fixture.bytes);
     const auto outcome = prepareMatroska(reader, kFixturePath, {});
     expect(outcome.asset == nullptr &&
-               outcome.status != MatroskaDemuxStatus::Ready,
+               outcome.status != MediaSourceOpenStatus::Ready,
            "a zero Duration is refused");
   }
   {
@@ -3922,7 +3889,7 @@ void testMalformedDocuments() {
     auto reader = std::make_shared<ProbeReader>(std::move(bytes));
     const auto outcome = prepareMatroska(reader, kFixturePath, {});
     expect(outcome.asset == nullptr &&
-               outcome.error == MatroskaDemuxError::InvalidContainer,
+               outcome.error == MediaRefusalClass::InvalidContainer,
            "a Cluster claiming bytes past the Segment is rejected");
   }
   {
@@ -3931,7 +3898,7 @@ void testMalformedDocuments() {
     FixtureSpec spec;
     spec.voidPaddingBytes = 23;
     const PreparedFixture prepared = prepareFixture(spec);
-    expect(prepared.outcome.status == MatroskaDemuxStatus::Ready &&
+    expect(prepared.outcome.status == MediaSourceOpenStatus::Ready &&
                prepared.outcome.asset != nullptr,
            "Segment and Cluster Void padding still prepares Ready");
     if (prepared.outcome.asset == nullptr) {
@@ -4060,7 +4027,7 @@ void testStructuralByteCeilings() {
                                                  std::move(sparse.chunks));
     const auto outcome = prepareMatroska(reader, kFixturePath, {});
     expect(outcome.asset == nullptr &&
-               outcome.error == MatroskaDemuxError::SampleLimit,
+               outcome.error == MediaRefusalClass::SampleLimit,
            "an encoded Block past the 64 MiB ceiling fails SampleLimit");
   }
   {
@@ -4072,7 +4039,7 @@ void testStructuralByteCeilings() {
                                                  std::move(sparse.chunks));
     const auto outcome = prepareMatroska(reader, kFixturePath, {});
     expect(outcome.asset == nullptr &&
-               outcome.error == MatroskaDemuxError::InvalidTimeline,
+               outcome.error == MediaRefusalClass::InvalidTimeline,
            "a Cluster past the 64 MiB ceiling is not indexable");
   }
   {
@@ -4080,7 +4047,7 @@ void testStructuralByteCeilings() {
     auto reader = std::make_shared<SparseReader>(sparse.reportedSize,
                                                  std::move(sparse.chunks));
     const auto outcome = prepareMatroska(reader, kFixturePath, {});
-    expect(outcome.status == MatroskaDemuxStatus::Ready &&
+    expect(outcome.status == MediaSourceOpenStatus::Ready &&
                outcome.asset != nullptr &&
                outcome.asset->clusters().size() == 1U,
            "the same sparse layout under both ceilings prepares normally");
@@ -4206,7 +4173,7 @@ void testFractionalDuration() {
     auto reader = std::make_shared<ProbeReader>(fixture.bytes);
     const auto outcome = prepareMatroska(reader, kFixturePath, {});
     expect(outcome.asset == nullptr &&
-               outcome.status != MatroskaDemuxStatus::Ready,
+               outcome.status != MediaSourceOpenStatus::Ready,
            "a negative Duration is still refused");
   }
 }
@@ -4250,13 +4217,13 @@ void testLocalFilePreparation() {
 
   const std::filesystem::path localPath(path.data());
   auto outcome = prepareMatroskaLocalFile(localPath, {});
-  expect(outcome.status == MatroskaDemuxStatus::Ready && outcome.asset &&
+  expect(outcome.status == MediaSourceOpenStatus::Ready && outcome.asset &&
              outcome.asset->path() == localPath,
          "a real local Matroska file prepares through one retained descriptor");
   if (outcome.asset) {
     const MatroskaPlanOutcome plan = outcome.asset->planGeneration(
         MediaTime{1, 2}, MediaSeekMode::KeyFrame);
-    expect(plan.status == MatroskaDemuxStatus::Ready,
+    expect(plan.status == MediaSourceOpenStatus::Ready,
            "the local-file asset plans a mid-stream key-frame seek");
     if (plan.plan) {
       auto cursor = outcome.asset->makeVideoCursor(*plan.plan);
@@ -4271,20 +4238,20 @@ void testLocalFilePreparation() {
     }
     const MatroskaPlanOutcome afterGrowth = outcome.asset->planGeneration(
         MediaTime{0, 1}, MediaSeekMode::KeyFrame);
-    expect(afterGrowth.error == MatroskaDemuxError::FileChanged,
+    expect(afterGrowth.error == MediaRefusalClass::FileChanged,
            "growing the local file invalidates the retained asset identity");
   }
 
   std::atomic<bool> cancelled{true};
   const auto cancelledOutcome = prepareMatroskaLocalFile(
       localPath, {}, {&cancelled, atomicCancellation});
-  expect(cancelledOutcome.status == MatroskaDemuxStatus::Cancelled &&
-             cancelledOutcome.error == MatroskaDemuxError::Cancelled,
+  expect(cancelledOutcome.status == MediaSourceOpenStatus::Cancelled &&
+             cancelledOutcome.error == MediaRefusalClass::Cancelled,
          "local-file preparation honors cancellation before opening");
 
   const auto missing = prepareMatroskaLocalFile(
       (std::filesystem::temp_directory_path() / "wam-matroska-demuxer-absent"), {});
-  expect(missing.asset == nullptr && missing.error == MatroskaDemuxError::Io,
+  expect(missing.asset == nullptr && missing.error == MediaRefusalClass::Io,
          "a missing local file fails with Io");
 
   outcome.asset.reset();
@@ -4305,7 +4272,7 @@ void testMultichannelAacAdmitted() {
   spec.audioCodecPrivate = fromOctets(kAac51_48Asc);
   spec.audioChannels = 6;
   const PreparedFixture prepared = prepareFixture(spec);
-  expect(prepared.outcome.status == MatroskaDemuxStatus::Ready &&
+  expect(prepared.outcome.status == MediaSourceOpenStatus::Ready &&
              prepared.outcome.asset != nullptr,
          "5.1 AAC-LC in Matroska is admitted natively");
   if (prepared.outcome.asset == nullptr) {
@@ -4342,9 +4309,9 @@ void testInadmissibleAacRefusedBeforeClusterScan() {
   spec.audioChannels = 8;
   const PreparedFixture prepared = prepareFixture(spec);
 
-  expect(prepared.outcome.status == MatroskaDemuxStatus::Unsupported &&
+  expect(prepared.outcome.status == MediaSourceOpenStatus::Unsupported &&
              prepared.outcome.error ==
-                 MatroskaDemuxError::CodecConfiguration &&
+                 MediaRefusalClass::CodecConfiguration &&
              prepared.outcome.asset == nullptr,
          "front-wide 7.1 AAC-LC is a clean whole-file fallback verdict");
 
@@ -4370,7 +4337,7 @@ void testInadmissibleAacRefusedBeforeClusterScan() {
   // The control: the identical fixture with a stereo ASC is still admitted, so
   // the pre-pass refuses the trait and not the shape of the file.
   const PreparedFixture stereo = prepareFixture({});
-  expect(stereo.outcome.status == MatroskaDemuxStatus::Ready,
+  expect(stereo.outcome.status == MediaSourceOpenStatus::Ready,
          "the same fixture with a stereo ASC is still admitted natively");
 }
 
@@ -4403,7 +4370,7 @@ constexpr std::size_t kAdmittedPreparationReadCeiling = 1'400;
 
 void testAdmittedPreparationDoesNotWalkClusterTails() {
   const PreparedFixture prepared = prepareFixture({});
-  expect(prepared.outcome.status == MatroskaDemuxStatus::Ready &&
+  expect(prepared.outcome.status == MediaSourceOpenStatus::Ready &&
              prepared.outcome.asset != nullptr,
          "the canonical fixture is admitted natively");
   if (prepared.outcome.asset == nullptr) {
@@ -4491,7 +4458,7 @@ void testSubtitleCuesAreNotProvenAtOpen() {
   spec.subtitleBlocksPerCluster = 6;
   spec.subtitleCues = true;
   const PreparedFixture prepared = prepareFixture(spec);
-  expect(prepared.outcome.status == MatroskaDemuxStatus::Ready &&
+  expect(prepared.outcome.status == MediaSourceOpenStatus::Ready &&
              prepared.outcome.asset != nullptr,
          "a subtitle-cue-heavy document is admitted natively");
   if (prepared.outcome.asset == nullptr) {
@@ -4571,7 +4538,7 @@ void testContainerColourMapping() {
     FixtureSpec spec;
     spec.videoColour = c.colour;
     const PreparedFixture prepared = prepareFixture(spec);
-    const bool ready = prepared.outcome.status == MatroskaDemuxStatus::Ready &&
+    const bool ready = prepared.outcome.status == MediaSourceOpenStatus::Ready &&
                        prepared.outcome.asset != nullptr;
     const std::string decidedMessage =
         std::string("container Colour case is decided as expected: ") + c.name;
@@ -4611,7 +4578,7 @@ void testHdrMetadataPresenceIsModelledNotRefused() {
     spec.videoMaxCll = 1000;
     spec.videoMaxFall = 400;
     const PreparedFixture prepared = prepareFixture(spec);
-    expect(prepared.outcome.status == MatroskaDemuxStatus::Ready &&
+    expect(prepared.outcome.status == MediaSourceOpenStatus::Ready &&
                prepared.outcome.asset != nullptr,
            "HDR mastering/light metadata no longer refuses the track");
     if (prepared.outcome.asset == nullptr) {
@@ -4729,27 +4696,27 @@ void testProjectionQuarterTurn() {
   {
     FixtureSpec spec;
     spec.videoProjection = FixtureSpec::Projection{.roll = -45.0F};
-    expectPrepareError(spec, MatroskaDemuxError::CodecConfiguration,
+    expectPrepareError(spec, MediaRefusalClass::CodecConfiguration,
                        "a roll that is not a quarter turn is refused");
   }
   {
     FixtureSpec spec;
     spec.videoProjection = FixtureSpec::Projection{.type = 1, .roll = -90.0F};
-    expectPrepareError(spec, MatroskaDemuxError::CodecConfiguration,
+    expectPrepareError(spec, MediaRefusalClass::CodecConfiguration,
                        "an equirectangular Projection is refused even with a "
                        "quarter-turn roll");
   }
   {
     FixtureSpec spec;
     spec.videoProjection = FixtureSpec::Projection{.yaw = 90.0F};
-    expectPrepareError(spec, MatroskaDemuxError::CodecConfiguration,
+    expectPrepareError(spec, MediaRefusalClass::CodecConfiguration,
                        "a Projection with yaw is refused");
   }
   {
     FixtureSpec spec;
     spec.videoProjection =
         FixtureSpec::Projection{.roll = -90.0F, .privateData = true};
-    expectPrepareError(spec, MatroskaDemuxError::CodecConfiguration,
+    expectPrepareError(spec, MediaRefusalClass::CodecConfiguration,
                        "a Projection carrying ProjectionPrivate is refused");
   }
 }
@@ -4777,7 +4744,7 @@ void testDolbyVisionMappingAdmission() {
   };
   const auto admitted = [](const FixtureSpec& spec) {
     const PreparedFixture prepared = prepareFixture(spec);
-    return prepared.outcome.status == MatroskaDemuxStatus::Ready &&
+    return prepared.outcome.status == MediaSourceOpenStatus::Ready &&
            prepared.outcome.asset != nullptr;
   };
   {
@@ -4800,7 +4767,7 @@ void testDolbyVisionMappingAdmission() {
     FixtureSpec spec;
     spec.videoBlockAdditionMapping = FixtureSpec::BlockAdditionMapping{
         kDvvC, record(5, 6, true, false, true, 0)};
-    expectPrepareError(spec, MatroskaDemuxError::CodecConfiguration,
+    expectPrepareError(spec, MediaRefusalClass::CodecConfiguration,
                        "profile 5 (no standalone base layer) is refused");
   }
   {
@@ -4810,21 +4777,21 @@ void testDolbyVisionMappingAdmission() {
     FixtureSpec spec;
     spec.videoBlockAdditionMapping = FixtureSpec::BlockAdditionMapping{
         kDvvC, record(5, 6, true, false, true, 4)};
-    expectPrepareError(spec, MatroskaDemuxError::CodecConfiguration,
+    expectPrepareError(spec, MediaRefusalClass::CodecConfiguration,
                        "profile 5 is refused even with a compatibility id");
   }
   {
     FixtureSpec spec;
     spec.videoBlockAdditionMapping = FixtureSpec::BlockAdditionMapping{
         kDvvC, record(7, 6, true, true, true, 6)};
-    expectPrepareError(spec, MatroskaDemuxError::CodecConfiguration,
+    expectPrepareError(spec, MediaRefusalClass::CodecConfiguration,
                        "profile 7 (enhancement layer present) is refused");
   }
   {
     FixtureSpec spec;
     spec.videoBlockAdditionMapping = FixtureSpec::BlockAdditionMapping{
         kDvvC, record(8, 4, true, false, true, 0)};
-    expectPrepareError(spec, MatroskaDemuxError::CodecConfiguration,
+    expectPrepareError(spec, MediaRefusalClass::CodecConfiguration,
                        "profile 8 with compatibility id 0 is refused");
   }
   {
@@ -4834,7 +4801,7 @@ void testDolbyVisionMappingAdmission() {
     FixtureSpec spec;
     spec.videoBlockAdditionMapping = FixtureSpec::BlockAdditionMapping{
         kDvvC, record(8, 4, true, true, true, 4)};
-    expectPrepareError(spec, MatroskaDemuxError::CodecConfiguration,
+    expectPrepareError(spec, MediaRefusalClass::CodecConfiguration,
                        "profile 8 with an enhancement layer is refused");
   }
   {
@@ -4843,7 +4810,7 @@ void testDolbyVisionMappingAdmission() {
     FixtureSpec spec;
     spec.videoBlockAdditionMapping =
         FixtureSpec::BlockAdditionMapping{kDvvC, truncated};
-    expectPrepareError(spec, MatroskaDemuxError::CodecConfiguration,
+    expectPrepareError(spec, MediaRefusalClass::CodecConfiguration,
                        "a record that is not exactly 24 bytes is refused");
   }
   {
@@ -4852,7 +4819,7 @@ void testDolbyVisionMappingAdmission() {
     FixtureSpec spec;
     spec.videoBlockAdditionMapping = FixtureSpec::BlockAdditionMapping{
         0, record(8, 4, true, false, true, 4), 2};
-    expectPrepareError(spec, MatroskaDemuxError::CodecConfiguration,
+    expectPrepareError(spec, MediaRefusalClass::CodecConfiguration,
                        "a non-Dolby-Vision BlockAdditionMapping is refused");
   }
 }
@@ -4875,7 +4842,7 @@ void testVariableFrameRateDurationLookahead() {
   spec.includeAudioTrack = false;
   spec.includeSubtitleTrack = false;
   const PreparedFixture prepared = prepareFixture(spec);
-  expect(prepared.outcome.status == MatroskaDemuxStatus::Ready &&
+  expect(prepared.outcome.status == MediaSourceOpenStatus::Ready &&
              prepared.outcome.asset != nullptr,
          "a VFR file with no BlockDuration and no DefaultDuration prepares");
   if (prepared.outcome.asset == nullptr) {
@@ -4990,7 +4957,7 @@ int main() {
     FixtureSpec spec = mpeg4VisualFixtureSpec();
     spec.videoRange = 2;
     const auto prepared = prepareFixture(spec);
-    expect(prepared.outcome.status == MatroskaDemuxStatus::Unsupported &&
+    expect(prepared.outcome.status == MediaSourceOpenStatus::Unsupported &&
                prepared.outcome.message == "SoftwareColorUnqualified: MPEG-4 full-range container signaling",
            "unqualified Apple Simple Profile full range retains its named refusal");
 #if defined(WAM_ENABLE_AVCODEC_STAGE)

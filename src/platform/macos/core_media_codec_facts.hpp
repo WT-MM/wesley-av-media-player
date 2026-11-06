@@ -1,7 +1,8 @@
 #pragma once
 
 #include "media/adpcm_audio.hpp"
-#include "media/matroska_vorbis.hpp"
+#include "media/audio_codec_timing.hpp"
+#include "media/codec/mpeg_audio.hpp"
 #include "media/media_codec_facts.hpp"
 #include "media/native_media_source.hpp"
 #include "native_audio_channel_map.hpp"
@@ -172,7 +173,8 @@ inline constexpr std::array<AdmittedAudioFormatTag, 14> kAdmittedAudioFormatTags
     {media::MediaCodec::Mp3, kAudioFormatMPEGLayer3},
     {media::MediaCodec::Mp3, kAudioFormatMPEGLayer2},
     {media::MediaCodec::Opus, kAudioFormatOpus},
-    {media::MediaCodec::Vorbis, media::matroska::kVorbisAudioFormatTag},
+    {media::MediaCodec::Vorbis,
+     media::mediaCodecFacts(media::MediaCodec::Vorbis).coreAudioFormatTag},
     {media::MediaCodec::Ac3, kAudioFormatAC3},
     {media::MediaCodec::Eac3, kAudioFormatEnhancedAC3},
     {media::MediaCodec::Flac, kAudioFormatFLAC},
@@ -209,6 +211,59 @@ static_assert(detail::admittedAudioFormatTagsCoverAudioCodecs(),
     }
   }
   return false;
+}
+
+namespace detail {
+
+// The facts table's canonical AudioFormatID of each codec is CoreAudio's own
+// constant, and is one this layer admits for that codec.
+inline constexpr std::array<AdmittedAudioFormatTag, 9> kCanonicalAudioFormatTags{{
+    {media::MediaCodec::Aac, kAudioFormatMPEG4AAC},
+    {media::MediaCodec::Alac, kAudioFormatAppleLossless},
+    {media::MediaCodec::Mp3, kAudioFormatMPEGLayer3},
+    {media::MediaCodec::Opus, kAudioFormatOpus},
+    {media::MediaCodec::Pcm, kAudioFormatLinearPCM},
+    {media::MediaCodec::Ac3, kAudioFormatAC3},
+    {media::MediaCodec::Eac3, kAudioFormatEnhancedAC3},
+    {media::MediaCodec::Flac, kAudioFormatFLAC},
+    {media::MediaCodec::AdpcmIma, kAudioFormatDVIIntelIMA},
+}};
+
+[[nodiscard]] constexpr bool coreAudioFormatTagsMatchFacts() noexcept {
+  for (const media::MediaCodecFacts &facts : media::kMediaCodecFacts) {
+    if (facts.coreAudioFormatTag != 0 &&
+        !audioCodecFormatTagAdmitted(facts.codec, facts.coreAudioFormatTag)) {
+      return false;
+    }
+  }
+  for (const AdmittedAudioFormatTag &entry : kCanonicalAudioFormatTags) {
+    if (media::mediaCodecFacts(entry.codec).coreAudioFormatTag !=
+        entry.formatTag) {
+      return false;
+    }
+  }
+  return true;
+}
+
+} // namespace detail
+
+static_assert(detail::coreAudioFormatTagsMatchFacts(),
+              "each facts row's AudioFormatID is CoreAudio's constant and is "
+              "admitted for its codec");
+static_assert(media::kCoreAudioMonoLayoutTag == kAudioChannelLayoutTag_Mono &&
+                  media::kCoreAudioStereoLayoutTag ==
+                      kAudioChannelLayoutTag_Stereo,
+              "the neutral layout tags are CoreAudio's");
+static_assert(media::codec::kMpegLayer2FormatTag == kAudioFormatMPEGLayer2,
+              "the neutral Layer II tag is CoreAudio's");
+
+// media::kAacPiecewiseTimelineAttachmentKey as a CFString. CFSTR() accepts only
+// a literal, hence the wrapper; the string lives for the process.
+[[nodiscard]] inline CFStringRef aacPiecewiseTimelineAttachmentKey() noexcept {
+  static const CFStringRef key = CFStringCreateWithCString(
+      nullptr, media::kAacPiecewiseTimelineAttachmentKey,
+      kCFStringEncodingASCII);
+  return key;
 }
 
 // Mono and stereo must state their canonical tag or none at all, and a
