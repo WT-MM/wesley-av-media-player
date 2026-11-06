@@ -45,6 +45,10 @@ static_assert(nativeMediaSessionCommitStepAdmitted(CommitPhase::Idle,
 static_assert(!nativeMediaSessionCommitStepAdmitted(CommitPhase::Idle,
                                                     CommitPhase::Idle));
 
+// Bounded work per worker pass for each loop that could otherwise spin on a
+// child that keeps reporting progress; the next pass resumes it.
+constexpr unsigned kWorkerPassBudget = 32;
+
 // One always-on stderr line for every terminal native failure, written by
 // publishFailure() itself so no failure site can omit it.
 //
@@ -1622,7 +1626,7 @@ struct NativeMediaSession::Impl final {
         return;
       }
     }
-    for (unsigned count = 0; count != 32; ++count) {
+    for (unsigned count = 0; count != kWorkerPassBudget; ++count) {
       if (!beginLiveIssue(nullptr, previewFromPublishedEnd)) {
         acceptPublishedCommands();
         return;
@@ -2126,7 +2130,7 @@ if (result != NativeAudioSessionProgress::Done) {
         authority == nullptr) {
       return;
     }
-    for (unsigned issueCount = 0; issueCount != 32; ++issueCount) {
+    for (unsigned issueCount = 0; issueCount != kWorkerPassBudget; ++issueCount) {
       const protocol::SetRunState issued = runCommand;
       if (!beginLiveIssue(&issued)) {
         acceptPublishedCommands();
@@ -2600,7 +2604,7 @@ if (result != NativeAudioSessionProgress::Done) {
     // Match the ordinary playback work budget. CallAgain is immediately
     // runnable work, not a reason to round-trip the worker semaphore for each
     // demux packet. The exact same covering-frame proof remains mandatory.
-    for (unsigned stepCount = 0; !commitVideoProof.has_value() && stepCount != 32;
+    for (unsigned stepCount = 0; !commitVideoProof.has_value() && stepCount != kWorkerPassBudget;
          ++stepCount) {
       if (!beginLiveIssue(nullptr, false, true)) {
         acceptPublishedCommands();
@@ -2626,7 +2630,7 @@ if (result != NativeAudioSessionProgress::Done) {
       }
       captureCommitProofs();
       if (step.wait != media::NativeMediaDispatcherWait::CallAgain) break;
-      if (!commitVideoProof.has_value() && stepCount == 31) {
+      if (!commitVideoProof.has_value() && stepCount + 1 == kWorkerPassBudget) {
         dependencies.wake->notify();
       }
     }
@@ -3171,7 +3175,7 @@ if (result != NativeAudioSessionProgress::Done) {
             !dispatcherExhausted && !previewActivity && !previewPending) {
           bool callAgain = false;
           bool terminalFailure = false;
-          for (unsigned stepCount = 0; stepCount != 32; ++stepCount) {
+          for (unsigned stepCount = 0; stepCount != kWorkerPassBudget; ++stepCount) {
             if (!beginLiveIssue()) {
               acceptPublishedCommands();
               break;
