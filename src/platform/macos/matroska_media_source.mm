@@ -82,7 +82,7 @@ std::optional<MediaTime> MatroskaSourceTraits::videoOrigin(
 
 CMVideoFormatDescriptionRef MatroskaSourceTraits::createVideoFormatDescription(
     const MediaTrackDescriptor& track) noexcept {
-  return createMatroskaVideoFormatDescription(track);
+  return macos::createVideoFormatDescription(track);
 }
 
 MediaTime MatroskaSourceTraits::mergeOrderKey(

@@ -170,6 +170,8 @@ find_library(WAM_COREIMAGE_FRAMEWORK CoreImage REQUIRED)
       src/platform/macos/matroska_media_source.mm
       src/platform/macos/matroska_preview_source.hpp
       src/platform/macos/matroska_preview_source.mm
+      src/platform/macos/core_media_carriage.hpp
+      src/platform/macos/core_media_carriage.mm
       src/platform/macos/matroska_sample_builder.hpp
       src/platform/macos/matroska_sample_builder.mm
       src/platform/macos/mpegts_asset_context.hpp

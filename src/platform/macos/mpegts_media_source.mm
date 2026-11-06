@@ -138,7 +138,7 @@ std::optional<MediaTime> MpegTsSourceTraits::videoOrigin(
 
 CMVideoFormatDescriptionRef MpegTsSourceTraits::createVideoFormatDescription(
     const MediaTrackDescriptor& track) noexcept {
-  return createMpegTsVideoFormatDescription(track);
+  return macos::createVideoFormatDescription(track);
 }
 
 MediaTime MpegTsSourceTraits::mergeOrderKey(const MediaSample& sample) noexcept {

@@ -11,8 +11,9 @@
 #include "media/video_codec_configuration.hpp"
 #include "platform/macos/core_media_codec_facts.hpp"
 #include "platform/macos/core_media_source_support.hpp"
+#include "platform/macos/core_media_carriage.hpp"
 #include "platform/macos/native_custom_source_core.hpp"
-#include "platform/macos/matroska_sample_builder.hpp"
+#include "platform/macos/native_preview_source_core.hpp"
 extern "C" {
 #include <libavcodec/codec_id.h>
 }
@@ -50,47 +51,14 @@ public:
   MediaTime audioDemuxOrigin{};
   MediaTime audioMediaStart{0,1};
 };
-// Slots and control blocks are allocated at open. A slot is mutable only when
-// the source holds its sole reference; asynchronous decoder leases keep it
-// busy.
-class Storage final : public MediaPayloadStorage {
-public:
-  ~Storage() override {
-    if (sample)
-      CFRelease(sample);
-  }
-  CMSampleBufferRef sample{};
-  std::size_t bytes{};
-  std::size_t byteSize() const noexcept override { return bytes; }
-  std::span<const std::byte> contiguousBytes() const noexcept override {
-    char *pointer{};
-    std::size_t contiguous{}, total{};
-    if (!sample ||
-        CMBlockBufferGetDataPointer(CMSampleBufferGetDataBuffer(sample), 0,
-                                    &contiguous, &total, &pointer) != noErr ||
-        contiguous != bytes || total != bytes)
-      return {};
-    return {reinterpret_cast<const std::byte *>(pointer), bytes};
-  }
-  bool copyBytes(std::size_t offset,
-                 std::span<std::byte> destination) const noexcept override {
-    return offset <= bytes && destination.size() <= bytes - offset &&
-           CMBlockBufferCopyDataBytes(CMSampleBufferGetDataBuffer(sample),
-                                      offset, destination.size(),
-                                      destination.data()) == noErr;
-  }
-
-protected:
-  std::optional<NativePayloadKind> nativePayloadKind() const noexcept override {
-    return NativePayloadKind::CoreMediaSampleBuffer;
-  }
-  const void *borrowedNativePayload() const noexcept override { return sample; }
-};
+// At most kPayloadLeases samples may be leased at once; a slot is reusable
+// only when the reader holds its sole reference.
 class PacketReader {
 public:
+  static constexpr std::size_t kPayloadLeases = 32;
   LibavformatCursor cursor;
   std::unique_ptr<LibavformatCursor> audioCursor;
-  std::array<std::shared_ptr<Storage>, 32> pool{};
+  std::array<std::shared_ptr<CoreMediaSampleStorage>, kPayloadLeases> pool{};
   CMFormatDescriptionRef format{}, audioFormat{};
   ~PacketReader() {
     if (format)
@@ -100,13 +68,11 @@ public:
   bool initialize(const MediaTrackDescriptor &track, std::string &error) {
     auto& description=track.audio?audioFormat:format;
     description = track.audio ? createAudioFormatDescription(track)
-                              : createMatroskaVideoFormatDescription(track);
+                              : createVideoFormatDescription(track);
     if (!description) {
       error = "LibavformatVideoFormatDescription";
       return false;
     }
-    for (auto &slot : pool)
-      if(!slot) slot = std::make_shared<Storage>();
     return true;
   }
   bool materialize(const LibavformatCursor::Packet &packet,
@@ -122,75 +88,49 @@ public:
         error = "LibavformatDamagedVideoPacket";
       return false;
     }
+    // Retire every sample whose lease has come back, so a free slot never
+    // keeps its last CMSampleBuffer alive.
     for (auto &slot : pool)
-      if (slot.use_count() == 1 && slot->sample) {
-        CFRelease(slot->sample);
-        slot->sample = nullptr;
-        slot->bytes = 0;
-      }
-    auto free = std::find_if(pool.begin(), pool.end(), [](const auto &slot) {
-      return slot.use_count() == 1;
-    });
+      if (slot.use_count() == 1)
+        slot.reset();
+    auto free = std::find(pool.begin(), pool.end(), nullptr);
     if (free == pool.end()) {
       error = "LibavformatPayloadLeaseLimit";
       return false;
     }
-    auto &storage = **free;
-    if (storage.sample) {
-      CFRelease(storage.sample);
-      storage.sample = nullptr;
-    }
-    CMBlockBufferRef block{};
     const std::size_t size = packet.bytes.size();
-    if (CMBlockBufferCreateWithMemoryBlock(kCFAllocatorDefault, nullptr, size,
-                                           kCFAllocatorDefault, nullptr, 0,
-                                           size, 0, &block) != noErr) {
-      error = "LibavformatBlockAllocation";
+    CMBlockBufferRef block{};
+    std::span<std::byte> destination;
+    if (!allocateSampleBlock(size, "libavformat", &block, &destination, &error))
       return false;
-    }
+    std::copy(packet.bytes.begin(), packet.bytes.end(), destination.begin());
     const MediaTime duration =
         track.audio && track.codec != MediaCodec::Aac
             ? MediaTime{track.audio->framesPerPacket,
                         static_cast<std::int32_t>(track.audio->sampleRate)}
             : packet.duration;
-    const CMSampleTimingInfo timing{
+    CompressedSampleShape shape;
+    shape.timing = {
         CMTimeMake(duration.value, duration.timescale),
         CMTimeMake(packet.pts.value, packet.pts.timescale),
         packet.dts.valid() ? CMTimeMake(packet.dts.value, packet.dts.timescale)
                            : kCMTimeInvalid};
-    const auto copied =
-        CMBlockBufferReplaceDataBytes(packet.bytes.data(), block, 0, size);
-    const auto built =
-        copied == noErr
-            ? CMSampleBufferCreateReady(kCFAllocatorDefault, block, track.audio?audioFormat:format, 1,
-                                        1, &timing, 1, &size, &storage.sample)
-            : copied;
-    CFRelease(block);
-    if (built != noErr) {
-      error = "LibavformatSampleAllocation";
+    shape.sizes = &size;
+    if (!track.audio)
+      shape.videoKeyFrame = packet.key;
+    ScopedSampleBuffer owned;
+    if (!buildCompressedSampleBuffer(block, track.audio ? audioFormat : format,
+                                     shape, "libavformat", &owned, &error))
       return false;
-    }
-    if (!track.audio) {
-      CFArrayRef attachments =
-          CMSampleBufferGetSampleAttachmentsArray(storage.sample, true);
-      if (!attachments || !CFArrayGetCount(attachments)) {
-        error = "LibavformatSampleAttachments";
-        return false;
-      }
-      auto dict = static_cast<CFMutableDictionaryRef>(
-          const_cast<void *>(CFArrayGetValueAtIndex(attachments, 0)));
-      CFDictionarySetValue(dict, kCMSampleAttachmentKey_NotSync,
-                           packet.key ? kCFBooleanFalse : kCFBooleanTrue);
-    }
     if (track.codec == MediaCodec::Aac) {
-      CMSetAttachment(storage.sample, aacPiecewiseTimelineAttachmentKey(), kCFBooleanTrue, kCMAttachmentMode_ShouldPropagate);
+      CMSetAttachment(owned.get(), aacPiecewiseTimelineAttachmentKey(), kCFBooleanTrue, kCMAttachmentMode_ShouldPropagate);
       const auto floor=audioFrameAtOrAfter(target,static_cast<std::uint32_t>(track.audio->sampleRate));
       const auto frame=exactAudioFrameIndex(packet.pts,static_cast<std::uint32_t>(track.audio->sampleRate));
       const auto floorFrame=floor ? exactAudioFrameIndex(*floor,static_cast<std::uint32_t>(track.audio->sampleRate)) : std::nullopt;
       if (floorFrame && frame && *floorFrame-*frame>=audioPrimingFrames(codec::kAacLcSamplesPerAccessUnit))
-        static_cast<void>(statedImmediatePlayoutFrame(storage.sample));
+        static_cast<void>(statedImmediatePlayoutFrame(owned.get()));
     }
-    storage.bytes = size;
+    *free = std::make_shared<CoreMediaSampleStorage>(owned.release(), size);
     out.generation = generation;
     out.track = track.id;
     out.kind = track.audio ? MediaSampleKind::EncodedAudio
@@ -929,8 +869,9 @@ namespace wam::macos {
 namespace {
 class Preview final : public NativePreviewSource {
 public:
-  explicit Preview(std::shared_ptr<const Context> context)
-      : context_(std::move(context)) {}
+  Preview(std::shared_ptr<const Context> context,
+          const MediaTrackDescriptor &track)
+      : context_(std::move(context)), track_(track) {}
   NativePreviewBeginOutcome
   begin(NativePreviewRequest request) noexcept override {
     NativePreviewBeginOutcome out;
@@ -956,8 +897,7 @@ public:
                     return static_cast<const Preview *>(value)->isCancelled();
                   }},
               out.error) ||
-          !reader_->initialize(context_->descriptor()->tracks.front(),
-                               out.error)) {
+          !reader_->initialize(track_, out.error)) {
         out.status = NativePreviewStatus::Unsupported;
         return out;
       }
@@ -1020,8 +960,7 @@ public:
       if (packet.stream != context_->selectedStream)
         continue;
       MediaSample sample;
-      if (!reader_->materialize(packet, epoch, facts_.target,
-                                context_->descriptor()->tracks.front(), sample,
+      if (!reader_->materialize(packet, epoch, facts_.target, track_, sample,
                                 error))
         return NativePreviewFailure{epoch, std::move(error)};
       ++facts_.samplesRead;
@@ -1034,13 +973,7 @@ public:
     return NativePreviewFailure{epoch, "LibavformatPreviewInterleaveLimit"};
   }
   void requestCancel(std::uint64_t epoch) noexcept override {
-    if (epoch && operation_.load(std::memory_order_acquire) == epoch) {
-      auto observed = cancelled_.load(std::memory_order_acquire);
-      while (observed < epoch && !cancelled_.compare_exchange_weak(
-                                     observed, epoch, std::memory_order_release,
-                                     std::memory_order_acquire)) {
-      }
-    }
+    publishPreviewCancellation(operation_, cancelled_, epoch);
   }
   void close() noexcept override {
     operation_.store(0, std::memory_order_release);
@@ -1060,6 +993,8 @@ public:
 
 private:
   std::shared_ptr<const Context> context_;
+  // Borrowed from the descriptor the context retains for this source's life.
+  const MediaTrackDescriptor &track_;
   std::unique_ptr<PacketReader> reader_;
   bool isCancelled() const noexcept {
     const auto active = operation_.load(std::memory_order_acquire);
@@ -1076,10 +1011,11 @@ createLibavformatPreviewSource(NativePreviewBinding binding) noexcept {
   try {
     auto context =
         std::dynamic_pointer_cast<const Context>(binding.assetContext);
-    if (!context || context->audioOnly ||
+    const MediaTrackDescriptor *track = previewableVideoTrack(binding);
+    if (!context || !track ||
         !context->matchesPreviewBinding(binding.localPath, binding.descriptor))
       return {};
-    return std::make_unique<Preview>(std::move(context));
+    return std::make_unique<Preview>(std::move(context), *track);
   } catch (...) {
     return {};
   }
